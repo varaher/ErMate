@@ -1,0 +1,64 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return request.auth.uid == userId;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // Default deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Users collection
+    match /users/{userId} {
+      allow read: if isSignedIn() && isOwner(userId);
+      allow create, update: if isSignedIn() && isOwner(userId)
+        && incoming().name is string && incoming().name.size() <= 100
+        && incoming().email is string && incoming().email.size() <= 100
+        && incoming().role is string && incoming().role.size() <= 100
+        && incoming().hospital is string && incoming().hospital.size() <= 100
+        && (incoming().get('aiCredits', 0) is int)
+        && (incoming().get('streak', 0) is int)
+        && (incoming().get('subscriptionTier', '') is string);
+    }
+
+    // Cases collection
+    match /cases/{caseId} {
+      allow read, delete: if isSignedIn();
+      allow create, update: if isSignedIn()
+        && incoming().id is string && incoming().id.size() <= 100
+        && incoming().status is string && (incoming().status == 'Triage' || incoming().status == 'Active' || incoming().status == 'Discharged')
+        && incoming().patient is map
+        && incoming().vitals is map;
+    }
+
+    // Handovers collection
+    match /handovers/{handoverId} {
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn()
+        && incoming().id is string && incoming().id.size() <= 100
+        && incoming().senderName is string && incoming().senderName.size() <= 100
+        && incoming().senderEmail is string && incoming().senderEmail.size() <= 100
+        && incoming().patientsText is string && incoming().patientsText.size() <= 10000;
+    }
+  }
+}

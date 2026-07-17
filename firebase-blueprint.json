@@ -1,0 +1,74 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User profile metadata",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "role": { "type": "string" },
+        "hospital": { "type": "string" },
+        "aiCredits": { "type": "integer" },
+        "streak": { "type": "integer" },
+        "subscriptionTier": { "type": "string" }
+      },
+      "required": ["name", "email", "role", "hospital"]
+    },
+    "ClinicalCase": {
+      "title": "ClinicalCase",
+      "description": "Structured medical case sheet documentation for an ER patient",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "patient": { "type": "object" },
+        "vitals": { "type": "object" },
+        "sampleHistory": { "type": "object" },
+        "primaryAssessment": { "type": "object" },
+        "secondaryAssessment": { "type": "string" },
+        "investigations": { "type": "array" },
+        "treatments": { "type": "array" },
+        "progressNotes": { "type": "string" },
+        "dischargeInfo": { "type": "object" },
+        "differentials": { "type": "array" },
+        "isPediatric": { "type": "boolean" },
+        "status": { "type": "string" },
+        "savedTime": { "type": "string" },
+        "timeSpentMin": { "type": "integer" },
+        "doctorEmail": { "type": "string" },
+        "doctorName": { "type": "string" }
+      },
+      "required": ["id", "patient", "vitals", "status"]
+    },
+    "HandoverRecord": {
+      "title": "HandoverRecord",
+      "description": "Structured shift handover report detailing patients transferred and shift transition info",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "senderName": { "type": "string" },
+        "senderEmail": { "type": "string" },
+        "timestamp": { "type": "string" },
+        "caseCount": { "type": "integer" },
+        "patientsText": { "type": "string" },
+        "acknowledgedBy": { "type": "string" },
+        "acknowledgedTime": { "type": "string" }
+      },
+      "required": ["id", "senderName", "senderEmail", "timestamp", "caseCount", "patientsText"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "User profiles keyed by auth.uid"
+    },
+    "/cases/{caseId}": {
+      "schema": "ClinicalCase",
+      "description": "Clinical cases logged or managed in the ER"
+    },
+    "/handovers/{handoverId}": {
+      "schema": "HandoverRecord",
+      "description": "Recorded shift handovers between shifts/doctors"
+    }
+  }
+}

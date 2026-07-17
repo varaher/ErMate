@@ -1,0 +1,6 @@
+{
+  "name": "ErMate",
+  "description": "Interactive Emergency Room EMR and User Guide Portal by Varah Group",
+  "requestFramePermissions": ["camera", "microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
