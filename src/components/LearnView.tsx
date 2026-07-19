@@ -11,9 +11,10 @@ interface EMReferenceResult {
 
 interface LearnViewProps {
   onNavigateToTab?: (tabId: string) => void;
+  isDarkMode?: boolean;
 }
 
-export default function LearnView({ onNavigateToTab }: LearnViewProps) {
+export default function LearnView({ onNavigateToTab, isDarkMode = false }: LearnViewProps) {
   const [activeTab, setActiveTab] = useState<"simulations" | "library" | "trivia" | "memory">("simulations");
   
   // EM Reference state
@@ -367,20 +368,26 @@ ${m.physicianReflections || "No reflections logged."}
           <div className="animate-fade-in max-w-4xl mx-auto space-y-6 text-xs">
             
             {/* Header / Intro Card */}
-            <div className="bg-gradient-to-r from-indigo-900 to-slate-900 text-white p-5 md:p-6 rounded-2xl shadow-md space-y-3 relative overflow-hidden">
+            <div className={`bg-gradient-to-r ${isDarkMode ? 'from-indigo-900 to-slate-900 border-indigo-500/20' : 'from-indigo-600 to-purple-600 border-transparent'} text-white p-5 md:p-6 rounded-2xl shadow-md space-y-3 relative overflow-hidden border`}>
               <div className="absolute right-0 bottom-0 opacity-10 pointer-events-none translate-x-4 translate-y-4">
                 <FileText className="w-48 h-48" />
               </div>
               
               <div className="flex flex-wrap items-center justify-between gap-4">
                 <div className="space-y-1">
-                  <span className="text-[9px] bg-indigo-500/30 text-indigo-300 border border-indigo-500/20 px-2.5 py-0.5 rounded font-mono font-bold uppercase tracking-widest">
+                  <span className={`text-[9px] px-2.5 py-0.5 rounded font-mono font-bold uppercase tracking-widest border ${
+                    isDarkMode 
+                      ? "bg-indigo-500/30 text-indigo-300 border-indigo-500/20" 
+                      : "bg-white/20 text-white border-white/10"
+                  }`}>
                     🔒 Secure Lifelong Ledger
                   </span>
                   <h3 className="text-base md:text-lg font-bold font-display">
                     My Private Clinical Memory Log
                   </h3>
-                  <p className="text-slate-300 text-[11px] max-w-xl leading-relaxed">
+                  <p className={`text-[11px] max-w-xl leading-relaxed ${
+                    isDarkMode ? "text-slate-300" : "text-indigo-100"
+                  }`}>
                     A private clinical diary logging key pathophysiology pearls, atypical mimics, and personal physician reflections from every emergency patient encountered. Stored locally, fully HIPAA-safe.
                   </p>
                 </div>

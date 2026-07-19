@@ -17,6 +17,7 @@ interface DashboardViewProps {
   onNavigateToDischarge: (caseId: string) => void;
   onNavigateToTab: (tabId: string) => void;
   onStartHandoverChat: () => void;
+  onStartHandoverSheet: () => void;
   onStartVoiceScribe: () => void;
   onOpenPediatricCalculator: () => void;
   onOpenPocketMirror: () => void;
@@ -31,6 +32,7 @@ interface DashboardViewProps {
   activeShiftDoctors: any[];
   setActiveShiftDoctors: React.Dispatch<React.SetStateAction<any[]>>;
   onSaveCase: (updatedCase: ClinicalCase) => void;
+  isDarkMode?: boolean;
 }
 
 export default function DashboardView({
@@ -42,6 +44,7 @@ export default function DashboardView({
   onNavigateToDischarge,
   onNavigateToTab,
   onStartHandoverChat,
+  onStartHandoverSheet,
   onStartVoiceScribe,
   onOpenPediatricCalculator,
   onOpenPocketMirror,
@@ -56,6 +59,7 @@ export default function DashboardView({
   activeShiftDoctors,
   setActiveShiftDoctors,
   onSaveCase,
+  isDarkMode = false,
 }: DashboardViewProps) {
   // Statistics
   const activeCasesCount = cases.filter(c => c.status === "Active" || c.status === "Triage").length;
@@ -73,8 +77,6 @@ export default function DashboardView({
       status: getCasePendingStatus(c)
     }))
     .filter(x => x.status.isPending);
-
-  const [showHandoverSheet, setShowHandoverSheet] = useState<boolean>(false);
 
   // Shift & Countdown Warning States
   const [showShiftWarning, setShowShiftWarning] = useState<boolean>(false);
@@ -424,25 +426,39 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
       )}
       
       {/* 1. Welcome Banner */}
-      <div className="bg-gradient-to-r from-emerald-950 via-slate-900 to-purple-950 text-white rounded-2xl p-4 md:p-8 shadow-md relative overflow-hidden no-print border border-emerald-500/20">
+      <div className={`bg-gradient-to-r ${isDarkMode ? 'from-emerald-950 via-slate-900 to-purple-950 text-white border-emerald-500/20' : 'from-emerald-600 via-teal-500 to-indigo-600 text-white border-transparent'} rounded-2xl p-4 md:p-8 shadow-md relative overflow-hidden no-print border`}>
         <div className="absolute right-0 top-0 w-64 h-64 bg-purple-500/10 rounded-full blur-2xl -mr-20 -mt-20 pointer-events-none" />
         <div className="absolute left-1/3 bottom-0 w-48 h-48 bg-emerald-500/10 rounded-full blur-xl -mb-10 pointer-events-none" />
         
         <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="space-y-1.5">
             <div className="flex items-center gap-1.5 flex-wrap">
-              <span className="bg-purple-950/50 text-purple-300 text-[8px] md:text-[10px] px-2 py-0.5 rounded-full font-mono font-bold uppercase tracking-wider border border-purple-500/30">
+              <span className={`px-2 py-0.5 rounded-full font-mono font-bold uppercase tracking-wider border ${
+                isDarkMode 
+                  ? "bg-purple-950/50 text-purple-300 text-[8px] md:text-[10px] border-purple-500/30" 
+                  : "bg-white/15 text-white text-[8px] md:text-[10px] border-white/20"
+              }`}>
                 Session • {profile.subscriptionTier || "Enterprise Platinum"}
               </span>
-              <span className="bg-emerald-500/10 text-emerald-400 text-[8px] md:text-[10px] px-2 py-0.5 rounded-full font-mono font-bold uppercase tracking-wider border border-emerald-500/20">
+              <span className={`px-2 py-0.5 rounded-full font-mono font-bold uppercase tracking-wider border ${
+                isDarkMode 
+                  ? "bg-emerald-500/10 text-emerald-400 text-[8px] md:text-[10px] border-emerald-500/20" 
+                  : "bg-white/10 text-white text-[8px] md:text-[10px] border-white/10"
+              }`}>
                 Shift Active • {profile.hospital}
               </span>
             </div>
             
-            <h1 className="text-lg md:text-2xl font-extrabold font-display tracking-tight bg-gradient-to-r from-white via-slate-100 to-purple-200 bg-clip-text text-transparent">
+            <h1 className={`text-lg md:text-2xl font-extrabold font-display tracking-tight ${
+              isDarkMode 
+                ? "bg-gradient-to-r from-white via-slate-100 to-purple-200 bg-clip-text text-transparent" 
+                : "text-white"
+            }`}>
               Welcome back, Dr. {profile.name}
             </h1>
-            <p className="hidden md:block text-slate-300 text-xs max-w-xl leading-relaxed">
+            <p className={`hidden md:block text-xs max-w-xl leading-relaxed ${
+              isDarkMode ? "text-slate-300" : "text-emerald-50"
+            }`}>
               Log patient details, run certified clinical surveys, or use continuous dictation.
             </p>
           </div>
@@ -450,16 +466,20 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
           <div className="flex gap-2 shrink-0 w-full md:w-auto">
             <button
               onClick={onStartHandoverChat}
-              className="flex-1 md:flex-none px-3 py-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white text-[10px] md:text-[11px] font-bold rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5"
+              className="flex-1 md:flex-none px-3 py-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white text-[10px] md:text-[11px] font-bold rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer"
             >
               <Users className="w-3.5 h-3.5 text-purple-100" />
               New Handover
             </button>
             <button
-              onClick={() => setShowHandoverSheet(true)}
-              className="flex-1 md:flex-none px-3 py-1.5 bg-slate-800/80 hover:bg-slate-700 border border-slate-700 text-slate-200 text-[10px] md:text-[11px] font-bold rounded-xl transition-all flex items-center justify-center gap-1.5"
+              onClick={onStartHandoverSheet}
+              className={`flex-1 md:flex-none px-3 py-1.5 border font-bold rounded-xl text-[10px] md:text-[11px] transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                isDarkMode 
+                  ? "bg-slate-800/80 hover:bg-slate-700 border-slate-700 text-slate-200" 
+                  : "bg-white/15 hover:bg-white/25 border-white/20 text-white"
+              }`}
             >
-              <FileText className="w-3.5 h-3.5 text-slate-400" />
+              <FileText className="w-3.5 h-3.5 text-slate-150" />
               Handover Sheet
             </button>
           </div>
@@ -468,7 +488,7 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
 
       {/* Pending Cases Alert Board */}
       {pendingCases.length > 0 && (
-        <div className="bg-gradient-to-br from-amber-500/10 via-purple-500/5 to-slate-900 border border-amber-500/20 dark:border-amber-500/10 rounded-2xl p-5 md:p-6 no-print space-y-4">
+        <div className={`bg-gradient-to-br ${isDarkMode ? 'from-amber-500/10 via-purple-500/5 to-slate-900 border-amber-500/20 dark:border-amber-500/10' : 'from-amber-50/70 via-purple-50/30 to-slate-50 border-amber-200'} border rounded-2xl p-5 md:p-6 no-print space-y-4`}>
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-amber-500/10 pb-3.5">
             <div className="flex items-start gap-3">
               <div className="p-2.5 bg-amber-500/10 text-amber-600 dark:text-amber-400 rounded-xl shrink-0 border border-amber-500/20 animate-pulse-slow">
@@ -737,7 +757,7 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
 
           {/* Card 5: Handover Sheet */}
           <div 
-            onClick={() => setShowHandoverSheet(true)}
+            onClick={onStartHandoverSheet}
             className="group relative bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 hover:border-blue-500 dark:hover:border-blue-600 cursor-pointer shadow-xs hover:shadow-md transition-all duration-200 flex flex-col justify-between h-48"
           >
             <div className="absolute right-4 top-4 p-2 bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 rounded-xl group-hover:scale-110 transition-transform">
@@ -746,10 +766,10 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
             
             <div className="space-y-1.5 max-w-[85%]">
               <h3 className="text-sm font-extrabold text-slate-900 dark:text-white flex items-center gap-1.5">
-                Handover Sheet (manual)
+                Handover Sheet
               </h3>
               <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
-                Review and generate a printable PDF shift handover report for active/triage cases in your queue.
+                Review and generate a printable PDF or Word shift handover report for active/triage cases in your queue.
               </p>
             </div>
 
@@ -1413,105 +1433,7 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
           </div>
         </div>
 
-      {/* Manual Handover Sheet Printable Modal */}
-      {showHandoverSheet && (
-        <div className="fixed inset-0 bg-slate-950/80 z-50 flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-4xl w-full p-6 shadow-2xl space-y-5 animate-fade-in max-h-[90vh] overflow-y-auto">
-            
-            <div className="flex items-center justify-between border-b pb-3 no-print">
-              <h2 className="text-base font-bold text-slate-900 dark:text-white font-display">
-                Outgoing Shift Handover Sheet (Manual PDF)
-              </h2>
-              <div className="flex gap-2">
-                <button
-                  onClick={() => window.print()}
-                  className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-lg transition-all flex items-center gap-1 shadow-sm"
-                >
-                  <FileText className="w-3.5 h-3.5" />
-                  Print / Save PDF
-                </button>
-                <button
-                  onClick={() => setShowHandoverSheet(false)}
-                  className="px-3 py-1.5 bg-slate-100 dark:bg-slate-900 hover:bg-slate-200 dark:hover:bg-slate-800 border rounded-lg text-xs font-bold text-slate-700 dark:text-slate-300"
-                >
-                  Close
-                </button>
-              </div>
-            </div>
 
-            {/* Printable Document Area */}
-            <div className="space-y-6 text-slate-800 dark:text-slate-100 p-2 print:p-0" id="printable-handover-document">
-              <div className="flex justify-between items-start border-b-2 pb-4">
-                <div>
-                  <h1 className="text-xl font-black font-display text-slate-900 dark:text-white uppercase tracking-tight">
-                    ErMate Outgoing Handover Report
-                  </h1>
-                  <p className="text-[11px] font-mono text-slate-500 mt-0.5">
-                    Facility: {profile.hospital} | Chief lead: Dr. {profile.name}
-                  </p>
-                </div>
-                <div className="text-right font-mono text-[10px] text-slate-400">
-                  <p>Handover generated on: {new Date().toLocaleDateString()}</p>
-                  <p>System context: ATLS/PALS Standardized</p>
-                </div>
-              </div>
-
-              <div className="space-y-4">
-                <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-400">
-                  Active Clinical Cases List
-                </h3>
-
-                <div className="overflow-x-auto border rounded-xl border-slate-200 dark:border-slate-800">
-                  <table className="w-full text-left border-collapse text-xs">
-                    <thead>
-                      <tr className="bg-slate-50 dark:bg-slate-900 text-slate-500 border-b border-slate-200 dark:border-slate-800 font-mono uppercase text-[10px]">
-                        <th className="p-3">Patient Name</th>
-                        <th className="p-3">Triage Priority</th>
-                        <th className="p-3">Vitals Summary</th>
-                        <th className="p-3">Chief Complaint</th>
-                        <th className="p-3">Treatments Given</th>
-                        <th className="p-3">Status</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-150 dark:divide-slate-850 font-mono text-[11px]">
-                      {cases.length === 0 ? (
-                        <tr>
-                          <td colSpan={6} className="p-4 text-center text-slate-400">No active cases to handover.</td>
-                        </tr>
-                      ) : (
-                        cases.map((c) => (
-                          <tr key={c.id} className="hover:bg-slate-50/20">
-                            <td className="p-3 font-bold text-slate-800 dark:text-white">{c.patient.name} ({c.patient.age}y {c.patient.gender})</td>
-                            <td className="p-3">
-                              <span className="font-extrabold text-slate-700 dark:text-slate-300">
-                                {c.patient.triageCategory}
-                              </span>
-                            </td>
-                            <td className="p-3 text-slate-500">HR {c.vitals.hr || "N/A"} | BP {c.vitals.bp || "N/A"} | SpO2 {c.vitals.spo2 || "N/A"}%</td>
-                            <td className="p-3 text-slate-600 truncate max-w-[150px]">{c.patient.presentingComplaint}</td>
-                            <td className="p-3 text-slate-500 truncate max-w-[150px]">
-                              {c.treatments.map(t => t.drugName).join(", ") || "None"}
-                            </td>
-                            <td className="p-3 font-semibold text-blue-700">{c.status}</td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
-              {/* Footer Note */}
-              <div className="border-t pt-4 text-center text-[10px] text-slate-400 font-mono leading-relaxed">
-                <p>This document contains confidential Protected Health Information (PHI) subject to patient privacy rules.</p>
-                <p>Ensure secure clinical disposition and specialist reconciliation post shift takeover.</p>
-              </div>
-
-            </div>
-
-          </div>
-        </div>
-      )}
 
     </div>
   );

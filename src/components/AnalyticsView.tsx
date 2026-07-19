@@ -13,9 +13,10 @@ interface AnalyticsViewProps {
   profile: UserProfile;
   cases: ClinicalCase[];
   onNavigateToTab?: (tabId: string) => void;
+  isDarkMode?: boolean;
 }
 
-export default function AnalyticsView({ profile, cases, onNavigateToTab }: AnalyticsViewProps) {
+export default function AnalyticsView({ profile, cases, onNavigateToTab, isDarkMode = false }: AnalyticsViewProps) {
   // Parse dates and count active vs discharged for "ER Patient Flow Trends"
   const parseDateOpened = (dateStr: string) => {
     if (!dateStr) return "Unknown";
@@ -121,7 +122,7 @@ export default function AnalyticsView({ profile, cases, onNavigateToTab }: Analy
   return (
     <div className="max-w-7xl mx-auto px-4 py-6 space-y-6 animate-fade-in" id="analytics-section">
       {/* Header Banner */}
-      <div className="bg-gradient-to-r from-slate-900 to-indigo-950 rounded-2xl p-6 text-white shadow-md border border-indigo-900/40 relative overflow-hidden">
+      <div className={`bg-gradient-to-r ${isDarkMode ? 'from-slate-900 to-indigo-950 border-indigo-900/40' : 'from-indigo-600 to-indigo-800 border-transparent'} rounded-2xl p-6 text-white shadow-md border relative overflow-hidden`}>
         <div className="absolute right-0 top-0 translate-x-12 -translate-y-8 opacity-10">
           <BarChart3 className="w-80 h-80" />
         </div>
@@ -129,12 +130,18 @@ export default function AnalyticsView({ profile, cases, onNavigateToTab }: Analy
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div className="space-y-2">
               <div className="flex items-center gap-2">
-                <span className="px-2.5 py-0.5 bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 rounded-full text-[10px] uppercase font-bold tracking-wider font-mono">
+                <span className={`px-2.5 py-0.5 rounded-full text-[10px] uppercase font-bold tracking-wider font-mono border ${
+                  isDarkMode 
+                    ? "bg-indigo-500/20 text-indigo-300 border-indigo-500/30" 
+                    : "bg-white/15 text-white border-white/20"
+                }`}>
                   Operational Intelligence
                 </span>
               </div>
               <h1 className="text-2xl font-black font-display tracking-tight">ER Quality & Flow Analytics</h1>
-              <p className="text-slate-300 text-xs max-w-xl font-medium leading-relaxed">
+              <p className={`text-xs max-w-xl font-medium leading-relaxed ${
+                isDarkMode ? "text-slate-300" : "text-indigo-100"
+              }`}>
                 Real-time visual monitoring of clinical triage stratification, admission velocities, and case disposition cycles at <span className="font-semibold text-white">{profile.hospital}</span>.
               </p>
             </div>

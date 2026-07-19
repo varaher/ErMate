@@ -5,7 +5,9 @@ import {
   Link, Copy, Check, Info, Sparkles, Building, ChevronRight, AlertTriangle,
   LogOut, ShieldAlert, Lock, Moon, Sun, Bell, FileText, Eye, EyeOff,
   UserCheck, Shield, Award, Sparkle, RefreshCcw, ChevronLeft, Clock,
-  FileCheck, HelpCircle, Laptop, Smartphone, Calculator
+  FileCheck, HelpCircle, Laptop, Smartphone, Calculator,
+  ChevronDown, ChevronUp, Database, Target, Cpu, Globe, Download, UserPlus,
+  Heart, Mic, Compass, BarChart2, Camera, BookOpen, Wrench
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { UserProfile, ClinicalCase, TriageCategory } from "../types";
@@ -145,10 +147,20 @@ export default function ProfileSettingsView({
   // Support desk tickets
   const [supportTicketMessage, setSupportTicketMessage] = useState<string>("");
   const [supportTicketSuccess, setSupportTicketSuccess] = useState<boolean>(false);
+  const [feedbackType, setFeedbackType] = useState<"bug" | "feature" | "improvement" | "general">("bug");
+  const [openFaqIndex, setOpenFaqIndex] = useState<number | null>(null);
 
   // Tour States
   const [tourActive, setTourActive] = useState<boolean>(false);
   const [tourStep, setTourStep] = useState<number>(0);
+  const [tourCategory, setTourCategory] = useState<"clinical" | "team" | "learning" | "tools">("clinical");
+  const [expandedFeatureIndex, setExpandedFeatureIndex] = useState<number | null>(0);
+
+  // Privacy Policy & Preferences states
+  const [openPolicySection, setOpenPolicySection] = useState<number | null>(null);
+  const [shareAnalytics, setShareAnalytics] = useState<boolean>(true);
+  const [shareAiTraining, setShareAiTraining] = useState<boolean>(true);
+  const [biometricLock, setBiometricLock] = useState<boolean>(true);
 
   // Indian ER Market Revenue Planner states
   const [proDoctorCount, setProDoctorCount] = useState<number>(200);
@@ -364,7 +376,8 @@ export default function ProfileSettingsView({
   const medCases = cases.filter(c => c.patient?.caseType === "Medical").length;
   const traumaCases = cases.filter(c => c.patient?.caseType === "Trauma").length;
 
-  const preparedInviteLink = `https://ermate.hospital/join/${(hospitalName || "general").toLowerCase().replace(/[^a-z0-9]+/g, "-")}-er-invite`;
+  const currentOrigin = typeof window !== "undefined" ? window.location.origin : "https://ermate.hospital";
+  const preparedInviteLink = `${currentOrigin}/join/${(hospitalName || "general").toLowerCase().replace(/[^a-z0-9]+/g, "-")}-er-invite`;
 
   // Menu items list component rendering
   const renderProfileMenuList = () => {
@@ -383,7 +396,7 @@ export default function ProfileSettingsView({
         )}
 
         {/* User Card Header */}
-        <div className="bg-[#182333] border border-slate-800/80 rounded-3xl p-6 flex flex-col items-center text-center relative overflow-hidden shadow-md">
+        <div className="bg-white dark:bg-[#182333] border border-slate-200 dark:border-slate-800/80 rounded-3xl p-6 flex flex-col items-center text-center relative overflow-hidden shadow-md">
           {/* Decorative radial gradients matching mobile ER aesthetic */}
           <div className="absolute right-0 top-0 w-32 h-32 bg-emerald-500/5 rounded-full blur-2xl pointer-events-none" />
           <div className="absolute left-0 bottom-0 w-32 h-32 bg-blue-500/5 rounded-full blur-2xl pointer-events-none" />
@@ -393,16 +406,16 @@ export default function ProfileSettingsView({
             {initialLetter}
           </div>
 
-          <h3 className="text-lg font-black text-white leading-tight">{profile.name}</h3>
-          <p className="text-xs text-slate-400 mt-1 font-mono">{profile.email}</p>
-          <div className="mt-2 text-[11px] bg-slate-800/60 border border-slate-700/60 rounded-full px-3 py-0.5 text-slate-300 font-bold tracking-wide">
+          <h3 className="text-lg font-black text-slate-800 dark:text-white leading-tight">{profile.name}</h3>
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 font-mono">{profile.email}</p>
+          <div className="mt-2 text-[11px] bg-slate-100 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/60 rounded-full px-3 py-0.5 text-slate-600 dark:text-slate-300 font-bold tracking-wide">
             👤 {profile.role || "HOD / Shift Lead"}
           </div>
 
           {/* Plan subscription pill */}
           <button 
             onClick={() => setSelectedSubSection("subscriptions")}
-            className="mt-3.5 bg-emerald-500/10 hover:bg-emerald-500/15 text-emerald-400 border border-emerald-500/20 px-3.5 py-1 rounded-full text-[11px] font-extrabold inline-flex items-center gap-1.5 transition-all"
+            className="mt-3.5 bg-emerald-500/10 hover:bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 px-3.5 py-1 rounded-full text-[11px] font-extrabold inline-flex items-center gap-1.5 transition-all"
           >
             <Zap className="w-3.5 h-3.5 animate-pulse" />
             <span>{profile.subscriptionTier || "Free Plan"}</span>
@@ -410,13 +423,13 @@ export default function ProfileSettingsView({
         </div>
 
         {/* Clinical Operational Shift Control (Taps Select/End Shift) */}
-        <div className="bg-[#182333] border border-slate-800/80 rounded-2xl overflow-hidden divide-y divide-slate-800/50 shadow-md">
+        <div className="bg-white dark:bg-[#182333] border border-slate-200 dark:border-slate-800/80 rounded-2xl overflow-hidden divide-y divide-slate-100 dark:divide-slate-800/50 shadow-md">
           <div 
             onClick={handleToggleShift}
-            className={`p-4 flex items-center justify-between gap-3 cursor-pointer transition-all hover:bg-slate-800/30 ${
+            className={`p-4 flex items-center justify-between gap-3 cursor-pointer transition-all hover:bg-slate-50 dark:hover:bg-slate-800/30 ${
               isOnShift 
-                ? "text-rose-500 hover:text-rose-400" 
-                : "text-emerald-400 hover:text-emerald-300"
+                ? "text-rose-600 dark:text-rose-500 hover:text-rose-500 dark:hover:text-rose-400" 
+                : "text-emerald-600 dark:text-emerald-400 hover:text-emerald-500 dark:hover:text-emerald-300"
             }`}
           >
             <div className="flex items-center gap-3">
@@ -427,7 +440,7 @@ export default function ProfileSettingsView({
               </div>
               <div className="text-left">
                 <strong className="text-sm font-bold block">{isOnShift ? "End Current Shift" : "Select Shift"}</strong>
-                <span className="text-[10px] text-slate-400 block font-mono">
+                <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">
                   {isOnShift ? `Checked in since 9:00 AM • Active roster Live` : "Check in to your current shift"}
                 </span>
               </div>
@@ -438,12 +451,12 @@ export default function ProfileSettingsView({
 
         {/* Section: ER Department workspace */}
         <div className="space-y-1.5">
-          <h4 className="text-[10px] font-black tracking-widest text-slate-400 uppercase font-mono pl-1">DEPARTMENT WORKSPACE</h4>
-          <div className="bg-[#182333] border border-slate-800/80 rounded-2xl overflow-hidden divide-y divide-slate-800/50 shadow-md">
+          <h4 className="text-[10px] font-black tracking-widest text-slate-400 dark:text-slate-500 uppercase font-mono pl-1">DEPARTMENT WORKSPACE</h4>
+          <div className="bg-white dark:bg-[#182333] border border-slate-200 dark:border-slate-800/80 rounded-2xl overflow-hidden divide-y divide-slate-100 dark:divide-slate-800/50 shadow-md">
             
             <div 
               onClick={() => setSelectedSubSection("handovers")}
-              className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-100 hover:bg-slate-800/30 transition-all"
+              className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-all"
             >
               <div className="flex items-center gap-3">
                 <div className="w-8.5 h-8.5 rounded-xl bg-blue-500/10 text-blue-400 flex items-center justify-center">
@@ -451,7 +464,7 @@ export default function ProfileSettingsView({
                 </div>
                 <div className="text-left">
                   <strong className="text-sm font-bold block">Incoming Handovers</strong>
-                  <span className="text-[10px] text-slate-400 block font-mono">
+                  <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">
                     {handovers.length} sheets pending acknowledgement
                   </span>
                 </div>
@@ -461,7 +474,7 @@ export default function ProfileSettingsView({
 
             <div 
               onClick={() => setSelectedSubSection("dashboard")}
-              className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-100 hover:bg-slate-800/30 transition-all"
+              className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-all"
             >
               <div className="flex items-center gap-3">
                 <div className="w-8.5 h-8.5 rounded-xl bg-indigo-500/10 text-indigo-400 flex items-center justify-center">
@@ -469,7 +482,7 @@ export default function ProfileSettingsView({
                 </div>
                 <div className="text-left">
                   <strong className="text-sm font-bold block">HOD Dashboard</strong>
-                  <span className="text-[10px] text-slate-400 block font-mono">Active roster shift and rota status</span>
+                  <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">Active roster shift and rota status</span>
                 </div>
               </div>
               <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
@@ -477,7 +490,7 @@ export default function ProfileSettingsView({
 
             <div 
               onClick={() => setSelectedSubSection("roster")}
-              className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-100 hover:bg-slate-800/30 transition-all"
+              className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-all"
             >
               <div className="flex items-center gap-3">
                 <div className="w-8.5 h-8.5 rounded-xl bg-emerald-500/10 text-emerald-400 flex items-center justify-center">
@@ -485,7 +498,7 @@ export default function ProfileSettingsView({
                 </div>
                 <div className="text-left">
                   <strong className="text-sm font-bold block">Manage Roster</strong>
-                  <span className="text-[10px] text-slate-400 block font-mono">Team Builder setup & doctor directory</span>
+                  <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">Team Builder setup & doctor directory</span>
                 </div>
               </div>
               <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
@@ -496,12 +509,12 @@ export default function ProfileSettingsView({
 
         {/* Section: Personal & Device tools */}
         <div className="space-y-1.5">
-          <h4 className="text-[10px] font-black tracking-widest text-slate-400 uppercase font-mono pl-1">PERSONAL & LINKING</h4>
-          <div className="bg-[#182333] border border-slate-800/80 rounded-2xl overflow-hidden divide-y divide-slate-800/50 shadow-md">
+          <h4 className="text-[10px] font-black tracking-widest text-slate-400 dark:text-slate-500 uppercase font-mono pl-1">PERSONAL & LINKING</h4>
+          <div className="bg-white dark:bg-[#182333] border border-slate-200 dark:border-slate-800/80 rounded-2xl overflow-hidden divide-y divide-slate-100 dark:divide-slate-800/50 shadow-md">
             
             <div 
               onClick={() => setSelectedSubSection("stats")}
-              className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-100 hover:bg-slate-800/30 transition-all"
+              className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-all"
             >
               <div className="flex items-center gap-3">
                 <div className="w-8.5 h-8.5 rounded-xl bg-teal-500/10 text-teal-400 flex items-center justify-center">
@@ -509,7 +522,7 @@ export default function ProfileSettingsView({
                 </div>
                 <div className="text-left">
                   <strong className="text-sm font-bold block">My Stats</strong>
-                  <span className="text-[10px] text-slate-400 block font-mono">Clinical registries performance analytics</span>
+                  <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">Clinical registries performance analytics</span>
                 </div>
               </div>
               <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
@@ -517,7 +530,7 @@ export default function ProfileSettingsView({
 
             <div 
               onClick={() => setSelectedSubSection("device-link")}
-              className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-100 hover:bg-slate-800/30 transition-all"
+              className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-all"
             >
               <div className="flex items-center gap-3">
                 <div className="w-8.5 h-8.5 rounded-xl bg-purple-500/10 text-purple-400 flex items-center justify-center">
@@ -525,7 +538,7 @@ export default function ProfileSettingsView({
                 </div>
                 <div className="text-left">
                   <strong className="text-sm font-bold block">Link to Web</strong>
-                  <span className="text-[10px] text-slate-400 block font-mono">Connect desktop monitors or recording pins</span>
+                  <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">Connect desktop monitors or recording pins</span>
                 </div>
               </div>
               <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
@@ -533,7 +546,7 @@ export default function ProfileSettingsView({
 
             <div 
               onClick={() => setSelectedSubSection("subscriptions")}
-              className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-100 hover:bg-slate-800/30 transition-all"
+              className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-all"
             >
               <div className="flex items-center gap-3">
                 <div className="w-8.5 h-8.5 rounded-xl bg-amber-500/10 text-amber-400 flex items-center justify-center">
@@ -541,7 +554,7 @@ export default function ProfileSettingsView({
                 </div>
                 <div className="text-left">
                   <strong className="text-sm font-bold block">My Subscriptions</strong>
-                  <span className="text-[10px] text-slate-400 block font-mono">{profile.aiCredits} scribe credits remaining</span>
+                  <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">{profile.aiCredits} scribe credits remaining</span>
                 </div>
               </div>
               <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
@@ -549,7 +562,7 @@ export default function ProfileSettingsView({
 
             <div 
               onClick={() => setSelectedSubSection("upgrade")}
-              className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-100 hover:bg-slate-800/30 transition-all"
+              className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-all"
             >
               <div className="flex items-center gap-3">
                 <div className="w-8.5 h-8.5 rounded-xl bg-rose-500/10 text-rose-400 flex items-center justify-center">
@@ -557,7 +570,7 @@ export default function ProfileSettingsView({
                 </div>
                 <div className="text-left">
                   <strong className="text-sm font-bold block">Upgrade Plan</strong>
-                  <span className="text-[10px] text-slate-400 block font-mono">Unlock unlimited Rounds & Department tier</span>
+                  <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">Unlock unlimited Rounds & Department tier</span>
                 </div>
               </div>
               <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
@@ -566,15 +579,15 @@ export default function ProfileSettingsView({
             {profile.email === "varahgrp@gmail.com" && (
               <div 
                 onClick={() => setSelectedSubSection("revenue-planner")}
-                className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-100 hover:bg-slate-800/30 transition-all border-t border-slate-800/50"
+                className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-all border-t border-slate-100 dark:border-slate-800/50"
               >
                 <div className="flex items-center gap-3">
                   <div className="w-8.5 h-8.5 rounded-xl bg-indigo-500/10 text-indigo-400 flex items-center justify-center">
                     <Calculator className="w-4.5 h-4.5" />
                   </div>
                   <div className="text-left">
-                    <strong className="text-sm font-bold block text-indigo-400">Owner Revenue & Cost Planner</strong>
-                    <span className="text-[10px] text-slate-400 block font-mono">Restricted: Analyze Gemini, Sarvam, Razorpay expenses</span>
+                    <strong className="text-sm font-bold block text-indigo-500">Owner Revenue & Cost Planner</strong>
+                    <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">Restricted: Analyze Gemini, Sarvam, Razorpay expenses</span>
                   </div>
                 </div>
                 <ChevronRight className="w-4 h-4 text-indigo-500 shrink-0" />
@@ -586,12 +599,12 @@ export default function ProfileSettingsView({
 
         {/* Section: Account compliance */}
         <div className="space-y-1.5">
-          <h4 className="text-[10px] font-black tracking-widest text-slate-400 uppercase font-mono pl-1">ACCOUNT & CONTROL</h4>
-          <div className="bg-[#182333] border border-slate-800/80 rounded-2xl overflow-hidden divide-y divide-slate-800/50 shadow-md">
+          <h4 className="text-[10px] font-black tracking-widest text-slate-400 dark:text-slate-500 uppercase font-mono pl-1">ACCOUNT & CONTROL</h4>
+          <div className="bg-white dark:bg-[#182333] border border-slate-200 dark:border-slate-800/80 rounded-2xl overflow-hidden divide-y divide-slate-100 dark:divide-slate-800/50 shadow-md">
             
             <div 
               onClick={() => setSelectedSubSection("role")}
-              className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-100 hover:bg-slate-800/30 transition-all"
+              className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-all"
             >
               <div className="flex items-center gap-3">
                 <div className="w-8.5 h-8.5 rounded-xl bg-slate-600/10 text-slate-300 flex items-center justify-center">
@@ -599,7 +612,7 @@ export default function ProfileSettingsView({
                 </div>
                 <div className="text-left">
                   <strong className="text-sm font-bold block">My Role</strong>
-                  <span className="text-[10px] text-slate-400 block font-mono">Hospital facility & specialty details</span>
+                  <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">Hospital facility & specialty details</span>
                 </div>
               </div>
               <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
@@ -607,7 +620,7 @@ export default function ProfileSettingsView({
 
             <div 
               onClick={() => setSelectedSubSection("set-password")}
-              className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-100 hover:bg-slate-800/30 transition-all"
+              className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-all"
             >
               <div className="flex items-center gap-3">
                 <div className="w-8.5 h-8.5 rounded-xl bg-slate-600/10 text-slate-300 flex items-center justify-center">
@@ -615,7 +628,7 @@ export default function ProfileSettingsView({
                 </div>
                 <div className="text-left">
                   <strong className="text-sm font-bold block">Set Password</strong>
-                  <span className="text-[10px] text-slate-400 block font-mono">Change sign-in session PIN credentials</span>
+                  <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">Change sign-in session PIN credentials</span>
                 </div>
               </div>
               <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
@@ -623,7 +636,7 @@ export default function ProfileSettingsView({
 
             <div 
               onClick={() => setSelectedSubSection("notifications")}
-              className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-100 hover:bg-slate-800/30 transition-all"
+              className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-all"
             >
               <div className="flex items-center gap-3">
                 <div className="w-8.5 h-8.5 rounded-xl bg-slate-600/10 text-slate-300 flex items-center justify-center">
@@ -631,7 +644,7 @@ export default function ProfileSettingsView({
                 </div>
                 <div className="text-left">
                   <strong className="text-sm font-bold block">Notifications</strong>
-                  <span className="text-[10px] text-slate-400 block font-mono">Alert sounds, push status toggles</span>
+                  <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">Alert sounds, push status toggles</span>
                 </div>
               </div>
               <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
@@ -639,7 +652,7 @@ export default function ProfileSettingsView({
 
             <div 
               onClick={() => setSelectedSubSection("privacy")}
-              className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-100 hover:bg-slate-800/30 transition-all"
+              className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-all"
             >
               <div className="flex items-center gap-3">
                 <div className="w-8.5 h-8.5 rounded-xl bg-slate-600/10 text-slate-300 flex items-center justify-center">
@@ -647,7 +660,7 @@ export default function ProfileSettingsView({
                 </div>
                 <div className="text-left">
                   <strong className="text-sm font-bold block">Privacy & Security</strong>
-                  <span className="text-[10px] text-slate-400 block font-mono">ABDM patient clinical privacy keys</span>
+                  <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">ABDM patient clinical privacy keys</span>
                 </div>
               </div>
               <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
@@ -658,20 +671,24 @@ export default function ProfileSettingsView({
 
         {/* Section: Tutorials & Support */}
         <div className="space-y-1.5">
-          <h4 className="text-[10px] font-black tracking-widest text-slate-400 uppercase font-mono pl-1">HELP & ABOUT</h4>
-          <div className="bg-[#182333] border border-slate-800/80 rounded-2xl overflow-hidden divide-y divide-slate-800/50 shadow-md">
+          <h4 className="text-[10px] font-black tracking-widest text-slate-400 dark:text-slate-500 uppercase font-mono pl-1">HELP & ABOUT</h4>
+          <div className="bg-white dark:bg-[#182333] border border-slate-200 dark:border-slate-800/80 rounded-2xl overflow-hidden divide-y divide-slate-100 dark:divide-slate-800/50 shadow-md">
             
             <div 
-              onClick={startAppTour}
-              className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-100 hover:bg-slate-800/30 transition-all"
+              onClick={() => {
+                setTourCategory("clinical");
+                setExpandedFeatureIndex(0);
+                setSelectedSubSection("tour");
+              }}
+              className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-all"
             >
               <div className="flex items-center gap-3">
                 <div className="w-8.5 h-8.5 rounded-xl bg-slate-600/10 text-slate-300 flex items-center justify-center">
-                  <Building className="w-4.5 h-4.5" />
+                  <Compass className="w-4.5 h-4.5 text-indigo-500" />
                 </div>
                 <div className="text-left">
                   <strong className="text-sm font-bold block">Take a Tour</strong>
-                  <span className="text-[10px] text-slate-400 block font-mono">Interactive guided on-boarding tour</span>
+                  <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">Interactive guided on-boarding tour</span>
                 </div>
               </div>
               <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
@@ -679,7 +696,7 @@ export default function ProfileSettingsView({
 
             <div 
               onClick={() => setSelectedSubSection("support")}
-              className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-100 hover:bg-slate-800/30 transition-all"
+              className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-all"
             >
               <div className="flex items-center gap-3">
                 <div className="w-8.5 h-8.5 rounded-xl bg-slate-600/10 text-slate-300 flex items-center justify-center">
@@ -687,7 +704,7 @@ export default function ProfileSettingsView({
                 </div>
                 <div className="text-left">
                   <strong className="text-sm font-bold block">Help & Support</strong>
-                  <span className="text-[10px] text-slate-400 block font-mono">Contact ErMate hospital operations support</span>
+                  <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">Contact ErMate hospital operations support</span>
                 </div>
               </div>
               <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
@@ -695,7 +712,7 @@ export default function ProfileSettingsView({
 
             <div 
               onClick={() => setSelectedSubSection("about")}
-              className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-100 hover:bg-slate-800/30 transition-all"
+              className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-all"
             >
               <div className="flex items-center gap-3">
                 <div className="w-8.5 h-8.5 rounded-xl bg-slate-600/10 text-slate-300 flex items-center justify-center">
@@ -703,7 +720,7 @@ export default function ProfileSettingsView({
                 </div>
                 <div className="text-left">
                   <strong className="text-sm font-bold block">About ErMate</strong>
-                  <span className="text-[10px] text-slate-400 block font-mono">Clinical standards & certifications log</span>
+                  <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">Clinical standards & certifications log</span>
                 </div>
               </div>
               <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
@@ -714,9 +731,9 @@ export default function ProfileSettingsView({
 
         {/* Section: Theme / Display Mode Selection Heading */}
         <div className="space-y-3">
-          <h4 className="text-[10px] font-black tracking-widest text-slate-400 uppercase font-mono pl-1">DISPLAY MODE</h4>
+          <h4 className="text-[10px] font-black tracking-widest text-slate-400 dark:text-slate-500 uppercase font-mono pl-1">DISPLAY MODE</h4>
           
-          <div className="bg-slate-900/60 p-1.5 rounded-2xl flex items-center gap-1.5 border border-slate-800/80">
+          <div className="bg-slate-100 dark:bg-slate-900/60 p-1.5 rounded-2xl flex items-center gap-1.5 border border-slate-200 dark:border-slate-800/80">
             {[
               { id: "auto" as const, label: "Auto (9pm-6am)" },
               { id: "light" as const, label: "Always Light" },
@@ -731,7 +748,7 @@ export default function ProfileSettingsView({
                   className={`flex-1 py-2 px-2 text-center rounded-xl font-bold text-[10.5px] transition-all cursor-pointer ${
                     active 
                       ? "bg-emerald-500 text-slate-950 shadow-md" 
-                      : "text-slate-400 hover:text-slate-200"
+                      : "text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200"
                   }`}
                 >
                   {mode.label}
@@ -740,7 +757,7 @@ export default function ProfileSettingsView({
             })}
           </div>
 
-          <div className="text-[10px] text-slate-400 font-mono flex items-center gap-1.5 pl-1.5">
+          <div className="text-[10px] text-slate-500 dark:text-slate-400 font-mono flex items-center gap-1.5 pl-1.5">
             <Moon className="w-3.5 h-3.5 text-indigo-400 animate-pulse" />
             <span>
               {displayMode === "auto" 
@@ -756,14 +773,14 @@ export default function ProfileSettingsView({
         <div className="space-y-2.5">
           <h4 className="text-[10px] font-black tracking-widest text-rose-500/80 uppercase font-mono pl-1">DATA MANAGEMENT</h4>
           
-          <div className="bg-[#182333] border border-slate-800/80 rounded-2xl overflow-hidden shadow-md">
+          <div className="bg-white dark:bg-[#182333] border border-slate-200 dark:border-slate-800/80 rounded-2xl overflow-hidden shadow-md">
             <div 
               onClick={() => {
                 setDeleteConfirmText("");
                 setDeleteStatus(null);
                 setShowDeleteConfirmModal(true);
               }}
-              className="p-4 flex items-center justify-between gap-3 cursor-pointer text-rose-500 hover:bg-rose-950/10 transition-all font-bold"
+              className="p-4 flex items-center justify-between gap-3 cursor-pointer text-rose-600 dark:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/10 transition-all font-bold"
             >
               <div className="flex items-center gap-3">
                 <div className="w-8.5 h-8.5 rounded-xl bg-rose-500/10 text-rose-500 flex items-center justify-center">
@@ -771,7 +788,7 @@ export default function ProfileSettingsView({
                 </div>
                 <div className="text-left">
                   <strong className="text-sm block">Delete All Cases</strong>
-                  <span className="text-[10px] text-rose-400/85 block font-mono">Purge cached records instantly</span>
+                  <span className="text-[10px] text-rose-500/80 dark:text-rose-400/85 block font-mono">Purge cached records instantly</span>
                 </div>
               </div>
               <ChevronRight className="w-4 h-4 text-rose-500 shrink-0" />
@@ -1625,84 +1642,1200 @@ export default function ProfileSettingsView({
         </div>
       );
     } else if (selectedSubSection === "privacy") {
-      title = "ABDM Privacy & Compliance";
+      title = "Privacy";
+      
+      const policySections = [
+        {
+          id: 1,
+          icon: Info,
+          title: "1. Introduction",
+          color: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20",
+          content: (
+            <div className="space-y-2">
+              <p>ErMate is a specialized Emergency Room Electronic Medical Records (EMR) and team management solution, available as an optimized Web Dashboard and Native Companion Client designed specifically for licensed healthcare professionals.</p>
+              <p>Developed by Varah Group.</p>
+              <p>This Privacy Policy explains how we collect, use, store, and protect data within the ErMate application stack.</p>
+              <p>By registering or using ErMate, you acknowledge and agree to the practices detailed in this policy.</p>
+            </div>
+          )
+        },
+        {
+          id: 2,
+          icon: Database,
+          title: "2. Information We Collect & Process",
+          color: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-500/20",
+          content: (
+            <div className="space-y-2">
+              <p className="font-bold">A. User & Account Data:</p>
+              <p>Account credentials, physician profile details (clinical role, registration ID, hospital/department affiliation), and team subscription ledgers.</p>
+              <p className="font-bold mt-1">B. Patient Clinical Records (As entered by physicians):</p>
+              <p>Demographic tags (age, gender), emergency triage levels (P1-P5 acuity categories), Glasgow Coma Scale (GCS), chief complaints, and serial vital timelines.</p>
+              <p>Primary Survey surveys (Airway, Breathing, Circulation, Disability, Exposure), Secondary Survey medical worksheets, diagnostic rule-outs, drug orders, and clinical disposition plans.</p>
+              <p>Psychological emergency screenings (including risk of self-harm, mental status parameters, and home support variables) input securely by the clinical team.</p>
+              <p className="font-bold mt-1">C. Audio & Media Inputs (Temporary):</p>
+              <p>Spoken medical narratives processed via the Smart Voice Scribe are streamed securely to the language processing engine for instant text mapping. Audio stream data is processed entirely in-memory and is never stored on our persistent database layers.</p>
+              <p>Uploaded referral letters, ECG tracings, or diagnostic reports are analyzed ephemerally using OCR technologies to extract text parameters; raw graphic files are not permanently cached beyond the user's explicit record attachment.</p>
+            </div>
+          )
+        },
+        {
+          id: 3,
+          icon: Target,
+          title: "3. Purpose of Data Collection",
+          color: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20",
+          content: (
+            <div className="space-y-2">
+              <p className="font-bold">Collected data is used strictly to fulfill clinical utility workflows:</p>
+              <ul className="list-disc pl-5 space-y-1">
+                <li>Facilitating rapid Emergency Department triage scoring and patient routing.</li>
+                <li>Conducting secure, structured shift handover logs using the SBAR (Situation, Background, Assessment, Recommendation) framework.</li>
+                <li>Generating literature-cited diagnostic suggestions via the Clinical Decision Support (CDS) panel.</li>
+                <li>Compiling and rendering clean patient case sheets and printable discharge summaries (PDF/DOCX formats).</li>
+                <li>Coordinating on-duty department rotas, team builders, and duty handovers.</li>
+                <li>Providing clinical training simulators, including interactive clinical trivia and pocket mirror bedside pupil scales.</li>
+              </ul>
+              <p className="mt-2 text-slate-500">ErMate does not sell, lease, or distribute clinical records or patient identifiers to third-party advertisers or insurance brokers under any circumstances.</p>
+            </div>
+          )
+        },
+        {
+          id: 4,
+          icon: ShieldCheck,
+          title: "4. Infrastructure, Storage & Security",
+          color: "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20",
+          content: (
+            <ul className="list-disc pl-5 space-y-1">
+              <li>All application traffic is guarded using secure Transport Layer Security (TLS/HTTPS 1.3) encryption.</li>
+              <li>Operational databases are backed by secure Google Cloud infrastructure and Firebase Firestore database engines.</li>
+              <li>Data access is bounded by explicit role-based authorization controls (Consultant review-overrides vs. Resident note-drafting).</li>
+              <li>Rigorous session-based token authentication verifies the active registration of clinical users.</li>
+              <li>Clinicians maintain full control of local device memory with instant 'Clear Offline Cache' functionality.</li>
+              <li>Supports secure, client-side local backup exports as encrypted JSON packages.</li>
+            </ul>
+          )
+        },
+        {
+          id: 5,
+          icon: Cpu,
+          title: "5. Artificial Intelligence & Processing Engine",
+          color: "bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20",
+          content: (
+            <ul className="list-disc pl-5 space-y-1">
+              <li>Smart Voice Scribe transcription, CDS differential parsing, and draft discharges leverage the advanced Gemini model family.</li>
+              <li>Data items are processed on a secure, private endpoint with strict agreements that prohibit the AI from retaining or using ErMate transactions for baseline model training.</li>
+              <li>All AI outputs function purely as clinician decision support overlays; the registered physician maintains sole final accountability for all diagnostic entries and therapeutic plans.</li>
+            </ul>
+          )
+        },
+        {
+          id: 6,
+          icon: Clock,
+          title: "6. Data Retention Policies",
+          color: "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20",
+          content: (
+            <ul className="list-disc pl-5 space-y-1">
+              <li>Active patient files remain retrievable inside the department directory during your active hospital team subscription.</li>
+              <li>Clinicians can permanently delete individual patient records or shift handovers at any point, removing them from cloud storage immediately.</li>
+              <li>Upon complete account termination, all associated personal indices and clinical entries are scheduled for hard deletion.</li>
+              <li>Complies with state-regulated medical record-keeping thresholds for emergency departments.</li>
+            </ul>
+          )
+        },
+        {
+          id: 7,
+          icon: UserCheck,
+          title: "7. Professional Responsibility & Consent",
+          color: "bg-teal-500/10 text-teal-600 dark:text-teal-400 border-teal-500/20",
+          content: (
+            <ul className="list-disc pl-5 space-y-1">
+              <li>ErMate serves as a digital EMR workbook assisting licensed, authorized clinicians only.</li>
+              <li>Using clinicians are responsible for obtaining standard institutional or patient consent where applicable under hospital policies.</li>
+              <li>Clinicians are expected to adhere to device-level safety practices (including passcode locks and secure biometrics) to block unauthorized bedside access.</li>
+            </ul>
+          )
+        },
+        {
+          id: 8,
+          icon: Globe,
+          title: "8. Regulatory Compliance (DPDPA & International Law)",
+          color: "bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/20",
+          content: (
+            <ul className="list-disc pl-5 space-y-1">
+              <li>Fully conforms to India's Digital Personal Data Protection Act (DPDPA), 2023, regarding electronic health data handling and consent boundaries.</li>
+              <li>Maintains compliance standards in line with national electronic health record guidelines and emergency triage safety practices.</li>
+            </ul>
+          )
+        },
+        {
+          id: 9,
+          icon: Trash2,
+          title: "9. Deletion & Data Rights",
+          color: "bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/20",
+          content: (
+            <ul className="list-disc pl-5 space-y-1">
+              <li>Users hold explicit rights to inspect, download, or completely request the deletion of their processed data index.</li>
+              <li>Data extraction can be handled locally via the backup downloader. Deletion inquiries can also be directly mailed to our team.</li>
+              <li>Requests submitted via official support channels are validated and resolved within 14 calendar days.</li>
+            </ul>
+          )
+        },
+        {
+          id: 10,
+          icon: RefreshCw,
+          title: "10. Policy Updates",
+          color: "bg-orange-500/10 text-orange-600 dark:text-orange-400 border-orange-500/20",
+          content: (
+            <ul className="list-disc pl-5 space-y-1">
+              <li>We update this policy to reflect new security protocols, software capabilities, or statutory regulations.</li>
+              <li>Any major changes are explicitly flagged inside our active release logs and dashboard alerts.</li>
+            </ul>
+          )
+        },
+        {
+          id: 11,
+          icon: Mail,
+          title: "11. Contact & Grievance Desk",
+          color: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20",
+          content: (
+            <div className="space-y-1">
+              <p>For data privacy queries, consent withdrawals, or compliance reports, contact Varah Group:</p>
+              <p>Email: varahgrp@gmail.com</p>
+              <p>Website: www.varahgrp.com</p>
+            </div>
+          )
+        }
+      ];
+
       content = (
-        <div className="space-y-4 font-mono text-xs text-slate-300 text-left">
-          <div className="bg-slate-900 border border-slate-800 p-4.5 rounded-2xl space-y-2">
-            <h5 className="font-bold text-white uppercase text-[10px] text-indigo-400 tracking-wider">CERTIFICATION AUDIT</h5>
-            <p className="text-[10.5px] leading-relaxed">
-              ErMate is fully ABDM compliant. Clinical registries are secured via SHA-256 local keys, ensuring absolute clinical data isolation in India.
+        <div className="space-y-6 font-mono text-xs text-slate-700 dark:text-slate-300 text-left pb-4">
+          
+          {/* Header Banner */}
+          <div className="bg-emerald-500/5 dark:bg-emerald-950/20 border border-emerald-500/20 p-4 rounded-2xl space-y-1.5 shadow-sm">
+            <h5 className="font-extrabold text-emerald-700 dark:text-emerald-400 uppercase text-[11px] tracking-wider flex items-center gap-1.5">
+              <ShieldCheck className="w-4.5 h-4.5 text-emerald-500" /> Privacy Policy
+            </h5>
+            <p className="text-[10.5px] leading-relaxed text-slate-600 dark:text-slate-300 font-sans">
+              ErMate by Varah Group takes patient data privacy seriously. All clinical information is handled with the highest standards of security and confidentiality.
+            </p>
+            <p className="text-[10px] text-slate-500 dark:text-slate-400 font-mono mt-1 pt-1 border-t border-slate-100 dark:border-slate-800/40">
+              Version: v2.1.0-Release (Last Updated: July 2026)
             </p>
           </div>
 
-          <div className="p-4 bg-slate-900 border border-slate-800 rounded-2xl divide-y divide-slate-850">
-            <div className="flex justify-between py-1.5">
-              <span>Auditing Nodes:</span>
-              <span className="text-emerald-400 font-bold">✓ Compliant</span>
-            </div>
-            <div className="flex justify-between py-1.5">
-              <span>Consent Log:</span>
-              <span className="text-emerald-400 font-bold">✓ End-to-End</span>
+          {/* Privacy Policy Accordion Section */}
+          <div className="space-y-2">
+            <h4 className="text-[10px] font-black tracking-widest text-slate-400 dark:text-slate-500 uppercase font-mono pl-1">
+              PRIVACY POLICY
+            </h4>
+            <div className="space-y-2">
+              {policySections.map((sect) => {
+                const IconComp = sect.icon;
+                const isOpen = openPolicySection === sect.id;
+                return (
+                  <div 
+                    key={sect.id} 
+                    className="bg-white dark:bg-[#182333] border border-slate-250 dark:border-slate-800/80 rounded-2xl overflow-hidden shadow-xs transition-all"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setOpenPolicySection(isOpen ? null : sect.id)}
+                      className="w-full p-3.5 flex items-center justify-between text-left gap-3 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-all cursor-pointer animate-none"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className={`p-2 rounded-xl border ${sect.color} flex items-center justify-center`}>
+                          <IconComp className="w-4 h-4" />
+                        </div>
+                        <span className="font-bold text-slate-800 dark:text-slate-200 text-[11.5px]">
+                          {sect.title}
+                        </span>
+                      </div>
+                      {isOpen ? (
+                        <ChevronUp className="w-4 h-4 text-slate-400" />
+                      ) : (
+                        <ChevronDown className="w-4 h-4 text-slate-400" />
+                      )}
+                    </button>
+                    {isOpen && (
+                      <div className="px-4 pb-4 pt-1 text-[11px] leading-relaxed text-slate-600 dark:text-slate-300 border-t border-slate-100 dark:border-slate-800/40 font-sans">
+                        {sect.content}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
+
+          {/* Data Sharing Preferences */}
+          <div className="space-y-2.5">
+            <h4 className="text-[10px] font-black tracking-widest text-slate-400 dark:text-slate-500 uppercase font-mono pl-1">
+              DATA SHARING PREFERENCES
+            </h4>
+            <div className="bg-white dark:bg-[#182333] border border-slate-250 dark:border-slate-800/80 rounded-2xl overflow-hidden divide-y divide-slate-100 dark:divide-slate-800/50 shadow-xs">
+              <div className="p-4 flex items-center justify-between gap-3">
+                <div className="text-left">
+                  <strong className="text-slate-800 dark:text-slate-200 text-xs font-bold block font-sans">Usage Analytics</strong>
+                  <p className="text-[10px] text-slate-500 mt-0.5 leading-tight font-sans">Help improve ErMate with anonymous usage data</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShareAnalytics(!shareAnalytics)}
+                  className={`w-11 h-6 rounded-full p-1 transition-all flex items-center shrink-0 ${shareAnalytics ? "bg-emerald-500 justify-end" : "bg-slate-200 dark:bg-slate-800 justify-start"}`}
+                >
+                  <span className="w-4 h-4 bg-white dark:bg-slate-950 rounded-full shadow-xs" />
+                </button>
+              </div>
+
+              <div className="p-4 flex items-center justify-between gap-3">
+                <div className="text-left">
+                  <strong className="text-slate-800 dark:text-slate-200 text-xs font-bold block font-sans">AI Training Data</strong>
+                  <p className="text-[10px] text-slate-500 mt-0.5 leading-tight font-sans">Allow de-identified data to improve AI diagnosis accuracy</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShareAiTraining(!shareAiTraining)}
+                  className={`w-11 h-6 rounded-full p-1 transition-all flex items-center shrink-0 ${shareAiTraining ? "bg-emerald-500 justify-end" : "bg-slate-200 dark:bg-slate-800 justify-start"}`}
+                >
+                  <span className="w-4 h-4 bg-white dark:bg-slate-950 rounded-full shadow-xs" />
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Security */}
+          <div className="space-y-2.5">
+            <h4 className="text-[10px] font-black tracking-widest text-slate-400 dark:text-slate-500 uppercase font-mono pl-1">
+              SECURITY
+            </h4>
+            <div className="bg-white dark:bg-[#182333] border border-slate-250 dark:border-slate-800/80 rounded-2xl overflow-hidden shadow-xs">
+              <div className="p-4 flex items-center justify-between gap-3">
+                <div className="text-left">
+                  <strong className="text-slate-800 dark:text-slate-200 text-xs font-bold block font-sans">Biometric Lock</strong>
+                  <p className="text-[10px] text-slate-500 mt-0.5 leading-tight font-sans">Require fingerprint or face unlock to open app</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setBiometricLock(!biometricLock)}
+                  className={`w-11 h-6 rounded-full p-1 transition-all flex items-center shrink-0 ${biometricLock ? "bg-emerald-500 justify-end" : "bg-slate-200 dark:bg-slate-800 justify-start"}`}
+                >
+                  <span className="w-4 h-4 bg-white dark:bg-slate-950 rounded-full shadow-xs" />
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Your Data Control */}
+          <div className="space-y-2.5">
+            <h4 className="text-[10px] font-black tracking-widest text-slate-400 dark:text-slate-500 uppercase font-mono pl-1">
+              YOUR DATA
+            </h4>
+            <div className="bg-white dark:bg-[#182333] border border-slate-250 dark:border-slate-800/80 rounded-2xl overflow-hidden divide-y divide-slate-100 dark:divide-slate-800/50 shadow-xs">
+              <button
+                type="button"
+                onClick={() => setShowDeleteConfirmModal(true)}
+                className="w-full p-4 flex items-center justify-between gap-3 text-left hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-all cursor-pointer"
+              >
+                <div>
+                  <strong className="text-rose-600 dark:text-rose-400 text-xs font-bold block font-sans">Clear Local Data</strong>
+                  <p className="text-[10px] text-slate-500 mt-0.5 leading-tight font-sans">Remove cached data from this device</p>
+                </div>
+                <ChevronRight className="w-4 h-4 text-slate-400 shrink-0" />
+              </button>
+
+              <button
+                type="button"
+                onClick={() => alert("📢 Data export request received. A secure backup download link will be dispatched to varahgrp@gmail.com within 24 hours.")}
+                className="w-full p-4 flex items-center justify-between gap-3 text-left hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-all cursor-pointer"
+              >
+                <div>
+                  <strong className="text-slate-800 dark:text-slate-200 text-xs font-bold block font-sans">Download My Data</strong>
+                  <p className="text-[10px] text-slate-500 mt-0.5 leading-tight font-sans">Get a copy of all your data via email</p>
+                </div>
+                <Download className="w-4 h-4 text-slate-400 shrink-0" />
+              </button>
+
+              <button
+                type="button"
+                onClick={() => alert("📢 Deletion authorization required. Please contact platform administrators at varahgrp@gmail.com to permanently destroy your profile credentials.")}
+                className="w-full p-4 flex items-center justify-between gap-3 text-left hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-all cursor-pointer"
+              >
+                <div>
+                  <strong className="text-rose-600 dark:text-rose-400 text-xs font-bold block font-sans">Delete Account</strong>
+                  <p className="text-[10px] text-slate-500 mt-0.5 leading-tight font-sans">Permanently remove your account and data</p>
+                </div>
+                <ChevronRight className="w-4 h-4 text-slate-400 shrink-0" />
+              </button>
+            </div>
+          </div>
+
+          {/* Footnote */}
+          <div className="pt-2.5 border-t border-slate-150 dark:border-slate-850 flex items-center gap-2 text-[9px] text-slate-500 dark:text-slate-500 leading-normal font-sans">
+            <Mail className="w-3.5 h-3.5 text-slate-400 shrink-0 animate-none" />
+            <span>
+              For privacy-related concerns, contact Varah Group at <strong className="text-slate-600 dark:text-slate-400">varahgrp@gmail.com</strong> | <a href="https://www.varahgrp.com" target="_blank" rel="noopener noreferrer" className="hover:underline text-indigo-500 font-bold">www.varahgrp.com</a>
+            </span>
+          </div>
+
         </div>
       );
     } else if (selectedSubSection === "support") {
-      title = "Hospital Clinical Helpdesk";
-      content = (
-        <div className="space-y-4 font-mono text-xs text-slate-300 text-left">
-          {supportTicketSuccess ? (
-            <div className="p-4 bg-emerald-950/80 border border-emerald-500/30 rounded-2xl text-emerald-400 space-y-1">
-              <strong className="block font-bold">Ticket Submitted successfully!</strong>
-              <p className="text-[10px]">Our hospital systems engineers have been notified and will contact you shortly.</p>
-            </div>
-          ) : (
-            <form 
-              onSubmit={(e) => {
-                e.preventDefault();
-                if (!supportTicketMessage.trim()) return;
-                setSupportTicketSuccess(true);
-                setSupportTicketMessage("");
-                setTimeout(() => setSupportTicketSuccess(false), 4500);
-              }}
-              className="space-y-3.5"
-            >
-              <div className="space-y-1">
-                <label className="text-[9px] text-slate-500 font-bold uppercase">Message / Issue Details</label>
-                <textarea
-                  value={supportTicketMessage}
-                  onChange={(e) => setSupportTicketMessage(e.target.value)}
-                  placeholder="Describe your operational clinical issue..."
-                  className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 h-24 text-xs text-slate-200 focus:outline-none"
-                />
-              </div>
+      title = "Help & Support";
+      
+      const faqs = [
+        {
+          question: "How do I start a new patient case?",
+          answer: "Tap the '+ New Patient' button in the top header or on the Dashboard. This loads the Triage screen where you can register patient demographics and enter immediate vitals. The system automatically computes age classifications, Glasgow Coma Scale (GCS), and Emergency Severity Index (P1 to P5 emergency priority levels)."
+        },
+        {
+          question: "How does the Smart Voice Scribe work?",
+          answer: "Locate the blue microphone button inside active case sheets. Tap to speak your clinical observations or patient history naturally (optimized for Indian hospital shorthand and bilingual clinical slang). ErMate's AI engine transcribes and extracts parameters (like symptoms, history, and vitals) directly into EMR fields without hand-typing. Tap 'Show Map' afterwards to view a visual ledger of exactly what clinical data was extracted and mapped."
+        },
+        {
+          question: "How do I export case sheets or discharge summaries?",
+          answer: "From the Dashboard, navigate to the discharged or completed patient case and tap the Download icon. You can instantly compile and download high-contrast, pre-formatted summaries in both PDF and DOCX (Word) formats. The export contains structured vital trends, Primary and Secondary surveys, administered medications, and primary home instructions."
+        },
+        {
+          question: "What is the Clinical Decision Support (CDS) engine?",
+          answer: "Accessible via the Treatment tab of an active case sheet, the CDS engine calculates differential diagnoses, highlights severe red-flag conditions to rule out, and provides clickable peer-reviewed guideline citations. All suggestions serve strictly as supportive review tools; the treating healthcare professional maintains sole final clinical responsibility."
+        },
+        {
+          question: "How are pediatric emergency cases routed?",
+          answer: "When a patient's age is entered as 16 or below, ErMate automatically shifts the workbook to a PALS-compliant Pediatric Case Sheet. This loads the Pediatric Assessment Triangle (PAT: Appearance, Work of Breathing, Circulation), sets age-appropriate normal vital ranges with color-coded alarms, and activates the bedside weight-based pediatric drug dose calculator."
+        },
+        {
+          question: "Can I use ErMate on my computer and pair my phone?",
+          answer: "Yes! ErMate supports dual-screen synchronization. Open Settings > Device Connection to generate a secure 6-digit companion PIN. Enter this PIN on your secondary mobile device to link its microphone and camera directly to your desktop browser session, enabling seamless bedside dictation and document scans."
+        },
+        {
+          question: "Is patient data secure and HIPAA/DPDPA compliant?",
+          answer: "Yes. All records are transmitted using secure HTTPS (TLS 1.3) and stored inside our cloud database on Firebase Firestore with strict data isolation. We implement role-based access gates (Consultants review/approve, Residents draft), support instant offline cache clearing, and provide encrypted JSON backup exports for full compliance with medical data regulations."
+        }
+      ];
 
-              <button
-                type="submit"
-                className="w-full py-2.5 bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-black text-xs rounded-xl transition-all"
+      content = (
+        <div className="space-y-6 pb-6 text-left">
+          {/* Need Help? Block */}
+          <div className="bg-gradient-to-br from-indigo-500/10 via-purple-500/5 to-transparent border border-indigo-500/10 rounded-2xl p-4.5 space-y-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="space-y-1">
+                <h4 className="text-sm font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
+                  <HelpCircle className="w-4.5 h-4.5 text-indigo-500" /> Need Help?
+                </h4>
+                <p className="text-[11px] leading-relaxed text-slate-600 dark:text-slate-350 font-sans">
+                  We're here to help you get the most out of ErMate
+                </p>
+              </div>
+            </div>
+            
+            <a
+              href="mailto:varahgrp@gmail.com?subject=ErMate Support Request"
+              className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-indigo-500 hover:bg-indigo-600 text-white font-bold text-xs rounded-xl transition-all cursor-pointer shadow-xs w-full sm:w-auto"
+            >
+              <Mail className="w-3.5 h-3.5" />
+              Email Support
+            </a>
+          </div>
+
+          {/* Use ErMate on Your Computer */}
+          <div className="bg-white dark:bg-[#182333] border border-slate-250 dark:border-slate-800/80 rounded-2xl p-4.5 space-y-3 shadow-xs">
+            <div className="space-y-1">
+              <h4 className="text-sm font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
+                <Laptop className="w-4.5 h-4.5 text-emerald-500" /> Use ErMate on Your Computer
+              </h4>
+              <div className="text-[11px] font-mono font-semibold text-indigo-600 dark:text-indigo-400">
+                {typeof window !== "undefined" ? window.location.host : "ermate.varahgrp.com"}
+              </div>
+              <p className="text-[11px] leading-relaxed text-slate-600 dark:text-slate-350 font-sans">
+                Access all your cases from any browser — just like WhatsApp Web. Generate a link code from Profile and enter it on the web page to connect instantly.
+              </p>
+            </div>
+
+            <div className="flex flex-wrap gap-2.5 pt-1">
+              <a
+                href={typeof window !== "undefined" ? window.location.origin : "#"}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 font-bold text-xs rounded-xl transition-all cursor-pointer border border-slate-200 dark:border-slate-700"
               >
-                Send Ticket Request
+                Open Web App
+                <ArrowUpRight className="w-3.5 h-3.5 text-slate-500" />
+              </a>
+              <button
+                type="button"
+                onClick={() => setSelectedSubSection("device-link")}
+                className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-black text-xs rounded-xl transition-all cursor-pointer shadow-xs"
+              >
+                <Link className="w-3.5 h-3.5" />
+                Get Link Code
               </button>
-            </form>
-          )}
+            </div>
+          </div>
+
+          {/* Frequently Asked Questions */}
+          <div className="space-y-3">
+            <h4 className="text-xs font-black uppercase text-slate-400 dark:text-slate-500 tracking-wider pl-1 font-mono">
+              Frequently Asked Questions
+            </h4>
+            
+            <div className="space-y-2">
+              {faqs.map((faq, idx) => {
+                const isOpen = openFaqIndex === idx;
+                return (
+                  <div
+                    key={idx}
+                    className="bg-white dark:bg-[#182333] border border-slate-200 dark:border-slate-800/60 rounded-xl overflow-hidden transition-all shadow-xs"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setOpenFaqIndex(isOpen ? null : idx)}
+                      className="w-full px-4 py-3 flex items-center justify-between gap-3 text-left hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-all"
+                    >
+                      <strong className="text-slate-800 dark:text-slate-200 text-[11px] font-bold leading-normal font-sans">
+                        {faq.question}
+                      </strong>
+                      {isOpen ? (
+                        <ChevronUp className="w-4 h-4 text-slate-400 shrink-0" />
+                      ) : (
+                        <ChevronDown className="w-4 h-4 text-slate-400 shrink-0" />
+                      )}
+                    </button>
+                    {isOpen && (
+                      <div className="px-4 pb-4 pt-1.5 text-[11px] leading-relaxed text-slate-650 dark:text-slate-300 border-t border-slate-100 dark:border-slate-800/40 font-sans">
+                        {faq.answer}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Send Feedback */}
+          <div className="bg-white dark:bg-[#182333] border border-slate-250 dark:border-slate-800/80 rounded-2xl p-4.5 space-y-3.5 shadow-xs">
+            <div className="space-y-1">
+              <h4 className="text-sm font-bold text-slate-800 dark:text-slate-100">
+                Send Feedback
+              </h4>
+              <p className="text-[11px] leading-relaxed text-slate-500 dark:text-slate-400 font-sans">
+                Help us improve ErMate with your suggestions
+              </p>
+            </div>
+
+            {supportTicketSuccess ? (
+              <div className="p-4 bg-emerald-500/10 border border-emerald-500/20 rounded-xl text-emerald-600 dark:text-emerald-400 space-y-1.5 text-[11px] font-sans">
+                <strong className="block font-bold">Feedback sent successfully!</strong>
+                <p>Thank you for helping us improve ErMate. Our team will review your feedback carefully.</p>
+              </div>
+            ) : (
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (!supportTicketMessage.trim()) return;
+                  setSupportTicketSuccess(true);
+                  setSupportTicketMessage("");
+                  setTimeout(() => setSupportTicketSuccess(false), 5000);
+                }}
+                className="space-y-3.5"
+              >
+                {/* Feedback Type Tabs */}
+                <div className="grid grid-cols-4 gap-1.5 bg-slate-50 dark:bg-slate-900 p-1 rounded-xl border border-slate-200 dark:border-slate-800">
+                  {(["bug", "feature", "improvement", "general"] as const).map((type) => {
+                    const isActive = feedbackType === type;
+                    const labelMap = {
+                      bug: "Bug Report",
+                      feature: "Feature Request",
+                      improvement: "Improvement",
+                      general: "General"
+                    };
+                    return (
+                      <button
+                        key={type}
+                        type="button"
+                        onClick={() => setFeedbackType(type)}
+                        className={`py-1.5 px-1 rounded-lg text-[9px] font-bold transition-all text-center cursor-pointer ${
+                          isActive
+                            ? "bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-xs"
+                            : "text-slate-500 dark:text-slate-400 hover:text-slate-850 dark:hover:text-slate-200"
+                        }`}
+                      >
+                        {labelMap[type]}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="space-y-1">
+                  <textarea
+                    value={supportTicketMessage}
+                    onChange={(e) => setSupportTicketMessage(e.target.value)}
+                    placeholder="Type your feedback, bug report, or feature request..."
+                    className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2.5 h-24 text-[11px] text-slate-800 dark:text-slate-200 placeholder-slate-400 focus:outline-none focus:border-indigo-500 dark:focus:border-indigo-500 font-sans"
+                    required
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={!supportTicketMessage.trim()}
+                  className="w-full py-2.5 bg-indigo-500 hover:bg-indigo-600 disabled:opacity-50 text-white font-bold text-xs rounded-xl transition-all cursor-pointer shadow-xs"
+                >
+                  Submit Feedback
+                </button>
+              </form>
+            )}
+          </div>
+        </div>
+      );
+    } else if (selectedSubSection === "tour") {
+      title = "Feature Tour";
+      
+      const categories = [
+        { id: "clinical", label: "Clinical EMR", count: 11, icon: Compass, color: "indigo" },
+        { id: "team", label: "Team & Shifts", count: 7, icon: Users, color: "emerald" },
+        { id: "learning", label: "Learning", count: 4, icon: BookOpen, color: "amber" },
+        { id: "tools", label: "Tools", count: 6, icon: Wrench, color: "cyan" }
+      ] as const;
+
+      const activeBgColors = {
+        clinical: "bg-indigo-600 dark:bg-indigo-500 text-white",
+        team: "bg-emerald-600 dark:bg-emerald-500 text-white",
+        learning: "bg-amber-500 dark:bg-amber-500 text-white",
+        tools: "bg-cyan-600 dark:bg-cyan-500 text-white"
+      };
+
+      const barColors = {
+        clinical: "bg-indigo-500",
+        team: "bg-emerald-500",
+        learning: "bg-amber-500",
+        tools: "bg-cyan-500"
+      };
+
+      const pathBoxColors = {
+        clinical: "bg-rose-500/5 border-rose-500/10 text-rose-600 dark:text-rose-400",
+        team: "bg-emerald-500/5 border-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+        learning: "bg-amber-500/5 border-amber-500/10 text-amber-600 dark:text-amber-400",
+        tools: "bg-cyan-500/5 border-cyan-500/10 text-cyan-600 dark:text-cyan-400"
+      };
+
+      const pathTextColors = {
+        clinical: "text-rose-600 dark:text-rose-400",
+        team: "text-emerald-600 dark:text-emerald-400",
+        learning: "text-amber-600 dark:text-amber-400",
+        tools: "text-cyan-600 dark:text-cyan-400"
+      };
+
+      const tourFeatures = {
+        clinical: [
+          {
+            title: "Patient Triage",
+            subtitle: "P1–P5 emergency categories",
+            desc: "Rapidly triage incoming ER patients using standard Emergency Severity Index priority codes. Capture demographics, chief complaints, immediate vitals, age-classification, and Glasgow Coma Scale (GCS) at the door.",
+            path: "Dashboard ➔ New Patient ➔ Fill triage checklist ➔ Start Case Sheet",
+            icon: AlertTriangle,
+            borderColor: "border-l-red-500",
+            iconBg: "bg-red-50 dark:bg-red-950/40 text-red-500 dark:text-red-400"
+          },
+          {
+            title: "Adult Case Sheet (ATLS)",
+            subtitle: "Advanced Trauma Life Support protocol",
+            desc: "Comprehensive EMR trauma & medical workbook mapped over 7 clinical sections: Primary Survey (Airway, Breathing, Circulation, Disability, Exposure), Secondary Survey, serial vital trends, medications, and clinical disposition.",
+            path: "Dashboard ➔ Select Active Case ➔ Navigate clinical tabs (Primary/Secondary Survey)",
+            icon: FileText,
+            borderColor: "border-l-blue-500",
+            iconBg: "bg-blue-50 dark:bg-blue-950/40 text-blue-500 dark:text-blue-400"
+          },
+          {
+            title: "Pediatric Case Sheet (PALS)",
+            subtitle: "Auto-routing system for patients ≤16 yrs",
+            desc: "Dynamically shifts patient workbook to pediatric-specific criteria when age is 16 or below. Integrates the Pediatric Assessment Triangle (PAT: Appearance, Work of Breathing, Circulation) and custom age-adjusted vital alerts.",
+            path: "New Patient ➔ Enter Age ≤ 16 ➔ Auto-routes to PALS Pediatric Sheet",
+            icon: Heart,
+            borderColor: "border-l-pink-500",
+            iconBg: "bg-pink-50 dark:bg-pink-950/40 text-pink-500 dark:text-pink-400"
+          },
+          {
+            title: "Smart Voice Scribe",
+            subtitle: "Bilingual dictation for Indian clinical slang",
+            desc: "AI-trained speech recognition that transcribes continuous clinical observations, medical abbreviations, and bilingual slang into structured medical entries, eliminating hand-typing fatigue.",
+            path: "Active Case Sheet ➔ Tap blue mic button ➔ Narrate observations ➔ AI auto-populates",
+            icon: Mic,
+            borderColor: "border-l-emerald-500",
+            iconBg: "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-500 dark:text-emerald-400"
+          },
+          {
+            title: "Dictation Completion Map",
+            subtitle: "Interactive voice extraction check",
+            desc: "A post-transcription visual ledger illustrating exactly which parameters (vitals, symptoms, history) were successfully identified and mapped from your continuous spoken narration into EMR fields.",
+            path: "Case Sheet ➔ Dictate ➔ Tap 'Show Map' to view highlighted structured data tags",
+            icon: BarChart2,
+            borderColor: "border-l-teal-500",
+            iconBg: "bg-teal-50 dark:bg-teal-950/40 text-teal-500 dark:text-teal-400",
+            isNew: true
+          },
+          {
+            title: "Clinical Decision Support (CDS)",
+            subtitle: "Severity differentials with evidence citations",
+            desc: "Intelligent clinical safety assistant reviewing active case records to calculate differential diagnoses, highlighting red flags, severe rule-out conditions, and citing peer-reviewed medical guidelines.",
+            path: "Case Sheet ➔ Treatment tab ➔ Review CDS suggested diagnoses and citations",
+            icon: Cpu,
+            borderColor: "border-l-purple-500",
+            iconBg: "bg-purple-50 dark:bg-purple-950/40 text-purple-500 dark:text-purple-400"
+          },
+          {
+            title: "Discharge Summary PDF/DOCX",
+            subtitle: "Instant clinical document generator",
+            desc: "Auto-compile and print elegant discharge summaries containing patient summary charts, diagnostic timelines, administered drugs, and primary instructions. Fully exportable in both PDF and Word formats.",
+            path: "Dashboard ➔ Discharged Cases ➔ Click download icon ➔ Select PDF or DOCX",
+            icon: Download,
+            borderColor: "border-l-cyan-500",
+            iconBg: "bg-cyan-50 dark:bg-cyan-950/40 text-cyan-500 dark:text-cyan-400"
+          },
+          {
+            title: "Serial Vitals & Alert Ranges",
+            subtitle: "Dynamic age-appropriate color alarms",
+            desc: "Plot multiple vital records over time. Custom internal lookup automatically colors vitals based on physiological age norms, warning of pediatric fever or geriatric shock indexes.",
+            path: "Case Sheet ➔ Vitals tab ➔ Add Serial Vitals ➔ View automated color-coded alerts",
+            icon: Activity,
+            borderColor: "border-l-rose-500",
+            iconBg: "bg-rose-50 dark:bg-rose-950/40 text-rose-500 dark:text-rose-400"
+          },
+          {
+            title: "Psychological Assessment",
+            subtitle: "Integrated mental health screening",
+            desc: "Fully integrated emergency psych framework to evaluate mental status examinations, risk of harm/suicide ideation, substance intake, and home protective environment variables.",
+            path: "Case Sheet ➔ Social / Psychological tab ➔ Check psychological criteria",
+            icon: UserCheck,
+            borderColor: "border-l-indigo-500",
+            iconBg: "bg-indigo-50 dark:bg-indigo-950/40 text-indigo-500 dark:text-indigo-400"
+          },
+          {
+            title: "Quick Fast-Track Sheet",
+            subtitle: "Immediate charting for low-severity cases",
+            desc: "Bypass detailed trauma protocols for ambulatory cases, minor procedures, or straightforward clinical consultations to write streamlined rapid clinical notes.",
+            path: "Dashboard ➔ Click 'Quick Case Sheet' ➔ Fill rapid consultation form",
+            icon: Zap,
+            borderColor: "border-l-amber-500",
+            iconBg: "bg-amber-50 dark:bg-amber-950/40 text-amber-500 dark:text-amber-400"
+          },
+          {
+            title: "ER Performance Analytics",
+            subtitle: "Operational metrics & triage distribution",
+            desc: "Bento-style analytic charts illustrating active patient volumes, historical discharge rates, triage level proportions (P1-P5), and peak ER admission windows to guide clinical staffing.",
+            path: "Dashboard ➔ Tap 'Analytics' (bar chart icon in top banner) ➔ Explore metrics",
+            icon: TrendingUp,
+            borderColor: "border-l-indigo-500",
+            iconBg: "bg-indigo-50 dark:bg-indigo-950/40 text-indigo-500 dark:text-indigo-400"
+          }
+        ],
+        team: [
+          {
+            title: "Active Duty Rota",
+            subtitle: "Track ER shifts & roster assignments",
+            desc: "View on-duty ER schedules, supervising consultant assignments, active resident registrars, and direct shift calendars for seamless handover coordination.",
+            path: "Profile / Settings ➔ Duty Shifts tab ➔ View current roster schedule",
+            icon: Clock,
+            borderColor: "border-l-blue-500",
+            iconBg: "bg-blue-50 dark:bg-blue-950/40 text-blue-500 dark:text-blue-400"
+          },
+          {
+            title: "Shift Availability Toggle",
+            subtitle: "Clock on/off shift status broadcast",
+            desc: "Instantly register yourself as 'Active On-Duty' or 'Off-Duty' to broadcast your availability to the ER floor, directing trauma dispatch alerts.",
+            path: "Profile / Settings ➔ Click Active On-Duty status toggle switch",
+            icon: UserPlus,
+            borderColor: "border-l-cyan-500",
+            iconBg: "bg-cyan-50 dark:bg-cyan-950/40 text-cyan-500 dark:text-cyan-400"
+          },
+          {
+            title: "Team Builder Directory",
+            subtitle: "Staff directory & invitation portal",
+            desc: "Create and organize your ER clinical directory. Invite residents and consultants, assign roles, track clinical IDs, and update licensure credentials in a central hub.",
+            path: "Profile / Settings ➔ Team Builder tab ➔ View directory & manage members",
+            icon: Users,
+            borderColor: "border-l-emerald-500",
+            iconBg: "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-500 dark:text-emerald-400"
+          },
+          {
+            title: "Join / Invite Web Link",
+            subtitle: "Frictionless boarding for hospital staff",
+            desc: "Generate secure department-specific invitation URLs. Allow residents, registrars, and rotating nursing staff to join your ER directory with a single click.",
+            path: "Profile / Settings ➔ Team Builder tab ➔ Click 'Copy Invite Link' button",
+            icon: Link,
+            borderColor: "border-l-amber-500",
+            iconBg: "bg-amber-50 dark:bg-amber-950/40 text-amber-500 dark:text-amber-400"
+          },
+          {
+            title: "Rounds Token Ledger",
+            subtitle: "Transparent clinical resource tracker",
+            desc: "Audited accounting ledger tracking local server storage, processed files, Gemini API token parameters, and compute parameters to maintain perfect transparency.",
+            path: "Profile / Settings ➔ Rounds Billing tab ➔ Audit token ledger balances",
+            icon: CreditCard,
+            borderColor: "border-l-red-500",
+            iconBg: "bg-red-50 dark:bg-red-950/40 text-red-500 dark:text-red-400"
+          },
+          {
+            title: "Handover Transition Logs",
+            subtitle: "SBAR clinical transfer sheets",
+            desc: "Conduct structured, sign-off transition logs using the SBAR protocol (Situation, Background, Assessment, Recommendation) to prevent patient tracking errors between shift rotations.",
+            path: "Profile / Settings ➔ Handover logs tab ➔ View outstanding case handovers",
+            icon: FileCheck,
+            borderColor: "border-l-purple-500",
+            iconBg: "bg-purple-50 dark:bg-purple-950/40 text-purple-500 dark:text-purple-400"
+          },
+          {
+            title: "Role-Based Access Control",
+            subtitle: "Consultant vs. Resident authorizations",
+            desc: "Configured authorization gates separating supervisory roles (Consultants with clinical approval, overrides, and audits) from execution roles (Residents drafting clinical notes).",
+            path: "Profile / Settings ➔ Account Credentials tab ➔ Select clinical designation",
+            icon: Shield,
+            borderColor: "border-l-rose-500",
+            iconBg: "bg-rose-50 dark:bg-rose-950/40 text-rose-500 dark:text-rose-400"
+          }
+        ],
+        learning: [
+          {
+            title: "Interactive Clinical Simulations",
+            subtitle: "Scenario practice with diagnostic pacing",
+            desc: "High-acuity medical scenario simulator. Test your reflexes and decision-making on trauma alerts, cardiac arrests, or pediatric emergencies under real-time score tracking and comprehensive clinical performance metrics.",
+            path: "Dashboard ➔ Learn tab ➔ Select interactive clinical case simulations",
+            icon: Target,
+            borderColor: "border-l-amber-500",
+            iconBg: "bg-amber-50 dark:bg-amber-950/40 text-amber-500 dark:text-amber-400"
+          },
+          {
+            title: "AI Medical Reference Library",
+            subtitle: "Verified medical guidelines assistant",
+            desc: "Fast medical literature search tool powered by AI grounding. Find standard drug dosages, clinical scoring scales, and international resuscitation guidelines instantly.",
+            path: "Dashboard ➔ Learn tab ➔ Medical Reference Library ➔ Search topic or drug",
+            icon: HelpCircle,
+            borderColor: "border-l-blue-500",
+            iconBg: "bg-blue-50 dark:bg-blue-950/40 text-blue-500 dark:text-blue-400"
+          },
+          {
+            title: "Clinical Trivia Challenge",
+            subtitle: "Interactive diagnostics quiz",
+            desc: "A gamified diagnostic trivia module focused on critical clinical scoring criteria (NEXUS, Wells, Wells PE, PERC rule, TIMI) and emergency pharmacology pearls to reinforce core trauma knowledge.",
+            path: "Dashboard ➔ Learn tab ➔ Select 'Clinical Quiz / Trivia'",
+            icon: Award,
+            borderColor: "border-l-purple-500",
+            iconBg: "bg-purple-50 dark:bg-purple-950/40 text-purple-500 dark:text-purple-400"
+          },
+          {
+            title: "Clinical Memory Log",
+            subtitle: "Personal medical reflection registry",
+            desc: "A private journal to document rare medical cases, clinical pearls, or cognitive biases encountered on shift, helping you track your diagnostic milestones over time.",
+            path: "Dashboard ➔ Learn tab ➔ Medical Reflection Log ➔ Add Clinical Note",
+            icon: BookOpen,
+            borderColor: "border-l-rose-500",
+            iconBg: "bg-rose-50 dark:bg-rose-950/40 text-rose-500 dark:text-rose-400"
+          }
+        ],
+        tools: [
+          {
+            title: "Bedside Pocket Mirror",
+            subtitle: "Pupil sizing & Mallampati camera overlays",
+            desc: "Uses your device's camera to display custom scale overlays at the bedside. Includes pupillary millimetre measurements (1mm - 8mm) and Mallampati class classifications to assist neurological and airway examinations.",
+            path: "Dashboard ➔ Click 'Pocket Mirror' icon ➔ Position patient's face with live graphics",
+            icon: Camera,
+            borderColor: "border-l-amber-500",
+            iconBg: "bg-amber-50 dark:bg-amber-950/40 text-amber-500 dark:text-amber-400"
+          },
+          {
+            title: "Pediatric Drug Calculator",
+            subtitle: "Weight-based emergency dose table",
+            desc: "PALS-based bedside dose utility. Enter a child's weight or age to instantly compute precise resuscitation drug volumes (Adrenaline, Amiodarone, Atropine, Sedatives) and airway sizes.",
+            path: "Dashboard ➔ Click 'Pediatric Drug Calculator' ➔ Enter pediatric weight/age",
+            icon: Calculator,
+            borderColor: "border-l-blue-500",
+            iconBg: "bg-blue-50 dark:bg-blue-950/40 text-blue-500 dark:text-blue-400"
+          },
+          {
+            title: "Clinical Risk Scorers",
+            subtitle: "Integrated emergency scoring systems",
+            desc: "Quick calculator sheets for assessing key risk models (Glasgow Coma Scale, CURB-65 pneumonia severity, GRACE ischemia score, TIMI index) with real-time risk classification alerts.",
+            path: "Dashboard / Active Case Sheet ➔ Tools dropdown ➔ Select calculator",
+            icon: Percent,
+            borderColor: "border-l-cyan-500",
+            iconBg: "bg-cyan-50 dark:bg-cyan-950/40 text-cyan-500 dark:text-cyan-400"
+          },
+          {
+            title: "Device Companion Link (Web)",
+            subtitle: "WhatsApp-style phone-to-browser pairing",
+            desc: "Generate a secure 6-digit PIN on your computer screen and input it on your phone's companion interface to pair the mobile camera and microphone instantly for bedside dictations.",
+            path: "Profile / Settings ➔ Device Connection tab ➔ Generate secure pairing code",
+            icon: Laptop,
+            borderColor: "border-l-emerald-500",
+            iconBg: "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-500 dark:text-emerald-400"
+          },
+          {
+            title: "Eye-Safe Dark Mode",
+            subtitle: "High-contrast slate interface for night shifts",
+            desc: "Instantly switch between bright, clean layouts and our eye-safe, ultra-low-glare deep slate dark theme specifically designed to protect night-shift ER staff from screen fatigue.",
+            path: "Profile / Settings ➔ Tap Light/Dark toggle icon or in Display Preferences",
+            icon: Moon,
+            borderColor: "border-l-purple-500",
+            iconBg: "bg-purple-50 dark:bg-purple-950/40 text-purple-500 dark:text-purple-400"
+          },
+          {
+            title: "Encrypted Backups",
+            subtitle: "Local backup download & restore",
+            desc: "Full local data safety utility. Export your complete history of clinical cases, logs, and billing details into an encrypted JSON file for compliance, audits, or offline transfer.",
+            path: "Profile / Settings ➔ Backup & Privacy tab ➔ Click 'Export Data Backup'",
+            icon: Download,
+            borderColor: "border-l-rose-500",
+            iconBg: "bg-rose-50 dark:bg-rose-950/40 text-rose-500 dark:text-rose-400"
+          }
+        ]
+      };
+
+      const currentCategoryLabel = categories.find(c => c.id === tourCategory)?.label || "Clinical EMR";
+      const currentCategoryCount = categories.find(c => c.id === tourCategory)?.count || 11;
+      const featuresInActiveCategory = tourFeatures[tourCategory];
+
+      content = (
+        <div className="space-y-6 pb-6 text-left">
+          {/* Compass Logo Badge */}
+          <div className="text-center pt-2">
+            <div className="w-16 h-16 rounded-full bg-emerald-100 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400 flex items-center justify-center mx-auto mb-3 shadow-inner">
+              <Compass className="w-8 h-8" />
+            </div>
+            <h3 className="text-xl font-bold text-slate-800 dark:text-slate-100">Feature Tour</h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400 font-sans mt-1">
+              Everything ErMate can do — in one place
+            </p>
+          </div>
+
+          {/* 4 Summary Statistics Cards */}
+          <div className="grid grid-cols-4 gap-2 mt-2">
+            {categories.map((cat) => {
+              const isActive = tourCategory === cat.id;
+              const textColors = {
+                clinical: "text-blue-600 dark:text-blue-400",
+                team: "text-emerald-600 dark:text-emerald-400",
+                learning: "text-amber-600 dark:text-amber-400",
+                tools: "text-cyan-600 dark:text-cyan-400"
+              };
+              const bgColors = {
+                clinical: "bg-blue-50/70 dark:bg-blue-950/20 border-blue-100 dark:border-blue-900/20",
+                team: "bg-emerald-50/70 dark:bg-emerald-950/20 border-emerald-100 dark:border-emerald-900/20",
+                learning: "bg-amber-50/70 dark:bg-amber-950/20 border-amber-100 dark:border-amber-900/20",
+                tools: "bg-cyan-50/70 dark:bg-cyan-950/20 border-cyan-100 dark:border-cyan-900/20"
+              };
+              const activeRings = {
+                clinical: "ring-2 ring-indigo-500/45 dark:ring-indigo-400/45",
+                team: "ring-2 ring-emerald-500/45 dark:ring-emerald-400/45",
+                learning: "ring-2 ring-amber-500/45 dark:ring-amber-400/45",
+                tools: "ring-2 ring-cyan-500/45 dark:ring-cyan-400/45"
+              };
+              
+              return (
+                <button
+                  key={cat.id}
+                  type="button"
+                  onClick={() => {
+                    setTourCategory(cat.id);
+                    setExpandedFeatureIndex(0);
+                  }}
+                  className={`border rounded-2xl p-2.5 text-center transition-all cursor-pointer select-none ${bgColors[cat.id]} ${
+                    isActive ? activeRings[cat.id] + " scale-[1.02] shadow-sm font-bold" : "border-transparent opacity-85 hover:opacity-100"
+                  }`}
+                >
+                  <span className={`text-lg font-black block leading-none ${textColors[cat.id]}`}>
+                    {cat.count}
+                  </span>
+                  <span className="text-[9px] font-bold text-slate-500 dark:text-slate-400 tracking-tight block mt-1 leading-tight">
+                    {cat.label}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Capsule Tab Navigation Bar */}
+          <div className="flex flex-wrap gap-2 pt-2">
+            {categories.map((cat) => {
+              const isActive = tourCategory === cat.id;
+              const IconComp = cat.icon;
+              return (
+                <button
+                  key={cat.id}
+                  type="button"
+                  onClick={() => {
+                    setTourCategory(cat.id);
+                    setExpandedFeatureIndex(0);
+                  }}
+                  className={`px-3 py-2 rounded-xl flex items-center gap-1.5 text-[11px] font-bold transition-all cursor-pointer shadow-xs border ${
+                    isActive
+                      ? activeBgColors[cat.id] + " border-transparent"
+                      : "bg-slate-50 dark:bg-slate-900 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800"
+                  }`}
+                >
+                  <IconComp className="w-3.5 h-3.5" />
+                  <span>{cat.label}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Category Title Header Line */}
+          <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800/60 pb-2.5 mt-2">
+            <div className="flex items-center gap-2">
+              <div className={`w-1 h-4 rounded-full ${barColors[tourCategory]}`} />
+              <strong className="text-sm font-bold text-slate-800 dark:text-slate-100">
+                {currentCategoryLabel}
+              </strong>
+            </div>
+            <span className="text-[10px] font-mono text-slate-400 dark:text-slate-500 font-bold">
+              {currentCategoryCount} features
+            </span>
+          </div>
+
+          {/* Features Expandable List (Accordion) */}
+          <div className="space-y-2.5">
+            {featuresInActiveCategory.map((feat, idx) => {
+              const isExpanded = expandedFeatureIndex === idx;
+              const IconComp = feat.icon;
+              return (
+                <div
+                  key={idx}
+                  className={`bg-white dark:bg-[#182333] border border-slate-200 dark:border-slate-800/80 rounded-2xl overflow-hidden transition-all shadow-xs border-l-4 ${feat.borderColor}`}
+                >
+                  <button
+                    type="button"
+                    onClick={() => setExpandedFeatureIndex(isExpanded ? null : idx)}
+                    className="w-full px-4 py-3.5 flex items-center justify-between gap-3 text-left hover:bg-slate-50 dark:hover:bg-slate-800/20 transition-all"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${feat.iconBg}`}>
+                        <IconComp className="w-4.5 h-4.5" />
+                      </div>
+                      <div>
+                        <div className="flex items-center flex-wrap gap-1">
+                          <strong className="text-slate-800 dark:text-slate-200 text-xs font-bold leading-tight">
+                            {feat.title}
+                          </strong>
+                          {feat.isNew && (
+                            <span className="px-1.5 py-0.5 bg-emerald-100 dark:bg-emerald-950 text-emerald-600 dark:text-emerald-400 font-black text-[8px] rounded uppercase font-mono tracking-wider">
+                              NEW
+                            </span>
+                          )}
+                        </div>
+                        <span className="text-slate-500 dark:text-slate-400 text-[10px] font-medium leading-tight block mt-0.5">
+                          {feat.subtitle}
+                        </span>
+                      </div>
+                    </div>
+                    {isExpanded ? (
+                      <ChevronUp className="w-4 h-4 text-slate-400 shrink-0" />
+                    ) : (
+                      <ChevronDown className="w-4 h-4 text-slate-400 shrink-0" />
+                    )}
+                  </button>
+
+                  {isExpanded && (
+                    <div className="px-4 pb-4.5 pt-1 border-t border-slate-100 dark:border-slate-800/40 space-y-3 font-sans">
+                      <p className="text-[11px] leading-relaxed text-slate-600 dark:text-slate-300">
+                        {feat.desc}
+                      </p>
+                      
+                      {/* Pathway box */}
+                      <div className={`p-3 rounded-xl border flex items-start gap-2.5 ${pathBoxColors[tourCategory]}`}>
+                        <ArrowUpRight className={`w-3.5 h-3.5 shrink-0 mt-0.5 ${pathTextColors[tourCategory]}`} />
+                        <p className="text-[10px] font-bold font-mono leading-normal flex-1">
+                          {feat.path}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         </div>
       );
     } else if (selectedSubSection === "about") {
       title = "About ErMate";
       content = (
-        <div className="space-y-4 font-mono text-xs text-slate-400 text-center">
-          <div className="w-12 h-12 rounded-full bg-emerald-950 border border-emerald-500/30 flex items-center justify-center mx-auto text-emerald-400 font-extrabold text-xl shadow-inner mb-2">
-            E
+        <div className="space-y-6 pb-6 text-left">
+          {/* Brand Card */}
+          <div className="bg-gradient-to-br from-indigo-500/10 via-purple-500/5 to-transparent border border-indigo-500/15 rounded-2xl p-6 text-center space-y-3 shadow-xs">
+            <div className="w-16 h-16 rounded-2xl bg-indigo-600 flex items-center justify-center mx-auto text-white font-extrabold text-2xl shadow-md tracking-wider">
+              EM
+            </div>
+            <div className="space-y-1">
+              <h3 className="text-lg font-bold text-slate-800 dark:text-slate-100">ErMate</h3>
+              <p className="text-xs text-indigo-600 dark:text-indigo-400 font-medium">Emergency Room EMR for Modern Physicians</p>
+            </div>
+            <div className="flex justify-center gap-4 text-[10px] text-slate-500 dark:text-slate-400 font-mono pt-1">
+              <span>Version 1.0.0</span>
+              <span className="text-slate-300 dark:text-slate-700">•</span>
+              <span>Build 2026.06.30</span>
+            </div>
           </div>
 
-          <h4 className="text-sm font-bold text-white">ErMate Clinical Assistant</h4>
-          <p className="text-[10.5px]">Version 1.0.0-Enterprise (Delhi Server Nodes)</p>
+          {/* About description */}
+          <div className="bg-white dark:bg-[#182333] border border-slate-200 dark:border-slate-800/60 rounded-xl p-4.5 space-y-2.5 shadow-xs">
+            <h4 className="text-xs font-black uppercase text-slate-400 dark:text-slate-500 tracking-wider font-mono">
+              About
+            </h4>
+            <p className="text-[11px] leading-relaxed text-slate-600 dark:text-slate-300 font-sans">
+              ErMate is a mobile-first Emergency Room Electronic Medical Records application designed for emergency medicine physicians and residents. It streamlines the complete patient workflow from triage through discharge with ErMate-powered features, voice dictation, and evidence-based clinical decision support.
+            </p>
+          </div>
 
-          <div className="p-4 bg-slate-900 border border-slate-800 rounded-2xl text-left space-y-2 text-[10.5px] leading-relaxed">
-            <strong className="text-slate-300 block uppercase text-[10px]">CERTIFICATION LOGS</strong>
-            <p>• Emergency Medicine (EM) Reference Framework compliant.</p>
-            <p>• Pediatric Advanced Life Support (PALS) compliant.</p>
-            <p>• Advanced Trauma Life Support (ATLS) compliant.</p>
+          {/* Key Features */}
+          <div className="bg-white dark:bg-[#182333] border border-slate-200 dark:border-slate-800/60 rounded-xl p-4.5 space-y-3.5 shadow-xs">
+            <h4 className="text-xs font-black uppercase text-slate-400 dark:text-slate-500 tracking-wider font-mono">
+              Key Features
+            </h4>
+            <div className="grid grid-cols-1 gap-2.5 text-[11px] font-sans">
+              {[
+                { title: "Complete ER workflow", desc: "Triage, Case Sheet, Disposition, Discharge" },
+                { title: "Voice dictation with ErMate clinical data extraction", desc: "Hands-free dictation with clinical data extraction" },
+                { title: "ErMate differential diagnosis with literature references", desc: "Literature-referenced clinical suggestions" },
+                { title: "Red flag detection with severity-based alerts", desc: "Severity-based real-time alerts" },
+                { title: "Age-based protocols", desc: "ATLS (adults) and PALS (pediatrics)" },
+                { title: "PDF and Word export for case sheets and discharge summaries", desc: "Case sheets and discharge summary downloads" },
+                { title: "Document scanner for lab reports and referral notes", desc: "Lab reports and referral notes OCR extraction" }
+              ].map((feat, idx) => (
+                <div key={idx} className="flex gap-2.5 items-start">
+                  <CheckCircle className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
+                  <div>
+                    <strong className="text-slate-800 dark:text-slate-200 font-bold block">{feat.title}</strong>
+                    <span className="text-slate-505 dark:text-slate-400 text-[10px]">{feat.desc}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Technology Dual Architecture */}
+          <div className="bg-white dark:bg-[#182333] border border-slate-200 dark:border-slate-800/60 rounded-xl p-4.5 space-y-4 shadow-xs">
+            <div>
+              <h4 className="text-xs font-black uppercase text-slate-400 dark:text-slate-500 tracking-wider font-mono">
+                System Architecture
+              </h4>
+              <p className="text-[10px] text-slate-500 leading-normal font-sans mt-0.5">
+                ErMate uses a dual-platform design tailored for rapid ER operations and team desk monitoring.
+              </p>
+            </div>
+
+            {/* Platform 1: Active Web Dashboard */}
+            <div className="border border-indigo-500/10 rounded-xl p-3 bg-indigo-50/5 dark:bg-indigo-950/5 space-y-2.5">
+              <div className="flex items-center justify-between border-b border-indigo-500/10 pb-2">
+                <span className="text-[10px] font-black text-indigo-500 dark:text-indigo-400 uppercase tracking-widest font-mono flex items-center gap-1.5">
+                  <Laptop className="w-3.5 h-3.5" />
+                  💻 Web Dashboard (This App)
+                </span>
+                <span className="text-[9px] bg-indigo-100 dark:bg-indigo-950 px-1.5 py-0.5 rounded text-indigo-600 dark:text-indigo-400 font-mono font-bold">Active Environment</span>
+              </div>
+              <div className="space-y-1.5">
+                {[
+                  { label: "Frontend", val: "React 18 + Vite + Tailwind CSS", icon: Smartphone },
+                  { label: "State & Motion", val: "React Hooks + Motion Transitions", icon: Cpu },
+                  { label: "Backend proxy", val: "Express.js (Node Sandbox)", icon: Laptop },
+                  { label: "Cloud Database", val: "Firebase Firestore (Cloud Core)", icon: Database },
+                  { label: "Clinical Voice / AI", val: "Gemini 2.5 Flash API", icon: Activity }
+                ].map((tech, idx) => (
+                  <div key={idx} className="flex items-center justify-between text-[11px] font-sans">
+                    <span className="text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
+                      <tech.icon className="w-3 h-3 text-slate-400 shrink-0" />
+                      {tech.label}
+                    </span>
+                    <span className="font-mono text-slate-700 dark:text-slate-300 text-right text-[10px]">{tech.val}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Platform 2: Native Mobile Core */}
+            <div className="border border-emerald-500/10 rounded-xl p-3 bg-emerald-50/5 dark:bg-emerald-950/5 space-y-2.5">
+              <div className="flex items-center justify-between border-b border-emerald-500/10 pb-2">
+                <span className="text-[10px] font-black text-emerald-500 dark:text-emerald-400 uppercase tracking-widest font-mono flex items-center gap-1.5">
+                  <Smartphone className="w-3.5 h-3.5" />
+                  📱 Native Mobile Client
+                </span>
+                <span className="text-[9px] bg-emerald-100 dark:bg-emerald-950 px-1.5 py-0.5 rounded text-emerald-600 dark:text-emerald-400 font-mono font-bold">Production Target</span>
+              </div>
+              <div className="space-y-1.5">
+                {[
+                  { label: "Frontend Engine", val: "React Native + Expo SDK 54", icon: Smartphone },
+                  { label: "State & Query", val: "TanStack React Query + Navigation", icon: Cpu },
+                  { label: "Production API", val: "Express.js + TypeScript CJS", icon: Laptop },
+                  { label: "Relational DB", val: "PostgreSQL (via Drizzle ORM)", icon: Database },
+                  { label: "Voice Scribe SDK", val: "ErMate Speech Core", icon: Activity }
+                ].map((tech, idx) => (
+                  <div key={idx} className="flex items-center justify-between text-[11px] font-sans">
+                    <span className="text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
+                      <tech.icon className="w-3 h-3 text-slate-400 shrink-0" />
+                      {tech.label}
+                    </span>
+                    <span className="font-mono text-slate-700 dark:text-slate-300 text-right text-[10px]">{tech.val}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Open Source Licenses */}
+          <div className="bg-white dark:bg-[#182333] border border-slate-200 dark:border-slate-800/60 rounded-xl p-4.5 space-y-3 shadow-xs">
+            <div className="space-y-1">
+              <h4 className="text-xs font-black uppercase text-slate-400 dark:text-slate-500 tracking-wider font-mono">
+                Open Source Licenses
+              </h4>
+              <p className="text-[10px] text-slate-500 leading-normal font-sans">
+                ErMate is made possible by these incredible open source ecosystems
+              </p>
+            </div>
+            <div className="divide-y divide-slate-100 dark:divide-slate-800/50">
+              {[
+                { name: "React & React Native", license: "MIT" },
+                { name: "Expo Core Hub", license: "MIT" },
+                { name: "React Navigation", license: "MIT" },
+                { name: "TanStack React Query", license: "MIT" },
+                { name: "Drizzle ORM & Postgres", license: "Apache-2.0" },
+                { name: "Framer Motion & Reanimated", license: "MIT" },
+                { name: "PDFKit & Docx Hub", license: "MIT" }
+              ].map((lib, idx) => (
+                <div key={idx} className="flex items-center justify-between py-2 first:pt-0 last:pb-0 text-[11px] font-sans">
+                  <span className="font-medium text-slate-700 dark:text-slate-300">{lib.name}</span>
+                  <span className="font-mono text-[10px] bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-slate-500 dark:text-slate-400">{lib.license}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Legal Accordion/Links */}
+          <div className="space-y-2">
+            <h4 className="text-xs font-black uppercase text-slate-400 dark:text-slate-500 tracking-wider pl-1 font-mono">
+              Legal
+            </h4>
+            <div className="bg-white dark:bg-[#182333] border border-slate-200 dark:border-slate-800/60 rounded-xl divide-y divide-slate-100 dark:divide-slate-800/50 overflow-hidden shadow-xs">
+              {[
+                { label: "Terms of Service", sub: "privacy" },
+                { label: "Privacy Policy", sub: "privacy" },
+                { label: "HIPAA Compliance", sub: "privacy" }
+              ].map((item, idx) => (
+                <button
+                  key={idx}
+                  type="button"
+                  onClick={() => setSelectedSubSection(item.sub)}
+                  className="w-full px-4 py-3 flex items-center justify-between text-left hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-all text-[11px] font-sans font-semibold text-slate-700 dark:text-slate-300 cursor-pointer"
+                >
+                  <span>{item.label}</span>
+                  <ChevronRight className="w-4 h-4 text-slate-400 shrink-0" />
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Footnote / Footer */}
+          <div className="pt-4 border-t border-slate-200 dark:border-slate-800/50 text-center space-y-1 text-[10px] text-slate-500 dark:text-slate-500 font-sans">
+            <p className="font-bold text-slate-600 dark:text-slate-400 flex items-center justify-center gap-1.5">
+              <ShieldCheck className="w-4 h-4 text-emerald-500" />
+              Made with care for Emergency Medicine
+            </p>
+            <p className="font-mono text-[9px]">&copy; 2024-2026 ErMate. All rights reserved.</p>
           </div>
         </div>
       );
@@ -2006,23 +3139,23 @@ export default function ProfileSettingsView({
     return (
       <div className="space-y-5 animate-fade-in">
         {/* Back navigation header */}
-        <div className="flex items-center justify-between border-b border-slate-800 pb-4 mb-2">
+        <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-4 mb-2">
           <div className="flex items-center gap-2">
             <button 
               type="button"
               onClick={() => setSelectedSubSection(null)} 
-              className="p-1.5 bg-slate-800/80 hover:bg-slate-700/80 text-slate-300 hover:text-white rounded-xl transition-all flex items-center gap-1 text-[11px] font-bold cursor-pointer"
+              className="p-1.5 bg-slate-100 dark:bg-slate-800/80 hover:bg-slate-200 dark:hover:bg-slate-700/80 text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white rounded-xl transition-all flex items-center gap-1 text-[11px] font-bold cursor-pointer"
             >
               <ChevronLeft className="w-4 h-4" /> Back
             </button>
-            <h3 className="text-sm font-black text-white tracking-tight uppercase font-mono">{title}</h3>
+            <h3 className="text-sm font-black text-slate-800 dark:text-white tracking-tight uppercase font-mono">{title}</h3>
           </div>
 
           {onNavigateToTab && (
             <button
               type="button"
               onClick={() => onNavigateToTab("dashboard")}
-              className="p-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 text-emerald-400 hover:text-emerald-300 rounded-xl transition-all flex items-center gap-1.5 text-[10px] font-bold font-mono uppercase tracking-wide cursor-pointer"
+              className="p-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 text-emerald-600 hover:text-emerald-500 dark:text-emerald-400 dark:hover:text-emerald-300 rounded-xl transition-all flex items-center gap-1.5 text-[10px] font-bold font-mono uppercase tracking-wide cursor-pointer"
             >
               <Activity className="w-3.5 h-3.5" /> Dashboard
             </button>
@@ -2036,10 +3169,10 @@ export default function ProfileSettingsView({
   };
 
   return (
-    <div className="w-full min-h-screen bg-[#111827] dark:bg-[#0c101b] py-6 px-4 flex items-center justify-center" id="ermate-profile-view">
+    <div className="w-full min-h-screen bg-slate-50 dark:bg-[#0c101b] py-6 px-4 flex items-center justify-center" id="ermate-profile-view">
       
       {/* Centered device frame simulating a gorgeous medical tablet/smartphone interface */}
-      <div className="w-full max-w-lg bg-[#131c2a] dark:bg-[#121824] text-slate-100 rounded-3xl overflow-hidden shadow-2xl border border-slate-800/80 p-5 flex flex-col justify-between relative min-h-[85vh]">
+      <div className="w-full max-w-lg bg-white dark:bg-[#121824] text-slate-800 dark:text-slate-100 rounded-3xl overflow-hidden shadow-2xl border border-slate-200 dark:border-slate-800/80 p-5 flex flex-col justify-between relative min-h-[85vh]">
         
         {/* Top ambient highlight */}
         <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-emerald-500 via-indigo-500 to-blue-500" />

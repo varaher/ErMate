@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from "react";
 import { 
   ArrowLeft, Mic, Send, Sparkles, AlertCircle, RefreshCw, 
   CheckCircle, FileText, User, Heart, Shield, PlusCircle, Trash2,
-  Upload, Camera, BookOpen
+  Upload, Camera, BookOpen, MoreHorizontal
 } from "lucide-react";
 import SpeechMicButton from "./SpeechMicButton";
 
@@ -61,8 +61,32 @@ export default function VoiceScribeChatView({
     }
   };
   const [inputText, setInputText] = useState("");
+  const [showMoreMenu, setShowMoreMenu] = useState(false);
+  const moreMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (moreMenuRef.current && !moreMenuRef.current.contains(event.target as Node)) {
+        setShowMoreMenu(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Auto-expand input text textarea
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (textarea) {
+      textarea.style.height = "auto";
+      textarea.style.height = `${Math.min(textarea.scrollHeight, 160)}px`;
+    }
+  }, [inputText]);
 
   // Document scanning states
   const [showOcrModal, setShowOcrModal] = useState(false);
@@ -554,39 +578,92 @@ Dr. Marcus Brody, Trauma Lead`);
           )}
 
           {/* Input Dock */}
-          <div className="bg-white dark:bg-slate-900 p-2 rounded-xl border border-slate-200 dark:border-slate-800 flex items-center gap-2">
-            <SpeechMicButton onTranscript={(txt) => setInputText(prev => prev ? `${prev} ${txt}` : txt)} />
+          <div className="relative flex items-end gap-2 bg-white dark:bg-slate-900 p-2 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xs">
             
-            <button
-              onClick={() => {
-                setError(null);
-                setShowOcrModal(true);
-              }}
-              className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-blue-600 dark:text-blue-400 cursor-pointer flex items-center gap-1 border border-blue-200 dark:border-blue-900/60 bg-blue-50/50 dark:bg-blue-950/20"
-              title="Scan Patient Reference Letter (OCR)"
-            >
-              <FileText className="w-4 h-4" />
-              <span className="text-[10px] font-bold pr-0.5">Scan Letter</span>
-            </button>
+            {/* 3-Dots Menu Button (More Actions) */}
+            <div className="relative" ref={moreMenuRef}>
+              <button
+                type="button"
+                onClick={() => setShowMoreMenu(!showMoreMenu)}
+                className={`p-2 rounded-lg hover:bg-slate-150 dark:hover:bg-slate-800 transition-colors flex items-center justify-center border border-slate-200 dark:border-slate-700 h-9 w-9 cursor-pointer ${showMoreMenu ? 'bg-slate-100 dark:bg-slate-800 text-purple-600' : 'text-slate-500 dark:text-slate-400'}`}
+                title="More Actions"
+              >
+                <MoreHorizontal className="w-4 h-4" />
+              </button>
 
-            <input
-              type="text"
-              value={inputText}
-              onChange={(e) => setInputText(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") handleSendMessage();
-              }}
-              placeholder="Ask anything (e.g. Tintinalli asthma steps), dictate naturally, or type here..."
-              className="flex-1 bg-transparent text-xs text-slate-900 dark:text-slate-100 focus:outline-none px-2 py-1.5"
-            />
+              {/* Popup Dropdown Menu */}
+              {showMoreMenu && (
+                <div className="absolute left-0 bottom-full mb-2 z-50 w-56 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xl p-1.5 animate-fade-in flex flex-col space-y-0.5">
+                  <div className="px-2.5 py-1 text-[9px] font-extrabold text-slate-400 uppercase tracking-wider border-b border-slate-100 dark:border-slate-800/85 mb-1">
+                    Scribe Actions
+                  </div>
+                  
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setError(null);
+                      setShowOcrModal(true);
+                      setShowMoreMenu(false);
+                    }}
+                    className="w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-900 flex items-center gap-2 transition-colors cursor-pointer"
+                  >
+                    <FileText className="w-4 h-4 text-blue-500" />
+                    <span>Scan Reference Letter (OCR)</span>
+                  </button>
 
-            <button
-              onClick={handleSendMessage}
-              disabled={!inputText.trim() || isProcessing}
-              className="p-2 bg-purple-600 hover:bg-purple-700 disabled:bg-slate-200 dark:disabled:bg-slate-800 text-white rounded-lg transition-all cursor-pointer"
-            >
-              <Send className="w-4 h-4" />
-            </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      clearChat();
+                      setShowMoreMenu(false);
+                    }}
+                    className="w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-semibold text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/20 flex items-center gap-2 transition-colors cursor-pointer"
+                  >
+                    <Trash2 className="w-4 h-4 text-rose-500" />
+                    <span>Clear Chat Log</span>
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Main Textarea */}
+            <div className="flex-1">
+              <textarea
+                ref={textareaRef}
+                rows={1}
+                value={inputText}
+                onChange={(e) => setInputText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    handleSendMessage();
+                  }
+                }}
+                placeholder="Ask anything, dictate, or type here..."
+                className="w-full bg-transparent text-xs text-slate-900 dark:text-slate-100 focus:outline-none px-1 py-2 resize-none max-h-[160px] overflow-y-auto leading-relaxed"
+              />
+            </div>
+
+            {/* Right side actions: WhatsApp-style dynamic Mic/Send toggle */}
+            <div className="flex items-center gap-1 shrink-0 pb-0.5">
+              {inputText.trim() === "" ? (
+                <SpeechMicButton 
+                  onTranscript={(txt) => setInputText(prev => prev ? `${prev} ${txt}` : txt)} 
+                  className="!w-10 !h-10 !rounded-full !bg-purple-600 hover:!bg-purple-700 !text-white dark:!text-white !border-none shadow-md flex items-center justify-center cursor-pointer transition-transform active:scale-95"
+                />
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleSendMessage}
+                  disabled={isProcessing}
+                  className="w-10 h-10 bg-purple-600 hover:bg-purple-700 text-white rounded-full flex items-center justify-center transition-all shadow-md active:scale-95 cursor-pointer"
+                  title="Send message"
+                >
+                  <Send className="w-4.5 h-4.5" />
+                </button>
+              )}
+            </div>
+
           </div>
         </div>
 

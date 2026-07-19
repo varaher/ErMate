@@ -122,7 +122,8 @@ export default function TeamBuilder({
   const theme = getThemeClasses();
 
   // Generated Link format based on hospital & team configurations
-  const generatedLink = `https://ermate.hospital.in/join/${slugify(hospitalName)}?team=${slugify(teamName)}&dept=${slugify(department)}&ref=hosp_sub_active`;
+  const currentOrigin = typeof window !== "undefined" ? window.location.origin : "https://ermate.hospital.in";
+  const generatedLink = `${currentOrigin}/join/${slugify(hospitalName)}?team=${slugify(teamName)}&dept=${slugify(department)}&ref=hosp_sub_active`;
 
   const showNotification = (text: string, type: "success" | "error" = "success") => {
     setNotification({ text, type });

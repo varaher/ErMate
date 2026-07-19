@@ -1,11 +1,11 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { 
   ArrowLeft, Save, Sparkles, Mic, FileText, CheckCircle, 
   Trash2, Plus, ShieldAlert, BookOpen, Clock, Heart, 
   Eye, RefreshCw, Printer, AlertTriangle, ClipboardCheck, 
   User, Check, Shield, FileCheck, Users, LogOut, ChevronRight,
   Copy, Download, ChevronDown, TrendingUp, PlusCircle, Activity, Edit3,
-  Brain, Send, Award
+  Brain, Send, Award, MoreHorizontal
 } from "lucide-react";
 import { 
   ClinicalCase, PatientVitals, SampleHistory, PrimaryAssessment, 
@@ -63,6 +63,29 @@ export default function CaseSheetView({
   const [roundsChatHistory, setRoundsChatHistory] = useState<Array<{ role: "user" | "model"; text: string }>>([]);
   const [roundsUserMessage, setRoundsUserMessage] = useState<string>("");
   const [roundsChatLoading, setRoundsChatLoading] = useState<boolean>(false);
+  const [showRoundsMoreMenu, setShowRoundsMoreMenu] = useState(false);
+  const roundsMoreMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (roundsMoreMenuRef.current && !roundsMoreMenuRef.current.contains(event.target as Node)) {
+        setShowRoundsMoreMenu(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const roundsTextareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Auto-expand rounds chat textarea
+  useEffect(() => {
+    const textarea = roundsTextareaRef.current;
+    if (textarea) {
+      textarea.style.height = "auto";
+      textarea.style.height = `${Math.min(textarea.scrollHeight, 240)}px`;
+    }
+  }, [roundsUserMessage]);
   const [roundsSavedToMemory, setRoundsSavedToMemory] = useState<boolean>(false);
   const [roundsReflections, setRoundsReflections] = useState<string>("");
   const [showPostSaveModal, setShowPostSaveModal] = useState<boolean>(false);
@@ -5608,25 +5631,79 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                     )}
 
                     {/* Chat Input */}
-                    <div className="flex gap-2">
-                      <input
-                        type="text"
-                        value={roundsUserMessage}
-                        onChange={(e) => setRoundsUserMessage(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") handleRoundsChatSend();
-                        }}
-                        placeholder="Ask educator: 'Explain target perfusion pressure', 'Calculate weight dosage', 'Society guidelines for...'"
-                        className="flex-1 px-3.5 py-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-xs text-slate-850 dark:text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 font-sans"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => handleRoundsChatSend()}
-                        disabled={roundsChatLoading || !roundsUserMessage.trim()}
-                        className="px-4 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-200 disabled:cursor-not-allowed text-white rounded-xl transition-all shadow-xs flex items-center justify-center shrink-0"
-                      >
-                        <Send className="w-4 h-4" />
-                      </button>
+                    <div className="relative flex items-end gap-2 bg-white dark:bg-slate-900 p-2 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xs">
+                      
+                      {/* 3-Dots Menu Button (More Actions) */}
+                      <div className="relative" ref={roundsMoreMenuRef}>
+                        <button
+                          type="button"
+                          onClick={() => setShowRoundsMoreMenu(!showRoundsMoreMenu)}
+                          className={`p-2 rounded-lg hover:bg-slate-150 dark:hover:bg-slate-800 transition-colors flex items-center justify-center border border-slate-200 dark:border-slate-700 h-9 w-9 cursor-pointer ${showRoundsMoreMenu ? 'bg-slate-100 dark:bg-slate-800 text-indigo-600' : 'text-slate-500 dark:text-slate-400'}`}
+                          title="More Actions"
+                        >
+                          <MoreHorizontal className="w-4 h-4" />
+                        </button>
+
+                        {/* Popup Dropdown Menu */}
+                        {showRoundsMoreMenu && (
+                          <div className="absolute left-0 bottom-full mb-2 z-50 w-56 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xl p-1.5 animate-fade-in flex flex-col space-y-0.5">
+                            <div className="px-2.5 py-1 text-[9px] font-extrabold text-slate-400 uppercase tracking-wider border-b border-slate-100 dark:border-slate-800/85 mb-1">
+                              Rounds Actions
+                            </div>
+                            
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setRoundsChatHistory([]);
+                                setShowRoundsMoreMenu(false);
+                              }}
+                              className="w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-semibold text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/20 flex items-center gap-2 transition-colors cursor-pointer"
+                            >
+                              <Trash2 className="w-4 h-4 text-rose-500" />
+                              <span>Clear Conversation</span>
+                            </button>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Main Textarea */}
+                      <div className="flex-1">
+                        <textarea
+                          ref={roundsTextareaRef}
+                          rows={1}
+                          value={roundsUserMessage}
+                          onChange={(e) => setRoundsUserMessage(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" && !e.shiftKey) {
+                              e.preventDefault();
+                              handleRoundsChatSend();
+                            }
+                          }}
+                          placeholder="Ask educator: 'Explain target perfusion pressure', 'Calculate weight dosage'..."
+                          className="w-full bg-transparent text-xs text-slate-900 dark:text-slate-100 focus:outline-none px-1 py-2 resize-none max-h-[160px] overflow-y-auto leading-relaxed"
+                        />
+                      </div>
+
+                      {/* Right side actions: WhatsApp-style dynamic Mic/Send toggle */}
+                      <div className="flex items-center gap-1 shrink-0 pb-0.5">
+                        {roundsUserMessage.trim() === "" ? (
+                          <SpeechMicButton 
+                            onTranscript={(txt) => setRoundsUserMessage(prev => prev ? `${prev} ${txt}` : txt)} 
+                            className="!w-10 !h-10 !rounded-full !bg-indigo-600 hover:!bg-indigo-700 !text-white dark:!text-white !border-none shadow-md flex items-center justify-center cursor-pointer transition-transform active:scale-95"
+                          />
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => handleRoundsChatSend()}
+                            disabled={roundsChatLoading}
+                            className="w-10 h-10 bg-indigo-600 hover:bg-indigo-700 text-white rounded-full flex items-center justify-center transition-all shadow-md active:scale-95 cursor-pointer"
+                            title="Send message"
+                          >
+                            <Send className="w-4.5 h-4.5" />
+                          </button>
+                        )}
+                      </div>
+
                     </div>
 
                   </div>

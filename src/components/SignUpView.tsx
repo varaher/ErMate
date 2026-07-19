@@ -9,16 +9,42 @@ interface SignUpViewProps {
   onSignUp: (profile: UserProfile) => void;
   onBackToLogin: () => void;
   theme?: "emerald" | "dark";
+  initialHospital?: string;
+  initialRole?: "Resident" | "Consultant" | "HOD";
 }
 
-export default function SignUpView({ onSignUp, onBackToLogin, theme = "emerald" }: SignUpViewProps) {
+export default function SignUpView({ 
+  onSignUp, 
+  onBackToLogin, 
+  theme = "emerald",
+  initialHospital = "",
+  initialRole = "Resident"
+}: SignUpViewProps) {
   const [name, setName] = useState("");
   const [age, setAge] = useState<string>("");
-  const [hospital, setHospital] = useState("");
-  const [role, setRole] = useState<"Resident" | "Consultant" | "HOD">("Resident");
+  const [hospital, setHospital] = useState(initialHospital);
+  const [role, setRole] = useState<"Resident" | "Consultant" | "HOD">(initialRole);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [subscription, setSubscription] = useState<"Free Trial" | "Pro Doctor" | "Team Department">("Free Trial");
+  const [subscription, setSubscription] = useState<"Free Trial" | "Pro Doctor" | "Team Department">(
+    initialRole === "HOD" ? "Team Department" : "Free Trial"
+  );
+
+  // Sync state if initial props change
+  React.useEffect(() => {
+    if (initialHospital) {
+      setHospital(initialHospital);
+    }
+  }, [initialHospital]);
+
+  React.useEffect(() => {
+    if (initialRole) {
+      setRole(initialRole);
+      if (initialRole === "HOD") {
+        setSubscription("Team Department");
+      }
+    }
+  }, [initialRole]);
   
   const [error, setError] = useState("");
   const [isRegistering, setIsRegistering] = useState(false);

@@ -1,8 +1,8 @@
 import React, { useState } from "react";
 import { Activity, ShieldCheck, Mail, ArrowRight, UserCheck, Sparkles, Building2, Key, ChevronRight, ArrowLeft, Link, QrCode, RefreshCw } from "lucide-react";
 import { UserProfile } from "../types";
-import { signInWithEmailAndPassword, signInWithPopup } from "firebase/auth";
-import { doc, getDoc } from "firebase/firestore";
+import { signInWithEmailAndPassword, signInWithPopup, createUserWithEmailAndPassword } from "firebase/auth";
+import { doc, getDoc, setDoc } from "firebase/firestore";
 import { auth, db, googleProvider } from "../firebase";
 
 interface MockLoginViewProps {
@@ -42,11 +42,11 @@ export default function MockLoginView({
   const [authStatusMessage, setAuthStatusMessage] = useState("Connecting to Google Accounts...");
 
   const preConfiguredAccounts = [
-    { name: "Dr. Varah", email: "varahgrp@gmail.com", role: "Senior Consultant", initial: "V", badge: "HOD / Admin" },
-    { name: "Dr. Vipin Kumar", email: "dr.vipin@gmail.com", role: "HOD / Shift Lead", initial: "VK", badge: "Shift Lead" },
-    { name: "Dr. Priya Nair", email: "priya.nair@gmail.com", role: "Senior Consultant", initial: "PN", badge: "Consultant" },
-    { name: "Dr. Sanjay Verma", email: "sanjay.verma@gmail.com", role: "EM Resident", initial: "SV", badge: "Resident" },
-    { name: "Dr. Ananya Iyer", email: "dr.ananya@gmail.com", role: "EM Resident", initial: "AI", badge: "Resident" }
+    { name: "Dr. Varah", email: "varahgrp@gmail.com", role: "Senior Consultant", initial: "V", badge: "HOD / Admin", hospital: "Varah Group Emergency Care" },
+    { name: "Dr. Vipin Kumar", email: "dr.vipin@gmail.com", role: "HOD / Shift Lead", initial: "VK", badge: "Shift Lead", hospital: "Vipin Apollo ER Center" },
+    { name: "Dr. Priya Nair", email: "priya.nair@gmail.com", role: "Senior Consultant", initial: "PN", badge: "Consultant", hospital: "Nair Fortis Trauma Clinic" },
+    { name: "Dr. Sanjay Verma", email: "sanjay.verma@gmail.com", role: "EM Resident", initial: "SV", badge: "Resident", hospital: "Verma Max Hospital" },
+    { name: "Dr. Ananya Iyer", email: "dr.ananya@gmail.com", role: "EM Resident", initial: "AI", badge: "Resident", hospital: "Iyer AIIMS Emergency" }
   ];
 
   // Resolve user profile based on email or username
@@ -58,6 +58,7 @@ export default function MockLoginView({
     let role = "EM Physician";
     let subscriptionTier = "Free Standard";
     let aiCredits = 100;
+    let resolvedHospital = hospital; // user's input value on form
     const resolvedEmail = emailVal || `${usernameVal || "doctor"}@hospital.in`;
 
     if (emailLower.includes("varah") || userLower.includes("varah")) {
@@ -65,26 +66,31 @@ export default function MockLoginView({
       role = "Senior Consultant";
       subscriptionTier = "Enterprise Platinum";
       aiCredits = 350;
+      resolvedHospital = "Varah Group Emergency Care";
     } else if (emailLower.includes("vipin") || userLower.includes("vipin") || userLower.includes("usr_vipin_32")) {
       name = "Dr. Vipin Kumar";
       role = "HOD / Shift Lead";
       subscriptionTier = "Team Department (Activated via Link)";
       aiCredits = 250;
+      resolvedHospital = "Vipin Apollo ER Center";
     } else if (emailLower.includes("priya") || userLower.includes("priya") || userLower.includes("usr_priya_77")) {
       name = "Dr. Priya Nair";
       role = "Senior Consultant";
       subscriptionTier = "Team Department (Activated via Link)";
       aiCredits = 250;
+      resolvedHospital = "Nair Fortis Trauma Clinic";
     } else if (emailLower.includes("sanjay") || userLower.includes("sanjay") || userLower.includes("usr_sanjay_21")) {
       name = "Dr. Sanjay Verma";
       role = "EM Resident";
       subscriptionTier = "Team Department (Activated via Link)";
       aiCredits = 250;
+      resolvedHospital = "Verma Max Hospital";
     } else if (emailLower.includes("ananya") || userLower.includes("ananya") || userLower.includes("usr_ananya_05")) {
       name = "Dr. Ananya Iyer";
       role = "EM Resident";
       subscriptionTier = "Team Department (Activated via Link)";
       aiCredits = 250;
+      resolvedHospital = "Iyer AIIMS Emergency";
     } else if (emailLower) {
       // General custom clinical Gmail
       const localPart = emailLower.split("@")[0].replace(".", " ");
@@ -97,7 +103,7 @@ export default function MockLoginView({
       name,
       email: resolvedEmail,
       role,
-      hospital: hospital || "Varah Group Emergency Care",
+      hospital: resolvedHospital || "Varah Group Emergency Care",
       aiCredits,
       streak: 5,
       subscriptionTier
@@ -207,8 +213,29 @@ export default function MockLoginView({
     setGoogleStep("enter_password");
   };
 
+  // Sign in or auto-create preset account in Firebase Auth
+  const authenticatePresetUser = async (email: string, name: string): Promise<any> => {
+    const password = "password123"; // standard password for preset accounts
+    try {
+      const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      return userCredential.user;
+    } catch (err: any) {
+      if (err.code === "auth/user-not-found" || err.code === "auth/wrong-password" || err.code === "auth/invalid-credential") {
+        try {
+          const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+          return userCredential.user;
+        } catch (createErr) {
+          console.error("Error auto-creating preset user:", createErr);
+        }
+      } else {
+        console.error("Error signing in preset user:", err);
+      }
+    }
+    return null;
+  };
+
   // Google Password submitted & flow begins
-  const handleGooglePasswordSubmit = (e: React.FormEvent) => {
+  const handleGooglePasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setGoogleError("");
     setGoogleStep("authenticating");
@@ -226,6 +253,24 @@ export default function MockLoginView({
         setAuthStatusMessage(step.msg);
       }, step.delay);
     });
+
+    try {
+      const selectedAccount = preConfiguredAccounts.find(acc => acc.email === googleEmail);
+      const displayName = selectedAccount ? selectedAccount.name : "Physician";
+      
+      const user = await authenticatePresetUser(googleEmail, displayName);
+      if (user) {
+        // Also ensure user profile document exists in Firestore under their UID
+        const profileRef = doc(db, "users", user.uid);
+        const profileSnap = await getDoc(profileRef);
+        if (!profileSnap.exists()) {
+          const customProfile = resolveProfile(googleEmail, "");
+          await setDoc(profileRef, customProfile);
+        }
+      }
+    } catch (authErr) {
+      console.error("Preset background authentication failed:", authErr);
+    }
 
     setTimeout(() => {
       setIsGoogleOpen(false);

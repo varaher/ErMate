@@ -2,7 +2,8 @@ import React, { useState, useEffect } from "react";
 import { 
   Activity, Sparkles, BookOpen, User, Clock, ShieldAlert, 
   Settings, HelpCircle, Trophy, ClipboardList, Zap, Moon, Sun, Users,
-  Search, X, TrendingUp
+  Search, X, TrendingUp, Bell, BellRing, Trash2, Check, Mic, ShieldCheck, RefreshCw,
+  Download, Smartphone
 } from "lucide-react";
 
 import { 
@@ -16,7 +17,6 @@ import CaseSheetView from "./components/CaseSheetView";
 import DischargeSummaryView from "./components/DischargeSummaryView";
 import TriageForm from "./components/TriageForm";
 import LearnView from "./components/LearnView";
-import HandoverChatView from "./components/HandoverChatView";
 import ProfileSettingsView from "./components/ProfileSettingsView";
 import MockLoginView from "./components/MockLoginView";
 import VoiceScribeChatView from "./components/VoiceScribeChatView";
@@ -120,11 +120,121 @@ const LOCAL_REFERENCES: StaticReference[] = [
   }
 ];
 
+interface AppNotification {
+  id: string;
+  title: string;
+  message: string;
+  type: "info" | "success" | "warning";
+  timestamp: string;
+  read: boolean;
+}
+
 export default function App() {
+  // Real-time Notification States
+  const [notifications, setNotifications] = useState<AppNotification[]>(() => {
+    try {
+      const saved = localStorage.getItem("ermate_notifications");
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [showNotificationsDropdown, setShowNotificationsDropdown] = useState<boolean>(false);
+  const [toasts, setToasts] = useState<Array<{ id: string; title: string; message: string; type: "info" | "success" | "warning" }>>([]);
+
+  const isInitialCases = React.useRef(true);
+  const isInitialHandovers = React.useRef(true);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("ermate_notifications", JSON.stringify(notifications));
+    } catch (err) {
+      console.error("Failed to save notifications to localStorage", err);
+    }
+  }, [notifications]);
+
+  const triggerNotification = (title: string, message: string, type: "info" | "success" | "warning" = "info") => {
+    const id = "notif-" + Date.now() + "-" + Math.random().toString(36).substring(2, 6);
+    const timestamp = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) + " | " + new Date().toLocaleDateString([], { month: "short", day: "numeric" });
+    
+    // Add to persistent notification list
+    const newNotif: AppNotification = {
+      id,
+      title,
+      message,
+      type,
+      timestamp,
+      read: false
+    };
+    setNotifications(prev => [newNotif, ...prev].slice(0, 50)); // keep last 50
+
+    // Add to active floating toasts list
+    const toastId = "toast-" + Date.now() + "-" + Math.random().toString(36).substring(2, 6);
+    setToasts(prev => [...prev, { id: toastId, title, message, type }]);
+
+    // Auto-remove toast after 5 seconds
+    setTimeout(() => {
+      setToasts(prev => prev.filter(t => t.id !== toastId));
+    }, 5000);
+  };
+
   // Session authentication state
   const [isLoggedIn, setIsLoggedIn] = useState<boolean>(false);
   const [authLoading, setAuthLoading] = useState<boolean>(true);
   const [loginScreenMode, setLoginScreenMode] = useState<"login" | "signup" | "forgot_password">("login");
+  const [initialHospital, setInitialHospital] = useState<string>("");
+  const [initialRole, setInitialRole] = useState<"Resident" | "Consultant" | "HOD">("Resident");
+
+  // Parse invite links on page load
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const path = window.location.pathname;
+    
+    if (path.includes("/join/")) {
+      const slug = path.split("/join/")[1];
+      if (slug) {
+        const cleanSlug = slug.split("?")[0].replace(/\/+$/, "");
+        const hospitalSlug = cleanSlug.replace(/-er-invite$/, "");
+        
+        const unslugified = hospitalSlug
+          .split("-")
+          .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+          .join(" ");
+        
+        if (unslugified) {
+          setInitialHospital(unslugified);
+          setLoginScreenMode("signup");
+        }
+      }
+    } else if (path.endsWith("/join")) {
+      setLoginScreenMode("signup");
+    }
+    
+    const params = new URLSearchParams(window.location.search);
+    const roleParam = params.get("role") || params.get("ref");
+    
+    if (roleParam === "HOD" || (roleParam && roleParam.includes("hod"))) {
+      setInitialRole("HOD");
+    } else if (roleParam === "Consultant" || (roleParam && roleParam.includes("consultant"))) {
+      setInitialRole("Consultant");
+    } else {
+      setInitialRole("Resident");
+    }
+  }, []);
+
+  // Updates and Announcements Modal state
+  const [showUpdatesModal, setShowUpdatesModal] = useState<boolean>(false);
+
+  // Automatically trigger release popup on login
+  useEffect(() => {
+    if (isLoggedIn) {
+      const seen = localStorage.getItem("ermate_seen_version_2_4_0");
+      if (seen !== "true") {
+        setShowUpdatesModal(true);
+        localStorage.setItem("ermate_seen_version_2_4_0", "true");
+      }
+    }
+  }, [isLoggedIn]);
 
   // Navigation
   const [activeTab, setActiveTab] = useState<"dashboard" | "analytics" | "handover" | "cases" | "learn" | "profile">("dashboard");
@@ -141,7 +251,67 @@ export default function App() {
   const [showPocketMirror, setShowPocketMirror] = useState<boolean>(false);
   
   // Theme state
-  const [isDarkMode, setIsDarkMode] = useState<boolean>(false);
+  const [isDarkMode, setIsDarkMode] = useState<boolean>(() => {
+    return localStorage.getItem("ermate_theme") === "dark";
+  });
+
+  // PWA Install States & Event Listeners
+  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+  const [isInstallable, setIsInstallable] = useState<boolean>(false);
+  const [isInstalled, setIsInstalled] = useState<boolean>(false);
+  const [showInstallModal, setShowInstallModal] = useState<boolean>(false);
+
+  useEffect(() => {
+    // Check if app is running in standalone (installed) mode
+    const isStandalone = window.matchMedia('(display-mode: standalone)').matches || 
+                          (window.navigator as any).standalone === true;
+    if (isStandalone) {
+      setIsInstalled(true);
+    }
+
+    const handleBeforeInstallPrompt = (e: any) => {
+      // Prevent browser's automatic mini-infobar on mobile
+      e.preventDefault();
+      // Store the event so we can trigger it upon clicking
+      setDeferredPrompt(e);
+      setIsInstallable(true);
+    };
+
+    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+
+    const handleAppInstalled = () => {
+      setIsInstalled(true);
+      setIsInstallable(false);
+      setDeferredPrompt(null);
+      triggerNotification(
+        "Application Installed",
+        "ErMate has been downloaded and installed on your device successfully!",
+        "success"
+      );
+    };
+
+    window.addEventListener('appinstalled', handleAppInstalled);
+
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+      window.removeEventListener('appinstalled', handleAppInstalled);
+    };
+  }, []);
+
+  const handleInstallApp = async () => {
+    if (deferredPrompt) {
+      deferredPrompt.prompt();
+      const { outcome } = await deferredPrompt.userChoice;
+      if (outcome === 'accepted') {
+        setIsInstalled(true);
+        setIsInstallable(false);
+        setDeferredPrompt(null);
+      }
+    } else {
+      // Show custom user manual install info (especially for iOS Safari and other systems)
+      setShowInstallModal(true);
+    }
+  };
 
   // App data states
   const [profile, setProfile] = useState<UserProfile>({
@@ -229,7 +399,14 @@ export default function App() {
 
   // Real-time Firestore sync for cases & handovers when logged in
   useEffect(() => {
-    if (!isLoggedIn || !auth.currentUser) return;
+    if (!isLoggedIn) return;
+
+    isInitialCases.current = true;
+    isInitialHandovers.current = true;
+
+    const userHospital = profile.hospital || "Varah Group Emergency Care";
+    const userHospitalLower = userHospital.trim().toLowerCase();
+    const docName = profile.name.startsWith("Dr. ") ? profile.name : `Dr. ${profile.name}`;
 
     // Stream Cases
     const casesQuery = collection(db, "cases");
@@ -239,9 +416,13 @@ export default function App() {
         loadedCases.push(doc.data() as ClinicalCase);
       });
       
-      // If there are no cases in Firestore, seed the defaults so the dashboard looks great!
-      if (loadedCases.length === 0) {
-        // Default seed cases
+      const filteredCases = loadedCases.filter(c => {
+        const caseHospital = (c.hospital || "Varah Group Emergency Care").trim().toLowerCase();
+        return caseHospital === userHospitalLower;
+      });
+
+      // If this specific hospital has no cases yet, seed customized defaults so the dashboard looks great!
+      if (filteredCases.length === 0) {
         const defaultCases: ClinicalCase[] = [
           {
             id: "C-9041",
@@ -295,7 +476,7 @@ export default function App() {
               exposure: "No sign of trauma, warm skin.",
               exposureStatus: "Normal"
             },
-            secondaryAssessment: "Aorta non-tender, neck veins not distended, lungs clear to auscultation. ECG reveals 2mm ST-elevation in V1-V4 (Antero-septal STEMI). Cardiac enzymes pending.",
+            secondaryAssessment: `Aorta non-tender, neck veins not distended, lungs clear to auscultation. ECG reveals 2mm ST-elevation in V1-V4 (Antero-septal STEMI). Cardiac enzymes pending.`,
             investigations: [
               { id: "i-1", testName: "12-Lead ECG", result: "2mm ST-segment elevation in V1-V4.", orderTime: "09:15 AM", resultTime: "09:18 AM" },
               { id: "i-2", testName: "Troponin T", result: "0.45 ng/mL (Elevated).", orderTime: "09:15 AM", resultTime: "09:35 AM" }
@@ -306,7 +487,7 @@ export default function App() {
               { id: "t-3", drugName: "Glyceryl Trinitrate (GTN)", dose: "0.4mg", route: "SL (Sublingual)", timeGiven: "09:16 AM", ipsgVerified: true },
               { id: "t-4", drugName: "Morphine", dose: "2mg", route: "IV", timeGiven: "09:20 AM", ipsgVerified: true }
             ],
-            progressNotes: "Patient was triaged as P1 immediately upon arrival. STEMI protocol activated. Primary PCI team notified at Varah Group Cath Lab. Patient's chest pain decreased from 8/10 to 3/10 after NTG and Morphine. Transfer to Cath Lab arranged.",
+            progressNotes: `Patient was triaged as P1 immediately upon arrival. STEMI protocol activated. Primary PCI team notified at ${userHospital} Cath Lab. Patient's chest pain decreased from 8/10 to 3/10 after NTG and Morphine. Transfer to Cath Lab arranged.`,
             dischargeInfo: null,
             differentials: [
               {
@@ -328,8 +509,9 @@ export default function App() {
             status: "Active",
             savedTime: "09:12 AM",
             timeSpentMin: 45,
-            doctorEmail: auth.currentUser?.email || "doctor@ermate.in",
-            doctorName: "Dr. " + (auth.currentUser?.displayName || "Physician"),
+            doctorEmail: profile.email || "doctor@ermate.in",
+            doctorName: docName,
+            hospital: userHospital,
             ipsgChecklist: {
               ipsg1IdentifiersVerified: true,
               ipsg2ReadBackPerformed: true,
@@ -352,9 +534,9 @@ export default function App() {
             dispositionDetails: {
               dispositionType: "Admit",
               durationInEr: "45 mins",
-              residentName: "Dr. Rajesh Patel",
-              consultantName: "Dr. Varah",
-              observationNotes: "Anteroseptal STEMI. Transporting to Cath Lab with cardiac monitor and emergency drugs."
+              residentName: "Dr. Thomas",
+              consultantName: docName,
+              observationNotes: `Anteroseptal STEMI. Transporting to Cath Lab with cardiac monitor and emergency drugs.`
             },
             vitalsHistory: [
               { timestamp: "09:12 AM", bp: "145/95", systolic: 145, diastolic: 95, hr: 108, spo2: 93, rr: 20, temp: 98.8 },
@@ -371,7 +553,40 @@ export default function App() {
           }
         }
       } else {
-        setCases(loadedCases);
+        setCases(filteredCases);
+
+        // Real-time alert for updates made by other users
+        if (!isInitialCases.current) {
+          snapshot.docChanges().forEach((change) => {
+            const data = change.doc.data() as ClinicalCase;
+            const caseHospital = (data.hospital || "Varah Group Emergency Care").trim().toLowerCase();
+            const isOurHospital = caseHospital === userHospitalLower;
+            const isByOtherDoctor = data.doctorEmail !== profile.email;
+
+            if (isOurHospital && isByOtherDoctor) {
+              if (change.type === "added") {
+                triggerNotification(
+                  "New ER Patient Admitted",
+                  `Patient ${data.patient.name} (${data.id}) was admitted by ${data.doctorName || "another clinician"}.`,
+                  "success"
+                );
+              } else if (change.type === "modified") {
+                triggerNotification(
+                  "Patient Case Updated",
+                  `Patient file for ${data.patient.name} (${data.id}) was updated by ${data.doctorName || "another clinician"}.`,
+                  "info"
+                );
+              } else if (change.type === "removed") {
+                triggerNotification(
+                  "Patient Case Removed",
+                  `Patient file for ${data.patient.name} (${data.id}) was removed.`,
+                  "warning"
+                );
+              }
+            }
+          });
+        }
+        isInitialCases.current = false;
       }
     }, (error) => {
       handleFirestoreError(error, OperationType.LIST, "cases");
@@ -385,8 +600,13 @@ export default function App() {
         loadedHandovers.push(doc.data() as HandoverRecord);
       });
       
-      // If there are no handovers in Firestore, seed the defaults!
-      if (loadedHandovers.length === 0) {
+      const filteredHandovers = loadedHandovers.filter(h => {
+        const handoverHospital = (h.hospital || "Varah Group Emergency Care").trim().toLowerCase();
+        return handoverHospital === userHospitalLower;
+      });
+
+      // If there are no handovers in Firestore for this clinic, seed the defaults!
+      if (filteredHandovers.length === 0) {
         const defaultHandovers: HandoverRecord[] = [
           {
             id: "H-8210",
@@ -395,8 +615,9 @@ export default function App() {
             timestamp: "06:15 AM | Jul 14",
             caseCount: 3,
             patientsText: "Bed 3: Abdulahad (Chest pain)\nBed 7: Siya Sibi (Abdominal pain)\nBed 9: Pradeep (Fever)",
-            acknowledgedBy: "Dr. Sanjay Verma",
-            acknowledgedTime: "06:22 AM | Jul 14"
+            acknowledgedBy: docName,
+            acknowledgedTime: "06:22 AM | Jul 14",
+            hospital: userHospital
           }
         ];
         for (const h of defaultHandovers) {
@@ -407,7 +628,35 @@ export default function App() {
           }
         }
       } else {
-        setHandovers(loadedHandovers.sort((a, b) => b.id.localeCompare(a.id)));
+        setHandovers(filteredHandovers.sort((a, b) => b.id.localeCompare(a.id)));
+
+        // Real-time alert for updates made by other users
+        if (!isInitialHandovers.current) {
+          snapshot.docChanges().forEach((change) => {
+            const data = change.doc.data() as HandoverRecord;
+            const handoverHospital = (data.hospital || "Varah Group Emergency Care").trim().toLowerCase();
+            const isOurHospital = handoverHospital === userHospitalLower;
+
+            if (isOurHospital) {
+              if (change.type === "added" && data.senderEmail !== profile.email) {
+                triggerNotification(
+                  "New Shift Handover Received",
+                  `A new shift handover (${data.id}) was sent by ${data.senderName}.`,
+                  "success"
+                );
+              } else if (change.type === "modified") {
+                if (data.acknowledgedBy && data.acknowledgedBy !== profile.name) {
+                  triggerNotification(
+                    "Handover Acknowledged",
+                    `Shift handover ${data.id} was acknowledged by ${data.acknowledgedBy}.`,
+                    "info"
+                  );
+                }
+              }
+            }
+          });
+        }
+        isInitialHandovers.current = false;
       }
     }, (error) => {
       handleFirestoreError(error, OperationType.LIST, "handovers");
@@ -417,13 +666,13 @@ export default function App() {
       unsubscribeCases();
       unsubscribeHandovers();
     };
-  }, [isLoggedIn]);
+  }, [isLoggedIn, profile.hospital, profile.email]);
 
   // View controllers
   const [selectedCaseId, setSelectedCaseId] = useState<string | null>(null);
   const [activeFormMode, setActiveFormMode] = useState<"full" | "quick" | null>(null);
   const [showDischargeSummaryId, setShowDischargeSummaryId] = useState<string | null>(null);
-  const [showHandoverChat, setShowHandoverChat] = useState<boolean>(false);
+  const [handoverSubTab, setHandoverSubTab] = useState<"registry" | "quickpaste">("registry");
 
   // Global Search & Reference Lookup States
   const [searchQuery, setSearchQuery] = useState<string>("");
@@ -481,8 +730,10 @@ export default function App() {
     const root = document.documentElement;
     if (isDarkMode) {
       root.classList.add("dark");
+      localStorage.setItem("ermate_theme", "dark");
     } else {
       root.classList.remove("dark");
+      localStorage.setItem("ermate_theme", "light");
     }
   }, [isDarkMode]);
 
@@ -491,7 +742,6 @@ export default function App() {
     setSelectedCaseId(caseId);
     setActiveFormMode(null);
     setShowDischargeSummaryId(null);
-    setShowHandoverChat(false);
   };
 
   // Delete a case
@@ -548,6 +798,7 @@ export default function App() {
       timeSpentMin: 1, // Start timer
       doctorEmail: profile.email,
       doctorName: "Dr. " + profile.name,
+      hospital: profile.hospital,
       ipsgChecklist: {
         ipsg1IdentifiersVerified: true,
         ipsg2ReadBackPerformed: false,
@@ -570,8 +821,8 @@ export default function App() {
       dispositionDetails: {
         dispositionType: "Discharge",
         durationInEr: "",
-        residentName: "Dr. Varah",
-        consultantName: "Dr. Varah",
+        residentName: "Dr. " + profile.name,
+        consultantName: "Dr. " + profile.name,
         observationNotes: ""
       },
       vitalsHistory: [
@@ -602,13 +853,17 @@ export default function App() {
 
   // Save changes inside Case Sheet View
   const handleSaveCase = async (updatedCase: ClinicalCase) => {
+    const caseToSave = {
+      ...updatedCase,
+      hospital: updatedCase.hospital || profile.hospital
+    };
     try {
-      await setDoc(doc(db, "cases", updatedCase.id), updatedCase);
+      await setDoc(doc(db, "cases", caseToSave.id), caseToSave);
     } catch (err: any) {
       console.error("Error saving case:", err);
       handleFirestoreError(err, OperationType.WRITE, "cases");
     }
-    setCases(prev => prev.map(c => c.id === updatedCase.id ? updatedCase : c));
+    setCases(prev => prev.map(c => c.id === updatedCase.id ? caseToSave : c));
   };
 
   // Finalize discharge summary
@@ -619,7 +874,8 @@ export default function App() {
       const updated = {
         ...targetCase,
         dischargeInfo,
-        status: "Discharged" as const
+        status: "Discharged" as const,
+        hospital: targetCase.hospital || profile.hospital
       };
       try {
         await setDoc(doc(db, "cases", updated.id), updated);
@@ -627,17 +883,8 @@ export default function App() {
         console.error("Error updating discharge summary in Firestore:", err);
         handleFirestoreError(err, OperationType.WRITE, "cases");
       }
+      setCases(prev => prev.map(c => c.id === showDischargeSummaryId ? updated : c));
     }
-    setCases(prev => prev.map(c => {
-      if (c.id === showDischargeSummaryId) {
-        return {
-          ...c,
-          dischargeInfo,
-          status: "Discharged"
-        };
-      }
-      return c;
-    }));
   };
 
   // Trigger discharge flow for active case
@@ -645,7 +892,6 @@ export default function App() {
     setShowDischargeSummaryId(caseId);
     setSelectedCaseId(null);
     setActiveFormMode(null);
-    setShowHandoverChat(false);
     setShowVoiceScribeChat(false);
   };
 
@@ -654,7 +900,6 @@ export default function App() {
     setSelectedCaseId(null);
     setActiveFormMode(null);
     setShowDischargeSummaryId(null);
-    setShowHandoverChat(false);
   };
 
   const handleSaveExtractedVoiceCase = async (extracted: any) => {
@@ -722,6 +967,7 @@ export default function App() {
       timeSpentMin: 1,
       doctorEmail: profile.email,
       doctorName: "Dr. " + profile.name,
+      hospital: profile.hospital,
       ipsgChecklist: {
         ipsg1IdentifiersVerified: true,
         ipsg2ReadBackPerformed: false,
@@ -744,8 +990,8 @@ export default function App() {
       dispositionDetails: {
         dispositionType: "Discharge",
         durationInEr: "",
-        residentName: "Dr. Varah",
-        consultantName: "Dr. Varah",
+        residentName: "Dr. " + profile.name,
+        consultantName: "Dr. " + profile.name,
         observationNotes: ""
       },
       vitalsHistory: [
@@ -774,7 +1020,6 @@ export default function App() {
     setShowVoiceScribeChat(false);
     setActiveFormMode(null);
     setShowDischargeSummaryId(null);
-    setShowHandoverChat(false);
   };
 
   // Handle user profile save to Firestore
@@ -800,15 +1045,19 @@ export default function App() {
 
     for (const record of newHandovers) {
       const existing = handovers.find(h => h.id === record.id);
+      const recordToSave = {
+        ...record,
+        hospital: record.hospital || profile.hospital
+      };
       if (!existing) {
         try {
-          await setDoc(doc(db, "handovers", record.id), record);
+          await setDoc(doc(db, "handovers", recordToSave.id), recordToSave);
         } catch (err) {
           console.error("Error adding handover to Firestore:", err);
         }
       } else if (existing.acknowledgedBy !== record.acknowledgedBy || existing.acknowledgedTime !== record.acknowledgedTime) {
         try {
-          await setDoc(doc(db, "handovers", record.id), record);
+          await setDoc(doc(db, "handovers", recordToSave.id), recordToSave);
         } catch (err) {
           console.error("Error updating handover in Firestore:", err);
         }
@@ -847,7 +1096,6 @@ export default function App() {
     setSelectedCaseId(null);
     setActiveFormMode(null);
     setShowDischargeSummaryId(null);
-    setShowHandoverChat(false);
     setShowVoiceScribeChat(false);
   };
 
@@ -858,6 +1106,8 @@ export default function App() {
         {loginScreenMode === "signup" ? (
           <SignUpView
             theme={currentTheme}
+            initialHospital={initialHospital}
+            initialRole={initialRole}
             onSignUp={(newProfile) => {
               setProfile(newProfile);
               setIsLoggedIn(true);
@@ -914,24 +1164,51 @@ export default function App() {
       <header className="bg-white dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 py-3.5 px-4 md:px-6 shadow-xs sticky top-0 z-40 no-print relative">
         {/* Colorful top border line */}
         <div className="absolute top-0 left-0 right-0 h-[3px] bg-gradient-to-r from-emerald-500 via-teal-400 to-purple-600" />
-        <div className="max-w-7xl mx-auto flex items-center justify-between gap-4 mt-0.5">
+        <div className="max-w-7xl mx-auto flex flex-col md:flex-row md:items-center justify-between gap-3 md:gap-4 mt-0.5">
           
-          {/* Logo & branding */}
-          <div className="flex items-center gap-2.5 shrink-0">
-            <div className="p-2 bg-gradient-to-br from-emerald-500 via-teal-500 to-purple-600 rounded-xl text-white shadow-sm flex items-center justify-center">
-              <Activity className="w-5.5 h-5.5 animate-pulse-slow" />
-            </div>
-            <div>
-              <div className="flex items-center gap-1.5">
-                <span className="text-base font-black font-display tracking-tight text-slate-900 dark:text-white">ErMate</span>
-                <span className="text-[10px] bg-gradient-to-r from-emerald-500 to-purple-600 text-white px-1.5 py-0.5 rounded font-mono font-bold shadow-xs">EMR v2.5</span>
+          <div className="flex items-center justify-between w-full md:w-auto gap-4">
+            {/* Logo & branding */}
+            <div className="flex items-center gap-2 shrink-0">
+              <div className="p-2 bg-gradient-to-br from-emerald-500 via-teal-500 to-purple-600 rounded-xl text-white shadow-sm flex items-center justify-center">
+                <Activity className="w-5 h-5 md:w-5.5 md:h-5.5 animate-pulse-slow" />
               </div>
-              <p className="text-[10px] text-slate-400 font-medium font-mono">ErMate :- The Scribe Companion for ER</p>
+              <div>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-sm md:text-base font-black font-display tracking-tight text-slate-900 dark:text-white">ErMate</span>
+                  <span className="text-[9px] md:text-[10px] bg-gradient-to-r from-emerald-500 to-purple-600 text-white px-1 py-0.2 rounded font-mono font-bold shadow-xs">EMR v2.5</span>
+                </div>
+                <p className="text-[9px] md:text-[10px] text-slate-400 font-medium font-mono">The Scribe Companion for ER</p>
+              </div>
+            </div>
+
+            {/* Mobile-only action shortcuts */}
+            <div className="flex md:hidden items-center gap-1.5">
+              <button
+                onClick={() => setShowUpdatesModal(true)}
+                className="p-1.5 hover:bg-emerald-50 dark:hover:bg-emerald-950/20 rounded-lg text-emerald-600 dark:text-emerald-400 transition-all"
+                title="v2.4.0 Updates"
+              >
+                <Sparkles className="w-4 h-4 animate-pulse" />
+              </button>
+              <button
+                onClick={handleInstallApp}
+                className="p-1.5 hover:bg-indigo-50 dark:hover:bg-indigo-950/20 rounded-lg text-indigo-600 dark:text-indigo-400 transition-all"
+                title="Download App"
+              >
+                <Download className="w-4 h-4" />
+              </button>
+              <button
+                onClick={() => setIsDarkMode(!isDarkMode)}
+                className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-slate-500 dark:text-slate-400 transition-all"
+                title="Toggle Theme"
+              >
+                {isDarkMode ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+              </button>
             </div>
           </div>
 
           {/* Global Search input */}
-          <div className="relative flex-1 max-w-xs md:max-w-sm lg:max-w-md mx-2 z-50">
+          <div className="relative w-full md:flex-1 md:max-w-xs lg:max-w-md md:mx-2 z-50">
             <div className="relative">
               <Search className="w-4 h-4 text-slate-400 dark:text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
               <input
@@ -1086,9 +1363,154 @@ export default function App() {
             </div>
           </div>
 
-          {/* Theme toggles & Profile shortcut */}
-          <div className="flex items-center gap-2">
+          {/* Theme toggles & Profile shortcut (Desktop Only) */}
+          <div className="hidden md:flex items-center gap-2">
+
+            {/* What's New & Announcements Button */}
+            <button
+              onClick={() => setShowUpdatesModal(true)}
+              className="p-1.5 px-2.5 hover:bg-emerald-50 dark:hover:bg-emerald-950/20 rounded-lg text-emerald-600 dark:text-emerald-400 transition-all flex items-center gap-1.5 cursor-pointer border border-emerald-200/50 dark:border-emerald-800/30 font-sans"
+              title="What's New & System Announcements"
+              id="whats-new-announcements-btn"
+            >
+              <Sparkles className="w-3.5 h-3.5 animate-pulse" />
+              <span className="text-[10px] font-extrabold tracking-tight uppercase hidden lg:inline">v2.4.0 Updates</span>
+              <span className="flex h-1.5 w-1.5 relative">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span>
+              </span>
+            </button>
+
+            {/* PWA Download / Install App Option */}
+            <button
+              onClick={handleInstallApp}
+              className="p-1.5 px-2.5 hover:bg-indigo-50 dark:hover:bg-indigo-950/20 rounded-lg text-indigo-600 dark:text-indigo-400 transition-all flex items-center gap-1.5 cursor-pointer border border-indigo-200/50 dark:border-indigo-800/30 font-sans shadow-sm"
+              title="Download ErMate on Mobile or Desktop"
+              id="pwa-install-btn"
+            >
+              <Download className="w-3.5 h-3.5 text-indigo-500" />
+              <span className="text-[10px] font-extrabold tracking-tight uppercase hidden lg:inline">Download App</span>
+              {!isInstalled && (
+                <span className="flex h-1.5 w-1.5 relative">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-indigo-500"></span>
+                </span>
+              )}
+            </button>
             
+            {/* Real-time Notifications Bell */}
+            <div className="relative">
+              <button
+                onClick={() => setShowNotificationsDropdown(!showNotificationsDropdown)}
+                className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-slate-500 dark:text-slate-400 transition-all relative"
+                title="Notifications"
+                id="notifications-bell"
+              >
+                {notifications.some(n => !n.read) ? (
+                  <>
+                    <BellRing className="w-4.5 h-4.5 text-rose-500 animate-bounce" />
+                    <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-rose-500 ring-2 ring-white dark:ring-slate-950" />
+                  </>
+                ) : (
+                  <Bell className="w-4.5 h-4.5" />
+                )}
+              </button>
+
+              {showNotificationsDropdown && (
+                <>
+                  <div 
+                    className="fixed inset-0 z-40 bg-transparent" 
+                    onClick={() => setShowNotificationsDropdown(false)}
+                  />
+                  <div className="absolute right-0 mt-2 w-80 md:w-96 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl shadow-lg z-50 overflow-hidden divide-y divide-slate-100 dark:divide-slate-900 animate-fade-in select-none">
+                    
+                    {/* Header */}
+                    <div className="p-3 bg-slate-50 dark:bg-slate-900/60 flex items-center justify-between">
+                      <span className="text-xs font-bold text-slate-800 dark:text-white flex items-center gap-1.5 font-display">
+                        <Activity className="w-3.5 h-3.5 text-emerald-500" />
+                        <span>ER Clinician Alerts</span>
+                      </span>
+                      <div className="flex gap-2">
+                        {notifications.some(n => !n.read) && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setNotifications(prev => prev.map(n => ({ ...n, read: true })));
+                            }}
+                            className="text-[10px] text-emerald-600 hover:text-emerald-700 dark:text-emerald-400 dark:hover:text-emerald-300 font-bold flex items-center gap-1"
+                          >
+                            <Check className="w-3 h-3" />
+                            <span>Read All</span>
+                          </button>
+                        )}
+                        {notifications.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setNotifications([]);
+                              setShowNotificationsDropdown(false);
+                            }}
+                            className="text-[10px] text-slate-500 hover:text-rose-600 dark:text-slate-400 dark:hover:text-rose-400 font-bold flex items-center gap-1"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                            <span>Clear</span>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Notification list */}
+                    <div className="max-h-80 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-900 scrollbar-thin">
+                      {notifications.length === 0 ? (
+                        <div className="p-6 text-center text-xs text-slate-400 flex flex-col items-center gap-1.5">
+                          <Bell className="w-6 h-6 text-slate-300 dark:text-slate-700 animate-pulse-slow" />
+                          <span className="font-bold text-slate-550">No notifications yet</span>
+                          <span className="text-[10px] text-slate-300 dark:text-slate-600">Updates from other clinicians will appear here in real-time.</span>
+                        </div>
+                      ) : (
+                        notifications.map((notif) => {
+                          const isUnread = !notif.read;
+                          return (
+                            <div 
+                              key={notif.id}
+                              onClick={() => {
+                                // Mark as read
+                                setNotifications(prev => prev.map(n => n.id === notif.id ? { ...n, read: true } : n));
+                                // Close dropdown
+                                setShowNotificationsDropdown(false);
+                              }}
+                              className={`p-3 text-left transition-all hover:bg-slate-50/80 dark:hover:bg-slate-900/60 cursor-pointer flex gap-2.5 items-start ${
+                                isUnread ? "bg-slate-50/40 dark:bg-slate-900/10 border-l-2 border-emerald-500" : ""
+                              }`}
+                            >
+                              <div className={`mt-1.5 shrink-0 w-2 h-2 rounded-full ${
+                                notif.type === "success" 
+                                  ? "bg-emerald-500" 
+                                  : notif.type === "warning"
+                                  ? "bg-rose-500"
+                                  : "bg-blue-500"
+                              }`} />
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className={`text-[11px] block truncate ${isUnread ? "font-extrabold text-slate-900 dark:text-white" : "font-semibold text-slate-700 dark:text-slate-300"}`}>
+                                    {notif.title}
+                                  </span>
+                                  <span className="text-[8px] text-slate-400 font-mono shrink-0 whitespace-nowrap">{notif.timestamp.split(" | ")[0]}</span>
+                                </div>
+                                <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5 leading-snug font-medium">
+                                  {notif.message}
+                                </p>
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+
             {/* Theme Toggle Button */}
             <button
               onClick={() => setIsDarkMode(!isDarkMode)}
@@ -1128,7 +1550,7 @@ export default function App() {
             { id: "profile", label: "Team & Subscriptions", icon: Settings, activeClass: "bg-fuchsia-600 text-white shadow-sm shadow-fuchsia-600/15" },
           ].map((tab) => {
             const Icon = tab.icon;
-            const active = activeTab === tab.id && !selectedCaseId && !activeFormMode && !showDischargeSummaryId && !showHandoverChat && !showVoiceScribeChat && !showPediatricCalculator && !showPocketMirror;
+            const active = activeTab === tab.id && !selectedCaseId && !activeFormMode && !showDischargeSummaryId && !showVoiceScribeChat && !showPediatricCalculator && !showPocketMirror;
             return (
               <button
                 key={tab.id}
@@ -1158,7 +1580,7 @@ export default function App() {
             { id: "profile" as const, label: "Team & Set", icon: Settings },
           ].map((tab) => {
             const Icon = tab.icon;
-            const active = activeTab === tab.id && !selectedCaseId && !activeFormMode && !showDischargeSummaryId && !showHandoverChat && !showVoiceScribeChat && !showPediatricCalculator && !showPocketMirror;
+            const active = activeTab === tab.id && !selectedCaseId && !activeFormMode && !showDischargeSummaryId && !showVoiceScribeChat && !showPediatricCalculator && !showPocketMirror;
             return (
               <button
                 key={tab.id}
@@ -1194,7 +1616,7 @@ export default function App() {
           )}
 
           {/* 2. Full Case Sheet View */}
-          {selectedCaseId && !activeFormMode && !showDischargeSummaryId && !showHandoverChat && (
+          {selectedCaseId && !activeFormMode && !showDischargeSummaryId && (
             (() => {
               const matched = cases.find(c => c.id === selectedCaseId);
               if (!matched) return <p>Case not found</p>;
@@ -1223,7 +1645,7 @@ export default function App() {
           )}
 
           {/* 3. Discharge Summary View */}
-          {showDischargeSummaryId && !selectedCaseId && !activeFormMode && !showHandoverChat && (
+          {showDischargeSummaryId && !selectedCaseId && !activeFormMode && (
             (() => {
               const matched = cases.find(c => c.id === showDischargeSummaryId);
               if (!matched) return <p>Case not found</p>;
@@ -1237,15 +1659,8 @@ export default function App() {
             })()
           )}
 
-          {/* 4. Shift Handover Chat View */}
-          {showHandoverChat && !selectedCaseId && !activeFormMode && !showDischargeSummaryId && (
-            <HandoverChatView 
-              onBack={() => setShowHandoverChat(false)} 
-            />
-          )}
-
           {/* 5. Voice Scribe Chat View */}
-          {showVoiceScribeChat && !selectedCaseId && !activeFormMode && !showDischargeSummaryId && !showHandoverChat && (
+          {showVoiceScribeChat && !selectedCaseId && !activeFormMode && !showDischargeSummaryId && (
             <VoiceScribeChatView
               onBack={() => setShowVoiceScribeChat(false)}
               onSaveExtractedCase={handleSaveExtractedVoiceCase}
@@ -1257,21 +1672,21 @@ export default function App() {
           )}
 
           {/* Pediatric Drug Calculator View */}
-          {showPediatricCalculator && !selectedCaseId && !activeFormMode && !showDischargeSummaryId && !showHandoverChat && !showVoiceScribeChat && (
+          {showPediatricCalculator && !selectedCaseId && !activeFormMode && !showDischargeSummaryId && !showVoiceScribeChat && (
             <PediatricDrugCalculatorView
               onBack={() => setShowPediatricCalculator(false)}
             />
           )}
 
           {/* Pocket Mirror & Pupil Inspector View */}
-          {showPocketMirror && !selectedCaseId && !activeFormMode && !showDischargeSummaryId && !showHandoverChat && !showVoiceScribeChat && (
+          {showPocketMirror && !selectedCaseId && !activeFormMode && !showDischargeSummaryId && !showVoiceScribeChat && (
             <PocketMirrorView
               onBack={() => setShowPocketMirror(false)}
             />
           )}
 
           {/* 6. Main Tab Views */}
-          {!selectedCaseId && !activeFormMode && !showDischargeSummaryId && !showHandoverChat && !showVoiceScribeChat && !showPediatricCalculator && !showPocketMirror && (
+          {!selectedCaseId && !activeFormMode && !showDischargeSummaryId && !showVoiceScribeChat && !showPediatricCalculator && !showPocketMirror && (
             <>
               {activeTab === "dashboard" && (
                 <DashboardView
@@ -1282,7 +1697,14 @@ export default function App() {
                   onSelectCase={handleSelectCase}
                   onNavigateToDischarge={handleNavigateToDischarge}
                   onNavigateToTab={navigateToTab}
-                  onStartHandoverChat={() => setShowHandoverChat(true)}
+                  onStartHandoverChat={() => {
+                    setHandoverSubTab("quickpaste");
+                    setActiveTab("handover");
+                  }}
+                  onStartHandoverSheet={() => {
+                    setHandoverSubTab("registry");
+                    setActiveTab("handover");
+                  }}
                   onStartVoiceScribe={handleStartVoiceScribe}
                   onOpenPediatricCalculator={() => setShowPediatricCalculator(true)}
                   onOpenPocketMirror={() => setShowPocketMirror(true)}
@@ -1297,6 +1719,7 @@ export default function App() {
                   activeShiftDoctors={activeShiftDoctors}
                   setActiveShiftDoctors={setActiveShiftDoctors}
                   onSaveCase={handleSaveCase}
+                  isDarkMode={isDarkMode}
                 />
               )}
 
@@ -1305,6 +1728,7 @@ export default function App() {
                   cases={cases}
                   profile={profile}
                   onNavigateToTab={navigateToTab}
+                  isDarkMode={isDarkMode}
                 />
               )}
 
@@ -1315,6 +1739,9 @@ export default function App() {
                   handovers={handovers}
                   setHandovers={customSetHandovers}
                   onNavigateToTab={navigateToTab}
+                  isDarkMode={isDarkMode}
+                  activeSubTab={handoverSubTab}
+                  setActiveSubTab={setHandoverSubTab}
                 />
               )}
 
@@ -1329,7 +1756,7 @@ export default function App() {
                 />
               )}
 
-              {activeTab === "learn" && <LearnView onNavigateToTab={navigateToTab} />}
+              {activeTab === "learn" && <LearnView onNavigateToTab={navigateToTab} isDarkMode={isDarkMode} />}
 
               {activeTab === "profile" && (
                 <ProfileSettingsView
@@ -1532,6 +1959,265 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* System-wide Updates & Announcements Modal */}
+      {showUpdatesModal && (
+        <div 
+          className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-4"
+          id="system-updates-modal"
+        >
+          <div className="bg-white dark:bg-slate-950 rounded-2xl max-w-lg w-full overflow-hidden shadow-2xl border border-slate-200 dark:border-slate-800 animate-in fade-in zoom-in-95 duration-250 flex flex-col max-h-[90vh]">
+            {/* Header Banner */}
+            <div className="p-6 bg-gradient-to-r from-emerald-600 to-teal-700 text-white relative">
+              <button 
+                onClick={() => setShowUpdatesModal(false)}
+                className="absolute top-4 right-4 text-white/80 hover:text-white transition-all bg-white/10 hover:bg-white/25 p-1.5 rounded-lg cursor-pointer animate-none"
+              >
+                <X className="w-4 h-4" />
+              </button>
+              <div className="flex items-center gap-2 mb-1">
+                <Sparkles className="w-5 h-5 text-amber-300 animate-pulse" />
+                <span className="text-[10px] font-mono tracking-widest font-extrabold uppercase bg-emerald-500/30 px-2 py-0.5 rounded-full">System Announcement</span>
+              </div>
+              <h2 className="text-lg font-bold tracking-tight">ErMate EMR Upgraded to v2.4.0 🚀</h2>
+              <p className="text-emerald-100 text-xs mt-1 font-medium">A new version of ErMate has been deployed with real-time syncing, clinical improvements, and complete role-based isolation.</p>
+            </div>
+
+            {/* Updates Body */}
+            <div className="p-6 overflow-y-auto space-y-4 flex-1 text-slate-700 dark:text-slate-300">
+              <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 mb-2">
+                We've introduced several critical improvements to enhance multi-user clinical simulation, shift handover reporting, and clinical data safety:
+              </p>
+
+              {/* Feature 1 */}
+              <div className="flex gap-3 items-start">
+                <div className="p-1.5 rounded-lg bg-emerald-100 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 shrink-0">
+                  <RefreshCw className="w-4 h-4" />
+                </div>
+                <div>
+                  <h4 className="text-xs font-bold text-slate-900 dark:text-white">Real-Time Syncing & Alerts</h4>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 leading-normal font-sans">
+                    ER patient admissions, case sheets, and shift handovers now update instantly across different doctor browsers in real-time. Immediate floating alerts will notify you whenever another clinician on your shift adds or updates a record.
+                  </p>
+                </div>
+              </div>
+
+              {/* Feature 2 */}
+              <div className="flex gap-3 items-start">
+                <div className="p-1.5 rounded-lg bg-indigo-100 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 shrink-0">
+                  <ShieldCheck className="w-4 h-4" />
+                </div>
+                <div>
+                  <h4 className="text-xs font-bold text-slate-900 dark:text-white">Strict Hospital-Role Isolation</h4>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 leading-normal font-sans">
+                    To comply with strict healthcare data confidentiality standards, each mock account (Dr. Vipin, Dr. Priya, Dr. Sanjay, Dr. Ananya) now syncs into their own distinct hospital database. You will no longer see other clinics' clinical data unless explicitly registered in the same facility.
+                  </p>
+                </div>
+              </div>
+
+              {/* Feature 3 */}
+              <div className="flex gap-3 items-start">
+                <div className="p-1.5 rounded-lg bg-amber-100 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 shrink-0">
+                  <Mic className="w-4 h-4" />
+                </div>
+                <div>
+                  <h4 className="text-xs font-bold text-slate-900 dark:text-white">AI Scribe & Reference Suite</h4>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 leading-normal font-sans">
+                    Use speech-to-text dictation or scan clinical handover notes to automatically generate structural triage sheets, and run clinical guideline queries grounded in Tintinalli's/Rosen's.
+                  </p>
+                </div>
+              </div>
+
+              {/* Feature 4 */}
+              <div className="flex gap-3 items-start">
+                <div className="p-1.5 rounded-lg bg-sky-100 dark:bg-sky-950/40 text-sky-600 dark:text-sky-400 shrink-0">
+                  <Bell className="w-4 h-4" />
+                </div>
+                <div>
+                  <h4 className="text-xs font-bold text-slate-900 dark:text-white">Shift Handover & Notification Hub</h4>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 leading-normal font-sans">
+                    A dedicated real-time notifications dropdown is now accessible via the **Bell Icon** at the top right of your navigation panel to view shift alerts and clinical handovers at any point.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="p-4 bg-slate-50 dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 flex justify-end gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => setShowUpdatesModal(false)}
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl transition-all shadow-xs cursor-pointer"
+              >
+                Acknowledge & Continue
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* PWA Universal Download / Installation Guide Modal */}
+      {showInstallModal && (
+        <div 
+          className="fixed inset-0 bg-slate-900/70 backdrop-blur-xs z-55 flex items-center justify-center p-4 no-print"
+          id="pwa-install-modal"
+        >
+          <div className="bg-white dark:bg-slate-950 rounded-2xl max-w-lg w-full overflow-hidden shadow-2xl border border-slate-200 dark:border-slate-800 animate-in fade-in zoom-in-95 duration-250 flex flex-col max-h-[90vh]">
+            
+            {/* Header Banner */}
+            <div className="p-6 bg-gradient-to-r from-indigo-600 via-indigo-700 to-purple-800 text-white relative">
+              <button 
+                onClick={() => setShowInstallModal(false)}
+                className="absolute top-4 right-4 text-white/80 hover:text-white transition-all bg-white/10 hover:bg-white/25 p-1.5 rounded-lg cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+              <div className="flex items-center gap-2 mb-1">
+                <Smartphone className="w-5 h-5 text-indigo-300 animate-bounce" />
+                <span className="text-[10px] font-mono tracking-widest font-extrabold uppercase bg-indigo-500/30 px-2.5 py-0.5 rounded-full">Device Download</span>
+              </div>
+              <h2 className="text-base font-black font-display tracking-tight">Download ErMate App</h2>
+              <p className="text-indigo-100 text-xs mt-1 font-medium">Install ErMate Clinical Scribe on your smartphone, tablet, or desktop computer to run it full-screen with offline capabilities.</p>
+            </div>
+
+            {/* Modal Body with Guides */}
+            <div className="p-6 overflow-y-auto space-y-5 flex-1 text-slate-700 dark:text-slate-300 scrollbar-thin">
+              
+              {/* Direct Native Installer Option (if supported) */}
+              {isInstallable && deferredPrompt ? (
+                <div className="p-4 bg-indigo-50/50 dark:bg-indigo-950/15 border border-indigo-200/50 dark:border-indigo-800/30 rounded-xl space-y-3">
+                  <div className="flex items-start gap-3">
+                    <div className="p-2 rounded-lg bg-indigo-500 text-white shrink-0">
+                      <Download className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <h4 className="text-xs font-extrabold text-indigo-800 dark:text-indigo-300">Instant Installation Available</h4>
+                      <p className="text-[11px] text-indigo-600 dark:text-indigo-400 mt-0.5 font-medium">Your current browser fully supports instant installation. Press the button below to download now.</p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handleInstallApp();
+                      setShowInstallModal(false);
+                    }}
+                    className="w-full py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-lg transition-all shadow-sm"
+                  >
+                    Click to Install Instantly
+                  </button>
+                </div>
+              ) : (
+                <div className="p-3 bg-emerald-50/50 dark:bg-emerald-950/10 border border-emerald-200/40 dark:border-emerald-800/20 rounded-xl flex items-center gap-2">
+                  <ShieldCheck className="w-4 h-4 text-emerald-500 shrink-0" />
+                  <span className="text-[10.5px] text-emerald-700 dark:text-emerald-400 font-bold font-sans">Full Offline Caching & PWA Manifest are fully active on this domain!</span>
+                </div>
+              )}
+
+              {/* Guide Tabs */}
+              <div className="space-y-4">
+                <span className="block text-[10px] font-extrabold text-slate-400 uppercase tracking-wider font-mono">Platform Installation Manuals</span>
+                
+                {/* 1. iOS Safari (iPhone / iPad) */}
+                <div className="p-4 bg-slate-50 dark:bg-slate-900 rounded-xl border border-slate-100 dark:border-slate-850 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-black text-slate-800 dark:text-white flex items-center gap-1.5 font-display">
+                      <span className="w-5 h-5 rounded-md bg-slate-200 dark:bg-slate-800 flex items-center justify-center text-[10px] font-mono text-slate-700 dark:text-slate-300 font-bold">iOS</span>
+                      Apple iPhone & iPad Safari
+                    </span>
+                  </div>
+                  <ol className="list-decimal pl-4 space-y-1.5 text-[11px] text-slate-500 dark:text-slate-400 font-sans font-medium">
+                    <li>Open this website in your native <strong className="text-slate-800 dark:text-slate-200">Safari</strong> browser.</li>
+                    <li>Tap the <strong className="text-indigo-600 dark:text-indigo-400">Share button</strong> <span className="inline-flex p-0.5 bg-slate-200 dark:bg-slate-850 rounded">📤</span> in Safari's bottom toolbar.</li>
+                    <li>Scroll down the options menu and select <strong className="text-slate-800 dark:text-slate-200">"Add to Home Screen"</strong> <span className="inline-flex p-0.5 bg-slate-200 dark:bg-slate-850 rounded">➕</span>.</li>
+                    <li>Tap <strong className="text-indigo-600 dark:text-indigo-400">"Add"</strong> at the top right of your screen. ErMate will immediately install as a native clinical icon!</li>
+                  </ol>
+                </div>
+
+                {/* 2. Android (Chrome) */}
+                <div className="p-4 bg-slate-50 dark:bg-slate-900 rounded-xl border border-slate-100 dark:border-slate-850 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-black text-slate-800 dark:text-white flex items-center gap-1.5 font-display">
+                      <span className="w-5 h-5 rounded-md bg-slate-200 dark:bg-slate-800 flex items-center justify-center text-[10px] font-mono text-slate-700 dark:text-slate-300 font-bold">And</span>
+                      Android Mobile Chrome
+                    </span>
+                  </div>
+                  <ol className="list-decimal pl-4 space-y-1.5 text-[11px] text-slate-500 dark:text-slate-400 font-sans font-medium">
+                    <li>Tap the browser menu button <strong className="text-slate-800 dark:text-slate-200">(three dots ⁝)</strong> in the top-right corner.</li>
+                    <li>Select <strong className="text-slate-800 dark:text-slate-200">"Install app"</strong> or <strong className="text-slate-800 dark:text-slate-200">"Add to Home screen"</strong> from the list.</li>
+                    <li>Confirm the dialog prompt. The app will install and appear in your app drawer instantly.</li>
+                  </ol>
+                </div>
+
+                {/* 3. Desktop (Chrome, Edge, Safari) */}
+                <div className="p-4 bg-slate-50 dark:bg-slate-900 rounded-xl border border-slate-100 dark:border-slate-850 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-black text-slate-800 dark:text-white flex items-center gap-1.5 font-display">
+                      <span className="w-5 h-5 rounded-md bg-slate-200 dark:bg-slate-800 flex items-center justify-center text-[10px] font-mono text-slate-700 dark:text-slate-300 font-bold">PC</span>
+                      Desktop Computer (Chrome/Edge/Safari)
+                    </span>
+                  </div>
+                  <ul className="list-disc pl-4 space-y-1.5 text-[11px] text-slate-500 dark:text-slate-400 font-sans font-medium">
+                    <li><strong className="text-slate-800 dark:text-slate-200">Option A:</strong> Look at the right-side of your web browser's search URL bar. Click the <strong className="text-indigo-600 dark:text-indigo-400">Install / Download icon</strong> (often a monitor/plus symbol) to install instantly.</li>
+                    <li><strong className="text-slate-800 dark:text-slate-200">Option B:</strong> Click the browser menu button <strong className="text-slate-800 dark:text-slate-200">(three dots ⁝ or lines ☰)</strong>, select <strong className="text-slate-800 dark:text-slate-200">"Save and share"</strong>, and choose <strong className="text-slate-800 dark:text-slate-200">"Install App"</strong>.</li>
+                  </ul>
+                </div>
+
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="p-4 bg-slate-50 dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 flex justify-end shrink-0">
+              <button
+                type="button"
+                onClick={() => setShowInstallModal(false)}
+                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition-all shadow-xs cursor-pointer"
+              >
+                Got It, Thank You!
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Floating Toast Notifications */}
+      <div className="fixed bottom-4 right-4 z-50 flex flex-col gap-2 max-w-sm w-full pointer-events-none px-4 md:px-0">
+        {toasts.map((toast) => (
+          <div
+            key={toast.id}
+            className={`pointer-events-auto p-4 rounded-xl shadow-lg border text-xs flex gap-3 items-start animate-slide-in transition-all bg-white dark:bg-slate-950 ${
+              toast.type === "success"
+                ? "border-emerald-500/30 dark:border-emerald-500/20 bg-emerald-50/50 dark:bg-emerald-950/10 text-emerald-800 dark:text-emerald-300"
+                : toast.type === "warning"
+                ? "border-rose-500/30 dark:border-rose-500/20 bg-rose-50/50 dark:bg-rose-950/10 text-rose-800 dark:text-rose-300"
+                : "border-blue-500/30 dark:border-blue-500/20 bg-blue-50/50 dark:bg-blue-950/10 text-blue-800 dark:text-blue-300"
+            }`}
+          >
+            <div className={`mt-0.5 shrink-0 w-2.5 h-2.5 rounded-full ${
+              toast.type === "success"
+                ? "bg-emerald-500"
+                : toast.type === "warning"
+                ? "bg-rose-500"
+                : "bg-blue-500"
+            }`} />
+            <div className="flex-1">
+              <span className="font-extrabold block text-slate-900 dark:text-white">
+                {toast.title}
+              </span>
+              <p className="text-slate-600 dark:text-slate-300 mt-1 leading-normal font-medium">
+                {toast.message}
+              </p>
+            </div>
+            <button
+              onClick={() => {
+                setToasts(prev => prev.filter(t => t.id !== toast.id));
+              }}
+              className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        ))}
+      </div>
 
     </div>
   );

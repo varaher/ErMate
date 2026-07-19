@@ -631,7 +631,7 @@ export default function TriageForm({ onBack, onSubmit, initialMode }: TriageForm
                 <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">
                   Glasgow Coma Scale (Current Composite: <strong className="text-blue-600 dark:text-blue-400 font-mono">{calculatedGcs}/15</strong>)
                 </label>
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                   <div>
                     <span className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Eye Opening (E)</span>
                     <select

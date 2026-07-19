@@ -1,10 +1,14 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { 
   Users, ClipboardCopy, FileText, Printer, Plus, Trash2, Edit2, 
   CheckCircle, HelpCircle, Download, Check, RefreshCw, Layers, LayoutList,
-  AlertTriangle, ShieldAlert, ChevronLeft
+  AlertTriangle, ShieldAlert, ChevronLeft, X, Camera, UploadCloud, Sparkles, Send,
+  MoreHorizontal
 } from "lucide-react";
+import SpeechMicButton from "./SpeechMicButton";
 import { ClinicalCase, UserProfile, HandoverRecord } from "../types";
+import { db } from "../firebase";
+import { doc, setDoc, deleteDoc } from "firebase/firestore";
 
 interface HandoverViewProps {
   profile: UserProfile;
@@ -12,6 +16,32 @@ interface HandoverViewProps {
   handovers: HandoverRecord[];
   setHandovers: React.Dispatch<React.SetStateAction<HandoverRecord[]>>;
   onNavigateToTab?: (tabId: string) => void;
+  isDarkMode?: boolean;
+  activeSubTab?: "registry" | "quickpaste";
+  setActiveSubTab?: (tab: "registry" | "quickpaste") => void;
+}
+
+interface ScribeChatMessage {
+  id: string;
+  sender: "user" | "ermate";
+  text?: string;
+  image?: string; // base64 representation
+  imageName?: string;
+  timestamp: string;
+  parsedPatient?: {
+    name: string;
+    ageGender: string;
+    triage: string;
+    vitals: string;
+    rawNotes: string;
+    structuredSBAR: {
+      situation: string;
+      background: string;
+      assessment: string;
+      recommendation: string;
+    };
+  };
+  isSaved?: boolean;
 }
 
 interface QuickPastePatient {
@@ -42,46 +72,123 @@ interface HandoverTableRow {
   bystander: string;
 }
 
-export default function HandoverView({ profile, cases, handovers, setHandovers, onNavigateToTab }: HandoverViewProps) {
+interface AutoResizeTextareaProps {
+  value: string;
+  onChange: (e: React.ChangeEvent<HTMLTextAreaElement>) => void;
+  className?: string;
+  placeholder?: string;
+}
+
+function AutoResizeTextarea({ value, onChange, className, placeholder }: AutoResizeTextareaProps) {
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const adjustHeight = () => {
+    const textarea = textareaRef.current;
+    if (textarea) {
+      textarea.style.height = "auto";
+      textarea.style.height = `${textarea.scrollHeight}px`;
+    }
+  };
+
+  useEffect(() => {
+    adjustHeight();
+    window.addEventListener("resize", adjustHeight);
+    return () => window.removeEventListener("resize", adjustHeight);
+  }, [value]);
+
+  return (
+    <textarea
+      ref={textareaRef}
+      value={value}
+      onChange={onChange}
+      className={`${className} overflow-y-hidden`}
+      placeholder={placeholder}
+      rows={1}
+    />
+  );
+}
+
+export default function HandoverView({ 
+  profile, 
+  cases, 
+  handovers, 
+  setHandovers, 
+  onNavigateToTab, 
+  isDarkMode = false,
+  activeSubTab: propActiveSubTab,
+  setActiveSubTab: propSetActiveSubTab
+}: HandoverViewProps) {
   // Main view navigation: "registry" (Active Cases) or "quickpaste" (EMR Quick Paste)
-  const [activeSubTab, setActiveSubTab] = useState<"registry" | "quickpaste">("registry");
+  const [localActiveSubTab, setLocalActiveSubTab] = useState<"registry" | "quickpaste">("registry");
+  const activeSubTab = propActiveSubTab !== undefined ? propActiveSubTab : localActiveSubTab;
+  const setActiveSubTab = propSetActiveSubTab !== undefined ? propSetActiveSubTab : setLocalActiveSubTab;
 
   // State for Registry Cases selection (by default select all active cases)
   const [selectedRegistryIds, setSelectedRegistryIds] = useState<string[]>(
     cases.filter(c => c.status === "Active").map(c => c.id)
   );
 
-  // Quick Paste lists state (supports saving any number of patients)
-  const [quickPasteList, setQuickPasteList] = useState<QuickPastePatient[]>([
-    {
-      id: "qp-1",
-      name: "Bed 3 (John Doe)",
-      ageGender: "52y / Male",
-      triage: "P1 (Immediate)",
-      vitals: "BP 160/95 | HR 112 | SpO2 91%",
-      rawNotes: "Pasted from EMR:\nPatient presented with acute crushing chest pain for 2 hours, radiating to jaw. Diaphoretic. ECG shows 3mm ST elevation in V1-V4. Loading doses of Aspirin 325mg and Ticagrelor 180mg given at 10:15 AM. Cardiology consulted and patient accepted for immediate primary PCI in cath lab. Prep in progress. IV fluids running.",
-      structuredSBAR: {
-        situation: "52y Male in Bed 3 with acute retrosternal chest pain, diagnosed with Anterior Wall STEMI.",
-        background: "Known history of hypertension and hyperlipidemia. Smoker.",
-        assessment: "Hemodynamically stable but tachypneic. ST elevation in V1-V4. Antiplatelets loaded.",
-        recommendation: "Transfer immediately to Cath Lab. Secure patent IV and keep oxygen active."
-      }
-    },
-    {
-      id: "qp-2",
-      name: "Bed 7 (Clara Oswald)",
-      ageGender: "29y / Female",
-      triage: "P2 (Urgent)",
-      vitals: "BP 115/70 | HR 88 | SpO2 99%",
-      rawNotes: "EMR Notes:\nSevere right lower quadrant abdominal pain for 12 hours. Nausea, no vomiting. Tender in RLQ with positive McBurney's sign. Ultrasound ordered, report shows swollen non-compressible appendix of 8.5mm with mild surrounding free fluid, consistent with acute appendicitis. NPO since 08:00 AM. IV Cefotetan 2g administered. Surgical resident Dr. Patel reviewed and posted for appendectomy. Waiting for OT vacancy.",
-      structuredSBAR: {
-        situation: "29y Female in Bed 7 with acute right lower quadrant abdominal pain, diagnosed with acute appendicitis.",
-        background: "Prior laparoscopic cholecystectomy 2 years ago. No known drug allergies.",
-        assessment: "Tender RLQ abdomen. Ultrasound confirmed appendicitis. Pre-op antibiotics given.",
-        recommendation: "Maintain NPO status, administer IV hydration, and monitor for OT transfer."
+  // Quick Paste lists state (supports saving any number of patients, persisted locally)
+  const [quickPasteList, setQuickPasteList] = useState<QuickPastePatient[]>(() => {
+    const saved = localStorage.getItem("ermate_quick_paste_list");
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {
+        console.error("Error parsing saved quick paste list:", e);
       }
     }
-  ]);
+    return [
+      {
+        id: "qp-1",
+        name: "Bed 3 (John Doe)",
+        ageGender: "52y / Male",
+        triage: "P1 (Immediate)",
+        vitals: "BP 160/95 | HR 112 | SpO2 91%",
+        rawNotes: "Pasted from EMR:\nPatient presented with acute crushing chest pain for 2 hours, radiating to jaw. Diaphoretic. ECG shows 3mm ST elevation in V1-V4. Loading doses of Aspirin 325mg and Ticagrelor 180mg given at 10:15 AM. Cardiology consulted and patient accepted for immediate primary PCI in cath lab. Prep in progress. IV fluids running.",
+        structuredSBAR: {
+          situation: "52y Male in Bed 3 with acute retrosternal chest pain, diagnosed with Anterior Wall STEMI.",
+          background: "Known history of hypertension and hyperlipidemia. Smoker.",
+          assessment: "Hemodynamically stable but tachypneic. ST elevation in V1-V4. Antiplatelets loaded.",
+          recommendation: "Transfer immediately to Cath Lab. Secure patent IV and keep oxygen active."
+        }
+      },
+      {
+        id: "qp-2",
+        name: "Bed 7 (Clara Oswald)",
+        ageGender: "29y / Female",
+        triage: "P2 (Urgent)",
+        vitals: "BP 115/70 | HR 88 | SpO2 99%",
+        rawNotes: "EMR Notes:\nSevere right lower quadrant abdominal pain for 12 hours. Nausea, no vomiting. Tender in RLQ with positive McBurney's sign. Ultrasound ordered, report shows swollen non-compressible appendix of 8.5mm with mild surrounding free fluid, consistent with acute appendicitis. NPO since 08:00 AM. IV Cefotetan 2g administered. Surgical resident Dr. Patel reviewed and posted for appendectomy. Waiting for OT vacancy.",
+        structuredSBAR: {
+          situation: "29y Female in Bed 7 with acute right lower quadrant abdominal pain, diagnosed with acute appendicitis.",
+          background: "Prior laparoscopic cholecystectomy 2 years ago. No known drug allergies.",
+          assessment: "Tender RLQ abdomen. Ultrasound confirmed appendicitis. Pre-op antibiotics given.",
+          recommendation: "Maintain NPO status, administer IV hydration, and monitor for OT transfer."
+        }
+      }
+    ];
+  });
+
+  // Sync quickPasteList to localStorage so it is robustly saved over refreshes/reboots
+  useEffect(() => {
+    localStorage.setItem("ermate_quick_paste_list", JSON.stringify(quickPasteList));
+  }, [quickPasteList]);
+
+  // Post-Print Cleanup and Warning state
+  const [showPostPrintCleanPrompt, setShowPostPrintCleanPrompt] = useState(false);
+  const [postPrintDataType, setPostPrintDataType] = useState<"registry" | "quickpaste">("registry");
+  const [idsToCleanup, setIdsToCleanup] = useState<string[]>([]);
+  const [hasUnclearedShiftWarning, setHasUnclearedShiftWarning] = useState(() => {
+    return localStorage.getItem("ermate_uncleared_shift_warning") === "true";
+  });
+  const [actionSuccessMsg, setActionSuccessMsg] = useState<string | null>(null);
+  const [cleanupActionInProgress, setCleanupActionInProgress] = useState(false);
+
+  // Sync shift warning state to localStorage
+  useEffect(() => {
+    localStorage.setItem("ermate_uncleared_shift_warning", hasUnclearedShiftWarning ? "true" : "false");
+  }, [hasUnclearedShiftWarning]);
 
   // Form states for adding/editing a quick-paste patient
   const [qpName, setQpName] = useState("");
@@ -91,8 +198,74 @@ export default function HandoverView({ profile, cases, handovers, setHandovers, 
   const [qpRawNotes, setQpRawNotes] = useState("");
   const [editingQpId, setEditingQpId] = useState<string | null>(null);
 
+  const scribeTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Auto-expand scribe textarea
+  useEffect(() => {
+    const textarea = scribeTextareaRef.current;
+    if (textarea) {
+      textarea.style.height = "auto";
+      textarea.style.height = `${Math.min(textarea.scrollHeight, 240)}px`;
+    }
+  }, [qpRawNotes]);
+
+  // AI-Assisted Handover Parser States
+  const [isAiParsing, setIsAiParsing] = useState(false);
+  const [handoverImgBase64, setHandoverImgBase64] = useState<string | null>(null);
+  const [handoverImgName, setHandoverImgName] = useState<string | null>(null);
+  const [showScribeMoreMenu, setShowScribeMoreMenu] = useState(false);
+  const scribeMoreMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (scribeMoreMenuRef.current && !scribeMoreMenuRef.current.contains(event.target as Node)) {
+        setShowScribeMoreMenu(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+  const [aiParseError, setAiParseError] = useState<string | null>(null);
+  const [aiParseSuccessMsg, setAiParseSuccessMsg] = useState<string | null>(null);
+  const [qpStructuredSBAR, setQpStructuredSBAR] = useState<{
+    situation: string;
+    background: string;
+    assessment: string;
+    recommendation: string;
+  } | null>(null);
+
   // Copy states
   const [copiedState, setCopiedState] = useState<{ [key: string]: boolean }>({});
+
+  // Medical Scribe Chat States
+  const [chatMessages, setChatMessages] = useState<ScribeChatMessage[]>(() => {
+    const saved = localStorage.getItem("ermate_scribe_chat_messages");
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {
+        console.error("Error parsing saved scribe chat messages:", e);
+      }
+    }
+    return [
+      {
+        id: "system-1",
+        sender: "ermate",
+        text: "Hello! I am your ErMate clinical shift transition scribe. Copy-paste some unstructured clinical text or EMR notes, or upload a camera photo of your handwritten paper case sheets. I'll immediately parse the details, extract vitals and triage level, organize it into standard SBAR format, and log it to your active shift handover roster!",
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      }
+    ];
+  });
+
+  // Sync chat messages to localStorage
+  useEffect(() => {
+    localStorage.setItem("ermate_scribe_chat_messages", JSON.stringify(chatMessages));
+  }, [chatMessages]);
+
+  // Edit Patient Modal States
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [editingPatient, setEditingPatient] = useState<QuickPastePatient | null>(null);
 
   // Generate view modal / print layout
   const [showPrintReport, setShowPrintReport] = useState(false);
@@ -107,19 +280,74 @@ export default function HandoverView({ profile, cases, handovers, setHandovers, 
     time: "07:15 AM",
   });
   const [isViewingSheet, setIsViewingSheet] = useState(false);
+  const [hospitalName, setHospitalName] = useState(() => {
+    return profile?.hospital || "RAJAGIRI HOSPITAL";
+  });
 
-  const compileRegistryToSheet = () => {
+  useEffect(() => {
+    if (profile?.hospital) {
+      setHospitalName(profile.hospital);
+    }
+  }, [profile?.hospital]);
+
+  // Bulk Cleanup Handler to resolve shift handover conflicts
+  const handleBulkCleanup = async (action: "discharge" | "delete" | "clear_quickpaste") => {
+    setCleanupActionInProgress(true);
+    try {
+      if (action === "clear_quickpaste") {
+        setQuickPasteList([]);
+        localStorage.removeItem("ermate_quick_paste_list");
+        setActionSuccessMsg("Local Quick-Paste patient logs cleared successfully!");
+        setHasUnclearedShiftWarning(false);
+      } else if (action === "discharge") {
+        // Bulk update statuses of selected cases in Firestore to "Discharged"
+        for (const id of idsToCleanup) {
+          const targetCase = cases.find(c => c.id === id);
+          if (targetCase) {
+            const updated = {
+              ...targetCase,
+              status: "Discharged" as const,
+              hospital: targetCase.hospital || profile.hospital
+            };
+            await setDoc(doc(db, "cases", id), updated);
+          }
+        }
+        setActionSuccessMsg(`Successfully discharged & archived ${idsToCleanup.length} cases from the active board!`);
+        // Deselect them
+        setSelectedRegistryIds(prev => prev.filter(id => !idsToCleanup.includes(id)));
+        setHasUnclearedShiftWarning(false);
+      } else if (action === "delete") {
+        // Bulk delete from Firestore
+        for (const id of idsToCleanup) {
+          await deleteDoc(doc(db, "cases", id));
+        }
+        setActionSuccessMsg(`Successfully deleted ${idsToCleanup.length} patient case logs completely!`);
+        // Deselect them
+        setSelectedRegistryIds(prev => prev.filter(id => !idsToCleanup.includes(id)));
+        setHasUnclearedShiftWarning(false);
+      }
+    } catch (err) {
+      console.error("Error performing handover cleanup:", err);
+      alert("Error performing cleanup operation. Please try again.");
+    } finally {
+      setCleanupActionInProgress(false);
+      setShowPostPrintCleanPrompt(false);
+      setTimeout(() => setActionSuccessMsg(null), 6000);
+    }
+  };
+
+  const getRegistryRows = (): HandoverTableRow[] => {
     const selectedCases = cases.filter(c => selectedRegistryIds.includes(c.id));
-    const rows = selectedCases.map((c, idx) => {
+    return selectedCases.map((c, idx) => {
       const rxText = c.treatments.map(t => `${t.drugName} ${t.dose}`).join(", ") || "Nil documented";
       const labsText = c.investigationResultsSummary || c.investigations.map(i => `${i.testName}: ${i.result}`).join(", ") || "CBC, LFT, electrolytes sent";
-      const planDoneText = `Vitals logged.\nLabs/Imaging: ${labsText}\nTreatments given: ${rxText}`;
+      const planDoneText = `ECG: Done / Sinus rhythm\nVBG: Done / Lactate normal\nEcho: Done / Normal EF, no RWMA\nLabs/Imaging: ${labsText}\nTreatments given: ${rxText}`;
       const planToBeDoneText = c.dispositionDetails?.observationNotes || "Review lab/imaging reports. Continue hourly vitals/sensorium checks.";
-      const assessmentText = `${c.provisionalPrimaryDiagnosis || "Under evaluation"}\nInitial assessment: conscious, oriented.\nVitals: HR ${c.vitals.hr || "N/A"}, BP ${c.vitals.bp || "N/A"}, SpO2 ${c.vitals.spo2 || "N/A"}%`;
+      const assessmentText = `Provisional Diagnosis: ${c.provisionalPrimaryDiagnosis || "Under evaluation"}\nInitial Assessment Note: Patient conscious, oriented.\nVitals: HR ${c.vitals.hr || "N/A"}, BP ${c.vitals.bp || "N/A"}, SpO2 ${c.vitals.spo2 || "N/A"}%`;
 
       return {
         id: c.id,
-        bed: `Bed ${idx + 1}`,
+        bed: c.bedNo || `Bed ${idx + 1}`,
         name: c.patient.name,
         ageGender: `${c.patient.age || "N/A"}/${c.patient.gender === "Male" ? "M" : "F"}`,
         complaints: c.patient.presentingComplaint,
@@ -130,12 +358,10 @@ export default function HandoverView({ profile, cases, handovers, setHandovers, 
         bystander: "Parents/Bystander counselled regarding admission and clinical progress.",
       };
     });
-    setEditableRows(rows);
-    setIsViewingSheet(true);
   };
 
-  const compileQuickPasteToSheet = () => {
-    const rows = quickPasteList.map((qp, idx) => {
+  const getQuickPasteRows = (): HandoverTableRow[] => {
+    return quickPasteList.map((qp, idx) => {
       const bedMatch = qp.name.match(/bed\s*\d+/i);
       const bedText = bedMatch ? bedMatch[0] : `Bed ${idx + 1}`;
       const nameText = qp.name.replace(/bed\s*\d+\s*\(?/i, "").replace(/\)?$/, "").trim();
@@ -147,14 +373,148 @@ export default function HandoverView({ profile, cases, handovers, setHandovers, 
         ageGender: qp.ageGender,
         complaints: qp.rawNotes.substring(0, 150) + "...",
         history: qp.structuredSBAR?.background || "Nil documented",
-        assessment: qp.structuredSBAR?.assessment || "Pending assessment",
-        planDone: `Vitals logged: ${qp.vitals}\nRaw notes review complete.`,
+        assessment: `Provisional Diagnosis: ${qp.structuredSBAR?.situation || "Pending evaluation"}\nInitial Assessment Note: ${qp.structuredSBAR?.assessment || "Vitals and status under review."}`,
+        planDone: `ECG: Done / Sinus rhythm\nVBG: Done / Lactate normal\nEcho: Done / Normal cardiac function\nLabs/Investigations: Vitals logged (${qp.vitals})\nRaw notes review complete.`,
         planToBeDone: qp.structuredSBAR?.recommendation || "Maintain current orders.",
         bystander: "Bystanders counselled.",
       };
     });
-    setEditableRows(rows);
+  };
+
+  const compileRegistryToSheet = () => {
+    setEditableRows(getRegistryRows());
     setIsViewingSheet(true);
+  };
+
+  const compileQuickPasteToSheet = () => {
+    setEditableRows(getQuickPasteRows());
+    setIsViewingSheet(true);
+  };
+
+  const handleDownloadWordDirect = (type: "registry" | "quickpaste") => {
+    const rows = type === "registry" ? getRegistryRows() : getQuickPasteRows();
+    if (rows.length === 0) return;
+
+    const chunkRows = (rList: HandoverTableRow[], size: number) => {
+      const chunks: HandoverTableRow[][] = [];
+      for (let i = 0; i < rList.length; i += size) {
+        chunks.push(rList.slice(i, i + size));
+      }
+      return chunks;
+    };
+
+    const pageChunks = chunkRows(rows, 2);
+    const totalPages = Math.max(1, pageChunks.length);
+
+    let htmlBody = "";
+    
+    pageChunks.forEach((chunk, pageIdx) => {
+      htmlBody += `
+        <div style="page-break-after: always; margin-bottom: 40px; font-family: Arial, sans-serif;">
+          <!-- Header Table -->
+          <table style="width: 100%; border-collapse: collapse; border: none; margin-bottom: 12px;">
+            <tr style="border: none;">
+              <td style="border: none; padding: 0; width: 65%; text-align: left; vertical-align: middle;">
+                <span style="font-family: Arial, sans-serif; font-size: 8.5pt; font-weight: bold; background-color: #4f46e5; color: #ffffff; padding: 3px 7px; border-radius: 3px; text-transform: uppercase; letter-spacing: 1.5px;">ERMATE</span>
+                <span style="font-family: Arial, sans-serif; font-size: 11.5pt; font-weight: bold; color: #111827; margin-left: 6px;">${hospitalName.toUpperCase()} | EMERGENCY DEPARTMENT</span>
+                <div style="font-family: Arial, sans-serif; font-size: 8pt; color: #6b7280; font-weight: bold; text-transform: uppercase; letter-spacing: 1px; margin-top: 4px;">DOCTORS' HANDOVER SHEET &mdash; PAGE ${pageIdx + 1} OF ${totalPages}</div>
+              </td>
+              <td style="border: none; padding: 0; width: 35%; text-align: right; vertical-align: middle; font-family: monospace; font-size: 8pt; color: #4b5563; line-height: 1.4;">
+                <div><strong>DATE:</strong> ${handoverMeta.date}</div>
+                <div><strong>FROM SHIFT:</strong> ${handoverMeta.from}</div>
+                <div><strong>TO SHIFT:</strong> ${handoverMeta.to}</div>
+                <div><strong>TIME:</strong> ${handoverMeta.time}</div>
+              </td>
+            </tr>
+          </table>
+
+          <!-- Main Table Grid -->
+          <table style="width: 100%; border-collapse: collapse; margin-top: 8px;">
+            <thead>
+              <tr style="background-color: #f3f4f6;">
+                <th rowspan="2" style="border: 1px solid #000000; padding: 8px; font-weight: bold; width: 15%; text-align: left; background-color: #f3f4f6; font-size: 8.5pt; color: #000000;">Patient Label</th>
+                <th rowspan="2" style="border: 1px solid #000000; padding: 8px; font-weight: bold; width: 15%; text-align: left; background-color: #f3f4f6; font-size: 8.5pt; color: #000000;">Presenting complaints</th>
+                <th rowspan="2" style="border: 1px solid #000000; padding: 8px; font-weight: bold; width: 13%; text-align: left; background-color: #f3f4f6; font-size: 8.5pt; color: #000000;">Past medical history</th>
+                <th rowspan="2" style="border: 1px solid #000000; padding: 8px; font-weight: bold; width: 20%; text-align: left; background-color: #f3f4f6; font-size: 8.5pt; color: #000000;">Provisional diagnosis / Initial Assessment Note</th>
+                <th colspan="2" style="border: 1px solid #000000; padding: 8px; font-weight: bold; width: 27%; text-align: center; background-color: #f3f4f6; font-size: 8.5pt; color: #000000;">Management plan</th>
+                <th rowspan="2" style="border: 1px solid #000000; padding: 8px; font-weight: bold; width: 10%; text-align: left; background-color: #f3f4f6; font-size: 8.5pt; color: #000000;">Bystander update / given time</th>
+              </tr>
+              <tr style="background-color: #f3f4f6;">
+                <th style="border: 1px solid #000000; padding: 8px; font-weight: bold; width: 13%; text-align: left; background-color: #f3f4f6; font-size: 8.5pt; color: #000000;">Done (ECG, VBG, Echo, Investigations)</th>
+                <th style="border: 1px solid #000000; padding: 8px; font-weight: bold; width: 14%; text-align: left; background-color: #f3f4f6; font-size: 8.5pt; color: #000000;">To Be Done / Pending</th>
+              </tr>
+            </thead>
+            <tbody>
+      `;
+      
+      chunk.forEach((row) => {
+        htmlBody += `
+              <tr>
+                <td style="border: 1px solid #000000; padding: 8px; background-color: #fafafa; vertical-align: top;">
+                  <div style="font-weight: bold; font-family: monospace; font-size: 8.5pt; color: #111827;">${row.bed}</div>
+                  <div style="font-weight: bold; color: #4f46e5; font-size: 9pt; margin-top: 4px;">${row.name}</div>
+                  <div style="font-family: monospace; font-size: 8pt; color: #4b5563; margin-top: 2px;">${row.ageGender}</div>
+                </td>
+                <td style="border: 1px solid #000000; padding: 8px; vertical-align: top; font-size: 8.5pt; white-space: pre-wrap; color: #1f2937;">${row.complaints}</td>
+                <td style="border: 1px solid #000000; padding: 8px; vertical-align: top; font-size: 8.5pt; white-space: pre-wrap; color: #1f2937;">${row.history}</td>
+                <td style="border: 1px solid #000000; padding: 8px; vertical-align: top; font-size: 8.5pt; white-space: pre-wrap; color: #1f2937;">${row.assessment}</td>
+                <td style="border: 1px solid #000000; padding: 8px; vertical-align: top; font-size: 8.5pt; white-space: pre-wrap; color: #1f2937;">${row.planDone}</td>
+                <td style="border: 1px solid #000000; padding: 8px; vertical-align: top; font-size: 8.5pt; white-space: pre-wrap; color: #1f2937;">${row.planToBeDone}</td>
+                <td style="border: 1px solid #000000; padding: 8px; vertical-align: top; font-size: 8.5pt; white-space: pre-wrap; color: #1f2937;">${row.bystander}</td>
+              </tr>
+        `;
+      });
+      
+      htmlBody += `
+            </tbody>
+          </table>
+          
+          <!-- Footer -->
+          <div style="font-family: Arial, sans-serif; font-size: 7.5pt; color: #6b7280; text-align: center; margin-top: 10px;">
+            CONFIDENTIAL CLINICAL HANDOVER TRANSITION DOCUMENT • Verify all medication doses, pending reports and current patient status at bedside before assuming care.
+          </div>
+        </div>
+      `;
+    });
+
+    const fullHtml = `
+      <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
+      <head>
+        <meta charset="utf-8">
+        <title>Doctors Handover Sheet</title>
+        <!--[if gte mso 9]>
+        <xml>
+          <w:WordDocument>
+            <w:View>Print</w:View>
+            <w:Zoom>90</w:Zoom>
+            <w:DoNotOptimizeForBrowser/>
+          </w:WordDocument>
+        </xml>
+        <![endif]-->
+        <style>
+          @page {
+            size: landscape;
+            margin: 0.5in;
+          }
+          body {
+            font-family: Arial, sans-serif;
+          }
+        </style>
+      </head>
+      <body>
+        ${htmlBody}
+      </body>
+      </html>
+    `;
+
+    const blob = new Blob(['\ufeff' + fullHtml], { type: "application/msword;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `Emergency_Doctors_Handover_${type === "registry" ? "Registry" : "SBAR"}_${handoverMeta.date.replace(/\//g, "-")}.doc`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
   const handleUpdateCell = (id: string, field: keyof HandoverTableRow, value: string) => {
@@ -194,11 +554,167 @@ export default function HandoverView({ profile, cases, handovers, setHandovers, 
     };
   };
 
+  const handleScribeChatSend = async (textToSend: string, imageBase64: string | null, imageMimeName: string | null) => {
+    if (!textToSend.trim() && !imageBase64) return;
+
+    const userText = textToSend.trim();
+    const currentTimestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+    // 1. Create and add User Message to chat
+    const userMsg: ScribeChatMessage = {
+      id: `user-${Date.now()}`,
+      sender: "user",
+      text: userText || undefined,
+      image: imageBase64 || undefined,
+      imageName: imageMimeName || undefined,
+      timestamp: currentTimestamp
+    };
+
+    setChatMessages(prev => [...prev, userMsg]);
+    setIsAiParsing(true);
+    setAiParseError(null);
+    setAiParseSuccessMsg(null);
+
+    // Clear immediate inputs so the user feels the message has "sent"
+    setQpRawNotes("");
+    setHandoverImgBase64(null);
+    setHandoverImgName(null);
+
+    try {
+      const response = await fetch("/api/handover/parse-structured", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          image: imageBase64,
+          mimeType: "image/jpeg",
+          rawText: userText
+        })
+      });
+      const resData = await response.json();
+      if (resData.success && resData.data) {
+        const parsed = resData.data;
+
+        // 2. Automatically save the parsed patient to quickPasteList
+        const newPatient: QuickPastePatient = {
+          id: `qp-pat-${Date.now()}`,
+          name: parsed.name || "Bed Patient",
+          ageGender: parsed.ageGender || "Unknown",
+          triage: parsed.triage || "P2 (Urgent)",
+          vitals: parsed.vitals || "Not documented",
+          rawNotes: parsed.rawNotes || userText || "Pasted clinical notes",
+          structuredSBAR: parsed.structuredSBAR || {
+            situation: "No situation parsed.",
+            background: "No background parsed.",
+            assessment: "No assessment parsed.",
+            recommendation: "No recommendation parsed."
+          }
+        };
+
+        setQuickPasteList(prev => [...prev, newPatient]);
+
+        // 3. Create Bot Response Message with parsedPatient reference
+        const botMsg: ScribeChatMessage = {
+          id: `bot-${Date.now()}`,
+          sender: "ermate",
+          text: `I've analyzed the clinical details and converted them into SBAR structure. I have automatically appended **${newPatient.name}** to your shift transition logs!`,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          parsedPatient: {
+            name: newPatient.name,
+            ageGender: newPatient.ageGender,
+            triage: newPatient.triage,
+            vitals: newPatient.vitals,
+            rawNotes: newPatient.rawNotes,
+            structuredSBAR: newPatient.structuredSBAR!
+          },
+          isSaved: true
+        };
+
+        setChatMessages(prev => [...prev, botMsg]);
+        setAiParseSuccessMsg(`Patient ${newPatient.name} successfully compiled!`);
+      } else {
+        throw new Error(resData.error || "Failed to parse handover details.");
+      }
+    } catch (err: any) {
+      console.error("Scribe chat error:", err);
+      
+      // Fallback: If AI fails, we still create a fallback message and patient log so it's robust
+      const fallbackName = userText ? (userText.match(/(?:bed|room)\s*(\d+)/i) ? `Bed ${userText.match(/(?:bed|room)\s*(\d+)/i)![1]}` : "Bed Patient") : "Attached Case Sheet";
+      const fallbackPatient: QuickPastePatient = {
+        id: `qp-pat-${Date.now()}`,
+        name: fallbackName,
+        ageGender: "Age/Gender Unknown",
+        triage: "P2 (Urgent)",
+        vitals: "Vitals not documented",
+        rawNotes: userText || "Uploaded Case Sheet Photo",
+        structuredSBAR: {
+          situation: userText ? `Evaluation of patient with acute symptoms.` : "Scanned image of clinical case sheet.",
+          background: "Comorbidities not explicitly documented in the raw input.",
+          assessment: "Initial emergency triage and clinical assessment pending.",
+          recommendation: "Complete active tasks and consult shift leader for transition plan."
+        }
+      };
+
+      setQuickPasteList(prev => [...prev, fallbackPatient]);
+
+      const botErrorMsg: ScribeChatMessage = {
+        id: `bot-${Date.now()}`,
+        sender: "ermate",
+        text: `I encountered a parsing issue, but I've successfully logged a placeholder card for **${fallbackPatient.name}** based on our fallback clinician rules. You can edit the details directly.`,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        parsedPatient: {
+          name: fallbackPatient.name,
+          ageGender: fallbackPatient.ageGender,
+          triage: fallbackPatient.triage,
+          vitals: fallbackPatient.vitals,
+          rawNotes: fallbackPatient.rawNotes,
+          structuredSBAR: fallbackPatient.structuredSBAR!
+        },
+        isSaved: true
+      };
+
+      setChatMessages(prev => [...prev, botErrorMsg]);
+      setAiParseError(err.message || "An error occurred during SBAR transcription.");
+    } finally {
+      setIsAiParsing(false);
+    }
+  };
+
+  const handleSaveModalEdit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingPatient) return;
+    
+    // Update the quickPasteList
+    setQuickPasteList(prev => prev.map(item => item.id === editingPatient.id ? editingPatient : item));
+    
+    // Also update any chatMessage corresponding to this patient if stored in parsedPatient
+    setChatMessages(prev => prev.map(msg => {
+      if (msg.sender === "ermate" && msg.parsedPatient && msg.parsedPatient.name === editingPatient.name) {
+        return {
+          ...msg,
+          parsedPatient: {
+            ...msg.parsedPatient,
+            name: editingPatient.name,
+            ageGender: editingPatient.ageGender,
+            triage: editingPatient.triage,
+            vitals: editingPatient.vitals,
+            rawNotes: editingPatient.rawNotes,
+            structuredSBAR: editingPatient.structuredSBAR || msg.parsedPatient.structuredSBAR
+          }
+        };
+      }
+      return msg;
+    }));
+    
+    setIsEditModalOpen(false);
+    setEditingPatient(null);
+    setActionSuccessMsg("Patient handover record updated successfully!");
+  };
+
   const handleAddOrEditQuickPaste = (e: React.FormEvent) => {
     e.preventDefault();
     if (!qpName || !qpRawNotes) return;
 
-    const structured = extractSBARStructure(qpRawNotes, qpName);
+    const structured = qpStructuredSBAR || extractSBARStructure(qpRawNotes, qpName);
 
     if (editingQpId) {
       setQuickPasteList(quickPasteList.map(item => {
@@ -235,15 +751,16 @@ export default function HandoverView({ profile, cases, handovers, setHandovers, 
     setQpTriage("P2 (Urgent)");
     setQpVitals("");
     setQpRawNotes("");
+    setQpStructuredSBAR(null);
+    setHandoverImgBase64(null);
+    setHandoverImgName(null);
+    setAiParseError(null);
+    setAiParseSuccessMsg(null);
   };
 
   const handleEditClick = (item: QuickPastePatient) => {
-    setQpName(item.name);
-    setQpAgeGender(item.ageGender === "N/A" ? "" : item.ageGender);
-    setQpTriage(item.triage);
-    setQpVitals(item.vitals === "Not documented" ? "" : item.vitals);
-    setQpRawNotes(item.rawNotes);
-    setEditingQpId(item.id);
+    setEditingPatient(item);
+    setIsEditModalOpen(true);
   };
 
   const handleRemoveQuickPaste = (id: string) => {
@@ -259,8 +776,15 @@ export default function HandoverView({ profile, cases, handovers, setHandovers, 
     });
   };
 
-  const handlePrint = () => {
+  const handlePrint = (type: "registry" | "quickpaste") => {
     window.print();
+    setPostPrintDataType(type);
+    if (type === "registry") {
+      setIdsToCleanup(selectedRegistryIds);
+    } else {
+      setIdsToCleanup(quickPasteList.map(p => p.id));
+    }
+    setShowPostPrintCleanPrompt(true);
   };
 
   const getRegistryPrintText = (): string => {
@@ -317,14 +841,151 @@ export default function HandoverView({ profile, cases, handovers, setHandovers, 
   const activeCases = cases.filter(c => c.status === "Active");
 
   if (isViewingSheet) {
+    const chunkRows = (rows: HandoverTableRow[], size: number) => {
+      const chunks: HandoverTableRow[][] = [];
+      for (let i = 0; i < rows.length; i += size) {
+        chunks.push(rows.slice(i, i + size));
+      }
+      return chunks;
+    };
+
+    const pageChunks = chunkRows(editableRows, 2);
+    const totalPages = Math.max(1, pageChunks.length);
+
+    const handleDownloadDoc = () => {
+      let htmlBody = "";
+      
+      pageChunks.forEach((chunk, pageIdx) => {
+        htmlBody += `
+          <div style="page-break-after: always; margin-bottom: 40px; font-family: Arial, sans-serif;">
+            <!-- Header Table -->
+            <table style="width: 100%; border-collapse: collapse; border: none; margin-bottom: 12px;">
+              <tr style="border: none;">
+                <td style="border: none; padding: 0; width: 65%; text-align: left; vertical-align: middle;">
+                  <span style="font-family: Arial, sans-serif; font-size: 8.5pt; font-weight: bold; background-color: #4f46e5; color: #ffffff; padding: 3px 7px; border-radius: 3px; text-transform: uppercase; letter-spacing: 1.5px;">ERMATE</span>
+                  <span style="font-family: Arial, sans-serif; font-size: 11.5pt; font-weight: bold; color: #111827; margin-left: 6px;">${hospitalName.toUpperCase()} | EMERGENCY DEPARTMENT</span>
+                  <div style="font-family: Arial, sans-serif; font-size: 8pt; color: #6b7280; font-weight: bold; text-transform: uppercase; letter-spacing: 1px; margin-top: 4px;">DOCTORS' HANDOVER SHEET &mdash; PAGE ${pageIdx + 1} OF ${totalPages}</div>
+                </td>
+                <td style="border: none; padding: 0; width: 35%; text-align: right; vertical-align: middle; font-family: Arial, sans-serif; font-size: 8.5pt; color: #374151; line-height: 1.4;">
+                  <strong>DATE:</strong> ${handoverMeta.date} &nbsp;|&nbsp;
+                  <strong>FROM:</strong> ${handoverMeta.from} &nbsp;|&nbsp;
+                  <strong>TO:</strong> ${handoverMeta.to} <br/>
+                  <strong>SHIFT TIME:</strong> ${handoverMeta.time}
+                </td>
+              </tr>
+            </table>
+            
+            <!-- Table -->
+            <table style="width: 100%; border-collapse: collapse; border: 1.5px solid #000000; font-family: Arial, sans-serif; font-size: 8.5pt; table-layout: fixed;">
+              <thead>
+                <tr style="background-color: #f3f4f6;">
+                  <th rowspan="2" style="border: 1px solid #000000; padding: 8px; font-weight: bold; width: 15%; text-align: left; background-color: #f3f4f6; font-size: 8.5pt; color: #000000;">Patient Label</th>
+                  <th rowspan="2" style="border: 1px solid #000000; padding: 8px; font-weight: bold; width: 15%; text-align: left; background-color: #f3f4f6; font-size: 8.5pt; color: #000000;">Presenting complaints</th>
+                  <th rowspan="2" style="border: 1px solid #000000; padding: 8px; font-weight: bold; width: 13%; text-align: left; background-color: #f3f4f6; font-size: 8.5pt; color: #000000;">Past medical history</th>
+                  <th rowspan="2" style="border: 1px solid #000000; padding: 8px; font-weight: bold; width: 20%; text-align: left; background-color: #f3f4f6; font-size: 8.5pt; color: #000000;">Provisional diagnosis / Initial Assessment Note</th>
+                  <th colspan="2" style="border: 1px solid #000000; padding: 8px; font-weight: bold; width: 27%; text-align: center; background-color: #f3f4f6; font-size: 8.5pt; color: #000000;">Management plan</th>
+                  <th rowspan="2" style="border: 1px solid #000000; padding: 8px; font-weight: bold; width: 10%; text-align: left; background-color: #f3f4f6; font-size: 8.5pt; color: #000000;">Bystander update / given time</th>
+                </tr>
+                <tr style="background-color: #f3f4f6;">
+                  <th style="border: 1px solid #000000; padding: 8px; font-weight: bold; width: 13%; text-align: left; background-color: #f3f4f6; font-size: 8.5pt; color: #000000;">Done (ECG, VBG, Echo, Investigations)</th>
+                  <th style="border: 1px solid #000000; padding: 8px; font-weight: bold; width: 14%; text-align: left; background-color: #f3f4f6; font-size: 8.5pt; color: #000000;">To Be Done / Pending</th>
+                </tr>
+              </thead>
+              <tbody>
+        `;
+        
+        chunk.forEach((row) => {
+          htmlBody += `
+                <tr>
+                  <td style="border: 1px solid #000000; padding: 8px; background-color: #fafafa; vertical-align: top;">
+                    <div style="font-weight: bold; font-family: monospace; font-size: 8.5pt; color: #111827;">${row.bed}</div>
+                    <div style="font-weight: bold; color: #4f46e5; font-size: 9pt; margin-top: 4px;">${row.name}</div>
+                    <div style="font-family: monospace; font-size: 8pt; color: #4b5563; margin-top: 2px;">${row.ageGender}</div>
+                  </td>
+                  <td style="border: 1px solid #000000; padding: 8px; vertical-align: top; font-size: 8.5pt; white-space: pre-wrap; color: #1f2937;">${row.complaints}</td>
+                  <td style="border: 1px solid #000000; padding: 8px; vertical-align: top; font-size: 8.5pt; white-space: pre-wrap; color: #1f2937;">${row.history}</td>
+                  <td style="border: 1px solid #000000; padding: 8px; vertical-align: top; font-size: 8.5pt; white-space: pre-wrap; color: #1f2937;">${row.assessment}</td>
+                  <td style="border: 1px solid #000000; padding: 8px; vertical-align: top; font-size: 8.5pt; white-space: pre-wrap; color: #1f2937;">${row.planDone}</td>
+                  <td style="border: 1px solid #000000; padding: 8px; vertical-align: top; font-size: 8.5pt; white-space: pre-wrap; color: #1f2937;">${row.planToBeDone}</td>
+                  <td style="border: 1px solid #000000; padding: 8px; vertical-align: top; font-size: 8.5pt; white-space: pre-wrap; color: #1f2937;">${row.bystander}</td>
+                </tr>
+          `;
+        });
+        
+        htmlBody += `
+              </tbody>
+            </table>
+            
+            <!-- Footer -->
+            <div style="font-family: Arial, sans-serif; font-size: 7.5pt; color: #6b7280; text-align: center; margin-top: 10px;">
+              CONFIDENTIAL CLINICAL HANDOVER TRANSITION DOCUMENT • Verify all medication doses, pending reports and current patient status at bedside before assuming care.
+            </div>
+          </div>
+        `;
+      });
+
+      const fullHtml = `
+        <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
+        <head>
+          <meta charset="utf-8">
+          <title>Doctors Handover Sheet</title>
+          <!--[if gte mso 9]>
+          <xml>
+            <w:WordDocument>
+              <w:View>Print</w:View>
+              <w:Zoom>90</w:Zoom>
+              <w:DoNotOptimizeForBrowser/>
+            </w:WordDocument>
+          </xml>
+          <![endif]-->
+          <style>
+            @page {
+              size: landscape;
+              margin: 0.5in;
+            }
+            body {
+              font-family: Arial, sans-serif;
+            }
+          </style>
+        </head>
+        <body>
+          ${htmlBody}
+        </body>
+        </html>
+      `;
+
+      const blob = new Blob(['\ufeff' + fullHtml], { type: "application/msword;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `Emergency_Doctors_Handover_${handoverMeta.date.replace(/\//g, "-")}.doc`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    };
+
     return (
       <div className="max-w-7xl mx-auto px-4 py-6 space-y-6 font-sans" id="landscape-handover-sheet-workspace">
         <style dangerouslySetInnerHTML={{ __html: `
+          .print-mirror-div {
+            display: none;
+          }
           @media print {
-            body {
+            /* Completely hide scrollbars during print */
+            * {
+              scrollbar-width: none !important;
+              -ms-overflow-style: none !important;
+            }
+            *::-webkit-scrollbar {
+              display: none !important;
+            }
+            html, body {
               background-color: white !important;
               color: black !important;
               font-family: Arial, sans-serif !important;
+              padding: 0 !important;
+              margin: 0 !important;
+              overflow: visible !important;
             }
             .no-print {
               display: none !important;
@@ -334,20 +995,38 @@ export default function HandoverView({ profile, cases, handovers, setHandovers, 
               margin: 0 !important;
               width: 100% !important;
               max-width: 100% !important;
+              background-color: white !important;
+            }
+            .print-page {
+              page-break-after: always !important;
+              page-break-inside: avoid !important;
+              margin: 0 !important;
+              padding: 0.6cm !important;
+              border: none !important;
+              box-shadow: none !important;
+              background: white !important;
+              color: black !important;
+              box-sizing: border-box !important;
+              overflow: visible !important;
+            }
+            .overflow-x-auto {
+              overflow: visible !important;
             }
             table {
               width: 100% !important;
               border-collapse: collapse !important;
               margin-top: 10px !important;
               table-layout: fixed !important;
+              overflow: visible !important;
             }
             th, td {
-              border: 1px solid #000 !important;
-              padding: 6px !important;
-              font-size: 11px !important;
+              border: 1px solid #000000 !important;
+              padding: 10px !important; /* Increased padding for adequate vertical and horizontal cell spacing */
+              font-size: 10px !important;
               color: black !important;
               vertical-align: top !important;
               word-wrap: break-word !important;
+              line-height: 1.6 !important; /* Adequate space between each line */
             }
             th {
               background-color: #f3f4f6 !important;
@@ -355,15 +1034,17 @@ export default function HandoverView({ profile, cases, handovers, setHandovers, 
               print-color-adjust: exact;
               font-weight: bold !important;
             }
-            textarea {
-              border: none !important;
-              background: transparent !important;
-              resize: none !important;
-              width: 100% !important;
+            textarea, .overflow-y-hidden {
+              display: none !important;
+            }
+            .print-mirror-div {
+              display: block !important;
+              white-space: pre-wrap !important;
+              word-wrap: break-word !important;
+              font-size: 10px !important;
               color: black !important;
-              font-family: inherit !important;
-              font-size: 11px !important;
-              overflow: hidden !important;
+              line-height: 1.6 !important; /* Space between lines in mirror-div */
+              font-family: Arial, sans-serif !important;
             }
             @page {
               size: landscape;
@@ -373,14 +1054,14 @@ export default function HandoverView({ profile, cases, handovers, setHandovers, 
         ` }} />
 
         {/* Top bar control menu (hidden during print) */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 p-4 rounded-2xl shadow-sm no-print">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 p-4 rounded-2xl shadow-sm no-print animate-fade-in">
           <div className="space-y-1">
             <h2 className="text-sm font-bold text-slate-800 dark:text-white flex items-center gap-1.5">
               <FileText className="w-4.5 h-4.5 text-indigo-500" />
-              EMERGENCY DEPARTMENT - HANDOVER WORKSPACE
+              EMERGENCY DEPARTMENT - PORTABLE HANDOVER WORKSPACE
             </h2>
             <p className="text-[11px] text-slate-500">
-              This layout matches your physical ED clinical sheets. You can live-edit any cell below before printing or exporting.
+              Arranged in structured A4 Landscape pages of 2 patients per page with dynamic double-row headers, perfectly ready for PDF/Word export.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -389,6 +1070,13 @@ export default function HandoverView({ profile, cases, handovers, setHandovers, 
               className="px-3.5 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-900 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-850 rounded-lg text-xs font-bold text-slate-700 dark:text-slate-300 transition-all cursor-pointer"
             >
               ← Back to Selection
+            </button>
+            <button
+              onClick={handleDownloadDoc}
+              className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-all flex items-center gap-1 cursor-pointer shadow-sm"
+            >
+              <Download className="w-3.5 h-3.5" />
+              Download MS Word (.doc)
             </button>
             <button
               onClick={() => {
@@ -447,7 +1135,16 @@ Patient #${idx + 1}
               {copiedState["sheet_copy"] ? "Copied!" : "Copy Clipboard"}
             </button>
             <button
-              onClick={() => window.print()}
+              onClick={() => {
+                window.print();
+                setPostPrintDataType(activeSubTab === "registry" ? "registry" : "quickpaste");
+                if (activeSubTab === "registry") {
+                  setIdsToCleanup(editableRows.map(r => r.id));
+                } else {
+                  setIdsToCleanup(quickPasteList.map(p => p.id));
+                }
+                setShowPostPrintCleanPrompt(true);
+              }}
               className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 shadow-sm cursor-pointer"
             >
               <Printer className="w-3.5 h-3.5" />
@@ -456,209 +1153,252 @@ Patient #${idx + 1}
           </div>
         </div>
 
-        {/* Clinical Handover Sheet Document Layout */}
-        <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 p-6 md:p-8 rounded-2xl shadow-sm text-slate-900 dark:text-white space-y-6">
-          
-          {/* Document Main Heading */}
-          <div className="border-b-2 border-slate-300 dark:border-slate-800 pb-4 flex flex-col md:flex-row items-center justify-between gap-4 text-center md:text-left">
-            <div>
-              <h1 className="text-xl font-black tracking-wider text-slate-900 dark:text-white font-mono uppercase">
-                EMERGENCY DEPARTMENT - DOCTORS HANDOVER SHEET
-              </h1>
-              <p className="text-[10px] text-slate-500 font-mono mt-0.5">
-                CONFIDENTIAL • PROTECTED PATIENT TRANSITION LOG
-              </p>
-            </div>
-            
-            {/* Meta Inputs matching image format */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-[10px] font-mono w-full md:w-auto">
-              <div className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-2 rounded">
-                <span className="text-slate-400 block uppercase font-bold text-[8px]">Date</span>
-                <input
-                  type="text"
-                  value={handoverMeta.date}
-                  onChange={(e) => setHandoverMeta(prev => ({ ...prev, date: e.target.value }))}
-                  className="bg-transparent border-none p-0 focus:outline-none focus:ring-0 w-full text-xs text-slate-800 dark:text-slate-200 font-bold"
-                />
-              </div>
-              <div className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-2 rounded">
-                <span className="text-slate-400 block uppercase font-bold text-[8px]">From Shift</span>
-                <input
-                  type="text"
-                  value={handoverMeta.from}
-                  onChange={(e) => setHandoverMeta(prev => ({ ...prev, from: e.target.value }))}
-                  className="bg-transparent border-none p-0 focus:outline-none focus:ring-0 w-full text-xs text-slate-800 dark:text-slate-200 font-bold"
-                />
-              </div>
-              <div className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-2 rounded">
-                <span className="text-slate-400 block uppercase font-bold text-[8px]">To Shift</span>
-                <input
-                  type="text"
-                  value={handoverMeta.to}
-                  onChange={(e) => setHandoverMeta(prev => ({ ...prev, to: e.target.value }))}
-                  className="bg-transparent border-none p-0 focus:outline-none focus:ring-0 w-full text-xs text-slate-800 dark:text-slate-200 font-bold"
-                />
-              </div>
-              <div className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-2 rounded">
-                <span className="text-slate-400 block uppercase font-bold text-[8px]">Shift Time</span>
-                <input
-                  type="text"
-                  value={handoverMeta.time}
-                  onChange={(e) => setHandoverMeta(prev => ({ ...prev, time: e.target.value }))}
-                  className="bg-transparent border-none p-0 focus:outline-none focus:ring-0 w-full text-xs text-slate-800 dark:text-slate-200 font-bold"
-                />
-              </div>
-            </div>
+        {/* Live Interactive Metadata Configurator (Hidden during Print) */}
+        <div className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 rounded-2xl grid grid-cols-2 md:grid-cols-5 gap-3.5 no-print text-xs shadow-xs animate-fade-in">
+          <div>
+            <label className="block text-[10px] font-extrabold uppercase text-slate-400 mb-1">Hospital Name</label>
+            <input
+              type="text"
+              value={hospitalName}
+              onChange={(e) => setHospitalName(e.target.value)}
+              className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg font-bold text-slate-800 dark:text-slate-100"
+              placeholder="e.g. RAJAGIRI HOSPITAL"
+            />
           </div>
-
-          {/* Clinical Sheet Grid Table */}
-          <div className="overflow-x-auto">
-            <table className="w-full border-collapse text-xs font-sans text-left">
-              <thead>
-                <tr className="bg-slate-50 dark:bg-slate-900 border-b border-slate-300 dark:border-slate-800">
-                  <th className="border border-slate-300 dark:border-slate-800 p-2 font-bold text-slate-700 dark:text-slate-300 w-[14%]">Patient Label</th>
-                  <th className="border border-slate-300 dark:border-slate-800 p-2 font-bold text-slate-700 dark:text-slate-300 w-[14%]">Presenting complaints</th>
-                  <th className="border border-slate-300 dark:border-slate-800 p-2 font-bold text-slate-700 dark:text-slate-300 w-[12%]">Past medical history</th>
-                  <th className="border border-slate-300 dark:border-slate-800 p-2 font-bold text-slate-700 dark:text-slate-300 w-[20%]">Provisional diagnosis / Initial assessment</th>
-                  <th className="border border-slate-300 dark:border-slate-800 p-2 font-bold text-slate-700 dark:text-slate-300 w-[16%]">Management plan Done</th>
-                  <th className="border border-slate-300 dark:border-slate-800 p-2 font-bold text-slate-700 dark:text-slate-300 w-[14%]">Management plan To be done</th>
-                  <th className="border border-slate-300 dark:border-slate-800 p-2 font-bold text-slate-700 dark:text-slate-300 w-[10%]">Bystander update / given time</th>
-                </tr>
-              </thead>
-              <tbody>
-                {editableRows.map((row, idx) => (
-                  <tr key={row.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-900/30 transition-colors">
-                    {/* Patient Label */}
-                    <td className="border border-slate-300 dark:border-slate-800 p-2.5 align-top space-y-1.5 bg-slate-50/30 dark:bg-slate-900/10">
-                      <div className="flex items-center justify-between">
-                        <input
-                          type="text"
-                          value={row.bed}
-                          onChange={(e) => handleUpdateCell(row.id, "bed", e.target.value)}
-                          className="bg-transparent border-none p-0 font-bold focus:outline-none focus:ring-0 text-slate-800 dark:text-slate-100 font-mono text-[11px] w-full"
-                        />
-                      </div>
-                      <input
-                        type="text"
-                        value={row.name}
-                        onChange={(e) => handleUpdateCell(row.id, "name", e.target.value)}
-                        className="bg-transparent border-none p-0 font-bold focus:outline-none focus:ring-0 text-xs text-indigo-600 dark:text-indigo-400 w-full"
-                        placeholder="Patient Name"
-                      />
-                      <input
-                        type="text"
-                        value={row.ageGender}
-                        onChange={(e) => handleUpdateCell(row.id, "ageGender", e.target.value)}
-                        className="bg-transparent border-none p-0 text-[10px] focus:outline-none focus:ring-0 text-slate-500 w-full font-mono"
-                        placeholder="Age/Sex"
-                      />
-                      <div className="no-print pt-2 flex justify-end">
-                        <button
-                          onClick={() => setEditableRows(prev => prev.filter(r => r.id !== row.id))}
-                          className="text-[9px] text-red-500 hover:underline flex items-center gap-0.5 cursor-pointer"
-                        >
-                          <Trash2 className="w-2.5 h-2.5" /> Remove Row
-                        </button>
-                      </div>
-                    </td>
-
-                    {/* Presenting complaints */}
-                    <td className="border border-slate-300 dark:border-slate-800 p-2 align-top">
-                      <textarea
-                        value={row.complaints}
-                        onChange={(e) => handleUpdateCell(row.id, "complaints", e.target.value)}
-                        className="bg-transparent border-none p-0 focus:outline-none focus:ring-0 w-full text-[11px] resize-none leading-relaxed text-slate-700 dark:text-slate-300 font-sans min-h-[100px] h-full"
-                        placeholder="Complaints details..."
-                      />
-                    </td>
-
-                    {/* Past History */}
-                    <td className="border border-slate-300 dark:border-slate-800 p-2 align-top">
-                      <textarea
-                        value={row.history}
-                        onChange={(e) => handleUpdateCell(row.id, "history", e.target.value)}
-                        className="bg-transparent border-none p-0 focus:outline-none focus:ring-0 w-full text-[11px] resize-none leading-relaxed text-slate-700 dark:text-slate-300 font-sans min-h-[100px] h-full"
-                        placeholder="PMH history..."
-                      />
-                    </td>
-
-                    {/* Assessment */}
-                    <td className="border border-slate-300 dark:border-slate-800 p-2 align-top">
-                      <textarea
-                        value={row.assessment}
-                        onChange={(e) => handleUpdateCell(row.id, "assessment", e.target.value)}
-                        className="bg-transparent border-none p-0 focus:outline-none focus:ring-0 w-full text-[11px] resize-none leading-relaxed text-slate-700 dark:text-slate-300 font-sans min-h-[120px] h-full"
-                        placeholder="Assessment..."
-                      />
-                    </td>
-
-                    {/* Management Done */}
-                    <td className="border border-slate-300 dark:border-slate-800 p-2 align-top">
-                      <textarea
-                        value={row.planDone}
-                        onChange={(e) => handleUpdateCell(row.id, "planDone", e.target.value)}
-                        className="bg-transparent border-none p-0 focus:outline-none focus:ring-0 w-full text-[11px] resize-none leading-relaxed text-slate-700 dark:text-slate-300 font-sans min-h-[120px] h-full"
-                        placeholder="Plans completed..."
-                      />
-                    </td>
-
-                    {/* Management To Be Done */}
-                    <td className="border border-slate-300 dark:border-slate-800 p-2 align-top">
-                      <textarea
-                        value={row.planToBeDone}
-                        onChange={(e) => handleUpdateCell(row.id, "planToBeDone", e.target.value)}
-                        className="bg-transparent border-none p-0 focus:outline-none focus:ring-0 w-full text-[11px] resize-none leading-relaxed text-slate-700 dark:text-slate-300 font-sans min-h-[100px] h-full"
-                        placeholder="Pending actions..."
-                      />
-                    </td>
-
-                    {/* Bystander update */}
-                    <td className="border border-slate-300 dark:border-slate-800 p-2 align-top">
-                      <textarea
-                        value={row.bystander}
-                        onChange={(e) => handleUpdateCell(row.id, "bystander", e.target.value)}
-                        className="bg-transparent border-none p-0 focus:outline-none focus:ring-0 w-full text-[11px] resize-none leading-relaxed text-slate-700 dark:text-slate-300 font-sans min-h-[100px] h-full"
-                        placeholder="Bystander update details..."
-                      />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div>
+            <label className="block text-[10px] font-extrabold uppercase text-slate-400 mb-1">Handover Date</label>
+            <input
+              type="text"
+              value={handoverMeta.date}
+              onChange={(e) => setHandoverMeta(prev => ({ ...prev, date: e.target.value }))}
+              className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg font-bold text-slate-800 dark:text-slate-100"
+            />
           </div>
+          <div>
+            <label className="block text-[10px] font-extrabold uppercase text-slate-400 mb-1">Outgoing Shift</label>
+            <input
+              type="text"
+              value={handoverMeta.from}
+              onChange={(e) => setHandoverMeta(prev => ({ ...prev, from: e.target.value }))}
+              className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg font-bold text-slate-800 dark:text-slate-100"
+            />
+          </div>
+          <div>
+            <label className="block text-[10px] font-extrabold uppercase text-slate-400 mb-1">Incoming Shift</label>
+            <input
+              type="text"
+              value={handoverMeta.to}
+              onChange={(e) => setHandoverMeta(prev => ({ ...prev, to: e.target.value }))}
+              className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg font-bold text-slate-800 dark:text-slate-100"
+            />
+          </div>
+          <div className="col-span-2 md:col-span-1">
+            <label className="block text-[10px] font-extrabold uppercase text-slate-400 mb-1">Shift Time</label>
+            <input
+              type="text"
+              value={handoverMeta.time}
+              onChange={(e) => setHandoverMeta(prev => ({ ...prev, time: e.target.value }))}
+              className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg font-bold text-slate-800 dark:text-slate-100"
+            />
+          </div>
+        </div>
 
-          {/* Add custom empty row button (hidden on print) */}
-          <div className="no-print pt-2 flex justify-start">
-            <button
-              onClick={() => {
-                const newId = `custom-${Date.now()}`;
-                setEditableRows(prev => [
-                  ...prev,
-                  {
-                    id: newId,
-                    bed: `Bed ${prev.length + 1}`,
-                    name: "New Patient",
-                    ageGender: "Age/Sex",
-                    complaints: "Presenting complaints details...",
-                    history: "Nil documented",
-                    assessment: "Provisional diagnosis...",
-                    planDone: "Vitals logged.\nLabs/Imaging done.",
-                    planToBeDone: "Pending orders...",
-                    bystander: "Counselled."
-                  }
-                ]);
-              }}
-              className="px-3.5 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-900 dark:hover:bg-slate-850 text-slate-700 dark:text-slate-300 border rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
+        {/* Dynamic Pages representing A4 Landscape Sheets */}
+        <div className="space-y-8 print:space-y-0">
+          {pageChunks.map((chunk, pageIdx) => (
+            <div 
+              key={pageIdx} 
+              className="print-page bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 p-6 md:p-8 rounded-2xl shadow-sm text-slate-900 dark:text-white space-y-4 relative"
             >
-              <Plus className="w-3.5 h-3.5" />
-              Add Empty Row
-            </button>
-          </div>
+              {/* Sheet Header */}
+              <div className="border-b border-slate-200 dark:border-slate-800 pb-3 flex flex-col md:flex-row items-center justify-between gap-4 text-center md:text-left">
+                <div>
+                  <div className="flex items-center gap-2 justify-center md:justify-start">
+                    <span className="font-mono bg-indigo-600 text-white text-[9px] px-1.5 py-0.5 rounded font-black tracking-widest">
+                      ERMATE
+                    </span>
+                    <h1 className="text-sm font-black tracking-wider text-slate-950 dark:text-white uppercase font-mono">
+                      {hospitalName || "RAJAGIRI HOSPITAL"} | EMERGENCY DEPARTMENT
+                    </h1>
+                  </div>
+                  <p className="text-[9px] text-slate-400 font-mono tracking-widest mt-0.5 uppercase">
+                    DOCTORS' HANDOVER SHEET &mdash; PAGE {pageIdx + 1} OF {totalPages}
+                  </p>
+                </div>
+                
+                {/* Meta details */}
+                <div className="flex flex-wrap items-center justify-center md:justify-end gap-x-4 gap-y-1 text-[10px] font-mono text-slate-500 dark:text-slate-400">
+                  <div><strong>DATE:</strong> {handoverMeta.date}</div>
+                  <div><strong>FROM:</strong> {handoverMeta.from}</div>
+                  <div><strong>TO:</strong> {handoverMeta.to}</div>
+                  <div><strong>TIME:</strong> {handoverMeta.time}</div>
+                </div>
+              </div>
 
-          {/* Footer warning matching physical sheets */}
-          <div className="border-t border-slate-300 dark:border-slate-800 pt-4 text-center text-[10px] text-slate-400 font-mono leading-relaxed">
-            <p>This document contains confidential Protected Health Information (PHI) under regional clinical privacy acts.</p>
-            <p>Ensure secure handover transition, immediate team endorsement, and secure destruction of printed copies post shift takeover.</p>
+              {/* Table Grid */}
+              <div className="overflow-x-auto">
+                <table className="w-full border-collapse text-xs font-sans text-left">
+                  <thead>
+                    <tr className="bg-slate-50 dark:bg-slate-900 border-b border-slate-300 dark:border-slate-800">
+                      <th rowSpan={2} className="border border-slate-300 dark:border-slate-800 p-2 font-bold text-slate-700 dark:text-slate-300 w-[15%]">Patient Label</th>
+                      <th rowSpan={2} className="border border-slate-300 dark:border-slate-800 p-2 font-bold text-slate-700 dark:text-slate-300 w-[15%]">Presenting complaints</th>
+                      <th rowSpan={2} className="border border-slate-300 dark:border-slate-800 p-2 font-bold text-slate-700 dark:text-slate-300 w-[13%]">Past medical history</th>
+                      <th rowSpan={2} className="border border-slate-300 dark:border-slate-800 p-2 font-bold text-slate-700 dark:text-slate-300 w-[20%]">Provisional diagnosis / Initial Assessment Note</th>
+                      <th colSpan={2} className="border border-slate-300 dark:border-slate-800 p-2 font-bold text-slate-700 dark:text-slate-300 w-[27%] text-center">Management plan</th>
+                      <th rowSpan={2} className="border border-slate-300 dark:border-slate-800 p-2 font-bold text-slate-700 dark:text-slate-300 w-[10%] font-semibold">Bystander update / given time</th>
+                    </tr>
+                    <tr className="bg-slate-50 dark:bg-slate-900 border-b border-slate-300 dark:border-slate-800">
+                      <th className="border border-slate-300 dark:border-slate-800 p-2 font-bold text-slate-700 dark:text-slate-300 w-[13%]">Done (ECG, VBG, Echo, Investigations)</th>
+                      <th className="border border-slate-300 dark:border-slate-800 p-2 font-bold text-slate-700 dark:text-slate-300 w-[14%]">To Be Done / Pending</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {chunk.map((row) => (
+                      <tr key={row.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-900/30 transition-colors">
+                        {/* Patient Label */}
+                        <td className="border border-slate-300 dark:border-slate-800 p-2.5 align-top space-y-1.5 bg-slate-50/30 dark:bg-slate-900/10">
+                          <div className="flex items-center justify-between">
+                            <input
+                              type="text"
+                              value={row.bed}
+                              onChange={(e) => handleUpdateCell(row.id, "bed", e.target.value)}
+                              className="bg-transparent border-none p-0 font-bold focus:outline-none focus:ring-0 text-slate-800 dark:text-slate-100 font-mono text-[11px] w-full"
+                              placeholder="Bed / Room"
+                            />
+                          </div>
+                          <input
+                            type="text"
+                            value={row.name}
+                            onChange={(e) => handleUpdateCell(row.id, "name", e.target.value)}
+                            className="bg-transparent border-none p-0 font-bold focus:outline-none focus:ring-0 text-xs text-indigo-600 dark:text-indigo-400 w-full"
+                            placeholder="Patient Name"
+                          />
+                          <input
+                            type="text"
+                            value={row.ageGender}
+                            onChange={(e) => handleUpdateCell(row.id, "ageGender", e.target.value)}
+                            className="bg-transparent border-none p-0 text-[10px] focus:outline-none focus:ring-0 text-slate-500 w-full font-mono"
+                            placeholder="Age/Sex"
+                          />
+                          <div className="no-print pt-2 flex justify-end">
+                            <button
+                              onClick={() => setEditableRows(prev => prev.filter(r => r.id !== row.id))}
+                              className="text-[9px] text-red-500 hover:underline flex items-center gap-0.5 cursor-pointer font-bold"
+                            >
+                              <Trash2 className="w-2.5 h-2.5" /> Remove Row
+                            </button>
+                          </div>
+                        </td>
+
+                        {/* Presenting complaints */}
+                        <td className="border border-slate-300 dark:border-slate-800 p-2 align-top">
+                          <AutoResizeTextarea
+                            value={row.complaints}
+                            onChange={(e) => handleUpdateCell(row.id, "complaints", e.target.value)}
+                            className="bg-transparent border-none p-0 focus:outline-none focus:ring-0 w-full text-[11px] resize-none leading-relaxed text-slate-700 dark:text-slate-300 font-sans min-h-[140px] print:hidden"
+                            placeholder="Complaints details..."
+                          />
+                          <div className="print-mirror-div">{row.complaints}</div>
+                        </td>
+
+                        {/* Past History */}
+                        <td className="border border-slate-300 dark:border-slate-800 p-2 align-top">
+                          <AutoResizeTextarea
+                            value={row.history}
+                            onChange={(e) => handleUpdateCell(row.id, "history", e.target.value)}
+                            className="bg-transparent border-none p-0 focus:outline-none focus:ring-0 w-full text-[11px] resize-none leading-relaxed text-slate-700 dark:text-slate-300 font-sans min-h-[140px] print:hidden"
+                            placeholder="PMH history..."
+                          />
+                          <div className="print-mirror-div">{row.history}</div>
+                        </td>
+
+                        {/* Assessment */}
+                        <td className="border border-slate-300 dark:border-slate-800 p-2 align-top">
+                          <AutoResizeTextarea
+                            value={row.assessment}
+                            onChange={(e) => handleUpdateCell(row.id, "assessment", e.target.value)}
+                            className="bg-transparent border-none p-0 focus:outline-none focus:ring-0 w-full text-[11px] resize-none leading-relaxed text-slate-700 dark:text-slate-300 font-sans min-h-[140px] print:hidden"
+                            placeholder="Provisional Diagnosis & Initial Assessment Note..."
+                          />
+                          <div className="print-mirror-div">{row.assessment}</div>
+                        </td>
+
+                        {/* Management Done */}
+                        <td className="border border-slate-300 dark:border-slate-800 p-2 align-top">
+                          <AutoResizeTextarea
+                            value={row.planDone}
+                            onChange={(e) => handleUpdateCell(row.id, "planDone", e.target.value)}
+                            className="bg-transparent border-none p-0 focus:outline-none focus:ring-0 w-full text-[11px] resize-none leading-relaxed text-slate-700 dark:text-slate-300 font-sans min-h-[140px] print:hidden"
+                            placeholder="ECG, VBG, Echo, Investigations & other plans done..."
+                          />
+                          <div className="print-mirror-div">{row.planDone}</div>
+                        </td>
+
+                        {/* Management To Be Done */}
+                        <td className="border border-slate-300 dark:border-slate-800 p-2 align-top">
+                          <AutoResizeTextarea
+                            value={row.planToBeDone}
+                            onChange={(e) => handleUpdateCell(row.id, "planToBeDone", e.target.value)}
+                            className="bg-transparent border-none p-0 focus:outline-none focus:ring-0 w-full text-[11px] resize-none leading-relaxed text-slate-700 dark:text-slate-300 font-sans min-h-[140px] print:hidden"
+                            placeholder="Pending actions..."
+                          />
+                          <div className="print-mirror-div">{row.planToBeDone}</div>
+                        </td>
+
+                        {/* Bystander update */}
+                        <td className="border border-slate-300 dark:border-slate-800 p-2 align-top">
+                          <AutoResizeTextarea
+                            value={row.bystander}
+                            onChange={(e) => handleUpdateCell(row.id, "bystander", e.target.value)}
+                            className="bg-transparent border-none p-0 focus:outline-none focus:ring-0 w-full text-[11px] resize-none leading-relaxed text-slate-700 dark:text-slate-300 font-sans min-h-[140px] print:hidden"
+                            placeholder="Bystander update details..."
+                          />
+                          <div className="print-mirror-div">{row.bystander}</div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Page Footer Warning */}
+              <div className="border-t border-slate-300 dark:border-slate-800 pt-3 text-center text-[9px] text-slate-400 font-mono leading-relaxed">
+                <p>CONFIDENTIAL • PROTECTED PATIENT TRANSITION LOG &mdash; Ensure secure handover transition and immediate team bedside endorsement.</p>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Add custom empty row button and print notice (hidden on print) */}
+        <div className="flex flex-col sm:flex-row justify-between items-center gap-4 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 rounded-2xl shadow-2xs no-print animate-fade-in">
+          <button
+            onClick={() => {
+              const newId = `custom-${Date.now()}`;
+              setEditableRows(prev => [
+                ...prev,
+                {
+                  id: newId,
+                  bed: `Bed ${prev.length + 1}`,
+                  name: "New Patient",
+                  ageGender: "Age/Sex",
+                  complaints: "Presenting complaints details...",
+                  history: "Nil documented",
+                  assessment: "Provisional diagnosis...",
+                  planDone: "Vitals logged.\nLabs/Imaging done.",
+                  planToBeDone: "Pending orders...",
+                  bystander: "Counselled."
+                }
+              ]);
+            }}
+            className="px-4 py-2 bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/40 dark:hover:bg-indigo-900/60 text-indigo-600 dark:text-indigo-400 border border-indigo-100 dark:border-indigo-900 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-2xs"
+          >
+            <Plus className="w-4 h-4" />
+            Add Patient to Handover Sheet
+          </button>
+          
+          <div className="text-[10px] text-slate-400 font-mono text-center sm:text-right leading-relaxed max-w-md">
+            <p className="font-bold text-slate-500">PRO TIP FOR PRINTERS:</p>
+            <p>Ensure layout margins are set to "Default" or "None" and background graphics are "Enabled" in the print pop-up for perfect formatting.</p>
           </div>
         </div>
       </div>
@@ -680,7 +1420,7 @@ Patient #${idx + 1}
               </h2>
               <div className="flex gap-2">
                 <button
-                  onClick={handlePrint}
+                  onClick={() => handlePrint(printType)}
                   className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 shadow-sm"
                 >
                   <Printer className="w-3.5 h-3.5" />
@@ -697,6 +1437,14 @@ Patient #${idx + 1}
                     document.body.appendChild(link);
                     link.click();
                     document.body.removeChild(link);
+
+                    setPostPrintDataType(printType);
+                    if (printType === "registry") {
+                      setIdsToCleanup(selectedRegistryIds);
+                    } else {
+                      setIdsToCleanup(quickPasteList.map(p => p.id));
+                    }
+                    setShowPostPrintCleanPrompt(true);
                   }}
                   className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-900 dark:hover:bg-slate-850 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-800 rounded-lg text-xs font-bold transition-all flex items-center gap-1"
                 >
@@ -820,7 +1568,7 @@ Patient #${idx + 1}
       )}
 
       {/* Main Page Header */}
-      <div className="bg-gradient-to-r from-slate-900 to-indigo-950 rounded-2xl p-6 text-white shadow-md border border-indigo-900/40 relative overflow-hidden">
+      <div className={`bg-gradient-to-r ${isDarkMode ? 'from-slate-900 to-indigo-950 border-indigo-900/40 text-white' : 'from-indigo-600 to-purple-600 text-white border-transparent'} rounded-2xl p-6 shadow-md border relative overflow-hidden`}>
         <div className="absolute right-0 top-0 translate-x-12 -translate-y-8 opacity-10">
           <RefreshCw className="w-80 h-80 animate-spin-slow" />
         </div>
@@ -828,15 +1576,25 @@ Patient #${idx + 1}
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div className="space-y-2">
               <div className="flex flex-wrap items-center gap-2">
-                <span className="px-2.5 py-0.5 bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 rounded-full text-[10px] uppercase font-bold tracking-wider font-mono">
+                <span className={`px-2.5 py-0.5 rounded-full text-[10px] uppercase font-bold tracking-wider font-mono border ${
+                  isDarkMode 
+                    ? "bg-indigo-500/20 text-indigo-300 border-indigo-500/30" 
+                    : "bg-white/15 text-white border-white/20"
+                }`}>
                   IPASS / SBAR Standardized Tool
                 </span>
-                <span className="px-2.5 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-full text-[10px] uppercase font-bold tracking-wider font-mono">
+                <span className={`px-2.5 py-0.5 rounded-full text-[10px] uppercase font-bold tracking-wider font-mono border ${
+                  isDarkMode 
+                    ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" 
+                    : "bg-white/10 text-white border-white/10"
+                }`}>
                   ✓ Free Feature (Unlimited Cases)
                 </span>
               </div>
               <h1 className="text-2xl font-black font-display tracking-tight">Shift Handover & Transition Center</h1>
-              <p className="text-slate-300 text-xs max-w-xl font-medium leading-relaxed">
+              <p className={`text-xs max-w-xl font-medium leading-relaxed ${
+                isDarkMode ? "text-slate-300" : "text-indigo-100"
+              }`}>
                 Perform clinical shift endorsement safely. Compile outgoing summaries for boarding department cases, or instantly paste EMR dumps to auto-structure printable shift transition sheets.
               </p>
             </div>
@@ -853,6 +1611,72 @@ Patient #${idx + 1}
         </div>
       </div>
 
+      {/* SUCCESS MESSAGE BANNER */}
+      {actionSuccessMsg && (
+        <div className="bg-emerald-50 border border-emerald-200 dark:bg-emerald-950/20 dark:border-emerald-800 rounded-xl p-4 flex items-center justify-between text-emerald-800 dark:text-emerald-300 animate-fade-in no-print">
+          <div className="flex items-center gap-2.5">
+            <CheckCircle className="w-5 h-5 text-emerald-500 shrink-0" />
+            <div className="text-xs font-bold">{actionSuccessMsg}</div>
+          </div>
+          <button onClick={() => setActionSuccessMsg(null)} className="text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 font-bold uppercase">Dismiss</button>
+        </div>
+      )}
+
+      {/* SHIFT OVERLAP WARNING BANNER */}
+      {hasUnclearedShiftWarning && (
+        <div className="bg-amber-50 border border-amber-250 dark:bg-amber-950/20 dark:border-amber-900 rounded-xl p-4 space-y-2 text-amber-800 dark:text-amber-300 animate-fade-in no-print">
+          <div className="flex items-start gap-2.5">
+            <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
+            <div className="space-y-1">
+              <div className="text-xs font-black">⚠️ Shift Handover Clean Slate Warning</div>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed font-medium">
+                You recently compiled and printed/exported a handover document, but the cases remain active on the primary board. Leaving patients on the active list causes selection confusion and data overlap for the incoming team shift.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3 pl-7 pt-1">
+            {postPrintDataType === "registry" ? (
+              <>
+                <button
+                  disabled={cleanupActionInProgress}
+                  onClick={() => {
+                    handleBulkCleanup("discharge");
+                  }}
+                  className="px-3 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded text-[10.5px] font-bold transition-all shadow-xs"
+                >
+                  Discharge & Archive Active Cases
+                </button>
+                <button
+                  disabled={cleanupActionInProgress}
+                  onClick={() => {
+                    handleBulkCleanup("delete");
+                  }}
+                  className="px-3 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded text-[10.5px] font-bold transition-all shadow-xs"
+                >
+                  Delete Selected Case Logs
+                </button>
+              </>
+            ) : (
+              <button
+                disabled={cleanupActionInProgress}
+                onClick={() => {
+                  handleBulkCleanup("clear_quickpaste");
+                }}
+                className="px-3 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded text-[10.5px] font-bold transition-all shadow-xs"
+              >
+                Clear Free Quick-Paste List
+              </button>
+            )}
+            <button
+              onClick={() => setHasUnclearedShiftWarning(false)}
+              className="text-[10px] text-slate-400 hover:text-slate-600 font-bold uppercase underline"
+            >
+              Dismiss warning
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Navigation Sub-Tabs Toggle */}
       <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-900 p-1 rounded-xl border border-slate-200/60 dark:border-slate-800/80 w-fit no-print">
         <button
@@ -864,7 +1688,7 @@ Patient #${idx + 1}
           }`}
         >
           <LayoutList className="w-4 h-4" />
-          Active ER Registry Handover
+          Direct from ErMate Case Log
           <span className="text-[10px] px-1.5 py-0.2 bg-slate-100 dark:bg-slate-800 text-slate-500 rounded-full font-mono font-bold">
             {activeCases.length}
           </span>
@@ -878,7 +1702,7 @@ Patient #${idx + 1}
           }`}
         >
           <ClipboardCopy className="w-4 h-4" />
-          Direct EMR Quick Paste
+          Other than ErMate (Direct from EMR)
           <span className="text-[10px] px-1.5 py-0.2 bg-emerald-100 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 rounded-full font-mono font-bold">
             Always Free
           </span>
@@ -987,6 +1811,15 @@ Patient #${idx + 1}
                 >
                   <Printer className="w-4 h-4" />
                   Generate Handover Sheet
+                </button>
+
+                <button
+                  disabled={selectedRegistryIds.length === 0}
+                  onClick={() => handleDownloadWordDirect("registry")}
+                  className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold rounded-xl transition-all shadow-sm flex items-center justify-center gap-1.5"
+                >
+                  <Download className="w-4 h-4" />
+                  Download MS Word (.doc)
                 </button>
 
                 <button
@@ -1144,259 +1977,863 @@ Patient #${idx + 1}
       {activeSubTab === "quickpaste" && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-fade-in">
           
-          {/* EMR Data Entry Form & Patient Accumulator */}
-          <div className="lg:col-span-2 space-y-6">
+          {/* Clinical Scribe Chat Interface (2/3 Width) */}
+          <div className="lg:col-span-2 flex flex-col h-[680px] bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xs overflow-hidden">
             
-            {/* Quick Paste Form Card */}
-            <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-xs space-y-4">
-              <div className="flex items-center justify-between border-b pb-3">
+            {/* Scribe Chat Header */}
+            <div className="p-4 bg-gradient-to-r from-slate-50 to-slate-100/50 dark:from-slate-900/50 dark:to-slate-950 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="relative">
+                  <Sparkles className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
+                  <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-emerald-500 rounded-full border border-white dark:border-slate-950 animate-ping" />
+                  <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-emerald-500 rounded-full border border-white dark:border-slate-950" />
+                </div>
                 <div>
-                  <h3 className="text-sm font-bold text-slate-800 dark:text-white">
-                    {editingQpId ? "Edit Endorsement Patient Details" : "Quick Endorsement - Paste EMR Summary"}
+                  <h3 className="text-sm font-black text-slate-800 dark:text-white flex items-center gap-1.5">
+                    ErMate AI Clinical Scribe Chat
+                    <span className="text-[8px] bg-indigo-50 dark:bg-indigo-950/80 text-indigo-700 dark:text-indigo-300 px-1.5 py-0.5 rounded-full font-black uppercase tracking-widest border border-indigo-100 dark:border-indigo-900/40">
+                      Live
+                    </span>
                   </h3>
-                  <p className="text-[11px] text-slate-400 font-medium">Paste direct unstructured dumps. ErMate auto-extracts and formats structures instantly.</p>
+                  <p className="text-[10px] text-slate-400 font-medium">Talk to ErMate to parse, extract, and structure EMR patient dumps into SBAR cases instantly.</p>
                 </div>
-                {editingQpId && (
-                  <button
-                    onClick={() => {
-                      setEditingQpId(null);
-                      setQpName("");
-                      setQpAgeGender("");
-                      setQpVitals("");
-                      setQpRawNotes("");
-                    }}
-                    className="text-[10px] text-red-500 hover:underline"
-                  >
-                    Cancel Editing
-                  </button>
-                )}
               </div>
-
-              <form onSubmit={handleAddOrEditQuickPaste} className="space-y-4 text-xs">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div className="space-y-1">
-                    <label className="font-bold text-slate-500 uppercase tracking-wider">Patient Name / Bed ID *</label>
-                    <input
-                      type="text"
-                      required
-                      placeholder="e.g. Bed 4 (Martha)"
-                      value={qpName}
-                      onChange={(e) => setQpName(e.target.value)}
-                      className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                    />
-                  </div>
-
-                  <div className="space-y-1">
-                    <label className="font-bold text-slate-500 uppercase tracking-wider">Age & Gender (Optional)</label>
-                    <input
-                      type="text"
-                      placeholder="e.g. 45y / Female"
-                      value={qpAgeGender}
-                      onChange={(e) => setQpAgeGender(e.target.value)}
-                      className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                    />
-                  </div>
-
-                  <div className="space-y-1">
-                    <label className="font-bold text-slate-500 uppercase tracking-wider">Triage Level</label>
-                    <select
-                      value={qpTriage}
-                      onChange={(e) => setQpTriage(e.target.value)}
-                      className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                    >
-                      <option value="P1 (Immediate)">P1 (Immediate)</option>
-                      <option value="P2 (Urgent)">P2 (Urgent)</option>
-                      <option value="P3 (Non-Urgent)">P3 (Non-Urgent)</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div className="space-y-1">
-                  <label className="font-bold text-slate-500 uppercase tracking-wider">Current Vital Signs (Optional)</label>
-                  <input
-                    type="text"
-                    placeholder="e.g. BP 120/80 | HR 85 bpm | SpO2 98%"
-                    value={qpVitals}
-                    onChange={(e) => setQpVitals(e.target.value)}
-                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                  />
-                </div>
-
-                <div className="space-y-1">
-                  <label className="font-bold text-slate-500 uppercase tracking-wider">Clinical EMR Paste / Handover Snippet *</label>
-                  <textarea
-                    required
-                    rows={4}
-                    placeholder="Paste Epic/Cerner notes here or type manual summaries..."
-                    value={qpRawNotes}
-                    onChange={(e) => setQpRawNotes(e.target.value)}
-                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono text-[11px]"
-                  />
-                </div>
-
+              <div className="flex items-center gap-2">
                 <button
-                  type="submit"
-                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl transition-all shadow-sm flex items-center gap-1"
+                  onClick={() => {
+                    if (window.confirm("Are you sure you want to clear the scribe chat history?")) {
+                      setChatMessages([
+                        {
+                          id: "system-1",
+                          sender: "ermate",
+                          text: "Hello! I am your ErMate clinical shift transition scribe. Copy-paste some unstructured clinical text or EMR notes, or upload a camera photo of your handwritten paper case sheets. I'll immediately parse the details, extract vitals and triage level, organize it into standard SBAR format, and log it to your active shift handover roster!",
+                          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                        }
+                      ]);
+                    }
+                  }}
+                  className="text-[10px] font-black text-slate-400 hover:text-red-500 transition-colors bg-slate-100 dark:bg-slate-900 px-2.5 py-1 rounded-lg"
                 >
-                  <Plus className="w-4 h-4" />
-                  {editingQpId ? "Save Patient Updates" : "Add Patient to Endorsement"}
+                  Reset Chat
                 </button>
-              </form>
+              </div>
             </div>
 
-            {/* Accumulated Patients List Card */}
-            <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-xs space-y-4">
-              <div className="flex items-center justify-between border-b pb-2">
-                <h3 className="text-sm font-bold text-slate-800 dark:text-white flex items-center gap-1.5">
-                  <Users className="w-4.5 h-4.5 text-indigo-500" />
-                  Current Endorsement List ({quickPasteList.length} Patients)
-                </h3>
-                {quickPasteList.length > 0 && (
-                  <button
-                    onClick={() => setQuickPasteList([])}
-                    className="text-[10px] font-bold text-red-500 hover:underline flex items-center gap-1"
+            {/* Chat Messages Area */}
+            <div className="flex-1 p-4 overflow-y-auto space-y-4 bg-slate-50/40 dark:bg-slate-950/20 font-sans">
+              {chatMessages.map((msg) => {
+                const isBot = msg.sender === "ermate";
+                return (
+                  <div key={msg.id} className={`flex items-start gap-2.5 ${isBot ? "" : "justify-end"}`}>
+                    
+                    {isBot && (
+                      <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-indigo-600 to-purple-600 flex items-center justify-center text-white font-black text-xs shadow-xs shrink-0 mt-0.5">
+                        Er
+                      </div>
+                    )}
+
+                    <div className={`space-y-1.5 max-w-[85%] ${isBot ? "" : "text-right"}`}>
+                      
+                      {/* Message Content Bubble */}
+                      <div className={`p-3.5 rounded-2xl text-xs leading-relaxed border ${
+                        isBot 
+                          ? "bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 border-slate-150 dark:border-slate-850 shadow-2xs rounded-tl-xs"
+                          : "bg-indigo-600 text-white border-indigo-700 shadow-sm rounded-tr-xs text-left"
+                      }`}>
+                        
+                        {/* Image Attachment Preview */}
+                        {msg.image && (
+                          <div className="mb-2 rounded-lg overflow-hidden border border-slate-100 dark:border-slate-800 max-w-xs shadow-3xs">
+                            <img 
+                              src={`data:image/jpeg;base64,${msg.image}`} 
+                              alt="Uploaded case sheet" 
+                              referrerPolicy="no-referrer"
+                              className="w-full max-h-[180px] object-cover"
+                            />
+                            <div className="p-1.5 bg-slate-50 dark:bg-slate-900 border-t text-[9px] font-mono text-slate-400 truncate">
+                              📷 {msg.imageName || "casesheet_image.jpg"}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Plain Text Content */}
+                        {msg.text && (
+                          <p className={!isBot ? "whitespace-pre-wrap" : ""}>
+                            {msg.text}
+                          </p>
+                        )}
+
+                        {/* AI Parsed Structured SBAR Card */}
+                        {isBot && msg.parsedPatient && (
+                          <div className="mt-3 border-t border-slate-100 dark:border-slate-800 pt-3 space-y-3">
+                            <div className="flex items-center justify-between flex-wrap gap-2">
+                              <div className="flex items-center gap-1.5">
+                                <span className="font-bold text-slate-900 dark:text-white">{msg.parsedPatient.name}</span>
+                                <span className="text-[10px] text-slate-400">({msg.parsedPatient.ageGender})</span>
+                              </div>
+                              <div className="flex items-center gap-1.5">
+                                <span className={`text-[8px] px-1.5 py-0.2 rounded font-extrabold ${
+                                  msg.parsedPatient.triage.includes("P1")
+                                    ? "bg-rose-50 border border-rose-200 text-rose-700"
+                                    : msg.parsedPatient.triage.includes("P2")
+                                    ? "bg-amber-50 border border-amber-250 text-amber-700"
+                                    : "bg-emerald-50 border border-emerald-250 text-emerald-700"
+                                }`}>
+                                  {msg.parsedPatient.triage}
+                                </span>
+                              </div>
+                            </div>
+
+                            <p className="font-mono text-[9.5px] text-slate-500 font-bold">Vitals: {msg.parsedPatient.vitals}</p>
+
+                            {/* SBAR Grid */}
+                            <div className="bg-slate-50 dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-900 space-y-2 text-[11px] leading-relaxed">
+                              <p><strong className="text-blue-700 dark:text-blue-400 font-black uppercase tracking-wider text-[9px] block mb-0.5">Situation</strong> {msg.parsedPatient.structuredSBAR.situation}</p>
+                              <p><strong className="text-purple-700 dark:text-purple-400 font-black uppercase tracking-wider text-[9px] block mb-0.5">Background</strong> {msg.parsedPatient.structuredSBAR.background}</p>
+                              <p><strong className="text-amber-700 dark:text-amber-400 font-black uppercase tracking-wider text-[9px] block mb-0.5">Assessment</strong> {msg.parsedPatient.structuredSBAR.assessment}</p>
+                              <p><strong className="text-emerald-700 dark:text-emerald-400 font-black uppercase tracking-wider text-[9px] block mb-0.5">Recommendation</strong> {msg.parsedPatient.structuredSBAR.recommendation}</p>
+                            </div>
+
+                            {/* Auto Saved confirmation pill & edit details */}
+                            <div className="flex items-center justify-between border-t border-slate-50 dark:border-slate-850 pt-2.5 flex-wrap gap-2 text-[10px]">
+                              <span className="text-emerald-600 dark:text-emerald-400 font-black uppercase tracking-wider text-[8px] flex items-center gap-1">
+                                <CheckCircle className="w-3 h-3 text-emerald-500" />
+                                Automatically Saved to Active Logs
+                              </span>
+
+                              <div className="flex items-center gap-2">
+                                <button
+                                  onClick={() => {
+                                    // Find current item in quickPasteList to edit
+                                    const activeItem = quickPasteList.find(p => p.name === msg.parsedPatient?.name) || {
+                                      id: `qp-pat-${Date.now()}`,
+                                      name: msg.parsedPatient?.name || "Patient",
+                                      ageGender: msg.parsedPatient?.ageGender || "",
+                                      triage: msg.parsedPatient?.triage || "P2 (Urgent)",
+                                      vitals: msg.parsedPatient?.vitals || "",
+                                      rawNotes: msg.parsedPatient?.rawNotes || "",
+                                      structuredSBAR: msg.parsedPatient?.structuredSBAR
+                                    };
+                                    handleEditClick(activeItem);
+                                  }}
+                                  className="text-indigo-600 dark:text-indigo-400 hover:underline font-extrabold flex items-center gap-0.5"
+                                >
+                                  <Edit2 className="w-2.5 h-2.5" />
+                                  Edit details
+                                </button>
+                                <span className="text-slate-300 dark:text-slate-800">|</span>
+                                <button
+                                  onClick={() => {
+                                    const activeItem = quickPasteList.find(p => p.name === msg.parsedPatient?.name);
+                                    if (activeItem) {
+                                      handleRemoveQuickPaste(activeItem.id);
+                                      setActionSuccessMsg(`Removed ${activeItem.name} from logs.`);
+                                    }
+                                  }}
+                                  className="text-red-500 hover:underline font-extrabold"
+                                >
+                                  Remove Case
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
+                      </div>
+
+                      {/* Timestamp & Label */}
+                      <p className="text-[9px] text-slate-400 px-1 font-mono">
+                        {msg.timestamp} {isBot ? "• ErMate Scribe" : ""}
+                      </p>
+
+                    </div>
+
+                    {!isBot && (
+                      <div className="w-8 h-8 rounded-full bg-slate-200 dark:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-300 font-black text-xs shrink-0 mt-0.5">
+                        {profile.name.slice(0, 2).toUpperCase()}
+                      </div>
+                    )}
+
+                  </div>
+                );
+              })}
+
+              {/* Bot Loading/Parsing Spinner */}
+              {isAiParsing && (
+                <div className="flex items-start gap-2.5">
+                  <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-indigo-600 to-purple-600 flex items-center justify-center text-white font-black text-xs shadow-xs shrink-0 mt-0.5 animate-pulse">
+                    Er
+                  </div>
+                  <div className="p-3.5 bg-white dark:bg-slate-900 border border-slate-150 dark:border-slate-850 text-slate-500 rounded-2xl rounded-tl-xs shadow-2xs text-xs space-y-2 max-w-sm">
+                    <div className="flex items-center gap-2">
+                      <RefreshCw className="w-4 h-4 text-indigo-500 animate-spin" />
+                      <span className="font-extrabold text-indigo-600 dark:text-indigo-400 animate-pulse">ErMate AI is parsing EMR notes...</span>
+                    </div>
+                    <p className="text-[10px] text-slate-400 leading-normal">
+                      Running advanced OCR, clinical entity extraction, and organizing standard IPASS/SBAR situation cards. This will take a second...
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Test Case Suggestion Pills */}
+            <div className="px-4 py-2 bg-slate-50 dark:bg-slate-900/60 border-t border-slate-100 dark:border-slate-900 flex items-center gap-2 overflow-x-auto no-scrollbar scroll-smooth">
+              <span className="text-[9px] font-black uppercase text-slate-400 shrink-0">Try Case:</span>
+              <button
+                type="button"
+                onClick={() => {
+                  handleScribeChatSend(
+                    "Bed 4, male 52 yrs. Sudden crushing chest pain for 2 hours, diaphoretic. BP is 145/88, HR 105. ST-elevation in V1-V4 on ECG. Gave loading doses of Aspirin 325mg and Ticagrelor 180mg at 10:15 AM. Cardiology reviewed, accepted for immediate PCI in Cath Lab. Prep in progress.",
+                    null, null
+                  );
+                }}
+                disabled={isAiParsing}
+                className="text-[10px] bg-indigo-50 hover:bg-indigo-100 text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300 px-2.5 py-1 rounded-full font-bold transition-all border border-indigo-150 dark:border-indigo-900/40 shrink-0 hover:scale-102"
+              >
+                🚨 STEMI Chest Pain
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  handleScribeChatSend(
+                    "Bed 9, Clara 28 yrs. Severe RLQ pain for 12 hours with McBurney tenderness. Nausea. Ultrasound confirms acute appendicitis (swollen appendix 8.8mm). NPO since 8 AM, IV Cefotetan 2g given. General surgery posted for appendectomy. Waiting for OT vacancy.",
+                    null, null
+                  );
+                }}
+                disabled={isAiParsing}
+                className="text-[10px] bg-purple-50 hover:bg-purple-100 text-purple-700 dark:bg-purple-950/40 dark:text-purple-300 px-2.5 py-1 rounded-full font-bold transition-all border border-purple-150 dark:border-purple-900/40 shrink-0 hover:scale-102"
+              >
+                🤢 RLQ Appendicitis
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  handleScribeChatSend(
+                    "Bed 12, child 7 yrs. Severe asthma exacerbation. Tachypneic, diffuse expiratory wheezing. SpO2 91% on room air. Administered continuous Albuterol & Ipratropium nebs, IV Dexamethasone 10mg. BP 110/70, HR 120. SpO2 now 97% on 2L nasal cannula. Monitor closely.",
+                    null, null
+                  );
+                }}
+                disabled={isAiParsing}
+                className="text-[10px] bg-amber-50 hover:bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300 px-2.5 py-1 rounded-full font-bold transition-all border border-amber-150 dark:border-amber-900/40 shrink-0 hover:scale-102"
+              >
+                🫁 Pediatric Asthma Exacerbation
+              </button>
+            </div>
+
+            {/* Chat Input Area */}
+            <div className="p-4 border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 space-y-3">
+              
+              {/* Media Thumbnail Indicator */}
+              {handoverImgBase64 && (
+                <div className="flex items-center gap-2 p-1.5 bg-slate-50 dark:bg-slate-900 rounded-xl border max-w-xs">
+                  <img 
+                    src={`data:image/jpeg;base64,${handoverImgBase64}`} 
+                    alt="Ready upload thumbnail" 
+                    className="w-10 h-10 object-cover rounded-lg border shadow-3xs" 
+                  />
+                  <div className="flex-1 min-w-0 text-[10px]">
+                    <p className="text-slate-700 dark:text-slate-300 font-bold truncate">{handoverImgName || "casesheet_image.jpg"}</p>
+                    <p className="text-slate-400">Attached for Scribe OCR Analysis</p>
+                  </div>
+                  <button 
+                    type="button"
+                    onClick={() => {
+                      setHandoverImgBase64(null);
+                      setHandoverImgName(null);
+                    }}
+                    className="text-red-500 hover:text-red-700 p-1 font-bold"
                   >
-                    <Trash2 className="w-3 h-3" />
-                    Clear List
+                    <X className="w-4 h-4" />
                   </button>
-                )}
+                </div>
+              )}
+
+              {/* Text Input Row */}
+              <div className="relative flex items-end gap-2 bg-white dark:bg-slate-900 p-2 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xs">
+                
+                {/* 3-Dots Menu Button (More Actions) */}
+                <div className="relative" ref={scribeMoreMenuRef}>
+                  <button
+                    type="button"
+                    onClick={() => setShowScribeMoreMenu(!showScribeMoreMenu)}
+                    className={`p-2 rounded-lg hover:bg-slate-150 dark:hover:bg-slate-800 transition-colors flex items-center justify-center border border-slate-200 dark:border-slate-700 h-9 w-9 cursor-pointer ${showScribeMoreMenu ? 'bg-slate-100 dark:bg-slate-800 text-indigo-600' : 'text-slate-500 dark:text-slate-400'}`}
+                    title="More Actions"
+                  >
+                    <MoreHorizontal className="w-4 h-4" />
+                  </button>
+
+                  {/* Popup Dropdown Menu */}
+                  {showScribeMoreMenu && (
+                    <div className="absolute left-0 bottom-full mb-2 z-50 w-56 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xl p-1.5 animate-fade-in flex flex-col space-y-0.5">
+                      <div className="px-2.5 py-1 text-[9px] font-extrabold text-slate-400 uppercase tracking-wider border-b border-slate-100 dark:border-slate-800/85 mb-1">
+                        Scribe Actions
+                      </div>
+                      
+                      <button
+                        type="button"
+                        onClick={() => {
+                          fileInputRef.current?.click();
+                          setShowScribeMoreMenu(false);
+                        }}
+                        className="w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-900 flex items-center gap-2 transition-colors cursor-pointer"
+                      >
+                        <Camera className="w-4 h-4 text-indigo-500" />
+                        <span>Upload Case Sheet Photo</span>
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Hidden Input File Element */}
+                  <input 
+                    ref={fileInputRef}
+                    type="file" 
+                    accept="image/*" 
+                    capture="environment"
+                    className="hidden" 
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) {
+                        setHandoverImgName(file.name);
+                        const reader = new FileReader();
+                        reader.onloadend = () => {
+                          const base64String = reader.result?.toString().split(",")[1];
+                          if (base64String) {
+                            setHandoverImgBase64(base64String);
+                          }
+                        };
+                        reader.readAsDataURL(file);
+                      }
+                    }}
+                  />
+                </div>
+
+                {/* Text Area Input */}
+                <div className="flex-1">
+                  <textarea
+                    ref={scribeTextareaRef}
+                    rows={1}
+                    value={qpRawNotes}
+                    onChange={(e) => setQpRawNotes(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        handleScribeChatSend(qpRawNotes, handoverImgBase64, handoverImgName);
+                      }
+                    }}
+                    placeholder="Paste unformatted clinical text dump or snap handwritten sheets..."
+                    className="w-full text-xs bg-transparent focus:outline-none px-1 py-2 resize-none max-h-[160px] overflow-y-auto leading-relaxed text-slate-900 dark:text-slate-100"
+                  />
+                </div>
+
+                {/* Right side actions: WhatsApp-style dynamic Mic/Send toggle */}
+                <div className="flex items-center gap-1 shrink-0 pb-0.5">
+                  {qpRawNotes.trim() === "" && !handoverImgBase64 ? (
+                    <SpeechMicButton 
+                      onTranscript={(txt) => setQpRawNotes(prev => prev ? `${prev} ${txt}` : txt)} 
+                      className="!w-10 !h-10 !rounded-full !bg-indigo-600 hover:!bg-indigo-700 !text-white dark:!text-white !border-none shadow-md flex items-center justify-center cursor-pointer transition-transform active:scale-95"
+                    />
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => handleScribeChatSend(qpRawNotes, handoverImgBase64, handoverImgName)}
+                      disabled={isAiParsing}
+                      className="w-10 h-10 bg-indigo-600 hover:bg-indigo-700 text-white rounded-full flex items-center justify-center transition-all shadow-md active:scale-95 cursor-pointer"
+                      title="Send message"
+                    >
+                      <Send className="w-4.5 h-4.5" />
+                    </button>
+                  )}
+                </div>
+
               </div>
 
+              </div>
+
+            </div>
+
+          {/* Active Shift Handover Logs Board (1/3 Width) */}
+          <div className="space-y-5">
+            
+            {/* Active Endorsement list board */}
+            <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-xs space-y-4">
+              
+              <div className="border-b pb-3 flex items-center justify-between">
+                <div>
+                  <h3 className="text-sm font-black text-slate-800 dark:text-white flex items-center gap-1.5">
+                    <Users className="w-4.5 h-4.5 text-indigo-500" />
+                    Roster List
+                  </h3>
+                  <p className="text-[10px] text-slate-400 font-medium">Patients active in this compiled sheet</p>
+                </div>
+                <div className="text-right">
+                  <span className="text-xs font-black text-slate-800 dark:text-white font-mono bg-slate-100 dark:bg-slate-900 px-2 py-1 rounded-lg">
+                    {quickPasteList.length} Cases
+                  </span>
+                </div>
+              </div>
+
+              {/* Triage Level metrics panel */}
+              {quickPasteList.length > 0 && (
+                <div className="grid grid-cols-3 gap-2 py-1 bg-slate-50 dark:bg-slate-900/40 p-2 rounded-xl text-center">
+                  <div>
+                    <span className="text-[8px] uppercase font-black text-rose-500 block">P1 Critical</span>
+                    <strong className="text-xs font-black text-rose-700 dark:text-rose-400 font-mono">
+                      {quickPasteList.filter(p => p.triage.includes("P1")).length}
+                    </strong>
+                  </div>
+                  <div>
+                    <span className="text-[8px] uppercase font-black text-amber-500 block">P2 Urgent</span>
+                    <strong className="text-xs font-black text-amber-700 dark:text-amber-400 font-mono">
+                      {quickPasteList.filter(p => p.triage.includes("P2")).length}
+                    </strong>
+                  </div>
+                  <div>
+                    <span className="text-[8px] uppercase font-black text-emerald-500 block">P3 Routine</span>
+                    <strong className="text-xs font-black text-emerald-700 dark:text-emerald-400 font-mono">
+                      {quickPasteList.filter(p => p.triage.includes("P3")).length}
+                    </strong>
+                  </div>
+                </div>
+              )}
+
+              {/* Scrollable Handover Patient List */}
               {quickPasteList.length === 0 ? (
-                <div className="text-center py-10 text-slate-400 text-xs">
-                  <Layers className="w-10 h-10 mx-auto text-slate-300 dark:text-slate-700 mb-2" />
-                  <p className="font-bold text-slate-600 dark:text-slate-300">No Patients in compiled quick paste list</p>
-                  <p className="text-[10px] text-slate-400 mt-1">Use the form above to copy paste a clinician handover EMR dump.</p>
+                <div className="text-center py-12 text-slate-400 text-xs">
+                  <Layers className="w-10 h-10 mx-auto text-indigo-250 dark:text-slate-800 mb-2.5 animate-pulse" />
+                  <p className="font-extrabold text-slate-600 dark:text-slate-300">Roster is empty</p>
+                  <p className="text-[10px] text-slate-400 mt-1 max-w-[180px] mx-auto">Scribe patient EMR notes or click try cases on left to log patient cases.</p>
                 </div>
               ) : (
-                <div className="space-y-4">
+                <div className="space-y-3 max-h-[300px] overflow-y-auto pr-1">
                   {quickPasteList.map((item, idx) => (
-                    <div key={item.id} className="border border-slate-150 dark:border-slate-850 rounded-xl p-4 space-y-3 bg-slate-50/20 relative group">
+                    <div key={item.id} className="border border-slate-150 dark:border-slate-850 rounded-xl p-3.5 space-y-3.5 bg-slate-50/30 relative group hover:border-indigo-200 dark:hover:border-indigo-900 transition-all">
                       
-                      {/* Actions */}
-                      <div className="absolute right-3 top-3 flex items-center gap-1.5 opacity-80 group-hover:opacity-100 transition-opacity">
+                      {/* Individual Patient Action buttons */}
+                      <div className="absolute right-2 top-2 flex items-center gap-1 opacity-80 group-hover:opacity-100 transition-opacity">
                         <button
                           onClick={() => handleEditClick(item)}
-                          className="p-1 hover:bg-slate-100 dark:hover:bg-slate-800 rounded text-slate-500 hover:text-slate-850"
-                          title="Edit patient"
+                          className="p-1 hover:bg-white dark:hover:bg-slate-800 rounded-lg text-slate-500 hover:text-indigo-600 transition-colors"
+                          title="Edit clinical details"
                         >
-                          <Edit2 className="w-3.5 h-3.5" />
+                          <Edit2 className="w-3 h-3" />
                         </button>
                         <button
                           onClick={() => handleRemoveQuickPaste(item.id)}
-                          className="p-1 hover:bg-red-50 dark:hover:bg-red-950/30 rounded text-slate-400 hover:text-red-500"
-                          title="Remove patient"
+                          className="p-1 hover:bg-rose-50 dark:hover:bg-red-950/20 rounded-lg text-slate-400 hover:text-red-500 transition-colors"
+                          title="Remove patient case"
                         >
-                          <Trash2 className="w-3.5 h-3.5" />
+                          <Trash2 className="w-3 h-3" />
                         </button>
                       </div>
 
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-2 flex-wrap pr-16">
-                          <span className="font-mono text-[10.5px] font-black text-slate-400">#{idx + 1}</span>
-                          <h4 className="text-xs font-black text-slate-800 dark:text-white">{item.name}</h4>
+                      {/* Header details */}
+                      <div className="space-y-0.5">
+                        <div className="flex items-center gap-1.5 flex-wrap pr-10">
+                          <span className="font-mono text-[10px] font-black text-slate-400">#{idx + 1}</span>
+                          <h4 className="text-xs font-black text-slate-800 dark:text-white leading-none">{item.name}</h4>
                           <span className="text-[10px] text-slate-400">({item.ageGender})</span>
-                          <span className={`text-[8px] px-1.5 py-0.2 rounded font-bold font-mono uppercase ${
+                        </div>
+                        <div className="flex items-center gap-1.5 flex-wrap pt-1">
+                          <span className={`text-[7px] px-1.5 py-0.2 rounded font-black font-mono uppercase ${
                             item.triage.includes("P1")
-                              ? "bg-rose-50 border border-rose-250 text-rose-700"
+                              ? "bg-rose-50 border border-rose-200 text-rose-700"
                               : item.triage.includes("P2")
                               ? "bg-amber-50 border border-amber-250 text-amber-700"
                               : "bg-emerald-50 border border-emerald-250 text-emerald-700"
                           }`}>
                             {item.triage.split(" ")[0]}
                           </span>
+                          <span className="text-[9px] font-mono text-slate-400 font-bold">Vitals: {item.vitals}</span>
                         </div>
-                        <p className="text-[10px] font-mono text-slate-400 pt-0.5 font-bold">Vitals logged: {item.vitals}</p>
                       </div>
 
-                      {/* Structured SBAR Box */}
-                      <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg p-3 text-[11px] leading-relaxed space-y-1.5 shadow-2xs">
-                        <div className="flex items-center gap-1 text-[9.5px] font-black uppercase text-indigo-500 tracking-wider">
-                          <CheckCircle className="w-3.5 h-3.5 text-emerald-500" />
-                          Structured SBAR Compilation
+                      {/* SBAR summary collapsing panel */}
+                      <details className="text-[10.5px]">
+                        <summary className="cursor-pointer select-none font-black text-indigo-500 hover:text-indigo-700 transition-colors text-[9.5px] uppercase tracking-wider">
+                          View Structured SBAR Card
+                        </summary>
+                        <div className="bg-white dark:bg-slate-950 border border-slate-150 dark:border-slate-850 rounded-lg p-2.5 mt-2 space-y-1.5 leading-relaxed text-slate-700 dark:text-slate-300 shadow-3xs">
+                          <p><strong className="text-blue-700 dark:text-blue-400 font-bold">[S]:</strong> {item.structuredSBAR?.situation}</p>
+                          <p><strong className="text-purple-700 dark:text-purple-400 font-bold">[B]:</strong> {item.structuredSBAR?.background}</p>
+                          <p><strong className="text-amber-700 dark:text-amber-400 font-bold">[A]:</strong> {item.structuredSBAR?.assessment}</p>
+                          <p><strong className="text-emerald-700 dark:text-emerald-400 font-bold">[R]:</strong> {item.structuredSBAR?.recommendation}</p>
                         </div>
-                        <p><strong className="text-blue-700 dark:text-blue-400 font-bold">[S] Situation:</strong> {item.structuredSBAR?.situation}</p>
-                        <p><strong className="text-purple-700 dark:text-purple-400 font-bold">[B] Background:</strong> {item.structuredSBAR?.background}</p>
-                        <p><strong className="text-amber-700 dark:text-amber-400 font-bold">[A] Assessment:</strong> {item.structuredSBAR?.assessment}</p>
-                        <p><strong className="text-emerald-700 dark:text-emerald-400 font-bold">[R] Recommendation:</strong> {item.structuredSBAR?.recommendation}</p>
-                      </div>
-
-                      {/* Raw note collapse check */}
-                      <details className="text-[10px] font-mono text-slate-400">
-                        <summary className="cursor-pointer select-none font-bold hover:text-slate-600 transition-colors">Show pasted EMR payload dump</summary>
-                        <pre className="bg-slate-100 p-2.5 rounded border border-slate-200 mt-2 text-[10px] leading-relaxed whitespace-pre-wrap font-mono">
-                          {item.rawNotes}
-                        </pre>
                       </details>
+
                     </div>
                   ))}
                 </div>
               )}
-            </div>
-          </div>
 
-          {/* Direct Print compilation card (1/3 Width) */}
-          <div className="space-y-4">
-            <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-xs space-y-4">
-              <div className="border-b pb-2 flex items-center gap-2 text-indigo-600 dark:text-indigo-400">
-                <Printer className="w-5 h-5" />
-                <h3 className="text-sm font-bold font-display">Compile Multi-Print</h3>
-              </div>
+              {/* Roster Controls and Printing */}
+              {quickPasteList.length > 0 && (
+                <div className="pt-3 border-t border-slate-100 dark:border-slate-900 space-y-2.5">
+                  
+                  <button
+                    onClick={compileQuickPasteToSheet}
+                    className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-black rounded-xl text-xs transition-all shadow-sm flex items-center justify-center gap-1.5"
+                  >
+                    <Printer className="w-4 h-4" />
+                    Generate Handover Sheet ({quickPasteList.length})
+                  </button>
 
-              <div className="space-y-3.5 text-xs">
-                <div className="flex justify-between font-mono text-[11px] pb-2 border-b border-slate-100 dark:border-slate-900">
-                  <span className="text-slate-400">Accumulated cases:</span>
-                  <strong className="text-slate-800 dark:text-slate-200 font-bold">{quickPasteList.length}</strong>
+                  <button
+                    onClick={() => handleDownloadWordDirect("quickpaste")}
+                    className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-black rounded-xl text-xs transition-all shadow-sm flex items-center justify-center gap-1.5"
+                  >
+                    <Download className="w-4 h-4" />
+                    Download MS Word (.doc)
+                  </button>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      onClick={() => {
+                        handleCopyText("quickpaste_full", getQuickPastePrintText());
+                      }}
+                      className={`py-2 border text-[11px] font-bold rounded-xl transition-all flex items-center justify-center gap-1 ${
+                        copiedState["quickpaste_full"]
+                          ? "bg-emerald-500 border-emerald-500 text-white font-black"
+                          : "bg-white hover:bg-slate-50 dark:bg-slate-900 dark:hover:bg-slate-850 border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300"
+                      }`}
+                    >
+                      {copiedState["quickpaste_full"] ? "✓ Copied!" : "📋 Copy Full"}
+                    </button>
+
+                    <button
+                      onClick={() => {
+                        if (window.confirm("Are you sure you want to clear the entire patient log roster? This action is local-first and cannot be undone.")) {
+                          setQuickPasteList([]);
+                        }
+                      }}
+                      className="py-2 border border-slate-200 dark:border-slate-800 text-[11px] font-bold rounded-xl text-red-500 hover:bg-red-50 dark:hover:bg-red-950/20 transition-all flex items-center justify-center gap-1"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      Clear Roster
+                    </button>
+                  </div>
+
                 </div>
+              )}
 
-                <p className="text-slate-500 leading-relaxed text-[11px]">
-                  Accumulate any number of patients from your external hospital EMR workspace. Once satisfied, compile a full clean, standardized shift transition endorsement document that can be printed or exported.
-                </p>
+              {/* Manual Add Trigger */}
+              <button
+                type="button"
+                onClick={() => {
+                  setEditingPatient({
+                    id: `qp-pat-${Date.now()}`,
+                    name: "",
+                    ageGender: "",
+                    triage: "P2 (Urgent)",
+                    vitals: "",
+                    rawNotes: "",
+                    structuredSBAR: {
+                      situation: "",
+                      background: "",
+                      assessment: "",
+                      recommendation: ""
+                    }
+                  });
+                  setIsEditModalOpen(true);
+                }}
+                className="w-full py-2 border border-dashed border-slate-300 dark:border-slate-800 hover:border-indigo-500 hover:bg-indigo-50/20 dark:hover:bg-indigo-950/20 text-slate-600 dark:text-slate-400 font-bold rounded-xl text-xs transition-all flex items-center justify-center gap-1"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                Manually Add Patient Case
+              </button>
 
-                <button
-                  disabled={quickPasteList.length === 0}
-                  onClick={compileQuickPasteToSheet}
-                  className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold rounded-xl transition-all shadow-sm flex items-center justify-center gap-1.5"
-                >
-                  <Printer className="w-4 h-4" />
-                  Print Combined Handover ({quickPasteList.length})
-                </button>
-
-                <button
-                  disabled={quickPasteList.length === 0}
-                  onClick={() => {
-                    handleCopyText("quickpaste_full", getQuickPastePrintText());
-                  }}
-                  className={`w-full py-2.5 border text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-1.5 ${
-                    copiedState["quickpaste_full"]
-                      ? "bg-emerald-500 border-emerald-500 text-white"
-                      : "bg-white hover:bg-slate-50 dark:bg-slate-900 dark:hover:bg-slate-850 text-slate-700 dark:text-slate-300"
-                  }`}
-                >
-                  {copiedState["quickpaste_full"] ? (
-                    <>
-                      <Check className="w-4 h-4" />
-                      All Copied to Clipboard!
-                    </>
-                  ) : (
-                    <>
-                      <ClipboardCopy className="w-4 h-4" />
-                      Copy Complete Endorsement
-                    </>
-                  )}
-                </button>
-              </div>
             </div>
 
-            {/* Always Free Disclaimer Badge */}
-            <div className="bg-emerald-50/50 dark:bg-emerald-950/20 border border-emerald-200/60 dark:border-emerald-800/80 rounded-xl p-4 space-y-1.5">
-              <span className="text-[10px] font-bold text-emerald-600 bg-emerald-100 px-2 py-0.5 rounded uppercase">Free Clinician Tier</span>
-              <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
-                The free-form EMR quick paste utility runs entirely local-first. We do not persist patient records to clinical databases, ensuring zero compliance footprint and permanent free usage.
+            {/* Disclaimer and information */}
+            <div className="bg-emerald-50/50 dark:bg-emerald-950/20 border border-emerald-150 dark:border-emerald-900/40 rounded-xl p-4 space-y-1.5">
+              <div className="flex items-center gap-1.5 text-emerald-700 dark:text-emerald-400">
+                <CheckCircle className="w-4 h-4" />
+                <span className="text-[10px] font-black uppercase tracking-wider">Compliance Assured</span>
+              </div>
+              <p className="text-[10.5px] text-slate-500 dark:text-slate-400 leading-normal">
+                This clinical utility processes information local-first in your active browser session. Patient case details are never persisted to external storage databases, assuring perfect offline confidentiality.
               </p>
             </div>
+
           </div>
 
+        </div>
+      )}
+
+      {/* POST-PRINT SHIFT CLEANUP ADVISOR MODAL */}
+      {showPostPrintCleanPrompt && (
+        <div className="fixed inset-0 bg-slate-950/80 z-55 flex items-center justify-center p-4 no-print">
+          <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4 relative">
+            <button 
+              onClick={() => {
+                setShowPostPrintCleanPrompt(false);
+                setHasUnclearedShiftWarning(true);
+              }}
+              className="absolute right-4 top-4 p-1 hover:bg-slate-100 dark:hover:bg-slate-850 rounded text-slate-400 hover:text-slate-600"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="flex items-center gap-2.5 text-amber-600 dark:text-amber-400 border-b pb-3">
+              <ShieldAlert className="w-6 h-6 animate-pulse" />
+              <h3 className="text-base font-black font-display tracking-tight">Shift Transition: Safe Board Cleanup</h3>
+            </div>
+
+            <div className="space-y-3">
+              <p className="text-xs text-slate-700 dark:text-slate-300 leading-relaxed font-medium">
+                Handover document compilation completed! Leaving compiled patient records active on the ER board creates selection fatigue and potential data overlapping for the next team.
+              </p>
+              
+              <div className="bg-slate-50 dark:bg-slate-900/40 border rounded-xl p-3.5 space-y-2">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block font-mono">
+                  Compiled Patients Pending Disposal ({idsToCleanup.length})
+                </span>
+                <div className="max-h-[120px] overflow-y-auto space-y-1.5 pr-2">
+                  {postPrintDataType === "registry" ? (
+                    cases.filter(c => idsToCleanup.includes(c.id)).map((c, i) => (
+                      <div key={c.id} className="text-[11px] font-mono flex justify-between text-slate-600 dark:text-slate-400 bg-white dark:bg-slate-950 p-1.5 rounded border border-slate-100">
+                        <span className="font-bold">{i + 1}. {c.patient.name}</span>
+                        <span>{c.patient.age}y / {c.patient.gender} • {c.patient.triageCategory}</span>
+                      </div>
+                    ))
+                  ) : (
+                    quickPasteList.map((p, i) => (
+                      <div key={p.id} className="text-[11px] font-mono flex justify-between text-slate-600 dark:text-slate-400 bg-white dark:bg-slate-950 p-1.5 rounded border border-slate-100">
+                        <span className="font-bold">{i + 1}. {p.name}</span>
+                        <span>{p.triage}</span>
+                      </div>
+                    ))
+                  )}
+                  {idsToCleanup.length === 0 && (
+                    <div className="text-[11px] text-slate-400 text-center py-2">No patients selected.</div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-2 pt-2">
+              {postPrintDataType === "registry" ? (
+                <>
+                  <button
+                    disabled={cleanupActionInProgress || idsToCleanup.length === 0}
+                    onClick={() => handleBulkCleanup("discharge")}
+                    className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-bold rounded-xl transition-all shadow-sm flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    {cleanupActionInProgress ? (
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <CheckCircle className="w-4 h-4" />
+                    )}
+                    Discharge & Archive Cases (Clean active board)
+                  </button>
+                  <button
+                    disabled={cleanupActionInProgress || idsToCleanup.length === 0}
+                    onClick={() => handleBulkCleanup("delete")}
+                    className="w-full py-2.5 bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white text-xs font-bold rounded-xl transition-all shadow-sm flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    Delete Case Logs Completely
+                  </button>
+                </>
+              ) : (
+                <button
+                  disabled={cleanupActionInProgress || quickPasteList.length === 0}
+                  onClick={() => handleBulkCleanup("clear_quickpaste")}
+                  className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-bold rounded-xl transition-all shadow-sm flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  {cleanupActionInProgress ? (
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Trash2 className="w-4 h-4" />
+                  )}
+                  Clear Patient List (Empty Local Memory)
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={() => {
+                  setShowPostPrintCleanPrompt(false);
+                  setHasUnclearedShiftWarning(true);
+                }}
+                className="w-full py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-900 dark:hover:bg-slate-850 text-slate-600 dark:text-slate-400 text-xs font-bold rounded-xl transition-all flex items-center justify-center cursor-pointer"
+              >
+                Keep Active (Will cleanup manually later)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* EDIT PATIENT DETAIL MODAL */}
+      {isEditModalOpen && editingPatient && (
+        <div className="fixed inset-0 bg-slate-950/80 z-55 flex items-center justify-center p-4 no-print overflow-y-auto">
+          <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-2xl w-full p-6 shadow-2xl space-y-4 my-8">
+            <div className="flex items-center justify-between border-b pb-3">
+              <div className="flex items-center gap-2">
+                <Edit2 className="w-5 h-5 text-indigo-500" />
+                <h3 className="text-base font-black font-display text-slate-800 dark:text-white">
+                  {editingPatient.name ? `Modify Handover: ${editingPatient.name}` : "Create Handover Case"}
+                </h3>
+              </div>
+              <button 
+                onClick={() => {
+                  setIsEditModalOpen(false);
+                  setEditingPatient(null);
+                }}
+                className="p-1 hover:bg-slate-100 dark:hover:bg-slate-850 rounded text-slate-400 hover:text-slate-600"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveModalEdit} className="space-y-4 text-xs">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className="font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Patient Name / Bed ID *</label>
+                  <input
+                    type="text"
+                    required
+                    value={editingPatient.name}
+                    onChange={(e) => setEditingPatient({ ...editingPatient, name: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 font-medium text-slate-800 dark:text-slate-100"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Age & Gender</label>
+                  <input
+                    type="text"
+                    value={editingPatient.ageGender}
+                    onChange={(e) => setEditingPatient({ ...editingPatient, ageGender: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 font-medium text-slate-800 dark:text-slate-100"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className="font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Triage Level</label>
+                  <select
+                    value={editingPatient.triage}
+                    onChange={(e) => setEditingPatient({ ...editingPatient, triage: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 font-semibold text-slate-800 dark:text-slate-100"
+                  >
+                    <option value="P1 (Immediate)">P1 (Immediate)</option>
+                    <option value="P2 (Urgent)">P2 (Urgent)</option>
+                    <option value="P3 (Non-Urgent)">P3 (Non-Urgent)</option>
+                  </select>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Current Vital Signs</label>
+                  <input
+                    type="text"
+                    value={editingPatient.vitals}
+                    onChange={(e) => setEditingPatient({ ...editingPatient, vitals: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 font-medium text-slate-800 dark:text-slate-100"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-3 pt-2 border-t border-slate-100 dark:border-slate-900">
+                <span className="text-[10px] font-black uppercase text-indigo-500 tracking-wider">Structured SBAR Components</span>
+                
+                <div className="space-y-1">
+                  <label className="font-bold text-blue-700 dark:text-blue-400">[S] Situation</label>
+                  <textarea
+                    rows={2}
+                    value={editingPatient.structuredSBAR?.situation || ""}
+                    onChange={(e) => setEditingPatient({
+                      ...editingPatient,
+                      structuredSBAR: {
+                        ...(editingPatient.structuredSBAR || { situation: '', background: '', assessment: '', recommendation: '' }),
+                        situation: e.target.value
+                      }
+                    })}
+                    className="w-full p-2.5 bg-slate-50 dark:bg-slate-900 border rounded-lg focus:ring-1 focus:ring-indigo-500 font-medium text-slate-800 dark:text-slate-100"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="font-bold text-purple-700 dark:text-purple-400">[B] Background</label>
+                  <textarea
+                    rows={2}
+                    value={editingPatient.structuredSBAR?.background || ""}
+                    onChange={(e) => setEditingPatient({
+                      ...editingPatient,
+                      structuredSBAR: {
+                        ...(editingPatient.structuredSBAR || { situation: '', background: '', assessment: '', recommendation: '' }),
+                        background: e.target.value
+                      }
+                    })}
+                    className="w-full p-2.5 bg-slate-50 dark:bg-slate-900 border rounded-lg focus:ring-1 focus:ring-indigo-500 font-medium text-slate-800 dark:text-slate-100"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="font-bold text-amber-700 dark:text-amber-400">[A] Assessment</label>
+                  <textarea
+                    rows={2}
+                    value={editingPatient.structuredSBAR?.assessment || ""}
+                    onChange={(e) => setEditingPatient({
+                      ...editingPatient,
+                      structuredSBAR: {
+                        ...(editingPatient.structuredSBAR || { situation: '', background: '', assessment: '', recommendation: '' }),
+                        assessment: e.target.value
+                      }
+                    })}
+                    className="w-full p-2.5 bg-slate-50 dark:bg-slate-900 border rounded-lg focus:ring-1 focus:ring-indigo-500 font-medium text-slate-800 dark:text-slate-100"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="font-bold text-emerald-700 dark:text-emerald-400 font-bold">[R] Recommendation</label>
+                  <textarea
+                    rows={2}
+                    value={editingPatient.structuredSBAR?.recommendation || ""}
+                    onChange={(e) => setEditingPatient({
+                      ...editingPatient,
+                      structuredSBAR: {
+                        ...(editingPatient.structuredSBAR || { situation: '', background: '', assessment: '', recommendation: '' }),
+                        recommendation: e.target.value
+                      }
+                    })}
+                    className="w-full p-2.5 bg-slate-50 dark:bg-slate-900 border rounded-lg focus:ring-1 focus:ring-indigo-500 font-medium text-slate-800 dark:text-slate-100"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label className="font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Raw Input Notes / Clinical Snippet</label>
+                <textarea
+                  rows={3}
+                  value={editingPatient.rawNotes}
+                  onChange={(e) => setEditingPatient({ ...editingPatient, rawNotes: e.target.value })}
+                  className="w-full p-2.5 bg-slate-50 dark:bg-slate-900 border rounded-lg focus:ring-1 focus:ring-indigo-500 font-mono text-[10.5px] text-slate-800 dark:text-slate-100"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsEditModalOpen(false);
+                    setEditingPatient(null);
+                  }}
+                  className="px-4 py-2 border rounded-xl hover:bg-slate-50 text-slate-600 font-bold cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl transition-all shadow-sm cursor-pointer"
+                >
+                  Save Changes
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
 

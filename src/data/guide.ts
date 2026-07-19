@@ -536,5 +536,84 @@ Your login session refreshes automatically in the background. If you are logged 
 2.  Tap the save/commit button again.
 3.  The app saves a local copy — your work is not lost even without connection.
     `
+  },
+  {
+    id: "23-shift-handover",
+    title: "23. Shift Handover & Endorsements",
+    badge: "Clinical",
+    content: `
+The **Shift Handover Board** (Endorsement Tracker) is a specialized module for managing and delegating patient care responsibility during clinical shift transitions.
+
+### Key Workflows:
+1. **Endorsing a Patient**: When your shift ends, or when transferring a patient to another ward/clinician, open the **Handover** tab. Click **Add Patient Handover** to register the patient's current status, complaints, medical history, initial assessment, and completed vs. pending tasks.
+2. **Pending Actions (To Be Done)**: Document any critical outstanding items (e.g., pending CT scan, repeat electrolytes, bystander update) so the incoming doctor can resume care without delay.
+3. **Registry View**: Shows all active patient handovers for the current ward/shift, categorized by status and urgency.
+4. **Real-time Synchronization**: Handover logs sync instantly with our Firestore database, allowing all team members to view live updates simultaneously.
+    `
+  },
+  {
+    id: "24-acknowledgement-function",
+    title: "24. Role of Acknowledgement",
+    badge: "Clinical",
+    content: `
+The **Acknowledgement** function is the cornerstone of patient safety and closed-loop communication during clinical handovers.
+
+### Why is Acknowledgement Critical?
+* **Medicolegal Safety**: It establishes a clear, timestamped record of exactly *who* took over clinical responsibility of a patient and *when*. 
+* **Closed-loop Transfer**: Instead of assuming the incoming doctor read the handover, the incoming doctor must actively review the card and tap **Acknowledge as Dr. [Name]**.
+* **Clinical Accountability**: Once clicked, the card turns green, registering that care has been successfully accepted.
+
+### How it Works:
+1. Open the **Handover** registry or your Dashboard.
+2. Review the patient's clinical state, active plans, and pending items.
+3. Tap **Acknowledge** (marked by a checkbox/double-check icon).
+4. The system automatically stamps your name and the exact time (e.g., *"Ack'd by Dr. Sarah Smith at 08:30 AM"*).
+5. **Real-time Notifications**: The doctor who originally endorsed the patient receives an instant notification showing that the handover has been officially acknowledged, ensuring full peace of mind.
+    `
+  },
+  {
+    id: "25-ai-scribe-chat",
+    title: "25. AI Clinical Scribe Chat",
+    badge: "ErMate Feature",
+    content: `
+The **ErMate AI Scribe Chat** is a conversational medical companion designed to draft high-quality clinical documentation and clinical notes.
+
+### Major Capabilities:
+* **Conversational Notes Drafting**: Discuss clinical cases naturally or dictation-transcribe a patient encounter, and ask ErMate to *"Draft a standard SOAP note"* or *"Formulate a discharge summary outline"*.
+* **Smart QuickPaste Integration**: Write a summary or clinical instruction in the scribe chat, click **Copy**, and use the QuickPaste panel to immediately inject the text into handover notes or patient charts.
+* **Drug & Guidelines Reference**: Ask rapid clinical questions regarding dosing, contraindications, or emergency protocols directly within the chat window to receive structured answers.
+    `
+  },
+  {
+    id: "26-pediatric-drug-calculator",
+    title: "26. Pediatric Drug Calculator",
+    badge: "Clinical",
+    content: `
+Emergency pediatric care requires rapid and highly precise weight-based dosing. The **Pediatric Emergency Drug Calculator** solves this by automating complex calculations under pressure.
+
+### How to Use the Calculator:
+1. Tap the **Pediatric Drug Calculator** shortcut in the quick tools or Case Sheet view.
+2. Enter the patient's **Age** or **Weight** (in kg). If only age is entered, the system estimates the weight based on standardized pediatric growth charts.
+3. The calculator instantly generates exact doses, concentrations, and infusion guidelines for:
+    * **Resuscitation Drugs**: Adrenaline, Atropine, Amiodarone, Sodium Bicarbonate.
+    * **Intubation & Sedation**: Ketamine, Propofol, Fentanyl, Midazolam.
+    * **Anticonvulsants**: Phenytoin, Levetiracetam, Diazepam.
+    * **Antibiotics & Fluids**: Age/weight-adjusted maintenance fluids and first-line emergency antibiotics.
+4. Always cross-verify calculated outputs with PALS references before administration.
+    `
+  },
+  {
+    id: "27-mobile-experience",
+    title: "27. Mobile & PWA Experience",
+    badge: "Nav",
+    content: `
+ErMate is built with a **Mobile-First Responsive Interface**, optimized to run flawlessly on smartphones, hospital tablets, and desktop computers.
+
+### Smartphone Optimizations:
+* **Single-Column Stacking**: On mobile screens, secondary sidebars and wide bento grids automatically stack into highly legible vertical views, keeping active forms readable and prevents horizontal scrolling.
+* **Header Collapse & Navigation**: Desktop header text links (e.g., v2.4.0 Updates, Download App) automatically collapse on mobile screens into lightweight icons, saving precious vertical pixels.
+* **Floating Quick Action Buttons**: Touch targets are scaled to at least **44px** to allow fast tap interactions during busy ER rounds.
+* **PWA Offline Support**: Install ErMate to your home screen using the **Download App** button. This configures the Progressive Web App (PWA) cache, allowing rapid launching and access to local records even with unstable hospital Wi-Fi.
+    `
   }
 ];

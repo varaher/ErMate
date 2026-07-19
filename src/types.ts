@@ -241,6 +241,7 @@ export interface VitalsRecord {
 
 export interface ClinicalCase {
   id: string;
+  bedNo?: string;
   patient: PatientDemographics;
   vitals: PatientVitals;
   sampleHistory: SampleHistory;
@@ -256,6 +257,7 @@ export interface ClinicalCase {
   savedTime: string;
   timeSpentMin: number; // calculated time spent
   doctorEmail?: string; // assigned doctor's email for custom dashboard cases
+  hospital?: string; // hospital name for data isolation and security
   ipsgChecklist?: IpsgChecklist;
   vulnerableAssessment?: VulnerableAssessment;
   consentTimeOut?: ConsentTimeOut;
@@ -391,5 +393,6 @@ export interface HandoverRecord {
   patientsText: string;
   acknowledgedBy?: string;
   acknowledgedTime?: string;
+  hospital?: string; // hospital name for data isolation and security
 }
 
