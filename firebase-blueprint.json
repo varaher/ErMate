@@ -55,9 +55,61 @@
         "acknowledgedTime": { "type": "string" }
       },
       "required": ["id", "senderName", "senderEmail", "timestamp", "caseCount", "patientsText"]
+    },
+    "TeamMember": {
+      "title": "TeamMember",
+      "description": "Hospital team member with clinical role and assigned shift",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "role": { "type": "string" },
+        "status": { "type": "string" },
+        "shift": { "type": "string" },
+        "hospital": { "type": "string" },
+        "assignedBy": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "name", "email", "role", "hospital", "shift"]
+    },
+    "HospitalSubscription": {
+      "title": "HospitalSubscription",
+      "description": "Hospital group license and team subscription status",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "hospital": { "type": "string" },
+        "subscriptionTier": { "type": "string" },
+        "active": { "type": "boolean" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "hospital", "subscriptionTier", "active"]
+    },
+    "Contribution": {
+      "title": "Contribution",
+      "description": "User suggested mnemonic or clinical guideline contribution",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "mnemonic": { "type": "string" },
+        "category": { "type": "string" },
+        "breakdown": { "type": "string" },
+        "explanation": { "type": "string" },
+        "status": { "type": "string" },
+        "submittedBy": { "type": "string" },
+        "submitterEmail": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "title", "mnemonic", "category", "breakdown", "status", "submittedBy", "submitterEmail"]
     }
   },
   "firestore": {
+    "/contributions/{contributionId}": {
+      "schema": "Contribution",
+      "description": "Suggested mnemonics and clinical guidelines pending review"
+    },
     "/users/{userId}": {
       "schema": "UserProfile",
       "description": "User profiles keyed by auth.uid"
@@ -69,6 +121,14 @@
     "/handovers/{handoverId}": {
       "schema": "HandoverRecord",
       "description": "Recorded shift handovers between shifts/doctors"
+    },
+    "/team_members/{memberId}": {
+      "schema": "TeamMember",
+      "description": "Whitelisted team members and shift assignments"
+    },
+    "/hospital_subscriptions/{hospitalId}": {
+      "schema": "HospitalSubscription",
+      "description": "Shared hospital subscription status for teams"
     }
   }
 }

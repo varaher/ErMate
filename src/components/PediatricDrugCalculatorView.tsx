@@ -82,22 +82,22 @@ export default function PediatricDrugCalculatorView({ onBack, initialWeight }: P
   };
 
   return (
-    <div className="bg-slate-900 min-h-screen text-slate-100 p-4 md:p-6 pb-20 font-sans" id="pediatric-calculator-container">
+    <div className="bg-slate-50 dark:bg-slate-900 min-h-screen text-slate-800 dark:text-slate-100 p-4 md:p-6 pb-20 font-sans" id="pediatric-calculator-container">
       
       {/* Header section */}
-      <div className="max-w-4xl mx-auto flex items-center gap-3 border-b border-slate-800 pb-4 mb-5">
+      <div className="max-w-4xl mx-auto flex items-center gap-3 border-b border-slate-200 dark:border-slate-800 pb-4 mb-5">
         <button 
           onClick={selectedCategory ? () => setSelectedCategory(null) : onBack}
-          className="p-2 hover:bg-slate-800 rounded-lg text-slate-300 hover:text-white transition-all flex items-center justify-center"
+          className="p-2 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-lg text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white transition-all flex items-center justify-center"
           title="Back"
         >
           <ArrowLeft className="w-5 h-5" />
         </button>
         <div>
-          <h1 className="text-lg md:text-xl font-bold font-display tracking-tight text-white flex items-center gap-2">
+          <h1 className="text-lg md:text-xl font-bold font-display tracking-tight text-slate-900 dark:text-white flex items-center gap-2">
             Pediatric Drug Calculator
           </h1>
-          <p className="text-xs text-slate-400 font-mono">
+          <p className="text-xs text-slate-500 dark:text-slate-400 font-mono">
             {selectedCategory ? `Dosing reference • ${selectedCategory}` : "Weight-based pediatric emergency dosing reference"}
           </p>
         </div>
@@ -106,15 +106,15 @@ export default function PediatricDrugCalculatorView({ onBack, initialWeight }: P
       <div className="max-w-4xl mx-auto space-y-5">
 
         {/* 1. Weight Input Card */}
-        <div className="bg-slate-950/60 border border-slate-800 rounded-2xl p-5 shadow-lg space-y-3">
+        <div className="bg-white dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-sm dark:shadow-lg space-y-3">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div className="flex items-center gap-3">
-              <div className="p-2.5 bg-sky-500/10 text-sky-400 rounded-xl border border-sky-500/25">
+              <div className="p-2.5 bg-sky-500/10 text-sky-600 dark:text-sky-400 rounded-xl border border-sky-500/25">
                 <Heart className="w-5 h-5" />
               </div>
               <div>
-                <label className="text-xs font-bold text-slate-400 uppercase tracking-wider block">Patient Weight (kg)</label>
-                <span className="text-[10px] text-slate-500 font-mono block">Type weight below to calculate immediate precise dosing</span>
+                <label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider block">Patient Weight (kg)</label>
+                <span className="text-[10px] text-slate-400 dark:text-slate-500 font-mono block">Type weight below to calculate immediate precise dosing</span>
               </div>
             </div>
 
@@ -127,15 +127,15 @@ export default function PediatricDrugCalculatorView({ onBack, initialWeight }: P
                   setExpandedDrugId(null);
                 }}
                 placeholder="Enter weight"
-                className="w-full pl-4 pr-12 py-3 bg-slate-900 border border-slate-800 rounded-xl text-sm font-semibold text-white focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 text-center font-mono [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                className="w-full pl-4 pr-12 py-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-sm font-semibold text-slate-900 dark:text-white focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 text-center font-mono [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
               />
-              <span className="absolute right-4 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-500 uppercase tracking-wider pointer-events-none">
+              <span className="absolute right-4 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider pointer-events-none">
                 KG
               </span>
             </div>
           </div>
           
-          <div className="text-[10px] text-amber-500/90 font-medium font-mono flex items-center gap-1 bg-amber-500/5 border border-amber-500/10 p-2.5 rounded-lg">
+          <div className="text-[10px] text-amber-600 dark:text-amber-500/90 font-medium font-mono flex items-center gap-1 bg-amber-500/5 border border-amber-500/10 p-2.5 rounded-lg">
             <Info className="w-3.5 h-3.5 shrink-0" />
             <span>Enter patient weight for dose calculations</span>
           </div>
@@ -153,7 +153,7 @@ export default function PediatricDrugCalculatorView({ onBack, initialWeight }: P
                 setExpandedDrugId(null);
               }}
               placeholder="Search drugs by name..."
-              className="w-full pl-11 pr-4 py-3 bg-slate-950/40 border border-slate-800 rounded-xl text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-sky-500/50"
+              className="w-full pl-11 pr-4 py-3 bg-white dark:bg-slate-950/40 border border-slate-200 dark:border-slate-800 rounded-xl text-xs text-slate-800 dark:text-slate-200 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:border-sky-500/50"
             />
           </div>
         )}
@@ -163,19 +163,19 @@ export default function PediatricDrugCalculatorView({ onBack, initialWeight }: P
           // SEARCH RESULTS ACTIVE
           <div className="space-y-4">
             <div className="flex justify-between items-center px-1">
-              <h3 className="text-xs font-bold font-mono uppercase text-slate-400 tracking-wider">
+              <h3 className="text-xs font-bold font-mono uppercase text-slate-500 dark:text-slate-400 tracking-wider">
                 Search Results ({filteredDrugs.length})
               </h3>
               <button 
                 onClick={() => setSearchQuery("")}
-                className="text-[11px] text-sky-400 hover:underline font-mono"
+                className="text-[11px] text-sky-600 dark:text-sky-400 hover:underline font-mono"
               >
                 Clear Search
               </button>
             </div>
 
             {filteredDrugs.length === 0 ? (
-              <div className="bg-slate-950/30 border border-slate-800 rounded-2xl p-10 text-center text-slate-500 text-xs font-mono">
+              <div className="bg-white dark:bg-slate-950/30 border border-slate-200 dark:border-slate-800 rounded-2xl p-10 text-center text-slate-500 text-xs font-mono">
                 No pediatric drugs match "{searchQuery}"
               </div>
             ) : (
@@ -197,24 +197,24 @@ export default function PediatricDrugCalculatorView({ onBack, initialWeight }: P
         ) : selectedCategory ? (
           // VIEWING A CATEGORY'S DRUGS
           <div className="space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-800/80 pb-2 px-1">
+            <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800/80 pb-2 px-1">
               <div className="flex items-center gap-2">
                 <button 
                   onClick={() => setSelectedCategory(null)}
-                  className="text-xs text-sky-400 hover:underline font-mono flex items-center gap-1"
+                  className="text-xs text-sky-600 dark:text-sky-400 hover:underline font-mono flex items-center gap-1"
                 >
                   <ArrowLeft className="w-3 h-3" /> Categories
                 </button>
-                <span className="text-xs text-slate-500">•</span>
-                <span className="text-xs font-bold font-mono text-slate-300">{selectedCategory}</span>
+                <span className="text-xs text-slate-400 dark:text-slate-500">•</span>
+                <span className="text-xs font-bold font-mono text-slate-700 dark:text-slate-300">{selectedCategory}</span>
               </div>
-              <span className="text-xs bg-slate-850 text-slate-400 px-2.5 py-0.5 rounded-full font-mono font-bold">
+              <span className="text-xs bg-slate-100 dark:bg-slate-850 text-slate-500 dark:text-slate-400 px-2.5 py-0.5 rounded-full font-mono font-bold">
                 {filteredDrugs.length} drugs
               </span>
             </div>
 
             {filteredDrugs.length === 0 ? (
-              <div className="bg-slate-950/30 border border-slate-800 rounded-2xl p-10 text-center text-slate-500 text-xs font-mono">
+              <div className="bg-white dark:bg-slate-950/30 border border-slate-200 dark:border-slate-800 rounded-2xl p-10 text-center text-slate-500 text-xs font-mono">
                 No drugs added under this category yet.
               </div>
             ) : (
@@ -237,10 +237,10 @@ export default function PediatricDrugCalculatorView({ onBack, initialWeight }: P
           // MAIN CATEGORIES LIST (Screenshot 1 & 2)
           <div className="space-y-4">
             <div className="px-1">
-              <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest font-mono">
+              <h3 className="text-xs font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest font-mono">
                 Drug Categories
               </h3>
-              <p className="text-[11px] text-slate-500 font-mono mt-0.5">
+              <p className="text-[11px] text-slate-400 dark:text-slate-500 font-mono mt-0.5">
                 133 drugs across 24 categories • Compliant with PALS standard guidelines
               </p>
             </div>
@@ -253,16 +253,16 @@ export default function PediatricDrugCalculatorView({ onBack, initialWeight }: P
                   <div
                     key={cat.id}
                     onClick={() => handleCategoryClick(cat.name)}
-                    className="bg-slate-950/40 hover:bg-slate-950 border border-slate-850 hover:border-sky-500/40 rounded-2xl p-4 cursor-pointer transition-all hover:shadow-md flex flex-col items-center text-center justify-center space-y-2.5 h-36 relative group"
+                    className="bg-white dark:bg-slate-950/40 hover:bg-slate-50 dark:hover:bg-slate-950 border border-slate-200 dark:border-slate-850 hover:border-sky-500/40 rounded-2xl p-4 cursor-pointer transition-all hover:shadow-md flex flex-col items-center text-center justify-center space-y-2.5 h-36 relative group"
                   >
                     <div className={`p-3 rounded-full ${cat.bgClass} ${cat.colorClass} group-hover:scale-110 transition-transform`}>
                       <CategoryIcon iconName={cat.iconName} className="w-5 h-5" />
                     </div>
                     <div className="space-y-0.5">
-                      <span className="text-[11px] font-bold text-slate-200 block tracking-tight group-hover:text-white leading-tight">
+                      <span className="text-[11px] font-bold text-slate-700 dark:text-slate-200 block tracking-tight group-hover:text-sky-600 dark:group-hover:text-white leading-tight">
                         {cat.name}
                       </span>
-                      <span className="text-[10px] text-slate-500 font-mono block">
+                      <span className="text-[10px] text-slate-400 dark:text-slate-500 font-mono block">
                         {count > 0 ? `${count} drug${count > 1 ? "s" : ""}` : "Coming soon"}
                       </span>
                     </div>
@@ -274,8 +274,8 @@ export default function PediatricDrugCalculatorView({ onBack, initialWeight }: P
         )}
 
         {/* 4. Disclaimer Banner (Screenshot 2 bottom) */}
-        <div className="bg-slate-950/80 border border-slate-850 p-4.5 rounded-2xl space-y-2 text-slate-400 text-[10px] leading-relaxed font-mono mt-10">
-          <div className="flex items-start gap-2.5 text-amber-500/90 font-bold uppercase tracking-wider">
+        <div className="bg-white dark:bg-slate-950/80 border border-slate-200 dark:border-slate-850 p-4.5 rounded-2xl space-y-2 text-slate-500 dark:text-slate-400 text-[10px] leading-relaxed font-mono mt-10">
+          <div className="flex items-start gap-2.5 text-amber-600 dark:text-amber-500/90 font-bold uppercase tracking-wider">
             <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
             <span>Clinical Disclaimer</span>
           </div>
@@ -310,46 +310,46 @@ function DrugCard({ drug, weight, isWeightValid, isExpanded, onToggle }: DrugCar
 
   return (
     <div 
-      className={`bg-slate-950/50 border rounded-2xl p-4 hover:border-slate-700 transition-all ${
-        isExpanded ? "border-sky-500/30 ring-1 ring-sky-500/10" : "border-slate-850"
+      className={`bg-white dark:bg-slate-950/50 border rounded-2xl p-4 hover:border-slate-400 dark:hover:border-slate-700 transition-all ${
+        isExpanded ? "border-sky-500/30 ring-1 ring-sky-500/10" : "border-slate-200 dark:border-slate-850"
       }`}
     >
       <div className="flex justify-between items-start gap-3 cursor-pointer" onClick={onToggle}>
         <div className="space-y-1">
-          <h4 className="text-xs font-bold text-white tracking-tight">{drug.name}</h4>
+          <h4 className="text-xs font-bold text-slate-900 dark:text-white tracking-tight">{drug.name}</h4>
           {drug.genericName && (
-            <p className="text-[10px] text-slate-500 font-mono">{drug.genericName}</p>
+            <p className="text-[10px] text-slate-450 dark:text-slate-500 font-mono">{drug.genericName}</p>
           )}
-          <p className="text-xs text-sky-400 font-mono font-semibold pt-1">
+          <p className="text-xs text-sky-600 dark:text-sky-400 font-mono font-semibold pt-1">
             {drug.standardDose} | {drug.route} | {drug.frequency}
           </p>
           {drug.maxDose && (
-            <p className="text-[9.5px] text-rose-400 font-mono font-medium">{drug.maxDose}</p>
+            <p className="text-[9.5px] text-rose-600 dark:text-rose-400 font-mono font-medium">{drug.maxDose}</p>
           )}
         </div>
 
-        <button className="p-1 hover:bg-slate-900 rounded text-slate-500 hover:text-slate-300 transition-all">
+        <button className="p-1 hover:bg-slate-100 dark:hover:bg-slate-900 rounded text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-all">
           {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
         </button>
       </div>
 
       {/* Realtime Calculated Dose Alert Block */}
       {isWeightValid && calculation ? (
-        <div className="mt-3 bg-indigo-500/5 border border-indigo-500/15 rounded-xl p-3 flex justify-between items-center">
+        <div className="mt-3 bg-indigo-50 dark:bg-indigo-500/5 border border-indigo-150 dark:border-indigo-500/15 rounded-xl p-3 flex justify-between items-center">
           <div className="space-y-0.5">
-            <span className="text-[9px] font-bold text-indigo-400 uppercase tracking-wider font-mono">Calculated Dose ({weight} kg)</span>
-            <span className="text-[10px] text-slate-300 font-semibold font-sans block leading-normal whitespace-pre-line">
+            <span className="text-[9px] font-bold text-indigo-600 dark:text-indigo-400 uppercase tracking-wider font-mono">Calculated Dose ({weight} kg)</span>
+            <span className="text-[10px] text-slate-700 dark:text-slate-300 font-semibold font-sans block leading-normal whitespace-pre-line">
               {calculation.breakdown || `${calculation.doseValue} ${drug.route} ${drug.frequency}`}
             </span>
           </div>
           <div className="text-right shrink-0">
-            <span className="text-xs font-black text-indigo-300 font-mono bg-indigo-500/10 border border-indigo-500/20 px-2.5 py-1 rounded-md">
+            <span className="text-xs font-black text-indigo-600 dark:text-indigo-300 font-mono bg-indigo-100 dark:bg-indigo-500/10 border border-indigo-200 dark:border-indigo-500/20 px-2.5 py-1 rounded-md">
               {calculation.doseValue}
             </span>
           </div>
         </div>
       ) : (
-        <div className="mt-3 bg-slate-900/40 border border-slate-850 rounded-xl p-2.5 text-[10px] font-mono text-slate-500 flex items-center gap-1.5">
+        <div className="mt-3 bg-slate-50 dark:bg-slate-900/40 border border-slate-150 dark:border-slate-850 rounded-xl p-2.5 text-[10px] font-mono text-slate-500 flex items-center gap-1.5">
           <Info className="w-3.5 h-3.5 shrink-0" />
           <span>Type weight in the calculator above to display calculated doses.</span>
         </div>
@@ -357,11 +357,11 @@ function DrugCard({ drug, weight, isWeightValid, isExpanded, onToggle }: DrugCar
 
       {/* Expanded detailed clinical instructions panel */}
       {isExpanded && (
-        <div className="mt-4 pt-4 border-t border-slate-900 space-y-3 text-[11px] leading-relaxed">
+        <div className="mt-4 pt-4 border-t border-slate-150 dark:border-slate-900 space-y-3 text-[11px] leading-relaxed">
           {drug.indications && drug.indications.length > 0 && (
             <div className="space-y-1">
-              <span className="text-[9.5px] font-bold text-slate-400 uppercase tracking-wider font-mono">Clinical Indications:</span>
-              <ul className="list-disc pl-4 space-y-0.5 text-slate-300">
+              <span className="text-[9.5px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider font-mono">Clinical Indications:</span>
+              <ul className="list-disc pl-4 space-y-0.5 text-slate-600 dark:text-slate-300">
                 {drug.indications.map((ind, idx) => (
                   <li key={idx}>{ind}</li>
                 ))}
@@ -369,23 +369,49 @@ function DrugCard({ drug, weight, isWeightValid, isExpanded, onToggle }: DrugCar
             </div>
           )}
 
-          {calculation?.notes && (
-            <div className="space-y-1 bg-slate-900/60 p-2.5 rounded-lg border border-slate-850">
-              <span className="text-[9.5px] font-bold text-amber-400 uppercase tracking-wider font-mono block">Clinical Dilution & Safe Administration notes:</span>
-              <p className="text-slate-300 font-mono text-[10px]">{calculation.notes}</p>
+          {drug.formulations && drug.formulations.length > 0 ? (
+            <div className="space-y-1.5 bg-sky-50 dark:bg-sky-950/20 p-2.5 rounded-lg border border-sky-150 dark:border-sky-900/40">
+              <span className="text-[9.5px] font-bold text-sky-700 dark:text-sky-400 uppercase tracking-wider font-mono block">Available Formulations (Syrup, Injection, Tablets, etc.):</span>
+              <ul className="list-disc pl-4 space-y-0.5 text-slate-650 dark:text-slate-300 font-mono text-[10px]">
+                {drug.formulations.map((form, idx) => (
+                  <li key={idx}>{form}</li>
+                ))}
+              </ul>
+            </div>
+          ) : (
+            <div className="space-y-1.5 bg-sky-50 dark:bg-sky-950/20 p-2.5 rounded-lg border border-sky-150 dark:border-sky-900/40">
+              <span className="text-[9.5px] font-bold text-sky-700 dark:text-sky-400 uppercase tracking-wider font-mono block">Formulation Classifications:</span>
+              <ul className="list-disc pl-4 space-y-0.5 text-slate-650 dark:text-slate-300 font-mono text-[10px]">
+                {drug.route.includes("PO") && (
+                  <>
+                    <li><strong className="text-slate-700 dark:text-slate-200">Syrup/Suspension:</strong> Standard pediatric oral suspension liquid drops.</li>
+                    <li><strong className="text-slate-700 dark:text-slate-200">Tablets:</strong> Dispersible or crushable tablets (split according to computed dose).</li>
+                  </>
+                )}
+                {drug.route.includes("IV") && <li><strong className="text-slate-700 dark:text-slate-200">Injection:</strong> Reconstituted liquid infusion vial (slow push / IV drip).</li>}
+                {drug.route.includes("IM") && <li><strong className="text-slate-700 dark:text-slate-200">Injection (IM):</strong> Concentrated intramuscular vial injection.</li>}
+                {drug.route.includes("PR") && <li><strong className="text-slate-700 dark:text-slate-200">Rectal/Suppository:</strong> Safe local pediatric suppository formulations.</li>}
+              </ul>
             </div>
           )}
 
-          <div className="flex items-center justify-between text-[9px] text-slate-500 font-mono pt-1">
+          {calculation?.notes && (
+            <div className="space-y-1 bg-slate-50 dark:bg-slate-900/60 p-2.5 rounded-lg border border-slate-150 dark:border-slate-850">
+              <span className="text-[9.5px] font-bold text-amber-600 dark:text-amber-400 uppercase tracking-wider font-mono block">Clinical Dilution & Safe Administration notes:</span>
+              <p className="text-slate-600 dark:text-slate-300 font-mono text-[10px]">{calculation.notes}</p>
+            </div>
+          )}
+
+          <div className="flex items-center justify-between text-[9px] text-slate-400 dark:text-slate-500 font-mono pt-1">
             <span>Reference: {drug.source}</span>
-            <span className="text-slate-600">PALS Emergency Guidelines</span>
+            <span className="text-slate-400 dark:text-slate-600">PALS Emergency Guidelines</span>
           </div>
         </div>
       )}
 
       {/* Card Footer Reference Source (Screenshot 4) */}
       {!isExpanded && (
-        <div className="mt-2 text-[9px] text-slate-500 font-mono border-t border-slate-900/40 pt-1.5">
+        <div className="mt-2 text-[9px] text-slate-450 dark:text-slate-500 font-mono border-t border-slate-100 dark:border-slate-900/40 pt-1.5">
           {drug.source}
         </div>
       )}

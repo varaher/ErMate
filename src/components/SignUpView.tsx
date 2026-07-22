@@ -29,6 +29,7 @@ export default function SignUpView({
   const [subscription, setSubscription] = useState<"Free Trial" | "Pro Doctor" | "Team Department">(
     initialRole === "HOD" ? "Team Department" : "Free Trial"
   );
+  const [acceptOffer, setAcceptOffer] = useState(true);
 
   // Sync state if initial props change
   React.useEffect(() => {
@@ -128,12 +129,29 @@ export default function SignUpView({
           hospital: hospital.trim(),
           aiCredits: credits,
           streak: 1, // new user streak starts at 1
-          subscriptionTier: subTier,
+          subscriptionTier: acceptOffer && initialHospital ? "Hospital Team Premium (Department Covered)" : subTier,
           age: parsedAge
         };
 
         // Write user profile to firestore
         await setDoc(doc(db, "users", user.uid), newProfile);
+
+        // Auto-add or update team member registration
+        if (acceptOffer && hospital.trim()) {
+          const emailClean = email.trim().toLowerCase();
+          const memberId = `mem-${emailClean.replace(/[^a-zA-Z0-9]/g, "-")}`;
+          const memberDocRef = doc(db, "team_members", memberId);
+          await setDoc(memberDocRef, {
+            id: memberId,
+            name: formattedName,
+            email: emailClean,
+            role: role === "HOD" ? "HOD / Shift Lead" : role === "Consultant" ? "Senior Consultant" : "EM Resident",
+            status: "Active (Joined)",
+            shift: "off",
+            hospital: hospital.trim(),
+            updatedAt: new Date().toISOString()
+          }, { merge: true });
+        }
 
         // Success callback
         onSignUp(newProfile);
@@ -214,6 +232,35 @@ export default function SignUpView({
             ) : (
               <form onSubmit={handleSubmit} className="space-y-4">
                 
+                {/* Clinical Joining Offer Banner */}
+                {initialHospital && (
+                  <div className="bg-indigo-50/70 dark:bg-slate-900 border border-indigo-200 dark:border-indigo-950 rounded-xl p-4 space-y-2.5 text-slate-800 dark:text-slate-100 shadow-sm">
+                    <div className="flex items-center gap-2">
+                      <div className="h-6 w-6 rounded-lg bg-indigo-600 flex items-center justify-center text-white text-[10px] font-bold">
+                        🎁
+                      </div>
+                      <p className="text-[10px] font-black uppercase tracking-wider font-mono text-indigo-700 dark:text-indigo-400">
+                        Clinical Joining Offer Active
+                      </p>
+                    </div>
+                    <p className="text-[11px] leading-relaxed text-slate-500 dark:text-slate-400 font-medium">
+                      You are invited to join the clinical team at <strong className="text-indigo-600 dark:text-indigo-400 font-extrabold">{initialHospital}</strong> under their premium department network subscription.
+                    </p>
+                    <div className="flex items-center gap-2 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-850 px-3 py-2 rounded-xl">
+                      <input
+                        type="checkbox"
+                        id="accept-offer"
+                        checked={acceptOffer}
+                        onChange={(e) => setAcceptOffer(e.target.checked)}
+                        className="h-3.5 w-3.5 rounded text-indigo-600 focus:ring-indigo-500 border-slate-300 dark:border-slate-800 cursor-pointer"
+                      />
+                      <label htmlFor="accept-offer" className="text-[10px] font-black text-slate-600 dark:text-slate-300 cursor-pointer select-none">
+                        I accept the offer to join and sync my roster
+                      </label>
+                    </div>
+                  </div>
+                )}
+
                 {/* Error Banner */}
                 {error && (
                   <div className="p-3 bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs rounded-xl font-mono leading-relaxed">

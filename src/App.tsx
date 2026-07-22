@@ -1,14 +1,14 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { 
   Activity, Sparkles, BookOpen, User, Clock, ShieldAlert, 
   Settings, HelpCircle, Trophy, ClipboardList, Zap, Moon, Sun, Users,
   Search, X, TrendingUp, Bell, BellRing, Trash2, Check, Mic, ShieldCheck, RefreshCw,
-  Download, Smartphone
+  Download, Smartphone, Building2, UserCheck
 } from "lucide-react";
 
 import { 
   ClinicalCase, UserProfile, PatientDemographics, PatientVitals, 
-  DischargeInfo, TriageCategory, ArrivalMode, HandoverRecord
+  DischargeInfo, TriageCategory, ArrivalMode, HandoverRecord, TeamMember
 } from "./types";
 
 import DashboardView from "./components/DashboardView";
@@ -23,13 +23,16 @@ import VoiceScribeChatView from "./components/VoiceScribeChatView";
 import SignUpView from "./components/SignUpView";
 import ForgotPasswordView from "./components/ForgotPasswordView";
 import PediatricDrugCalculatorView from "./components/PediatricDrugCalculatorView";
+import ErGuideView from "./components/ErGuideView";
 import AnalyticsView from "./components/AnalyticsView";
 import HandoverView from "./components/HandoverView";
 import PocketMirrorView from "./components/PocketMirrorView";
+import ConsentModal from "./components/ConsentModal";
+import { ROTA_SHIFTS } from "./components/TeamRosterBoard";
 
 import { auth, db, handleFirestoreError, OperationType } from "./firebase";
 import { onAuthStateChanged, signOut } from "firebase/auth";
-import { doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, collection, onSnapshot } from "firebase/firestore";
+import { doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, collection, onSnapshot, query, where } from "firebase/firestore";
 
 interface StaticReference {
   id: string;
@@ -127,6 +130,7 @@ interface AppNotification {
   type: "info" | "success" | "warning";
   timestamp: string;
   read: boolean;
+  linkView?: string;
 }
 
 export default function App() {
@@ -141,9 +145,11 @@ export default function App() {
   });
   const [showNotificationsDropdown, setShowNotificationsDropdown] = useState<boolean>(false);
   const [toasts, setToasts] = useState<Array<{ id: string; title: string; message: string; type: "info" | "success" | "warning" }>>([]);
+  const [pendingContributionsCount, setPendingContributionsCount] = useState<number>(0);
 
   const isInitialCases = React.useRef(true);
   const isInitialHandovers = React.useRef(true);
+  const isInitialContributions = React.useRef(true);
 
   useEffect(() => {
     try {
@@ -153,7 +159,7 @@ export default function App() {
     }
   }, [notifications]);
 
-  const triggerNotification = (title: string, message: string, type: "info" | "success" | "warning" = "info") => {
+  const triggerNotification = (title: string, message: string, type: "info" | "success" | "warning" = "info", linkView?: string) => {
     const id = "notif-" + Date.now() + "-" + Math.random().toString(36).substring(2, 6);
     const timestamp = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) + " | " + new Date().toLocaleDateString([], { month: "short", day: "numeric" });
     
@@ -164,7 +170,8 @@ export default function App() {
       message,
       type,
       timestamp,
-      read: false
+      read: false,
+      linkView
     };
     setNotifications(prev => [newNotif, ...prev].slice(0, 50)); // keep last 50
 
@@ -225,6 +232,15 @@ export default function App() {
   // Updates and Announcements Modal state
   const [showUpdatesModal, setShowUpdatesModal] = useState<boolean>(false);
 
+  // Consent Modal state
+  const [showConsentModal, setShowConsentModal] = useState<boolean>(false);
+  const [consentFirstCaseTrigger, setConsentFirstCaseTrigger] = useState<boolean>(false);
+
+  // Join Flow and Modals states
+  const [showAffiliationConflictModal, setShowAffiliationConflictModal] = useState<boolean>(false);
+  const [showRoleSelectionModal, setShowRoleSelectionModal] = useState<boolean>(false);
+  const [pendingJoinRole, setPendingJoinRole] = useState<"EM Resident" | "Senior Consultant">("EM Resident");
+
   // Automatically trigger release popup on login
   useEffect(() => {
     if (isLoggedIn) {
@@ -237,7 +253,7 @@ export default function App() {
   }, [isLoggedIn]);
 
   // Navigation
-  const [activeTab, setActiveTab] = useState<"dashboard" | "analytics" | "handover" | "cases" | "learn" | "profile">("dashboard");
+  const [activeTab, setActiveTab] = useState<"dashboard" | "analytics" | "handover" | "cases" | "learn" | "profile" | "emdrugs">("dashboard");
   const [showVoiceScribeChat, setShowVoiceScribeChat] = useState<boolean>(false);
   const [scribeMessages, setScribeMessages] = useState<any[]>([
     {
@@ -324,6 +340,11 @@ export default function App() {
     subscriptionTier: "Enterprise Platinum"
   });
 
+  const profileRef = useRef(profile);
+  useEffect(() => {
+    profileRef.current = profile;
+  }, [profile]);
+
   // Shift & Team states
   const [isOnShift, setIsOnShift] = useState<boolean>(false);
   const [showShiftCheckIn, setShowShiftCheckIn] = useState<boolean>(true);
@@ -359,42 +380,170 @@ export default function App() {
   ]);
 
   const [cases, setCases] = useState<ClinicalCase[]>([]);
+  const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
+  const [shifts, setShifts] = useState<any[]>([]);
+  const [hospitalSubscription, setHospitalSubscription] = useState<{ active: boolean; subscriptionTier: string } | null>(null);
 
-  // Auth state listener
+  // Auth state listener with real-time onSnapshot for UserProfile and team invite sync
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+    let unsubscribeProfile: (() => void) | null = null;
+
+    const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
       setAuthLoading(true);
       if (user) {
         setIsLoggedIn(true);
-        // Fetch user profile from `/users/{uid}`
         const profileDocRef = doc(db, "users", user.uid);
         try {
           const profileSnap = await getDoc(profileDocRef);
-          if (profileSnap.exists()) {
-            setProfile(profileSnap.data() as UserProfile);
-          } else {
-            // Create profile if doesn't exist yet
+          let currentProfile: UserProfile;
+
+          if (!profileSnap.exists()) {
+            // Check if there is a pending team invite for this new user
+            const emailClean = (user.email || "").trim().toLowerCase();
+            const memberId = `mem-${emailClean.replace(/[^a-zA-Z0-9]/g, "-")}`;
+            const memberDocRef = doc(db, "team_members", memberId);
+            const memberSnap = await getDoc(memberDocRef);
+
+            let initialHospital = "Varah Group Emergency Care";
+            let initialTier = "Free Standard";
+            let initialRole = "Senior Consultant";
+
+            if (memberSnap.exists()) {
+              const mData = memberSnap.data();
+              initialHospital = mData.hospital || initialHospital;
+              initialRole = mData.role || initialRole;
+              initialTier = "Hospital Team Premium (Department Covered)";
+
+              // Update team member status to Active (Joined)
+              await updateDoc(memberDocRef, {
+                status: "Active (Joined)",
+                updatedAt: new Date().toISOString()
+              });
+            }
+
             const initialProfile: UserProfile = {
-              name: user.displayName || user.email?.split("@")[0] || "Doctor",
+              name: user.displayName || "Dr. " + (user.email?.split("@")[0] || "Doctor"),
               email: user.email || "doctor@ermate.in",
-              role: "Senior Consultant",
-              hospital: "Varah Group Emergency Care",
+              role: initialRole,
+              hospital: initialHospital,
               aiCredits: 350,
               streak: 5,
-              subscriptionTier: "Enterprise Platinum"
+              subscriptionTier: initialTier
             };
+
+            if (memberSnap.exists()) {
+              (initialProfile as any).teamAddedNotification = {
+                title: "Welcome to Your Team!",
+                message: `You have been automatically incorporated into the team at ${initialHospital}. Your workspace and shifts are fully synchronized!`,
+                timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) + " | " + new Date().toLocaleDateString([], { month: "short", day: "numeric" }),
+                acknowledged: false
+              };
+            }
+
             await setDoc(profileDocRef, initialProfile);
-            setProfile(initialProfile);
+            currentProfile = initialProfile;
+          } else {
+            currentProfile = profileSnap.data() as UserProfile;
+
+            // For existing profiles, check if they have a pending team invite that wasn't incorporated yet
+            const emailClean = (user.email || "").trim().toLowerCase();
+            const memberId = `mem-${emailClean.replace(/[^a-zA-Z0-9]/g, "-")}`;
+            const memberDocRef = doc(db, "team_members", memberId);
+            const memberSnap = await getDoc(memberDocRef);
+
+            if (memberSnap.exists()) {
+              const mData = memberSnap.data();
+              if (mData.status === "Pending Invite" || currentProfile.hospital !== mData.hospital) {
+                const isIndividualPlan = currentProfile.subscriptionTier?.toLowerCase().includes("pro") || currentProfile.subscriptionTier?.toLowerCase().includes("individual");
+
+                let updatedTier = currentProfile.subscriptionTier || "Free Standard";
+                let nextBillingTier = (currentProfile as any).nextBillingTier || "";
+                let subscriptionTransitionPending = (currentProfile as any).subscriptionTransitionPending || false;
+                let subscriptionTransitionMessage = (currentProfile as any).subscriptionTransitionMessage || "";
+
+                if (isIndividualPlan) {
+                  nextBillingTier = "Hospital Team Premium (Department Covered)";
+                  subscriptionTransitionPending = true;
+                  subscriptionTransitionMessage = "From next month, your individual plan transitions to your hospital's shared Department Plan (no further individual charges).";
+                } else {
+                  updatedTier = "Hospital Team Premium (Department Covered)";
+                }
+
+                await updateDoc(profileDocRef, {
+                  hospital: mData.hospital,
+                  subscriptionTier: updatedTier,
+                  nextBillingTier,
+                  subscriptionTransitionPending,
+                  subscriptionTransitionMessage,
+                  teamAddedNotification: {
+                    title: "Added to Team!",
+                    message: `You have been added to the team at ${mData.hospital} by your HOD. Your clinical workspace and roster are now synced!`,
+                    timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) + " | " + new Date().toLocaleDateString([], { month: "short", day: "numeric" }),
+                    acknowledged: false
+                  }
+                });
+
+                await updateDoc(memberDocRef, {
+                  status: "Active (Joined)",
+                  updatedAt: new Date().toISOString()
+                });
+              }
+            }
           }
+
+          setProfile(currentProfile);
         } catch (err) {
-          console.error("Error reading profile:", err);
+          console.error("Error checking profile/invites:", err);
         }
+
+        // Set up real-time onSnapshot listener for UserProfile
+        unsubscribeProfile = onSnapshot(profileDocRef, (snapshot) => {
+          if (snapshot.exists()) {
+            const data = snapshot.data() as UserProfile & {
+              teamAddedNotification?: {
+                title: string;
+                message: string;
+                timestamp: string;
+                acknowledged: boolean;
+              }
+            };
+
+            // Process real-time team added notification
+            if (data.teamAddedNotification && !data.teamAddedNotification.acknowledged) {
+              triggerNotification(
+                data.teamAddedNotification.title,
+                data.teamAddedNotification.message,
+                "success"
+              );
+
+              // Acknowledge notification
+              updateDoc(profileDocRef, {
+                "teamAddedNotification.acknowledged": true
+              }).catch(e => console.error("Error acknowledging team notification:", e));
+            }
+
+            setProfile(data);
+          }
+        }, (error) => {
+          console.error("Error listening to profile:", error);
+        });
+
       } else {
         setIsLoggedIn(false);
+        if (unsubscribeProfile) {
+          unsubscribeProfile();
+          unsubscribeProfile = null;
+        }
       }
       setAuthLoading(false);
     });
-    return () => unsubscribe();
+
+    return () => {
+      unsubscribeAuth();
+      if (unsubscribeProfile) {
+        unsubscribeProfile();
+      }
+    };
   }, []);
 
   // Real-time Firestore sync for cases & handovers when logged in
@@ -422,7 +571,7 @@ export default function App() {
       });
 
       // If this specific hospital has no cases yet, seed customized defaults so the dashboard looks great!
-      if (filteredCases.length === 0) {
+      if (filteredCases.length === 0 && !profileRef.current?.seededCases) {
         const defaultCases: ClinicalCase[] = [
           {
             id: "C-9041",
@@ -552,6 +701,14 @@ export default function App() {
             console.error("Error seeding default case:", err);
           }
         }
+
+        if (auth.currentUser) {
+          try {
+            await updateDoc(doc(db, "users", auth.currentUser.uid), { seededCases: true });
+          } catch (err) {
+            console.error("Error updating seededCases status in Firestore:", err);
+          }
+        }
       } else {
         setCases(filteredCases);
 
@@ -606,7 +763,7 @@ export default function App() {
       });
 
       // If there are no handovers in Firestore for this clinic, seed the defaults!
-      if (filteredHandovers.length === 0) {
+      if (filteredHandovers.length === 0 && !profileRef.current?.seededHandovers) {
         const defaultHandovers: HandoverRecord[] = [
           {
             id: "H-8210",
@@ -625,6 +782,14 @@ export default function App() {
             await setDoc(doc(db, "handovers", h.id), h);
           } catch (err) {
             console.error("Error seeding default handover:", err);
+          }
+        }
+
+        if (auth.currentUser) {
+          try {
+            await updateDoc(doc(db, "users", auth.currentUser.uid), { seededHandovers: true });
+          } catch (err) {
+            console.error("Error updating seededHandovers status in Firestore:", err);
           }
         }
       } else {
@@ -662,11 +827,222 @@ export default function App() {
       handleFirestoreError(error, OperationType.LIST, "handovers");
     });
 
+    // Stream Team Members
+    const teamQuery = collection(db, "team_members");
+    const unsubscribeTeam = onSnapshot(teamQuery, async (snapshot) => {
+      const loadedTeam: TeamMember[] = [];
+      snapshot.forEach((doc) => {
+        loadedTeam.push(doc.data() as TeamMember);
+      });
+
+      const filteredTeam = loadedTeam.filter(m => {
+        const memberHospital = (m.hospital || "Varah Group Emergency Care").trim().toLowerCase();
+        return memberHospital === userHospitalLower;
+      });
+
+      if (filteredTeam.length === 0 && !profileRef.current?.seededTeam) {
+        const defaultTeam: TeamMember[] = [
+          {
+            id: "mem-vipin",
+            name: "Dr. Vipin Kumar",
+            email: "dr.vipin@gmail.com",
+            role: "HOD / Shift Lead",
+            status: "Pending Invite",
+            shift: "morning",
+            hospital: userHospital
+          },
+          {
+            id: "mem-priya",
+            name: "Dr. Priya Nair",
+            email: "priya.nair@gmail.com",
+            role: "Senior Consultant",
+            status: "Active (Joined)",
+            shift: "evening",
+            hospital: userHospital
+          },
+          {
+            id: "mem-sanjay",
+            name: "Dr. Sanjay Verma",
+            email: "sanjay.verma@gmail.com",
+            role: "EM Resident",
+            status: "Pending Invite",
+            shift: "night",
+            hospital: userHospital
+          },
+          {
+            id: "mem-ananya",
+            name: "Dr. Ananya",
+            email: "dr.ananya@gmail.com",
+            role: "Scribe Specialist",
+            status: "Pending Invite",
+            shift: "off",
+            hospital: userHospital
+          }
+        ];
+
+        // Also add current logged in user if not in defaults
+        const currentEmail = profile.email.toLowerCase().trim();
+        if (!defaultTeam.some(m => m.email.toLowerCase().trim() === currentEmail)) {
+          defaultTeam.push({
+            id: `mem-${profile.email.replace(/[^a-zA-Z0-9]/g, "-")}`,
+            name: profile.name,
+            email: profile.email,
+            role: profile.role || "EM Resident",
+            status: "Active (Joined)",
+            shift: "morning",
+            hospital: userHospital
+          });
+        }
+
+        for (const member of defaultTeam) {
+          try {
+            await setDoc(doc(db, "team_members", member.id), member);
+          } catch (err) {
+            console.error("Error seeding team member:", err);
+          }
+        }
+
+        if (auth.currentUser) {
+          try {
+            await updateDoc(doc(db, "users", auth.currentUser.uid), { seededTeam: true });
+          } catch (err) {
+            console.error("Error updating seededTeam status in Firestore:", err);
+          }
+        }
+      } else {
+        // If logged in user is not in the team list, let's automatically add them to the team list so they are displayed!
+        const currentEmail = profile.email.toLowerCase().trim();
+        const hasSelf = filteredTeam.some(m => m.email.toLowerCase().trim() === currentEmail);
+        if (!hasSelf && profile.email) {
+          const selfMember: TeamMember = {
+            id: `mem-${profile.email.replace(/[^a-zA-Z0-9]/g, "-")}`,
+            name: profile.name,
+            email: profile.email,
+            role: profile.role || "EM Resident",
+            status: "Active (Joined)",
+            shift: "morning",
+            hospital: userHospital
+          };
+          try {
+            await setDoc(doc(db, "team_members", selfMember.id), selfMember);
+          } catch (err) {
+            console.error("Error auto-adding self to team list:", err);
+          }
+        }
+
+        setTeamMembers(filteredTeam);
+      }
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, "team_members");
+    });
+
+    // Stream Hospital Subscription
+    const hospitalSlug = userHospitalLower.replace(/[^a-z0-9]/g, "-");
+    const subDocRef = doc(db, "hospital_subscriptions", hospitalSlug);
+    const unsubscribeSub = onSnapshot(subDocRef, async (snapshot) => {
+      if (snapshot.exists()) {
+        const data = snapshot.data();
+        setHospitalSubscription({
+          active: data.active,
+          subscriptionTier: data.subscriptionTier
+        });
+      } else {
+        // If snapshot doesn't exist, check if current profile has a team plan.
+        const tier = profile.subscriptionTier || "Free Plan";
+        const isTeamPlan = tier.toLowerCase().includes("team") || tier.toLowerCase().includes("enterprise");
+        if (isTeamPlan) {
+          // Auto initialize the hospital subscription so all members benefit!
+          const initialSub = {
+            id: hospitalSlug,
+            hospital: userHospital,
+            subscriptionTier: tier,
+            active: true,
+            updatedAt: new Date().toISOString()
+          };
+          try {
+            await setDoc(subDocRef, initialSub);
+            setHospitalSubscription({
+              active: true,
+              subscriptionTier: tier
+            });
+          } catch (err) {
+            console.error("Error creating hospital subscription:", err);
+          }
+        } else {
+          setHospitalSubscription(null);
+        }
+      }
+    });
+
+    // Stream Hospital Shifts Configuration
+    const shiftDocRef = doc(db, "hospital_shifts", hospitalSlug);
+    const unsubscribeShifts = onSnapshot(shiftDocRef, (snapshot) => {
+      if (snapshot.exists()) {
+        const data = snapshot.data();
+        if (data.shifts && Array.isArray(data.shifts)) {
+          setShifts(data.shifts);
+        } else {
+          setShifts(ROTA_SHIFTS);
+        }
+      } else {
+        setShifts(ROTA_SHIFTS);
+      }
+    }, (error) => {
+      console.error("Error fetching hospital shifts:", error);
+      setShifts(ROTA_SHIFTS);
+    });
+
+    // Stream Clinical Contributions for Peer Review Notifications
+    const contributionsQuery = collection(db, "contributions");
+    const unsubscribeContributions = onSnapshot(contributionsQuery, (snapshot) => {
+      const loadedContributions: any[] = [];
+      snapshot.forEach((docSnap) => {
+        loadedContributions.push({ ...docSnap.data(), firestoreDocId: docSnap.id });
+      });
+
+      const pendingCount = loadedContributions.filter(c => c.status === "pending").length;
+      setPendingContributionsCount(pendingCount);
+
+      if (!isInitialContributions.current) {
+        snapshot.docChanges().forEach((change) => {
+          const data = change.doc.data();
+          if (change.type === "added" && data.status === "pending") {
+            const submitter = data.submittedBy || "A clinician";
+            const title = data.title || "Clinical Mnemonic";
+            triggerNotification(
+              "💡 New Mnemonic Awaiting Peer Review",
+              `"${title}" was submitted by ${submitter}. Tap to review & approve.`,
+              "info",
+              "learn"
+            );
+          } else if (change.type === "modified" && data.status === "approved") {
+            const isSelf = (data.submitterEmail || "").toLowerCase().trim() === (profile.email || "").toLowerCase().trim();
+            if (isSelf) {
+              triggerNotification(
+                "🎉 Contribution Approved & Published!",
+                `Your clinical mnemonic "${data.title}" has been reviewed and published to the global directory!`,
+                "success",
+                "learn"
+              );
+            }
+          }
+        });
+      } else {
+        isInitialContributions.current = false;
+      }
+    }, (error) => {
+      console.error("Error listening to contributions:", error);
+    });
+
     return () => {
       unsubscribeCases();
       unsubscribeHandovers();
+      unsubscribeTeam();
+      unsubscribeSub();
+      unsubscribeShifts();
+      unsubscribeContributions();
     };
-  }, [isLoggedIn, profile.hospital, profile.email]);
+  }, [isLoggedIn, profile.hospital, profile.email, profile.subscriptionTier]);
 
   // View controllers
   const [selectedCaseId, setSelectedCaseId] = useState<string | null>(null);
@@ -746,21 +1122,59 @@ export default function App() {
 
   // Delete a case
   const handleDeleteCase = async (caseId: string) => {
-    try {
-      await deleteDoc(doc(db, "cases", caseId));
-    } catch (err: any) {
-      console.error("Error deleting case:", err);
-      handleFirestoreError(err, OperationType.DELETE, "cases");
+    triggerNotification("Access Denied", "Medico-legal compliance: Clinical cases can never be permanently deleted.", "warning");
+    return;
+  };
+
+  // Delete all cases for this hospital from Firestore permanently
+  const handleDeleteAllCases = async () => {
+    triggerNotification("Access Denied", "Medico-legal compliance: Permanent bulk deletion is disabled.", "warning");
+    return;
+  };
+
+  // Helper to trigger learning consent flow if user hasn't made a decision yet
+  const checkConsentOnCaseSaved = () => {
+    if (profile && profile.hasConsentedToLearning === undefined) {
+      setConsentFirstCaseTrigger(true);
+      setShowConsentModal(true);
     }
-    setCases(prev => prev.filter(c => c.id !== caseId));
-    if (selectedCaseId === caseId) setSelectedCaseId(null);
   };
 
   // Submit triage / registration form
   const handleTriageSubmit = async (demographics: PatientDemographics, vitals: PatientVitals) => {
     const isPeds = demographics.age !== null && demographics.age <= 16;
+    
+    // Calculate shift and creation context fields dynamically
+    const todayDateStr = new Date().toISOString().split('T')[0];
+    const todayDateCompact = todayDateStr.replace(/-/g, '');
+    const currentUserMember = teamMembers.find(
+      m => m.email.toLowerCase().trim() === profile.email.toLowerCase().trim()
+    );
+    const activeUserShiftId = currentUserMember?.shift || "morning";
+    const activeShiftName = activeUserShiftId.charAt(0).toUpperCase() + activeUserShiftId.slice(1);
+    const computedShiftId = `shift_${activeUserShiftId}_${todayDateCompact}`;
+    
+    const consultantOnShift = teamMembers.find(
+      m => (m.role.toLowerCase().includes("consultant") || m.role.toLowerCase().includes("hod") || m.role.toLowerCase().includes("lead")) && m.shift === activeUserShiftId
+    );
+    const consultantId = consultantOnShift ? consultantOnShift.id : "uid_nirmal";
+    const consultantName = consultantOnShift ? consultantOnShift.name || "Dr. Nirmal" : "Dr. Nirmal";
+    const createdByUid = auth.currentUser?.uid || "uid_priya";
+    const createdByRoleVal = profile.role.toLowerCase().includes("hod") ? "hod" : (profile.role.toLowerCase().includes("consultant") ? "consultant" : "resident");
+    const hospitalSlug = (profile.hospital || "Varah Group Emergency Care").trim().toLowerCase().replace(/[^a-z0-9]/g, "-");
+
     const newCase: ClinicalCase = {
       id: "C-" + Math.floor(1000 + Math.random() * 9000),
+      createdBy: createdByUid,
+      createdByName: profile.name.startsWith("Dr. ") ? profile.name : "Dr. " + profile.name,
+      createdByRole: createdByRoleVal,
+      shiftId: computedShiftId,
+      shiftDate: todayDateStr,
+      shiftName: activeShiftName,
+      consultantId,
+      consultantName,
+      departmentId: hospitalSlug,
+      createdAt: new Date().toISOString(),
       patient: demographics,
       vitals,
       sampleHistory: {
@@ -849,21 +1263,73 @@ export default function App() {
     setCases(prev => [newCase, ...prev]);
     setSelectedCaseId(newCase.id);
     setActiveFormMode(null);
+    checkConsentOnCaseSaved();
   };
 
   // Save changes inside Case Sheet View
   const handleSaveCase = async (updatedCase: ClinicalCase) => {
-    const caseToSave = {
+    const editRole = profile.role.toLowerCase().includes("hod") ? "hod" : (profile.role.toLowerCase().includes("consultant") ? "consultant" : "resident");
+    const editUid = auth.currentUser?.uid || "uid_priya";
+    const editName = profile.name.startsWith("Dr. ") ? profile.name : "Dr. " + profile.name;
+
+    const caseToSave: ClinicalCase = {
       ...updatedCase,
-      hospital: updatedCase.hospital || profile.hospital
+      hospital: updatedCase.hospital || profile.hospital,
+      lastEditedBy: editUid,
+      lastEditedByName: editName,
+      lastEditedByRole: editRole,
+      lastEditedAt: new Date().toISOString()
     };
+
     try {
       await setDoc(doc(db, "cases", caseToSave.id), caseToSave);
+      
+      // Determine changed fields
+      const previousCase = cases.find(c => c.id === updatedCase.id);
+      const changedKeys: string[] = [];
+      const prevVals: any = {};
+      const newValData: any = {};
+      
+      if (previousCase) {
+        if (JSON.stringify(previousCase.differentials) !== JSON.stringify(updatedCase.differentials)) {
+          changedKeys.push("differentials");
+          prevVals.differentials = previousCase.differentials || [];
+          newValData.differentials = updatedCase.differentials || [];
+        }
+        if (JSON.stringify(previousCase.vitals) !== JSON.stringify(updatedCase.vitals)) {
+          changedKeys.push("vitals");
+          prevVals.vitals = previousCase.vitals || {};
+          newValData.vitals = updatedCase.vitals || {};
+        }
+        if (previousCase.progressNotes !== updatedCase.progressNotes) {
+          changedKeys.push("progressNotes");
+          prevVals.progressNotes = previousCase.progressNotes || "";
+          newValData.progressNotes = updatedCase.progressNotes || "";
+        }
+      }
+
+      // Add audit log to addenda subcollection
+      const addendumId = "add-" + Math.floor(100000 + Math.random() * 900000);
+      const addendumRef = doc(db, "cases", caseToSave.id, "addenda", addendumId);
+      const auditLog = {
+        id: addendumId,
+        type: "edit",
+        editedBy: editUid,
+        editedByName: editName,
+        editedByRole: editRole,
+        fieldsChanged: changedKeys.length > 0 ? changedKeys : ["caseData"],
+        previousValues: prevVals,
+        newValues: newValData,
+        addedAt: new Date().toISOString(),
+        addedBy: editUid // for rules create constraint
+      };
+      await setDoc(addendumRef, auditLog);
     } catch (err: any) {
-      console.error("Error saving case:", err);
+      console.error("Error saving case or audit trail:", err);
       handleFirestoreError(err, OperationType.WRITE, "cases");
     }
     setCases(prev => prev.map(c => c.id === updatedCase.id ? caseToSave : c));
+    checkConsentOnCaseSaved();
   };
 
   // Finalize discharge summary
@@ -871,19 +1337,45 @@ export default function App() {
     if (!showDischargeSummaryId) return;
     const targetCase = cases.find(c => c.id === showDischargeSummaryId);
     if (targetCase) {
-      const updated = {
+      const editRole = profile.role.toLowerCase().includes("hod") ? "hod" : (profile.role.toLowerCase().includes("consultant") ? "consultant" : "resident");
+      const editUid = auth.currentUser?.uid || "uid_priya";
+      const editName = profile.name.startsWith("Dr. ") ? profile.name : "Dr. " + profile.name;
+
+      const updated: ClinicalCase = {
         ...targetCase,
         dischargeInfo,
         status: "Discharged" as const,
-        hospital: targetCase.hospital || profile.hospital
+        hospital: targetCase.hospital || profile.hospital,
+        lastEditedBy: editUid,
+        lastEditedByName: editName,
+        lastEditedByRole: editRole,
+        lastEditedAt: new Date().toISOString()
       };
       try {
         await setDoc(doc(db, "cases", updated.id), updated);
+
+        // Add audit log to addenda subcollection
+        const addendumId = "add-" + Math.floor(100000 + Math.random() * 900000);
+        const addendumRef = doc(db, "cases", updated.id, "addenda", addendumId);
+        const auditLog = {
+          id: addendumId,
+          type: "discharge",
+          editedBy: editUid,
+          editedByName: editName,
+          editedByRole: editRole,
+          fieldsChanged: ["dischargeInfo", "status"],
+          previousValues: { status: targetCase.status },
+          newValues: { status: "Discharged" },
+          addedAt: new Date().toISOString(),
+          addedBy: editUid // for rules create constraint
+        };
+        await setDoc(addendumRef, auditLog);
       } catch (err: any) {
         console.error("Error updating discharge summary in Firestore:", err);
         handleFirestoreError(err, OperationType.WRITE, "cases");
       }
       setCases(prev => prev.map(c => c.id === showDischargeSummaryId ? updated : c));
+      checkConsentOnCaseSaved();
     }
   };
 
@@ -904,11 +1396,62 @@ export default function App() {
 
   const handleSaveExtractedVoiceCase = async (extracted: any) => {
     const newCaseId = "C-" + Math.floor(1000 + Math.random() * 9000);
+    
+    // Calculate shift and creation context fields dynamically
+    const todayDateStr = new Date().toISOString().split('T')[0];
+    const todayDateCompact = todayDateStr.replace(/-/g, '');
+    const currentUserMember = teamMembers.find(
+      m => m.email.toLowerCase().trim() === profile.email.toLowerCase().trim()
+    );
+    const activeUserShiftId = currentUserMember?.shift || "morning";
+    const activeShiftName = activeUserShiftId.charAt(0).toUpperCase() + activeUserShiftId.slice(1);
+    const computedShiftId = `shift_${activeUserShiftId}_${todayDateCompact}`;
+    
+    const consultantOnShift = teamMembers.find(
+      m => (m.role.toLowerCase().includes("consultant") || m.role.toLowerCase().includes("hod") || m.role.toLowerCase().includes("lead")) && m.shift === activeUserShiftId
+    );
+    const consultantId = consultantOnShift ? consultantOnShift.id : "uid_nirmal";
+    const consultantName = consultantOnShift ? consultantOnShift.name || "Dr. Nirmal" : "Dr. Nirmal";
+    const createdByUid = auth.currentUser?.uid || "uid_priya";
+    const createdByRoleVal = profile.role.toLowerCase().includes("hod") ? "hod" : (profile.role.toLowerCase().includes("consultant") ? "consultant" : "resident");
+    const hospitalSlug = (profile.hospital || "Varah Group Emergency Care").trim().toLowerCase().replace(/[^a-z0-9]/g, "-");
+
+    // Robust parsing helpers to completely prevent NaN values in Firestore
+    const parsedAge = (extracted.age !== null && extracted.age !== undefined && extracted.age !== "") ? Number(extracted.age) : null;
+    const isAgeValid = parsedAge !== null && !isNaN(parsedAge);
+    const finalAge = isAgeValid ? parsedAge : null;
+
+    const safeParseInt = (val: any, fallback: number): number => {
+      if (val === undefined || val === null || val === "") return fallback;
+      const parsed = parseInt(val, 10);
+      return isNaN(parsed) ? fallback : parsed;
+    };
+
+    const safeParseFloat = (val: any, fallback: number): number => {
+      if (val === undefined || val === null || val === "") return fallback;
+      const parsed = parseFloat(val);
+      return isNaN(parsed) ? fallback : parsed;
+    };
+
+    const bpParts = (extracted.vitals?.bp || "120/80").split("/");
+    const systolicVal = safeParseInt(bpParts[0], 120);
+    const diastolicVal = safeParseInt(bpParts[1], 80);
+
     const newCase: ClinicalCase = {
       id: newCaseId,
+      createdBy: createdByUid,
+      createdByName: profile.name.startsWith("Dr. ") ? profile.name : "Dr. " + profile.name,
+      createdByRole: createdByRoleVal,
+      shiftId: computedShiftId,
+      shiftDate: todayDateStr,
+      shiftName: activeShiftName,
+      consultantId,
+      consultantName,
+      departmentId: hospitalSlug,
+      createdAt: new Date().toISOString(),
       patient: {
         name: extracted.patientName || "Extracted Voice Patient",
-        age: extracted.age || null,
+        age: finalAge,
         gender: extracted.gender || "Male",
         presentingComplaint: extracted.presentingComplaint || "Dictated presentation transcript.",
         triageCategory: extracted.triageCategory || TriageCategory.P2,
@@ -961,7 +1504,7 @@ export default function App() {
       progressNotes: extracted.progressNotes || "Case created via GPT Voice Scribe dictation.",
       dischargeInfo: null,
       differentials: [],
-      isPediatric: extracted.age !== null && extracted.age <= 12,
+      isPediatric: finalAge !== null && finalAge <= 12,
       status: "Active",
       savedTime: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       timeSpentMin: 1,
@@ -977,8 +1520,8 @@ export default function App() {
         ipsg6FallRiskAssessed: "Low"
       },
       vulnerableAssessment: {
-        isVulnerable: extracted.age !== null && (extracted.age < 16 || extracted.age > 65),
-        vulnerableType: extracted.age !== null && extracted.age < 16 ? "Pediatric" : extracted.age !== null && extracted.age > 65 ? "Geriatric" : "",
+        isVulnerable: finalAge !== null && (finalAge < 16 || finalAge > 65),
+        vulnerableType: finalAge !== null && finalAge < 16 ? "Pediatric" : finalAge !== null && finalAge > 65 ? "Geriatric" : "",
         nutritionalScreenPassed: true,
         functionalAssessmentScore: "Independent",
         abuseScreenNegative: true
@@ -998,12 +1541,12 @@ export default function App() {
         {
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           bp: extracted.vitals?.bp || "120/80",
-          systolic: parseInt(extracted.vitals?.bp?.split("/")[0]) || 120,
-          diastolic: parseInt(extracted.vitals?.bp?.split("/")[1]) || 80,
-          hr: parseInt(extracted.vitals?.hr) || 80,
-          spo2: parseInt(extracted.vitals?.spo2) || 98,
-          rr: parseInt(extracted.vitals?.rr) || 16,
-          temp: parseFloat(extracted.vitals?.temp) || 98.6
+          systolic: systolicVal,
+          diastolic: diastolicVal,
+          hr: safeParseInt(extracted.vitals?.hr, 80),
+          spo2: safeParseInt(extracted.vitals?.spo2, 98),
+          rr: safeParseInt(extracted.vitals?.rr, 16),
+          temp: safeParseFloat(extracted.vitals?.temp, 98.6)
         }
       ]
     };
@@ -1020,6 +1563,356 @@ export default function App() {
     setShowVoiceScribeChat(false);
     setActiveFormMode(null);
     setShowDischargeSummaryId(null);
+    checkConsentOnCaseSaved();
+  };
+
+  // Accepting Joining Offers (e.g., from share links)
+  const handleAcceptJoinOffer = async () => {
+    if (!auth.currentUser || !initialHospital) return;
+    try {
+      // Enforce: one user id or email id valid for one team, but allow switching with confirmation
+      if (profile.hospital && profile.hospital.trim() !== "" && profile.hospital.toLowerCase().trim() !== "varah group emergency care".trim() && profile.hospital.toLowerCase().trim() !== initialHospital.toLowerCase().trim()) {
+        setShowAffiliationConflictModal(true);
+      } else {
+        setShowRoleSelectionModal(true);
+      }
+    } catch (err) {
+      console.error("Error accepting join offer:", err);
+    }
+  };
+
+  const handleConfirmLeaveAndJoin = async () => {
+    if (!auth.currentUser || !initialHospital) return;
+    try {
+      const emailClean = (profile.email || "").trim().toLowerCase();
+      const memberId = `mem-${emailClean.replace(/[^a-zA-Z0-9]/g, "-")}`;
+      
+      // Delete old membership
+      await deleteDoc(doc(db, "team_members", memberId));
+      
+      setShowAffiliationConflictModal(false);
+      setShowRoleSelectionModal(true);
+    } catch (err) {
+      console.error("Error leaving old hospital:", err);
+      alert("Failed to leave previous hospital team. Please try again.");
+    }
+  };
+
+  const handleRoleSelectionSubmit = async () => {
+    if (!auth.currentUser || !initialHospital) return;
+    try {
+      const emailClean = (profile.email || "").trim().toLowerCase();
+      const memberId = `mem-${emailClean.replace(/[^a-zA-Z0-9]/g, "-")}`;
+      const memberDocRef = doc(db, "team_members", memberId);
+      
+      // Create new pending membership in new department
+      await setDoc(memberDocRef, {
+        id: memberId,
+        name: profile.name,
+        email: emailClean,
+        role: pendingJoinRole,
+        status: "Pending Approval",
+        shift: "off",
+        hospital: initialHospital,
+        invitedAt: new Date().toISOString()
+      }, { merge: true });
+
+      // Update user's profile hospital and subscription tier
+      const profileDocRef = doc(db, "users", auth.currentUser.uid);
+      await updateDoc(profileDocRef, {
+        hospital: initialHospital,
+        subscriptionTier: "Hospital Team Premium (Department Covered)"
+      });
+
+      setShowRoleSelectionModal(false);
+      sessionStorage.removeItem("ermate_pending_invite_hospital");
+      setInitialHospital("");
+      
+      triggerNotification(
+        "Request Sent ✓",
+        `Your request to join ${initialHospital} as an ${pendingJoinRole} has been sent to the HOD.`,
+        "success"
+      );
+    } catch (err) {
+      console.error("Error submitting role selection:", err);
+      alert("Failed to submit request. Please try again.");
+    }
+  };
+
+  const handleApproveTeamMember = async (memberId: string) => {
+    try {
+      const memberDocRef = doc(db, "team_members", memberId);
+      await updateDoc(memberDocRef, {
+        status: "Active (Joined)",
+        joinedAt: new Date().toISOString()
+      });
+      
+      triggerNotification(
+        "Clinician Approved",
+        "The clinician registration has been approved. They are now active on your team.",
+        "success"
+      );
+    } catch (err) {
+      console.error("Error approving member:", err);
+    }
+  };
+
+  const handleDeclineTeamMember = async (memberId: string) => {
+    try {
+      const memberDocRef = doc(db, "team_members", memberId);
+      const snap = await getDoc(memberDocRef);
+      if (snap.exists()) {
+        const data = snap.data();
+        const userEmail = data.email || "";
+        
+        // Find corresponding user and revert them
+        const usersRef = collection(db, "users");
+        const q = query(usersRef, where("email", "==", userEmail.trim().toLowerCase()));
+        const userSnap = await getDocs(q);
+        if (!userSnap.empty) {
+          const userDocRef = doc(db, "users", userSnap.docs[0].id);
+          await updateDoc(userDocRef, {
+            hospital: "Varah Group Emergency Care",
+            subscriptionTier: "Free Standard"
+          });
+        }
+      }
+      
+      await deleteDoc(memberDocRef);
+      triggerNotification(
+        "Request Declined",
+        "The registration request was successfully declined.",
+        "info"
+      );
+    } catch (err) {
+      console.error("Error declining member:", err);
+    }
+  };
+
+  const handleLeaveTeam = async () => {
+    if (!auth.currentUser) return;
+    try {
+      const emailClean = (profile.email || "").trim().toLowerCase();
+      const memberId = `mem-${emailClean.replace(/[^a-zA-Z0-9]/g, "-")}`;
+      
+      // Delete their team member doc
+      await deleteDoc(doc(db, "team_members", memberId));
+      
+      // Reset user profile back to default
+      const profileDocRef = doc(db, "users", auth.currentUser.uid);
+      await updateDoc(profileDocRef, {
+        hospital: "Varah Group Emergency Care",
+        subscriptionTier: "Free Standard"
+      });
+      
+      triggerNotification(
+        "Left Department",
+        "You have successfully left your previous hospital team. You are now on a Standalone Standard plan.",
+        "info"
+      );
+    } catch (err) {
+      console.error("Error leaving team:", err);
+    }
+  };
+
+  const handleCancelJoinRequest = async () => {
+    if (!auth.currentUser) return;
+    try {
+      const emailClean = (profile.email || "").trim().toLowerCase();
+      const memberId = `mem-${emailClean.replace(/[^a-zA-Z0-9]/g, "-")}`;
+      
+      await deleteDoc(doc(db, "team_members", memberId));
+      
+      const profileDocRef = doc(db, "users", auth.currentUser.uid);
+      await updateDoc(profileDocRef, {
+        hospital: "Varah Group Emergency Care",
+        subscriptionTier: "Free Standard"
+      });
+      
+      triggerNotification(
+        "Request Cancelled",
+        "Your request to join the hospital team has been cancelled.",
+        "info"
+      );
+    } catch (err) {
+      console.error("Error cancelling request:", err);
+    }
+  };
+
+  // Roster Management Handlers
+  const handleAddTeamMember = async (name: string, email: string, role: string, shift: string) => {
+    const memberId = `mem-${email.replace(/[^a-zA-Z0-9]/g, "-")}`;
+    const cleanEmail = email.trim().toLowerCase();
+    const newMember: TeamMember = {
+      id: memberId,
+      name,
+      email: cleanEmail,
+      role,
+      status: "Pending Invite",
+      shift,
+      hospital: profile.hospital
+    };
+
+    try {
+      // 1. Check if email is already in the roster of a different hospital to prevent misuse
+      const rosterRef = collection(db, "team_members");
+      const rosterQuery = query(rosterRef, where("email", "==", cleanEmail));
+      const rosterSnapshot = await getDocs(rosterQuery);
+
+      if (!rosterSnapshot.empty) {
+        const existingRosterDoc = rosterSnapshot.docs[0].data() as TeamMember;
+        if (existingRosterDoc.hospital && existingRosterDoc.hospital.toLowerCase().trim() !== (profile.hospital || "").toLowerCase().trim()) {
+          throw new Error(`This email is already registered on the team roster for "${existingRosterDoc.hospital}". A clinician can only belong to one hospital team.`);
+        }
+      }
+
+      // 2. Check if user is already registered in ErMate by email query
+      const usersRef = collection(db, "users");
+      const q = query(usersRef, where("email", "==", cleanEmail));
+      const querySnapshot = await getDocs(q);
+
+      if (!querySnapshot.empty) {
+        // User has already registered! Incorporate automatically
+        const userDocSnap = querySnapshot.docs[0];
+        const userUid = userDocSnap.id;
+        const userData = userDocSnap.data() as UserProfile & {
+          nextBillingTier?: string;
+          subscriptionTransitionPending?: boolean;
+          subscriptionTransitionMessage?: string;
+          teamAddedNotification?: {
+            title: string;
+            message: string;
+            timestamp: string;
+            acknowledged: boolean;
+          };
+        };
+
+        if (userData.hospital && userData.hospital.toLowerCase().trim() !== (profile.hospital || "").toLowerCase().trim()) {
+          throw new Error(`This user is already registered and affiliated with another hospital ("${userData.hospital}"). A user can only belong to one hospital team.`);
+        }
+
+        const currentTier = userData.subscriptionTier || "Free Plan";
+        const isIndividualPlan = currentTier.toLowerCase().includes("pro") || currentTier.toLowerCase().includes("individual");
+
+        let updatedTier = currentTier;
+        let nextBillingTier = userData.nextBillingTier || "";
+        let subscriptionTransitionPending = userData.subscriptionTransitionPending || false;
+        let subscriptionTransitionMessage = userData.subscriptionTransitionMessage || "";
+
+        if (isIndividualPlan) {
+          // If individual plan, transition from next following month
+          nextBillingTier = "Hospital Team Premium (Department Covered)";
+          subscriptionTransitionPending = true;
+          subscriptionTransitionMessage = "From next month, your individual plan transitions to your hospital's shared Department Plan (no further individual charges).";
+        } else {
+          // If free plan, upgrade immediately
+          updatedTier = "Hospital Team Premium (Department Covered)";
+        }
+
+        const teamAddedNotification = {
+          title: "Added to Team!",
+          message: `You have been added to the team at ${profile.hospital} by your HOD. Your clinical workspace and roster are now synced!`,
+          timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) + " | " + new Date().toLocaleDateString([], { month: "short", day: "numeric" }),
+          acknowledged: false
+        };
+
+        // Update the registered user profile
+        await setDoc(doc(db, "users", userUid), {
+          ...userData,
+          hospital: profile.hospital,
+          subscriptionTier: updatedTier,
+          nextBillingTier,
+          subscriptionTransitionPending,
+          subscriptionTransitionMessage,
+          teamAddedNotification
+        });
+
+        // Set roster status to Active (Joined)
+        newMember.status = "Active (Joined)";
+        await setDoc(doc(db, "team_members", memberId), newMember);
+
+        triggerNotification("User Auto-Synced", `${name} is already registered! They have been incorporated into the team and subscription updated successfully.`, "success");
+      } else {
+        // User doesn't have an account registration yet, add as pending invite
+        await setDoc(doc(db, "team_members", memberId), newMember);
+        triggerNotification("Roster Updated", `Added ${name} to the team roster. Pending registration.`, "info");
+      }
+    } catch (err: any) {
+      console.error("Error adding team member to Firestore:", err);
+      // If it's our own custom validation error, don't pass it to standard Firestore handler
+      if (err.message && (err.message.includes("registered") || err.message.includes("belong to one"))) {
+        throw err;
+      }
+      handleFirestoreError(err, OperationType.WRITE, "team_members");
+      throw err;
+    }
+  };
+
+  const handleRemoveTeamMember = async (id: string) => {
+    try {
+      await deleteDoc(doc(db, "team_members", id));
+      triggerNotification("Roster Updated", "Removed clinician from the team roster.", "info");
+    } catch (err: any) {
+      console.error("Error removing team member from Firestore:", err);
+      handleFirestoreError(err, OperationType.DELETE, "team_members");
+      throw err;
+    }
+  };
+
+  const handleUpdateTeamMemberShift = async (id: string, shift: string) => {
+    try {
+      await updateDoc(doc(db, "team_members", id), { shift });
+      triggerNotification("Shift Updated", "Updated assigned clinician shift.", "info");
+    } catch (err: any) {
+      console.error("Error updating team member shift:", err);
+      handleFirestoreError(err, OperationType.WRITE, "team_members");
+      throw err;
+    }
+  };
+
+  const handleUpdateTeamMemberRole = async (id: string, role: string) => {
+    try {
+      // 1. Update team member role in Firebase team_members collection
+      await updateDoc(doc(db, "team_members", id), { role });
+      
+      // 2. Find the clinician's user profile in 'users' and update their profile role too
+      const memberSnap = await getDoc(doc(db, "team_members", id));
+      if (memberSnap.exists()) {
+        const email = memberSnap.data().email || "";
+        if (email) {
+          const q = query(collection(db, "users"), where("email", "==", email.trim().toLowerCase()));
+          const userSnap = await getDocs(q);
+          if (!userSnap.empty) {
+            const userDocRef = doc(db, "users", userSnap.docs[0].id);
+            await updateDoc(userDocRef, { role });
+          }
+        }
+      }
+      triggerNotification("Role Updated ✓", "Clinical role designation has been successfully modified.", "success");
+    } catch (err: any) {
+      console.error("Error updating team member role:", err);
+      handleFirestoreError(err, OperationType.WRITE, "team_members");
+      throw err;
+    }
+  };
+
+  const handleUpdateHospitalShifts = async (newShifts: any[]) => {
+    const userHospital = profile.hospital || "Varah Group Emergency Care";
+    const userHospitalLower = userHospital.trim().toLowerCase();
+    const hospitalSlug = userHospitalLower.replace(/[^a-z0-9]/g, "-");
+    try {
+      await setDoc(doc(db, "hospital_shifts", hospitalSlug), {
+        id: hospitalSlug,
+        hospital: userHospital,
+        shifts: newShifts,
+        updatedAt: new Date().toISOString(),
+        updatedBy: auth.currentUser?.email || ""
+      });
+      triggerNotification("Roster Configured", "Shift rota times updated successfully.", "success");
+    } catch (err: any) {
+      console.error("Error updating hospital shifts:", err);
+      triggerNotification("Error", "Failed to update shift times.", "warning");
+    }
   };
 
   // Handle user profile save to Firestore
@@ -1028,10 +1921,62 @@ export default function App() {
     if (auth.currentUser) {
       try {
         await setDoc(doc(db, "users", auth.currentUser.uid), newProfile);
+
+        // Also update shared hospital subscription if the user upgraded to a team/enterprise plan
+        const tier = newProfile.subscriptionTier || "Free Plan";
+        const isTeamPlan = tier.toLowerCase().includes("team") || tier.toLowerCase().includes("enterprise");
+        if (isTeamPlan && newProfile.hospital) {
+          const hospitalSlug = newProfile.hospital.trim().toLowerCase().replace(/[^a-z0-9]/g, "-");
+          await setDoc(doc(db, "hospital_subscriptions", hospitalSlug), {
+            id: hospitalSlug,
+            hospital: newProfile.hospital,
+            subscriptionTier: tier,
+            active: true,
+            updatedAt: new Date().toISOString()
+          });
+        }
+
+        // Sync with Cloud SQL (PostgreSQL) backend
+        try {
+          const idToken = await auth.currentUser.getIdToken(true);
+          await fetch("/api/sql/sync-user", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${idToken}`
+            },
+            body: JSON.stringify({
+              uid: auth.currentUser.uid,
+              email: newProfile.email,
+              name: newProfile.name,
+              role: newProfile.role,
+              hospital: newProfile.hospital,
+              aiCredits: newProfile.aiCredits,
+              streak: newProfile.streak,
+              subscriptionTier: newProfile.subscriptionTier,
+              hasConsentedToLearning: newProfile.hasConsentedToLearning
+            })
+          });
+        } catch (e) {
+          console.error("Failed to sync profile change with Cloud SQL:", e);
+        }
+
       } catch (err) {
         console.error("Error saving profile to Firestore:", err);
       }
     }
+  };
+
+  // Process user's consent choice (Yes or Not right now)
+  const handleConsentChoice = async (consented: boolean) => {
+    if (profile) {
+      const updatedProfile = {
+        ...profile,
+        hasConsentedToLearning: consented
+      };
+      await handleSaveProfile(updatedProfile);
+    }
+    setShowConsentModal(false);
   };
 
   // Intercept and persist handovers to Firestore
@@ -1181,6 +2126,18 @@ export default function App() {
               </div>
             </div>
 
+            {/* Hospital Workplace Badge */}
+            <div className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-xs">
+              <Building2 className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+              <span className="text-slate-500 dark:text-slate-400 font-medium">Active Hospital:</span>
+              <strong className="text-slate-800 dark:text-white font-bold">{profile.hospital || "Varah Group Emergency Care"}</strong>
+              {hospitalSubscription?.active && (
+                <span className="ml-1 px-1.5 py-0.2 bg-emerald-500/10 text-emerald-500 dark:text-emerald-400 border border-emerald-500/20 rounded text-[9px] font-bold uppercase tracking-wider">
+                  Team Licensed
+                </span>
+              )}
+            </div>
+
             {/* Mobile-only action shortcuts */}
             <div className="flex md:hidden items-center gap-1.5">
               <button
@@ -1197,6 +2154,142 @@ export default function App() {
               >
                 <Download className="w-4 h-4" />
               </button>
+              
+              {/* Real-time Notifications Bell on Mobile */}
+              <div className="relative">
+                <button
+                  onClick={() => setShowNotificationsDropdown(!showNotificationsDropdown)}
+                  className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-slate-500 dark:text-slate-400 transition-all relative"
+                  title="Notifications"
+                  id="notifications-bell-mobile"
+                >
+                  {notifications.some(n => !n.read) ? (
+                    <>
+                      <BellRing className="w-4 h-4 text-rose-500 animate-bounce" />
+                      <span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-rose-500 ring-1 ring-white dark:ring-slate-950" />
+                    </>
+                  ) : (
+                    <Bell className="w-4 h-4" />
+                  )}
+                </button>
+
+                {showNotificationsDropdown && (
+                  <>
+                    <div 
+                      className="fixed inset-0 z-40 bg-transparent" 
+                      onClick={() => setShowNotificationsDropdown(false)}
+                    />
+                    <div className="absolute right-0 mt-2 w-72 sm:w-80 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl shadow-lg z-50 overflow-hidden divide-y divide-slate-100 dark:divide-slate-900 animate-fade-in select-none">
+                      
+                      {/* Header */}
+                      <div className="p-3 bg-slate-50 dark:bg-slate-900/60 flex items-center justify-between">
+                        <span className="text-xs font-bold text-slate-800 dark:text-white flex items-center gap-1.5 font-display">
+                          <Activity className="w-3.5 h-3.5 text-emerald-500" />
+                          <span>ER Clinician Alerts</span>
+                        </span>
+                        <div className="flex gap-2">
+                          {notifications.some(n => !n.read) && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setNotifications(prev => prev.map(n => ({ ...n, read: true })));
+                              }}
+                              className="text-[10px] text-emerald-600 hover:text-emerald-700 dark:text-emerald-400 dark:hover:text-emerald-300 font-bold flex items-center gap-1"
+                            >
+                              <Check className="w-3 h-3" />
+                              <span>Read All</span>
+                            </button>
+                          )}
+                          {notifications.length > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setNotifications([]);
+                                setShowNotificationsDropdown(false);
+                              }}
+                              className="text-[10px] text-slate-500 hover:text-rose-600 dark:text-slate-400 dark:hover:text-rose-400 font-bold flex items-center gap-1"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                              <span>Clear</span>
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Notification list */}
+                      <div className="max-h-80 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-900 scrollbar-thin">
+                        {notifications.length === 0 ? (
+                          <div className="p-6 text-center text-xs text-slate-400 flex flex-col items-center gap-1.5">
+                            <Bell className="w-6 h-6 text-slate-300 dark:text-slate-700 animate-pulse-slow" />
+                            <span className="font-bold text-slate-550">No notifications yet</span>
+                            <span className="text-[10px] text-slate-300 dark:text-slate-600">Updates from other clinicians will appear here in real-time.</span>
+                          </div>
+                        ) : (
+                          notifications.map((notif) => {
+                            const isUnread = !notif.read;
+                            return (
+                              <div 
+                                key={notif.id}
+                                onClick={() => {
+                                  // Mark as read
+                                  setNotifications(prev => prev.map(n => n.id === notif.id ? { ...n, read: true } : n));
+                                  if (notif.linkView) {
+                                    setActiveTab(notif.linkView as any);
+                                    setSelectedCaseId(null);
+                                    setActiveFormMode(null);
+                                    setShowDischargeSummaryId(null);
+                                    setShowVoiceScribeChat(false);
+                                  }
+                                  // Close dropdown
+                                  setShowNotificationsDropdown(false);
+                                }}
+                                className={`p-3 text-left transition-all hover:bg-slate-50/80 dark:hover:bg-slate-900/60 cursor-pointer flex gap-2.5 items-start ${
+                                  isUnread ? "bg-slate-50/40 dark:bg-slate-900/10 border-l-2 border-emerald-500" : ""
+                                }`}
+                              >
+                                <div className={`mt-1.5 shrink-0 w-2 h-2 rounded-full ${
+                                  notif.type === "success" 
+                                    ? "bg-emerald-500" 
+                                    : notif.type === "warning"
+                                    ? "bg-rose-500"
+                                    : "bg-blue-500"
+                                }`} />
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center justify-between gap-2">
+                                    <span className={`text-[11px] block truncate ${isUnread ? "font-extrabold text-slate-900 dark:text-white" : "font-semibold text-slate-700 dark:text-slate-300"}`}>
+                                      {notif.title}
+                                    </span>
+                                    <div className="flex items-center gap-1.5 shrink-0">
+                                      <span className="text-[8px] text-slate-400 font-mono whitespace-nowrap">{notif.timestamp.split(" | ")[0]}</span>
+                                      {isUnread && (
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation(); // Prevent closing dropdown or triggering outer click
+                                            setNotifications(prev => prev.map(n => n.id === notif.id ? { ...n, read: true } : n));
+                                          }}
+                                          className="p-0.5 bg-slate-100 hover:bg-emerald-50 dark:bg-slate-800 dark:hover:bg-emerald-950/40 text-slate-400 hover:text-emerald-600 dark:hover:text-emerald-400 rounded transition-all cursor-pointer"
+                                          title="Mark as read"
+                                        >
+                                          <Check className="w-3 h-3" />
+                                        </button>
+                                      )}
+                                    </div>
+                                  </div>
+                                  <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5 leading-snug font-medium">
+                                    {notif.message}
+                                  </p>
+                                </div>
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+
               <button
                 onClick={() => setIsDarkMode(!isDarkMode)}
                 className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-slate-500 dark:text-slate-400 transition-all"
@@ -1476,6 +2569,13 @@ export default function App() {
                               onClick={() => {
                                 // Mark as read
                                 setNotifications(prev => prev.map(n => n.id === notif.id ? { ...n, read: true } : n));
+                                if (notif.linkView) {
+                                  setActiveTab(notif.linkView as any);
+                                  setSelectedCaseId(null);
+                                  setActiveFormMode(null);
+                                  setShowDischargeSummaryId(null);
+                                  setShowVoiceScribeChat(false);
+                                }
                                 // Close dropdown
                                 setShowNotificationsDropdown(false);
                               }}
@@ -1495,7 +2595,22 @@ export default function App() {
                                   <span className={`text-[11px] block truncate ${isUnread ? "font-extrabold text-slate-900 dark:text-white" : "font-semibold text-slate-700 dark:text-slate-300"}`}>
                                     {notif.title}
                                   </span>
-                                  <span className="text-[8px] text-slate-400 font-mono shrink-0 whitespace-nowrap">{notif.timestamp.split(" | ")[0]}</span>
+                                  <div className="flex items-center gap-1.5 shrink-0">
+                                    <span className="text-[8px] text-slate-400 font-mono whitespace-nowrap">{notif.timestamp.split(" | ")[0]}</span>
+                                    {isUnread && (
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation(); // Prevent closing dropdown or triggering outer click
+                                          setNotifications(prev => prev.map(n => n.id === notif.id ? { ...n, read: true } : n));
+                                        }}
+                                        className="p-0.5 bg-slate-100 hover:bg-emerald-50 dark:bg-slate-800 dark:hover:bg-emerald-950/40 text-slate-400 hover:text-emerald-600 dark:hover:text-emerald-400 rounded transition-all cursor-pointer"
+                                        title="Mark as read"
+                                      >
+                                        <Check className="w-3 h-3" />
+                                      </button>
+                                    )}
+                                  </div>
                                 </div>
                                 <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5 leading-snug font-medium">
                                   {notif.message}
@@ -1546,6 +2661,7 @@ export default function App() {
             { id: "analytics", label: "Analytics", icon: TrendingUp, activeClass: "bg-indigo-600 text-white shadow-sm shadow-indigo-600/15" },
             { id: "handover", label: "Handover", icon: Users, activeClass: "bg-blue-600 text-white shadow-sm shadow-blue-600/15" },
             { id: "cases", label: "Cases Registry", icon: ClipboardList, activeClass: "bg-teal-600 text-white shadow-sm shadow-teal-600/15" },
+            { id: "emdrugs", label: "EM Drugs", icon: ShieldAlert, activeClass: "bg-red-600 text-white shadow-sm shadow-red-600/15" },
             { id: "learn", label: "Learn & Reference", icon: BookOpen, activeClass: "bg-purple-600 text-white shadow-sm shadow-purple-600/15" },
             { id: "profile", label: "Team & Subscriptions", icon: Settings, activeClass: "bg-fuchsia-600 text-white shadow-sm shadow-fuchsia-600/15" },
           ].map((tab) => {
@@ -1606,6 +2722,102 @@ export default function App() {
       <main className="flex-1 p-4 md:p-6 pb-24 md:pb-6">
         <div className="max-w-7xl mx-auto">
           
+          {/* Verification Pending Block Screen */}
+          {(() => {
+            const myTeamMember = teamMembers.find(
+              m => m.email.toLowerCase().trim() === (profile?.email || "").toLowerCase().trim()
+            );
+            const isPendingApproval = myTeamMember && myTeamMember.status === "Pending Approval";
+
+            if (isPendingApproval && activeTab !== "profile") {
+              const departmentHOD = teamMembers.find(m => m.role?.toLowerCase().includes("hod") || m.role?.toLowerCase().includes("lead"));
+              const hodName = departmentHOD ? `Dr. ${departmentHOD.name}` : "the Clinical HOD";
+              return (
+                <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-8 md:p-12 text-center max-w-2xl mx-auto shadow-xl space-y-6 my-12 animate-fade-in" id="pending-approval-overlay">
+                  <div className="w-16 h-16 bg-amber-500/10 text-amber-500 rounded-full flex items-center justify-center mx-auto mb-4 animate-pulse">
+                    <Clock className="w-8 h-8" />
+                  </div>
+                  <div className="space-y-2">
+                    <h2 className="text-xl font-extrabold text-slate-900 dark:text-white tracking-tight">
+                      Verification Pending
+                    </h2>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 font-mono">
+                      Hospital Team: <span className="text-indigo-600 dark:text-indigo-400 font-bold font-sans">{profile.hospital}</span>
+                    </p>
+                  </div>
+                  <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed max-w-md mx-auto">
+                    Your credentials have been submitted and are currently waiting for onboarding verification by the Department HOD. Once approved, your profile will link, and your clinical shifts will sync immediately.
+                  </p>
+                  
+                  <div className="bg-slate-50 dark:bg-slate-950/45 border border-slate-150 dark:border-slate-850 p-4 rounded-2xl text-[11px] text-slate-500 dark:text-slate-400 max-w-sm mx-auto font-mono">
+                    📬 Request routed to <strong className="text-slate-700 dark:text-slate-200 font-sans">{hodName}</strong>. You will be notified when approved.
+                  </div>
+
+                  <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-4">
+                    <button
+                      type="button"
+                      onClick={handleCancelJoinRequest}
+                      className="w-full sm:w-auto px-5 py-2.5 border border-slate-200 hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-850 text-slate-700 dark:text-slate-300 text-xs font-bold rounded-xl transition-all cursor-pointer bg-transparent"
+                    >
+                      Cancel Request
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => navigateToTab("profile")}
+                      className="w-full sm:w-auto px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-black rounded-xl transition-all shadow-md shadow-indigo-600/15 cursor-pointer"
+                    >
+                      View Team Directory
+                    </button>
+                  </div>
+                </div>
+              );
+            }
+            return null;
+          })()}
+
+          {/* Render Normal Workspace Views only if not pending approval (or if on profile page) */}
+          {(() => {
+            const myTeamMember = teamMembers.find(
+              m => m.email.toLowerCase().trim() === (profile?.email || "").toLowerCase().trim()
+            );
+            const isPendingApproval = myTeamMember && myTeamMember.status === "Pending Approval";
+            if (isPendingApproval && activeTab !== "profile") return null;
+
+            return (
+              <>
+                {/* Pending Joining Offer Invite Banner */}
+          {initialHospital && profile?.hospital?.trim().toLowerCase() !== initialHospital.trim().toLowerCase() && (
+            <div className="mb-6 bg-gradient-to-r from-indigo-50 to-blue-50 dark:from-indigo-950/20 dark:to-blue-950/20 border border-indigo-200 dark:border-indigo-900 rounded-2xl p-4 md:p-6 flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-sm animate-fade-in no-print">
+              <div className="space-y-1.5 flex-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs bg-indigo-600 text-white px-2.5 py-0.5 rounded-full font-bold font-mono tracking-wider">
+                    PENDING JOINING OFFER
+                  </span>
+                </div>
+                <h3 className="text-sm font-black text-slate-800 dark:text-slate-100 font-display">
+                  You've been invited to join the medical team at {initialHospital}
+                </h3>
+                <p className="text-xs leading-relaxed text-slate-550 dark:text-slate-400 font-medium max-w-3xl">
+                  Accepting this offer will link your ErMate profile, synchronize your shifts with their central clinical roster, and cover your account under their shared department team license.
+                </p>
+              </div>
+              <div className="flex items-center gap-2.5 self-end md:self-center">
+                <button
+                  onClick={() => setInitialHospital("")}
+                  className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold rounded-xl transition-all cursor-pointer"
+                >
+                  Decline
+                </button>
+                <button
+                  onClick={handleAcceptJoinOffer}
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-black rounded-xl transition-all shadow-md shadow-indigo-600/10 cursor-pointer flex items-center gap-1.5"
+                >
+                  Accept Joining Offer
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* 1. Triage Form View */}
           {activeFormMode && (
             <TriageForm
@@ -1692,6 +2904,7 @@ export default function App() {
                 <DashboardView
                   profile={profile}
                   cases={cases}
+                  pendingContributionsCount={pendingContributionsCount}
                   onStartFullFlow={() => setActiveFormMode("full")}
                   onStartQuickCase={() => setActiveFormMode("quick")}
                   onSelectCase={handleSelectCase}
@@ -1720,6 +2933,14 @@ export default function App() {
                   setActiveShiftDoctors={setActiveShiftDoctors}
                   onSaveCase={handleSaveCase}
                   isDarkMode={isDarkMode}
+                  teamMembers={teamMembers}
+                  onAddMember={handleAddTeamMember}
+                  onRemoveMember={handleRemoveTeamMember}
+                  onUpdateShift={handleUpdateTeamMemberShift}
+                  onApproveMember={handleApproveTeamMember}
+                  onDeclineMember={handleDeclineTeamMember}
+                  onUpdateRole={handleUpdateTeamMemberRole}
+                  shifts={shifts}
                 />
               )}
 
@@ -1756,6 +2977,13 @@ export default function App() {
                 />
               )}
 
+              {activeTab === "emdrugs" && (
+                <ErGuideView
+                  onBack={() => navigateToTab("dashboard")}
+                  isDarkMode={isDarkMode}
+                />
+              )}
+
               {activeTab === "learn" && <LearnView onNavigateToTab={navigateToTab} isDarkMode={isDarkMode} />}
 
               {activeTab === "profile" && (
@@ -1768,16 +2996,30 @@ export default function App() {
                   setRotaAssignments={setRotaAssignments}
                   isDarkMode={isDarkMode}
                   setIsDarkMode={setIsDarkMode}
-                  onDeleteAllCases={() => setCases([])}
+                  onDeleteAllCases={handleDeleteAllCases}
                   isOnShift={isOnShift}
                   setIsOnShift={setIsOnShift}
                   handovers={handovers}
                   setHandovers={customSetHandovers}
                   onNavigateToTab={navigateToTab}
+                  teamMembers={teamMembers}
+                  onAddMember={handleAddTeamMember}
+                  onRemoveMember={handleRemoveTeamMember}
+                  onUpdateShift={handleUpdateTeamMemberShift}
+                  onApproveMember={handleApproveTeamMember}
+                  onDeclineMember={handleDeclineTeamMember}
+                  onUpdateRole={handleUpdateTeamMemberRole}
+                  onLeaveTeam={handleLeaveTeam}
+                  hospitalSubscription={hospitalSubscription}
+                  shifts={shifts}
+                  onUpdateShifts={handleUpdateHospitalShifts}
                 />
               )}
             </>
           )}
+              </>
+            );
+          })()}
 
         </div>
       </main>
@@ -2050,6 +3292,145 @@ export default function App() {
                 className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl transition-all shadow-xs cursor-pointer"
               >
                 Acknowledge & Continue
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Learning & Privacy Consent Modal */}
+      {showConsentModal && profile && (
+        <ConsentModal
+          isOpen={showConsentModal}
+          profile={profile}
+          isFirstCaseTrigger={consentFirstCaseTrigger}
+          onConsent={handleConsentChoice}
+          onClose={() => setShowConsentModal(false)}
+        />
+      )}
+
+      {/* 1. Affiliation Conflict Modal */}
+      {showAffiliationConflictModal && (
+        <div 
+          className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-4"
+          id="affiliation-conflict-modal"
+        >
+          <div className="bg-white dark:bg-slate-950 rounded-2xl max-w-md w-full overflow-hidden shadow-2xl border border-slate-200 dark:border-slate-800 animate-in fade-in zoom-in-95 duration-200 flex flex-col">
+            <div className="p-6 bg-rose-50 dark:bg-rose-950/20 border-b border-rose-100 dark:border-rose-900/40 relative">
+              <button 
+                onClick={() => setShowAffiliationConflictModal(false)}
+                className="absolute top-4 right-4 text-rose-850/65 dark:text-rose-400/80 hover:text-rose-900 dark:hover:text-rose-200 transition-all bg-rose-200/20 hover:bg-rose-200/45 p-1.5 rounded-lg cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+              <div className="flex items-center gap-2 mb-1 text-rose-700 dark:text-rose-450">
+                <ShieldAlert className="w-5 h-5 animate-bounce" />
+                <span className="text-[9px] font-mono tracking-widest font-extrabold uppercase bg-rose-500/15 px-2 py-0.5 rounded-full">Affiliation Conflict</span>
+              </div>
+              <h2 className="text-sm font-extrabold tracking-tight text-slate-900 dark:text-white mt-1.5">Hospital Affiliation Warning</h2>
+            </div>
+            
+            <div className="p-6 space-y-4 text-slate-700 dark:text-slate-300">
+              <p className="text-xs font-semibold leading-normal">
+                You are currently active on the roster for <span className="text-indigo-600 dark:text-indigo-400 font-bold">"{profile.hospital}"</span>. A clinician can only belong to one hospital team at a time.
+              </p>
+              <p className="text-xs text-slate-500 dark:text-slate-400 leading-normal font-medium">
+                Joining <span className="font-extrabold text-slate-800 dark:text-slate-200">"{initialHospital}"</span> will safely archive your membership at <span className="font-semibold">"{profile.hospital}"</span>. Your local medical cases, rounds history, and personal scribe notes will remain perfectly intact.
+              </p>
+            </div>
+
+            <div className="p-6 bg-slate-50 dark:bg-slate-900/40 border-t border-slate-100 dark:border-slate-800 flex items-center justify-end gap-3">
+              <button
+                onClick={() => setShowAffiliationConflictModal(false)}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-extrabold rounded-xl transition-all cursor-pointer bg-transparent border-0"
+              >
+                Keep "{profile.hospital}"
+              </button>
+              <button
+                onClick={handleConfirmLeaveAndJoin}
+                className="px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white text-xs font-black rounded-xl transition-all shadow-md shadow-rose-600/15 cursor-pointer flex items-center gap-1.5"
+              >
+                Leave & Join New Team
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 2. Role Selection / Onboarding Modal */}
+      {showRoleSelectionModal && (
+        <div 
+          className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-4"
+          id="role-selection-modal"
+        >
+          <div className="bg-white dark:bg-slate-950 rounded-2xl max-w-md w-full overflow-hidden shadow-2xl border border-slate-200 dark:border-slate-800 animate-in fade-in zoom-in-95 duration-200 flex flex-col">
+            <div className="p-6 bg-gradient-to-r from-indigo-600 to-indigo-700 text-white relative">
+              <button 
+                onClick={() => setShowRoleSelectionModal(false)}
+                className="absolute top-4 right-4 text-white/80 hover:text-white transition-all bg-white/10 hover:bg-white/25 p-1.5 rounded-lg cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+              <div className="flex items-center gap-2 mb-1 text-indigo-200">
+                <UserCheck className="w-5 h-5" />
+                <span className="text-[9px] font-mono tracking-widest font-extrabold uppercase bg-indigo-500/30 px-2 py-0.5 rounded-full">Roster Credentials</span>
+              </div>
+              <h2 className="text-base font-extrabold tracking-tight mt-1.5">Select Department Position</h2>
+              <p className="text-indigo-100 text-xs font-medium mt-0.5">Please specify your clinical designation at {initialHospital}.</p>
+            </div>
+            
+            <div className="p-6 space-y-4 text-slate-700 dark:text-slate-300">
+              <label className="text-[10px] font-black tracking-wider text-slate-400 uppercase font-mono block mb-1">Select Designation</label>
+              <div className="grid grid-cols-1 gap-3">
+                {[
+                  {
+                    role: "EM Resident" as const,
+                    title: "Emergency Medicine Resident",
+                    desc: "Full roster synchronization, shifts rota assignments, and team case handovers."
+                  },
+                  {
+                    role: "Senior Consultant" as const,
+                    title: "Senior Consultant",
+                    desc: "All clinical features covered, with option to manage shifts or coordinate department teams."
+                  }
+                ].map((item) => (
+                  <div
+                    key={item.role}
+                    onClick={() => setPendingJoinRole(item.role)}
+                    className={`p-4 border-2 rounded-xl cursor-pointer transition-all text-left space-y-1.5 ${
+                      pendingJoinRole === item.role
+                        ? "border-indigo-600 bg-indigo-50/20 dark:bg-indigo-950/20"
+                        : "border-slate-200 hover:border-slate-300 dark:border-slate-800 dark:hover:border-slate-700"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <strong className="text-xs font-bold text-slate-900 dark:text-white">{item.title}</strong>
+                      <div className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center shrink-0 ${
+                        pendingJoinRole === item.role ? "border-indigo-600" : "border-slate-300"
+                      }`}>
+                        {pendingJoinRole === item.role && (
+                          <div className="w-2 h-2 rounded-full bg-indigo-600" />
+                        )}
+                      </div>
+                    </div>
+                    <p className="text-[10px] text-slate-500 dark:text-slate-450 leading-normal">{item.desc}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="p-6 bg-slate-50 dark:bg-slate-900/40 border-t border-slate-100 dark:border-slate-800 flex items-center justify-end gap-3">
+              <button
+                onClick={() => setShowRoleSelectionModal(false)}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-extrabold rounded-xl transition-all cursor-pointer bg-transparent border-0"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleRoleSelectionSubmit}
+                className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-black rounded-xl transition-all shadow-md shadow-indigo-600/15 cursor-pointer flex items-center gap-1.5"
+              >
+                Submit Join Request
               </button>
             </div>
           </div>

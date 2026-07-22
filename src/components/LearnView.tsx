@@ -28,6 +28,7 @@ export default function LearnView({ onNavigateToTab, isDarkMode = false }: Learn
   const [searchQuery, setSearchQuery] = useState("");
   const [editingMemId, setEditingMemId] = useState<string | null>(null);
   const [tempReflections, setTempReflections] = useState("");
+  const [pendingDeleteMemId, setPendingDeleteMemId] = useState<string | null>(null);
 
   const loadMemories = () => {
     try {
@@ -520,18 +521,39 @@ ${m.physicianReflections || "No reflections logged."}
                             <span className="text-[10px] text-slate-400 font-mono">
                               Logged: {new Date(m.savedAt).toLocaleDateString()} at {new Date(m.savedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                             </span>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                if (confirm("Remove this clinical memory from your private career ledger? This cannot be undone.")) {
-                                  handleDeleteMemory(m.id);
-                                }
-                              }}
-                              className="text-slate-400 hover:text-rose-600 transition-all p-1 rounded"
-                              title="Delete from log"
-                            >
-                              <span className="text-[10px] font-bold">Delete</span>
-                            </button>
+                            {pendingDeleteMemId === m.id ? (
+                              <div className="flex items-center gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    handleDeleteMemory(m.id);
+                                    setPendingDeleteMemId(null);
+                                  }}
+                                  className="text-[10px] bg-rose-600 hover:bg-rose-700 text-white font-bold px-2 py-0.5 rounded cursor-pointer transition-all"
+                                >
+                                  Confirm Delete
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setPendingDeleteMemId(null)}
+                                  className="text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-slate-700 px-1.5 py-0.5 rounded cursor-pointer"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setPendingDeleteMemId(m.id);
+                                  setTimeout(() => setPendingDeleteMemId(prev => prev === m.id ? null : prev), 5000);
+                                }}
+                                className="text-slate-400 hover:text-rose-600 transition-all p-1 rounded text-[10px] font-bold cursor-pointer"
+                                title="Delete from log"
+                              >
+                                Delete
+                              </button>
+                            )}
                           </div>
                         </div>
 

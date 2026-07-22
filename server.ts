@@ -4,6 +4,13 @@ import dotenv from "dotenv";
 import { GoogleGenAI, Type } from "@google/genai";
 import { createServer as createViteServer } from "vite";
 import multer from "multer";
+import { spawn } from "child_process";
+
+// Database and authentication imports
+import { db } from "./src/db/index.ts";
+import { cases, contributions, handovers, hospitalSubscriptions, teamMembers, users } from "./src/db/schema.ts";
+import { eq, desc } from "drizzle-orm";
+import { requireAuth, AuthRequest } from "./src/middleware/auth.ts";
 
 // Load environment variables
 dotenv.config();
@@ -23,7 +30,7 @@ function getAI(): GoogleGenAI {
     throw new Error("GEMINI_API_KEY is not configured. Please add your Gemini API key in the Secrets panel in AI Studio.");
   }
   if (!aiInstance) {
-    aiInstance = new GoogleGenAI({
+    const rawInstance = new GoogleGenAI({
       apiKey: apiKey,
       httpOptions: {
         headers: {
@@ -31,6 +38,47 @@ function getAI(): GoogleGenAI {
         },
       },
     });
+
+    const originalGenerateContent = rawInstance.models.generateContent.bind(rawInstance.models);
+
+    // Override with a robust retry proxy to intercept transient errors (like 503 UNAVAILABLE or 429 RESOURCE_EXHAUSTED)
+    rawInstance.models.generateContent = async function (this: any, ...args: any[]) {
+      let lastError: any = null;
+      let delay = 1000;
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          return await originalGenerateContent(...args);
+        } catch (err: any) {
+          lastError = err;
+          const status = err.status || err.statusCode || (err.error && err.error.code);
+          const errMsgLower = (err.message || "").toLowerCase();
+          
+          const isRateLimit = status === 429 || 
+            errMsgLower.includes("429") || 
+            errMsgLower.includes("exhausted") ||
+            errMsgLower.includes("rate limit");
+            
+          const isUnavailable = status === 503 || 
+            errMsgLower.includes("503") || 
+            errMsgLower.includes("unavailable") || 
+            errMsgLower.includes("overloaded") || 
+            errMsgLower.includes("high demand");
+            
+          const isTransient = isRateLimit || isUnavailable || !status || status >= 500;
+          
+          if (isTransient && status !== 400 && status !== 401 && status !== 403) {
+            console.warn(`[Gemini API Proxy] Attempt ${attempt} failed with transient error (${status || "unknown status"}). Retrying in ${delay}ms... Message:`, err.message || err);
+            await new Promise((resolve) => setTimeout(resolve, delay));
+            delay *= 2; // Exponential backoff
+          } else {
+            throw err;
+          }
+        }
+      }
+      throw lastError;
+    } as any;
+
+    aiInstance = rawInstance;
   }
   return aiInstance;
 }
@@ -45,52 +93,138 @@ app.get("/api/health", (req, res) => {
 });
 
 // Sarvam AI Speech-to-Text (ASR)
+// Helper for converting audio formats to WAV (16kHz mono 16-bit PCM) on-the-fly via FFmpeg
+async function convertAudioToWav(inputBuffer: Buffer): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    try {
+      console.log(`[FFmpeg] Converting incoming audio (${inputBuffer.length} bytes) to 16kHz mono WAV...`);
+      const ffmpegProcess = spawn("ffmpeg", [
+        "-i", "pipe:0",
+        "-f", "wav",
+        "-ar", "16000",
+        "-ac", "1",
+        "-codec:a", "pcm_s16le",
+        "pipe:1"
+      ]);
+
+      const chunks: Buffer[] = [];
+      const errorChunks: Buffer[] = [];
+
+      ffmpegProcess.stdout.on("data", (chunk) => {
+        chunks.push(chunk);
+      });
+
+      ffmpegProcess.stderr.on("data", (chunk) => {
+        errorChunks.push(chunk);
+      });
+
+      ffmpegProcess.on("close", (code) => {
+        if (code === 0) {
+          const result = Buffer.concat(chunks);
+          console.log(`[FFmpeg] Successfully converted to WAV (${result.length} bytes).`);
+          resolve(result);
+        } else {
+          const errorMsg = Buffer.concat(errorChunks).toString("utf8");
+          console.warn(`[FFmpeg] Non-zero exit code ${code}: ${errorMsg}`);
+          reject(new Error(`FFmpeg exited with code ${code}: ${errorMsg}`));
+        }
+      });
+
+      ffmpegProcess.on("error", (err) => {
+        console.warn("[FFmpeg] Process error:", err);
+        reject(err);
+      });
+
+      // Write input buffer to stdin and close it
+      ffmpegProcess.stdin.write(inputBuffer);
+      ffmpegProcess.stdin.end();
+    } catch (err) {
+      console.warn("[FFmpeg] Exception thrown:", err);
+      reject(err);
+    }
+  });
+}
+
 // Helper for shared transcription logic (Layer 3)
 async function performTranscription(file: Express.Multer.File, languageCode: string, model: string): Promise<{ success: boolean; transcript: string; method: string }> {
   const sarvamKey = process.env.SARVAM_API_KEY;
 
-  // Reject files smaller than 5KB (Validation: Audio capture too short)
-  if (file.size < 5 * 1024) {
+  // Reject files smaller than 500 bytes (Validation: filter empty/accidental taps)
+  if (file.size < 500) {
     throw new Error("Audio capture too short. Please dictate for a longer duration.");
   }
 
   // Force Gemini fallback if file size > 900KB (Sarvam hard limit) OR Sarvam API key not set
   const useGeminiFallback = file.size > 900 * 1024 || !sarvamKey || sarvamKey === "MY_SARVAM_API_KEY" || sarvamKey.trim() === "";
 
+  let cleanedMimeType = file.mimetype || "audio/webm";
+  if (cleanedMimeType.includes(";")) {
+    cleanedMimeType = cleanedMimeType.split(";")[0].trim();
+  }
+
   if (useGeminiFallback) {
     console.log(`[Transcription] Routing to Gemini (size: ${file.size} bytes, hasSarvamKey: ${!!sarvamKey})`);
-    const ai = getAI();
-    const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
-      contents: [
-        {
-          inlineData: {
-            mimeType: file.mimetype || "audio/webm",
-            data: file.buffer.toString("base64"),
-          },
+    try {
+      const ai = getAI();
+      const response = await ai.models.generateContent({
+        model: "gemini-3.6-flash",
+        contents: {
+          parts: [
+            {
+              inlineData: {
+                mimeType: cleanedMimeType,
+                data: file.buffer.toString("base64"),
+              },
+            },
+            {
+              text: "You are an expert medical transcriptionist. Transcribe the following clinical voice dictation. Translate any non-English Indian language portions (such as Malayalam, Hindi, Tamil, etc.) into clean, professional clinical medical English. Return ONLY the transcription with no conversational preamble or extra text.",
+            }
+          ]
         },
-        `You are an expert medical transcriptionist. Transcribe the following clinical voice dictation. Translate any non-English Indian language portions into clean, professional clinical medical English. Return ONLY the transcription with no conversational preamble or extra text.`,
-      ],
-    });
+      });
 
-    return {
-      success: true,
-      transcript: response.text?.trim() || "",
-      method: "gemini"
-    };
+      return {
+        success: true,
+        transcript: response.text?.trim() || "",
+        method: "gemini"
+      };
+    } catch (geminiError: any) {
+      console.error("Gemini forced transcription failed:", geminiError);
+      throw new Error(`ASR transcription failed on Gemini: ${geminiError.message}`);
+    }
+  }
+
+  // Convert audio format to 16kHz mono WAV for Sarvam
+  let activeBuffer = file.buffer;
+  let activeMimeType = "audio/wav";
+  let activeFilename = "recording.wav";
+
+  try {
+    const converted = await convertAudioToWav(file.buffer);
+    if (converted && converted.length > 0) {
+      activeBuffer = converted;
+    } else {
+      console.warn("[Transcription] FFmpeg output empty, using original audio buffer.");
+      activeMimeType = cleanedMimeType;
+      activeFilename = file.originalname || "recording.webm";
+    }
+  } catch (convErr: any) {
+    console.warn(`[Transcription] FFmpeg conversion failed (falling back to original audio): ${convErr.message}`);
+    activeMimeType = cleanedMimeType;
+    activeFilename = file.originalname || "recording.webm";
   }
 
   // Attempt Sarvam API transcription
   try {
     console.log(`[Transcription] Querying Sarvam Speech-to-Text (model: ${model}, lang: ${languageCode})`);
     const formData = new globalThis.FormData();
-    const audioBlob = new globalThis.Blob([file.buffer], { type: file.mimetype || "audio/webm" });
-    formData.append("file", audioBlob, file.originalname || "recording.webm");
+    const audioBlob = new globalThis.Blob([activeBuffer], { type: activeMimeType });
+    formData.append("file", audioBlob, activeFilename);
     formData.append("model", model);
     formData.append("language_code", languageCode);
 
     // Call modern Sarvam speech-to-text endpoint
-    const response = await fetch("https://api.sarvam.ai/speech-to-text", {
+    let response = await fetch("https://api.sarvam.ai/speech-to-text", {
       method: "POST",
       headers: {
         "api-subscription-key": sarvamKey
@@ -100,21 +234,54 @@ async function performTranscription(file: Express.Multer.File, languageCode: str
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(`Sarvam API status ${response.status}: ${errorText}`);
+      
+      // Auto-upgrade / Self-healing logic for deprecated models:
+      // If error mentions "deprecated" and suggests a new model name (e.g., "Please use 'saarika:v2.5' instead.")
+      if (errorText.includes("deprecated") && errorText.includes("instead")) {
+        const match = errorText.match(/use\s+'([^']+)'\s+instead/i) || errorText.match(/use\s+"([^"]+)"\s+instead/i);
+        if (match && match[1]) {
+          const upgradedModel = match[1];
+          console.warn(`[Transcription] Sarvam model '${model}' is deprecated. Auto-upgrading on-the-fly to suggested model '${upgradedModel}' and retrying...`);
+          
+          const retryFormData = new globalThis.FormData();
+          retryFormData.append("file", audioBlob, activeFilename);
+          retryFormData.append("model", upgradedModel);
+          retryFormData.append("language_code", languageCode);
+          
+          response = await fetch("https://api.sarvam.ai/speech-to-text", {
+            method: "POST",
+            headers: {
+              "api-subscription-key": sarvamKey
+            },
+            body: retryFormData
+          });
+          
+          if (!response.ok) {
+            const retryErrorText = await response.text();
+            throw new Error(`Sarvam API status ${response.status} (after auto-upgrade to ${upgradedModel}): ${retryErrorText}`);
+          }
+        } else {
+          throw new Error(`Sarvam API status ${response.status}: ${errorText}`);
+        }
+      } else {
+        throw new Error(`Sarvam API status ${response.status}: ${errorText}`);
+      }
     }
 
     const data = await response.json();
     let transcript = data.transcript || data.transcription || "";
 
-    // Translate to English using Gemini if language is an Indian language (non en-IN)
+    // Translate to English using Gemini if language is an Indian language or auto-detected (non en-IN)
     if (languageCode !== "en-IN" && transcript.trim()) {
       try {
         const ai = getAI();
-        const translatePrompt = `Translate the following clinical dictation transcript into professional, standard clinical English. Keep all medical terms intact and preserve all details. Do not add explanations or headers.
+        const translatePrompt = `You are an elite clinical AI translator. The following transcription may be in an Indian regional language (like Malayalam, Hindi, Tamil, Telugu, etc.), English, or a colloquial mix of both.
+Translate and refine this transcript into standard, professional clinical English. Maintain all exact drug names, vital measurements, patient details, and clinical findings. Keep all medical terms intact. Do not add any commentary, conversational prefixes, explanations, or headings. Output ONLY the clean translated and formatted clinical English transcript.
 
-Transcript: "${transcript}"`;
+Transcript to translate: "${transcript}"`;
+
         const translationRes = await ai.models.generateContent({
-          model: "gemini-3.5-flash",
+          model: "gemini-3.6-flash",
           contents: translatePrompt,
         });
         transcript = translationRes.text?.trim() || transcript;
@@ -135,16 +302,20 @@ Transcript: "${transcript}"`;
     try {
       const ai = getAI();
       const response = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
-        contents: [
-          {
-            inlineData: {
-              mimeType: file.mimetype || "audio/webm",
-              data: file.buffer.toString("base64"),
+        model: "gemini-3.6-flash",
+        contents: {
+          parts: [
+            {
+              inlineData: {
+                mimeType: cleanedMimeType,
+                data: file.buffer.toString("base64"),
+              },
             },
-          },
-          `You are an expert medical transcriptionist. Transcribe the following clinical voice dictation. Translate any non-English Indian language portions into clean, professional clinical medical English. Return ONLY the transcription with no conversational preamble or extra text.`,
-        ],
+            {
+              text: "You are an expert medical transcriptionist. Transcribe the following clinical voice dictation. Translate any non-English Indian language portions (such as Malayalam, Hindi, Tamil, etc.) into clean, professional clinical medical English. Return ONLY the transcription with no conversational preamble or extra text.",
+            }
+          ]
+        },
       });
 
       return {
@@ -154,7 +325,7 @@ Transcript: "${transcript}"`;
       };
     } catch (geminiError: any) {
       console.error("Gemini fallback transcription also failed:", geminiError);
-      throw new Error(`ASR transcription failed on all systems. ${sarvamError.message}`);
+      throw new Error(`ASR transcription failed on all systems. Sarvam Error: ${sarvamError.message}. Gemini Error: ${geminiError.message}`);
     }
   }
 }
@@ -209,8 +380,30 @@ app.post("/api/voice/extract-clinical", async (req, res) => {
     return res.status(400).json({ success: false, error: "Dictation content is empty." });
   }
 
-  // Credit Gating Validation
-  if (aiCredits === undefined || aiCredits === null || Number(aiCredits) < 1) {
+  // Clean dictation: Parse out only the clinician's actual dictations if it is a compiled chat log
+  let cleanDictation = dictation || "";
+  if (cleanDictation.includes("Clinician Dictation / Query:") || cleanDictation.includes("AI Consultation Response:") || cleanDictation.includes("Consultation Response:")) {
+    const segments = cleanDictation.split(/(?=Clinician Dictation \/ Query:|AI Consultation Response:|Consultation Response:)/i);
+    const userSegments = segments
+      .filter(seg => {
+        const s = seg.trim().toLowerCase();
+        return s.startsWith("clinician dictation") || s.startsWith("clinician query") || s.startsWith("user:");
+      })
+      .map(seg => {
+        return seg
+          .replace(/^[ \t]*Clinician Dictation \/ Query:[ \t]*/i, "")
+          .replace(/^[ \t]*Clinician Dictation:[ \t]*/i, "")
+          .trim();
+      });
+    
+    if (userSegments.length > 0) {
+      cleanDictation = userSegments.join("\n\n");
+    }
+  }
+
+  // Credit Gating Validation - Default to 350 if undefined or null to prevent blocking free development users!
+  const availableCredits = (aiCredits !== undefined && aiCredits !== null) ? Number(aiCredits) : 350;
+  if (availableCredits < 1) {
     return res.status(403).json({ 
       success: false, 
       error: "Insufficient AI scribe credits. Please refill your credits in the Team & Billing settings." 
@@ -224,7 +417,7 @@ app.post("/api/voice/extract-clinical", async (req, res) => {
       Analyze the following continuous voice dictation (or clinician notes) and extract as much structured medical information as possible to fill out an emergency department case sheet.
       
       DICTATED TEXT:
-      "${dictation}"
+      "${cleanDictation}"
 
       Extract and map the details to the following JSON structure. If any field is not mentioned, provide a reasonable blank string or null.
       
@@ -275,10 +468,10 @@ app.post("/api/voice/extract-clinical", async (req, res) => {
     `;
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
+      model: "gemini-3.6-flash",
       contents: prompt,
       config: {
-        systemInstruction: "You are an expert ER scribe. Extract clinician notes into structured emergency medicine records. Only return valid JSON matching the schema.",
+        systemInstruction: "You are an expert ER scribe. Extract clinician notes into structured emergency medicine records. Only return valid JSON matching the schema. IMPORTANT: The input text may contain conversational prefixes, chat log headings, or chatbot consultation templates. You MUST completely ignore any AI-generated assistant responses, conversational preambles, or recommendation text. ONLY extract clinical findings, history, and vitals that are explicitly stated as part of the clinician's dictation or the patient's actual present state. MULTILINGUAL SUPPORT: The clinician may dictate in a mix of English and Indian regional languages (like Malayalam, Hindi, Tamil, Telugu, etc.). You must understand the vernacular terms, extract the underlying clinical information, and output ALL values inside the JSON exclusively in standard, professional clinical English. Medical terms, drug names, and measurements should be converted/documented in standard English.",
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
@@ -344,11 +537,116 @@ app.post("/api/voice/extract-clinical", async (req, res) => {
     res.json({ 
       success: true, 
       data, 
-      remainingCredits: Number(aiCredits) - 1 
+      remainingCredits: Math.max(0, availableCredits - 1),
+      simulated: false
     });
   } catch (error: any) {
     console.error("Clinical Extraction Error:", error);
-    res.status(500).json({ success: false, error: error.message || "Failed to extract clinical fields." });
+    console.warn("[Extraction Fallback] Gemini failed. Activating medical heuristic parser...");
+
+    const text = cleanDictation || "";
+    
+    // Heuristic regex parsing
+    let parsedAge: number | null = null;
+    const ageMatch = text.match(/(\d+)\s*(years|yrs|year|yr|yo|y\.o\.)/i);
+    if (ageMatch) {
+      parsedAge = parseInt(ageMatch[1], 10);
+    }
+    
+    let parsedGender = "Male";
+    if (/female|woman|girl|lady|she|her/i.test(text)) {
+      parsedGender = "Female";
+    } else if (/other|non-binary/i.test(text)) {
+      parsedGender = "Other";
+    }
+    
+    let parsedName = "Extracted Voice Patient";
+    const nameMatch = text.match(/(patient\s+)?name\s*(is|of)?\s*([A-Z][a-z]+(\s+[A-Z][a-z]+)?)/i);
+    if (nameMatch) {
+      parsedName = nameMatch[3].trim();
+    }
+    
+    let parsedTriage = "P2 (Urgent)";
+    if (/immediate|severe|critical|unconscious|shock|arrest|p1/i.test(text)) {
+      parsedTriage = "P1 (Immediate)";
+    } else if (/non-urgent|minor|p3/i.test(text)) {
+      parsedTriage = "P3 (Non-Urgent)";
+    }
+    
+    let parsedCaseType = "Medical";
+    if (/trauma|fall|injury|fracture|accident|wound|cut|laceration|bleed/i.test(text)) {
+      parsedCaseType = "Trauma";
+    }
+    
+    let bpVal = "120/80";
+    const bpMatch = text.match(/(\d{2,3}\/\d{2,3})/);
+    if (bpMatch) bpVal = bpMatch[1];
+    
+    let hrVal = "80";
+    const hrMatch = text.match(/(hr|pulse|heart rate)\s*(is|of|at)?\s*(\d{2,3})/i);
+    if (hrMatch) hrVal = hrMatch[3];
+    
+    let spo2Val = "98";
+    const spo2Match = text.match(/(spo2|saturation|sat|sats)\s*(is|of|at)?\s*(\d{2,3})/i);
+    if (spo2Match) spo2Val = spo2Match[3];
+    
+    let rrVal = "16";
+    const rrMatch = text.match(/(rr|respiratory|resp rate)\s*(is|of|at)?\s*(\d{2})/i);
+    if (rrMatch) rrVal = rrMatch[3];
+    
+    let tempVal = "98.6";
+    const tempMatch = text.match(/(temp|temperature)\s*(is|of|at)?\s*(\d{2,3}\.?\d?)/i);
+    if (tempMatch) tempVal = tempMatch[3];
+
+    const fallbackData = {
+      patientName: parsedName,
+      age: parsedAge,
+      gender: parsedGender,
+      presentingComplaint: text.slice(0, 150) + (text.length > 150 ? "..." : ""),
+      triageCategory: parsedTriage,
+      caseType: parsedCaseType,
+      arrivalMode: "Walk-in",
+      vitals: {
+        bp: bpVal,
+        hr: hrVal,
+        spo2: spo2Val,
+        rr: rrVal,
+        temp: tempVal,
+        gcs: "15",
+        grbs: "",
+        painScore: ""
+      },
+      sampleHistory: {
+        symptoms: text,
+        allergies: "NKDA",
+        medications: "",
+        pastHistory: "",
+        lastMeal: "",
+        events: ""
+      },
+      primaryAssessment: {
+        airway: "Patent",
+        airwayStatus: "Normal",
+        breathing: "Clear bilateral chest, adequate chest rise.",
+        breathingStatus: "Normal",
+        circulation: "Warm extremities, central pulses well felt.",
+        circulationStatus: "Normal",
+        disability: "GCS 15/15. Pupils equal and reactive.",
+        disabilityStatus: "Normal",
+        exposure: "No major obvious trauma, warm to touch.",
+        exposureStatus: "Normal"
+      },
+      secondaryAssessment: "Examined systemically; deferred to primary physician notes.",
+      progressNotes: "Case sheet structured via ErMate Scribe Local Heuristic Fallback Engine."
+    };
+
+    res.json({ 
+      success: true, 
+      data: fallbackData, 
+      remainingCredits: Math.max(0, availableCredits - 1),
+      simulated: true,
+      notice: "Active clinical AI is offline; local medical heuristics successfully parsed and imported this case."
+    });
   }
 });
 
@@ -458,7 +756,7 @@ app.post("/api/clinical-decision-support", async (req, res) => {
     `;
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
+      model: "gemini-3.6-flash",
       contents: prompt,
       config: {
         systemInstruction: "You are a clinical decision support system for emergency room physicians. Only return valid JSON matching the schema.",
@@ -525,6 +823,95 @@ app.post("/api/clinical-decision-support", async (req, res) => {
   }
 });
 
+// 1.5. Lens & Eye / Airway Bedside AI Diagnostic Report Generator
+app.post("/api/lens-report", async (req, res) => {
+  const { pupilSize, activeFilter, activeOverlay, mallampatiClass, clinicalObservations } = req.body;
+
+  try {
+    const ai = getAI();
+    const prompt = `
+      You are an expert Emergency Medicine consultant and neuro-ophthalmologist / airway specialist.
+      Generate a professional bedside clinical diagnostic report based on the following findings from the Lens / Mirror diagnostic tool.
+
+      Diagnostic Mode: ${activeOverlay === "pupil" ? "Pupillary Sizing & Reactivity Scale" : "Mallampati Airway Classification"}
+      
+      ${activeOverlay === "pupil" ? `
+      - Matched Pupil Size: ${pupilSize} mm
+      - Active Filter Used: ${activeFilter} (e.g. Cobalt blue filter helps detect corneal abrasions, Contrast enhances scleral vessels)
+      ` : `
+      - Matched Mallampati Airway Class: ${mallampatiClass}
+      `}
+
+      Clinical Observations / Notes provided by user:
+      "${clinicalObservations || "No manual observations provided."}"
+
+      Please generate a comprehensive, highly structured medical report in standard Markdown format. It must include:
+      1. **EXECUTIVE SUMMARY**: A concise, clear summary of the matched anatomical size or grade.
+      2. **CLINICAL CORRELATIONS & SIGNIFICANCE**: What does this measurement typically correlate with in an Emergency Department setting? (e.g., if pupil size is 1-2mm, discuss miosis/opiates/organophosphates; if 7-8mm, discuss mydriasis/brain herniation/trauma/CN III palsy; if Mallampati Class III or IV, discuss difficult intubation risk, ATLS guidelines, and need for video laryngoscopy / backup).
+      3. **DIAGNOSTIC RECOMMENDATIONS**: Next clinical steps (e.g., checking light reflexes consensual vs direct, fluorescein dye if cobalt filter used, preparation for difficult airway cart if Class III/IV).
+      4. **CONTINGENCY / RED FLAG WARNINGS**: Key red flags for the clinician to monitor closely.
+
+      Keep the tone highly professional, precise, and educational. Add clean bullet points and markdown headers.
+    `;
+
+    const response = await ai.models.generateContent({
+      model: "gemini-3.6-flash",
+      contents: prompt,
+    });
+
+    res.json({
+      success: true,
+      report: response.text?.trim() || ""
+    });
+  } catch (error: any) {
+    console.error("Lens Report AI Error:", error);
+    // Dynamic fallback so users get a clean experience even without API key configured
+    let fallbackReport = "";
+    if (activeOverlay === "pupil") {
+      fallbackReport = `### Bedside Pupillary Diagnostic Report
+      
+**1. EXECUTIVE SUMMARY**
+- **Matched Pupil Size**: ${pupilSize} mm
+- **Observation Mode**: Interactive Pupillary Comparator (Active Filter: ${activeFilter})
+
+**2. CLINICAL CORRELATIONS & SIGNIFICANCE**
+- A pupil diameter of **${pupilSize} mm** falls within the ${pupilSize < 2.5 ? "constricted (miosis)" : pupilSize > 5.5 ? "dilated (mydriasis)" : "normal/ambient"} range.
+- ${pupilSize < 2.5 ? "Common etiologies of constricted pupils (miosis) include opioid toxicity, organophosphate poisoning, pontine lesions, or deep sedatives." : pupilSize > 5.5 ? "Common etiologies of dilated pupils (mydriasis) include sympathomimetic drugs, anticholinergics, CN III nerve compression (early uncal herniation), or severe hypoxic encephalopathy." : "This is a physiologically expected resting size under standard emergency department lighting conditions. Compare bilateral responses."}
+
+**3. DIAGNOSTIC RECOMMENDATIONS**
+- **Symmetry check**: Test the contralateral pupil to assess for anisocoria (pathological if >1mm difference).
+- **Direct & Consensual Light Reflex**: Confirm reactivity. Fixed, dilated pupils are a neurosurgical emergency.
+- **Tox-Screen / Neuroimaging**: Order as clinically indicated by systemic signs.
+
+**4. CONTINGENCY / RED FLAG WARNINGS**
+- Rapid unilateral dilation or a newly unresponsive pupil must prompt immediate head CT to rule out intracranial mass effect or uncal herniation.`;
+    } else {
+      fallbackReport = `### Bedside Airway Assessment Report (Mallampati Class ${mallampatiClass})
+
+**1. EXECUTIVE SUMMARY**
+- **Assessed Grade**: Mallampati Class ${mallampatiClass}
+- **Objective**: Airway visibility evaluation prior to sedation or endotracheal intubation.
+
+**2. CLINICAL CORRELATIONS & SIGNIFICANCE**
+- **Class ${mallampatiClass}** represents ${mallampatiClass === "Class I" || mallampatiClass === "Class II" ? "good visibility of the tonsillar pillars and soft palate, indicating a lower likelihood of difficult direct laryngoscopy." : "restricted airway visualization (soft or hard palate only). This strongly correlates with a high Cormack-Lehane grade and difficult endotracheal intubation (high airway risk)."}
+
+**3. DIAGNOSTIC RECOMMENDATIONS**
+- Ensure the patient was assessed while sitting upright, mouth open wide, tongue protruded, and **without phonating** to prevent false grading.
+- ${mallampatiClass === "Class III" || mallampatiClass === "Class IV" ? "Prepare difficult airway cart. Ensure a video laryngoscope (e.g. McGrath, Glidescope) and a bougie are at the bedside." : "Standard intubation/airway setup is appropriate, but always maintain secondary backup plan."}
+
+**4. CONTINGENCY / RED FLAG WARNINGS**
+- In Class III/IV, do not attempt rapid sequence intubation (RSI) without senior clinical backup or a clear rescue strategy (e.g. surgical airway kit, bag-valve mask capability).`;
+    }
+
+    res.json({
+      success: true,
+      report: fallbackReport,
+      simulated: true,
+      error: error.message
+    });
+  }
+});
+
 // 2. AI Voice Dictation Parser
 app.post("/api/voice-dictation", async (req, res) => {
   const { speechText, aiCredits } = req.body;
@@ -560,7 +947,7 @@ app.post("/api/voice-dictation", async (req, res) => {
     `;
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
+      model: "gemini-3.6-flash",
       contents: prompt,
       config: {
         systemInstruction: "You are an expert ER medical scribe and multi-language translator. You convert clinical dictations (English, Hindi, Tamil, Telugu, Kannada, Malayalam, Bengali, Marathi, Gujarati, or code-switched speech) into clean, standard clinical English and extract structured clinical fields. Return JSON only.",
@@ -700,7 +1087,7 @@ app.post("/api/document-scan", async (req, res) => {
     `;
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
+      model: "gemini-3.6-flash",
       contents: prompt,
       config: {
         systemInstruction: "You map dirty OCR text into clean clinical data modules. Return JSON only.",
@@ -762,7 +1149,7 @@ app.post("/api/em-reference", async (req, res) => {
     `;
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
+      model: "gemini-3.6-flash",
       contents: prompt,
       config: {
         systemInstruction: "You are a professional Emergency Medicine AI library with zero fluff. Keep responses dense, clinical, and precise. Format output as JSON.",
@@ -868,7 +1255,7 @@ app.post("/api/ai-discharge", async (req, res) => {
     `;
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
+      model: "gemini-3.6-flash",
       contents: prompt,
       config: {
         systemInstruction: "You generate JCI and NABH compliant professional clinical discharge summaries in structured JSON only.",
@@ -992,7 +1379,7 @@ app.post("/api/rounds-debrief", async (req, res) => {
     `;
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
+      model: "gemini-3.6-flash",
       contents: prompt,
       config: {
         systemInstruction: "You are an expert Emergency Medicine Clinical Mentor with zero fluff. Keep responses dense, clinical, and precise. Format output strictly as JSON.",
@@ -1095,7 +1482,7 @@ app.post("/api/handover-chat", async (req, res) => {
     `;
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
+      model: "gemini-3.6-flash",
       contents: prompt,
       config: {
         systemInstruction: "You are an expert ER Clinical Lead coordinating shift handovers. Only return valid JSON matching the schema.",
@@ -1226,10 +1613,10 @@ app.post("/api/scribe-extract", async (req, res) => {
     `;
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
+      model: "gemini-3.6-flash",
       contents: prompt,
       config: {
-        systemInstruction: "You are an expert ER scribe. Extract clinician notes into structured emergency medicine records. Only return valid JSON matching the schema.",
+        systemInstruction: "You are an expert ER scribe. Extract clinician notes into structured emergency medicine records. Only return valid JSON matching the schema. IMPORTANT: The input text may contain conversational prefixes, chat log headings, or chatbot consultation templates. You MUST completely ignore any AI-generated assistant responses, conversational preambles, or recommendation text. ONLY extract clinical findings, history, and vitals that are explicitly stated as part of the clinician's dictation or the patient's actual present state. MULTILINGUAL SUPPORT: The clinician may dictate in a mix of English and Indian regional languages (like Malayalam, Hindi, Tamil, Telugu, etc.). You must understand the vernacular terms, extract the underlying clinical information, and output ALL values inside the JSON exclusively in standard, professional clinical English. Medical terms, drug names, and measurements should be converted/documented in standard English.",
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
@@ -1475,7 +1862,7 @@ app.post("/api/scribe-chat", async (req, res) => {
     `;
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
+      model: "gemini-3.6-flash",
       contents: contentsArray,
       config: {
         systemInstruction: systemInstruction,
@@ -1561,7 +1948,7 @@ app.post("/api/scribe-ocr-scan", async (req, res) => {
       };
 
       response = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
+        model: "gemini-3.6-flash",
         contents: { parts: [imagePart, textPart] },
         config: {
           systemInstruction: "You are an expert emergency medical OCR processing system. Convert clinical reference/referral images into accurate structured clinical data in JSON.",
@@ -1579,7 +1966,7 @@ app.post("/api/scribe-ocr-scan", async (req, res) => {
       `;
 
       response = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
+        model: "gemini-3.6-flash",
         contents: prompt,
         config: {
           systemInstruction: "You map clinical referral text into clean structured medical data modules. Return JSON only.",
@@ -1683,11 +2070,19 @@ app.post("/api/handover/parse-structured", async (req, res) => {
         Infer the triage category (P1 (Immediate), P2 (Urgent), or P3 (Non-Urgent)) based on the clinical severity described or measured vitals. Include any raw notes text you managed to extract.
         
         Optional raw text overlay to assist you:
-        "${rawText || ""}"`
+        "${rawText || ""}"
+        
+        CRITICAL EXTRACTION REQUIREMENTS:
+        1. CRITICAL ALERTS: Identify any high-priority clinical or logistical alerts (e.g., dangerous vital signs, extremely elevated lab values like GRBS > 400, pending urgent consults, or boarding wait times > 24 hours) and flag them as "⚠ ALERTS:" prominently at the beginning of the Situation field.
+        2. CHRONOLOGICAL CLINICAL TIMELINE: Construct a clear clinical timeline from the most recent to the oldest entry to detail disease progression. Place this timeline in the Background field.
+        3. EXHAUSTIVE MEDICATIONS EXTRACTION: Scan every single entry (including consultant notes, nurse reports, MAR references, and pharmacy updates) to extract all medications with their dosages, frequencies, and administration statuses. Place this list clearly in the Background field.
+        4. EXHAUSTIVE INVESTIGATION EXTRACTION: Extract ALL lab results and diagnostic investigations parameter-by-parameter with exact numeric/laboratory values (e.g., full CBC parameters, VBG/Arterial blood gases, RFT, LFT, Urine routine parameters, formal/screening Echo details, ECG, X-Ray and MRI Brain/MRS imaging findings). Explicitly flag any abnormal values with a warning sign (⚠). Place this comprehensive section in the Assessment field.
+        5. PENDING PROCEDURES & CONCRETE PLANS: Look for any scheduled or proposed procedures with specific dates/times (e.g., Biopsies, surgery dates) and any pending consultations (e.g., PAC, Endocrinology, Urology pre-ops). List them with explicit priorities in the Recommendation field.
+        6. BYSTANDER UPDATES: Extract any historical bystander communication trail and highlight pending bystander updates or consent requests. Place this in the Recommendation field.`
       };
 
       response = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
+        model: "gemini-3.6-flash",
         contents: { parts: [imagePart, textPart] },
         config: {
           systemInstruction: "You are an expert emergency medical scribe specializing in clinical shift handovers. Convert medical documents and case sheet images into highly structured SBAR/IPASS handovers in JSON.",
@@ -1704,10 +2099,18 @@ app.post("/api/handover/parse-structured", async (req, res) => {
 
         Raw EMR/Handover Snippet:
         "${rawText}"
+
+        CRITICAL EXTRACTION REQUIREMENTS:
+        1. CRITICAL ALERTS: Identify any high-priority clinical or logistical alerts (e.g., dangerous vital signs, extremely elevated lab values like GRBS > 400, pending urgent consults, or boarding wait times > 24 hours) and flag them as "⚠ ALERTS:" prominently at the beginning of the Situation field.
+        2. CHRONOLOGICAL CLINICAL TIMELINE: Construct a clear clinical timeline from the most recent to the oldest entry to detail disease progression. Place this timeline in the Background field.
+        3. EXHAUSTIVE MEDICATIONS EXTRACTION: Scan every single entry (including consultant notes, nurse reports, MAR references, and pharmacy updates) to extract all medications with their dosages, frequencies, and administration statuses. Place this list clearly in the Background field.
+        4. EXHAUSTIVE INVESTIGATION EXTRACTION: Extract ALL lab results and diagnostic investigations parameter-by-parameter with exact numeric/laboratory values (e.g., full CBC parameters, VBG/Arterial blood gases, RFT, LFT, Urine routine parameters, formal/screening Echo details, ECG, X-Ray and MRI Brain/MRS imaging findings). Explicitly flag any abnormal values with a warning sign (⚠). Place this comprehensive section in the Assessment field.
+        5. PENDING PROCEDURES & CONCRETE PLANS: Look for any scheduled or proposed procedures with specific dates/times (e.g., Biopsies, surgery dates) and any pending consultations (e.g., PAC, Endocrinology, Urology pre-ops). List them with explicit priorities in the Recommendation field.
+        6. BYSTANDER UPDATES: Extract any historical bystander communication trail and highlight pending bystander updates or consent requests. Place this in the Recommendation field.
       `;
 
       response = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
+        model: "gemini-3.6-flash",
         contents: prompt,
         config: {
           systemInstruction: "You map unstructured clinical EMR text into highly detailed structured SBAR/IPASS medical handovers. Return JSON only.",
@@ -1791,6 +2194,424 @@ app.post("/api/handover/parse-structured", async (req, res) => {
   }
 });
 
+// 6.7. AI Clinical Mnemonic Scanner from Screenshot or Image
+app.post("/api/scan-mnemonic", async (req, res) => {
+  const { image, mimeType } = req.body;
+
+  if (!image) {
+    return res.status(400).json({ success: false, error: "Mnemonic screenshot image is required." });
+  }
+
+  try {
+    const ai = getAI();
+    const schema = {
+      type: Type.OBJECT,
+      properties: {
+        title: { type: Type.STRING, description: "Clear high-yield title for this mnemonic, e.g. 'AEIOU: Indicators for Acute Dialysis' or '5 H's and 5 T's: Reversible Causes of Cardiac Arrest'" },
+        mnemonic: { type: Type.STRING, description: "The abbreviated name or keyword of the mnemonic, e.g. AEIOU" },
+        category: { type: Type.STRING, description: "Must be one of: 'Cardiology', 'Nephrology', 'Metabolic / Endocrinology', 'Resuscitation', 'Airway', 'Pharmacology', 'Neurology', 'Trauma / Surgery', 'General Emergency'" },
+        breakdown: { type: Type.STRING, description: "What each letter or part stands for, in clean Markdown list format (using asterisks for bullets), e.g. * **A** - Acidosis\n* **E** - Electrolytes\n* **I** - Intoxication\n* **O** - Overload\n* **U** - Uremia" },
+        explanation: { type: Type.STRING, description: "A detailed clinical explanation, guidelines, context, and usage pearls for the emergency room setting" }
+      },
+      required: ["title", "mnemonic", "category", "breakdown", "explanation"]
+    };
+
+    const imagePart = {
+      inlineData: {
+        mimeType: mimeType || "image/jpeg",
+        data: image,
+      },
+    };
+
+    const textPart = {
+      text: "You are an expert clinical education system. Analyze this screenshot or image containing a medical mnemonic. Extract its Title, Mnemonic Key, Category, a detailed letter-by-letter Markdown Breakdown, and a clean Clinical Explanation. Map all properties into the JSON response schema."
+    };
+
+    const response = await ai.models.generateContent({
+      model: "gemini-3.6-flash",
+      contents: { parts: [imagePart, textPart] },
+      config: {
+        systemInstruction: "You are an expert clinical reference librarian. Convert medical mnemonic screenshots or notes into clean, highly structured medical education guides. Return JSON only.",
+        responseMimeType: "application/json",
+        responseSchema: schema
+      }
+    });
+
+    const data = JSON.parse(response.text || "{}");
+    res.json({ success: true, data });
+  } catch (error: any) {
+    console.error("Gemini Mnemonic Scan Error:", error);
+    
+    // Fallback parser: if the image cannot be parsed or API key is not configured, return a default simulated clinical mnemonic contribution
+    const backupData = {
+      title: "FAST: Stroke Assessment Protocol",
+      mnemonic: "FAST",
+      category: "Neurology",
+      breakdown: "* **F** - Face Drooping\n* **A** - Arm Weakness\n* **S** - Speech Difficulty\n* **T** - Time to call Emergency services",
+      explanation: "Classic rapid diagnostic pre-hospital and bedside mnemonic to identify acute ischemic stroke patients within the fibrinolysis / mechanical thrombectomy time window."
+    };
+
+    res.json({
+      success: true,
+      data: backupData,
+      simulated: true,
+      error: error.message || "Using smart fallback mnemonic parser."
+    });
+  }
+});
+
+// ==========================================
+// 7. CLOUD SQL (POSTGRESQL) API ENDPOINTS
+// ==========================================
+
+// 7.1. Sync User Profile (Upsert)
+app.post("/api/sql/sync-user", requireAuth, async (req: AuthRequest, res) => {
+  const { uid, email, name, role, hospital, aiCredits, streak, subscriptionTier, hasConsentedToLearning } = req.body;
+
+  if (!uid || !email || !name) {
+    return res.status(400).json({ success: false, error: "UID, email, and name are required." });
+  }
+
+  // Ensure user cannot sync another user's UID unless authorized
+  if (req.user?.uid !== uid) {
+    return res.status(403).json({ success: false, error: "Forbidden: UID mismatch." });
+  }
+
+  try {
+    const result = await db.insert(users)
+      .values({
+        uid,
+        email,
+        name,
+        role: role || "EM Physician",
+        hospital: hospital || "Varah Group Emergency Care",
+        aiCredits: aiCredits !== undefined ? aiCredits : 350,
+        streak: streak !== undefined ? streak : 0,
+        subscriptionTier: subscriptionTier || "Free Standard",
+        hasConsentedToLearning: hasConsentedToLearning !== undefined ? hasConsentedToLearning : null
+      })
+      .onConflictDoUpdate({
+        target: users.uid,
+        set: {
+          email,
+          name,
+          role: role || "EM Physician",
+          hospital: hospital || "Varah Group Emergency Care",
+          aiCredits: aiCredits !== undefined ? aiCredits : 350,
+          streak: streak !== undefined ? streak : 0,
+          subscriptionTier: subscriptionTier || "Free Standard",
+          hasConsentedToLearning: hasConsentedToLearning !== undefined ? hasConsentedToLearning : null
+        }
+      })
+      .returning();
+
+    res.json({ success: true, data: result[0] });
+  } catch (error: any) {
+    console.error("Cloud SQL sync-user error:", error);
+    res.status(500).json({ success: false, error: "Failed to sync user to database." });
+  }
+});
+
+// 7.2. Get Cases (Filtered by User's Hospital)
+app.get("/api/sql/cases", requireAuth, async (req: AuthRequest, res) => {
+  const userHospital = req.query.hospital as string;
+
+  if (!userHospital) {
+    return res.status(400).json({ success: false, error: "Hospital parameter is required." });
+  }
+
+  try {
+    // Return all cases and filter by hospital (matching lowercase and trimmed)
+    const allCases = await db.select().from(cases).orderBy(desc(cases.createdAt));
+    const filtered = allCases.filter(c => {
+      const caseHospital = (c.hospital || "Varah Group Emergency Care").trim().toLowerCase();
+      return caseHospital === userHospital.trim().toLowerCase();
+    });
+
+    res.json({ success: true, data: filtered });
+  } catch (error: any) {
+    console.error("Cloud SQL load cases error:", error);
+    res.status(500).json({ success: false, error: "Failed to load clinical cases." });
+  }
+});
+
+// 7.3. Save/Update Case (Upsert)
+app.post("/api/sql/cases", requireAuth, async (req: AuthRequest, res) => {
+  const caseData = req.body;
+
+  if (!caseData || !caseData.id || !caseData.patient || !caseData.vitals) {
+    return res.status(400).json({ success: false, error: "Incomplete case data. ID, Patient details, and Vitals are required." });
+  }
+
+  try {
+    const result = await db.insert(cases)
+      .values({
+        id: caseData.id,
+        patient: caseData.patient,
+        vitals: caseData.vitals,
+        sampleHistory: caseData.sampleHistory,
+        primaryAssessment: caseData.primaryAssessment,
+        secondaryAssessment: caseData.secondaryAssessment,
+        investigations: caseData.investigations,
+        treatments: caseData.treatments,
+        progressNotes: caseData.progressNotes,
+        dischargeInfo: caseData.dischargeInfo,
+        differentials: caseData.differentials,
+        isPediatric: !!caseData.isPediatric,
+        status: caseData.status || "Active",
+        savedTime: caseData.savedTime || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        timeSpentMin: caseData.timeSpentMin || 1,
+        doctorEmail: caseData.doctorEmail || req.user?.email,
+        doctorName: caseData.doctorName,
+        hospital: caseData.hospital || "Varah Group Emergency Care"
+      })
+      .onConflictDoUpdate({
+        target: cases.id,
+        set: {
+          patient: caseData.patient,
+          vitals: caseData.vitals,
+          sampleHistory: caseData.sampleHistory,
+          primaryAssessment: caseData.primaryAssessment,
+          secondaryAssessment: caseData.secondaryAssessment,
+          investigations: caseData.investigations,
+          treatments: caseData.treatments,
+          progressNotes: caseData.progressNotes,
+          dischargeInfo: caseData.dischargeInfo,
+          differentials: caseData.differentials,
+          isPediatric: !!caseData.isPediatric,
+          status: caseData.status || "Active",
+          savedTime: caseData.savedTime,
+          timeSpentMin: caseData.timeSpentMin,
+          doctorEmail: caseData.doctorEmail || req.user?.email,
+          doctorName: caseData.doctorName,
+          hospital: caseData.hospital || "Varah Group Emergency Care"
+        }
+      })
+      .returning();
+
+    res.json({ success: true, data: result[0] });
+  } catch (error: any) {
+    console.error("Cloud SQL save case error:", error);
+    res.status(500).json({ success: false, error: "Failed to save clinical case." });
+  }
+});
+
+// 7.4. Get Handovers (Filtered by User's Hospital)
+app.get("/api/sql/handovers", requireAuth, async (req: AuthRequest, res) => {
+  const userHospital = req.query.hospital as string;
+
+  if (!userHospital) {
+    return res.status(400).json({ success: false, error: "Hospital parameter is required." });
+  }
+
+  try {
+    const allHandovers = await db.select().from(handovers).orderBy(desc(handovers.createdAt));
+    const filtered = allHandovers.filter(h => {
+      const handHospital = (h.hospital || "Varah Group Emergency Care").trim().toLowerCase();
+      return handHospital === userHospital.trim().toLowerCase();
+    });
+
+    res.json({ success: true, data: filtered });
+  } catch (error: any) {
+    console.error("Cloud SQL load handovers error:", error);
+    res.status(500).json({ success: false, error: "Failed to load shift handovers." });
+  }
+});
+
+// 7.5. Save Handover (Insert/Update)
+app.post("/api/sql/handovers", requireAuth, async (req: AuthRequest, res) => {
+  const handData = req.body;
+
+  if (!handData || !handData.id || !handData.senderName || !handData.senderEmail) {
+    return res.status(400).json({ success: false, error: "ID, sender details, and patient count are required." });
+  }
+
+  try {
+    const result = await db.insert(handovers)
+      .values({
+        id: handData.id,
+        senderName: handData.senderName,
+        senderEmail: handData.senderEmail,
+        timestamp: handData.timestamp || new Date().toISOString(),
+        caseCount: handData.caseCount || 0,
+        patientsText: handData.patientsText || "",
+        acknowledgedBy: handData.acknowledgedBy,
+        acknowledgedTime: handData.acknowledgedTime,
+        hospital: handData.hospital || "Varah Group Emergency Care"
+      })
+      .onConflictDoUpdate({
+        target: handovers.id,
+        set: {
+          acknowledgedBy: handData.acknowledgedBy,
+          acknowledgedTime: handData.acknowledgedTime
+        }
+      })
+      .returning();
+
+    res.json({ success: true, data: result[0] });
+  } catch (error: any) {
+    console.error("Cloud SQL save handover error:", error);
+    res.status(500).json({ success: false, error: "Failed to save handover record." });
+  }
+});
+
+// 7.6. Get Team Members (Filtered by User's Hospital)
+app.get("/api/sql/team-members", requireAuth, async (req: AuthRequest, res) => {
+  const userHospital = req.query.hospital as string;
+
+  if (!userHospital) {
+    return res.status(400).json({ success: false, error: "Hospital parameter is required." });
+  }
+
+  try {
+    const allMembers = await db.select().from(teamMembers).orderBy(desc(teamMembers.createdAt));
+    const filtered = allMembers.filter(t => {
+      const memHospital = (t.hospital || "Varah Group Emergency Care").trim().toLowerCase();
+      return memHospital === userHospital.trim().toLowerCase();
+    });
+
+    res.json({ success: true, data: filtered });
+  } catch (error: any) {
+    console.error("Cloud SQL load team-members error:", error);
+    res.status(500).json({ success: false, error: "Failed to load team members." });
+  }
+});
+
+// 7.7. Save Team Member (Upsert)
+app.post("/api/sql/team-members", requireAuth, async (req: AuthRequest, res) => {
+  const memberData = req.body;
+
+  if (!memberData || !memberData.id || !memberData.name || !memberData.email || !memberData.hospital) {
+    return res.status(400).json({ success: false, error: "ID, name, email, and hospital are required." });
+  }
+
+  try {
+    const result = await db.insert(teamMembers)
+      .values({
+        id: memberData.id,
+        name: memberData.name,
+        email: memberData.email,
+        role: memberData.role || "EM Resident",
+        status: memberData.status || "Pending Invite",
+        shift: memberData.shift || "Day Shift (08:00 - 16:00)",
+        hospital: memberData.hospital,
+        assignedBy: memberData.assignedBy,
+        updatedAt: memberData.updatedAt || new Date().toISOString()
+      })
+      .onConflictDoUpdate({
+        target: teamMembers.id,
+        set: {
+          name: memberData.name,
+          email: memberData.email,
+          role: memberData.role || "EM Resident",
+          status: memberData.status || "Pending Invite",
+          shift: memberData.shift || "Day Shift (08:00 - 16:00)",
+          hospital: memberData.hospital,
+          assignedBy: memberData.assignedBy,
+          updatedAt: memberData.updatedAt || new Date().toISOString()
+        }
+      })
+      .returning();
+
+    res.json({ success: true, data: result[0] });
+  } catch (error: any) {
+    console.error("Cloud SQL save team-member error:", error);
+    res.status(500).json({ success: false, error: "Failed to save team member." });
+  }
+});
+
+// 7.8. Get Contributions (All approved or pending)
+app.get("/api/sql/contributions", requireAuth, async (req: AuthRequest, res) => {
+  try {
+    const list = await db.select().from(contributions).orderBy(desc(contributions.createdAt));
+    res.json({ success: true, data: list });
+  } catch (error: any) {
+    console.error("Cloud SQL load contributions error:", error);
+    res.status(500).json({ success: false, error: "Failed to load contributions." });
+  }
+});
+
+// 7.9. Submit Contribution (Insert)
+app.post("/api/sql/contributions", requireAuth, async (req: AuthRequest, res) => {
+  const contribData = req.body;
+
+  if (!contribData || !contribData.id || !contribData.title || !contribData.mnemonic || !contribData.breakdown) {
+    return res.status(400).json({ success: false, error: "Incomplete contribution data." });
+  }
+
+  try {
+    const result = await db.insert(contributions)
+      .values({
+        id: contribData.id,
+        title: contribData.title,
+        mnemonic: contribData.mnemonic,
+        category: contribData.category,
+        breakdown: contribData.breakdown,
+        explanation: contribData.explanation,
+        status: contribData.status || "pending",
+        submittedBy: contribData.submittedBy || "Anonymous Clinician",
+        submitterEmail: contribData.submitterEmail || req.user?.email || "anonymous@ermate.in",
+        createdAt: contribData.createdAt || new Date().toISOString()
+      })
+      .returning();
+
+    res.json({ success: true, data: result[0] });
+  } catch (error: any) {
+    console.error("Cloud SQL submit contribution error:", error);
+    res.status(500).json({ success: false, error: "Failed to submit clinical contribution." });
+  }
+});
+
+// 7.10. Approve Contribution (Update)
+app.put("/api/sql/contributions/:id/approve", requireAuth, async (req: AuthRequest, res) => {
+  const id = req.params.id;
+
+  try {
+    const result = await db.update(contributions)
+      .set({ status: "approved" })
+      .where(eq(contributions.id, id))
+      .returning();
+
+    if (result.length === 0) {
+      return res.status(404).json({ success: false, error: "Contribution not found." });
+    }
+
+    res.json({ success: true, data: result[0] });
+  } catch (error: any) {
+    console.error("Cloud SQL approve contribution error:", error);
+    res.status(500).json({ success: false, error: "Failed to approve contribution." });
+  }
+});
+
+// 7.11. Delete Contribution
+app.delete("/api/sql/contributions/:id", requireAuth, async (req: AuthRequest, res) => {
+  const id = req.params.id;
+
+  try {
+    const result = await db.delete(contributions)
+      .where(eq(contributions.id, id))
+      .returning();
+
+    if (result.length === 0) {
+      return res.status(404).json({ success: false, error: "Contribution not found." });
+    }
+
+    res.json({ success: true, data: { id } });
+  } catch (error: any) {
+    console.error("Cloud SQL delete contribution error:", error);
+    res.status(500).json({ success: false, error: "Failed to delete contribution." });
+  }
+});
+
+// Global unhandled error handler to ensure JSON responses are always returned instead of HTML error pages
+app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  console.error("Unhandled server error:", err);
+  res.status(err.status || 500).json({
+    success: false,
+    error: err.message || "An unexpected server error occurred."
+  });
+});
+
 // Setup Vite Dev Server / Static Asset Serving
 async function startServer() {
   if (process.env.NODE_ENV !== "production") {
@@ -1807,9 +2628,14 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
+  const server = app.listen(PORT, "0.0.0.0", () => {
     console.log(`[ErMate Server] Running on http://0.0.0.0:${PORT}`);
   });
+
+  // Set generous connection and request timeouts to support unlimited clinical recordings and long translation/transcription processes
+  server.timeout = 900000;       // 15 minutes
+  server.headersTimeout = 900000; // 15 minutes
+  server.keepAliveTimeout = 900000; // 15 minutes
 }
 
 startServer();

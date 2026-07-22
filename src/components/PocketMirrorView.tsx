@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { 
-  Camera, ChevronLeft, Eye, Sun, Zap, RotateCw, Pause, Play, ShieldAlert, Check, RefreshCw, Sparkles, Sliders
+  Camera, ChevronLeft, Eye, Sun, Zap, RotateCw, Pause, Play, ShieldAlert, Check, RefreshCw, Sparkles, Sliders, AlertCircle, FileText
 } from "lucide-react";
 
 interface PocketMirrorViewProps {
@@ -26,6 +26,131 @@ export default function PocketMirrorView({ onBack }: PocketMirrorViewProps) {
   
   // Mock fallback preview image if camera permission is denied
   const [useMockDemo, setUseMockDemo] = useState<boolean>(false);
+
+  // Diagnostics report states
+  const [selectedMallampatiClass, setSelectedMallampatiClass] = useState<string>("Class I");
+  const [reportText, setReportText] = useState<string>("");
+  const [isGeneratingReport, setIsGeneratingReport] = useState<boolean>(false);
+  const [clinicalObservations, setClinicalObservations] = useState<string>("");
+  const [copiedReport, setCopiedReport] = useState<boolean>(false);
+
+  // Generate Clinical Report via server API
+  const handleGenerateReport = async () => {
+    setIsGeneratingReport(true);
+    setReportText("");
+    setCopiedReport(false);
+    try {
+      const response = await fetch("/api/lens-report", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          pupilSize: selectedPupilSize,
+          activeFilter: activeFilter,
+          activeOverlay: activeOverlay,
+          mallampatiClass: selectedMallampatiClass,
+          clinicalObservations: clinicalObservations,
+        }),
+      });
+      const data = await response.json();
+      if (data.success) {
+        setReportText(data.report);
+      } else {
+        setReportText(`### Error Generating Report\n\nFailed to generate the diagnostic report. Please verify connection and try again.`);
+      }
+    } catch (err: any) {
+      console.error("Report generation failed:", err);
+      setReportText(`### Connection Error\n\nCould not reach the diagnostic server. Fallback system active.`);
+    } finally {
+      setIsGeneratingReport(false);
+    }
+  };
+
+  // Markdown parsing logic matching clinical guidelines
+  const formatMarkdown = (text: string) => {
+    return text.split("\n").map((line, index) => {
+      const trimmed = line.trim();
+      if (!trimmed) return <div key={index} className="h-2" />;
+
+      // Header h3
+      if (trimmed.startsWith("###")) {
+        return (
+          <h3 key={index} className="text-sm font-black text-indigo-400 mt-4 mb-1.5 font-mono uppercase tracking-wide">
+            {trimmed.replace("###", "").trim()}
+          </h3>
+        );
+      }
+      
+      // Header h2
+      if (trimmed.startsWith("##")) {
+        return (
+          <h2 key={index} className="text-sm font-black text-white mt-5 mb-2 font-mono uppercase tracking-wider border-b border-slate-800 pb-1">
+            {trimmed.replace("##", "").trim()}
+          </h2>
+        );
+      }
+
+      // Header h1
+      if (trimmed.startsWith("#")) {
+        return (
+          <h1 key={index} className="text-base font-black text-white mt-6 mb-3 font-mono uppercase border-b border-slate-855 pb-1">
+            {trimmed.replace("#", "").trim()}
+          </h1>
+        );
+      }
+
+      // Bold tips/notes
+      if (trimmed.startsWith(">")) {
+        return (
+          <blockquote key={index} className="border-l-3 border-amber-500 bg-amber-955/10 text-amber-200 p-3 rounded-r-lg my-3 text-[10px] flex gap-2 items-start leading-relaxed font-mono">
+            <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+            <div>{trimmed.replace(">", "").trim()}</div>
+          </blockquote>
+        );
+      }
+
+      // List item
+      if (trimmed.startsWith("* ") || trimmed.startsWith("- ")) {
+        const itemContent = trimmed.substring(2);
+        return (
+          <li key={index} className="ml-4 list-disc text-slate-300 mb-1 leading-relaxed text-[10.5px]">
+            {renderBoldText(itemContent)}
+          </li>
+        );
+      }
+
+      // Numbered lists
+      const numberedMatch = trimmed.match(/^(\d+)\.\s+(.*)/);
+      if (numberedMatch) {
+        return (
+          <li key={index} className="ml-4 list-decimal text-slate-300 mb-1 leading-relaxed text-[10.5px]">
+            {renderBoldText(numberedMatch[2])}
+          </li>
+        );
+      }
+
+      // Normal paragraph
+      return (
+        <p key={index} className="text-slate-300 mb-2 leading-relaxed text-[11px] font-medium">
+          {renderBoldText(trimmed)}
+        </p>
+      );
+    });
+  };
+
+  const renderBoldText = (text: string) => {
+    const parts = text.split(/(\*\*.*?\*\*|`.*?`)/g);
+    return parts.map((part, i) => {
+      if (part.startsWith("**") && part.endsWith("**")) {
+        return <strong key={i} className="font-bold text-white">{part.slice(2, -2)}</strong>;
+      }
+      if (part.startsWith("`") && part.endsWith("`")) {
+        return <code key={i} className="px-1 py-0.5 bg-slate-950 text-indigo-400 font-mono text-[10px] rounded border border-slate-800">{part.slice(1, -1)}</code>;
+      }
+      return part;
+    });
+  };
 
   // Pupil size scale reference data (clinical significance)
   const pupilScales = [
@@ -393,6 +518,18 @@ export default function PocketMirrorView({ onBack }: PocketMirrorViewProps) {
               ))}
             </div>
           </div>
+
+          {/* Guide notification when frozen */}
+          {isFrozen && (
+            <div className="bg-indigo-950/50 border border-indigo-900 p-4 rounded-2xl space-y-2 animate-pulse mt-4">
+              <span className="text-[10px] text-indigo-400 font-extrabold uppercase tracking-widest block font-mono flex items-center gap-1.5">
+                <Sparkles className="w-3.5 h-3.5" /> Frame Paired & Frozen!
+              </span>
+              <p className="text-[9.5px] text-slate-300 leading-normal">
+                You have locked the live snapshot. Align the interactive gauges on the right (Pupil Diameter or Airway Mallampati class) to match the clinical finding, then scroll to the bottom to generate your structured Bedside Clinical Report!
+              </p>
+            </div>
+          )}
         </div>
 
         {/* Right Hand: Clinical reference tools & pupil sizing slider (5 columns) */}
@@ -539,7 +676,12 @@ export default function PocketMirrorView({ onBack }: PocketMirrorViewProps) {
                 {mallampatiClasses.map(m => (
                   <div 
                     key={m.class}
-                    className="p-3 bg-slate-950/70 border border-slate-850 rounded-2xl space-y-1.5 text-[10px]"
+                    onClick={() => setSelectedMallampatiClass(m.class)}
+                    className={`p-3 rounded-2xl space-y-1.5 text-[10px] cursor-pointer transition-all border ${
+                      selectedMallampatiClass === m.class 
+                        ? "bg-indigo-950/50 border-indigo-500 text-white shadow-md"
+                        : "bg-slate-950/70 border-slate-850 hover:border-slate-800 text-slate-300"
+                    }`}
                   >
                     <div className="flex justify-between items-center">
                       <strong className="font-mono text-[11px] text-white font-black">{m.class} : {m.view}</strong>
@@ -581,6 +723,135 @@ export default function PocketMirrorView({ onBack }: PocketMirrorViewProps) {
             </div>
           )}
         </div>
+      </div>
+
+      {/* Persistent Bedside AI Diagnostics Assistant section */}
+      <div id="ai-report-assistant" className="bg-slate-900 border border-slate-800 rounded-3xl p-6 space-y-5 mt-6">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-slate-850 pb-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 bg-indigo-600/10 rounded-2xl border border-indigo-500/20 text-indigo-400">
+              <FileText className="w-5.5 h-5.5" />
+            </div>
+            <div>
+              <h3 className="text-sm font-black text-white uppercase font-mono tracking-wider flex items-center gap-2">
+                Bedside AI Diagnostics Assistant
+                <span className="px-2 py-0.5 rounded-full text-[8px] bg-indigo-500/10 text-indigo-400 border border-indigo-500/25 animate-pulse">
+                  Snapshot Analysis Active
+                </span>
+              </h3>
+              <p className="text-[10px] text-slate-400">
+                Generate structured, EMR-ready diagnostic summaries from live gauges and observation notes.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 text-[9px] bg-slate-950/80 px-3 py-1 rounded-xl border border-slate-800 font-mono">
+            <span className="text-slate-500 font-bold">STATUS:</span>
+            <span className="text-emerald-400 font-black flex items-center gap-1.5 uppercase">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+              Ready
+            </span>
+          </div>
+        </div>
+
+        {/* Current State Summary Dashboard */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div className="bg-slate-950/50 border border-slate-850 p-3.5 rounded-2xl space-y-1">
+            <span className="text-[8.5px] text-slate-500 uppercase font-mono tracking-wider block">Assessment Mode</span>
+            <span className="text-xs font-black text-white font-mono uppercase block">
+              {activeOverlay === "pupil" ? "Pupil Diameter Scale" : "Mallampati Airway Scale"}
+            </span>
+          </div>
+          <div className="bg-slate-950/50 border border-slate-850 p-3.5 rounded-2xl space-y-1">
+            <span className="text-[8.5px] text-slate-500 uppercase font-mono tracking-wider block">Assessed Selection</span>
+            <span className="text-xs font-black text-indigo-400 font-mono block">
+              {activeOverlay === "pupil" ? `${selectedPupilSize.toFixed(1)} mm` : selectedMallampatiClass}
+            </span>
+          </div>
+          <div className="bg-slate-950/50 border border-slate-850 p-3.5 rounded-2xl space-y-1">
+            <span className="text-[8.5px] text-slate-500 uppercase font-mono tracking-wider block">Frame Capture State</span>
+            <span className={`text-xs font-black font-mono uppercase block ${isFrozen ? "text-rose-400" : "text-amber-400"}`}>
+              {isFrozen ? "🔒 Paused / Frozen Frame" : "🎥 Live Camera Mode"}
+            </span>
+          </div>
+        </div>
+
+        {/* Bedside observations notes */}
+        <div className="space-y-1.5">
+          <label className="text-[10px] font-extrabold text-slate-400 font-mono uppercase tracking-wider flex items-center gap-1.5">
+            <span>Clinical Observations / Bedside Notes (Optional)</span>
+          </label>
+          <textarea
+            value={clinicalObservations}
+            onChange={(e) => setClinicalObservations(e.target.value)}
+            placeholder="e.g. Sluggish direct reflex, corneal reflex intact. Intubation difficult cart prepared due to poor uvula visualization..."
+            className="w-full h-18 bg-slate-950 border border-slate-850 rounded-2xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-indigo-500 placeholder-slate-600 leading-relaxed resize-none transition-all font-medium"
+          />
+        </div>
+
+        {/* Generate Clinical Report Button */}
+        <button
+          onClick={handleGenerateReport}
+          disabled={isGeneratingReport}
+          className={`w-full py-3 rounded-2xl font-black text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2 shadow-lg ${
+            isGeneratingReport 
+              ? "bg-slate-850 text-slate-500 cursor-not-allowed border border-slate-800" 
+              : "bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-600/10 hover:-translate-y-0.5 cursor-pointer"
+          }`}
+        >
+          {isGeneratingReport ? (
+            <>
+              <RefreshCw className="w-4 h-4 animate-spin text-indigo-400" />
+              Synthesizing Clinical Report with Gemini...
+            </>
+          ) : (
+            <>
+              <Sparkles className="w-4 h-4 text-amber-400" />
+              Generate structured Diagnostics Report
+            </>
+          )}
+        </button>
+
+        {/* Display Generated Report with Markdown parsing */}
+        {reportText && (
+          <div className="bg-slate-950/75 border border-slate-850 rounded-2xl p-5 space-y-4 animate-fade-in relative shadow-inner">
+            
+            {/* Report Header */}
+            <div className="flex justify-between items-center border-b border-slate-900 pb-3">
+              <span className="text-[9px] font-black text-emerald-400 uppercase tracking-widest font-mono flex items-center gap-1.5">
+                <Check className="w-4 h-4" /> Bedside Assessment Report Ready
+              </span>
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(reportText);
+                  setCopiedReport(true);
+                  setTimeout(() => setCopiedReport(false), 2000);
+                }}
+                className="text-[9.5px] font-bold text-slate-350 hover:text-white bg-slate-900 border border-slate-800 px-3 py-1.5 rounded-xl transition-all flex items-center gap-1.5 cursor-pointer"
+              >
+                {copiedReport ? (
+                  <>
+                    <Check className="w-3.5 h-3.5 text-emerald-400" /> Copied!
+                  </>
+                ) : (
+                  <>
+                    Copy Report to Clipboard
+                  </>
+                )}
+              </button>
+            </div>
+
+            {/* Markdown Text Area */}
+            <div className="text-left space-y-3.5 max-h-[350px] overflow-y-auto pr-1.5 scrollbar-thin scrollbar-thumb-slate-800 text-[11px] leading-relaxed">
+              {formatMarkdown(reportText)}
+            </div>
+
+            {/* Clinician disclaimer instructions */}
+            <div className="bg-indigo-950/15 border border-indigo-900/30 p-4 rounded-xl text-[10px] text-slate-400 font-mono leading-relaxed">
+              <strong className="text-indigo-400 block mb-1">💡 EMR INTEGRATION PROTOCOL:</strong>
+              This assessment outline has been generated using the <strong>Gemini 3.5 Flash Model</strong>. Clinicians are advised to confirm matched physical measurements and adapt output as needed before incorporating into official medical logs or EMR progress sheets.
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

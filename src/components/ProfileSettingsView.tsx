@@ -2,16 +2,17 @@ import React, { useState, useEffect } from "react";
 import { 
   CreditCard, Activity, RefreshCw, CheckCircle, Zap, ShieldCheck, 
   TrendingUp, Users, Percent, ArrowUpRight, Plus, Trash2, Mail, 
-  Link, Copy, Check, Info, Sparkles, Building, ChevronRight, AlertTriangle,
+  Link, Copy, Check, Info, Sparkles, Building, Building2, ChevronRight, AlertTriangle,
   LogOut, ShieldAlert, Lock, Moon, Sun, Bell, FileText, Eye, EyeOff,
   UserCheck, Shield, Award, Sparkle, RefreshCcw, ChevronLeft, Clock,
   FileCheck, HelpCircle, Laptop, Smartphone, Calculator,
   ChevronDown, ChevronUp, Database, Target, Cpu, Globe, Download, UserPlus,
-  Heart, Mic, Compass, BarChart2, Camera, BookOpen, Wrench
+  Heart, Mic, Compass, BarChart2, Camera, BookOpen, Wrench, Search
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
-import { UserProfile, ClinicalCase, TriageCategory } from "../types";
-import TeamBuilder, { TeamMember } from "./TeamBuilder";
+import { UserProfile, ClinicalCase, TriageCategory, TeamMember, ArrivalMode } from "../types";
+import TeamRosterBoard from "./TeamRosterBoard";
+import TeamBuilder from "./TeamBuilder";
 
 interface ProfileSettingsViewProps {
   profile: UserProfile;
@@ -29,6 +30,17 @@ interface ProfileSettingsViewProps {
   handovers?: any[];
   setHandovers?: any;
   onNavigateToTab?: (tabId: string) => void;
+  teamMembers: TeamMember[];
+  onAddMember: (name: string, email: string, role: string, shift: string) => Promise<void>;
+  onRemoveMember: (id: string) => Promise<void>;
+  onUpdateShift: (id: string, shift: string) => Promise<void>;
+  onApproveMember?: (id: string) => Promise<void>;
+  onDeclineMember?: (id: string) => Promise<void>;
+  onUpdateRole?: (id: string, role: string) => Promise<void>;
+  onLeaveTeam?: () => Promise<void>;
+  hospitalSubscription?: { active: boolean; subscriptionTier: string } | null;
+  shifts?: any[];
+  onUpdateShifts?: (newShifts: any[]) => Promise<void> | void;
 }
 
 export default function ProfileSettingsView({
@@ -46,6 +58,17 @@ export default function ProfileSettingsView({
   handovers = [],
   setHandovers,
   onNavigateToTab,
+  teamMembers,
+  onAddMember,
+  onRemoveMember,
+  onUpdateShift,
+  onApproveMember,
+  onDeclineMember,
+  onUpdateRole,
+  onLeaveTeam,
+  hospitalSubscription = null,
+  shifts = [],
+  onUpdateShifts,
 }: ProfileSettingsViewProps) {
   // Mobile navigation subview selector
   const [selectedSubSection, setSelectedSubSection] = useState<string | null>(null);
@@ -93,13 +116,7 @@ export default function ProfileSettingsView({
     return () => clearInterval(timer);
   }, []);
 
-  // Roster States
-  const [teamBuilderMembers, setTeamBuilderMembers] = useState<TeamMember[]>([
-    { id: "mem-1", email: "dr.vipin@gmail.com", role: "HOD / Shift Lead", status: "Pending Invite" },
-    { id: "mem-2", email: "priya.nair@gmail.com", role: "Senior Consultant", status: "Pending Invite" },
-    { id: "mem-3", email: "sanjay.verma@gmail.com", role: "EM Resident", status: "Pending Invite" },
-    { id: "mem-4", email: "dr.ananya@gmail.com", role: "Scribe Specialist", status: "Pending Invite" },
-  ]);
+
 
   const [hospitalName, setHospitalName] = useState<string>(profile.hospital || "Varah Emergency Hospital");
   const [departmentName, setDepartmentName] = useState<string>("Emergency Medicine Department");
@@ -180,6 +197,10 @@ export default function ProfileSettingsView({
   const [razorpayPlanName, setRazorpayPlanName] = useState<string>("");
   const [razorpayTier, setRazorpayTier] = useState<string>("");
   const [razorpayCredits, setRazorpayCredits] = useState<number>(0);
+
+  // Log Book States
+  const [logBookSearch, setLogBookSearch] = useState<string>("");
+  const [logBookTriageFilter, setLogBookTriageFilter] = useState<string>("all");
 
   // Handle Roster Invites
   const handleSelectCoworker = (doc: { name: string; email: string; userId: string; role: string }) => {
@@ -368,6 +389,11 @@ export default function ProfileSettingsView({
     }
   }, [displayMode]);
 
+  // Sync shareAiTraining with profile's consented field
+  useEffect(() => {
+    setShareAiTraining(profile.hasConsentedToLearning !== false);
+  }, [profile.hasConsentedToLearning]);
+
   // Compute Statistics for Stats view
   const totalCases = cases.length;
   const p1Cases = cases.filter(c => c.patient?.triageCategory === TriageCategory.P1).length;
@@ -497,13 +523,111 @@ export default function ProfileSettingsView({
                   <Users className="w-4.5 h-4.5" />
                 </div>
                 <div className="text-left">
-                  <strong className="text-sm font-bold block">Manage Roster</strong>
+                  <strong className="text-sm font-bold block">Clinical Team & Roster</strong>
                   <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">Team Builder setup & doctor directory</span>
                 </div>
               </div>
               <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
             </div>
 
+          </div>
+        </div>
+
+        {/* Section: Clinical Team Directory */}
+        <div className="space-y-2">
+          <div className="flex justify-between items-center pl-1">
+            <h4 className="text-[10px] font-black tracking-widest text-slate-400 dark:text-slate-500 uppercase font-mono">
+              MY TEAM DIRECTORY ({teamMembers.length})
+            </h4>
+            <button
+              type="button"
+              onClick={() => setSelectedSubSection("roster")}
+              className="text-[10px] font-black font-mono uppercase text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-0.5 cursor-pointer bg-transparent border-none"
+            >
+              Manage / Invite <ChevronRight className="w-3 h-3" />
+            </button>
+          </div>
+          
+          <div className="bg-white dark:bg-[#182333] border border-slate-200 dark:border-slate-800/80 rounded-2xl p-4 shadow-md space-y-3">
+            <div className="flex items-center justify-between bg-slate-50 dark:bg-slate-900/40 px-3 py-2 rounded-xl border border-slate-100 dark:border-slate-800/50">
+              <div className="flex items-center gap-2 min-w-0">
+                <Building className="w-4 h-4 text-emerald-500 shrink-0" />
+                <span className="text-xs font-bold text-slate-800 dark:text-slate-200 truncate">{profile.hospital || "Varah Group Emergency Care"}</span>
+              </div>
+              <span className="text-[9px] bg-emerald-100 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20 px-2 py-0.5 rounded-full font-mono font-bold uppercase tracking-wide shrink-0">
+                Synced
+              </span>
+            </div>
+
+            {teamMembers.length === 0 ? (
+              <div className="text-center py-4 text-slate-500 dark:text-slate-400 text-xs font-mono">
+                No active team members on this hospital roster yet.
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-[220px] overflow-y-auto pr-1">
+                {teamMembers.map((member) => {
+                  const userEmailLower = (profile.email || "").toLowerCase().trim();
+                  const isSelf = member.email.toLowerCase().trim() === userEmailLower;
+                  const initials = (member.name || "Dr").replace("Dr.", "").trim().substring(0, 2).toUpperCase();
+                  
+                  return (
+                    <div 
+                      key={member.id} 
+                      className={`flex items-center gap-2.5 p-2 rounded-xl border transition-all ${
+                        isSelf 
+                          ? "bg-indigo-50/50 dark:bg-indigo-950/20 border-indigo-200/50 dark:border-indigo-900/30" 
+                          : "bg-slate-50/30 dark:bg-slate-900/10 border-slate-100 dark:border-slate-850"
+                      }`}
+                    >
+                      <div className={`w-7.5 h-7.5 rounded-lg flex items-center justify-center text-[11px] font-black font-mono shrink-0 ${
+                        isSelf 
+                          ? "bg-indigo-600 text-white" 
+                          : "bg-slate-100 dark:bg-slate-800 text-slate-650 dark:text-slate-350"
+                      }`}>
+                        {initials}
+                      </div>
+                      <div className="text-left min-w-0 flex-1">
+                        <div className="flex items-center gap-1 min-w-0">
+                          <span className="text-xs font-bold text-slate-800 dark:text-slate-200 truncate block">
+                            {member.name}
+                          </span>
+                          {isSelf && (
+                            <span className="text-[8px] bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-400 px-1 py-0.2 rounded font-black uppercase tracking-wider font-mono shrink-0">
+                              You{member.status === "Pending Approval" ? " (Pending)" : ""}
+                            </span>
+                          )}
+                          {!isSelf && member.status === "Pending Approval" && (
+                            <span className="text-[8px] bg-amber-100 dark:bg-amber-950/45 text-amber-700 dark:text-amber-400 px-1.5 py-0.2 rounded font-black uppercase tracking-wider font-mono shrink-0 animate-pulse">
+                              Pending
+                            </span>
+                          )}
+                        </div>
+                        <span className="text-[10px] text-slate-500 dark:text-slate-400 block truncate font-mono">
+                          {member.role || "EM Resident"} • {member.shift || "off"}{member.status === "Pending Approval" ? " • Pending Approval" : ""}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {profile.hospital && profile.hospital !== "Varah Group Emergency Care" && onLeaveTeam && (
+              <div className="pt-3 flex justify-end">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (window.confirm(`Are you sure you want to leave your team affiliation at "${profile.hospital}"?\n\nThis will safely disconnect you from their clinical roster, but all of your local cases, rounds histories, and private clinical memories will remain perfectly safe with you.`)) {
+                      await onLeaveTeam();
+                    }
+                  }}
+                  className="px-3.5 py-1.5 border border-rose-200 dark:border-rose-900 hover:bg-rose-50 dark:hover:bg-rose-950/20 text-rose-600 dark:text-rose-400 font-black text-xs rounded-xl transition-all cursor-pointer flex items-center gap-1.5 bg-transparent"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                  Leave Hospital Team
+                </button>
+              </div>
+            )}
           </div>
         </div>
 
@@ -523,6 +647,22 @@ export default function ProfileSettingsView({
                 <div className="text-left">
                   <strong className="text-sm font-bold block">My Stats</strong>
                   <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">Clinical registries performance analytics</span>
+                </div>
+              </div>
+              <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
+            </div>
+
+            <div 
+              onClick={() => setSelectedSubSection("log-book")}
+              className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-all"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-8.5 h-8.5 rounded-xl bg-indigo-500/10 text-indigo-400 flex items-center justify-center">
+                  <BookOpen className="w-4.5 h-4.5" />
+                </div>
+                <div className="text-left">
+                  <strong className="text-sm font-bold block">My Log Book</strong>
+                  <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">International standard case & procedure logs</span>
                 </div>
               </div>
               <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
@@ -822,46 +962,46 @@ export default function ProfileSettingsView({
   // Subview selector container rendering
   const renderSubSectionContent = () => {
     let title = "Settings Subsection";
-    let content = null;
+    let content: React.ReactNode = null;
 
     if (selectedSubSection === "handovers") {
       title = "Incoming Hospital Handovers";
       content = (
         <div className="space-y-4 font-mono">
-          <div className="p-4 bg-slate-900 border border-slate-800 rounded-2xl space-y-2">
-            <h4 className="text-xs font-bold text-white uppercase tracking-wider text-blue-400">ACTIVE HANDOVER LOG</h4>
-            <p className="text-[11px] text-slate-400">
+          <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl space-y-2 text-left">
+            <h4 className="text-xs font-bold text-indigo-600 uppercase tracking-wider">ACTIVE HANDOVER LOG</h4>
+            <p className="text-[11px] text-slate-600">
               These patient charts have been routed here from other ER shifts and require your active department review and signing.
             </p>
           </div>
 
           <div className="space-y-3">
             {handovers.length === 0 ? (
-              <div className="py-12 text-center border-2 border-dashed border-slate-800 rounded-2xl bg-slate-900/40">
-                <FileCheck className="w-10 h-10 text-slate-600 mx-auto mb-2" />
-                <strong className="text-xs text-slate-300 block">No Pending Handovers</strong>
-                <p className="text-[10px] text-slate-500 mt-1">All incoming department transfers have been reviewed and filed.</p>
+              <div className="py-12 text-center border-2 border-dashed border-slate-200 rounded-2xl bg-slate-50/50">
+                <FileCheck className="w-10 h-10 text-slate-450 mx-auto mb-2" />
+                <strong className="text-xs text-slate-700 block">No Pending Handovers</strong>
+                <p className="text-[10px] text-slate-400 mt-1">All incoming department transfers have been reviewed and filed.</p>
               </div>
             ) : (
               handovers.map((item: any, idx: number) => (
-                <div key={idx} className="bg-slate-900 border border-slate-800 p-4 rounded-2xl space-y-3">
+                <div key={idx} className="bg-white border border-slate-200 p-4 rounded-2xl space-y-3 shadow-xs">
                   <div className="flex justify-between items-start">
-                    <div>
-                      <span className="bg-slate-800 text-slate-300 px-2 py-0.5 rounded text-[10px] font-bold">
+                    <div className="text-left">
+                      <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded text-[10px] font-bold border border-slate-150">
                         Bed {item.bedNumber || `ER-${idx+1}`}
                       </span>
-                      <strong className="block text-white text-xs font-bold mt-1.5">{item.patientName || "Anonymous Patient"}</strong>
-                      <p className="text-[10px] text-slate-400">{item.age || "32"}y • {item.triageColor?.toUpperCase() || "YELLOW"} Triage</p>
+                      <strong className="block text-slate-800 text-xs font-bold mt-1.5">{item.patientName || "Anonymous Patient"}</strong>
+                      <p className="text-[10px] text-slate-500">{item.age || "32"}y • {item.triageColor?.toUpperCase() || "YELLOW"} Triage</p>
                     </div>
-                    <span className="text-[10px] text-indigo-400 font-bold bg-indigo-500/10 px-2.5 py-0.5 rounded-full border border-indigo-500/20">
+                    <span className="text-[10px] text-indigo-600 font-bold bg-indigo-50 px-2.5 py-0.5 rounded-full border border-indigo-150">
                       Pending
                     </span>
                   </div>
 
-                  <div className="border-t border-slate-850 pt-2.5 text-[10.5px] text-slate-300 space-y-1.5">
-                    <p><span className="text-slate-500">Chief Complaint:</span> {item.chiefComplaint || "Cardiovascular evaluation"}</p>
-                    <p><span className="text-slate-500">Sender Doctor:</span> {item.assignedDoctor || "Dr. Vipin Kumar"}</p>
-                    <p><span className="text-slate-500">Pending Actions:</span> <span className="text-amber-400 font-bold">{item.pendingActions || "Verify lab reports & monitor vitals"}</span></p>
+                  <div className="border-t border-slate-100 pt-2.5 text-[10.5px] text-slate-700 text-left space-y-1.5">
+                    <p><span className="text-slate-450 font-medium">Chief Complaint:</span> {item.chiefComplaint || "Cardiovascular evaluation"}</p>
+                    <p><span className="text-slate-450 font-medium">Sender Doctor:</span> {item.assignedDoctor || "Dr. Vipin Kumar"}</p>
+                    <p><span className="text-slate-450 font-medium">Pending Actions:</span> <span className="text-amber-600 font-black">{item.pendingActions || "Verify lab reports & monitor vitals"}</span></p>
                   </div>
 
                   <div className="flex gap-2 pt-2">
@@ -870,12 +1010,12 @@ export default function ProfileSettingsView({
                       onClick={() => {
                         setHandovers(prev => prev.filter((_: any, i: number) => i !== idx));
                         const notice = document.createElement("div");
-                        notice.className = "fixed bottom-20 left-1/2 -translate-x-1/2 z-50 bg-emerald-900 border border-emerald-500 text-emerald-300 px-4 py-2.5 rounded-xl font-bold text-xs shadow-xl";
+                        notice.className = "fixed bottom-20 left-1/2 -translate-x-1/2 z-50 bg-emerald-550 border border-emerald-500 text-white px-4 py-2.5 rounded-xl font-bold text-xs shadow-xl";
                         notice.innerHTML = `✓ Handover accepted for ${item.patientName || "Patient"}.`;
                         document.body.appendChild(notice);
                         setTimeout(() => notice.remove(), 2500);
                       }}
-                      className="flex-1 py-1.8 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-slate-950 font-black text-[10.5px] rounded-xl transition-all"
+                      className="flex-1 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[11px] rounded-xl transition-all cursor-pointer shadow-xs"
                     >
                       Acknowledge & Sync
                     </button>
@@ -883,12 +1023,12 @@ export default function ProfileSettingsView({
                       type="button"
                       onClick={() => {
                         const notice = document.createElement("div");
-                        notice.className = "fixed bottom-20 left-1/2 -translate-x-1/2 z-50 bg-indigo-900 border border-indigo-500 text-indigo-300 px-4 py-2.5 rounded-xl font-bold text-xs shadow-xl";
+                        notice.className = "fixed bottom-20 left-1/2 -translate-x-1/2 z-50 bg-indigo-650 border border-indigo-500 text-white px-4 py-2.5 rounded-xl font-bold text-xs shadow-xl";
                         notice.innerHTML = `📢 Escalated case sheet alert to ER Consultants.`;
                         document.body.appendChild(notice);
                         setTimeout(() => notice.remove(), 2500);
                       }}
-                      className="px-3.5 py-1.8 bg-indigo-900/50 hover:bg-indigo-900 text-indigo-300 border border-indigo-800 rounded-xl transition-all text-[10px]"
+                      className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-250 rounded-xl transition-all text-[11px] cursor-pointer"
                     >
                       Escalate
                     </button>
@@ -903,48 +1043,48 @@ export default function ProfileSettingsView({
       title = "HOD Executive Panel";
       content = (
         <div className="space-y-4 font-mono">
-          <div className="bg-gradient-to-r from-indigo-950 to-slate-900 border border-indigo-850 p-4.5 rounded-2xl text-white space-y-1">
-            <h4 className="text-xs font-extrabold uppercase tracking-widest text-indigo-300">ADMIN CONTROL CENTER</h4>
-            <p className="text-[10px] text-slate-350">HOD authorization layer. Oversee duty assignments and lock live registries.</p>
+          <div className="bg-gradient-to-r from-indigo-50 to-purple-50 border border-indigo-150 p-4.5 rounded-2xl text-slate-800 space-y-1 text-left">
+            <h4 className="text-xs font-black uppercase tracking-widest text-indigo-700">ADMIN CONTROL CENTER</h4>
+            <p className="text-[10px] text-slate-600">HOD authorization layer. Oversee duty assignments and lock live registries.</p>
           </div>
 
           <div className="grid grid-cols-2 gap-3">
-            <div className="p-3.5 bg-slate-900 border border-slate-800 rounded-xl text-left space-y-1">
+            <div className="p-3.5 bg-white border border-slate-200 rounded-xl text-left space-y-1 shadow-xs">
               <span className="text-[9px] text-slate-450 uppercase font-bold">Duty Roster Mode</span>
-              <p className="text-xs font-bold text-white">Consolidated Core</p>
-              <span className="text-[9px] text-emerald-400 font-bold block">✓ Operational</span>
+              <p className="text-xs font-bold text-slate-800">Consolidated Core</p>
+              <span className="text-[9px] text-emerald-600 font-bold block">✓ Operational</span>
             </div>
-            <div className="p-3.5 bg-slate-900 border border-slate-800 rounded-xl text-left space-y-1">
+            <div className="p-3.5 bg-white border border-slate-200 rounded-xl text-left space-y-1 shadow-xs">
               <span className="text-[9px] text-slate-450 uppercase font-bold">Registry Locks</span>
-              <p className="text-xs font-bold text-white">Standard HIPAA</p>
-              <span className="text-[9px] text-blue-400 font-bold block">● Encryption Active</span>
+              <p className="text-xs font-bold text-slate-800">Standard HIPAA</p>
+              <span className="text-[9px] text-indigo-600 font-bold block">● Encryption Active</span>
             </div>
           </div>
 
-          <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl space-y-3 text-xs text-left">
-            <h5 className="font-bold text-white uppercase text-[10px] text-indigo-400 tracking-wider">ACTIVE ROSTER SHIFTS</h5>
+          <div className="bg-white border border-slate-200 p-4 rounded-2xl space-y-3 text-xs text-left shadow-xs">
+            <h5 className="font-bold text-indigo-700 uppercase text-[10px] tracking-wider">ACTIVE ROSTER SHIFTS</h5>
             
-            <div className="space-y-2.5 divide-y divide-slate-850 text-[10.5px]">
+            <div className="space-y-2.5 divide-y divide-slate-100 text-[10.5px]">
               <div className="flex justify-between items-center pt-1">
                 <div>
-                  <strong className="text-slate-200 font-bold block">Morning Ward Rota</strong>
+                  <strong className="text-slate-800 font-bold block">Morning Ward Rota</strong>
                   <span className="text-[9.5px] text-slate-500">2 Consultants • 4 Residents</span>
                 </div>
-                <span className="bg-emerald-950 text-emerald-400 px-2 py-0.5 rounded text-[9px] font-bold border border-emerald-900/30">Active</span>
+                <span className="bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded text-[9px] font-bold">Active</span>
               </div>
               <div className="flex justify-between items-center pt-2.5">
                 <div>
-                  <strong className="text-slate-200 font-bold block">Noon Trauma Backup</strong>
+                  <strong className="text-slate-800 font-bold block">Noon Trauma Backup</strong>
                   <span className="text-[9.5px] text-slate-500">1 Consultant • 2 Residents</span>
                 </div>
-                <span className="bg-slate-800 text-slate-400 px-2 py-0.5 rounded text-[9px] font-bold">Pending</span>
+                <span className="bg-slate-50 text-slate-600 border border-slate-200 px-2 py-0.5 rounded text-[9px] font-bold">Pending</span>
               </div>
               <div className="flex justify-between items-center pt-2.5">
                 <div>
-                  <strong className="text-slate-200 font-bold block">Night Resus Duty</strong>
+                  <strong className="text-slate-800 font-bold block">Night Resus Duty</strong>
                   <span className="text-[9.5px] text-slate-500">3 Consultants • 6 Residents</span>
                 </div>
-                <span className="bg-slate-800 text-slate-400 px-2 py-0.5 rounded text-[9px] font-bold">Configured</span>
+                <span className="bg-indigo-50 text-indigo-700 border border-indigo-200 px-2 py-0.5 rounded text-[9px] font-bold">Configured</span>
               </div>
             </div>
           </div>
@@ -954,12 +1094,12 @@ export default function ProfileSettingsView({
               type="button"
               onClick={() => {
                 const notice = document.createElement("div");
-                notice.className = "fixed bottom-20 left-1/2 -translate-x-1/2 z-50 bg-emerald-900 border border-emerald-500 text-emerald-300 px-4 py-2.5 rounded-xl font-bold text-xs shadow-xl";
+                notice.className = "fixed bottom-20 left-1/2 -translate-x-1/2 z-50 bg-indigo-600 border border-indigo-500 text-white px-4 py-2.5 rounded-xl font-bold text-xs shadow-xl";
                 notice.innerHTML = `📢 Sent WhatsApp alerts & Roster updates to emergency core.`;
                 document.body.appendChild(notice);
                 setTimeout(() => notice.remove(), 2500);
               }}
-              className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl transition-all"
+              className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl transition-all cursor-pointer"
             >
               Broadcast Shift Rota Alerts
             </button>
@@ -969,45 +1109,561 @@ export default function ProfileSettingsView({
     } else if (selectedSubSection === "roster") {
       title = "Roster Setup & Workbench";
       content = (
-        <div className="space-y-6">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 text-xs font-mono text-slate-300">
-            <span className="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded text-[10px] font-bold mb-2 inline-block">
-              Hospital: {hospitalName}
-            </span>
-            <p className="leading-relaxed">
-              Whitelists designated doctors authorized to join your ER network and edit cases sheets.
-            </p>
+        <div className="space-y-6 text-left">
+          <TeamBuilder
+            hospitalName={hospitalName}
+            onHospitalChange={(name) => {
+              setHospitalName(name);
+              onSaveProfile({
+                ...profile,
+                hospital: name
+              });
+            }}
+            profile={profile}
+            onSaveConfig={(teamName, department, teamColor) => {
+              onSaveProfile({
+                ...profile,
+                teamName,
+                department,
+                teamColor
+              });
+            }}
+            members={teamMembers}
+            onMembersChange={(updatedMembers) => {
+              if (updatedMembers.length > teamMembers.length) {
+                const added = updatedMembers[updatedMembers.length - 1];
+                onAddMember(
+                  added.name || added.email.split("@")[0],
+                  added.email,
+                  added.role,
+                  added.shift || "Not Scheduled"
+                );
+              } else if (updatedMembers.length < teamMembers.length) {
+                const deleted = teamMembers.find(m => !updatedMembers.some(um => um.id === m.id));
+                if (deleted) {
+                  onRemoveMember(deleted.id);
+                }
+              }
+            }}
+          />
+
+          <div className="border-t border-slate-200 dark:border-slate-800/80 pt-6">
+            <TeamRosterBoard
+              teamMembers={teamMembers}
+              profile={profile}
+              onAddMember={onAddMember}
+              onRemoveMember={onRemoveMember}
+              onUpdateShift={onUpdateShift}
+              onApproveMember={onApproveMember}
+              onDeclineMember={onDeclineMember}
+              onUpdateRole={onUpdateRole}
+              hospitalSubscriptionActive={!!hospitalSubscription?.active}
+              shifts={shifts}
+              onUpdateShifts={onUpdateShifts}
+            />
+          </div>
+        </div>
+      );
+    } else if (selectedSubSection === "log-book") {
+      title = "Official Clinical Log Book";
+
+      const getCaseProcedures = (c: ClinicalCase) => {
+        const list: string[] = [];
+        if (c.proceduresChecked && Array.isArray(c.proceduresChecked)) {
+          c.proceduresChecked.forEach(p => {
+            const mapped: Record<string, string> = {
+              foleys: "Foley's Catheterization",
+              ng_tube: "NG Tube Placement",
+              intubation: "RSI Intubation",
+              central_line: "Central Venous Line",
+              suturing: "Laceration Suturing",
+              splinting: "Orthopedic Splinting",
+              cpr: "Cardiopulmonary Resuscitation",
+              defib: "Defibrillation / Cardioversion",
+              nebulization: "Nebulization Therapy",
+              iv_access: "IV Cannulation",
+              abg_punch: "ABG Radial Punch",
+            };
+            list.push(mapped[p] || p.replace(/_/g, " ").replace(/\b\w/g, ch => ch.toUpperCase()));
+          });
+        }
+        if (c.otherProcedures && c.otherProcedures.trim()) {
+          c.otherProcedures.split(",").map(p => p.trim()).forEach(p => {
+            if (p && !list.includes(p)) list.push(p);
+          });
+        }
+        return list;
+      };
+
+      const myCases = cases.filter(c => c.doctorEmail?.toLowerCase().trim() === profile.email.toLowerCase().trim());
+      const hasRealLogs = myCases.length > 0;
+
+      const demoCases: ClinicalCase[] = [
+        {
+          id: "demo-1",
+          bedNo: "ER-04",
+          savedTime: new Date(Date.now() - 3600000 * 2).toISOString(),
+          timeSpentMin: 45,
+          patient: {
+            name: "Rajesh Sharma",
+            age: 48,
+            gender: "Male",
+            presentingComplaint: "Acute sudden chest pain radiation to left arm and diaphoresis.",
+            triageCategory: TriageCategory.P1,
+            arrivalMode: ArrivalMode.WalkIn,
+            dateOpened: new Date(Date.now() - 3600000 * 2).toISOString(),
+            isMlc: false,
+            caseType: "Medical",
+            uhid: "UHID-2026-9841",
+          },
+          vitals: {
+            hr: "110",
+            bp: "140/90",
+            spo2: "94",
+            rr: "24",
+            temp: "98.6",
+            gcs: "15",
+            gcs_e: "4",
+            gcs_v: "5",
+            gcs_m: "6",
+            grbs: "148",
+            avpu: "Alert",
+            painScore: "8",
+          },
+          sampleHistory: {
+            symptoms: "Chest pain, diaphoresis",
+            allergies: "None",
+            medications: "Amlodipine 5mg",
+            pastHistory: "Hypertension for 5 years",
+            lastMeal: "2h ago",
+            events: "Pain started suddenly while walking",
+            socialHistory: "None",
+            familyHistory: "None",
+            psychiatricFlags: "None",
+          },
+          primaryAssessment: {
+            airway: "Patent",
+            airwayStatus: "Normal",
+            breathing: "Tachypnea",
+            breathingStatus: "Normal",
+            circulation: "Peripheral pulses present",
+            circulationStatus: "Normal",
+            disability: "GCS 15/15",
+            disabilityStatus: "Normal",
+            exposure: "Warm and diaphoretic",
+            exposureStatus: "Normal",
+          },
+          secondaryAssessment: "Normal chest expansion. S1 S2 heard, no murmurs.",
+          investigations: [],
+          treatments: [],
+          progressNotes: "Aspirin 325mg given. ECG shows ST elevation in V1-V4. Cardiopulmonary team notified.",
+          dischargeInfo: null,
+          differentials: [],
+          isPediatric: false,
+          provisionalPrimaryDiagnosis: "Acute Anterior Wall MI / STEMI",
+          proceduresChecked: ["iv_access", "abg_punch"],
+          otherProcedures: "12-Lead ECG Acquisition",
+          status: "Discharged",
+          doctorEmail: profile.email
+        },
+        {
+          id: "demo-2",
+          bedNo: "ER-09",
+          savedTime: new Date(Date.now() - 3600000 * 8).toISOString(),
+          timeSpentMin: 30,
+          patient: {
+            name: "Anjali Gupta",
+            age: 29,
+            gender: "Female",
+            presentingComplaint: "Severe respiratory distress with bronchospasm wheezing.",
+            triageCategory: TriageCategory.P2,
+            arrivalMode: ArrivalMode.WalkIn,
+            dateOpened: new Date(Date.now() - 3600000 * 8).toISOString(),
+            isMlc: false,
+            caseType: "Medical",
+            uhid: "UHID-2026-4432",
+          },
+          vitals: {
+            hr: "98",
+            bp: "120/80",
+            spo2: "89",
+            rr: "28",
+            temp: "98.4",
+            gcs: "15",
+            gcs_e: "4",
+            gcs_v: "5",
+            gcs_m: "6",
+            grbs: "105",
+            avpu: "Alert",
+            painScore: "2",
+          },
+          sampleHistory: {
+            symptoms: "Shortness of breath, cough",
+            allergies: "Dust mites",
+            medications: "Salbutamol inhaler",
+            pastHistory: "Bronchial Asthma since childhood",
+            lastMeal: "4h ago",
+            events: "Triggered by sweeping dusty room",
+            socialHistory: "None",
+            familyHistory: "None",
+            psychiatricFlags: "None",
+          },
+          primaryAssessment: {
+            airway: "Patent",
+            airwayStatus: "Normal",
+            breathing: "Bilateral polyphonic wheeze",
+            breathingStatus: "Abnormal",
+            circulation: "Tachycardia present",
+            circulationStatus: "Normal",
+            disability: "GCS 15/15",
+            disabilityStatus: "Normal",
+            exposure: "No signs of trauma",
+            exposureStatus: "Normal",
+          },
+          secondaryAssessment: "Bilateral polyphonic wheeze present. Accessory muscles in use.",
+          investigations: [],
+          treatments: [],
+          progressNotes: "Nebulized with Levosalbutamol + Ipratropium. IV Hydrocortisone administered.",
+          dischargeInfo: null,
+          differentials: [],
+          isPediatric: false,
+          provisionalPrimaryDiagnosis: "Acute Severe Asthma Exacerbation",
+          proceduresChecked: ["nebulization"],
+          otherProcedures: "Non-Invasive Ventilation (NIV)",
+          status: "Active",
+          doctorEmail: profile.email
+        },
+        {
+          id: "demo-3",
+          bedNo: "ER-12",
+          savedTime: new Date(Date.now() - 3600000 * 24).toISOString(),
+          timeSpentMin: 60,
+          patient: {
+            name: "Master Kabir",
+            age: 6,
+            gender: "Male",
+            presentingComplaint: "High-grade fever with febrile convulsion lasting 2 minutes.",
+            triageCategory: TriageCategory.P1,
+            arrivalMode: ArrivalMode.WalkIn,
+            dateOpened: new Date(Date.now() - 3600000 * 24).toISOString(),
+            isMlc: false,
+            caseType: "Medical",
+            uhid: "UHID-2026-1192",
+          },
+          vitals: {
+            hr: "124",
+            bp: "100/65",
+            spo2: "98",
+            rr: "32",
+            temp: "103.1",
+            gcs: "12",
+            gcs_e: "3",
+            gcs_v: "4",
+            gcs_m: "5",
+            grbs: "94",
+            avpu: "Voice",
+            painScore: "0",
+          },
+          sampleHistory: {
+            symptoms: "Fever, generalized tonic-clonic movements",
+            allergies: "Penicillin",
+            medications: "Paracetamol syrup",
+            pastHistory: "Prior simple febrile seizure at age 3",
+            lastMeal: "1h ago",
+            events: "Had a seizure lasting 2 min, currently post-ictal",
+            socialHistory: "None",
+            familyHistory: "None",
+            psychiatricFlags: "None",
+          },
+          primaryAssessment: {
+            airway: "Patent",
+            airwayStatus: "Normal",
+            breathing: "Normal breathing effort",
+            breathingStatus: "Normal",
+            circulation: "Pulses rapid but full",
+            circulationStatus: "Normal",
+            disability: "Drowsy, localizes to pain",
+            disabilityStatus: "Abnormal",
+            exposure: "Hot to touch",
+            exposureStatus: "Normal",
+          },
+          secondaryAssessment: "Post-ictal state. Chest clear. Pupillary reflexes prompt and reactive.",
+          investigations: [],
+          treatments: [],
+          progressNotes: "IV Paracetamol infused. Temperature reduced to 99.1F. Patient regained full consciousness.",
+          dischargeInfo: null,
+          differentials: [],
+          isPediatric: true,
+          provisionalPrimaryDiagnosis: "Febrile Convulsion / Seizure",
+          proceduresChecked: ["iv_access"],
+          otherProcedures: "Sponging Therapy",
+          status: "Discharged",
+          doctorEmail: profile.email
+        }
+      ];
+
+      const activeLogs = hasRealLogs ? myCases : demoCases;
+
+      // Filtered cases list based on search and triage
+      const filteredCases = activeLogs.filter(c => {
+        const matchesTriage = logBookTriageFilter === "all" || 
+          (logBookTriageFilter === "P1" && c.patient.triageCategory === TriageCategory.P1) ||
+          (logBookTriageFilter === "P2" && c.patient.triageCategory === TriageCategory.P2) ||
+          (logBookTriageFilter === "P3" && c.patient.triageCategory === TriageCategory.P3);
+
+        const searchLower = logBookSearch.toLowerCase().trim();
+        const caseProcs = getCaseProcedures(c).join(" ").toLowerCase();
+        const matchesSearch = !searchLower ||
+          c.patient.name.toLowerCase().includes(searchLower) ||
+          (c.patient.uhid && c.patient.uhid.toLowerCase().includes(searchLower)) ||
+          (c.provisionalPrimaryDiagnosis && c.provisionalPrimaryDiagnosis.toLowerCase().includes(searchLower)) ||
+          (c.patient.presentingComplaint && c.patient.presentingComplaint.toLowerCase().includes(searchLower)) ||
+          caseProcs.includes(searchLower);
+
+        return matchesTriage && matchesSearch;
+      });
+
+      // Stats computations
+      const totalCasesCount = activeLogs.length;
+      const p1Count = activeLogs.filter(c => c.patient.triageCategory === TriageCategory.P1).length;
+      const p2Count = activeLogs.filter(c => c.patient.triageCategory === TriageCategory.P2).length;
+      const p3Count = activeLogs.filter(c => c.patient.triageCategory === TriageCategory.P3).length;
+
+      // Procedures counts
+      const procMap: Record<string, number> = {};
+      let totalProcsPerformed = 0;
+      activeLogs.forEach(c => {
+        getCaseProcedures(c).forEach(p => {
+          procMap[p] = (procMap[p] || 0) + 1;
+          totalProcsPerformed++;
+        });
+      });
+
+      const uniqueProcsCount = Object.keys(procMap).length;
+
+      const handleCSVExport = () => {
+        const headers = [
+          "Date/Time", 
+          "Bed No", 
+          "Patient Name", 
+          "Age", 
+          "Gender", 
+          "UHID", 
+          "Triage Level", 
+          "Presenting Complaint", 
+          "Primary Diagnosis", 
+          "Procedures Performed", 
+          "Status"
+        ];
+        const rows = activeLogs.map(c => [
+          c.savedTime || c.patient.dateOpened || "",
+          c.bedNo || "N/A",
+          c.patient.name,
+          c.patient.age || "N/A",
+          c.patient.gender,
+          c.patient.uhid || "N/A",
+          c.patient.triageCategory || "N/A",
+          c.patient.presentingComplaint || "",
+          c.provisionalPrimaryDiagnosis || "Under Evaluation",
+          getCaseProcedures(c).join("; "),
+          c.status
+        ]);
+        const csvContent = [headers, ...rows].map(e => e.map(val => `"${String(val).replace(/"/g, '""')}"`).join(",")).join("\n");
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.setAttribute("href", url);
+        link.setAttribute("download", `ErMate_Logbook_${profile.name.replace(/\s+/g, "_")}.csv`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      };
+
+      content = (
+        <div className="space-y-4 font-mono text-left text-xs text-slate-800 dark:text-slate-100">
+          
+          {/* Real vs Demo Banner Alert */}
+          {!hasRealLogs && (
+            <div className="bg-amber-500/10 border border-amber-500/20 p-3 rounded-xl space-y-1">
+              <span className="text-[9px] bg-amber-500 text-slate-950 px-1.5 py-0.5 rounded font-black uppercase inline-block">
+                Demonstration Mode
+              </span>
+              <p className="text-[10px] text-amber-600 dark:text-amber-400 leading-relaxed font-sans">
+                You haven't logged any active cases yet. We are showing interactive standard-compliant clinical logs to demonstrate the layout. Save case sheets on the clinical dashboard to automatically populate your permanent logbook.
+              </p>
+            </div>
+          )}
+
+          {hasRealLogs && (
+            <div className="bg-emerald-500/10 border border-emerald-500/20 p-3 rounded-xl flex items-center gap-2">
+              <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+              <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold font-sans">
+                Real-Time Sync Active — {myCases.length} case sheets captured in your permanent registry.
+              </span>
+            </div>
+          )}
+
+          {/* Official Registry Header stats */}
+          <div className="grid grid-cols-3 gap-2.5">
+            <div className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3 rounded-2xl">
+              <span className="text-[8.5px] text-slate-500 block uppercase font-bold">Total Cases</span>
+              <strong className="text-lg text-slate-800 dark:text-white mt-1 block">{totalCasesCount}</strong>
+              <span className="text-[9px] text-slate-400 block font-sans">Patient logs</span>
+            </div>
+            <div className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3 rounded-2xl">
+              <span className="text-[8.5px] text-slate-500 block uppercase font-bold">Procedures</span>
+              <strong className="text-lg text-indigo-600 dark:text-indigo-400 mt-1 block">{totalProcsPerformed}</strong>
+              <span className="text-[9px] text-slate-400 block font-sans">{uniqueProcsCount} unique types</span>
+            </div>
+            <div className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3 rounded-2xl">
+              <span className="text-[8.5px] text-slate-500 block uppercase font-bold">Resus (P1)</span>
+              <strong className="text-lg text-rose-600 dark:text-rose-400 mt-1 block">{p1Count}</strong>
+              <span className="text-[9px] text-slate-400 block font-sans">Level 1 triage</span>
+            </div>
           </div>
 
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 shadow-sm space-y-4">
-            <h5 className="text-[10px] font-black uppercase text-slate-400 font-mono tracking-wider border-b border-slate-800 pb-2">
-              ACTIVATE TEAM MEMBERS
-            </h5>
+          {/* Segmented Triage Proportion bar */}
+          <div className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3 space-y-1.5">
+            <div className="flex justify-between items-center text-[9px] text-slate-500 uppercase font-bold">
+              <span>Triage Profile Ratio</span>
+              <span>P1 ({p1Count}) • P2 ({p2Count}) • P3 ({p3Count})</span>
+            </div>
+            <div className="h-2 rounded-full overflow-hidden flex w-full">
+              <div className="bg-rose-500 h-full transition-all" style={{ width: `${totalCasesCount > 0 ? (p1Count / totalCasesCount) * 100 : 0}%` }} />
+              <div className="bg-amber-500 h-full transition-all" style={{ width: `${totalCasesCount > 0 ? (p2Count / totalCasesCount) * 100 : 0}%` }} />
+              <div className="bg-emerald-500 h-full transition-all" style={{ width: `${totalCasesCount > 0 ? (p3Count / totalCasesCount) * 100 : 0}%` }} />
+            </div>
+          </div>
 
-            <div className="flex flex-col sm:flex-row gap-2 font-mono">
+          {/* Interactive Controls Panel */}
+          <div className="flex flex-col sm:flex-row gap-2">
+            <div className="relative flex-1">
               <input
                 type="text"
-                value={hospitalName}
-                onChange={(e) => setHospitalName(e.target.value)}
-                placeholder="Enter hospital name..."
-                className="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 text-slate-200"
+                placeholder="Search UHID, Diagnosis, Procedure..."
+                value={logBookSearch}
+                onChange={(e) => setLogBookSearch(e.target.value)}
+                className="w-full bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl pl-8.5 pr-3 py-1.8 text-[11px] focus:outline-hidden focus:border-indigo-500 text-slate-800 dark:text-slate-200"
               />
+              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
+            </div>
+            <div className="flex gap-2">
+              <select
+                value={logBookTriageFilter}
+                onChange={(e) => setLogBookTriageFilter(e.target.value)}
+                className="bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-2 py-1 text-[11px] font-bold text-slate-700 dark:text-slate-300"
+              >
+                <option value="all">All Triage</option>
+                <option value="P1">P1 (Red)</option>
+                <option value="P2">P2 (Yellow)</option>
+                <option value="P3">P3 (Green)</option>
+              </select>
               <button
                 type="button"
-                onClick={handleCopyLink}
-                className="py-2 px-3.5 bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-black text-xs rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1"
+                onClick={handleCSVExport}
+                className="px-3 py-1.8 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl transition-all cursor-pointer flex items-center gap-1.5 text-[10.5px] uppercase shadow-xs"
               >
-                {copiedLink ? "Copied!" : "Copy Invite Link"}
+                <Download className="w-3.5 h-3.5" /> Export
               </button>
             </div>
           </div>
 
-          <TeamBuilder 
-            hospitalName={hospitalName}
-            onHospitalChange={setHospitalName}
-            members={teamBuilderMembers}
-            onMembersChange={setTeamBuilderMembers}
-          />
+          {/* Case logs table/cards list */}
+          <div className="space-y-2.5 max-h-[50vh] overflow-y-auto pr-1">
+            {filteredCases.length === 0 ? (
+              <div className="text-center py-8 text-slate-400 border border-dashed border-slate-200 dark:border-slate-800 rounded-2xl font-sans">
+                <BookOpen className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+                <p className="font-bold text-xs">No matching cases found</p>
+                <p className="text-[10px] mt-0.5">Try widening your search terms or triage filter.</p>
+              </div>
+            ) : (
+              filteredCases.map((c) => {
+                const cProcs = getCaseProcedures(c);
+                const triageColor = c.patient.triageCategory === TriageCategory.P1 
+                  ? "border-l-rose-500 text-rose-500 dark:text-rose-400 bg-rose-50/5 dark:bg-rose-500/5" 
+                  : c.patient.triageCategory === TriageCategory.P2
+                    ? "border-l-amber-500 text-amber-500 dark:text-amber-400 bg-amber-50/5 dark:bg-amber-500/5"
+                    : "border-l-emerald-500 text-emerald-500 dark:text-emerald-400 bg-emerald-50/5 dark:bg-emerald-500/5";
+
+                const triageLabel = c.patient.triageCategory === TriageCategory.P1 ? "P1 (CRITICAL)" : c.patient.triageCategory === TriageCategory.P2 ? "P2 (URGENT)" : "P3 (STABLE)";
+
+                return (
+                  <div 
+                    key={c.id} 
+                    className={`border-l-4 rounded-r-xl border border-slate-200 dark:border-slate-800 p-3 space-y-2 ${triageColor}`}
+                  >
+                    {/* Card Header row */}
+                    <div className="flex justify-between items-start gap-1">
+                      <div className="text-left">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <strong className="text-slate-800 dark:text-slate-200 text-xs font-bold font-sans">
+                            {c.patient.name}
+                          </strong>
+                          <span className="text-[9px] text-slate-400 font-sans font-medium">
+                            ({c.patient.age} / {c.patient.gender})
+                          </span>
+                        </div>
+                        <span className="text-[9.5px] text-slate-500 block mt-0.5">
+                          UHID: <span className="font-bold">{c.patient.uhid || "N/A"}</span> • Bed: <span className="font-bold">{c.bedNo || "N/A"}</span>
+                        </span>
+                      </div>
+                      <div className="text-right shrink-0 font-sans">
+                        <span className="text-[8px] px-1.5 py-0.5 rounded font-black tracking-wider uppercase border border-current bg-current/10">
+                          {triageLabel}
+                        </span>
+                        <span className="text-[9px] text-slate-400 block mt-1">
+                          {c.savedTime ? new Date(c.savedTime).toLocaleDateString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "N/A"}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Diagnosis & Complaints */}
+                    <div className="bg-white/40 dark:bg-[#131b26] p-2 rounded-lg border border-slate-200/50 dark:border-slate-800/50 space-y-1">
+                      <div className="text-[10.5px]">
+                        <span className="text-slate-500 block text-[9px] font-bold uppercase tracking-wider">Presenting Complaint</span>
+                        <p className="text-slate-700 dark:text-slate-300 font-sans leading-normal">
+                          {c.patient.presentingComplaint}
+                        </p>
+                      </div>
+                      <div className="text-[10.5px] border-t border-slate-150 dark:border-slate-800/50 pt-1 mt-1">
+                        <span className="text-slate-500 block text-[9px] font-bold uppercase tracking-wider">Primary Diagnoses</span>
+                        <p className="text-slate-800 dark:text-emerald-400 font-sans font-bold leading-normal">
+                          {c.provisionalPrimaryDiagnosis || "Under Clinical Evaluation"}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Procedures pills */}
+                    <div className="space-y-1 text-left">
+                      <span className="text-slate-500 block text-[8px] font-bold uppercase tracking-wider">Procedures Performed ({cProcs.length})</span>
+                      <div className="flex flex-wrap gap-1">
+                        {cProcs.length === 0 ? (
+                          <span className="text-[9.5px] text-slate-450 italic">None logged</span>
+                        ) : (
+                          cProcs.map((p, idx) => (
+                            <span 
+                              key={idx} 
+                              className="bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 border border-indigo-150 dark:border-indigo-900/50 px-1.8 py-0.5 rounded text-[9px] font-sans font-semibold inline-block"
+                            >
+                              ✓ {p}
+                            </span>
+                          ))
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Auto case summary section */}
+                    <div className="bg-slate-50/50 dark:bg-slate-900/30 p-2 rounded-lg text-[10px] leading-relaxed text-slate-600 dark:text-slate-400 font-sans border border-dashed border-slate-200 dark:border-slate-800/80">
+                      <span className="font-black text-[8px] uppercase tracking-wider text-slate-400 block font-mono font-bold">Automated SBAR Narrative Summary</span>
+                      <p className="mt-0.5">
+                        Patient presented in distress with "{c.patient.presentingComplaint}". Initial assessment airway {c.primaryAssessment?.airway || "patent"} and breathing {c.primaryAssessment?.breathing || "normal"}. {cProcs.length > 0 ? `Procedures successfully performed include ${cProcs.join(", ")}.` : "No major airway or invasive procedures required."} Patient disposition resolved to status: <strong>{c.status}</strong>.
+                      </p>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
         </div>
       );
     } else if (selectedSubSection === "stats") {
@@ -1015,76 +1671,76 @@ export default function ProfileSettingsView({
       content = (
         <div className="space-y-4 font-mono">
           <div className="grid grid-cols-2 gap-3">
-            <div className="bg-slate-900 border border-slate-800 p-3 rounded-xl text-left">
+            <div className="bg-white border border-slate-200 p-3 rounded-xl text-left shadow-xs">
               <span className="text-[9px] text-slate-500 font-bold block">Total Patients</span>
-              <h4 className="text-xl font-bold text-white mt-1">{totalCases}</h4>
+              <h4 className="text-xl font-bold text-slate-800 mt-1">{totalCases}</h4>
               <p className="text-[8.5px] text-slate-450">Active Case Sheets</p>
             </div>
-            <div className="bg-slate-900 border border-slate-800 p-3 rounded-xl text-left">
+            <div className="bg-white border border-slate-200 p-3 rounded-xl text-left shadow-xs">
               <span className="text-[9px] text-slate-500 font-bold block">Red Triage (P1)</span>
-              <h4 className="text-xl font-bold text-rose-500 mt-1">{p1Cases}</h4>
+              <h4 className="text-xl font-bold text-rose-600 mt-1">{p1Cases}</h4>
               <p className="text-[8.5px] text-slate-450">Critical Resus</p>
             </div>
-            <div className="bg-slate-900 border border-slate-800 p-3 rounded-xl text-left">
+            <div className="bg-white border border-slate-200 p-3 rounded-xl text-left shadow-xs">
               <span className="text-[9px] text-slate-500 font-bold block">Yellow Triage (P2)</span>
-              <h4 className="text-xl font-bold text-amber-500 mt-1">{p2Cases}</h4>
+              <h4 className="text-xl font-bold text-amber-600 mt-1">{p2Cases}</h4>
               <p className="text-[8.5px] text-slate-450">Urgent Consults</p>
             </div>
-            <div className="bg-slate-900 border border-slate-800 p-3 rounded-xl text-left">
+            <div className="bg-white border border-slate-200 p-3 rounded-xl text-left shadow-xs">
               <span className="text-[9px] text-slate-500 font-bold block">Green Triage (P3)</span>
-              <h4 className="text-xl font-bold text-emerald-500 mt-1">{p3Cases}</h4>
+              <h4 className="text-xl font-bold text-emerald-600 mt-1">{p3Cases}</h4>
               <p className="text-[8.5px] text-slate-450">Minor Ambulatory</p>
             </div>
           </div>
 
           {/* Render simple gorgeous bar charts using pure SVGs */}
-          <div className="bg-slate-900 border border-slate-800 p-4.5 rounded-2xl space-y-4">
-            <h5 className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">TRIAGE CASE BREAKDOWN</h5>
+          <div className="bg-white border border-slate-200 p-4.5 rounded-2xl space-y-4 shadow-xs text-left">
+            <h5 className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500">TRIAGE CASE BREAKDOWN</h5>
             
             <div className="space-y-2.5">
               <div>
-                <div className="flex justify-between text-[10px] text-slate-300 mb-1">
+                <div className="flex justify-between text-[10px] text-slate-600 mb-1">
                   <span>P1 (Critical)</span>
-                  <span className="font-bold text-rose-400">{p1Cases} ({totalCases > 0 ? Math.round((p1Cases/totalCases)*100) : 0}%)</span>
+                  <span className="font-bold text-rose-600">{p1Cases} ({totalCases > 0 ? Math.round((p1Cases/totalCases)*100) : 0}%)</span>
                 </div>
-                <div className="w-full bg-slate-950 h-2.5 rounded-full overflow-hidden">
+                <div className="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden">
                   <div className="bg-rose-500 h-full rounded-full" style={{ width: `${totalCases > 0 ? (p1Cases/totalCases)*100 : 0}%` }} />
                 </div>
               </div>
               
               <div>
-                <div className="flex justify-between text-[10px] text-slate-300 mb-1">
+                <div className="flex justify-between text-[10px] text-slate-600 mb-1">
                   <span>P2 (Urgent)</span>
-                  <span className="font-bold text-amber-400">{p2Cases} ({totalCases > 0 ? Math.round((p2Cases/totalCases)*100) : 0}%)</span>
+                  <span className="font-bold text-amber-600">{p2Cases} ({totalCases > 0 ? Math.round((p2Cases/totalCases)*100) : 0}%)</span>
                 </div>
-                <div className="w-full bg-slate-950 h-2.5 rounded-full overflow-hidden">
+                <div className="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden">
                   <div className="bg-amber-500 h-full rounded-full" style={{ width: `${totalCases > 0 ? (p2Cases/totalCases)*100 : 0}%` }} />
                 </div>
               </div>
 
               <div>
-                <div className="flex justify-between text-[10px] text-slate-300 mb-1">
+                <div className="flex justify-between text-[10px] text-slate-600 mb-1">
                   <span>P3 (Non-Urgent)</span>
-                  <span className="font-bold text-emerald-400">{p3Cases} ({totalCases > 0 ? Math.round((p3Cases/totalCases)*100) : 0}%)</span>
+                  <span className="font-bold text-emerald-600">{p3Cases} ({totalCases > 0 ? Math.round((p3Cases/totalCases)*100) : 0}%)</span>
                 </div>
-                <div className="w-full bg-slate-950 h-2.5 rounded-full overflow-hidden">
+                <div className="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden">
                   <div className="bg-emerald-500 h-full rounded-full" style={{ width: `${totalCases > 0 ? (p3Cases/totalCases)*100 : 0}%` }} />
                 </div>
               </div>
             </div>
           </div>
 
-          <div className="bg-slate-900 border border-slate-800 p-4.5 rounded-2xl space-y-3.5">
-            <h5 className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">CHIEF COMPLAINT CATEGORIES</h5>
+          <div className="bg-white border border-slate-200 p-4.5 rounded-2xl space-y-3.5 shadow-xs text-left">
+            <h5 className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500">CHIEF COMPLAINT CATEGORIES</h5>
             
             <div className="grid grid-cols-2 gap-2 text-[10.5px]">
-              <div className="p-2.5 bg-slate-950 rounded-xl flex items-center justify-between border border-slate-850">
-                <span className="text-slate-400">Medicine:</span>
-                <strong className="text-white">{medCases}</strong>
+              <div className="p-2.5 bg-slate-50 rounded-xl flex items-center justify-between border border-slate-150">
+                <span className="text-slate-500">Medicine:</span>
+                <strong className="text-slate-800">{medCases}</strong>
               </div>
-              <div className="p-2.5 bg-slate-950 rounded-xl flex items-center justify-between border border-slate-850">
-                <span className="text-slate-400">Trauma/Accident:</span>
-                <strong className="text-white">{traumaCases}</strong>
+              <div className="p-2.5 bg-slate-50 rounded-xl flex items-center justify-between border border-slate-150">
+                <span className="text-slate-500">Trauma/Accident:</span>
+                <strong className="text-slate-800">{traumaCases}</strong>
               </div>
             </div>
           </div>
@@ -1093,17 +1749,17 @@ export default function ProfileSettingsView({
     } else if (selectedSubSection === "device-link") {
       title = "Device Link Connection";
       content = (
-        <div className="space-y-6">
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 text-center space-y-4">
+        <div className="space-y-6 text-left">
+          <div className="bg-white border border-slate-200 rounded-3xl p-5 text-center space-y-4 shadow-xs">
             <div className="space-y-1">
-              <span className="text-[10px] font-black uppercase tracking-wider text-emerald-400 font-mono">Real-time Stream Access</span>
-              <h4 className="text-sm font-bold text-white">Clinical Sync Protocol</h4>
+              <span className="text-[10px] font-black uppercase tracking-wider text-emerald-600 font-mono">Real-time Stream Access</span>
+              <h4 className="text-sm font-bold text-slate-800">Clinical Sync Protocol</h4>
             </div>
 
             {/* Simulated QR block layout */}
             <div className="w-36 h-36 bg-white rounded-2xl p-2 mx-auto flex flex-col items-center justify-center relative shadow-inner">
-              <div className="w-full h-full bg-slate-100 flex items-center justify-center border-2 border-dashed border-slate-300 rounded-lg">
-                <svg className="w-24 h-24 text-slate-900" viewBox="0 0 100 100" fill="none" stroke="currentColor">
+              <div className="w-full h-full bg-slate-50 flex items-center justify-center border-2 border-dashed border-slate-200 rounded-lg">
+                <svg className="w-24 h-24 text-slate-850" viewBox="0 0 100 100" fill="none" stroke="currentColor">
                   {/* Decorative medical QR box */}
                   <rect x="5" y="5" width="25" height="25" strokeWidth="4" />
                   <rect x="12" y="12" width="11" height="11" fill="currentColor" />
@@ -1123,9 +1779,9 @@ export default function ProfileSettingsView({
             </div>
 
             <div className="space-y-1 text-center font-mono text-xs pt-2">
-              <span className="text-[10px] text-slate-400 uppercase tracking-wider font-bold">6-Digit PIN</span>
+              <span className="text-[10px] text-slate-500 uppercase tracking-wider font-bold">6-Digit PIN</span>
               <div className="flex items-center justify-center gap-2">
-                <span className="text-2xl font-black text-emerald-400 tracking-widest">{pairingCode}</span>
+                <span className="text-2xl font-black text-indigo-650 tracking-widest">{pairingCode}</span>
                 <button
                   type="button"
                   onClick={() => {
@@ -1133,27 +1789,27 @@ export default function ProfileSettingsView({
                     setCopiedLink(true);
                     setTimeout(() => setCopiedLink(false), 2000);
                   }}
-                  className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-400 transition-all cursor-pointer"
+                  className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-450 transition-all cursor-pointer"
                 >
-                  {copiedLink ? <span className="text-emerald-500 text-xs">Copied!</span> : <Copy className="w-4 h-4" />}
+                  {copiedLink ? <span className="text-emerald-600 text-xs font-bold">Copied!</span> : <Copy className="w-4 h-4" />}
                 </button>
               </div>
-              <div className="flex items-center justify-center gap-1.5 text-[10px] text-slate-400">
-                <RefreshCw className="w-3 h-3 animate-spin text-emerald-500" />
-                <span>Expires in <strong className="text-emerald-500">{pairingTimeLeft}s</strong></span>
+              <div className="flex items-center justify-center gap-1.5 text-[10px] text-slate-500">
+                <RefreshCw className="w-3 h-3 animate-spin text-indigo-500" />
+                <span>Expires in <strong className="text-indigo-600">{pairingTimeLeft}s</strong></span>
               </div>
             </div>
           </div>
 
           {/* Active Authorized Sessions */}
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-4 text-xs font-mono">
-            <h5 className="font-bold text-white uppercase text-[10px] text-indigo-400 tracking-wider">AUTHORIZED SESSIONS</h5>
+          <div className="bg-white border border-slate-200 rounded-2xl p-5 space-y-4 text-xs font-mono shadow-xs">
+            <h5 className="font-bold text-indigo-700 uppercase text-[10px] tracking-wider">AUTHORIZED SESSIONS</h5>
             
             <div className="space-y-3">
               {pairedDevices.map((device) => (
-                <div key={device.id} className="p-3 bg-slate-950 rounded-xl border border-slate-800 flex items-center justify-between gap-3 text-left">
+                <div key={device.id} className="p-3 bg-slate-50 rounded-xl border border-slate-150 flex items-center justify-between gap-3 text-left">
                   <div>
-                    <strong className="text-xs text-slate-200 font-bold block">{device.deviceName}</strong>
+                    <strong className="text-slate-800 font-bold block">{device.deviceName}</strong>
                     <span className="text-[9.5px] text-slate-500 block">{device.os} • {device.location}</span>
                   </div>
                   <button
@@ -1161,7 +1817,7 @@ export default function ProfileSettingsView({
                     onClick={() => {
                       setPairedDevices(prev => prev.filter(d => d.id !== device.id));
                     }}
-                    className="text-[10px] font-bold text-rose-500 bg-rose-500/5 hover:bg-rose-500/10 px-2 py-1 rounded border border-rose-950 transition-all cursor-pointer"
+                    className="text-[10px] font-bold text-rose-600 bg-rose-50 hover:bg-rose-100 px-2.5 py-1 rounded border border-rose-200 transition-all cursor-pointer"
                   >
                     Revoke
                   </button>
@@ -1171,35 +1827,35 @@ export default function ProfileSettingsView({
           </div>
 
           {/* Sync Simulator Card */}
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-4 text-xs font-mono text-left">
-            <h5 className="font-bold text-white uppercase text-[10px] text-emerald-400 tracking-wider">SYNC PAIRING SIMULATOR</h5>
+          <div className="bg-white border border-slate-200 rounded-2xl p-5 space-y-4 text-xs font-mono text-left shadow-xs">
+            <h5 className="font-bold text-emerald-700 uppercase text-[10px] tracking-wider">SYNC PAIRING SIMULATOR</h5>
             
             <div className="space-y-3.5">
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">
-                  <label className="text-[9px] text-slate-450 block font-bold uppercase">Device Label</label>
+                  <label className="text-[9px] text-slate-500 block font-bold uppercase">Device Label</label>
                   <input
                     type="text"
                     value={simDeviceName}
                     onChange={(e) => setSimDeviceName(e.target.value)}
                     placeholder="e.g. Dell Hospital PC"
-                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-200"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-[9px] text-slate-450 block font-bold uppercase">6-Digit PIN</label>
+                  <label className="text-[9px] text-slate-500 block font-bold uppercase">6-Digit PIN</label>
                   <input
                     type="text"
                     value={simPairCodeInput}
                     onChange={(e) => setSimPairCodeInput(e.target.value)}
                     placeholder="e.g. 583921"
-                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 text-center tracking-wider font-bold"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 text-center tracking-wider font-bold"
                   />
                 </div>
               </div>
 
-              {simError && <p className="text-[10px] text-rose-500">⚠️ {simError}</p>}
-              {simSuccess && <p className="text-[10px] text-emerald-400">✓ {simSuccess}</p>}
+              {simError && <p className="text-[10px] text-rose-600">⚠️ {simError}</p>}
+              {simSuccess && <p className="text-[10px] text-emerald-600">✓ {simSuccess}</p>}
 
               <button
                 type="button"
@@ -1233,7 +1889,7 @@ export default function ProfileSettingsView({
                   setSimDeviceName("");
                   setSimPairCodeInput("");
                 }}
-                className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-lg transition-all"
+                className="w-full py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg transition-all cursor-pointer"
               >
                 Trigger Device Link
               </button>
@@ -1245,45 +1901,83 @@ export default function ProfileSettingsView({
       title = "Hospital Subscriptions Suite";
       content = (
         <div className="space-y-6 text-left">
-          <div className="bg-[#182333] border border-slate-800 rounded-2xl p-5 font-mono space-y-3 shadow-md">
-            <span className="text-[9px] text-slate-450 uppercase font-bold block">Current License tier</span>
+          {/* Upcoming billing adjustment transition */}
+          {(profile as any).subscriptionTransitionPending && (
+            <div className="bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 rounded-2xl p-4.5 font-mono space-y-1.5 shadow-xs animate-fade-in">
+              <span className="text-[9.5px] text-amber-700 uppercase font-bold flex items-center gap-1.5">
+                <Info className="w-3.5 h-3.5 shrink-0" />
+                Upcoming billing adjustment
+              </span>
+              <strong className="block text-slate-800 text-xs font-bold">
+                Transitioning to {(profile as any).nextBillingTier || "Team Plan"}
+              </strong>
+              <p className="text-[10px] text-slate-600 leading-relaxed">
+                {(profile as any).subscriptionTransitionMessage || "From the next following month, your subscription will automatically transition to your hospital's shared Department Plan, and your individual charges will cease."}
+              </p>
+            </div>
+          )}
+
+          {/* Hospital-Level Linked Subscription Banner */}
+          {hospitalSubscription?.active && (
+            <div className="bg-gradient-to-br from-indigo-50 to-slate-50 border border-indigo-150 rounded-2xl p-4.5 font-mono space-y-2 shadow-xs">
+              <span className="text-[9px] text-indigo-700 uppercase font-bold flex items-center gap-1.5">
+                <Building2 className="w-3.5 h-3.5" />
+                Hospital Workplace License Active
+              </span>
+              <div className="flex justify-between items-center">
+                <h4 className="text-sm font-extrabold text-indigo-850 flex items-center gap-1.5">
+                  <Sparkles className="w-4 h-4 text-amber-500 animate-pulse" />
+                  {hospitalSubscription.subscriptionTier}
+                </h4>
+                <span className="bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider">
+                  Shared
+                </span>
+              </div>
+              <p className="text-[10px] text-slate-600 leading-relaxed">
+                Your clinical team at <strong>{profile.hospital}</strong> is linked to an active department subscription. Roster validation is fully unlocked!
+              </p>
+            </div>
+          )}
+
+          <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5 font-mono space-y-3 shadow-xs">
+            <span className="text-[9px] text-slate-500 uppercase font-bold block">Current License tier</span>
             <div className="flex justify-between items-center">
-              <h4 className="text-base font-extrabold text-white flex items-center gap-1.5">
-                <Zap className="w-5 h-5 text-emerald-400 animate-pulse" />
+              <h4 className="text-base font-extrabold text-slate-850 flex items-center gap-1.5">
+                <Zap className="w-5 h-5 text-emerald-600 animate-pulse" />
                 {profile.subscriptionTier || "Free Plan"}
               </h4>
-              <span className="bg-emerald-950 text-emerald-400 border border-emerald-900 px-2 py-0.5 rounded text-[10px] font-bold">
+              <span className="bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded text-[10px] font-bold">
                 Active
               </span>
             </div>
 
-            <div className="border-t border-slate-800/80 pt-3.5 flex justify-between items-center">
+            <div className="border-t border-slate-200 pt-3.5 flex justify-between items-center">
               <div>
                 <span className="text-[9px] text-slate-500 uppercase font-bold block">Scribe Credits Remaining</span>
-                <strong className="text-emerald-400 text-sm font-black">{profile.aiCredits} Credits</strong>
+                <strong className="text-emerald-700 text-sm font-black">{profile.aiCredits} Credits</strong>
               </div>
               <button
                 type="button"
                 onClick={handleRefillCredits}
-                className="py-1.8 px-3 bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-black text-[10.5px] rounded-lg transition-all cursor-pointer shadow-sm"
+                className="py-1.8 px-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[10.5px] rounded-lg transition-all cursor-pointer shadow-xs"
               >
                 Refill Credits (Razorpay)
               </button>
             </div>
           </div>
 
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-4 text-xs font-mono">
-            <h5 className="text-[10px] font-black uppercase text-slate-400 tracking-wider">FEATURES & ALLOWANCES</h5>
+          <div className="bg-white border border-slate-200 rounded-2xl p-5 space-y-4 text-xs font-mono shadow-xs">
+            <h5 className="text-[10px] font-black uppercase text-slate-500 tracking-wider">FEATURES & ALLOWANCES</h5>
             <div className="space-y-3">
-              <div className="flex items-start gap-2 text-slate-300">
+              <div className="flex items-start gap-2 text-slate-650">
                 <CheckCircle className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
                 <span>Unlimited Rounds clinical debrief and 7 thinking lenses evaluation.</span>
               </div>
-              <div className="flex items-start gap-2 text-slate-300">
+              <div className="flex items-start gap-2 text-slate-650">
                 <CheckCircle className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
                 <span>Patient record encryption conforming to certified HIPAA standards.</span>
               </div>
-              <div className="flex items-start gap-2 text-slate-300">
+              <div className="flex items-start gap-2 text-slate-650">
                 <CheckCircle className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
                 <span>Consolidated handover sheets ready for landscape PDF print.</span>
               </div>
@@ -1296,18 +1990,18 @@ export default function ProfileSettingsView({
       content = (
         <div className="space-y-6 text-left">
           {/* Plan Choice Banner */}
-          <div className="bg-slate-900/60 p-1 rounded-xl flex border border-slate-800">
+          <div className="bg-slate-100 dark:bg-slate-900/60 p-1 rounded-xl flex border border-slate-200 dark:border-slate-800">
             <button
               type="button"
               onClick={() => setSubPlanTab("individual")}
-              className={`flex-1 py-2 text-center rounded-lg text-xs font-bold transition-all cursor-pointer ${subPlanTab === "individual" ? "bg-emerald-500 text-slate-950 shadow" : "text-slate-400"}`}
+              className={`flex-1 py-2 text-center rounded-lg text-xs font-bold transition-all cursor-pointer ${subPlanTab === "individual" ? "bg-emerald-500 text-slate-950 shadow" : "text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200"}`}
             >
               Individual Plans
             </button>
             <button
               type="button"
               onClick={() => setSubPlanTab("team")}
-              className={`flex-1 py-2 text-center rounded-lg text-xs font-bold transition-all cursor-pointer ${subPlanTab === "team" ? "bg-emerald-500 text-slate-950 shadow" : "text-slate-400"}`}
+              className={`flex-1 py-2 text-center rounded-lg text-xs font-bold transition-all cursor-pointer ${subPlanTab === "team" ? "bg-emerald-500 text-slate-950 shadow" : "text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200"}`}
             >
               Department / Team Plan
             </button>
@@ -1315,19 +2009,19 @@ export default function ProfileSettingsView({
 
           {/* Pricing Billing Toggle */}
           <div className="flex items-center justify-between font-mono text-[10.5px]">
-            <span className="text-slate-400 uppercase tracking-wider font-extrabold">BILLING FREQUENCY</span>
-            <div className="flex bg-slate-900 rounded-lg p-0.5 border border-slate-800">
+            <span className="text-slate-500 dark:text-slate-400 uppercase tracking-wider font-extrabold">BILLING FREQUENCY</span>
+            <div className="flex bg-slate-100 dark:bg-slate-900 rounded-lg p-0.5 border border-slate-200 dark:border-slate-800">
               <button
                 type="button"
                 onClick={() => setBillingPeriod("monthly")}
-                className={`px-3 py-1 rounded text-xs font-bold transition-all ${billingPeriod === "monthly" ? "bg-slate-850 text-white" : "text-slate-500"}`}
+                className={`px-3 py-1 rounded text-xs font-bold transition-all ${billingPeriod === "monthly" ? "bg-white dark:bg-slate-850 text-slate-950 dark:text-white shadow-xs" : "text-slate-550 dark:text-slate-500 hover:text-slate-800 dark:hover:text-slate-300"}`}
               >
                 Monthly
               </button>
               <button
                 type="button"
                 onClick={() => setBillingPeriod("annual")}
-                className={`px-3 py-1 rounded text-xs font-bold transition-all ${billingPeriod === "annual" ? "bg-slate-850 text-white" : "text-slate-500"}`}
+                className={`px-3 py-1 rounded text-xs font-bold transition-all ${billingPeriod === "annual" ? "bg-white dark:bg-slate-850 text-slate-950 dark:text-white shadow-xs" : "text-slate-550 dark:text-slate-500 hover:text-slate-800 dark:hover:text-slate-300"}`}
               >
                 Annually (Save 30%)
               </button>
@@ -1337,21 +2031,21 @@ export default function ProfileSettingsView({
           {subPlanTab === "individual" ? (
             <div className="space-y-4">
               {/* Individual Pro Card */}
-              <div className="bg-gradient-to-b from-[#182333] to-slate-900 border border-emerald-500/30 rounded-3xl p-5 space-y-4 shadow-lg relative overflow-hidden">
-                <div className="absolute top-4 right-4 bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 px-2.5 py-0.5 rounded-full text-[9px] font-mono font-bold uppercase">
+              <div className="bg-slate-50 dark:bg-gradient-to-b dark:from-[#182333] dark:to-slate-900 border border-slate-200 dark:border-emerald-500/30 rounded-3xl p-5 space-y-4 shadow-sm dark:shadow-lg relative overflow-hidden">
+                <div className="absolute top-4 right-4 bg-emerald-100 dark:bg-emerald-500/15 border border-emerald-300 dark:border-emerald-500/30 text-emerald-700 dark:text-emerald-400 px-2.5 py-0.5 rounded-full text-[9px] font-mono font-bold uppercase">
                   Best Seller
                 </div>
 
                 <div className="space-y-1 font-mono">
-                  <h4 className="text-base font-black text-white">Individual Pro</h4>
-                  <p className="text-[10px] text-slate-400">For consultants & independent ER practitioners</p>
-                  <div className="pt-2 text-2xl font-black text-emerald-400">
+                  <h4 className="text-base font-black text-slate-950 dark:text-white">Individual Pro</h4>
+                  <p className="text-[10px] text-slate-500 dark:text-slate-400">For consultants & independent ER practitioners</p>
+                  <div className="pt-2 text-2xl font-black text-emerald-600 dark:text-emerald-400">
                     {billingPeriod === "monthly" ? "₹1,199" : "₹9,990"}
-                    <span className="text-xs text-slate-500 font-normal">/{billingPeriod === "monthly" ? "mo" : "yr"}</span>
+                    <span className="text-xs text-slate-500 dark:text-slate-500 font-normal">/{billingPeriod === "monthly" ? "mo" : "yr"}</span>
                   </div>
                 </div>
 
-                <ul className="space-y-2.5 text-xs text-slate-300 font-mono">
+                <ul className="space-y-2.5 text-xs text-slate-700 dark:text-slate-300 font-mono">
                   <li className="flex items-center gap-2">✓ Unlimited Rounds & 7 Lenses</li>
                   <li className="flex items-center gap-2">✓ Complete Scribe audio transcriptions</li>
                   <li className="flex items-center gap-2">✓ Advanced decision support (OCR, ABG)</li>
@@ -1373,49 +2067,77 @@ export default function ProfileSettingsView({
           ) : (
             <div className="space-y-4">
               {/* Team Plan Slider */}
-              <div className="bg-[#182333] border border-slate-800 rounded-3xl p-5 space-y-4 font-mono">
-                <h4 className="text-xs font-black text-white uppercase tracking-wider text-blue-400">
+              <div className="bg-slate-50 dark:bg-[#182333] border border-slate-200 dark:border-slate-800 rounded-3xl p-5 space-y-4 font-mono text-slate-800 dark:text-slate-100 shadow-sm">
+                <h4 className="text-xs font-black text-indigo-600 dark:text-sky-450 uppercase tracking-wider">
                   TEAM ROSTER ESTIMATOR
                 </h4>
 
-                <div className="space-y-4 divide-y divide-slate-800/60 text-xs">
+                <div className="space-y-4 divide-y divide-slate-200 dark:divide-slate-800/60 text-xs">
                   {/* Consultants Slider */}
                   <div className="flex justify-between items-center pt-1">
                     <div>
-                      <p className="font-bold text-slate-200">Consultants</p>
-                      <p className="text-[9.5px] text-slate-500">₹{billingPeriod === "monthly" ? "599/mo each" : "4,990/yr each"}</p>
+                      <p className="font-bold text-slate-800 dark:text-slate-200">Consultants</p>
+                      <p className="text-[9.5px] text-slate-500 dark:text-slate-400">₹{billingPeriod === "monthly" ? "599/mo each" : "4,990/yr each"}</p>
                     </div>
                     <div className="flex items-center gap-2.5">
-                      <button type="button" onClick={() => setConsultantsPerTeam(prev => Math.max(0, prev - 1))} className="w-7 h-7 bg-slate-800 hover:bg-slate-700 text-white rounded font-black">-</button>
-                      <span className="w-6 text-center font-bold">{consultantsPerTeam}</span>
-                      <button type="button" onClick={() => setConsultantsPerTeam(prev => prev + 1)} className="w-7 h-7 bg-slate-800 hover:bg-slate-700 text-white rounded font-black">+</button>
+                      <button 
+                        type="button" 
+                        onClick={() => setConsultantsPerTeam(prev => Math.max(0, prev - 1))} 
+                        className="w-7 h-7 bg-slate-200 hover:bg-slate-300 text-slate-800 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-white rounded font-black flex items-center justify-center transition-all"
+                      >
+                        -
+                      </button>
+                      <span className="w-8 py-0.5 text-center font-black text-slate-900 dark:text-white text-sm bg-white dark:bg-slate-900 rounded border border-slate-250 dark:border-slate-750 shadow-xs">
+                        {consultantsPerTeam}
+                      </span>
+                      <button 
+                        type="button" 
+                        onClick={() => setConsultantsPerTeam(prev => prev + 1)} 
+                        className="w-7 h-7 bg-slate-200 hover:bg-slate-300 text-slate-800 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-white rounded font-black flex items-center justify-center transition-all"
+                      >
+                        +
+                      </button>
                     </div>
                   </div>
 
                   {/* Residents Slider */}
                   <div className="flex justify-between items-center pt-3.5">
                     <div>
-                      <p className="font-bold text-slate-200">Residents</p>
-                      <p className="text-[9.5px] text-slate-500">₹{billingPeriod === "monthly" ? "399/mo each" : "3,390/yr each"}</p>
+                      <p className="font-bold text-slate-800 dark:text-slate-200">Residents</p>
+                      <p className="text-[9.5px] text-slate-500 dark:text-slate-400">₹{billingPeriod === "monthly" ? "399/mo each" : "3,390/yr each"}</p>
                     </div>
                     <div className="flex items-center gap-2.5">
-                      <button type="button" onClick={() => setResidentsPerTeam(prev => Math.max(0, prev - 1))} className="w-7 h-7 bg-slate-800 hover:bg-slate-700 text-white rounded font-black">-</button>
-                      <span className="w-6 text-center font-bold">{residentsPerTeam}</span>
-                      <button type="button" onClick={() => setResidentsPerTeam(prev => prev + 1)} className="w-7 h-7 bg-slate-800 hover:bg-slate-700 text-white rounded font-black">+</button>
+                      <button 
+                        type="button" 
+                        onClick={() => setResidentsPerTeam(prev => Math.max(0, prev - 1))} 
+                        className="w-7 h-7 bg-slate-200 hover:bg-slate-300 text-slate-800 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-white rounded font-black flex items-center justify-center transition-all"
+                      >
+                        -
+                      </button>
+                      <span className="w-8 py-0.5 text-center font-black text-slate-900 dark:text-white text-sm bg-white dark:bg-slate-900 rounded border border-slate-250 dark:border-slate-750 shadow-xs">
+                        {residentsPerTeam}
+                      </span>
+                      <button 
+                        type="button" 
+                        onClick={() => setResidentsPerTeam(prev => prev + 1)} 
+                        className="w-7 h-7 bg-slate-200 hover:bg-slate-300 text-slate-800 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-white rounded font-black flex items-center justify-center transition-all"
+                      >
+                        +
+                      </button>
                     </div>
                   </div>
 
                   {/* Computed Pricing Box */}
-                  <div className="pt-4 flex justify-between items-end border-t border-dashed border-slate-800">
+                  <div className="pt-4 flex justify-between items-end border-t border-dashed border-slate-200 dark:border-slate-800">
                     <div>
-                      <span className="text-[9px] text-slate-500 uppercase font-bold block">Estimated Bill</span>
-                      <h4 className="text-xl font-black text-emerald-400 mt-1">
+                      <span className="text-[9px] text-slate-500 dark:text-slate-400 uppercase font-bold block">Estimated Bill</span>
+                      <h4 className="text-xl font-black text-emerald-600 dark:text-emerald-400 mt-1">
                         ₹{(
-                          billingPeriod === "monthly"
-                            ? (residentsPerTeam * 399 + consultantsPerTeam * 599)
-                            : (residentsPerTeam * 3390 + consultantsPerTeam * 4990)
+                           billingPeriod === "monthly"
+                             ? (residentsPerTeam * 399 + consultantsPerTeam * 599)
+                             : (residentsPerTeam * 3390 + consultantsPerTeam * 4990)
                         ).toLocaleString("en-IN")}
-                        <span className="text-xs text-slate-500 font-normal">/{billingPeriod === "monthly" ? "month" : "year"}</span>
+                        <span className="text-xs text-slate-500 dark:text-slate-400 font-normal">/{billingPeriod === "monthly" ? "month" : "year"}</span>
                       </h4>
                     </div>
                     <button
@@ -1668,11 +2390,13 @@ export default function ProfileSettingsView({
             <div className="space-y-2">
               <p className="font-bold">A. User & Account Data:</p>
               <p>Account credentials, physician profile details (clinical role, registration ID, hospital/department affiliation), and team subscription ledgers.</p>
-              <p className="font-bold mt-1">B. Patient Clinical Records (As entered by physicians):</p>
+              <p className="font-bold mt-1">B. Team and Department Linkage Data:</p>
+              <p>When a Head of Department (HOD) adds your email address to their clinical roster, we process this to automatically incorporate your profile into the department team. Any existing individual plans are securely identified and automatically set to transition to the department-covered team subscription model starting the following month to prevent double billing, ensuring you retain full access to active purchases for the current billing cycle.</p>
+              <p className="font-bold mt-1">C. Patient Clinical Records (As entered by physicians):</p>
               <p>Demographic tags (age, gender), emergency triage levels (P1-P5 acuity categories), Glasgow Coma Scale (GCS), chief complaints, and serial vital timelines.</p>
               <p>Primary Survey surveys (Airway, Breathing, Circulation, Disability, Exposure), Secondary Survey medical worksheets, diagnostic rule-outs, drug orders, and clinical disposition plans.</p>
               <p>Psychological emergency screenings (including risk of self-harm, mental status parameters, and home support variables) input securely by the clinical team.</p>
-              <p className="font-bold mt-1">C. Audio & Media Inputs (Temporary):</p>
+              <p className="font-bold mt-1">D. Audio & Media Inputs (Temporary):</p>
               <p>Spoken medical narratives processed via the Smart Voice Scribe are streamed securely to the language processing engine for instant text mapping. Audio stream data is processed entirely in-memory and is never stored on our persistent database layers.</p>
               <p>Uploaded referral letters, ECG tracings, or diagnostic reports are analyzed ephemerally using OCR technologies to extract text parameters; raw graphic files are not permanently cached beyond the user's explicit record attachment.</p>
             </div>
@@ -1886,18 +2610,30 @@ export default function ProfileSettingsView({
                 </button>
               </div>
 
-              <div className="p-4 flex items-center justify-between gap-3">
-                <div className="text-left">
-                  <strong className="text-slate-800 dark:text-slate-200 text-xs font-bold block font-sans">AI Training Data</strong>
-                  <p className="text-[10px] text-slate-500 mt-0.5 leading-tight font-sans">Allow de-identified data to improve AI diagnosis accuracy</p>
+              <div className="p-4 flex flex-col gap-2">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="text-left">
+                    <strong className="text-slate-800 dark:text-slate-200 text-xs font-bold block font-sans">CONTRIBUTE TO ERMATE LEARNING</strong>
+                    <p className="text-[10px] text-slate-500 mt-1 leading-normal font-sans">
+                      Help improve ErMate's voice recognition and clinical accuracy by sharing anonymised case data. Patient identity is never stored.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const newValue = !shareAiTraining;
+                      setShareAiTraining(newValue);
+                      onSaveProfile({ ...profile, hasConsentedToLearning: newValue });
+                    }}
+                    className={`w-11 h-6 rounded-full p-1 transition-all flex items-center shrink-0 cursor-pointer ${shareAiTraining ? "bg-emerald-500 justify-end" : "bg-slate-200 dark:bg-slate-800 justify-start"}`}
+                  >
+                    <span className="w-4 h-4 bg-white dark:bg-slate-950 rounded-full shadow-xs" />
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setShareAiTraining(!shareAiTraining)}
-                  className={`w-11 h-6 rounded-full p-1 transition-all flex items-center shrink-0 ${shareAiTraining ? "bg-emerald-500 justify-end" : "bg-slate-200 dark:bg-slate-800 justify-start"}`}
-                >
-                  <span className="w-4 h-4 bg-white dark:bg-slate-950 rounded-full shadow-xs" />
-                </button>
+                <div className="text-[9px] text-slate-400 font-mono flex items-center gap-1.5 mt-0.5">
+                  <span className={`inline-block w-1.5 h-1.5 rounded-full ${shareAiTraining ? "bg-emerald-500" : "bg-slate-400"}`} />
+                  <span>{shareAiTraining ? "Tap to turn off" : "Tap to turn on"}</span>
+                </div>
               </div>
             </div>
           </div>
@@ -1995,6 +2731,14 @@ export default function ProfileSettingsView({
           answer: "From the Dashboard, navigate to the discharged or completed patient case and tap the Download icon. You can instantly compile and download high-contrast, pre-formatted summaries in both PDF and DOCX (Word) formats. The export contains structured vital trends, Primary and Secondary surveys, administered medications, and primary home instructions."
         },
         {
+          question: "What happens when my HOD adds me to their clinical team roster?",
+          answer: "If you already have an account registration on ErMate under your email address, you are automatically incorporated into the team. You will instantly receive a notification indicating you've been added, and your hospital affiliation and clinical workspace will be synchronized with your HOD's department. If you are not yet registered, your profile will be auto-joined and configured immediately upon sign-up."
+        },
+        {
+          question: "How does my subscription adjust if I am added to a team but have an individual plan?",
+          answer: "To honor active purchases and avoid double billing, if you have an active individual plan (like Individual Pro), you will keep that tier for the current billing month while enjoying full team/dashboard features immediately. A 'subscriptionTransitionPending: true' marker is scheduled on your profile, and starting from the next following month, your subscription automatically transitions to the shared, department-covered hospital plan (with all individual billing halted)."
+        },
+        {
           question: "What is the Clinical Decision Support (CDS) engine?",
           answer: "Accessible via the Treatment tab of an active case sheet, the CDS engine calculates differential diagnoses, highlights severe red-flag conditions to rule out, and provides clickable peer-reviewed guideline citations. All suggestions serve strictly as supportive review tools; the treating healthcare professional maintains sole final clinical responsibility."
         },
@@ -2008,7 +2752,7 @@ export default function ProfileSettingsView({
         },
         {
           question: "Is patient data secure and HIPAA/DPDPA compliant?",
-          answer: "Yes. All records are transmitted using secure HTTPS (TLS 1.3) and stored inside our cloud database on Firebase Firestore with strict data isolation. We implement role-based access gates (Consultants review/approve, Residents draft), support instant offline cache clearing, and provide encrypted JSON backup exports for full compliance with medical data regulations."
+          answer: "Yes. All records are transmitted using secure HTTPS (TLS 1.3) and stored inside our cloud database on Firebase Firestore with data isolation. We implement role-based access gates, support instant offline cache clearing, and provide encrypted JSON backup exports for full compliance with medical data regulations."
         }
       ];
 
@@ -2191,7 +2935,7 @@ export default function ProfileSettingsView({
       
       const categories = [
         { id: "clinical", label: "Clinical EMR", count: 11, icon: Compass, color: "indigo" },
-        { id: "team", label: "Team & Shifts", count: 7, icon: Users, color: "emerald" },
+        { id: "team", label: "Team & Shifts", count: 8, icon: Users, color: "emerald" },
         { id: "learning", label: "Learning", count: 4, icon: BookOpen, color: "amber" },
         { id: "tools", label: "Tools", count: 6, icon: Wrench, color: "cyan" }
       ] as const;
@@ -2390,6 +3134,16 @@ export default function ProfileSettingsView({
             icon: Shield,
             borderColor: "border-l-rose-500",
             iconBg: "bg-rose-50 dark:bg-rose-950/40 text-rose-500 dark:text-rose-400"
+          },
+          {
+            title: "Automated Team Pathway",
+            subtitle: "HOD Sync & Plan Transition",
+            desc: "When an HOD adds a doctor to their team roster, existing accounts are automatically incorporated with a real-time notification. Individual plan subscriptions are gracefully transitioned starting the following month to avoid double billing.",
+            path: "Profile / Settings ➔ Team Builder tab ➔ Automated background synchronization",
+            icon: Sparkles,
+            borderColor: "border-l-indigo-500",
+            iconBg: "bg-indigo-50 dark:bg-indigo-950/40 text-indigo-500 dark:text-indigo-400",
+            isNew: true
           }
         ],
         learning: [
@@ -3187,7 +3941,7 @@ export default function ProfileSettingsView({
           <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center z-50 p-4 font-mono text-xs">
             <div className="bg-[#131c2a] border border-emerald-500 p-5 rounded-2xl max-w-xs space-y-3.5 text-center shadow-2xl">
               <span className="bg-emerald-950 text-emerald-400 border border-emerald-800 px-2 py-0.5 rounded text-[10px] font-bold">
-                Tour Step {tourStep + 1} of 3
+                Tour Step {tourStep + 1} of 4
               </span>
               
               <div className="space-y-1.5">
@@ -3195,11 +3949,13 @@ export default function ProfileSettingsView({
                   {tourStep === 0 && "Welcome to ErMate Profile"}
                   {tourStep === 1 && "Bedside Mobile Linking"}
                   {tourStep === 2 && "Unlimited Rounds Debriefs"}
+                  {tourStep === 3 && "Smart Team & Plan Sync"}
                 </strong>
                 <p className="text-slate-300 text-[11px] leading-relaxed">
                   {tourStep === 0 && "Manage your professional duty shift schedules, hospital credentials, and custom roster whitelists here."}
                   {tourStep === 1 && "Use Link to Web to pair bedside monitors or recording mics with desktop screens instantly."}
                   {tourStep === 2 && "Unleash clinical Rounds evaluations with all 7 thinking lenses for your medical career logs."}
+                  {tourStep === 3 && "HOD team additions automatically incorporate active registered profiles with a real-time notification, gracefully transitioning individual plan billing to the department plan next month!"}
                 </p>
               </div>
 
@@ -3216,7 +3972,7 @@ export default function ProfileSettingsView({
                 <button
                   type="button"
                   onClick={() => {
-                    if (tourStep < 2) {
+                    if (tourStep < 3) {
                       setTourStep(prev => prev + 1);
                     } else {
                       setTourActive(false);
@@ -3224,7 +3980,7 @@ export default function ProfileSettingsView({
                   }}
                   className="flex-1 py-1.5 bg-emerald-500 text-slate-950 rounded font-black"
                 >
-                  {tourStep === 2 ? "Done" : "Next"}
+                  {tourStep === 3 ? "Done" : "Next"}
                 </button>
               </div>
             </div>

@@ -254,6 +254,8 @@ export default function MockLoginView({
       }, step.delay);
     });
 
+    let finalProfile: UserProfile | null = null;
+
     try {
       const selectedAccount = preConfiguredAccounts.find(acc => acc.email === googleEmail);
       const displayName = selectedAccount ? selectedAccount.name : "Physician";
@@ -263,9 +265,11 @@ export default function MockLoginView({
         // Also ensure user profile document exists in Firestore under their UID
         const profileRef = doc(db, "users", user.uid);
         const profileSnap = await getDoc(profileRef);
-        if (!profileSnap.exists()) {
-          const customProfile = resolveProfile(googleEmail, "");
-          await setDoc(profileRef, customProfile);
+        if (profileSnap.exists()) {
+          finalProfile = profileSnap.data() as UserProfile;
+        } else {
+          finalProfile = resolveProfile(googleEmail, "");
+          await setDoc(profileRef, finalProfile);
         }
       }
     } catch (authErr) {
@@ -274,7 +278,11 @@ export default function MockLoginView({
 
     setTimeout(() => {
       setIsGoogleOpen(false);
-      triggerLogin(googleEmail, "");
+      if (finalProfile) {
+        onLogin(finalProfile);
+      } else {
+        triggerLogin(googleEmail, "");
+      }
     }, 2000);
   };
 
@@ -477,7 +485,7 @@ export default function MockLoginView({
                 </div>
 
                 <form 
-                  onSubmit={(e) => {
+                  onSubmit={async (e) => {
                     e.preventDefault();
                     setDeviceLinkError("");
                     setDeviceLinkSuccess("");
@@ -489,13 +497,35 @@ export default function MockLoginView({
                     }
 
                     setIsLinkingLoading(true);
-                    setTimeout(() => {
+                    try {
+                      const selectedAccount = preConfiguredAccounts.find(acc => acc.email === selectedProfileForDevice);
+                      const displayName = selectedAccount ? selectedAccount.name : "Physician";
+                      
+                      const user = await authenticatePresetUser(selectedProfileForDevice, displayName);
+                      if (user) {
+                        const profileRef = doc(db, "users", user.uid);
+                        const profileSnap = await getDoc(profileRef);
+                        let finalProfile: UserProfile;
+                        if (profileSnap.exists()) {
+                          finalProfile = profileSnap.data() as UserProfile;
+                        } else {
+                          finalProfile = resolveProfile(selectedProfileForDevice, "");
+                          await setDoc(profileRef, finalProfile);
+                        }
+
+                        setIsLinkingLoading(false);
+                        setDeviceLinkSuccess("Pairing authorized! Handshake complete.");
+                        setTimeout(() => {
+                          onLogin(finalProfile);
+                        }, 800);
+                      } else {
+                        throw new Error("Unable to authenticate preset device profile.");
+                      }
+                    } catch (err: any) {
+                      console.error("Device link authentication error:", err);
                       setIsLinkingLoading(false);
-                      setDeviceLinkSuccess("Pairing authorized! Handshake complete.");
-                      setTimeout(() => {
-                        triggerLogin(selectedProfileForDevice, "");
-                      }, 800);
-                    }, 1200);
+                      setDeviceLinkError(err.message || "Failed to sync device session.");
+                    }
                   }}
                   className="space-y-4"
                 >

@@ -2,10 +2,162 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Helper functions
-    function isSignedIn() {
+    // ── Helper functions ──────────────
+
+    function uid() {
+      return request.auth.uid;
+    }
+
+    function isLoggedIn() {
       return request.auth != null;
     }
+
+    function getMember(deptId) {
+      return get(/databases/$(database)/documents/departments/$(deptId)/members/$(uid())).data;
+    }
+
+    function getRole(deptId) {
+      return getMember(deptId).role;
+    }
+
+    function isHOD(deptId) {
+      return getRole(deptId) == 'hod';
+    }
+
+    function isConsultant(deptId) {
+      return getRole(deptId) == 'consultant';
+    }
+
+    function isResident(deptId) {
+      return getRole(deptId) == 'resident';
+    }
+
+    function isMember(deptId) {
+      return exists(/databases/$(database)/documents/departments/$(deptId)/members/$(uid()));
+    }
+
+    // ── Legacy / Standard Flat Cases Rules (Aligned with Access Model) ──
+
+    function getProfile() {
+      return get(/databases/$(database)/documents/users/$(uid())).data;
+    }
+
+    function getUserRole() {
+      return getProfile().get('role', 'EM Resident');
+    }
+
+    function isFlatHOD() {
+      return getUserRole() == 'HOD' || getUserRole() == 'HOD / Shift Lead' || getUserRole().lower().matches('.*hod.*');
+    }
+
+    function isFlatConsultant() {
+      return getUserRole() == 'Consultant' || getUserRole() == 'Senior Consultant' || getUserRole().lower().matches('.*consultant.*');
+    }
+
+    function isFlatResident() {
+      return getUserRole() == 'Resident' || getUserRole() == 'EM Resident' || getUserRole().lower().matches('.*resident.*');
+    }
+
+    match /cases/{caseId} {
+      allow read: if isLoggedIn() && (
+        isFlatHOD()
+        || (isFlatConsultant() && resource.data.shiftId == getProfile().get('activeShiftId', getProfile().get('shift', 'morning')))
+        || (isFlatResident() && resource.data.createdBy == uid())
+        // Graceful fallback for initial/unassigned/seeded cases
+        || (!('createdBy' in resource.data) && resource.data.get('hospital', '') == getProfile().get('hospital', ''))
+      );
+
+      allow create: if isLoggedIn()
+        && request.resource.data.createdBy == uid();
+
+      allow update: if isLoggedIn() && (
+        isFlatHOD()
+        || (isFlatConsultant() && resource.data.shiftId == getProfile().get('activeShiftId', getProfile().get('shift', 'morning')))
+        || (isFlatResident() && resource.data.createdBy == uid())
+      );
+
+      // Nobody deletes a case (medico-legal requirement)
+      allow delete: if false;
+
+      // Addenda subcollection under cases
+      match /addenda/{addendumId} {
+        allow read: if isLoggedIn() && (
+          isFlatHOD()
+          || (isFlatConsultant() && get(/databases/$(database)/documents/cases/$(caseId)).data.shiftId == getProfile().get('activeShiftId', getProfile().get('shift', 'morning')))
+          || get(/databases/$(database)/documents/cases/$(caseId)).data.createdBy == uid()
+        );
+
+        allow create: if isLoggedIn()
+          && request.resource.data.addedBy == uid();
+
+        allow update, delete: if false;
+      }
+    }
+
+    // ── Departments Cases (User's Exact Rules) ──
+
+    match /departments/{deptId}/cases/{caseId} {
+
+      // ── READ ──────────────────────────
+
+      allow read: if isLoggedIn() && (
+
+        // HOD reads everything
+        isHOD(deptId)
+
+        // Consultant reads all cases in their shift
+        || (isConsultant(deptId) && resource.data.shiftId == getMember(deptId).activeShiftId)
+
+        // Resident reads own cases only
+        || (isResident(deptId) && resource.data.createdBy == uid())
+      );
+
+      // ── CREATE ────────────────────────
+
+      // Any member can create a case
+      allow create: if isLoggedIn()
+        && isMember(deptId)
+        && request.resource.data.createdBy == uid();
+
+      // ── UPDATE ────────────────────────
+
+      allow update: if isLoggedIn() && (
+
+        // HOD edits any case
+        isHOD(deptId)
+
+        // Consultant edits any case in their current shift
+        || (isConsultant(deptId) && resource.data.shiftId == getMember(deptId).activeShiftId)
+
+        // Resident edits own cases only
+        || (isResident(deptId) && resource.data.createdBy == uid())
+      );
+
+      // ── DELETE ────────────────────────
+      // Nobody deletes — medico-legal
+      allow delete: if false;
+
+      // ── Addenda ───────────────────────
+
+      match /addenda/{addendumId} {
+
+        allow read: if isLoggedIn() && (
+          isHOD(deptId)
+          || (isConsultant(deptId) && get(/databases/$(database)/documents/departments/$(deptId)/cases/$(caseId)).data.shiftId == getMember(deptId).activeShiftId)
+          || get(/databases/$(database)/documents/departments/$(deptId)/cases/$(caseId)).data.createdBy == uid()
+        );
+
+        // Anyone who can read the case can add an addendum
+        allow create: if isLoggedIn()
+          && isMember(deptId)
+          && request.resource.data.addedBy == uid();
+
+        // Addenda never edited or deleted
+        allow update, delete: if false;
+      }
+    }
+
+    // ── Other Standard Collections (Preserved for App Stability) ──
 
     function isOwner(userId) {
       return request.auth.uid == userId;
@@ -23,15 +175,10 @@ service cloud.firestore {
       return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
 
-    // Default deny catch-all
-    match /{document=**} {
-      allow read, write: if false;
-    }
-
     // Users collection
     match /users/{userId} {
-      allow read: if isSignedIn() && isOwner(userId);
-      allow create, update: if isSignedIn() && isOwner(userId)
+      allow read: if isLoggedIn() && isOwner(userId);
+      allow create, update: if isLoggedIn() && isOwner(userId)
         && incoming().name is string && incoming().name.size() <= 100
         && incoming().email is string && incoming().email.size() <= 100
         && incoming().role is string && incoming().role.size() <= 100
@@ -41,24 +188,92 @@ service cloud.firestore {
         && (incoming().get('subscriptionTier', '') is string);
     }
 
-    // Cases collection
-    match /cases/{caseId} {
-      allow read, delete: if isSignedIn();
-      allow create, update: if isSignedIn()
-        && incoming().id is string && incoming().id.size() <= 100
-        && incoming().status is string && (incoming().status == 'Triage' || incoming().status == 'Active' || incoming().status == 'Discharged')
-        && incoming().patient is map
-        && incoming().vitals is map;
-    }
-
     // Handovers collection
     match /handovers/{handoverId} {
-      allow read: if isSignedIn();
-      allow create, update: if isSignedIn()
+      allow read: if isLoggedIn();
+      allow create, update: if isLoggedIn()
         && incoming().id is string && incoming().id.size() <= 100
         && incoming().senderName is string && incoming().senderName.size() <= 100
         && incoming().senderEmail is string && incoming().senderEmail.size() <= 100
         && incoming().patientsText is string && incoming().patientsText.size() <= 10000;
+    }
+
+    // Team members collection
+    match /team_members/{memberId} {
+      allow read: if isLoggedIn();
+      allow delete: if isLoggedIn() && isValidId(memberId);
+      allow create: if isLoggedIn()
+        && isValidId(memberId)
+        && incoming().id is string && incoming().id.size() <= 100
+        && incoming().name is string && incoming().name.size() <= 100
+        && incoming().email is string && incoming().email.size() <= 100
+        && incoming().role is string && incoming().role.size() <= 100
+        && incoming().status is string && incoming().status.size() <= 100
+        && incoming().shift is string && incoming().shift.size() <= 100
+        && incoming().hospital is string && incoming().hospital.size() <= 100;
+      allow update: if isLoggedIn()
+        && isValidId(memberId)
+        && incoming().id is string && incoming().id.size() <= 100
+        && incoming().name is string && incoming().name.size() <= 100
+        && incoming().email is string && incoming().email.size() <= 100
+        && incoming().role is string && incoming().role.size() <= 100
+        && incoming().status is string && incoming().status.size() <= 100
+        && incoming().shift is string && incoming().shift.size() <= 100
+        && incoming().hospital is string && incoming().hospital.size() <= 100;
+    }
+
+    // Hospital subscriptions collection
+    match /hospital_subscriptions/{hospitalId} {
+      allow read: if isLoggedIn();
+      allow create, update: if isLoggedIn()
+        && incoming().id is string && incoming().id.size() <= 128
+        && incoming().hospital is string && incoming().hospital.size() <= 100
+        && incoming().subscriptionTier is string && incoming().subscriptionTier.size() <= 100
+        && incoming().active is bool;
+    }
+
+    // Hospital shifts configuration collection
+    match /hospital_shifts/{hospitalId} {
+      allow read: if isLoggedIn();
+      allow create, update, delete: if isLoggedIn();
+    }
+
+    // Contributions collection
+    match /contributions/{contributionId} {
+      allow read: if isLoggedIn();
+      allow delete: if isLoggedIn() && (
+        resource.data.submitterEmail == null ||
+        !('email' in request.auth.token) ||
+        request.auth.token.email == null ||
+        resource.data.submitterEmail.lower() == request.auth.token.email.lower()
+      );
+      allow create: if isLoggedIn()
+        && isValidId(contributionId)
+        && incoming().id == contributionId
+        && incoming().title is string && incoming().title.size() <= 150
+        && incoming().mnemonic is string && incoming().mnemonic.size() <= 100
+        && incoming().category is string && incoming().category.size() <= 100
+        && incoming().breakdown is string && incoming().breakdown.size() <= 2000
+        && incoming().status == 'pending'
+        && incoming().submittedBy is string && incoming().submittedBy.size() <= 100
+        && (
+          !('email' in request.auth.token) ||
+          request.auth.token.email == null ||
+          incoming().submitterEmail.lower() == request.auth.token.email.lower()
+        );
+      allow update: if isLoggedIn()
+        && isValidId(contributionId)
+        && (
+          (incoming().status == 'approved' && incoming().diff(existing()).affectedKeys().hasOnly(['status'])) ||
+          (
+            (
+              resource.data.submitterEmail == null ||
+              !('email' in request.auth.token) ||
+              request.auth.token.email == null ||
+              resource.data.submitterEmail.lower() == request.auth.token.email.lower()
+            ) && incoming().diff(existing()).affectedKeys().hasOnly(['title', 'mnemonic', 'category', 'breakdown', 'explanation'])
+          )
+        );
     }
   }
 }

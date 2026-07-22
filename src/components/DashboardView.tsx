@@ -3,10 +3,13 @@ import {
   PlusCircle, Zap, TrendingUp, Clock, ArrowRight, Activity, 
   Calendar, Users, FileText, Heart, ShieldAlert, ChevronRight, Calculator,
   Mic, AlertTriangle, CheckCircle, Edit, Copy, Download, Check, Eye, ChevronDown, ChevronUp, Briefcase,
-  Camera
+  Camera, Building, Trash2, UserPlus, ShieldCheck, Share2, Lightbulb, BookOpen
 } from "lucide-react";
-import { ClinicalCase, UserProfile, HandoverRecord } from "../types";
+import { motion, AnimatePresence } from "motion/react";
+import { ClinicalCase, UserProfile, HandoverRecord, TeamMember } from "../types";
 import { getCasePendingStatus } from "../utils/caseHelper";
+import { doc, updateDoc } from "firebase/firestore";
+import { db, auth } from "../firebase";
 
 interface DashboardViewProps {
   profile: UserProfile;
@@ -33,6 +36,15 @@ interface DashboardViewProps {
   setActiveShiftDoctors: React.Dispatch<React.SetStateAction<any[]>>;
   onSaveCase: (updatedCase: ClinicalCase) => void;
   isDarkMode?: boolean;
+  teamMembers: TeamMember[];
+  onAddMember: (name: string, email: string, role: string, shift: string) => Promise<void>;
+  onRemoveMember: (id: string) => Promise<void>;
+  onUpdateShift: (id: string, shift: string) => Promise<void>;
+  onApproveMember?: (id: string) => Promise<void>;
+  onDeclineMember?: (id: string) => Promise<void>;
+  onUpdateRole?: (id: string, role: string) => Promise<void>;
+  shifts?: any[];
+  pendingContributionsCount?: number;
 }
 
 export default function DashboardView({
@@ -60,6 +72,15 @@ export default function DashboardView({
   setActiveShiftDoctors,
   onSaveCase,
   isDarkMode = false,
+  teamMembers,
+  onAddMember,
+  onRemoveMember,
+  onUpdateShift,
+  onApproveMember,
+  onDeclineMember,
+  onUpdateRole,
+  shifts = [],
+  pendingContributionsCount = 0,
 }: DashboardViewProps) {
   // Statistics
   const activeCasesCount = cases.filter(c => c.status === "Active" || c.status === "Triage").length;
@@ -68,6 +89,27 @@ export default function DashboardView({
   const recentCases = [...cases]
     .sort((a, b) => new Date(b.patient.dateOpened).getTime() - new Date(a.patient.dateOpened).getTime())
     .slice(0, 3);
+
+  // Resolve current logged-in user's assigned shift name and time
+  const userEmailLower = profile.email.toLowerCase().trim();
+  const currentUserMember = teamMembers.find(
+    m => m.email.toLowerCase().trim() === userEmailLower
+  );
+  const activeUserShiftId = currentUserMember?.shift || "morning";
+  
+  // Use the default fallback if shifts prop is empty
+  const activeShiftsList = shifts && shifts.length > 0 ? shifts : [
+    { id: "morning", name: "Morning", time: "08:00 - 14:00" },
+    { id: "evening", name: "Evening", time: "14:00 - 20:00" },
+    { id: "night", name: "Night", time: "20:00 - 08:00" },
+    { id: "off", name: "Off Shift", time: "Off Duty" },
+    { id: "d1", name: "D1 Shift", time: "08:00 - 18:00" },
+    { id: "d2", name: "D2 Shift", time: "18:00 - 08:00" },
+    { id: "g1", name: "G1 Shift", time: "08:00 - 16:00" },
+    { id: "g2", name: "G2 Shift", time: "12:00 - 20:00" },
+  ];
+  
+  const assignedShift = activeShiftsList.find(s => s.id === activeUserShiftId) || activeShiftsList[0];
 
   // Filter out discharged cases, check which active ones are pending/incomplete
   const pendingCases = cases
@@ -108,6 +150,58 @@ export default function DashboardView({
   const [expandedCaseId, setExpandedCaseId] = useState<string | null>(null);
   const [copiedState, setCopiedState] = useState<{ [key: string]: boolean }>({});
   const [isHodPanelExpanded, setIsHodPanelExpanded] = useState<boolean>(false);
+  const [isApprovalsHubExpanded, setIsApprovalsHubExpanded] = useState<boolean>(true);
+
+  // HOD Profile & Team Sync States
+  const [isEditingHospital, setIsEditingHospital] = useState(false);
+  const [tempHospital, setTempHospital] = useState(profile.hospital || "Varah Group Emergency Care");
+  const [copiedInvite, setCopiedInvite] = useState(false);
+  const [pendingDeleteMemberId, setPendingDeleteMemberId] = useState<string | null>(null);
+
+  // States for HOD Clinician Case Explorer
+  const [selectedClinicianForCases, setSelectedClinicianForCases] = useState<any | null>(null);
+  const [selectedClinicianCaseIds, setSelectedClinicianCaseIds] = useState<string[]>([]);
+  const [successTakeoverMessage, setSuccessTakeoverMessage] = useState<string | null>(null);
+  const [showInstantHandoverSummary, setShowInstantHandoverSummary] = useState(false);
+
+  // Add Member Form States
+  const [addName, setAddName] = useState("");
+  const [addEmail, setAddEmail] = useState("");
+  const [addRole, setAddRole] = useState("Resident");
+  const [addShift, setAddShift] = useState("morning");
+  const [isAddingMember, setIsAddingMember] = useState(false);
+  const [addSuccessMessage, setAddSuccessMessage] = useState("");
+
+  const handleLocalAddMember = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!addName.trim() || !addEmail.trim()) return;
+    setIsAddingMember(true);
+    setAddSuccessMessage("");
+    try {
+      const formattedName = addName.trim().startsWith("Dr.") ? addName.trim() : `Dr. ${addName.trim()}`;
+      await onAddMember(formattedName, addEmail.trim().toLowerCase(), addRole, addShift);
+      setAddSuccessMessage(`Success! Whitelisted and added ${formattedName} to your clinical department team.`);
+      setAddName("");
+      setAddEmail("");
+      setTimeout(() => setAddSuccessMessage(""), 4000);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsAddingMember(false);
+    }
+  };
+
+  const handleSaveHospitalLocal = async () => {
+    if (!auth.currentUser || !tempHospital.trim()) return;
+    try {
+      const userDocRef = doc(db, "users", auth.currentUser.uid);
+      await updateDoc(userDocRef, { hospital: tempHospital.trim() });
+      profile.hospital = tempHospital.trim();
+      setIsEditingHospital(false);
+    } catch (err) {
+      console.error("Error updating hospital: ", err);
+    }
+  };
 
   const handleCopy = (key: string, text: string) => {
     navigator.clipboard.writeText(text).then(() => {
@@ -272,8 +366,151 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
 ==================================================`;
   };
 
+  const pendingMembers = (teamMembers || []).filter(m => m.status === "Pending Approval");
+
   return (
     <div className="space-y-6" id="dashboard-container">
+      {/* PEER REVIEW PIPELINE BANNER */}
+      {pendingContributionsCount > 0 && (
+        <div className="bg-gradient-to-r from-amber-500 via-orange-500 to-purple-600 rounded-3xl p-5 md:p-6 text-white shadow-lg space-y-3 border border-amber-400/30 no-print animate-fade-in">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 bg-white/15 border border-white/20 rounded-2xl shrink-0">
+                <Lightbulb className="w-6 h-6 text-amber-200 animate-pulse" />
+              </div>
+              <div>
+                <span className="bg-white/20 border border-white/25 text-[10px] font-black uppercase tracking-widest px-2.5 py-0.5 rounded-full font-mono">
+                  iMnemonic Peer Review Pipeline
+                </span>
+                <h3 className="text-sm md:text-base font-extrabold font-display tracking-tight mt-1 flex items-center gap-2">
+                  {pendingContributionsCount} CLINICAL MNEMONIC{pendingContributionsCount > 1 ? "S" : ""} AWAITING REVIEW
+                </h3>
+                <p className="text-xs text-amber-100 font-sans leading-relaxed mt-0.5">
+                  New clinical mnemonics submitted by peer clinicians are waiting for review & approval before publishing to the global directory.
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => onNavigateToTab("learn")}
+              className="bg-white text-slate-900 hover:bg-amber-50 font-black text-xs px-4 py-2.5 rounded-xl shadow-md transition-all cursor-pointer flex items-center justify-center gap-1.5 shrink-0 uppercase tracking-wider active:scale-95"
+            >
+              <BookOpen className="w-4 h-4 text-purple-600" />
+              <span>Review & Publish</span>
+              <ChevronRight className="w-4 h-4 text-slate-400" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* VERIFICATION & APPROVALS HUB (HOD ONLY) */}
+      {profile.role.toLowerCase().includes("hod") && pendingMembers.length > 0 && (
+        <div className="bg-gradient-to-r from-purple-600 via-indigo-600 to-violet-600 rounded-3xl p-5 md:p-6 text-white shadow-xl space-y-4 border border-indigo-500/30 no-print">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <span className="relative flex h-3.5 w-3.5">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-pink-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-pink-500"></span>
+              </span>
+              <div>
+                <span className="bg-purple-500/30 border border-purple-400/20 text-[10px] font-black uppercase tracking-widest px-2.5 py-0.5 rounded-full font-mono">
+                  Verification & Approvals Hub
+                </span>
+                <h2 className="text-sm md:text-base font-extrabold font-display tracking-tight mt-1 flex items-center gap-2">
+                  <ShieldAlert className="w-5 h-5 text-pink-300" />
+                  {pendingMembers.length} CLINICIAN REGISTRATION{pendingMembers.length > 1 ? "S" : ""} AWAITING HOD VERIFICATION
+                </h2>
+                <p className="text-xs text-indigo-100 leading-relaxed mt-0.5 font-sans">
+                  Review designation choices and approve team members to active shift status.
+                </p>
+              </div>
+            </div>
+
+            <button
+              onClick={() => setIsApprovalsHubExpanded(!isApprovalsHubExpanded)}
+              className="bg-white/10 hover:bg-white/15 text-white border border-white/20 font-black text-xs px-4 py-2 rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5 self-start md:self-center uppercase tracking-wider"
+            >
+              {isApprovalsHubExpanded ? "Collapse Review" : "Expand & Review"}
+              <ChevronRight className={`w-4 h-4 transition-transform ${isApprovalsHubExpanded ? 'rotate-90' : ''}`} />
+            </button>
+          </div>
+
+          <AnimatePresence>
+            {isApprovalsHubExpanded && (
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: "auto" }}
+                exit={{ opacity: 0, height: 0 }}
+                className="overflow-hidden pt-4 border-t border-white/10 space-y-3"
+              >
+                {pendingMembers.map((member) => (
+                  <div
+                    key={member.id}
+                    className="bg-white/5 border border-white/10 hover:bg-white/8 transition-all p-4 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+                  >
+                    <div className="space-y-1 text-left">
+                      <div className="flex flex-wrap items-center gap-2.5">
+                        <strong className="text-sm font-bold text-white font-sans">{member.name || member.email.split("@")[0]}</strong>
+                        
+                        <div className="flex items-center gap-1.5 bg-indigo-950/40 border border-indigo-500/30 rounded-lg px-2 py-0.5">
+                          <span className="text-[10px] text-indigo-300 font-bold uppercase">Designation:</span>
+                          <select
+                            value={member.role}
+                            onChange={async (e) => {
+                              try {
+                                if (onUpdateRole) {
+                                  await onUpdateRole(member.id, e.target.value);
+                                }
+                              } catch (err) {
+                                console.error("Error updating role:", err);
+                              }
+                            }}
+                            className="bg-transparent text-xs font-bold text-indigo-200 focus:outline-none cursor-pointer uppercase font-mono"
+                          >
+                            <option value="Senior Consultant" className="bg-slate-900 text-white">Senior Consultant</option>
+                            <option value="EM Resident" className="bg-slate-900 text-white">EM Resident</option>
+                            <option value="HOD / Shift Lead" className="bg-slate-900 text-white">HOD / Shift Lead</option>
+                          </select>
+                        </div>
+                      </div>
+                      
+                      <div className="text-xs text-indigo-200 font-mono flex items-center gap-1">
+                        <span>Email:</span>
+                        <span className="text-white underline">{member.email}</span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 self-end sm:self-center">
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          if (onDeclineMember) {
+                            await onDeclineMember(member.id);
+                          }
+                        }}
+                        className="px-3.5 py-2 bg-white/10 hover:bg-rose-600/30 border border-white/10 hover:border-rose-500/50 text-white hover:text-rose-200 font-bold text-xs rounded-xl transition-all cursor-pointer"
+                      >
+                        Decline ✗
+                      </button>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          if (onApproveMember) {
+                            await onApproveMember(member.id);
+                          }
+                        }}
+                        className="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-white border border-emerald-400/30 font-bold text-xs rounded-xl transition-all shadow-md shadow-emerald-500/20 cursor-pointer flex items-center gap-1"
+                      >
+                        <ShieldCheck className="w-4 h-4" />
+                        <span>Verify & Approve ✓</span>
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+      )}
       {/* Shift Banner & Controls */}
       {isOnShift ? (
         <div className="bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900/60 rounded-xl p-4 flex flex-col sm:flex-row items-center justify-between gap-3 shadow-xs">
@@ -382,23 +619,27 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
             <div className="bg-slate-50 dark:bg-slate-900/40 p-4 rounded-xl border border-slate-100 dark:border-slate-800 space-y-2.5">
               <div className="flex items-center justify-between text-xs font-bold text-slate-700 dark:text-slate-300">
                 <span className="uppercase tracking-wider">Shift Name:</span>
-                <span className="text-indigo-600 dark:text-indigo-400 font-extrabold">Morning Shift</span>
+                <span className="text-indigo-600 dark:text-indigo-400 font-extrabold">{assignedShift.name}</span>
               </div>
               <div className="flex items-center justify-between text-xs font-bold text-slate-700 dark:text-slate-300">
                 <span className="uppercase tracking-wider">Time Window:</span>
-                <span>06:00 – 14:00</span>
+                <span className="font-semibold text-slate-800 dark:text-slate-200">{assignedShift.time}</span>
               </div>
               <div className="flex items-center justify-between text-xs font-bold text-slate-700 dark:text-slate-300">
                 <span className="uppercase tracking-wider">Clinical Facility:</span>
-                <span>{profile.hospital}</span>
+                <span className="font-semibold text-slate-800 dark:text-slate-200">{profile.hospital}</span>
               </div>
               <div className="border-t border-slate-250 dark:border-slate-800/80 my-2 pt-2 flex items-center justify-between text-[11px] text-slate-400 font-mono">
                 <span>Residents Active:</span>
-                <span className="font-bold text-slate-700 dark:text-slate-300">2/4 slots</span>
+                <span className="font-bold text-slate-700 dark:text-slate-300">
+                  {teamMembers.filter(m => m.role.toLowerCase().includes("resident") && m.shift === activeUserShiftId).length} active
+                </span>
               </div>
               <div className="flex items-center justify-between text-[11px] text-slate-400 font-mono">
                 <span>Consultants Active:</span>
-                <span className="font-bold text-slate-700 dark:text-slate-300">1/2 slots</span>
+                <span className="font-bold text-slate-700 dark:text-slate-300">
+                  {teamMembers.filter(m => (m.role.toLowerCase().includes("consultant") || m.role.toLowerCase().includes("hod") || m.role.toLowerCase().includes("lead")) && m.shift === activeUserShiftId).length} active
+                </span>
               </div>
             </div>
 
@@ -654,6 +895,23 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
             </div>
             <span className="text-[8px] font-mono text-emerald-500 font-bold bg-emerald-500/10 px-1.5 py-0.5 rounded uppercase">NEW</span>
           </button>
+
+          {/* Card 6: EM Drugs & Procedures (Mobile) */}
+          <button 
+            onClick={() => onNavigateToTab("emdrugs")}
+            className="col-span-2 flex items-center justify-between p-3 bg-red-500/10 dark:bg-red-950/20 border border-red-500/20 rounded-xl text-left hover:bg-red-500/15 transition-all shadow-xs h-[64px] w-full"
+          >
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 bg-red-500/20 text-red-600 dark:text-red-400 rounded-lg flex items-center justify-center">
+                <ShieldAlert className="w-4 h-4 text-red-500" />
+              </div>
+              <div>
+                <span className="block font-black text-xs text-slate-800 dark:text-red-300">EM Drugs & Procedures</span>
+                <span className="block text-[8px] text-slate-400 font-medium">RSI, Sedation, Vents, Lines</span>
+              </div>
+            </div>
+            <span className="text-[8px] font-mono text-red-500 font-bold bg-red-500/10 px-1.5 py-0.5 rounded uppercase font-black">CRITICAL</span>
+          </button>
         </div>
 
         {/* Desktop Detailed Grid (Visible on Desktop only) */}
@@ -806,6 +1064,33 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
             </div>
           </div>
 
+          {/* Card 7: EM Drugs & Procedures (Desktop) */}
+          <div 
+            onClick={() => onNavigateToTab("emdrugs")}
+            className="group relative bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 hover:border-red-500 dark:hover:border-red-600 cursor-pointer shadow-xs hover:shadow-md transition-all duration-200 flex flex-col justify-between h-48"
+          >
+            <div className="absolute right-4 top-4 p-2 bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400 rounded-xl group-hover:scale-110 transition-transform">
+              <ShieldAlert className="w-5.5 h-5.5" />
+            </div>
+            
+            <div className="space-y-1.5 max-w-[85%]">
+              <div className="flex items-center gap-1.5">
+                <h3 className="text-sm font-extrabold text-slate-900 dark:text-white">
+                  EM Drugs & Procedures
+                </h3>
+                <span className="text-[8px] font-mono text-red-500 font-bold bg-red-500/10 px-1.5 py-0.5 rounded uppercase">CRITICAL</span>
+              </div>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
+                RSI 7 Ps timeline & drug estimators, sedation agent dose calculators, predicted Tidal Volume (lung protective) models, and Seldinger CVC guidelines.
+              </p>
+            </div>
+
+            <div className="mt-4 flex items-center justify-between text-xs font-bold text-red-600 dark:text-red-400 border-t border-slate-100 dark:border-slate-800/60 pt-3">
+              <span>Open EM Reference</span>
+              <ChevronRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+            </div>
+          </div>
+
         </div>
       </div>
 
@@ -852,20 +1137,20 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
 
       {/* HOD / Shift Lead Department Control Center */}
       {profile.role.toLowerCase().includes("hod") && (
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 md:p-6 shadow-xl space-y-4 md:space-y-6 text-white no-print">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800 pb-4">
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 md:p-6 shadow-md dark:shadow-xl space-y-4 md:space-y-6 text-slate-800 dark:text-white no-print">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-800 pb-4">
             <div className="flex items-center justify-between w-full md:w-auto">
               <div>
                 <div className="flex items-center gap-2">
-                  <span className="bg-purple-500/20 text-purple-300 text-[8px] md:text-[9px] px-2 py-0.5 rounded-full font-mono font-extrabold uppercase border border-purple-500/30 animate-pulse">
+                  <span className="bg-purple-100 dark:bg-purple-500/20 text-purple-700 dark:text-purple-300 text-[8px] md:text-[9px] px-2 py-0.5 rounded-full font-mono font-extrabold uppercase border border-purple-200 dark:border-purple-500/30 animate-pulse">
                     Department Admin Active
                   </span>
                 </div>
-                <h2 className="text-base md:text-lg font-black font-display tracking-tight bg-gradient-to-r from-white to-slate-300 bg-clip-text text-transparent flex items-center gap-2 mt-1">
-                  <Users className="w-4.5 h-4.5 md:w-5 md:h-5 text-purple-400" />
+                <h2 className="text-base md:text-lg font-black font-display tracking-tight text-slate-900 dark:text-white flex items-center gap-2 mt-1">
+                  <Users className="w-4.5 h-4.5 md:w-5 md:h-5 text-purple-500 dark:text-purple-400" />
                   HOD Control Center
                 </h2>
-                <p className="hidden md:block text-xs text-slate-400">
+                <p className="hidden md:block text-xs text-slate-550 dark:text-slate-400">
                   City Emergency Department · {profile.hospital}
                 </p>
               </div>
@@ -873,7 +1158,7 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
               {/* Mobile Toggle Button */}
               <button
                 onClick={() => setIsHodPanelExpanded(!isHodPanelExpanded)}
-                className="md:hidden px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-[10px] font-bold rounded-lg flex items-center gap-1.5 transition-colors border border-slate-700"
+                className="md:hidden px-3 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-[10px] font-bold rounded-lg flex items-center gap-1.5 transition-colors border border-slate-200 dark:border-slate-700"
               >
                 {isHodPanelExpanded ? "Minimize" : "Expand Admin"}
                 <ChevronRight className={`w-3.5 h-3.5 transition-transform ${isHodPanelExpanded ? 'rotate-90' : ''}`} />
@@ -892,7 +1177,7 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
                 onClick={() => {
                   window.print();
                 }}
-                className="flex-1 md:flex-none px-3.5 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-1.5"
+                className="flex-1 md:flex-none px-3.5 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-1.5"
               >
                 <Download className="w-3.5 h-3.5" />
                 Print Registry Cases
@@ -904,16 +1189,16 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
             {/* Active shifts list */}
             <div className="space-y-3">
               <div className="flex items-center justify-between">
-                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-550 dark:text-slate-400">
                   Active Doctors on Shift (Clinical Roster)
                 </h3>
-                <span className="text-[10px] bg-emerald-500/15 text-emerald-400 px-2 py-0.5 rounded-full border border-emerald-500/20 font-mono">
+                <span className="text-[10px] bg-emerald-100 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 px-2 py-0.5 rounded-full border border-emerald-200 dark:border-emerald-500/20 font-mono">
                   {activeShiftDoctors.length} Clinicians Active
                 </span>
               </div>
 
               {activeShiftDoctors.length === 0 ? (
-                <div className="bg-slate-950 border border-slate-850 rounded-xl p-6 text-center text-slate-500 text-xs">
+                <div className="bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-850 rounded-xl p-6 text-center text-slate-450 dark:text-slate-500 text-xs">
                   No active clinicians found. All doctors checked out of shift.
                 </div>
               ) : (
@@ -921,14 +1206,37 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
                   {activeShiftDoctors.map((doc) => (
                     <div
                       key={doc.id}
-                      className="bg-slate-950 border border-slate-850 p-4 rounded-xl flex items-center justify-between gap-4 transition-all hover:border-slate-800"
+                      className="bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-850 p-4 rounded-xl flex items-center justify-between gap-4 transition-all hover:border-slate-300 dark:hover:border-slate-800"
                     >
                       <div className="space-y-1">
-                        <p className="text-sm font-extrabold text-white">{doc.name}</p>
-                        <div className="flex gap-2 text-[10px] text-slate-400 font-mono">
+                        <p 
+                          className="text-sm font-extrabold text-slate-900 dark:text-white cursor-pointer hover:text-indigo-600 dark:hover:text-indigo-400 flex items-center gap-1.5 group/shiftname"
+                          onClick={() => {
+                            const member = teamMembers.find(m => m.name.toLowerCase() === doc.name.toLowerCase()) || {
+                              id: doc.id,
+                              name: doc.name,
+                              email: doc.name.toLowerCase().replace(/\s+/g, "") + "@hospital.com",
+                              role: doc.role,
+                              status: "Active (Joined)",
+                              shift: "morning"
+                            };
+                            setSelectedClinicianForCases(member);
+                            const clinicianCases = cases.filter(c => 
+                              (c.doctorEmail && member.email && c.doctorEmail.trim().toLowerCase() === member.email.trim().toLowerCase()) ||
+                              (c.doctorName && member.name && c.doctorName.trim().toLowerCase().includes(member.name.trim().toLowerCase()))
+                            );
+                            const activeIds = clinicianCases.filter(c => c.status === "Active" || c.status === "Triage").map(c => c.id);
+                            setSelectedClinicianCaseIds(activeIds);
+                          }}
+                          title="Click to inspect & takeover cases"
+                        >
+                          {doc.name}
+                          <Eye className="w-3.5 h-3.5 opacity-60 group-hover/shiftname:opacity-100 transition-opacity text-indigo-500" />
+                        </p>
+                        <div className="flex gap-2 text-[10px] text-slate-500 dark:text-slate-400 font-mono">
                           <span>{doc.role}</span>
                           <span>•</span>
-                          <span className="text-indigo-400">{doc.caseCount} patients</span>
+                          <span className="text-indigo-600 dark:text-indigo-400 font-semibold">{doc.caseCount} patients</span>
                           <span>•</span>
                           <span>On Duty: {doc.timeOnShift}</span>
                         </div>
@@ -938,7 +1246,7 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
                         onClick={() => {
                           setActiveShiftDoctors(prev => prev.filter(d => d.id !== doc.id));
                         }}
-                        className="px-2.5 py-1 bg-rose-950/40 hover:bg-rose-900/60 border border-rose-900/40 text-rose-300 font-bold rounded-lg text-[10px] transition-all"
+                        className="px-2.5 py-1 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-900/60 border border-rose-200 dark:border-rose-900/40 text-rose-600 dark:text-rose-300 font-bold rounded-lg text-[10px] transition-all"
                       >
                         End Shift
                       </button>
@@ -951,10 +1259,10 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
             {/* Handover Acknowledgement Trail */}
             <div className="space-y-3">
               <div className="flex items-center justify-between">
-                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-550 dark:text-slate-400">
                   Recent Handover Acknowledgements
                 </h3>
-                <span className="text-[10px] bg-purple-500/15 text-purple-400 px-2 py-0.5 rounded-full border border-purple-500/20 font-mono">
+                <span className="text-[10px] bg-purple-100 dark:bg-purple-500/15 text-purple-700 dark:text-purple-400 px-2 py-0.5 rounded-full border border-purple-200 dark:border-purple-500/20 font-mono">
                   Audit Trail
                 </span>
               </div>
@@ -965,32 +1273,32 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
                   return (
                     <div
                       key={hand.id}
-                      className="bg-slate-950 border border-slate-850 p-4 rounded-xl space-y-2"
+                      className="bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-850 p-4 rounded-xl space-y-2"
                     >
                       <div className="flex items-center justify-between gap-2">
-                        <span className="text-xs font-bold text-slate-200">
+                        <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
                           {hand.senderName} (Handover {hand.id})
                         </span>
                         {isAck ? (
-                          <span className="bg-emerald-500/10 text-emerald-400 text-[9px] px-2 py-0.5 rounded-full border border-emerald-500/20 font-bold uppercase tracking-wider flex items-center gap-1">
-                            <Check className="w-3 h-3 text-emerald-400" />
+                          <span className="bg-emerald-100 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 text-[9px] px-2 py-0.5 rounded-full border border-emerald-250 dark:border-emerald-500/20 font-bold uppercase tracking-wider flex items-center gap-1">
+                            <Check className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
                             ACKNOWLEDGED
                           </span>
                         ) : (
-                          <span className="bg-amber-500/10 text-amber-400 text-[9px] px-2 py-0.5 rounded-full border border-amber-500/20 font-bold uppercase tracking-wider animate-pulse">
+                          <span className="bg-amber-100 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 text-[9px] px-2 py-0.5 rounded-full border border-amber-250 dark:border-amber-500/20 font-bold uppercase tracking-wider animate-pulse">
                             PENDING ACK
                           </span>
                         )}
                       </div>
                       
-                      <p className="text-[11px] text-slate-400 line-clamp-1 italic">
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400 line-clamp-1 italic">
                         "{hand.patientsText}"
                       </p>
 
-                      <div className="flex items-center justify-between gap-4 pt-1.5 border-t border-slate-900 text-[10px] font-mono text-slate-500">
+                      <div className="flex items-center justify-between gap-4 pt-1.5 border-t border-slate-200 dark:border-slate-900 text-[10px] font-mono text-slate-450 dark:text-slate-500">
                         <span>Sent: {hand.timestamp}</span>
                         {isAck ? (
-                          <span className="text-emerald-500">
+                          <span className="text-emerald-600 dark:text-emerald-500 font-bold">
                             Ack'd by {hand.acknowledgedBy} ({hand.acknowledgedTime?.split("|")[0]})
                           </span>
                         ) : (
@@ -1002,7 +1310,7 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
                                 acknowledgedTime: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + " | Today"
                               } : h));
                             }}
-                            className="text-indigo-400 hover:text-indigo-300 font-bold hover:underline"
+                            className="text-indigo-600 dark:text-indigo-400 hover:text-indigo-500 dark:hover:text-indigo-300 font-bold hover:underline"
                           >
                             Force Acknowledge Receipt
                           </button>
@@ -1012,6 +1320,341 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
                   );
                 })}
               </div>
+            </div>
+          </div>
+
+          {/* Section Divider */}
+          <div className="border-t border-slate-200 dark:border-slate-800 pt-6 mt-6 no-print" />
+
+          {/* HOD Department Administration Panel */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 pt-2 pb-2 no-print">
+            
+            {/* Left Column: Team Member Roster & Whitelisting Form (8 Cols) */}
+            <div className="lg:col-span-8 space-y-6">
+              
+              {/* Whitelist New Team Member Card */}
+              <div className="bg-slate-50 dark:bg-slate-950/40 border border-slate-200 dark:border-slate-850 p-5 rounded-2xl space-y-4">
+                <div className="flex items-center gap-2">
+                  <UserPlus className="w-4.5 h-4.5 text-indigo-500" />
+                  <h3 className="text-xs font-black uppercase tracking-wider text-slate-700 dark:text-slate-350">
+                    Whitelist & Onboard Team Clinician
+                  </h3>
+                </div>
+                
+                <form onSubmit={handleLocalAddMember} className="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
+                  <div className="space-y-1">
+                    <label className="block text-[9px] font-bold uppercase tracking-wider text-slate-550 dark:text-slate-400 font-mono">
+                      Clinician Full Name
+                    </label>
+                    <input
+                      type="text"
+                      value={addName}
+                      onChange={(e) => setAddName(e.target.value)}
+                      placeholder="Dr. Shreya Patel"
+                      className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-200 block w-full px-3 py-2 text-xs rounded-lg font-sans font-semibold focus:outline-none focus:ring-1 focus:ring-purple-500"
+                      required
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="block text-[9px] font-bold uppercase tracking-wider text-slate-550 dark:text-slate-400 font-mono">
+                      Verified Gmail Address
+                    </label>
+                    <input
+                      type="email"
+                      value={addEmail}
+                      onChange={(e) => setAddEmail(e.target.value)}
+                      placeholder="shreya@gmail.com"
+                      className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-200 block w-full px-3 py-2 text-xs rounded-lg font-mono focus:outline-none focus:ring-1 focus:ring-purple-500"
+                      required
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="block text-[9px] font-bold uppercase tracking-wider text-slate-550 dark:text-slate-400 font-mono">
+                      Designation Role
+                    </label>
+                    <select
+                      value={addRole}
+                      onChange={(e) => setAddRole(e.target.value)}
+                      className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-200 block w-full px-2 py-2 text-xs rounded-lg font-bold focus:outline-none focus:ring-1 focus:ring-purple-500"
+                    >
+                      <option value="Resident">EM Resident</option>
+                      <option value="Consultant">Senior Consultant</option>
+                      <option value="HOD">HOD / Shift Lead</option>
+                    </select>
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={isAddingMember}
+                    className="w-full py-2 bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-lg text-xs transition-all flex items-center justify-center gap-1.5 shadow-xs cursor-pointer"
+                  >
+                    <PlusCircle className="w-4 h-4" />
+                    <span>Onboard Doctor</span>
+                  </button>
+                </form>
+
+                {addSuccessMessage && (
+                  <div className="p-2.5 bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-xs rounded-lg font-mono flex items-center gap-2">
+                    <CheckCircle className="w-3.5 h-3.5" />
+                    <span>{addSuccessMessage}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Active Team Roster List */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-550 dark:text-slate-400">
+                    Clinical Department Team Roster
+                  </h3>
+                  <span className="text-[10px] bg-indigo-50 dark:bg-indigo-500/15 text-indigo-700 dark:text-indigo-400 px-2.5 py-0.5 rounded-full border border-indigo-150 dark:border-indigo-500/20 font-mono">
+                    {teamMembers.length} Registered Clinicians
+                  </span>
+                </div>
+
+                {teamMembers.length === 0 ? (
+                  <div className="bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-850 rounded-xl p-8 text-center text-slate-450 dark:text-slate-500 text-xs leading-relaxed">
+                    No registered team members found. Share the invitation link below to populate your clinician roster in real-time.
+                  </div>
+                ) : (
+                  <div className="border border-slate-200 dark:border-slate-850 rounded-2xl overflow-hidden bg-white dark:bg-slate-950">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left border-collapse">
+                        <thead>
+                          <tr className="bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-850 text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 font-mono">
+                            <th className="p-3.5">Clinician</th>
+                            <th className="p-3.5">Post</th>
+                            <th className="p-3.5">Sync Status</th>
+                            <th className="p-3.5">Active Duty</th>
+                            <th className="p-3.5 text-right">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 dark:divide-slate-900">
+                          {teamMembers.map((member) => (
+                            <tr key={member.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-900/30 transition-colors">
+                              <td className="p-3.5">
+                                <div 
+                                  className="flex items-center gap-2.5 cursor-pointer group/rostername"
+                                  onClick={() => {
+                                    setSelectedClinicianForCases(member);
+                                    const clinicianCases = cases.filter(c => 
+                                      (c.doctorEmail && member.email && c.doctorEmail.trim().toLowerCase() === member.email.trim().toLowerCase()) ||
+                                      (c.doctorName && member.name && c.doctorName.trim().toLowerCase().includes(member.name.trim().toLowerCase()))
+                                    );
+                                    const activeIds = clinicianCases.filter(c => c.status === "Active" || c.status === "Triage").map(c => c.id);
+                                    setSelectedClinicianCaseIds(activeIds);
+                                  }}
+                                  title="Click to view & takeover clinical cases"
+                                >
+                                  <div className="h-7 w-7 rounded-lg bg-indigo-100 dark:bg-indigo-500/10 text-indigo-700 dark:text-indigo-400 flex items-center justify-center text-xs font-black uppercase font-display group-hover/rostername:bg-indigo-600 group-hover/rostername:text-white transition-all">
+                                    {member.name.replace("Dr. ", "").slice(0, 2)}
+                                  </div>
+                                  <div>
+                                    <p className="text-xs font-black text-slate-900 dark:text-slate-100 group-hover/rostername:text-indigo-600 dark:group-hover/rostername:text-indigo-400 transition-colors flex items-center gap-1">
+                                      {member.name}
+                                      <Eye className="w-3 h-3 opacity-0 group-hover/rostername:opacity-100 transition-opacity text-indigo-500" />
+                                    </p>
+                                    <p className="text-[10px] text-slate-450 dark:text-slate-500 font-mono">{member.email}</p>
+                                  </div>
+                                </div>
+                              </td>
+                              
+                              <td className="p-3.5">
+                                <span className={`text-[9.5px] px-2 py-0.5 rounded-md font-mono font-bold ${
+                                  member.role.includes("HOD") 
+                                    ? "bg-purple-100 dark:bg-purple-500/15 text-purple-700 dark:text-purple-400 border border-purple-200/50" 
+                                    : member.role.includes("Consultant")
+                                    ? "bg-indigo-100 dark:bg-indigo-500/15 text-indigo-700 dark:text-indigo-400 border border-indigo-200/50"
+                                    : "bg-blue-100 dark:bg-blue-500/15 text-blue-700 dark:text-blue-400 border border-blue-200/50"
+                                }`}>
+                                  {member.role}
+                                </span>
+                              </td>
+
+                              <td className="p-3.5">
+                                {member.status === "Active (Joined)" ? (
+                                  <span className="inline-flex items-center gap-1 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 text-[10px] px-2 py-0.5 rounded-full border border-emerald-200 dark:border-emerald-500/20 font-bold font-sans">
+                                    <ShieldCheck className="w-3.5 h-3.5" />
+                                    Active (Joined)
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 text-[10px] px-2 py-0.5 rounded-full border border-amber-200 dark:border-amber-500/20 font-bold font-sans">
+                                    <Clock className="w-3 h-3" />
+                                    Claim Pending
+                                  </span>
+                                )}
+                              </td>
+
+                              <td className="p-3.5">
+                                <select
+                                  value={member.shift || "off"}
+                                  onChange={(e) => onUpdateShift(member.id, e.target.value)}
+                                  className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-200 text-[11px] font-semibold rounded-md px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                >
+                                  <option value="morning">Morning Shift</option>
+                                  <option value="evening">Evening Shift</option>
+                                  <option value="night">Night Shift</option>
+                                  <option value="off">Off Duty</option>
+                                </select>
+                              </td>
+
+                              <td className="p-3.5 text-right">
+                                {pendingDeleteMemberId === member.id ? (
+                                  <div className="flex items-center justify-end gap-1.5 animate-fade-in">
+                                    <button
+                                      onClick={() => setPendingDeleteMemberId(null)}
+                                      className="px-2 py-1 text-[9px] font-bold bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-350 rounded-md transition-colors"
+                                    >
+                                      Cancel
+                                    </button>
+                                    <button
+                                      onClick={async () => {
+                                        await onRemoveMember(member.id);
+                                        setPendingDeleteMemberId(null);
+                                      }}
+                                      className="px-2 py-1 text-[9px] font-black bg-rose-600 text-white rounded-md transition-all shadow-xs"
+                                    >
+                                      Confirm
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <button
+                                    onClick={() => setPendingDeleteMemberId(member.id)}
+                                    className="p-1.5 text-slate-400 hover:text-rose-500 rounded-lg hover:bg-rose-500/10 transition-colors cursor-pointer inline-flex items-center justify-center"
+                                    title="Revoke and Remove Clinician Access"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Right Column: Hospital Department Profile & Invite Links (4 Cols) */}
+            <div className="lg:col-span-4 space-y-6">
+              
+              {/* Profile Card */}
+              <div className="bg-slate-50 dark:bg-slate-950/40 border border-slate-200 dark:border-slate-850 p-5 rounded-2xl space-y-4">
+                <div className="flex items-center gap-2">
+                  <Building className="w-4.5 h-4.5 text-purple-500" />
+                  <h3 className="text-xs font-black uppercase tracking-wider text-slate-700 dark:text-slate-350">
+                    Institution Profile Details
+                  </h3>
+                </div>
+
+                <div className="space-y-3 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-850 p-4 rounded-xl">
+                  <div className="space-y-1.5">
+                    <span className="block text-[9px] font-bold uppercase tracking-wider text-slate-450 dark:text-slate-500 font-mono">
+                      Affiliated Hospital Network
+                    </span>
+                    
+                    {isEditingHospital ? (
+                      <div className="space-y-2 animate-fade-in">
+                        <input
+                          type="text"
+                          value={tempHospital}
+                          onChange={(e) => setTempHospital(e.target.value)}
+                          className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-200 block w-full px-3 py-1.5 text-xs rounded-lg font-sans font-semibold focus:outline-none focus:ring-1 focus:ring-purple-500"
+                        />
+                        <div className="flex items-center gap-2 justify-end">
+                          <button
+                            onClick={() => {
+                              setTempHospital(profile.hospital);
+                              setIsEditingHospital(false);
+                            }}
+                            className="px-2.5 py-1 text-[10px] font-bold text-slate-500 hover:text-slate-700 dark:hover:text-white"
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            onClick={handleSaveHospitalLocal}
+                            className="px-2.5 py-1 text-[10px] font-bold bg-indigo-600 text-white rounded-md"
+                          >
+                            Save
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="text-sm font-black text-slate-800 dark:text-white leading-tight">
+                          {profile.hospital || "Varah Group Emergency Care"}
+                        </p>
+                        <button
+                          onClick={() => {
+                            setTempHospital(profile.hospital);
+                            setIsEditingHospital(true);
+                          }}
+                          className="p-1 text-slate-450 hover:text-slate-850 dark:hover:text-white rounded transition-colors"
+                          title="Rename Institution"
+                        >
+                          <Edit className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="border-t border-slate-100 dark:border-slate-900 pt-3 flex items-center justify-between text-[10px] text-slate-500 dark:text-slate-400 font-mono">
+                    <span>Clinical Scribe Node:</span>
+                    <span className="text-slate-750 dark:text-slate-300 font-bold">Standard ISO-27001</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Share Invite Referral Link Card */}
+              <div className="bg-gradient-to-br from-indigo-50/50 to-purple-50/30 dark:from-slate-950/40 dark:to-slate-950/10 border border-indigo-100 dark:border-slate-850 p-5 rounded-2xl space-y-4">
+                <div className="flex items-center gap-2">
+                  <Share2 className="w-4 h-4 text-indigo-500" />
+                  <h3 className="text-xs font-black uppercase tracking-wider text-slate-700 dark:text-slate-350">
+                    Share Invitation Link
+                  </h3>
+                </div>
+
+                <p className="text-[11px] leading-relaxed text-slate-500 dark:text-slate-400 font-medium">
+                  Provide this secure link to your clinical team members. Opening this link prompts colleagues to register and accept your department's roster sync automatically.
+                </p>
+
+                <div className="space-y-2">
+                  <div className="flex items-center gap-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-2 rounded-xl">
+                    <input
+                      type="text"
+                      readOnly
+                      value={`${window.location.origin}/join/${(profile.hospital || "").toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)+/g, "")}?ref=team_invite`}
+                      className="bg-transparent text-slate-600 dark:text-slate-300 text-[10.5px] font-mono font-medium block w-full focus:outline-none select-all truncate"
+                    />
+                    <button
+                      onClick={() => {
+                        const link = `${window.location.origin}/join/${(profile.hospital || "").toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)+/g, "")}?ref=team_invite`;
+                        navigator.clipboard.writeText(link);
+                        setCopiedInvite(true);
+                        setTimeout(() => setCopiedInvite(false), 2000);
+                      }}
+                      className={`p-1.5 rounded-lg transition-all flex items-center justify-center cursor-pointer ${
+                        copiedInvite
+                          ? "bg-emerald-500/10 text-emerald-500 border border-emerald-500/20"
+                          : "bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300"
+                      }`}
+                    >
+                      {copiedInvite ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                    </button>
+                  </div>
+
+                  {copiedInvite && (
+                    <p className="text-[10px] font-bold font-mono text-emerald-600 dark:text-emerald-400 animate-pulse text-right">
+                      ✓ Copied invitation to clipboard!
+                    </p>
+                  )}
+                </div>
+              </div>
+
             </div>
           </div>
         </div>
@@ -1027,7 +1670,6 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
                   <Briefcase className="w-5 h-5 text-indigo-500" />
                   Today's ER Patient Registry
                 </h2>
-                <p className="text-[11px] text-slate-500 font-medium">Logged in as: <span className="font-semibold text-slate-700 dark:text-slate-300 font-mono">{profile.name} ({profile.role})</span></p>
               </div>
 
               {/* Segmented Control Tabs */}
@@ -1432,6 +2074,306 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
             })()}
           </div>
         </div>
+
+      {/* HOD Clinician Case Explorer and Takeover Modal */}
+      <AnimatePresence>
+        {selectedClinicianForCases && (() => {
+          const clinicianCases = cases.filter(c => 
+            (c.doctorEmail && selectedClinicianForCases.email && c.doctorEmail.trim().toLowerCase() === selectedClinicianForCases.email.trim().toLowerCase()) ||
+            (c.doctorName && selectedClinicianForCases.name && c.doctorName.trim().toLowerCase().includes(selectedClinicianForCases.name.trim().toLowerCase()))
+          );
+          const activeCases = clinicianCases.filter(c => c.status === "Active" || c.status === "Triage");
+
+          return (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4"
+              id="hod-case-explorer-backdrop"
+              onClick={() => {
+                setSelectedClinicianForCases(null);
+                setSuccessTakeoverMessage(null);
+                setShowInstantHandoverSummary(false);
+              }}
+            >
+              <motion.div
+                initial={{ scale: 0.95, y: 15 }}
+                animate={{ scale: 1, y: 0 }}
+                exit={{ scale: 0.95, y: 15 }}
+                transition={{ type: "spring", duration: 0.4 }}
+                className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-3xl shadow-2xl max-w-2xl w-full max-h-[85vh] flex flex-col overflow-hidden text-left"
+                onClick={(e) => e.stopPropagation()}
+              >
+                {/* Header */}
+                <div className="bg-gradient-to-r from-indigo-50 to-slate-50 dark:from-slate-900 dark:to-slate-950 px-6 py-5 border-b border-slate-150 dark:border-slate-850 flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="h-10 w-10 rounded-xl bg-indigo-100 dark:bg-indigo-500/10 text-indigo-700 dark:text-indigo-400 flex items-center justify-center text-sm font-black uppercase font-display">
+                      {selectedClinicianForCases.name.replace("Dr. ", "").slice(0, 2)}
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-black text-slate-900 dark:text-white flex items-center gap-1.5 leading-none">
+                        {selectedClinicianForCases.name}
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 font-bold uppercase tracking-wider font-mono">
+                          {selectedClinicianForCases.role || "Clinician"}
+                        </span>
+                      </h3>
+                      <p className="text-[10.5px] text-slate-500 font-mono mt-1">{selectedClinicianForCases.email}</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setSelectedClinicianForCases(null);
+                      setSuccessTakeoverMessage(null);
+                      setShowInstantHandoverSummary(false);
+                    }}
+                    className="p-1.5 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-full text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors cursor-pointer text-sm"
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                {/* Sub-header info */}
+                <div className="px-6 py-3 bg-slate-50 dark:bg-slate-900/40 border-b border-slate-150 dark:border-slate-850 flex items-center justify-between text-xs">
+                  <span className="text-slate-500 font-medium font-sans">
+                    Department Duty Status: <strong className="text-slate-800 dark:text-slate-200 uppercase font-bold">{selectedClinicianForCases.shift || "Active"} Duty</strong>
+                  </span>
+                  <span className="text-xs font-black text-slate-800 dark:text-white font-mono bg-slate-100 dark:bg-slate-900 px-2 py-0.5 rounded">
+                    {activeCases.length} Active cases
+                  </span>
+                </div>
+
+                {/* Body Content */}
+                <div className="flex-1 overflow-y-auto p-6 space-y-4">
+                  {/* Success Alert */}
+                  {successTakeoverMessage && (
+                    <div className="bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-900/50 p-4 rounded-xl text-emerald-800 dark:text-emerald-300 text-xs flex items-center gap-2">
+                      <CheckCircle className="w-4 h-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                      <div>
+                        <p className="font-extrabold">{successTakeoverMessage}</p>
+                        <p className="text-[10px] text-emerald-600 dark:text-emerald-400 mt-0.5">The selected cases are now assigned to your queue and visible on the active handover list.</p>
+                      </div>
+                    </div>
+                  )}
+
+                  {clinicianCases.length === 0 ? (
+                    <div className="text-center py-12 text-slate-400 text-xs">
+                      <Users className="w-10 h-10 mx-auto text-indigo-250 dark:text-slate-800 mb-2.5 animate-pulse" />
+                      <p className="font-extrabold text-slate-600 dark:text-slate-300">No logged cases found</p>
+                      <p className="text-[10px] text-slate-400 mt-1 max-w-[240px] mx-auto">This clinician hasn't logged or assumed care of any clinical cases during this duty window.</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      <div className="flex justify-between items-center pb-1">
+                        <span className="text-[10px] uppercase font-black tracking-wider text-slate-400">Clinician Patients Queue</span>
+                        {activeCases.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (selectedClinicianCaseIds.length === activeCases.length) {
+                                setSelectedClinicianCaseIds([]);
+                              } else {
+                                setSelectedClinicianCaseIds(activeCases.map(c => c.id));
+                              }
+                            }}
+                            className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 hover:underline bg-indigo-50 dark:bg-indigo-950/40 px-2 py-0.5 rounded"
+                          >
+                            {selectedClinicianCaseIds.length === activeCases.length ? "Deselect All" : "Select All Active"}
+                          </button>
+                        )}
+                      </div>
+
+                      <div className="space-y-2.5">
+                        {clinicianCases.map((c) => {
+                          const isActive = c.status === "Active" || c.status === "Triage";
+                          const isSelected = selectedClinicianCaseIds.includes(c.id);
+                          return (
+                            <div
+                              key={c.id}
+                              onClick={() => isActive && (
+                                selectedClinicianCaseIds.includes(c.id)
+                                  ? setSelectedClinicianCaseIds(selectedClinicianCaseIds.filter(id => id !== c.id))
+                                  : setSelectedClinicianCaseIds([...selectedClinicianCaseIds, c.id])
+                              )}
+                              className={`border rounded-xl p-3.5 transition-all flex items-start gap-3.5 ${
+                                !isActive
+                                  ? "bg-slate-50 dark:bg-slate-900/20 border-slate-150 dark:border-slate-850 opacity-60 cursor-not-allowed"
+                                  : isSelected
+                                  ? "bg-indigo-50/20 dark:bg-indigo-950/10 border-indigo-400 dark:border-indigo-900 ring-1 ring-indigo-50 dark:ring-indigo-950 cursor-pointer"
+                                  : "bg-white dark:bg-slate-950 border-slate-150 dark:border-slate-800 hover:border-slate-300 cursor-pointer"
+                              }`}
+                            >
+                              {/* Checkbox */}
+                              {isActive ? (
+                                <div className="pt-0.5">
+                                  <div className={`w-4 h-4 rounded border flex items-center justify-center transition-all ${
+                                    isSelected 
+                                      ? "bg-indigo-600 border-indigo-600 text-white" 
+                                      : "border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900"
+                                  }`}>
+                                    {isSelected && <Check className="w-2.5 h-2.5 stroke-[3]" />}
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="w-4 h-4 rounded border border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-900 flex items-center justify-center">
+                                  <CheckCircle className="w-3 h-3 text-slate-450" />
+                                </div>
+                              )}
+
+                              {/* Patient Clinical details */}
+                              <div className="flex-1 min-w-0 space-y-1">
+                                <div className="flex items-center justify-between gap-2 flex-wrap">
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    <h4 className="text-xs font-extrabold text-slate-800 dark:text-white">{c.patient.name}</h4>
+                                    <span className="text-[10px] text-slate-400">({c.patient.age}y / {c.patient.gender === "Male" ? "M" : "F"})</span>
+                                    <span className="text-[9px] font-mono bg-slate-100 dark:bg-slate-900 text-slate-500 px-1.5 py-0.2 rounded">
+                                      {c.patient.uhid || `ID: ${c.id.slice(0, 5)}`}
+                                    </span>
+                                  </div>
+                                  <span className={`text-[8px] uppercase font-black font-mono px-1.5 py-0.2 rounded border ${
+                                    c.patient.triageCategory?.includes("P1")
+                                      ? "bg-rose-50 border-rose-200 text-rose-700"
+                                      : c.patient.triageCategory?.includes("P2")
+                                      ? "bg-amber-50 border-amber-250 text-amber-700"
+                                      : "bg-emerald-50 border-emerald-250 text-emerald-700"
+                                  }`}>
+                                    {c.patient.triageCategory?.split(" ")[0] || "P3"}
+                                  </span>
+                                </div>
+
+                                <p className="text-[10.5px] text-slate-650 dark:text-slate-300 leading-relaxed font-sans line-clamp-2">
+                                  <strong className="font-bold text-slate-700 dark:text-slate-200">Complaint:</strong> {c.patient.presentingComplaint}
+                                </p>
+
+                                {c.vitals && (
+                                  <div className="text-[9.5px] font-mono text-slate-450 font-bold flex gap-2 pt-0.5">
+                                    <span>HR: {c.vitals.hr || "N/A"}</span>
+                                    <span>•</span>
+                                    <span>BP: {c.vitals.bp || "N/A"}</span>
+                                    <span>•</span>
+                                    <span>SpO2: {c.vitals.spo2 || "N/A"}%</span>
+                                    {c.bedNo && (
+                                      <>
+                                        <span>•</span>
+                                        <span className="text-indigo-600 dark:text-indigo-400">{c.bedNo}</span>
+                                      </>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* SBAR instantaneous report preview */}
+                  {showInstantHandoverSummary && selectedClinicianCaseIds.length > 0 && (
+                    <div className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 space-y-3 animate-fade-in text-slate-800 dark:text-white">
+                      <div className="flex justify-between items-center border-b pb-2">
+                        <span className="text-[10.5px] uppercase font-black font-mono text-indigo-600 dark:text-indigo-400 tracking-wider">Instant SBAR Transition Preview</span>
+                        <button
+                          onClick={() => {
+                            let text = `==================================================\n`;
+                            text += `HOD CLINICAL TRANSFER HANDOVER REPORT\n`;
+                            text += `==================================================\n`;
+                            text += `Lead HOD Clinician: Dr. ${profile.name}\n`;
+                            text += `Pushed from Clinician: ${selectedClinicianForCases?.name}\n`;
+                            text += `Date: ${new Date().toLocaleDateString()} | Time: ${new Date().toLocaleTimeString()}\n\n`;
+
+                            const selCases = cases.filter(c => selectedClinicianCaseIds.includes(c.id));
+                            selCases.forEach((c, idx) => {
+                              text += `${idx + 1}. PATIENT: ${c.patient.name} (${c.patient.age}y / ${c.patient.gender})\n`;
+                              text += `   Triage Category: ${c.patient.triageCategory}\n`;
+                              text += `   Chief Complaint: ${c.patient.presentingComplaint}\n`;
+                              text += `   Vitals: HR ${c.vitals.hr || "N/A"} | BP ${c.vitals.bp || "N/A"} | SpO2 ${c.vitals.spo2 || "N/A"}%\n`;
+                              text += `   Airway Status: ${c.primaryAssessment?.airwayStatus || "Normal"}\n`;
+                              text += `   Past History: ${c.sampleHistory?.pastHistory || "Nil documented"}\n`;
+                              text += `   ER Plan Summary: Handed over to HOD for queue management.\n`;
+                              text += `--------------------------------------------------\n\n`;
+                            });
+
+                            navigator.clipboard.writeText(text);
+                            setCopiedState(prev => ({ ...prev, hod_sbar: true }));
+                            setTimeout(() => setCopiedState(prev => ({ ...prev, hod_sbar: false })), 2000);
+                          }}
+                          className="text-[9.5px] font-black uppercase text-indigo-500 hover:text-indigo-700 bg-white dark:bg-slate-950 px-2 py-1 rounded border border-slate-200 dark:border-slate-850 shadow-3xs cursor-pointer"
+                        >
+                          {copiedState["hod_sbar"] ? "✓ Copied!" : "📋 Copy SBAR Block"}
+                        </button>
+                      </div>
+
+                      <div className="max-h-[160px] overflow-y-auto text-[10px] space-y-2.5 font-sans leading-relaxed text-slate-600 dark:text-slate-350 pr-1">
+                        {cases.filter(c => selectedClinicianCaseIds.includes(c.id)).map((c, idx) => (
+                          <div key={c.id} className="border-b border-slate-100 dark:border-slate-850 pb-2.5">
+                            <p className="font-extrabold text-slate-800 dark:text-white text-[10.5px]">#{idx + 1} Patient: {c.patient.name}</p>
+                            <p className="mt-1"><strong className="text-blue-700 dark:text-blue-400 font-bold">[S] Situation:</strong> Presents with {c.patient.presentingComplaint}</p>
+                            <p><strong className="text-purple-700 dark:text-purple-400 font-bold">[B] Background:</strong> {c.sampleHistory?.pastHistory || "Nil past history documented."}</p>
+                            <p><strong className="text-amber-700 dark:text-amber-400 font-bold">[A] Assessment:</strong> Vitals: HR {c.vitals?.hr || "N/A"}, BP {c.vitals?.bp || "N/A"}, SpO2 {c.vitals?.spo2 || "N/A"}%. Airway: {c.primaryAssessment?.airwayStatus || "Normal"}</p>
+                            <p><strong className="text-emerald-700 dark:text-emerald-400 font-bold">[R] Recommendation:</strong> Handed over to department HOD Dr. {profile.name} for queue management and active assignment.</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Footer */}
+                <div className="bg-slate-50 dark:bg-slate-950 border-t border-slate-150 dark:border-slate-850 px-6 py-4 flex flex-wrap gap-2 justify-between items-center">
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => setShowInstantHandoverSummary(!showInstantHandoverSummary)}
+                      disabled={selectedClinicianCaseIds.length === 0}
+                      className="px-4 py-2 bg-slate-200 dark:bg-slate-850 hover:bg-slate-300 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 disabled:opacity-40 font-black rounded-xl text-xs transition-all shadow-3xs cursor-pointer"
+                    >
+                      {showInstantHandoverSummary ? "Hide SBAR" : "SBAR Preview"}
+                    </button>
+                  </div>
+
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => {
+                        const activeCasesToOvertake = cases.filter(c => selectedClinicianCaseIds.includes(c.id));
+                        if (activeCasesToOvertake.length === 0) return;
+
+                        activeCasesToOvertake.forEach(c => {
+                          const updatedCase = {
+                            ...c,
+                            doctorEmail: profile.email,
+                            doctorName: profile.name
+                          };
+                          onSaveCase(updatedCase);
+                        });
+
+                        setSuccessTakeoverMessage(`Handover complete! Took control of ${activeCasesToOvertake.length} cases.`);
+                        setSelectedClinicianCaseIds([]);
+                        setTimeout(() => setSuccessTakeoverMessage(null), 5000);
+                      }}
+                      disabled={selectedClinicianCaseIds.length === 0}
+                      className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 dark:disabled:bg-indigo-950/40 text-white disabled:text-slate-450 dark:disabled:text-slate-550 font-black rounded-xl text-xs transition-all shadow-md flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Users className="w-4 h-4" />
+                      Take Handover ({selectedClinicianCaseIds.length})
+                    </button>
+                    
+                    <button
+                      onClick={() => {
+                        setSelectedClinicianForCases(null);
+                        setSuccessTakeoverMessage(null);
+                        setShowInstantHandoverSummary(false);
+                      }}
+                      className="px-4 py-2 border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-900 text-slate-700 dark:text-slate-300 font-bold rounded-xl text-xs transition-all cursor-pointer"
+                    >
+                      Close
+                    </button>
+                  </div>
+                </div>
+              </motion.div>
+            </motion.div>
+          );
+        })()}
+      </AnimatePresence>
 
 
 

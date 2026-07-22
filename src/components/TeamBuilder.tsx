@@ -1,37 +1,53 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { 
   Users, Mail, Plus, Trash2, Link, Copy, Check, Info, Sparkles, 
   Building2, ArrowRight, ShieldCheck, CheckCircle2, UserCheck, 
   AlertCircle, ShieldAlert, FileText, Send, UserX, RefreshCw
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
-
-export interface TeamMember {
-  id: string;
-  email: string;
-  role: string;
-  status: "Pending Invite" | "Active (Joined)";
-  joinedAt?: string;
-}
+import { TeamMember } from "../types";
 
 interface TeamBuilderProps {
   hospitalName: string;
   onHospitalChange: (name: string) => void;
   members?: TeamMember[];
   onMembersChange?: (members: TeamMember[]) => void;
+  profile?: any;
+  onSaveConfig?: (teamName: string, department: string, teamColor: "emerald" | "blue" | "indigo" | "violet") => void;
 }
 
 export default function TeamBuilder({ 
   hospitalName, 
   onHospitalChange,
   members: externalMembers,
-  onMembersChange: setExternalMembers
+  onMembersChange: setExternalMembers,
+  profile,
+  onSaveConfig
 }: TeamBuilderProps) {
   // Team configuration states
-  const [teamName, setTeamName] = useState("Varah Emergency Core");
-  const [department, setDepartment] = useState("Trauma & Resuscitation Unit");
-  const [teamColor, setTeamColor] = useState<"emerald" | "blue" | "indigo" | "violet">("blue");
+  const [teamName, setTeamName] = useState(profile?.teamName || "Varah Emergency Core");
+  const [department, setDepartment] = useState(profile?.department || "Trauma & Resuscitation Unit");
+  const [teamColor, setTeamColor] = useState<"emerald" | "blue" | "indigo" | "violet">(profile?.teamColor || "blue");
   const [isConfigSaved, setIsConfigSaved] = useState(true);
+
+  // Sync state with props when profile loads
+  useEffect(() => {
+    if (profile?.teamName) {
+      setTeamName(profile.teamName);
+    }
+  }, [profile?.teamName]);
+
+  useEffect(() => {
+    if (profile?.department) {
+      setDepartment(profile.department);
+    }
+  }, [profile?.department]);
+
+  useEffect(() => {
+    if (profile?.teamColor) {
+      setTeamColor(profile.teamColor);
+    }
+  }, [profile?.teamColor]);
 
   // Members states
   const [localMembers, setLocalMembers] = useState<TeamMember[]>([
@@ -414,6 +430,9 @@ export default function TeamBuilder({
                   onClick={() => {
                     setIsConfigSaved(true);
                     showNotification("Team details updated successfully!", "success");
+                    if (onSaveConfig) {
+                      onSaveConfig(teamName, department, teamColor);
+                    }
                   }}
                   className={`w-full py-2 ${theme.primary} text-white text-xs font-bold rounded-xl transition-all shadow-sm flex items-center justify-center gap-1.5`}
                 >

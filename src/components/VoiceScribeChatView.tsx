@@ -45,6 +45,11 @@ export default function VoiceScribeChatView({
   ]);
 
   const messages = propsMessages || localMessages;
+  const messagesRef = useRef<Message[]>(messages);
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+
   const setMessages = (newMsgs: Message[] | ((prev: Message[]) => Message[])) => {
     if (onUpdateMessages) {
       if (typeof newMsgs === "function") {
@@ -75,6 +80,7 @@ export default function VoiceScribeChatView({
   }, []);
 
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -115,7 +121,7 @@ export default function VoiceScribeChatView({
       timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
     };
 
-    const updatedMessages = [...messages, userMsg];
+    const updatedMessages = [...messagesRef.current, userMsg];
     setMessages(updatedMessages);
     setInputText("");
     setIsProcessing(true);
@@ -151,6 +157,59 @@ export default function VoiceScribeChatView({
         id: "ai-fallback-" + Date.now(),
         sender: "ai",
         text: `Based on your clinical query: "${userText}", here is the general clinical guideline summary:\n\nEnsure immediate resuscitation measures, check airway patency, secure large-bore IV access, and continuous cardiac monitoring.\n\n### 📚 Reference Citations\n* **Tintinalli's Emergency Medicine**: Chapter 22: Cardiac Rhythm Disturbances.\n* **Rosen's Emergency Medicine**: Chapter 12: Airway and Resuscitation protocols.\n* **Harrison's Principles of Internal Medicine**: Section 5: Cardinal Manifestations of Disease.\n* **WikEM**: Resuscitation and emergency department therapies.\n* **UpToDate**: Evidence-based management of acute emergency department presentations.`,
+        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+      };
+      setMessages(prev => [...prev, aiMsg]);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  // Automatically send transcribed voice text to chat & AI assistant
+  const handleVoiceTranscript = async (transcriptText: string) => {
+    if (!transcriptText.trim()) return;
+
+    const userMsg: Message = {
+      id: "user-voice-" + Date.now(),
+      sender: "user",
+      text: transcriptText,
+      timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    };
+
+    const updatedMessages = [...messagesRef.current, userMsg];
+    setMessages(updatedMessages);
+    setIsProcessing(true);
+    setError(null);
+
+    try {
+      const response = await fetch("/api/scribe-chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messages: updatedMessages })
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to reach clinical assistant.");
+      }
+
+      const resData = await response.json();
+      if (resData.success && resData.reply) {
+        const aiMsg: Message = {
+          id: "ai-" + Date.now(),
+          sender: "ai",
+          text: resData.reply,
+          timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+        };
+        setMessages(prev => [...prev, aiMsg]);
+      } else {
+        throw new Error(resData.error || "No response received from clinical consult.");
+      }
+    } catch (err: any) {
+      console.error("Voice Scribe assistant error:", err);
+      const aiMsg: Message = {
+        id: "ai-fallback-" + Date.now(),
+        sender: "ai",
+        text: `Based on your clinical dictation: "${transcriptText}", here is the general clinical guideline summary:\n\nEnsure immediate resuscitation measures, check airway patency, secure large-bore IV access, and continuous cardiac monitoring.\n\n### 📚 Reference Citations\n* **Tintinalli's Emergency Medicine**: Chapter 22: Cardiac Rhythm Disturbances.\n* **Rosen's Emergency Medicine**: Chapter 12: Airway and Resuscitation protocols.\n* **Harrison's Principles of Internal Medicine**: Section 5: Cardinal Manifestations of Disease.\n* **WikEM**: Resuscitation and emergency department therapies.\n* **UpToDate**: Evidence-based management of acute emergency department presentations.`,
         timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
       };
       setMessages(prev => [...prev, aiMsg]);
@@ -243,16 +302,26 @@ export default function VoiceScribeChatView({
     }
   };
 
-  // Compile entire user speech transcript (for legacy "Save to Case Sheet" fallback)
+  // Compile only the user's actual dictations and queries for clinical case sheet extraction
   const getFullDictationString = () => {
     return messages
       .filter(m => m.sender === "user" && !m.text.includes("[Scanned Referral Document]"))
       .map(m => m.text)
-      .join("\n");
+      .join("\n\n");
   };
 
   const handleSaveToCaseSheet = async () => {
-    const fullDictation = getFullDictationString();
+    let fullDictation = getFullDictationString();
+    
+    // Auto-include current unsent text in the textarea to avoid losing work!
+    if (inputText.trim()) {
+      if (fullDictation) {
+        fullDictation += "\n\n" + inputText.trim();
+      } else {
+        fullDictation = inputText.trim();
+      }
+    }
+
     if (!fullDictation.trim()) {
       setError("Please dictate or type some details first before saving.");
       return;
@@ -477,7 +546,7 @@ Dr. Marcus Brody, Trauma Lead`);
 
           <button
             onClick={handleSaveToCaseSheet}
-            disabled={isProcessing}
+            disabled={isProcessing || isTranscribing}
             className="px-4 py-1.5 bg-purple-600 hover:bg-purple-700 disabled:bg-purple-300 dark:disabled:bg-purple-950 text-white rounded-xl text-xs font-extrabold flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
           >
             {isProcessing ? (
@@ -558,11 +627,25 @@ Dr. Marcus Brody, Trauma Lead`);
                 </div>
               </div>
             ))}
+            {isTranscribing && (
+              <div className="flex justify-start animate-pulse">
+                <div className="bg-purple-50 dark:bg-purple-950/20 border border-purple-100 dark:border-purple-900/50 rounded-2xl rounded-tl-none px-4 py-3 text-xs text-purple-700 dark:text-purple-300 flex items-center gap-2.5">
+                  <RefreshCw className="w-4 h-4 animate-spin text-purple-600" />
+                  <div>
+                    <span className="font-extrabold block">Transcribing continuous voice recording...</span>
+                    <span className="text-[10px] text-slate-400 font-medium">Please wait while ErMate converts your clinical audio to text</span>
+                  </div>
+                </div>
+              </div>
+            )}
             {isProcessing && (
               <div className="flex justify-start animate-pulse">
-                <div className="bg-white dark:bg-slate-900 border border-slate-150 dark:border-slate-850 rounded-2xl rounded-tl-none px-4 py-3 text-xs text-slate-400 flex items-center gap-2">
-                  <RefreshCw className="w-3.5 h-3.5 animate-spin text-purple-600" />
-                  <span>AI Senior Consultant is reviewing textbooks...</span>
+                <div className="bg-purple-50 dark:bg-purple-950/20 border border-purple-100 dark:border-purple-900/50 rounded-2xl rounded-tl-none px-4 py-3 text-xs text-purple-700 dark:text-purple-300 flex items-center gap-2.5">
+                  <RefreshCw className="w-4 h-4 animate-spin text-purple-600" />
+                  <div>
+                    <span className="font-extrabold block">ErMate is thinking, please wait...</span>
+                    <span className="text-[10px] text-purple-600/70 dark:text-purple-400/70 font-medium">Consulting medical reference textbooks & formulating answer</span>
+                  </div>
                 </div>
               </div>
             )}
@@ -632,6 +715,7 @@ Dr. Marcus Brody, Trauma Lead`);
                 ref={textareaRef}
                 rows={1}
                 value={inputText}
+                disabled={isProcessing || isTranscribing}
                 onChange={(e) => setInputText(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !e.shiftKey) {
@@ -639,8 +723,8 @@ Dr. Marcus Brody, Trauma Lead`);
                     handleSendMessage();
                   }
                 }}
-                placeholder="Ask anything, dictate, or type here..."
-                className="w-full bg-transparent text-xs text-slate-900 dark:text-slate-100 focus:outline-none px-1 py-2 resize-none max-h-[160px] overflow-y-auto leading-relaxed"
+                placeholder={isTranscribing ? "Transcribing voice recording... please wait" : isProcessing ? "ErMate is thinking... please wait" : "Ask anything, dictate, or type here..."}
+                className="w-full bg-transparent text-xs text-slate-900 dark:text-slate-100 focus:outline-none px-1 py-2 resize-none max-h-[160px] overflow-y-auto leading-relaxed disabled:opacity-60"
               />
             </div>
 
@@ -648,15 +732,17 @@ Dr. Marcus Brody, Trauma Lead`);
             <div className="flex items-center gap-1 shrink-0 pb-0.5">
               {inputText.trim() === "" ? (
                 <SpeechMicButton 
-                  onTranscript={(txt) => setInputText(prev => prev ? `${prev} ${txt}` : txt)} 
-                  className="!w-10 !h-10 !rounded-full !bg-purple-600 hover:!bg-purple-700 !text-white dark:!text-white !border-none shadow-md flex items-center justify-center cursor-pointer transition-transform active:scale-95"
+                  onTranscript={handleVoiceTranscript} 
+                  chatLayout={true}
+                  onProcessingChange={setIsTranscribing}
+                  className="!w-10 !h-10 !rounded-full !bg-purple-600 hover:!bg-purple-700 !text-white dark:!text-white !border-none shadow-md flex items-center justify-center cursor-pointer transition-transform active:scale-95 disabled:opacity-50"
                 />
               ) : (
                 <button
                   type="button"
                   onClick={handleSendMessage}
-                  disabled={isProcessing}
-                  className="w-10 h-10 bg-purple-600 hover:bg-purple-700 text-white rounded-full flex items-center justify-center transition-all shadow-md active:scale-95 cursor-pointer"
+                  disabled={isProcessing || isTranscribing}
+                  className="w-10 h-10 bg-purple-600 hover:bg-purple-700 text-white rounded-full flex items-center justify-center transition-all shadow-md active:scale-95 cursor-pointer disabled:opacity-50"
                   title="Send message"
                 >
                   <Send className="w-4.5 h-4.5" />

@@ -29,6 +29,7 @@ interface ScribeChatMessage {
   imageName?: string;
   timestamp: string;
   parsedPatient?: {
+    patientId?: string;
     name: string;
     ageGender: string;
     triage: string;
@@ -170,6 +171,44 @@ export default function HandoverView({
     ];
   });
 
+  // State for EMR Quick Paste selection
+  const [selectedQuickPasteIds, setSelectedQuickPasteIds] = useState<string[]>(() => {
+    // Start with all quickPasteList items selected
+    return quickPasteList.map(qp => qp.id);
+  });
+
+  // Auto-sync selectedQuickPasteIds when quickPasteList is modified
+  useEffect(() => {
+    const quickPasteIds = quickPasteList.map(p => p.id);
+    setSelectedQuickPasteIds(prev => {
+      const newIds = quickPasteIds.filter(id => !prev.includes(id));
+      if (newIds.length > 0) {
+        return [...prev, ...newIds];
+      }
+      const existingPrev = prev.filter(id => quickPasteIds.includes(id));
+      if (existingPrev.length !== prev.length) {
+        return existingPrev;
+      }
+      return prev;
+    });
+  }, [quickPasteList]);
+
+  const handleToggleQuickPasteCase = (id: string) => {
+    if (selectedQuickPasteIds.includes(id)) {
+      setSelectedQuickPasteIds(selectedQuickPasteIds.filter(x => x !== id));
+    } else {
+      setSelectedQuickPasteIds([...selectedQuickPasteIds, id]);
+    }
+  };
+
+  const handleSelectAllQuickPaste = () => {
+    if (selectedQuickPasteIds.length === quickPasteList.length) {
+      setSelectedQuickPasteIds([]);
+    } else {
+      setSelectedQuickPasteIds(quickPasteList.map(qp => qp.id));
+    }
+  };
+
   // Sync quickPasteList to localStorage so it is robustly saved over refreshes/reboots
   useEffect(() => {
     localStorage.setItem("ermate_quick_paste_list", JSON.stringify(quickPasteList));
@@ -262,6 +301,13 @@ export default function HandoverView({
   useEffect(() => {
     localStorage.setItem("ermate_scribe_chat_messages", JSON.stringify(chatMessages));
   }, [chatMessages]);
+
+  const handleDeleteMessage = (id: string) => {
+    setChatMessages(prev => prev.filter(msg => msg.id !== id));
+  };
+
+  const [confirmResetChat, setConfirmResetChat] = useState(false);
+  const [confirmClearRoster, setConfirmClearRoster] = useState(false);
 
   // Edit Patient Modal States
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
@@ -361,7 +407,8 @@ export default function HandoverView({
   };
 
   const getQuickPasteRows = (): HandoverTableRow[] => {
-    return quickPasteList.map((qp, idx) => {
+    const selected = quickPasteList.filter(qp => selectedQuickPasteIds.includes(qp.id));
+    return selected.map((qp, idx) => {
       const bedMatch = qp.name.match(/bed\s*\d+/i);
       const bedText = bedMatch ? bedMatch[0] : `Bed ${idx + 1}`;
       const nameText = qp.name.replace(/bed\s*\d+\s*\(?/i, "").replace(/\)?$/, "").trim();
@@ -619,6 +666,7 @@ export default function HandoverView({
           text: `I've analyzed the clinical details and converted them into SBAR structure. I have automatically appended **${newPatient.name}** to your shift transition logs!`,
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           parsedPatient: {
+            patientId: newPatient.id,
             name: newPatient.name,
             ageGender: newPatient.ageGender,
             triage: newPatient.triage,
@@ -662,6 +710,7 @@ export default function HandoverView({
         text: `I encountered a parsing issue, but I've successfully logged a placeholder card for **${fallbackPatient.name}** based on our fallback clinician rules. You can edit the details directly.`,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         parsedPatient: {
+          patientId: fallbackPatient.id,
           name: fallbackPatient.name,
           ageGender: fallbackPatient.ageGender,
           triage: fallbackPatient.triage,
@@ -782,7 +831,7 @@ export default function HandoverView({
     if (type === "registry") {
       setIdsToCleanup(selectedRegistryIds);
     } else {
-      setIdsToCleanup(quickPasteList.map(p => p.id));
+      setIdsToCleanup(selectedQuickPasteIds);
     }
     setShowPostPrintCleanPrompt(true);
   };
@@ -822,7 +871,9 @@ export default function HandoverView({
     text += `Lead Clinician: Dr. ${profile.name} (${profile.role})\n`;
     text += `Date: ${new Date().toLocaleDateString()} | Time: ${new Date().toLocaleTimeString()}\n\n`;
 
-    quickPasteList.forEach((item, idx) => {
+    const selectedList = quickPasteList.filter(item => selectedQuickPasteIds.includes(item.id));
+
+    selectedList.forEach((item, idx) => {
       text += `${idx + 1}. PATIENT: ${item.name} (${item.ageGender})\n`;
       text += `   Triage Priority: ${item.triage} | Current Vitals: ${item.vitals}\n`;
       text += `   IPASS/SBAR Structured Handover Summary:\n`;
@@ -2001,7 +2052,10 @@ Patient #${idx + 1}
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => {
-                    if (window.confirm("Are you sure you want to clear the scribe chat history?")) {
+                    if (!confirmResetChat) {
+                      setConfirmResetChat(true);
+                      setTimeout(() => setConfirmResetChat(false), 4000);
+                    } else {
                       setChatMessages([
                         {
                           id: "system-1",
@@ -2010,11 +2064,16 @@ Patient #${idx + 1}
                           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
                         }
                       ]);
+                      setConfirmResetChat(false);
                     }
                   }}
-                  className="text-[10px] font-black text-slate-400 hover:text-red-500 transition-colors bg-slate-100 dark:bg-slate-900 px-2.5 py-1 rounded-lg"
+                  className={`text-[10px] font-black transition-colors px-2.5 py-1 rounded-lg cursor-pointer ${
+                    confirmResetChat
+                      ? "bg-rose-100 text-rose-700 hover:bg-rose-200 border border-rose-300"
+                      : "text-slate-400 hover:text-red-500 bg-slate-100 dark:bg-slate-900"
+                  }`}
                 >
-                  Reset Chat
+                  {confirmResetChat ? "Confirm Reset?" : "Reset Chat"}
                 </button>
               </div>
             </div>
@@ -2023,6 +2082,11 @@ Patient #${idx + 1}
             <div className="flex-1 p-4 overflow-y-auto space-y-4 bg-slate-50/40 dark:bg-slate-950/20 font-sans">
               {chatMessages.map((msg) => {
                 const isBot = msg.sender === "ermate";
+                const targetId = msg.parsedPatient?.patientId;
+                const isCurrentlyInLogs = msg.parsedPatient 
+                  ? quickPasteList.some(p => p.id === targetId || p.name === msg.parsedPatient?.name)
+                  : false;
+
                 return (
                   <div key={msg.id} className={`flex items-start gap-2.5 ${isBot ? "" : "justify-end"}`}>
                     
@@ -2032,12 +2096,21 @@ Patient #${idx + 1}
                       </div>
                     )}
 
-                    <div className={`space-y-1.5 max-w-[85%] ${isBot ? "" : "text-right"}`}>
+                    <div className={`space-y-1.5 max-w-[85%] ${isBot ? "" : "text-right"} relative group`}>
                       
+                      {/* Delete Message Button */}
+                      <button
+                        onClick={() => handleDeleteMessage(msg.id)}
+                        className={`absolute ${isBot ? "-right-6" : "-left-6"} top-4 p-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-md text-slate-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity duration-150 shadow-3xs cursor-pointer no-print`}
+                        title="Delete message from chat history"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+
                       {/* Message Content Bubble */}
                       <div className={`p-3.5 rounded-2xl text-xs leading-relaxed border ${
                         isBot 
-                          ? "bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 border-slate-150 dark:border-slate-850 shadow-2xs rounded-tl-xs"
+                          ? "bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 border-slate-150 dark:border-slate-850 shadow-2xs rounded-tl-xs text-left"
                           : "bg-indigo-600 text-white border-indigo-700 shadow-sm rounded-tr-xs text-left"
                       }`}>
                         
@@ -2096,45 +2169,80 @@ Patient #${idx + 1}
 
                             {/* Auto Saved confirmation pill & edit details */}
                             <div className="flex items-center justify-between border-t border-slate-50 dark:border-slate-850 pt-2.5 flex-wrap gap-2 text-[10px]">
-                              <span className="text-emerald-600 dark:text-emerald-400 font-black uppercase tracking-wider text-[8px] flex items-center gap-1">
-                                <CheckCircle className="w-3 h-3 text-emerald-500" />
-                                Automatically Saved to Active Logs
-                              </span>
+                              {isCurrentlyInLogs ? (
+                                <>
+                                  <span className="text-emerald-600 dark:text-emerald-400 font-black uppercase tracking-wider text-[8px] flex items-center gap-1">
+                                    <CheckCircle className="w-3 h-3 text-emerald-500" />
+                                    Automatically Saved to Active Logs
+                                  </span>
 
-                              <div className="flex items-center gap-2">
-                                <button
-                                  onClick={() => {
-                                    // Find current item in quickPasteList to edit
-                                    const activeItem = quickPasteList.find(p => p.name === msg.parsedPatient?.name) || {
-                                      id: `qp-pat-${Date.now()}`,
-                                      name: msg.parsedPatient?.name || "Patient",
-                                      ageGender: msg.parsedPatient?.ageGender || "",
-                                      triage: msg.parsedPatient?.triage || "P2 (Urgent)",
-                                      vitals: msg.parsedPatient?.vitals || "",
-                                      rawNotes: msg.parsedPatient?.rawNotes || "",
-                                      structuredSBAR: msg.parsedPatient?.structuredSBAR
-                                    };
-                                    handleEditClick(activeItem);
-                                  }}
-                                  className="text-indigo-600 dark:text-indigo-400 hover:underline font-extrabold flex items-center gap-0.5"
-                                >
-                                  <Edit2 className="w-2.5 h-2.5" />
-                                  Edit details
-                                </button>
-                                <span className="text-slate-300 dark:text-slate-800">|</span>
-                                <button
-                                  onClick={() => {
-                                    const activeItem = quickPasteList.find(p => p.name === msg.parsedPatient?.name);
-                                    if (activeItem) {
-                                      handleRemoveQuickPaste(activeItem.id);
-                                      setActionSuccessMsg(`Removed ${activeItem.name} from logs.`);
-                                    }
-                                  }}
-                                  className="text-red-500 hover:underline font-extrabold"
-                                >
-                                  Remove Case
-                                </button>
-                              </div>
+                                  <div className="flex items-center gap-2">
+                                    <button
+                                      onClick={() => {
+                                        const activeItem = quickPasteList.find(p => p.id === targetId || p.name === msg.parsedPatient?.name) || {
+                                          id: targetId || `qp-pat-${Date.now()}`,
+                                          name: msg.parsedPatient?.name || "Patient",
+                                          ageGender: msg.parsedPatient?.ageGender || "",
+                                          triage: msg.parsedPatient?.triage || "P2 (Urgent)",
+                                          vitals: msg.parsedPatient?.vitals || "",
+                                          rawNotes: msg.parsedPatient?.rawNotes || "",
+                                          structuredSBAR: msg.parsedPatient?.structuredSBAR
+                                        };
+                                        handleEditClick(activeItem);
+                                      }}
+                                      className="text-indigo-600 dark:text-indigo-400 hover:underline font-extrabold flex items-center gap-0.5"
+                                    >
+                                      <Edit2 className="w-2.5 h-2.5" />
+                                      Edit details
+                                    </button>
+                                    <span className="text-slate-300 dark:text-slate-800">|</span>
+                                    <button
+                                      onClick={() => {
+                                        const activeItem = quickPasteList.find(p => p.id === targetId || p.name === msg.parsedPatient?.name);
+                                        if (activeItem) {
+                                          handleRemoveQuickPaste(activeItem.id);
+                                          setActionSuccessMsg(`Removed ${activeItem.name} from logs.`);
+                                        }
+                                      }}
+                                      className="text-red-500 hover:underline font-extrabold"
+                                    >
+                                      Remove Case
+                                    </button>
+                                  </div>
+                                </>
+                              ) : (
+                                <>
+                                  <span className="text-slate-400 dark:text-slate-500 font-black uppercase tracking-wider text-[8px] flex items-center gap-1">
+                                    <span className="w-1.5 h-1.5 bg-slate-400 rounded-full" />
+                                    Removed from Active Logs
+                                  </span>
+
+                                  <button
+                                    onClick={() => {
+                                      const restoredPatient: QuickPastePatient = {
+                                        id: targetId || `qp-pat-${Date.now()}`,
+                                        name: msg.parsedPatient?.name || "Bed Patient",
+                                        ageGender: msg.parsedPatient?.ageGender || "Unknown",
+                                        triage: msg.parsedPatient?.triage || "P2 (Urgent)",
+                                        vitals: msg.parsedPatient?.vitals || "Not documented",
+                                        rawNotes: msg.parsedPatient?.rawNotes || "Pasted clinical notes",
+                                        structuredSBAR: msg.parsedPatient?.structuredSBAR || {
+                                          situation: "No situation parsed.",
+                                          background: "No background parsed.",
+                                          assessment: "No assessment parsed.",
+                                          recommendation: "No recommendation parsed."
+                                        }
+                                      };
+                                      setQuickPasteList(prev => [...prev, restoredPatient]);
+                                      setActionSuccessMsg(`Restored ${restoredPatient.name} to logs.`);
+                                    }}
+                                    className="text-emerald-600 dark:text-emerald-400 hover:underline font-extrabold flex items-center gap-1"
+                                  >
+                                    <Plus className="w-3 h-3" />
+                                    Add Back to Active Logs
+                                  </button>
+                                </>
+                              )}
                             </div>
                           </div>
                         )}
@@ -2354,7 +2462,6 @@ Patient #${idx + 1}
 
           {/* Active Shift Handover Logs Board (1/3 Width) */}
           <div className="space-y-5">
-            
             {/* Active Endorsement list board */}
             <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-xs space-y-4">
               
@@ -2364,11 +2471,19 @@ Patient #${idx + 1}
                     <Users className="w-4.5 h-4.5 text-indigo-500" />
                     Roster List
                   </h3>
-                  <p className="text-[10px] text-slate-400 font-medium">Patients active in this compiled sheet</p>
+                  <p className="text-[10px] text-slate-400 font-medium">Select patients to include in compiled handover</p>
                 </div>
-                <div className="text-right">
-                  <span className="text-xs font-black text-slate-800 dark:text-white font-mono bg-slate-100 dark:bg-slate-900 px-2 py-1 rounded-lg">
-                    {quickPasteList.length} Cases
+                <div className="flex items-center gap-3">
+                  {quickPasteList.length > 0 && (
+                    <button
+                      onClick={handleSelectAllQuickPaste}
+                      className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 hover:underline px-2.5 py-1 bg-indigo-50/50 dark:bg-indigo-950/25 rounded"
+                    >
+                      {selectedQuickPasteIds.length === quickPasteList.length ? "Deselect All" : "Select All"}
+                    </button>
+                  )}
+                  <span className="text-xs font-black text-slate-800 dark:text-white font-mono bg-slate-100 dark:bg-slate-900 px-2 py-0.5 rounded-lg">
+                    {selectedQuickPasteIds.length}/{quickPasteList.length}
                   </span>
                 </div>
               </div>
@@ -2406,63 +2521,86 @@ Patient #${idx + 1}
                 </div>
               ) : (
                 <div className="space-y-3 max-h-[300px] overflow-y-auto pr-1">
-                  {quickPasteList.map((item, idx) => (
-                    <div key={item.id} className="border border-slate-150 dark:border-slate-850 rounded-xl p-3.5 space-y-3.5 bg-slate-50/30 relative group hover:border-indigo-200 dark:hover:border-indigo-900 transition-all">
-                      
-                      {/* Individual Patient Action buttons */}
-                      <div className="absolute right-2 top-2 flex items-center gap-1 opacity-80 group-hover:opacity-100 transition-opacity">
-                        <button
-                          onClick={() => handleEditClick(item)}
-                          className="p-1 hover:bg-white dark:hover:bg-slate-800 rounded-lg text-slate-500 hover:text-indigo-600 transition-colors"
-                          title="Edit clinical details"
-                        >
-                          <Edit2 className="w-3 h-3" />
-                        </button>
-                        <button
-                          onClick={() => handleRemoveQuickPaste(item.id)}
-                          className="p-1 hover:bg-rose-50 dark:hover:bg-red-950/20 rounded-lg text-slate-400 hover:text-red-500 transition-colors"
-                          title="Remove patient case"
-                        >
-                          <Trash2 className="w-3 h-3" />
-                        </button>
+                  {quickPasteList.map((item, idx) => {
+                    const isSelected = selectedQuickPasteIds.includes(item.id);
+                    return (
+                      <div 
+                        key={item.id} 
+                        onClick={() => handleToggleQuickPasteCase(item.id)}
+                        className={`border rounded-xl p-3.5 space-y-3.5 relative group cursor-pointer transition-all ${
+                          isSelected
+                            ? "bg-indigo-50/30 dark:bg-indigo-950/15 border-indigo-400/80 ring-1 ring-indigo-50 dark:ring-indigo-950/50"
+                            : "bg-slate-50/30 dark:bg-slate-900/10 border-slate-150 dark:border-slate-850 hover:border-slate-300"
+                        }`}
+                      >
+                        
+                        {/* Individual Patient Action buttons */}
+                        <div className="absolute right-2 top-2 flex items-center gap-1 opacity-80 group-hover:opacity-100 transition-opacity" onClick={(e) => e.stopPropagation()}>
+                          <button
+                            onClick={() => handleEditClick(item)}
+                            className="p-1 hover:bg-white dark:hover:bg-slate-800 rounded-lg text-slate-500 hover:text-indigo-600 transition-colors"
+                            title="Edit clinical details"
+                          >
+                            <Edit2 className="w-3 h-3" />
+                          </button>
+                          <button
+                            onClick={() => handleRemoveQuickPaste(item.id)}
+                            className="p-1 hover:bg-rose-50 dark:hover:bg-red-950/20 rounded-lg text-slate-400 hover:text-red-500 transition-colors"
+                            title="Remove patient case"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        </div>
+
+                        {/* Checkbox and Header details */}
+                        <div className="flex items-start gap-3">
+                          <div className="pt-0.5">
+                            <div className={`w-4 h-4 rounded border flex items-center justify-center transition-all ${
+                              isSelected 
+                                ? "bg-indigo-600 border-indigo-600 text-white" 
+                                : "border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900"
+                            }`}>
+                              {isSelected && <Check className="w-2.5 h-2.5 stroke-[3]" />}
+                            </div>
+                          </div>
+
+                          <div className="space-y-0.5 flex-1 min-w-0">
+                            <div className="flex items-center gap-1.5 flex-wrap pr-10">
+                              <span className="font-mono text-[10px] font-black text-slate-400">#{idx + 1}</span>
+                              <h4 className="text-xs font-black text-slate-800 dark:text-white leading-none">{item.name}</h4>
+                              <span className="text-[10px] text-slate-400">({item.ageGender})</span>
+                            </div>
+                            <div className="flex items-center gap-1.5 flex-wrap pt-1">
+                              <span className={`text-[7px] px-1.5 py-0.2 rounded font-black font-mono uppercase ${
+                                item.triage.includes("P1")
+                                  ? "bg-rose-50 border border-rose-200 text-rose-700"
+                                  : item.triage.includes("P2")
+                                  ? "bg-amber-50 border border-amber-250 text-amber-700"
+                                  : "bg-emerald-50 border border-emerald-250 text-emerald-700"
+                              }`}>
+                                {item.triage.split(" ")[0]}
+                              </span>
+                              <span className="text-[9px] font-mono text-slate-400 font-bold">Vitals: {item.vitals}</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* SBAR summary collapsing panel */}
+                        <details className="text-[10.5px]" onClick={(e) => e.stopPropagation()}>
+                          <summary className="cursor-pointer select-none font-black text-indigo-500 hover:text-indigo-700 transition-colors text-[9.5px] uppercase tracking-wider">
+                            View Structured SBAR Card
+                          </summary>
+                          <div className="bg-white dark:bg-slate-950 border border-slate-150 dark:border-slate-850 rounded-lg p-2.5 mt-2 space-y-1.5 leading-relaxed text-slate-700 dark:text-slate-300 shadow-3xs">
+                            <p><strong className="text-blue-700 dark:text-blue-400 font-bold">[S]:</strong> {item.structuredSBAR?.situation}</p>
+                            <p><strong className="text-purple-700 dark:text-purple-400 font-bold">[B]:</strong> {item.structuredSBAR?.background}</p>
+                            <p><strong className="text-amber-700 dark:text-amber-400 font-bold">[A]:</strong> {item.structuredSBAR?.assessment}</p>
+                            <p><strong className="text-emerald-700 dark:text-emerald-400 font-bold">[R]:</strong> {item.structuredSBAR?.recommendation}</p>
+                          </div>
+                        </details>
+
                       </div>
-
-                      {/* Header details */}
-                      <div className="space-y-0.5">
-                        <div className="flex items-center gap-1.5 flex-wrap pr-10">
-                          <span className="font-mono text-[10px] font-black text-slate-400">#{idx + 1}</span>
-                          <h4 className="text-xs font-black text-slate-800 dark:text-white leading-none">{item.name}</h4>
-                          <span className="text-[10px] text-slate-400">({item.ageGender})</span>
-                        </div>
-                        <div className="flex items-center gap-1.5 flex-wrap pt-1">
-                          <span className={`text-[7px] px-1.5 py-0.2 rounded font-black font-mono uppercase ${
-                            item.triage.includes("P1")
-                              ? "bg-rose-50 border border-rose-200 text-rose-700"
-                              : item.triage.includes("P2")
-                              ? "bg-amber-50 border border-amber-250 text-amber-700"
-                              : "bg-emerald-50 border border-emerald-250 text-emerald-700"
-                          }`}>
-                            {item.triage.split(" ")[0]}
-                          </span>
-                          <span className="text-[9px] font-mono text-slate-400 font-bold">Vitals: {item.vitals}</span>
-                        </div>
-                      </div>
-
-                      {/* SBAR summary collapsing panel */}
-                      <details className="text-[10.5px]">
-                        <summary className="cursor-pointer select-none font-black text-indigo-500 hover:text-indigo-700 transition-colors text-[9.5px] uppercase tracking-wider">
-                          View Structured SBAR Card
-                        </summary>
-                        <div className="bg-white dark:bg-slate-950 border border-slate-150 dark:border-slate-850 rounded-lg p-2.5 mt-2 space-y-1.5 leading-relaxed text-slate-700 dark:text-slate-300 shadow-3xs">
-                          <p><strong className="text-blue-700 dark:text-blue-400 font-bold">[S]:</strong> {item.structuredSBAR?.situation}</p>
-                          <p><strong className="text-purple-700 dark:text-purple-400 font-bold">[B]:</strong> {item.structuredSBAR?.background}</p>
-                          <p><strong className="text-amber-700 dark:text-amber-400 font-bold">[A]:</strong> {item.structuredSBAR?.assessment}</p>
-                          <p><strong className="text-emerald-700 dark:text-emerald-400 font-bold">[R]:</strong> {item.structuredSBAR?.recommendation}</p>
-                        </div>
-                      </details>
-
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
 
@@ -2472,15 +2610,17 @@ Patient #${idx + 1}
                   
                   <button
                     onClick={compileQuickPasteToSheet}
-                    className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-black rounded-xl text-xs transition-all shadow-sm flex items-center justify-center gap-1.5"
+                    disabled={selectedQuickPasteIds.length === 0}
+                    className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-black rounded-xl text-xs transition-all shadow-sm flex items-center justify-center gap-1.5"
                   >
                     <Printer className="w-4 h-4" />
-                    Generate Handover Sheet ({quickPasteList.length})
+                    Generate Handover Sheet ({selectedQuickPasteIds.length})
                   </button>
 
                   <button
                     onClick={() => handleDownloadWordDirect("quickpaste")}
-                    className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-black rounded-xl text-xs transition-all shadow-sm flex items-center justify-center gap-1.5"
+                    disabled={selectedQuickPasteIds.length === 0}
+                    className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-black rounded-xl text-xs transition-all shadow-sm flex items-center justify-center gap-1.5"
                   >
                     <Download className="w-4 h-4" />
                     Download MS Word (.doc)
@@ -2502,14 +2642,22 @@ Patient #${idx + 1}
 
                     <button
                       onClick={() => {
-                        if (window.confirm("Are you sure you want to clear the entire patient log roster? This action is local-first and cannot be undone.")) {
+                        if (!confirmClearRoster) {
+                          setConfirmClearRoster(true);
+                          setTimeout(() => setConfirmClearRoster(false), 4000);
+                        } else {
                           setQuickPasteList([]);
+                          setConfirmClearRoster(false);
                         }
                       }}
-                      className="py-2 border border-slate-200 dark:border-slate-800 text-[11px] font-bold rounded-xl text-red-500 hover:bg-red-50 dark:hover:bg-red-950/20 transition-all flex items-center justify-center gap-1"
+                      className={`py-2 border text-[11px] font-bold rounded-xl transition-all flex items-center justify-center gap-1 cursor-pointer ${
+                        confirmClearRoster
+                          ? "bg-rose-600 border-rose-700 text-white font-black"
+                          : "border-slate-200 dark:border-slate-800 text-red-500 hover:bg-red-50 dark:hover:bg-red-950/20"
+                      }`}
                     >
                       <Trash2 className="w-3.5 h-3.5" />
-                      Clear Roster
+                      {confirmClearRoster ? "Confirm Clear?" : "Clear Roster"}
                     </button>
                   </div>
 

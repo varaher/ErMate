@@ -280,6 +280,22 @@ export interface ClinicalCase {
   escalated?: boolean;
   consultantReview?: { reviewedBy: string; reviewText: string; timestamp: string };
   pediatricDetails?: PediatricDetails;
+  
+  // Creation, shift, and audit fields for access model
+  createdBy?: string;
+  createdByName?: string;
+  createdByRole?: string;
+  shiftId?: string;
+  shiftDate?: string;
+  shiftName?: string;
+  consultantId?: string;
+  consultantName?: string;
+  departmentId?: string;
+  createdAt?: string;
+  lastEditedBy?: string;
+  lastEditedByName?: string;
+  lastEditedByRole?: string;
+  lastEditedAt?: string;
 }
 
 export interface PediatricDetails {
@@ -382,6 +398,13 @@ export interface UserProfile {
   streak: number;
   subscriptionTier: string;
   age?: number;
+  seededCases?: boolean;
+  seededTeam?: boolean;
+  seededHandovers?: boolean;
+  teamName?: string;
+  department?: string;
+  teamColor?: "emerald" | "blue" | "indigo" | "violet";
+  hasConsentedToLearning?: boolean;
 }
 
 export interface HandoverRecord {
@@ -395,4 +418,17 @@ export interface HandoverRecord {
   acknowledgedTime?: string;
   hospital?: string; // hospital name for data isolation and security
 }
+
+export interface TeamMember {
+  id: string;
+  name?: string;
+  email: string;
+  role: string;
+  status: "Pending Invite" | "Active (Joined)" | "Pending Approval";
+  shift?: string;
+  hospital?: string;
+  assignedBy?: string;
+  updatedAt?: string;
+}
+
 
