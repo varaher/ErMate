@@ -46,20 +46,32 @@ body {
   background: #475569;
 }
 
-/* Simple print stylesheet */
+/* Print stylesheet for Vertical Portrait Handover Sheet */
 @media print {
+  @page {
+    size: A4 portrait;
+    margin: 8mm;
+  }
   .no-print {
     display: none !important;
   }
   body {
     background-color: white !important;
     color: black !important;
-    font-size: 12pt;
+    font-size: 10pt;
   }
-  .print-card {
+  .print-page {
     border: none !important;
     box-shadow: none !important;
     padding: 0 !important;
     margin: 0 !important;
+    width: 100% !important;
+  }
+  .print-card {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+  .print-mirror-div {
+    display: block !important;
   }
 }

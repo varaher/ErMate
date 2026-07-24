@@ -103,12 +103,33 @@
         "createdAt": { "type": "string" }
       },
       "required": ["id", "title", "mnemonic", "category", "breakdown", "status", "submittedBy", "submitterEmail"]
+    },
+    "QuickPastePatient": {
+      "title": "QuickPastePatient",
+      "description": "EMR Quick Paste handover patient card synced across devices",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "ageGender": { "type": "string" },
+        "triage": { "type": "string" },
+        "vitals": { "type": "string" },
+        "rawNotes": { "type": "string" },
+        "structuredSBAR": { "type": "object" },
+        "hospital": { "type": "string" },
+        "createdByEmail": { "type": "string" }
+      },
+      "required": ["id", "name"]
     }
   },
   "firestore": {
     "/contributions/{contributionId}": {
       "schema": "Contribution",
       "description": "Suggested mnemonics and clinical guidelines pending review"
+    },
+    "/quick_paste_patients/{itemId}": {
+      "schema": "QuickPastePatient",
+      "description": "EMR Quick Paste roster patients synced across devices"
     },
     "/users/{userId}": {
       "schema": "UserProfile",

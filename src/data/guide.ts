@@ -573,10 +573,10 @@ The **Acknowledgement** function is the cornerstone of patient safety and closed
   },
   {
     id: "25-ai-scribe-chat",
-    title: "25. AI Clinical Scribe Chat",
+    title: "25. ErMate Clinical Scribe Chat",
     badge: "ErMate Feature",
     content: `
-The **ErMate AI Scribe Chat** is a conversational medical companion designed to draft high-quality clinical documentation and clinical notes.
+The **ErMate Clinical Scribe Chat** is a conversational medical companion designed to draft high-quality clinical documentation and clinical notes.
 
 ### Major Capabilities:
 * **Conversational Notes Drafting**: Discuss clinical cases naturally or dictation-transcribe a patient encounter, and ask ErMate to *"Draft a standard SOAP note"* or *"Formulate a discharge summary outline"*.

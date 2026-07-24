@@ -27,6 +27,7 @@ export interface MlcDetails {
 }
 
 export interface PatientDemographics {
+  id?: string;
   name: string;
   age: number | null;
   gender: string;
@@ -96,6 +97,7 @@ export interface InvestigationItem {
   result: string;
   orderTime: string;
   resultTime: string;
+  isAbnormal?: boolean;
 }
 
 export interface DifferentialDiagnosis {
@@ -281,6 +283,13 @@ export interface ClinicalCase {
   consultantReview?: { reviewedBy: string; reviewText: string; timestamp: string };
   pediatricDetails?: PediatricDetails;
   
+  // Handover timeline & status fields
+  notes?: Array<{ id?: string; timestamp?: string; authorName?: string; authorRole?: string; content: string }>;
+  admissionTime?: string;
+  vitalFlags?: string[];
+  primaryDoctor?: string;
+  stayHours?: string;
+  
   // Creation, shift, and audit fields for access model
   createdBy?: string;
   createdByName?: string;
@@ -428,6 +437,25 @@ export interface TeamMember {
   shift?: string;
   hospital?: string;
   assignedBy?: string;
+  updatedAt?: string;
+}
+
+export interface QuickPastePatient {
+  id: string;
+  name: string;
+  ageGender: string;
+  triage: string;
+  vitals: string;
+  presentingComplaint?: string;
+  rawNotes: string;
+  structuredSBAR?: {
+    situation: string;
+    background: string;
+    assessment: string;
+    recommendation: string;
+  };
+  hospital?: string;
+  createdByEmail?: string;
   updatedAt?: string;
 }
 

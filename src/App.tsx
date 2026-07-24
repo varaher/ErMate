@@ -8,7 +8,7 @@ import {
 
 import { 
   ClinicalCase, UserProfile, PatientDemographics, PatientVitals, 
-  DischargeInfo, TriageCategory, ArrivalMode, HandoverRecord, TeamMember
+  DischargeInfo, TriageCategory, ArrivalMode, HandoverRecord, TeamMember, QuickPastePatient
 } from "./types";
 
 import DashboardView from "./components/DashboardView";
@@ -259,7 +259,7 @@ export default function App() {
     {
       id: "msg-1",
       sender: "ai",
-      text: "Hello! I am your ErMate AI Scribe assistant. 🎙️\n\nI function as both a standard scribe and a medical consult chat. You can ask me *anything*—from drug dosages to diagnostic guidelines—and I will immediately provide answers with official references from **Tintinalli's**, **Rosen's**, **Harrison's**, **WikEM**, and **UpToDate**.\n\nTo dictate naturally, tap the microphone or type below. To scan a hospital transfer or reference letter, click the **Scan Doc** button next to the input field! 📄",
+      text: "ErMate is ready.\n\n🎙️ Dictate your case in your native language\n📄 Scan a referral letter\n💬 Ask a clinical question\n\nEvidence-based. Built for Indian ERs.",
       timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
     }
   ]);
@@ -349,6 +349,11 @@ export default function App() {
   const [isOnShift, setIsOnShift] = useState<boolean>(false);
   const [showShiftCheckIn, setShowShiftCheckIn] = useState<boolean>(true);
   const [handovers, setHandovers] = useState<HandoverRecord[]>([]);
+  const [quickPasteList, setQuickPasteList] = useState<QuickPastePatient[]>([]);
+  const quickPasteListRef = useRef<QuickPastePatient[]>([]);
+  useEffect(() => {
+    quickPasteListRef.current = quickPasteList;
+  }, [quickPasteList]);
 
   const [rotaAssignments, setRotaAssignments] = useState<Array<{
     day: number;
@@ -827,6 +832,33 @@ export default function App() {
       handleFirestoreError(error, OperationType.LIST, "handovers");
     });
 
+    // Stream Quick Paste Patients (Synced Handover Roster across Desktop and Mobile)
+    const quickPasteQuery = collection(db, "quick_paste_patients");
+    const unsubscribeQuickPaste = onSnapshot(quickPasteQuery, async (snapshot) => {
+      const loadedQuickPaste: QuickPastePatient[] = [];
+      snapshot.forEach((docSnap) => {
+        const data = docSnap.data() as QuickPastePatient;
+        loadedQuickPaste.push({
+          ...data,
+          id: data.id || docSnap.id
+        });
+      });
+
+      const filteredQuickPaste = loadedQuickPaste.filter(item => {
+        const itemHospital = (item.hospital || "Varah Group Emergency Care").trim().toLowerCase();
+        const itemEmail = (item.createdByEmail || "").trim().toLowerCase();
+        const currentEmail = (profile.email || "").trim().toLowerCase();
+        return itemHospital === userHospitalLower || itemEmail === currentEmail;
+      });
+
+      filteredQuickPaste.sort((a, b) => (b.updatedAt || b.id || "").localeCompare(a.updatedAt || a.id || ""));
+
+      setQuickPasteList(filteredQuickPaste);
+      localStorage.setItem("ermate_quick_paste_list", JSON.stringify(filteredQuickPaste));
+    }, (error) => {
+      console.error("Error streaming quick paste patients:", error);
+    });
+
     // Stream Team Members
     const teamQuery = collection(db, "team_members");
     const unsubscribeTeam = onSnapshot(teamQuery, async (snapshot) => {
@@ -1037,6 +1069,7 @@ export default function App() {
     return () => {
       unsubscribeCases();
       unsubscribeHandovers();
+      unsubscribeQuickPaste();
       unsubscribeTeam();
       unsubscribeSub();
       unsubscribeShifts();
@@ -1394,8 +1427,13 @@ export default function App() {
     setShowDischargeSummaryId(null);
   };
 
-  const handleSaveExtractedVoiceCase = async (extracted: any) => {
-    const newCaseId = "C-" + Math.floor(1000 + Math.random() * 9000);
+  const handleSaveExtractedVoiceCase = async (
+    extracted: any, 
+    options?: { autoNavigate?: boolean; existingCaseId?: string | null }
+  ): Promise<string> => {
+    const shouldNavigate = options?.autoNavigate !== false;
+    const existingId = options?.existingCaseId;
+    const newCaseId = existingId || ("C-" + Math.floor(1000 + Math.random() * 9000));
     
     // Calculate shift and creation context fields dynamically
     const todayDateStr = new Date().toISOString().split('T')[0];
@@ -1437,73 +1475,75 @@ export default function App() {
     const systolicVal = safeParseInt(bpParts[0], 120);
     const diastolicVal = safeParseInt(bpParts[1], 80);
 
+    const existingMatch = cases.find(c => c.id === newCaseId);
+
     const newCase: ClinicalCase = {
       id: newCaseId,
-      createdBy: createdByUid,
-      createdByName: profile.name.startsWith("Dr. ") ? profile.name : "Dr. " + profile.name,
-      createdByRole: createdByRoleVal,
-      shiftId: computedShiftId,
-      shiftDate: todayDateStr,
-      shiftName: activeShiftName,
-      consultantId,
-      consultantName,
-      departmentId: hospitalSlug,
-      createdAt: new Date().toISOString(),
+      createdBy: existingMatch?.createdBy || createdByUid,
+      createdByName: existingMatch?.createdByName || (profile.name.startsWith("Dr. ") ? profile.name : "Dr. " + profile.name),
+      createdByRole: existingMatch?.createdByRole || createdByRoleVal,
+      shiftId: existingMatch?.shiftId || computedShiftId,
+      shiftDate: existingMatch?.shiftDate || todayDateStr,
+      shiftName: existingMatch?.shiftName || activeShiftName,
+      consultantId: existingMatch?.consultantId || consultantId,
+      consultantName: existingMatch?.consultantName || consultantName,
+      departmentId: existingMatch?.departmentId || hospitalSlug,
+      createdAt: existingMatch?.createdAt || new Date().toISOString(),
       patient: {
-        name: extracted.patientName || "Extracted Voice Patient",
-        age: finalAge,
-        gender: extracted.gender || "Male",
-        presentingComplaint: extracted.presentingComplaint || "Dictated presentation transcript.",
-        triageCategory: extracted.triageCategory || TriageCategory.P2,
-        arrivalMode: extracted.arrivalMode || ArrivalMode.WalkIn,
-        dateOpened: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + " | " + new Date().toLocaleDateString([], { month: 'short', day: 'numeric' }),
-        uhid: "UHID-" + Math.floor(100000 + Math.random() * 900000),
-        caseType: extracted.caseType || "Medical",
+        name: extracted.patientName || existingMatch?.patient.name || "Extracted Voice Patient",
+        age: finalAge !== null ? finalAge : existingMatch?.patient.age || null,
+        gender: extracted.gender || existingMatch?.patient.gender || "Male",
+        presentingComplaint: extracted.presentingComplaint || existingMatch?.patient.presentingComplaint || "Dictated presentation transcript.",
+        triageCategory: extracted.triageCategory || existingMatch?.patient.triageCategory || TriageCategory.P2,
+        arrivalMode: extracted.arrivalMode || existingMatch?.patient.arrivalMode || ArrivalMode.WalkIn,
+        dateOpened: existingMatch?.patient.dateOpened || (new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + " | " + new Date().toLocaleDateString([], { month: 'short', day: 'numeric' })),
+        uhid: existingMatch?.patient.uhid || ("UHID-" + Math.floor(100000 + Math.random() * 900000)),
+        caseType: extracted.caseType || existingMatch?.patient.caseType || "Medical",
         isMlc: false
       },
       vitals: {
-        bp: extracted.vitals?.bp || "",
-        hr: extracted.vitals?.hr || "",
-        spo2: extracted.vitals?.spo2 || "",
-        rr: extracted.vitals?.rr || "",
-        temp: extracted.vitals?.temp || "",
-        gcs: extracted.vitals?.gcs || "15",
-        gcs_e: extracted.vitals?.gcs_e || "4",
-        gcs_v: extracted.vitals?.gcs_v || "5",
-        gcs_m: extracted.vitals?.gcs_m || "6",
-        grbs: extracted.vitals?.grbs || "",
-        avpu: extracted.vitals?.avpu || "Alert",
-        painScore: extracted.vitals?.painScore || "0"
+        bp: extracted.vitals?.bp || existingMatch?.vitals.bp || "",
+        hr: extracted.vitals?.hr || existingMatch?.vitals.hr || "",
+        spo2: extracted.vitals?.spo2 || existingMatch?.vitals.spo2 || "",
+        rr: extracted.vitals?.rr || existingMatch?.vitals.rr || "",
+        temp: extracted.vitals?.temp || existingMatch?.vitals.temp || "",
+        gcs: extracted.vitals?.gcs || existingMatch?.vitals.gcs || "15",
+        gcs_e: extracted.vitals?.gcs_e || existingMatch?.vitals.gcs_e || "4",
+        gcs_v: extracted.vitals?.gcs_v || existingMatch?.vitals.gcs_v || "5",
+        gcs_m: extracted.vitals?.gcs_m || existingMatch?.vitals.gcs_m || "6",
+        grbs: extracted.vitals?.grbs || existingMatch?.vitals.grbs || "",
+        avpu: extracted.vitals?.avpu || existingMatch?.vitals.avpu || "Alert",
+        painScore: extracted.vitals?.painScore || existingMatch?.vitals.painScore || "0"
       },
       sampleHistory: {
-        symptoms: extracted.sampleHistory?.symptoms || "",
-        allergies: extracted.sampleHistory?.allergies || "",
-        medications: extracted.sampleHistory?.medications || "",
-        pastHistory: extracted.sampleHistory?.pastHistory || "",
-        lastMeal: extracted.sampleHistory?.lastMeal || "",
-        events: extracted.sampleHistory?.events || "",
+        symptoms: extracted.sampleHistory?.symptoms || existingMatch?.sampleHistory.symptoms || "",
+        allergies: extracted.sampleHistory?.allergies || existingMatch?.sampleHistory.allergies || "",
+        medications: extracted.sampleHistory?.medications || existingMatch?.sampleHistory.medications || "",
+        pastHistory: extracted.sampleHistory?.pastHistory || existingMatch?.sampleHistory.pastHistory || "",
+        lastMeal: extracted.sampleHistory?.lastMeal || existingMatch?.sampleHistory.lastMeal || "",
+        events: extracted.sampleHistory?.events || existingMatch?.sampleHistory.events || "",
         socialHistory: "",
         familyHistory: "",
         psychiatricFlags: ""
       },
       primaryAssessment: {
-        airway: extracted.primaryAssessment?.airway || "",
-        airwayStatus: extracted.primaryAssessment?.airwayStatus || "Normal",
-        breathing: extracted.primaryAssessment?.breathing || "",
-        breathingStatus: extracted.primaryAssessment?.breathingStatus || "Normal",
-        circulation: extracted.primaryAssessment?.circulation || "",
-        circulationStatus: extracted.primaryAssessment?.circulationStatus || "Normal",
-        disability: extracted.primaryAssessment?.disability || "",
-        disabilityStatus: extracted.primaryAssessment?.disabilityStatus || "Normal",
-        exposure: extracted.primaryAssessment?.exposure || "",
-        exposureStatus: extracted.primaryAssessment?.exposureStatus || "Normal"
+        airway: extracted.primaryAssessment?.airway || existingMatch?.primaryAssessment.airway || "",
+        airwayStatus: extracted.primaryAssessment?.airwayStatus || existingMatch?.primaryAssessment.airwayStatus || "Normal",
+        breathing: extracted.primaryAssessment?.breathing || existingMatch?.primaryAssessment.breathing || "",
+        breathingStatus: extracted.primaryAssessment?.breathingStatus || existingMatch?.primaryAssessment.breathingStatus || "Normal",
+        circulation: extracted.primaryAssessment?.circulation || existingMatch?.primaryAssessment.circulation || "",
+        circulationStatus: extracted.primaryAssessment?.circulationStatus || existingMatch?.primaryAssessment.circulationStatus || "Normal",
+        disability: extracted.primaryAssessment?.disability || existingMatch?.primaryAssessment.disability || "",
+        disabilityStatus: extracted.primaryAssessment?.disabilityStatus || existingMatch?.primaryAssessment.disabilityStatus || "Normal",
+        exposure: extracted.primaryAssessment?.exposure || existingMatch?.primaryAssessment.exposure || "",
+        exposureStatus: extracted.primaryAssessment?.exposureStatus || existingMatch?.primaryAssessment.exposureStatus || "Normal"
       },
-      secondaryAssessment: extracted.secondaryAssessment || "",
-      investigations: extracted.investigations || [],
-      treatments: extracted.treatments || [],
-      progressNotes: extracted.progressNotes || "Case created via GPT Voice Scribe dictation.",
+      secondaryAssessment: extracted.secondaryAssessment || existingMatch?.secondaryAssessment || "",
+      investigations: extracted.investigations || existingMatch?.investigations || [],
+      treatments: extracted.treatments || existingMatch?.treatments || [],
+      progressNotes: extracted.progressNotes || existingMatch?.progressNotes || "Case created via ErMate Voice Scribe dictation.",
       dischargeInfo: null,
-      differentials: [],
+      differentials: existingMatch?.differentials || [],
       isPediatric: finalAge !== null && finalAge <= 12,
       status: "Active",
       savedTime: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
@@ -1511,7 +1551,7 @@ export default function App() {
       doctorEmail: profile.email,
       doctorName: "Dr. " + profile.name,
       hospital: profile.hospital,
-      ipsgChecklist: {
+      ipsgChecklist: existingMatch?.ipsgChecklist || {
         ipsg1IdentifiersVerified: true,
         ipsg2ReadBackPerformed: false,
         ipsg3HighAlertDoubleChecked: false,
@@ -1519,25 +1559,25 @@ export default function App() {
         ipsg5HandHygieneComplied: true,
         ipsg6FallRiskAssessed: "Low"
       },
-      vulnerableAssessment: {
+      vulnerableAssessment: existingMatch?.vulnerableAssessment || {
         isVulnerable: finalAge !== null && (finalAge < 16 || finalAge > 65),
         vulnerableType: finalAge !== null && finalAge < 16 ? "Pediatric" : finalAge !== null && finalAge > 65 ? "Geriatric" : "",
         nutritionalScreenPassed: true,
         functionalAssessmentScore: "Independent",
         abuseScreenNegative: true
       },
-      consentTimeOut: {
+      consentTimeOut: existingMatch?.consentTimeOut || {
         procedureConsentObtained: false,
         procedureTimeOutPerformed: false
       },
-      dispositionDetails: {
+      dispositionDetails: existingMatch?.dispositionDetails || {
         dispositionType: "Discharge",
         durationInEr: "",
         residentName: "Dr. " + profile.name,
         consultantName: "Dr. " + profile.name,
         observationNotes: ""
       },
-      vitalsHistory: [
+      vitalsHistory: existingMatch?.vitalsHistory || [
         {
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           bp: extracted.vitals?.bp || "120/80",
@@ -1552,18 +1592,34 @@ export default function App() {
     };
 
     try {
-      await setDoc(doc(db, "cases", newCase.id), newCase);
+      await setDoc(doc(db, "cases", newCase.id), newCase, { merge: true });
     } catch (err: any) {
       console.error("Error saving extracted voice case:", err);
       handleFirestoreError(err, OperationType.WRITE, "cases");
     }
 
-    setCases(prev => [newCase, ...prev]);
-    setSelectedCaseId(newCaseId);
-    setShowVoiceScribeChat(false);
-    setActiveFormMode(null);
-    setShowDischargeSummaryId(null);
+    setCases(prev => {
+      const idx = prev.findIndex(c => c.id === newCase.id);
+      if (idx >= 0) {
+        const copy = [...prev];
+        copy[idx] = newCase;
+        return copy;
+      }
+      return [newCase, ...prev];
+    });
+
+    if (shouldNavigate) {
+      setSelectedCaseId(newCaseId);
+      setShowVoiceScribeChat(false);
+      setActiveFormMode(null);
+      setShowDischargeSummaryId(null);
+      triggerNotification("Case Sheet Saved", `Voice case sheet (${newCase.patient.name}) successfully saved and opened.`, "success");
+    } else {
+      triggerNotification("Auto-Saved to Dashboard", `Voice case (${newCase.patient.name}) updated in Emergency Dashboard.`, "info");
+    }
+
     checkConsentOnCaseSaved();
+    return newCaseId;
   };
 
   // Accepting Joining Offers (e.g., from share links)
@@ -2023,6 +2079,47 @@ export default function App() {
     setHandovers(newHandovers);
   };
 
+  // Intercept and persist quick paste list (handover roster) to Firestore so desktop & mobile stay synced
+  const customSetQuickPasteList = async (value: React.SetStateAction<QuickPastePatient[]>) => {
+    const previousList = quickPasteListRef.current;
+    let newList: QuickPastePatient[] = [];
+    if (typeof value === "function") {
+      newList = (value as Function)(previousList);
+    } else {
+      newList = value;
+    }
+
+    setQuickPasteList(newList);
+    localStorage.setItem("ermate_quick_paste_list", JSON.stringify(newList));
+
+    // Save or update items in Firestore
+    for (const item of newList) {
+      const itemToSave: QuickPastePatient = {
+        ...item,
+        hospital: item.hospital || profile.hospital || "Varah Group Emergency Care",
+        createdByEmail: item.createdByEmail || profile.email,
+        updatedAt: new Date().toISOString()
+      };
+      try {
+        await setDoc(doc(db, "quick_paste_patients", itemToSave.id), itemToSave);
+      } catch (err) {
+        console.error("Error saving quick paste patient to Firestore:", err);
+      }
+    }
+
+    // Delete items removed from newList
+    for (const item of previousList) {
+      const stillExists = newList.some(p => p.id === item.id);
+      if (!stillExists) {
+        try {
+          await deleteDoc(doc(db, "quick_paste_patients", item.id));
+        } catch (err) {
+          console.error("Error deleting quick paste patient from Firestore:", err);
+        }
+      }
+    }
+  };
+
   // Secure sign out
   const handleSignOut = async () => {
     try {
@@ -2429,7 +2526,7 @@ export default function App() {
                       className="w-full py-2 px-3 hover:bg-blue-50 hover:text-blue-700 dark:hover:bg-slate-800 text-left rounded-lg text-xs font-bold flex items-center gap-2 text-slate-600 dark:text-slate-300 transition-all border border-dashed border-slate-200 dark:border-slate-800"
                     >
                       <Sparkles className="w-3.5 h-3.5 text-blue-600 animate-pulse" />
-                      <span>Ask Gemini EM Reference for <strong className="text-blue-700 dark:text-blue-400">"{searchQuery}"</strong></span>
+                      <span>Ask ErMate EM Reference for <strong className="text-blue-700 dark:text-blue-400">"{searchQuery}"</strong></span>
                     </button>
                   </div>
                   
@@ -2963,6 +3060,8 @@ export default function App() {
                   isDarkMode={isDarkMode}
                   activeSubTab={handoverSubTab}
                   setActiveSubTab={setHandoverSubTab}
+                  quickPasteList={quickPasteList}
+                  setQuickPasteList={customSetQuickPasteList}
                 />
               )}
 
@@ -3116,7 +3215,7 @@ export default function App() {
                           Consulting Clinical Reference Registries...
                         </p>
                         <p className="text-[10px] font-mono text-slate-400 max-w-sm mx-auto leading-relaxed">
-                          Gemini is indexing standard ATLS, PALS, and AHA resuscitation guidelines for: "{customReferenceQuery}"
+                          ErMate is indexing standard ATLS, PALS, and AHA resuscitation guidelines for: "{customReferenceQuery}"
                         </p>
                       </div>
                     </div>
@@ -3263,7 +3362,7 @@ export default function App() {
                   <Mic className="w-4 h-4" />
                 </div>
                 <div>
-                  <h4 className="text-xs font-bold text-slate-900 dark:text-white">AI Scribe & Reference Suite</h4>
+                  <h4 className="text-xs font-bold text-slate-900 dark:text-white">ErMate Scribe & Reference Suite</h4>
                   <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 leading-normal font-sans">
                     Use speech-to-text dictation or scan clinical handover notes to automatically generate structural triage sheets, and run clinical guideline queries grounded in Tintinalli's/Rosen's.
                   </p>

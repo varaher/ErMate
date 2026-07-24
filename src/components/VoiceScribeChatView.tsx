@@ -5,6 +5,7 @@ import {
   Upload, Camera, BookOpen, MoreHorizontal
 } from "lucide-react";
 import SpeechMicButton from "./SpeechMicButton";
+import { sanitizeDoctorError } from "../utils/sanitizeError";
 
 import { UserProfile } from "../types";
 
@@ -20,11 +21,11 @@ interface Message {
 
 interface VoiceScribeChatViewProps {
   onBack: () => void;
-  onSaveExtractedCase: (extractedData: any) => void;
+  onSaveExtractedCase: (extractedData: any, options?: { autoNavigate?: boolean; existingCaseId?: string | null }) => Promise<string> | void;
   profile?: UserProfile;
   onSaveProfile?: (updated: UserProfile) => void;
   messages?: Message[];
-  onUpdateMessages?: (msgs: Message[]) => void;
+  onUpdateMessages?: (msgs: Message[] | ((prev: Message[]) => Message[])) => void;
 }
 
 export default function VoiceScribeChatView({ 
@@ -39,7 +40,7 @@ export default function VoiceScribeChatView({
     {
       id: "msg-1",
       sender: "ai",
-      text: "Hello! I am your ErMate AI Scribe assistant. 🎙️\n\nI function as both a standard scribe and a medical consult chat. You can ask me *anything*—from drug dosages to diagnostic guidelines—and I will immediately provide answers with official references from **Tintinalli's**, **Rosen's**, **Harrison's**, **WikEM**, and **UpToDate**.\n\nTo dictate naturally, tap the microphone or type below. To scan a hospital transfer or reference letter, click the **Scan Doc** button next to the input field! 📄",
+      text: "ErMate is ready.\n\n🎙️ Dictate your case in your native language\n📄 Scan a referral letter\n💬 Ask a clinical question\n\nEvidence-based. Built for Indian ERs.",
       timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
     }
   ]);
@@ -53,7 +54,7 @@ export default function VoiceScribeChatView({
   const setMessages = (newMsgs: Message[] | ((prev: Message[]) => Message[])) => {
     if (onUpdateMessages) {
       if (typeof newMsgs === "function") {
-        onUpdateMessages(newMsgs(messages));
+        onUpdateMessages(newMsgs(messagesRef.current));
       } else {
         onUpdateMessages(newMsgs);
       }
@@ -82,6 +83,45 @@ export default function VoiceScribeChatView({
   const [isProcessing, setIsProcessing] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [activeVoiceCaseId, setActiveVoiceCaseId] = useState<string | null>(null);
+  const activeVoiceCaseIdRef = useRef<string | null>(null);
+  activeVoiceCaseIdRef.current = activeVoiceCaseId;
+
+  const autoExtractAndSaveCase = async (dictationText: string) => {
+    if (!dictationText || !dictationText.trim()) return;
+    try {
+      const response = await fetch("/api/voice/extract-clinical", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ 
+          dictation: dictationText,
+          aiCredits: profile?.aiCredits
+        })
+      });
+
+      if (!response.ok) return;
+
+      const resData = await response.json();
+      if (resData.success && resData.data) {
+        if (onSaveProfile && profile && resData.remainingCredits !== undefined) {
+          onSaveProfile({
+            ...profile,
+            aiCredits: resData.remainingCredits
+          });
+        }
+        const savedId = await onSaveExtractedCase(resData.data, {
+          autoNavigate: false,
+          existingCaseId: activeVoiceCaseIdRef.current
+        });
+        if (savedId) {
+          setActiveVoiceCaseId(savedId);
+          activeVoiceCaseIdRef.current = savedId;
+        }
+      }
+    } catch (err) {
+      console.warn("Auto-save voice case extraction notice:", err);
+    }
+  };
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -162,6 +202,10 @@ export default function VoiceScribeChatView({
       setMessages(prev => [...prev, aiMsg]);
     } finally {
       setIsProcessing(false);
+      // Auto-extract and save case sheet to Emergency Dashboard in background
+      setTimeout(() => {
+        autoExtractAndSaveCase(getFullDictationString());
+      }, 100);
     }
   };
 
@@ -215,6 +259,10 @@ export default function VoiceScribeChatView({
       setMessages(prev => [...prev, aiMsg]);
     } finally {
       setIsProcessing(false);
+      // Auto-extract and save case sheet to Emergency Dashboard in background
+      setTimeout(() => {
+        autoExtractAndSaveCase(getFullDictationString());
+      }, 100);
     }
   };
 
@@ -302,12 +350,38 @@ export default function VoiceScribeChatView({
     }
   };
 
-  // Compile only the user's actual dictations and queries for clinical case sheet extraction
+  // Compile user's actual dictations, queries, or OCR proposals for clinical case sheet extraction
   const getFullDictationString = () => {
-    return messages
-      .filter(m => m.sender === "user" && !m.text.includes("[Scanned Referral Document]"))
-      .map(m => m.text)
-      .join("\n\n");
+    const userTexts: string[] = [];
+
+    messages.forEach(m => {
+      if (m.sender === "user") {
+        if (!m.text.includes("[Scanned Referral Document]") && !m.text.includes("[Scanned Reference Document]")) {
+          userTexts.push(m.text);
+        }
+      } else if (m.sender === "ai") {
+        // Extract clinical query/dictation quoted inside fallback AI messages
+        const queryMatch = m.text.match(/Based on your clinical (?:query|dictation):\s*["'`]([\s\S]*?)["'`]/i);
+        if (queryMatch && queryMatch[1]) {
+          userTexts.push(queryMatch[1]);
+        }
+        // Extract OCR proposal structured data if present
+        if (m.isOcrProposal && m.extractedData) {
+          const d = m.extractedData;
+          const ocrSummary = `Patient: ${d.patientName || "Unknown"}, Age: ${d.age || "N/A"}, Gender: ${d.gender || "N/A"}. Presenting Complaint: ${d.presentingComplaint || ""}. Vitals: BP ${d.bp || "N/A"}, HR ${d.hr || "N/A"}, SpO2 ${d.spo2 || "N/A"}%. Symptoms: ${d.symptoms || ""}. Allergies: ${d.allergies || ""}. Past History: ${d.pastHistory || ""}.`;
+          userTexts.push(ocrSummary);
+        }
+      }
+    });
+
+    // Auto-include current unsent text in the textarea
+    if (inputText.trim()) {
+      userTexts.push(inputText.trim());
+    }
+
+    // Deduplicate and filter out empty strings
+    const uniqueTexts = Array.from(new Set(userTexts.map(t => t.trim()))).filter(Boolean);
+    return uniqueTexts.join("\n\n");
   };
 
   const handleSaveToCaseSheet = async () => {
@@ -352,13 +426,18 @@ export default function VoiceScribeChatView({
             aiCredits: resData.remainingCredits
           });
         }
-        onSaveExtractedCase(resData.data);
+        await onSaveExtractedCase(resData.data, {
+          autoNavigate: true,
+          existingCaseId: activeVoiceCaseIdRef.current
+        });
+        // Clear chat & reset session so subsequent patient dictations are isolated
+        clearChat();
       } else {
-        throw new Error(resData.error || "Gemini was unable to extract structured clinical fields.");
+        throw new Error(resData.error || "ErMate was unable to extract structured clinical fields.");
       }
     } catch (err: any) {
       console.error(err);
-      setError(err.message || "An unexpected error occurred during extraction.");
+      setError(sanitizeDoctorError(err));
     } finally {
       setIsProcessing(false);
     }
@@ -478,6 +557,9 @@ Dr. Marcus Brody, Trauma Lead`);
         timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
       }
     ]);
+    setActiveVoiceCaseId(null);
+    activeVoiceCaseIdRef.current = null;
+    setInputText("");
     setError(null);
   };
 
@@ -598,7 +680,7 @@ Dr. Marcus Brody, Trauma Lead`);
                         <button
                           onClick={() => {
                             // Call save callback
-                            onSaveExtractedCase(m.extractedData);
+                            onSaveExtractedCase(m.extractedData, { autoNavigate: true, existingCaseId: activeVoiceCaseIdRef.current });
                             // Set proposal inactive
                             setMessages(prev => prev.map(msg => msg.id === m.id ? { ...msg, proposalActive: false, text: msg.text + "\n\n✅ *Hospital reference letter successfully included as structured Case Sheet!*" } : msg));
                           }}

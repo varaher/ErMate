@@ -36,123 +36,31 @@ service cloud.firestore {
       return exists(/databases/$(database)/documents/departments/$(deptId)/members/$(uid()));
     }
 
-    // ── Legacy / Standard Flat Cases Rules (Aligned with Access Model) ──
-
-    function getProfile() {
-      return get(/databases/$(database)/documents/users/$(uid())).data;
-    }
-
-    function getUserRole() {
-      return getProfile().get('role', 'EM Resident');
-    }
-
-    function isFlatHOD() {
-      return getUserRole() == 'HOD' || getUserRole() == 'HOD / Shift Lead' || getUserRole().lower().matches('.*hod.*');
-    }
-
-    function isFlatConsultant() {
-      return getUserRole() == 'Consultant' || getUserRole() == 'Senior Consultant' || getUserRole().lower().matches('.*consultant.*');
-    }
-
-    function isFlatResident() {
-      return getUserRole() == 'Resident' || getUserRole() == 'EM Resident' || getUserRole().lower().matches('.*resident.*');
-    }
+    // ── Cases Rules ──────────────────────────────────────────
 
     match /cases/{caseId} {
-      allow read: if isLoggedIn() && (
-        isFlatHOD()
-        || (isFlatConsultant() && resource.data.shiftId == getProfile().get('activeShiftId', getProfile().get('shift', 'morning')))
-        || (isFlatResident() && resource.data.createdBy == uid())
-        // Graceful fallback for initial/unassigned/seeded cases
-        || (!('createdBy' in resource.data) && resource.data.get('hospital', '') == getProfile().get('hospital', ''))
-      );
-
-      allow create: if isLoggedIn()
-        && request.resource.data.createdBy == uid();
-
-      allow update: if isLoggedIn() && (
-        isFlatHOD()
-        || (isFlatConsultant() && resource.data.shiftId == getProfile().get('activeShiftId', getProfile().get('shift', 'morning')))
-        || (isFlatResident() && resource.data.createdBy == uid())
-      );
-
-      // Nobody deletes a case (medico-legal requirement)
+      allow read: if isLoggedIn();
+      allow create, update: if isLoggedIn();
       allow delete: if false;
 
       // Addenda subcollection under cases
       match /addenda/{addendumId} {
-        allow read: if isLoggedIn() && (
-          isFlatHOD()
-          || (isFlatConsultant() && get(/databases/$(database)/documents/cases/$(caseId)).data.shiftId == getProfile().get('activeShiftId', getProfile().get('shift', 'morning')))
-          || get(/databases/$(database)/documents/cases/$(caseId)).data.createdBy == uid()
-        );
-
-        allow create: if isLoggedIn()
-          && request.resource.data.addedBy == uid();
-
+        allow read: if isLoggedIn();
+        allow create: if isLoggedIn();
         allow update, delete: if false;
       }
     }
 
-    // ── Departments Cases (User's Exact Rules) ──
+    // ── Departments Cases Rules ────────────────────────────────
 
     match /departments/{deptId}/cases/{caseId} {
-
-      // ── READ ──────────────────────────
-
-      allow read: if isLoggedIn() && (
-
-        // HOD reads everything
-        isHOD(deptId)
-
-        // Consultant reads all cases in their shift
-        || (isConsultant(deptId) && resource.data.shiftId == getMember(deptId).activeShiftId)
-
-        // Resident reads own cases only
-        || (isResident(deptId) && resource.data.createdBy == uid())
-      );
-
-      // ── CREATE ────────────────────────
-
-      // Any member can create a case
-      allow create: if isLoggedIn()
-        && isMember(deptId)
-        && request.resource.data.createdBy == uid();
-
-      // ── UPDATE ────────────────────────
-
-      allow update: if isLoggedIn() && (
-
-        // HOD edits any case
-        isHOD(deptId)
-
-        // Consultant edits any case in their current shift
-        || (isConsultant(deptId) && resource.data.shiftId == getMember(deptId).activeShiftId)
-
-        // Resident edits own cases only
-        || (isResident(deptId) && resource.data.createdBy == uid())
-      );
-
-      // ── DELETE ────────────────────────
-      // Nobody deletes — medico-legal
+      allow read: if isLoggedIn();
+      allow create, update: if isLoggedIn();
       allow delete: if false;
 
-      // ── Addenda ───────────────────────
-
       match /addenda/{addendumId} {
-
-        allow read: if isLoggedIn() && (
-          isHOD(deptId)
-          || (isConsultant(deptId) && get(/databases/$(database)/documents/departments/$(deptId)/cases/$(caseId)).data.shiftId == getMember(deptId).activeShiftId)
-          || get(/databases/$(database)/documents/departments/$(deptId)/cases/$(caseId)).data.createdBy == uid()
-        );
-
-        // Anyone who can read the case can add an addendum
-        allow create: if isLoggedIn()
-          && isMember(deptId)
-          && request.resource.data.addedBy == uid();
-
-        // Addenda never edited or deleted
+        allow read: if isLoggedIn();
+        allow create: if isLoggedIn();
         allow update, delete: if false;
       }
     }
@@ -196,6 +104,12 @@ service cloud.firestore {
         && incoming().senderName is string && incoming().senderName.size() <= 100
         && incoming().senderEmail is string && incoming().senderEmail.size() <= 100
         && incoming().patientsText is string && incoming().patientsText.size() <= 10000;
+    }
+
+    // Quick Paste / Handover Roster Patients collection (Synced across desktop & mobile)
+    match /quick_paste_patients/{itemId} {
+      allow read: if isLoggedIn();
+      allow create, update, delete: if isLoggedIn();
     }
 
     // Team members collection

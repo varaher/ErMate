@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useRef } from "react";
 import { 
-  Users, ClipboardCopy, FileText, Printer, Plus, Trash2, Edit2, 
+  Users, ClipboardCopy, FileText, Printer, Plus, Trash2, Edit2, Pencil,
   CheckCircle, HelpCircle, Download, Check, RefreshCw, Layers, LayoutList,
   AlertTriangle, ShieldAlert, ChevronLeft, X, Camera, UploadCloud, Sparkles, Send,
   MoreHorizontal
 } from "lucide-react";
 import SpeechMicButton from "./SpeechMicButton";
-import { ClinicalCase, UserProfile, HandoverRecord } from "../types";
+import { sanitizeDoctorError } from "../utils/sanitizeError";
+import { ClinicalCase, UserProfile, HandoverRecord, QuickPastePatient, InvestigationItem } from "../types";
 import { db } from "../firebase";
 import { doc, setDoc, deleteDoc } from "firebase/firestore";
 
@@ -19,6 +20,8 @@ interface HandoverViewProps {
   isDarkMode?: boolean;
   activeSubTab?: "registry" | "quickpaste";
   setActiveSubTab?: (tab: "registry" | "quickpaste") => void;
+  quickPasteList?: QuickPastePatient[];
+  setQuickPasteList?: React.Dispatch<React.SetStateAction<QuickPastePatient[]>>;
 }
 
 interface ScribeChatMessage {
@@ -45,32 +48,23 @@ interface ScribeChatMessage {
   isSaved?: boolean;
 }
 
-interface QuickPastePatient {
-  id: string;
-  name: string;
-  ageGender: string;
-  triage: string;
-  vitals: string;
-  rawNotes: string;
-  structuredSBAR?: {
-    situation: string;
-    background: string;
-    assessment: string;
-    recommendation: string;
-  };
-}
-
 interface HandoverTableRow {
   id: string;
   bed: string;
   name: string;
   ageGender: string;
+  erNo?: string;
+  doctor?: string;
+  stayDuration?: string;
   complaints: string;
+  chronologicalNotes?: string;
   history: string;
   assessment: string;
   planDone: string;
   planToBeDone: string;
   bystander: string;
+  vitals?: string;
+  alerts?: string;
 }
 
 interface AutoResizeTextareaProps {
@@ -109,6 +103,230 @@ function AutoResizeTextarea({ value, onChange, className, placeholder }: AutoRes
   );
 }
 
+// Helper to sort handover rows by Bed Number chronologically (e.g. Bed 1, Bed 2, Bed 3A, Bed 10...)
+export function sortRowsByBedNumber<T>(rows: T[]): T[] {
+  return [...rows].sort((a, b) => {
+    const parseBed = (item: any) => {
+      const rawStr = (item.bed || item.bedNo || item.name || "").trim();
+      if (!rawStr) return { num: 999999, suffix: "", raw: "" };
+      
+      const match = rawStr.match(/(?:bed|room|bay|cot|icu|hdu)?\s*#?\s*(\d+)\s*([a-z]?)/i);
+      if (match) {
+        return {
+          num: parseInt(match[1], 10),
+          suffix: (match[2] || "").toLowerCase(),
+          raw: rawStr.toLowerCase()
+        };
+      }
+      return { num: 999999, suffix: "", raw: rawStr.toLowerCase() };
+    };
+
+    const bedA = parseBed(a);
+    const bedB = parseBed(b);
+
+    if (bedA.num !== bedB.num) {
+      return bedA.num - bedB.num;
+    }
+    if (bedA.suffix !== bedB.suffix) {
+      return bedA.suffix.localeCompare(bedB.suffix);
+    }
+    return bedA.raw.localeCompare(bedB.raw);
+  });
+}
+
+// Helper to highlight numbered list items, Bed numbers, Dates, Timestamps, Alerts, and Numeric Lab/Vitals Values
+export function renderHighlightedText(text: string | undefined | null) {
+  if (!text) return null;
+
+  const tokenRegex = /(?<=^|\s|\n)(?:Step\s*\d+:?|[A-Z]\.|\d+(?:\.\d+)*(?:[\.\)]|\b)|\(\d+\)|\[\d+\]|#\d+)(?=\s|$)|[⚠️⚠🚨⚡❗‼]+|\b(?:ALERT|CRITICAL|WARNING|URGENT|DANGER|HIGH\s+RISK|RED\s+FLAG|P1|A3|SEPSIS|HYPOTENSION|HYPOXIA|ANAPHYLAXIS|CARDIAC\s+ARREST|ST\s*-?\s*ELEVATION):?|\b(?:Bed|Room|Bay|Cot|ICU|HDU)\s*#?\s*\d+[A-Za-z]?\b|\b(?:\d{1,2}[\/\.-]\d{1,2}[\/\.-]\d{2,4}|\d{4}[\/\.-]\d{1,2}[\/\.-]\d{1,2}|\d{1,2}(?:st|nd|rd|th)?\s+(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)(?:\s+\d{2,4})?|(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{1,2}(?:st|nd|rd|th)?(?:\,?\s+\d{2,4})?|Today|Yesterday|Tomorrow|Day\s*\d+|POD\s*\d+)\b|(?:@\s*)?\b(?:[0-1]?\d|2[0-3]):[0-5]\d(?::[0-5]\d)?(?:\s*[AP]M)?\b|\b\d{2,3}\/\d{2,3}(?:\s*mmHg)?\b|\b\d+(?:\.\d+)?(?:k|mg|g|ml|l|m|mmol\/L|mg\/dL|g\/dL|IU\/L|bpm|mmHg|cm|mm|kg|%|x\d+|days?|months?|hrs?|hours?|mins?|weeks?|yr|years?|mEq\/L|G)?\s*[⚠⚠️]|\b[><]=?\s*\d+(?:\.\d+)?(?:k|mg|g|ml|%)?\b|\b\d+(?:\.\d+)?(?:\s*(?:k|mg|mcg|g|ml|l|m|mmol\/L|mg\/dL|g\/dL|IU\/L|bpm|mmHg|cm|mm|kg|%|x\d+|days?|months?|hrs?|hours?|mins?|weeks?|yr|years?|mEq\/L|G))\b|\b\d+(?:\.\d+)+\b|(?<=\s|^|\(|\[|#|:|-|·)\d+(?=\s|\)|\]|,|\.|;|$|·)/gi;
+
+  const parts = text.split(tokenRegex);
+  const matches = text.match(tokenRegex);
+
+  if (!matches || matches.length === 0) {
+    return text;
+  }
+
+  const result: React.ReactNode[] = [];
+  parts.forEach((part, index) => {
+    if (part) {
+      result.push(part);
+    }
+    if (index < matches.length) {
+      const match = matches[index];
+      const trimmed = match.trim();
+
+      const isBed = /^(?:Bed|Room|Bay|Cot|ICU|HDU)\s*#?\s*\d+[A-Za-z]?$/i.test(trimmed);
+      const isDate = /^(?:\d{1,2}[\/\.-]\d{1,2}[\/\.-]\d{2,4}|\d{4}[\/\.-]\d{1,2}[\/\.-]\d{1,2}|\d{1,2}(?:st|nd|rd|th)?\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*(?:\s+\d{2,4})?|Today|Yesterday|Tomorrow|Day\s*\d+|POD\s*\d+)$/i.test(trimmed);
+      const isTime = /^(?:@\s*)?(?:[0-1]?\d|2[0-3]):[0-5]\d(?::[0-5]\d)?(?:\s*[AP]M)?$/i.test(trimmed);
+      const isNumbering = /^(?:Step\s*\d+:?|[A-Z]\.|\d+(?:\.\d+)*(?:[\.\)]|\b)|\(\d+\)|\[\d+\]|#\d+)$/i.test(trimmed);
+      const isAlert = /^(?:[⚠️⚠🚨⚡❗‼]+|\b(?:ALERT|CRITICAL|WARNING|URGENT|DANGER|HIGH\s+RISK|RED\s+FLAG|P1|A3|SEPSIS|HYPOTENSION|HYPOXIA|ANAPHYLAXIS|CARDIAC\s+ARREST|ST\s*-?\s*ELEVATION):?)$/i.test(trimmed);
+      const isAbnormalNum = /⚠|⚠️|^[><]/.test(trimmed);
+      const isBpRatio = /^\d{2,3}\/\d{2,3}(?:\s*mmHg)?$/i.test(trimmed);
+      const isNumericValue = /^\d+(?:\.\d+)?/.test(trimmed);
+
+      if (isBed) {
+        result.push(
+          <span
+            key={`bed-${index}`}
+            className="inline-flex items-center gap-0.5 bg-violet-100 dark:bg-violet-950/90 text-violet-900 dark:text-violet-200 font-extrabold text-[10.5px] px-1.5 py-0.5 rounded-md border border-violet-300 dark:border-violet-700 mx-0.5 font-mono shadow-2xs leading-none print:bg-violet-100 print:text-violet-900 print:border-violet-300"
+          >
+            🛏️ {match}
+          </span>
+        );
+      } else if (isDate) {
+        result.push(
+          <span
+            key={`date-${index}`}
+            className="inline-flex items-center gap-0.5 bg-amber-100 dark:bg-amber-950/90 text-amber-900 dark:text-amber-200 font-bold text-[10px] px-1.5 py-0.5 rounded-md border border-amber-300 dark:border-amber-700 mx-0.5 font-mono shadow-2xs leading-none print:bg-amber-100 print:text-amber-900 print:border-amber-300"
+          >
+            📅 {match}
+          </span>
+        );
+      } else if (isTime) {
+        result.push(
+          <span
+            key={`time-${index}`}
+            className="inline-flex items-center gap-0.5 bg-sky-100 dark:bg-sky-950/90 text-sky-900 dark:text-sky-200 font-bold text-[10px] px-1.5 py-0.5 rounded-md border border-sky-300 dark:border-sky-700 mx-0.5 font-mono shadow-2xs leading-none print:bg-sky-100 print:text-sky-900 print:border-sky-300"
+          >
+            ⏱️ {match}
+          </span>
+        );
+      } else if (isNumbering) {
+        result.push(
+          <span
+            key={`num-${index}`}
+            className="inline-flex items-center justify-center bg-indigo-100 dark:bg-indigo-900/80 text-indigo-800 dark:text-indigo-200 font-black text-[10px] px-1.5 py-0.5 rounded-md border border-indigo-300 dark:border-indigo-700 mx-0.5 font-mono shadow-2xs leading-none print:bg-indigo-50 print:text-indigo-900 print:border-indigo-300"
+          >
+            {match}
+          </span>
+        );
+      } else if (isAlert || isAbnormalNum) {
+        result.push(
+          <span
+            key={`alert-${index}`}
+            className="inline-flex items-center gap-0.5 bg-rose-100 dark:bg-rose-950/80 text-rose-700 dark:text-rose-300 font-extrabold text-[10px] px-1.5 py-0.5 rounded-md border border-rose-300 dark:border-rose-800 mx-0.5 font-mono animate-pulse shadow-2xs leading-none print:bg-rose-100 print:text-rose-900 print:border-rose-300 print:animate-none"
+          >
+            {match.includes("⚠") || match.includes("⚠️") || match.includes("🚨") ? match : `⚠️ ${match}`}
+          </span>
+        );
+      } else if (isBpRatio) {
+        result.push(
+          <span
+            key={`bp-${index}`}
+            className="inline-flex items-center gap-0.5 bg-slate-200 dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-black text-[10.5px] px-1.5 py-0.5 rounded-md border border-slate-300 dark:border-slate-600 mx-0.5 font-mono shadow-2xs leading-none print:bg-slate-200 print:text-slate-900"
+          >
+            {match}
+          </span>
+        );
+      } else if (isNumericValue) {
+        result.push(
+          <span
+            key={`val-${index}`}
+            className="inline-flex items-center justify-center bg-amber-50 dark:bg-amber-950/60 text-amber-900 dark:text-amber-200 font-bold text-[10.5px] px-1 py-0.5 rounded border border-amber-200/90 dark:border-amber-800/80 mx-0.5 font-mono shadow-2xs leading-none print:bg-amber-50 print:text-amber-900"
+          >
+            {match}
+          </span>
+        );
+      } else {
+        result.push(match);
+      }
+    }
+  });
+
+  return <>{result}</>;
+}
+
+export function HighlightedHandoverText({ text }: { text: string | undefined | null }) {
+  if (!text) return null;
+
+  const lines = text.split("\n");
+  return (
+    <span className="whitespace-pre-wrap">
+      {lines.map((line, lIdx) => (
+        <React.Fragment key={lIdx}>
+          {renderHighlightedText(line)}
+          {lIdx < lines.length - 1 && <br />}
+        </React.Fragment>
+      ))}
+    </span>
+  );
+}
+
+// Helper to parse multi-entry text (by paragraphs or newlines)
+export function parseHandoverEntries(rawText: string | undefined | null): string[] {
+  if (!rawText || !rawText.trim()) return [];
+  const paraSplit = rawText.split(/\n\s*\n+/).map(s => s.trim()).filter(Boolean);
+  if (paraSplit.length > 1) {
+    return paraSplit;
+  }
+  const lineSplit = rawText.split(/\n+/).map(s => s.trim()).filter(Boolean);
+  if (lineSplit.length > 1) {
+    return lineSplit;
+  }
+  return [rawText.trim()];
+}
+
+// Auto-detect columns: 1-3 entries -> 1 col, 4-6 entries -> 2 cols, 7+ entries -> 3 cols
+// Maintains chronological order: left to right, top to bottom
+export function splitEntriesIntoColumns(entries: string[]): string[][] {
+  const n = entries.length;
+  if (n === 0) return [];
+
+  let cols = 1;
+  if (n <= 3) {
+    cols = 1;
+  } else if (n <= 6) {
+    cols = 2;
+  } else {
+    cols = 3;
+  }
+
+  const perCol = Math.floor((n + cols - 1) / cols);
+  const result: string[][] = [];
+  for (let i = 0; i < n; i += perCol) {
+    result.push(entries.slice(i, i + perCol));
+  }
+  return result;
+}
+
+// Reusable multi-column viewer for Handover Sections (Initial Assessment & Management Plan)
+export function MultiColumnEntriesView({ 
+  text, 
+  fontFamily = "font-mono"
+}: { 
+  text: string | undefined | null; 
+  fontFamily?: string;
+}) {
+  if (!text || !text.trim()) {
+    return <span className="text-slate-400 italic text-xs">Nil logged</span>;
+  }
+
+  const entries = parseHandoverEntries(text);
+  if (entries.length === 0) return null;
+
+  const columns = splitEntriesIntoColumns(entries);
+  const numCols = columns.length;
+
+  let gridColsClass = "grid-cols-1";
+  if (numCols === 2) gridColsClass = "grid-cols-1 md:grid-cols-2 print:grid-cols-2";
+  if (numCols === 3) gridColsClass = "grid-cols-1 md:grid-cols-3 print:grid-cols-3";
+
+  return (
+    <div className={`grid ${gridColsClass} gap-2 md:gap-3 divide-y md:divide-y-0 md:divide-x divide-slate-200 dark:divide-slate-800`}>
+      {columns.map((colEntries, cIdx) => (
+        <div key={cIdx} className={`space-y-1.5 ${cIdx > 0 ? "md:pl-2.5 pt-2 md:pt-0" : ""}`}>
+          {colEntries.map((entry, eIdx) => (
+            <div key={eIdx} className={`text-xs ${fontFamily} leading-relaxed text-slate-900 dark:text-slate-100 bg-white/80 dark:bg-slate-900/50 p-2 rounded-md border border-slate-200/80 dark:border-slate-800/80 shadow-2xs`}>
+              <HighlightedHandoverText text={entry} />
+            </div>
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function HandoverView({ 
   profile, 
   cases, 
@@ -117,7 +335,9 @@ export default function HandoverView({
   onNavigateToTab, 
   isDarkMode = false,
   activeSubTab: propActiveSubTab,
-  setActiveSubTab: propSetActiveSubTab
+  setActiveSubTab: propSetActiveSubTab,
+  quickPasteList: propQuickPasteList,
+  setQuickPasteList: propSetQuickPasteList
 }: HandoverViewProps) {
   // Main view navigation: "registry" (Active Cases) or "quickpaste" (EMR Quick Paste)
   const [localActiveSubTab, setLocalActiveSubTab] = useState<"registry" | "quickpaste">("registry");
@@ -129,8 +349,8 @@ export default function HandoverView({
     cases.filter(c => c.status === "Active").map(c => c.id)
   );
 
-  // Quick Paste lists state (supports saving any number of patients, persisted locally)
-  const [quickPasteList, setQuickPasteList] = useState<QuickPastePatient[]>(() => {
+  // Quick Paste lists state (synced with Firestore if provided via props, else local state)
+  const [localQuickPasteList, setLocalQuickPasteList] = useState<QuickPastePatient[]>(() => {
     const saved = localStorage.getItem("ermate_quick_paste_list");
     if (saved) {
       try {
@@ -146,6 +366,7 @@ export default function HandoverView({
         ageGender: "52y / Male",
         triage: "P1 (Immediate)",
         vitals: "BP 160/95 | HR 112 | SpO2 91%",
+        presentingComplaint: "Acute crushing retrosternal chest pain radiating to jaw for 2 hours with diaphoresis",
         rawNotes: "Pasted from EMR:\nPatient presented with acute crushing chest pain for 2 hours, radiating to jaw. Diaphoretic. ECG shows 3mm ST elevation in V1-V4. Loading doses of Aspirin 325mg and Ticagrelor 180mg given at 10:15 AM. Cardiology consulted and patient accepted for immediate primary PCI in cath lab. Prep in progress. IV fluids running.",
         structuredSBAR: {
           situation: "52y Male in Bed 3 with acute retrosternal chest pain, diagnosed with Anterior Wall STEMI.",
@@ -160,6 +381,7 @@ export default function HandoverView({
         ageGender: "29y / Female",
         triage: "P2 (Urgent)",
         vitals: "BP 115/70 | HR 88 | SpO2 99%",
+        presentingComplaint: "Severe right lower quadrant abdominal pain for 12 hours with nausea",
         rawNotes: "EMR Notes:\nSevere right lower quadrant abdominal pain for 12 hours. Nausea, no vomiting. Tender in RLQ with positive McBurney's sign. Ultrasound ordered, report shows swollen non-compressible appendix of 8.5mm with mild surrounding free fluid, consistent with acute appendicitis. NPO since 08:00 AM. IV Cefotetan 2g administered. Surgical resident Dr. Patel reviewed and posted for appendectomy. Waiting for OT vacancy.",
         structuredSBAR: {
           situation: "29y Female in Bed 7 with acute right lower quadrant abdominal pain, diagnosed with acute appendicitis.",
@@ -170,6 +392,9 @@ export default function HandoverView({
       }
     ];
   });
+
+  const quickPasteList = propQuickPasteList !== undefined ? propQuickPasteList : localQuickPasteList;
+  const setQuickPasteList = propSetQuickPasteList !== undefined ? propSetQuickPasteList : setLocalQuickPasteList;
 
   // State for EMR Quick Paste selection
   const [selectedQuickPasteIds, setSelectedQuickPasteIds] = useState<string[]>(() => {
@@ -223,6 +448,7 @@ export default function HandoverView({
   });
   const [actionSuccessMsg, setActionSuccessMsg] = useState<string | null>(null);
   const [cleanupActionInProgress, setCleanupActionInProgress] = useState(false);
+  const [isAiCompilingSheet, setIsAiCompilingSheet] = useState(false);
 
   // Sync shift warning state to localStorage
   useEffect(() => {
@@ -319,6 +545,13 @@ export default function HandoverView({
   const [handoverLoggedSuccess, setHandoverLoggedSuccess] = useState(false);
 
   const [editableRows, setEditableRows] = useState<HandoverTableRow[]>([]);
+  const [editingCells, setEditingCells] = useState<Record<string, boolean>>({});
+
+  const toggleCellEditing = (rowId: string, field: string) => {
+    const key = `${rowId}_${field}`;
+    setEditingCells(prev => ({ ...prev, [key]: !prev[key] }));
+  };
+
   const [handoverMeta, setHandoverMeta] = useState({
     date: new Date().toLocaleDateString('en-GB'),
     from: "Night Shift",
@@ -382,60 +615,431 @@ export default function HandoverView({
     }
   };
 
+function extractLatestVitalsWithTime(
+  vitalsObj?: { bp?: string; hr?: string; spo2?: string; rr?: string; temp?: string; gcs?: string; grbs?: string },
+  notesList?: Array<{ timestamp?: string; content?: string }>,
+  rawText?: string
+): string {
+  // 1. Search notesList reverse-chronologically for a note containing vitals
+  if (notesList && notesList.length > 0) {
+    const reversed = [...notesList].reverse();
+    for (const note of reversed) {
+      const content = note.content || "";
+      if (/(?:bp|hr|pulse|spo2|grbs|gcs|temp|vitals)\b/i.test(content)) {
+        let timeStr = note.timestamp || "";
+        const timeMatch = content.match(/\b([0-2]?\d:[0-5]\d(?:\s*[ap]m)?)\b/i) || (timeStr ? timeStr.match(/\b([0-2]?\d:[0-5]\d(?:\s*[ap]m)?)\b/i) : null);
+        const extractedTime = timeMatch ? timeMatch[1] : (timeStr.trim() || "");
+
+        const vitalsSnippetMatch = content.match(/(?:BP|HR|Pulse|SpO2|GRBS|GCS|Temp|RR|MAP)\s*[:=]?\s*[\d\/\.\s%⚠A-Za-z°C\-]+/i);
+        if (vitalsSnippetMatch) {
+          const snippet = vitalsSnippetMatch[0].trim();
+          return extractedTime ? `@ ${extractedTime} · ${snippet}` : snippet;
+        }
+      }
+    }
+  }
+
+  // 2. Search rawText for vitals line + timestamp
+  if (rawText && rawText.trim().length > 0) {
+    const lines = rawText.split(/\n+/);
+    for (const line of lines) {
+      if (/(?:bp|hr|pulse|spo2|grbs|gcs|temp|vitals)\b/i.test(line)) {
+        const timeMatch = line.match(/\b([0-2]?\d:[0-5]\d(?:\s*[ap]m)?)\b/i) || line.match(/\b(\d{1,2}[\/-]\d{1,2}\s+[0-2]?\d:[0-5]\d)\b/i);
+        const extractedTime = timeMatch ? timeMatch[1] : "";
+        
+        let vitalsPart = line;
+        const vitalsIdx = line.search(/(?:BP|HR|Pulse|SpO2|GRBS|GCS|Temp|RR|MAP|Vitals)\b/i);
+        if (vitalsIdx !== -1) {
+          vitalsPart = line.substring(vitalsIdx).trim();
+        }
+        if (vitalsPart) {
+          return extractedTime ? `@ ${extractedTime} · ${vitalsPart}` : vitalsPart;
+        }
+      }
+    }
+  }
+
+  // 3. Fallback to structured vitalsObj
+  if (vitalsObj && (vitalsObj.bp || vitalsObj.hr || vitalsObj.spo2 || vitalsObj.grbs)) {
+    const parts: string[] = [];
+    if (vitalsObj.bp) parts.push(`BP ${vitalsObj.bp}`);
+    if (vitalsObj.hr) parts.push(`HR ${vitalsObj.hr}`);
+    if (vitalsObj.spo2) parts.push(`SpO2 ${vitalsObj.spo2}%`);
+    if (vitalsObj.grbs) parts.push(`GRBS ${vitalsObj.grbs}${Number(vitalsObj.grbs) > 300 ? '⚠' : ''}`);
+    if (vitalsObj.gcs) parts.push(`GCS ${vitalsObj.gcs}`);
+    if (vitalsObj.temp) parts.push(`Temp ${vitalsObj.temp}`);
+    if (vitalsObj.rr) parts.push(`RR ${vitalsObj.rr}`);
+
+    const formattedVitals = parts.join(" · ");
+    const nowTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    return `@ ${nowTime} · ${formattedVitals}`;
+  }
+
+  return "BP 120/80 · HR 72 · SpO2 98%";
+}
+
+  function checkLineForAbnormalities(line: string): boolean {
+    if (!line) return false;
+    if (/⚠|⚠️|high|low|abnormal|positive|elevated|severe|critical|panic/i.test(line)) return true;
+    if (/grbs\s*(?:>|:|=)?\s*(?:2[0-9]\d|[3-9]\d\d)/i.test(line)) return true;
+    if (/wbc\s*(?:>|:|=)?\s*(?:1[2-9]|[2-9]\d)/i.test(line)) return true;
+    if (/crp\s*(?:>|:|=)?\s*(?:1\d|[2-9]\d)/i.test(line)) return true;
+    if (/(?:creatinine|cr)\s*(?:>|:|=)?\s*(?:1\.[4-9]|[2-9])/i.test(line)) return true;
+    if (/lactate\s*(?:>|:|=)?\s*(?:2\.[1-9]|[3-9])/i.test(line)) return true;
+    if (/troponin\s*(?:positive|pos|>)/i.test(line)) return true;
+    if (/inr\s*(?:>|:|=)?\s*(?:1\.[6-9]|[2-9])/i.test(line)) return true;
+    if (/(?:ct|mri|usg|x-ray|cxr)\s*.*(?:infarct|hemorrhage|ich|fracture|pneumothorax|effusion|perforation|mass|edema)/i.test(line)) return true;
+    return false;
+  }
+
+  function extractAlertStringsFromLine(line: string): string[] {
+    if (!line) return [];
+    const alerts: string[] = [];
+    const grbsM = line.match(/grbs\s*(?:>|:|=)?\s*(\d+)/i);
+    if (grbsM && parseInt(grbsM[1], 10) > 200) alerts.push(`GRBS: ${grbsM[1]} mg/dL`);
+
+    const wbcM = line.match(/wbc\s*(?:>|:|=)?\s*(\d+(?:\.\d+)?k?)/i);
+    if (wbcM) alerts.push(`WBC: ${wbcM[1]}`);
+
+    const crpM = line.match(/crp\s*(?:>|:|=)?\s*(\d+(?:\.\d+)?)/i);
+    if (crpM && parseFloat(crpM[1]) > 10) alerts.push(`CRP: ${crpM[1]}`);
+
+    const crM = line.match(/(?:creatinine|cr)\s*(?:>|:|=)?\s*(\d+(?:\.\d+)?)/i);
+    if (crM && parseFloat(crM[1]) > 1.3) alerts.push(`Creatinine: ${crM[1]}`);
+
+    const lacM = line.match(/lactate\s*(?:>|:|=)?\s*(\d+(?:\.\d+)?)/i);
+    if (lacM && parseFloat(lacM[1]) > 2.0) alerts.push(`Lactate: ${lacM[1]}`);
+
+    if (/troponin\s*(?:positive|pos|>)/i.test(line)) alerts.push("Troponin: Positive");
+
+    const imgM = line.match(/(?:ct|mri|usg|x-ray|cxr)\s*[:=-]?\s*([^\.\n\r]+)/i);
+    if (imgM && /(?:infarct|hemorrhage|ich|fracture|pneumothorax|effusion|perforation|mass)/i.test(imgM[1])) {
+      alerts.push(imgM[0].trim());
+    }
+
+    return alerts;
+  }
+
+  function parseTimestampFromText(str: string): number {
+    if (!str) return 9999;
+    const timeMatch = str.match(/\b([0-1]?\d|2[0-3]):([0-5]\d)(?:\s*([AP]M))?\b/i);
+    if (timeMatch) {
+      let hours = parseInt(timeMatch[1], 10);
+      const mins = parseInt(timeMatch[2], 10);
+      const ampm = timeMatch[3];
+      if (ampm) {
+        if (ampm.toUpperCase() === "PM" && hours < 12) hours += 12;
+        if (ampm.toUpperCase() === "AM" && hours === 12) hours = 0;
+      }
+      return hours * 60 + mins;
+    }
+    return 9999;
+  }
+
+  function extractChronologicalInvestigationsAndAlerts(
+    rawText: string,
+    assessmentStr?: string,
+    investigationsArray?: InvestigationItem[]
+  ): {
+    formattedAssessment: string;
+    alertsList: string[];
+    planDoneLabsText: string;
+  } {
+    const alertsList: string[] = [];
+    const investigationLines: { timeStr?: string; text: string; isAlert: boolean; timestamp: number }[] = [];
+    const completedLabNames: string[] = [];
+
+    // 1. Process investigationsArray
+    if (investigationsArray && investigationsArray.length > 0) {
+      investigationsArray.forEach(inv => {
+        const isAbn = !!inv.isAbnormal || checkLineForAbnormalities(`${inv.testName} ${inv.result || ''}`);
+        const resText = `${inv.testName}: ${inv.result || 'Done'}${isAbn && !inv.result?.includes('⚠') ? ' ⚠' : ''}`;
+        if (isAbn) {
+          alertsList.push(`${inv.testName}: ${inv.result || 'Abnormal'}`);
+        }
+        completedLabNames.push(inv.testName);
+        
+        const ts = parseTimestampFromText(`${inv.resultTime || inv.orderTime || ''} ${inv.result || ''}`);
+        investigationLines.push({
+          timeStr: inv.resultTime || inv.orderTime || undefined,
+          text: resText,
+          isAlert: isAbn,
+          timestamp: ts
+        });
+      });
+    }
+
+    // 2. Process combined rawText / assessmentStr
+    const combinedText = `${assessmentStr || ''}\n${rawText || ''}`;
+    const lines = combinedText.split(/\n+/).map(l => l.trim()).filter(Boolean);
+
+    const labKeywordsRegex = /\b(?:cbc|wbc|hgb|hb|platelet|rft|creatinine|urea|lft|bilirubin|sgot|sgpt|trop|troponin|ckmb|crp|esr|abg|vbg|lactate|grbs|sugar|d-dimer|ddimer|inr|pt\/inr|urine|ecg|ekg|cxr|x-ray|xray|ct|mri|usg|echo|fast|labs?|investigations?|results?|blood|ionised|potassium|sodium)\b/i;
+
+    lines.forEach(line => {
+      if (labKeywordsRegex.test(line)) {
+        if (!investigationLines.some(il => il.text.toLowerCase().includes(line.toLowerCase().substring(0, 18)))) {
+          const isAbn = checkLineForAbnormalities(line);
+          let cleanedLine = line;
+          if (isAbn && !cleanedLine.includes("⚠") && !cleanedLine.includes("⚠️")) {
+            cleanedLine += " ⚠";
+          }
+
+          const extractedAlerts = extractAlertStringsFromLine(line);
+          extractedAlerts.forEach(a => {
+            if (!alertsList.includes(a)) alertsList.push(a);
+          });
+
+          const ts = parseTimestampFromText(line);
+          const timeMatch = line.match(/(?:@\s*)?\b(?:[0-1]?\d|2[0-3]):[0-5]\d(?::[0-5]\d)?(?:\s*[AP]M)?\b/i);
+
+          investigationLines.push({
+            timeStr: timeMatch ? timeMatch[0] : undefined,
+            text: cleanedLine,
+            isAlert: isAbn,
+            timestamp: ts
+          });
+
+          const testNameMatch = line.match(/\b(CBC|RFT|LFT|VBG|ABG|CT\s*\w+|MRI\s*\w+|X-Ray|CXR|USG|Echo|ECG|Troponin|CRP|GRBS)\b/i);
+          if (testNameMatch && !completedLabNames.includes(testNameMatch[0].toUpperCase())) {
+            completedLabNames.push(testNameMatch[0].toUpperCase());
+          }
+        }
+      }
+    });
+
+    // Sort investigation lines chronologically
+    investigationLines.sort((a, b) => a.timestamp - b.timestamp);
+
+    let formattedAssessment = assessmentStr || "";
+    if (investigationLines.length > 0) {
+      const invSectionText = investigationLines.map(item => {
+        const prefix = item.timeStr ? `[${item.timeStr}] ` : "• ";
+        return `${prefix}${item.text}`;
+      }).join("\n");
+
+      if (!formattedAssessment.toLowerCase().includes("investigation") && !formattedAssessment.toLowerCase().includes("lab result")) {
+        formattedAssessment = `${formattedAssessment ? `${formattedAssessment}\n\n` : ''}INVESTIGATION FINDINGS (Chronological Order):\n${invSectionText}`;
+      } else if (!formattedAssessment.includes("INVESTIGATION FINDINGS")) {
+        formattedAssessment += `\n\nINVESTIGATION FINDINGS (Chronological Order):\n${invSectionText}`;
+      }
+    }
+
+    const planDoneLabsText = completedLabNames.length > 0 ? `✓ Completed Investigations: ${completedLabNames.join(", ")}` : "✓ Investigations reviewed.";
+
+    return { formattedAssessment, alertsList, planDoneLabsText };
+  }
+
   const getRegistryRows = (): HandoverTableRow[] => {
     const selectedCases = cases.filter(c => selectedRegistryIds.includes(c.id));
-    return selectedCases.map((c, idx) => {
-      const rxText = c.treatments.map(t => `${t.drugName} ${t.dose}`).join(", ") || "Nil documented";
-      const labsText = c.investigationResultsSummary || c.investigations.map(i => `${i.testName}: ${i.result}`).join(", ") || "CBC, LFT, electrolytes sent";
-      const planDoneText = `ECG: Done / Sinus rhythm\nVBG: Done / Lactate normal\nEcho: Done / Normal EF, no RWMA\nLabs/Imaging: ${labsText}\nTreatments given: ${rxText}`;
-      const planToBeDoneText = c.dispositionDetails?.observationNotes || "Review lab/imaging reports. Continue hourly vitals/sensorium checks.";
-      const assessmentText = `Provisional Diagnosis: ${c.provisionalPrimaryDiagnosis || "Under evaluation"}\nInitial Assessment Note: Patient conscious, oriented.\nVitals: HR ${c.vitals.hr || "N/A"}, BP ${c.vitals.bp || "N/A"}, SpO2 ${c.vitals.spo2 || "N/A"}%`;
+    const rows = selectedCases.map((c, idx) => {
+      const rxText = c.treatments.map(t => `${t.drugName} ${t.dose}${t.route ? ` (${t.route})` : ''}`).join(", ");
+      
+      const diagnosisText = c.provisionalPrimaryDiagnosis 
+        ? `PROVISIONAL DIAGNOSIS: ${c.provisionalPrimaryDiagnosis}` 
+        : "PROVISIONAL DIAGNOSIS: Under evaluation";
+
+      // Extract investigation details, chronological ordering, and alerts
+      const { formattedAssessment, alertsList: invAlerts, planDoneLabsText } = extractChronologicalInvestigationsAndAlerts(
+        `${c.notes?.map(n => n.content).join("\n") || ''} ${c.investigationResultsSummary || ''} ${c.investigationImaging || ''}`,
+        diagnosisText,
+        c.investigations || []
+      );
+
+      const doneParts: string[] = [];
+      if (planDoneLabsText) doneParts.push(planDoneLabsText);
+      if (rxText) doneParts.push(`✓ Treatments given: ${rxText}`);
+      if (c.vitals && (c.vitals.bp || c.vitals.hr || c.vitals.spo2)) {
+        doneParts.push(`✓ Vitals logged: BP ${c.vitals.bp || 'N/A'} | HR ${c.vitals.hr || 'N/A'} | SpO2 ${c.vitals.spo2 || 'N/A'}%`);
+      }
+      const planDoneText = doneParts.length > 0 ? doneParts.join("\n") : "✓ Initial emergency evaluation & vitals recorded.";
+
+      const planToBeDoneText = c.dispositionDetails?.observationNotes ? `□ ${c.dispositionDetails.observationNotes}` : "□ Monitor clinical status and complete all pending orders as per shift schedule.";
+
+      const vitalsText = extractLatestVitalsWithTime(
+        c.vitals,
+        c.notes,
+        `${c.vitals.bp ? `BP ${c.vitals.bp}` : ''} ${c.vitals.hr ? `HR ${c.vitals.hr}` : ''} ${c.vitals.spo2 ? `SpO2 ${c.vitals.spo2}` : ''}\n${c.notes?.map(n => n.content).join("\n") || ''}`
+      );
+
+      const historyText = c.sampleHistory?.pastHistory ? c.sampleHistory.pastHistory : "Nil significant past medical history documented.";
+
+      const chronoNotes = c.notes && c.notes.length > 0
+        ? [...c.notes].reverse().map(n => `${n.timestamp || 'Initial'} ${n.authorRole ? `Dr. ${n.authorName || 'Lead'}` : ''} · ${n.content}`).join("\n\n")
+        : `${new Date(c.admissionTime || Date.now()).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit' })} ${new Date(c.admissionTime || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} Dr. ${profile.name || 'Duty'} · First assessment\nBP ${c.vitals.bp || "N/A"} · GCS normal · Vitals logged`;
+
+      // Extract Alert Flags
+      const alertList: string[] = [...invAlerts];
+      if (c.vitalFlags && c.vitalFlags.length > 0) {
+        c.vitalFlags.forEach(f => { if (!alertList.includes(f)) alertList.push(f); });
+      }
+
+      const combinedForAlerts = `${c.vitals.bp || ''} ${c.vitals.hr || ''} ${c.vitals.spo2 || ''} ${c.investigationResultsSummary || ''} ${c.investigationImaging || ''}`;
+      if (/grbs\s*(?:>|:|=)?\s*(?:3[0-9]\d|[4-9]\d\d)/i.test(combinedForAlerts) && !alertList.some(a => a.toLowerCase().includes("grbs"))) {
+        alertList.push("Elevated GRBS (>300)");
+      }
+      if (/wbc\s*(?:>|:|=)?\s*(?:1[5-9]|[2-9]\d)/i.test(combinedForAlerts) && !alertList.some(a => a.toLowerCase().includes("wbc"))) {
+        alertList.push("Severe Leukocytosis");
+      }
+      if (/cr\s*(?:>|:|=)?\s*(?:1\.[5-9]|[2-9])/i.test(combinedForAlerts) && !alertList.some(a => a.toLowerCase().includes("cr"))) {
+        alertList.push("Elevated Creatinine");
+      }
+      if (/inr\s*(?:>|:|=)?\s*(?:1\.[5-9]|[2-9])/i.test(combinedForAlerts) && !alertList.some(a => a.toLowerCase().includes("inr"))) {
+        alertList.push("Coagulopathy / High INR");
+      }
+
+      const alertsText = alertList.length > 0 ? `⚠ ${alertList.join(" · ")}` : "";
 
       return {
         id: c.id,
         bed: c.bedNo || `Bed ${idx + 1}`,
-        name: c.patient.name,
-        ageGender: `${c.patient.age || "N/A"}/${c.patient.gender === "Male" ? "M" : "F"}`,
-        complaints: c.patient.presentingComplaint,
-        history: c.sampleHistory?.pastHistory || "Nil documented",
-        assessment: assessmentText,
+        name: c.patient.name || "Anonymous",
+        ageGender: `${c.patient.age || "N/A"}${c.patient.gender === "Male" ? "M" : c.patient.gender === "Female" ? "F" : "U"}`,
+        erNo: `ER# ${c.patient.id || c.id.substring(0, 7)}`,
+        doctor: `Dr. ${profile.name || "Manoj"}`,
+        stayDuration: `In ER since: ${c.admissionTime ? new Date(c.admissionTime).toLocaleDateString('en-GB') : 'Today'}`,
+        complaints: c.patient.presentingComplaint || "Acute ER Presentation",
+        chronologicalNotes: chronoNotes,
+        history: historyText,
+        assessment: formattedAssessment,
         planDone: planDoneText,
         planToBeDone: planToBeDoneText,
-        bystander: "Parents/Bystander counselled regarding admission and clinical progress.",
+        bystander: "Bystanders counselled.",
+        vitals: vitalsText,
+        alerts: alertsText
       };
     });
+
+    return sortRowsByBedNumber(rows);
   };
+
+  function extractPresentingComplaint(item: { presentingComplaint?: string; rawNotes?: string; structuredSBAR?: { situation?: string } }): string {
+  if (item.presentingComplaint && item.presentingComplaint.trim().length > 0) {
+    return item.presentingComplaint.trim();
+  }
+  if (!item.rawNotes) {
+    return item.structuredSBAR?.situation || "Presenting complaints recorded.";
+  }
+  const raw = item.rawNotes;
+
+  // Search for explicit complaint headings in raw notes
+  const complaintPatterns = [
+    /(?:presenting\s+complaints?|chief\ complaints?|complaints|c\/o|complaining\ of|reason\ for\ visit|reason\ for\ admission|presentation)\s*[:=-]?\s*([^\n\r]+(?:\n[^\n\r]+)?)/i,
+    /(?:presented\s+with|history\ of)\s+([^\n\r\.]+)/i
+  ];
+
+  for (const pat of complaintPatterns) {
+    const match = raw.match(pat);
+    if (match && match[1] && match[1].trim().length > 3) {
+      let cleaned = match[1].trim();
+      if (cleaned.length > 250) cleaned = cleaned.substring(0, 250) + "...";
+      return cleaned;
+    }
+  }
+
+  if (item.structuredSBAR?.situation && item.structuredSBAR.situation.trim().length > 0) {
+    return item.structuredSBAR.situation.trim();
+  }
+
+  if (raw.length <= 200) {
+    return raw.trim();
+  }
+  return raw.substring(0, 180) + "...";
+}
 
   const getQuickPasteRows = (): HandoverTableRow[] => {
     const selected = quickPasteList.filter(qp => selectedQuickPasteIds.includes(qp.id));
-    return selected.map((qp, idx) => {
-      const bedMatch = qp.name.match(/bed\s*\d+/i);
+    const rows = selected.map((qp, idx) => {
+      const bedMatch = qp.name.match(/(?:bed|room|bay|cot|icu|hdu)?\s*#?\s*\d+[a-z]?/i);
       const bedText = bedMatch ? bedMatch[0] : `Bed ${idx + 1}`;
-      const nameText = qp.name.replace(/bed\s*\d+\s*\(?/i, "").replace(/\)?$/, "").trim();
+      const nameText = qp.name.replace(/(?:bed|room|bay|cot|icu|hdu)?\s*#?\s*\d+[a-z]?\s*\(?/i, "").replace(/\)?$/, "").trim();
+
+      const bg = (qp.structuredSBAR?.background && !qp.structuredSBAR.background.includes("comorbid clinical elements"))
+        ? qp.structuredSBAR.background
+        : "Nil significant past medical history documented.";
+
+      const sit = qp.structuredSBAR?.situation || "Evaluation of acute chief complaints.";
+      const ass = qp.structuredSBAR?.assessment || `Vitals: ${qp.vitals || 'Logged'}. Clinical review in progress.`;
+
+      const chronoNotes = qp.rawNotes && qp.rawNotes.trim().length > 0
+        ? qp.rawNotes.split(/\n\s*\n+/).map(l => l.trim()).filter(l => l.length > 0).join("\n\n")
+        : `First assessment · ${sit}`;
+
+      const { formattedAssessment, alertsList: invAlerts, planDoneLabsText } = extractChronologicalInvestigationsAndAlerts(
+        qp.rawNotes || "",
+        `PROVISIONAL DIAGNOSIS: ${sit}\nASSESSMENT: ${ass}`,
+        []
+      );
+
+      const qpAlerts: string[] = [...invAlerts];
+      const combinedRaw = `${qp.vitals || ''} ${qp.rawNotes || ''} ${ass}`;
+      if (/grbs\s*(?:>|:|=)?\s*(?:3[0-9]\d|[4-9]\d\d)/i.test(combinedRaw) && !qpAlerts.some(a => a.toLowerCase().includes("grbs"))) qpAlerts.push("Elevated GRBS (>300)");
+      if (/bp\s*(?:>|:|=)?\s*(?:1[8-9]\d|2\d\d)/i.test(combinedRaw) && !qpAlerts.some(a => a.toLowerCase().includes("bp"))) qpAlerts.push("Hypertensive Urgency");
+      if (/spo2\s*(?:<|:|=)?\s*(?:8\d|90|91|92)/i.test(combinedRaw) && !qpAlerts.some(a => a.toLowerCase().includes("spo2"))) qpAlerts.push("Hypoxia / Low SpO2");
+
+      const alertsText = qpAlerts.length > 0 ? `⚠ ${qpAlerts.join(" · ")}` : "";
 
       return {
         id: qp.id,
         bed: bedText,
-        name: nameText || "Anonymous",
-        ageGender: qp.ageGender,
-        complaints: qp.rawNotes.substring(0, 150) + "...",
-        history: qp.structuredSBAR?.background || "Nil documented",
-        assessment: `Provisional Diagnosis: ${qp.structuredSBAR?.situation || "Pending evaluation"}\nInitial Assessment Note: ${qp.structuredSBAR?.assessment || "Vitals and status under review."}`,
-        planDone: `ECG: Done / Sinus rhythm\nVBG: Done / Lactate normal\nEcho: Done / Normal cardiac function\nLabs/Investigations: Vitals logged (${qp.vitals})\nRaw notes review complete.`,
-        planToBeDone: qp.structuredSBAR?.recommendation || "Maintain current orders.",
+        name: nameText || qp.name || "Anonymous",
+        ageGender: qp.ageGender || "N/A",
+        erNo: `ER# ${qp.id.substring(0, 7)}`,
+        doctor: `Dr. ${profile.name || "Manoj"}`,
+        stayDuration: "In ER evaluation",
+        complaints: extractPresentingComplaint(qp),
+        chronologicalNotes: chronoNotes,
+        history: bg,
+        assessment: formattedAssessment,
+        planDone: `✓ Vitals & Initial Workup: ${qp.vitals || 'Logged'}\n${planDoneLabsText}\n✓ Parsed Notes Review Complete.`,
+        planToBeDone: qp.structuredSBAR?.recommendation ? `□ ${qp.structuredSBAR.recommendation}` : "□ Maintain current orders and monitor.",
         bystander: "Bystanders counselled.",
+        vitals: extractLatestVitalsWithTime(undefined, undefined, `${qp.vitals || ''}\n${qp.rawNotes || ''}`),
+        alerts: alertsText
       };
     });
+
+    return sortRowsByBedNumber(rows);
+  };
+
+  const refineSheetWithGemini = async (items: any[]) => {
+    setIsAiCompilingSheet(true);
+    try {
+      const res = await fetch("/api/handover/compile-sheet", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ patients: items }),
+      });
+      const json = await res.json();
+      if (json.success && json.rows && Array.isArray(json.rows) && json.rows.length > 0) {
+        setEditableRows(sortRowsByBedNumber(json.rows));
+      }
+    } catch (err) {
+      console.error("AI handover sheet compilation error:", err);
+    } finally {
+      setIsAiCompilingSheet(false);
+    }
   };
 
   const compileRegistryToSheet = () => {
-    setEditableRows(getRegistryRows());
+    const localRows = getRegistryRows();
+    setEditableRows(localRows);
     setIsViewingSheet(true);
+
+    const selectedCases = cases.filter(c => selectedRegistryIds.includes(c.id));
+    if (selectedCases.length > 0) {
+      refineSheetWithGemini(selectedCases);
+    }
   };
 
   const compileQuickPasteToSheet = () => {
-    setEditableRows(getQuickPasteRows());
+    const localRows = getQuickPasteRows();
+    setEditableRows(localRows);
     setIsViewingSheet(true);
+
+    const selectedQuick = quickPasteList.filter(qp => selectedQuickPasteIds.includes(qp.id));
+    if (selectedQuick.length > 0) {
+      refineSheetWithGemini(selectedQuick);
+    }
   };
 
   const handleDownloadWordDirect = (type: "registry" | "quickpaste") => {
@@ -648,6 +1252,7 @@ export default function HandoverView({
           ageGender: parsed.ageGender || "Unknown",
           triage: parsed.triage || "P2 (Urgent)",
           vitals: parsed.vitals || "Not documented",
+          presentingComplaint: parsed.presentingComplaint || (userText ? userText.substring(0, 150) : "Presenting complaint recorded."),
           rawNotes: parsed.rawNotes || userText || "Pasted clinical notes",
           structuredSBAR: parsed.structuredSBAR || {
             situation: "No situation parsed.",
@@ -693,6 +1298,7 @@ export default function HandoverView({
         ageGender: "Age/Gender Unknown",
         triage: "P2 (Urgent)",
         vitals: "Vitals not documented",
+        presentingComplaint: userText ? userText.substring(0, 150) : "Scanned image of clinical case sheet.",
         rawNotes: userText || "Uploaded Case Sheet Photo",
         structuredSBAR: {
           situation: userText ? `Evaluation of patient with acute symptoms.` : "Scanned image of clinical case sheet.",
@@ -722,7 +1328,7 @@ export default function HandoverView({
       };
 
       setChatMessages(prev => [...prev, botErrorMsg]);
-      setAiParseError(err.message || "An error occurred during SBAR transcription.");
+      setAiParseError(sanitizeDoctorError(err));
     } finally {
       setIsAiParsing(false);
     }
@@ -766,7 +1372,7 @@ export default function HandoverView({
     const structured = qpStructuredSBAR || extractSBARStructure(qpRawNotes, qpName);
 
     if (editingQpId) {
-      setQuickPasteList(quickPasteList.map(item => {
+      setQuickPasteList(prev => prev.map(item => {
         if (item.id === editingQpId) {
           return {
             ...item,
@@ -791,7 +1397,7 @@ export default function HandoverView({
         rawNotes: qpRawNotes,
         structuredSBAR: structured
       };
-      setQuickPasteList([...quickPasteList, newItem]);
+      setQuickPasteList(prev => [...prev, newItem]);
     }
 
     // Reset Form
@@ -813,7 +1419,7 @@ export default function HandoverView({
   };
 
   const handleRemoveQuickPaste = (id: string) => {
-    setQuickPasteList(quickPasteList.filter(item => item.id !== id));
+    setQuickPasteList(prev => prev.filter(item => item.id !== id));
   };
 
   const handleCopyText = (key: string, text: string) => {
@@ -837,7 +1443,9 @@ export default function HandoverView({
   };
 
   const getRegistryPrintText = (): string => {
-    const selectedCases = cases.filter(c => selectedRegistryIds.includes(c.id));
+    const selectedCases = sortRowsByBedNumber(
+      cases.filter(c => selectedRegistryIds.includes(c.id)).map(c => ({ ...c, bed: c.bedNo }))
+    );
     let text = `==================================================\n`;
     text += `ERMATE ACTIVE PATIENTS SHIFT HANDOVER SHEET\n`;
     text += `==================================================\n`;
@@ -846,7 +1454,7 @@ export default function HandoverView({
     text += `Date: ${new Date().toLocaleDateString()} | Time: ${new Date().toLocaleTimeString()}\n\n`;
 
     selectedCases.forEach((c, idx) => {
-      text += `${idx + 1}. PATIENT: ${c.patient.name} (${c.patient.age}y / ${c.patient.gender})\n`;
+      text += `${idx + 1}. PATIENT: ${c.patient.name} (${c.patient.age}y / ${c.patient.gender}) [${c.bedNo || 'Bed N/A'}]\n`;
       text += `   Case ID: ${c.id} | UHID: ${c.patient.uhid} | Triage Level: ${c.patient.triageCategory}\n`;
       text += `   Vitals: HR ${c.vitals.hr || "N/A"} | BP ${c.vitals.bp || "N/A"} | SpO2 ${c.vitals.spo2 || "N/A"}%\n`;
       text += `   Chief Complaint: ${c.patient.presentingComplaint}\n`;
@@ -871,7 +1479,7 @@ export default function HandoverView({
     text += `Lead Clinician: Dr. ${profile.name} (${profile.role})\n`;
     text += `Date: ${new Date().toLocaleDateString()} | Time: ${new Date().toLocaleTimeString()}\n\n`;
 
-    const selectedList = quickPasteList.filter(item => selectedQuickPasteIds.includes(item.id));
+    const selectedList = sortRowsByBedNumber<QuickPastePatient>(quickPasteList.filter(item => selectedQuickPasteIds.includes(item.id)));
 
     selectedList.forEach((item, idx) => {
       text += `${idx + 1}. PATIENT: ${item.name} (${item.ageGender})\n`;
@@ -900,7 +1508,7 @@ export default function HandoverView({
       return chunks;
     };
 
-    const pageChunks = chunkRows(editableRows, 2);
+    const pageChunks = chunkRows(sortRowsByBedNumber(editableRows), 2);
     const totalPages = Math.max(1, pageChunks.length);
 
     const handleDownloadDoc = () => {
@@ -1123,6 +1731,22 @@ export default function HandoverView({
               ← Back to Selection
             </button>
             <button
+              onClick={() => {
+                if (activeSubTab === "registry") {
+                  const selectedCases = cases.filter(c => selectedRegistryIds.includes(c.id));
+                  refineSheetWithGemini(selectedCases);
+                } else {
+                  const selectedQuick = quickPasteList.filter(qp => selectedQuickPasteIds.includes(qp.id));
+                  refineSheetWithGemini(selectedQuick);
+                }
+              }}
+              disabled={isAiCompilingSheet}
+              className="px-3.5 py-1.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 shadow-sm cursor-pointer disabled:opacity-50"
+            >
+              <Sparkles className={`w-3.5 h-3.5 ${isAiCompilingSheet ? 'animate-spin' : ''}`} />
+              {isAiCompilingSheet ? "Extracting..." : "ErMate Refine Sheet"}
+            </button>
+            <button
               onClick={handleDownloadDoc}
               className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-all flex items-center gap-1 cursor-pointer shadow-sm"
             >
@@ -1131,18 +1755,39 @@ export default function HandoverView({
             </button>
             <button
               onClick={() => {
-                const text = `Date: ${handoverMeta.date} | From: ${handoverMeta.from} | To: ${handoverMeta.to} | Time: ${handoverMeta.time}\n\n` + 
-                  editableRows.map((r, idx) => `
-Patient #${idx + 1}
-----------------------------------------
-[Patient Label]: ${r.bed}, ${r.name}, ${r.ageGender}
-[Presenting complaints]: ${r.complaints}
-[Past medical history]: ${r.history}
-[Provisional diagnosis/Initial assessment]: ${r.assessment}
-[Management plan Done]: ${r.planDone}
-[Management plan To be done]: ${r.planToBeDone}
-[Bystander update]: ${r.bystander}
-`).join("\n");
+                const buildFormattedCard = (r: HandoverTableRow, idx: number) => {
+                  return `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+1. BED NO + NAME: ${r.bed} · ${r.name}
+   ${r.ageGender} · ${r.erNo || ''} · ${r.doctor || ''} · ${r.stayDuration || ''}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+2. INITIAL ASSESSMENT & CHRONOLOGICAL NOTES (Oldest → Newest):
+${r.chronologicalNotes || 'No notes logged'}
+
+   PRESENTING COMPLAINT:
+${r.complaints}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+3. PAST MEDICAL HISTORY:
+${r.history}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+4. PROVISIONAL DIAGNOSIS & ASSESSMENT:
+${r.assessment}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+5. MANAGEMENT PLAN:
+   [DONE ✓]
+${r.planDone}
+
+   [TO BE DONE □]
+${r.planToBeDone}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+6. BYSTANDER UPDATE & VITALS:
+   [Bystander]: ${r.bystander}
+   [Vitals]: ${r.vitals || 'Logged'}
+${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n⚠ CRITICAL ALERTS: ${r.alerts}` : ''}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+                };
+
+                const text = `HOSPITAL HANDOVER & TRANSITION LOG\nDate: ${handoverMeta.date} | From: ${handoverMeta.from} | To: ${handoverMeta.to} | Time: ${handoverMeta.time}\n\n` + 
+                  editableRows.map(buildFormattedCard).join("\n");
                 const blob = new Blob([text], { type: "text/plain;charset=utf-8;" });
                 const url = URL.createObjectURL(blob);
                 const link = document.createElement("a");
@@ -1159,18 +1804,39 @@ Patient #${idx + 1}
             </button>
             <button
               onClick={() => {
-                const text = `Date: ${handoverMeta.date} | From: ${handoverMeta.from} | To: ${handoverMeta.to} | Time: ${handoverMeta.time}\n\n` + 
-                  editableRows.map((r, idx) => `
-Patient #${idx + 1}
-----------------------------------------
-[Patient Label]: ${r.bed}, ${r.name}, ${r.ageGender}
-[Presenting complaints]: ${r.complaints}
-[Past medical history]: ${r.history}
-[Provisional diagnosis/Initial assessment]: ${r.assessment}
-[Management plan Done]: ${r.planDone}
-[Management plan To be done]: ${r.planToBeDone}
-[Bystander update]: ${r.bystander}
-`).join("\n");
+                const buildFormattedCard = (r: HandoverTableRow, idx: number) => {
+                  return `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+1. BED NO + NAME: ${r.bed} · ${r.name}
+   ${r.ageGender} · ${r.erNo || ''} · ${r.doctor || ''} · ${r.stayDuration || ''}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+2. INITIAL ASSESSMENT & CHRONOLOGICAL NOTES (Oldest → Newest):
+${r.chronologicalNotes || 'No notes logged'}
+
+   PRESENTING COMPLAINT:
+${r.complaints}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+3. PAST MEDICAL HISTORY:
+${r.history}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+4. PROVISIONAL DIAGNOSIS & ASSESSMENT:
+${r.assessment}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+5. MANAGEMENT PLAN:
+   [DONE ✓]
+${r.planDone}
+
+   [TO BE DONE □]
+${r.planToBeDone}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+6. BYSTANDER UPDATE & VITALS:
+   [Bystander]: ${r.bystander}
+   [Vitals]: ${r.vitals || 'Logged'}
+${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n⚠ CRITICAL ALERTS: ${r.alerts}` : ''}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+                };
+
+                const text = `HOSPITAL HANDOVER & TRANSITION LOG\nDate: ${handoverMeta.date} | From: ${handoverMeta.from} | To: ${handoverMeta.to} | Time: ${handoverMeta.time}\n\n` + 
+                  editableRows.map(buildFormattedCard).join("\n");
                 navigator.clipboard.writeText(text).then(() => {
                   setCopiedState(prev => ({ ...prev, "sheet_copy": true }));
                   setTimeout(() => setCopiedState(prev => ({ ...prev, "sheet_copy": false })), 2000);
@@ -1203,6 +1869,17 @@ Patient #${idx + 1}
             </button>
           </div>
         </div>
+
+        {/* Gemini AI Compiling Indicator Banner */}
+        {isAiCompilingSheet && (
+          <div className="bg-gradient-to-r from-indigo-900/90 to-purple-900/90 text-white p-3.5 rounded-2xl flex items-center gap-3 no-print shadow-md animate-pulse text-xs font-semibold border border-indigo-500/30">
+            <Sparkles className="w-5 h-5 text-amber-300 animate-spin shrink-0" />
+            <div>
+              <p className="font-bold text-amber-200">ErMate Scribe extracting clinical data...</p>
+              <p className="text-[11px] text-indigo-100/80 font-normal">Extracting doctor notes, timestamps, past history, labs, and pending plans parameter-by-parameter into handover columns. Please wait a few seconds...</p>
+            </div>
+          </div>
+        )}
 
         {/* Live Interactive Metadata Configurator (Hidden during Print) */}
         <div className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 rounded-2xl grid grid-cols-2 md:grid-cols-5 gap-3.5 no-print text-xs shadow-xs animate-fade-in">
@@ -1254,170 +1931,390 @@ Patient #${idx + 1}
           </div>
         </div>
 
-        {/* Dynamic Pages representing A4 Landscape Sheets */}
-        <div className="space-y-8 print:space-y-0">
-          {pageChunks.map((chunk, pageIdx) => (
-            <div 
-              key={pageIdx} 
-              className="print-page bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 p-6 md:p-8 rounded-2xl shadow-sm text-slate-900 dark:text-white space-y-4 relative"
-            >
-              {/* Sheet Header */}
-              <div className="border-b border-slate-200 dark:border-slate-800 pb-3 flex flex-col md:flex-row items-center justify-between gap-4 text-center md:text-left">
-                <div>
-                  <div className="flex items-center gap-2 justify-center md:justify-start">
-                    <span className="font-mono bg-indigo-600 text-white text-[9px] px-1.5 py-0.5 rounded font-black tracking-widest">
-                      ERMATE
-                    </span>
-                    <h1 className="text-sm font-black tracking-wider text-slate-950 dark:text-white uppercase font-mono">
-                      {hospitalName || "RAJAGIRI HOSPITAL"} | EMERGENCY DEPARTMENT
-                    </h1>
-                  </div>
-                  <p className="text-[9px] text-slate-400 font-mono tracking-widest mt-0.5 uppercase">
-                    DOCTORS' HANDOVER SHEET &mdash; PAGE {pageIdx + 1} OF {totalPages}
-                  </p>
+        {/* Vertical Portrait A4 Handover Sheets */}
+        <div className="space-y-6 print:space-y-0">
+          <div className="print-page bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 p-4 md:p-6 rounded-2xl shadow-sm text-slate-900 dark:text-white space-y-4 relative">
+            
+            {/* Sheet Top Branding Header */}
+            <div className="border-b-2 border-slate-900 dark:border-slate-800 pb-3 flex flex-col md:flex-row items-center justify-between gap-4 text-center md:text-left">
+              <div>
+                <div className="flex items-center gap-2 justify-center md:justify-start">
+                  <span className="font-mono bg-indigo-600 text-white text-[10px] px-2 py-0.5 rounded font-black tracking-widest">
+                    ERMATE
+                  </span>
+                  <h1 className="text-base font-black tracking-wider text-slate-950 dark:text-white uppercase font-mono">
+                    {hospitalName || "RAJAGIRI HOSPITAL"} | EMERGENCY DEPARTMENT
+                  </h1>
                 </div>
-                
-                {/* Meta details */}
-                <div className="flex flex-wrap items-center justify-center md:justify-end gap-x-4 gap-y-1 text-[10px] font-mono text-slate-500 dark:text-slate-400">
-                  <div><strong>DATE:</strong> {handoverMeta.date}</div>
-                  <div><strong>FROM:</strong> {handoverMeta.from}</div>
-                  <div><strong>TO:</strong> {handoverMeta.to}</div>
-                  <div><strong>TIME:</strong> {handoverMeta.time}</div>
-                </div>
+                <p className="text-[10px] text-slate-500 dark:text-slate-400 font-mono tracking-widest mt-0.5 uppercase font-bold">
+                  DOCTORS' CLINICAL HANDOVER SHEET &mdash; VERTICAL PORTRAIT LOG
+                </p>
               </div>
-
-              {/* Table Grid */}
-              <div className="overflow-x-auto">
-                <table className="w-full border-collapse text-xs font-sans text-left">
-                  <thead>
-                    <tr className="bg-slate-50 dark:bg-slate-900 border-b border-slate-300 dark:border-slate-800">
-                      <th rowSpan={2} className="border border-slate-300 dark:border-slate-800 p-2 font-bold text-slate-700 dark:text-slate-300 w-[15%]">Patient Label</th>
-                      <th rowSpan={2} className="border border-slate-300 dark:border-slate-800 p-2 font-bold text-slate-700 dark:text-slate-300 w-[15%]">Presenting complaints</th>
-                      <th rowSpan={2} className="border border-slate-300 dark:border-slate-800 p-2 font-bold text-slate-700 dark:text-slate-300 w-[13%]">Past medical history</th>
-                      <th rowSpan={2} className="border border-slate-300 dark:border-slate-800 p-2 font-bold text-slate-700 dark:text-slate-300 w-[20%]">Provisional diagnosis / Initial Assessment Note</th>
-                      <th colSpan={2} className="border border-slate-300 dark:border-slate-800 p-2 font-bold text-slate-700 dark:text-slate-300 w-[27%] text-center">Management plan</th>
-                      <th rowSpan={2} className="border border-slate-300 dark:border-slate-800 p-2 font-bold text-slate-700 dark:text-slate-300 w-[10%] font-semibold">Bystander update / given time</th>
-                    </tr>
-                    <tr className="bg-slate-50 dark:bg-slate-900 border-b border-slate-300 dark:border-slate-800">
-                      <th className="border border-slate-300 dark:border-slate-800 p-2 font-bold text-slate-700 dark:text-slate-300 w-[13%]">Done (ECG, VBG, Echo, Investigations)</th>
-                      <th className="border border-slate-300 dark:border-slate-800 p-2 font-bold text-slate-700 dark:text-slate-300 w-[14%]">To Be Done / Pending</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {chunk.map((row) => (
-                      <tr key={row.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-900/30 transition-colors">
-                        {/* Patient Label */}
-                        <td className="border border-slate-300 dark:border-slate-800 p-2.5 align-top space-y-1.5 bg-slate-50/30 dark:bg-slate-900/10">
-                          <div className="flex items-center justify-between">
-                            <input
-                              type="text"
-                              value={row.bed}
-                              onChange={(e) => handleUpdateCell(row.id, "bed", e.target.value)}
-                              className="bg-transparent border-none p-0 font-bold focus:outline-none focus:ring-0 text-slate-800 dark:text-slate-100 font-mono text-[11px] w-full"
-                              placeholder="Bed / Room"
-                            />
-                          </div>
-                          <input
-                            type="text"
-                            value={row.name}
-                            onChange={(e) => handleUpdateCell(row.id, "name", e.target.value)}
-                            className="bg-transparent border-none p-0 font-bold focus:outline-none focus:ring-0 text-xs text-indigo-600 dark:text-indigo-400 w-full"
-                            placeholder="Patient Name"
-                          />
-                          <input
-                            type="text"
-                            value={row.ageGender}
-                            onChange={(e) => handleUpdateCell(row.id, "ageGender", e.target.value)}
-                            className="bg-transparent border-none p-0 text-[10px] focus:outline-none focus:ring-0 text-slate-500 w-full font-mono"
-                            placeholder="Age/Sex"
-                          />
-                          <div className="no-print pt-2 flex justify-end">
-                            <button
-                              onClick={() => setEditableRows(prev => prev.filter(r => r.id !== row.id))}
-                              className="text-[9px] text-red-500 hover:underline flex items-center gap-0.5 cursor-pointer font-bold"
-                            >
-                              <Trash2 className="w-2.5 h-2.5" /> Remove Row
-                            </button>
-                          </div>
-                        </td>
-
-                        {/* Presenting complaints */}
-                        <td className="border border-slate-300 dark:border-slate-800 p-2 align-top">
-                          <AutoResizeTextarea
-                            value={row.complaints}
-                            onChange={(e) => handleUpdateCell(row.id, "complaints", e.target.value)}
-                            className="bg-transparent border-none p-0 focus:outline-none focus:ring-0 w-full text-[11px] resize-none leading-relaxed text-slate-700 dark:text-slate-300 font-sans min-h-[140px] print:hidden"
-                            placeholder="Complaints details..."
-                          />
-                          <div className="print-mirror-div">{row.complaints}</div>
-                        </td>
-
-                        {/* Past History */}
-                        <td className="border border-slate-300 dark:border-slate-800 p-2 align-top">
-                          <AutoResizeTextarea
-                            value={row.history}
-                            onChange={(e) => handleUpdateCell(row.id, "history", e.target.value)}
-                            className="bg-transparent border-none p-0 focus:outline-none focus:ring-0 w-full text-[11px] resize-none leading-relaxed text-slate-700 dark:text-slate-300 font-sans min-h-[140px] print:hidden"
-                            placeholder="PMH history..."
-                          />
-                          <div className="print-mirror-div">{row.history}</div>
-                        </td>
-
-                        {/* Assessment */}
-                        <td className="border border-slate-300 dark:border-slate-800 p-2 align-top">
-                          <AutoResizeTextarea
-                            value={row.assessment}
-                            onChange={(e) => handleUpdateCell(row.id, "assessment", e.target.value)}
-                            className="bg-transparent border-none p-0 focus:outline-none focus:ring-0 w-full text-[11px] resize-none leading-relaxed text-slate-700 dark:text-slate-300 font-sans min-h-[140px] print:hidden"
-                            placeholder="Provisional Diagnosis & Initial Assessment Note..."
-                          />
-                          <div className="print-mirror-div">{row.assessment}</div>
-                        </td>
-
-                        {/* Management Done */}
-                        <td className="border border-slate-300 dark:border-slate-800 p-2 align-top">
-                          <AutoResizeTextarea
-                            value={row.planDone}
-                            onChange={(e) => handleUpdateCell(row.id, "planDone", e.target.value)}
-                            className="bg-transparent border-none p-0 focus:outline-none focus:ring-0 w-full text-[11px] resize-none leading-relaxed text-slate-700 dark:text-slate-300 font-sans min-h-[140px] print:hidden"
-                            placeholder="ECG, VBG, Echo, Investigations & other plans done..."
-                          />
-                          <div className="print-mirror-div">{row.planDone}</div>
-                        </td>
-
-                        {/* Management To Be Done */}
-                        <td className="border border-slate-300 dark:border-slate-800 p-2 align-top">
-                          <AutoResizeTextarea
-                            value={row.planToBeDone}
-                            onChange={(e) => handleUpdateCell(row.id, "planToBeDone", e.target.value)}
-                            className="bg-transparent border-none p-0 focus:outline-none focus:ring-0 w-full text-[11px] resize-none leading-relaxed text-slate-700 dark:text-slate-300 font-sans min-h-[140px] print:hidden"
-                            placeholder="Pending actions..."
-                          />
-                          <div className="print-mirror-div">{row.planToBeDone}</div>
-                        </td>
-
-                        {/* Bystander update */}
-                        <td className="border border-slate-300 dark:border-slate-800 p-2 align-top">
-                          <AutoResizeTextarea
-                            value={row.bystander}
-                            onChange={(e) => handleUpdateCell(row.id, "bystander", e.target.value)}
-                            className="bg-transparent border-none p-0 focus:outline-none focus:ring-0 w-full text-[11px] resize-none leading-relaxed text-slate-700 dark:text-slate-300 font-sans min-h-[140px] print:hidden"
-                            placeholder="Bystander update details..."
-                          />
-                          <div className="print-mirror-div">{row.bystander}</div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              {/* Page Footer Warning */}
-              <div className="border-t border-slate-300 dark:border-slate-800 pt-3 text-center text-[9px] text-slate-400 font-mono leading-relaxed">
-                <p>CONFIDENTIAL • PROTECTED PATIENT TRANSITION LOG &mdash; Ensure secure handover transition and immediate team bedside endorsement.</p>
+              
+              {/* Meta details */}
+              <div className="flex flex-wrap items-center justify-center md:justify-end gap-x-4 gap-y-1 text-xs font-mono text-slate-700 dark:text-slate-300">
+                <div><strong>DATE:</strong> {handoverMeta.date}</div>
+                <div><strong>FROM:</strong> {handoverMeta.from}</div>
+                <div><strong>TO:</strong> {handoverMeta.to}</div>
+                <div><strong>TIME:</strong> {handoverMeta.time}</div>
               </div>
             </div>
-          ))}
+
+            {/* Patients Vertical Card List */}
+            <div className="space-y-6 print:space-y-4">
+              {editableRows.map((row) => (
+                <div 
+                  key={row.id} 
+                  className="print-card border-2 border-slate-900 dark:border-slate-700 rounded-xl overflow-hidden bg-white dark:bg-slate-950 shadow-xs print:shadow-none print:border-slate-900 break-inside-avoid font-sans"
+                >
+                  {/* 1. HEADER BAR: BED NO + NAME */}
+                  <div className="bg-slate-900 dark:bg-slate-900 text-white p-2.5 md:p-3 border-b-2 border-slate-900 flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2.5">
+                      <div className="bg-indigo-600 text-white text-xs font-mono font-black px-2 py-0.5 rounded tracking-wide uppercase">
+                        <input
+                          type="text"
+                          value={row.bed}
+                          onChange={(e) => handleUpdateCell(row.id, "bed", e.target.value)}
+                          className="bg-transparent border-none text-white text-center w-16 focus:outline-none font-mono font-black"
+                          placeholder="Bed #"
+                        />
+                      </div>
+                      <input
+                        type="text"
+                        value={row.name}
+                        onChange={(e) => handleUpdateCell(row.id, "name", e.target.value)}
+                        className="text-base font-black tracking-tight text-white uppercase font-mono bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-indigo-400 rounded px-1"
+                        placeholder="PATIENT NAME"
+                      />
+                    </div>
+                    <div className="text-xs font-mono font-bold text-slate-200 flex flex-wrap items-center gap-2 md:gap-3">
+                      <input
+                        type="text"
+                        value={row.ageGender}
+                        onChange={(e) => handleUpdateCell(row.id, "ageGender", e.target.value)}
+                        className="bg-transparent border-none text-slate-200 font-mono font-bold text-xs w-14 text-right focus:outline-none"
+                        placeholder="Age/Sex"
+                      />
+                      {row.erNo && <span className="text-amber-300 font-mono">· {row.erNo}</span>}
+                      {row.doctor && <span className="text-indigo-200 font-mono">· {row.doctor}</span>}
+                      {row.stayDuration && <span className="text-emerald-300 font-mono">· {row.stayDuration}</span>}
+                    </div>
+                  </div>
+
+                  {/* 2. PRESENTING COMPLAINT & INITIAL ASSESSMENT CHRONOLOGICAL NOTES */}
+                  <div className="border-b border-slate-300 dark:border-slate-800 divide-y divide-slate-300 dark:divide-slate-800">
+                    {/* PRESENTING COMPLAINT: Full width · Short · Clean */}
+                    <div className="p-3 bg-amber-50/30 dark:bg-amber-950/10">
+                      <div className="flex items-center justify-between mb-1.5 pb-1 border-b border-amber-200 dark:border-amber-900/30">
+                        <span className="text-[10.5px] font-black uppercase tracking-wider text-amber-800 dark:text-amber-400 font-mono">
+                          PRESENTING COMPLAINT
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => toggleCellEditing(row.id, "complaints")}
+                          className="no-print text-[10px] text-amber-700 dark:text-amber-400 hover:text-amber-900 font-mono font-bold flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-amber-100 dark:hover:bg-amber-900/40 cursor-pointer"
+                        >
+                          {editingCells[`${row.id}_complaints`] ? (
+                            <><Check className="w-3 h-3 text-emerald-600" /> Done</>
+                          ) : (
+                            <><Pencil className="w-2.5 h-2.5" /> Edit text</>
+                          )}
+                        </button>
+                      </div>
+                      {editingCells[`${row.id}_complaints`] ? (
+                        <AutoResizeTextarea
+                          value={row.complaints}
+                          onChange={(e) => handleUpdateCell(row.id, "complaints", e.target.value)}
+                          className="bg-white dark:bg-slate-900 border border-amber-300 dark:border-amber-800 p-2 rounded focus:outline-none focus:ring-1 focus:ring-amber-500 w-full text-xs leading-relaxed text-slate-800 dark:text-slate-200 font-sans resize-none min-h-[40px]"
+                          placeholder="Altered sensorium x 1 month..."
+                        />
+                      ) : (
+                        <div className="text-xs font-sans whitespace-pre-wrap text-slate-900 dark:text-slate-100 leading-relaxed bg-white/60 dark:bg-slate-900/40 p-2 rounded border border-amber-100 dark:border-amber-950/30">
+                          <HighlightedHandoverText text={row.complaints} />
+                        </div>
+                      )}
+                    </div>
+
+                    {/* 2. INITIAL ASSESSMENT & CHRONOLOGICAL NOTES (OLDEST -> NEWEST): Multi-column (1, 2, or 3 cols based on entry count) */}
+                    <div className="p-3 bg-slate-50/50 dark:bg-slate-900/30">
+                      <div className="flex items-center justify-between mb-1.5 pb-1 border-b border-slate-200 dark:border-slate-800">
+                        <span className="text-[10.5px] font-black uppercase tracking-wider text-indigo-700 dark:text-indigo-400 font-mono flex items-center gap-1">
+                          2. INITIAL ASSESSMENT &amp; CHRONOLOGICAL NOTES (OLDEST &rarr; NEWEST)
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => toggleCellEditing(row.id, "chronologicalNotes")}
+                          className="no-print text-[10px] text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 font-mono font-bold flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-indigo-100 dark:hover:bg-indigo-900/40 cursor-pointer"
+                        >
+                          {editingCells[`${row.id}_chronologicalNotes`] ? (
+                            <><Check className="w-3 h-3 text-emerald-600" /> Done</>
+                          ) : (
+                            <><Pencil className="w-2.5 h-2.5" /> Edit text</>
+                          )}
+                        </button>
+                      </div>
+                      {editingCells[`${row.id}_chronologicalNotes`] ? (
+                        <AutoResizeTextarea
+                          value={row.chronologicalNotes || ""}
+                          onChange={(e) => handleUpdateCell(row.id, "chronologicalNotes", e.target.value)}
+                          className="bg-white dark:bg-slate-900 border border-indigo-300 dark:border-indigo-800 p-2 rounded focus:outline-none focus:ring-1 focus:ring-indigo-500 w-full text-xs leading-relaxed text-slate-800 dark:text-slate-200 font-mono resize-none min-h-[60px]"
+                          placeholder="20-07 00:30 Dr. Fathim · BP 150/80 · GCS normal..."
+                        />
+                      ) : (
+                        <div className="pt-1">
+                          <MultiColumnEntriesView text={row.chronologicalNotes} fontFamily="font-mono" />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* 3. PAST MEDICAL HISTORY */}
+                  <div className="p-3 border-b border-slate-300 dark:border-slate-800 bg-white dark:bg-slate-950">
+                    <div className="flex items-center justify-between mb-1.5 pb-1 border-b border-slate-200 dark:border-slate-800">
+                      <span className="text-[10.5px] font-black uppercase tracking-wider text-slate-700 dark:text-slate-300 font-mono">
+                        3. PAST MEDICAL HISTORY
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => toggleCellEditing(row.id, "history")}
+                        className="no-print text-[10px] text-slate-600 dark:text-slate-400 hover:text-slate-800 font-mono font-bold flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-slate-100 dark:hover:bg-slate-900/40 cursor-pointer"
+                      >
+                        {editingCells[`${row.id}_history`] ? (
+                          <><Check className="w-3 h-3 text-emerald-600" /> Done</>
+                        ) : (
+                          <><Pencil className="w-2.5 h-2.5" /> Edit text</>
+                        )}
+                      </button>
+                    </div>
+                    {editingCells[`${row.id}_history`] ? (
+                      <AutoResizeTextarea
+                        value={row.history}
+                        onChange={(e) => handleUpdateCell(row.id, "history", e.target.value)}
+                        className="bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 p-2 rounded focus:outline-none focus:ring-1 focus:ring-slate-500 w-full text-xs leading-relaxed text-slate-800 dark:text-slate-200 font-sans resize-none min-h-[40px]"
+                        placeholder="T2DM · HTN · Meds · Surgical history..."
+                      />
+                    ) : (
+                      <div className="text-xs font-sans whitespace-pre-wrap text-slate-900 dark:text-slate-100 leading-relaxed bg-slate-50/50 dark:bg-slate-900/30 p-2 rounded border border-slate-100 dark:border-slate-900">
+                        <HighlightedHandoverText text={row.history} />
+                      </div>
+                    )}
+                  </div>
+
+                  {/* 4. PROVISIONAL DIAGNOSIS & ASSESSMENT */}
+                  <div className="p-3 border-b border-slate-300 dark:border-slate-800 bg-purple-50/20 dark:bg-purple-950/10">
+                    <div className="flex items-center justify-between mb-1.5 pb-1 border-b border-slate-200 dark:border-slate-800">
+                      <span className="text-[10.5px] font-black uppercase tracking-wider text-purple-700 dark:text-purple-400 font-mono">
+                        4. PROVISIONAL DIAGNOSIS &amp; INVESTIGATION FINDINGS
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => toggleCellEditing(row.id, "assessment")}
+                        className="no-print text-[10px] text-purple-600 dark:text-purple-400 hover:text-purple-800 font-mono font-bold flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-purple-100 dark:hover:bg-purple-900/40 cursor-pointer"
+                      >
+                        {editingCells[`${row.id}_assessment`] ? (
+                          <><Check className="w-3 h-3 text-emerald-600" /> Done</>
+                        ) : (
+                          <><Pencil className="w-2.5 h-2.5" /> Edit text</>
+                        )}
+                      </button>
+                    </div>
+                    {editingCells[`${row.id}_assessment`] ? (
+                      <AutoResizeTextarea
+                        value={row.assessment}
+                        onChange={(e) => handleUpdateCell(row.id, "assessment", e.target.value)}
+                        className="bg-white dark:bg-slate-900 border border-purple-300 dark:border-purple-800 p-2 rounded focus:outline-none focus:ring-1 focus:ring-purple-500 w-full text-xs leading-relaxed text-slate-800 dark:text-slate-200 font-sans resize-none min-h-[50px]"
+                        placeholder="Provisional Diagnosis & MRI/CT/Lab report details..."
+                      />
+                    ) : (
+                      <div className="text-xs font-sans whitespace-pre-wrap text-slate-900 dark:text-slate-100 leading-relaxed bg-white/60 dark:bg-slate-900/40 p-2 rounded border border-purple-100 dark:border-purple-950/30">
+                        <HighlightedHandoverText text={row.assessment} />
+                      </div>
+                    )}
+                  </div>
+
+                  {/* 5. MANAGEMENT PLAN (DONE ✓ | TO BE DONE □) */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 border-b border-slate-300 dark:border-slate-800 divide-y md:divide-y-0 md:divide-x divide-slate-300 dark:divide-slate-800">
+                    {/* Left: DONE ✓ */}
+                    <div className="p-3 bg-emerald-50/30 dark:bg-emerald-950/10">
+                      <div className="flex items-center justify-between mb-1.5 pb-1 border-b border-emerald-200 dark:border-emerald-900/30">
+                        <span className="text-[10.5px] font-black uppercase tracking-wider text-emerald-700 dark:text-emerald-400 font-mono flex items-center gap-1">
+                          5. MANAGEMENT PLAN &mdash; DONE ✓
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => toggleCellEditing(row.id, "planDone")}
+                          className="no-print text-[10px] text-emerald-600 dark:text-emerald-400 hover:text-emerald-800 font-mono font-bold flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-emerald-100 dark:hover:bg-emerald-900/40 cursor-pointer"
+                        >
+                          {editingCells[`${row.id}_planDone`] ? (
+                            <><Check className="w-3 h-3 text-emerald-600" /> Done</>
+                          ) : (
+                            <><Pencil className="w-2.5 h-2.5" /> Edit text</>
+                          )}
+                        </button>
+                      </div>
+                      {editingCells[`${row.id}_planDone`] ? (
+                        <AutoResizeTextarea
+                          value={row.planDone}
+                          onChange={(e) => handleUpdateCell(row.id, "planDone", e.target.value)}
+                          className="bg-white dark:bg-slate-900 border border-emerald-300 dark:border-emerald-800 p-2 rounded focus:outline-none focus:ring-1 focus:ring-emerald-500 w-full text-xs leading-relaxed text-slate-800 dark:text-slate-200 font-sans resize-none min-h-[50px]"
+                          placeholder="✓ MRI done · ✓ VBG x3 · ✓ Cardiology consult..."
+                        />
+                      ) : (
+                        <div className="pt-1">
+                          <MultiColumnEntriesView text={row.planDone} fontFamily="font-sans" />
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Right: TO BE DONE □ */}
+                    <div className="p-3 bg-blue-50/30 dark:bg-blue-950/10">
+                      <div className="flex items-center justify-between mb-1.5 pb-1 border-b border-blue-200 dark:border-blue-900/30">
+                        <span className="text-[10.5px] font-black uppercase tracking-wider text-blue-700 dark:text-blue-400 font-mono flex items-center gap-1">
+                          MANAGEMENT PLAN &mdash; TO BE DONE □
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => toggleCellEditing(row.id, "planToBeDone")}
+                          className="no-print text-[10px] text-blue-600 dark:text-blue-400 hover:text-blue-800 font-mono font-bold flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-blue-100 dark:hover:bg-blue-900/40 cursor-pointer"
+                        >
+                          {editingCells[`${row.id}_planToBeDone`] ? (
+                            <><Check className="w-3 h-3 text-emerald-600" /> Done</>
+                          ) : (
+                            <><Pencil className="w-2.5 h-2.5" /> Edit text</>
+                          )}
+                        </button>
+                      </div>
+                      {editingCells[`${row.id}_planToBeDone`] ? (
+                        <AutoResizeTextarea
+                          value={row.planToBeDone}
+                          onChange={(e) => handleUpdateCell(row.id, "planToBeDone", e.target.value)}
+                          className="bg-white dark:bg-slate-900 border border-blue-300 dark:border-blue-800 p-2 rounded focus:outline-none focus:ring-1 focus:ring-blue-500 w-full text-xs leading-relaxed text-slate-800 dark:text-slate-200 font-sans resize-none min-h-[50px]"
+                          placeholder="□ PAC — URGENT · □ Urine C&S · □ Biopsy Thu..."
+                        />
+                      ) : (
+                        <div className="pt-1">
+                          <MultiColumnEntriesView text={row.planToBeDone} fontFamily="font-sans" />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* 6. BYSTANDER UPDATE | VITALS */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-slate-300 dark:divide-slate-800">
+                    {/* Left: BYSTANDER UPDATE */}
+                    <div className="p-3 bg-white dark:bg-slate-950">
+                      <div className="flex items-center justify-between mb-1.5 pb-1 border-b border-slate-200 dark:border-slate-800">
+                        <span className="text-[10.5px] font-black uppercase tracking-wider text-slate-700 dark:text-slate-300 font-mono">
+                          6. BYSTANDER UPDATE &amp; CONSENTS
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => toggleCellEditing(row.id, "bystander")}
+                          className="no-print text-[10px] text-slate-600 dark:text-slate-400 hover:text-slate-800 font-mono font-bold flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-slate-100 dark:hover:bg-slate-900/40 cursor-pointer"
+                        >
+                          {editingCells[`${row.id}_bystander`] ? (
+                            <><Check className="w-3 h-3 text-emerald-600" /> Done</>
+                          ) : (
+                            <><Pencil className="w-2.5 h-2.5" /> Edit text</>
+                          )}
+                        </button>
+                      </div>
+                      {editingCells[`${row.id}_bystander`] ? (
+                        <AutoResizeTextarea
+                          value={row.bystander}
+                          onChange={(e) => handleUpdateCell(row.id, "bystander", e.target.value)}
+                          className="bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 p-2 rounded focus:outline-none focus:ring-1 focus:ring-slate-500 w-full text-xs leading-relaxed text-slate-800 dark:text-slate-200 font-sans resize-none min-h-[35px]"
+                          placeholder="Wife present · Consent done · Pending biopsy consent..."
+                        />
+                      ) : (
+                        <div className="text-xs font-sans whitespace-pre-wrap text-slate-900 dark:text-slate-100 leading-relaxed bg-slate-50/50 dark:bg-slate-900/30 p-2 rounded border border-slate-100 dark:border-slate-900">
+                          <HighlightedHandoverText text={row.bystander} />
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Right: VITALS */}
+                    <div className="p-3 bg-slate-50/50 dark:bg-slate-900/30">
+                      <div className="flex items-center justify-between mb-1.5 pb-1 border-b border-slate-200 dark:border-slate-800">
+                        <span className="text-[10.5px] font-black uppercase tracking-wider text-indigo-700 dark:text-indigo-400 font-mono">
+                          LATEST VITALS &amp; RECORDED TIME
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => toggleCellEditing(row.id, "vitals")}
+                          className="no-print text-[10px] text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 font-mono font-bold flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-indigo-100 dark:hover:bg-indigo-900/40 cursor-pointer"
+                        >
+                          {editingCells[`${row.id}_vitals`] ? (
+                            <><Check className="w-3 h-3 text-emerald-600" /> Done</>
+                          ) : (
+                            <><Pencil className="w-2.5 h-2.5" /> Edit text</>
+                          )}
+                        </button>
+                      </div>
+                      {editingCells[`${row.id}_vitals`] ? (
+                        <AutoResizeTextarea
+                          value={row.vitals || ""}
+                          onChange={(e) => handleUpdateCell(row.id, "vitals", e.target.value)}
+                          className="bg-white dark:bg-slate-900 border border-indigo-300 dark:border-indigo-800 p-2 rounded focus:outline-none focus:ring-1 focus:ring-indigo-500 w-full text-xs font-mono leading-relaxed text-slate-800 dark:text-slate-200 resize-none min-h-[35px]"
+                          placeholder="BP 130/80 · HR 72 · GRBS 415⚠ · GCS E4V5M6..."
+                        />
+                      ) : (
+                        <div className="text-xs font-mono whitespace-pre-wrap text-slate-900 dark:text-slate-100 leading-relaxed bg-white/60 dark:bg-slate-900/40 p-2 rounded border border-indigo-100 dark:border-indigo-950/30">
+                          <HighlightedHandoverText text={row.vitals || ""} />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* FOOTER WARNING / ALERT STRIP */}
+                  {row.alerts && row.alerts.trim().length > 0 && (
+                    <div className="bg-red-600 text-white p-2 text-xs font-mono font-bold flex items-center justify-between border-t-2 border-red-700">
+                      <div className="flex items-center gap-1.5">
+                        <AlertTriangle className="w-4 h-4 text-amber-200 shrink-0" />
+                        <span className="tracking-wide">{row.alerts}</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => toggleCellEditing(row.id, "alerts")}
+                        className="no-print text-[10px] text-red-100 hover:text-white font-mono font-bold flex items-center gap-1 px-1.5 py-0.5 rounded bg-red-700/60 hover:bg-red-700 cursor-pointer"
+                      >
+                        {editingCells[`${row.id}_alerts`] ? (
+                          <><Check className="w-3 h-3 text-emerald-300" /> Done</>
+                        ) : (
+                          <><Pencil className="w-2.5 h-2.5" /> Edit</>
+                        )}
+                      </button>
+                    </div>
+                  )}
+                  {editingCells[`${row.id}_alerts`] && (
+                    <div className="p-2 bg-red-50 dark:bg-red-950/30 border-t border-red-200 dark:border-red-900">
+                      <AutoResizeTextarea
+                        value={row.alerts || ""}
+                        onChange={(e) => handleUpdateCell(row.id, "alerts", e.target.value)}
+                        className="bg-white dark:bg-slate-900 border border-red-300 dark:border-red-800 p-2 rounded focus:outline-none focus:ring-1 focus:ring-red-500 w-full text-xs font-mono leading-relaxed text-red-800 dark:text-red-200 resize-none min-h-[35px]"
+                        placeholder="⚠ High risk alerts / Lab abnormalities..."
+                      />
+                    </div>
+                  )}
+
+                  {/* Card Actions (no-print) */}
+                  <div className="no-print bg-slate-100 dark:bg-slate-900 px-3 py-1.5 border-t border-slate-200 dark:border-slate-800 flex items-center justify-end gap-2">
+                    <button
+                      onClick={() => setEditableRows(prev => prev.filter(r => r.id !== row.id))}
+                      className="text-xs text-red-600 hover:text-red-700 dark:text-red-400 font-bold flex items-center gap-1 cursor-pointer"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" /> Remove Patient Card
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Sheet Footer Notice */}
+            <div className="border-t border-slate-300 dark:border-slate-800 pt-3 text-center text-[9px] text-slate-400 font-mono leading-relaxed">
+              <p>CONFIDENTIAL • PROTECTED PATIENT TRANSITION LOG &mdash; Ensure secure handover transition and immediate team bedside endorsement.</p>
+            </div>
+          </div>
         </div>
 
         {/* Add custom empty row button and print notice (hidden on print) */}
@@ -2041,7 +2938,7 @@ Patient #${idx + 1}
                 </div>
                 <div>
                   <h3 className="text-sm font-black text-slate-800 dark:text-white flex items-center gap-1.5">
-                    ErMate AI Clinical Scribe Chat
+                    ErMate Clinical Scribe Chat
                     <span className="text-[8px] bg-indigo-50 dark:bg-indigo-950/80 text-indigo-700 dark:text-indigo-300 px-1.5 py-0.5 rounded-full font-black uppercase tracking-widest border border-indigo-100 dark:border-indigo-900/40">
                       Live
                     </span>
@@ -2161,10 +3058,10 @@ Patient #${idx + 1}
 
                             {/* SBAR Grid */}
                             <div className="bg-slate-50 dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-900 space-y-2 text-[11px] leading-relaxed">
-                              <p><strong className="text-blue-700 dark:text-blue-400 font-black uppercase tracking-wider text-[9px] block mb-0.5">Situation</strong> {msg.parsedPatient.structuredSBAR.situation}</p>
-                              <p><strong className="text-purple-700 dark:text-purple-400 font-black uppercase tracking-wider text-[9px] block mb-0.5">Background</strong> {msg.parsedPatient.structuredSBAR.background}</p>
-                              <p><strong className="text-amber-700 dark:text-amber-400 font-black uppercase tracking-wider text-[9px] block mb-0.5">Assessment</strong> {msg.parsedPatient.structuredSBAR.assessment}</p>
-                              <p><strong className="text-emerald-700 dark:text-emerald-400 font-black uppercase tracking-wider text-[9px] block mb-0.5">Recommendation</strong> {msg.parsedPatient.structuredSBAR.recommendation}</p>
+                              <p><strong className="text-blue-700 dark:text-blue-400 font-black uppercase tracking-wider text-[9px] block mb-0.5">Situation</strong> <HighlightedHandoverText text={msg.parsedPatient.structuredSBAR.situation} /></p>
+                              <p><strong className="text-purple-700 dark:text-purple-400 font-black uppercase tracking-wider text-[9px] block mb-0.5">Background</strong> <HighlightedHandoverText text={msg.parsedPatient.structuredSBAR.background} /></p>
+                              <p><strong className="text-amber-700 dark:text-amber-400 font-black uppercase tracking-wider text-[9px] block mb-0.5">Assessment</strong> <HighlightedHandoverText text={msg.parsedPatient.structuredSBAR.assessment} /></p>
+                              <p><strong className="text-emerald-700 dark:text-emerald-400 font-black uppercase tracking-wider text-[9px] block mb-0.5">Recommendation</strong> <HighlightedHandoverText text={msg.parsedPatient.structuredSBAR.recommendation} /></p>
                             </div>
 
                             {/* Auto Saved confirmation pill & edit details */}
@@ -2521,7 +3418,7 @@ Patient #${idx + 1}
                 </div>
               ) : (
                 <div className="space-y-3 max-h-[300px] overflow-y-auto pr-1">
-                  {quickPasteList.map((item, idx) => {
+                  {sortRowsByBedNumber<QuickPastePatient>(quickPasteList).map((item, idx) => {
                     const isSelected = selectedQuickPasteIds.includes(item.id);
                     return (
                       <div 
@@ -2591,10 +3488,10 @@ Patient #${idx + 1}
                             View Structured SBAR Card
                           </summary>
                           <div className="bg-white dark:bg-slate-950 border border-slate-150 dark:border-slate-850 rounded-lg p-2.5 mt-2 space-y-1.5 leading-relaxed text-slate-700 dark:text-slate-300 shadow-3xs">
-                            <p><strong className="text-blue-700 dark:text-blue-400 font-bold">[S]:</strong> {item.structuredSBAR?.situation}</p>
-                            <p><strong className="text-purple-700 dark:text-purple-400 font-bold">[B]:</strong> {item.structuredSBAR?.background}</p>
-                            <p><strong className="text-amber-700 dark:text-amber-400 font-bold">[A]:</strong> {item.structuredSBAR?.assessment}</p>
-                            <p><strong className="text-emerald-700 dark:text-emerald-400 font-bold">[R]:</strong> {item.structuredSBAR?.recommendation}</p>
+                            <p><strong className="text-blue-700 dark:text-blue-400 font-bold">[S]:</strong> <HighlightedHandoverText text={item.structuredSBAR?.situation} /></p>
+                            <p><strong className="text-purple-700 dark:text-purple-400 font-bold">[B]:</strong> <HighlightedHandoverText text={item.structuredSBAR?.background} /></p>
+                            <p><strong className="text-amber-700 dark:text-amber-400 font-bold">[A]:</strong> <HighlightedHandoverText text={item.structuredSBAR?.assessment} /></p>
+                            <p><strong className="text-emerald-700 dark:text-emerald-400 font-bold">[R]:</strong> <HighlightedHandoverText text={item.structuredSBAR?.recommendation} /></p>
                           </div>
                         </details>
 
@@ -2882,6 +3779,17 @@ Patient #${idx + 1}
                     className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 font-medium text-slate-800 dark:text-slate-100"
                   />
                 </div>
+              </div>
+
+              <div className="space-y-1">
+                <label className="font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Presenting Complaint(s) / Chief Reason for Visit</label>
+                <input
+                  type="text"
+                  value={editingPatient.presentingComplaint || ""}
+                  onChange={(e) => setEditingPatient({ ...editingPatient, presentingComplaint: e.target.value })}
+                  placeholder="e.g. Acute chest pain x 2 hours, radiating to jaw with diaphoresis"
+                  className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 font-medium text-slate-800 dark:text-slate-100"
+                />
               </div>
 
               <div className="space-y-3 pt-2 border-t border-slate-100 dark:border-slate-900">

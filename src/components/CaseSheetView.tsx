@@ -5327,7 +5327,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                 <div className="p-8 text-center border-2 border-dashed border-slate-200 dark:border-slate-800 rounded-xl">
                   <Sparkles className="w-10 h-10 mx-auto text-slate-300 dark:text-slate-700 mb-3" />
                   <p className="text-slate-600 dark:text-slate-400 font-medium">No differential list generated yet</p>
-                  <p className="text-xs text-slate-400 mt-1">Tap 'Generate Differential' above to let the Gemini engine audit patient vitals and SAMPLE history.</p>
+                  <p className="text-xs text-slate-400 mt-1">Tap 'Generate Differential' above to let the ErMate engine audit patient vitals and SAMPLE history.</p>
                 </div>
               ) : (
                 <div className="space-y-4">

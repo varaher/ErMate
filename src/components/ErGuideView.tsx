@@ -296,7 +296,7 @@ export default function ErGuideView({ onBack, isDarkMode }: EMDrugsViewProps) {
           if (result.simulated) {
             setMnemonicScanSuccess("Scan finished using backup clinical parser! Please review fields below.");
           } else {
-            setMnemonicScanSuccess("Mnemonic scan complete! Fields populated via Gemini AI.");
+            setMnemonicScanSuccess("Mnemonic scan complete! Fields populated via ErMate.");
           }
         } else {
           setMnemonicScanError(result.error || "Failed to analyze the mnemonic screenshot.");
@@ -1515,7 +1515,7 @@ export default function ErGuideView({ onBack, isDarkMode }: EMDrugsViewProps) {
                       </div>
                       
                       <p className="text-[10px] text-slate-400 dark:text-slate-500 leading-normal">
-                        Have a screenshot, handwritten note, or reference card? Upload it here! ErMate AI will scan and extract the Title, Mnemonic Key, Category, and detailed Breakdown to populate the fields below automatically.
+                        Have a screenshot, handwritten note, or reference card? Upload it here! ErMate will scan and extract the Title, Mnemonic Key, Category, and detailed Breakdown to populate the fields below automatically.
                       </p>
 
                       <div className="flex flex-col items-center justify-center border border-dashed border-slate-200 dark:border-slate-800 rounded-lg p-4 bg-white/50 dark:bg-slate-950/40 hover:bg-slate-50 dark:hover:bg-slate-950/80 transition-all cursor-pointer relative group">

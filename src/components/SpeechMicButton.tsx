@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { Mic, MicOff, Brain, Sparkles, RefreshCw, Pause, Play, Trash2, Check, X } from "lucide-react";
 import { transcribeAudioLocally, ScanProgress } from "../utils/localTranscribe";
+import { sanitizeDoctorError } from "../utils/sanitizeError";
 import { auth, db, storage } from "../firebase";
 import { doc, getDoc } from "firebase/firestore";
 import { ref, uploadBytes } from "firebase/storage";
@@ -18,18 +19,26 @@ async function uploadAudioIfConsented(blob: Blob) {
       if (profileData && profileData.hasConsentedToLearning === true) {
         console.log("Learning consent is granted. Uploading de-identified clinical audio to Google Cloud Storage...");
         const fileRef = ref(storage, `voice_recordings/${currentUser.uid}/${Date.now()}_recording.webm`);
-        await uploadBytes(fileRef, blob, {
+        
+        // Timeout after 6 seconds to prevent storage/retry-limit-exceeded if Cloud Storage bucket is offline
+        const uploadPromise = uploadBytes(fileRef, blob, {
           contentType: "audio/webm",
           customMetadata: {
             userId: currentUser.uid,
             timestamp: new Date().toISOString()
           }
         });
-        console.log("Audio recording successfully uploaded to Cloud Storage Mumbai.");
+
+        const timeoutPromise = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("Cloud Storage upload timeout")), 6000)
+        );
+
+        await Promise.race([uploadPromise, timeoutPromise]);
+        console.log("Audio recording successfully uploaded to Cloud Storage.");
       }
     }
-  } catch (err) {
-    console.error("Failed to upload audio to Cloud Storage:", err);
+  } catch (err: any) {
+    console.info("Cloud Storage voice recording backup skipped:", err?.message || err);
   }
 }
 
@@ -350,7 +359,7 @@ export default function SpeechMicButton({
     if (mode === "web") {
       if (!supported) {
         showToast(
-          "Speech recognition is not supported in your browser. For the best voice experience, please use Google Chrome or Safari, or configure Sarvam AI.",
+          "Speech recognition is not supported in your browser. For the best voice experience, please use Google Chrome or Safari, or use ErMate voice engine.",
           "warning"
         );
         return;
@@ -417,7 +426,23 @@ export default function SpeechMicButton({
         streamRef.current = stream;
         audioChunksRef.current = [];
         
-        const mediaRecorder = new MediaRecorder(stream);
+        const supportedTypes = [
+          "audio/webm;codecs=opus",
+          "audio/webm",
+          "audio/mp4",
+          "audio/aac",
+          "audio/ogg",
+          "audio/wav"
+        ];
+        let chosenMime = "audio/webm";
+        for (const type of supportedTypes) {
+          if (typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported(type)) {
+            chosenMime = type;
+            break;
+          }
+        }
+
+        const mediaRecorder = new MediaRecorder(stream, chosenMime ? { mimeType: chosenMime } : undefined);
         mediaRecorderRef.current = mediaRecorder;
         
         mediaRecorder.ondataavailable = (event) => {
@@ -433,7 +458,9 @@ export default function SpeechMicButton({
             return;
           }
 
-          const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
+          const actualMime = mediaRecorder.mimeType || chosenMime || "audio/webm";
+          const ext = actualMime.includes("mp4") ? "mp4" : actualMime.includes("aac") ? "aac" : actualMime.includes("ogg") ? "ogg" : actualMime.includes("wav") ? "wav" : "webm";
+          const audioBlob = new Blob(audioChunksRef.current, { type: actualMime });
           if (audioBlob.size === 0) return;
 
           // 1. Minimum check: Under VOICE_CONFIG.MIN_DURATION_SECONDS
@@ -465,7 +492,7 @@ export default function SpeechMicButton({
               });
               if (transcript) {
                 onTranscriptRef.current(transcript);
-                uploadAudioIfConsented(audioBlob).catch((e) => console.error("Cloud Storage Save Error:", e));
+                uploadAudioIfConsented(audioBlob).catch((e) => console.info("Cloud Storage Save notice:", e?.message || e));
               }
             } catch (err: any) {
               console.error("Local ML Whisper Error:", err);
@@ -477,7 +504,7 @@ export default function SpeechMicButton({
             setIsProcessingSarvam(true);
             try {
               const formData = new FormData();
-              formData.append("file", audioBlob, "recording.webm");
+              formData.append("file", audioBlob, `recording.${ext}`);
               formData.append("model", "saaras:v3");
               formData.append("language_code", language);
               
@@ -512,22 +539,11 @@ export default function SpeechMicButton({
               
               if (resData.success && resData.transcript) {
                 onTranscriptRef.current(resData.transcript);
-                uploadAudioIfConsented(audioBlob).catch((e) => console.error("Cloud Storage Save Error:", e));
+                uploadAudioIfConsented(audioBlob).catch((e) => console.info("Cloud Storage Save notice:", e?.message || e));
               }
             } catch (err: any) {
               console.warn("Cloud transcription failed:", err);
-              
-              let friendlyMessage = "";
-              if (err.status === 502) {
-                friendlyMessage = "Voice processing failed. Please tap the mic and try again.";
-              } else if (err.status === 415) {
-                friendlyMessage = "Audio format not supported. Please try again.";
-              } else if (err.message && (err.message.includes("blocked") || err.message.includes("cookie") || err.message.includes("iframe"))) {
-                friendlyMessage = err.message;
-              } else {
-                friendlyMessage = `Cloud transcription failed: ${err.message || "Unknown server error"}. Please try again, or type manually instead.`;
-              }
-              
+              const friendlyMessage = sanitizeDoctorError(err);
               showToast(friendlyMessage, "warning");
             } finally {
               setIsProcessingSarvam(false);
@@ -575,7 +591,7 @@ export default function SpeechMicButton({
             : isLocalMlProcessing
             ? `Local Web-ML Whisper: ${localMlProgress?.message}`
             : isProcessingSarvam
-            ? "Transcribing voice via Sarvam AI..."
+            ? "Transcribing voice via ErMate engine..."
             : `Click to dictate (${mode === "sarvam" ? `Sarvam: ${language}` : mode === "local_ml" ? "Local ML (Whisper)" : "Web Speech"})`
         }
       >
@@ -634,7 +650,7 @@ export default function SpeechMicButton({
         <div className="absolute bottom-full right-0 mb-2 z-50 w-72 bg-slate-950/95 text-slate-200 border border-slate-800 rounded-lg shadow-xl p-3 space-y-2 animate-fade-in font-sans">
           <div className="flex items-center gap-1.5 text-xs font-bold text-indigo-400">
             <Sparkles className="w-4 h-4 text-indigo-500 animate-pulse" />
-            <span>AI Voice Processing Engine</span>
+            <span>ErMate Voice Processing Engine</span>
           </div>
           <p className="text-[11px] text-slate-300 leading-normal font-medium whitespace-pre-line">
             {getProcessingMessage(recordingSeconds)}
@@ -703,7 +719,7 @@ export default function SpeechMicButton({
             {sarvamAvailable && (
               <>
                 <div className="px-2 py-1 mt-1 font-semibold text-slate-400 text-[10px] uppercase tracking-wider border-b border-slate-100 dark:border-slate-800">
-                  Sarvam AI Languages
+                  ErMate Vernacular Languages
                 </div>
                 {[
                   { code: "unknown", name: "Auto-Detect Language 🔍" },

@@ -1344,7 +1344,7 @@ ${followUpPlan}<br/>
                     ) : (
                       <Sparkles className="w-2.5 h-2.5 text-amber-500 animate-pulse" />
                     )}
-                    Gemini Auto-Draft
+                    ErMate Auto-Draft
                   </button>
                 </div>
 

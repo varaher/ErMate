@@ -734,7 +734,7 @@ export default function PocketMirrorView({ onBack }: PocketMirrorViewProps) {
             </div>
             <div>
               <h3 className="text-sm font-black text-white uppercase font-mono tracking-wider flex items-center gap-2">
-                Bedside AI Diagnostics Assistant
+                Bedside ErMate Diagnostics Assistant
                 <span className="px-2 py-0.5 rounded-full text-[8px] bg-indigo-500/10 text-indigo-400 border border-indigo-500/25 animate-pulse">
                   Snapshot Analysis Active
                 </span>
@@ -801,7 +801,7 @@ export default function PocketMirrorView({ onBack }: PocketMirrorViewProps) {
           {isGeneratingReport ? (
             <>
               <RefreshCw className="w-4 h-4 animate-spin text-indigo-400" />
-              Synthesizing Clinical Report with Gemini...
+              Synthesizing Clinical Report with ErMate...
             </>
           ) : (
             <>
@@ -848,7 +848,7 @@ export default function PocketMirrorView({ onBack }: PocketMirrorViewProps) {
             {/* Clinician disclaimer instructions */}
             <div className="bg-indigo-950/15 border border-indigo-900/30 p-4 rounded-xl text-[10px] text-slate-400 font-mono leading-relaxed">
               <strong className="text-indigo-400 block mb-1">💡 EMR INTEGRATION PROTOCOL:</strong>
-              This assessment outline has been generated using the <strong>Gemini 3.5 Flash Model</strong>. Clinicians are advised to confirm matched physical measurements and adapt output as needed before incorporating into official medical logs or EMR progress sheets.
+              This assessment outline has been generated using the <strong>ErMate Clinical Engine</strong>. Clinicians are advised to confirm matched physical measurements and adapt output as needed before incorporating into official medical logs or EMR progress sheets.
             </div>
           </div>
         )}

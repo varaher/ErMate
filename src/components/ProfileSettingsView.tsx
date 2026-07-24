@@ -727,7 +727,7 @@ export default function ProfileSettingsView({
                   </div>
                   <div className="text-left">
                     <strong className="text-sm font-bold block text-indigo-500">Owner Revenue & Cost Planner</strong>
-                    <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">Restricted: Analyze Gemini, Sarvam, Razorpay expenses</span>
+                    <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">Restricted: Analyze ErMate expenses and revenue</span>
                   </div>
                 </div>
                 <ChevronRight className="w-4 h-4 text-indigo-500 shrink-0" />
@@ -2445,7 +2445,7 @@ export default function ProfileSettingsView({
           color: "bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20",
           content: (
             <ul className="list-disc pl-5 space-y-1">
-              <li>Smart Voice Scribe transcription, CDS differential parsing, and draft discharges leverage the advanced Gemini model family.</li>
+              <li>Smart Voice Scribe transcription, CDS differential parsing, and draft discharges leverage the advanced ErMate clinical engine family.</li>
               <li>Data items are processed on a secure, private endpoint with strict agreements that prohibit the AI from retaining or using ErMate transactions for baseline model training.</li>
               <li>All AI outputs function purely as clinician decision support overlays; the registered physician maintains sole final accountability for all diagnostic entries and therapeutic plans.</li>
             </ul>
@@ -3111,7 +3111,7 @@ export default function ProfileSettingsView({
           {
             title: "Rounds Token Ledger",
             subtitle: "Transparent clinical resource tracker",
-            desc: "Audited accounting ledger tracking local server storage, processed files, Gemini API token parameters, and compute parameters to maintain perfect transparency.",
+            desc: "Audited accounting ledger tracking local server storage, processed files, ErMate engine parameters, and compute parameters to maintain perfect transparency.",
             path: "Profile / Settings ➔ Rounds Billing tab ➔ Audit token ledger balances",
             icon: CreditCard,
             borderColor: "border-l-red-500",
@@ -3489,7 +3489,7 @@ export default function ProfileSettingsView({
                   { label: "State & Motion", val: "React Hooks + Motion Transitions", icon: Cpu },
                   { label: "Backend proxy", val: "Express.js (Node Sandbox)", icon: Laptop },
                   { label: "Cloud Database", val: "Firebase Firestore (Cloud Core)", icon: Database },
-                  { label: "Clinical Voice / AI", val: "Gemini 2.5 Flash API", icon: Activity }
+                  { label: "Clinical Voice / Engine", val: "ErMate Clinical Engine", icon: Activity }
                 ].map((tech, idx) => (
                   <div key={idx} className="flex items-center justify-between text-[11px] font-sans">
                     <span className="text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
@@ -3681,7 +3681,7 @@ export default function ProfileSettingsView({
                 <span className="font-bold text-rose-300">₹{singleUserRazorpay.toFixed(2)}</span>
               </div>
               <div className="flex justify-between items-center text-slate-300">
-                <span>Gemini API <span className="text-[9px] text-slate-500">(SBAR/IPASS LLM structuring)</span></span>
+                <span>ErMate Engine <span className="text-[9px] text-slate-500">(SBAR/IPASS structuring)</span></span>
                 <span className="font-bold text-rose-300">₹{singleUserGemini.toFixed(2)}</span>
               </div>
               <div className="flex justify-between items-center text-slate-300">
@@ -3851,10 +3851,10 @@ export default function ProfileSettingsView({
                   <span className="font-bold text-rose-300">₹{Math.round(totalRazorpayExpenses).toLocaleString("en-IN")}</span>
                 </div>
 
-                {/* Gemini API LLM Tokens */}
+                {/* ErMate Engine Costs */}
                 <div className="flex justify-between items-start border-t border-slate-850 pt-2">
                   <div className="space-y-0.5">
-                    <p className="font-bold text-slate-300">2. Gemini LLM API Costs</p>
+                    <p className="font-bold text-slate-300">2. ErMate Clinical Engine Costs</p>
                     <p className="text-[9.5px] text-slate-500 max-w-[200px]">
                       Transcription & structured clinical analysis. ₹75/mo (Consultant) and ₹40/mo (Resident).
                     </p>
