@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Search, Filter, Plus, Calendar, Activity, Eye, Trash2, Clock, CheckCircle, ChevronLeft } from "lucide-react";
+import { Search, Filter, Plus, Calendar, Activity, Eye, Trash2, Clock, CheckCircle, ChevronLeft, MessageSquare } from "lucide-react";
 import { ClinicalCase } from "../types";
 
 interface CasesListViewProps {
@@ -9,6 +9,7 @@ interface CasesListViewProps {
   onStartFullFlow: () => void;
   onStartQuickCase: () => void;
   onNavigateToTab?: (tabId: string) => void;
+  onDiscussCase?: (patientCase: ClinicalCase) => void;
 }
 
 export default function CasesListView({
@@ -18,6 +19,7 @@ export default function CasesListView({
   onStartFullFlow,
   onStartQuickCase,
   onNavigateToTab,
+  onDiscussCase,
 }: CasesListViewProps) {
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState<"All" | "Active" | "Triage" | "Discharged">("All");
@@ -220,7 +222,17 @@ export default function CasesListView({
                     ~{c.timeSpentMin} mins spent
                   </div>
 
-                  <div className="flex items-center gap-1">
+                  <div className="flex items-center gap-1.5">
+                    {onDiscussCase && (
+                      <button
+                        onClick={() => onDiscussCase(c)}
+                        className="px-2 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 dark:bg-blue-950/40 dark:hover:bg-blue-900/60 dark:text-blue-300 border border-blue-200 dark:border-blue-800 rounded-lg text-xs font-semibold transition-all flex items-center gap-1"
+                        title="Discuss case with AI Assistant"
+                      >
+                        <MessageSquare className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+                        <span>Discuss</span>
+                      </button>
+                    )}
                     <button
                       onClick={() => onSelectCase(c.id)}
                       className="p-1.5 bg-slate-50 hover:bg-slate-100 text-slate-600 hover:text-slate-800 dark:bg-slate-900 dark:hover:bg-slate-800 dark:text-slate-400 rounded-lg transition-all"

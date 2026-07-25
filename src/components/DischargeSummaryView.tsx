@@ -22,7 +22,7 @@ export default function DischargeSummaryView({
 
   // --- Administrative & Demographics ---
   const [uhid, setUhid] = useState(
-    currentCase.dischargeInfo?.uhid || currentCase.patient.uhid || "CR-" + Math.floor(100000 + Math.random() * 90000)
+    currentCase.dischargeInfo?.uhid || currentCase.patient.uhid || ""
   );
   const [broughtBy, setBroughtBy] = useState(
     currentCase.dischargeInfo?.broughtBy || "Self / Relatives"
@@ -31,7 +31,7 @@ export default function DischargeSummaryView({
     currentCase.dischargeInfo?.dischargeDateTime || new Date().toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })
   );
   const [dispositionStatus, setDispositionStatus] = useState<string>(
-    currentCase.dischargeInfo?.dispositionStatus || "Normal Discharge"
+    currentCase.dischargeInfo?.dispositionStatus || currentCase.dispositionDetails?.dispositionType || "Discharge"
   );
   const [isMlc, setIsMlc] = useState(
     currentCase.dischargeInfo?.isMlc || (currentCase.patient.isMlc ? "Yes" : "No")
@@ -61,133 +61,133 @@ export default function DischargeSummaryView({
     currentCase.dischargeInfo?.historyOfPresentIllness || currentCase.sampleHistory?.events || currentCase.sampleHistory?.symptoms || ""
   );
   const [pastMedicalHistory, setPastMedicalHistory] = useState(
-    currentCase.dischargeInfo?.pastMedicalHistory || currentCase.sampleHistory?.pastHistory || "None"
+    currentCase.dischargeInfo?.pastMedicalHistory || currentCase.sampleHistory?.pastHistory || "None recorded"
   );
   const [familyGynaeHistory, setFamilyGynaeHistory] = useState(
-    currentCase.dischargeInfo?.familyGynaeHistory || currentCase.sampleHistory?.familyHistory || "None"
+    currentCase.dischargeInfo?.familyGynaeHistory || currentCase.sampleHistory?.familyHistory || "None recorded"
   );
   const [lmp, setLmp] = useState(
     currentCase.dischargeInfo?.lmp || (currentCase.patient.gender === "Female" ? "Not Recorded" : "N/A")
   );
   const [generalExamination, setGeneralExamination] = useState(
-    currentCase.dischargeInfo?.generalExamination || "Patient is conscious, alert, oriented and hemodynamically stable. No acute distress."
+    currentCase.dischargeInfo?.generalExamination || (currentCase.vitals.hr ? "Patient conscious, oriented, vitals recorded on arrival." : "")
   );
 
   // --- Primary Assessment (Arrival) ---
   const [primaryAirway, setPrimaryAirway] = useState(
-    currentCase.dischargeInfo?.primaryAirway || currentCase.primaryAssessment?.airway || "Patent"
+    currentCase.dischargeInfo?.primaryAirway || currentCase.primaryAssessment?.airway || ""
   );
   const [primaryAirwayIntervention, setPrimaryAirwayIntervention] = useState(
-    currentCase.dischargeInfo?.primaryAirwayIntervention || "None"
+    currentCase.dischargeInfo?.primaryAirwayIntervention || ""
   );
 
   const [primaryBreathing, setPrimaryBreathing] = useState(
-    currentCase.dischargeInfo?.primaryBreathing || currentCase.primaryAssessment?.breathing || "Bilateral air entry equal, chest clear"
+    currentCase.dischargeInfo?.primaryBreathing || currentCase.primaryAssessment?.breathing || ""
   );
   const [primaryBreathingWork, setPrimaryBreathingWork] = useState(
-    currentCase.dischargeInfo?.primaryBreathingWork || "Normal / Eupneic"
+    currentCase.dischargeInfo?.primaryBreathingWork || ""
   );
   const [primaryBreathingAirEntry, setPrimaryBreathingAirEntry] = useState(
-    currentCase.dischargeInfo?.primaryBreathingAirEntry || "Bilateral equal"
+    currentCase.dischargeInfo?.primaryBreathingAirEntry || ""
   );
   const [primaryBreathingCct, setPrimaryBreathingCct] = useState(
-    currentCase.dischargeInfo?.primaryBreathingCct || "Normal"
+    currentCase.dischargeInfo?.primaryBreathingCct || ""
   );
   const [primaryBreathingSubcut, setPrimaryBreathingSubcut] = useState(
-    currentCase.dischargeInfo?.primaryBreathingSubcut || "Nil"
+    currentCase.dischargeInfo?.primaryBreathingSubcut || ""
   );
   const [primaryBreathingEfast, setPrimaryBreathingEfast] = useState(
-    currentCase.dischargeInfo?.primaryBreathingEfast || "Negative"
+    currentCase.dischargeInfo?.primaryBreathingEfast || ""
   );
   const [primaryBreathingIntervention, setPrimaryBreathingIntervention] = useState(
-    currentCase.dischargeInfo?.primaryBreathingIntervention || "None"
+    currentCase.dischargeInfo?.primaryBreathingIntervention || ""
   );
 
   const [primaryCirculationCrt, setPrimaryCirculationCrt] = useState(
-    currentCase.dischargeInfo?.primaryCirculationCrt || "< 2 seconds"
+    currentCase.dischargeInfo?.primaryCirculationCrt || ""
   );
   const [primaryCirculationDnv, setPrimaryCirculationDnv] = useState(
-    currentCase.dischargeInfo?.primaryCirculationDnv || "No"
+    currentCase.dischargeInfo?.primaryCirculationDnv || ""
   );
   const [primaryCirculationPct, setPrimaryCirculationPct] = useState(
-    currentCase.dischargeInfo?.primaryCirculationPct || "No"
+    currentCase.dischargeInfo?.primaryCirculationPct || ""
   );
   const [primaryCirculationDeformity, setPrimaryCirculationDeformity] = useState(
-    currentCase.dischargeInfo?.primaryCirculationDeformity || "None"
+    currentCase.dischargeInfo?.primaryCirculationDeformity || ""
   );
   const [primaryCirculationFast, setPrimaryCirculationFast] = useState(
-    currentCase.dischargeInfo?.primaryCirculationFast || "Negative"
+    currentCase.dischargeInfo?.primaryCirculationFast || ""
   );
   const [primaryCirculationInterventions, setPrimaryCirculationInterventions] = useState(
-    currentCase.dischargeInfo?.primaryCirculationInterventions || "None"
+    currentCase.dischargeInfo?.primaryCirculationInterventions || ""
   );
 
   const [primaryDisabilityAvpuGcs, setPrimaryDisabilityAvpuGcs] = useState(
-    currentCase.dischargeInfo?.primaryDisabilityAvpuGcs || `${currentCase.vitals.avpu || "Alert"} / GCS ${currentCase.vitals.gcs || "15"}`
+    currentCase.dischargeInfo?.primaryDisabilityAvpuGcs || (currentCase.vitals.avpu || currentCase.vitals.gcs ? `${currentCase.vitals.avpu || "Alert"} / GCS ${currentCase.vitals.gcs || "15"}` : "")
   );
   const [primaryDisabilityPupils, setPrimaryDisabilityPupils] = useState(
-    currentCase.dischargeInfo?.primaryDisabilityPupils || "Bilateral 3mm, Equal & Reacting to Light"
+    currentCase.dischargeInfo?.primaryDisabilityPupils || ""
   );
   const [primaryDisabilityGrbs, setPrimaryDisabilityGrbs] = useState(
-    currentCase.dischargeInfo?.primaryDisabilityGrbs || currentCase.vitals.grbs || "Normal"
+    currentCase.dischargeInfo?.primaryDisabilityGrbs || currentCase.vitals.grbs || ""
   );
 
   const [primaryExposureTemp, setPrimaryExposureTemp] = useState(
-    currentCase.dischargeInfo?.primaryExposureTemp || currentCase.vitals.temp || "98.6"
+    currentCase.dischargeInfo?.primaryExposureTemp || currentCase.vitals.temp || ""
   );
   const [primaryExposureTrauma, setPrimaryExposureTrauma] = useState(
-    currentCase.dischargeInfo?.primaryExposureTrauma || "No spine tenderness / Logroll negative"
+    currentCase.dischargeInfo?.primaryExposureTrauma || ""
   );
 
   // --- Secondary Assessment ---
   const [secondaryPicle, setSecondaryPicle] = useState(
-    currentCase.dischargeInfo?.secondaryPicle || "No pallor, icterus, cyanosis, clubbing, lymphadenopathy, edema"
+    currentCase.dischargeInfo?.secondaryPicle || (typeof currentCase.secondaryAssessment === "string" ? currentCase.secondaryAssessment : "")
   );
   const [secondaryChest, setSecondaryChest] = useState(
-    currentCase.dischargeInfo?.secondaryChest || "Symmetrical expansion, clear breath sounds"
+    currentCase.dischargeInfo?.secondaryChest || ""
   );
   const [secondaryCvs, setSecondaryCvs] = useState(
-    currentCase.dischargeInfo?.secondaryCvs || "S1 S2 heard, no murmurs / gallops"
+    currentCase.dischargeInfo?.secondaryCvs || ""
   );
   const [secondaryPa, setSecondaryPa] = useState(
-    currentCase.dischargeInfo?.secondaryPa || "Soft, non-tender, no organomegaly"
+    currentCase.dischargeInfo?.secondaryPa || ""
   );
   const [secondaryCns, setSecondaryCns] = useState(
-    currentCase.dischargeInfo?.secondaryCns || "Conscious, oriented x3, pupils reacting, no focal deficits"
+    currentCase.dischargeInfo?.secondaryCns || ""
   );
   const [secondaryExtremities, setSecondaryExtremities] = useState(
-    currentCase.dischargeInfo?.secondaryExtremities || "Warm, peripheral pulses well felt, no swelling or deformities"
+    currentCase.dischargeInfo?.secondaryExtremities || ""
   );
 
   // --- Course, Investigations, Diagnosis, Medications ---
   const [courseInHospital, setCourseInHospital] = useState(
-    currentCase.dischargeInfo?.courseInHospital || currentCase.progressNotes || "Patient was received in the ER, evaluated immediately, vital signs stabilized. Observed and found stable for home discharge."
+    currentCase.dischargeInfo?.courseInHospital || currentCase.progressNotes || `Patient evaluated in ER for ${currentCase.patient.presentingComplaint || "acute presentation"}. Clinical evaluation and stabilization provided.`
   );
   const [investigationsResults, setInvestigationsResults] = useState(
-    currentCase.dischargeInfo?.investigationsResults || (currentCase.investigations.length > 0 ? currentCase.investigations.map(i => `${i.testName}: ${i.result}`).join("\n") : "No investigations done.")
+    currentCase.dischargeInfo?.investigationsResults || (currentCase.investigations && currentCase.investigations.length > 0 ? currentCase.investigations.map(i => `${i.testName}: ${i.result || "Done"}`).join("\n") : "No investigations ordered.")
   );
   const [primaryDiagnosis, setPrimaryDiagnosis] = useState(
-    currentCase.dischargeInfo?.primaryDiagnosis || (currentCase.differentials?.[0]?.diagnosis || currentCase.patient.presentingComplaint)
+    currentCase.dischargeInfo?.primaryDiagnosis || currentCase.provisionalPrimaryDiagnosis || (currentCase.differentials?.[0]?.diagnosis) || currentCase.patient.presentingComplaint || ""
   );
   const [secondaryDiagnosis, setSecondaryDiagnosis] = useState(
-    currentCase.dischargeInfo?.secondaryDiagnosis || ""
+    currentCase.dischargeInfo?.secondaryDiagnosis || currentCase.sampleHistory?.pastHistory || ""
   );
   const [dischargeMedications, setDischargeMedications] = useState(
-    currentCase.dischargeInfo?.dischargeMedications || currentCase.treatments.map((t, idx) => `${idx + 1}. Tab. ${t.drugName} ${t.dose} (${t.route}) - ${t.timeGiven}`).join("\n") || "No outpatient medications prescribed."
+    currentCase.dischargeInfo?.dischargeMedications || (currentCase.treatments && currentCase.treatments.length > 0 ? currentCase.treatments.map((t, idx) => `${idx + 1}. ${t.drugName} ${t.dose || ""} (${t.route || ""}) - ${t.timeGiven || "Given in ER"}`).join("\n") : "No outpatient medications prescribed.")
   );
 
   // --- Discharge Vitals & Follow-Up ---
-  const [dischargeHr, setDischargeHr] = useState(currentCase.dischargeInfo?.dischargeHr || currentCase.vitals.hr || "76");
-  const [dischargeBp, setDischargeBp] = useState(currentCase.dischargeInfo?.dischargeBp || currentCase.vitals.bp || "120/80");
-  const [dischargeRr, setDischargeRr] = useState(currentCase.dischargeInfo?.dischargeRr || currentCase.vitals.rr || "16");
-  const [dischargeSpo2, setDischargeSpo2] = useState(currentCase.dischargeInfo?.dischargeSpo2 || currentCase.vitals.spo2 || "98");
-  const [dischargeGcs, setDischargeGcs] = useState(currentCase.dischargeInfo?.dischargeGcs || currentCase.vitals.gcs || "15");
-  const [dischargePainScore, setDischargePainScore] = useState(currentCase.dischargeInfo?.dischargePainScore || "0");
-  const [dischargeGrbs, setDischargeGrbs] = useState(currentCase.dischargeInfo?.dischargeGrbs || currentCase.vitals.grbs || "95");
-  const [dischargeTemp, setDischargeTemp] = useState(currentCase.dischargeInfo?.dischargeTemp || currentCase.vitals.temp || "98.6");
+  const [dischargeHr, setDischargeHr] = useState(currentCase.dischargeInfo?.dischargeHr || currentCase.dispositionDetails?.dischargeVitals?.hr || currentCase.vitals.hr || "");
+  const [dischargeBp, setDischargeBp] = useState(currentCase.dischargeInfo?.dischargeBp || currentCase.dispositionDetails?.dischargeVitals?.bp || currentCase.vitals.bp || "");
+  const [dischargeRr, setDischargeRr] = useState(currentCase.dischargeInfo?.dischargeRr || currentCase.dispositionDetails?.dischargeVitals?.rr || currentCase.vitals.rr || "");
+  const [dischargeSpo2, setDischargeSpo2] = useState(currentCase.dischargeInfo?.dischargeSpo2 || currentCase.dispositionDetails?.dischargeVitals?.spo2 || currentCase.vitals.spo2 || "");
+  const [dischargeGcs, setDischargeGcs] = useState(currentCase.dischargeInfo?.dischargeGcs || currentCase.dispositionDetails?.dischargeVitals?.gcs || currentCase.vitals.gcs || "");
+  const [dischargePainScore, setDischargePainScore] = useState(currentCase.dischargeInfo?.dischargePainScore || currentCase.vitals.painScore || "");
+  const [dischargeGrbs, setDischargeGrbs] = useState(currentCase.dischargeInfo?.dischargeGrbs || currentCase.vitals.grbs || "");
+  const [dischargeTemp, setDischargeTemp] = useState(currentCase.dischargeInfo?.dischargeTemp || currentCase.vitals.temp || "");
 
   const [dischargeCondition, setDischargeCondition] = useState(
-    currentCase.dischargeInfo?.dischargeCondition || "STABLE"
+    currentCase.dischargeInfo?.dischargeCondition || "Stable at time of discharge"
   );
   const [followUpPlan, setFollowUpPlan] = useState(
     currentCase.dischargeInfo?.followUpPlan || "Review in OPD / Primary care clinic in 3-5 days. Return to emergency department immediately if warning symptoms develop."
@@ -195,10 +195,10 @@ export default function DischargeSummaryView({
 
   // Consultant / Resident Names
   const [emResidentName, setEmResidentName] = useState(
-    currentCase.dischargeInfo?.emResidentName || currentCase.dispositionDetails?.residentName || "Dr. Rajesh Patel, MD"
+    currentCase.dischargeInfo?.emResidentName || currentCase.dispositionDetails?.residentName || ""
   );
   const [emConsultantName, setEmConsultantName] = useState(
-    currentCase.dischargeInfo?.emConsultantName || currentCase.dispositionDetails?.consultantName || "Dr. Sunita Iyer, DM (EM)"
+    currentCase.dischargeInfo?.emConsultantName || currentCase.dispositionDetails?.consultantName || ""
   );
 
   // States for actions

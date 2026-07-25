@@ -143,6 +143,15 @@ export interface DispositionDetails {
   residentName: string;
   consultantName: string;
   observationNotes: string;
+  dischargeVitals?: {
+    hr?: string;
+    bp?: string;
+    rr?: string;
+    spo2?: string;
+    gcs?: string;
+    temp?: string;
+    grbs?: string;
+  };
 }
 
 export interface DischargeInfo {
@@ -267,6 +276,9 @@ export interface ClinicalCase {
   vitalsHistory?: VitalsRecord[];
   
   // Advanced features from UI screenshots
+  medications?: Array<string | { drugName: string; dose?: string; route?: string; frequency?: string }>;
+  investigationsOrdered?: Array<{ name: string; category?: string; orderedAt?: string; status?: string }>;
+  investigationResults?: Array<{ name: string; value: string; unit?: string; referenceRange?: string; isAbnormal?: boolean; flag?: "HIGH" | "LOW" | "ABNORMAL" | "NORMAL" }>;
   investigationLabsOrdered?: string;
   investigationImaging?: string;
   investigationResultsSummary?: string;

@@ -634,7 +634,7 @@ Dr. Marcus Brody, Trauma Lead`);
             {isProcessing ? (
               <>
                 <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                Processing...
+                Saving to Case Sheet...
               </>
             ) : (
               <>

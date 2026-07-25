@@ -3,7 +3,7 @@ import {
   Activity, Sparkles, BookOpen, User, Clock, ShieldAlert, 
   Settings, HelpCircle, Trophy, ClipboardList, Zap, Moon, Sun, Users,
   Search, X, TrendingUp, Bell, BellRing, Trash2, Check, Mic, ShieldCheck, RefreshCw,
-  Download, Smartphone, Building2, UserCheck
+  Download, Smartphone, Building2, UserCheck, CheckCircle2
 } from "lucide-react";
 
 import { 
@@ -28,7 +28,9 @@ import AnalyticsView from "./components/AnalyticsView";
 import HandoverView from "./components/HandoverView";
 import PocketMirrorView from "./components/PocketMirrorView";
 import ConsentModal from "./components/ConsentModal";
+import { CaseDiscussionModal } from "./components/CaseDiscussionModal";
 import { ROTA_SHIFTS } from "./components/TeamRosterBoard";
+import { APP_VERSION, CHANGELOG } from "./changelog";
 
 import { auth, db, handleFirestoreError, OperationType } from "./firebase";
 import { onAuthStateChanged, signOut } from "firebase/auth";
@@ -229,8 +231,90 @@ export default function App() {
     }
   }, []);
 
-  // Updates and Announcements Modal state
+  // Updates and Announcements Modal state & Version Tracking
   const [showUpdatesModal, setShowUpdatesModal] = useState<boolean>(false);
+  const [currentVersion, setCurrentVersion] = useState<string>(APP_VERSION);
+  const [appUpdateBanner, setAppUpdateBanner] = useState<boolean>(false);
+  const [isForceUpdate, setIsForceUpdate] = useState<boolean>(false);
+
+  // Auto-dismiss update banner after 10 seconds (unless force update)
+  useEffect(() => {
+    if (appUpdateBanner && !isForceUpdate) {
+      const timer = setTimeout(() => {
+        setAppUpdateBanner(false);
+      }, 10000);
+      return () => clearTimeout(timer);
+    }
+  }, [appUpdateBanner, isForceUpdate]);
+
+  // Version check logic: compares current version to localStorage 'ermate_last_seen_version'
+  useEffect(() => {
+    let isMounted = true;
+
+    const checkVersion = async () => {
+      try {
+        const res = await fetch("/api/version");
+        if (res.ok) {
+          const data = await res.json();
+          if (!isMounted) return;
+          const serverVersion = data.version || APP_VERSION;
+          setCurrentVersion(serverVersion);
+
+          const lastSeen = localStorage.getItem("ermate_last_seen_version") || localStorage.getItem("ermate_app_known_version");
+          if (lastSeen !== serverVersion) {
+            setAppUpdateBanner(true);
+          }
+        }
+      } catch (err) {
+        const lastSeen = localStorage.getItem("ermate_last_seen_version") || localStorage.getItem("ermate_app_known_version");
+        if (lastSeen !== APP_VERSION) {
+          setAppUpdateBanner(true);
+        }
+      }
+    };
+
+    checkVersion();
+    const interval = setInterval(checkVersion, 25000);
+
+    // Optional Firestore real-time version check for team / HOD pushed updates
+    const unsubFirestoreVersion = onSnapshot(
+      doc(db, "app_config", "version"),
+      (docSnap) => {
+        if (docSnap.exists() && isMounted) {
+          const data = docSnap.data();
+          const remoteVersion = data.current || APP_VERSION;
+          const force = !!data.forceUpdate;
+          setCurrentVersion(remoteVersion);
+          setIsForceUpdate(force);
+
+          const lastSeen = localStorage.getItem("ermate_last_seen_version");
+          if (lastSeen !== remoteVersion) {
+            setAppUpdateBanner(true);
+          }
+        }
+      },
+      () => {}
+    );
+
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+      unsubFirestoreVersion();
+    };
+  }, []);
+
+  // Update handlers
+  const handleUpdateApp = () => {
+    localStorage.setItem("ermate_last_seen_version", currentVersion);
+    localStorage.setItem("ermate_app_known_version", currentVersion);
+    window.location.reload();
+  };
+
+  const handleLaterApp = () => {
+    // Don't save version to localStorage yet — will show again next session
+    setAppUpdateBanner(false);
+    setShowUpdatesModal(false);
+  };
 
   // Consent Modal state
   const [showConsentModal, setShowConsentModal] = useState<boolean>(false);
@@ -244,16 +328,21 @@ export default function App() {
   // Automatically trigger release popup on login
   useEffect(() => {
     if (isLoggedIn) {
-      const seen = localStorage.getItem("ermate_seen_version_2_4_0");
+      const seen = localStorage.getItem("ermate_seen_version_2_5_0");
       if (seen !== "true") {
         setShowUpdatesModal(true);
-        localStorage.setItem("ermate_seen_version_2_4_0", "true");
+        localStorage.setItem("ermate_seen_version_2_5_0", "true");
       }
     }
   }, [isLoggedIn]);
 
   // Navigation
   const [activeTab, setActiveTab] = useState<"dashboard" | "analytics" | "handover" | "cases" | "learn" | "profile" | "emdrugs">("dashboard");
+  const [discussionModalCase, setDiscussionModalCase] = useState<ClinicalCase | null>(null);
+
+  const handleSaveDiscussionHistory = (caseId: string, messages: any[]) => {
+    setCases(prev => prev.map(c => c.id === caseId ? { ...c, discussionMessages: messages } : c));
+  };
   const [showVoiceScribeChat, setShowVoiceScribeChat] = useState<boolean>(false);
   const [scribeMessages, setScribeMessages] = useState<any[]>([
     {
@@ -385,6 +474,24 @@ export default function App() {
   ]);
 
   const [cases, setCases] = useState<ClinicalCase[]>([]);
+  const [savedBanner, setSavedBanner] = useState<{
+    visible: boolean;
+    patientName: string;
+    caseId: string;
+  }>({
+    visible: false,
+    patientName: "",
+    caseId: ""
+  });
+
+  useEffect(() => {
+    if (savedBanner.visible) {
+      const timer = setTimeout(() => {
+        setSavedBanner(prev => ({ ...prev, visible: false }));
+      }, 6000);
+      return () => clearTimeout(timer);
+    }
+  }, [savedBanner.visible]);
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
   const [shifts, setShifts] = useState<any[]>([]);
   const [hospitalSubscription, setHospitalSubscription] = useState<{ active: boolean; subscriptionTier: string } | null>(null);
@@ -498,7 +605,17 @@ export default function App() {
 
           setProfile(currentProfile);
         } catch (err) {
-          console.error("Error checking profile/invites:", err);
+          console.warn("Offline or error checking profile/invites, using fallback profile:", err);
+          const fallbackProfile: UserProfile = {
+            name: user.displayName || "Dr. " + (user.email?.split("@")[0] || "Doctor"),
+            email: user.email || "doctor@ermate.in",
+            role: "Senior Consultant",
+            hospital: "Varah Group Emergency Care",
+            aiCredits: 350,
+            streak: 5,
+            subscriptionTier: "Hospital Team Premium (Department Covered)"
+          };
+          setProfile(fallbackProfile);
         }
 
         // Set up real-time onSnapshot listener for UserProfile
@@ -524,13 +641,13 @@ export default function App() {
               // Acknowledge notification
               updateDoc(profileDocRef, {
                 "teamAddedNotification.acknowledged": true
-              }).catch(e => console.error("Error acknowledging team notification:", e));
+              }).catch(e => console.warn("Error acknowledging team notification:", e));
             }
 
             setProfile(data);
           }
         }, (error) => {
-          console.error("Error listening to profile:", error);
+          console.warn("Profile onSnapshot offline warning:", error?.message || error);
         });
 
       } else {
@@ -1477,10 +1594,13 @@ export default function App() {
 
     const existingMatch = cases.find(c => c.id === newCaseId);
 
+    const rawDocName = profile.name || auth.currentUser?.displayName || (profile.email ? profile.email.split("@")[0] : "Doctor");
+    const docFormattedName = rawDocName.startsWith("Dr. ") ? rawDocName : "Dr. " + rawDocName;
+
     const newCase: ClinicalCase = {
       id: newCaseId,
       createdBy: existingMatch?.createdBy || createdByUid,
-      createdByName: existingMatch?.createdByName || (profile.name.startsWith("Dr. ") ? profile.name : "Dr. " + profile.name),
+      createdByName: existingMatch?.createdByName || docFormattedName,
       createdByRole: existingMatch?.createdByRole || createdByRoleVal,
       shiftId: existingMatch?.shiftId || computedShiftId,
       shiftDate: existingMatch?.shiftDate || todayDateStr,
@@ -1548,8 +1668,8 @@ export default function App() {
       status: "Active",
       savedTime: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       timeSpentMin: 1,
-      doctorEmail: profile.email,
-      doctorName: "Dr. " + profile.name,
+      doctorEmail: profile.email || auth.currentUser?.email || "",
+      doctorName: docFormattedName,
       hospital: profile.hospital,
       ipsgChecklist: existingMatch?.ipsgChecklist || {
         ipsg1IdentifiersVerified: true,
@@ -1573,8 +1693,8 @@ export default function App() {
       dispositionDetails: existingMatch?.dispositionDetails || {
         dispositionType: "Discharge",
         durationInEr: "",
-        residentName: "Dr. " + profile.name,
-        consultantName: "Dr. " + profile.name,
+        residentName: docFormattedName,
+        consultantName: consultantName,
         observationNotes: ""
       },
       vitalsHistory: existingMatch?.vitalsHistory || [
@@ -1593,9 +1713,14 @@ export default function App() {
 
     try {
       await setDoc(doc(db, "cases", newCase.id), newCase, { merge: true });
+      if (newCase.departmentId) {
+        await setDoc(doc(db, "departments", newCase.departmentId, "cases", newCase.id), newCase, { merge: true });
+      }
     } catch (err: any) {
       console.error("Error saving extracted voice case:", err);
-      handleFirestoreError(err, OperationType.WRITE, "cases");
+      if (!err?.message?.includes("offline") && !err?.message?.includes("unavailable")) {
+        handleFirestoreError(err, OperationType.WRITE, "cases");
+      }
     }
 
     setCases(prev => {
@@ -1608,12 +1733,17 @@ export default function App() {
       return [newCase, ...prev];
     });
 
+    setSavedBanner({
+      visible: true,
+      patientName: newCase.patient.name,
+      caseId: newCase.id
+    });
+
     if (shouldNavigate) {
       setSelectedCaseId(newCaseId);
       setShowVoiceScribeChat(false);
       setActiveFormMode(null);
       setShowDischargeSummaryId(null);
-      triggerNotification("Case Sheet Saved", `Voice case sheet (${newCase.patient.name}) successfully saved and opened.`, "success");
     } else {
       triggerNotification("Auto-Saved to Dashboard", `Voice case (${newCase.patient.name}) updated in Emergency Dashboard.`, "info");
     }
@@ -2559,16 +2689,18 @@ export default function App() {
             {/* What's New & Announcements Button */}
             <button
               onClick={() => setShowUpdatesModal(true)}
-              className="p-1.5 px-2.5 hover:bg-emerald-50 dark:hover:bg-emerald-950/20 rounded-lg text-emerald-600 dark:text-emerald-400 transition-all flex items-center gap-1.5 cursor-pointer border border-emerald-200/50 dark:border-emerald-800/30 font-sans"
+              className="p-1.5 px-2.5 hover:bg-emerald-50 dark:hover:bg-emerald-950/20 rounded-lg text-emerald-600 dark:text-emerald-400 transition-all flex items-center gap-1.5 cursor-pointer border border-emerald-200/50 dark:border-emerald-800/30 font-sans shadow-xs"
               title="What's New & System Announcements"
               id="whats-new-announcements-btn"
             >
-              <Sparkles className="w-3.5 h-3.5 animate-pulse" />
-              <span className="text-[10px] font-extrabold tracking-tight uppercase hidden lg:inline">v2.4.0 Updates</span>
-              <span className="flex h-1.5 w-1.5 relative">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span>
-              </span>
+              <Sparkles className="w-3.5 h-3.5 animate-pulse text-amber-500" />
+              <span className="text-[10px] font-extrabold tracking-tight uppercase hidden lg:inline">v{currentVersion}</span>
+              {appUpdateBanner && (
+                <span className="flex h-1.5 w-1.5 relative">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span>
+                </span>
+              )}
             </button>
 
             {/* PWA Download / Install App Option */}
@@ -2814,6 +2946,76 @@ export default function App() {
           })}
         </div>
       </nav>
+
+      {/* App Update Notification Banner */}
+      {appUpdateBanner && (
+        <div 
+          id="app-update-notification-banner"
+          className="bg-slate-900 text-white px-4 py-3 shadow-xl border-b border-emerald-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs z-30 animate-in slide-in-from-top-2 duration-300 no-print"
+        >
+          <div className="flex items-start gap-3 min-w-0">
+            <div className="p-2 bg-emerald-500/20 rounded-xl shrink-0 text-emerald-400 mt-0.5 flex items-center justify-center">
+              <Sparkles className="w-4 h-4 text-emerald-400 animate-pulse" />
+            </div>
+            <div className="min-w-0">
+              <h3 className="font-extrabold text-white text-sm tracking-tight font-sans flex items-center gap-2">
+                <span>⚡ ErMate v{currentVersion} is ready</span>
+                {isForceUpdate && (
+                  <span className="bg-rose-500/30 text-rose-300 border border-rose-500/40 text-[10px] font-mono px-2 py-0.5 rounded-full font-extrabold uppercase">
+                    Required Update
+                  </span>
+                )}
+              </h3>
+              <ul className="mt-1.5 space-y-1 text-slate-300 font-medium text-xs">
+                {(CHANGELOG[currentVersion] || CHANGELOG[APP_VERSION] || [
+                  "Voice dictation is faster",
+                  "Handover extraction improved",
+                  "Normal exam fields auto-fill",
+                  "Works offline seamlessly"
+                ]).slice(0, 4).map((bullet, idx) => (
+                  <li key={idx} className="flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0"></span>
+                    <span>{bullet}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0 self-end sm:self-center pt-1 sm:pt-0">
+            <button
+              type="button"
+              onClick={handleUpdateApp}
+              className="px-3.5 py-1.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-extrabold text-xs rounded-xl shadow-sm transition-all flex items-center gap-1.5 cursor-pointer active:scale-95"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              <span>Update now</span>
+            </button>
+
+            {!isForceUpdate && (
+              <button
+                type="button"
+                onClick={handleLaterApp}
+                className="px-3 py-1.5 hover:bg-slate-800 text-slate-300 hover:text-white text-xs font-semibold rounded-xl transition-all cursor-pointer"
+                title="Dismiss for this session"
+              >
+                Later
+              </button>
+            )}
+
+            {!isForceUpdate && (
+              <button
+                type="button"
+                onClick={handleLaterApp}
+                className="p-1.5 hover:bg-slate-800 text-slate-400 hover:text-white rounded-lg transition-all cursor-pointer"
+                title="Dismiss (X)"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Main Content Render Space */}
       <main className="flex-1 p-4 md:p-6 pb-24 md:pb-6">
@@ -3073,6 +3275,7 @@ export default function App() {
                   onStartFullFlow={() => setActiveFormMode("full")}
                   onStartQuickCase={() => setActiveFormMode("quick")}
                   onNavigateToTab={navigateToTab}
+                  onDiscussCase={(c) => setDiscussionModalCase(c)}
                 />
               )}
 
@@ -3307,90 +3510,60 @@ export default function App() {
           className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-4"
           id="system-updates-modal"
         >
-          <div className="bg-white dark:bg-slate-950 rounded-2xl max-w-lg w-full overflow-hidden shadow-2xl border border-slate-200 dark:border-slate-800 animate-in fade-in zoom-in-95 duration-250 flex flex-col max-h-[90vh]">
+          <div className="bg-white dark:bg-slate-950 rounded-2xl max-w-sm w-full overflow-hidden shadow-2xl border border-slate-200 dark:border-slate-800 animate-in fade-in zoom-in-95 duration-250 flex flex-col">
             {/* Header Banner */}
-            <div className="p-6 bg-gradient-to-r from-emerald-600 to-teal-700 text-white relative">
+            <div className="p-5 bg-slate-900 text-white relative border-b border-emerald-500/30">
               <button 
-                onClick={() => setShowUpdatesModal(false)}
-                className="absolute top-4 right-4 text-white/80 hover:text-white transition-all bg-white/10 hover:bg-white/25 p-1.5 rounded-lg cursor-pointer animate-none"
+                onClick={handleLaterApp}
+                className="absolute top-4 right-4 text-white/70 hover:text-white transition-all bg-white/10 hover:bg-white/20 p-1.5 rounded-lg cursor-pointer"
+                title="Dismiss (X)"
               >
                 <X className="w-4 h-4" />
               </button>
-              <div className="flex items-center gap-2 mb-1">
-                <Sparkles className="w-5 h-5 text-amber-300 animate-pulse" />
-                <span className="text-[10px] font-mono tracking-widest font-extrabold uppercase bg-emerald-500/30 px-2 py-0.5 rounded-full">System Announcement</span>
+              <div className="flex items-center gap-2 mb-1.5">
+                <Sparkles className="w-4 h-4 text-emerald-400 animate-pulse" />
+                <span className="text-[10px] font-mono tracking-widest font-extrabold uppercase bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded-full border border-emerald-500/30">
+                  Update Available
+                </span>
               </div>
-              <h2 className="text-lg font-bold tracking-tight">ErMate EMR Upgraded to v2.4.0 🚀</h2>
-              <p className="text-emerald-100 text-xs mt-1 font-medium">A new version of ErMate has been deployed with real-time syncing, clinical improvements, and complete role-based isolation.</p>
+              <h2 className="text-base font-extrabold tracking-tight text-white font-sans flex items-center gap-1.5">
+                <span>⚡ ErMate v{currentVersion} is ready</span>
+              </h2>
             </div>
 
             {/* Updates Body */}
-            <div className="p-6 overflow-y-auto space-y-4 flex-1 text-slate-700 dark:text-slate-300">
-              <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 mb-2">
-                We've introduced several critical improvements to enhance multi-user clinical simulation, shift handover reporting, and clinical data safety:
-              </p>
-
-              {/* Feature 1 */}
-              <div className="flex gap-3 items-start">
-                <div className="p-1.5 rounded-lg bg-emerald-100 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 shrink-0">
-                  <RefreshCw className="w-4 h-4" />
-                </div>
-                <div>
-                  <h4 className="text-xs font-bold text-slate-900 dark:text-white">Real-Time Syncing & Alerts</h4>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 leading-normal font-sans">
-                    ER patient admissions, case sheets, and shift handovers now update instantly across different doctor browsers in real-time. Immediate floating alerts will notify you whenever another clinician on your shift adds or updates a record.
-                  </p>
-                </div>
-              </div>
-
-              {/* Feature 2 */}
-              <div className="flex gap-3 items-start">
-                <div className="p-1.5 rounded-lg bg-indigo-100 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 shrink-0">
-                  <ShieldCheck className="w-4 h-4" />
-                </div>
-                <div>
-                  <h4 className="text-xs font-bold text-slate-900 dark:text-white">Strict Hospital-Role Isolation</h4>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 leading-normal font-sans">
-                    To comply with strict healthcare data confidentiality standards, each mock account (Dr. Vipin, Dr. Priya, Dr. Sanjay, Dr. Ananya) now syncs into their own distinct hospital database. You will no longer see other clinics' clinical data unless explicitly registered in the same facility.
-                  </p>
-                </div>
-              </div>
-
-              {/* Feature 3 */}
-              <div className="flex gap-3 items-start">
-                <div className="p-1.5 rounded-lg bg-amber-100 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 shrink-0">
-                  <Mic className="w-4 h-4" />
-                </div>
-                <div>
-                  <h4 className="text-xs font-bold text-slate-900 dark:text-white">ErMate Scribe & Reference Suite</h4>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 leading-normal font-sans">
-                    Use speech-to-text dictation or scan clinical handover notes to automatically generate structural triage sheets, and run clinical guideline queries grounded in Tintinalli's/Rosen's.
-                  </p>
-                </div>
-              </div>
-
-              {/* Feature 4 */}
-              <div className="flex gap-3 items-start">
-                <div className="p-1.5 rounded-lg bg-sky-100 dark:bg-sky-950/40 text-sky-600 dark:text-sky-400 shrink-0">
-                  <Bell className="w-4 h-4" />
-                </div>
-                <div>
-                  <h4 className="text-xs font-bold text-slate-900 dark:text-white">Shift Handover & Notification Hub</h4>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 leading-normal font-sans">
-                    A dedicated real-time notifications dropdown is now accessible via the **Bell Icon** at the top right of your navigation panel to view shift alerts and clinical handovers at any point.
-                  </p>
-                </div>
-              </div>
+            <div className="p-5 space-y-3 text-slate-700 dark:text-slate-300">
+              <ul className="space-y-2 text-xs font-semibold text-slate-800 dark:text-slate-200">
+                {(CHANGELOG[currentVersion] || CHANGELOG[APP_VERSION] || [
+                  "Voice dictation is faster",
+                  "Handover extraction improved",
+                  "Normal exam fields auto-fill",
+                  "Works offline seamlessly"
+                ]).slice(0, 4).map((bullet, idx) => (
+                  <li key={idx} className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0"></span>
+                    <span>{bullet}</span>
+                  </li>
+                ))}
+              </ul>
             </div>
 
             {/* Footer */}
-            <div className="p-4 bg-slate-50 dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 flex justify-end gap-2 shrink-0">
+            <div className="p-4 bg-slate-50 dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2 shrink-0">
               <button
                 type="button"
-                onClick={() => setShowUpdatesModal(false)}
-                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl transition-all shadow-xs cursor-pointer"
+                onClick={handleLaterApp}
+                className="px-3.5 py-2 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white text-xs font-semibold rounded-xl transition-all cursor-pointer"
               >
-                Acknowledge & Continue
+                Later
+              </button>
+              <button
+                type="button"
+                onClick={handleUpdateApp}
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl transition-all shadow-xs flex items-center gap-1.5 cursor-pointer active:scale-95"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>Update now</span>
               </button>
             </div>
           </div>
@@ -3659,6 +3832,43 @@ export default function App() {
         </div>
       )}
 
+      {/* Saved Case Confirmation Banner */}
+      {savedBanner.visible && (
+        <div className="fixed bottom-20 right-4 md:right-6 z-50 bg-slate-900 dark:bg-slate-950 text-white px-4 py-3 rounded-2xl shadow-2xl border border-emerald-500/40 flex items-center gap-3 animate-slide-up max-w-sm w-full">
+          <div className="w-2.5 h-10 bg-emerald-500 rounded-full shrink-0" />
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-1.5 font-bold text-xs text-emerald-400">
+              <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+              <span>Case saved to Case Sheet</span>
+            </div>
+            <div className="text-xs text-slate-200 truncate font-semibold mt-0.5">
+              {savedBanner.patientName ? `${savedBanner.patientName} · just now` : 'Just now'}
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={() => {
+                setSelectedCaseId(savedBanner.caseId);
+                setShowVoiceScribeChat(false);
+                setActiveFormMode(null);
+                setShowDischargeSummaryId(null);
+                setSavedBanner(prev => ({ ...prev, visible: false }));
+              }}
+              className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-extrabold transition-all cursor-pointer shadow-xs"
+            >
+              View case
+            </button>
+            <button
+              onClick={() => setSavedBanner(prev => ({ ...prev, visible: false }))}
+              className="text-slate-400 hover:text-white p-1 rounded-lg transition-colors cursor-pointer"
+              title="Dismiss"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Floating Toast Notifications */}
       <div className="fixed bottom-4 right-4 z-50 flex flex-col gap-2 max-w-sm w-full pointer-events-none px-4 md:px-0">
         {toasts.map((toast) => (
@@ -3698,6 +3908,14 @@ export default function App() {
           </div>
         ))}
       </div>
+
+      {/* Patient Case Discussion Modal */}
+      <CaseDiscussionModal
+        patientCase={discussionModalCase}
+        isOpen={!!discussionModalCase}
+        onClose={() => setDiscussionModalCase(null)}
+        onSaveDiscussionHistory={handleSaveDiscussionHistory}
+      />
 
     </div>
   );

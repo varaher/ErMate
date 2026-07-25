@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { 
   Users, ClipboardCopy, FileText, Printer, Plus, Trash2, Edit2, Pencil,
   CheckCircle, HelpCircle, Download, Check, RefreshCw, Layers, LayoutList,
@@ -9,7 +9,7 @@ import SpeechMicButton from "./SpeechMicButton";
 import { sanitizeDoctorError } from "../utils/sanitizeError";
 import { ClinicalCase, UserProfile, HandoverRecord, QuickPastePatient, InvestigationItem } from "../types";
 import { db } from "../firebase";
-import { doc, setDoc, deleteDoc } from "firebase/firestore";
+import { doc, setDoc, deleteDoc, getDoc } from "firebase/firestore";
 
 interface HandoverViewProps {
   profile: UserProfile;
@@ -138,7 +138,7 @@ export function sortRowsByBedNumber<T>(rows: T[]): T[] {
 export function renderHighlightedText(text: string | undefined | null) {
   if (!text) return null;
 
-  const tokenRegex = /(?<=^|\s|\n)(?:Step\s*\d+:?|[A-Z]\.|\d+(?:\.\d+)*(?:[\.\)]|\b)|\(\d+\)|\[\d+\]|#\d+)(?=\s|$)|[⚠️⚠🚨⚡❗‼]+|\b(?:ALERT|CRITICAL|WARNING|URGENT|DANGER|HIGH\s+RISK|RED\s+FLAG|P1|A3|SEPSIS|HYPOTENSION|HYPOXIA|ANAPHYLAXIS|CARDIAC\s+ARREST|ST\s*-?\s*ELEVATION):?|\b(?:Bed|Room|Bay|Cot|ICU|HDU)\s*#?\s*\d+[A-Za-z]?\b|\b(?:\d{1,2}[\/\.-]\d{1,2}[\/\.-]\d{2,4}|\d{4}[\/\.-]\d{1,2}[\/\.-]\d{1,2}|\d{1,2}(?:st|nd|rd|th)?\s+(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)(?:\s+\d{2,4})?|(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{1,2}(?:st|nd|rd|th)?(?:\,?\s+\d{2,4})?|Today|Yesterday|Tomorrow|Day\s*\d+|POD\s*\d+)\b|(?:@\s*)?\b(?:[0-1]?\d|2[0-3]):[0-5]\d(?::[0-5]\d)?(?:\s*[AP]M)?\b|\b\d{2,3}\/\d{2,3}(?:\s*mmHg)?\b|\b\d+(?:\.\d+)?(?:k|mg|g|ml|l|m|mmol\/L|mg\/dL|g\/dL|IU\/L|bpm|mmHg|cm|mm|kg|%|x\d+|days?|months?|hrs?|hours?|mins?|weeks?|yr|years?|mEq\/L|G)?\s*[⚠⚠️]|\b[><]=?\s*\d+(?:\.\d+)?(?:k|mg|g|ml|%)?\b|\b\d+(?:\.\d+)?(?:\s*(?:k|mg|mcg|g|ml|l|m|mmol\/L|mg\/dL|g\/dL|IU\/L|bpm|mmHg|cm|mm|kg|%|x\d+|days?|months?|hrs?|hours?|mins?|weeks?|yr|years?|mEq\/L|G))\b|\b\d+(?:\.\d+)+\b|(?<=\s|^|\(|\[|#|:|-|·)\d+(?=\s|\)|\]|,|\.|;|$|·)/gi;
+  const tokenRegex = /(?<=^|\s|\n)(?:Step\s*\d+:?|[A-Z]\.|\d+(?:\.\d+)*(?:[\.\)]|\b)|\(\d+\)|\[\d+\]|#\d+)(?=\s|$)|[⚠️⚠🚨⚡❗‼]+|\b(?:ALERT|CRITICAL|WARNING|URGENT|DANGER|HIGH\s+RISK|RED\s+FLAG|P1|A3|SEPSIS|HYPOTENSION|HYPOXIA|ANAPHYLAXIS|CARDIAC\s+ARREST|ST\s*-?\s*ELEVATION):?|\b(?:Bed|Room|Bay|Cot|ICU|HDU)\s*#?\s*\d+[A-Za-z]?\b|\b(?:\d{1,2}[\/\.-]\d{1,2}[\/\.-]\d{2,4}|\d{4}[\/\.-]\d{1,2}[\/\.-]\d{1,2}|\d{1,2}(?:st|nd|rd|th)?\s+(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)(?:\s+\d{2,4})?|(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{1,2}(?:st|nd|rd|th)?(?:\,?\s+\d{2,4})?|Today|Yesterday|Tomorrow|Day\s*\d+|POD\s*\d+)\b|(?:@\s*)?\b(?:[0-1]?\d|2[0-3]):[0-5]\d(?::[0-5]\d)?(?:\s*[AP]M)?\b|\b\d{2,3}\/\d{2,3}(?:\s*mmHg)?\b|\b(?:Temp(?:erature)?|T:?)\s*[:\s]*\d{2,3}(?:\.\d+)?(?:\s*°?[FC])?\b|\b\d{2,3}(?:\.\d+)?\s*°[FC]\b|\b\d{2,3}(?:\.\d+)?\s*(?:deg\s*F|deg\s*C|Fahrenheit|Celsius)\b|\b\d+(?:\.\d+)?(?:k|mg|g|ml|l|m|mmol\/L|mg\/dL|g\/dL|IU\/L|bpm|mmHg|cm|mm|kg|%|x\d+|days?|months?|hrs?|hours?|mins?|weeks?|yr|years?|mEq\/L|G)?\s*[⚠⚠️]|\b[><]=?\s*\d+(?:\.\d+)?(?:k|mg|g|ml|%)?\b|\b\d+(?:\.\d+)?(?:\s*(?:k|mg|mcg|g|ml|l|m|mmol\/L|mg\/dL|g\/dL|IU\/L|bpm|mmHg|cm|mm|kg|%|x\d+|days?|months?|hrs?|hours?|mins?|weeks?|yr|years?|mEq\/L|G))\b|\b\d+(?:\.\d+)+\b|(?<=\s|^|\(|\[|#|:|-|·)\d+(?=\s|\)|\]|,|\.|;|$|·)/gi;
 
   const parts = text.split(tokenRegex);
   const matches = text.match(tokenRegex);
@@ -163,6 +163,7 @@ export function renderHighlightedText(text: string | undefined | null) {
       const isAlert = /^(?:[⚠️⚠🚨⚡❗‼]+|\b(?:ALERT|CRITICAL|WARNING|URGENT|DANGER|HIGH\s+RISK|RED\s+FLAG|P1|A3|SEPSIS|HYPOTENSION|HYPOXIA|ANAPHYLAXIS|CARDIAC\s+ARREST|ST\s*-?\s*ELEVATION):?)$/i.test(trimmed);
       const isAbnormalNum = /⚠|⚠️|^[><]/.test(trimmed);
       const isBpRatio = /^\d{2,3}\/\d{2,3}(?:\s*mmHg)?$/i.test(trimmed);
+      const isTemp = /^(?:Temp(?:erature)?|T:?)\s*[:\s]*\d{2,3}(?:\.\d+)?|\d{2,3}(?:\.\d+)?\s*(?:°[FC]|deg\s*[FC]|Fahrenheit|Celsius)$/i.test(trimmed);
       const isNumericValue = /^\d+(?:\.\d+)?/.test(trimmed);
 
       if (isBed) {
@@ -217,6 +218,21 @@ export function renderHighlightedText(text: string | undefined | null) {
             className="inline-flex items-center gap-0.5 bg-slate-200 dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-black text-[10.5px] px-1.5 py-0.5 rounded-md border border-slate-300 dark:border-slate-600 mx-0.5 font-mono shadow-2xs leading-none print:bg-slate-200 print:text-slate-900"
           >
             {match}
+          </span>
+        );
+      } else if (isTemp) {
+        const numVal = parseFloat(trimmed.replace(/[^0-9.]/g, ""));
+        const isFever = numVal >= 99.5 || (numVal >= 37.5 && numVal <= 43) || /fever|high/i.test(trimmed);
+        result.push(
+          <span
+            key={`temp-${index}`}
+            className={`inline-flex items-center gap-0.5 font-bold text-[10.5px] px-1.5 py-0.5 rounded-md border mx-0.5 font-mono shadow-2xs leading-none ${
+              isFever
+                ? "bg-rose-100 dark:bg-rose-950/90 text-rose-800 dark:text-rose-200 border-rose-300 dark:border-rose-700 animate-pulse print:animate-none"
+                : "bg-teal-100 dark:bg-teal-950/90 text-teal-800 dark:text-teal-200 border-teal-300 dark:border-teal-700"
+            }`}
+          >
+            🌡️ {match} {isFever ? " (FEVER ⚠️)" : ""}
           </span>
         );
       } else if (isNumericValue) {
@@ -282,7 +298,7 @@ export function splitEntriesIntoColumns(entries: string[]): string[][] {
     cols = 3;
   }
 
-  const perCol = Math.floor((n + cols - 1) / cols);
+  const perCol = Math.ceil(n / cols);
   const result: string[][] = [];
   for (let i = 0; i < n; i += perCol) {
     result.push(entries.slice(i, i + perCol));
@@ -546,6 +562,7 @@ export default function HandoverView({
 
   const [editableRows, setEditableRows] = useState<HandoverTableRow[]>([]);
   const [editingCells, setEditingCells] = useState<Record<string, boolean>>({});
+  const [autoSaveStatus, setAutoSaveStatus] = useState<"saved" | "saving" | "idle">("idle");
 
   const toggleCellEditing = (rowId: string, field: string) => {
     const key = `${rowId}_${field}`;
@@ -562,6 +579,68 @@ export default function HandoverView({
   const [hospitalName, setHospitalName] = useState(() => {
     return profile?.hospital || "RAJAGIRI HOSPITAL";
   });
+
+  const saveRefinedHandoverSheet = useCallback((rows: HandoverTableRow[], meta: typeof handoverMeta) => {
+    if (!rows || rows.length === 0) return;
+    setAutoSaveStatus("saving");
+    try {
+      localStorage.setItem("ermate_refined_handover_rows_v2", JSON.stringify(rows));
+      localStorage.setItem("ermate_refined_handover_meta_v2", JSON.stringify(meta));
+    } catch (err) {
+      console.warn("Failed to write handover to localStorage:", err);
+    }
+
+    const activeDocRef = doc(db, "handover_sheets", "active_shift");
+    setDoc(activeDocRef, {
+      rows,
+      meta,
+      hospitalName,
+      updatedAt: new Date().toISOString(),
+      updatedBy: profile?.name || "Doctor"
+    }, { merge: true }).then(() => {
+      setAutoSaveStatus("saved");
+    }).catch(err => {
+      console.warn("Firestore handover sheet save warning:", err);
+      setAutoSaveStatus("saved");
+    });
+  }, [profile?.name, hospitalName]);
+
+  // Restore saved handover state on mount
+  useEffect(() => {
+    try {
+      const savedStr = localStorage.getItem("ermate_refined_handover_rows_v2");
+      const savedMetaStr = localStorage.getItem("ermate_refined_handover_meta_v2");
+      if (savedStr) {
+        const parsed = JSON.parse(savedStr);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setEditableRows(parsed);
+        }
+      }
+      if (savedMetaStr) {
+        const parsedMeta = JSON.parse(savedMetaStr);
+        if (parsedMeta && typeof parsedMeta === "object") {
+          setHandoverMeta(prev => ({ ...prev, ...parsedMeta }));
+        }
+      }
+    } catch (e) {
+      console.warn("Failed to load saved handover rows from localStorage:", e);
+    }
+
+    const activeDocRef = doc(db, "handover_sheets", "active_shift");
+    getDoc(activeDocRef).then((snapshot) => {
+      if (snapshot.exists()) {
+        const data = snapshot.data();
+        if (data && Array.isArray(data.rows) && data.rows.length > 0) {
+          setEditableRows(data.rows);
+          if (data.meta) {
+            setHandoverMeta(prev => ({ ...prev, ...data.meta }));
+          }
+        }
+      }
+    }).catch(err => {
+      console.warn("Firestore handover sheet fetch error:", err);
+    });
+  }, []);
 
   useEffect(() => {
     if (profile?.hospital) {
@@ -1011,7 +1090,9 @@ function extractLatestVitalsWithTime(
       });
       const json = await res.json();
       if (json.success && json.rows && Array.isArray(json.rows) && json.rows.length > 0) {
-        setEditableRows(sortRowsByBedNumber(json.rows));
+        const sorted = sortRowsByBedNumber(json.rows);
+        setEditableRows(sorted);
+        saveRefinedHandoverSheet(sorted, handoverMeta);
       }
     } catch (err) {
       console.error("AI handover sheet compilation error:", err);
@@ -1022,28 +1103,30 @@ function extractLatestVitalsWithTime(
 
   const compileRegistryToSheet = () => {
     const localRows = getRegistryRows();
-    setEditableRows(localRows);
-    setIsViewingSheet(true);
-
-    const selectedCases = cases.filter(c => selectedRegistryIds.includes(c.id));
-    if (selectedCases.length > 0) {
-      refineSheetWithGemini(selectedCases);
+    if (editableRows.length === 0) {
+      setEditableRows(localRows);
+      const selectedCases = cases.filter(c => selectedRegistryIds.includes(c.id));
+      if (selectedCases.length > 0) {
+        refineSheetWithGemini(selectedCases);
+      }
     }
+    setIsViewingSheet(true);
   };
 
   const compileQuickPasteToSheet = () => {
     const localRows = getQuickPasteRows();
-    setEditableRows(localRows);
-    setIsViewingSheet(true);
-
-    const selectedQuick = quickPasteList.filter(qp => selectedQuickPasteIds.includes(qp.id));
-    if (selectedQuick.length > 0) {
-      refineSheetWithGemini(selectedQuick);
+    if (editableRows.length === 0) {
+      setEditableRows(localRows);
+      const selectedQuick = quickPasteList.filter(qp => selectedQuickPasteIds.includes(qp.id));
+      if (selectedQuick.length > 0) {
+        refineSheetWithGemini(selectedQuick);
+      }
     }
+    setIsViewingSheet(true);
   };
 
   const handleDownloadWordDirect = (type: "registry" | "quickpaste") => {
-    const rows = type === "registry" ? getRegistryRows() : getQuickPasteRows();
+    const rows = (editableRows && editableRows.length > 0) ? editableRows : (type === "registry" ? getRegistryRows() : getQuickPasteRows());
     if (rows.length === 0) return;
 
     const chunkRows = (rList: HandoverTableRow[], size: number) => {
@@ -1169,7 +1252,11 @@ function extractLatestVitalsWithTime(
   };
 
   const handleUpdateCell = (id: string, field: keyof HandoverTableRow, value: string) => {
-    setEditableRows(prev => prev.map(row => row.id === id ? { ...row, [field]: value } : row));
+    setEditableRows(prev => {
+      const updated = prev.map(row => row.id === id ? { ...row, [field]: value } : row);
+      saveRefinedHandoverSheet(updated, handoverMeta);
+      return updated;
+    });
   };
 
   const handleToggleRegistryCase = (caseId: string) => {
@@ -1724,6 +1811,16 @@ function extractLatestVitalsWithTime(
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            {autoSaveStatus === "saving" && (
+              <span className="text-[11px] font-semibold text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/80 px-2.5 py-1.5 rounded-lg border border-amber-200 dark:border-amber-800 flex items-center gap-1.5 animate-pulse">
+                <RefreshCw className="w-3 h-3 animate-spin" /> Auto-saving...
+              </span>
+            )}
+            {autoSaveStatus === "saved" && (
+              <span className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/80 px-2.5 py-1.5 rounded-lg border border-emerald-200 dark:border-emerald-800 flex items-center gap-1.5">
+                <Check className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" /> Saved
+              </span>
+            )}
             <button
               onClick={() => setIsViewingSheet(false)}
               className="px-3.5 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-900 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-850 rounded-lg text-xs font-bold text-slate-700 dark:text-slate-300 transition-all cursor-pointer"
@@ -1965,10 +2062,10 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
               {editableRows.map((row) => (
                 <div 
                   key={row.id} 
-                  className="print-card border-2 border-slate-900 dark:border-slate-700 rounded-xl overflow-hidden bg-white dark:bg-slate-950 shadow-xs print:shadow-none print:border-slate-900 break-inside-avoid font-sans"
+                  className="print-card border-2 border-slate-900 dark:border-slate-700 rounded-xl overflow-hidden bg-white dark:bg-slate-950 shadow-xs print:shadow-none print:border-slate-900 font-sans"
                 >
                   {/* 1. HEADER BAR: BED NO + NAME */}
-                  <div className="bg-slate-900 dark:bg-slate-900 text-white p-2.5 md:p-3 border-b-2 border-slate-900 flex flex-wrap items-center justify-between gap-2">
+                  <div className="print-card-header bg-slate-900 dark:bg-slate-900 text-white p-2.5 md:p-3 border-b-2 border-slate-900 flex flex-wrap items-center justify-between gap-2">
                     <div className="flex items-center gap-2.5">
                       <div className="bg-indigo-600 text-white text-xs font-mono font-black px-2 py-0.5 rounded tracking-wide uppercase">
                         <input
@@ -2004,7 +2101,7 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
                   {/* 2. PRESENTING COMPLAINT & INITIAL ASSESSMENT CHRONOLOGICAL NOTES */}
                   <div className="border-b border-slate-300 dark:border-slate-800 divide-y divide-slate-300 dark:divide-slate-800">
                     {/* PRESENTING COMPLAINT: Full width · Short · Clean */}
-                    <div className="p-3 bg-amber-50/30 dark:bg-amber-950/10">
+                    <div className="p-3 bg-amber-50/30 dark:bg-amber-950/10 print-section">
                       <div className="flex items-center justify-between mb-1.5 pb-1 border-b border-amber-200 dark:border-amber-900/30">
                         <span className="text-[10.5px] font-black uppercase tracking-wider text-amber-800 dark:text-amber-400 font-mono">
                           PRESENTING COMPLAINT
@@ -2036,7 +2133,7 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
                     </div>
 
                     {/* 2. INITIAL ASSESSMENT & CHRONOLOGICAL NOTES (OLDEST -> NEWEST): Multi-column (1, 2, or 3 cols based on entry count) */}
-                    <div className="p-3 bg-slate-50/50 dark:bg-slate-900/30">
+                    <div className="p-3 bg-slate-50/50 dark:bg-slate-900/30 print-section">
                       <div className="flex items-center justify-between mb-1.5 pb-1 border-b border-slate-200 dark:border-slate-800">
                         <span className="text-[10.5px] font-black uppercase tracking-wider text-indigo-700 dark:text-indigo-400 font-mono flex items-center gap-1">
                           2. INITIAL ASSESSMENT &amp; CHRONOLOGICAL NOTES (OLDEST &rarr; NEWEST)
@@ -2069,7 +2166,7 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
                   </div>
 
                   {/* 3. PAST MEDICAL HISTORY */}
-                  <div className="p-3 border-b border-slate-300 dark:border-slate-800 bg-white dark:bg-slate-950">
+                  <div className="p-3 border-b border-slate-300 dark:border-slate-800 bg-white dark:bg-slate-950 print-section">
                     <div className="flex items-center justify-between mb-1.5 pb-1 border-b border-slate-200 dark:border-slate-800">
                       <span className="text-[10.5px] font-black uppercase tracking-wider text-slate-700 dark:text-slate-300 font-mono">
                         3. PAST MEDICAL HISTORY
@@ -2101,7 +2198,7 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
                   </div>
 
                   {/* 4. PROVISIONAL DIAGNOSIS & ASSESSMENT */}
-                  <div className="p-3 border-b border-slate-300 dark:border-slate-800 bg-purple-50/20 dark:bg-purple-950/10">
+                  <div className="p-3 border-b border-slate-300 dark:border-slate-800 bg-purple-50/20 dark:bg-purple-950/10 print-section">
                     <div className="flex items-center justify-between mb-1.5 pb-1 border-b border-slate-200 dark:border-slate-800">
                       <span className="text-[10.5px] font-black uppercase tracking-wider text-purple-700 dark:text-purple-400 font-mono">
                         4. PROVISIONAL DIAGNOSIS &amp; INVESTIGATION FINDINGS
@@ -2133,7 +2230,7 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
                   </div>
 
                   {/* 5. MANAGEMENT PLAN (DONE ✓ | TO BE DONE □) */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 border-b border-slate-300 dark:border-slate-800 divide-y md:divide-y-0 md:divide-x divide-slate-300 dark:divide-slate-800">
+                  <div className="grid grid-cols-1 md:grid-cols-2 border-b border-slate-300 dark:border-slate-800 divide-y md:divide-y-0 md:divide-x divide-slate-300 dark:divide-slate-800 print-section">
                     {/* Left: DONE ✓ */}
                     <div className="p-3 bg-emerald-50/30 dark:bg-emerald-950/10">
                       <div className="flex items-center justify-between mb-1.5 pb-1 border-b border-emerald-200 dark:border-emerald-900/30">
@@ -2200,7 +2297,7 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
                   </div>
 
                   {/* 6. BYSTANDER UPDATE | VITALS */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-slate-300 dark:divide-slate-800">
+                  <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-slate-300 dark:divide-slate-800 print-section">
                     {/* Left: BYSTANDER UPDATE */}
                     <div className="p-3 bg-white dark:bg-slate-950">
                       <div className="flex items-center justify-between mb-1.5 pb-1 border-b border-slate-200 dark:border-slate-800">
