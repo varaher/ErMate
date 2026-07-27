@@ -1,0 +1,283 @@
+/* ============================================================
+   ErMate Handover Card Styles
+   File: src/styles/handover.css
+   ============================================================ */
+
+.hov-card {
+  border: 1.5px solid #D4E8DC;
+  border-radius: 12px;
+  overflow: hidden;
+  margin-bottom: 16px;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  background: white;
+  box-shadow: 0 2px 8px rgba(13,43,26,0.08);
+  transition: all 0.2s ease;
+}
+
+/* Header */
+.hov-header {
+  display: flex;
+  align-items: center;
+  padding: 10px 14px;
+  gap: 10px;
+  position: relative;
+}
+
+.hov-status-bar {
+  width: 4px;
+  height: 100%;
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+}
+
+.hov-header-content {
+  flex: 1;
+  padding-left: 6px;
+}
+
+.hov-bed-name {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+
+.hov-bed {
+  font-size: 11px;
+  font-weight: 700;
+  color: #5A8A6E;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.hov-name {
+  font-size: 16px;
+  font-weight: 800;
+  color: #0D2B1A;
+  letter-spacing: -0.3px;
+}
+
+.hov-agesex {
+  font-size: 12px;
+  color: #5A8A6E;
+  font-weight: 500;
+}
+
+.hov-meta {
+  font-size: 11px;
+  color: #5A8A6E;
+}
+
+.hov-chip {
+  padding: 3px 10px;
+  border-radius: 99px;
+  font-size: 10px;
+  font-weight: 800;
+  color: white;
+  letter-spacing: 0.5px;
+  flex-shrink: 0;
+}
+
+/* Sections */
+.hov-section {
+  padding: 8px 14px;
+  border-top: 1px solid #F0F7F3;
+}
+
+.hov-label {
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: #9EC4AF;
+  margin-bottom: 4px;
+}
+
+.hov-value {
+  font-size: 12.5px;
+  color: #0D2B1A;
+  line-height: 1.5;
+}
+
+/* Story */
+.hov-story {
+  background: #F9FEFC;
+}
+
+.hov-story-text {
+  font-size: 13px;
+  color: #0D2B1A;
+  line-height: 1.6;
+  font-weight: 450;
+}
+
+/* Critical + Vitals */
+.hov-two-col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border-top: 1px solid #F0F7F3;
+}
+
+.hov-critical {
+  background: #FEF2F2;
+  border-right: 1px solid #FECACA;
+}
+
+.hov-alert-item {
+  font-size: 12px;
+  font-weight: 700;
+  color: #DC2626;
+  line-height: 1.6;
+}
+
+.hov-vitals {
+  font-size: 12px;
+  color: #0D2B1A;
+  line-height: 1.8;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* PMH */
+.hov-pmh {
+  font-size: 12px;
+  color: #374151;
+}
+
+/* Diagnosis */
+.hov-dx {
+  padding: 8px 14px 8px 12px;
+}
+
+.hov-dx-text {
+  font-size: 13px;
+  font-weight: 600;
+  color: #0D2B1A;
+  line-height: 1.5;
+}
+
+/* Management Plan */
+.hov-mgmt-label {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  color: #0D2B1A;
+  padding: 8px 14px 4px;
+  border-top: 1px solid #F0F7F3;
+}
+
+.hov-mgmt {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1px;
+  background: #D4E8DC;
+  margin: 0 14px 8px;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.hov-done {
+  background: #F0FFF4;
+  padding: 8px;
+}
+
+.hov-todo {
+  background: #FFFBEB;
+  padding: 8px;
+}
+
+.hov-mgmt-header {
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+
+.hov-done-header { color: #065F46; }
+.hov-todo-header { color: #D97706; }
+
+/* Columns within done/todo */
+.hov-cols {
+  display: grid;
+  gap: 2px;
+}
+
+.hov-cols-1 { grid-template-columns: 1fr; }
+.hov-cols-2 { grid-template-columns: 1fr 1fr; }
+.hov-cols-3 { grid-template-columns: 1fr 1fr 1fr; }
+
+.hov-col {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.hov-done-item,
+.hov-todo-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: #0D2B1A;
+}
+
+.hov-tick {
+  color: #065F46;
+  font-weight: 700;
+  flex-shrink: 0;
+  font-size: 11px;
+  margin-top: 1px;
+}
+
+.hov-box {
+  color: #D97706;
+  font-weight: 700;
+  flex-shrink: 0;
+  font-size: 12px;
+  margin-top: 0px;
+}
+
+/* Bystander */
+.hov-bystander {
+  background: #F5F3FF;
+}
+
+/* Alert Row — always last, always bold */
+.hov-alert-row {
+  padding: 8px 14px;
+  font-size: 12px;
+  font-weight: 700;
+  color: white;
+  line-height: 1.5;
+  letter-spacing: 0.2px;
+}
+
+/* Print styles */
+@media print {
+  .hov-card {
+    break-inside: avoid;
+    page-break-inside: avoid;
+    margin-bottom: 8px;
+    box-shadow: none;
+    border: 0.5pt solid #D4E8DC;
+  }
+
+  .hov-section { padding: 5px 10px; }
+  .hov-label { font-size: 7pt; }
+  .hov-value { font-size: 8pt; }
+  .hov-story-text { font-size: 8.5pt; }
+  .hov-name { font-size: 12pt; }
+  .hov-alert-row {
+    font-size: 8pt;
+    padding: 5px 10px;
+  }
+  .hov-mgmt { margin: 0 10px 5px; }
+  .hov-done-item,
+  .hov-todo-item { font-size: 7.5pt; }
+
+  * { height: auto !important; }
+}

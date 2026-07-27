@@ -2,8 +2,8 @@ import { GoogleGenAI } from "@google/genai";
 
 // ── Model Config ──────────────────────────────────────────────
 export const MODELS = {
-  GEMINI_PRIMARY: "gemini-1.5-flash",
-  GEMINI_PRO: "gemini-1.5-pro",
+  GEMINI_PRIMARY: "gemini-3.6-flash",
+  GEMINI_PRO: "gemini-3.1-pro-preview",
   CLAUDE_HAIKU: "claude-3-5-haiku-20241022",
   CLAUDE_SONNET: "claude-3-5-sonnet-20241022",
 };
@@ -253,6 +253,9 @@ No markdown. No explanation. No preamble.
   "hpi":                     string,
   "pmh":                     string | null,
   "medications":             string[],
+  "outpatientMedications":   string[] | string | null,
+  "symptoms":                string | null,
+  "events":                  string | null,
   "allergies":               string | null,
   "surgicalHistory":         string | null,
   "familyHistory":           string | null,
@@ -282,6 +285,44 @@ No markdown. No explanation. No preamble.
 RULES FOR SPECIFIC FIELDS:
 
 chiefComplaint:
+  The main reason patient came (1-2 lines). Extracted directly from dictation.
+  NEVER generate generic boilerplate text.
+
+hpi:
+  Write as clinical narrative paragraph using ONLY what the doctor dictated.
+  Do NOT add "Acute symptom onset prior to arrival", "Patient presented to ED for urgent evaluation", or "Events leading up to presentation".
+
+symptoms:
+  Refined concise list of active clinical signs & symptoms (e.g. "Fever, cough, cold, rhinorrhea, headache, sore throat, body ache x 3 days").
+  Omit narrative preambles like "A 42-year-old male presented with complaints of...".
+
+events:
+  Preceding trauma, mechanism of injury, accident, or precipitants ONLY if explicitly dictated by doctor.
+  If the doctor did NOT mention preceding events or trauma, return null or empty string!
+  NEVER generate hallucinated filler text like "Acute symptom onset prior to arrival" or "progressive discomfort prompted emergency evaluation".
+
+SECTION LABELS — use EXACTLY standard labels:
+  - "Chief Complaint"
+  - "History of Present Illness"
+  - "Signs and Symptoms"
+  - "Past Medical History"
+
+NEVER GENERATE:
+  "Acute symptom onset prior to arrival"
+  "Patient presented to ED for urgent evaluation"
+  "Events Leading Up to Presentation"
+  "Patient History & Presentation"
+  Any text the doctor did not say.
+
+outpatientMedications:
+  Daily home medications taken regularly by patient before ER arrival (e.g. "Tab Metformin 500mg BD").
+  CRITICAL: Acute ER treatments given or suggested by doctor in ER (e.g. Paracetamol 1g IV stat, Esomeprazole 40mg IV stat) MUST go into "treatment", NOT "outpatientMedications".
+  AUTOMATIC RULE: If PMH or dictation states "No past medical history" / "Nil past medical history" / "No comorbidities" / "NKCO" and no daily home meds are mentioned, return "Nil regular medications".
+
+pmh:
+  Past medical and surgical history. If dictated as "no past medical history" or "no surgical history" or no comorbidities, return "No past medical history".
+
+chiefComplaint:
   NEVER null — always extract concise chief complaint.
   If input is a case sheet, extract text from "Presenting Complaint:" or "CHIEF COMPLAINT:".
 
@@ -306,75 +347,179 @@ ${transcript}
 `;
 }
 
-// ── Handover extraction prompt ────────────────────────────────
-export function buildHandoverPrompt(rawText: string): string {
-  return `
-You are a clinical handover extraction engine for Indian Emergency Departments.
+// ── STEP 1: preprocessEMR ──────────────────────────────────────
+export function preprocessEMR(rawText: string): string {
+  if (!rawText || typeof rawText !== "string") return "";
 
-TEMPERATURE IS SET TO 0. BE DETERMINISTIC.
-Same input = same output always.
+  const lines = rawText.split(/\r?\n/);
+  const cleanedLines: string[] = [];
+  let prevLineWasNoComplaints = false;
 
-ANTI-HALLUCINATION:
-  NEVER invent data not in the provided text.
-  Return null for missing fields.
-  Do not guess diagnoses from symptoms.
-  Do not assume medications not mentioned.
+  for (let line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
 
-CHRONOLOGICAL READING:
-  Hospital EMRs are often REVERSE chronological (newest entry first).
-  Read from BOTTOM to TOP to understand the clinical story chronologically.
-  Presenting complaint = EARLIEST entry.
-  Current status = MOST RECENT entry.
-
-ENTRY TYPE IDENTIFICATION:
-  Nurse note → medication given, vitals, handover
-  Doctor note → assessment, plan, diagnosis
-  Consultant note → specialty review + advice
-  Lab result → investigation values
-  Radiology → imaging findings
-
-DONE vs TO BE DONE:
-  DONE: Past tense, completed actions
-    "Given", "done", "inserted", "started", "reviewed", "administered", "sent"
-  TO BE DONE: Future/pending actions
-    "Plan", "advised", "pending", "await", "to send", "to review", "follow up"
-
-OUTPUT — strict JSON only:
-{
-  "patientLabel": {
-    "name":               string | null,
-    "age":                string | null,
-    "sex":                string | null,
-    "bed":                string | null,
-    "erNumber":           string | null,
-    "admittingConsultant":string | null,
-    "erSince":            string | null,
-    "currentVitals":      string | null,
-    "status":             "critical"|"unstable"|"stable"|"discharge"
-  },
-  "presentingComplaints": string,
-  "pastMedicalHistory":   string | null,
-  "provisionalDiagnosis": string,
-  "done":                 string[],
-  "toBeDone":             string[],
-  "bystanderUpdate":      string | null,
-  "alerts":               string[],
-  "assessmentEntries": [
-    {
-      "datetime":   string,
-      "author":     string,
-      "role":       "doctor"|"nurse"|"consultant"|"lab"|"radiology",
-      "content":    string
+    // 1. Remove Acknowledged By / DateTime / Ack by
+    if (/(?:Acknowledged\s+By|Acknowledged\s+by|Ack\s+by|Acknowledged\s+Date\/?Time)/i.test(trimmed)) {
+      continue;
     }
-  ]
+
+    // 2. Remove VIP scores / Waterlow / Braden / Fall risk / Pain scale noise
+    if (/(?:VIP\s*Score|Waterlow\s*Score|Braden\s*Score|Fall\s*Risk|Morse\s*Fall|Pain\s*Score|NRS\s*Pain\s*Scale)\s*[:=-]?/i.test(trimmed)) {
+      continue;
+    }
+
+    // 3. Remove Document handover lines
+    if (/(?:Document\s+handover|Handover\s+(?:given|received|documented|taken)|Shift\s+handover\s+(?:done|taken|given|documented))/i.test(trimmed)) {
+      continue;
+    }
+
+    // 4. Remove Supply lists / Consumables / Inventory
+    if (/^(?:\d+x\s*)?(?:Syringe|Gauge\s+wire|Cotton\s+swab|Disposables?|Bandage|Micropore|Gloves|Needle|Infusion\s+set|Catheter\s+tray)\s*(?:x\d+|\b)/i.test(trimmed)) {
+      continue;
+    }
+
+    // 5. Remove Empty lab rows
+    if (/^(?:CBC|RFT|LFT|Serum\s+Electrolytes|ABG|VBG|Urine|Coagulation|Thyroid\s+profile)\s*[:=-]?\s*$/i.test(trimmed)) {
+      continue;
+    }
+
+    // 6. Remove Personal care / hygiene routine nursing lines
+    if (/(?:Sponge\s+bath|Bed\s+linen|Position\s+changed|Mouth\s+care|Back\s+care|Hair\s+care|Routine\s+nursing\s+care|Diaper\s+change)\s+(?:given|done|changed|provided|performed)/i.test(trimmed)) {
+      continue;
+    }
+
+    // 7. Collapse duplicate NO FRESH COMPLAINTS
+    const isNoComplaints = /(?:no\s+fresh\s+complaints|patient\s+comfortable\s+in\s+bed|nfc\b|no\s+new\s+complaints)/i.test(trimmed);
+    if (isNoComplaints) {
+      if (prevLineWasNoComplaints) {
+        continue;
+      }
+      prevLineWasNoComplaints = true;
+      cleanedLines.push("NO FRESH COMPLAINTS");
+      continue;
+    } else {
+      prevLineWasNoComplaints = false;
+    }
+
+    cleanedLines.push(trimmed);
+  }
+
+  return cleanedLines.join("\n");
 }
 
-assessmentEntries: chronological order (oldest first, newest last).
-This powers the multi-column display.
+// ── STEP 2: reverseEMREntries ─────────────────────────────────
+export function reverseEMREntries(text: string): string {
+  if (!text || typeof text !== "string") return "";
 
-RAW EMR TEXT:
+  // Split by entry header date/time or section boundaries
+  const entryBoundaryRegex = /\n(?=(?:\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{1,2}-[A-Za-z]{3}-\d{2,4}|\d{1,2}:\d{2}\s*(?:AM|PM|hrs)?|Doctor Note|Nursing Note|Consultant Review|Primary Assessment|Emergency Review|Progress Note)\b)/i;
+
+  let chunks = text.split(entryBoundaryRegex).map(c => c.trim()).filter(c => c.length > 0);
+
+  if (chunks.length <= 1) {
+    chunks = text.split(/\n\s*\n+/).map(c => c.trim()).filter(c => c.length > 0);
+  }
+
+  if (chunks.length > 1) {
+    chunks.reverse(); // Oldest entry now at TOP
+    return chunks.join("\n\n--- PREVIOUS ENTRY (CHRONOLOGICAL ORDER: OLDEST AT TOP) ---\n\n");
+  }
+
+  return text;
+}
+
+// ── Handover extraction prompt ────────────────────────────────
+export function buildHandoverPrompt(reversedText: string): string {
+  return `
+You are an expert Emergency Medicine Clinical Lead extracting a clinical handover from a real Indian hospital EMR note or case sheet.
+
+Text has been preprocessed and reversed — oldest entry first at the TOP.
+Read top to bottom to follow complete clinical story.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+WHERE TO FIND EACH FIELD:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+PATIENT LABEL:
+  Name from entry headers (e.g., Selvarani, Varghese KC)
+  Age/sex from consultant notes or headers (e.g., 57F, 48M)
+  Bed number and ER number from header or notes
+
+PRESENTING COMPLAINT:
+  Look for "Presenting Complaint:" or "Chief Complaint:" or "c/o" labels
+  Use EARLIEST entry (at TOP of text) or initial presentation note
+  Detail symptoms, duration, and onset
+
+PAST MEDICAL HISTORY:
+  Look for "Past Medical History:", "Known case of", "K/C/O", "KCO", "Comorbidities:", "PMH"
+  May appear in ANY entry — especially consultant notes (e.g., General Medicine, Nephrology, Cardiology consults)
+  Extract ALL conditions with durations and home medications (e.g., T2DM x 22y, HTN x 22y, Hypothyroidism x 5y, Cushing's syndrome, Morbid Obesity, OSA)
+  NEVER say "not documented" or "Comorbidities not explicitly documented" if PMH exists anywhere in the text
+
+PROVISIONAL DIAGNOSIS:
+  Look for "IMP:", "Impression:", "Differential Diagnosis:", "Provisional Diagnosis:", "Diagnosis:", "Dx:"
+  Consultant notes often have "IMP:" (e.g. "Fluid overload state with pericardial effusion and right pleural effusion, Moderate ascites, Metabolic acidosis, Acute kidney injury")
+  Use the MOST SPECIFIC diagnosis found across all entries
+  CT/imaging impressions count as diagnosis
+
+DONE (COMPLETED ACTIONS):
+  Any entry with PAST TENSE actions: "done", "given", "taken", "sent", "started", "inserted", "shifted", "administered", "counselled"
+  Each completed action = one done item (prefixed with ✓)
+
+TO BE DONE (PENDING / PLAN):
+  Any entry with FUTURE actions: "Plan:", "Advice:", "Adv:", "to be done", "pending", "awaited", "monitor", "shift to", "ICU transfer"
+  Each pending action = one to-do item (prefixed with □)
+
+VITALS:
+  Look in "Primary Assessment:" sections or arrival/nursing notes
+  Look for BP, HR, SpO2, RR, Temp, GCS, GRBS
+  Use MOST RECENT values or arrival values
+
+BYSTANDER UPDATE:
+  Look for "family counselled", "explained to bystander", "financial counselling"
+  Include WHO was told and WHAT was communicated
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CRITICAL RULES:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+1. TEMPERATURE IS SET TO 0.0 — BE DETERMINISTIC AND ACCURATE.
+2. ZERO GENERIC PLACEHOLDERS: NEVER output "Comorbidities not explicitly documented in raw input" or "Vitals not documented". If data is present, extract it; if genuinely absent, return empty string "".
+3. READ EVERY ENTRY TOP TO BOTTOM.
+
+OUTPUT FORMAT — STRICT JSON ONLY:
+{
+  "name": "Patient Name or Bed ID",
+  "ageGender": "e.g. 57F, 48M",
+  "triage": "P1 (Immediate) or P2 (Urgent) or P3 (Non-Urgent)",
+  "vitals": "Summary of vital signs",
+  "presentingComplaint": "Chief complaint, symptoms, onset, and duration from earliest entry",
+  "rawNotes": "Preprocessed and chronologically ordered notes",
+  "structuredSBAR": {
+    "situation": "Situation (S): Bed, Age/Gender, and EXPLICIT provisional diagnosis / active primary issue.",
+    "background": "Background (B): Exhaustive past medical history, comorbidities, home medications.",
+    "assessment": "Assessment (A): Vitals, physical exam highlights, investigation findings parameter-by-parameter.",
+    "recommendation": "Recommendation (R): Exhaustive list of completed actions ✓ and pending actions □, transfer plans, bystander update."
+  },
+  "patientLabel": {
+    "name": "Patient Name",
+    "age": "Age",
+    "sex": "Sex",
+    "bed": "Bed Number",
+    "erNumber": "ER Number",
+    "status": "critical|unstable|stable"
+  },
+  "presentingComplaints": "Same as presentingComplaint",
+  "pastMedicalHistory": "Exhaustive PMH and comorbidities",
+  "provisionalDiagnosis": "Explicit provisional diagnosis",
+  "done": ["✓ Item 1", "✓ Item 2"],
+  "toBeDone": ["□ Item 1", "□ Item 2"],
+  "bystanderUpdate": "Bystander update details"
+}
+
+RAW EMR TEXT (REVERSED CHRONOLOGICALLY — OLDEST ENTRY AT TOP):
 """
-${rawText}
+${reversedText}
 """
 `;
 }
@@ -390,18 +535,33 @@ async function callGemini(
   }
 
   const ai = new GoogleGenAI({ apiKey });
-  const response = await ai.models.generateContent({
-    model,
-    contents: prompt,
-    config: {
-      temperature: 0.0, // deterministic
-      topP: 0.1,
-      topK: 1,
-      responseMimeType: "application/json",
-    },
-  });
+  const modelCandidates = [model, "gemini-3.6-flash", "gemini-flash-latest", "gemini-3.1-pro-preview"];
+  const uniqueModels = Array.from(new Set(modelCandidates));
 
-  return response.text || "";
+  let lastErr: any = null;
+  for (const targetModel of uniqueModels) {
+    try {
+      const response = await ai.models.generateContent({
+        model: targetModel,
+        contents: prompt,
+        config: {
+          temperature: 0.0, // deterministic
+          topP: 0.1,
+          topK: 1,
+          responseMimeType: "application/json",
+        },
+      });
+
+      if (response.text && response.text.trim()) {
+        return response.text;
+      }
+    } catch (err: any) {
+      lastErr = err;
+      console.warn(`[callGemini] Model ${targetModel} failed:`, err?.message || err);
+    }
+  }
+
+  throw lastErr || new Error("All Gemini model attempts failed.");
 }
 
 // ── Claude caller ─────────────────────────────────────────────
@@ -757,6 +917,156 @@ export function parseHeuristicClinicalData(transcript: string): Record<string, a
   };
 }
 
+// ── Refinement utilities for SAMPLE History ──────────────────
+
+/**
+ * Refines signs and symptoms by removing narrative preambles like "A 42-year-old male presented with..."
+ */
+export function refineSymptomsText(
+  symptomRaw: string | null | undefined,
+  ccRaw: string | null | undefined,
+  hpiRaw: string | null | undefined,
+  rawText: string
+): string {
+  let source = (symptomRaw && symptomRaw.trim().length > 2)
+    ? symptomRaw.trim()
+    : (ccRaw && ccRaw.trim().length > 2)
+      ? ccRaw.trim()
+      : (hpiRaw && hpiRaw.trim().length > 2)
+        ? hpiRaw.trim()
+        : (rawText || "");
+
+  let clean = source
+    .replace(/^Based on your clinical (?:query|dictation):\s*["'`]([\s\S]*?)["'`]/i, "$1")
+    .replace(/(?:A|An)\s+\d+[- ](?:year|yr|yr-old|year-old|y\.?o\.?)\s*(?:old\s+)?(?:male|female|man|woman|boy|girl|patient|child)\s+(?:presented\s+with\s+)?(?:complaints?\s+of\s+)?/gi, "")
+    .replace(/(?:Patient|Pt|The patient)\s+(?:presented|presents|came)\s+with\s+(?:complaints?\s+of\s+)?/gi, "")
+    .replace(/Presented\s+with\s+(?:complaints?\s+of\s+)?/gi, "")
+    .replace(/Complaining\s+of\s+/gi, "")
+    .replace(/Complaints?\s+of\s+/gi, "")
+    .replace(/Chief\s+complaint[s]?\s*:\s*/gi, "")
+    .replace(/Doctor\s+dictation\s*:\s*/gi, "")
+    .replace(/Clinician\s+dictation\s*:\s*/gi, "")
+    .replace(/User\s*:\s*/gi, "")
+    .trim();
+
+  if (!clean) return "";
+
+  return clean.charAt(0).toUpperCase() + clean.slice(1);
+}
+
+/**
+ * Refines events leading to presentation ensuring it is distinct from signs & symptoms.
+ * Returns empty string if no specific trauma or preceding event was dictated.
+ */
+export function refineEventsText(
+  eventRaw: string | null | undefined,
+  hpiRaw: string | null | undefined,
+  symptomsText: string,
+  rawText: string
+): string {
+  let cleanEvent = (eventRaw && eventRaw.trim().length > 3) ? eventRaw.trim() : "";
+
+  // Filter out hallucinated boilerplate phrases if present in raw
+  cleanEvent = cleanEvent
+    .replace(/Acute symptom onset prior to arrival[^\.]*/gi, "")
+    .replace(/patient presented to ED for urgent evaluation[^\.]*/gi, "")
+    .replace(/progressive discomfort\/escalation prompted emergency department evaluation[^\.]*/gi, "")
+    .trim();
+
+  if (cleanEvent && cleanEvent.toLowerCase() !== (symptomsText || "").toLowerCase()) {
+    cleanEvent = cleanEvent
+      .replace(/(?:A|An)\s+\d+[- ](?:year|yr|yr-old|year-old|y\.?o\.?)\s*(?:old\s+)?(?:male|female|man|woman|boy|girl|patient|child)\s+(?:presented\s+with\s+)?(?:complaints?\s+of\s+)?/gi, "")
+      .replace(/(?:Patient|Pt)\s+(?:presented|presents)\s+with\s+(?:complaints?\s+of\s+)?/gi, "")
+      .trim();
+    if (cleanEvent) {
+      return cleanEvent.charAt(0).toUpperCase() + cleanEvent.slice(1);
+    }
+  }
+
+  const sourceText = hpiRaw || rawText || "";
+
+  // If text explicitly denies trauma or injury, return empty string
+  if (/(?:no|nil|denies|denied|without)\s+(?:h\/o|history of|reported|known)?\s*(?:trauma|injury|fall|accident|RTA)/i.test(sourceText)) {
+    return "";
+  }
+
+  // Check trauma/injury explicit events only
+  const traumaMatch = sourceText.match(/(?:fall|injury|trauma|accident|hit|collision|wound|burn|bite|RTA|road traffic accident)[^,\.]*/i);
+  if (traumaMatch) {
+    return `Acute ${traumaMatch[0].trim()} prior to ER arrival.`;
+  }
+
+  // If doctor did not dictate explicit preceding trauma or events — leave BLANK.
+  return "";
+}
+
+/**
+ * Processes PMH and Outpatient Medications.
+ * Trigger: If patient has "no past medical/surgical history", automatically sets medications to "Nil regular medications".
+ * Also separates acute ER treatment orders from regular home medications.
+ */
+export function processSampleMedicationsAndPmh(
+  pmhRaw: any,
+  medsRaw: any,
+  treatmentRaw: any,
+  rawText: string
+): { pastHistory: string; medications: string; acuteTreatments: string[] } {
+  const pmhStr = typeof pmhRaw === "string" ? pmhRaw.trim() : "";
+  const rawTextLower = (rawText || "").toLowerCase();
+
+  const isNoPmh = !pmhStr ||
+    /no\s+(past\s+)?(medical|surgical)\s+(history|hx)|nil\s+past|no\s+comorbidities|nkco|none\s+(documented|recorded)?|no\s+known\s+medical|no\s+past\s+hx/i.test(pmhStr) ||
+    /no\s+(past\s+)?medical|no\s+(past\s+)?surgical|no\s+comorbidities|nil\s+past\s+history/i.test(rawTextLower);
+
+  const pastHistory = isNoPmh ? "No past medical history" : pmhStr;
+
+  let rawMedsArray: string[] = [];
+  if (Array.isArray(medsRaw)) {
+    rawMedsArray = medsRaw.map(m => typeof m === "string" ? m.trim() : JSON.stringify(m)).filter(Boolean);
+  } else if (typeof medsRaw === "string" && medsRaw.trim()) {
+    rawMedsArray = medsRaw.split(/,|\n|;/).map(m => m.trim()).filter(Boolean);
+  }
+
+  const homeMeds: string[] = [];
+  const acuteTreatments: string[] = [];
+
+  for (const med of rawMedsArray) {
+    const isAcute = /\b(?:stat|iv\s*stat|im\s*stat|inj|inj\.|nebulization|neb|given|administered|stat\s+dose|iv\s+fluid)\b/i.test(med) ||
+      /\b(?:paracetamol\s+1g|esomeprazole.*40mg|sompraz.*40mg|pantoprazole.*40mg|monocef|ondansetron|emeset)\b/i.test(med);
+
+    if (isAcute) {
+      acuteTreatments.push(med);
+    } else {
+      homeMeds.push(med);
+    }
+  }
+
+  if (Array.isArray(treatmentRaw)) {
+    treatmentRaw.forEach(t => {
+      const str = typeof t === "string" ? t.trim() : JSON.stringify(t);
+      if (str && !acuteTreatments.includes(str)) acuteTreatments.push(str);
+    });
+  } else if (typeof treatmentRaw === "string" && treatmentRaw.trim()) {
+    if (!acuteTreatments.includes(treatmentRaw.trim())) {
+      acuteTreatments.push(treatmentRaw.trim());
+    }
+  }
+
+  let medications = "Nil regular medications";
+
+  if (homeMeds.length > 0) {
+    medications = homeMeds.join(", ");
+  } else {
+    medications = "Nil regular medications";
+  }
+
+  return {
+    pastHistory,
+    medications,
+    acuteTreatments
+  };
+}
+
 export function formatClinicalCaseObject(ext: Record<string, any>, rawText: string): Record<string, any> {
   const ageVal = ext.age ? (typeof ext.age === "number" ? ext.age : parseInt(String(ext.age), 10) || null) : null;
   const genderVal = ext.sex === "Female" ? "Female" : ext.sex === "Male" ? "Male" : "Other";
@@ -785,6 +1095,30 @@ export function formatClinicalCaseObject(ext: Record<string, any>, rawText: stri
       timeGiven: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       ipsgVerified: true
     };
+  });
+
+  // Process SAMPLE history refinement and treatment/PMH separation
+  const finalSymptoms = refineSymptomsText(ext.symptoms, ext.chiefComplaint, ext.hpi, rawText);
+  const finalEvents = refineEventsText(ext.events, ext.hpi, finalSymptoms, rawText);
+  const medPmh = processSampleMedicationsAndPmh(
+    ext.pmh || ext.pastHistory,
+    ext.outpatientMedications || ext.medications,
+    ext.treatment,
+    rawText
+  );
+
+  // Merge any acute treatments into treatmentsList if not already present
+  medPmh.acuteTreatments.forEach((medStr, idx) => {
+    if (medStr && !treatmentsList.some(t => t.drugName.toLowerCase() === medStr.toLowerCase())) {
+      treatmentsList.push({
+        id: `trt-acute-${Date.now()}-${idx}`,
+        drugName: medStr,
+        dose: "Stat",
+        route: "IV",
+        timeGiven: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        ipsgVerified: true
+      });
+    }
   });
 
   // Extract Investigations into InvestigationItem[] array
@@ -846,12 +1180,12 @@ export function formatClinicalCaseObject(ext: Record<string, any>, rawText: stri
       painScore: ext.vitals?.pain || "0"
     },
     sampleHistory: {
-      symptoms: ext.hpi || ext.chiefComplaint || rawText,
+      symptoms: finalSymptoms,
       allergies: ext.allergies || "NKDA",
-      medications: rawMeds.join(", "),
-      pastHistory: ext.pmh || "",
-      lastMeal: "",
-      events: ext.hpi || "",
+      medications: medPmh.medications,
+      pastHistory: medPmh.pastHistory,
+      lastMeal: ext.lastMeal || "",
+      events: finalEvents,
       socialHistory: "",
       familyHistory: ext.familyHistory || "",
       psychiatricFlags: ext.psychologicalAssessment || "No active cognitive, psychiatric, or psychological flags."
@@ -941,35 +1275,54 @@ export async function extractClinicalData(
   };
 }
 
-// ── 2. Extract handover from pasted EMR ───────────────────────
-export async function extractHandoverData(
-  rawText: string
-): Promise<{
-  success: boolean;
-  extracted?: Record<string, any>;
-  error?: string;
-}> {
-  try {
-    const prompt = buildHandoverPrompt(rawText);
-    const raw = await withFallback(prompt, "Handover");
-    const parsed = safeParseJSON(raw, "Handover");
+// Helper for heuristic fallback handover construction
+function buildHeuristicHandover(text: string): Record<string, any> {
+  let name = "Bed Patient";
+  let ageGender = "Unknown";
+  let triage = "P2 (Urgent)";
+  let vitals = "";
+  let presentingComplaint = "";
 
-    if (!parsed) {
-      return {
-        success: false,
-        error: "Could not structure the handover — please try again",
-      };
+  if (text) {
+    const complaintMatch = text.match(/(?:presenting\s+complaint|chief\ complaint|complaints|c\/o|complaining\ of|reason\ for\ visit)\s*[:=-]?\s*([^\n\r]+(?:\n[^\n\r]+)?)/i);
+    if (complaintMatch && complaintMatch[1]) {
+      presentingComplaint = complaintMatch[1].trim();
+    } else {
+      const lines = text.split(/\n+/).filter(l => l.trim().length > 10);
+      presentingComplaint = lines.length > 0 ? lines[0].trim() : text.substring(0, 150);
     }
 
-    return { success: true, extracted: parsed };
-  } catch (err: any) {
-    console.error("[Handover] Failed:", err);
-    return {
-      success: false,
-      error: getFriendlyError(err),
-    };
+    const nameMatch = text.match(/(?:patient|mr\.|ms\.|mrs\.)\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)/i);
+    if (nameMatch) name = nameMatch[1];
+
+    const ageMatch = text.match(/(\d{1,3})\s*-?(?:year|y\.?o\.?|yo|f|m)/i);
+    const genderMatch = text.match(/\b(female|male|f|m)\b/i);
+    if (ageMatch && genderMatch) {
+      ageGender = `${ageMatch[1]}${genderMatch[1].toUpperCase().startsWith("F") ? "F" : "M"}`;
+    } else if (ageMatch) {
+      ageGender = `${ageMatch[1]}y`;
+    }
   }
+
+  return {
+    name,
+    ageGender,
+    triage,
+    vitals: vitals || "Vitals recorded in notes",
+    presentingComplaint: presentingComplaint || "Presenting complaint documented in EMR",
+    rawNotes: text,
+    structuredSBAR: {
+      situation: `Patient ${name} (${ageGender}) present in ER.`,
+      background: "See raw notes for past medical history.",
+      assessment: "See raw notes for assessment and investigation results.",
+      recommendation: "Review raw notes for pending tasks."
+    }
+  };
 }
+
+export {
+  extractHandover as extractHandoverData
+} from "./handover.ts";
 
 // ── 3. Generate discharge summary ─────────────────────────────
 export async function generateDischargeSummary(

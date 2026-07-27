@@ -17,7 +17,12 @@ import {
   generateDischargeSummary, 
   generateDifferentials, 
   applyExaminationDefaults, 
-  EXAM_DEFAULTS 
+  EXAM_DEFAULTS,
+  preprocessEMR,
+  reverseEMREntries,
+  refineSymptomsText,
+  refineEventsText,
+  processSampleMedicationsAndPmh
 } from "./server/extraction.ts";
 
 import extractionRouter from "./server/routes/extraction.routes.ts";
@@ -56,10 +61,13 @@ function getAI(): GoogleGenAI {
     rawInstance.models.generateContent = async function (this: any, ...args: any[]) {
       let lastError: any = null;
       let delay = 1000;
-      const modelList = ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-flash-latest", "gemini-1.5-pro"];
+      const modelList = ["gemini-3.6-flash", "gemini-flash-latest", "gemini-3.1-pro-preview", "gemini-3.1-flash-lite"];
 
       for (let attempt = 1; attempt <= 4; attempt++) {
         try {
+          if (args[0] && typeof args[0] === "object" && (!args[0].model || args[0].model.includes("2.5") || args[0].model.includes("1.5") || args[0].model.includes("2.0"))) {
+            args[0].model = "gemini-3.6-flash";
+          }
           return await originalGenerateContent(...args);
         } catch (err: any) {
           lastError = err;
@@ -92,7 +100,7 @@ function getAI(): GoogleGenAI {
             
             // Dynamic model fallback across Gemini model variants
             if (args[0] && typeof args[0] === "object") {
-              const currentModel = args[0].model || "gemini-1.5-flash";
+              const currentModel = args[0].model || "gemini-3.6-flash";
               const nextIdx = (modelList.indexOf(currentModel) + 1) % modelList.length;
               const nextModel = modelList[nextIdx];
               console.warn(`[AI] Dynamic Gemini model switch: '${currentModel}' -> '${nextModel}'`);
@@ -122,7 +130,7 @@ function getAI(): GoogleGenAI {
 
 // API Routes
 
-const APP_VERSION = "2.7.0";
+const APP_VERSION = "2.10.0";
 const BUILD_TIMESTAMP = new Date().toISOString();
 
 // Version & Build Info Endpoint
@@ -131,7 +139,7 @@ app.get("/api/version", (req, res) => {
     version: APP_VERSION,
     buildTime: BUILD_TIMESTAMP,
     updatedAt: BUILD_TIMESTAMP,
-    releaseNotes: "ErMate v2.7.0: Faster voice dictation, improved handover extraction, auto-filled normal exam fields, and real-time syncing."
+    releaseNotes: "ErMate v2.10.0: Upgraded Gemini 3.6 Flash AI engine, structured handover cards, EMR noise-stripping & chronological entry reversal, and real-time critical alert row."
   });
 });
 
@@ -245,7 +253,7 @@ async function callClaudeTextAPI(prompt: string, systemInstruction: string, expe
       } else {
         const errText = await response.text();
         console.warn(`[AI] Claude (${modelName}) status ${response.status}: ${errText}`);
-        if ([401, 402].includes(response.status) || errText.includes("credit balance") || errText.includes("invalid_x_api_key")) {
+        if ([400, 401, 402].includes(response.status) || errText.includes("credit balance") || errText.includes("invalid_x_api_key")) {
           console.warn("[AI] Anthropic API key or credit issue. Disabling Claude fallback.");
           isAnthropicDisabled = true;
           break;
@@ -263,10 +271,15 @@ async function callClaudeSonnetHandover(prompt: string, systemInstruction: strin
   return await callClaudeSonnetOnly(prompt, systemInstruction, true);
 }
 
-// Dedicated helper for Clinical Reasoning & Q&A (LOCKED to Claude Sonnet)
+// Dedicated helper for Clinical Reasoning & Q&A
 async function callClaudeSonnetOnly(prompt: string, systemInstruction: string, expectJson: boolean = false): Promise<any> {
+  if (isAnthropicDisabled) {
+    return null;
+  }
+
   const anthropicKey = process.env.ANTHROPIC_API_KEY;
   if (!anthropicKey || anthropicKey.trim() === "" || anthropicKey === "MY_ANTHROPIC_API_KEY") {
+    isAnthropicDisabled = true;
     return null;
   }
 
@@ -315,6 +328,11 @@ async function callClaudeSonnetOnly(prompt: string, systemInstruction: string, e
       } else {
         const errText = await response.text();
         console.warn(`[Clinical Reasoning] Claude Sonnet (${modelName}) status ${response.status}: ${errText}`);
+        if ([400, 401, 402].includes(response.status) || errText.includes("credit balance") || errText.includes("invalid_x_api_key")) {
+          console.warn("[Clinical Reasoning] Anthropic API key or credit issue. Disabling Claude.");
+          isAnthropicDisabled = true;
+          break;
+        }
       }
     } catch (err: any) {
       console.warn(`[Clinical Reasoning] Claude Sonnet (${modelName}) exception:`, err?.message || err);
@@ -407,7 +425,7 @@ async function performTranscription(file: Express.Multer.File, languageCode: str
     try {
       const ai = getAI();
       const response = await ai.models.generateContent({
-        model: "gemini-1.5-flash",
+        model: "gemini-3.6-flash",
         contents: {
           parts: [
             {
@@ -520,7 +538,7 @@ Translate and refine this transcript into standard, professional clinical medica
 Transcript to translate: "${transcript}"`;
 
         const translationRes = await ai.models.generateContent({
-          model: "gemini-1.5-flash",
+          model: "gemini-3.6-flash",
           contents: translatePrompt,
         });
         const translated = translationRes.text?.trim();
@@ -558,7 +576,7 @@ Transcript to translate: "${transcript}"`;
   try {
     const ai = getAI();
     const response = await ai.models.generateContent({
-      model: "gemini-1.5-flash",
+      model: "gemini-3.6-flash",
       contents: {
         parts: [
           {
@@ -741,7 +759,8 @@ app.post("/api/voice/extract-clinical", async (req, res) => {
     const result = await extractClinicalData(cleanDictation);
     if (result.success && result.extracted) {
       const ext = result.extracted;
-      const formattedData = {
+      // If ext was formatted by formatClinicalCaseObject, return it directly or map with fallback
+      const formattedData = ext.sampleHistory ? ext : {
         patientName: ext.patientName || "Unidentified Patient",
         age: ext.age ? (typeof ext.age === "number" ? ext.age : parseInt(ext.age, 10) || null) : null,
         gender: ext.sex === "Female" ? "Female" : ext.sex === "Male" ? "Male" : "Other",
@@ -759,13 +778,13 @@ app.post("/api/voice/extract-clinical", async (req, res) => {
           grbs: ext.vitals?.grbs || "",
           painScore: ext.vitals?.pain || "0"
         },
-        sampleHistory: {
-          symptoms: ext.hpi || ext.chiefComplaint || "",
+        sampleHistory: ext.sampleHistory || {
+          symptoms: refineSymptomsText(ext.symptoms, ext.chiefComplaint, ext.hpi, cleanDictation),
           allergies: ext.allergies || "NKDA",
-          medications: Array.isArray(ext.medications) ? ext.medications.join(", ") : (ext.medications || ""),
-          pastHistory: ext.pmh || "",
-          lastMeal: "",
-          events: ext.hpi || ""
+          medications: processSampleMedicationsAndPmh(ext.pmh, ext.medications, ext.treatment, cleanDictation).medications,
+          pastHistory: processSampleMedicationsAndPmh(ext.pmh, ext.medications, ext.treatment, cleanDictation).pastHistory,
+          lastMeal: ext.lastMeal || "",
+          events: refineEventsText(ext.events, ext.hpi, ext.chiefComplaint, cleanDictation)
         },
         primaryAssessment: {
           airway: ext.airway || EXAM_DEFAULTS.airway,
@@ -1023,9 +1042,25 @@ app.post("/api/clinical-decision-support", async (req, res) => {
       return res.json({ success: true, data: claudeResult, model: "claude-sonnet-4-6" });
     }
     
+    // Fallback to Gemini if Claude unavailable or out of credits
+    const ai = getAI();
+    const response = await ai.models.generateContent({
+      model: "gemini-3.6-flash",
+      contents: prompt,
+      config: {
+        systemInstruction: sysInstruction,
+        responseMimeType: "application/json"
+      }
+    });
+
+    const parsed = JSON.parse(response.text || "[]");
+    if (Array.isArray(parsed) && parsed.length > 0) {
+      return res.json({ success: true, data: parsed, model: "gemini-3.6-flash" });
+    }
+
     return res.json({ success: false, error: "Clinical assistant busy — try again in a moment", reply: "Clinical assistant busy — try again in a moment" });
   } catch (error: any) {
-    console.error("[Clinical Reasoning] CDS Claude Error:", error?.message || error);
+    console.error("[Clinical Reasoning] CDS Error:", error?.message || error);
     return res.json({ success: false, error: "Clinical assistant busy — try again in a moment", reply: "Clinical assistant busy — try again in a moment" });
   }
 });
@@ -1062,7 +1097,7 @@ app.post("/api/lens-report", async (req, res) => {
     `;
 
     const response = await ai.models.generateContent({
-      model: "gemini-1.5-flash",
+      model: "gemini-3.6-flash",
       contents: prompt,
     });
 
@@ -1155,10 +1190,38 @@ app.post("/api/voice-dictation", async (req, res) => {
     const ai = getAI();
 
     const response = await ai.models.generateContent({
-      model: "gemini-1.5-flash",
+      model: "gemini-3.6-flash",
       contents: dictationPrompt,
       config: {
-        systemInstruction: "You are an expert ER medical scribe and multi-language translator. You convert clinical dictations (English, Hindi, Tamil, Telugu, Kannada, Malayalam, Bengali, Marathi, Gujarati, or code-switched speech) into clean, standard clinical English and extract structured clinical fields. Return JSON only.",
+        systemInstruction: `You are an expert ER medical scribe and multi-language translator. You convert clinical dictations (English, Hindi, Tamil, Telugu, Kannada, Malayalam, Bengali, Marathi, Gujarati, or code-switched speech) into clean, standard clinical English and extract structured clinical fields. Return JSON only.
+
+FIELD MAPPING — STRICT:
+
+presentingComplaint / chiefComplaint:
+  The main reason patient came (1-2 lines directly from dictation).
+  NEVER generate generic boilerplate text.
+
+sampleHistory.symptoms:
+  Signs and symptoms described by doctor. Use ONLY what doctor dictated.
+  Do NOT add preambles or narrative boilerplate.
+
+sampleHistory.events:
+  Preceding trauma, mechanism of injury, accident, or precipitants ONLY if explicitly dictated.
+  If the doctor did NOT dictate preceding trauma or specific events — return an empty string ""!
+  NEVER generate hallucinated filler text like "Acute symptom onset prior to arrival", "Patient presented to ED for urgent evaluation", or "Events leading up to presentation".
+
+SECTION LABELS — use EXACTLY standard terms:
+  - "Chief Complaint"
+  - "History of Present Illness"
+  - "Signs and Symptoms"
+  - "Past Medical History"
+
+NEVER GENERATE:
+  - "Acute symptom onset prior to arrival"
+  - "Patient presented to ED for urgent evaluation"
+  - "Events Leading Up to Presentation"
+  - "Patient History & Presentation"
+  - Any text the doctor did not explicitly dictate.`,
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
@@ -1214,6 +1277,16 @@ app.post("/api/voice-dictation", async (req, res) => {
     });
 
     const data = JSON.parse(response.text || "{}");
+    if (data && data.sampleHistory) {
+      const refinedSymptoms = refineSymptomsText(data.sampleHistory.symptoms, data.presentingComplaint, null, speechText);
+      const refinedEvents = refineEventsText(data.sampleHistory.events, null, refinedSymptoms, speechText);
+      const medPmh = processSampleMedicationsAndPmh(data.sampleHistory.pastHistory, data.sampleHistory.medications, data.treatments, speechText);
+      data.sampleHistory.symptoms = refinedSymptoms;
+      data.sampleHistory.events = refinedEvents;
+      data.sampleHistory.pastHistory = medPmh.pastHistory;
+      data.sampleHistory.medications = medPmh.medications;
+    }
+
     res.json({ 
       success: true, 
       data,
@@ -1231,6 +1304,15 @@ app.post("/api/voice-dictation", async (req, res) => {
       const sysInstruction = "You are an expert ER medical scribe and multi-language translator. You convert clinical dictations into clean, standard clinical English and extract structured clinical fields. Return ONLY valid raw JSON matching the schema.";
       const claudeData = await callClaudeTextAPI(dictationPrompt, sysInstruction, true);
       if (claudeData && typeof claudeData === "object" && (claudeData.patientName || claudeData.presentingComplaint || claudeData.vitals)) {
+        if (claudeData.sampleHistory) {
+          const refinedSymptoms = refineSymptomsText(claudeData.sampleHistory.symptoms, claudeData.presentingComplaint, null, speechText);
+          const refinedEvents = refineEventsText(claudeData.sampleHistory.events, null, refinedSymptoms, speechText);
+          const medPmh = processSampleMedicationsAndPmh(claudeData.sampleHistory.pastHistory, claudeData.sampleHistory.medications, claudeData.treatments, speechText);
+          claudeData.sampleHistory.symptoms = refinedSymptoms;
+          claudeData.sampleHistory.events = refinedEvents;
+          claudeData.sampleHistory.pastHistory = medPmh.pastHistory;
+          claudeData.sampleHistory.medications = medPmh.medications;
+        }
         return res.json({ 
           success: true, 
           data: claudeData,
@@ -1316,7 +1398,7 @@ app.post("/api/document-scan", async (req, res) => {
     `;
 
     const response = await ai.models.generateContent({
-      model: "gemini-1.5-flash",
+      model: "gemini-3.6-flash",
       contents: prompt,
       config: {
         systemInstruction: "You map dirty OCR text into clean clinical data modules. Return JSON only.",
@@ -1378,7 +1460,7 @@ app.post("/api/em-reference", async (req, res) => {
     `;
 
     const response = await ai.models.generateContent({
-      model: "gemini-1.5-flash",
+      model: "gemini-3.6-flash",
       contents: prompt,
       config: {
         systemInstruction: "You are a professional Emergency Medicine AI library with zero fluff. Keep responses dense, clinical, and precise. Format output as JSON.",
@@ -1503,7 +1585,7 @@ app.post("/api/ai-discharge", async (req, res) => {
     const sysInstruction = "You generate JCI and NABH compliant professional clinical discharge summaries in structured JSON only. Strictly adhere to facts in the patient record without adding fictional details.";
 
     const response = await ai.models.generateContent({
-      model: "gemini-1.5-flash",
+      model: "gemini-3.6-flash",
       contents: prompt,
       config: {
         systemInstruction: sysInstruction,
@@ -1632,9 +1714,25 @@ app.post("/api/rounds-debrief", async (req, res) => {
       return res.json({ success: true, data: claudeResult, model: "claude-sonnet-4-6" });
     }
 
+    // Fallback to Gemini
+    const ai = getAI();
+    const response = await ai.models.generateContent({
+      model: "gemini-3.6-flash",
+      contents: prompt,
+      config: {
+        systemInstruction: sysInstruction,
+        responseMimeType: "application/json"
+      }
+    });
+
+    const parsed = JSON.parse(response.text || "{}");
+    if (parsed && typeof parsed === "object" && parsed.content) {
+      return res.json({ success: true, data: parsed, model: "gemini-3.6-flash" });
+    }
+
     return res.json({ success: false, error: "Clinical assistant busy — try again in a moment", reply: "Clinical assistant busy — try again in a moment" });
   } catch (error: any) {
-    console.error("[Clinical Reasoning] Rounds Debrief Claude Error:", error?.message || error);
+    console.error("[Clinical Reasoning] Rounds Debrief Error:", error?.message || error);
     return res.json({ success: false, error: "Clinical assistant busy — try again in a moment", reply: "Clinical assistant busy — try again in a moment" });
   }
 });
@@ -1683,7 +1781,7 @@ app.post("/api/handover-chat", async (req, res) => {
 
     const ai = getAI();
     const response = await ai.models.generateContent({
-      model: "gemini-1.5-flash",
+      model: "gemini-3.6-flash",
       contents: prompt,
       config: {
         systemInstruction: "You are an expert ER Clinical Lead coordinating shift handovers. Only return valid JSON matching the schema.",
@@ -1760,7 +1858,7 @@ app.post("/api/scribe-extract", async (req, res) => {
     const result = await extractClinicalData(dictation);
     if (result.success && result.extracted) {
       const ext = result.extracted;
-      const formattedData = {
+      const formattedData = ext.sampleHistory ? ext : {
         patientName: ext.patientName || "Unidentified Patient",
         age: ext.age ? (typeof ext.age === "number" ? ext.age : parseInt(ext.age, 10) || null) : null,
         gender: ext.sex === "Female" ? "Female" : ext.sex === "Male" ? "Male" : "Other",
@@ -1778,13 +1876,13 @@ app.post("/api/scribe-extract", async (req, res) => {
           grbs: ext.vitals?.grbs || "",
           painScore: ext.vitals?.pain || "0"
         },
-        sampleHistory: {
-          symptoms: ext.hpi || ext.chiefComplaint || "",
+        sampleHistory: ext.sampleHistory || {
+          symptoms: refineSymptomsText(ext.symptoms, ext.chiefComplaint, ext.hpi, dictation),
           allergies: ext.allergies || "NKDA",
-          medications: Array.isArray(ext.medications) ? ext.medications.join(", ") : (ext.medications || ""),
-          pastHistory: ext.pmh || "",
-          lastMeal: "",
-          events: ext.hpi || ""
+          medications: processSampleMedicationsAndPmh(ext.pmh, ext.medications, ext.treatment, dictation).medications,
+          pastHistory: processSampleMedicationsAndPmh(ext.pmh, ext.medications, ext.treatment, dictation).pastHistory,
+          lastMeal: ext.lastMeal || "",
+          events: refineEventsText(ext.events, ext.hpi, ext.chiefComplaint, dictation)
         },
         primaryAssessment: {
           airway: ext.airway || EXAM_DEFAULTS.airway,
@@ -1958,14 +2056,29 @@ app.post("/api/scribe-chat", async (req, res) => {
     .join("\n\n");
 
   try {
-    // LOCKED TO CLAUDE SONNET — NO GEMINI FALLBACK
     const claudeReply = await callClaudeSonnetOnly(conversationHistoryText, scribeSystemInstruction, false);
     if (claudeReply && typeof claudeReply === "string" && claudeReply.trim().length > 10) {
       return res.json({ success: true, reply: claudeReply, model: "claude-sonnet-4-6" });
     }
+
+    // Gemini Fallback
+    const ai = getAI();
+    const response = await ai.models.generateContent({
+      model: "gemini-3.6-flash",
+      contents: conversationHistoryText,
+      config: {
+        systemInstruction: scribeSystemInstruction,
+      }
+    });
+
+    const replyText = response.text?.trim();
+    if (replyText) {
+      return res.json({ success: true, reply: replyText, model: "gemini-3.6-flash" });
+    }
+
     return res.json({ success: false, reply: "Clinical assistant busy — try again in a moment", error: "Clinical assistant busy — try again in a moment" });
   } catch (error: any) {
-    console.error("[Clinical Reasoning] Scribe Chat Claude Error:", error?.message || error);
+    console.error("[Clinical Reasoning] Scribe Chat Error:", error?.message || error);
     return res.json({ success: false, reply: "Clinical assistant busy — try again in a moment", error: "Clinical assistant busy — try again in a moment" });
   }
 });
@@ -2055,14 +2168,29 @@ YOUR CRITICAL GUIDELINES:
     .join("\n\n");
 
   try {
-    // LOCKED TO CLAUDE SONNET — NO GEMINI FALLBACK
     const claudeReply = await callClaudeSonnetOnly(conversationHistoryText, discussionSystemInstruction, false);
     if (claudeReply && typeof claudeReply === "string" && claudeReply.trim().length > 10) {
       return res.json({ success: true, reply: claudeReply, model: "claude-sonnet-4-6" });
     }
+
+    // Gemini Fallback
+    const ai = getAI();
+    const response = await ai.models.generateContent({
+      model: "gemini-3.6-flash",
+      contents: conversationHistoryText,
+      config: {
+        systemInstruction: discussionSystemInstruction,
+      }
+    });
+
+    const replyText = response.text?.trim();
+    if (replyText) {
+      return res.json({ success: true, reply: replyText, model: "gemini-3.6-flash" });
+    }
+
     return res.json({ success: false, reply: "Clinical assistant busy — try again in a moment", error: "Clinical assistant busy — try again in a moment" });
   } catch (error: any) {
-    console.error("[Clinical Reasoning] Case Discussion Claude Error:", error?.message || error);
+    console.error("[Clinical Reasoning] Case Discussion Error:", error?.message || error);
     return res.json({ success: false, reply: "Clinical assistant busy — try again in a moment", error: "Clinical assistant busy — try again in a moment" });
   }
 });
@@ -2136,7 +2264,7 @@ app.post("/api/scribe-ocr-scan", async (req, res) => {
       };
 
       response = await ai.models.generateContent({
-        model: "gemini-1.5-flash",
+        model: "gemini-3.6-flash",
         contents: { parts: [imagePart, textPart] },
         config: {
           systemInstruction: "You are an expert emergency medical OCR processing system. Convert clinical reference/referral images into accurate structured clinical data in JSON.",
@@ -2154,7 +2282,7 @@ app.post("/api/scribe-ocr-scan", async (req, res) => {
       `;
 
       response = await ai.models.generateContent({
-        model: "gemini-1.5-flash",
+        model: "gemini-3.6-flash",
         contents: prompt,
         config: {
           systemInstruction: "You map clinical referral text into clean structured medical data modules. Return JSON only.",
@@ -2225,25 +2353,109 @@ app.post("/api/handover/parse-structured", async (req, res) => {
     const schema = {
       type: Type.OBJECT,
       properties: {
-        name: { type: Type.STRING, description: "Patient name or Bed ID if name is not available (e.g. Bed 4)" },
-        ageGender: { type: Type.STRING, description: "Age and gender (e.g., 45y / Male, 3y / Female, or 'Unknown')" },
+        name: { type: Type.STRING, description: "Patient name or Bed ID if name is not available (e.g. Selvarani, Bed 3)" },
+        ageGender: { type: Type.STRING, description: "Age and gender (e.g., 57F, 45y / Male, or 'Unknown')" },
         triage: { type: Type.STRING, description: "Triage Priority level (must be exactly 'P1 (Immediate)' or 'P2 (Urgent)' or 'P3 (Non-Urgent)')" },
-        vitals: { type: Type.STRING, description: "Vital signs extracted or summarized (e.g., BP 120/80 | HR 85 | SpO2 98%)" },
-        presentingComplaint: { type: Type.STRING, description: "Chief presenting complaint, primary symptoms, onset, and reason for visit extracted from case sheet or copy pasted EMR data (e.g. 'Severe right lower quadrant abdominal pain for 12 hours with nausea')" },
+        vitals: { type: Type.STRING, description: "Vital signs extracted or summarized (e.g., SpO2 97% on 5L O2 | HR 103 | BP 130/80 | RR 18 | Temp 97.4°F | GRBS 204 | GCS 15)" },
+        presentingComplaint: { type: Type.STRING, description: "Chief presenting complaint, primary symptoms, onset, and duration extracted from case sheet or EMR data" },
         rawNotes: { type: Type.STRING, description: "A cleaned, highly legible transcription or compilation of the raw EMR notes or case sheet text" },
         structuredSBAR: {
           type: Type.OBJECT,
           properties: {
-            situation: { type: Type.STRING, description: "Situation (S): Patient's current situation, bed/room, age/gender, and active primary issue or main diagnosis." },
-            background: { type: Type.STRING, description: "Background (B): Patient's active past medical history, comorbidities, allergies, and timeline of the current presentation." },
-            assessment: { type: Type.STRING, description: "Assessment (A): Most recent vitals, physical examination highlights, diagnostic results, and treatment administered so far." },
-            recommendation: { type: Type.STRING, description: "Recommendation (R): Immediate actions to be done, pending labs or consults, transfer plans, and contingency plans for clinical deterioration." }
+            situation: { type: Type.STRING, description: "Situation (S): Patient's current situation, bed/room, age/gender, and EXPLICIT provisional diagnosis / active primary issue." },
+            background: { type: Type.STRING, description: "Background (B): Exhaustive past medical history, comorbidities (e.g. T2DM x 22y, HTN x 22y, Hypothyroidism x 5y, Cushing's syndrome, Morbid Obesity, OSA), home medications, and timeline." },
+            assessment: { type: Type.STRING, description: "Assessment (A): Most recent vitals, physical examination highlights, exhaustive investigation findings parameter-by-parameter in chronological order, and clinical results." },
+            recommendation: { type: Type.STRING, description: "Recommendation (R): Exhaustive list of pending actions (□ items), transfer plans (e.g. MICU), specialist consults, and bystander counselling updates." }
           },
           required: ["situation", "background", "assessment", "recommendation"]
         }
       },
       required: ["name", "ageGender", "triage", "vitals", "presentingComplaint", "rawNotes", "structuredSBAR"]
     };
+
+    const extractionInstruction = `
+You are an expert Emergency Medicine Clinical Lead extracting a clinical handover from a real Indian hospital EMR note or case sheet.
+
+The input contains multiple entries from different authors in reverse chronological order (newest first).
+
+READ THE ENTIRE TEXT BEFORE EXTRACTING. Do not stop at the first entry.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+WHERE TO FIND EACH FIELD:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+PATIENT LABEL:
+  Name from entry headers (e.g., Selvarani, Varghese KC)
+  Age/sex from consultant notes or headers (e.g., 57F, 48M)
+  Bed number and ER number from header or notes
+
+PRESENTING COMPLAINT:
+  Look for "Presenting Complaint:" or "Chief Complaint:" or "c/o" labels
+  Use EARLIEST entry (bottom of text) or initial presentation note
+  Detail symptoms, duration, and onset
+
+PAST MEDICAL HISTORY:
+  Look for "Past Medical History:", "Known case of", "K/C/O", "KCO", "Comorbidities:", "PMH"
+  May appear in ANY entry — especially consultant notes (e.g., General Medicine, Nephrology, Cardiology consults)
+  Extract ALL conditions with durations and home medications (e.g., T2DM x 22y, HTN with Nephropathy, Hypothyroidism x 5y, Cushing's syndrome, Morbid Obesity, OSA)
+  NEVER say "not documented" or "Comorbidities not explicitly documented" if the text has PMH anywhere
+
+PROVISIONAL DIAGNOSIS:
+  Look for "IMP:", "Impression:", "Differential Diagnosis:", "Provisional Diagnosis:", "Diagnosis:", "Dx:"
+  Consultant notes often have "IMP:" (e.g. "Fluid overload state with pericardial effusion and right pleural effusion, Moderate ascites, Metabolic acidosis, Acute kidney injury")
+  Use the MOST SPECIFIC diagnosis found across all entries
+  CT/imaging impressions count as diagnosis
+
+DONE (COMPLETED ACTIONS):
+  Any entry with PAST TENSE actions:
+  "done" / "given" / "taken" / "sent" / "started" / "inserted" / "shifted" / "administered" / "completed" / "counselled"
+  Each completed action = one done item (prefixed with ✓)
+  Include: investigations done, medications given, procedures, consultations completed, IV lines, oxygen delivery
+
+TO BE DONE (PENDING / PLAN):
+  Any entry with FUTURE actions:
+  "Plan:" / "Advice:" / "Adv:" / "to be done" / "pending" / "awaited" / "monitor" / "follow" / "shift to" / "ICU transfer"
+  Each pending action = one to-do item (prefixed with □)
+
+VITALS:
+  Look in "Primary Assessment:" sections or arrival/nursing notes
+  Look for BP, HR, SpO2, RR, Temp, GCS, GRBS
+  Use MOST RECENT values (top of text) or arrival values
+  NEVER say "not documented" if ANY vital is anywhere in the text
+
+BYSTANDER UPDATE:
+  Look for "family counselled", "explained to bystander", "financial counselling", "informed about"
+  Include WHO was told and WHAT was communicated (e.g., "Explained in detail regarding need of ICU admission in view of fluid overload, desaturation and metabolic acidosis; financial counselling given")
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CRITICAL RULES:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. READ EVERY ENTRY in the text. Diagnosis is often in the middle (consultant note) not at the start.
+
+2. NEVER use generic placeholders:
+   ✗ "Comorbidities not explicitly documented in raw input"
+   ✗ "Vitals not documented"
+   ✗ "Evaluation of patient with acute symptoms"
+   ✗ "Complete active tasks and consult"
+   ✗ "Parsed Notes Review Complete"
+   ✗ "Bystanders counselled" (unless that's literally all that's written)
+   
+   If something is genuinely absent write: null or empty string ""
+
+3. Separate nursing actions from clinical findings:
+   Nursing = "Patient shifted for CT", "CT slot called", "Called CT said half hour delay", "Foley inserted"
+   Clinical = "CT Abdomen: Pericardial & pleural effusion, moderate ascites"
+   
+   Nursing actions → DONE list / Chronological notes
+   Clinical findings → Assessment / Investigations
+
+4. IMP: in any entry = diagnosis. Extract it as provisional diagnosis.
+
+5. "Adv:" or "Advice:" in any entry = management plan to-do items.
+
+6. Do NOT truncate. Extract ALL done items and ALL to-do items. Long lists are correct for complex patients.
+`;
 
     if (image) {
       // Multimodal Image analysis of Case sheet
@@ -2254,87 +2466,27 @@ app.post("/api/handover/parse-structured", async (req, res) => {
         },
       };
       const textPart = {
-        text: `You are an expert Emergency Medicine Clinical Lead. Analyze this image of a patient case sheet, referral letter, or clinical chart.
-        Extract and transcribe the details, then organize them into a standardized, professional, highly detailed clinical SBAR (Situation, Background, Assessment, Recommendation) handover format.
-        Infer the triage category (P1 (Immediate), P2 (Urgent), or P3 (Non-Urgent)) based on the clinical severity described or measured vitals. Include any raw notes text you managed to extract.
+        text: `${extractionInstruction}
         
+        Analyze this image of a patient case sheet, referral letter, or clinical chart.
         Optional raw text overlay to assist you:
-        "${rawText || ""}"
-        
-        CRITICAL EXTRACTION REQUIREMENTS:
-        1. PRESENTING COMPLAINT EXTRACTION: Explicitly capture the chief presenting complaints, primary symptoms, onset, and main reasons for visit from the case sheet or EMR data in the presentingComplaint field.
-        2. CRITICAL ALERTS: Identify any high-priority clinical or logistical alerts (e.g., dangerous vital signs, extremely elevated lab values like GRBS > 400, pending urgent consults, or boarding wait times > 24 hours) and flag them as "⚠ ALERTS:" prominently at the beginning of the Situation field.
-        3. CHRONOLOGICAL CLINICAL TIMELINE: Construct a clear clinical timeline from the most recent to the oldest entry to detail disease progression. Place this timeline in the Background field.
-        4. EXHAUSTIVE MEDICATIONS EXTRACTION: Scan every single entry (including consultant notes, nurse reports, MAR references, and pharmacy updates) to extract all medications with their dosages, frequencies, and administration statuses. Place this list clearly in the Background field.
-        5. EXHAUSTIVE INVESTIGATION EXTRACTION: Extract ALL lab results and diagnostic investigations parameter-by-parameter with exact numeric/laboratory values (e.g., full CBC parameters, VBG/Arterial blood gases, RFT, LFT, Urine routine parameters, formal/screening Echo details, ECG, X-Ray and MRI Brain/MRS imaging findings). Explicitly flag any abnormal values with a warning sign (⚠). Place this comprehensive section in the Assessment field.
-        6. PENDING PROCEDURES & CONCRETE PLANS: Look for any scheduled or proposed procedures with specific dates/times (e.g., Biopsies, surgery dates) and any pending consultations (e.g., PAC, Endocrinology, Urology pre-ops). List them with explicit priorities in the Recommendation field.
-        7. BYSTANDER UPDATES: Extract any historical bystander communication trail and highlight pending bystander updates or consent requests. Place this in the Recommendation field.`
+        "${rawText || ""}"`
       };
 
       response = await ai.models.generateContent({
-        model: "gemini-1.5-flash",
+        model: "gemini-3.6-flash",
         contents: { parts: [imagePart, textPart] },
         config: {
           systemInstruction: "You are an expert emergency medical scribe specializing in clinical shift handovers. Convert medical documents and case sheet images into highly structured SBAR/IPASS handovers in JSON.",
+          temperature: 0.0,
           responseMimeType: "application/json",
           responseSchema: schema
         }
       });
     } else {
-      // Text-based unstructured EMR paste analysis
-      const prompt = `
-        You are an expert Emergency Medicine Clinical Lead. Analyze the following raw, unstructured hospital EMR note, paste dump, or clinical handover snippet.
-        Extract all clinical variables and organize them into a clean, standardized, highly professional SBAR (Situation, Background, Assessment, Recommendation) handover format.
-        Infer the triage category (P1 (Immediate), P2 (Urgent), or P3 (Non-Urgent)) based on clinical severity.
-
-        Raw EMR/Handover Snippet:
-        "${rawText}"
-
-        CRITICAL EXTRACTION REQUIREMENTS:
-        1. PRESENTING COMPLAINT EXTRACTION: Explicitly capture the chief presenting complaints, primary symptoms, onset, and main reasons for visit from the case sheet or EMR data in the presentingComplaint field.
-        2. CRITICAL ALERTS: Identify any high-priority clinical or logistical alerts (e.g., dangerous vital signs, extremely elevated lab values like GRBS > 400, pending urgent consults, or boarding wait times > 24 hours) and flag them as "⚠ ALERTS:" prominently at the beginning of the Situation field.
-        3. CHRONOLOGICAL CLINICAL TIMELINE: Construct a clear clinical timeline from the most recent to the oldest entry to detail disease progression. Place this timeline in the Background field.
-        4. EXHAUSTIVE MEDICATIONS EXTRACTION: Scan every single entry (including consultant notes, nurse reports, MAR references, and pharmacy updates) to extract all medications with their dosages, frequencies, and administration statuses. Place this list clearly in the Background field.
-        5. EXHAUSTIVE INVESTIGATION EXTRACTION: Extract ALL lab results and diagnostic investigations parameter-by-parameter with exact numeric/laboratory values (e.g., full CBC parameters, VBG/Arterial blood gases, RFT, LFT, Urine routine parameters, formal/screening Echo details, ECG, X-Ray and MRI Brain/MRS imaging findings). Explicitly flag any abnormal values with a warning sign (⚠). Place this comprehensive section in the Assessment field.
-        6. PENDING PROCEDURES & CONCRETE PLANS: Look for any scheduled or proposed procedures with specific dates/times (e.g., Biopsies, surgery dates) and any pending consultations (e.g., PAC, Endocrinology, Urology pre-ops). List them with explicit priorities in the Recommendation field.
-        7. BYSTANDER UPDATES: Extract any historical bystander communication trail and highlight pending bystander updates or consent requests. Place this in the Recommendation field.
-
-        Expected JSON format:
-        {
-          "name": "Patient name or Bed ID",
-          "ageGender": "Age/Gender string e.g. 45y / Male",
-          "triage": "P1 (Immediate), P2 (Urgent), or P3 (Non-Urgent)",
-          "vitals": "Vitals summary string e.g. BP 120/80 | HR 85 | SpO2 98%",
-          "presentingComplaint": "Chief presenting complaints extracted from EMR note or case sheet",
-          "rawNotes": "Cleaned transcription of notes",
-          "structuredSBAR": {
-            "situation": "Situation string",
-            "background": "Background string",
-            "assessment": "Assessment string",
-            "recommendation": "Recommendation string"
-          }
-        }
-      `;
-
-      // Try Anthropic Claude Sonnet 5 for text-based Handover EMR Extraction
-      const claudeResult = await callClaudeSonnetHandover(
-        prompt,
-        "You map unstructured clinical EMR text into highly detailed structured SBAR/IPASS medical handovers. Return JSON matching the schema."
-      );
-
-      if (claudeResult && claudeResult.structuredSBAR) {
-        return res.json({ success: true, data: claudeResult, provider: "anthropic-claude-sonnet-5" });
-      }
-
-      response = await ai.models.generateContent({
-        model: "gemini-1.5-flash",
-        contents: prompt,
-        config: {
-          systemInstruction: "You map unstructured clinical EMR text into highly detailed structured SBAR/IPASS medical handovers. Return JSON only.",
-          responseMimeType: "application/json",
-          responseSchema: schema
-        }
-      });
+      // Delegate text-based EMR paste analysis to the complete 5-step handover pipeline (preprocess -> reverse -> length route -> LLM -> JSON format)
+      const handoverResult = await extractHandoverData(rawText || "");
+      return res.json(handoverResult);
     }
 
     const data = JSON.parse(response.text || "{}");
@@ -2342,52 +2494,69 @@ app.post("/api/handover/parse-structured", async (req, res) => {
   } catch (error: any) {
     console.error("Gemini Handover Parse Error:", error);
     
-    // Fallback parser in case of API failure, using simple heuristics to extract what we can
-    let name = "Bed Block Patient";
-    let ageGender = "Age/Gender Unknown";
+    // Smart heuristic fallback parser
+    let name = "Bed Patient";
+    let ageGender = "";
     let triage = "P2 (Urgent)";
-    let vitals = "Vitals not explicitly recorded";
-    let presentingComplaint = "Acute chief complaints recorded.";
+    let vitals = "";
+    let presentingComplaint = "";
     let rawTextClean = rawText || "Image scanned or raw text pasted successfully.";
 
-    // Simple heuristic parser for mock preview compatibility
     if (rawText) {
       const lower = rawText.toLowerCase();
       
-      // Presenting Complaint heuristic search
+      // Presenting Complaint search
       const complaintMatch = rawText.match(/(?:presenting\s+complaint|chief\ complaint|complaints|c\/o|complaining\ of|reason\ for\ visit|reason\ for\ admission|presentation)\s*[:=-]?\s*([^\n\r]+(?:\n[^\n\r]+)?)/i);
       if (complaintMatch && complaintMatch[1] && complaintMatch[1].trim().length > 3) {
         presentingComplaint = complaintMatch[1].trim();
       } else {
-        presentingComplaint = rawText.substring(0, 150) + "...";
+        const firstLines = rawText.split(/\n+/).filter(l => l.trim().length > 10);
+        presentingComplaint = firstLines.length > 0 ? firstLines[0].trim() : rawText.substring(0, 150);
       }
 
       // Bed/Name
-      const bedMatch = rawText.match(/(?:bed|room)\s*(\d+)/i);
+      const bedMatch = rawText.match(/(?:bed|room|bay|cot|icu|hdu)?\s*#?\s*(\d+[a-z]?)/i);
       if (bedMatch) name = `Bed ${bedMatch[1]}`;
-      const nameMatch = rawText.match(/(?:patient|mr\.|ms\.)\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)/);
+      const nameMatch = rawText.match(/(?:patient|mr\.|ms\.|mrs\.)\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)/i);
       if (nameMatch) name = bedMatch ? `Bed ${bedMatch[1]} (${nameMatch[1]})` : nameMatch[1];
       
       // Age/Gender
-      const ageMatch = rawText.match(/(\d+)\s*-?(?:year|y\.?o\.?|yo)/i);
-      const genderMatch = rawText.match(/\b(male|female|man|woman|boy|girl|m|f)\b/i);
+      const ageMatch = rawText.match(/(\d{1,3})\s*-?(?:year|y\.?o\.?|yo|f|m)/i);
+      const genderMatch = rawText.match(/\b(male|female|m|f)\b/i);
       if (ageMatch && genderMatch) {
-        ageGender = `${ageMatch[1]}y / ${genderMatch[1].toUpperCase()}`;
+        ageGender = `${ageMatch[1]}${genderMatch[1].toUpperCase().startsWith("F") ? "F" : "M"}`;
       } else if (ageMatch) {
         ageGender = `${ageMatch[1]}y`;
-      } else if (genderMatch) {
-        ageGender = genderMatch[1].toUpperCase();
       }
 
       // Vitals
-      const bpMatch = rawText.match(/(\d{2,3}\/\d{2,3})/);
+      const bpMatch = rawText.match(/(?:bp|blood\s*pressure)\s*[:=-]?\s*(\d{2,3}\/\d{2,3})/i) || rawText.match(/(\d{2,3}\/\d{2,3})/);
       const hrMatch = rawText.match(/(?:hr|pr|pulse|heart rate)\s*[:=-]?\s*(\d{2,3})/i);
-      const spo2Match = rawText.match(/(?:spo2|oximetry|saturation)\s*[:=-]?\s*(\d{2,3})/i);
+      const spo2Match = rawText.match(/(?:spo2|oximetry|saturation)\s*[:=-]?\s*(\d{2,3})%/i);
+      const grbsMatch = rawText.match(/(?:grbs|rbs|sugar)\s*[:=-]?\s*(\d{2,3})/i);
+      const gcsMatch = rawText.match(/(?:gcs)\s*[:=-]?\s*([e\d\s\w]+)/i);
+
       let vitalsArr = [];
       if (bpMatch) vitalsArr.push(`BP ${bpMatch[1]}`);
       if (hrMatch) vitalsArr.push(`HR ${hrMatch[1]}`);
       if (spo2Match) vitalsArr.push(`SpO2 ${spo2Match[1]}%`);
-      if (vitalsArr.length > 0) vitals = vitalsArr.join(" | ");
+      if (grbsMatch) vitalsArr.push(`GRBS ${grbsMatch[1]}`);
+      if (gcsMatch) vitalsArr.push(`GCS ${gcsMatch[1].trim()}`);
+      if (vitalsArr.length > 0) vitals = vitalsArr.join(" · ");
+
+      // PMH search
+      let pmhText = "";
+      const pmhMatch = rawText.match(/(?:past\s+medical\s+history|known\s+case\ lawful|known\s+case\s+of|k\/c\/o|kco|comorbidities|pmh)\s*[:=-]?\s*([^\n\r]+(?:\n[^\n\r]+){0,4})/i);
+      if (pmhMatch && pmhMatch[1]) {
+        pmhText = pmhMatch[1].trim();
+      }
+
+      // Diagnosis search
+      let diagText = "";
+      const diagMatch = rawText.match(/(?:imp|impression|provisional\s+diagnosis|differential|diagnosis|dx)\s*[:=-]?\s*([^\n\r]+(?:\n[^\n\r]+){0,2})/i);
+      if (diagMatch && diagMatch[1]) {
+        diagText = diagMatch[1].trim();
+      }
 
       // Triage
       if (lower.includes("p1") || lower.includes("immediate") || lower.includes("resus") || lower.includes("stemi") || lower.includes("arrest")) {
@@ -2395,29 +2564,31 @@ app.post("/api/handover/parse-structured", async (req, res) => {
       } else if (lower.includes("p3") || lower.includes("minor") || lower.includes("discharge")) {
         triage = "P3 (Non-Urgent)";
       }
+
+      const backupData = {
+        name,
+        ageGender: ageGender || "Unknown",
+        triage,
+        vitals: vitals || "",
+        presentingComplaint,
+        rawNotes: rawTextClean,
+        structuredSBAR: {
+          situation: diagText ? `PROVISIONAL DIAGNOSIS: ${diagText}` : presentingComplaint,
+          background: pmhText || "",
+          assessment: vitals ? `Vitals: ${vitals}` : "",
+          recommendation: "Monitor clinical status and follow up pending orders."
+        }
+      };
+
+      return res.json({
+        success: true,
+        data: backupData,
+        simulated: true,
+        error: error.message || "Using smart backup heuristic parser."
+      });
     }
 
-    const backupData = {
-      name,
-      ageGender,
-      triage,
-      vitals,
-      presentingComplaint,
-      rawNotes: rawTextClean,
-      structuredSBAR: {
-        situation: rawText ? rawText.substring(0, 300) : "Patient presenting with acute emergency complaints.",
-        background: rawText ? (rawText.toLowerCase().includes("k/c/o") || rawText.toLowerCase().includes("history") ? rawText.substring(0, 250) : "No specific past history listed in raw notes.") : "No chronic illnesses documented.",
-        assessment: rawText ? `Vitals logged: ${vitals}. Assessment: ${rawText.substring(0, 300)}` : "Initial clinical triage and vitals recorded.",
-        recommendation: rawText ? "Monitor clinical status and complete all pending orders as per shift schedule." : "Ensure continuous pulse oximetry and review pending labs."
-      }
-    };
-
-    res.json({
-      success: true,
-      data: backupData,
-      simulated: true,
-      error: error.message || "Using smart backup heuristic parser."
-    });
+    res.status(500).json({ success: false, error: error.message || "Parsing failed." });
   }
 });
 
@@ -2428,6 +2599,17 @@ app.post("/api/handover/compile-sheet", async (req, res) => {
   if (!patients || !Array.isArray(patients) || patients.length === 0) {
     return res.status(400).json({ success: false, error: "No patient records provided for compilation." });
   }
+
+  // Preprocess & reverse raw notes for each patient (oldest at top)
+  const processedPatients = patients.map((p: any) => {
+    const raw = p.rawNotes || p.chronologicalNotes || "";
+    if (raw && typeof raw === "string" && raw.trim().length > 0) {
+      const clean = preprocessEMR(raw);
+      const reversed = reverseEMREntries(clean);
+      return { ...p, rawNotes: reversed, chronologicalNotes: reversed };
+    }
+    return p;
+  });
 
   try {
     const ai = getAI();
@@ -2441,20 +2623,20 @@ app.post("/api/handover/compile-sheet", async (req, res) => {
             properties: {
               id: { type: Type.STRING },
               bed: { type: Type.STRING, description: "Bed or Room number e.g. Bed 13, Bed 3" },
-              name: { type: Type.STRING, description: "Patient name e.g. Mini Unnikrishnan, Abdulahad Mohammed" },
-              ageGender: { type: Type.STRING, description: "Age and gender e.g. 59F, 48M" },
+              name: { type: Type.STRING, description: "Patient name e.g. Selvarani, Mini Unnikrishnan" },
+              ageGender: { type: Type.STRING, description: "Age and gender e.g. 57F, 48M" },
               erNo: { type: Type.STRING, description: "ER number or patient ID e.g. ER# 1849288" },
-              doctor: { type: Type.STRING, description: "Lead clinician / primary doctor e.g. Dr. Manoj" },
-              stayDuration: { type: Type.STRING, description: "Admission date and stay duration in ER e.g. In ER since: 20-07-2026 (36h)" },
-              complaints: { type: Type.STRING, description: "PRESENTING COMPLAINT: Chief complaints, symptoms, duration, and onset e.g. Altered sensorium x 1 month, Difficulty walking x 1 week, Vomiting x 3 days" },
-              chronologicalNotes: { type: Type.STRING, description: "INITIAL ASSESSMENT & CHRONOLOGICAL NOTES: Exhaustive, date-stamped, time-stamped clinical notes ordered STRICTLY from OLDEST to NEWEST (e.g., 20-07 00:30 Dr. Fathim - BP 150/80 · GCS normal · VBG Lactate 1.4 \n 20-07 01:47 Dr. Rohit - GCS E4V4M6 · Levipil \n 21-07 12:26 Dr. Manoj - Biopsy planned Thu). Reading top to bottom MUST tell the complete chronological story." },
-              history: { type: Type.STRING, description: "PAST MEDICAL HISTORY: Comorbidities (e.g. T2DM · Hypertension), all medications listed with dosages, surgical history, and allergies." },
-              assessment: { type: Type.STRING, description: "PROVISIONAL DIAGNOSIS & ASSESSMENT: Provisional diagnosis, full imaging/lab report text (e.g., MRI Brain findings), and clinical complications." },
-              planDone: { type: Type.STRING, description: "MANAGEMENT PLAN DONE ✓: List ALL completed investigations, lab results, ECG, VBG, Echo, X-ray, USG, and completed consults with checkmarks (e.g. ✓ MRI done \n ✓ VBG x3 \n ✓ Cardiology consult)." },
-              planToBeDone: { type: Type.STRING, description: "MANAGEMENT PLAN TO BE DONE □: List ALL pending investigations, pending PAC/consults, scheduled procedures with checkboxes (e.g. □ PAC — URGENT \n □ Urine C&S \n □ GRBS Q8H \n □ Biopsy Thu)." },
-              bystander: { type: Type.STRING, description: "BYSTANDER UPDATE: Bystander presence, communication history, consent status, and pending consents." },
-              vitals: { type: Type.STRING, description: "VITALS: Latest vital signs e.g. BP 130/80 · HR 72 · GRBS 415⚠ · GCS E4V5M6" },
-              alerts: { type: Type.STRING, description: "CRITICAL ALERTS STRIP: Warning flags for elevated labs, dangerous vitals, or urgent pending consults e.g. ⚠ GRBS 415 · PAC not done · UTI?" }
+              doctor: { type: Type.STRING, description: "Lead clinician / primary doctor e.g. Dr. Manoj, Dr. Elizabeth" },
+              stayDuration: { type: Type.STRING, description: "Admission date and stay duration in ER e.g. In ER since: 25-07-2026 (12h)" },
+              complaints: { type: Type.STRING, description: "PRESENTING COMPLAINT: Chief complaints, symptoms, duration, and onset from initial presentation" },
+              chronologicalNotes: { type: Type.STRING, description: "INITIAL ASSESSMENT & CHRONOLOGICAL NOTES: Exhaustive, date-stamped, time-stamped clinical notes ordered STRICTLY from OLDEST to NEWEST" },
+              history: { type: Type.STRING, description: "PAST MEDICAL HISTORY: Comorbidities (e.g. T2DM x 22y, HTN x 22y, Hypothyroidism x 5y, Cushing's syndrome, Morbid Obesity, OSA), home medications, surgical history, and allergies" },
+              assessment: { type: Type.STRING, description: "PROVISIONAL DIAGNOSIS & ASSESSMENT: Exact provisional diagnosis (e.g. Fluid overload state with pericardial & pleural effusion, moderate ascites, metabolic acidosis, AKI), full imaging/lab report findings" },
+              planDone: { type: Type.STRING, description: "MANAGEMENT PLAN DONE ✓: List ALL completed investigations, medications given, IV lines, procedures, catheterization, and completed consults with ✓" },
+              planToBeDone: { type: Type.STRING, description: "MANAGEMENT PLAN TO BE DONE □: List ALL pending investigations, pending consults, transfer plans (e.g. Shift to 3rd MICU), and scheduled procedures with □" },
+              bystander: { type: Type.STRING, description: "BYSTANDER UPDATE: Exact details of WHO was counselled and WHAT was communicated (e.g. Explained in detail regarding need of ICU admission...)" },
+              vitals: { type: Type.STRING, description: "VITALS: Latest vital signs e.g. SpO2 97% on 5L O2 · HR 103 · BP 130/80 · RR 18 · Temp 97.4°F · GRBS 204 · GCS E4V5M6" },
+              alerts: { type: Type.STRING, description: "CRITICAL ALERTS STRIP: Warning flags for abnormal labs, dangerous vitals, or urgent pending consults e.g. ⚠ Shifting to MICU · ⚠ Metabolic Acidosis · ⚠ Trop I pending" }
             },
             required: ["id", "bed", "name", "ageGender", "complaints", "chronologicalNotes", "history", "assessment", "planDone", "planToBeDone", "bystander", "vitals", "alerts"]
           }
@@ -2468,20 +2650,22 @@ app.post("/api/handover/compile-sheet", async (req, res) => {
       Synthesize the following ${patients.length} patient clinical records into a standardized, exhaustive Vertical Portrait Doctors' Handover Sheet.
 
       PATIENTS DATA TO EXTRACT:
-      ${JSON.stringify(patients, null, 2)}
+      ${JSON.stringify(processedPatients, null, 2)}
 
       CRITICAL EXTRACTION RULES:
-      0. ZERO HALLUCINATION / DETERMINISTIC OUTPUT (TEMPERATURE = 0.0): Never invent or guess any diagnostic values, vitals, drugs, past history, or doctor names. If a field or detail is absent from the provided text, return empty string or null.
-      1. FILTER UNWANTED EMR NOISE: Strip away administrative page footers, software copyright notices, raw system UI buttons, and irrelevant EMR boilerplate text. Extract ONLY relevant clinical facts.
-      2. STRICT CHRONOLOGICAL ORDER (OLDEST TO NEWEST): For Section 2 (chronologicalNotes), organize ALL visit notes, consultant reviews, labs, and interventions date-wise and time-wise from OLDEST to NEWEST. Top-to-bottom reading MUST tell the complete clinical progression from initial ER entry to current shift.
-      3. EXTRACT ALL SPECIFICS: Preserve every doctor name (e.g. Dr. Ashwin P Vinod, Dr. Megha Jacob, Dr. Divya R, Dr. Manoj), timestamp, consultant review note, chief complaint, diagnostic value, medication, and dosage.
-      4. PRESENTING COMPLAINT: Detail the chief complaints, onset, and duration (e.g., Altered sensorium x 1 month, Vomiting x 3 days).
-      5. PAST MEDICAL HISTORY: Extract actual past medical history, comorbidities, medications, surgical history, and allergies.
-      6. PROVISIONAL DIAGNOSIS & ASSESSMENT (EXHAUSTIVE INVESTIGATION FINDINGS IN CHRONOLOGICAL ORDER): Detail provisional diagnosis, and ALL diagnostic lab results, blood gases (ABG/VBG), ECG, Echo, and imaging report findings (e.g., USG / CT / MRI / X-Ray). Organize investigation results parameter-by-parameter in strict chronological order (Oldest → Newest) with recorded timestamps/dates. Explicitly flag all abnormal values, elevated lab parameters, or critical findings with a warning sign (e.g. ⚠ WBC 21.9k · ⚠ CRP 54.8 · ⚠ Creatinine 1.92 · ⚠ GRBS 374 · ⚠ Temp 101.4°F · ⚠ Troponin Positive · ⚠ CT Brain: Acute Infarct).
-      7. MANAGEMENT DONE: List ALL completed tests, labs, imaging, procedures, and consults prefixed with ✓ (e.g. ✓ MRI done · ✓ VBG x3 · ✓ Cardiology consult).
-      8. MANAGEMENT TO BE DONE: List pending tests, consults, and procedures prefixed with □ (e.g. □ PAC — URGENT · □ Urine C&S · □ GRBS Q8H · □ Biopsy Thu).
-      9. BYSTANDER UPDATE & VITALS: Detail bystander updates/consents and format latest vitals clearly WITH RECORDED TIMESTAMP if available (e.g. "@ 14:30 · BP 130/80 · HR 72 · SpO2 98% · Temp 98.6°F · GRBS 415⚠ · GCS E4V5M6").
-      10. CRITICAL ALERTS: MUST flag all abnormal lab findings (e.g. WBC, CRP, Creatinine, GRBS, Troponin, PT/INR, Lactate, CT/MRI abnormalities), dangerous vitals, fever, or urgent pending consults with ⚠.
+      0. ZERO HALLUCINATION / DETERMINISTIC OUTPUT (TEMPERATURE = 0.0): Never invent or guess any diagnostic values, vitals, drugs, past history, or doctor names. Return empty string or null for absent items.
+      1. ZERO GENERIC PLACEHOLDERS: NEVER output generic strings like "Comorbidities not explicitly documented in raw input", "Vitals not documented", "Evaluation of patient with acute symptoms", "Complete active tasks", "Parsed Notes Review Complete", or "Bystanders counselled". If data is present, extract it thoroughly; if genuinely absent, leave as empty string.
+      2. READ EVERY ENTRY IN REVERSE CHRONOLOGICAL NOTES: Scan every single consultant review (General Medicine, Nephrology, MICU), nurse entry, and lab parameter.
+      3. SEPARATE NURSING ACTIONS FROM CLINICAL FINDINGS:
+         Nursing actions ("Patient shifted for CT", "CT slot called", "Foley catheter inserted", "IV cannulated") -> Place in Management Plan DONE ✓ list / Chronological Notes.
+         Clinical findings ("CT Abdomen: Pericardial & pleural effusion, moderate ascites") -> Place in Provisional Diagnosis & Assessment / Investigation findings.
+      4. PAST MEDICAL HISTORY: Scan all entries for "Known case of", "K/C/O", "Comorbidities", "Past Medical History". Extract every single condition with duration and home drugs (e.g., T2DM x 22y, HTN with Nephropathy, Hypothyroidism x 5y, Cushing's syndrome, Morbid Obesity, OSA).
+      5. PROVISIONAL DIAGNOSIS: Look for "IMP:", "Impression:", "Differential Diagnosis:", or consultant review conclusions. Extract the explicit diagnosis (e.g., "Fluid overload state with pericardial effusion and right pleural effusion, Moderate ascites, Metabolic acidosis, Acute kidney injury").
+      6. MANAGEMENT DONE ✓: Extract ALL past-tense completed actions (IV, VBG, O2 delivery, Foley catheter, CT done, Chest X-ray done, Troponin sent, Echo done, Consults done). Format with ✓.
+      7. MANAGEMENT TO BE DONE □: Extract ALL future/pending actions (Shift to MICU, Critical care consultation, Trop I result awaited, NIV if O2 req increases, Monitor VBG/UO). Format with □.
+      8. BYSTANDER UPDATE: Extract exact details of family counselling (WHO was told, WHAT was explained).
+      9. VITALS: Format latest vitals clearly (SpO2, HR, BP, RR, Temp, GRBS, GCS).
+      10. CRITICAL ALERTS: Flag abnormal lab findings, metabolic acidosis, pending cardiac markers, or ICU transfers with ⚠.
 
       Expected JSON schema:
       {
@@ -2508,7 +2692,7 @@ app.post("/api/handover/compile-sheet", async (req, res) => {
       }
     `;
 
-    // Try Claude Sonnet 5 for Handover Sheet Compilation
+    // Try Claude Sonnet for Handover Sheet Compilation
     const claudeResult = await callClaudeSonnetHandover(
       prompt,
       "You are an expert emergency medical scribe specializing in clinical shift handovers. Only return JSON matching the schema with key 'rows'."
@@ -2519,23 +2703,21 @@ app.post("/api/handover/compile-sheet", async (req, res) => {
     }
 
     const response = await ai.models.generateContent({
-      model: "gemini-1.5-flash",
+      model: "gemini-3.6-flash",
       contents: prompt,
       config: {
-        systemInstruction: "You are an expert emergency medical scribe specializing in clinical shift handovers. Only return JSON matching the schema.",
+        systemInstruction: "You are an expert emergency medical scribe specializing in clinical shift handovers. Return JSON matching the schema.",
         temperature: 0.0,
-        topP: 0.1,
-        topK: 1,
         responseMimeType: "application/json",
         responseSchema: schema
       }
     });
 
-    const parsed = JSON.parse(response.text || "{}");
-    res.json({ success: true, rows: parsed.rows || [] });
+    const data = JSON.parse(response.text || "{}");
+    res.json({ success: true, rows: data.rows || [] });
   } catch (error: any) {
-    console.error("Compile handover sheet error:", error);
-    res.status(500).json({ success: false, error: error.message || "Failed to compile handover sheet." });
+    console.error("AI handover sheet compilation error:", error);
+    res.status(500).json({ success: false, error: error.message || "Compilation failed." });
   }
 });
 
@@ -2573,7 +2755,7 @@ app.post("/api/scan-mnemonic", async (req, res) => {
     };
 
     const response = await ai.models.generateContent({
-      model: "gemini-1.5-flash",
+      model: "gemini-3.6-flash",
       contents: { parts: [imagePart, textPart] },
       config: {
         systemInstruction: "You are an expert clinical reference librarian. Convert medical mnemonic screenshots or notes into clean, highly structured medical education guides. Return JSON only.",

@@ -261,14 +261,30 @@ export default function App() {
           setCurrentVersion(serverVersion);
 
           const lastSeen = localStorage.getItem("ermate_last_seen_version") || localStorage.getItem("ermate_app_known_version");
-          if (lastSeen !== serverVersion) {
-            setAppUpdateBanner(true);
+          if (!lastSeen) {
+            // First time loading app on this client — user is already on latest server version
+            localStorage.setItem("ermate_last_seen_version", serverVersion);
+            localStorage.setItem("ermate_app_known_version", serverVersion);
+            setAppUpdateBanner(false);
+          } else if (lastSeen !== serverVersion) {
+            const dismissedSession = sessionStorage.getItem("ermate_dismissed_update_version");
+            if (dismissedSession !== serverVersion) {
+              setAppUpdateBanner(true);
+            }
+          } else {
+            setAppUpdateBanner(false);
           }
         }
       } catch (err) {
         const lastSeen = localStorage.getItem("ermate_last_seen_version") || localStorage.getItem("ermate_app_known_version");
-        if (lastSeen !== APP_VERSION) {
-          setAppUpdateBanner(true);
+        if (!lastSeen) {
+          localStorage.setItem("ermate_last_seen_version", APP_VERSION);
+          localStorage.setItem("ermate_app_known_version", APP_VERSION);
+        } else if (lastSeen !== APP_VERSION) {
+          const dismissedSession = sessionStorage.getItem("ermate_dismissed_update_version");
+          if (dismissedSession !== APP_VERSION) {
+            setAppUpdateBanner(true);
+          }
         }
       }
     };
@@ -288,8 +304,11 @@ export default function App() {
           setIsForceUpdate(force);
 
           const lastSeen = localStorage.getItem("ermate_last_seen_version");
-          if (lastSeen !== remoteVersion) {
-            setAppUpdateBanner(true);
+          if (lastSeen && lastSeen !== remoteVersion) {
+            const dismissedSession = sessionStorage.getItem("ermate_dismissed_update_version");
+            if (dismissedSession !== remoteVersion) {
+              setAppUpdateBanner(true);
+            }
           }
         }
       },
@@ -307,11 +326,13 @@ export default function App() {
   const handleUpdateApp = () => {
     localStorage.setItem("ermate_last_seen_version", currentVersion);
     localStorage.setItem("ermate_app_known_version", currentVersion);
+    sessionStorage.removeItem("ermate_dismissed_update_version");
     window.location.reload();
   };
 
   const handleLaterApp = () => {
-    // Don't save version to localStorage yet — will show again next session
+    // Save dismissal for current session so polling doesn't keep annoying user
+    sessionStorage.setItem("ermate_dismissed_update_version", currentVersion);
     setAppUpdateBanner(false);
     setShowUpdatesModal(false);
   };

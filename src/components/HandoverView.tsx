@@ -7,7 +7,8 @@ import {
 } from "lucide-react";
 import SpeechMicButton from "./SpeechMicButton";
 import { sanitizeDoctorError } from "../utils/sanitizeError";
-import { ClinicalCase, UserProfile, HandoverRecord, QuickPastePatient, InvestigationItem } from "../types";
+import { ClinicalCase, UserProfile, HandoverRecord, QuickPastePatient, InvestigationItem, HandoverPatient } from "../types";
+import { HandoverCard } from "./HandoverCard";
 import { db } from "../firebase";
 import { doc, setDoc, deleteDoc, getDoc } from "firebase/firestore";
 
@@ -44,6 +45,7 @@ interface ScribeChatMessage {
       assessment: string;
       recommendation: string;
     };
+    handoverCardData?: HandoverPatient;
   };
   isSaved?: boolean;
 }
@@ -855,7 +857,9 @@ function extractLatestVitalsWithTime(
     const labKeywordsRegex = /\b(?:cbc|wbc|hgb|hb|platelet|rft|creatinine|urea|lft|bilirubin|sgot|sgpt|trop|troponin|ckmb|crp|esr|abg|vbg|lactate|grbs|sugar|d-dimer|ddimer|inr|pt\/inr|urine|ecg|ekg|cxr|x-ray|xray|ct|mri|usg|echo|fast|labs?|investigations?|results?|blood|ionised|potassium|sodium)\b/i;
 
     lines.forEach(line => {
-      if (labKeywordsRegex.test(line)) {
+      // Exclude nursing/logistics status messages from diagnostic lab results
+      const isNursingLogistics = /shifted\s+for|slot\s+called|half\s+an\s+hour\s+delay|delay|informed|foley|cannula|iv\s+line|shifted\s+to|slot\s+again|bystander/i.test(line);
+      if (labKeywordsRegex.test(line) && !isNursingLogistics) {
         if (!investigationLines.some(il => il.text.toLowerCase().includes(line.toLowerCase().substring(0, 18)))) {
           const isAbn = checkLineForAbnormalities(line);
           let cleanedLine = line;
@@ -940,11 +944,19 @@ function extractLatestVitalsWithTime(
         `${c.vitals.bp ? `BP ${c.vitals.bp}` : ''} ${c.vitals.hr ? `HR ${c.vitals.hr}` : ''} ${c.vitals.spo2 ? `SpO2 ${c.vitals.spo2}` : ''}\n${c.notes?.map(n => n.content).join("\n") || ''}`
       );
 
-      const historyText = c.sampleHistory?.pastHistory ? c.sampleHistory.pastHistory : "Nil significant past medical history documented.";
+      const historyText = c.sampleHistory?.pastHistory ? c.sampleHistory.pastHistory : "";
 
       const chronoNotes = c.notes && c.notes.length > 0
         ? [...c.notes].reverse().map(n => `${n.timestamp || 'Initial'} ${n.authorRole ? `Dr. ${n.authorName || 'Lead'}` : ''} · ${n.content}`).join("\n\n")
         : `${new Date(c.admissionTime || Date.now()).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit' })} ${new Date(c.admissionTime || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} Dr. ${profile.name || 'Duty'} · First assessment\nBP ${c.vitals.bp || "N/A"} · GCS normal · Vitals logged`;
+
+      // Extract Bystander Counselling info if recorded
+      let bystanderNote = "";
+      const registryAllNotes = c.notes?.map(n => n.content).join("\n") || "";
+      const bystanderMatch = registryAllNotes.match(/(?:bystander|family|relatives|counselled|explained|informed)\s*[:=-]?\s*([^\n\r]+(?:\n[^\n\r]+)?)/i);
+      if (bystanderMatch && bystanderMatch[0]) {
+        bystanderNote = bystanderMatch[0].trim();
+      }
 
       // Extract Alert Flags
       const alertList: string[] = [...invAlerts];
@@ -982,7 +994,7 @@ function extractLatestVitalsWithTime(
         assessment: formattedAssessment,
         planDone: planDoneText,
         planToBeDone: planToBeDoneText,
-        bystander: "Bystanders counselled.",
+        bystander: bystanderNote,
         vitals: vitalsText,
         alerts: alertsText
       };
@@ -996,7 +1008,7 @@ function extractLatestVitalsWithTime(
     return item.presentingComplaint.trim();
   }
   if (!item.rawNotes) {
-    return item.structuredSBAR?.situation || "Presenting complaints recorded.";
+    return item.structuredSBAR?.situation || "";
   }
   const raw = item.rawNotes;
 
@@ -1032,16 +1044,16 @@ function extractLatestVitalsWithTime(
       const bedText = bedMatch ? bedMatch[0] : `Bed ${idx + 1}`;
       const nameText = qp.name.replace(/(?:bed|room|bay|cot|icu|hdu)?\s*#?\s*\d+[a-z]?\s*\(?/i, "").replace(/\)?$/, "").trim();
 
-      const bg = (qp.structuredSBAR?.background && !qp.structuredSBAR.background.includes("comorbid clinical elements"))
+      const bg = (qp.structuredSBAR?.background && !qp.structuredSBAR.background.includes("comorbid clinical elements") && !qp.structuredSBAR.background.includes("not explicitly documented"))
         ? qp.structuredSBAR.background
-        : "Nil significant past medical history documented.";
+        : "";
 
-      const sit = qp.structuredSBAR?.situation || "Evaluation of acute chief complaints.";
-      const ass = qp.structuredSBAR?.assessment || `Vitals: ${qp.vitals || 'Logged'}. Clinical review in progress.`;
+      const sit = qp.structuredSBAR?.situation || extractPresentingComplaint(qp);
+      const ass = qp.structuredSBAR?.assessment || (qp.vitals ? `Vitals: ${qp.vitals}` : "");
 
       const chronoNotes = qp.rawNotes && qp.rawNotes.trim().length > 0
         ? qp.rawNotes.split(/\n\s*\n+/).map(l => l.trim()).filter(l => l.length > 0).join("\n\n")
-        : `First assessment · ${sit}`;
+        : sit;
 
       const { formattedAssessment, alertsList: invAlerts, planDoneLabsText } = extractChronologicalInvestigationsAndAlerts(
         qp.rawNotes || "",
@@ -1057,6 +1069,17 @@ function extractLatestVitalsWithTime(
 
       const alertsText = qpAlerts.length > 0 ? `⚠ ${qpAlerts.join(" · ")}` : "";
 
+      let bystanderQP = "";
+      const qpRawAll = `${qp.rawNotes || ''} ${qp.structuredSBAR?.recommendation || ''}`;
+      const bystanderMatchQP = qpRawAll.match(/(?:bystander|family|relatives|counselled|explained|informed)\s*[:=-]?\s*([^\n\r]+(?:\n[^\n\r]+)?)/i);
+      if (bystanderMatchQP && bystanderMatchQP[0]) {
+        bystanderQP = bystanderMatchQP[0].trim();
+      }
+
+      const doneItems = [];
+      if (qp.vitals) doneItems.push(`✓ Vitals: ${qp.vitals}`);
+      if (planDoneLabsText) doneItems.push(planDoneLabsText);
+
       return {
         id: qp.id,
         bed: bedText,
@@ -1069,9 +1092,9 @@ function extractLatestVitalsWithTime(
         chronologicalNotes: chronoNotes,
         history: bg,
         assessment: formattedAssessment,
-        planDone: `✓ Vitals & Initial Workup: ${qp.vitals || 'Logged'}\n${planDoneLabsText}\n✓ Parsed Notes Review Complete.`,
-        planToBeDone: qp.structuredSBAR?.recommendation ? `□ ${qp.structuredSBAR.recommendation}` : "□ Maintain current orders and monitor.",
-        bystander: "Bystanders counselled.",
+        planDone: doneItems.join("\n"),
+        planToBeDone: qp.structuredSBAR?.recommendation ? `□ ${qp.structuredSBAR.recommendation}` : "",
+        bystander: bystanderQP,
         vitals: extractLatestVitalsWithTime(undefined, undefined, `${qp.vitals || ''}\n${qp.rawNotes || ''}`),
         alerts: alertsText
       };
@@ -1329,24 +1352,59 @@ function extractLatestVitalsWithTime(
         })
       });
       const resData = await response.json();
-      if (resData.success && resData.data) {
-        const parsed = resData.data;
+      if (resData.success && (resData.data || resData.extracted)) {
+        const parsed = resData.data || resData.extracted;
+
+        const handoverCardData: HandoverPatient = parsed.patientLabel ? {
+          patientLabel: parsed.patientLabel,
+          presentingComplaint: parsed.presentingComplaint || "",
+          story: parsed.story || "",
+          pmh: parsed.pmh || null,
+          diagnosis: parsed.diagnosis || "",
+          done: Array.isArray(parsed.done) ? parsed.done : [],
+          toBeDone: Array.isArray(parsed.toBeDone) ? parsed.toBeDone : [],
+          vitalsNow: parsed.vitalsNow || null,
+          criticalAlerts: Array.isArray(parsed.criticalAlerts) ? parsed.criticalAlerts : [],
+          bystander: parsed.bystander || null,
+          alertRow: parsed.alertRow || "✓ Stable"
+        } : {
+          patientLabel: {
+            name: parsed.name || "Bed Patient",
+            ageSex: parsed.ageGender || "Unknown",
+            bed: null,
+            erNumber: null,
+            admittingConsultant: null,
+            inERSince: null,
+            status: (parsed.triage && parsed.triage.includes("P1")) ? 'critical' : 'unstable'
+          },
+          presentingComplaint: parsed.presentingComplaint || "Presenting complaint recorded.",
+          story: parsed.structuredSBAR?.situation || "Clinical story recorded.",
+          pmh: parsed.structuredSBAR?.background || null,
+          diagnosis: parsed.structuredSBAR?.situation || "Under evaluation",
+          done: parsed.structuredSBAR?.recommendation ? [parsed.structuredSBAR.recommendation] : [],
+          toBeDone: [],
+          vitalsNow: parsed.vitals || null,
+          criticalAlerts: [],
+          bystander: null,
+          alertRow: parsed.vitals ? `⚠ ${parsed.vitals}` : "⚠ Active ER evaluation"
+        };
 
         // 2. Automatically save the parsed patient to quickPasteList
         const newPatient: QuickPastePatient = {
           id: `qp-pat-${Date.now()}`,
-          name: parsed.name || "Bed Patient",
-          ageGender: parsed.ageGender || "Unknown",
-          triage: parsed.triage || "P2 (Urgent)",
-          vitals: parsed.vitals || "Not documented",
-          presentingComplaint: parsed.presentingComplaint || (userText ? userText.substring(0, 150) : "Presenting complaint recorded."),
+          name: handoverCardData.patientLabel.name || parsed.name || "Bed Patient",
+          ageGender: handoverCardData.patientLabel.ageSex || parsed.ageGender || "Unknown",
+          triage: parsed.triage || (handoverCardData.patientLabel.status === 'critical' ? "P1 (Immediate)" : "P2 (Urgent)"),
+          vitals: handoverCardData.vitalsNow || parsed.vitals || "Not documented",
+          presentingComplaint: handoverCardData.presentingComplaint || (userText ? userText.substring(0, 150) : "Presenting complaint recorded."),
           rawNotes: parsed.rawNotes || userText || "Pasted clinical notes",
           structuredSBAR: parsed.structuredSBAR || {
-            situation: "No situation parsed.",
-            background: "No background parsed.",
-            assessment: "No assessment parsed.",
-            recommendation: "No recommendation parsed."
-          }
+            situation: handoverCardData.story || "No situation parsed.",
+            background: handoverCardData.pmh || "No background parsed.",
+            assessment: handoverCardData.vitalsNow || "No assessment parsed.",
+            recommendation: `Done: ${handoverCardData.done.join(', ')} | To Do: ${handoverCardData.toBeDone.join(', ')}`
+          },
+          handoverCardData
         };
 
         setQuickPasteList(prev => [...prev, newPatient]);
@@ -1355,7 +1413,7 @@ function extractLatestVitalsWithTime(
         const botMsg: ScribeChatMessage = {
           id: `bot-${Date.now()}`,
           sender: "ermate",
-          text: `I've analyzed the clinical details and converted them into SBAR structure. I have automatically appended **${newPatient.name}** to your shift transition logs!`,
+          text: `I've analyzed the clinical details using the complete handover pipeline (preprocessed noise stripping, chronological reversal, model routing, and alert row synthesis). **${newPatient.name}** has been added to your handover records!`,
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           parsedPatient: {
             patientId: newPatient.id,
@@ -1364,7 +1422,8 @@ function extractLatestVitalsWithTime(
             triage: newPatient.triage,
             vitals: newPatient.vitals,
             rawNotes: newPatient.rawNotes,
-            structuredSBAR: newPatient.structuredSBAR!
+            structuredSBAR: newPatient.structuredSBAR!,
+            handoverCardData
           },
           isSaved: true
         };
@@ -1378,20 +1437,33 @@ function extractLatestVitalsWithTime(
       console.error("Scribe chat error:", err);
       
       // Fallback: If AI fails, we still create a fallback message and patient log so it's robust
-      const fallbackName = userText ? (userText.match(/(?:bed|room)\s*(\d+)/i) ? `Bed ${userText.match(/(?:bed|room)\s*(\d+)/i)![1]}` : "Bed Patient") : "Attached Case Sheet";
+      const fallbackName = userText ? (userText.match(/(?:bed|room|bay)\s*#?\s*(\d+)/i) ? `Bed ${userText.match(/(?:bed|room|bay)\s*#?\s*(\d+)/i)![1]}` : "Bed Patient") : "Attached Case Sheet";
+      
+      // Extract vitals if present
+      const bpM = userText?.match(/(?:bp|blood\s*pressure)?\s*[:=-]?\s*(\d{2,3}\/\d{2,3})/i);
+      const hrM = userText?.match(/(?:hr|pulse)?\s*[:=-]?\s*(\d{2,3})/i);
+      const spo2M = userText?.match(/(?:spo2|sat)?\s*[:=-]?\s*(\d{2,3})%/i);
+      const extractedVitals = [bpM ? `BP ${bpM[1]}` : '', hrM ? `HR ${hrM[1]}` : '', spo2M ? `SpO2 ${spo2M[1]}%` : ''].filter(Boolean).join(" · ");
+
+      // Extract PMH if present
+      const pmhM = userText?.match(/(?:past\s+medical\s+history|known\s+case\s+of|k\/c\/o|comorbidities|pmh)\s*[:=-]?\s*([^\n\r]+)/i);
+
+      // Extract Diagnosis if present
+      const diagM = userText?.match(/(?:imp|impression|diagnosis|dx)\s*[:=-]?\s*([^\n\r]+)/i);
+
       const fallbackPatient: QuickPastePatient = {
         id: `qp-pat-${Date.now()}`,
         name: fallbackName,
-        ageGender: "Age/Gender Unknown",
+        ageGender: "Unknown",
         triage: "P2 (Urgent)",
-        vitals: "Vitals not documented",
-        presentingComplaint: userText ? userText.substring(0, 150) : "Scanned image of clinical case sheet.",
+        vitals: extractedVitals,
+        presentingComplaint: userText ? userText.substring(0, 150) : "",
         rawNotes: userText || "Uploaded Case Sheet Photo",
         structuredSBAR: {
-          situation: userText ? `Evaluation of patient with acute symptoms.` : "Scanned image of clinical case sheet.",
-          background: "Comorbidities not explicitly documented in the raw input.",
-          assessment: "Initial emergency triage and clinical assessment pending.",
-          recommendation: "Complete active tasks and consult shift leader for transition plan."
+          situation: diagM ? diagM[1].trim() : (userText ? userText.substring(0, 150) : ""),
+          background: pmhM ? pmhM[1].trim() : "",
+          assessment: extractedVitals ? `Vitals: ${extractedVitals}` : "",
+          recommendation: ""
         }
       };
 
@@ -3130,36 +3202,42 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
                           </p>
                         )}
 
-                        {/* AI Parsed Structured SBAR Card */}
+                        {/* AI Parsed Structured Card */}
                         {isBot && msg.parsedPatient && (
                           <div className="mt-3 border-t border-slate-100 dark:border-slate-800 pt-3 space-y-3">
-                            <div className="flex items-center justify-between flex-wrap gap-2">
-                              <div className="flex items-center gap-1.5">
-                                <span className="font-bold text-slate-900 dark:text-white">{msg.parsedPatient.name}</span>
-                                <span className="text-[10px] text-slate-400">({msg.parsedPatient.ageGender})</span>
-                              </div>
-                              <div className="flex items-center gap-1.5">
-                                <span className={`text-[8px] px-1.5 py-0.2 rounded font-extrabold ${
-                                  msg.parsedPatient.triage.includes("P1")
-                                    ? "bg-rose-50 border border-rose-200 text-rose-700"
-                                    : msg.parsedPatient.triage.includes("P2")
-                                    ? "bg-amber-50 border border-amber-250 text-amber-700"
-                                    : "bg-emerald-50 border border-emerald-250 text-emerald-700"
-                                }`}>
-                                  {msg.parsedPatient.triage}
-                                </span>
-                              </div>
-                            </div>
+                            {msg.parsedPatient.handoverCardData ? (
+                              <HandoverCard patient={msg.parsedPatient.handoverCardData} />
+                            ) : (
+                              <>
+                                <div className="flex items-center justify-between flex-wrap gap-2">
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="font-bold text-slate-900 dark:text-white">{msg.parsedPatient.name}</span>
+                                    <span className="text-[10px] text-slate-400">({msg.parsedPatient.ageGender})</span>
+                                  </div>
+                                  <div className="flex items-center gap-1.5">
+                                    <span className={`text-[8px] px-1.5 py-0.2 rounded font-extrabold ${
+                                      msg.parsedPatient.triage.includes("P1")
+                                        ? "bg-rose-50 border border-rose-200 text-rose-700"
+                                        : msg.parsedPatient.triage.includes("P2")
+                                        ? "bg-amber-50 border border-amber-250 text-amber-700"
+                                        : "bg-emerald-50 border border-emerald-250 text-emerald-700"
+                                    }`}>
+                                      {msg.parsedPatient.triage}
+                                    </span>
+                                  </div>
+                                </div>
 
-                            <p className="font-mono text-[9.5px] text-slate-500 font-bold">Vitals: {msg.parsedPatient.vitals}</p>
+                                <p className="font-mono text-[9.5px] text-slate-500 font-bold">Vitals: {msg.parsedPatient.vitals}</p>
 
-                            {/* SBAR Grid */}
-                            <div className="bg-slate-50 dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-900 space-y-2 text-[11px] leading-relaxed">
-                              <p><strong className="text-blue-700 dark:text-blue-400 font-black uppercase tracking-wider text-[9px] block mb-0.5">Situation</strong> <HighlightedHandoverText text={msg.parsedPatient.structuredSBAR.situation} /></p>
-                              <p><strong className="text-purple-700 dark:text-purple-400 font-black uppercase tracking-wider text-[9px] block mb-0.5">Background</strong> <HighlightedHandoverText text={msg.parsedPatient.structuredSBAR.background} /></p>
-                              <p><strong className="text-amber-700 dark:text-amber-400 font-black uppercase tracking-wider text-[9px] block mb-0.5">Assessment</strong> <HighlightedHandoverText text={msg.parsedPatient.structuredSBAR.assessment} /></p>
-                              <p><strong className="text-emerald-700 dark:text-emerald-400 font-black uppercase tracking-wider text-[9px] block mb-0.5">Recommendation</strong> <HighlightedHandoverText text={msg.parsedPatient.structuredSBAR.recommendation} /></p>
-                            </div>
+                                {/* SBAR Grid Fallback */}
+                                <div className="bg-slate-50 dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-900 space-y-2 text-[11px] leading-relaxed">
+                                  <p><strong className="text-blue-700 dark:text-blue-400 font-black uppercase tracking-wider text-[9px] block mb-0.5">Situation</strong> <HighlightedHandoverText text={msg.parsedPatient.structuredSBAR.situation} /></p>
+                                  <p><strong className="text-purple-700 dark:text-purple-400 font-black uppercase tracking-wider text-[9px] block mb-0.5">Background</strong> <HighlightedHandoverText text={msg.parsedPatient.structuredSBAR.background} /></p>
+                                  <p><strong className="text-amber-700 dark:text-amber-400 font-black uppercase tracking-wider text-[9px] block mb-0.5">Assessment</strong> <HighlightedHandoverText text={msg.parsedPatient.structuredSBAR.assessment} /></p>
+                                  <p><strong className="text-emerald-700 dark:text-emerald-400 font-black uppercase tracking-wider text-[9px] block mb-0.5">Recommendation</strong> <HighlightedHandoverText text={msg.parsedPatient.structuredSBAR.recommendation} /></p>
+                                </div>
+                              </>
+                            )}
 
                             {/* Auto Saved confirmation pill & edit details */}
                             <div className="flex items-center justify-between border-t border-slate-50 dark:border-slate-850 pt-2.5 flex-wrap gap-2 text-[10px]">
@@ -3579,18 +3657,29 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
                           </div>
                         </div>
 
-                        {/* SBAR summary collapsing panel */}
-                        <details className="text-[10.5px]" onClick={(e) => e.stopPropagation()}>
-                          <summary className="cursor-pointer select-none font-black text-indigo-500 hover:text-indigo-700 transition-colors text-[9.5px] uppercase tracking-wider">
-                            View Structured SBAR Card
-                          </summary>
-                          <div className="bg-white dark:bg-slate-950 border border-slate-150 dark:border-slate-850 rounded-lg p-2.5 mt-2 space-y-1.5 leading-relaxed text-slate-700 dark:text-slate-300 shadow-3xs">
-                            <p><strong className="text-blue-700 dark:text-blue-400 font-bold">[S]:</strong> <HighlightedHandoverText text={item.structuredSBAR?.situation} /></p>
-                            <p><strong className="text-purple-700 dark:text-purple-400 font-bold">[B]:</strong> <HighlightedHandoverText text={item.structuredSBAR?.background} /></p>
-                            <p><strong className="text-amber-700 dark:text-amber-400 font-bold">[A]:</strong> <HighlightedHandoverText text={item.structuredSBAR?.assessment} /></p>
-                            <p><strong className="text-emerald-700 dark:text-emerald-400 font-bold">[R]:</strong> <HighlightedHandoverText text={item.structuredSBAR?.recommendation} /></p>
-                          </div>
-                        </details>
+                        {/* Handover Card or SBAR summary collapsing panel */}
+                        {item.handoverCardData ? (
+                          <details className="text-[10.5px]" onClick={(e) => e.stopPropagation()}>
+                            <summary className="cursor-pointer select-none font-black text-emerald-600 dark:text-emerald-400 hover:text-emerald-700 transition-colors text-[9.5px] uppercase tracking-wider flex items-center gap-1">
+                              View Handover Card & Critical Alert Row
+                            </summary>
+                            <div className="mt-2">
+                              <HandoverCard patient={item.handoverCardData} />
+                            </div>
+                          </details>
+                        ) : (
+                          <details className="text-[10.5px]" onClick={(e) => e.stopPropagation()}>
+                            <summary className="cursor-pointer select-none font-black text-indigo-500 hover:text-indigo-700 transition-colors text-[9.5px] uppercase tracking-wider">
+                              View Structured SBAR Card
+                            </summary>
+                            <div className="bg-white dark:bg-slate-950 border border-slate-150 dark:border-slate-850 rounded-lg p-2.5 mt-2 space-y-1.5 leading-relaxed text-slate-700 dark:text-slate-300 shadow-3xs">
+                              <p><strong className="text-blue-700 dark:text-blue-400 font-bold">[S]:</strong> <HighlightedHandoverText text={item.structuredSBAR?.situation} /></p>
+                              <p><strong className="text-purple-700 dark:text-purple-400 font-bold">[B]:</strong> <HighlightedHandoverText text={item.structuredSBAR?.background} /></p>
+                              <p><strong className="text-amber-700 dark:text-amber-400 font-bold">[A]:</strong> <HighlightedHandoverText text={item.structuredSBAR?.assessment} /></p>
+                              <p><strong className="text-emerald-700 dark:text-emerald-400 font-bold">[R]:</strong> <HighlightedHandoverText text={item.structuredSBAR?.recommendation} /></p>
+                            </div>
+                          </details>
+                        )}
 
                       </div>
                     );

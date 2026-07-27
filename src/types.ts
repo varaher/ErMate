@@ -452,6 +452,28 @@ export interface TeamMember {
   updatedAt?: string;
 }
 
+export interface HandoverPatient {
+  patientLabel: {
+    name: string;
+    ageSex: string;
+    bed: string | null;
+    erNumber: string | null;
+    admittingConsultant: string | null;
+    inERSince: string | null;
+    status: 'critical' | 'unstable' | 'stable' | 'discharge';
+  };
+  presentingComplaint: string;
+  story: string;
+  pmh: string | null;
+  diagnosis: string;
+  done: string[];
+  toBeDone: string[];
+  vitalsNow: string | null;
+  criticalAlerts: string[];
+  bystander: string | null;
+  alertRow: string;
+}
+
 export interface QuickPastePatient {
   id: string;
   name: string;
@@ -466,6 +488,7 @@ export interface QuickPastePatient {
     assessment: string;
     recommendation: string;
   };
+  handoverCardData?: HandoverPatient;
   hospital?: string;
   createdByEmail?: string;
   updatedAt?: string;

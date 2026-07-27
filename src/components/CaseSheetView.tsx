@@ -396,7 +396,7 @@ export default function CaseSheetView({
             lastMeal: "Light oral fluids and snack approx 2.5 hours ago, tolerated well without vomiting.",
             events: isTrauma 
               ? "Minor mechanical fall from standing height onto carpet. No loss of consciousness, no vomiting, no active crying." 
-              : "Brought by parents for baseline clinical clearance following resolved minor illness.",
+              : "",
             socialHistory: "Lives with parents, active child with reassuring milestones.",
             familyHistory: "Unremarkable. No family history of premature CAD or hereditary diseases.",
             psychiatricFlags: "No behavioral or interaction flags. Excellent parental bonding."
@@ -1109,6 +1109,19 @@ Extremities: No deformity. No peripheral oedema. Peripheral pulses present.`,
           treatments: newTreatments
         };
 
+        if (currentCase.isPediatric) {
+          updatedCase.pediatricDetails = {
+            ...(currentCase.pediatricDetails || {}),
+            historySignsSymptoms: parsed.sampleHistory?.symptoms || currentCase.pediatricDetails?.historySignsSymptoms || "",
+            historyAllergies: parsed.sampleHistory?.allergies || currentCase.pediatricDetails?.historyAllergies || "",
+            historyMedications: parsed.sampleHistory?.medications || currentCase.pediatricDetails?.historyMedications || "",
+            historyPastMedical: parsed.sampleHistory?.pastHistory || currentCase.pediatricDetails?.historyPastMedical || "",
+            historyLastMeal: parsed.sampleHistory?.lastMeal || currentCase.pediatricDetails?.historyLastMeal || "",
+            historyEvents: parsed.sampleHistory?.events || currentCase.pediatricDetails?.historyEvents || "",
+            presentingComplaints: parsed.presentingComplaint || currentCase.pediatricDetails?.presentingComplaints || ""
+          };
+        }
+
         // Recalculate triage category based on updated clinical information
         const triageResult = classifyEmergencyTriage(updatedCase.patient.age, updatedCase.patient.presentingComplaint, updatedCase.vitals);
         updatedCase.patient.triageCategory = triageResult.category;
@@ -1374,7 +1387,7 @@ Extremities: No deformity. No peripheral oedema. Peripheral pulses present.`,
 - **M - Medications:** ${currentCase.sampleHistory.medications || "None"}
 - **P - Past History:** ${currentCase.sampleHistory.pastHistory || "None"}
 - **L - Last Meal:** ${currentCase.sampleHistory.lastMeal || "N/A"}
-- **E - Events:** ${currentCase.sampleHistory.events || "No history of acute trauma recorded."}
+- **E - Events:** ${currentCase.sampleHistory.events || "None"}
 - **Family / Gynae History:** ${currentCase.sampleHistory.familyHistory || "Unremarkable"}
 - **LMP:** ${currentCase.isPediatric ? "N/A" : "Normal / Not applicable"}
 
@@ -1501,7 +1514,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}
   <li><strong>M - Medications:</strong> ${currentCase.sampleHistory.medications || "None"}</li>
   <li><strong>P - Past History:</strong> ${currentCase.sampleHistory.pastHistory || "None"}</li>
   <li><strong>L - Last Meal:</strong> ${currentCase.sampleHistory.lastMeal || "N/A"}</li>
-  <li><strong>E - Events:</strong> ${currentCase.sampleHistory.events || "No history of acute trauma recorded."}</li>
+  <li><strong>E - Events:</strong> ${currentCase.sampleHistory.events || "None"}</li>
   <li><strong>Family / Gynae History:</strong> ${currentCase.sampleHistory.familyHistory || "Unremarkable"}</li>
   <li><strong>LMP:</strong> ${currentCase.isPediatric ? "N/A" : "Normal / Not applicable"}</li>
 </ul>
@@ -2776,7 +2789,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                           historyMedications: "None.",
                           historyPastMedical: "Full term normal vaginal delivery. Normal developmental milestones. Up-to-date with immunization.",
                           historyLastMeal: "Light oral fluids and soft snack 2 hours ago. Tolerating feeding well.",
-                          historyEvents: "Brought by parents for evaluation. Reassuring clinical status.",
+                          historyEvents: "",
                           examHeent: "Normocephalic, pupils equal and reactive, throat clear, neck supple.",
                           examRespiratory: "Symmetrical chest expansion, vesicular breath sounds, lungs clear, no wheezing.",
                           examCardiovascular: "S1 S2 heard clearly, regular rhythm, no murmurs. Warm peripheries.",
@@ -3466,8 +3479,8 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                       },
                       {
                         field: "historyEvents",
-                        label: "Events Leading to Presentation (Onset, interval treatments)",
-                        pills: ["Mechanical fall from bed", "Onset of sudden fever and crying", "Gradual cough worsening"]
+                        label: "E - Events / Environment (Preceding Trauma / Precipitants)",
+                        pills: ["Mechanical fall from bed", "Accidental injury", "Smoke / toxic inhalation"]
                       }
                     ].map((item) => (
                       <div key={item.field} className="space-y-1 text-xs">
@@ -4166,7 +4179,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                   { field: "medications", label: "M - Outpatient Medications" },
                   { field: "pastHistory", label: "P - Past Medical/Surgical History" },
                   { field: "lastMeal", label: "L - Last Oral Intake (Meal/Fluid)" },
-                  { field: "events", label: "E - Events Leading Up to Presentation" },
+                  { field: "events", label: "E - Events / Environment (Preceding Trauma / Precipitants)" },
                 ].map((item) => (
                   <div key={item.field} className="space-y-1">
                     <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">
@@ -6554,12 +6567,19 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                 <strong>Secondary Assessment (Focused Pediatric History & Examination)</strong>
               </span>
               <div className="border border-slate-300 rounded-xl p-3 bg-slate-50/20 space-y-2 text-[10px]">
-                <p><strong>Signs & Symptoms:</strong> {currentCase.pediatricDetails?.historySignsSymptoms || "None"}</p>
-                <p><strong>Allergies:</strong> {currentCase.pediatricDetails?.historyAllergies || "NKDA (No Known Drug Allergies)"}</p>
-                <p><strong>Medications:</strong> {currentCase.pediatricDetails?.historyMedications || "None"}</p>
-                <p><strong>Past Medical History:</strong> {currentCase.pediatricDetails?.historyPastMedical || "Unremarkable developmental history"}</p>
-                <p><strong>Last Meal:</strong> {currentCase.pediatricDetails?.historyLastMeal || "Light oral fluids"}</p>
-                <p><strong>Events Leading to Presentation:</strong> {currentCase.pediatricDetails?.historyEvents || "Refer to complaints"}</p>
+                <p><strong>Signs & Symptoms:</strong> {currentCase.pediatricDetails?.historySignsSymptoms || currentCase.sampleHistory?.symptoms || "None"}</p>
+                <p><strong>Allergies:</strong> {currentCase.pediatricDetails?.historyAllergies || currentCase.sampleHistory?.allergies || "NKDA (No Known Drug Allergies)"}</p>
+                <p><strong>Medications:</strong> {currentCase.pediatricDetails?.historyMedications || currentCase.sampleHistory?.medications || "None"}</p>
+                <p><strong>Past Medical History:</strong> {currentCase.pediatricDetails?.historyPastMedical || currentCase.sampleHistory?.pastHistory || "Unremarkable developmental history"}</p>
+                <p><strong>Last Meal:</strong> {currentCase.pediatricDetails?.historyLastMeal || currentCase.sampleHistory?.lastMeal || "Light oral fluids"}</p>
+                {((currentCase.pediatricDetails?.historyEvents &&
+                   currentCase.pediatricDetails.historyEvents.trim() &&
+                   !["none", "n/a", "nil", "refer to complaints"].includes(currentCase.pediatricDetails.historyEvents.trim().toLowerCase())) ||
+                  (currentCase.sampleHistory?.events &&
+                   currentCase.sampleHistory.events.trim() &&
+                   !["none", "n/a", "nil", "refer to complaints"].includes(currentCase.sampleHistory.events.trim().toLowerCase()))) && (
+                  <p><strong>Preceding Events / Trauma:</strong> {currentCase.pediatricDetails?.historyEvents || currentCase.sampleHistory?.events}</p>
+                )}
                 <p className="border-t pt-1.5 mt-1"><strong>HEENT:</strong> {currentCase.pediatricDetails?.examHeent || "Normocephalic, pupils equal and reactive"}</p>
                 <p><strong>Respiratory:</strong> {currentCase.pediatricDetails?.examRespiratory || "Lungs clear, symmetrical breath sounds"}</p>
                 <p><strong>Cardiovascular:</strong> {currentCase.pediatricDetails?.examCardiovascular || "S1 S2 heard clearly, normal rhythm"}</p>
@@ -6716,7 +6736,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                 <strong>History of Present Illness</strong>
               </span>
               <p className="p-2 bg-slate-50 rounded whitespace-pre-wrap text-[10px]">
-                {currentCase.sampleHistory.events || "No history of acute trauma recorded."}
+                {currentCase.sampleHistory.symptoms || currentCase.patient.presentingComplaint || "None reported"}
               </p>
             </div>
 
@@ -6728,6 +6748,9 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
               <div className="border border-slate-300 rounded-xl p-3 bg-slate-50/20 space-y-1 text-[10px]">
                 <p><strong>Signs and Symptoms:</strong> {currentCase.sampleHistory.symptoms || "None"}</p>
                 <p><strong>Past medical history:</strong> {currentCase.sampleHistory.pastHistory || "None"}</p>
+                {currentCase.sampleHistory.events && currentCase.sampleHistory.events.trim() && !["none", "n/a", "nil"].includes(currentCase.sampleHistory.events.trim().toLowerCase()) && (
+                  <p><strong>Preceding Events / Trauma:</strong> {currentCase.sampleHistory.events}</p>
+                )}
                 <p><strong>Surgical history:</strong> None reported.</p>
                 <p><strong>Family / Gynae History:</strong> {currentCase.sampleHistory.familyHistory || "Unremarkable"}</p>
                 <p><strong>LMP:</strong> {currentCase.isPediatric ? "N/A" : "Normal / Not applicable"}</p>
