@@ -3,11 +3,12 @@ import {
   Users, ClipboardCopy, FileText, Printer, Plus, Trash2, Edit2, Pencil,
   CheckCircle, HelpCircle, Download, Check, RefreshCw, Layers, LayoutList,
   AlertTriangle, ShieldAlert, ChevronLeft, X, Camera, UploadCloud, Sparkles, Send,
-  MoreHorizontal
+  MoreHorizontal, BookmarkCheck
 } from "lucide-react";
 import SpeechMicButton from "./SpeechMicButton";
 import { sanitizeDoctorError } from "../utils/sanitizeError";
-import { ClinicalCase, UserProfile, HandoverRecord, QuickPastePatient, InvestigationItem, HandoverPatient } from "../types";
+import { triggerPrintWithTip } from "../utils/printWithTip";
+import { ClinicalCase, UserProfile, HandoverRecord, QuickPastePatient, InvestigationItem, HandoverPatient, DirectDischargeSummaryItem } from "../types";
 import { HandoverCard } from "./HandoverCard";
 import { db } from "../firebase";
 import { doc, setDoc, deleteDoc, getDoc } from "firebase/firestore";
@@ -19,8 +20,8 @@ interface HandoverViewProps {
   setHandovers: React.Dispatch<React.SetStateAction<HandoverRecord[]>>;
   onNavigateToTab?: (tabId: string) => void;
   isDarkMode?: boolean;
-  activeSubTab?: "registry" | "quickpaste";
-  setActiveSubTab?: (tab: "registry" | "quickpaste") => void;
+  activeSubTab?: "registry" | "quickpaste" | "discharge_direct";
+  setActiveSubTab?: (tab: "registry" | "quickpaste" | "discharge_direct") => void;
   quickPasteList?: QuickPastePatient[];
   setQuickPasteList?: React.Dispatch<React.SetStateAction<QuickPastePatient[]>>;
 }
@@ -357,8 +358,8 @@ export default function HandoverView({
   quickPasteList: propQuickPasteList,
   setQuickPasteList: propSetQuickPasteList
 }: HandoverViewProps) {
-  // Main view navigation: "registry" (Active Cases) or "quickpaste" (EMR Quick Paste)
-  const [localActiveSubTab, setLocalActiveSubTab] = useState<"registry" | "quickpaste">("registry");
+  // Main view navigation: "registry" (Active Cases), "quickpaste" (EMR Quick Paste), or "discharge_direct" (Direct Discharge Summary)
+  const [localActiveSubTab, setLocalActiveSubTab] = useState<"registry" | "quickpaste" | "discharge_direct">("registry");
   const activeSubTab = propActiveSubTab !== undefined ? propActiveSubTab : localActiveSubTab;
   const setActiveSubTab = propSetActiveSubTab !== undefined ? propSetActiveSubTab : setLocalActiveSubTab;
 
@@ -411,7 +412,9 @@ export default function HandoverView({
     ];
   });
 
-  const quickPasteList = propQuickPasteList !== undefined ? propQuickPasteList : localQuickPasteList;
+  const quickPasteList = (propQuickPasteList !== undefined && propQuickPasteList.length > 0) 
+    ? propQuickPasteList 
+    : (localQuickPasteList.length > 0 ? localQuickPasteList : (propQuickPasteList || []));
   const setQuickPasteList = propSetQuickPasteList !== undefined ? propSetQuickPasteList : setLocalQuickPasteList;
 
   // State for EMR Quick Paste selection
@@ -472,6 +475,317 @@ export default function HandoverView({
   useEffect(() => {
     localStorage.setItem("ermate_uncleared_shift_warning", hasUnclearedShiftWarning ? "true" : "false");
   }, [hasUnclearedShiftWarning]);
+
+  // ── Direct EMR Discharge Summary States & Logic ──
+  const [directDischargeList, setDirectDischargeList] = useState<DirectDischargeSummaryItem[]>(() => {
+    try {
+      const saved = localStorage.getItem("ermate_direct_discharge_list");
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const [directInputText, setDirectInputText] = useState<string>("");
+  const [isGeneratingDischarge, setIsGeneratingDischarge] = useState<boolean>(false);
+  const [dischargeError, setDischargeError] = useState<string>("");
+  const [selectedDischargeModal, setSelectedDischargeModal] = useState<DirectDischargeSummaryItem | null>(null);
+
+  // Sync directDischargeList to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem("ermate_direct_discharge_list", JSON.stringify(directDischargeList));
+    } catch (e) {
+      console.error("Failed to save directDischargeList to localStorage:", e);
+    }
+  }, [directDischargeList]);
+
+  const handleGenerateDirectDischarge = async (textToProcess?: string) => {
+    const raw = (textToProcess !== undefined ? textToProcess : directInputText).trim();
+    if (!raw) {
+      setDischargeError("Please paste EMR case sheet text before generating.");
+      return;
+    }
+
+    setIsGeneratingDischarge(true);
+    setDischargeError("");
+
+    try {
+      const res = await fetch("/api/discharge-summary/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rawText: raw }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok || !data.success || !data.summary) {
+        throw new Error(data.error || "Failed to generate discharge summary.");
+      }
+
+      const summary = data.summary;
+      const patientNameMatch = raw.match(/(?:PATIENT\s*NAME|PATIENT|NAME)\s*[:=-]?\s*([^\n,]+)/i) ||
+                               raw.match(/(?:mr\.|mrs\.|ms\.|pt\.?|baby|master)\s+([A-Za-z\s]+)/i);
+      
+      const extractedName = (summary.patientName && typeof summary.patientName === 'string' && summary.patientName.trim().length > 1)
+        ? summary.patientName.trim()
+        : (patientNameMatch ? patientNameMatch[1].trim() : "Emergency Patient");
+
+      const newItem: DirectDischargeSummaryItem = {
+        id: `ds-${Date.now()}`,
+        patientName: extractedName,
+        uhid: summary.mlc || raw.match(/(?:uhid|mrn|ip|id)\s*[:=-]?\s*(\w+)/i)?.[1] || "N/A",
+        createdAt: new Date().toLocaleDateString('en-GB', {
+          day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit'
+        }),
+        rawText: raw,
+        summary: summary,
+      };
+
+      setDirectDischargeList((prev) => [newItem, ...prev]);
+      setDirectInputText("");
+    } catch (err: any) {
+      console.error("[Discharge Summary Direct Error]", err);
+      setDischargeError(err.message || "An error occurred while generating the discharge summary.");
+    } finally {
+      setIsGeneratingDischarge(false);
+    }
+  };
+
+  const handleDeleteDirectDischarge = (id: string) => {
+    if (confirm("Are you sure you want to delete this discharge summary?")) {
+      setDirectDischargeList((prev) => {
+        const updated = prev.filter((item) => item.id !== id);
+        try {
+          localStorage.setItem("ermate_direct_discharge_list", JSON.stringify(updated));
+        } catch (e) {
+          console.error("Error updating directDischargeList in localStorage:", e);
+        }
+        return updated;
+      });
+      if (selectedDischargeModal?.id === id) {
+        setSelectedDischargeModal(null);
+      }
+    }
+  };
+
+  const handleClearAllDirectDischarge = () => {
+    if (confirm("Clear all generated direct discharge summaries?")) {
+      setDirectDischargeList([]);
+      localStorage.removeItem("ermate_direct_discharge_list");
+    }
+  };
+
+  const handleDownloadDischargeWord = (item: DirectDischargeSummaryItem) => {
+    const s = item.summary || {};
+    const vArrival = s.vitalsOnArrival || {};
+    const vDischarge = s.vitalsAtDischarge || {};
+    const prim = s.primarySurvey || {};
+    const air = prim.airway || {};
+    const br = prim.breathing || {};
+    const circ = prim.circulation || {};
+    const dis = prim.disability || {};
+    const exp = prim.exposure || {};
+    const inv = s.investigations || {};
+
+    const wordHtml = `
+      <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
+      <head>
+        <meta charset="utf-8">
+        <title>Discharge Summary - ${item.patientName}</title>
+        <!--[if gte mso 9]>
+        <xml>
+          <w:WordDocument>
+            <w:View>Print</w:View>
+            <w:Zoom>100</w:Zoom>
+            <w:DoNotOptimizeForBrowser/>
+          </w:WordDocument>
+        </xml>
+        <![endif]-->
+        <style>
+          @page { size: A4 portrait; margin: 15mm; }
+          body { font-family: 'Calibri', 'Arial', sans-serif; font-size: 10pt; color: #111827; line-height: 1.4; }
+          h1 { font-size: 15pt; font-weight: bold; color: #1e3a8a; margin-bottom: 2px; text-transform: uppercase; }
+          h2 { font-size: 11pt; font-weight: bold; color: #1e3a8a; border-bottom: 1.5pt solid #1e3a8a; padding-bottom: 2px; margin-top: 12px; margin-bottom: 6px; text-transform: uppercase; }
+          .header-table { width: 100%; border-collapse: collapse; margin-bottom: 8px; }
+          .header-table td { padding: 4px 6px; vertical-align: top; border: 1px solid #d1d5db; font-size: 9.5pt; }
+          .bg-light { background-color: #f3f4f6; font-weight: bold; width: 22%; }
+          .section-box { margin-bottom: 8px; line-height: 1.4; }
+          ul { margin-top: 3px; margin-bottom: 3px; padding-left: 18px; }
+          .footer-sign { margin-top: 25px; width: 100%; border-collapse: collapse; }
+          .footer-sign td { width: 50%; padding-top: 35px; font-weight: bold; font-size: 9.5pt; }
+        </style>
+      </head>
+      <body>
+        <table style="width: 100%; margin-bottom: 12px; border-bottom: 2.5pt solid #1e3a8a;">
+          <tr>
+            <td style="text-align: left;">
+              <h1 style="margin: 0; font-size: 17pt;">${(hospitalName || "EMERGENCY DEPARTMENT").toUpperCase()}</h1>
+              <div style="font-size: 10.5pt; font-weight: bold; color: #374151;">DEPARTMENT OF EMERGENCY MEDICINE</div>
+              <div style="font-size: 8.5pt; color: #6b7280;">24x7 Emergency Care &amp; Medico-Legal Records</div>
+            </td>
+            <td style="text-align: right; vertical-align: bottom;">
+              <div style="font-size: 13pt; font-weight: bold; color: #1e3a8a;">EMERGENCY DISCHARGE SUMMARY</div>
+              <div style="font-size: 9pt; color: #6b7280;">Date: ${s.dateTime || item.createdAt}</div>
+            </td>
+          </tr>
+        </table>
+
+        <table class="header-table">
+          <tr>
+            <td class="bg-light">Patient Name:</td>
+            <td style="width: 28%;"><strong>${item.patientName}</strong></td>
+            <td class="bg-light">UHID / Bed:</td>
+            <td style="width: 28%;"><strong>${item.uhid}</strong></td>
+          </tr>
+          <tr>
+            <td class="bg-light">MLC Status:</td>
+            <td>${s.mlc ? `YES (${s.mlc})` : "NO / Nil"}</td>
+            <td class="bg-light">Allergies:</td>
+            <td><strong>${s.allergy || "Nil known"}</strong></td>
+          </tr>
+        </table>
+
+        <h2>1. Vitals On Arrival</h2>
+        <table class="header-table">
+          <tr>
+            <td class="bg-light">Pulse / HR:</td><td>${vArrival.hr || "N/A"}</td>
+            <td class="bg-light">BP:</td><td>${vArrival.bp || "N/A"}</td>
+            <td class="bg-light">RR:</td><td>${vArrival.rr || "N/A"}</td>
+            <td class="bg-light">SpO₂:</td><td>${vArrival.spo2 || "N/A"}</td>
+          </tr>
+          <tr>
+            <td class="bg-light">GCS:</td><td>${vArrival.gcs || "N/A"}</td>
+            <td class="bg-light">GRBS:</td><td>${vArrival.grbs || "N/A"}</td>
+            <td class="bg-light">Temp:</td><td>${vArrival.temp || "N/A"}</td>
+            <td class="bg-light">Pain Score:</td><td>${vArrival.painScore || "N/A"}</td>
+          </tr>
+        </table>
+
+        <h2>2. Clinical Presentation & History</h2>
+        <div class="section-box">
+          <strong>Presenting Complaints:</strong>
+          <div>${s.presentingComplaints || "N/A"}</div>
+        </div>
+        <div class="section-box">
+          <strong>History of Present Illness (HPI):</strong>
+          <div>${s.hpi || "N/A"}</div>
+        </div>
+        <div class="section-box">
+          <strong>Past Medical / Surgical Histories:</strong>
+          <div>${s.pastHistory || "Nil recorded"}</div>
+        </div>
+        ${s.familyGynaeHistory || s.lmp ? `
+        <div class="section-box">
+          <strong>Family / Gynae History:</strong> ${s.familyGynaeHistory || "Nil"} | <strong>LMP:</strong> ${s.lmp || "N/A"}
+        </div>
+        ` : ''}
+
+        <h2>3. Primary Assessment</h2>
+        <table class="header-table">
+          <tr>
+            <td class="bg-light">Airway:</td>
+            <td colspan="3">${air.status || "Patent"} ${air.intervention ? `(Intervention: ${air.intervention})` : ''}</td>
+          </tr>
+          <tr>
+            <td class="bg-light">Breathing:</td>
+            <td colspan="3">Work of breathing: ${br.workOfBreathing || "Normal"}, Air entry: ${br.airEntry || "Bilaterally equal"}${br.cct ? `, CCT: ${br.cct}` : ''}${br.subcutaneousEmphysema ? `, Subcut Emphysema: ${br.subcutaneousEmphysema}` : ''}${br.efast ? `, EFAST: ${br.efast}` : ''}${br.intervention ? `, Intervention: ${br.intervention}` : ''}</td>
+          </tr>
+          <tr>
+            <td class="bg-light">Circulation:</td>
+            <td colspan="3">CRT: ${circ.crt || "< 2s"}${circ.distendedNeckVeins ? `, Distended Neck Veins: ${circ.distendedNeckVeins}` : ''}${circ.pct ? `, PCT: ${circ.pct}` : ''}${circ.longBoneDeformity ? `, Long bone deformity: ${circ.longBoneDeformity}` : ''}${circ.fast ? `, FAST: ${circ.fast}` : ''}${circ.intervention ? `, Interventions: ${circ.intervention}` : ''}</td>
+          </tr>
+          <tr>
+            <td class="bg-light">Disability:</td>
+            <td>GCS: ${dis.gcs || "15/15"}</td>
+            <td class="bg-light">Pupils / GRBS:</td>
+            <td>Pupils: ${dis.pupils || "Equal & reactive"}, GRBS: ${dis.grbs || "N/A"}</td>
+          </tr>
+          <tr>
+            <td class="bg-light">Exposure:</td>
+            <td colspan="3">Temp: ${exp.temp || "Normal"}${exp.logRoll ? ` | Trauma / Logroll: ${exp.logRoll}` : ''}</td>
+          </tr>
+        </table>
+
+        ${s.generalAndSystemicExam ? `
+        <h2>4. General & Systemic Examination</h2>
+        <div class="section-box">
+          <div>${s.generalAndSystemicExam}</div>
+        </div>
+        ` : ''}
+
+        <h2>${s.generalAndSystemicExam ? '5' : '4'}. Course In Hospital & ER Treatment</h2>
+        <div class="section-box">
+          <div>${s.courseInHospital || "Evaluated and treated in ED."}</div>
+        </div>
+
+        <h2>${s.generalAndSystemicExam ? '6' : '5'}. Key Investigations & Lab Results</h2>
+        <table class="header-table">
+          ${Object.entries(inv).filter(([_, v]) => Boolean(v)).map(([k, v]) => `<tr><td class="bg-light" style="width: 28%;">${k.toUpperCase()}:</td><td>${v}</td></tr>`).join('') || '<tr><td colspan="2">No key lab results documented.</td></tr>'}
+        </table>
+
+        <h2>${s.generalAndSystemicExam ? '7' : '6'}. Diagnosis At Discharge</h2>
+        <ul>
+          ${(s.diagnosisAtDischarge || ["Emergency Clinical Evaluation"]).map((d: string) => `<li><strong>${d}</strong></li>`).join('')}
+        </ul>
+
+        <h2>${s.generalAndSystemicExam ? '8' : '7'}. Discharge Advice & Medications</h2>
+        ${Array.isArray(s.dischargeMedications) && s.dischargeMedications.length > 0 ? `
+          <ul>
+            ${s.dischargeMedications.map((m: string) => `<li>${m}</li>`).join('')}
+          </ul>
+        ` : '<div>No oral discharge medications prescribed. Transferred / Admitted as noted.</div>'}
+
+        <h2>${s.generalAndSystemicExam ? '9' : '8'}. Disposition & Vitals At Discharge</h2>
+        <table class="header-table">
+          <tr>
+            <td class="bg-light">Disposition Status:</td>
+            <td><strong>${s.disposition || "Normal Discharge"}</strong></td>
+            <td class="bg-light">Condition:</td>
+            <td><strong>${s.conditionAtDischarge || "STABLE"}</strong></td>
+          </tr>
+          <tr>
+            <td class="bg-light">Discharge Vitals:</td>
+            <td colspan="3">HR: ${vDischarge.hr || "N/A"} | BP: ${vDischarge.bp || "N/A"} | RR: ${vDischarge.rr || "N/A"} | SpO₂: ${vDischarge.spo2 || "N/A"} | GCS: ${vDischarge.gcs || "N/A"} | Temp: ${vDischarge.temp || "N/A"}</td>
+          </tr>
+        </table>
+
+        <div style="margin-top: 8px;">
+          <strong>Follow-Up Advice:</strong> ${s.followUpAdvice || "Review in ED if warning symptoms worsen or recur."}
+        </div>
+
+        <table class="footer-sign">
+          <tr>
+            <td>
+              <div>______________________________</div>
+              <div>Dr. ${s.edResident || "Duty EM Resident"}</div>
+              <div style="font-size: 8pt; color: #6b7280;">Emergency Medicine Resident</div>
+            </td>
+            <td style="text-align: right;">
+              <div>______________________________</div>
+              <div>Dr. ${s.edConsultant || "ED Consultant"}</div>
+              <div style="font-size: 8pt; color: #6b7280;">Consultant Emergency Medicine</div>
+            </td>
+          </tr>
+        </table>
+
+        <div style="font-size: 8pt; color: #6b7280; margin-top: 25px; border-top: 1px solid #d1d5db; padding-top: 10px; text-align: center; line-height: 1.4;">
+          This discharge summary provides clinical information meant to facilitate continuity of patient care. For statutory purposes, a treatment/discharge certificate shall be issued on request as per applicable Medico-legal regulations. For a disability certificate, approach a Government-constituted Medical Board.
+        </div>
+      </body>
+      </html>
+    `;
+
+    const blob = new Blob(['\ufeff', wordHtml], { type: 'application/msword' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Discharge_Summary_${item.patientName.replace(/[^a-zA-Z0-9]/g, '_')}.doc`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
 
   // Form states for adding/editing a quick-paste patient
   const [qpName, setQpName] = useState("");
@@ -546,6 +860,18 @@ export default function HandoverView({
     localStorage.setItem("ermate_scribe_chat_messages", JSON.stringify(chatMessages));
   }, [chatMessages]);
 
+  const [scribeDraftToast, setScribeDraftToast] = useState(false);
+
+  const handleSaveScribeDraft = () => {
+    try {
+      localStorage.setItem("ermate_scribe_chat_messages", JSON.stringify(chatMessages));
+      setScribeDraftToast(true);
+      setTimeout(() => setScribeDraftToast(false), 3000);
+    } catch (err) {
+      console.error("Error saving scribe draft:", err);
+    }
+  };
+
   const handleDeleteMessage = (id: string) => {
     setChatMessages(prev => prev.filter(msg => msg.id !== id));
   };
@@ -579,7 +905,7 @@ export default function HandoverView({
   });
   const [isViewingSheet, setIsViewingSheet] = useState(false);
   const [hospitalName, setHospitalName] = useState(() => {
-    return profile?.hospital || "RAJAGIRI HOSPITAL";
+    return profile?.hospital || "EMERGENCY DEPARTMENT";
   });
 
   const saveRefinedHandoverSheet = useCallback((rows: HandoverTableRow[], meta: typeof handoverMeta) => {
@@ -701,6 +1027,11 @@ function extractLatestVitalsWithTime(
   notesList?: Array<{ timestamp?: string; content?: string }>,
   rawText?: string
 ): string {
+  // If rawText already starts with `@ Time` or formatted vitals with time
+  if (rawText && /^@\s*[0-2]?\d:[0-5]\d/i.test(rawText.trim())) {
+    return rawText.trim();
+  }
+
   // 1. Search notesList reverse-chronologically for a note containing vitals
   if (notesList && notesList.length > 0) {
     const reversed = [...notesList].reverse();
@@ -714,26 +1045,51 @@ function extractLatestVitalsWithTime(
         const vitalsSnippetMatch = content.match(/(?:BP|HR|Pulse|SpO2|GRBS|GCS|Temp|RR|MAP)\s*[:=]?\s*[\d\/\.\s%⚠A-Za-z°C\-]+/i);
         if (vitalsSnippetMatch) {
           const snippet = vitalsSnippetMatch[0].trim();
+          if (/^@\s*[0-2]?\d:[0-5]\d/i.test(snippet)) return snippet;
           return extractedTime ? `@ ${extractedTime} · ${snippet}` : snippet;
         }
       }
     }
   }
 
-  // 2. Search rawText for vitals line + timestamp
+  // 2. Search rawText reverse-chronologically for vitals line + timestamp
   if (rawText && rawText.trim().length > 0) {
-    const lines = rawText.split(/\n+/);
-    for (const line of lines) {
+    const lines = rawText.split(/\r?\n+/);
+    const reversedLines = [...lines].reverse();
+
+    for (let i = 0; i < reversedLines.length; i++) {
+      const line = reversedLines[i].trim();
+      if (!line) continue;
+
       if (/(?:bp|hr|pulse|spo2|grbs|gcs|temp|vitals)\b/i.test(line)) {
-        const timeMatch = line.match(/\b([0-2]?\d:[0-5]\d(?:\s*[ap]m)?)\b/i) || line.match(/\b(\d{1,2}[\/-]\d{1,2}\s+[0-2]?\d:[0-5]\d)\b/i);
+        if (/^@\s*[0-2]?\d:[0-5]\d/i.test(line)) {
+          return line;
+        }
+
+        // Look for timestamp on this line or preceding lines in original text
+        let timeMatch = line.match(/\b([0-2]?\d:[0-5]\d(?:\s*[ap]m)?)\b/i) || line.match(/\b(\d{1,2}[\/-]\d{1,2}(?:[\/-]\d{2,4})?\s+[0-2]?\d:[0-5]\d(?:\s*[ap]m)?)\b/i);
+        if (!timeMatch) {
+          for (let j = i + 1; j < Math.min(i + 4, reversedLines.length); j++) {
+            const prevLine = reversedLines[j];
+            const prevTimeMatch = prevLine.match(/\b([0-2]?\d:[0-5]\d(?:\s*[ap]m)?)\b/i);
+            if (prevTimeMatch) {
+              timeMatch = prevTimeMatch;
+              break;
+            }
+          }
+        }
+
         const extractedTime = timeMatch ? timeMatch[1] : "";
-        
+
         let vitalsPart = line;
         const vitalsIdx = line.search(/(?:BP|HR|Pulse|SpO2|GRBS|GCS|Temp|RR|MAP|Vitals)\b/i);
         if (vitalsIdx !== -1) {
           vitalsPart = line.substring(vitalsIdx).trim();
         }
+
         if (vitalsPart) {
+          vitalsPart = vitalsPart.replace(/^[:\-\s]+/, "").trim();
+          if (/^@\s*[0-2]?\d:[0-5]\d/i.test(vitalsPart)) return vitalsPart;
           return extractedTime ? `@ ${extractedTime} · ${vitalsPart}` : vitalsPart;
         }
       }
@@ -741,7 +1097,7 @@ function extractLatestVitalsWithTime(
   }
 
   // 3. Fallback to structured vitalsObj
-  if (vitalsObj && (vitalsObj.bp || vitalsObj.hr || vitalsObj.spo2 || vitalsObj.grbs)) {
+  if (vitalsObj && (vitalsObj.bp || vitalsObj.hr || vitalsObj.spo2 || vitalsObj.grbs || vitalsObj.gcs || vitalsObj.temp)) {
     const parts: string[] = [];
     if (vitalsObj.bp) parts.push(`BP ${vitalsObj.bp}`);
     if (vitalsObj.hr) parts.push(`HR ${vitalsObj.hr}`);
@@ -1039,17 +1395,34 @@ function extractLatestVitalsWithTime(
 
   const getQuickPasteRows = (): HandoverTableRow[] => {
     const selected = quickPasteList.filter(qp => selectedQuickPasteIds.includes(qp.id));
+    const isGenericName = (n?: string | null) => !n || /^(bed patient|anonymous|patient|bed \d+|unknown|n\/a)$/i.test(n.trim());
+
     const rows = selected.map((qp, idx) => {
+      const card = qp.handoverCardData;
+
       const bedMatch = qp.name.match(/(?:bed|room|bay|cot|icu|hdu)?\s*#?\s*\d+[a-z]?/i);
-      const bedText = bedMatch ? bedMatch[0] : `Bed ${idx + 1}`;
-      const nameText = qp.name.replace(/(?:bed|room|bay|cot|icu|hdu)?\s*#?\s*\d+[a-z]?\s*\(?/i, "").replace(/\)?$/, "").trim();
+      const bedText = qp.bed || card?.patientLabel?.bed || (bedMatch ? bedMatch[0] : `Bed ${idx + 1}`);
+      const rawNameText = qp.name.replace(/(?:bed|room|bay|cot|icu|hdu)?\s*#?\s*\d+[a-z]?\s*\(?/i, "").replace(/\)?$/, "").trim();
 
-      const bg = (qp.structuredSBAR?.background && !qp.structuredSBAR.background.includes("comorbid clinical elements") && !qp.structuredSBAR.background.includes("not explicitly documented"))
+      let nameText = card?.patientLabel?.name;
+      if (isGenericName(nameText) && !isGenericName(qp.name)) {
+        nameText = qp.name;
+      }
+      if (isGenericName(nameText) && rawNameText) {
+        nameText = rawNameText;
+      }
+      if (!nameText || isGenericName(nameText)) {
+        nameText = qp.name || "Bed Patient";
+      }
+
+      const ageSexText = (card?.patientLabel?.ageSex && !/unknown/i.test(card.patientLabel.ageSex)) ? card.patientLabel.ageSex : (qp.ageGender || "N/A");
+
+      const bg = card?.pmh || ((qp.structuredSBAR?.background && !qp.structuredSBAR.background.includes("comorbid clinical elements") && !qp.structuredSBAR.background.includes("not explicitly documented"))
         ? qp.structuredSBAR.background
-        : "";
+        : "");
 
-      const sit = qp.structuredSBAR?.situation || extractPresentingComplaint(qp);
-      const ass = qp.structuredSBAR?.assessment || (qp.vitals ? `Vitals: ${qp.vitals}` : "");
+      const sit = card?.presentingComplaint || card?.story || qp.presentingComplaint || qp.structuredSBAR?.situation || extractPresentingComplaint(qp);
+      const ass = card?.diagnosis || qp.structuredSBAR?.assessment || (qp.vitals ? `Vitals: ${qp.vitals}` : "");
 
       const chronoNotes = qp.rawNotes && qp.rawNotes.trim().length > 0
         ? qp.rawNotes.split(/\n\s*\n+/).map(l => l.trim()).filter(l => l.length > 0).join("\n\n")
@@ -1061,41 +1434,54 @@ function extractLatestVitalsWithTime(
         []
       );
 
-      const qpAlerts: string[] = [...invAlerts];
+      const qpAlerts: string[] = card?.criticalAlerts || [...invAlerts];
       const combinedRaw = `${qp.vitals || ''} ${qp.rawNotes || ''} ${ass}`;
       if (/grbs\s*(?:>|:|=)?\s*(?:3[0-9]\d|[4-9]\d\d)/i.test(combinedRaw) && !qpAlerts.some(a => a.toLowerCase().includes("grbs"))) qpAlerts.push("Elevated GRBS (>300)");
       if (/bp\s*(?:>|:|=)?\s*(?:1[8-9]\d|2\d\d)/i.test(combinedRaw) && !qpAlerts.some(a => a.toLowerCase().includes("bp"))) qpAlerts.push("Hypertensive Urgency");
       if (/spo2\s*(?:<|:|=)?\s*(?:8\d|90|91|92)/i.test(combinedRaw) && !qpAlerts.some(a => a.toLowerCase().includes("spo2"))) qpAlerts.push("Hypoxia / Low SpO2");
 
-      const alertsText = qpAlerts.length > 0 ? `⚠ ${qpAlerts.join(" · ")}` : "";
+      const alertsText = card?.alertRow || (qpAlerts.length > 0 ? `⚠ ${qpAlerts.join(" · ")}` : "");
 
-      let bystanderQP = "";
-      const qpRawAll = `${qp.rawNotes || ''} ${qp.structuredSBAR?.recommendation || ''}`;
-      const bystanderMatchQP = qpRawAll.match(/(?:bystander|family|relatives|counselled|explained|informed)\s*[:=-]?\s*([^\n\r]+(?:\n[^\n\r]+)?)/i);
-      if (bystanderMatchQP && bystanderMatchQP[0]) {
-        bystanderQP = bystanderMatchQP[0].trim();
+      let bystanderQP = card?.bystander || "";
+      if (!bystanderQP) {
+        const qpRawAll = `${qp.rawNotes || ''} ${qp.structuredSBAR?.recommendation || ''}`;
+        const bystanderMatchQP = qpRawAll.match(/(?:bystander|family|relatives|counselled|explained|informed)\s*[:=-]?\s*([^\n\r]+(?:\n[^\n\r]+)?)/i);
+        if (bystanderMatchQP && bystanderMatchQP[0]) {
+          bystanderQP = bystanderMatchQP[0].trim();
+        }
       }
 
       const doneItems = [];
-      if (qp.vitals) doneItems.push(`✓ Vitals: ${qp.vitals}`);
-      if (planDoneLabsText) doneItems.push(planDoneLabsText);
+      if (card?.done && card.done.length > 0) {
+        card.done.forEach(d => doneItems.push(`✓ ${d}`));
+      } else {
+        if (qp.vitals) doneItems.push(`✓ Vitals: ${qp.vitals}`);
+        if (planDoneLabsText) doneItems.push(planDoneLabsText);
+      }
+
+      let toBeDoneText = "";
+      if (card?.toBeDone && card.toBeDone.length > 0) {
+        toBeDoneText = card.toBeDone.map(t => `□ ${t}`).join("\n");
+      } else if (qp.structuredSBAR?.recommendation) {
+        toBeDoneText = `□ ${qp.structuredSBAR.recommendation}`;
+      }
 
       return {
         id: qp.id,
         bed: bedText,
-        name: nameText || qp.name || "Anonymous",
-        ageGender: qp.ageGender || "N/A",
-        erNo: `ER# ${qp.id.substring(0, 7)}`,
-        doctor: `Dr. ${profile.name || "Manoj"}`,
-        stayDuration: "In ER evaluation",
-        complaints: extractPresentingComplaint(qp),
+        name: nameText,
+        ageGender: ageSexText,
+        erNo: card?.patientLabel?.erNumber ? `ER# ${card.patientLabel.erNumber}` : `ER# ${qp.id.substring(0, 7)}`,
+        doctor: card?.patientLabel?.admittingConsultant ? `Dr. ${card.patientLabel.admittingConsultant}` : `Dr. ${profile.name || "Manoj"}`,
+        stayDuration: card?.patientLabel?.inERSince ? `In ER since: ${card.patientLabel.inERSince}` : "In ER evaluation",
+        complaints: sit,
         chronologicalNotes: chronoNotes,
         history: bg,
-        assessment: formattedAssessment,
+        assessment: formattedAssessment || ass,
         planDone: doneItems.join("\n"),
-        planToBeDone: qp.structuredSBAR?.recommendation ? `□ ${qp.structuredSBAR.recommendation}` : "",
+        planToBeDone: toBeDoneText,
         bystander: bystanderQP,
-        vitals: extractLatestVitalsWithTime(undefined, undefined, `${qp.vitals || ''}\n${qp.rawNotes || ''}`),
+        vitals: card?.vitalsNow || extractLatestVitalsWithTime(undefined, undefined, `${qp.vitals || ''}\n${qp.rawNotes || ''}`),
         alerts: alertsText
       };
     });
@@ -1113,7 +1499,41 @@ function extractLatestVitalsWithTime(
       });
       const json = await res.json();
       if (json.success && json.rows && Array.isArray(json.rows) && json.rows.length > 0) {
-        const sorted = sortRowsByBedNumber(json.rows);
+        const mappedRows = json.rows.map((row: HandoverTableRow) => {
+          // 1. Patient ID match (BEST - Exact match on patient ID)
+          let orig = items.find(it => it.id && row.id && String(it.id).trim() === String(row.id).trim());
+
+          // 2. Bed Number match (GOOD - If Patient ID missing or altered by AI)
+          if (!orig && (row.bed || orig?.bed || orig?.bedNo)) {
+            orig = items.find(it => {
+              const itBed = (it.bed || it.bedNo || "").toString().toLowerCase().trim();
+              const rBed = (row.bed || "").toString().toLowerCase().trim();
+              if (!itBed || !rBed) return false;
+              const cleanIt = itBed.replace(/^(bed|room|bay|cot|icu|hdu)?\s*#?\s*/i, "");
+              const cleanR = rBed.replace(/^(bed|room|bay|cot|icu|hdu)?\s*#?\s*/i, "");
+              return cleanIt === cleanR || itBed === rBed;
+            });
+          }
+
+          // STRICT CLINICAL SAFETY RULE:
+          // If neither Patient ID nor Bed Number matched, SKIP this row!
+          // NEVER match by Patient Name or Array Index to prevent cross-patient data corruption.
+          if (!orig) {
+            console.warn(`[Handover] Skipped unassigned AI row (ID: ${row.id}, Bed: ${row.bed}, Name: ${row.name}) - No safe ID or Bed match in active selection.`);
+            return null;
+          }
+
+          const fallbackName = orig?.name || orig?.patientLabel?.name || row.name;
+          const finalName = (row.name && !/anonymous|bed patient/i.test(row.name)) ? row.name : fallbackName;
+
+          return {
+            ...row,
+            id: orig.id, // Strictly preserve original Patient ID
+            bed: row.bed && !/bed \d+/i.test(row.bed) ? row.bed : (orig?.bed || orig?.bedNo || row.bed),
+            name: finalName
+          };
+        }).filter(Boolean) as HandoverTableRow[];
+        const sorted = sortRowsByBedNumber(mappedRows);
         setEditableRows(sorted);
         saveRefinedHandoverSheet(sorted, handoverMeta);
       }
@@ -1126,30 +1546,31 @@ function extractLatestVitalsWithTime(
 
   const compileRegistryToSheet = () => {
     const localRows = getRegistryRows();
-    if (editableRows.length === 0) {
-      setEditableRows(localRows);
-      const selectedCases = cases.filter(c => selectedRegistryIds.includes(c.id));
-      if (selectedCases.length > 0) {
-        refineSheetWithGemini(selectedCases);
-      }
+    setEditableRows(localRows);
+    saveRefinedHandoverSheet(localRows, handoverMeta);
+    const selectedCases = cases.filter(c => selectedRegistryIds.includes(c.id));
+    if (selectedCases.length > 0) {
+      refineSheetWithGemini(selectedCases);
     }
     setIsViewingSheet(true);
   };
 
   const compileQuickPasteToSheet = () => {
     const localRows = getQuickPasteRows();
-    if (editableRows.length === 0) {
-      setEditableRows(localRows);
-      const selectedQuick = quickPasteList.filter(qp => selectedQuickPasteIds.includes(qp.id));
-      if (selectedQuick.length > 0) {
-        refineSheetWithGemini(selectedQuick);
-      }
+    setEditableRows(localRows);
+    saveRefinedHandoverSheet(localRows, handoverMeta);
+    const selectedQuick = quickPasteList.filter(qp => selectedQuickPasteIds.includes(qp.id));
+    if (selectedQuick.length > 0) {
+      refineSheetWithGemini(selectedQuick);
     }
     setIsViewingSheet(true);
   };
 
   const handleDownloadWordDirect = (type: "registry" | "quickpaste") => {
-    const rows = (editableRows && editableRows.length > 0) ? editableRows : (type === "registry" ? getRegistryRows() : getQuickPasteRows());
+    const rows = (isViewingSheet && editableRows && editableRows.length > 0) 
+      ? editableRows 
+      : (type === "registry" ? getRegistryRows() : getQuickPasteRows());
+    if (rows.length === 0) return;
     if (rows.length === 0) return;
 
     const chunkRows = (rList: HandoverTableRow[], size: number) => {
@@ -1172,8 +1593,7 @@ function extractLatestVitalsWithTime(
           <table style="width: 100%; border-collapse: collapse; border: none; margin-bottom: 12px;">
             <tr style="border: none;">
               <td style="border: none; padding: 0; width: 65%; text-align: left; vertical-align: middle;">
-                <span style="font-family: Arial, sans-serif; font-size: 8.5pt; font-weight: bold; background-color: #4f46e5; color: #ffffff; padding: 3px 7px; border-radius: 3px; text-transform: uppercase; letter-spacing: 1.5px;">ERMATE</span>
-                <span style="font-family: Arial, sans-serif; font-size: 11.5pt; font-weight: bold; color: #111827; margin-left: 6px;">${hospitalName.toUpperCase()} | EMERGENCY DEPARTMENT</span>
+                <span style="font-family: Arial, sans-serif; font-size: 11.5pt; font-weight: bold; color: #111827;">${hospitalName.toUpperCase()} | EMERGENCY DEPARTMENT</span>
                 <div style="font-family: Arial, sans-serif; font-size: 8pt; color: #6b7280; font-weight: bold; text-transform: uppercase; letter-spacing: 1px; margin-top: 4px;">DOCTORS' HANDOVER SHEET &mdash; PAGE ${pageIdx + 1} OF ${totalPages}</div>
               </td>
               <td style="border: none; padding: 0; width: 35%; text-align: right; vertical-align: middle; font-family: monospace; font-size: 8pt; color: #4b5563; line-height: 1.4;">
@@ -1440,10 +1860,7 @@ function extractLatestVitalsWithTime(
       const fallbackName = userText ? (userText.match(/(?:bed|room|bay)\s*#?\s*(\d+)/i) ? `Bed ${userText.match(/(?:bed|room|bay)\s*#?\s*(\d+)/i)![1]}` : "Bed Patient") : "Attached Case Sheet";
       
       // Extract vitals if present
-      const bpM = userText?.match(/(?:bp|blood\s*pressure)?\s*[:=-]?\s*(\d{2,3}\/\d{2,3})/i);
-      const hrM = userText?.match(/(?:hr|pulse)?\s*[:=-]?\s*(\d{2,3})/i);
-      const spo2M = userText?.match(/(?:spo2|sat)?\s*[:=-]?\s*(\d{2,3})%/i);
-      const extractedVitals = [bpM ? `BP ${bpM[1]}` : '', hrM ? `HR ${hrM[1]}` : '', spo2M ? `SpO2 ${spo2M[1]}%` : ''].filter(Boolean).join(" · ");
+      const extractedVitals = extractLatestVitalsWithTime(undefined, undefined, userText);
 
       // Extract PMH if present
       const pmhM = userText?.match(/(?:past\s+medical\s+history|known\s+case\s+of|k\/c\/o|comorbidities|pmh)\s*[:=-]?\s*([^\n\r]+)/i);
@@ -1590,15 +2007,79 @@ function extractLatestVitalsWithTime(
     });
   };
 
-  const handlePrint = (type: "registry" | "quickpaste") => {
-    window.print();
-    setPostPrintDataType(type);
-    if (type === "registry") {
-      setIdsToCleanup(selectedRegistryIds);
-    } else {
-      setIdsToCleanup(selectedQuickPasteIds);
+  const handleDownloadHandoverPdf = async (type: "registry" | "quickpaste") => {
+    try {
+      let patientList: any[] = [];
+      if (type === "registry") {
+        patientList = cases.filter(c => selectedRegistryIds.includes(c.id)).map(c => ({
+          id: c.id,
+          bed: c.bedNo || "N/A",
+          name: c.patient.name,
+          ageGender: `${c.patient.age || "N/A"}y / ${c.patient.gender}`,
+          erNo: c.patient.uhid || c.id.substring(0, 7),
+          doctor: c.createdByName || c.doctorName || `Dr. ${profile.name}`,
+          vitals: `HR ${c.vitals.hr || "N/A"}, BP ${c.vitals.bp || "N/A"}, SpO2 ${c.vitals.spo2 || "N/A"}%`,
+          complaints: c.patient.presentingComplaint,
+          assessment: c.progressNotes || c.sampleHistory?.symptoms || "Stable",
+          planToBeDone: c.treatments?.map(t => `${t.drugName} ${t.dose}`).join(", ") || "Active monitoring",
+          alerts: c.sampleHistory?.allergies || "None"
+        }));
+      } else {
+        patientList = editableRows.filter(r => selectedQuickPasteIds.includes(r.id)).map(r => ({
+          id: r.id,
+          bed: r.bed || "N/A",
+          name: r.name || "Patient",
+          ageGender: r.ageGender || "N/A",
+          erNo: r.erNo || r.id.substring(0, 7),
+          doctor: r.doctor || `Dr. ${profile.name}`,
+          vitals: r.vitals || "N/A",
+          complaints: r.complaints || r.history || "N/A",
+          assessment: r.assessment || "N/A",
+          planToBeDone: `${r.planDone || ''} | ${r.planToBeDone || ''}`.trim(),
+          alerts: r.bystander || r.alerts || "None"
+        }));
+      }
+
+      const response = await fetch("/api/handover/pdf", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          date: handoverMeta.date || new Date().toLocaleDateString(),
+          facility: profile.hospital || "Emergency Department",
+          clinician: profile.name ? `Dr. ${profile.name}` : "Duty Medical Officer",
+          patients: patientList
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error("PDF server response not OK");
+      }
+
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `Emergency_Handover_Report_${type}_${new Date().toISOString().split('T')[0]}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("[Handover PDF Download Error]", err);
+      triggerPrintWithTip();
+    } finally {
+      setPostPrintDataType(type);
+      if (type === "registry") {
+        setIdsToCleanup(selectedRegistryIds);
+      } else {
+        setIdsToCleanup(selectedQuickPasteIds);
+      }
+      setShowPostPrintCleanPrompt(true);
     }
-    setShowPostPrintCleanPrompt(true);
+  };
+
+  const handlePrint = (type: "registry" | "quickpaste") => {
+    handleDownloadHandoverPdf(type);
   };
 
   const getRegistryPrintText = (): string => {
@@ -1680,8 +2161,7 @@ function extractLatestVitalsWithTime(
             <table style="width: 100%; border-collapse: collapse; border: none; margin-bottom: 12px;">
               <tr style="border: none;">
                 <td style="border: none; padding: 0; width: 65%; text-align: left; vertical-align: middle;">
-                  <span style="font-family: Arial, sans-serif; font-size: 8.5pt; font-weight: bold; background-color: #4f46e5; color: #ffffff; padding: 3px 7px; border-radius: 3px; text-transform: uppercase; letter-spacing: 1.5px;">ERMATE</span>
-                  <span style="font-family: Arial, sans-serif; font-size: 11.5pt; font-weight: bold; color: #111827; margin-left: 6px;">${hospitalName.toUpperCase()} | EMERGENCY DEPARTMENT</span>
+                  <span style="font-family: Arial, sans-serif; font-size: 11.5pt; font-weight: bold; color: #111827;">${hospitalName.toUpperCase()} | EMERGENCY DEPARTMENT</span>
                   <div style="font-family: Arial, sans-serif; font-size: 8pt; color: #6b7280; font-weight: bold; text-transform: uppercase; letter-spacing: 1px; margin-top: 4px;">DOCTORS' HANDOVER SHEET &mdash; PAGE ${pageIdx + 1} OF ${totalPages}</div>
                 </td>
                 <td style="border: none; padding: 0; width: 35%; text-align: right; vertical-align: middle; font-family: Arial, sans-serif; font-size: 8.5pt; color: #374151; line-height: 1.4;">
@@ -2022,7 +2502,7 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
             </button>
             <button
               onClick={() => {
-                window.print();
+                triggerPrintWithTip();
                 setPostPrintDataType(activeSubTab === "registry" ? "registry" : "quickpaste");
                 if (activeSubTab === "registry") {
                   setIdsToCleanup(editableRows.map(r => r.id));
@@ -2108,15 +2588,12 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
             <div className="border-b-2 border-slate-900 dark:border-slate-800 pb-3 flex flex-col md:flex-row items-center justify-between gap-4 text-center md:text-left">
               <div>
                 <div className="flex items-center gap-2 justify-center md:justify-start">
-                  <span className="font-mono bg-indigo-600 text-white text-[10px] px-2 py-0.5 rounded font-black tracking-widest">
-                    ERMATE
-                  </span>
-                  <h1 className="text-base font-black tracking-wider text-slate-950 dark:text-white uppercase font-mono">
-                    {hospitalName || "RAJAGIRI HOSPITAL"} | EMERGENCY DEPARTMENT
+                  <h1 className="text-base md:text-lg font-black tracking-wider text-slate-950 dark:text-white uppercase font-mono">
+                    {hospitalName || "RAJAGIRI HOSPITAL"} &mdash; EMERGENCY DEPARTMENT
                   </h1>
                 </div>
-                <p className="text-[10px] text-slate-500 dark:text-slate-400 font-mono tracking-widest mt-0.5 uppercase font-bold">
-                  DOCTORS' CLINICAL HANDOVER SHEET &mdash; VERTICAL PORTRAIT LOG
+                <p className="text-[10px] text-slate-600 dark:text-slate-400 font-mono tracking-widest mt-0.5 uppercase font-bold">
+                  DOCTORS' CLINICAL HANDOVER SHEET
                 </p>
               </div>
               
@@ -2139,29 +2616,38 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
                   {/* 1. HEADER BAR: BED NO + NAME */}
                   <div className="print-card-header bg-slate-900 dark:bg-slate-900 text-white p-2.5 md:p-3 border-b-2 border-slate-900 flex flex-wrap items-center justify-between gap-2">
                     <div className="flex items-center gap-2.5">
-                      <div className="bg-indigo-600 text-white text-xs font-mono font-black px-2 py-0.5 rounded tracking-wide uppercase">
+                      <div className="bg-indigo-600 text-white text-xs font-mono font-black px-2 py-0.5 rounded tracking-wide uppercase flex items-center justify-center">
+                        <span className="hidden print:inline-block font-mono font-black text-white whitespace-nowrap">
+                          {row.bed || "Bed #"}
+                        </span>
                         <input
                           type="text"
                           value={row.bed}
                           onChange={(e) => handleUpdateCell(row.id, "bed", e.target.value)}
-                          className="bg-transparent border-none text-white text-center w-16 focus:outline-none font-mono font-black"
+                          className="bg-transparent border-none text-white text-center w-16 focus:outline-none font-mono font-black print:hidden"
                           placeholder="Bed #"
                         />
                       </div>
+                      <span className="hidden print:inline-block text-base font-black tracking-tight text-white uppercase font-mono">
+                        {row.name || "PATIENT NAME"}
+                      </span>
                       <input
                         type="text"
                         value={row.name}
                         onChange={(e) => handleUpdateCell(row.id, "name", e.target.value)}
-                        className="text-base font-black tracking-tight text-white uppercase font-mono bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-indigo-400 rounded px-1"
+                        className="text-base font-black tracking-tight text-white uppercase font-mono bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-indigo-400 rounded px-1 print:hidden"
                         placeholder="PATIENT NAME"
                       />
                     </div>
                     <div className="text-xs font-mono font-bold text-slate-200 flex flex-wrap items-center gap-2 md:gap-3">
+                      <span className="hidden print:inline-block text-slate-200 font-mono font-bold text-xs">
+                        {row.ageGender || ""}
+                      </span>
                       <input
                         type="text"
                         value={row.ageGender}
                         onChange={(e) => handleUpdateCell(row.id, "ageGender", e.target.value)}
-                        className="bg-transparent border-none text-slate-200 font-mono font-bold text-xs w-14 text-right focus:outline-none"
+                        className="bg-transparent border-none text-slate-200 font-mono font-bold text-xs w-14 text-right focus:outline-none print:hidden"
                         placeholder="Age/Sex"
                       />
                       {row.erNo && <span className="text-amber-300 font-mono">· {row.erNo}</span>}
@@ -2480,8 +2966,8 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
             </div>
 
             {/* Sheet Footer Notice */}
-            <div className="border-t border-slate-300 dark:border-slate-800 pt-3 text-center text-[9px] text-slate-400 font-mono leading-relaxed">
-              <p>CONFIDENTIAL • PROTECTED PATIENT TRANSITION LOG &mdash; Ensure secure handover transition and immediate team bedside endorsement.</p>
+            <div className="border-t border-slate-300 dark:border-slate-800 pt-3 text-center text-[9px] text-slate-500 dark:text-slate-400 font-mono leading-relaxed">
+              <p>CONFIDENTIAL • PROTECTED PATIENT TRANSITION LOG &mdash; Powered by ErMate Clinical Systems | Ensure secure handover transition and immediate team bedside endorsement.</p>
             </div>
           </div>
         </div>
@@ -2585,7 +3071,7 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
                     ErMate Standardized Handover Report
                   </h1>
                   <p className="text-[11px] font-mono text-slate-500 mt-1">
-                    Compiled Lead: Dr. {profile.name} | Facility: {profile.hospital}
+                    Compiled Lead: {profile.name} | Facility: <strong>{profile.hospital}</strong>{profile.hospitalAddress ? ` (${profile.hospitalAddress}${profile.state ? `, ${profile.state}` : ''})` : profile.state ? ` (${profile.state})` : ''}
                   </p>
                 </div>
                 <div className="text-right font-mono text-[10px] text-slate-400">
@@ -2636,9 +3122,16 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
                   {quickPasteList.map((item, idx) => (
                     <div key={item.id} className="border border-slate-200 rounded-xl p-4 space-y-3 bg-slate-50/20">
                       <div className="flex items-center justify-between border-b pb-2">
-                        <h3 className="text-sm font-bold text-slate-900">
-                          {idx + 1}. {item.name} ({item.ageGender})
-                        </h3>
+                        <div className="flex items-center gap-2">
+                          {item.bed && (
+                            <span className="font-mono text-xs font-black bg-indigo-100 text-indigo-900 px-2 py-0.5 rounded border border-indigo-200">
+                              {item.bed}
+                            </span>
+                          )}
+                          <h3 className="text-sm font-bold text-slate-900">
+                            {idx + 1}. {item.name} ({item.ageGender})
+                          </h3>
+                        </div>
                         <span className="font-mono text-[10px] font-extrabold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100">
                           {item.triage}
                         </span>
@@ -2797,7 +3290,10 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
       {/* Navigation Sub-Tabs Toggle */}
       <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-900 p-1 rounded-xl border border-slate-200/60 dark:border-slate-800/80 w-fit no-print">
         <button
-          onClick={() => setActiveSubTab("registry")}
+          onClick={() => {
+            setActiveSubTab("registry");
+            setIsViewingSheet(false);
+          }}
           className={`px-4 py-2.5 rounded-lg text-xs font-bold transition-all flex items-center gap-2 ${
             activeSubTab === "registry"
               ? "bg-white dark:bg-slate-950 text-indigo-600 dark:text-indigo-400 shadow-sm"
@@ -2811,7 +3307,10 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
           </span>
         </button>
         <button
-          onClick={() => setActiveSubTab("quickpaste")}
+          onClick={() => {
+            setActiveSubTab("quickpaste");
+            setIsViewingSheet(false);
+          }}
           className={`px-4 py-2.5 rounded-lg text-xs font-bold transition-all flex items-center gap-2 ${
             activeSubTab === "quickpaste"
               ? "bg-white dark:bg-slate-950 text-indigo-600 dark:text-indigo-400 shadow-sm"
@@ -2819,9 +3318,26 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
           }`}
         >
           <ClipboardCopy className="w-4 h-4" />
-          Other than ErMate (Direct from EMR)
+          Other than ErMate (Direct EMR Handover)
           <span className="text-[10px] px-1.5 py-0.2 bg-emerald-100 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 rounded-full font-mono font-bold">
             Always Free
+          </span>
+        </button>
+        <button
+          onClick={() => {
+            setActiveSubTab("discharge_direct");
+            setIsViewingSheet(false);
+          }}
+          className={`px-4 py-2.5 rounded-lg text-xs font-bold transition-all flex items-center gap-2 ${
+            activeSubTab === "discharge_direct"
+              ? "bg-white dark:bg-slate-950 text-indigo-600 dark:text-indigo-400 shadow-sm"
+              : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
+          }`}
+        >
+          <FileText className="w-4 h-4" />
+          Discharge Summary Generator
+          <span className="text-[10px] px-1.5 py-0.2 bg-purple-100 dark:bg-purple-950/40 text-purple-600 dark:text-purple-400 rounded-full font-mono font-bold">
+            Universal Hospital Format
           </span>
         </button>
       </div>
@@ -3117,6 +3633,15 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
               </div>
               <div className="flex items-center gap-2">
                 <button
+                  type="button"
+                  onClick={handleSaveScribeDraft}
+                  className="text-[10px] font-extrabold px-2.5 py-1 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border border-emerald-200/80 dark:border-emerald-800 hover:bg-emerald-100 flex items-center gap-1 transition-colors cursor-pointer"
+                  title="Save scribe chat draft"
+                >
+                  <BookmarkCheck className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                  <span>Save Draft</span>
+                </button>
+                <button
                   onClick={() => {
                     if (!confirmResetChat) {
                       setConfirmResetChat(true);
@@ -3143,6 +3668,16 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
                 </button>
               </div>
             </div>
+
+            {scribeDraftToast && (
+              <div className="bg-emerald-600 text-white text-xs font-semibold px-4 py-2 border-b border-emerald-700 flex items-center justify-between animate-fade-in shadow-inner shrink-0">
+                <span className="flex items-center gap-1.5">
+                  <Check className="w-4 h-4 text-white" />
+                  <span>Scribe AI chat history saved as draft successfully!</span>
+                </span>
+                <span className="text-[9px] uppercase font-mono bg-emerald-700 px-2 py-0.5 rounded-full tracking-wider">Synced</span>
+              </div>
+            )}
 
             {/* Chat Messages Area */}
             <div className="flex-1 p-4 overflow-y-auto space-y-4 bg-slate-50/40 dark:bg-slate-950/20 font-sans">
@@ -3506,8 +4041,18 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
                   />
                 </div>
 
-                {/* Right side actions: WhatsApp-style dynamic Mic/Send toggle */}
-                <div className="flex items-center gap-1 shrink-0 pb-0.5">
+                {/* Right side actions: Save Draft & dynamic Mic/Send toggle */}
+                <div className="flex items-center gap-1.5 shrink-0 pb-0.5">
+                  <button
+                    type="button"
+                    onClick={handleSaveScribeDraft}
+                    title="Save scribe chat as draft"
+                    className="px-2.5 py-2 bg-slate-100 hover:bg-emerald-50 dark:bg-slate-800 dark:hover:bg-emerald-950/40 text-slate-700 dark:text-slate-300 hover:text-emerald-700 dark:hover:text-emerald-400 font-semibold text-xs rounded-xl flex items-center gap-1 border border-slate-200 dark:border-slate-700 transition-colors cursor-pointer shrink-0"
+                  >
+                    <BookmarkCheck className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                    <span className="hidden sm:inline">Save Draft</span>
+                  </button>
+
                   {qpRawNotes.trim() === "" && !handoverImgBase64 ? (
                     <SpeechMicButton 
                       onTranscript={(txt) => setQpRawNotes(prev => prev ? `${prev} ${txt}` : txt)} 
@@ -3639,6 +4184,11 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
                           <div className="space-y-0.5 flex-1 min-w-0">
                             <div className="flex items-center gap-1.5 flex-wrap pr-10">
                               <span className="font-mono text-[10px] font-black text-slate-400">#{idx + 1}</span>
+                              {item.bed && (
+                                <span className="font-mono text-[10px] font-black bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300 px-1.5 py-0.5 rounded uppercase border border-indigo-200 dark:border-indigo-800">
+                                  {item.bed}
+                                </span>
+                              )}
                               <h4 className="text-xs font-black text-slate-800 dark:text-white leading-none">{item.name}</h4>
                               <span className="text-[10px] text-slate-400">({item.ageGender})</span>
                             </div>
@@ -3791,6 +4341,586 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
         </div>
       )}
 
+      {/* SUB-TAB 3: DIRECT EMR DISCHARGE SUMMARY */}
+      {activeSubTab === "discharge_direct" && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-fade-in">
+          
+          {/* Left Panel: Paste & Extraction Interface (1/3 Width) */}
+          <div className="lg:col-span-1 space-y-4">
+            <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-xs space-y-4">
+              <div className="flex items-center justify-between border-b pb-3">
+                <div className="flex items-center gap-2">
+                  <div className="p-2 bg-purple-50 dark:bg-purple-950/50 rounded-xl text-purple-600 dark:text-purple-400">
+                    <Sparkles className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-800 dark:text-white">EMR Case Sheet Scribe</h3>
+                    <p className="text-[10px] text-slate-400 font-medium">Paste raw EMR notes or case sheet dump</p>
+                  </div>
+                </div>
+              </div>
+
+              {dischargeError && (
+                <div className="p-3 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/50 rounded-xl text-xs text-rose-700 dark:text-rose-300 flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                  <span>{dischargeError}</span>
+                </div>
+              )}
+
+              <div className="space-y-2">
+                <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 flex items-center justify-between">
+                  <span>Paste Unstructured Case Sheet Text</span>
+                  <span className="text-[10px] text-slate-400 font-mono">Universal Hospital Format</span>
+                </label>
+                <textarea
+                  value={directInputText}
+                  onChange={(e) => setDirectInputText(e.target.value)}
+                  placeholder="Paste complete EMR case sheet dump here... (Doctor notes, nursing notes, vitals, lab reports, treatment given)"
+                  rows={14}
+                  className="w-full p-3.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-mono text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-purple-500/50 resize-y"
+                />
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => handleGenerateDirectDischarge()}
+                  disabled={isGeneratingDischarge || !directInputText.trim()}
+                  className="flex-1 py-3 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white font-black text-xs rounded-xl transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  {isGeneratingDischarge ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      Structuring Medico-Legal Summary...
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="w-4 h-4" />
+                      Generate Discharge Summary
+                    </>
+                  )}
+                </button>
+                {directInputText && (
+                  <button
+                    onClick={() => setDirectInputText("")}
+                    className="p-3 text-slate-400 hover:text-slate-600 bg-slate-100 dark:bg-slate-900 rounded-xl text-xs font-bold"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+
+              {/* Preset Sample EMR Cases */}
+              <div className="border-t pt-3 space-y-2">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block font-mono">
+                  Quick Preset Cases for Testing
+                </span>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    onClick={() => setDirectInputText(`PATIENT: Raman Pillai, 58/M, UHID: 4810294, MLC: Nil
+Allergies: NKDA
+ARRIVING VITALS (08:30 AM): HR 108/min, BP 150/90 mmHg, RR 22/min, SpO2 94% on room air, GCS 15/15, GRBS 184 mg/dl, Temp 98.4 F.
+PRESENTING COMPLAINT:
+Severe retrosternal chest pain for 3 hours with radiation to left shoulder and profuse diaphoresis.
+HPI:
+58-year-old male with history of Type 2 DM and HTN presented with sudden onset oppressive substernal chest pain starting at 5:30 AM. Accompanied by nausea and breathlessness. Received Aspirin 300mg at local clinic.
+PAST HISTORY: DM x 10 years on Tab Metformin 500mg BD. HTN x 5 years on Tab Amlodipine 5mg OD.
+GENERAL EXAMINATION:
+Moderate distress due to pain. Conscious, oriented. No pallor, icterus, cyanosis, or pedal edema.
+PRIMARY SURVEY:
+Airway: Patent.
+Breathing: RR 22, SpO2 94% room air. Oxygen started @ 3L/min via NC. Air entry bilaterally equal.
+Circulation: HR 108, BP 150/90. CRT < 2s. 2 large bore IV access secured.
+Disability: GCS E4V5M6, Pupils equal & reactive. GRBS 184.
+Exposure: Temp 98.4 F.
+COURSE IN ED:
+Patient was connected to cardiac monitor. Stat 12-lead ECG showed 3mm ST-segment elevation in V1-V4 (Acute Anterior Wall STEMI). Loading doses of Tab Ticagrelor 180mg and Tab Atorvastatin 80mg administered at 08:40 AM. IV Heparin 5000 IU bolus given. Urgent Cardiology consult called (Dr. Jayakrishnan). Patient accepted for immediate primary PCI in Cath Lab. Echocardiogram showed anterior wall hypokinesia, LVEF 40%. Patient transferred safely to Cath Lab at 09:15 AM.
+INVESTIGATIONS:
+CBC: Hb: 13.8 g/dL, WBC: 12,400 /cu.mm ↑, Platelets: 2.4 lakh
+LFT: Total Bili: 0.8 mg/dL, SGOT: 45 U/L, SGPT: 38 U/L
+RFT: Urea: 28 mg/dL, Creatinine: 1.0 mg/dL
+Electrolytes: Na: 138 mEq/L, K: 4.2 mEq/L
+Cardiac: Troponin-I: 2.8 ng/mL ↑ (ref < 0.04)
+ECG: Acute Anterior Wall STEMI. Echo: LVEF 40%.
+DIAGNOSIS AT DISCHARGE:
+1. Acute Anterior Wall ST-Elevation Myocardial Infarction (Anterior STEMI)
+2. Type 2 Diabetes Mellitus
+3. Essential Hypertension
+DISPOSITION: Transferred / Admitted for Primary PCI (Cath Lab / Cardiac ICU) under Dr. Jayakrishnan (Cardiology).
+CONDITION AT DISCHARGE: STABLE, chest pain relieved.
+DISCHARGE VITALS: HR 78/min, BP 120/80 mmHg, RR 16/min, SpO2 99% on 2L O2.
+EM Resident: Dr. Rahul V.
+EM Consultant: Dr. Suresh Menon`)}
+                    className="p-2 text-left bg-purple-50/50 dark:bg-purple-950/20 hover:bg-purple-100 dark:hover:bg-purple-900/40 border border-purple-200/60 dark:border-purple-800/50 rounded-lg text-[10.5px] font-bold text-purple-700 dark:text-purple-300 transition-all cursor-pointer"
+                  >
+                    ❤️ STEMI Case
+                  </button>
+
+                  <button
+                    onClick={() => setDirectInputText(`PATIENT: Anjali Kumar, 24/F, UHID: 992014, MLC: Nil
+Allergies: Penicillin (Rash)
+ARRIVING VITALS: HR 112/min, BP 110/70 mmHg, RR 20/min, SpO2 98% room air, GCS 15/15, Temp 101.2 F.
+PRESENTING COMPLAINT:
+Severe right lower quadrant abdominal pain for 24 hours with low-grade fever and vomiting x 2 episodes.
+HPI:
+24-year-old female presented with periumbilical pain that migrated to the right iliac fossa over 12 hours. Pain is sharp, aggravated by movement and coughing. Anorexia present. LMP: 14 days ago, regular.
+PAST HISTORY: Nil significant.
+PHYSICAL EXAM:
+Tenderness in right iliac fossa with localized guarding and rebound tenderness at McBurney's point. Rovsing sign positive.
+COURSE IN ED:
+IV access secured. IV Normal Saline 1000ml bolus initiated. IV Paracetamol 1g given for fever/pain. IV Ondansetron 4mg given. Urgent USG Abdomen & Pelvis performed at 10:30 AM showing a non-compressible, aperistaltic appendiceal structure measuring 8.5mm with periappendiceal fat stranding (Acute Appendicitis). General Surgery consult called (Dr. Thomas). Patient accepted for Laparoscopic Appendectomy.
+INVESTIGATIONS:
+CBC: Hb: 12.1 g/dL, WBC: 15,200 /cu.mm ↑ (82% Neutrophils), Platelets: 2.1 lakh
+RFT: Urea: 22 mg/dL, Creatinine: 0.7 mg/dL
+Urine: Pus cells 2-3/hpf, Urine pregnancy test (UPT): Negative
+USG Abdomen: Features diagnostic of Acute Appendicitis.
+DIAGNOSIS AT DISCHARGE:
+1. Acute Suppurative Appendicitis
+DISPOSITION: Admitted under Dr. Thomas (General Surgery) for Laparoscopic Appendectomy.
+CONDITION AT DISCHARGE: STABLE.
+DISCHARGE VITALS: HR 84/min, BP 116/74 mmHg, RR 16/min, SpO2 99% room air, Temp 98.6 F.
+EM Resident: Dr. Anjana S.
+EM Consultant: Dr. Suresh Menon`)}
+                    className="p-2 text-left bg-purple-50/50 dark:bg-purple-950/20 hover:bg-purple-100 dark:hover:bg-purple-900/40 border border-purple-200/60 dark:border-purple-800/50 rounded-lg text-[10.5px] font-bold text-purple-700 dark:text-purple-300 transition-all cursor-pointer"
+                  >
+                    🩺 Appendicitis Case
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Right Panel: Generated Summaries List (2/3 Width) */}
+          <div className="lg:col-span-2 space-y-4">
+            <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-xs space-y-4">
+              <div className="flex items-center justify-between border-b pb-3">
+                <div>
+                  <h3 className="text-sm font-bold text-slate-800 dark:text-white flex items-center gap-2">
+                    <FileText className="w-4.5 h-4.5 text-purple-600 dark:text-purple-400" />
+                    Direct Generated Discharge Summaries Roster
+                  </h3>
+                  <p className="text-[10px] text-slate-400 font-medium">Universal Medico-Legal Format</p>
+                </div>
+                {directDischargeList.length > 0 && (
+                  <button
+                    onClick={handleClearAllDirectDischarge}
+                    className="text-[10px] font-bold text-rose-600 dark:text-rose-400 hover:underline px-2.5 py-1 bg-rose-50/50 dark:bg-rose-950/25 rounded"
+                  >
+                    Clear Roster ({directDischargeList.length})
+                  </button>
+                )}
+              </div>
+
+              {directDischargeList.length === 0 ? (
+                <div className="text-center py-16 text-slate-400 text-xs space-y-3">
+                  <FileText className="w-12 h-12 mx-auto text-purple-200 dark:text-purple-950 animate-pulse" />
+                  <p className="font-bold text-slate-600 dark:text-slate-300">No Direct Discharge Summaries Generated Yet</p>
+                  <p className="text-[11px] text-slate-400 max-w-sm mx-auto">
+                    Paste raw EMR notes or click one of the quick preset cases on the left to extract a structured discharge summary.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-4 max-h-[620px] overflow-y-auto pr-1">
+                  {directDischargeList.map((item) => {
+                    const s = item.summary || {};
+                    const vArrival = s.vitalsOnArrival || {};
+
+                    return (
+                      <div
+                        key={item.id}
+                        className="bg-slate-50/70 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-800 rounded-xl p-4 space-y-3 hover:border-purple-300 dark:hover:border-purple-800 transition-all shadow-xs"
+                      >
+                        {/* Header Bar */}
+                        <div className="flex items-start justify-between border-b border-slate-200/80 dark:border-slate-800 pb-2.5">
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-2">
+                              <span className="font-extrabold text-sm text-slate-900 dark:text-white">
+                                {item.patientName}
+                              </span>
+                              <span className="text-[10px] font-mono px-2 py-0.5 bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300 rounded font-bold">
+                                UHID: {item.uhid}
+                              </span>
+                              {s.mlc && (
+                                <span className="text-[10px] font-bold px-2 py-0.5 bg-rose-100 text-rose-700 rounded">
+                                  MLC: {s.mlc}
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-[10.5px] text-slate-400 flex items-center gap-3">
+                              <span>Generated: {item.createdAt}</span>
+                              {s.disposition && (
+                                <span className="font-bold text-indigo-600 dark:text-indigo-400">
+                                  • {s.disposition}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Action Buttons */}
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              onClick={() => setSelectedDischargeModal(item)}
+                              className="px-2.5 py-1.5 bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-lg text-[11px] flex items-center gap-1 shadow-xs cursor-pointer"
+                              title="View & Print Full Summary Sheet"
+                            >
+                              <Printer className="w-3.5 h-3.5" />
+                              View / Print
+                            </button>
+                            <button
+                              onClick={() => handleDownloadDischargeWord(item)}
+                              className="px-2.5 py-1.5 bg-indigo-50 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 font-bold rounded-lg text-[11px] flex items-center gap-1 cursor-pointer border border-indigo-200 dark:border-indigo-900"
+                              title="Download Word Document (.doc)"
+                            >
+                              <Download className="w-3.5 h-3.5" />
+                              Word
+                            </button>
+                            <button
+                              onClick={() => {
+                                const s = item.summary || {};
+                                const vArr = s.vitalsOnArrival || {};
+                                const vDis = s.vitalsAtDischarge || {};
+                                const prim = s.primarySurvey || {};
+                                const air = prim.airway || {};
+                                const br = prim.breathing || {};
+                                const circ = prim.circulation || {};
+                                const dis = prim.disability || {};
+                                const exp = prim.exposure || {};
+                                const inv = s.investigations || {};
+
+                                const invText = Object.entries(inv)
+                                  .filter(([_, v]) => Boolean(v))
+                                  .map(([k, v]) => `${k.toUpperCase()}: ${v}`)
+                                  .join('\n');
+
+                                const fullTxt = `Discharge Summary
+MLC: ${s.mlc || "Nil"}
+Allergy : ${s.allergy || "Nil"}
+Vitals at the time of arrival:
+HR- ${vArr.hr || "-"} ,BP- ${vArr.bp || "-"} ,RR-${vArr.rr || "-"} ,Spo2- ${vArr.spo2 || "-"} ,GCS-${vArr.gcs || "-"} ,Pain Score- ${vArr.painScore || "-"} ,GRBS- ${vArr.grbs || "-"} ,Temp- ${vArr.temp || "-"}
+
+Presenting Complaints:
+${s.presentingComplaints || "N/A"}
+
+History of Present Illness:
+${s.hpi || "N/A"}
+
+Past Medical/Surgical Histories:
+${s.pastHistory || "Nil recorded"}
+Family / Gynae History : ${s.familyGynaeHistory || "Nil"}
+LMP : ${s.lmp || "N/A"}
+
+General Examination / Systemic examination:
+${s.generalAndSystemicExam || "General condition fair."}
+
+Primary Assessment:
+Airway → ${air.status || "Patent"} ,Intervention- ${air.intervention || "None"}
+Breathing → Work of breathing- ${br.workOfBreathing || "Normal"} ,Air entry- ${br.airEntry || "Bilaterally equal"} ,CCT- ${br.cct || "N/A"} ,Subcutaneous emphysema- ${br.subcutaneousEmphysema || "Nil"} ,EFAST- ${br.efast || "N/A"} ,Intervention- ${br.intervention || "None"}
+Circulation → CRT- ${circ.crt || "< 2s"} ,, Distended Neck Veins- ${circ.distendedNeckVeins || "Nil"} , PCT- ${circ.pct || "N/A"} Long bone deformity- ${circ.longBoneDeformity || "Nil"} ,FAST- ${circ.fast || "N/A"} ,Interventions- ${circ.intervention || "None"}
+Disability → AVPU/GCS- ${dis.gcs || "15/15"} ,Pupils- ${dis.pupils || "Equal & reactive"} ,GRBS- ${dis.grbs || "N/A"}
+Exposure → Temp- ${exp.temp || "98.6°F"} | Trauma- Logroll ${exp.logRoll || "N/A"}
+
+Course in Hospital with Medications and Procedure:
+${s.courseInHospital || "Evaluated and treated in ED."}
+
+Investigations:
+${invText || "No lab results documented."}
+
+Diagnosis at the time of discharge:
+${(s.diagnosisAtDischarge || ["Emergency Evaluation"]).map((d: string, i: number) => `${i + 1}. ${d}`).join('\n')}
+
+Discharge Medications:
+${Array.isArray(s.dischargeMedications) ? s.dischargeMedications.join('\n') : (s.dischargeMedications || "Nil")}
+
+Disposition:
+${s.disposition || "Normal Discharge"}
+
+Condition at time of discharge: (${s.conditionAtDischarge || "STABLE"})
+
+Vitals at the time of Discharge:
+HR- ${vDis.hr || "-"} ,BP- ${vDis.bp || "-"} ,RR-${vDis.rr || "-"} ,Sp02- ${vDis.spo2 || "-"} ,GCS-${vDis.gcs || "-"} ,Pain Score- ${vDis.painScore || "-"} ,GRBS- ${vDis.grbs || "-"} ,Temp- ${vDis.temp || "-"}
+
+Follow-Up Advice:
+${s.followUpAdvice || "Review in ED if symptoms recur."}
+
+ED Resident: ${s.edResident || "Duty Resident"} | ED Consultant: ${s.edConsultant || "ED Consultant"}
+Sign and Time: [Pending] | Sign and Time: [Pending]
+Date: ${s.dateTime || item.createdAt}
+
+This discharge summary provides clinical information meant to facilitate continuity of patient care. For statutory purposes, a treatment/discharge certificate shall be issued on request. For a disability certificate, approach a Government-constituted Medical Board.`;
+                                navigator.clipboard.writeText(fullTxt);
+                                alert("Discharge summary text copied to clipboard!");
+                              }}
+                              className="p-1.5 text-slate-500 hover:text-slate-700 bg-white dark:bg-slate-900 border rounded-lg cursor-pointer"
+                              title="Copy Text"
+                            >
+                              <ClipboardCopy className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => handleDeleteDirectDischarge(item.id)}
+                              className="p-1.5 text-slate-400 hover:text-rose-500 bg-white dark:bg-slate-900 border rounded-lg cursor-pointer"
+                              title="Delete"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Summary Grid Preview */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+                          <div className="bg-white dark:bg-slate-950 p-2.5 rounded-lg border space-y-1">
+                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                              Presenting Complaints & HPI
+                            </span>
+                            <p className="text-slate-800 dark:text-slate-200 line-clamp-3 font-sans leading-relaxed">
+                              {s.presentingComplaints || s.hpi || "N/A"}
+                            </p>
+                          </div>
+
+                          <div className="bg-white dark:bg-slate-950 p-2.5 rounded-lg border space-y-1">
+                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                              Diagnosis & Disposition
+                            </span>
+                            <div className="font-bold text-purple-700 dark:text-purple-400">
+                              {(s.diagnosisAtDischarge || ["Emergency Evaluation"]).join(", ")}
+                            </div>
+                            <div className="text-[10.5px] text-slate-500 mt-1">
+                              Status: <strong className="text-emerald-600">{s.conditionAtDischarge || "STABLE"}</strong>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Vitals Bar */}
+                        <div className="flex items-center gap-4 bg-white dark:bg-slate-950 p-2 rounded-lg border text-[11px] font-mono overflow-x-auto">
+                          <span className="font-bold text-slate-500 shrink-0">Arrival Vitals:</span>
+                          <span>HR: <strong>{vArrival.hr || "N/A"}</strong></span>
+                          <span>BP: <strong>{vArrival.bp || "N/A"}</strong></span>
+                          <span>SpO₂: <strong>{vArrival.spo2 || "N/A"}</strong></span>
+                          <span>GCS: <strong>{vArrival.gcs || "N/A"}</strong></span>
+                          <span>GRBS: <strong>{vArrival.grbs || "N/A"}</strong></span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+
+        </div>
+      )}
+
+      {/* FULL RAJAGIRI PRINTABLE DISCHARGE SUMMARY MODAL */}
+      {selectedDischargeModal && (
+        <div className="fixed inset-0 bg-slate-950/80 z-55 flex items-center justify-center p-4 overflow-y-auto no-print">
+          <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-3xl w-full p-6 shadow-2xl space-y-5 my-8 max-h-[90vh] overflow-y-auto relative">
+            <button
+              onClick={() => setSelectedDischargeModal(null)}
+              className="absolute right-4 top-4 p-2 bg-slate-100 dark:bg-slate-900 rounded-xl text-slate-400 hover:text-slate-600 cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            {/* Modal Actions Header */}
+            <div className="flex items-center justify-between border-b pb-3 pr-10">
+              <div className="flex items-center gap-2">
+                <FileText className="w-5 h-5 text-purple-600" />
+                <h3 className="text-base font-black text-slate-900 dark:text-white">
+                  Discharge Summary Generator
+                </h3>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => triggerPrintWithTip()}
+                  className="px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-lg text-xs flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  Print / Save PDF
+                </button>
+                <button
+                  onClick={() => handleDownloadDischargeWord(selectedDischargeModal)}
+                  className="px-3 py-1.5 bg-indigo-50 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 font-bold rounded-lg text-xs flex items-center gap-1.5 border cursor-pointer"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  Word (.doc)
+                </button>
+              </div>
+            </div>
+
+            {/* Print Document Content */}
+            <div className="p-6 bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 space-y-4 border rounded-xl font-sans text-xs leading-relaxed">
+              {/* Header Banner */}
+              <div className="border-b-2 border-indigo-900 pb-3 flex justify-between items-end">
+                <div>
+                  <h1 className="text-xl font-black text-indigo-950 dark:text-indigo-400 uppercase tracking-tight">
+                    {(hospitalName || "EMERGENCY DEPARTMENT").toUpperCase()}
+                  </h1>
+                  <p className="text-xs font-bold text-slate-600 dark:text-slate-400">
+                    DEPARTMENT OF EMERGENCY MEDICINE
+                  </p>
+                  <p className="text-[10px] text-slate-400">
+                    24x7 Emergency Care &amp; Medico-Legal Records
+                  </p>
+                </div>
+                <div className="text-right">
+                  <span className="text-sm font-black text-indigo-900 dark:text-indigo-300 block">
+                    EMERGENCY DISCHARGE SUMMARY
+                  </span>
+                  <span className="text-[11px] font-mono text-slate-500">
+                    Date: {selectedDischargeModal.summary?.dateTime || selectedDischargeModal.createdAt}
+                  </span>
+                </div>
+              </div>
+
+              {/* Demographics Table */}
+              <div className="grid grid-cols-2 gap-2 bg-slate-50 dark:bg-slate-900 p-3 rounded-lg border font-mono">
+                <div><strong>Patient Name:</strong> {selectedDischargeModal.patientName}</div>
+                <div><strong>UHID / Bed:</strong> {selectedDischargeModal.uhid}</div>
+                <div><strong>MLC Status:</strong> {selectedDischargeModal.summary?.mlc ? `YES (${selectedDischargeModal.summary.mlc})` : "NO / Nil"}</div>
+                <div><strong>Allergies:</strong> {selectedDischargeModal.summary?.allergy || "Nil known"}</div>
+              </div>
+
+              {/* Arrival Vitals */}
+              <div className="space-y-1">
+                <h4 className="font-extrabold text-indigo-900 dark:text-indigo-300 border-b pb-1 text-xs uppercase">
+                  1. Vitals On Arrival
+                </h4>
+                <div className="grid grid-cols-4 gap-2 bg-slate-50 dark:bg-slate-900 p-2 rounded font-mono text-[11px]">
+                  <div>HR: <strong>{selectedDischargeModal.summary?.vitalsOnArrival?.hr || "N/A"}</strong></div>
+                  <div>BP: <strong>{selectedDischargeModal.summary?.vitalsOnArrival?.bp || "N/A"}</strong></div>
+                  <div>RR: <strong>{selectedDischargeModal.summary?.vitalsOnArrival?.rr || "N/A"}</strong></div>
+                  <div>SpO₂: <strong>{selectedDischargeModal.summary?.vitalsOnArrival?.spo2 || "N/A"}</strong></div>
+                  <div>GCS: <strong>{selectedDischargeModal.summary?.vitalsOnArrival?.gcs || "N/A"}</strong></div>
+                  <div>GRBS: <strong>{selectedDischargeModal.summary?.vitalsOnArrival?.grbs || "N/A"}</strong></div>
+                  <div>Temp: <strong>{selectedDischargeModal.summary?.vitalsOnArrival?.temp || "N/A"}</strong></div>
+                  <div>Pain: <strong>{selectedDischargeModal.summary?.vitalsOnArrival?.painScore || "N/A"}</strong></div>
+                </div>
+              </div>
+
+              {/* Presenting Complaints & HPI */}
+              <div className="space-y-1">
+                <h4 className="font-extrabold text-indigo-900 dark:text-indigo-300 border-b pb-1 text-xs uppercase">
+                  2. Clinical Presentation & History
+                </h4>
+                <p><strong>Presenting Complaints:</strong> {selectedDischargeModal.summary?.presentingComplaints || "N/A"}</p>
+                <p><strong>History of Present Illness:</strong> {selectedDischargeModal.summary?.hpi || "N/A"}</p>
+                <p><strong>Past Medical / Surgical Histories:</strong> {selectedDischargeModal.summary?.pastHistory || "Nil recorded"}</p>
+                {(selectedDischargeModal.summary?.familyGynaeHistory || selectedDischargeModal.summary?.lmp) && (
+                  <p><strong>Family / Gynae History:</strong> {selectedDischargeModal.summary?.familyGynaeHistory || "Nil"} | <strong>LMP:</strong> {selectedDischargeModal.summary?.lmp || "N/A"}</p>
+                )}
+              </div>
+
+              {/* Primary Assessment */}
+              <div className="space-y-1">
+                <h4 className="font-extrabold text-indigo-900 dark:text-indigo-300 border-b pb-1 text-xs uppercase">
+                  3. Primary Assessment
+                </h4>
+                <div className="bg-slate-50 dark:bg-slate-900 p-2.5 rounded border text-[11px] font-mono space-y-1">
+                  <div><strong>Airway:</strong> {selectedDischargeModal.summary?.primarySurvey?.airway?.status || "Patent"} {selectedDischargeModal.summary?.primarySurvey?.airway?.intervention ? `(Intervention: ${selectedDischargeModal.summary?.primarySurvey?.airway?.intervention})` : ''}</div>
+                  <div><strong>Breathing:</strong> Work of breathing: {selectedDischargeModal.summary?.primarySurvey?.breathing?.workOfBreathing || "Normal"}, Air entry: {selectedDischargeModal.summary?.primarySurvey?.breathing?.airEntry || "Bilaterally equal"}{selectedDischargeModal.summary?.primarySurvey?.breathing?.efast ? `, EFAST: ${selectedDischargeModal.summary?.primarySurvey?.breathing?.efast}` : ''}{selectedDischargeModal.summary?.primarySurvey?.breathing?.intervention ? `, Intervention: ${selectedDischargeModal.summary?.primarySurvey?.breathing?.intervention}` : ''}</div>
+                  <div><strong>Circulation:</strong> CRT: {selectedDischargeModal.summary?.primarySurvey?.circulation?.crt || "< 2s"}{selectedDischargeModal.summary?.primarySurvey?.circulation?.fast ? `, FAST: ${selectedDischargeModal.summary?.primarySurvey?.circulation?.fast}` : ''}{selectedDischargeModal.summary?.primarySurvey?.circulation?.intervention ? `, Interventions: ${selectedDischargeModal.summary?.primarySurvey?.circulation?.intervention}` : ''}</div>
+                  <div><strong>Disability:</strong> GCS: {selectedDischargeModal.summary?.primarySurvey?.disability?.gcs || "15/15"}, Pupils: {selectedDischargeModal.summary?.primarySurvey?.disability?.pupils || "Equal & reactive"}, GRBS: {selectedDischargeModal.summary?.primarySurvey?.disability?.grbs || "N/A"}</div>
+                  <div><strong>Exposure:</strong> Temp: {selectedDischargeModal.summary?.primarySurvey?.exposure?.temp || "Normal"}{selectedDischargeModal.summary?.primarySurvey?.exposure?.logRoll ? ` | Trauma / Logroll: ${selectedDischargeModal.summary?.primarySurvey?.exposure?.logRoll}` : ''}</div>
+                </div>
+              </div>
+
+              {/* General & Systemic Exam */}
+              {selectedDischargeModal.summary?.generalAndSystemicExam && (
+                <div className="space-y-1">
+                  <h4 className="font-extrabold text-indigo-900 dark:text-indigo-300 border-b pb-1 text-xs uppercase">
+                    4. General & Systemic Examination
+                  </h4>
+                  <p>{selectedDischargeModal.summary.generalAndSystemicExam}</p>
+                </div>
+              )}
+
+              {/* Course in Hospital */}
+              <div className="space-y-1">
+                <h4 className="font-extrabold text-indigo-900 dark:text-indigo-300 border-b pb-1 text-xs uppercase">
+                  {selectedDischargeModal.summary?.generalAndSystemicExam ? '5' : '4'}. Course In Hospital & ER Treatment Given
+                </h4>
+                <p>{selectedDischargeModal.summary?.courseInHospital || "Evaluated and managed in the Emergency Department."}</p>
+              </div>
+
+              {/* Investigations */}
+              <div className="space-y-1">
+                <h4 className="font-extrabold text-indigo-900 dark:text-indigo-300 border-b pb-1 text-xs uppercase">
+                  {selectedDischargeModal.summary?.generalAndSystemicExam ? '6' : '5'}. Key Lab Investigations & Imaging
+                </h4>
+                <div className="space-y-1 font-mono text-[11px]">
+                  {Object.entries(selectedDischargeModal.summary?.investigations || {}).map(([k, v]) => (
+                    v ? <div key={k}><strong>{k.toUpperCase()}:</strong> {v as string}</div> : null
+                  ))}
+                  {Object.values(selectedDischargeModal.summary?.investigations || {}).every(val => !val) && (
+                    <p className="font-sans text-slate-500">No key lab results documented.</p>
+                  )}
+                </div>
+              </div>
+
+              {/* Diagnosis */}
+              <div className="space-y-1">
+                <h4 className="font-extrabold text-indigo-900 dark:text-indigo-300 border-b pb-1 text-xs uppercase">
+                  {selectedDischargeModal.summary?.generalAndSystemicExam ? '7' : '6'}. Diagnosis At Discharge
+                </h4>
+                <ul className="list-disc pl-5 font-bold text-slate-800 dark:text-slate-200">
+                  {(selectedDischargeModal.summary?.diagnosisAtDischarge || ["Emergency Evaluation"]).map((d: string, idx: number) => (
+                    <li key={idx}>{d}</li>
+                  ))}
+                </ul>
+              </div>
+
+              {/* Discharge Medications & Advice */}
+              <div className="space-y-1">
+                <h4 className="font-extrabold text-indigo-900 dark:text-indigo-300 border-b pb-1 text-xs uppercase">
+                  {selectedDischargeModal.summary?.generalAndSystemicExam ? '8' : '7'}. Discharge Advice & Medications
+                </h4>
+                {Array.isArray(selectedDischargeModal.summary?.dischargeMedications) && selectedDischargeModal.summary.dischargeMedications.length > 0 ? (
+                  <ul className="list-disc pl-5">
+                    {selectedDischargeModal.summary.dischargeMedications.map((m: string, idx: number) => (
+                      <li key={idx}>{m}</li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p>No oral discharge medications prescribed. Patient transferred / admitted as noted.</p>
+                )}
+                <p className="pt-1"><strong>Follow-Up Advice:</strong> {selectedDischargeModal.summary?.followUpAdvice || "Review in ED if warning symptoms recur."}</p>
+              </div>
+
+              {/* Disposition & Condition */}
+              <div className="space-y-1">
+                <h4 className="font-extrabold text-indigo-900 dark:text-indigo-300 border-b pb-1 text-xs uppercase">
+                  {selectedDischargeModal.summary?.generalAndSystemicExam ? '9' : '8'}. Disposition & Vitals At Discharge
+                </h4>
+                <div className="grid grid-cols-2 gap-2 bg-slate-50 dark:bg-slate-900 p-2.5 rounded border text-[11px] font-mono">
+                  <div><strong>Disposition Status:</strong> {selectedDischargeModal.summary?.disposition || "Normal Discharge"}</div>
+                  <div><strong>Condition at Discharge:</strong> <span className="font-bold text-emerald-600 dark:text-emerald-400">{selectedDischargeModal.summary?.conditionAtDischarge || "STABLE"}</span></div>
+                  <div className="col-span-2 border-t pt-1.5 mt-1">
+                    <strong>Discharge Vitals:</strong> HR: {selectedDischargeModal.summary?.vitalsAtDischarge?.hr || "N/A"} | BP: {selectedDischargeModal.summary?.vitalsAtDischarge?.bp || "N/A"} | RR: {selectedDischargeModal.summary?.vitalsAtDischarge?.rr || "N/A"} | SpO₂: {selectedDischargeModal.summary?.vitalsAtDischarge?.spo2 || "N/A"} | GCS: {selectedDischargeModal.summary?.vitalsAtDischarge?.gcs || "N/A"} | Temp: {selectedDischargeModal.summary?.vitalsAtDischarge?.temp || "N/A"}
+                  </div>
+                </div>
+              </div>
+
+              {/* Signatures */}
+              <div className="pt-8 grid grid-cols-2 gap-4 font-bold border-t">
+                <div>
+                  <p>______________________________</p>
+                  <p>Dr. {selectedDischargeModal.summary?.edResident || "Duty EM Resident"}</p>
+                  <p className="text-[10px] text-slate-400 font-normal">Emergency Medicine Resident</p>
+                </div>
+                <div className="text-right">
+                  <p>______________________________</p>
+                  <p>Dr. {selectedDischargeModal.summary?.edConsultant || "ED Consultant"}</p>
+                  <p className="text-[10px] text-slate-400 font-normal">Consultant Emergency Medicine</p>
+                </div>
+              </div>
+
+              {/* Statutory Disclaimer */}
+              <p className="text-[10px] text-slate-400 border-t pt-3 mt-4 text-center leading-normal font-sans">
+                This discharge summary provides clinical information meant to facilitate continuity of patient care. For statutory purposes, a treatment/discharge certificate shall be issued on request as per applicable Medico-legal regulations. For a disability certificate, approach a Government-constituted Medical Board.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* POST-PRINT SHIFT CLEANUP ADVISOR MODAL */}
       {showPostPrintCleanPrompt && (
         <div className="fixed inset-0 bg-slate-950/80 z-55 flex items-center justify-center p-4 no-print">
@@ -3919,14 +5049,26 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
             </div>
 
             <form onSubmit={handleSaveModalEdit} className="space-y-4 text-xs">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 <div className="space-y-1">
-                  <label className="font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Patient Name / Bed ID *</label>
+                  <label className="font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Bed Number / Bed #</label>
+                  <input
+                    type="text"
+                    value={editingPatient.bed || ""}
+                    onChange={(e) => setEditingPatient({ ...editingPatient, bed: e.target.value })}
+                    placeholder="e.g. Bed 4, ICU 2"
+                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 font-medium text-slate-800 dark:text-slate-100"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Patient Name *</label>
                   <input
                     type="text"
                     required
                     value={editingPatient.name}
                     onChange={(e) => setEditingPatient({ ...editingPatient, name: e.target.value })}
+                    placeholder="Patient name"
                     className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 font-medium text-slate-800 dark:text-slate-100"
                   />
                 </div>
@@ -3937,6 +5079,7 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
                     type="text"
                     value={editingPatient.ageGender}
                     onChange={(e) => setEditingPatient({ ...editingPatient, ageGender: e.target.value })}
+                    placeholder="e.g. 45M or 62F"
                     className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 font-medium text-slate-800 dark:text-slate-100"
                   />
                 </div>

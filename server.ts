@@ -1,6 +1,7 @@
 import express from "express";
 import path from "path";
 import dotenv from "dotenv";
+import PDFDocument from "pdfkit";
 import { GoogleGenAI, Type } from "@google/genai";
 import { createServer as createViteServer } from "vite";
 import multer from "multer";
@@ -26,6 +27,7 @@ import {
 } from "./server/extraction.ts";
 
 import extractionRouter from "./server/routes/extraction.routes.ts";
+import { generateMortalityAudit } from "./server/mortalityAudit.ts";
 
 // Load environment variables
 dotenv.config();
@@ -156,11 +158,17 @@ app.get("/api/health", (req, res) => {
     sarvamConfigured: hasSarvamKey,
     anthropicConfigured: hasAnthropicKey,
     pipelineConfig: {
-      transcription: "Sarvam Saaras v3 (saaras:v3)",
-      caseExtraction: "Gemini 1.5 / 3.6 Flash",
-      dischargeSummary: "Gemini 1.5 / 3.6 Flash (Narrative Quality)",
-      handoverExtraction: hasAnthropicKey ? "Claude Sonnet 5 (claude-sonnet-5)" : "Gemini 3.6 Flash (Fallback)",
-      differentialDiagnosis: "Gemini High-Reasoning CDS"
+      transcription: "Sarvam v3 (Primary) / Gemini Audio (Fallback)",
+      voiceExtraction: "GPT-4o-mini (Primary) / Claude Haiku (Fallback) [NOT Gemini]",
+      handoverExtractionShort: "Claude Haiku (Primary) / Gemini Flash (Fallback)",
+      handoverExtractionLong: "Claude Sonnet (Primary) / Gemini Pro (Fallback)",
+      dischargeSummary: "Claude Sonnet (Primary) / GPT-4o (Fallback) [NOT Gemini]",
+      clinicalDiscussion: "Claude Sonnet ONLY (Fallback: None)",
+      differentialDiagnosis: "Claude Sonnet ONLY (Fallback: None)",
+      bedsideVision: "Gemini Vision",
+      medicalLiterature: "Gemini Search Grounding",
+      quickCorrections: "Gemini Flash",
+      translation: "Gemini Flash"
     }
   });
 });
@@ -654,6 +662,92 @@ app.post("/api/voice/transcribe", upload.single("file"), async (req, res) => {
   }
 });
 
+// Clinical Summary Generator using Claude Sonnet
+async function generateClinicalSummary(extracted: Record<string, any>): Promise<{
+  summary: string;
+  workingDiagnosis: string[];
+  keyPoints: string[];
+  references: string[];
+  alerts: string[];
+}> {
+  const complaint = extracted.presentingComplaint || extracted.chiefComplaint || "Acute presentation";
+  const ageSex = `${extracted.age || 'Adult'}${extracted.gender || extracted.sex ? ' ' + (extracted.gender || extracted.sex) : ''}`;
+  const bp = extracted.vitals?.bp || "120/80";
+  const hr = extracted.vitals?.hr || "80";
+
+  const prompt = `
+You are an Emergency Medicine Senior Consultant at an Indian tertiary hospital.
+Analyze the following documented clinical case and generate a high-yield post-dictation summary for the ED team.
+
+CASE DATA:
+${JSON.stringify({
+  patientName: extracted.patientName || extracted.name || "Patient",
+  age: extracted.age,
+  gender: extracted.gender || extracted.sex,
+  complaint,
+  vitals: extracted.vitals,
+  sampleHistory: extracted.sampleHistory,
+  primaryAssessment: extracted.primaryAssessment,
+  treatment: extracted.progressNotes || extracted.treatment
+}, null, 2)}
+
+Return ONLY a JSON object:
+{
+  "summary": "2-3 sentence clinical overview of presentation and initial stabilization",
+  "workingDiagnosis": ["Primary Working Diagnosis", "Secondary differential if pertinent"],
+  "keyPoints": [
+    "Most important practical management point",
+    "Time-sensitive intervention if needed",
+    "Key investigation to not miss",
+    "Common clinical pitfall to avoid"
+  ],
+  "references": [
+    "Tintinalli's Emergency Medicine 9th Ed — Chapter XX: [Topic]",
+    "Rosen's Emergency Medicine 9th Ed — Chapter XX: [Topic]",
+    "ACC/AHA or ESC or WHO Relevant Guidelines"
+  ],
+  "alerts": [
+    "Time-critical red flag alert if any (empty array if stable)"
+  ]
+}
+`;
+
+  const sysInstruction = "You are a Senior Emergency Medicine Consultant generating a post-dictation clinical summary.";
+
+  try {
+    const claudeResult = await callClaudeSonnetOnly(prompt, sysInstruction, true);
+    if (claudeResult && typeof claudeResult === "object" && claudeResult.summary) {
+      return {
+        summary: claudeResult.summary,
+        workingDiagnosis: Array.isArray(claudeResult.workingDiagnosis) ? claudeResult.workingDiagnosis : [complaint],
+        keyPoints: Array.isArray(claudeResult.keyPoints) ? claudeResult.keyPoints : ["Monitor vitals continuously", "Secure IV access and send emergency bloods"],
+        references: Array.isArray(claudeResult.references) ? claudeResult.references : ["Tintinalli's Emergency Medicine 9th Ed", "Rosen's Emergency Medicine 9th Ed"],
+        alerts: Array.isArray(claudeResult.alerts) ? claudeResult.alerts : []
+      };
+    }
+  } catch (err) {
+    console.warn("[Clinical Summary] Claude call failed:", err);
+  }
+
+  return {
+    summary: `${ageSex} presented to Emergency Department with ${complaint}. Initial vitals: BP ${bp}, HR ${hr}. Emergency assessment and initial stabilization initiated.`,
+    workingDiagnosis: [complaint],
+    keyPoints: [
+      "Secure IV access and monitor cardiac rhythm, BP, and oxygen saturation.",
+      "Send baseline Emergency Panel (CBC, Renal Parameters, Electrolytes, Troponins as indicated).",
+      "Perform frequent re-assessments and document dynamic vital changes.",
+      "Escalate immediately for acute deterioration or abnormal vital flags."
+    ],
+    references: [
+      "Tintinalli's Emergency Medicine 9th Ed — Emergency Resuscitation & Triage",
+      "Rosen's Emergency Medicine 9th Ed — Approach to Acute Complaints"
+    ],
+    alerts: (extracted.vitals?.spo2 && parseInt(extracted.vitals.spo2) < 90)
+      ? ["Hypoxia detected (SpO2 < 90%). Administer high-flow supplemental oxygen."]
+      : []
+  };
+}
+
 // 4c. Upgraded Post-processing Clinical Scribe Extractor with Credit Check (Layer 4)
 app.post("/api/voice/extract-clinical", async (req, res) => {
   const { dictation, aiCredits } = req.body;
@@ -710,7 +804,7 @@ app.post("/api/voice/extract-clinical", async (req, res) => {
     Extract and map the details to the following JSON structure. If any field is not mentioned, provide a reasonable blank string or null.
     
     Demographics:
-    - patientName: string (default "Unidentified Patient" if not mentioned)
+    - patientName: string or null (default null if not mentioned so the doctor fills manually)
     - age: number or null (e.g. 45 or null)
     - gender: string (must be exactly "Male", "Female", or "Other")
     - presentingComplaint: string (what complaints the patient presented with)
@@ -737,15 +831,22 @@ app.post("/api/voice/extract-clinical", async (req, res) => {
     - events: string (preceding circumstances)
 
     Primary Assessment (ABCDE):
-    - airway: string (description of airway findings)
+    Map vitals to exact ABCDE fields:
+    - Airway: status (Patent/Maintained/Compromised), intervention, C-Spine
+    - Breathing: RR -> breathing.rr, SpO2 -> breathing.spo2, O2 delivery, air entry, added sounds
+    - Circulation: HR -> circulation.hr, BP -> circulation.sbp/dbp, CRT, pulses, skin, EFAST, ECG
+    - Disability: GCS (E, V, M), Pupils, GRBS -> disability.grbs, focal deficit, seizure
+    - Exposure: Temp -> exposure.temp, skin, log roll (trauma only), pelvis, long bones
+    DO NOT put vitals in free text fields. Map each vital to its exact ABCDE location.
+    - airway: string
     - airwayStatus: string (either "Normal" or "Abnormal")
-    - breathing: string (breathing assessment, e.g., clear bilateral chest)
+    - breathing: string
     - breathingStatus: string (either "Normal" or "Abnormal")
-    - circulation: string (pulses, capillary refill, skin turgor)
+    - circulation: string
     - circulationStatus: string (either "Normal" or "Abnormal")
-    - disability: string (pupils, orientation, power)
+    - disability: string
     - disabilityStatus: string (either "Normal" or "Abnormal")
-    - exposure: string (rashes, trauma signs, temperature check)
+    - exposure: string
     - exposureStatus: string (either "Normal" or "Abnormal")
 
     Secondary Assessment:
@@ -761,7 +862,7 @@ app.post("/api/voice/extract-clinical", async (req, res) => {
       const ext = result.extracted;
       // If ext was formatted by formatClinicalCaseObject, return it directly or map with fallback
       const formattedData = ext.sampleHistory ? ext : {
-        patientName: ext.patientName || "Unidentified Patient",
+        patientName: ext.patientName || null,
         age: ext.age ? (typeof ext.age === "number" ? ext.age : parseInt(ext.age, 10) || null) : null,
         gender: ext.sex === "Female" ? "Female" : ext.sex === "Male" ? "Male" : "Other",
         presentingComplaint: ext.chiefComplaint || ext.hpi || "Acute presentation",
@@ -810,9 +911,15 @@ app.post("/api/voice/extract-clinical", async (req, res) => {
         rawExtracted: ext
       };
 
+      const summaryResult = await generateClinicalSummary(formattedData).catch(err => {
+        console.warn("[Clinical Summary] Generation error:", err);
+        return null;
+      });
+
       return res.json({ 
         success: true, 
         data: formattedData, 
+        clinicalSummary: summaryResult,
         remainingCredits: Math.max(0, availableCredits - 1),
         simulated: false
       });
@@ -1577,7 +1684,15 @@ app.post("/api/ai-discharge", async (req, res) => {
       4. dischargeMedications: Outpatient discharge medications based ONLY on treatments administered/prescribed in the ER case record.
       5. followUpPlan: Follow-up recommendations tailored to the chief complaint (e.g., OPD review in 3-5 days).
       6. patientInstructions: Plain-English summary of treatment received and RED-FLAG symptoms to watch out for.
-      7. courseInHospital: Detailed clinical narrative summarizing presentation, diagnostic workup, ER treatments given, and patient's response.
+      7. courseInHospital: Write a STRUCTURED CLINICAL NARRATIVE in PARAGRAPHS as a qualified doctor would write in a formal hospital discharge summary. NOT a list of raw notes, NOT bullet points.
+         MANDATORY 6-PARAGRAPH ORDER:
+         - PARAGRAPH 1 (Arrival & Primary Survey): Start with "The patient was received in the Emergency Department at [TIME] on [DATE] with the above-mentioned complaints." Then describe primary survey findings and immediate interventions in formal passive voice.
+         - PARAGRAPH 2 (Investigations): "Baseline investigations were sent including [tests]." Describe key results that influenced management and imaging findings if any. Do NOT list raw values.
+         - PARAGRAPH 3 (Treatment): "The patient was administered [medications with dose, route, frequency]. IV access was secured." Write every medication as a sentence including IV fluids and procedures.
+         - PARAGRAPH 4 (Consultations): If done, "[Specialty] consultation was sought. Case reviewed by [Dr. Name]. [Their advice / plan]."
+         - PARAGRAPH 5 (Clinical Course): "Patient's clinical condition [improved/remained stable/deteriorated] during the ER stay. [Significant events or serial responses]."
+         - PARAGRAPH 6 (Disposition): End with "After clinical assessment and interdisciplinary discussion, a decision was made to [admit the patient under Dr. [Name] ([Specialty]) / discharge the patient] for further management."
+         LANGUAGE RULES: Use PAST TENSE, PASSIVE VOICE ("was received", "was administered"), FORMAL medical English. No timestamps in narrative, no bullet points, no verbatim nursing notes. Integrate all into a coherent clinical story.
       8. dischargeNarrative: A simplified plain language summary.
       9. patientAdvice: Warning advice on when to return to the ER.
     `;
@@ -1655,7 +1770,10 @@ app.post("/api/rounds-debrief", async (req, res) => {
   const age = caseData.patient?.age || "N/A";
   const gender = caseData.patient?.gender || "N/A";
   const presentingComplaint = caseData.patient?.presentingComplaint || "Acute presentation";
-  
+  const triageCategory = caseData.patient?.triageCategory || "N/A";
+  const arrivalMode = caseData.patient?.arrivalMode || "N/A";
+  const caseType = caseData.patient?.caseType || "N/A";
+
   const hr = caseData.vitals?.hr || "N/A";
   const bp = caseData.vitals?.bp || "N/A";
   const rr = caseData.vitals?.rr || "N/A";
@@ -1666,35 +1784,74 @@ app.post("/api/rounds-debrief", async (req, res) => {
 
   const sampleHistory = caseData.sampleHistory || {};
   const primaryAssessment = caseData.primaryAssessment || {};
+  const secondaryAssessment = caseData.secondaryAssessment || "";
   const investigations = caseData.investigations || [];
+  const investigationResultsSummary = caseData.investigationResultsSummary || "";
   const treatments = caseData.treatments || [];
   const progressNotes = caseData.progressNotes || "";
   const differentials = caseData.differentials || [];
+  const dispositionDetails = caseData.dispositionDetails || {};
+  const dischargeInfo = caseData.dischargeInfo || {};
+
+  const dispositionText = `Disposition Type: ${dispositionDetails.dispositionType || "In ER Evaluation"}
+Duration in ER: ${dispositionDetails.durationInEr || "N/A"}
+Resident: ${dispositionDetails.residentName || "N/A"} | Consultant: ${dispositionDetails.consultantName || "N/A"}
+Observation & ER Notes: ${dispositionDetails.observationNotes || "N/A"}`;
+
+  const dischargeText = `Primary Diagnosis: ${dischargeInfo.primaryDiagnosis || caseData.provisionalPrimaryDiagnosis || "Under Evaluation"}
+Secondary Diagnosis: ${dischargeInfo.secondaryDiagnosis || "N/A"}
+Condition at Discharge/Terminal: ${dischargeInfo.conditionAtDischarge || "N/A"}
+Follow-Up / Summary: ${dischargeInfo.followUpPlan || "N/A"}`;
 
   const prompt = `
     You are a world-class Emergency Medicine Clinical Educator leading Clinical Rounds for an attending physician or medical resident (Claude Sonnet).
     We are analyzing this active ER patient case:
     - Name: ${patientName} (${age}y, ${gender})
     - Chief Complaint: ${presentingComplaint}
-    - Vitals: HR ${hr} bpm, BP ${bp} mmHg, RR ${rr} cpm, SpO2 ${spo2}%, Temp ${temp}°F, GRBS ${grbs} mg/dL, GCS ${gcs}
-    - SAMPLE History: Symptoms: ${sampleHistory.symptoms || "N/A"}, Allergies: ${sampleHistory.allergies || "None"}, Meds: ${sampleHistory.medications || "None"}, Past Hx: ${sampleHistory.pastHistory || "None"}, Last Meal: ${sampleHistory.lastMeal || "N/A"}, Events: ${sampleHistory.events || "N/A"}
-    - Primary Survey: Airway: ${primaryAssessment.airwayStatus || "N/A"}, Breathing: ${primaryAssessment.breathingStatus || "N/A"}, Circulation: ${primaryAssessment.circulationStatus || "N/A"}
+    - Triage Category: ${triageCategory} | Arrival Mode: ${arrivalMode} | Case Type: ${caseType}
+    - Presentation Vitals: HR ${hr} bpm, BP ${bp} mmHg, RR ${rr} cpm, SpO2 ${spo2}%, Temp ${temp}°F, GRBS ${grbs} mg/dL, GCS ${gcs}
+    - SAMPLE History:
+      - Symptoms: ${sampleHistory.symptoms || "N/A"}
+      - Past Medical History: ${sampleHistory.pastHistory || "None documented"}
+      - Outpatient Medications: ${sampleHistory.medications || "None"}
+      - Allergies: ${sampleHistory.allergies || "NKDA"}
+      - Family / Social Hx: ${sampleHistory.familyHistory || "N/A"}
+      - Events / Story of Presenting Illness: ${sampleHistory.events || "N/A"}
+    - Primary Survey (ABCDE): Airway: ${primaryAssessment.airwayStatus || primaryAssessment.airway || "N/A"}, Breathing: ${primaryAssessment.breathingStatus || primaryAssessment.breathing || "N/A"}, Circulation: ${primaryAssessment.circulationStatus || primaryAssessment.circulation || "N/A"}, Disability: ${primaryAssessment.disability || "N/A"}, Exposure: ${primaryAssessment.exposure || "N/A"}
+    - Secondary Assessment / Physical Exam: ${secondaryAssessment || "N/A"}
     - Diagnostics Ordered/Done: ${JSON.stringify(investigations)}
+    - Lab / Imaging Results Summary: ${investigationResultsSummary || "N/A"}
     - Treatments/Medications Administered: ${JSON.stringify(treatments)}
-    - Progress & Observation Notes: ${progressNotes}
+    - Progress & Observation Notes (ER Course & Timeline): ${progressNotes}
     - Differential Diagnoses considered: ${JSON.stringify(differentials)}
+    - Disposition & Outcome Details:
+      ${dispositionText}
+      ${dischargeText}
 
     Analyze this case deeply through the lens: "${lens}".
-    
-    Requirements for each lens (ensure your markdown content is structured, detailed, and dense with medical terminology):
+
+    SPECIAL CAUSE OF DEATH & MORTALITY REVIEW GUIDELINES:
+    If the lens is "cause-of-death" OR if the patient's disposition is "Death" or "Brought Dead" or if death/mortality is discussed:
+    You MUST perform a rigorous, structured MORTALITY & CAUSE OF DEATH DECONSTRUCTION by interpreting the WHOLE CLINICAL STORY (from onset of symptoms, pre-hospital story, past risk factors, presentation vitals, physical findings, labs/ECG/imaging, serial vital trends, ER treatment response, resuscitation efforts/CPR, to the terminal event).
+    Structure the "content" with clear, bold markdown sections:
+    1. 📖 **Whole Clinical Story Chronology**: Synthesize the full trajectory from first symptom through ER course to final outcome into a cohesive clinical narrative.
+    2. 💀 **Immediate Cause of Death (Part I Top Line)**: State the exact final disease, condition, or physiological mechanism directly causing death (e.g., Refractory Septic Shock with Multiorgan Dysfunction, Ventricular Fibrillation, Acute Severe Hypoxic Respiratory Failure).
+    3. 🩸 **Antecedent Causes (Part I Subsequent Lines)**: Detail the intermediate conditions leading directly to the immediate cause (e.g., Severe Community-Acquired Pneumonia with Bacteremia, Acute Anterior Wall STEMI with Cardiogenic Shock).
+    4. 🏥 **Underlying Cause of Death**: State the fundamental primary disease or injury that initiated the chain of pathological events leading to death.
+    5. ⚡ **Contributing Comorbidities & Factors (Part II)**: Other significant pre-existing or co-occurring conditions contributing to mortality (e.g., Decompensated Diabetes Mellitus, CKD Stage 4, Severe CAD, delayed ER presentation).
+    6. 🫀 **Resuscitation & ER Intervention Audit**: Objective clinical audit of airway management, circulation support, pressors, ACLS protocols, CPR duration, defibrillation, and therapeutic responses.
+    7. 🎓 **High-Yield Rounds Debrief Lessons**: Key clinical red flags, subtle warning markers, diagnostic pitfalls, and actionable takeaways for future ER resuscitation.
+
+    Requirements for other lenses:
     1. "first-principles": Deconstruct the presentation starting from absolute physiological and physical truths.
-    2. "devils-advocate": Act as a hyper-critical medical examiner. Challenge our assumptions.
+    2. "devils-advocate": Act as a hyper-critical medical examiner. Challenge assumptions, cognitive biases, and missed diagnoses.
     3. "pathophysiology": Outline a detailed mechanical, cellular, and immunologic timeline of the disease's underlying biology in this patient.
     4. "rare-but-real": Spotlight 3-4 rare, critical, or life-threatening mimics and complications of this presentation that must not be missed.
     5. "guidelines": Detail the gold-standard society recommendations (e.g., ACC/AHA, GINA, GOLD, KDIGO, Surviving Sepsis, NICE).
-    6. "disease-snapshot": A super-dense clinical chest-sheet for the primary suspected diagnosis.
-    7. "full-debrief": Comprehensive performance review of how the case was managed.
-    8. "rounds-chat": Engage in interactive clinical rounds discussion. Answer this custom query: "${userMessage || ""}" specifically in the context of this case.
+    6. "disease-snapshot": A super-dense clinical cheat-sheet for the primary suspected diagnosis.
+    7. "full-debrief": Comprehensive performance review of how the case was managed. If the patient died, include a dedicated Cause of Death & Mortality Analysis.
+    8. "cause-of-death": Deep mortality cause deconstruction analyzing the full story as detailed above.
+    9. "rounds-chat": Engage in interactive clinical rounds discussion. Answer this custom query: "${userMessage || ""}" specifically in the context of this case's whole story.
 
     If this is "rounds-chat", also reference this previous rounds chat conversation history:
     ${JSON.stringify(chatHistory || [])}
@@ -1859,7 +2016,7 @@ app.post("/api/scribe-extract", async (req, res) => {
     if (result.success && result.extracted) {
       const ext = result.extracted;
       const formattedData = ext.sampleHistory ? ext : {
-        patientName: ext.patientName || "Unidentified Patient",
+        patientName: ext.patientName || null,
         age: ext.age ? (typeof ext.age === "number" ? ext.age : parseInt(ext.age, 10) || null) : null,
         gender: ext.sex === "Female" ? "Female" : ext.sex === "Male" ? "Male" : "Other",
         presentingComplaint: ext.chiefComplaint || ext.hpi || "Dictated presentation transcript.",
@@ -2058,32 +2215,55 @@ app.post("/api/scribe-chat", async (req, res) => {
   try {
     const claudeReply = await callClaudeSonnetOnly(conversationHistoryText, scribeSystemInstruction, false);
     if (claudeReply && typeof claudeReply === "string" && claudeReply.trim().length > 10) {
-      return res.json({ success: true, reply: claudeReply, model: "claude-sonnet-4-6" });
+      return res.json({ success: true, reply: claudeReply, model: "claude-sonnet-3-5" });
     }
 
-    // Gemini Fallback
-    const ai = getAI();
-    const response = await ai.models.generateContent({
-      model: "gemini-3.6-flash",
-      contents: conversationHistoryText,
-      config: {
-        systemInstruction: scribeSystemInstruction,
-      }
+    return res.json({
+      success: false,
+      reply: "Claude Sonnet reasoning service is temporarily unavailable. Please verify ANTHROPIC_API_KEY configuration or try again shortly.",
+      error: "Claude Sonnet reasoning service unavailable"
     });
-
-    const replyText = response.text?.trim();
-    if (replyText) {
-      return res.json({ success: true, reply: replyText, model: "gemini-3.6-flash" });
-    }
-
-    return res.json({ success: false, reply: "Clinical assistant busy — try again in a moment", error: "Clinical assistant busy — try again in a moment" });
   } catch (error: any) {
     console.error("[Clinical Reasoning] Scribe Chat Error:", error?.message || error);
-    return res.json({ success: false, reply: "Clinical assistant busy — try again in a moment", error: "Clinical assistant busy — try again in a moment" });
+    return res.json({
+      success: false,
+      reply: "Claude Sonnet reasoning service is temporarily unavailable. Please verify ANTHROPIC_API_KEY configuration or try again shortly.",
+      error: error?.message || "Scribe chat error"
+    });
   }
 });
 
-// 5c-2. Case-Specific Clinical Discussion Endpoint (Patient Context Bound - LOCKED TO CLAUDE SONNET)
+// 5c-2. Case-Specific Clinical Discussion Endpoint (Patient Context Bound - LOCKED TO CLAUDE SONNET ONLY)
+// 5c-2b. Formal Mortality Audit (M&M Review) Endpoint (Confidential Medico-Legal Document)
+app.post("/api/mortality-audit/generate", async (req, res) => {
+  try {
+    const user = (req as any).user || req.body?.user;
+    const isHOD = user?.isHOD || user?.email === "varahgrp@gmail.com" || req.body?.isHOD || req.body?.email === "varahgrp@gmail.com";
+
+    const { rawText, caseId, hospitalName } = req.body;
+
+    if (!rawText || !rawText.trim()) {
+      return res.status(400).json({
+        success: false,
+        error: "No EMR text provided for mortality audit",
+      });
+    }
+
+    const result = await generateMortalityAudit(rawText, hospitalName || "Emergency Department");
+
+    if (!result.success) {
+      return res.status(500).json(result);
+    }
+
+    return res.json(result);
+  } catch (err: any) {
+    console.error("[MortalityAudit API Error]:", err);
+    return res.status(500).json({
+      success: false,
+      error: "Could not generate mortality audit — " + (err?.message || "server error"),
+    });
+  }
+});
 app.post("/api/case-discussion", async (req, res) => {
   const { caseData, messages } = req.body;
 
@@ -2116,12 +2296,13 @@ VITALS ON PRESENTATION:
 BP: ${vit.bp || "N/A"} mmHg | HR: ${vit.hr || "N/A"} bpm | SpO2: ${vit.spo2 || "N/A"}% | RR: ${vit.rr || "N/A"}/min
 Temp: ${vit.temp || "N/A"} °F | GCS: ${vit.gcs || "15"} | GRBS: ${vit.grbs || "N/A"} mg/dL
 
-SAMPLE HISTORY:
+SAMPLE HISTORY & PRESENTATION STORY:
 - History / Symptoms: ${sam.symptoms || "N/A"}
 - Past Medical History: ${sam.pastHistory || "None documented"}
 - Outpatient Medications: ${sam.medications || "None"}
 - Allergies: ${sam.allergies || "NKDA"}
 - Family / Social History: ${sam.familyHistory || "N/A"}
+- Events / Story of Presenting Illness: ${sam.events || "N/A"}
 
 PRIMARY ASSESSMENT (ABCDE):
 - Airway: ${pri.airway || "Patent"}
@@ -2139,8 +2320,18 @@ ${invSummary || "No labs uploaded yet."}
 TREATMENTS ADMINISTERED / ORDERED:
 ${trts.map((t: any) => `- ${t.drugName} ${t.dose || ""} (${t.route || "IV"})`).join("\n") || "Symptomatic ER monitoring."}
 
+PROGRESS NOTES & ER TIMELINE:
+${caseData?.progressNotes || "No progress notes recorded."}
+
 DIFFERENTIAL DIAGNOSES / IMPRESSIONS:
 ${diffs.map((d: any) => `- ${typeof d === "string" ? d : d.diagnosis || d.name}`).join("\n") || "Under evaluation"}
+
+DISPOSITION & TERMINAL OUTCOME:
+- Disposition Type: ${caseData?.dispositionDetails?.dispositionType || "In ER"}
+- Duration in ER: ${caseData?.dispositionDetails?.durationInEr || "N/A"}
+- Observation & ER Notes: ${caseData?.dispositionDetails?.observationNotes || "N/A"}
+- Primary Diagnosis: ${caseData?.dischargeInfo?.primaryDiagnosis || caseData?.provisionalPrimaryDiagnosis || "Under evaluation"}
+- Condition at Discharge / Terminal Status: ${caseData?.dischargeInfo?.conditionAtDischarge || "N/A"}
 ===================================
 `;
 
@@ -2151,11 +2342,20 @@ You are currently in an interactive clinical discussion with the Emergency Physi
 ${caseSummaryText}
 
 YOUR CRITICAL GUIDELINES:
-1. Answer the doctor's query directly referencing THIS patient's exact history, vitals, physical findings, and specific lab values (e.g. Urine Routine Protein/Glucose/Bacteria, Creatinine, Hb/Hct/MCV/RDW, Bilirubin/ALP, CRP, etc.).
-2. When evaluating complex or rare differentials (such as Amyloidosis, Cushing's decompensation, Nephrotic Syndrome, Heart Failure, Sepsis, CLD/NAFLD, Polycythemia, etc.), provide clear pathophysiological reasoning comparing the patient's specific lab findings, risks, and clinical features against diagnostic criteria.
-3. Provide actionable, step-by-step next diagnostic steps (e.g., SPEP, UPEP, Serum Free Light Chains, 24h Urine Protein, Echo with Strain/Diastology, Fat pad biopsy, Endocrinology/Nephrology consults) and acute stabilization guidelines.
-4. Keep answers clean, professional, and well-structured with bold terms and short bullet points.
-5. ALWAYS end your response with authoritative Emergency Medicine and Internal Medicine textbook citations under a "📚 Reference Citations" header:
+1. Answer the doctor's query directly referencing THIS patient's exact history, vitals, physical findings, labs, treatments, and complete clinical story.
+2. CAUSE OF DEATH & MORTALITY REVIEW: If analyzing cause of death or mortality (or if disposition is "Death" or "Brought Dead" or if the doctor asks about the cause of death):
+   Interpret the WHOLE CLINICAL STORY from initial symptom onset, SAMPLE history, baseline comorbidities, presentation vitals, physical exam, labs/ECG/imaging, serial vitals, treatments administered, resuscitation/CPR efforts, to terminal event.
+   Clearly deconstruct:
+   - 💀 Immediate Cause of Death (Part I Top Line): Final physiological/disease mechanism directly causing death.
+   - 🩸 Antecedent Causes (Part I Subsequent Lines): Intermediate conditions giving rise to immediate cause.
+   - 🏥 Underlying Cause of Death: Primary disease/injury initiating fatal sequence.
+   - ⚡ Contributing Factors & Comorbidities (Part II): Co-existing conditions contributing to mortality.
+   - 🫀 Resuscitation & Timeline Audit: Objective review of airway, pressors, ACLS, and ER course.
+   - 🎓 Clinical Debrief Lessons: High-yield red flags and educational pearls for rounds.
+3. When evaluating complex or rare differentials, provide clear pathophysiological reasoning comparing the patient's specific lab findings, risks, and clinical features against diagnostic criteria.
+4. Provide actionable, step-by-step next diagnostic steps (e.g., SPEP, UPEP, Serum Free Light Chains, 24h Urine Protein, Echo with Strain/Diastology, Fat pad biopsy, Endocrinology/Nephrology consults) and acute stabilization guidelines.
+5. Keep answers clean, professional, and well-structured with bold terms and short bullet points.
+6. ALWAYS end your response with authoritative Emergency Medicine and Internal Medicine textbook citations under a "📚 Reference Citations" header:
    - Tintinalli's Emergency Medicine
    - Rosen's Emergency Medicine
    - Harrison's Principles of Internal Medicine
@@ -2170,28 +2370,114 @@ YOUR CRITICAL GUIDELINES:
   try {
     const claudeReply = await callClaudeSonnetOnly(conversationHistoryText, discussionSystemInstruction, false);
     if (claudeReply && typeof claudeReply === "string" && claudeReply.trim().length > 10) {
-      return res.json({ success: true, reply: claudeReply, model: "claude-sonnet-4-6" });
+      return res.json({ success: true, reply: claudeReply, model: "claude-sonnet-3-5" });
     }
 
-    // Gemini Fallback
-    const ai = getAI();
-    const response = await ai.models.generateContent({
-      model: "gemini-3.6-flash",
-      contents: conversationHistoryText,
-      config: {
-        systemInstruction: discussionSystemInstruction,
-      }
+    return res.json({
+      success: false,
+      reply: "Claude Sonnet reasoning service is temporarily unavailable. Please verify ANTHROPIC_API_KEY configuration or try again shortly.",
+      error: "Claude Sonnet reasoning service unavailable"
     });
-
-    const replyText = response.text?.trim();
-    if (replyText) {
-      return res.json({ success: true, reply: replyText, model: "gemini-3.6-flash" });
-    }
-
-    return res.json({ success: false, reply: "Clinical assistant busy — try again in a moment", error: "Clinical assistant busy — try again in a moment" });
   } catch (error: any) {
     console.error("[Clinical Reasoning] Case Discussion Error:", error?.message || error);
-    return res.json({ success: false, reply: "Clinical assistant busy — try again in a moment", error: "Clinical assistant busy — try again in a moment" });
+    return res.json({
+      success: false,
+      reply: "Claude Sonnet reasoning service is temporarily unavailable. Please verify ANTHROPIC_API_KEY configuration or try again shortly.",
+      error: error?.message || "Case discussion error"
+    });
+  }
+});
+
+// 5c-3. Handover PDF Generation Endpoint
+app.post("/api/handover/pdf", async (req, res) => {
+  try {
+    const { date, facility, clinician, patients } = req.body;
+
+    const doc = new PDFDocument({ layout: "portrait", size: "A4", margin: 30, bufferPages: true });
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="Emergency_Handover_Report_${(date || "Shift").toString().replace(/[/\\?%*:|"<>]/g, "-")}.pdf"`
+    );
+
+    doc.pipe(res);
+
+    // Document Header
+    doc.fillColor("#0f172a").fontSize(16).font("Helvetica-Bold").text(`${(facility || "EMERGENCY DEPARTMENT").toUpperCase()} - CLINICAL HANDOVER REPORT`, { align: "center" });
+    doc.moveDown(0.2);
+    doc.fillColor("#475569").fontSize(9.5).font("Helvetica").text(
+      `Facility: ${facility || "Emergency Department"}  |  Lead Clinician: ${clinician || "Duty Officer"}  |  Date: ${date || new Date().toLocaleDateString()}`,
+      { align: "center" }
+    );
+    doc.moveDown(0.4);
+    doc.strokeColor("#cbd5e1").lineWidth(1).moveTo(30, doc.y).lineTo(doc.page.width - 30, doc.y).stroke();
+    doc.moveDown(0.6);
+
+    // Patient Cards / Table
+    if (Array.isArray(patients) && patients.length > 0) {
+      patients.forEach((p: any, idx: number) => {
+        if (doc.y > doc.page.height - 120) {
+          doc.addPage();
+        }
+
+        const startY = doc.y;
+        const cardWidth = doc.page.width - 60;
+        const cardHeight = 92;
+
+        // Card container
+        doc.rect(30, startY, cardWidth, cardHeight).fillAndStroke("#ffffff", "#0f172a");
+
+        // Header line
+        doc.fillColor("#0f172a").fontSize(11).font("Helvetica-Bold")
+           .text(`${idx + 1}. [Bed: ${p.bed || "N/A"}]  ${p.name || p.patientName || "Patient"} (${p.ageGender || p.ageSex || "N/A"})`, 40, startY + 8);
+
+        // Subheader line
+        doc.fillColor("#334155").fontSize(9).font("Helvetica-Bold")
+           .text(`ER No: ${p.erNo || "N/A"}  |  Doctor: ${p.doctor || "N/A"}  |  Vitals: ${p.vitals || "N/A"}`, 40, startY + 24);
+
+        // Complaints / History
+        const comp = (p.complaints || p.situation || p.presentingComplaint || "N/A").substring(0, 110);
+        doc.fillColor("#0f172a").fontSize(8.5).font("Helvetica")
+           .text(`Chief Complaints: ${comp}`, 40, startY + 40);
+
+        // Assessment & Plan
+        const plan = (p.planToBeDone || p.assessment || p.recommendation || "Maintain monitoring & care").substring(0, 120);
+        doc.fillColor("#0f172a").fontSize(8.5).font("Helvetica")
+           .text(`Plan / Action Needed: ${plan}`, 40, startY + 55);
+
+        // Bystanders / Alerts
+        const alertText = (p.alerts || p.bystander || "None").substring(0, 100);
+        doc.fillColor("#991b1b").fontSize(8.5).font("Helvetica-Bold")
+           .text(`Alerts / Bystander Update: ${alertText}`, 40, startY + 70);
+
+        doc.y = startY + cardHeight + 10;
+      });
+    } else {
+      doc.fillColor("#64748b").fontSize(10).text("No active handover patients in report.", { align: "center" });
+    }
+
+    // Add Page X of Y page numbers to all buffered pages
+    const range = doc.bufferedPageRange();
+    for (let i = range.start; i < range.start + range.count; i++) {
+      doc.switchToPage(i);
+      doc.strokeColor("#e2e8f0").lineWidth(0.5)
+         .moveTo(30, doc.page.height - 35)
+         .lineTo(doc.page.width - 30, doc.page.height - 35)
+         .stroke();
+
+      doc.fillColor("#475569").fontSize(8.5).font("Helvetica-Bold").text(
+        `CONFIDENTIAL CLINICAL HANDOVER REPORT  •  Powered by ErMate  •  Page ${i + 1} of ${range.count}`,
+        30,
+        doc.page.height - 24,
+        { align: "center", width: doc.page.width - 60 }
+      );
+    }
+
+    doc.end();
+  } catch (err: any) {
+    console.error("[Handover PDF Endpoint Error]", err);
+    res.status(500).json({ success: false, error: "Failed to generate handover PDF" });
   }
 });
 
@@ -2666,6 +2952,7 @@ app.post("/api/handover/compile-sheet", async (req, res) => {
       8. BYSTANDER UPDATE: Extract exact details of family counselling (WHO was told, WHAT was explained).
       9. VITALS: Format latest vitals clearly (SpO2, HR, BP, RR, Temp, GRBS, GCS).
       10. CRITICAL ALERTS: Flag abnormal lab findings, metabolic acidosis, pending cardiac markers, or ICU transfers with ⚠.
+      11. PRESERVE PATIENT ID: The "id" field in each row MUST match the exact "id" field provided in the corresponding input patient object.
 
       Expected JSON schema:
       {

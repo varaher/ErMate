@@ -50,7 +50,17 @@ body {
 @media print {
   @page {
     size: A4 portrait;
-    margin: 6mm 8mm 6mm 8mm;
+    margin: 10mm 12mm;
+  }
+
+  @page :left {
+    margin-left: 18mm;
+    margin-right: 12mm;
+  }
+
+  @page :right {
+    margin-right: 18mm;
+    margin-left: 12mm;
   }
 
   /* Force exact color reproduction for badges and header bars */
@@ -169,5 +179,57 @@ body {
   /* Empty elements take no vertical space */
   :empty {
     display: none !important;
+  }
+
+  /* Discharge Summary print preview stylesheet matching on-screen card layout */
+  #print-sheet-content {
+    display: block !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background-color: #ffffff !important;
+    color: #0f172a !important;
+    font-size: 8.5pt !important;
+    line-height: 1.35 !important;
+    box-shadow: none !important;
+    border: none !important;
+  }
+
+  /* Reset grid layout columns for full page print output */
+  .lg\:col-span-12,
+  .lg\:col-span-7,
+  .lg\:col-span-5 {
+    grid-column: span 12 / span 12 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
+  }
+
+  /* Preserve multi-column layout inside discharge summary card */
+  #print-sheet-content .grid-cols-2,
+  #print-sheet-content .md\:grid-cols-2 {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 8px !important;
+  }
+
+  #print-sheet-content .grid-cols-4,
+  #print-sheet-content .md\:grid-cols-8 {
+    display: grid !important;
+    grid-template-columns: repeat(8, minmax(0, 1fr)) !important;
+    gap: 4px !important;
+  }
+
+  /* Prevent page breaks inside table rows or sections */
+  #print-sheet-content table,
+  #print-sheet-content tr,
+  #print-sheet-content .border,
+  #print-sheet-content .rounded-xl {
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
   }
 }

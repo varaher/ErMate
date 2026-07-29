@@ -1,9 +1,12 @@
 import React, { useState, useEffect, useRef } from "react";
 import { 
   MessageSquare, X, Send, Bot, User, Sparkles, Activity, FileText, 
-  HelpCircle, ChevronRight, BookOpen, AlertCircle, RefreshCw, Layers
+  HelpCircle, ChevronRight, BookOpen, AlertCircle, RefreshCw, Layers,
+  BookmarkCheck, Check
 } from "lucide-react";
 import { ClinicalCase } from "../types";
+import { db } from "../firebase";
+import { doc, getDoc, setDoc, updateDoc } from "firebase/firestore";
 
 interface Message {
   id: string;
@@ -32,29 +35,198 @@ export const CaseDiscussionModal: React.FC<CaseDiscussionModalProps> = ({
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
+  // Helper to persist discussion state across local storage, state & Firestore
+  const saveDiscussionState = async (caseId: string, updatedMsgs: Message[]) => {
+    if (!caseId) return;
+    const cleanId = caseId.trim();
+    const patientName = patientCase?.patient?.name?.trim()?.toLowerCase();
+
+    try {
+      localStorage.setItem(`ermate_discussion_${cleanId}`, JSON.stringify(updatedMsgs));
+      if (patientName) {
+        localStorage.setItem(`ermate_discussion_name_${patientName}`, JSON.stringify(updatedMsgs));
+      }
+    } catch (err) {
+      console.warn("[CaseDiscussion] LocalStorage save error:", err);
+    }
+
+    if (onSaveDiscussionHistory) {
+      onSaveDiscussionHistory(cleanId, updatedMsgs);
+    }
+
+    try {
+      if (db && cleanId) {
+        const caseRef = doc(db, "cases", cleanId);
+        await updateDoc(caseRef, {
+          discussionMessages: updatedMsgs,
+          lastEditedAt: new Date().toISOString()
+        }).catch(async () => {
+          await setDoc(caseRef, { discussionMessages: updatedMsgs }, { merge: true });
+        });
+
+        const discussionRef = doc(db, "cases", cleanId, "discussions", "active_session");
+        await setDoc(discussionRef, {
+          caseId: cleanId,
+          messages: updatedMsgs,
+          updatedAt: new Date().toISOString()
+        }, { merge: true });
+      }
+    } catch (err) {
+      console.warn("[CaseDiscussion] Firestore save notice:", err);
+    }
+  };
+
   // Load existing discussion or initialize with welcome message
   useEffect(() => {
     if (!patientCase || !isOpen) return;
 
-    if (patientCase.discussionMessages && patientCase.discussionMessages.length > 0) {
-      setMessages(patientCase.discussionMessages);
-    } else {
+    const loadCaseDiscussion = async () => {
+      const caseId = patientCase.id;
+      const patientName = patientCase.patient?.name?.trim()?.toLowerCase();
+
+      // 1. Direct prop check
+      if (patientCase.discussionMessages && Array.isArray(patientCase.discussionMessages) && patientCase.discussionMessages.length > 0) {
+        setMessages(patientCase.discussionMessages);
+        return;
+      }
+
+      // 2. Check LocalStorage by case ID
+      try {
+        const localData = localStorage.getItem(`ermate_discussion_${caseId}`);
+        if (localData) {
+          const parsed = JSON.parse(localData);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            setMessages(parsed);
+            return;
+          }
+        }
+      } catch (err) {
+        console.warn("Error reading local discussion by id:", err);
+      }
+
+      // 3. Check LocalStorage by patient name (fallback)
+      if (patientName) {
+        try {
+          const localByName = localStorage.getItem(`ermate_discussion_name_${patientName}`);
+          if (localByName) {
+            const parsed = JSON.parse(localByName);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              setMessages(parsed);
+              return;
+            }
+          }
+        } catch (err) {
+          console.warn("Error reading local discussion by name:", err);
+        }
+      }
+
+      // 4. Check LocalStorage rounds chat (from Rounds & Debrief tab)
+      try {
+        const roundsChatData = localStorage.getItem(`ermate_rounds_chat_${caseId}`) || (patientName ? localStorage.getItem(`ermate_rounds_chat_${patientName}`) : null);
+        if (roundsChatData) {
+          const parsed = JSON.parse(roundsChatData);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            const converted: Message[] = parsed.map((item: any, idx: number) => ({
+              id: "rounds-" + idx + "-" + Date.now(),
+              sender: item.role === "model" ? "ai" : "user",
+              text: item.text,
+              timestamp: "Rounds Session"
+            }));
+            setMessages(converted);
+            saveDiscussionState(caseId, converted);
+            return;
+          }
+        }
+      } catch (err) {
+        console.warn("Error reading rounds chat history:", err);
+      }
+
+      // 5. Check Firestore active_session or main case document
+      try {
+        if (db && caseId) {
+          const discussionRef = doc(db, "cases", caseId, "discussions", "active_session");
+          const docSnap = await getDoc(discussionRef);
+          if (docSnap.exists() && docSnap.data()?.messages) {
+            const msgs = docSnap.data().messages;
+            if (Array.isArray(msgs) && msgs.length > 0) {
+              setMessages(msgs);
+              return;
+            }
+          }
+
+          const caseSnap = await getDoc(doc(db, "cases", caseId));
+          if (caseSnap.exists()) {
+            const caseData = caseSnap.data();
+            if (caseData?.discussionMessages && Array.isArray(caseData.discussionMessages) && caseData.discussionMessages.length > 0) {
+              setMessages(caseData.discussionMessages);
+              return;
+            }
+          }
+        }
+      } catch (err) {
+        console.warn("Error reading Firestore discussion:", err);
+      }
+
+      // 6. If no prior session exists anywhere, create initial welcome message and persist it immediately
+      const isDeceased = patientCase.dispositionDetails?.dispositionType === "Death" || patientCase.dischargeInfo?.conditionAtDischarge?.toLowerCase().includes("decease") || patientCase.dischargeInfo?.conditionAtDischarge?.toLowerCase().includes("death") || patientCase.dischargeInfo?.conditionAtDischarge?.toLowerCase().includes("expired");
+
       const initialWelcomeMsg: Message = {
         id: "welcome-" + Date.now(),
         sender: "ai",
-        text: `Hello Doctor. I have loaded **${patientCase.patient?.name || "Patient"}** (${patientCase.patient?.age || "N/A"} y/o ${patientCase.patient?.gender || ""}) into clinical discussion mode.
+        text: `Hello Doctor. I have loaded **${patientCase.patient?.name || "Patient"}** (${patientCase.patient?.age || "N/A"} y/o ${patientCase.patient?.gender || ""}) into clinical rounds & debrief discussion mode.
 
-**Case Highlights Loaded:**
+**Case Story Highlights Loaded:**
 - **Chief Complaint**: ${patientCase.patient?.presentingComplaint || "Emergency presentation"}
 - **Triage**: ${patientCase.patient?.triageCategory || "P2"} | **Vitals**: BP ${patientCase.vitals?.bp || "N/A"}, HR ${patientCase.vitals?.hr || "N/A"}, SpO2 ${patientCase.vitals?.spo2 || "N/A"}%
+- **SAMPLE / HPI Story**: ${patientCase.sampleHistory?.events || patientCase.sampleHistory?.symptoms || "None documented"}
 - **PMH**: ${patientCase.sampleHistory?.pastHistory || "None documented"}
+- **Disposition Status**: ${patientCase.dispositionDetails?.dispositionType || "Active ER Evaluation"}${isDeceased ? " 💀 (ER Exitus / Mortality Record)" : ""}
 
-You can ask me any diagnostic, therapeutic, or learning curve questions specific to this patient. How would you like to proceed?`,
+${isDeceased ? "⚠️ **Mortality Case Detected**: You can request an immediate **Cause of Death Analysis** interpreting the whole clinical story (Immediate, Antecedent, Underlying causes & resuscitation debrief)." : "You can ask me any diagnostic, therapeutic, or case debrief questions specific to this patient's story. How would you like to proceed?"}`,
         timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
       };
-      setMessages([initialWelcomeMsg]);
+      
+      const defaultInitial = [initialWelcomeMsg];
+      setMessages(defaultInitial);
+      saveDiscussionState(caseId, defaultInitial);
+    };
+
+    loadCaseDiscussion();
+  }, [patientCase?.id, isOpen]);
+
+  const handleResetDiscussion = async () => {
+    if (!patientCase) return;
+    if (window.confirm(`Reset case discussion history for ${patientCase.patient?.name || "this patient"}?`)) {
+      const isDeceased = patientCase.dispositionDetails?.dispositionType === "Death" || patientCase.dischargeInfo?.conditionAtDischarge?.toLowerCase().includes("decease") || patientCase.dischargeInfo?.conditionAtDischarge?.toLowerCase().includes("death") || patientCase.dischargeInfo?.conditionAtDischarge?.toLowerCase().includes("expired");
+
+      const freshWelcome: Message = {
+        id: "welcome-" + Date.now(),
+        sender: "ai",
+        text: `Hello Doctor. I have reset clinical discussion mode for **${patientCase.patient?.name || "Patient"}**.
+
+**Case Story Highlights Loaded:**
+- **Chief Complaint**: ${patientCase.patient?.presentingComplaint || "Emergency presentation"}
+- **Triage**: ${patientCase.patient?.triageCategory || "P2"} | **Vitals**: BP ${patientCase.vitals?.bp || "N/A"}, HR ${patientCase.vitals?.hr || "N/A"}, SpO2 ${patientCase.vitals?.spo2 || "N/A"}%
+- **SAMPLE / HPI Story**: ${patientCase.sampleHistory?.events || patientCase.sampleHistory?.symptoms || "None documented"}
+
+${isDeceased ? "⚠️ **Mortality Case Detected**: Ask for **Cause of Death Analysis** anytime." : "How would you like to proceed with this case?"}`,
+        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+      };
+
+      const freshMsgs = [freshWelcome];
+      setMessages(freshMsgs);
+      saveDiscussionState(patientCase.id, freshMsgs);
     }
-  }, [patientCase, isOpen]);
+  };
+
+  const [draftSavedToast, setDraftSavedToast] = useState(false);
+
+  const handleSaveDraft = async () => {
+    if (!patientCase || !messages.length) return;
+    await saveDiscussionState(patientCase.id, messages);
+    setDraftSavedToast(true);
+    setTimeout(() => setDraftSavedToast(false), 3000);
+  };
 
   // Scroll to bottom on new message
   useEffect(() => {
@@ -104,9 +276,7 @@ You can ask me any diagnostic, therapeutic, or learning curve questions specific
         };
         const finalMessages = [...updatedMessages, aiMsg];
         setMessages(finalMessages);
-        if (onSaveDiscussionHistory && patientCase.id) {
-          onSaveDiscussionHistory(patientCase.id, finalMessages);
-        }
+        saveDiscussionState(patientCase.id, finalMessages);
       } else {
         throw new Error(resData.error || "No response received.");
       }
@@ -133,15 +303,14 @@ You can ask me any diagnostic, therapeutic, or learning curve questions specific
       };
       const finalMessages = [...updatedMessages, fallbackMsg];
       setMessages(finalMessages);
-      if (onSaveDiscussionHistory && patientCase.id) {
-        onSaveDiscussionHistory(patientCase.id, finalMessages);
-      }
+      saveDiscussionState(patientCase.id, finalMessages);
     } finally {
       setIsProcessing(false);
     }
   };
 
   const quickPrompts = [
+    "💀 Analyze cause of death by interpreting full clinical story",
     "🧬 Could this presentation be Amyloidosis?",
     "🩸 Analyze all lab & urine routine findings",
     "💊 Review medication & fluid management plan",
@@ -180,14 +349,43 @@ You can ask me any diagnostic, therapeutic, or learning curve questions specific
             </div>
           </div>
 
-          <button 
-            onClick={onClose}
-            className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors"
-            title="Close discussion"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleSaveDraft}
+              title="Save discussion chat draft to case record"
+              className="p-1.5 text-emerald-400 hover:text-emerald-300 hover:bg-slate-800 rounded-lg transition-colors flex items-center gap-1.5 text-xs border border-emerald-500/40 px-2.5 font-medium cursor-pointer"
+            >
+              <BookmarkCheck className="w-3.5 h-3.5 text-emerald-400" />
+              <span className="hidden sm:inline">Save Draft</span>
+            </button>
+            <button
+              onClick={handleResetDiscussion}
+              title="Reset case discussion history"
+              className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors flex items-center gap-1.5 text-xs border border-slate-700/80 px-2.5 font-medium cursor-pointer"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Reset</span>
+            </button>
+            <button 
+              onClick={onClose}
+              className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+              title="Close discussion"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
+
+        {draftSavedToast && (
+          <div className="bg-emerald-600 text-white text-xs font-semibold px-4 py-2 border-b border-emerald-700 flex items-center justify-between animate-fade-in shadow-inner shrink-0">
+            <span className="flex items-center gap-1.5">
+              <Check className="w-4 h-4 text-white" />
+              <span>Discussion chat draft saved to patient record successfully!</span>
+            </span>
+            <span className="text-[10px] bg-emerald-700 px-2 py-0.5 rounded-full uppercase font-mono tracking-wider">Synced</span>
+          </div>
+        )}
 
         {/* Quick Vitals & Clinical Context Banner */}
         <div className="bg-slate-50 border-b border-slate-200 px-6 py-2.5 text-xs flex flex-wrap items-center justify-between gap-3 text-slate-700 shrink-0">
@@ -213,7 +411,7 @@ You can ask me any diagnostic, therapeutic, or learning curve questions specific
           </div>
           <div className="text-[11px] text-slate-500 flex items-center gap-1 font-medium">
             <Sparkles className="w-3 h-3 text-amber-500" />
-            Patient context bound to Gemini AI
+            Patient context bound to Claude Sonnet AI
           </div>
         </div>
 
@@ -307,9 +505,18 @@ You can ask me any diagnostic, therapeutic, or learning curve questions specific
               className="flex-1 px-4 py-2.5 text-sm bg-slate-50 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white text-slate-900 transition-all placeholder:text-slate-400"
             />
             <button
+              type="button"
+              onClick={handleSaveDraft}
+              title="Save chat messages as draft"
+              className="px-3.5 py-2.5 bg-slate-100 hover:bg-emerald-50 text-slate-700 hover:text-emerald-700 font-medium text-xs rounded-xl flex items-center gap-1.5 border border-slate-300 transition-colors shrink-0 cursor-pointer"
+            >
+              <BookmarkCheck className="w-4 h-4 text-emerald-600" />
+              <span className="hidden sm:inline font-semibold">Save as Draft</span>
+            </button>
+            <button
               type="submit"
               disabled={!inputText.trim() || isProcessing}
-              className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white font-semibold text-sm rounded-xl flex items-center gap-2 transition-colors shadow-sm shrink-0"
+              className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white font-semibold text-sm rounded-xl flex items-center gap-2 transition-colors shadow-sm shrink-0 cursor-pointer"
             >
               <span>Send</span>
               <Send className="w-4 h-4" />

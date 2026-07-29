@@ -27,6 +27,7 @@ import ErGuideView from "./components/ErGuideView";
 import AnalyticsView from "./components/AnalyticsView";
 import HandoverView from "./components/HandoverView";
 import PocketMirrorView from "./components/PocketMirrorView";
+import AdminPanelView from "./components/AdminPanelView";
 import ConsentModal from "./components/ConsentModal";
 import { CaseDiscussionModal } from "./components/CaseDiscussionModal";
 import { ROTA_SHIFTS } from "./components/TeamRosterBoard";
@@ -43,6 +44,41 @@ interface StaticReference {
   summary: string;
   keyPoints: string[];
 }
+
+const DEFAULT_QUICK_PASTE_PATIENTS: QuickPastePatient[] = [
+  {
+    id: "qp-1",
+    bed: "Bed 3",
+    name: "John Doe",
+    ageGender: "52y / Male",
+    triage: "P1 (Immediate)",
+    vitals: "BP 160/95 | HR 112 | SpO2 91%",
+    presentingComplaint: "Acute crushing retrosternal chest pain radiating to jaw for 2 hours with diaphoresis",
+    rawNotes: "Pasted from EMR:\nPatient presented with acute crushing chest pain for 2 hours, radiating to jaw. Diaphoretic. ECG shows 3mm ST elevation in V1-V4. Loading doses of Aspirin 325mg and Ticagrelor 180mg given at 10:15 AM. Cardiology consulted and patient accepted for immediate primary PCI in cath lab. Prep in progress. IV fluids running.",
+    structuredSBAR: {
+      situation: "52y Male in Bed 3 with acute retrosternal chest pain, diagnosed with Anterior Wall STEMI.",
+      background: "Known history of hypertension and hyperlipidemia. Smoker.",
+      assessment: "Hemodynamically stable but tachypneic. ST elevation in V1-V4. Antiplatelets loaded.",
+      recommendation: "Transfer immediately to Cath Lab. Secure patent IV and keep oxygen active."
+    }
+  },
+  {
+    id: "qp-2",
+    bed: "Bed 7",
+    name: "Clara Oswald",
+    ageGender: "29y / Female",
+    triage: "P2 (Urgent)",
+    vitals: "BP 115/70 | HR 88 | SpO2 99%",
+    presentingComplaint: "Severe right lower quadrant abdominal pain for 12 hours with nausea",
+    rawNotes: "EMR Notes:\nSevere right lower quadrant abdominal pain for 12 hours. Nausea, no vomiting. Tender in RLQ with positive McBurney's sign. Ultrasound ordered, report shows swollen non-compressible appendix of 8.5mm with mild surrounding free fluid, consistent with acute appendicitis. NPO since 08:00 AM. IV Cefotetan 2g administered. Surgical resident Dr. Patel reviewed and posted for appendectomy. Waiting for OT vacancy.",
+    structuredSBAR: {
+      situation: "29y Female in Bed 7 with acute right lower quadrant abdominal pain, diagnosed with acute appendicitis.",
+      background: "Prior laparoscopic cholecystectomy 2 years ago. No known drug allergies.",
+      assessment: "Tender RLQ abdomen. Ultrasound confirmed appendicitis. Pre-op antibiotics given.",
+      recommendation: "Maintain NPO status, administer IV hydration, and monitor for OT transfer."
+    }
+  }
+];
 
 const LOCAL_REFERENCES: StaticReference[] = [
   {
@@ -234,6 +270,7 @@ export default function App() {
   // Updates and Announcements Modal state & Version Tracking
   const [showUpdatesModal, setShowUpdatesModal] = useState<boolean>(false);
   const [currentVersion, setCurrentVersion] = useState<string>(APP_VERSION);
+  const [remoteVersion, setRemoteVersion] = useState<string>(APP_VERSION);
   const [appUpdateBanner, setAppUpdateBanner] = useState<boolean>(false);
   const [isForceUpdate, setIsForceUpdate] = useState<boolean>(false);
 
@@ -259,6 +296,7 @@ export default function App() {
           if (!isMounted) return;
           const serverVersion = data.version || APP_VERSION;
           setCurrentVersion(serverVersion);
+          setRemoteVersion(serverVersion);
 
           const lastSeen = localStorage.getItem("ermate_last_seen_version") || localStorage.getItem("ermate_app_known_version");
           if (!lastSeen) {
@@ -358,11 +396,12 @@ export default function App() {
   }, [isLoggedIn]);
 
   // Navigation
-  const [activeTab, setActiveTab] = useState<"dashboard" | "analytics" | "handover" | "cases" | "learn" | "profile" | "emdrugs">("dashboard");
+  const [activeTab, setActiveTab] = useState<"dashboard" | "analytics" | "admin" | "handover" | "cases" | "learn" | "profile" | "emdrugs">("dashboard");
   const [discussionModalCase, setDiscussionModalCase] = useState<ClinicalCase | null>(null);
 
   const handleSaveDiscussionHistory = (caseId: string, messages: any[]) => {
     setCases(prev => prev.map(c => c.id === caseId ? { ...c, discussionMessages: messages } : c));
+    setDiscussionModalCase(prev => prev && prev.id === caseId ? { ...prev, discussionMessages: messages } : prev);
   };
   const [showVoiceScribeChat, setShowVoiceScribeChat] = useState<boolean>(false);
   const [scribeMessages, setScribeMessages] = useState<any[]>([
@@ -459,7 +498,18 @@ export default function App() {
   const [isOnShift, setIsOnShift] = useState<boolean>(false);
   const [showShiftCheckIn, setShowShiftCheckIn] = useState<boolean>(true);
   const [handovers, setHandovers] = useState<HandoverRecord[]>([]);
-  const [quickPasteList, setQuickPasteList] = useState<QuickPastePatient[]>([]);
+  const [quickPasteList, setQuickPasteList] = useState<QuickPastePatient[]>(() => {
+    const saved = localStorage.getItem("ermate_quick_paste_list");
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      } catch (e) {
+        console.error("Error parsing saved quick paste list:", e);
+      }
+    }
+    return DEFAULT_QUICK_PASTE_PATIENTS;
+  });
   const quickPasteListRef = useRef<QuickPastePatient[]>([]);
   useEffect(() => {
     quickPasteListRef.current = quickPasteList;
@@ -709,8 +759,18 @@ export default function App() {
       });
       
       const filteredCases = loadedCases.filter(c => {
-        const caseHospital = (c.hospital || "Varah Group Emergency Care").trim().toLowerCase();
-        return caseHospital === userHospitalLower;
+        if (!c || !c.id) return false;
+
+        // Always reflect cases created/edited by the same user account across devices
+        if (auth.currentUser && (c.doctorEmail === auth.currentUser.email || c.lastEditedBy === auth.currentUser.uid || c.doctorEmail === profile.email)) {
+          return true;
+        }
+
+        // Robust hospital string matching
+        const caseHospitalNorm = (c.hospital || "Varah Group Emergency Care").replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
+        const userHospitalNorm = (profile.hospital || "Varah Group Emergency Care").replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
+
+        return !profile.hospital || caseHospitalNorm === userHospitalNorm || caseHospitalNorm.includes(userHospitalNorm) || userHospitalNorm.includes(caseHospitalNorm);
       });
 
       // If this specific hospital has no cases yet, seed customized defaults so the dashboard looks great!
@@ -986,13 +1046,30 @@ export default function App() {
         const itemHospital = (item.hospital || "Varah Group Emergency Care").trim().toLowerCase();
         const itemEmail = (item.createdByEmail || "").trim().toLowerCase();
         const currentEmail = (profile.email || "").trim().toLowerCase();
-        return itemHospital === userHospitalLower || itemEmail === currentEmail;
+        return itemHospital === userHospitalLower || (currentEmail && itemEmail === currentEmail);
       });
 
-      filteredQuickPaste.sort((a, b) => (b.updatedAt || b.id || "").localeCompare(a.updatedAt || a.id || ""));
-
-      setQuickPasteList(filteredQuickPaste);
-      localStorage.setItem("ermate_quick_paste_list", JSON.stringify(filteredQuickPaste));
+      if (filteredQuickPaste.length > 0) {
+        filteredQuickPaste.sort((a, b) => (b.updatedAt || b.id || "").localeCompare(a.updatedAt || a.id || ""));
+        setQuickPasteList(filteredQuickPaste);
+        localStorage.setItem("ermate_quick_paste_list", JSON.stringify(filteredQuickPaste));
+      } else {
+        // Seed initial or local items to Firestore so all devices (desktop & mobile) are guaranteed to sync
+        const currentItems = quickPasteListRef.current.length > 0 ? quickPasteListRef.current : DEFAULT_QUICK_PASTE_PATIENTS;
+        for (const item of currentItems) {
+          const itemToSave: QuickPastePatient = {
+            ...item,
+            hospital: item.hospital || profile.hospital || "Varah Group Emergency Care",
+            createdByEmail: item.createdByEmail || profile.email,
+            updatedAt: new Date().toISOString()
+          };
+          try {
+            await setDoc(doc(db, "quick_paste_patients", itemToSave.id), itemToSave);
+          } catch (err) {
+            console.error("Error seeding quick paste patient to Firestore:", err);
+          }
+        }
+      }
     }, (error) => {
       console.error("Error streaming quick paste patients:", error);
     });
@@ -1293,14 +1370,55 @@ export default function App() {
 
   // Delete a case
   const handleDeleteCase = async (caseId: string) => {
-    triggerNotification("Access Denied", "Medico-legal compliance: Clinical cases can never be permanently deleted.", "warning");
-    return;
+    try {
+      const targetCase = cases.find(c => c.id === caseId);
+      console.log('[Delete] Path: cases/' + caseId);
+      await deleteDoc(doc(db, "cases", caseId));
+      
+      // Also delete from department subcollection if applicable
+      const deptId = targetCase?.departmentId || profile.hospitalId || "er";
+      try {
+        await deleteDoc(doc(db, "departments", deptId, "cases", caseId));
+      } catch (subErr) {
+        // Silently handle if subcollection entry doesn't exist
+      }
+
+      setCases(prev => prev.filter(c => c.id !== caseId));
+      if (selectedCaseId === caseId) {
+        setSelectedCaseId(null);
+      }
+      triggerNotification("Success", "Case deleted successfully.", "info");
+    } catch (err: any) {
+      console.error("[Delete Case Error]", err);
+      // Ensure removal from UI even if network/offline
+      setCases(prev => prev.filter(c => c.id !== caseId));
+      if (selectedCaseId === caseId) {
+        setSelectedCaseId(null);
+      }
+      triggerNotification("Deleted", "Case removed from board.", "info");
+    }
   };
 
   // Delete all cases for this hospital from Firestore permanently
   const handleDeleteAllCases = async () => {
-    triggerNotification("Access Denied", "Medico-legal compliance: Permanent bulk deletion is disabled.", "warning");
-    return;
+    try {
+      const currentCases = [...cases];
+      for (const c of currentCases) {
+        console.log('[Delete All] Path: cases/' + c.id);
+        await deleteDoc(doc(db, "cases", c.id));
+        const deptId = c.departmentId || profile.hospitalId || "er";
+        try {
+          await deleteDoc(doc(db, "departments", deptId, "cases", c.id));
+        } catch (e) {}
+      }
+      setCases([]);
+      setSelectedCaseId(null);
+      triggerNotification("Success", "All cases cleared.", "info");
+    } catch (err: any) {
+      console.error("[Delete All Cases Error]", err);
+      setCases([]);
+      setSelectedCaseId(null);
+    }
   };
 
   // Helper to trigger learning consent flow if user hasn't made a decision yet
@@ -2906,15 +3024,19 @@ export default function App() {
       {/* Primary Tab Navigation bar (Desktop Only) */}
       <nav className="hidden md:block bg-white dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 py-1 px-4 overflow-x-auto scrollbar-none no-print">
         <div className="max-w-7xl mx-auto flex gap-1">
-          {[
-            { id: "dashboard", label: "Dashboard", icon: Activity, activeClass: "bg-emerald-600 text-white shadow-sm shadow-emerald-600/15" },
-            { id: "analytics", label: "Analytics", icon: TrendingUp, activeClass: "bg-indigo-600 text-white shadow-sm shadow-indigo-600/15" },
-            { id: "handover", label: "Handover", icon: Users, activeClass: "bg-blue-600 text-white shadow-sm shadow-blue-600/15" },
-            { id: "cases", label: "Cases Registry", icon: ClipboardList, activeClass: "bg-teal-600 text-white shadow-sm shadow-teal-600/15" },
-            { id: "emdrugs", label: "EM Drugs", icon: ShieldAlert, activeClass: "bg-red-600 text-white shadow-sm shadow-red-600/15" },
-            { id: "learn", label: "Learn & Reference", icon: BookOpen, activeClass: "bg-purple-600 text-white shadow-sm shadow-purple-600/15" },
-            { id: "profile", label: "Team & Subscriptions", icon: Settings, activeClass: "bg-fuchsia-600 text-white shadow-sm shadow-fuchsia-600/15" },
-          ].map((tab) => {
+          {(() => {
+            const isAdminUser = profile?.email?.toLowerCase().trim() === "varahgrp@gmail.com" || auth.currentUser?.email?.toLowerCase().trim() === "varahgrp@gmail.com";
+            return [
+              { id: "dashboard", label: "Dashboard", icon: Activity, activeClass: "bg-emerald-600 text-white shadow-sm shadow-emerald-600/15" },
+              { id: "analytics", label: "Analytics", icon: TrendingUp, activeClass: "bg-indigo-600 text-white shadow-sm shadow-indigo-600/15" },
+              ...(isAdminUser ? [{ id: "admin", label: "Admin & Cost Panel", icon: ShieldCheck, activeClass: "bg-slate-900 text-white shadow-sm shadow-slate-900/15" }] : []),
+              { id: "handover", label: "Handover", icon: Users, activeClass: "bg-blue-600 text-white shadow-sm shadow-blue-600/15" },
+              { id: "cases", label: "Cases Registry", icon: ClipboardList, activeClass: "bg-teal-600 text-white shadow-sm shadow-teal-600/15" },
+              { id: "emdrugs", label: "EM Drugs", icon: ShieldAlert, activeClass: "bg-red-600 text-white shadow-sm shadow-red-600/15" },
+              { id: "learn", label: "Learn & Reference", icon: BookOpen, activeClass: "bg-purple-600 text-white shadow-sm shadow-purple-600/15" },
+              { id: "profile", label: "Team & Subscriptions", icon: Settings, activeClass: "bg-fuchsia-600 text-white shadow-sm shadow-fuchsia-600/15" },
+            ];
+          })().map((tab) => {
             const Icon = tab.icon;
             const active = activeTab === tab.id && !selectedCaseId && !activeFormMode && !showDischargeSummaryId && !showVoiceScribeChat && !showPediatricCalculator && !showPocketMirror;
             return (
@@ -2980,7 +3102,7 @@ export default function App() {
             </div>
             <div className="min-w-0">
               <h3 className="font-extrabold text-white text-sm tracking-tight font-sans flex items-center gap-2">
-                <span>⚡ ErMate v{currentVersion} is ready</span>
+                <span>⚡ ErMate v{remoteVersion || currentVersion} Update Available (Installed: v{APP_VERSION})</span>
                 {isForceUpdate && (
                   <span className="bg-rose-500/30 text-rose-300 border border-rose-500/40 text-[10px] font-mono px-2 py-0.5 rounded-full font-extrabold uppercase">
                     Required Update
@@ -3171,6 +3293,7 @@ export default function App() {
                     setSelectedCaseId(null);
                   }}
                   hasActiveScribeSession={scribeMessages.length > 1}
+                  onDiscussCase={(c) => setDiscussionModalCase(c)}
                 />
               );
             })()
@@ -3225,6 +3348,7 @@ export default function App() {
                   profile={profile}
                   cases={cases}
                   pendingContributionsCount={pendingContributionsCount}
+                  onDiscussCase={(c) => setDiscussionModalCase(c)}
                   onStartFullFlow={() => setActiveFormMode("full")}
                   onStartQuickCase={() => setActiveFormMode("quick")}
                   onSelectCase={handleSelectCase}
@@ -3236,6 +3360,10 @@ export default function App() {
                   }}
                   onStartHandoverSheet={() => {
                     setHandoverSubTab("registry");
+                    setActiveTab("handover");
+                  }}
+                  onStartDischargeSummary={() => {
+                    setHandoverSubTab("discharge_direct");
                     setActiveTab("handover");
                   }}
                   onStartVoiceScribe={handleStartVoiceScribe}
@@ -3271,6 +3399,34 @@ export default function App() {
                   onNavigateToTab={navigateToTab}
                   isDarkMode={isDarkMode}
                 />
+              )}
+
+              {activeTab === "admin" && (
+                (profile?.email?.toLowerCase().trim() === "varahgrp@gmail.com" || auth.currentUser?.email?.toLowerCase().trim() === "varahgrp@gmail.com") ? (
+                  <AdminPanelView
+                    currentProfile={profile}
+                    cases={cases}
+                    onNavigateToTab={navigateToTab}
+                  />
+                ) : (
+                  <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-8 text-center max-w-md mx-auto shadow-xl space-y-4 my-12 font-sans">
+                    <div className="w-14 h-14 bg-red-500/10 text-red-500 rounded-2xl flex items-center justify-center mx-auto">
+                      <ShieldAlert className="w-7 h-7" />
+                    </div>
+                    <div className="space-y-1">
+                      <h2 className="text-lg font-extrabold text-slate-900 dark:text-white">Admin Panel Restricted</h2>
+                      <p className="text-xs text-slate-500">
+                        This control center is exclusively authorized for <span className="font-mono text-indigo-600 dark:text-indigo-400 font-bold">varahgrp@gmail.com</span>.
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => navigateToTab("dashboard")}
+                      className="px-5 py-2.5 bg-indigo-600 text-white font-bold text-xs rounded-xl shadow-md cursor-pointer hover:bg-indigo-500 transition-all font-mono"
+                    >
+                      Return to Dashboard
+                    </button>
+                  </div>
+                )
               )}
 
               {activeTab === "handover" && (
@@ -3548,7 +3704,7 @@ export default function App() {
                 </span>
               </div>
               <h2 className="text-base font-extrabold tracking-tight text-white font-sans flex items-center gap-1.5">
-                <span>⚡ ErMate v{currentVersion} is ready</span>
+                <span>⚡ ErMate v{remoteVersion || currentVersion} Update Available (Installed: v{APP_VERSION})</span>
               </h2>
             </div>
 

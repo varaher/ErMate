@@ -2,10 +2,12 @@ import React, { useState, useRef, useEffect } from "react";
 import { 
   ArrowLeft, Mic, Send, Sparkles, AlertCircle, RefreshCw, 
   CheckCircle, FileText, User, Heart, Shield, PlusCircle, Trash2,
-  Upload, Camera, BookOpen, MoreHorizontal
+  Upload, Camera, BookOpen, MoreHorizontal, Lightbulb, HelpCircle, ClipboardCheck,
+  BookmarkCheck, Check
 } from "lucide-react";
 import SpeechMicButton from "./SpeechMicButton";
 import { sanitizeDoctorError } from "../utils/sanitizeError";
+import { ClinicalSummaryCard, ClinicalSummaryData } from "./ClinicalSummaryCard";
 
 import { UserProfile } from "../types";
 
@@ -17,6 +19,7 @@ interface Message {
   isOcrProposal?: boolean;
   proposalActive?: boolean;
   extractedData?: any;
+  clinicalSummary?: ClinicalSummaryData;
 }
 
 interface VoiceScribeChatViewProps {
@@ -67,6 +70,7 @@ export default function VoiceScribeChatView({
     }
   };
   const [inputText, setInputText] = useState("");
+  const [showGuide, setShowGuide] = useState<boolean>(true);
   const [showMoreMenu, setShowMoreMenu] = useState(false);
   const moreMenuRef = useRef<HTMLDivElement>(null);
 
@@ -109,7 +113,23 @@ export default function VoiceScribeChatView({
             aiCredits: resData.remainingCredits
           });
         }
-        const savedId = await onSaveExtractedCase(resData.data, {
+
+        if (resData.clinicalSummary) {
+          const summaryMsg: Message = {
+            id: "ai-summary-" + Date.now(),
+            sender: "ai",
+            text: "📋 **Post-Dictation Clinical Summary**",
+            timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+            clinicalSummary: resData.clinicalSummary
+          };
+          setMessages(prev => {
+            if (prev.some(m => m.clinicalSummary?.summary === resData.clinicalSummary.summary)) return prev;
+            return [...prev, summaryMsg];
+          });
+        }
+
+        const caseWithSummary = resData.clinicalSummary ? { ...resData.data, clinicalSummary: resData.clinicalSummary } : resData.data;
+        const savedId = await onSaveExtractedCase(caseWithSummary, {
           autoNavigate: false,
           existingCaseId: activeVoiceCaseIdRef.current
         });
@@ -563,6 +583,18 @@ Dr. Marcus Brody, Trauma Lead`);
     setError(null);
   };
 
+  const [voiceDraftToast, setVoiceDraftToast] = useState(false);
+
+  const handleSaveVoiceDraft = () => {
+    try {
+      localStorage.setItem("ermate_voice_chat_messages", JSON.stringify(messages));
+      setVoiceDraftToast(true);
+      setTimeout(() => setVoiceDraftToast(false), 3000);
+    } catch (err) {
+      console.error("Error saving voice scribe draft:", err);
+    }
+  };
+
   // Custom visual markdown formatter
   function parseBold(text: string) {
     const parts = text.split(/(\*\*.*?\*\*)/g);
@@ -618,6 +650,16 @@ Dr. Marcus Brody, Trauma Lead`);
 
         <div className="flex items-center gap-2">
           <button
+            type="button"
+            onClick={handleSaveVoiceDraft}
+            className="px-3 py-1.5 bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 text-emerald-700 dark:text-emerald-400 border border-emerald-200/80 dark:border-emerald-800 rounded-xl text-xs font-extrabold flex items-center gap-1.5 transition-all cursor-pointer"
+            title="Save voice scribe chat draft"
+          >
+            <BookmarkCheck className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+            <span className="hidden sm:inline">Save Draft</span>
+          </button>
+
+          <button
             onClick={clearChat}
             className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/20 rounded-lg text-xs font-bold transition-all flex items-center gap-1 cursor-pointer"
             title="Clear current log"
@@ -646,12 +688,76 @@ Dr. Marcus Brody, Trauma Lead`);
         </div>
       </div>
 
+      {voiceDraftToast && (
+        <div className="bg-emerald-600 text-white text-xs font-semibold px-4 py-2 border-b border-emerald-700 flex items-center justify-between animate-fade-in shadow-inner shrink-0">
+          <span className="flex items-center gap-1.5">
+            <Check className="w-4 h-4 text-white" />
+            <span>Voice Scribe chat history saved as draft successfully!</span>
+          </span>
+          <span className="text-[9px] uppercase font-mono bg-emerald-700 px-2 py-0.5 rounded-full tracking-wider">Synced</span>
+        </div>
+      )}
+
       {/* Main Grid */}
       <div className="flex-1 flex overflow-hidden">
         
         {/* Chat window */}
         <div className="flex-1 flex flex-col justify-between bg-slate-100/40 dark:bg-slate-900/10 p-4 overflow-y-auto space-y-4">
           <div className="space-y-3 flex-1 overflow-y-auto pr-1">
+            
+            {/* Interactive How to Use Voice Scribe Banner */}
+            <div className="bg-purple-50/90 dark:bg-purple-950/40 border border-purple-200 dark:border-purple-900/60 rounded-2xl p-3.5 md:p-4 text-xs text-purple-950 dark:text-purple-100 mb-3 space-y-2.5 transition-all shadow-xs">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="p-1.5 bg-purple-600 text-white rounded-lg shadow-xs">
+                    <Lightbulb className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h4 className="font-extrabold text-xs uppercase tracking-wide text-purple-900 dark:text-purple-200">
+                      How to Use AI Voice Scribe & Clinical Dictation
+                    </h4>
+                    <p className="text-[11px] text-purple-700 dark:text-purple-300 font-medium">
+                      Hands-free medical transcription and instant AI case extraction for Emergency Physicians.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowGuide(!showGuide)}
+                  className="px-2.5 py-1 text-[10px] font-bold bg-purple-100 hover:bg-purple-200 dark:bg-purple-900/60 text-purple-800 dark:text-purple-200 rounded-lg transition-colors cursor-pointer shrink-0"
+                >
+                  {showGuide ? "Hide Guide" : "Show Guide"}
+                </button>
+              </div>
+
+              {showGuide && (
+                <div className="pt-2.5 border-t border-purple-200/60 dark:border-purple-900/60 grid grid-cols-1 md:grid-cols-2 gap-3 text-[11px] leading-relaxed">
+                  <div className="space-y-1.5 bg-white/80 dark:bg-slate-900/80 p-3 rounded-xl border border-purple-100 dark:border-purple-900">
+                    <span className="font-extrabold text-purple-900 dark:text-purple-300 flex items-center gap-1">
+                      <HelpCircle className="w-3.5 h-3.5 text-purple-600" />
+                      What is Voice Scribe for?
+                    </span>
+                    <p className="text-slate-700 dark:text-slate-300">
+                      Dictate your clinical findings in natural language. ErMate transcribes the dictation and automatically parses vitals, SAMPLE history, primary survey, and populates the <strong>Case Sheet</strong> with a <strong>Clinical Summary Card</strong>.
+                    </p>
+                  </div>
+
+                  <div className="space-y-1.5 bg-white/80 dark:bg-slate-900/80 p-3 rounded-xl border border-purple-100 dark:border-purple-900">
+                    <span className="font-extrabold text-purple-900 dark:text-purple-300 flex items-center gap-1">
+                      <ClipboardCheck className="w-3.5 h-3.5 text-purple-600" />
+                      4-Step Scribe Workflow:
+                    </span>
+                    <ol className="list-decimal pl-4 space-y-1 text-slate-700 dark:text-slate-300 font-medium">
+                      <li><strong>Dictate or Paste:</strong> Tap <em>Mic</em> to speak or paste transfer notes.</li>
+                      <li><strong>AI Case Extraction:</strong> ErMate extracts vitals, history & treatments.</li>
+                      <li><strong>Review Summary:</strong> Review working diagnoses & time-critical alerts.</li>
+                      <li><strong>Commit to Case Sheet:</strong> Click <em>Save to Case Sheet</em> to sync.</li>
+                    </ol>
+                  </div>
+                </div>
+              )}
+            </div>
+
             {messages.map((m) => (
               <div 
                 key={m.id}
@@ -665,6 +771,11 @@ Dr. Marcus Brody, Trauma Lead`);
                   <div className="whitespace-pre-wrap font-sans">
                     {m.sender === "ai" ? parseMarkdown(m.text) : m.text}
                   </div>
+
+                  {/* Clinical Summary Card */}
+                  {m.clinicalSummary && (
+                    <ClinicalSummaryCard summary={m.clinicalSummary} />
+                  )}
 
                   {/* Render OCR interactive case sheet insertion option */}
                   {m.isOcrProposal && m.proposalActive && (

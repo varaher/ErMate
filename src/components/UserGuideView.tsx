@@ -1,12 +1,13 @@
 import React, { useState } from "react";
-import { Search, BookOpen, ChevronRight, HelpCircle, ArrowUpRight, Sparkles, AlertCircle } from "lucide-react";
+import { Search, BookOpen, ChevronRight, HelpCircle, ArrowUpRight, Sparkles, AlertCircle, ChevronLeft } from "lucide-react";
 import { GUIDE_SECTIONS, GuideSection } from "../data/guide";
 
 interface UserGuideViewProps {
   onNavigateToFeature?: (featureId: string) => void;
+  onNavigateToTab?: (tabId: string) => void;
 }
 
-export default function UserGuideView({ onNavigateToFeature }: UserGuideViewProps) {
+export default function UserGuideView({ onNavigateToFeature, onNavigateToTab }: UserGuideViewProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedSectionId, setSelectedSectionId] = useState(GUIDE_SECTIONS[0].id);
   const [activeTab, setActiveTab] = useState<"all" | "core" | "clinical" | "ai" | "account">("all");
@@ -134,6 +135,17 @@ export default function UserGuideView({ onNavigateToFeature }: UserGuideViewProp
     <div className="flex flex-col lg:flex-row h-full min-h-[500px]" id="user-guide-container">
       {/* Search & Index Drawer/Sidebar */}
       <div className="w-full lg:w-80 border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 flex flex-col shrink-0">
+        {onNavigateToTab && (
+          <div className="p-3 border-b border-slate-100 dark:border-slate-900 bg-slate-50/50 dark:bg-slate-900/40">
+            <button
+              type="button"
+              onClick={() => onNavigateToTab("dashboard")}
+              className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white transition-all cursor-pointer"
+            >
+              <ChevronLeft className="w-4 h-4 text-emerald-500" /> Back to Dashboard
+            </button>
+          </div>
+        )}
         <div className="p-4 border-b border-slate-100 dark:border-slate-900">
           <div className="relative">
             <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />

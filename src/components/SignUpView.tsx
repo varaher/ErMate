@@ -23,6 +23,8 @@ export default function SignUpView({
   const [name, setName] = useState("");
   const [age, setAge] = useState<string>("");
   const [hospital, setHospital] = useState(initialHospital);
+  const [stateName, setStateName] = useState("Maharashtra");
+  const [hospitalAddress, setHospitalAddress] = useState("");
   const [role, setRole] = useState<"Resident" | "Consultant" | "HOD">(initialRole);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -70,6 +72,16 @@ export default function SignUpView({
 
     if (!hospital.trim()) {
       setError("Please specify your current active hospital name.");
+      return;
+    }
+
+    if (!hospitalAddress.trim()) {
+      setError("Please specify your hospital address (e.g. Street / District / Area).");
+      return;
+    }
+
+    if (!stateName.trim()) {
+      setError("Please select or enter your hospital state.");
       return;
     }
 
@@ -127,6 +139,8 @@ export default function SignUpView({
           email: email.trim().toLowerCase(),
           role: role === "HOD" ? "HOD / Shift Lead" : role === "Consultant" ? "Senior Consultant" : "EM Resident",
           hospital: hospital.trim(),
+          state: stateName.trim(),
+          hospitalAddress: hospitalAddress.trim(),
           aiCredits: credits,
           streak: 1, // new user streak starts at 1
           subscriptionTier: acceptOffer && initialHospital ? "Hospital Team Premium (Department Covered)" : subTier,
@@ -329,7 +343,7 @@ export default function SignUpView({
                 {/* Hospital Name */}
                 <div className="space-y-1">
                   <label htmlFor="signup-hospital" className={`block text-[9px] font-bold uppercase tracking-wider font-mono ${isEmerald ? 'text-slate-500' : 'text-slate-400'}`}>
-                    Hospital Name
+                    Hospital Name *
                   </label>
                   <div className="relative rounded-lg">
                     <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
@@ -342,6 +356,56 @@ export default function SignUpView({
                       onChange={(e) => setHospital(e.target.value)}
                       placeholder="Varah Group Emergency Care"
                       className={`${isEmerald ? 'bg-slate-50 border-slate-200 text-slate-800 focus:ring-emerald-500' : 'bg-slate-900 border-slate-800 text-slate-200 focus:ring-blue-500'} block w-full pl-9 pr-3 py-2 text-xs rounded-lg font-sans font-semibold focus:outline-none focus:ring-1`}
+                      required
+                    />
+                  </div>
+                </div>
+
+                {/* State & Hospital Address */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label htmlFor="signup-state" className={`block text-[9px] font-bold uppercase tracking-wider font-mono ${isEmerald ? 'text-slate-500' : 'text-slate-400'}`}>
+                      State / Region *
+                    </label>
+                    <select
+                      id="signup-state"
+                      value={stateName}
+                      onChange={(e) => setStateName(e.target.value)}
+                      className={`${isEmerald ? 'bg-slate-50 border-slate-200 text-slate-800 focus:ring-emerald-500' : 'bg-slate-900 border-slate-800 text-slate-200 focus:ring-blue-500'} block w-full px-2.5 py-2 text-xs rounded-lg font-bold focus:outline-none focus:ring-1`}
+                      required
+                    >
+                      <option value="Maharashtra">Maharashtra</option>
+                      <option value="Delhi">Delhi NCR</option>
+                      <option value="Karnataka">Karnataka</option>
+                      <option value="Tamil Nadu">Tamil Nadu</option>
+                      <option value="Telangana">Telangana</option>
+                      <option value="Kerala">Kerala</option>
+                      <option value="Gujarat">Gujarat</option>
+                      <option value="West Bengal">West Bengal</option>
+                      <option value="Uttar Pradesh">Uttar Pradesh</option>
+                      <option value="Rajasthan">Rajasthan</option>
+                      <option value="Madhya Pradesh">Madhya Pradesh</option>
+                      <option value="Andhra Pradesh">Andhra Pradesh</option>
+                      <option value="Punjab">Punjab</option>
+                      <option value="Haryana">Haryana</option>
+                      <option value="Odisha">Odisha</option>
+                      <option value="Assam">Assam</option>
+                      <option value="Goa">Goa</option>
+                      <option value="Other">Other / International</option>
+                    </select>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label htmlFor="signup-address" className={`block text-[9px] font-bold uppercase tracking-wider font-mono ${isEmerald ? 'text-slate-500' : 'text-slate-400'}`}>
+                      Hospital Address *
+                    </label>
+                    <input
+                      id="signup-address"
+                      type="text"
+                      value={hospitalAddress}
+                      onChange={(e) => setHospitalAddress(e.target.value)}
+                      placeholder="e.g. 12 Medical Enclave, Civil Lines"
+                      className={`${isEmerald ? 'bg-slate-50 border-slate-200 text-slate-800 focus:ring-emerald-500' : 'bg-slate-900 border-slate-800 text-slate-200 focus:ring-blue-500'} block w-full px-3 py-2 text-xs rounded-lg font-sans focus:outline-none focus:ring-1`}
                       required
                     />
                   </div>

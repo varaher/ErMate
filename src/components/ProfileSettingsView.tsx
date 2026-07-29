@@ -150,7 +150,18 @@ export default function ProfileSettingsView({
   const [editEmail, setEditEmail] = useState<string>(profile.email);
   const [editAge, setEditAge] = useState<number>(profile.age || 34);
   const [editRole, setEditRole] = useState<string>(profile.role || "Senior Consultant");
+  const [editState, setEditState] = useState<string>(profile.state || "Maharashtra");
+  const [editHospitalAddress, setEditHospitalAddress] = useState<string>(profile.hospitalAddress || "");
   const [profileSuccess, setProfileSuccess] = useState<string>("");
+
+  useEffect(() => {
+    setEditName(profile.name || "");
+    setEditEmail(profile.email || "");
+    setEditAge(profile.age || 34);
+    setEditRole(profile.role || "Senior Consultant");
+    setEditState(profile.state || "Maharashtra");
+    setEditHospitalAddress(profile.hospitalAddress || "");
+  }, [profile]);
 
   // Delete cases states
   const [deleteConfirmText, setDeleteConfirmText] = useState<string>("");
@@ -364,7 +375,9 @@ export default function ProfileSettingsView({
       email: editEmail,
       age: editAge,
       role: editRole,
-      hospital: hospitalName
+      hospital: hospitalName,
+      state: editState,
+      hospitalAddress: editHospitalAddress
     });
     setProfileSuccess("Clinical profile parameters updated and synchronized successfully.");
     setTimeout(() => setProfileSuccess(""), 3000);
@@ -2221,6 +2234,45 @@ export default function ProfileSettingsView({
               value={hospitalName}
               onChange={(e) => setHospitalName(e.target.value)}
               placeholder="Varah Emergency Hospital"
+              className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-200"
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-[10px] text-slate-450 block font-bold uppercase">State / Region</label>
+            <select
+              value={editState}
+              onChange={(e) => setEditState(e.target.value)}
+              className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-200 font-bold"
+            >
+              <option value="Maharashtra">Maharashtra</option>
+              <option value="Delhi">Delhi NCR</option>
+              <option value="Karnataka">Karnataka</option>
+              <option value="Tamil Nadu">Tamil Nadu</option>
+              <option value="Telangana">Telangana</option>
+              <option value="Kerala">Kerala</option>
+              <option value="Gujarat">Gujarat</option>
+              <option value="West Bengal">West Bengal</option>
+              <option value="Uttar Pradesh">Uttar Pradesh</option>
+              <option value="Rajasthan">Rajasthan</option>
+              <option value="Madhya Pradesh">Madhya Pradesh</option>
+              <option value="Andhra Pradesh">Andhra Pradesh</option>
+              <option value="Punjab">Punjab</option>
+              <option value="Haryana">Haryana</option>
+              <option value="Odisha">Odisha</option>
+              <option value="Assam">Assam</option>
+              <option value="Goa">Goa</option>
+              <option value="Other">Other / International</option>
+            </select>
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-[10px] text-slate-450 block font-bold uppercase">Hospital Address (Street / District / Area)</label>
+            <input
+              type="text"
+              value={editHospitalAddress}
+              onChange={(e) => setEditHospitalAddress(e.target.value)}
+              placeholder="e.g. 12 Medical Enclave, Civil Lines, Central District"
               className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-200"
             />
           </div>

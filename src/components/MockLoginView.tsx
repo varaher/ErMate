@@ -179,6 +179,8 @@ export default function MockLoginView({
           email: user.email || "doctor@ermate.in",
           role: "Senior Consultant",
           hospital: "Varah Group Emergency Care",
+          state: "Maharashtra",
+          hospitalAddress: "Emergency Wing, Medical Enclave, Civil Lines",
           aiCredits: 350,
           streak: 5,
           subscriptionTier: "Enterprise Platinum"

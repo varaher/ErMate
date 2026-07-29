@@ -258,26 +258,107 @@
 
 /* Print styles */
 @media print {
+  * { 
+    height: auto !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  @page { 
+    size: A4 portrait; 
+    margin: 10mm 12mm; 
+  }
+
+  @page :left { 
+    margin-left: 18mm; 
+    margin-right: 12mm;
+  }
+
+  @page :right { 
+    margin-right: 18mm; 
+    margin-left: 12mm;
+  }
+
   .hov-card {
-    break-inside: avoid;
-    page-break-inside: avoid;
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
     margin-bottom: 8px;
-    box-shadow: none;
-    border: 0.5pt solid #D4E8DC;
+    box-shadow: none !important;
+    border: 1px solid #0f172a !important;
+    background: #ffffff !important;
   }
 
-  .hov-section { padding: 5px 10px; }
-  .hov-label { font-size: 7pt; }
-  .hov-value { font-size: 8pt; }
-  .hov-story-text { font-size: 8.5pt; }
-  .hov-name { font-size: 12pt; }
-  .hov-alert-row {
-    font-size: 8pt;
+  .hov-section { 
     padding: 5px 10px;
+    border-top: 1px solid #cbd5e1 !important;
   }
-  .hov-mgmt { margin: 0 10px 5px; }
-  .hov-done-item,
-  .hov-todo-item { font-size: 7.5pt; }
 
-  * { height: auto !important; }
+  .hov-label { 
+    font-size: 7.5pt !important;
+    color: #334155 !important;
+    font-weight: 800 !important;
+  }
+
+  .hov-value { 
+    font-size: 8.5pt !important;
+    color: #0f172a !important;
+    font-weight: 600 !important;
+  }
+
+  .hov-story-text { 
+    font-size: 8.5pt !important;
+    color: #0f172a !important;
+    font-weight: 500 !important;
+  }
+
+  .hov-name { 
+    font-size: 13pt !important;
+    color: #000000 !important;
+    font-weight: 800 !important;
+  }
+
+  .hov-bed, .hov-agesex, .hov-meta {
+    color: #1e293b !important;
+    font-weight: 700 !important;
+  }
+
+  .hov-alert-row {
+    font-size: 8.5pt !important;
+    padding: 5px 10px;
+    font-weight: 800 !important;
+    background-color: #991b1b !important;
+    color: #ffffff !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  .hov-mgmt { 
+    margin: 0 10px 5px;
+    background: #94a3b8 !important;
+  }
+
+  .hov-done {
+    background: #f0fdf4 !important;
+  }
+
+  .hov-todo {
+    background: #fffbeb !important;
+  }
+
+  .hov-done-header {
+    color: #14532d !important;
+    font-weight: 800 !important;
+  }
+
+  .hov-todo-header {
+    color: #78350f !important;
+    font-weight: 800 !important;
+  }
+
+  .hov-done-item,
+  .hov-todo-item { 
+    font-size: 8pt !important;
+    color: #0f172a !important;
+    font-weight: 600 !important;
+  }
 }

@@ -10,6 +10,7 @@ import {
   generateDischargeSummary,
   generateDifferentials,
 } from '../extraction.ts';
+import { generateDischargeSummary as generateEMRDischargeSummary } from '../dischargeSummary.ts';
 
 const router = Router();
 
@@ -69,7 +70,7 @@ router.post(
   }
 );
 
-// ── Route 3: Generate discharge summary ───────────────────────
+// ── Route 3: Generate discharge summary from registered case ─────
 router.post(
   '/api/discharge-summary',
   async (req: Request, res: Response) => {
@@ -83,6 +84,31 @@ router.post(
     }
 
     const result = await generateDischargeSummary(caseData);
+
+    if (!result.success) {
+      return res.status(500).json(result);
+    }
+
+    return res.json(result);
+  }
+);
+
+// ── Route 3b: Direct EMR Paste → Generate structured Discharge Summary ──
+router.post(
+  '/api/discharge-summary/generate',
+  async (req: Request, res: Response) => {
+    const { rawText } = req.body;
+
+    if (!rawText || typeof rawText !== 'string' || !rawText.trim()) {
+      return res.status(400).json({
+        success: false,
+        error: 'No EMR text provided',
+      });
+    }
+
+    console.log('[Route] discharge-summary/generate — length:', rawText.length);
+
+    const result = await generateEMRDischargeSummary(rawText);
 
     if (!result.success) {
       return res.status(500).json(result);

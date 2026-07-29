@@ -69,6 +69,63 @@ export interface SampleHistory {
   psychiatricFlags: string;
 }
 
+export interface PrimarySurvey {
+  airway: {
+    status: 'patent' | 'maintained' | 'compromised' | 'protected' | string;
+    intervention: string | null;
+    cSpine: 'immobilised' | 'not_applicable' | string | null;
+  };
+  breathing: {
+    rr: string | null;
+    spo2: string | null;
+    o2Delivery: string | null;
+    workOfBreathing: 'normal' | 'increased' | string | null;
+    airEntry: string | null;
+    addedSounds: string | null;
+    chestWall: string | null;
+  };
+  circulation: {
+    hr: string | null;
+    rhythm: 'regular' | 'irregular' | string | null;
+    sbp: string | null;
+    dbp: string | null;
+    crt: '<2sec' | '>2sec' | string | null;
+    peripheralPulses: 'normal' | 'weak' | 'absent' | 'bounding' | string | null;
+    skinPerfusion: string | null;
+    bleeding: string | null;
+    ivAccess: string | null;
+    efast: {
+      pericardial: 'negative' | 'positive' | 'not_done' | string;
+      ruq: 'negative' | 'positive' | 'not_done' | string;
+      luq: 'negative' | 'positive' | 'not_done' | string;
+      suprapubic: 'negative' | 'positive' | 'not_done' | string;
+      lungs: 'no_blines' | 'blines' | 'not_done' | string;
+    };
+    ecg: string | null;
+  };
+  disability: {
+    gcsE: string | null;
+    gcsV: string | null;
+    gcsM: string | null;
+    gcsTotal: string | null;
+    pupilsEqual: boolean | null;
+    pupilSizeR: string | null;
+    pupilSizeL: string | null;
+    pupilReaction: 'reactive' | 'sluggish' | 'fixed' | string | null;
+    grbs: string | null;
+    focalDeficit: string | null;
+    seizure: 'none' | 'active' | 'postictal' | string | null;
+  };
+  exposure: {
+    temp: string | null;
+    logRoll: string | null;
+    skin: string | null;
+    pelvis: 'stable' | 'unstable' | 'not_assessed' | string | null;
+    longBones: string | null;
+    hypothermiaPrevention: boolean | null;
+  };
+}
+
 export interface PrimaryAssessment {
   airway: string;
   airwayStatus: "Normal" | "Abnormal";
@@ -80,6 +137,67 @@ export interface PrimaryAssessment {
   disabilityStatus: "Normal" | "Abnormal";
   exposure: string;
   exposureStatus: "Normal" | "Abnormal";
+  survey?: PrimarySurvey;
+}
+
+export function getInitialPrimarySurvey(caseType: string = "Medical"): PrimarySurvey {
+  const isTrauma = caseType?.toLowerCase() === "trauma";
+  return {
+    airway: {
+      status: "patent",
+      intervention: null,
+      cSpine: isTrauma ? "immobilised" : "not_applicable",
+    },
+    breathing: {
+      rr: null,
+      spo2: null,
+      o2Delivery: "Room air",
+      workOfBreathing: "normal",
+      airEntry: "Bilaterally equal",
+      addedSounds: "Clear",
+      chestWall: isTrauma ? "Normal" : null,
+    },
+    circulation: {
+      hr: null,
+      rhythm: "regular",
+      sbp: null,
+      dbp: null,
+      crt: "<2sec",
+      peripheralPulses: "normal",
+      skinPerfusion: "Warm + dry",
+      bleeding: isTrauma ? "Nil" : null,
+      ivAccess: null,
+      efast: {
+        pericardial: "not_done",
+        ruq: "not_done",
+        luq: "not_done",
+        suprapubic: "not_done",
+        lungs: "not_done",
+      },
+      ecg: null,
+    },
+    disability: {
+      gcsE: "4",
+      gcsV: "5",
+      gcsM: "6",
+      gcsTotal: "15",
+      pupilsEqual: true,
+      pupilSizeR: "3",
+      pupilSizeL: "3",
+      pupilReaction: "reactive",
+      grbs: null,
+      focalDeficit: "Nil",
+      seizure: "none",
+    },
+    exposure: {
+      temp: null,
+      skin: "No pallor, rashes, or oedema",
+      logRoll: isTrauma ? "Spine clear" : null,
+      pelvis: isTrauma ? "stable" : null,
+      longBones: isTrauma ? "Intact" : null,
+      hypothermiaPrevention: false,
+    },
+  };
 }
 
 export interface TreatmentItem {
@@ -317,6 +435,8 @@ export interface ClinicalCase {
   lastEditedByName?: string;
   lastEditedByRole?: string;
   lastEditedAt?: string;
+  discussionMessages?: any[];
+  clinicalSummary?: any;
 }
 
 export interface PediatricDetails {
@@ -410,11 +530,24 @@ export interface PediatricDetails {
   emConsultant?: string;
 }
 
+export interface DirectDischargeSummaryItem {
+  id: string;
+  patientName: string;
+  uhid?: string;
+  ageGender?: string;
+  triage?: string;
+  rawText: string;
+  createdAt: string;
+  summary: Record<string, any>;
+}
+
 export interface UserProfile {
   name: string;
   email: string;
   role: string;
   hospital: string;
+  state?: string;
+  hospitalAddress?: string;
   aiCredits: number;
   streak: number;
   subscriptionTier: string;
@@ -426,6 +559,19 @@ export interface UserProfile {
   department?: string;
   teamColor?: "emerald" | "blue" | "indigo" | "violet";
   hasConsentedToLearning?: boolean;
+}
+
+export interface ApiLogItem {
+  id: string;
+  timestamp: string;
+  service: "Gemini 2.5 Flash" | "Gemini 3.6 Pro" | "Google Vision OCR" | "Speech-to-Text Voice" | "Gemini Search Grounding" | "Firestore Operations";
+  feature: string;
+  userEmail: string;
+  hospital: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  estimatedCostUSD: number;
+  status: "Success" | "Rate Limited" | "Failed";
 }
 
 export interface HandoverRecord {
@@ -476,6 +622,7 @@ export interface HandoverPatient {
 
 export interface QuickPastePatient {
   id: string;
+  bed?: string;
   name: string;
   ageGender: string;
   triage: string;

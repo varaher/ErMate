@@ -1,18 +1,21 @@
 import React, { useState, useEffect, useRef } from "react";
 import { 
-  ArrowLeft, Save, Sparkles, Mic, FileText, CheckCircle, 
+  ArrowLeft, Save, Sparkles, Mic, FileText, CheckCircle, CheckCircle2,
   Trash2, Plus, ShieldAlert, BookOpen, Clock, Heart, 
   Eye, RefreshCw, Printer, AlertTriangle, ClipboardCheck, 
   User, Check, Shield, FileCheck, Users, LogOut, ChevronRight,
   Copy, Download, ChevronDown, TrendingUp, PlusCircle, Activity, Edit3,
-  Brain, Send, Award, MoreHorizontal, Pill
+  Brain, Send, Award, MoreHorizontal, Pill, MessageSquare, HelpCircle, Info, Lightbulb, X, Skull,
+  BookmarkCheck
 } from "lucide-react";
 import { 
-  ClinicalCase, PatientVitals, SampleHistory, PrimaryAssessment, 
+  ClinicalCase, PatientVitals, SampleHistory, PrimaryAssessment, PrimarySurvey, getInitialPrimarySurvey,
   TreatmentItem, InvestigationItem, DifferentialDiagnosis, TriageCategory, ArrivalMode,
   IpsgChecklist, VulnerableAssessment, ConsentTimeOut, DispositionDetails, MlcDetails, VitalsRecord,
   UserProfile, PediatricDetails, DischargeInfo
 } from "../types";
+import { PrimarySurveySection } from "./PrimarySurveySection";
+import { triggerPrintWithTip } from "../utils/printWithTip";
 import { 
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend
 } from "recharts";
@@ -32,6 +35,7 @@ interface CaseSheetViewProps {
   onSaveProfile?: (updated: UserProfile) => void;
   onReturnToScribe?: () => void;
   hasActiveScribeSession?: boolean;
+  onDiscussCase?: (patientCase: ClinicalCase) => void;
 }
 
 export default function CaseSheetView({ 
@@ -45,7 +49,8 @@ export default function CaseSheetView({
   profile,
   onSaveProfile,
   onReturnToScribe,
-  hasActiveScribeSession
+  hasActiveScribeSession,
+  onDiscussCase
 }: CaseSheetViewProps) {
   const [activeTab, setActiveTab] = useState<
     "complaints" | "primary-survey" | "history" | "secondary-survey" | "investigations" | "trends" | "treatment" | "notes" | "disposition" | "pediatrics-sheet" | "rounds"
@@ -53,7 +58,7 @@ export default function CaseSheetView({
 
   // Clinical Rounds & 7-Lens Debrief States
   const [roundsLens, setRoundsLens] = useState<
-    "first-principles" | "devils-advocate" | "pathophysiology" | "rare-but-real" | "guidelines" | "disease-snapshot" | "full-debrief"
+    "first-principles" | "devils-advocate" | "pathophysiology" | "rare-but-real" | "guidelines" | "disease-snapshot" | "full-debrief" | "cause-of-death"
   >("first-principles");
   const [roundsContent, setRoundsContent] = useState<string>("");
   const [roundsLoading, setRoundsLoading] = useState<boolean>(false);
@@ -91,12 +96,21 @@ export default function CaseSheetView({
   const [showPostSaveModal, setShowPostSaveModal] = useState<boolean>(false);
 
   const [currentCase, setCurrentCase] = useState<ClinicalCase>(initialCase);
+  const displayHospitalName = (currentCase.hospital || profile?.hospital || "Emergency Hospital & Trauma Center").toUpperCase();
+  const displayHospitalAddress = profile?.hospitalAddress 
+    ? `${profile.hospitalAddress}${profile?.state ? `, ${profile.state}` : ''}`
+    : (profile?.state ? `Department of Emergency Medicine, ${profile.state}` : "Department of Emergency Medicine & Trauma Center");
   const [isEditingDemographics, setIsEditingDemographics] = useState(false);
   const [caseSwitcherOpen, setCaseSwitcherOpen] = useState(false);
   const [saveBanner, setSaveBanner] = useState<{ show: boolean; minutesSaved: number } | null>(null);
   const [normalMarkedBanner, setNormalMarkedBanner] = useState<boolean>(false);
   const [isNormalToggled, setIsNormalToggled] = useState<boolean>(false);
   const [backupCase, setBackupCase] = useState<ClinicalCase | null>(null);
+
+  // New features: PDF Preview Modal, Disposition Save feedback, Rounds Instructions
+  const [showPdfModal, setShowPdfModal] = useState<boolean>(false);
+  const [dispositionSaveMessage, setDispositionSaveMessage] = useState<string | null>(null);
+  const [showRoundsGuide, setShowRoundsGuide] = useState<boolean>(true);
 
   // States for logging new vitals to trend timeline
   const [logTime, setLogTime] = useState("");
@@ -282,6 +296,37 @@ export default function CaseSheetView({
       if (age > 5 && age <= 12) return (age * 3) + 7;
       return (age * 3) + 10;
     });
+
+    // Sync rounds and discussion chat history
+    const cid = initialCase.id;
+    const pname = initialCase.patient?.name?.trim()?.toLowerCase();
+
+    if (initialCase.discussionMessages && Array.isArray(initialCase.discussionMessages) && initialCase.discussionMessages.length > 0) {
+      const converted = initialCase.discussionMessages.map((m: any) => ({
+        role: m.sender === "ai" ? ("model" as const) : ("user" as const),
+        text: m.text
+      }));
+      setRoundsChatHistory(converted);
+    } else {
+      const storedRounds = localStorage.getItem(`ermate_rounds_chat_${cid}`) || (pname ? localStorage.getItem(`ermate_rounds_chat_${pname}`) : null);
+      if (storedRounds) {
+        try { setRoundsChatHistory(JSON.parse(storedRounds)); } catch(e){}
+      } else {
+        const storedDisc = localStorage.getItem(`ermate_discussion_${cid}`) || (pname ? localStorage.getItem(`ermate_discussion_name_${pname}`) : null);
+        if (storedDisc) {
+          try {
+            const parsed = JSON.parse(storedDisc);
+            const converted = parsed.map((m: any) => ({
+              role: m.sender === "ai" ? ("model" as const) : ("user" as const),
+              text: m.text
+            }));
+            setRoundsChatHistory(converted);
+          } catch(e){}
+        } else {
+          setRoundsChatHistory([]);
+        }
+      }
+    }
   }, [initialCase.id]);
 
   const getPalsNormalParameters = (age: number | null) => {
@@ -946,11 +991,65 @@ Extremities: No deformity. No peripheral oedema. Peripheral pulses present.`,
     psychological: 'No features of depression, anxiety, psychosis, agitation, suicidal ideation, or substance use. Behaviour appropriate.'
   };
 
+  const handleSurveyChange = (fieldPath: string, value: any) => {
+    setCurrentCase(prev => {
+      const isTrauma = prev.patient.caseType === "Trauma";
+      const currentSurvey: PrimarySurvey = prev.primaryAssessment?.survey || getInitialPrimarySurvey(prev.patient.caseType);
+      
+      const newSurvey: PrimarySurvey = JSON.parse(JSON.stringify(currentSurvey));
+      const parts = fieldPath.split(".");
+      let target: any = newSurvey;
+      for (let i = 0; i < parts.length - 1; i++) {
+        if (!target[parts[i]]) target[parts[i]] = {};
+        target = target[parts[i]];
+      }
+      target[parts[parts.length - 1]] = value;
+
+      const newVitals = { ...prev.vitals };
+      if (fieldPath === "breathing.rr" && value) newVitals.rr = String(value);
+      if (fieldPath === "breathing.spo2" && value) newVitals.spo2 = String(value);
+      if (fieldPath === "circulation.hr" && value) newVitals.hr = String(value);
+      if (fieldPath === "circulation.sbp" || fieldPath === "circulation.dbp") {
+        const sbp = fieldPath === "circulation.sbp" ? value : newSurvey.circulation.sbp;
+        const dbp = fieldPath === "circulation.dbp" ? value : newSurvey.circulation.dbp;
+        if (sbp || dbp) newVitals.bp = `${sbp || '120'}/${dbp || '80'}`;
+      }
+      if (fieldPath === "disability.gcsTotal" && value) newVitals.gcs = String(value);
+      if (fieldPath === "disability.grbs" && value) newVitals.grbs = String(value);
+      if (fieldPath === "exposure.temp" && value) newVitals.temp = String(value);
+
+      return {
+        ...prev,
+        vitals: newVitals,
+        primaryAssessment: {
+          ...prev.primaryAssessment,
+          survey: newSurvey,
+          airway: `Airway ${newSurvey.airway.status}${newSurvey.airway.intervention ? `, Intervention: ${newSurvey.airway.intervention}` : ''}${isTrauma ? `, C-Spine: ${newSurvey.airway.cSpine}` : ''}`,
+          breathing: `RR: ${newSurvey.breathing.rr || '16'}/min, SpO2: ${newSurvey.breathing.spo2 || '98'}% on ${newSurvey.breathing.o2Delivery || 'Room air'}, Work: ${newSurvey.breathing.workOfBreathing || 'normal'}, Air Entry: ${newSurvey.breathing.airEntry || 'Bilaterally equal'}, Sounds: ${newSurvey.breathing.addedSounds || 'Clear'}`,
+          circulation: `HR: ${newSurvey.circulation.hr || '80'}/min ${newSurvey.circulation.rhythm || 'regular'}, BP: ${newSurvey.circulation.sbp || '120'}/${newSurvey.circulation.dbp || '80'} mmHg, CRT: ${newSurvey.circulation.crt || '<2sec'}, Pulses: ${newSurvey.circulation.peripheralPulses || 'normal'}, Skin: ${newSurvey.circulation.skinPerfusion || 'Warm + dry'}`,
+          disability: `GCS: ${newSurvey.disability.gcsTotal || '15'}/15 (E${newSurvey.disability.gcsE || '4'}V${newSurvey.disability.gcsV || '5'}M${newSurvey.disability.gcsM || '6'}), Pupils: ${newSurvey.disability.pupilSizeR || '3'}mm R / ${newSurvey.disability.pupilSizeL || '3'}mm L (${newSurvey.disability.pupilReaction || 'reactive'}), GRBS: ${newSurvey.disability.grbs || 'N/A'}`,
+          exposure: `Temp: ${newSurvey.exposure.temp || '37.0'}°C, Skin: ${newSurvey.exposure.skin || 'Clear'}${isTrauma ? `, Logroll: ${newSurvey.exposure.logRoll || 'Spine clear'}, Pelvis: ${newSurvey.exposure.pelvis || 'stable'}` : ''}`
+        }
+      };
+    });
+  };
+
   const markPrimarySurveyNormal = () => {
+    const initialSurvey = getInitialPrimarySurvey(currentCase.patient.caseType);
     setCurrentCase(prev => ({
       ...prev,
+      vitals: {
+        ...prev.vitals,
+        rr: initialSurvey.breathing.rr || "16",
+        spo2: initialSurvey.breathing.spo2 || "98",
+        hr: initialSurvey.circulation.hr || "80",
+        bp: "120/80",
+        gcs: initialSurvey.disability.gcsTotal || "15",
+        temp: "37.0"
+      },
       primaryAssessment: {
         ...prev.primaryAssessment,
+        survey: initialSurvey,
         ...SECTION_NORMALS.primarySurvey
       }
     }));
@@ -1244,18 +1343,85 @@ Extremities: No deformity. No peripheral oedema. Peripheral pulses present.`,
         })
       });
       const data = await response.json();
+      let replyContent = "";
       if (data.success && data.data) {
-        setRoundsChatHistory(prev => [...prev, { role: "model" as const, text: data.data.content }]);
+        replyContent = data.data.content;
         if (data.data.suggestedQuestions) {
           setRoundsSuggestedQuestions(data.data.suggestedQuestions);
         }
       } else if (data.data) {
-        setRoundsChatHistory(prev => [...prev, { role: "model" as const, text: data.data.content }]);
+        replyContent = data.data.content;
+      }
+
+      if (replyContent) {
+        const finalHistory = [...updatedHistory, { role: "model" as const, text: replyContent }];
+        setRoundsChatHistory(finalHistory);
+
+        // Persist to LocalStorage & Discussion format
+        const cid = currentCase.id;
+        const pname = currentCase.patient?.name?.trim()?.toLowerCase();
+        try {
+          localStorage.setItem(`ermate_rounds_chat_${cid}`, JSON.stringify(finalHistory));
+          if (pname) {
+            localStorage.setItem(`ermate_rounds_chat_${pname}`, JSON.stringify(finalHistory));
+          }
+
+          const convertedMsgs = finalHistory.map((h, idx) => ({
+            id: "rounds-" + idx + "-" + Date.now(),
+            sender: h.role === "model" ? ("ai" as const) : ("user" as const),
+            text: h.text,
+            timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+          }));
+
+          localStorage.setItem(`ermate_discussion_${cid}`, JSON.stringify(convertedMsgs));
+          if (pname) {
+            localStorage.setItem(`ermate_discussion_name_${pname}`, JSON.stringify(convertedMsgs));
+          }
+          if (onSaveCase) {
+            onSaveCase({ ...currentCase, discussionMessages: convertedMsgs });
+          }
+        } catch (e) {
+          console.warn("Error saving rounds chat history:", e);
+        }
       }
     } catch (err) {
       console.error("Error sending rounds chat message:", err);
     } finally {
       setRoundsChatLoading(false);
+    }
+  };
+
+  const [roundsDraftToast, setRoundsDraftToast] = useState(false);
+
+  const handleSaveRoundsDraft = () => {
+    if (!currentCase || !roundsChatHistory.length) return;
+    const cid = currentCase.id;
+    const pname = currentCase.patient?.name?.trim()?.toLowerCase();
+
+    try {
+      localStorage.setItem(`ermate_rounds_chat_${cid}`, JSON.stringify(roundsChatHistory));
+      if (pname) {
+        localStorage.setItem(`ermate_rounds_chat_${pname}`, JSON.stringify(roundsChatHistory));
+      }
+
+      const convertedMsgs = roundsChatHistory.map((h, idx) => ({
+        id: "rounds-" + idx + "-" + Date.now(),
+        sender: h.role === "model" ? ("ai" as const) : ("user" as const),
+        text: h.text,
+        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+      }));
+
+      localStorage.setItem(`ermate_discussion_${cid}`, JSON.stringify(convertedMsgs));
+      if (pname) {
+        localStorage.setItem(`ermate_discussion_name_${pname}`, JSON.stringify(convertedMsgs));
+      }
+      if (onSaveCase) {
+        onSaveCase({ ...currentCase, discussionMessages: convertedMsgs });
+      }
+      setRoundsDraftToast(true);
+      setTimeout(() => setRoundsDraftToast(false), 3000);
+    } catch (err) {
+      console.error("Error saving rounds draft:", err);
     }
   };
 
@@ -1313,6 +1479,15 @@ Extremities: No deformity. No peripheral oedema. Peripheral pulses present.`,
     // Auto-populate first principles learning for the saved modal and trigger the Post-Save Debrief Nudge
     fetchRoundsDebrief("first-principles");
     setShowPostSaveModal(true);
+  };
+
+  const handleSaveFromDisposition = async () => {
+    await handleSave();
+    const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    setDispositionSaveMessage(`Case Sheet saved to Dashboard successfully at ${timeStr}`);
+    setTimeout(() => {
+      setDispositionSaveMessage(null);
+    }, 6000);
   };
 
   // Calculated composite GCS based on subscale variables
@@ -2232,6 +2407,18 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
               </button>
             </div>
 
+            {onDiscussCase && (
+              <button
+                type="button"
+                onClick={() => onDiscussCase(currentCase)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-bold rounded-lg transition-all dark:bg-blue-950/30 dark:text-blue-300 ring-1 ring-blue-200 dark:ring-blue-800"
+                title="Discuss this active case with AI Clinical Assistant"
+              >
+                <MessageSquare className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+                Discuss Case
+              </button>
+            )}
+
             <button
               onClick={() => {
                 document.getElementById('quick-voice-scribe-section')?.scrollIntoView({ behavior: 'smooth' });
@@ -2267,6 +2454,15 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
             </button>
 
             <button
+              onClick={() => setShowPdfModal(true)}
+              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-extrabold rounded-lg transition-all shadow-xs cursor-pointer"
+              title="Preview Case Sheet as official printable PDF document"
+            >
+              <Eye className="w-3.5 h-3.5" />
+              View Case Sheet PDF
+            </button>
+
+            <button
               onClick={handleDownloadCaseSheet}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs font-bold rounded-lg transition-all dark:bg-slate-800 dark:text-slate-300 border border-slate-200 dark:border-slate-800"
               title="Download Case Sheet as plain text file"
@@ -2276,7 +2472,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
             </button>
 
             <button
-              onClick={() => window.print()}
+              onClick={() => triggerPrintWithTip()}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs font-bold rounded-lg transition-all dark:bg-slate-800 dark:text-slate-300"
             >
               <Printer className="w-3.5 h-3.5" />
@@ -3817,21 +4013,56 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                 </div>
 
                 {/* Handover & Save Actions */}
-                <div className="flex flex-wrap items-center gap-3 pt-5 border-t border-slate-100 dark:border-slate-800">
-                  <button
-                    type="button"
-                    onClick={() => onNavigateToDischarge(currentCase.id)}
-                    className="px-5 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white text-xs font-bold rounded-lg shadow-sm transition-all flex items-center justify-center gap-1.5"
-                  >
-                    <FileText className="w-4 h-4" /> Generate Discharge Summary
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleSave}
-                    className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-lg shadow-sm transition-all flex items-center justify-center gap-1.5"
-                  >
-                    <CheckCircle className="w-4 h-4" /> Finish & Save Case
-                  </button>
+                <div className="pt-5 border-t border-slate-100 dark:border-slate-800 space-y-4">
+                  {dispositionSaveMessage && (
+                    <div className="bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200 p-3.5 rounded-xl flex items-center justify-between text-xs font-bold animate-fade-in shadow-xs">
+                      <div className="flex items-center gap-2">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                        <span>{dispositionSaveMessage}</span>
+                      </div>
+                      <span className="text-[10px] bg-emerald-200/60 dark:bg-emerald-900/60 px-2.5 py-0.5 rounded-full font-mono">
+                        Committed
+                      </span>
+                    </div>
+                  )}
+
+                  <div className="bg-blue-50/60 dark:bg-slate-900/60 border border-blue-200/80 dark:border-slate-800 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div>
+                      <h4 className="text-xs font-extrabold text-slate-800 dark:text-white uppercase tracking-wide flex items-center gap-1.5">
+                        <Save className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                        Save Case Sheet to Dashboard
+                      </h4>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                        Commits all demographics, vitals, primary survey, SAMPLE history, treatments, investigations, and disposition notes to your case dashboard.
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        type="button"
+                        onClick={handleSaveFromDisposition}
+                        className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-extrabold rounded-lg shadow-sm transition-all flex items-center justify-center gap-2 cursor-pointer"
+                      >
+                        <CheckCircle2 className="w-4 h-4" /> Save Case Sheet to Dashboard
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-3 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => onNavigateToDischarge(currentCase.id)}
+                      className="px-5 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white text-xs font-bold rounded-lg shadow-sm transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <FileText className="w-4 h-4" /> Generate Discharge Summary
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowPdfModal(true)}
+                      className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-lg shadow-sm transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <Eye className="w-4 h-4" /> View Case Sheet PDF
+                    </button>
+                  </div>
                 </div>
 
                 {/* OPEN CASES - TAP TO SWITCH */}
@@ -4250,88 +4481,16 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
             </div>
           )}
 
-          {/* Primary Assessment ABCDE Tab with Status Buttons (Red vs Green) */}
+          {/* Primary Assessment ABCDE Tab */}
           {activeTab === "primary-survey" && (
-            <div className="space-y-5">
-              <div className="flex items-center justify-between border-b pb-2">
-                <h3 className="text-sm font-bold text-slate-800 dark:text-white uppercase tracking-wide">
-                  {currentCase.patient.caseType === "Trauma" ? "ATLS Trauma Primary Survey" : "Clinical Primary Assessment"} (ABCDE)
-                </h3>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={markPrimarySurveyNormal}
-                    className="text-xs font-bold px-3 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 dark:bg-emerald-950/30 dark:text-emerald-300 dark:border-emerald-800 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer"
-                  >
-                    <CheckCircle className="w-3.5 h-3.5 text-emerald-600" />
-                    Mark Normal
-                  </button>
-                  <span className="text-[10px] bg-red-50 text-red-600 dark:bg-red-950/20 px-2 py-0.5 rounded font-bold uppercase">Time-Sensitive Screen</span>
-                </div>
-              </div>
-              
-              <div className="space-y-4">
-                {[
-                  { field: "airway", statusField: "airwayStatus", label: "A - Airway & C-Collar Stability", placeholder: "Patent, cervical spine collar applied if trauma, no stridor" },
-                  { field: "breathing", statusField: "breathingStatus", label: "B - Breathing & Ventilation", placeholder: "Symmetrical chest expansion, vesicular breath sounds, RR normal" },
-                  { field: "circulation", statusField: "circulationStatus", label: "C - Circulation & Hemorrhage Control", placeholder: "Warm peripheries, CRT < 2s, radial pulses strong, no severe external bleed" },
-                  { field: "disability", statusField: "disabilityStatus", label: "D - Disability / Neurological Status", placeholder: "GCS 15, PEARLA, AVPU alert, moving all four limbs symmetrically" },
-                  { field: "exposure", statusField: "exposureStatus", label: "E - Exposure & Environmental Control", placeholder: "Temperature stable, fully exposed and checked for wounds, midline spine clear" },
-                ].map((item) => {
-                  const descValue = currentCase.primaryAssessment[item.field as keyof PrimaryAssessment] || "";
-                  const statusValue = currentCase.primaryAssessment[item.statusField as "airwayStatus" | "breathingStatus" | "circulationStatus" | "disabilityStatus" | "exposureStatus"] || "Normal";
-                  
-                  return (
-                    <div key={item.field} className="grid grid-cols-1 md:grid-cols-5 gap-3 border-b border-slate-100 dark:border-slate-900 pb-3">
-                      <div className="md:col-span-1.5 flex flex-col justify-center">
-                        <label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wide">
-                          {item.label}
-                        </label>
-                        
-                        {/* High-contrast status buttons (Green for Normal, Red for Abnormal) */}
-                        <div className="flex gap-1.5 mt-1.5">
-                          <button
-                            type="button"
-                            onClick={() => updatePrimaryStatus(item.statusField as any, "Normal")}
-                            className={`text-[10px] px-2.5 py-1 rounded-md font-bold flex items-center gap-1 border transition-all ${
-                              statusValue === "Normal"
-                                ? "bg-emerald-600 text-white border-emerald-600 shadow-xs"
-                                : "bg-white text-slate-500 border-slate-200 hover:bg-slate-50"
-                            }`}
-                          >
-                            <Check className="w-3 h-3" /> Normal
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => updatePrimaryStatus(item.statusField as any, "Abnormal")}
-                            className={`text-[10px] px-2.5 py-1 rounded-md font-bold flex items-center gap-1 border transition-all ${
-                              statusValue === "Abnormal"
-                                ? "bg-rose-600 text-white border-rose-600 shadow-xs animate-pulse"
-                                : "bg-white text-slate-500 border-slate-200 hover:bg-slate-50"
-                            }`}
-                          >
-                            <AlertTriangle className="w-3 h-3" /> Abnormal
-                          </button>
-                        </div>
-                      </div>
-
-                      <div className="md:col-span-3.5">
-                        <div className="flex gap-2">
-                          <textarea
-                            rows={2}
-                            placeholder={item.placeholder}
-                            value={descValue}
-                            onChange={(e) => updatePrimary(item.field as keyof PrimaryAssessment, e.target.value)}
-                            className="flex-1 px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                          />
-                          <SpeechMicButton onTranscript={(txt) => updatePrimary(item.field as keyof PrimaryAssessment, (currentCase.primaryAssessment[item.field as keyof PrimaryAssessment] || "") + " " + txt)} />
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
+            <PrimarySurveySection
+              data={currentCase.primaryAssessment?.survey || getInitialPrimarySurvey(currentCase.patient.caseType)}
+              onChange={handleSurveyChange}
+              caseType={currentCase.patient.caseType}
+              onMarkNormal={markPrimarySurveyNormal}
+              vitals={currentCase.vitals}
+              onUpdateVitals={updateVitals}
+            />
           )}
 
           {/* Secondary Assessment head-to-toe Exam Tab */}
@@ -5732,6 +5891,59 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                 </div>
               </div>
 
+              {/* How To Use & Purpose Guide Box */}
+              <div className="bg-indigo-50/70 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-850 rounded-2xl p-4 md:p-5 text-xs text-indigo-950 dark:text-indigo-100 space-y-3 transition-all">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="p-1.5 bg-indigo-600 text-white rounded-lg shadow-xs">
+                      <Lightbulb className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <h4 className="font-extrabold text-xs uppercase tracking-wide text-indigo-900 dark:text-indigo-200">
+                        How to Use Rounds & Debrief (Clinical Mentor Guide)
+                      </h4>
+                      <p className="text-[11px] text-indigo-700 dark:text-indigo-300 font-medium">
+                        Interactive ER teaching rounds designed to challenge clinical decision making and deepen emergency medicine expertise.
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowRoundsGuide(!showRoundsGuide)}
+                    className="px-2.5 py-1 text-[10px] font-bold bg-indigo-100 hover:bg-indigo-200 dark:bg-indigo-900/60 text-indigo-800 dark:text-indigo-200 rounded-lg transition-colors cursor-pointer shrink-0"
+                  >
+                    {showRoundsGuide ? "Hide Instructions" : "Show Instructions"}
+                  </button>
+                </div>
+
+                {showRoundsGuide && (
+                  <div className="pt-2 border-t border-indigo-200/60 dark:border-indigo-900/60 grid grid-cols-1 md:grid-cols-2 gap-3 text-[11px] leading-relaxed">
+                    <div className="space-y-1.5 bg-white/70 dark:bg-slate-900/70 p-3 rounded-xl border border-indigo-100 dark:border-indigo-900">
+                      <span className="font-extrabold text-indigo-900 dark:text-indigo-300 flex items-center gap-1">
+                        <HelpCircle className="w-3.5 h-3.5 text-indigo-600" />
+                        What is this section for?
+                      </span>
+                      <p className="text-slate-700 dark:text-slate-300">
+                        This is an <strong>interactive AI Clinical Mentor</strong>. Instead of just taking notes, it acts like a senior Emergency Physician on rounds—helping you stress-test diagnoses, avoid missed red flags, review underlying pathophysiology, and stay updated on guidelines.
+                      </p>
+                    </div>
+
+                    <div className="space-y-1.5 bg-white/70 dark:bg-slate-900/70 p-3 rounded-xl border border-indigo-100 dark:border-indigo-900">
+                      <span className="font-extrabold text-indigo-900 dark:text-indigo-300 flex items-center gap-1">
+                        <ClipboardCheck className="w-3.5 h-3.5 text-indigo-600" />
+                        4-Step Workflow:
+                      </span>
+                      <ol className="list-decimal pl-4 space-y-1 text-slate-700 dark:text-slate-300 font-medium">
+                        <li><strong>Pick a Lens</strong> below (e.g. <em>Devil's Advocate</em> to catch biases or <em>Rare but Real</em> for mimics).</li>
+                        <li><strong>Review AI Analysis</strong> generated specifically for this patient's vitals & presentation.</li>
+                        <li><strong>Ask in Chat</strong> below to discuss alternative scenarios, drug choices, or diagnostic criteria.</li>
+                        <li><strong>Save Takeaways</strong> to preserve key clinical pearls in your personal learning log.</li>
+                      </ol>
+                    </div>
+                  </div>
+                )}
+              </div>
+
               {/* Lens Selection Bar */}
               <div className="flex overflow-x-auto scrollbar-thin pb-2 gap-1.5 no-print">
                 {[
@@ -5742,6 +5954,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                   { id: "guidelines", label: "Guidelines", icon: FileCheck, desc: "Society guideline recommendations" },
                   { id: "disease-snapshot", label: "Disease Snapshot", icon: Eye, desc: "Dense clinical cheat-sheet" },
                   { id: "full-debrief", label: "Full Debrief", icon: Award, desc: "Comprehensive performance review" },
+                  { id: "cause-of-death", label: "Cause of Death", icon: Skull, desc: "Whole-story mortality & cause deconstruction" },
                 ].map((lens) => {
                   const Icon = lens.icon;
                   const isActive = roundsLens === lens.id;
@@ -5879,15 +6092,36 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
 
                   {/* Interactive Rounds Mentor Chat (Unlimited) */}
                   <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-850 rounded-2xl p-5 space-y-4">
-                    <div className="flex items-center gap-2 border-b pb-2.5">
-                      <Users className="w-4.5 h-4.5 text-indigo-500" />
-                      <div>
-                        <h4 className="font-bold text-slate-800 dark:text-white uppercase tracking-wide text-[11px]">
-                          Unlimited Rounds Educator Chat
-                        </h4>
-                        <p className="text-[10px] text-slate-400">Ask any case-related drug-dosing, management or physiological questions.</p>
+                    <div className="flex items-center justify-between border-b pb-2.5">
+                      <div className="flex items-center gap-2">
+                        <Users className="w-4.5 h-4.5 text-indigo-500" />
+                        <div>
+                          <h4 className="font-bold text-slate-800 dark:text-white uppercase tracking-wide text-[11px]">
+                            Unlimited Rounds Educator Chat
+                          </h4>
+                          <p className="text-[10px] text-slate-400">Ask any case-related drug-dosing, management or physiological questions.</p>
+                        </div>
                       </div>
+                      <button
+                        type="button"
+                        onClick={handleSaveRoundsDraft}
+                        className="px-3 py-1.5 bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 dark:hover:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400 border border-emerald-200/80 dark:border-emerald-800 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+                        title="Save rounds chat draft to patient record"
+                      >
+                        <BookmarkCheck className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                        <span>Save as Draft</span>
+                      </button>
                     </div>
+
+                    {roundsDraftToast && (
+                      <div className="bg-emerald-600 text-white text-xs font-semibold px-3.5 py-2 rounded-xl flex items-center justify-between animate-fade-in shadow-sm">
+                        <span className="flex items-center gap-1.5">
+                          <Check className="w-4 h-4 text-white" />
+                          <span>Rounds chat saved as draft to patient record successfully!</span>
+                        </span>
+                        <span className="text-[9px] uppercase font-mono bg-emerald-700 px-2 py-0.5 rounded-full tracking-wider">Synced</span>
+                      </div>
+                    )}
 
                     {/* Chat logs */}
                     <div className="space-y-3 max-h-80 overflow-y-auto scrollbar-thin pr-1">
@@ -5982,6 +6216,17 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                               Rounds Actions
                             </div>
                             
+                            <button
+                              type="button"
+                              onClick={() => {
+                                handleSaveRoundsDraft();
+                                setShowRoundsMoreMenu(false);
+                              }}
+                              className="w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-semibold text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/20 flex items-center gap-2 transition-colors cursor-pointer"
+                            >
+                              <BookmarkCheck className="w-4 h-4 text-emerald-500" />
+                              <span>Save Chat Draft</span>
+                            </button>
                             <button
                               type="button"
                               onClick={() => {
@@ -6419,17 +6664,15 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
             {/* Header section matching clinical template layout */}
             <div className="border-b-4 border-double border-slate-800 pb-3 text-center space-y-1">
               <h2 className="text-sm md:text-base font-extrabold tracking-wide uppercase font-serif text-slate-950">
-                <strong>MEMORIAL MULTISPECIALTY HOSPITAL & RESEARCH CENTER</strong>
+                <strong>{displayHospitalName}</strong>
               </h2>
               <p className="text-[10px] text-slate-600 tracking-wide uppercase font-semibold">
                 <strong>Clinical Department of Emergency Medicine & Pediatrics Division</strong>
               </p>
               <div className="text-[9px] text-slate-500 font-mono flex flex-wrap justify-center gap-x-4 gap-y-1">
-                <span><strong>Chunangamvely, Aluva, Ernakulam, Kerala - 683 112</strong></span>
+                <span><strong>{displayHospitalAddress}</strong></span>
                 <span>•</span>
-                <span><strong>General Ph: 0484-2905000 / 2905100</strong></span>
-                <span>•</span>
-                <span><strong>24x7 ER Hotline: 0484-2905100</strong></span>
+                <span><strong>24x7 ER Hotline Available</strong></span>
               </div>
               <h1 className="text-xs font-black uppercase tracking-widest bg-slate-950 text-white py-1 px-4 rounded-md inline-block mt-2">
                 <strong>PEDIATRIC INITIAL ASSESSMENT AND EMERGENCY DEPARTMENT RECORD</strong>
@@ -6621,17 +6864,15 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
             {/* Header section matching clinical template layout */}
             <div className="border-b-4 border-double border-slate-800 pb-3 text-center space-y-1">
               <h2 className="text-sm md:text-base font-extrabold tracking-wide uppercase font-serif text-slate-950">
-                <strong>MEMORIAL MULTISPECIALTY HOSPITAL & RESEARCH CENTER</strong>
+                <strong>{displayHospitalName}</strong>
               </h2>
               <p className="text-[10px] text-slate-600 tracking-wide uppercase font-semibold">
-                <strong>Clinical Department of Emergency Medicine & Level 1 Trauma Services</strong>
+                <strong>Clinical Department of Emergency Medicine & Trauma Services</strong>
               </p>
               <div className="text-[9px] text-slate-500 font-mono flex flex-wrap justify-center gap-x-4 gap-y-1">
-                <span><strong>Chunangamvely, Aluva, Ernakulam, Kerala - 683 112</strong></span>
+                <span><strong>{displayHospitalAddress}</strong></span>
                 <span>•</span>
-                <span><strong>General Ph: 0484-2905000 / 2905100</strong></span>
-                <span>•</span>
-                <span><strong>24x7 ER Hotline: 0484-2905100</strong></span>
+                <span><strong>24x7 ER Hotline Available</strong></span>
               </div>
               <h1 className="text-xs font-black uppercase tracking-widest bg-slate-950 text-white py-1 px-4 rounded-md inline-block mt-2">
                 <strong>INITIAL ASSESSMENT AND EMERGENCY DEPARTMENT CASE RECORD</strong>
@@ -7009,6 +7250,212 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
               </button>
             </div>
 
+          </div>
+        </div>
+      )}
+
+      {/* View Case Sheet PDF Modal Preview Overlay */}
+      {showPdfModal && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 md:p-6 animate-fade-in no-print">
+          <div className="bg-white dark:bg-slate-900 w-full max-w-4xl h-[92vh] rounded-2xl shadow-2xl overflow-hidden flex flex-col border border-slate-200 dark:border-slate-800">
+            {/* Modal Top Control Header */}
+            <div className="px-5 py-3.5 bg-slate-900 text-white flex items-center justify-between shrink-0 border-b border-slate-800">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-indigo-600/30 border border-indigo-500/40 rounded-xl text-indigo-400">
+                  <FileText className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-sm text-white">Clinical Case Sheet PDF Preview</h3>
+                  <p className="text-[10px] text-slate-400 font-mono">
+                    {currentCase.patient.name} · UHID: {currentCase.patient.uhid || "N/A"} · Case ID: {currentCase.id}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleDownloadCaseSheet}
+                  className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer"
+                  title="Download raw case sheet text"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  Download Text
+                </button>
+                <button
+                  type="button"
+                  onClick={() => triggerPrintWithTip()}
+                  className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-extrabold rounded-lg transition-colors flex items-center gap-1.5 shadow-xs cursor-pointer"
+                  title="Print / Save as PDF document"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  Print / Save PDF
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowPdfModal(false)}
+                  className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+                  title="Close Modal"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Modal Document Container */}
+            <div className="flex-1 overflow-y-auto p-4 md:p-8 bg-slate-100 dark:bg-slate-950 flex justify-center">
+              <div className="bg-white text-slate-900 p-6 md:p-10 rounded-xl shadow-lg border border-slate-200 w-full max-w-3xl font-sans text-[11px] leading-relaxed space-y-5 select-text">
+                {/* Header section matching clinical template layout */}
+                <div className="border-b-4 border-double border-slate-800 pb-3 text-center space-y-1">
+                  <h2 className="text-sm md:text-base font-extrabold tracking-wide uppercase font-serif text-slate-950">
+                    <strong>{displayHospitalName}</strong>
+                  </h2>
+                  <p className="text-[10px] text-slate-600 tracking-wide uppercase font-semibold">
+                    <strong>Clinical Department of Emergency Medicine & Trauma Center</strong>
+                  </p>
+                  <div className="text-[9px] text-slate-500 font-mono flex flex-wrap justify-center gap-x-4 gap-y-1">
+                    <span><strong>{displayHospitalAddress}</strong></span>
+                    <span>•</span>
+                    <span><strong>24x7 ER Hotline Available</strong></span>
+                  </div>
+                  <h1 className="text-xs font-black uppercase tracking-widest bg-slate-950 text-white py-1 px-4 rounded-md inline-block mt-2">
+                    <strong>EMERGENCY DEPARTMENT INITIAL ASSESSMENT & CASE RECORD</strong>
+                  </h1>
+                </div>
+
+                {/* Patient Demographics Box */}
+                <div className="grid grid-cols-2 gap-y-2 gap-x-4 border border-slate-300 p-3 rounded-xl bg-slate-50/40 text-[10px]">
+                  <div className="space-y-1">
+                    <p className="flex justify-between border-b border-slate-100 pb-0.5">
+                      <span className="font-extrabold text-slate-500 uppercase">Patient Name:</span>
+                      <span className="font-bold text-slate-950 uppercase">{currentCase.patient.name}</span>
+                    </p>
+                    <p className="flex justify-between border-b border-slate-100 pb-0.5">
+                      <span className="font-extrabold text-slate-500 uppercase">Age/Sex:</span>
+                      <span className="font-bold text-slate-850">{currentCase.patient.age || "N/A"} Yrs / {currentCase.patient.gender}</span>
+                    </p>
+                    <p className="flex justify-between border-b border-slate-100 pb-0.5">
+                      <span className="font-extrabold text-slate-500 uppercase">UHID:</span>
+                      <span className="font-mono font-bold text-slate-900">{currentCase.patient.uhid || "N/A"}</span>
+                    </p>
+                    <p className="flex justify-between">
+                      <span className="font-extrabold text-slate-500 uppercase">Triage Category:</span>
+                      <span className="font-bold text-indigo-700">{currentCase.patient.triageCategory}</span>
+                    </p>
+                  </div>
+                  <div className="space-y-1 border-l pl-4">
+                    <p className="flex justify-between border-b border-slate-100 pb-0.5">
+                      <span className="font-extrabold text-slate-500 uppercase">Date/Time Opened:</span>
+                      <span className="font-semibold text-slate-850 font-mono">{currentCase.patient.dateOpened}</span>
+                    </p>
+                    <p className="flex justify-between border-b border-slate-100 pb-0.5">
+                      <span className="font-extrabold text-slate-500 uppercase">Case Type:</span>
+                      <span className="font-semibold text-slate-850">{currentCase.patient.caseType}</span>
+                    </p>
+                    <p className="flex justify-between border-b border-slate-100 pb-0.5">
+                      <span className="font-extrabold text-slate-500 uppercase">Doctor On Duty:</span>
+                      <span className="font-bold text-slate-900">{currentCase.doctorName || "Dr. Duty Physician"}</span>
+                    </p>
+                    <p className="flex justify-between">
+                      <span className="font-extrabold text-slate-500 uppercase">MLC Status:</span>
+                      <span className="font-bold text-slate-850">{currentCase.patient.isMlc ? "YES (MLC Registered)" : "NO"}</span>
+                    </p>
+                  </div>
+                </div>
+
+                {/* Presenting Complaints & Vitals */}
+                <div className="space-y-2">
+                  <h4 className="font-black text-slate-900 uppercase border-b border-slate-300 pb-0.5 text-[10px]">
+                    Presenting Complaint & Initial Vitals
+                  </h4>
+                  <p className="p-2 bg-slate-50 rounded text-slate-800">
+                    {currentCase.patient.presentingComplaint || "No complaint recorded."}
+                  </p>
+                  <div className="grid grid-cols-5 gap-2 p-2 bg-slate-100/60 rounded text-center text-[10px] font-mono">
+                    <div><span className="text-slate-500 block text-[8px] uppercase">BP</span><strong>{currentCase.vitals.bp || "N/A"}</strong></div>
+                    <div><span className="text-slate-500 block text-[8px] uppercase">HR</span><strong>{currentCase.vitals.hr || "N/A"} bpm</strong></div>
+                    <div><span className="text-slate-500 block text-[8px] uppercase">SpO2</span><strong>{currentCase.vitals.spo2 || "N/A"}%</strong></div>
+                    <div><span className="text-slate-500 block text-[8px] uppercase">RR</span><strong>{currentCase.vitals.rr || "N/A"}/m</strong></div>
+                    <div><span className="text-slate-500 block text-[8px] uppercase">Temp</span><strong>{currentCase.vitals.temp || "N/A"}°F</strong></div>
+                  </div>
+                </div>
+
+                {/* Primary Survey (ABCDE) */}
+                <div className="space-y-1">
+                  <h4 className="font-black text-slate-900 uppercase border-b border-slate-300 pb-0.5 text-[10px]">
+                    Primary Survey (ABCDE Assessment)
+                  </h4>
+                  <div className="space-y-1 text-[10px] bg-slate-50 p-2.5 rounded border border-slate-200">
+                    <p><strong>Airway:</strong> {currentCase.primaryAssessment.airway || "Patent and clear"}</p>
+                    <p><strong>Breathing:</strong> {currentCase.primaryAssessment.breathing || "Bilateral breath sounds present"}</p>
+                    <p><strong>Circulation:</strong> {currentCase.primaryAssessment.circulation || "Peripheral pulses palpable, CRT < 2 sec"}</p>
+                    <p><strong>Disability:</strong> {currentCase.primaryAssessment.disability || "Alert, GCS 15/15"}</p>
+                    <p><strong>Exposure:</strong> {currentCase.primaryAssessment.exposure || "No external trauma or injuries noted"}</p>
+                  </div>
+                </div>
+
+                {/* SAMPLE History */}
+                <div className="space-y-1">
+                  <h4 className="font-black text-slate-900 uppercase border-b border-slate-300 pb-0.5 text-[10px]">
+                    SAMPLE History & Clinical Evolution
+                  </h4>
+                  <div className="grid grid-cols-2 gap-2 text-[10px] bg-slate-50 p-2.5 rounded border border-slate-200">
+                    <p><strong>Symptoms:</strong> {currentCase.sampleHistory.symptoms || "As presenting complaint"}</p>
+                    <p><strong>Allergies:</strong> {currentCase.sampleHistory.allergies || "NKDA"}</p>
+                    <p><strong>Medications:</strong> {currentCase.sampleHistory.medications || "Nil regular"}</p>
+                    <p><strong>Past Medical History:</strong> {currentCase.sampleHistory.pastHistory || "None reported"}</p>
+                    <p className="col-span-2"><strong>Events & Course:</strong> {currentCase.sampleHistory.events || currentCase.progressNotes || "Stabilized in Emergency Ward."}</p>
+                  </div>
+                </div>
+
+                {/* Treatments Administered */}
+                {currentCase.treatments && currentCase.treatments.length > 0 && (
+                  <div className="space-y-1">
+                    <h4 className="font-black text-slate-900 uppercase border-b border-slate-300 pb-0.5 text-[10px]">
+                      Emergency Treatments & Medications Given
+                    </h4>
+                    <table className="w-full border-collapse border border-slate-200 text-[10px] text-left">
+                      <thead>
+                        <tr className="bg-slate-100 text-slate-700 font-bold">
+                          <th className="p-1.5 border border-slate-200">Medication / Procedure</th>
+                          <th className="p-1.5 border border-slate-200">Dose</th>
+                          <th className="p-1.5 border border-slate-200">Route</th>
+                          <th className="p-1.5 border border-slate-200">Time Given</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {currentCase.treatments.map((t, idx) => (
+                          <tr key={idx} className="border-b border-slate-200">
+                            <td className="p-1.5 border border-slate-200 font-bold">{t.drugName}</td>
+                            <td className="p-1.5 border border-slate-200">{t.dose}</td>
+                            <td className="p-1.5 border border-slate-200">{t.route}</td>
+                            <td className="p-1.5 border border-slate-200 font-mono">{t.timeGiven}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                {/* Disposition & Signatures */}
+                <div className="space-y-2 pt-2 border-t border-slate-300">
+                  <div className="flex justify-between text-[10px]">
+                    <p><strong>Disposition Outcome:</strong> <span className="uppercase font-bold text-indigo-800">{currentCase.dispositionDetails?.dispositionType || "Discharged"}</span></p>
+                    <p><strong>Condition at Transfer/Shift:</strong> <span className="font-bold">{currentCase.conditionAtShift || "Stable"}</span></p>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4 pt-6 text-[10px] text-center border-t border-slate-200">
+                    <div>
+                      <p className="font-bold border-b border-slate-400 pb-1 max-w-[180px] mx-auto">{currentCase.dispositionDetails?.residentName || currentCase.doctorName || "Dr. Resident Physician"}</p>
+                      <p className="text-slate-500 text-[9px] mt-0.5">Resident Emergency Physician Signature</p>
+                    </div>
+                    <div>
+                      <p className="font-bold border-b border-slate-400 pb-1 max-w-[180px] mx-auto">{currentCase.dispositionDetails?.consultantName || currentCase.consultantName || "Dr. Consultant EM"}</p>
+                      <p className="text-slate-500 text-[9px] mt-0.5">Consultant / Attending Physician Signature</p>
+                    </div>
+                  </div>
+                </div>
+
+              </div>
+            </div>
           </div>
         </div>
       )}

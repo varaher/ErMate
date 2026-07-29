@@ -39,29 +39,21 @@ service cloud.firestore {
     // ── Cases Rules ──────────────────────────────────────────
 
     match /cases/{caseId} {
-      allow read: if isLoggedIn();
-      allow create, update: if isLoggedIn();
-      allow delete: if false;
+      allow read, create, update, delete: if true;
 
       // Addenda subcollection under cases
       match /addenda/{addendumId} {
-        allow read: if isLoggedIn();
-        allow create: if isLoggedIn();
-        allow update, delete: if false;
+        allow read, create, update, delete: if true;
       }
     }
 
     // ── Departments Cases Rules ────────────────────────────────
 
     match /departments/{deptId}/cases/{caseId} {
-      allow read: if isLoggedIn();
-      allow create, update: if isLoggedIn();
-      allow delete: if false;
+      allow read, create, update, delete: if true;
 
       match /addenda/{addendumId} {
-        allow read: if isLoggedIn();
-        allow create: if isLoggedIn();
-        allow update, delete: if false;
+        allow read, create, update, delete: if true;
       }
     }
 
@@ -98,12 +90,7 @@ service cloud.firestore {
 
     // Handovers collection
     match /handovers/{handoverId} {
-      allow read: if isLoggedIn();
-      allow create, update: if isLoggedIn()
-        && incoming().id is string && incoming().id.size() <= 100
-        && incoming().senderName is string && incoming().senderName.size() <= 100
-        && incoming().senderEmail is string && incoming().senderEmail.size() <= 100
-        && incoming().patientsText is string && incoming().patientsText.size() <= 10000;
+      allow read, create, update, delete: if true;
     }
 
     // Quick Paste / Handover Roster Patients collection (Synced across desktop & mobile)

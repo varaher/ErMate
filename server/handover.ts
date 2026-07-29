@@ -114,18 +114,27 @@ export function reverseEMREntries(cleanedText: string): string {
   return reversed.join('\n\n───────────────────\n\n');
 }
 
-// ── Step 3: Route to correct model ───────────────────────────
+// ── Step 3: Route to correct model (Claude Primary, Gemini Fallback for Handover) ──────
 export function selectModel(charCount: number): {
   model: string;
   provider: 'claude' | 'gemini';
+  fallbackModel: string;
+  fallbackProvider: 'claude' | 'gemini';
 } {
-  if (charCount > 24000) {
-    return { model: MODELS.CLAUDE_SONNET, provider: 'claude' };
-  }
   if (charCount > 8000) {
-    return { model: MODELS.CLAUDE_HAIKU, provider: 'claude' };
+    return {
+      model: MODELS.CLAUDE_SONNET,
+      provider: 'claude',
+      fallbackModel: MODELS.GEMINI_PRO,
+      fallbackProvider: 'gemini'
+    };
   }
-  return { model: MODELS.GEMINI_FLASH, provider: 'gemini' };
+  return {
+    model: MODELS.CLAUDE_HAIKU,
+    provider: 'claude',
+    fallbackModel: MODELS.GEMINI_FLASH,
+    fallbackProvider: 'gemini'
+  };
 }
 
 // ── Step 4: The extraction prompt ────────────────────────────
@@ -144,8 +153,13 @@ FIELD EXTRACTION GUIDE
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 PATIENT LABEL:
-  name: from any entry header or consultant note
-  ageSex: "52M" or "38F" format
+  name: The patient's PROPER NAME only (e.g. Selvarani, Mini Unnikrishnan, Varghese KC).
+        NEVER put symptoms, complaints, or nursing text in the name field.
+        If a proper name is not found → null.
+  ageSex: Format: "57F" or "52M" or "38F" (number + M/F).
+          Extract from "57 year old female" → "57F".
+          NEVER put symptoms or complaints here.
+          If not found → null.
   bed: bed number from header
   erNumber: ER# or registration number
   admittingConsultant: admitting specialty + doctor
@@ -218,8 +232,11 @@ TO DO LIST (action items only):
   "Monitor HR — was 171" "Final USG report"
 
 VITALS NOW (most recent values only):
-  From most recent entry.
-  Format: "BP: 130/90 · HR: 171 ⚠ · SpO₂: 97%"
+  From most recent entry in EMR notes.
+  CRITICAL: ALWAYS capture and include the exact timestamp/time of the latest vitals if present in the EMR notes.
+  Format: "@ [Time e.g. 08:18 PM or 08:28 AM] · BP 120/80 · HR 75 · SpO₂ 100%"
+  Example: "@ 08:18 PM · BP 120/80 · HR 75 · SpO₂ 100%" or "@ 08:28 AM · Vitals stable · GCS 15"
+  If no explicit timestamp is in the entry, omit the "@ [Time]" prefix.
   Flag abnormals with ⚠.
   One line only.
 
@@ -457,6 +474,59 @@ function buildHeuristicFallback(rawText: string): any {
   };
 }
 
+function sanitizeHandoverPatient(data: any): any {
+  if (!data || typeof data !== 'object') return data;
+  const result = { ...data };
+  const pl = { ...(result.patientLabel || {}) };
+
+  const medTerms = [
+    'fever', 'cough', 'cold', 'pain', 'complaint', 'breathless', 'vomiting',
+    'distension', 'displacement', 'pcn', 'presented', 'patient', 'history',
+    'since', 'edema', 'oedema', 'evaluati', 'c/o', 'dizziness', 'weakness',
+    'rhinorrhea', 'sore', 'throat', 'nausea', 'seizure', 'syncope'
+  ];
+
+  let rawName = pl.name || result.name;
+  if (rawName && typeof rawName === 'string') {
+    const lower = rawName.toLowerCase();
+    const hasMedTerm = medTerms.some(t => lower.includes(t));
+    const isTooLong = rawName.length > 35;
+    const hasDigit = /\d/.test(rawName) && !/^Bed\s+\d+$/i.test(rawName);
+
+    if (hasMedTerm || isTooLong || hasDigit) {
+      if (!result.presentingComplaint || result.presentingComplaint === 'Presenting complaint recorded.') {
+        result.presentingComplaint = rawName;
+      }
+      rawName = pl.bed ? `Bed ${pl.bed}` : 'Bed Patient';
+    }
+  } else {
+    rawName = pl.bed ? `Bed ${pl.bed}` : 'Bed Patient';
+  }
+
+  let cleanAgeSex = pl.ageSex || result.ageGender || 'Unknown';
+  if (cleanAgeSex && typeof cleanAgeSex === 'string' && cleanAgeSex !== 'Unknown') {
+    const match = cleanAgeSex.match(/(\d{1,3})\s*([MF])/i);
+    if (match) {
+      cleanAgeSex = `${match[1]}${match[2].toUpperCase()}`;
+    } else {
+      const ageOnly = cleanAgeSex.match(/\b\d{1,3}\b/);
+      if (ageOnly) {
+        cleanAgeSex = `${ageOnly[0]}y`;
+      } else if (cleanAgeSex.length > 10) {
+        cleanAgeSex = 'Unknown';
+      }
+    }
+  }
+
+  pl.name = rawName;
+  pl.ageSex = cleanAgeSex;
+  result.patientLabel = pl;
+  result.name = rawName;
+  result.ageGender = cleanAgeSex;
+
+  return result;
+}
+
 // ── Main extraction function ──────────────────────────────────
 export async function extractHandover(
   rawText: string
@@ -494,7 +564,7 @@ export async function extractHandover(
   console.log(`[Handover] Entries found: ${entriesFound}`);
 
   // STEP 3 — Select model
-  const { model, provider } = selectModel(reversed.length);
+  const { model, provider, fallbackModel, fallbackProvider } = selectModel(reversed.length);
   console.log(`[Handover] Model selected: ${model} (${reversed.length} chars)`);
 
   // STEP 4 — Extract
@@ -510,16 +580,7 @@ export async function extractHandover(
   // Fallback chain
   const attempts: Array<{ model: string; provider: 'claude' | 'gemini' }> = [
     { model, provider },
-    // Fallbacks
-    ...(provider === 'gemini' ? [
-      { model: MODELS.CLAUDE_HAIKU, provider: 'claude' as const },
-      { model: MODELS.CLAUDE_SONNET, provider: 'claude' as const },
-      { model: MODELS.GEMINI_PRO, provider: 'gemini' as const },
-    ] : [
-      { model: MODELS.CLAUDE_SONNET, provider: 'claude' as const },
-      { model: MODELS.GEMINI_FLASH, provider: 'gemini' as const },
-      { model: MODELS.GEMINI_PRO, provider: 'gemini' as const },
-    ]),
+    { model: fallbackModel, provider: fallbackProvider },
   ];
 
   for (const attempt of attempts) {
@@ -582,10 +643,12 @@ export async function extractHandover(
         }
       };
 
+      const sanitizedHandover = sanitizeHandoverPatient(normalizedExtracted);
+
       return {
         success: true,
-        extracted: normalizedExtracted,
-        data: normalizedExtracted,
+        extracted: sanitizedHandover,
+        data: sanitizedHandover,
         meta: {
           originalChars: rawText.length,
           cleanedChars: cleaned.length,

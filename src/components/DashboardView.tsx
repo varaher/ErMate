@@ -3,11 +3,12 @@ import {
   PlusCircle, Zap, TrendingUp, Clock, ArrowRight, Activity, 
   Calendar, Users, FileText, Heart, ShieldAlert, ChevronRight, Calculator,
   Mic, AlertTriangle, CheckCircle, Edit, Copy, Download, Check, Eye, ChevronDown, ChevronUp, Briefcase,
-  Camera, Building, Trash2, UserPlus, ShieldCheck, Share2, Lightbulb, BookOpen
+  Camera, Building, Trash2, UserPlus, ShieldCheck, Share2, Lightbulb, BookOpen, MessageSquare
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { ClinicalCase, UserProfile, HandoverRecord, TeamMember } from "../types";
 import { getCasePendingStatus } from "../utils/caseHelper";
+import { triggerPrintWithTip } from "../utils/printWithTip";
 import { doc, updateDoc } from "firebase/firestore";
 import { db, auth } from "../firebase";
 
@@ -45,6 +46,8 @@ interface DashboardViewProps {
   onUpdateRole?: (id: string, role: string) => Promise<void>;
   shifts?: any[];
   pendingContributionsCount?: number;
+  onDiscussCase?: (patientCase: ClinicalCase) => void;
+  onStartDischargeSummary?: () => void;
 }
 
 export default function DashboardView({
@@ -57,6 +60,7 @@ export default function DashboardView({
   onNavigateToTab,
   onStartHandoverChat,
   onStartHandoverSheet,
+  onStartDischargeSummary,
   onStartVoiceScribe,
   onOpenPediatricCalculator,
   onOpenPocketMirror,
@@ -81,6 +85,7 @@ export default function DashboardView({
   onUpdateRole,
   shifts = [],
   pendingContributionsCount = 0,
+  onDiscussCase,
 }: DashboardViewProps) {
   // Statistics
   const activeCasesCount = cases.filter(c => c.status === "Active" || c.status === "Triage").length;
@@ -802,13 +807,27 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
                   </div>
                 </div>
 
-                <button
-                  onClick={() => onSelectCase(pc.id)}
-                  className="w-full mt-2.5 py-2 px-3.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white text-[10.5px] font-extrabold rounded-lg transition-all flex items-center justify-center gap-1 shadow-sm group-hover:shadow-md"
-                >
-                  <span>Complete Case Sheet</span>
-                  <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
-                </button>
+                <div className="flex items-center gap-2 mt-2.5">
+                  {onDiscussCase && (
+                    <button
+                      type="button"
+                      onClick={() => onDiscussCase(pc)}
+                      className="px-3 py-2 bg-blue-50 hover:bg-blue-100 text-blue-700 dark:bg-blue-950/40 dark:hover:bg-blue-900/60 dark:text-blue-300 border border-blue-200 dark:border-blue-800 rounded-lg text-[10.5px] font-bold transition-all flex items-center gap-1.5 shrink-0"
+                      title="Discuss case with AI Assistant"
+                    >
+                      <MessageSquare className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+                      <span>Discuss</span>
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => onSelectCase(pc.id)}
+                    className="flex-1 py-2 px-3.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white text-[10.5px] font-extrabold rounded-lg transition-all flex items-center justify-center gap-1 shadow-sm group-hover:shadow-md"
+                  >
+                    <span>Complete Case Sheet</span>
+                    <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
+                  </button>
+                </div>
               </div>
             ))}
           </div>
@@ -837,17 +856,23 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
             </div>
           </button>
 
-          {/* Card 2: Pediatric Drug Calculator */}
+          {/* Card 2: Discharge Summary Generator (Mobile) */}
           <button 
-            onClick={onOpenPediatricCalculator}
-            className="flex flex-col justify-between p-3 bg-sky-500/10 dark:bg-sky-950/20 border border-sky-500/20 rounded-xl text-left hover:bg-sky-500/15 transition-all shadow-xs h-[88px] w-full"
+            onClick={() => {
+              if (onStartDischargeSummary) {
+                onStartDischargeSummary();
+              } else {
+                onNavigateToTab("handover");
+              }
+            }}
+            className="flex flex-col justify-between p-3 bg-purple-500/10 dark:bg-purple-950/20 border border-purple-500/20 rounded-xl text-left hover:bg-purple-500/15 transition-all shadow-xs h-[88px] w-full"
           >
-            <div className="w-7 h-7 bg-sky-500/20 text-sky-600 dark:text-sky-400 rounded-lg flex items-center justify-center">
-              <Calculator className="w-4.5 h-4.5" />
+            <div className="w-7 h-7 bg-purple-500/20 text-purple-600 dark:text-purple-400 rounded-lg flex items-center justify-center">
+              <FileText className="w-4.5 h-4.5 text-purple-500" />
             </div>
             <div>
-              <span className="block font-black text-xs text-slate-800 dark:text-sky-300">Peds Dosing</span>
-              <span className="block text-[8px] text-slate-400 font-medium">Weight calculations</span>
+              <span className="block font-black text-xs text-slate-800 dark:text-purple-300 truncate">Discharge Summary</span>
+              <span className="block text-[8px] text-slate-400 font-medium truncate">EMR case dump processor</span>
             </div>
           </button>
 
@@ -861,7 +886,7 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
             </div>
             <div>
               <span className="block font-black text-xs text-slate-800 dark:text-purple-300">Voice Scribe</span>
-              <span className="block text-[8px] text-slate-400 font-medium">EM consult scribe</span>
+              <span className="block text-[8px] text-slate-400 font-medium">Scribe in native language</span>
             </div>
           </button>
 
@@ -912,6 +937,23 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
             </div>
             <span className="text-[8px] font-mono text-red-500 font-bold bg-red-500/10 px-1.5 py-0.5 rounded uppercase font-black">CRITICAL</span>
           </button>
+
+          {/* Card 7: Pediatric Drug Calculator (Mobile) */}
+          <button 
+            onClick={onOpenPediatricCalculator}
+            className="col-span-2 flex items-center justify-between p-3 bg-sky-500/10 dark:bg-sky-950/20 border border-sky-500/20 rounded-xl text-left hover:bg-sky-500/15 transition-all shadow-xs h-[64px] w-full"
+          >
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 bg-sky-500/20 text-sky-600 dark:text-sky-400 rounded-lg flex items-center justify-center">
+                <Calculator className="w-4 h-4 text-sky-500" />
+              </div>
+              <div>
+                <span className="block font-black text-xs text-slate-800 dark:text-sky-300">Peds Dosing</span>
+                <span className="block text-[8px] text-slate-400 font-medium">Weight calculations & dosing reference</span>
+              </div>
+            </div>
+            <span className="text-[8px] font-mono text-sky-500 font-bold bg-sky-500/10 px-1.5 py-0.5 rounded uppercase font-black">CALCULATOR</span>
+          </button>
         </div>
 
         {/* Desktop Detailed Grid (Visible on Desktop only) */}
@@ -941,26 +983,35 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
             </div>
           </div>
 
-          {/* Card 2: Pediatric Drug Calculator */}
+          {/* Card 2: Discharge Summary Generator (Desktop) */}
           <div 
-            onClick={onOpenPediatricCalculator}
-            className="group relative bg-sky-500/10 dark:bg-sky-950/20 border border-sky-500/25 dark:border-sky-500/10 rounded-2xl p-5 hover:border-sky-500 dark:hover:border-sky-500 cursor-pointer shadow-xs hover:shadow-md transition-all duration-200 flex flex-col justify-between h-48"
+            onClick={() => {
+              if (onStartDischargeSummary) {
+                onStartDischargeSummary();
+              } else {
+                onNavigateToTab("handover");
+              }
+            }}
+            className="group relative bg-purple-500/10 dark:bg-purple-950/20 border border-purple-500/25 dark:border-purple-500/10 rounded-2xl p-5 hover:border-purple-500 dark:hover:border-purple-500 cursor-pointer shadow-xs hover:shadow-md transition-all duration-200 flex flex-col justify-between h-48"
           >
-            <div className="absolute right-4 top-4 p-2 bg-sky-500/10 text-sky-600 dark:text-sky-400 rounded-xl group-hover:scale-110 transition-transform">
-              <Calculator className="w-5.5 h-5.5" />
+            <div className="absolute right-4 top-4 p-2 bg-purple-500/10 text-purple-600 dark:text-purple-400 rounded-xl group-hover:scale-110 transition-transform">
+              <FileText className="w-5.5 h-5.5" />
             </div>
             
             <div className="space-y-1.5 max-w-[85%]">
-              <h3 className="text-sm font-extrabold text-slate-900 dark:text-white flex items-center gap-1.5">
-                Pediatric Drug Calculator
-              </h3>
+              <div className="flex items-center gap-1.5">
+                <h3 className="text-sm font-extrabold text-slate-900 dark:text-white">
+                  Discharge Summary Generator
+                </h3>
+                <span className="text-[8px] font-mono text-purple-500 font-bold bg-purple-500/10 px-1.5 py-0.5 rounded uppercase">AI FORMATTER</span>
+              </div>
               <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
-                Weight-based dosing reference. Enter weight for immediate calculations across 24 drug categories.
+                Paste raw EMR notes or case sheet dumps to generate standardized, medico-legal discharge summaries for any hospital.
               </p>
             </div>
 
-            <div className="mt-4 flex items-center justify-between text-xs font-bold text-sky-600 dark:text-sky-400 border-t border-sky-500/10 pt-3">
-              <span>Open Calculator</span>
+            <div className="mt-4 flex items-center justify-between text-xs font-bold text-purple-600 dark:text-purple-400 border-t border-purple-500/10 pt-3">
+              <span>Open Generator</span>
               <ChevronRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
             </div>
           </div>
@@ -1091,6 +1142,30 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
             </div>
           </div>
 
+          {/* Card 8: Pediatric Drug Calculator (Desktop) */}
+          <div 
+            onClick={onOpenPediatricCalculator}
+            className="group relative bg-sky-500/10 dark:bg-sky-950/20 border border-sky-500/25 dark:border-sky-500/10 rounded-2xl p-5 hover:border-sky-500 dark:hover:border-sky-500 cursor-pointer shadow-xs hover:shadow-md transition-all duration-200 flex flex-col justify-between h-48"
+          >
+            <div className="absolute right-4 top-4 p-2 bg-sky-500/10 text-sky-600 dark:text-sky-400 rounded-xl group-hover:scale-110 transition-transform">
+              <Calculator className="w-5.5 h-5.5" />
+            </div>
+            
+            <div className="space-y-1.5 max-w-[85%]">
+              <h3 className="text-sm font-extrabold text-slate-900 dark:text-white flex items-center gap-1.5">
+                Pediatric Drug Calculator
+              </h3>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
+                Weight-based dosing reference. Enter weight for immediate calculations across 24 drug categories.
+              </p>
+            </div>
+
+            <div className="mt-4 flex items-center justify-between text-xs font-bold text-sky-600 dark:text-sky-400 border-t border-sky-500/10 pt-3">
+              <span>Open Calculator</span>
+              <ChevronRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+            </div>
+          </div>
+
         </div>
       </div>
 
@@ -1175,7 +1250,7 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
               </button>
               <button
                 onClick={() => {
-                  window.print();
+                  triggerPrintWithTip();
                 }}
                 className="flex-1 md:flex-none px-3.5 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-1.5"
               >
@@ -1800,11 +1875,9 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
                                   Adult
                                 </span>
                               )}
-                              {c.doctorEmail && (
-                                <span className="text-[9px] bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400 border border-indigo-100 dark:border-indigo-900 px-1.5 py-0.2 rounded font-mono">
-                                  Clinician: {c.doctorName || c.doctorEmail.split("@")[0]}
-                                </span>
-                              )}
+                              <span className="text-[9px] bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400 border border-indigo-100 dark:border-indigo-900 px-1.5 py-0.2 rounded font-mono">
+                                Clinician: {c.doctorName || c.createdByName || c.dispositionDetails?.residentName || (c.doctorEmail ? `Dr. ${c.doctorEmail.split("@")[0]}` : null) || `Dr. ${profile?.name || "Duty Officer"}`}
+                              </span>
                               {c.escalated && (
                                 <span className="text-[9px] bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/25 px-1.5 py-0.2 rounded font-bold animate-pulse uppercase tracking-wider flex items-center gap-0.5">
                                   Escalated ⚠️
