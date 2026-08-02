@@ -105,7 +105,7 @@ export default function SignUpView({
     
     const messages = [
       { delay: 400, msg: "Allocating private local database shard..." },
-      { delay: 800, msg: "Registering Google whitelists for department sharing..." },
+      { delay: 800, msg: "Registering Google allowlists for department sharing..." },
       { delay: 1200, msg: "Preparing custom subscription plan..." },
       { delay: 1600, msg: "Signing certificates and securing clinical node..." }
     ];

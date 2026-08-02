@@ -168,7 +168,7 @@ export default function TeamBuilder({
     const isDuplicate = members.some(m => m.email.toLowerCase() === emailLower);
 
     if (isDuplicate) {
-      showNotification(`${singleEmail} is already whitelisted on this team.`, "error");
+      showNotification(`${singleEmail} is already allowlisted on this team.`, "error");
       return;
     }
 
@@ -181,7 +181,7 @@ export default function TeamBuilder({
 
     setMembers(prev => [...prev, newMem]);
     setSingleEmail("");
-    showNotification(`Successfully whitelisted ${emailLower} for the team!`, "success");
+    showNotification(`Successfully allowlisted ${emailLower} for the team!`, "success");
   };
 
   const handleBulkAddMembers = (e: React.FormEvent) => {
@@ -225,7 +225,7 @@ export default function TeamBuilder({
       setBulkEmailsText("");
       showNotification(`Bulk imported ${addedCount} team members successfully!${duplicateCount > 0 ? ` (${duplicateCount} duplicates skipped)` : ""}`, "success");
     } else {
-      showNotification("All entered email addresses are already whitelisted on the team.", "error");
+      showNotification("All entered email addresses are already allowlisted on the team.", "error");
     }
   };
 
@@ -234,7 +234,7 @@ export default function TeamBuilder({
     if (selectedSimEmail === email) {
       setSelectedSimEmail("");
     }
-    showNotification(`Removed ${email} from the whitelist pool.`, "success");
+    showNotification(`Removed ${email} from the allowlist pool.`, "success");
   };
 
   // Simulate a clinical team colleague receiving the invite link, clicking it, and joining!
@@ -260,7 +260,7 @@ export default function TeamBuilder({
     showNotification(`SIMULATION SUCCESS: ${selectedSimEmail} clicked the invite link and activated their clinical seat!`, "success");
   };
 
-  // Filtering whitelisted roster
+  // Filtering allowlisted roster
   const filteredMembers = members.filter(
     m => m.email.toLowerCase().includes(searchQuery.toLowerCase()) || m.role.toLowerCase().includes(searchQuery.toLowerCase())
   );
@@ -316,7 +316,7 @@ export default function TeamBuilder({
               {hospitalName}
             </h2>
             <p className="text-xs text-slate-300 max-w-2xl font-mono leading-relaxed">
-              Create your hospital team workspace, whitelist member doctors by their Gmail addresses, and generate a secure clinical invitation link. Once any colleague clicks and joins, your Group License instantly activates!
+              Create your hospital team workspace, allowlist member doctors by their Gmail addresses, and generate a secure clinical invitation link. Once any colleague clicks and joins, your Group License instantly activates!
             </p>
           </div>
 
@@ -450,7 +450,7 @@ export default function TeamBuilder({
                   <Link className="w-4 h-4 text-blue-500" />
                   Prepared Invitation Link
                 </h3>
-                <p className="text-[10px] text-slate-400 mt-0.5">Copy this secure token to onboard whitelisted medical staff.</p>
+                <p className="text-[10px] text-slate-400 mt-0.5">Copy this secure token to onboard allowlisted medical staff.</p>
               </div>
               <span className="bg-blue-500/10 text-blue-600 dark:text-blue-400 text-[9px] font-mono px-2 py-0.5 rounded font-bold uppercase">
                 Secure SSL
@@ -508,9 +508,9 @@ export default function TeamBuilder({
               <div>
                 <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
                   <Users className="w-4 h-4 text-emerald-500" />
-                  Roster Whitelist Pool
+                  Roster Allowlist Pool
                 </h3>
-                <p className="text-[10px] text-slate-400 mt-0.5">Whitelist doctors by email so they can unlock the shared hospital subscription.</p>
+                <p className="text-[10px] text-slate-400 mt-0.5">Allowlist doctors by email so they can unlock the shared hospital subscription.</p>
               </div>
 
               {/* Add Modes selectors */}
@@ -577,7 +577,7 @@ export default function TeamBuilder({
                     type="submit"
                     className={`w-full py-2 ${theme.primary} text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1 shadow-sm`}
                   >
-                    <Plus className="w-3.5 h-3.5" /> Whitelist
+                    <Plus className="w-3.5 h-3.5" /> Allowlist
                   </button>
                 </div>
               </form>
@@ -600,7 +600,7 @@ export default function TeamBuilder({
                   type="submit"
                   className={`w-full py-2 ${theme.primary} text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-sm`}
                 >
-                  <Plus className="w-3.5 h-3.5" /> Bulk Whitelist Team
+                  <Plus className="w-3.5 h-3.5" /> Bulk Allowlist Team
                 </button>
               </form>
             )}
@@ -609,7 +609,7 @@ export default function TeamBuilder({
             <div className="space-y-3 pt-3 border-t border-slate-100 dark:border-slate-900">
               <div className="flex items-center justify-between gap-3">
                 <span className="text-[9px] font-bold text-slate-400 uppercase font-mono">
-                  Current Whitelisted Members List ({filteredMembers.length})
+                  Current Allowlisted Members List ({filteredMembers.length})
                 </span>
                 <input
                   type="text"
@@ -623,8 +623,8 @@ export default function TeamBuilder({
               {filteredMembers.length === 0 ? (
                 <div className="text-center py-6 border border-dashed border-slate-200 dark:border-slate-800 rounded-xl">
                   <UserX className="w-7 h-7 text-slate-300 mx-auto mb-1.5" />
-                  <p className="text-xs text-slate-400 font-bold">No whitelisted members found</p>
-                  <p className="text-[10px] text-slate-400 font-mono">Try clearing your filters or whitelist a doctor.</p>
+                  <p className="text-xs text-slate-400 font-bold">No allowlisted members found</p>
+                  <p className="text-[10px] text-slate-400 font-mono">Try clearing your filters or allowlist a doctor.</p>
                 </div>
               ) : (
                 <div className="max-h-[220px] overflow-y-auto border border-slate-100 dark:border-slate-850 rounded-xl bg-slate-50/50 dark:bg-slate-900/10">
@@ -664,7 +664,7 @@ export default function TeamBuilder({
                               type="button"
                               onClick={() => handleRemoveMember(member.id, member.email)}
                               className="text-rose-500 hover:text-rose-700 p-1 rounded-lg hover:bg-rose-50 dark:hover:bg-rose-950/20 transition-all"
-                              title="Remove whitelist"
+                              title="Remove allowlist"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>
@@ -700,7 +700,7 @@ export default function TeamBuilder({
             <div className="space-y-3.5 text-xs">
               <div className="space-y-1.5">
                 <label className="block text-[9px] font-bold text-indigo-200 uppercase tracking-wider font-mono">
-                  Select Whitelisted Colleague to Join
+                  Select Allowlisted Colleague to Join
                 </label>
                 <div className="flex gap-2.5">
                   <select
@@ -708,7 +708,7 @@ export default function TeamBuilder({
                     onChange={(e) => setSelectedSimEmail(e.target.value)}
                     className="flex-1 px-3 py-2 bg-slate-900 border border-slate-800 rounded-xl text-xs font-bold text-white focus:outline-none"
                   >
-                    <option value="">-- Choose whitelisted doctor --</option>
+                    <option value="">-- Choose allowlisted doctor --</option>
                     {members
                       .filter(m => m.status === "Pending Invite")
                       .map((m) => (
@@ -738,12 +738,12 @@ export default function TeamBuilder({
                 <div className="bg-emerald-500/10 border border-emerald-500/20 p-3 rounded-xl flex items-start gap-2.5 text-[10.5px] font-mono leading-relaxed text-emerald-300">
                   <span className="text-base shrink-0">🎉</span>
                   <div>
-                    <strong>Roster Sandbox Fully Joined!</strong> All whitelisted doctors have completed their simulated onboarding. The entire emergency ward is active under your premium EMR group license!
+                    <strong>Roster Sandbox Fully Joined!</strong> All allowlisted doctors have completed their simulated onboarding. The entire emergency ward is active under your premium EMR group license!
                   </div>
                 </div>
               ) : (
                 <p className="text-[10px] text-slate-400 font-mono leading-relaxed italic">
-                  💡 <strong>How to test:</strong> Whitelist an email like <code>doctor.varah@hospital.in</code>, select it in the dropdown above, and click "Simulate Join" to witness automatic activation of your team license!
+                  💡 <strong>How to test:</strong> Allowlist an email like <code>doctor.varah@hospital.in</code>, select it in the dropdown above, and click "Simulate Join" to witness automatic activation of your team license!
                 </p>
               )}
             </div>

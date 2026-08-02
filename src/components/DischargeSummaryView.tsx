@@ -1,8 +1,10 @@
 import React, { useState } from "react";
-import { ArrowLeft, Sparkles, CheckCircle, Save, RefreshCw, AlertCircle, Printer, ShieldAlert, FileText, Check, AlertTriangle, ListFilter, Copy, Download, ChevronDown, FileCheck } from "lucide-react";
+import { ArrowLeft, Sparkles, CheckCircle, Save, RefreshCw, AlertCircle, Printer, ShieldAlert, FileText, Check, AlertTriangle, ListFilter, Copy, Download, ChevronDown, FileCheck, MessageSquare } from "lucide-react";
 import { ClinicalCase, DischargeInfo, UserProfile } from "../types";
 import SpeechMicButton from "./SpeechMicButton";
 import { triggerPrintWithTip } from "../utils/printWithTip";
+import { BoundChatModal } from "./BoundChatModal";
+import { captureFeedbackCorrection } from "../services/learningClient";
 
 interface DischargeSummaryViewProps {
   currentCase: ClinicalCase;
@@ -22,6 +24,7 @@ export default function DischargeSummaryView({
   // Prepopulate from case records or existing dischargeInfo
   const [activeTab, setActiveTab] = useState<TabType>("admin-vitals");
   const [downloadMenuOpen, setDownloadMenuOpen] = useState(false);
+  const [isDiscussModalOpen, setIsDiscussModalOpen] = useState(false);
 
   // --- Administrative & Demographics ---
   const [uhid, setUhid] = useState(
@@ -548,6 +551,16 @@ ${followUpPlan}<br/>
   };
 
   const handleSave = () => {
+    if (aiDrafted && currentCase?.dischargeInfo) {
+      const caseAny = currentCase as any;
+      if (currentCase.dischargeInfo.primaryDiagnosis !== primaryDiagnosis) {
+        captureFeedbackCorrection("primary_diagnosis", currentCase.dischargeInfo.primaryDiagnosis || "", primaryDiagnosis, caseAny.historyOfPresentIllness || caseAny.presentingComplaint || "", "discharge_summary", profile?.name || "Doctor");
+      }
+      if (currentCase.dischargeInfo.dischargeMedications !== dischargeMedications) {
+        captureFeedbackCorrection("discharge_medications", currentCase.dischargeInfo.dischargeMedications || "", dischargeMedications, caseAny.treatmentInEr || caseAny.treatments || "", "discharge_summary", profile?.name || "Doctor");
+      }
+    }
+
     const info: DischargeInfo = {
       primaryDiagnosis,
       secondaryDiagnosis,
@@ -660,6 +673,16 @@ ${followUpPlan}<br/>
         </div>
 
         <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => setIsDiscussModalOpen(true)}
+            className="inline-flex items-center gap-1.5 px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-lg transition-all shadow-xs cursor-pointer"
+            title="Discuss this discharge summary with ErMate AI"
+          >
+            <MessageSquare className="w-3.5 h-3.5" />
+            <span>Discuss Discharge</span>
+          </button>
+
           <button
             onClick={handleCopyDischargeSummary}
             className={`inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-lg transition-all border ${
@@ -1762,6 +1785,34 @@ ${followUpPlan}<br/>
         </div>
 
       </div>
+
+      {/* Bound Chat Modal */}
+      <BoundChatModal
+        context={{
+          type: 'discharge',
+          id: currentCase.id,
+          data: {
+            patient: currentCase.patient,
+            primaryDiagnosis,
+            secondaryDiagnosis,
+            dischargeMedications,
+            followUpPlan,
+            courseInHospital,
+            investigationsResults,
+            dischargeCondition,
+            dispositionStatus
+          },
+          canEdit: true,
+          onRecordUpdated: (updatedFields) => {
+            if (updatedFields.primaryDiagnosis) setPrimaryDiagnosis(updatedFields.primaryDiagnosis);
+            if (updatedFields.dischargeMedications) setDischargeMedications(updatedFields.dischargeMedications);
+            if (updatedFields.followUpPlan) setFollowUpPlan(updatedFields.followUpPlan);
+            if (updatedFields.courseInHospital) setCourseInHospital(updatedFields.courseInHospital);
+          }
+        }}
+        isOpen={isDiscussModalOpen}
+        onClose={() => setIsDiscussModalOpen(false)}
+      />
 
     </div>
   );

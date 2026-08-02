@@ -3,15 +3,18 @@ import {
   Users, ClipboardCopy, FileText, Printer, Plus, Trash2, Edit2, Pencil,
   CheckCircle, HelpCircle, Download, Check, RefreshCw, Layers, LayoutList,
   AlertTriangle, ShieldAlert, ChevronLeft, X, Camera, UploadCloud, Sparkles, Send,
-  MoreHorizontal, BookmarkCheck
+  MoreHorizontal, BookmarkCheck, MessageSquare
 } from "lucide-react";
 import SpeechMicButton from "./SpeechMicButton";
 import { sanitizeDoctorError } from "../utils/sanitizeError";
 import { triggerPrintWithTip } from "../utils/printWithTip";
 import { ClinicalCase, UserProfile, HandoverRecord, QuickPastePatient, InvestigationItem, HandoverPatient, DirectDischargeSummaryItem } from "../types";
 import { HandoverCard } from "./HandoverCard";
+import { BoundChatModal } from "./BoundChatModal";
+import { ChatContext } from "../hooks/useBoundChat";
 import { db } from "../firebase";
 import { doc, setDoc, deleteDoc, getDoc } from "firebase/firestore";
+import { captureFeedbackCorrection } from "../services/learningClient";
 
 interface HandoverViewProps {
   profile: UserProfile;
@@ -892,6 +895,59 @@ export default function HandoverView({
   const [editingCells, setEditingCells] = useState<Record<string, boolean>>({});
   const [autoSaveStatus, setAutoSaveStatus] = useState<"saved" | "saving" | "idle">("idle");
 
+  const [boundChatContext, setBoundChatContext] = useState<ChatContext | null>(null);
+  const [isBoundChatOpen, setIsBoundChatOpen] = useState(false);
+
+  const handleOpenHandoverRowChat = (row: HandoverTableRow) => {
+    setBoundChatContext({
+      type: 'handover',
+      id: row.id || `handover_row_${row.bed}_${row.name}`,
+      data: {
+        patientLabel: {
+          name: row.name,
+          ageSex: row.ageGender,
+          bed: row.bed,
+          erNumber: row.erNo,
+          admittingConsultant: row.doctor,
+          inERSince: row.stayDuration,
+          status: 'unstable'
+        },
+        presentingComplaint: row.complaints,
+        story: row.chronologicalNotes || row.complaints,
+        pmh: row.history,
+        diagnosis: row.assessment,
+        done: row.planDone ? row.planDone.split('\n') : [],
+        toBeDone: row.planToBeDone ? row.planToBeDone.split('\n') : [],
+        vitalsNow: row.vitals,
+        alertRow: row.alerts
+      },
+      canEdit: true,
+      onRecordUpdated: (updatedFields) => {
+        setEditableRows(prev => prev.map(r => {
+          if (r.id !== row.id) return r;
+          return {
+            ...r,
+            ...(updatedFields.diagnosis ? { assessment: updatedFields.diagnosis } : {}),
+            ...(updatedFields.toBeDone ? { planToBeDone: Array.isArray(updatedFields.toBeDone) ? updatedFields.toBeDone.join('\n') : updatedFields.toBeDone } : {}),
+            ...(updatedFields.done ? { planDone: Array.isArray(updatedFields.done) ? updatedFields.done.join('\n') : updatedFields.done } : {}),
+            ...(updatedFields.alertRow ? { alerts: updatedFields.alertRow } : {})
+          };
+        }));
+      }
+    });
+    setIsBoundChatOpen(true);
+  };
+
+  const handleOpenHandoverCardChat = (patient: HandoverPatient) => {
+    setBoundChatContext({
+      type: 'handover',
+      id: patient.id || `handover_card_${patient.patientLabel?.bed}_${patient.patientLabel?.name}`,
+      data: patient,
+      canEdit: true
+    });
+    setIsBoundChatOpen(true);
+  };
+
   const toggleCellEditing = (rowId: string, field: string) => {
     const key = `${rowId}_${field}`;
     setEditingCells(prev => ({ ...prev, [key]: !prev[key] }));
@@ -1021,6 +1077,119 @@ export default function HandoverView({
       setTimeout(() => setActionSuccessMsg(null), 6000);
     }
   };
+
+function extractPatientNameAndTimestamp(rawText: string): {
+  name: string;
+  ageGender: string;
+  time: string;
+  bed: string | null;
+} {
+  if (!rawText || typeof rawText !== 'string') {
+    return { name: "Bed Patient", ageGender: "Unknown", time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), bed: null };
+  }
+
+  let name = "";
+  let ageGender = "";
+  let time = "";
+  let bed: string | null = null;
+
+  // 1. Bed Extraction
+  const bedMatch = rawText.match(/(?:bed|bay|room)\s*#?\s*:?\s*([a-z0-9\-]+)/i);
+  if (bedMatch) {
+    bed = bedMatch[1].trim();
+  }
+
+  // 2. Name Extraction
+  // Pattern A: Explicit label "PATIENT: ...", "Patient Name: ...", "Pt Name: ...", "Name: ..."
+  const labelMatch = rawText.match(/(?:patient(?:\s*name)?|pt(?:\s*name)?|name)\s*[:=-]\s*([A-Za-z\s\.']+?)(?=[,\n\r\t\d\/\(\);]|UHID|MLC|Age|Bed|Allergies|$)/i);
+  if (labelMatch && labelMatch[1].trim().length > 1) {
+    const candidate = labelMatch[1].trim();
+    if (!/^(?:unknown|bed|patient|male|female|adult|na|nil)$/i.test(candidate) && candidate.length < 35) {
+      name = candidate;
+    }
+  }
+
+  // Pattern B: Name before age/gender (e.g. "Raman Pillai, 58/M" or "Selvarani, 57F" or "Varghese KC / 48M")
+  if (!name) {
+    const ageSexNameMatch = rawText.match(/\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})\s*[\/,-]?\s*(\d{1,3}\s*[\/,-]?\s*[MFmf])\b/);
+    if (ageSexNameMatch) {
+      name = ageSexNameMatch[1].trim();
+      ageGender = ageSexNameMatch[2].replace(/\s+/g, '').toUpperCase();
+    }
+  }
+
+  // Pattern C: "Mr. Raman Pillai" or "Mrs. Selvarani" or "Pt. Varghese KC"
+  if (!name) {
+    const titleMatch = rawText.match(/(?:mr\.|mrs\.|ms\.|pt\.)\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})/i);
+    if (titleMatch) {
+      name = titleMatch[1].trim();
+    }
+  }
+
+  // Pattern D: Header pattern: "DD-MM-YYYY HH:MM AM/PM / Author / Name"
+  if (!name) {
+    const headerMatch = rawText.match(/\d{2}[-\/]\d{2}[-\/]\d{2,4}\s+\d{1,2}:\d{2}\s*(?:AM|PM)?\s*\/\s*(?:[^\/]+\/)?\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)/i);
+    if (headerMatch) {
+      name = headerMatch[1].trim();
+    }
+  }
+
+  // Fallback Name
+  if (!name) {
+    name = bed ? `Bed ${bed}` : "Bed Patient";
+  }
+
+  // 3. Age & Gender Extraction (if not matched yet)
+  if (!ageGender || ageGender === "Unknown") {
+    const ageMatch = rawText.match(/(\d{1,3})\s*(?:year|y\.?o\.?|yo|f|m|\/f|\/m)/i) || rawText.match(/(?:age)\s*[:=-]?\s*(\d{1,3})/i);
+    const genderMatch = rawText.match(/\b(female|male|f|m)\b/i);
+    if (ageMatch) {
+      const ageNum = ageMatch[1];
+      const genderLetter = genderMatch ? genderMatch[1].toUpperCase().charAt(0) : "";
+      ageGender = genderLetter ? `${ageNum}${genderLetter}` : `${ageNum}y`;
+    } else {
+      ageGender = "Unknown";
+    }
+  }
+
+  // 4. Time / Timestamp Extraction
+  // Pattern A: "ARRIVING VITALS (08:30 AM):" or "ARRIVING VITALS 08:30 AM"
+  const arrivingVitalsMatch = rawText.match(/(?:arriving\s+vitals|arrival\s+vitals|arrival|arrived)\s*\(?\s*([0-2]?\d:[0-5]\d(?:\s*[AP]M)?)\s*\)?/i);
+  if (arrivingVitalsMatch) {
+    time = arrivingVitalsMatch[1].trim();
+  }
+
+  // Pattern B: "@ 08:30 AM" or "Time: 08:30 AM" or "Arrived at: 08:30 AM"
+  if (!time) {
+    const explicitTimeMatch = rawText.match(/(?:@|time|arrived\s+at)\s*[:=-]?\s*([0-2]?\d:[0-5]\d(?:\s*[AP]M)?)/i);
+    if (explicitTimeMatch) {
+      time = explicitTimeMatch[1].trim();
+    }
+  }
+
+  // Pattern C: Full date-time "28-07-2026 08:30 AM" or "28/07/2026 10:15 AM"
+  if (!time) {
+    const dateTimeMatch = rawText.match(/\b\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4}\s+([0-2]?\d:[0-5]\d(?:\s*[AP]M)?)\b/i);
+    if (dateTimeMatch) {
+      time = dateTimeMatch[1].trim();
+    }
+  }
+
+  // Pattern D: Any standalone time "08:30 AM" or "10:15 PM" or "14:30"
+  if (!time) {
+    const timeMatch = rawText.match(/\b([0-2]?\d:[0-5]\d(?:\s*[AP]M))\b/i);
+    if (timeMatch) {
+      time = timeMatch[1].trim();
+    }
+  }
+
+  // Fallback Time
+  if (!time) {
+    time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+
+  return { name, ageGender, time, bed };
+}
 
 function extractLatestVitalsWithTime(
   vitalsObj?: { bp?: string; hr?: string; spo2?: string; rr?: string; temp?: string; gcs?: string; grbs?: string },
@@ -1762,6 +1931,8 @@ function extractLatestVitalsWithTime(
     setHandoverImgName(null);
 
     try {
+      const extractedMeta = extractPatientNameAndTimestamp(userText);
+
       const response = await fetch("/api/handover/parse-structured", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1775,45 +1946,39 @@ function extractLatestVitalsWithTime(
       if (resData.success && (resData.data || resData.extracted)) {
         const parsed = resData.data || resData.extracted;
 
-        const handoverCardData: HandoverPatient = parsed.patientLabel ? {
-          patientLabel: parsed.patientLabel,
-          presentingComplaint: parsed.presentingComplaint || "",
-          story: parsed.story || "",
-          pmh: parsed.pmh || null,
-          diagnosis: parsed.diagnosis || "",
-          done: Array.isArray(parsed.done) ? parsed.done : [],
-          toBeDone: Array.isArray(parsed.toBeDone) ? parsed.toBeDone : [],
-          vitalsNow: parsed.vitalsNow || null,
-          criticalAlerts: Array.isArray(parsed.criticalAlerts) ? parsed.criticalAlerts : [],
-          bystander: parsed.bystander || null,
-          alertRow: parsed.alertRow || "✓ Stable"
-        } : {
+        const resolvedName = (parsed.patientLabel?.name && parsed.patientLabel.name !== "Bed Patient") ? parsed.patientLabel.name : (parsed.name && parsed.name !== "Bed Patient" ? parsed.name : extractedMeta.name);
+        const resolvedAgeSex = (parsed.patientLabel?.ageSex && parsed.patientLabel.ageSex !== "Unknown") ? parsed.patientLabel.ageSex : (parsed.ageGender || extractedMeta.ageGender || "Unknown");
+        const resolvedTime = parsed.patientLabel?.inERSince || extractedMeta.time;
+        const resolvedBed = parsed.patientLabel?.bed || extractedMeta.bed || null;
+
+        const handoverCardData: HandoverPatient = {
           patientLabel: {
-            name: parsed.name || "Bed Patient",
-            ageSex: parsed.ageGender || "Unknown",
-            bed: null,
-            erNumber: null,
-            admittingConsultant: null,
-            inERSince: null,
-            status: (parsed.triage && parsed.triage.includes("P1")) ? 'critical' : 'unstable'
+            name: resolvedName,
+            ageSex: resolvedAgeSex,
+            bed: resolvedBed,
+            erNumber: parsed.patientLabel?.erNumber || null,
+            admittingConsultant: parsed.patientLabel?.admittingConsultant || null,
+            inERSince: resolvedTime,
+            status: parsed.patientLabel?.status || ((parsed.triage && parsed.triage.includes("P1")) ? 'critical' : 'unstable')
           },
           presentingComplaint: parsed.presentingComplaint || "Presenting complaint recorded.",
-          story: parsed.structuredSBAR?.situation || "Clinical story recorded.",
-          pmh: parsed.structuredSBAR?.background || null,
-          diagnosis: parsed.structuredSBAR?.situation || "Under evaluation",
-          done: parsed.structuredSBAR?.recommendation ? [parsed.structuredSBAR.recommendation] : [],
-          toBeDone: [],
-          vitalsNow: parsed.vitals || null,
-          criticalAlerts: [],
-          bystander: null,
-          alertRow: parsed.vitals ? `⚠ ${parsed.vitals}` : "⚠ Active ER evaluation"
+          story: parsed.story || parsed.structuredSBAR?.situation || "Clinical story recorded.",
+          pmh: parsed.pmh || parsed.structuredSBAR?.background || null,
+          diagnosis: parsed.diagnosis || parsed.structuredSBAR?.situation || "Under evaluation",
+          done: Array.isArray(parsed.done) ? parsed.done : (parsed.structuredSBAR?.recommendation ? [parsed.structuredSBAR.recommendation] : []),
+          toBeDone: Array.isArray(parsed.toBeDone) ? parsed.toBeDone : [],
+          vitalsNow: parsed.vitalsNow || parsed.vitals || null,
+          criticalAlerts: Array.isArray(parsed.criticalAlerts) ? parsed.criticalAlerts : [],
+          bystander: parsed.bystander || null,
+          alertRow: parsed.alertRow || (parsed.vitals ? `⚠ ${parsed.vitals}` : "⚠ Active ER evaluation")
         };
 
         // 2. Automatically save the parsed patient to quickPasteList
         const newPatient: QuickPastePatient = {
           id: `qp-pat-${Date.now()}`,
-          name: handoverCardData.patientLabel.name || parsed.name || "Bed Patient",
-          ageGender: handoverCardData.patientLabel.ageSex || parsed.ageGender || "Unknown",
+          bed: resolvedBed || undefined,
+          name: resolvedName,
+          ageGender: resolvedAgeSex,
           triage: parsed.triage || (handoverCardData.patientLabel.status === 'critical' ? "P1 (Immediate)" : "P2 (Urgent)"),
           vitals: handoverCardData.vitalsNow || parsed.vitals || "Not documented",
           presentingComplaint: handoverCardData.presentingComplaint || (userText ? userText.substring(0, 150) : "Presenting complaint recorded."),
@@ -1833,7 +1998,7 @@ function extractLatestVitalsWithTime(
         const botMsg: ScribeChatMessage = {
           id: `bot-${Date.now()}`,
           sender: "ermate",
-          text: `I've analyzed the clinical details using the complete handover pipeline (preprocessed noise stripping, chronological reversal, model routing, and alert row synthesis). **${newPatient.name}** has been added to your handover records!`,
+          text: `I've analyzed the clinical details using the complete handover pipeline (preprocessed noise stripping, chronological reversal, model routing, and alert row synthesis). **${newPatient.name}** (${newPatient.ageGender} · In ER: ${resolvedTime}) has been added to your handover records!`,
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           parsedPatient: {
             patientId: newPatient.id,
@@ -1857,9 +2022,7 @@ function extractLatestVitalsWithTime(
       console.error("Scribe chat error:", err);
       
       // Fallback: If AI fails, we still create a fallback message and patient log so it's robust
-      const fallbackName = userText ? (userText.match(/(?:bed|room|bay)\s*#?\s*(\d+)/i) ? `Bed ${userText.match(/(?:bed|room|bay)\s*#?\s*(\d+)/i)![1]}` : "Bed Patient") : "Attached Case Sheet";
-      
-      // Extract vitals if present
+      const extractedFallback = extractPatientNameAndTimestamp(userText);
       const extractedVitals = extractLatestVitalsWithTime(undefined, undefined, userText);
 
       // Extract PMH if present
@@ -1868,12 +2031,35 @@ function extractLatestVitalsWithTime(
       // Extract Diagnosis if present
       const diagM = userText?.match(/(?:imp|impression|diagnosis|dx)\s*[:=-]?\s*([^\n\r]+)/i);
 
+      const fallbackCardData: HandoverPatient = {
+        patientLabel: {
+          name: extractedFallback.name,
+          ageSex: extractedFallback.ageGender,
+          bed: extractedFallback.bed,
+          erNumber: null,
+          admittingConsultant: null,
+          inERSince: extractedFallback.time,
+          status: 'unstable'
+        },
+        presentingComplaint: userText ? userText.substring(0, 150) : "Presenting complaint recorded.",
+        story: userText ? userText.substring(0, 200) : "Clinical evaluation in progress.",
+        pmh: pmhM ? pmhM[1].trim() : null,
+        diagnosis: diagM ? diagM[1].trim() : "Under evaluation",
+        done: ["Triage evaluation done"],
+        toBeDone: ["Review workup"],
+        vitalsNow: extractedVitals || null,
+        criticalAlerts: [],
+        bystander: null,
+        alertRow: extractedVitals ? `⚠ ${extractedVitals}` : "⚠ Active ER evaluation"
+      };
+
       const fallbackPatient: QuickPastePatient = {
         id: `qp-pat-${Date.now()}`,
-        name: fallbackName,
-        ageGender: "Unknown",
+        bed: extractedFallback.bed || undefined,
+        name: extractedFallback.name,
+        ageGender: extractedFallback.ageGender,
         triage: "P2 (Urgent)",
-        vitals: extractedVitals,
+        vitals: extractedVitals || "Not documented",
         presentingComplaint: userText ? userText.substring(0, 150) : "",
         rawNotes: userText || "Uploaded Case Sheet Photo",
         structuredSBAR: {
@@ -1881,7 +2067,8 @@ function extractLatestVitalsWithTime(
           background: pmhM ? pmhM[1].trim() : "",
           assessment: extractedVitals ? `Vitals: ${extractedVitals}` : "",
           recommendation: ""
-        }
+        },
+        handoverCardData: fallbackCardData
       };
 
       setQuickPasteList(prev => [...prev, fallbackPatient]);
@@ -1913,6 +2100,17 @@ function extractLatestVitalsWithTime(
   const handleSaveModalEdit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingPatient) return;
+
+    // Capture feedback if notes or vitals were edited
+    const originalItem = quickPasteList.find(i => i.id === editingPatient.id);
+    if (originalItem) {
+      if (originalItem.vitals !== editingPatient.vitals) {
+        captureFeedbackCorrection("vitals", originalItem.vitals, editingPatient.vitals, editingPatient.rawNotes, "handover_synthesis", profile?.name || "Doctor");
+      }
+      if (originalItem.name !== editingPatient.name) {
+        captureFeedbackCorrection("patient_name", originalItem.name, editingPatient.name, editingPatient.rawNotes, "handover_synthesis", profile?.name || "Doctor");
+      }
+    }
     
     // Update the quickPasteList
     setQuickPasteList(prev => prev.map(item => item.id === editingPatient.id ? editingPatient : item));
@@ -1943,19 +2141,25 @@ function extractLatestVitalsWithTime(
 
   const handleAddOrEditQuickPaste = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!qpName || !qpRawNotes) return;
+    if (!qpRawNotes) return;
 
-    const structured = qpStructuredSBAR || extractSBARStructure(qpRawNotes, qpName);
+    const extracted = extractPatientNameAndTimestamp(qpRawNotes);
+    const resolvedName = (qpName && qpName.trim() && qpName !== "Bed Patient") ? qpName.trim() : extracted.name;
+    const resolvedAgeGender = (qpAgeGender && qpAgeGender !== "N/A" && qpAgeGender !== "Unknown") ? qpAgeGender : extracted.ageGender;
+    const resolvedVitals = (qpVitals && qpVitals.trim()) ? qpVitals.trim() : (extractLatestVitalsWithTime(undefined, undefined, qpRawNotes) || "Not documented");
+
+    const structured = qpStructuredSBAR || extractSBARStructure(qpRawNotes, resolvedName);
 
     if (editingQpId) {
       setQuickPasteList(prev => prev.map(item => {
         if (item.id === editingQpId) {
           return {
             ...item,
-            name: qpName,
-            ageGender: qpAgeGender || "N/A",
+            bed: extracted.bed || item.bed,
+            name: resolvedName,
+            ageGender: resolvedAgeGender,
             triage: qpTriage,
-            vitals: qpVitals || "Not documented",
+            vitals: resolvedVitals,
             rawNotes: qpRawNotes,
             structuredSBAR: structured
           };
@@ -1966,10 +2170,11 @@ function extractLatestVitalsWithTime(
     } else {
       const newItem: QuickPastePatient = {
         id: "qp-" + Date.now(),
-        name: qpName,
-        ageGender: qpAgeGender || "N/A",
+        bed: extracted.bed || undefined,
+        name: resolvedName,
+        ageGender: resolvedAgeGender,
         triage: qpTriage,
-        vitals: qpVitals || "Not documented",
+        vitals: resolvedVitals,
         rawNotes: qpRawNotes,
         structuredSBAR: structured
       };
@@ -2653,6 +2858,15 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
                       {row.erNo && <span className="text-amber-300 font-mono">· {row.erNo}</span>}
                       {row.doctor && <span className="text-indigo-200 font-mono">· {row.doctor}</span>}
                       {row.stayDuration && <span className="text-emerald-300 font-mono">· {row.stayDuration}</span>}
+                      <button
+                        type="button"
+                        onClick={() => handleOpenHandoverRowChat(row)}
+                        className="no-print ml-2 px-2.5 py-1 bg-indigo-500 hover:bg-indigo-400 text-white rounded-lg text-xs font-black shadow-xs transition-all cursor-pointer flex items-center gap-1"
+                        title="Discuss this patient's handover notes with ErMate AI"
+                      >
+                        <MessageSquare className="w-3.5 h-3.5" />
+                        <span>Discuss</span>
+                      </button>
                     </div>
                   </div>
 
@@ -3288,21 +3502,23 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
       )}
 
       {/* Navigation Sub-Tabs Toggle */}
-      <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-900 p-1 rounded-xl border border-slate-200/60 dark:border-slate-800/80 w-fit no-print">
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-1.5 bg-slate-100 dark:bg-slate-900 p-1.5 rounded-xl border border-slate-200/60 dark:border-slate-800/80 w-full sm:w-fit no-print">
         <button
           onClick={() => {
             setActiveSubTab("registry");
             setIsViewingSheet(false);
           }}
-          className={`px-4 py-2.5 rounded-lg text-xs font-bold transition-all flex items-center gap-2 ${
+          className={`px-3.5 py-2.5 rounded-lg text-xs font-bold transition-all flex items-center justify-between sm:justify-start gap-2 ${
             activeSubTab === "registry"
               ? "bg-white dark:bg-slate-950 text-indigo-600 dark:text-indigo-400 shadow-sm"
               : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
           }`}
         >
-          <LayoutList className="w-4 h-4" />
-          Direct from ErMate Case Log
-          <span className="text-[10px] px-1.5 py-0.2 bg-slate-100 dark:bg-slate-800 text-slate-500 rounded-full font-mono font-bold">
+          <span className="flex items-center gap-2">
+            <LayoutList className="w-4 h-4 shrink-0" />
+            <span>Direct from ErMate Case Log</span>
+          </span>
+          <span className="text-[10px] px-1.5 py-0.2 bg-slate-100 dark:bg-slate-800 text-slate-500 rounded-full font-mono font-bold shrink-0">
             {activeCases.length}
           </span>
         </button>
@@ -3311,15 +3527,17 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
             setActiveSubTab("quickpaste");
             setIsViewingSheet(false);
           }}
-          className={`px-4 py-2.5 rounded-lg text-xs font-bold transition-all flex items-center gap-2 ${
+          className={`px-3.5 py-2.5 rounded-lg text-xs font-bold transition-all flex items-center justify-between sm:justify-start gap-2 ${
             activeSubTab === "quickpaste"
               ? "bg-white dark:bg-slate-950 text-indigo-600 dark:text-indigo-400 shadow-sm"
               : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
           }`}
         >
-          <ClipboardCopy className="w-4 h-4" />
-          Other than ErMate (Direct EMR Handover)
-          <span className="text-[10px] px-1.5 py-0.2 bg-emerald-100 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 rounded-full font-mono font-bold">
+          <span className="flex items-center gap-2">
+            <ClipboardCopy className="w-4 h-4 shrink-0" />
+            <span>Other than ErMate (Direct EMR Handover)</span>
+          </span>
+          <span className="text-[10px] px-1.5 py-0.2 bg-emerald-100 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 rounded-full font-mono font-bold shrink-0">
             Always Free
           </span>
         </button>
@@ -3328,15 +3546,17 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
             setActiveSubTab("discharge_direct");
             setIsViewingSheet(false);
           }}
-          className={`px-4 py-2.5 rounded-lg text-xs font-bold transition-all flex items-center gap-2 ${
+          className={`px-3.5 py-2.5 rounded-lg text-xs font-bold transition-all flex items-center justify-between sm:justify-start gap-2 ${
             activeSubTab === "discharge_direct"
               ? "bg-white dark:bg-slate-950 text-indigo-600 dark:text-indigo-400 shadow-sm"
               : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
           }`}
         >
-          <FileText className="w-4 h-4" />
-          Discharge Summary Generator
-          <span className="text-[10px] px-1.5 py-0.2 bg-purple-100 dark:bg-purple-950/40 text-purple-600 dark:text-purple-400 rounded-full font-mono font-bold">
+          <span className="flex items-center gap-2">
+            <FileText className="w-4 h-4 shrink-0" />
+            <span>Discharge Summary Generator</span>
+          </span>
+          <span className="text-[10px] px-1.5 py-0.2 bg-purple-100 dark:bg-purple-950/40 text-purple-600 dark:text-purple-400 rounded-full font-mono font-bold shrink-0">
             Universal Hospital Format
           </span>
         </button>
@@ -3741,7 +3961,10 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
                         {isBot && msg.parsedPatient && (
                           <div className="mt-3 border-t border-slate-100 dark:border-slate-800 pt-3 space-y-3">
                             {msg.parsedPatient.handoverCardData ? (
-                              <HandoverCard patient={msg.parsedPatient.handoverCardData} />
+                              <HandoverCard
+                                patient={msg.parsedPatient.handoverCardData}
+                                onDiscuss={handleOpenHandoverCardChat}
+                              />
                             ) : (
                               <>
                                 <div className="flex items-center justify-between flex-wrap gap-2">
@@ -4029,7 +4252,27 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
                     ref={scribeTextareaRef}
                     rows={1}
                     value={qpRawNotes}
-                    onChange={(e) => setQpRawNotes(e.target.value)}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setQpRawNotes(val);
+                      if (val.length > 8) {
+                        const extracted = extractPatientNameAndTimestamp(val);
+                        if (!qpName || qpName === "Bed Patient") setQpName(extracted.name);
+                        if (!qpAgeGender || qpAgeGender === "Unknown") setQpAgeGender(extracted.ageGender);
+                      }
+                    }}
+                    onPaste={(e) => {
+                      const text = e.clipboardData.getData("text");
+                      if (text) {
+                        const extracted = extractPatientNameAndTimestamp(text);
+                        if (!qpName || qpName === "Bed Patient") setQpName(extracted.name);
+                        if (!qpAgeGender || qpAgeGender === "Unknown") setQpAgeGender(extracted.ageGender);
+                        if (!qpVitals) {
+                          const extractedVitals = extractLatestVitalsWithTime(undefined, undefined, text);
+                          if (extractedVitals) setQpVitals(extractedVitals);
+                        }
+                      }
+                    }}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' && !e.shiftKey) {
                         e.preventDefault();
@@ -4214,7 +4457,10 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
                               View Handover Card & Critical Alert Row
                             </summary>
                             <div className="mt-2">
-                              <HandoverCard patient={item.handoverCardData} />
+                              <HandoverCard
+                                patient={item.handoverCardData}
+                                onDiscuss={handleOpenHandoverCardChat}
+                              />
                             </div>
                           </details>
                         ) : (
@@ -5220,6 +5466,18 @@ This discharge summary provides clinical information meant to facilitate continu
             </form>
           </div>
         </div>
+      )}
+
+      {/* Bound Chat Modal */}
+      {boundChatContext && (
+        <BoundChatModal
+          context={boundChatContext}
+          isOpen={isBoundChatOpen}
+          onClose={() => {
+            setIsBoundChatOpen(false);
+            setBoundChatContext(null);
+          }}
+        />
       )}
 
     </div>

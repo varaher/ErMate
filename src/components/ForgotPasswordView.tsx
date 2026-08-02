@@ -26,7 +26,7 @@ export default function ForgotPasswordView({ onBackToLogin, theme = "emerald" }:
     setError("");
 
     if (!email.trim() || !email.includes("@")) {
-      setError("Please provide a valid clinical or whitelisted Gmail address.");
+      setError("Please provide a valid clinical or allowlisted Gmail address.");
       return;
     }
 
@@ -151,7 +151,7 @@ export default function ForgotPasswordView({ onBackToLogin, theme = "emerald" }:
                   <form onSubmit={handleRequestSubmit} className="space-y-4">
                     <div className={`${isEmerald ? 'text-slate-600' : 'text-slate-300'} space-y-2`}>
                       <p className="text-xs font-sans leading-relaxed">
-                        Forgot your clinical credentials? Enter your whitelisted Google account address to receive a secure password recovery token.
+                        Forgot your clinical credentials? Enter your allowlisted Google account address to receive a secure password recovery token.
                       </p>
                     </div>
 

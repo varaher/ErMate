@@ -3,8 +3,8 @@ import { extractFromTranscript, sanitizeExtracted } from "./voiceExtraction.ts";
 
 // ── Model Config ──────────────────────────────────────────────
 export const MODELS = {
-  GEMINI_PRIMARY: "gemini-3.6-flash",
-  GEMINI_PRO: "gemini-3.1-pro-preview",
+  GEMINI_PRIMARY: "gemini-2.5-flash",
+  GEMINI_PRO: "gemini-2.5-pro",
   CLAUDE_HAIKU: "claude-3-5-haiku-20241022",
   CLAUDE_SONNET: "claude-3-5-sonnet-20241022",
 };
@@ -536,7 +536,7 @@ async function callGemini(
   }
 
   const ai = new GoogleGenAI({ apiKey });
-  const modelCandidates = [model, "gemini-3.6-flash", "gemini-flash-latest", "gemini-3.1-pro-preview"];
+  const modelCandidates = [model, "gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"];
   const uniqueModels = Array.from(new Set(modelCandidates));
 
   let lastErr: any = null;
@@ -1074,26 +1074,42 @@ export function formatClinicalCaseObject(rawExt: Record<string, any>, rawText: s
   const genderVal = ext.sex === "Female" ? "Female" : ext.sex === "Male" ? "Male" : "Other";
   const triageCategory = ext.priority === "P1" || ext.priority === "P1 (Immediate)" ? "P1 (Immediate)" : (ext.priority === "P3" || ext.priority === "P3 (Non-Urgent)" ? "P3 (Non-Urgent)" : "P2 (Urgent)");
 
+  // Helper to infer proper route
+  const getProperRoute = (drugName: string, rawRoute?: string) => {
+    const d = drugName.toLowerCase();
+    if (/^(tab\.|cap\.|syr\.|syrup|susp\.|tbl|tablet|capsule)/i.test(drugName) || /\b(tablet|capsule|syrup|suspension|oral|po)\b/i.test(d)) {
+      return "Oral";
+    }
+    if (/^(inj\.|injection)/i.test(drugName) || /\b(injection|ampoule|vial)\b/i.test(d)) {
+      return (!rawRoute || rawRoute === "Oral" || rawRoute === "Stat") ? "IV" : rawRoute;
+    }
+    if (/\b(iv fluids?|normal saline|ns|rl|ringer|d5w|dns)\b/i.test(d)) return "IV";
+    return rawRoute || "Oral";
+  };
+
   // Extract medications into TreatmentItem[] array
   const rawMeds: string[] = Array.isArray(ext.medications) ? ext.medications : [];
-  const treatmentsList = rawMeds.map((medStr: string, idx: number) => {
+  let treatmentsList = rawMeds.map((medStr: string, idx: number) => {
     // Match e.g. "Aspirin (Ecosprin) 325mg oral stat"
     const match = medStr.match(/^(.*?)\s+(\d+[\.\d]*\s*(?:mg|g|mcg|iu|ml|puffs?|nebs?|tablets?|tbl|caps?))\s*(.*)$/i);
     if (match) {
+      const name = match[1].trim();
+      const r = getProperRoute(name, match[3].trim());
       return {
         id: `trt-${Date.now()}-${idx}`,
-        drugName: match[1].trim(),
+        drugName: name,
         dose: match[2].trim(),
-        route: match[3].trim() || "Oral",
+        route: r,
         timeGiven: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         ipsgVerified: true
       };
     }
+    const r = getProperRoute(medStr, "Oral");
     return {
       id: `trt-${Date.now()}-${idx}`,
       drugName: medStr,
       dose: "Stat",
-      route: "IV",
+      route: r,
       timeGiven: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       ipsgVerified: true
     };
@@ -1112,16 +1128,40 @@ export function formatClinicalCaseObject(rawExt: Record<string, any>, rawText: s
   // Merge any acute treatments into treatmentsList if not already present
   medPmh.acuteTreatments.forEach((medStr, idx) => {
     if (medStr && !treatmentsList.some(t => t.drugName.toLowerCase() === medStr.toLowerCase())) {
+      const r = getProperRoute(medStr, "IV");
       treatmentsList.push({
         id: `trt-acute-${Date.now()}-${idx}`,
         drugName: medStr,
         dose: "Stat",
-        route: "IV",
+        route: r,
         timeGiven: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         ipsgVerified: true
       });
     }
   });
+
+  // Deduplicate treatments (e.g. Inj. Omeprazole vs Omeprazole, Inj. Emeset (Ondansetron) vs Ondansetron)
+  const seenDrugKeys = new Map<string, any>();
+  treatmentsList.forEach((t) => {
+    let key = t.drugName.toLowerCase()
+      .replace(/^(inj\.|tab\.|cap\.|syr\.|syrup|susp\.)\s*/gi, '')
+      .replace(/\(.*?\)/g, '')
+      .replace(/\d+[\.\d]*\s*(mg|g|mcg|iu|ml)\b/gi, '')
+      .trim();
+    if (key.includes('emeset')) key = 'ondansetron';
+    if (key.includes('sompraz') || key.includes('pan 40')) key = 'pantoprazole';
+    if (key.includes('ziddot')) key = 'ziddot';
+
+    if (!seenDrugKeys.has(key)) {
+      seenDrugKeys.set(key, t);
+    } else {
+      const existing = seenDrugKeys.get(key);
+      if ((t.drugName.length + (t.dose !== 'Stat' ? 10 : 0)) > (existing.drugName.length + (existing.dose !== 'Stat' ? 10 : 0))) {
+        seenDrugKeys.set(key, t);
+      }
+    }
+  });
+  treatmentsList = Array.from(seenDrugKeys.values());
 
   // Extract Investigations into InvestigationItem[] array
   const investigationItems: any[] = [];
@@ -1199,9 +1239,9 @@ export function formatClinicalCaseObject(rawExt: Record<string, any>, rawText: s
       breathingStatus: "Normal",
       circulation: ext.circulation || EXAM_DEFAULTS.cvsExamination,
       circulationStatus: "Normal",
-      disability: ext.disability || EXAM_DEFAULTS.cnsExamination,
+      disability: ext.disability || `GCS ${ext.vitals?.gcs || '15'}/15 (E4V5M6 - Alert), Pupils: Equal & Reactive (2mm), Motor: ${EXAM_DEFAULTS.cnsExamination}`,
       disabilityStatus: "Normal",
-      exposure: ext.exposure || "Normal exposure findings",
+      exposure: ext.exposure || `Temp: ${ext.vitals?.temp || '37.0'}°C (98.6°F), Skin: Normal, clear`,
       exposureStatus: "Normal"
     },
     secondaryAssessment: [

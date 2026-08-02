@@ -13,6 +13,9 @@ import { motion, AnimatePresence } from "motion/react";
 import { UserProfile, ClinicalCase, TriageCategory, TeamMember, ArrivalMode } from "../types";
 import TeamRosterBoard from "./TeamRosterBoard";
 import TeamBuilder from "./TeamBuilder";
+import MortalityAuditModal from "./MortalityAuditModal";
+import { SelfLearningRulesPanel } from "./SelfLearningRulesPanel";
+import { APP_VERSION } from "../changelog";
 
 interface ProfileSettingsViewProps {
   profile: UserProfile;
@@ -374,7 +377,7 @@ export default function ProfileSettingsView({
       name: editName,
       email: editEmail,
       age: editAge,
-      role: editRole,
+      role: profile.role || "EM Resident",
       hospital: hospitalName,
       state: editState,
       hospitalAddress: editHospitalAddress
@@ -422,6 +425,19 @@ export default function ProfileSettingsView({
   const renderProfileMenuList = () => {
     const initialLetter = (profile.name || "E").charAt(0).toUpperCase();
 
+    const roleStr = (profile.role || "").toLowerCase();
+    const emailStr = (profile.email || "").toLowerCase();
+
+    const isHOD = roleStr.includes("hod") || roleStr.includes("owner") || roleStr.includes("head") || emailStr === "varahgrp@gmail.com";
+    const isConsultant = !isHOD && roleStr.includes("consultant");
+    const isResident = !isHOD && !isConsultant;
+
+    const displayedRoleLabel = isHOD
+      ? (profile.role && profile.role.toLowerCase().includes("hod") ? profile.role : "HOD / Department Lead")
+      : isConsultant
+        ? (profile.role && profile.role.toLowerCase().includes("consultant") ? profile.role : "Senior Consultant")
+        : (profile.role || "ER Resident");
+
     return (
       <div className="space-y-6 pb-24 animate-fade-in">
         {onNavigateToTab && (
@@ -447,21 +463,26 @@ export default function ProfileSettingsView({
 
           <h3 className="text-lg font-black text-slate-800 dark:text-white leading-tight">{profile.name}</h3>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 font-mono">{profile.email}</p>
-          <div className="mt-2 text-[11px] bg-slate-100 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/60 rounded-full px-3 py-0.5 text-slate-600 dark:text-slate-300 font-bold tracking-wide">
-            👤 {profile.role || "HOD / Shift Lead"}
+          <div className="mt-2 flex flex-wrap items-center justify-center gap-1.5">
+            <span className="text-[11px] bg-slate-100 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/60 rounded-full px-3 py-0.5 text-slate-700 dark:text-slate-200 font-bold tracking-wide">
+              👤 {displayedRoleLabel}
+            </span>
+            <span className="text-[10px] bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800/60 rounded-full px-2.5 py-0.5 font-mono font-bold">
+              {profile.hospital || "Varah Group Emergency Care"}
+            </span>
           </div>
 
           {/* Plan subscription pill */}
           <button 
             onClick={() => setSelectedSubSection("subscriptions")}
-            className="mt-3.5 bg-emerald-500/10 hover:bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 px-3.5 py-1 rounded-full text-[11px] font-extrabold inline-flex items-center gap-1.5 transition-all"
+            className="mt-3.5 bg-emerald-500/10 hover:bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 px-3.5 py-1 rounded-full text-[11px] font-extrabold inline-flex items-center gap-1.5 transition-all cursor-pointer"
           >
             <Zap className="w-3.5 h-3.5 animate-pulse" />
-            <span>{profile.subscriptionTier || "Free Plan"}</span>
+            <span>{profile.subscriptionTier || (isHOD ? "Hospital Team Premium" : "Clinical Pro Plan")}</span>
           </button>
         </div>
 
-        {/* Clinical Operational Shift Control (Taps Select/End Shift) */}
+        {/* Clinical Operational Shift Control (Check In / End Shift) */}
         <div className="bg-white dark:bg-[#182333] border border-slate-200 dark:border-slate-800/80 rounded-2xl overflow-hidden divide-y divide-slate-100 dark:divide-slate-800/50 shadow-md">
           <div 
             onClick={handleToggleShift}
@@ -478,9 +499,9 @@ export default function ProfileSettingsView({
                 {isOnShift ? <LogOut className="w-4.5 h-4.5" /> : <Clock className="w-4.5 h-4.5" />}
               </div>
               <div className="text-left">
-                <strong className="text-sm font-bold block">{isOnShift ? "End Current Shift" : "Select Shift"}</strong>
+                <strong className="text-sm font-bold block">{isOnShift ? "End Current Shift" : "Check In to Current Shift"}</strong>
                 <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">
-                  {isOnShift ? `Checked in since 9:00 AM • Active roster Live` : "Check in to your current shift"}
+                  {isOnShift ? "Active clinical shift running • Roster Live" : "Check in to start logging cases & handovers"}
                 </span>
               </div>
             </div>
@@ -488,77 +509,465 @@ export default function ProfileSettingsView({
           </div>
         </div>
 
-        {/* Section: ER Department workspace */}
-        <div className="space-y-1.5">
-          <h4 className="text-[10px] font-black tracking-widest text-slate-400 dark:text-slate-500 uppercase font-mono pl-1">DEPARTMENT WORKSPACE</h4>
-          <div className="bg-white dark:bg-[#182333] border border-slate-200 dark:border-slate-800/80 rounded-2xl overflow-hidden divide-y divide-slate-100 dark:divide-slate-800/50 shadow-md">
-            
-            <div 
-              onClick={() => setSelectedSubSection("handovers")}
-              className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-all"
-            >
-              <div className="flex items-center gap-3">
-                <div className="w-8.5 h-8.5 rounded-xl bg-blue-500/10 text-blue-400 flex items-center justify-center">
-                  <RefreshCcw className="w-4.5 h-4.5" />
+        {/* ROLE-SPECIFIC WORKSPACE SECTIONS */}
+
+        {/* ------------------- ROLE 1: HOD / OWNER ------------------- */}
+        {isHOD && (
+          <>
+            <div className="space-y-1.5">
+              <h4 className="text-[10px] font-black tracking-widest text-slate-400 dark:text-slate-500 uppercase font-mono pl-1">DEPARTMENT MANAGEMENT</h4>
+              <div className="bg-white dark:bg-[#182333] border border-slate-200 dark:border-slate-800/80 rounded-2xl overflow-hidden divide-y divide-slate-100 dark:divide-slate-800/50 shadow-md">
+                
+                <div 
+                  onClick={() => setSelectedSubSection("dashboard")}
+                  className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-all"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-8.5 h-8.5 rounded-xl bg-indigo-500/10 text-indigo-400 flex items-center justify-center">
+                      <ShieldCheck className="w-4.5 h-4.5" />
+                    </div>
+                    <div className="text-left">
+                      <strong className="text-sm font-bold block">HOD Dashboard</strong>
+                      <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">Department oversight, active roster & shift status</span>
+                    </div>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
                 </div>
-                <div className="text-left">
-                  <strong className="text-sm font-bold block">Incoming Handovers</strong>
-                  <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">
-                    {handovers.length} sheets pending acknowledgement
-                  </span>
+
+                <div 
+                  onClick={() => setSelectedSubSection("handovers")}
+                  className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-all"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-8.5 h-8.5 rounded-xl bg-blue-500/10 text-blue-400 flex items-center justify-center">
+                      <RefreshCcw className="w-4.5 h-4.5" />
+                    </div>
+                    <div className="text-left">
+                      <strong className="text-sm font-bold block">Incoming Handovers</strong>
+                      <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">
+                        {handovers.length} pending acknowledgement
+                      </span>
+                    </div>
+                  </div>
+                  {handovers.length > 0 ? (
+                    <span className="text-[10px] bg-blue-500/15 text-blue-400 border border-blue-500/30 px-2 py-0.5 rounded-full font-bold font-mono">
+                      {handovers.length} pending
+                    </span>
+                  ) : (
+                    <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
+                  )}
                 </div>
+
+                <div 
+                  onClick={() => setSelectedSubSection("roster")}
+                  className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-all"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-8.5 h-8.5 rounded-xl bg-emerald-500/10 text-emerald-400 flex items-center justify-center">
+                      <Users className="w-4.5 h-4.5" />
+                    </div>
+                    <div className="text-left">
+                      <strong className="text-sm font-bold block">Clinical Team & Roster</strong>
+                      <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">Roster assignments & doctor directory</span>
+                    </div>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
+                </div>
+
+                <div 
+                  onClick={() => setSelectedSubSection("roster")}
+                  className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-all"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-8.5 h-8.5 rounded-xl bg-teal-500/10 text-teal-400 flex items-center justify-center">
+                      <UserPlus className="w-4.5 h-4.5" />
+                    </div>
+                    <div className="text-left">
+                      <strong className="text-sm font-bold block">Team Builder & Invitations</strong>
+                      <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">Onboard doctors and generate team join links</span>
+                    </div>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
+                </div>
+
+                <div 
+                  onClick={() => setSelectedSubSection("revenue-planner")}
+                  className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-all"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-8.5 h-8.5 rounded-xl bg-purple-500/10 text-purple-400 flex items-center justify-center">
+                      <Calculator className="w-4.5 h-4.5" />
+                    </div>
+                    <div className="text-left">
+                      <strong className="text-sm font-bold block text-purple-400">Owner Revenue & Cost Planner</strong>
+                      <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">Analyze ErMate department expenses & financial models</span>
+                    </div>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
+                </div>
+
+                <div 
+                  onClick={() => setSelectedSubSection("self-learning")}
+                  className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-all"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-8.5 h-8.5 rounded-xl bg-amber-500/10 text-amber-400 flex items-center justify-center">
+                      <Cpu className="w-4.5 h-4.5" />
+                    </div>
+                    <div className="text-left">
+                      <strong className="text-sm font-bold block">Self-Learning Rules Panel</strong>
+                      <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">Approve AI feedback corrections & custom department rules</span>
+                    </div>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
+                </div>
+
+                <div 
+                  onClick={() => setSelectedSubSection("mortality-audit")}
+                  className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-all"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-8.5 h-8.5 rounded-xl bg-rose-500/10 text-rose-400 flex items-center justify-center">
+                      <ShieldAlert className="w-4.5 h-4.5" />
+                    </div>
+                    <div className="text-left">
+                      <strong className="text-sm font-bold block">Mortality & M&M Audit</strong>
+                      <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">Conduct clinical case deconstructions & M&M debriefs</span>
+                    </div>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
+                </div>
+
               </div>
-              <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
             </div>
 
-            <div 
-              onClick={() => setSelectedSubSection("dashboard")}
-              className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-all"
-            >
-              <div className="flex items-center gap-3">
-                <div className="w-8.5 h-8.5 rounded-xl bg-indigo-500/10 text-indigo-400 flex items-center justify-center">
-                  <ShieldCheck className="w-4.5 h-4.5" />
+            {/* MY WORK section for HOD */}
+            <div className="space-y-1.5">
+              <h4 className="text-[10px] font-black tracking-widest text-slate-400 dark:text-slate-500 uppercase font-mono pl-1">MY WORK</h4>
+              <div className="bg-white dark:bg-[#182333] border border-slate-200 dark:border-slate-800/80 rounded-2xl overflow-hidden divide-y divide-slate-100 dark:divide-slate-800/50 shadow-md">
+                
+                <div 
+                  onClick={() => setSelectedSubSection("stats")}
+                  className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-all"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-8.5 h-8.5 rounded-xl bg-teal-500/10 text-teal-400 flex items-center justify-center">
+                      <TrendingUp className="w-4.5 h-4.5" />
+                    </div>
+                    <div className="text-left">
+                      <strong className="text-sm font-bold block">My Stats</strong>
+                      <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">Clinical registries performance analytics</span>
+                    </div>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
                 </div>
-                <div className="text-left">
-                  <strong className="text-sm font-bold block">HOD Dashboard</strong>
-                  <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">Active roster shift and rota status</span>
+
+                <div 
+                  onClick={() => setSelectedSubSection("log-book")}
+                  className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-all"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-8.5 h-8.5 rounded-xl bg-indigo-500/10 text-indigo-400 flex items-center justify-center">
+                      <BookOpen className="w-4.5 h-4.5" />
+                    </div>
+                    <div className="text-left">
+                      <strong className="text-sm font-bold block">My Log Book</strong>
+                      <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">International standard case & procedure logs</span>
+                    </div>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
                 </div>
+
+                <div 
+                  onClick={() => setSelectedSubSection("subscriptions")}
+                  className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-all"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-8.5 h-8.5 rounded-xl bg-amber-500/10 text-amber-400 flex items-center justify-center">
+                      <CreditCard className="w-4.5 h-4.5" />
+                    </div>
+                    <div className="text-left">
+                      <strong className="text-sm font-bold block">My Subscriptions</strong>
+                      <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">Department plan & billing details</span>
+                    </div>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
+                </div>
+
               </div>
-              <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
+            </div>
+          </>
+        )}
+
+        {/* ------------------- ROLE 2: CONSULTANT ------------------- */}
+        {isConsultant && (
+          <>
+            <div className="space-y-1.5">
+              <h4 className="text-[10px] font-black tracking-widest text-slate-400 dark:text-slate-500 uppercase font-mono pl-1">CLINICAL WORK</h4>
+              <div className="bg-white dark:bg-[#182333] border border-slate-200 dark:border-slate-800/80 rounded-2xl overflow-hidden divide-y divide-slate-100 dark:divide-slate-800/50 shadow-md">
+                
+                <div 
+                  onClick={() => setSelectedSubSection("handovers")}
+                  className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-all"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-8.5 h-8.5 rounded-xl bg-blue-500/10 text-blue-400 flex items-center justify-center">
+                      <RefreshCcw className="w-4.5 h-4.5" />
+                    </div>
+                    <div className="text-left">
+                      <strong className="text-sm font-bold block">Incoming Handovers</strong>
+                      <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">
+                        {handovers.length} pending acknowledgement
+                      </span>
+                    </div>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
+                </div>
+
+                <div 
+                  onClick={() => onNavigateToTab ? onNavigateToTab("dashboard") : setSelectedSubSection("cases-today")}
+                  className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-all"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-8.5 h-8.5 rounded-xl bg-emerald-500/10 text-emerald-400 flex items-center justify-center">
+                      <Activity className="w-4.5 h-4.5" />
+                    </div>
+                    <div className="text-left">
+                      <strong className="text-sm font-bold block">My Cases Today</strong>
+                      <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">View active shift patients & consultations</span>
+                    </div>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
+                </div>
+
+                <div 
+                  onClick={() => setSelectedSubSection("mortality-audit")}
+                  className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-all"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-8.5 h-8.5 rounded-xl bg-rose-500/10 text-rose-400 flex items-center justify-center">
+                      <ShieldAlert className="w-4.5 h-4.5" />
+                    </div>
+                    <div className="text-left">
+                      <strong className="text-sm font-bold block">Mortality & M&M Audit</strong>
+                      <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">Conduct clinical case deconstructions</span>
+                    </div>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
+                </div>
+
+              </div>
             </div>
 
-            <div 
-              onClick={() => setSelectedSubSection("roster")}
-              className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-all"
-            >
-              <div className="flex items-center gap-3">
-                <div className="w-8.5 h-8.5 rounded-xl bg-emerald-500/10 text-emerald-400 flex items-center justify-center">
-                  <Users className="w-4.5 h-4.5" />
+            <div className="space-y-1.5">
+              <h4 className="text-[10px] font-black tracking-widest text-slate-400 dark:text-slate-500 uppercase font-mono pl-1">MY PROFILE</h4>
+              <div className="bg-white dark:bg-[#182333] border border-slate-200 dark:border-slate-800/80 rounded-2xl overflow-hidden divide-y divide-slate-100 dark:divide-slate-800/50 shadow-md">
+                
+                <div 
+                  onClick={() => setSelectedSubSection("stats")}
+                  className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-all"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-8.5 h-8.5 rounded-xl bg-teal-500/10 text-teal-400 flex items-center justify-center">
+                      <TrendingUp className="w-4.5 h-4.5" />
+                    </div>
+                    <div className="text-left">
+                      <strong className="text-sm font-bold block">My Stats</strong>
+                      <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">Clinical registries performance analytics</span>
+                    </div>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
                 </div>
-                <div className="text-left">
-                  <strong className="text-sm font-bold block">Clinical Team & Roster</strong>
-                  <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">Team Builder setup & doctor directory</span>
+
+                <div 
+                  onClick={() => setSelectedSubSection("log-book")}
+                  className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-all"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-8.5 h-8.5 rounded-xl bg-indigo-500/10 text-indigo-400 flex items-center justify-center">
+                      <BookOpen className="w-4.5 h-4.5" />
+                    </div>
+                    <div className="text-left">
+                      <strong className="text-sm font-bold block">My Log Book</strong>
+                      <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">International standard case & procedure logs</span>
+                    </div>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
                 </div>
+
+                <div 
+                  onClick={() => setSelectedSubSection("subscriptions")}
+                  className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-all"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-8.5 h-8.5 rounded-xl bg-amber-500/10 text-amber-400 flex items-center justify-center">
+                      <CreditCard className="w-4.5 h-4.5" />
+                    </div>
+                    <div className="text-left">
+                      <strong className="text-sm font-bold block">My Subscriptions</strong>
+                      <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">Professional plan & usage</span>
+                    </div>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
+                </div>
+
               </div>
-              <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
+            </div>
+          </>
+        )}
+
+        {/* ------------------- ROLE 3: RESIDENT ------------------- */}
+        {isResident && (
+          <>
+            <div className="space-y-1.5">
+              <h4 className="text-[10px] font-black tracking-widest text-slate-400 dark:text-slate-500 uppercase font-mono pl-1">MY WORK</h4>
+              <div className="bg-white dark:bg-[#182333] border border-slate-200 dark:border-slate-800/80 rounded-2xl overflow-hidden divide-y divide-slate-100 dark:divide-slate-800/50 shadow-md">
+                
+                <div 
+                  onClick={() => onNavigateToTab ? onNavigateToTab("dashboard") : setSelectedSubSection("cases-today")}
+                  className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-all"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-8.5 h-8.5 rounded-xl bg-emerald-500/10 text-emerald-400 flex items-center justify-center">
+                      <Activity className="w-4.5 h-4.5" />
+                    </div>
+                    <div className="text-left">
+                      <strong className="text-sm font-bold block">My Cases Today</strong>
+                      <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">View patients under your care</span>
+                    </div>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
+                </div>
+
+                <div 
+                  onClick={() => setSelectedSubSection("handovers")}
+                  className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-all"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-8.5 h-8.5 rounded-xl bg-blue-500/10 text-blue-400 flex items-center justify-center">
+                      <RefreshCcw className="w-4.5 h-4.5" />
+                    </div>
+                    <div className="text-left">
+                      <strong className="text-sm font-bold block">Handover Sheet</strong>
+                      <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">Shift transfer sheets & pending items</span>
+                    </div>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
+                </div>
+
+                <div 
+                  onClick={() => setSelectedSubSection("subscriptions")}
+                  className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-all"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className={`w-8.5 h-8.5 rounded-xl flex items-center justify-center ${
+                      (profile.aiCredits ?? 350) < 50 ? "bg-amber-500/20 text-amber-400" : "bg-purple-500/10 text-purple-400"
+                    }`}>
+                      <Mic className="w-4.5 h-4.5" />
+                    </div>
+                    <div className="text-left">
+                      <strong className="text-sm font-bold block">Scribe Credits</strong>
+                      <span className={`text-[10px] block font-mono ${
+                        (profile.aiCredits ?? 350) < 50 ? "text-amber-500 font-extrabold" : "text-slate-500 dark:text-slate-400"
+                      }`}>
+                        {profile.aiCredits ?? 350} scribe credits remaining
+                      </span>
+                    </div>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
+                </div>
+
+              </div>
             </div>
 
-          </div>
-        </div>
+            <div className="space-y-1.5">
+              <h4 className="text-[10px] font-black tracking-widest text-slate-400 dark:text-slate-500 uppercase font-mono pl-1">MY PROFILE</h4>
+              <div className="bg-white dark:bg-[#182333] border border-slate-200 dark:border-slate-800/80 rounded-2xl overflow-hidden divide-y divide-slate-100 dark:divide-slate-800/50 shadow-md">
+                
+                <div 
+                  onClick={() => setSelectedSubSection("stats")}
+                  className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-all"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-8.5 h-8.5 rounded-xl bg-teal-500/10 text-teal-400 flex items-center justify-center">
+                      <TrendingUp className="w-4.5 h-4.5" />
+                    </div>
+                    <div className="text-left">
+                      <strong className="text-sm font-bold block">My Stats</strong>
+                      <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">Resident case volume & clinical analytics</span>
+                    </div>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
+                </div>
 
-        {/* Section: Clinical Team Directory */}
+                <div 
+                  onClick={() => setSelectedSubSection("log-book")}
+                  className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-all"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-8.5 h-8.5 rounded-xl bg-indigo-500/10 text-indigo-400 flex items-center justify-center">
+                      <BookOpen className="w-4.5 h-4.5" />
+                    </div>
+                    <div className="text-left">
+                      <strong className="text-sm font-bold block">My Log Book</strong>
+                      <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">Resident procedure & case logbook</span>
+                    </div>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
+                </div>
+
+                <div 
+                  onClick={() => setSelectedSubSection("subscriptions")}
+                  className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-all"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-8.5 h-8.5 rounded-xl bg-amber-500/10 text-amber-400 flex items-center justify-center">
+                      <CreditCard className="w-4.5 h-4.5" />
+                    </div>
+                    <div className="text-left">
+                      <strong className="text-sm font-bold block">My Subscriptions</strong>
+                      <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">Current plan status & tokens</span>
+                    </div>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
+                </div>
+
+                <div 
+                  onClick={() => setSelectedSubSection("upgrade")}
+                  className="p-4 flex items-center justify-between gap-3 cursor-pointer text-emerald-600 dark:text-emerald-400 bg-emerald-50/50 dark:bg-emerald-950/20 hover:bg-emerald-100/50 dark:hover:bg-emerald-900/30 transition-all"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-8.5 h-8.5 rounded-xl bg-emerald-500/20 text-emerald-500 flex items-center justify-center">
+                      <Sparkles className="w-4.5 h-4.5" />
+                    </div>
+                    <div className="text-left">
+                      <strong className="text-sm font-extrabold block text-emerald-600 dark:text-emerald-400">Upgrade Plan</strong>
+                      <span className="text-[10px] text-emerald-600/80 dark:text-emerald-400/80 block font-mono font-bold">Unlock unlimited voice AI & Rounds Debriefs</span>
+                    </div>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-emerald-500 shrink-0" />
+                </div>
+
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* Clinical Team Roster Card (Visible for all roles as directory reference) */}
         <div className="space-y-2">
           <div className="flex justify-between items-center pl-1">
             <h4 className="text-[10px] font-black tracking-widest text-slate-400 dark:text-slate-500 uppercase font-mono">
               MY TEAM DIRECTORY ({teamMembers.length})
             </h4>
-            <button
-              type="button"
-              onClick={() => setSelectedSubSection("roster")}
-              className="text-[10px] font-black font-mono uppercase text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-0.5 cursor-pointer bg-transparent border-none"
-            >
-              Manage / Invite <ChevronRight className="w-3 h-3" />
-            </button>
+            {isHOD && (
+              <button
+                type="button"
+                onClick={() => setSelectedSubSection("roster")}
+                className="text-[10px] font-black font-mono uppercase text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-0.5 cursor-pointer bg-transparent border-none"
+              >
+                Manage / Invite <ChevronRight className="w-3 h-3" />
+              </button>
+            )}
           </div>
           
           <div className="bg-white dark:bg-[#182333] border border-slate-200 dark:border-slate-800/80 rounded-2xl p-4 shadow-md space-y-3">
@@ -644,112 +1053,6 @@ export default function ProfileSettingsView({
           </div>
         </div>
 
-        {/* Section: Personal & Device tools */}
-        <div className="space-y-1.5">
-          <h4 className="text-[10px] font-black tracking-widest text-slate-400 dark:text-slate-500 uppercase font-mono pl-1">PERSONAL & LINKING</h4>
-          <div className="bg-white dark:bg-[#182333] border border-slate-200 dark:border-slate-800/80 rounded-2xl overflow-hidden divide-y divide-slate-100 dark:divide-slate-800/50 shadow-md">
-            
-            <div 
-              onClick={() => setSelectedSubSection("stats")}
-              className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-all"
-            >
-              <div className="flex items-center gap-3">
-                <div className="w-8.5 h-8.5 rounded-xl bg-teal-500/10 text-teal-400 flex items-center justify-center">
-                  <TrendingUp className="w-4.5 h-4.5" />
-                </div>
-                <div className="text-left">
-                  <strong className="text-sm font-bold block">My Stats</strong>
-                  <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">Clinical registries performance analytics</span>
-                </div>
-              </div>
-              <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
-            </div>
-
-            <div 
-              onClick={() => setSelectedSubSection("log-book")}
-              className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-all"
-            >
-              <div className="flex items-center gap-3">
-                <div className="w-8.5 h-8.5 rounded-xl bg-indigo-500/10 text-indigo-400 flex items-center justify-center">
-                  <BookOpen className="w-4.5 h-4.5" />
-                </div>
-                <div className="text-left">
-                  <strong className="text-sm font-bold block">My Log Book</strong>
-                  <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">International standard case & procedure logs</span>
-                </div>
-              </div>
-              <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
-            </div>
-
-            <div 
-              onClick={() => setSelectedSubSection("device-link")}
-              className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-all"
-            >
-              <div className="flex items-center gap-3">
-                <div className="w-8.5 h-8.5 rounded-xl bg-purple-500/10 text-purple-400 flex items-center justify-center">
-                  <Laptop className="w-4.5 h-4.5" />
-                </div>
-                <div className="text-left">
-                  <strong className="text-sm font-bold block">Link to Web</strong>
-                  <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">Connect desktop monitors or recording pins</span>
-                </div>
-              </div>
-              <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
-            </div>
-
-            <div 
-              onClick={() => setSelectedSubSection("subscriptions")}
-              className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-all"
-            >
-              <div className="flex items-center gap-3">
-                <div className="w-8.5 h-8.5 rounded-xl bg-amber-500/10 text-amber-400 flex items-center justify-center">
-                  <CreditCard className="w-4.5 h-4.5" />
-                </div>
-                <div className="text-left">
-                  <strong className="text-sm font-bold block">My Subscriptions</strong>
-                  <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">{profile.aiCredits} scribe credits remaining</span>
-                </div>
-              </div>
-              <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
-            </div>
-
-            <div 
-              onClick={() => setSelectedSubSection("upgrade")}
-              className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-all"
-            >
-              <div className="flex items-center gap-3">
-                <div className="w-8.5 h-8.5 rounded-xl bg-rose-500/10 text-rose-400 flex items-center justify-center">
-                  <Sparkles className="w-4.5 h-4.5" />
-                </div>
-                <div className="text-left">
-                  <strong className="text-sm font-bold block">Upgrade Plan</strong>
-                  <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">Unlock unlimited Rounds & Department tier</span>
-                </div>
-              </div>
-              <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
-            </div>
-
-            {profile.email === "varahgrp@gmail.com" && (
-              <div 
-                onClick={() => setSelectedSubSection("revenue-planner")}
-                className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-all border-t border-slate-100 dark:border-slate-800/50"
-              >
-                <div className="flex items-center gap-3">
-                  <div className="w-8.5 h-8.5 rounded-xl bg-indigo-500/10 text-indigo-400 flex items-center justify-center">
-                    <Calculator className="w-4.5 h-4.5" />
-                  </div>
-                  <div className="text-left">
-                    <strong className="text-sm font-bold block text-indigo-500">Owner Revenue & Cost Planner</strong>
-                    <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">Restricted: Analyze ErMate expenses and revenue</span>
-                  </div>
-                </div>
-                <ChevronRight className="w-4 h-4 text-indigo-500 shrink-0" />
-              </div>
-            )}
-
-          </div>
-        </div>
-
         {/* Section: Account compliance */}
         <div className="space-y-1.5">
           <h4 className="text-[10px] font-black tracking-widest text-slate-400 dark:text-slate-500 uppercase font-mono pl-1">ACCOUNT & CONTROL</h4>
@@ -764,7 +1067,7 @@ export default function ProfileSettingsView({
                   <UserCheck className="w-4.5 h-4.5" />
                 </div>
                 <div className="text-left">
-                  <strong className="text-sm font-bold block">My Role</strong>
+                  <strong className="text-sm font-bold block">My Role & Facility Details</strong>
                   <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">Hospital facility & specialty details</span>
                 </div>
               </div>
@@ -780,7 +1083,7 @@ export default function ProfileSettingsView({
                   <Lock className="w-4.5 h-4.5" />
                 </div>
                 <div className="text-left">
-                  <strong className="text-sm font-bold block">Set Password</strong>
+                  <strong className="text-sm font-bold block">Set Password / PIN</strong>
                   <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">Change sign-in session PIN credentials</span>
                 </div>
               </div>
@@ -818,6 +1121,25 @@ export default function ProfileSettingsView({
               </div>
               <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
             </div>
+
+            {/* Link to Web: Only shown for HOD and Consultant */}
+            {(isHOD || isConsultant) && (
+              <div 
+                onClick={() => setSelectedSubSection("device-link")}
+                className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-all"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-8.5 h-8.5 rounded-xl bg-purple-500/10 text-purple-400 flex items-center justify-center">
+                    <Laptop className="w-4.5 h-4.5" />
+                  </div>
+                  <div className="text-left">
+                    <strong className="text-sm font-bold block">Link to Web</strong>
+                    <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">Connect desktop monitors or recording pins</span>
+                  </div>
+                </div>
+                <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
+              </div>
+            )}
 
           </div>
         </div>
@@ -882,7 +1204,7 @@ export default function ProfileSettingsView({
           </div>
         </div>
 
-        {/* Section: Theme / Display Mode Selection Heading */}
+        {/* Section: Theme / Display Mode Selection */}
         <div className="space-y-3">
           <h4 className="text-[10px] font-black tracking-widest text-slate-400 dark:text-slate-500 uppercase font-mono pl-1">DISPLAY MODE</h4>
           
@@ -962,9 +1284,11 @@ export default function ProfileSettingsView({
         </div>
 
         {/* App footer details */}
-        <div className="text-center space-y-1.5 pt-4">
-          <p className="text-[10px] font-mono text-slate-500">ErMate Clinical Environment v1.0.0-PRO</p>
-          <p className="text-[9px] text-slate-600 leading-relaxed max-w-xs mx-auto">
+        <div className="text-center space-y-1.5 pt-4 font-mono">
+          <p className="text-[11px] font-bold text-slate-400">
+            ErMate v3.0 {isHOD ? "· PRO" : ""}
+          </p>
+          <p className="text-[9px] text-slate-500 leading-relaxed max-w-xs mx-auto">
             HIPAA-Compliant • Certified ATLS Protocol Engine • End-to-end encrypted locally in India.
           </p>
         </div>
@@ -2183,15 +2507,20 @@ export default function ProfileSettingsView({
             </div>
           )}
 
-          <div className="space-y-1.5">
-            <label className="text-[10px] text-slate-450 block font-bold uppercase">Clinical Title / Designation</label>
-            <input
-              type="text"
-              value={editRole}
-              onChange={(e) => setEditRole(e.target.value)}
-              placeholder="e.g. HOD / Senior Consultant"
-              className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-200"
-            />
+          <div className="space-y-2 bg-slate-900/60 border border-slate-800 rounded-xl p-3.5">
+            <div className="flex items-center justify-between">
+              <label className="text-[10px] text-slate-400 block font-bold uppercase">Clinical Role Designation</label>
+              <span className="text-[9px] bg-slate-800 text-slate-400 border border-slate-700/60 px-2 py-0.5 rounded font-mono font-bold uppercase">
+                🔒 Role Locked
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <Shield className="w-4 h-4 text-emerald-400 shrink-0" />
+              <span className="text-sm font-bold text-white font-sans">{profile.role || "EM Resident"}</span>
+            </div>
+            <p className="text-[10.5px] text-slate-400 leading-relaxed font-sans pt-1">
+              For NABH compliance & clinical safety, physicians cannot alter their own access role. To request a role change, please contact your Department Head (HOD) or Administrator.
+            </p>
           </div>
 
           <div className="space-y-1.5">
@@ -3938,6 +4267,55 @@ export default function ProfileSettingsView({
               </div>
             </div>
           </div>
+        </div>
+      );
+    } else if (selectedSubSection === "self-learning") {
+      title = "Self-Learning Rules Panel";
+      content = <SelfLearningRulesPanel />;
+    } else if (selectedSubSection === "mortality-audit") {
+      title = "Mortality & M&M Audit";
+      content = (
+        <MortalityAuditModal
+          isOpen={true}
+          onClose={() => setSelectedSubSection(null)}
+          profile={profile}
+          cases={cases}
+        />
+      );
+    } else if (selectedSubSection === "cases-today") {
+      title = "My Cases Today";
+      content = (
+        <div className="space-y-4 font-mono">
+          <div className="p-4 bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800 rounded-2xl text-left">
+            <h4 className="text-xs font-black uppercase text-emerald-700 dark:text-emerald-400">My Active Clinical Cases ({cases.length})</h4>
+            <p className="text-xs text-slate-600 dark:text-slate-300 mt-1">Quick view of patients logged during your active shift.</p>
+          </div>
+          
+          <div className="space-y-2">
+            {cases.length === 0 ? (
+              <div className="py-8 text-center text-slate-500 text-xs">
+                No clinical cases registered today yet.
+              </div>
+            ) : (
+              cases.slice(0, 10).map((c) => (
+                <div key={c.id} className="p-3 bg-white dark:bg-[#182333] border border-slate-200 dark:border-slate-800 rounded-xl flex justify-between items-center text-left">
+                  <div>
+                    <strong className="text-xs text-slate-800 dark:text-slate-200 block">{c.patient?.name || "Patient"}</strong>
+                    <span className="text-[10px] text-slate-500 block">{c.patient?.presentingComplaint || "ER Evaluation"} • UHID {c.patient?.uhid || c.id}</span>
+                  </div>
+                  <span className="text-[10px] font-bold text-emerald-500 bg-emerald-500/10 px-2 py-0.5 rounded-md">Active</span>
+                </div>
+              ))
+            )}
+          </div>
+
+          <button
+            type="button"
+            onClick={() => onNavigateToTab ? onNavigateToTab("dashboard") : setSelectedSubSection(null)}
+            className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-xs rounded-xl shadow-sm transition-all cursor-pointer"
+          >
+            Go to Full Dashboard ➔
+          </button>
         </div>
       );
     }

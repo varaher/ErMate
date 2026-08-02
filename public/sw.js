@@ -21,6 +21,13 @@ self.addEventListener('install', (event) => {
   self.skipWaiting();
 });
 
+// Listen for message events (e.g. SKIP_WAITING from useAppUpdate)
+self.addEventListener('message', (event) => {
+  if (event.data?.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
+});
+
 // Clean up old caches on activate
 self.addEventListener('activate', (event) => {
   event.waitUntil(

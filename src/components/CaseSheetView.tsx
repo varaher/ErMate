@@ -22,6 +22,7 @@ import {
 import SpeechMicButton from "./SpeechMicButton";
 import { getCasePendingStatus } from "../utils/caseHelper";
 import { classifyEmergencyTriage } from "../utils/triageClassifier";
+import { formatTemperature, formatDoctorName, deduplicateMeds, validateMedRoute, formatDisabilityAssessment } from "../utils/clinicalFormatter";
 
 interface CaseSheetViewProps {
   initialCase: ClinicalCase;
@@ -1466,15 +1467,40 @@ Extremities: No deformity. No peripheral oedema. Peripheral pulses present.`,
 
   // Commit to backend (Save)
   const handleSave = async () => {
-    onSaveCase(currentCase);
-    const saved = Math.max(2, 18 - currentCase.timeSpentMin);
+    // Audit & sanitize clinical fields before saving
+    const ageNum = currentCase.patient.age;
+    const isPeds = currentCase.isPediatric || (ageNum !== null && ageNum <= 16);
+    
+    const formattedVitals = {
+      ...currentCase.vitals,
+      temp: currentCase.vitals.temp ? formatTemperature(currentCase.vitals.temp) : currentCase.vitals.temp
+    };
+
+    const formattedTreatments = deduplicateMeds(currentCase.treatments).map(t => ({
+      ...t,
+      route: validateMedRoute(t.drugName, t.route)
+    }));
+
+    const formattedDocName = formatDoctorName(currentCase.doctorName);
+
+    const caseToSave: ClinicalCase = {
+      ...currentCase,
+      isPediatric: isPeds,
+      vitals: formattedVitals,
+      treatments: formattedTreatments,
+      doctorName: formattedDocName
+    };
+
+    setCurrentCase(caseToSave);
+    onSaveCase(caseToSave);
+    const saved = Math.max(2, 18 - caseToSave.timeSpentMin);
     setSaveBanner({ show: true, minutesSaved: saved });
     setTimeout(() => {
       setSaveBanner(null);
     }, 5000);
     
     // Auto-update discharge summary in background
-    await syncDischargeSummary(currentCase);
+    await syncDischargeSummary(caseToSave);
 
     // Auto-populate first principles learning for the saved modal and trigger the Post-Save Debrief Nudge
     fetchRoundsDebrief("first-principles");
@@ -5451,13 +5477,13 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                         <td colSpan={6} className="p-4 text-center text-slate-400 font-medium">No medications or therapeutic procedures logged for this case.</td>
                       </tr>
                     ) : (
-                      currentCase.treatments.map((item) => (
+                      deduplicateMeds(currentCase.treatments).map((item) => (
                         <tr key={item.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-900/10">
                           <td className="p-3 font-semibold text-slate-700 dark:text-slate-300">{item.drugName}</td>
                           <td className="p-3 font-mono">{item.dose}</td>
                           <td className="p-3">
                             <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-slate-100 dark:bg-slate-800 font-mono">
-                              {item.route}
+                              {validateMedRoute(item.drugName, item.route)}
                             </span>
                           </td>
                           <td className="p-3">
@@ -7353,7 +7379,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                     </p>
                     <p className="flex justify-between border-b border-slate-100 pb-0.5">
                       <span className="font-extrabold text-slate-500 uppercase">Doctor On Duty:</span>
-                      <span className="font-bold text-slate-900">{currentCase.doctorName || "Dr. Duty Physician"}</span>
+                      <span className="font-bold text-slate-900">{formatDoctorName(currentCase.doctorName)}</span>
                     </p>
                     <p className="flex justify-between">
                       <span className="font-extrabold text-slate-500 uppercase">MLC Status:</span>
@@ -7375,7 +7401,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                     <div><span className="text-slate-500 block text-[8px] uppercase">HR</span><strong>{currentCase.vitals.hr || "N/A"} bpm</strong></div>
                     <div><span className="text-slate-500 block text-[8px] uppercase">SpO2</span><strong>{currentCase.vitals.spo2 || "N/A"}%</strong></div>
                     <div><span className="text-slate-500 block text-[8px] uppercase">RR</span><strong>{currentCase.vitals.rr || "N/A"}/m</strong></div>
-                    <div><span className="text-slate-500 block text-[8px] uppercase">Temp</span><strong>{currentCase.vitals.temp || "N/A"}°F</strong></div>
+                    <div><span className="text-slate-500 block text-[8px] uppercase">Temp</span><strong>{formatTemperature(currentCase.vitals.temp)}</strong></div>
                   </div>
                 </div>
 
@@ -7423,11 +7449,11 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                         </tr>
                       </thead>
                       <tbody>
-                        {currentCase.treatments.map((t, idx) => (
+                        {deduplicateMeds(currentCase.treatments).map((t, idx) => (
                           <tr key={idx} className="border-b border-slate-200">
                             <td className="p-1.5 border border-slate-200 font-bold">{t.drugName}</td>
                             <td className="p-1.5 border border-slate-200">{t.dose}</td>
-                            <td className="p-1.5 border border-slate-200">{t.route}</td>
+                            <td className="p-1.5 border border-slate-200">{validateMedRoute(t.drugName, t.route)}</td>
                             <td className="p-1.5 border border-slate-200 font-mono">{t.timeGiven}</td>
                           </tr>
                         ))}
@@ -7444,11 +7470,11 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                   </div>
                   <div className="grid grid-cols-2 gap-4 pt-6 text-[10px] text-center border-t border-slate-200">
                     <div>
-                      <p className="font-bold border-b border-slate-400 pb-1 max-w-[180px] mx-auto">{currentCase.dispositionDetails?.residentName || currentCase.doctorName || "Dr. Resident Physician"}</p>
+                      <p className="font-bold border-b border-slate-400 pb-1 max-w-[180px] mx-auto">{formatDoctorName(currentCase.dispositionDetails?.residentName || currentCase.doctorName)}</p>
                       <p className="text-slate-500 text-[9px] mt-0.5">Resident Emergency Physician Signature</p>
                     </div>
                     <div>
-                      <p className="font-bold border-b border-slate-400 pb-1 max-w-[180px] mx-auto">{currentCase.dispositionDetails?.consultantName || currentCase.consultantName || "Dr. Consultant EM"}</p>
+                      <p className="font-bold border-b border-slate-400 pb-1 max-w-[180px] mx-auto">{formatDoctorName(currentCase.dispositionDetails?.consultantName || currentCase.consultantName || "Dr. Consultant EM")}</p>
                       <p className="text-slate-500 text-[9px] mt-0.5">Consultant / Attending Physician Signature</p>
                     </div>
                   </div>

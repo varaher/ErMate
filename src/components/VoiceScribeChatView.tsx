@@ -10,6 +10,8 @@ import { sanitizeDoctorError } from "../utils/sanitizeError";
 import { ClinicalSummaryCard, ClinicalSummaryData } from "./ClinicalSummaryCard";
 
 import { UserProfile } from "../types";
+import { useCaseSheetSave } from "../hooks/useCaseSheetSave";
+import { SaveStatusPill } from "./SaveStatusPill";
 
 interface Message {
   id: string;
@@ -90,6 +92,13 @@ export default function VoiceScribeChatView({
   const [activeVoiceCaseId, setActiveVoiceCaseId] = useState<string | null>(null);
   const activeVoiceCaseIdRef = useRef<string | null>(null);
   activeVoiceCaseIdRef.current = activeVoiceCaseId;
+
+  const { saveToCaseSheet, retrySave, saveStatus, saveError } = useCaseSheetSave(async (extractedData) => {
+    await onSaveExtractedCase(extractedData, {
+      autoNavigate: true,
+      existingCaseId: activeVoiceCaseIdRef.current
+    });
+  });
 
   const autoExtractAndSaveCase = async (dictationText: string) => {
     if (!dictationText || !dictationText.trim()) return;
@@ -446,10 +455,7 @@ export default function VoiceScribeChatView({
             aiCredits: resData.remainingCredits
           });
         }
-        await onSaveExtractedCase(resData.data, {
-          autoNavigate: true,
-          existingCaseId: activeVoiceCaseIdRef.current
-        });
+        await saveToCaseSheet(resData.data);
         // Clear chat & reset session so subsequent patient dictations are isolated
         clearChat();
       } else {
@@ -649,6 +655,8 @@ Dr. Marcus Brody, Trauma Lead`);
         </div>
 
         <div className="flex items-center gap-2">
+          <SaveStatusPill status={saveStatus} errorMessage={saveError} onRetry={retrySave} />
+
           <button
             type="button"
             onClick={handleSaveVoiceDraft}

@@ -8,8 +8,9 @@ import {
 
 import { 
   ClinicalCase, UserProfile, PatientDemographics, PatientVitals, 
-  DischargeInfo, TriageCategory, ArrivalMode, HandoverRecord, TeamMember, QuickPastePatient
+  DischargeInfo, TriageCategory, ArrivalMode, HandoverRecord, TeamMember, QuickPastePatient, HandoverPatient
 } from "./types";
+import { saveHandoverPatient } from "./utils/handoverUtils";
 
 import DashboardView from "./components/DashboardView";
 import CasesListView from "./components/CasesListView";
@@ -30,12 +31,14 @@ import PocketMirrorView from "./components/PocketMirrorView";
 import AdminPanelView from "./components/AdminPanelView";
 import ConsentModal from "./components/ConsentModal";
 import { CaseDiscussionModal } from "./components/CaseDiscussionModal";
+import { BoundChatModal } from "./components/BoundChatModal";
 import { ROTA_SHIFTS } from "./components/TeamRosterBoard";
 import { APP_VERSION, CHANGELOG } from "./changelog";
+import { HeaderUpdateButton } from "./hooks/useAppUpdate";
 
 import { auth, db, handleFirestoreError, OperationType } from "./firebase";
 import { onAuthStateChanged, signOut } from "firebase/auth";
-import { doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, collection, onSnapshot, query, where } from "firebase/firestore";
+import { doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, collection, addDoc, onSnapshot, query, where } from "firebase/firestore";
 
 interface StaticReference {
   id: string;
@@ -267,6 +270,23 @@ export default function App() {
     }
   }, []);
 
+  // Helper to compare semver strings (e.g. "2.10.0" vs "2.9.0")
+  const isHigherVersion = (vNew: string, vCurrent: string): boolean => {
+    if (!vNew || !vCurrent) return false;
+    const cleanNew = vNew.replace(/^v/, '');
+    const cleanCurrent = vCurrent.replace(/^v/, '');
+    if (cleanNew === cleanCurrent) return false;
+    const partsNew = cleanNew.split('.').map(n => parseInt(n, 10) || 0);
+    const partsCurr = cleanCurrent.split('.').map(n => parseInt(n, 10) || 0);
+    for (let i = 0; i < Math.max(partsNew.length, partsCurr.length); i++) {
+      const n = partsNew[i] || 0;
+      const c = partsCurr[i] || 0;
+      if (n > c) return true;
+      if (n < c) return false;
+    }
+    return false;
+  };
+
   // Updates and Announcements Modal state & Version Tracking
   const [showUpdatesModal, setShowUpdatesModal] = useState<boolean>(false);
   const [currentVersion, setCurrentVersion] = useState<string>(APP_VERSION);
@@ -284,7 +304,7 @@ export default function App() {
     }
   }, [appUpdateBanner, isForceUpdate]);
 
-  // Version check logic: compares current version to localStorage 'ermate_last_seen_version'
+  // Version check logic: compares server version to installed APP_VERSION
   useEffect(() => {
     let isMounted = true;
 
@@ -298,13 +318,11 @@ export default function App() {
           setCurrentVersion(serverVersion);
           setRemoteVersion(serverVersion);
 
-          const lastSeen = localStorage.getItem("ermate_last_seen_version") || localStorage.getItem("ermate_app_known_version");
-          if (!lastSeen) {
-            // First time loading app on this client — user is already on latest server version
-            localStorage.setItem("ermate_last_seen_version", serverVersion);
-            localStorage.setItem("ermate_app_known_version", serverVersion);
-            setAppUpdateBanner(false);
-          } else if (lastSeen !== serverVersion) {
+          // Mark current APP_VERSION as seen
+          localStorage.setItem("ermate_last_seen_version", APP_VERSION);
+          localStorage.setItem("ermate_app_known_version", APP_VERSION);
+
+          if (isHigherVersion(serverVersion, APP_VERSION)) {
             const dismissedSession = sessionStorage.getItem("ermate_dismissed_update_version");
             if (dismissedSession !== serverVersion) {
               setAppUpdateBanner(true);
@@ -314,21 +332,14 @@ export default function App() {
           }
         }
       } catch (err) {
-        const lastSeen = localStorage.getItem("ermate_last_seen_version") || localStorage.getItem("ermate_app_known_version");
-        if (!lastSeen) {
-          localStorage.setItem("ermate_last_seen_version", APP_VERSION);
-          localStorage.setItem("ermate_app_known_version", APP_VERSION);
-        } else if (lastSeen !== APP_VERSION) {
-          const dismissedSession = sessionStorage.getItem("ermate_dismissed_update_version");
-          if (dismissedSession !== APP_VERSION) {
-            setAppUpdateBanner(true);
-          }
-        }
+        localStorage.setItem("ermate_last_seen_version", APP_VERSION);
+        localStorage.setItem("ermate_app_known_version", APP_VERSION);
+        setAppUpdateBanner(false);
       }
     };
 
     checkVersion();
-    const interval = setInterval(checkVersion, 25000);
+    const interval = setInterval(checkVersion, 60000);
 
     // Optional Firestore real-time version check for team / HOD pushed updates
     const unsubFirestoreVersion = onSnapshot(
@@ -336,17 +347,19 @@ export default function App() {
       (docSnap) => {
         if (docSnap.exists() && isMounted) {
           const data = docSnap.data();
-          const remoteVersion = data.current || APP_VERSION;
+          const remoteVer = data.current || APP_VERSION;
           const force = !!data.forceUpdate;
-          setCurrentVersion(remoteVersion);
+          setCurrentVersion(remoteVer);
+          setRemoteVersion(remoteVer);
           setIsForceUpdate(force);
 
-          const lastSeen = localStorage.getItem("ermate_last_seen_version");
-          if (lastSeen && lastSeen !== remoteVersion) {
+          if (isHigherVersion(remoteVer, APP_VERSION)) {
             const dismissedSession = sessionStorage.getItem("ermate_dismissed_update_version");
-            if (dismissedSession !== remoteVersion) {
+            if (dismissedSession !== remoteVer) {
               setAppUpdateBanner(true);
             }
+          } else {
+            setAppUpdateBanner(false);
           }
         }
       },
@@ -362,15 +375,33 @@ export default function App() {
 
   // Update handlers
   const handleUpdateApp = () => {
-    localStorage.setItem("ermate_last_seen_version", currentVersion);
-    localStorage.setItem("ermate_app_known_version", currentVersion);
+    const targetVer = remoteVersion || currentVersion || APP_VERSION;
+    localStorage.setItem("ermate_last_seen_version", targetVer);
+    localStorage.setItem("ermate_app_known_version", targetVer);
+    localStorage.setItem(`ermate_seen_version_${APP_VERSION}`, "true");
     sessionStorage.removeItem("ermate_dismissed_update_version");
-    window.location.reload();
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.getRegistrations().then((registrations) => {
+        for (const registration of registrations) {
+          registration.update();
+          if (registration.waiting) {
+            registration.waiting.postMessage({ type: 'SKIP_WAITING' });
+          }
+        }
+        window.location.reload();
+      }).catch(() => {
+        window.location.reload();
+      });
+    } else {
+      window.location.reload();
+    }
   };
 
   const handleLaterApp = () => {
-    // Save dismissal for current session so polling doesn't keep annoying user
-    sessionStorage.setItem("ermate_dismissed_update_version", currentVersion);
+    localStorage.setItem(`ermate_seen_version_${APP_VERSION}`, "true");
+    localStorage.setItem("ermate_last_seen_version", APP_VERSION);
+    localStorage.setItem("ermate_app_known_version", APP_VERSION);
+    sessionStorage.setItem("ermate_dismissed_update_version", remoteVersion || APP_VERSION);
     setAppUpdateBanner(false);
     setShowUpdatesModal(false);
   };
@@ -384,12 +415,14 @@ export default function App() {
   const [showRoleSelectionModal, setShowRoleSelectionModal] = useState<boolean>(false);
   const [pendingJoinRole, setPendingJoinRole] = useState<"EM Resident" | "Senior Consultant">("EM Resident");
 
-  // Automatically trigger release popup on login
+  // Automatically trigger release popup ONCE per release version on login
   useEffect(() => {
     if (isLoggedIn) {
-      const seen = localStorage.getItem("ermate_seen_version_2_5_0");
-      if (seen !== "true") {
+      const seenKey = `ermate_seen_version_${APP_VERSION}`;
+      const seen = localStorage.getItem(seenKey);
+      if (!seen) {
         setShowUpdatesModal(true);
+        localStorage.setItem(seenKey, "true");
         localStorage.setItem("ermate_seen_version_2_5_0", "true");
       }
     }
@@ -1573,27 +1606,62 @@ export default function App() {
     try {
       await setDoc(doc(db, "cases", caseToSave.id), caseToSave);
       
-      // Determine changed fields
+      // Determine changed fields across all patient sections (Demographics, Vitals, Primary Survey, SAMPLE history, Treatments, Labs, Differentials, Notes, Disposition, Pediatric)
       const previousCase = cases.find(c => c.id === updatedCase.id);
       const changedKeys: string[] = [];
       const prevVals: any = {};
       const newValData: any = {};
       
       if (previousCase) {
-        if (JSON.stringify(previousCase.differentials) !== JSON.stringify(updatedCase.differentials)) {
-          changedKeys.push("differentials");
-          prevVals.differentials = previousCase.differentials || [];
-          newValData.differentials = updatedCase.differentials || [];
+        if (JSON.stringify(previousCase.patient) !== JSON.stringify(updatedCase.patient)) {
+          changedKeys.push("patient");
+          prevVals.patient = previousCase.patient;
+          newValData.patient = updatedCase.patient;
         }
         if (JSON.stringify(previousCase.vitals) !== JSON.stringify(updatedCase.vitals)) {
           changedKeys.push("vitals");
           prevVals.vitals = previousCase.vitals || {};
           newValData.vitals = updatedCase.vitals || {};
         }
+        if (JSON.stringify(previousCase.primaryAssessment) !== JSON.stringify(updatedCase.primaryAssessment)) {
+          changedKeys.push("primaryAssessment");
+          prevVals.primaryAssessment = previousCase.primaryAssessment || {};
+          newValData.primaryAssessment = updatedCase.primaryAssessment || {};
+        }
+        if (JSON.stringify(previousCase.sampleHistory) !== JSON.stringify(updatedCase.sampleHistory)) {
+          changedKeys.push("sampleHistory");
+          prevVals.sampleHistory = previousCase.sampleHistory || {};
+          newValData.sampleHistory = updatedCase.sampleHistory || {};
+        }
+        if (JSON.stringify(previousCase.treatments) !== JSON.stringify(updatedCase.treatments)) {
+          changedKeys.push("treatments");
+          prevVals.treatments = previousCase.treatments || [];
+          newValData.treatments = updatedCase.treatments || [];
+        }
+        if (JSON.stringify(previousCase.investigations) !== JSON.stringify(updatedCase.investigations)) {
+          changedKeys.push("investigations");
+          prevVals.investigations = previousCase.investigations || [];
+          newValData.investigations = updatedCase.investigations || [];
+        }
+        if (JSON.stringify(previousCase.differentials) !== JSON.stringify(updatedCase.differentials)) {
+          changedKeys.push("differentials");
+          prevVals.differentials = previousCase.differentials || [];
+          newValData.differentials = updatedCase.differentials || [];
+        }
         if (previousCase.progressNotes !== updatedCase.progressNotes) {
           changedKeys.push("progressNotes");
           prevVals.progressNotes = previousCase.progressNotes || "";
           newValData.progressNotes = updatedCase.progressNotes || "";
+        }
+        if (JSON.stringify(previousCase.dispositionDetails) !== JSON.stringify(updatedCase.dispositionDetails)) {
+          changedKeys.push("dispositionDetails");
+          prevVals.dispositionDetails = previousCase.dispositionDetails || {};
+          newValData.dispositionDetails = updatedCase.dispositionDetails || {};
+        }
+        if (JSON.stringify(previousCase.pediatricDetails) !== JSON.stringify(updatedCase.pediatricDetails)) {
+          changedKeys.push("pediatricDetails");
+          prevVals.pediatricDetails = previousCase.pediatricDetails || {};
+          newValData.pediatricDetails = updatedCase.pediatricDetails || {};
         }
       }
 
@@ -1803,7 +1871,8 @@ export default function App() {
       progressNotes: extracted.progressNotes || existingMatch?.progressNotes || "Case created via ErMate Voice Scribe dictation.",
       dischargeInfo: null,
       differentials: existingMatch?.differentials || [],
-      isPediatric: finalAge !== null && finalAge <= 12,
+      isPediatric: extracted.isPediatric !== undefined ? Boolean(extracted.isPediatric) : (finalAge !== null && finalAge <= 16),
+      pediatricDetails: extracted.pediatricDetails || existingMatch?.pediatricDetails || undefined,
       status: "Active",
       savedTime: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       timeSpentMin: 1,
@@ -2197,23 +2266,66 @@ export default function App() {
 
   const handleUpdateTeamMemberRole = async (id: string, role: string) => {
     try {
+      const userRole = (profile.role || "").toLowerCase();
+      const callerEmail = (auth.currentUser?.email || profile.email || "").toLowerCase().trim();
+      const isCallerHODOrOwner = userRole.includes("hod") || userRole.includes("owner") || callerEmail === "varahgrp@gmail.com";
+
+      if (!isCallerHODOrOwner) {
+        triggerNotification("Access Denied 🔒", "Only Department Head (HOD) or Owner can assign clinical roles.", "warning");
+        return;
+      }
+
+      // Check member details
+      const memberRef = doc(db, "team_members", id);
+      const memberSnap = await getDoc(memberRef);
+      if (!memberSnap.exists()) {
+        triggerNotification("Error", "Team member record not found.", "warning");
+        return;
+      }
+
+      const memberData = memberSnap.data();
+      const memberEmail = (memberData.email || "").toLowerCase().trim();
+
+      // Prevent self demotion/promotion unless Owner
+      if (memberEmail && memberEmail === callerEmail && callerEmail !== "varahgrp@gmail.com") {
+        triggerNotification("Action Restricted 🔒", "You cannot modify your own role designation. Another HOD must make this change.", "warning");
+        return;
+      }
+
+      const previousRole = memberData.role || "Unassigned";
+
       // 1. Update team member role in Firebase team_members collection
-      await updateDoc(doc(db, "team_members", id), { role });
+      await updateDoc(memberRef, { role });
       
       // 2. Find the clinician's user profile in 'users' and update their profile role too
-      const memberSnap = await getDoc(doc(db, "team_members", id));
-      if (memberSnap.exists()) {
-        const email = memberSnap.data().email || "";
-        if (email) {
-          const q = query(collection(db, "users"), where("email", "==", email.trim().toLowerCase()));
-          const userSnap = await getDocs(q);
-          if (!userSnap.empty) {
-            const userDocRef = doc(db, "users", userSnap.docs[0].id);
-            await updateDoc(userDocRef, { role });
-          }
+      if (memberEmail) {
+        const q = query(collection(db, "users"), where("email", "==", memberEmail));
+        const userSnap = await getDocs(q);
+        if (!userSnap.empty) {
+          const userDocRef = doc(db, "users", userSnap.docs[0].id);
+          await updateDoc(userDocRef, { role });
         }
       }
-      triggerNotification("Role Updated ✓", "Clinical role designation has been successfully modified.", "success");
+
+      // 3. TASK 3 — Write audit log entry to roleChangeLog collection
+      try {
+        await addDoc(collection(db, "roleChangeLog"), {
+          targetMemberId: id,
+          targetEmail: memberEmail,
+          targetName: memberData.name || memberEmail,
+          previousRole: previousRole,
+          newRole: role,
+          changedByUid: auth.currentUser?.uid || "",
+          changedByEmail: callerEmail,
+          changedByName: profile.name || callerEmail,
+          changedAt: new Date().toISOString(),
+          hospital: profile.hospital || ""
+        });
+      } catch (logErr) {
+        console.warn("[RoleAuditLog] Failed to log role change:", logErr);
+      }
+
+      triggerNotification("Role Updated ✓", `Clinical role for ${memberData.name || memberEmail} updated from "${previousRole}" to "${role}". Audit log recorded.`, "success");
     } catch (err: any) {
       console.error("Error updating team member role:", err);
       handleFirestoreError(err, OperationType.WRITE, "team_members");
@@ -2242,10 +2354,20 @@ export default function App() {
 
   // Handle user profile save to Firestore
   const handleSaveProfile = async (newProfile: UserProfile) => {
-    setProfile(newProfile);
+    // Guard against unauthorized self-role modification
+    const currentRole = profile.role || "EM Resident";
+    const userRoleLower = currentRole.toLowerCase();
+    const isCallerHODOrOwner = userRoleLower.includes("hod") || userRoleLower.includes("owner") || auth.currentUser?.email?.toLowerCase().trim() === "varahgrp@gmail.com";
+
+    const profileToSave: UserProfile = {
+      ...newProfile,
+      role: isCallerHODOrOwner ? newProfile.role : currentRole
+    };
+
+    setProfile(profileToSave);
     if (auth.currentUser) {
       try {
-        await setDoc(doc(db, "users", auth.currentUser.uid), newProfile);
+        await setDoc(doc(db, "users", auth.currentUser.uid), profileToSave);
 
         // Also update shared hospital subscription if the user upgraded to a team/enterprise plan
         const tier = newProfile.subscriptionTier || "Free Plan";
@@ -2358,11 +2480,23 @@ export default function App() {
       newList = value;
     }
 
-    setQuickPasteList(newList);
-    localStorage.setItem("ermate_quick_paste_list", JSON.stringify(newList));
+    const processedList: QuickPastePatient[] = newList.map(item => {
+      const existingItem = previousList.find(p => p.id === item.id);
+      if (item.handoverCardData) {
+        const updatedCardData = saveHandoverPatient(existingItem?.handoverCardData, item.handoverCardData);
+        return {
+          ...item,
+          handoverCardData: updatedCardData
+        };
+      }
+      return item;
+    });
+
+    setQuickPasteList(processedList);
+    localStorage.setItem("ermate_quick_paste_list", JSON.stringify(processedList));
 
     // Save or update items in Firestore
-    for (const item of newList) {
+    for (const item of processedList) {
       const itemToSave: QuickPastePatient = {
         ...item,
         hospital: item.hospital || profile.hospital || "Varah Group Emergency Care",
@@ -2506,6 +2640,7 @@ export default function App() {
 
             {/* Mobile-only action shortcuts */}
             <div className="flex md:hidden items-center gap-1.5">
+              <HeaderUpdateButton />
               <button
                 onClick={() => setShowUpdatesModal(true)}
                 className="p-1.5 hover:bg-emerald-50 dark:hover:bg-emerald-950/20 rounded-lg text-emerald-600 dark:text-emerald-400 transition-all"
@@ -2825,6 +2960,9 @@ export default function App() {
           {/* Theme toggles & Profile shortcut (Desktop Only) */}
           <div className="hidden md:flex items-center gap-2">
 
+            {/* Header Update Button (renders only when update is waiting) */}
+            <HeaderUpdateButton />
+
             {/* What's New & Announcements Button */}
             <button
               onClick={() => setShowUpdatesModal(true)}
@@ -3089,76 +3227,6 @@ export default function App() {
           })}
         </div>
       </nav>
-
-      {/* App Update Notification Banner */}
-      {appUpdateBanner && (
-        <div 
-          id="app-update-notification-banner"
-          className="bg-slate-900 text-white px-4 py-3 shadow-xl border-b border-emerald-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs z-30 animate-in slide-in-from-top-2 duration-300 no-print"
-        >
-          <div className="flex items-start gap-3 min-w-0">
-            <div className="p-2 bg-emerald-500/20 rounded-xl shrink-0 text-emerald-400 mt-0.5 flex items-center justify-center">
-              <Sparkles className="w-4 h-4 text-emerald-400 animate-pulse" />
-            </div>
-            <div className="min-w-0">
-              <h3 className="font-extrabold text-white text-sm tracking-tight font-sans flex items-center gap-2">
-                <span>⚡ ErMate v{remoteVersion || currentVersion} Update Available (Installed: v{APP_VERSION})</span>
-                {isForceUpdate && (
-                  <span className="bg-rose-500/30 text-rose-300 border border-rose-500/40 text-[10px] font-mono px-2 py-0.5 rounded-full font-extrabold uppercase">
-                    Required Update
-                  </span>
-                )}
-              </h3>
-              <ul className="mt-1.5 space-y-1 text-slate-300 font-medium text-xs">
-                {(CHANGELOG[currentVersion] || CHANGELOG[APP_VERSION] || [
-                  "Voice dictation is faster",
-                  "Handover extraction improved",
-                  "Normal exam fields auto-fill",
-                  "Works offline seamlessly"
-                ]).slice(0, 4).map((bullet, idx) => (
-                  <li key={idx} className="flex items-center gap-1.5">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0"></span>
-                    <span>{bullet}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2 shrink-0 self-end sm:self-center pt-1 sm:pt-0">
-            <button
-              type="button"
-              onClick={handleUpdateApp}
-              className="px-3.5 py-1.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-extrabold text-xs rounded-xl shadow-sm transition-all flex items-center gap-1.5 cursor-pointer active:scale-95"
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
-              <span>Update now</span>
-            </button>
-
-            {!isForceUpdate && (
-              <button
-                type="button"
-                onClick={handleLaterApp}
-                className="px-3 py-1.5 hover:bg-slate-800 text-slate-300 hover:text-white text-xs font-semibold rounded-xl transition-all cursor-pointer"
-                title="Dismiss for this session"
-              >
-                Later
-              </button>
-            )}
-
-            {!isForceUpdate && (
-              <button
-                type="button"
-                onClick={handleLaterApp}
-                className="p-1.5 hover:bg-slate-800 text-slate-400 hover:text-white rounded-lg transition-all cursor-pointer"
-                title="Dismiss (X)"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            )}
-          </div>
-        </div>
-      )}
 
       {/* Main Content Render Space */}
       <main className="flex-1 p-4 md:p-6 pb-24 md:pb-6">
@@ -3700,18 +3768,22 @@ export default function App() {
               <div className="flex items-center gap-2 mb-1.5">
                 <Sparkles className="w-4 h-4 text-emerald-400 animate-pulse" />
                 <span className="text-[10px] font-mono tracking-widest font-extrabold uppercase bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded-full border border-emerald-500/30">
-                  Update Available
+                  {isHigherVersion(remoteVersion, APP_VERSION) ? "Update Available" : `Release Notes v${APP_VERSION}`}
                 </span>
               </div>
               <h2 className="text-base font-extrabold tracking-tight text-white font-sans flex items-center gap-1.5">
-                <span>⚡ ErMate v{remoteVersion || currentVersion} Update Available (Installed: v{APP_VERSION})</span>
+                {isHigherVersion(remoteVersion, APP_VERSION) ? (
+                  <span>⚡ ErMate v{remoteVersion} Update Available (Installed: v{APP_VERSION})</span>
+                ) : (
+                  <span>⚡ What's New in ErMate v{APP_VERSION}</span>
+                )}
               </h2>
             </div>
 
             {/* Updates Body */}
             <div className="p-5 space-y-3 text-slate-700 dark:text-slate-300">
               <ul className="space-y-2 text-xs font-semibold text-slate-800 dark:text-slate-200">
-                {(CHANGELOG[currentVersion] || CHANGELOG[APP_VERSION] || [
+                {(CHANGELOG[remoteVersion] || CHANGELOG[APP_VERSION] || [
                   "Voice dictation is faster",
                   "Handover extraction improved",
                   "Normal exam fields auto-fill",
@@ -3727,21 +3799,33 @@ export default function App() {
 
             {/* Footer */}
             <div className="p-4 bg-slate-50 dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2 shrink-0">
-              <button
-                type="button"
-                onClick={handleLaterApp}
-                className="px-3.5 py-2 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white text-xs font-semibold rounded-xl transition-all cursor-pointer"
-              >
-                Later
-              </button>
-              <button
-                type="button"
-                onClick={handleUpdateApp}
-                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl transition-all shadow-xs flex items-center gap-1.5 cursor-pointer active:scale-95"
-              >
-                <RefreshCw className="w-3.5 h-3.5" />
-                <span>Update now</span>
-              </button>
+              {isHigherVersion(remoteVersion, APP_VERSION) ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={handleLaterApp}
+                    className="px-3.5 py-2 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white text-xs font-semibold rounded-xl transition-all cursor-pointer"
+                  >
+                    Later
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleUpdateApp}
+                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl transition-all shadow-xs flex items-center gap-1.5 cursor-pointer active:scale-95"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    <span>Update now</span>
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleLaterApp}
+                  className="w-full py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl transition-all shadow-xs cursor-pointer text-center font-bold"
+                >
+                  Got it!
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -4086,13 +4170,32 @@ export default function App() {
         ))}
       </div>
 
-      {/* Patient Case Discussion Modal */}
-      <CaseDiscussionModal
-        patientCase={discussionModalCase}
-        isOpen={!!discussionModalCase}
-        onClose={() => setDiscussionModalCase(null)}
-        onSaveDiscussionHistory={handleSaveDiscussionHistory}
-      />
+      {/* Patient Case Discussion Modal - Context-Bound Chat */}
+      {discussionModalCase && (
+        <BoundChatModal
+          context={{
+            type: 'case',
+            id: discussionModalCase.id,
+            data: discussionModalCase,
+            canEdit: true,
+            onRecordUpdated: (updatedFields) => {
+              setCases(prev => prev.map(c => c.id === discussionModalCase.id ? { ...c, ...updatedFields } : c));
+            }
+          }}
+          activeContexts={cases.map(c => ({
+            type: 'case',
+            id: c.id,
+            data: c
+          }))}
+          onSelectContext={(ctx) => {
+            if (ctx.data) {
+              setDiscussionModalCase(ctx.data as ClinicalCase);
+            }
+          }}
+          isOpen={!!discussionModalCase}
+          onClose={() => setDiscussionModalCase(null)}
+        />
+      )}
 
     </div>
   );

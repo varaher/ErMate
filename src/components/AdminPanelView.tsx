@@ -8,6 +8,7 @@ import {
 import { collection, onSnapshot, query, doc, updateDoc } from "firebase/firestore";
 import { db, auth } from "../firebase";
 import { UserProfile, ClinicalCase, ApiLogItem } from "../types";
+import { SelfLearningRulesPanel } from "./SelfLearningRulesPanel";
 
 interface AdminPanelViewProps {
   currentProfile: UserProfile;
@@ -747,6 +748,12 @@ export default function AdminPanelView({
 
       </div>
 
+      {/* Role Change Audit Log Panel (NABH Compliance) */}
+      <RoleChangeAuditLogPanel />
+
+      {/* Self-Learning Architecture & Learned Rules Engine */}
+      <SelfLearningRulesPanel />
+
       {/* Modal for editing User AI Credits */}
       {editingUser && (
         <div className="fixed inset-0 bg-slate-950/80 z-50 flex items-center justify-center p-4">
@@ -805,6 +812,97 @@ export default function AdminPanelView({
         </div>
       )}
 
+    </div>
+  );
+}
+
+function RoleChangeAuditLogPanel() {
+  const [logs, setLogs] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const q = query(collection(db, "roleChangeLog"));
+    const unsub = onSnapshot(q, (snapshot) => {
+      const items: any[] = [];
+      snapshot.forEach((docSnap) => {
+        items.push({ id: docSnap.id, ...docSnap.data() });
+      });
+      // Sort newest first
+      items.sort((a, b) => new Date(b.changedAt || 0).getTime() - new Date(a.changedAt || 0).getTime());
+      setLogs(items);
+      setLoading(false);
+    }, (err) => {
+      console.warn("Could not fetch role change logs:", err);
+      setLoading(false);
+    });
+
+    return () => unsub();
+  }, []);
+
+  return (
+    <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-sm space-y-4 font-sans">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 dark:border-slate-800 pb-4">
+        <div>
+          <h3 className="text-sm font-extrabold text-slate-900 dark:text-white flex items-center gap-2">
+            <ShieldCheck className="w-4 h-4 text-emerald-500" /> NABH Compliance: Clinical Role Access Governance Log
+          </h3>
+          <p className="text-[11px] text-slate-500 mt-0.5">
+            Immutable audit trail of all clinical role promotions, demotions, and department designations for medical legal governance.
+          </p>
+        </div>
+        <span className="text-[10px] font-mono font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 px-2.5 py-1 rounded-full">
+          {logs.length} Logged Role Modifications
+        </span>
+      </div>
+
+      {loading ? (
+        <div className="py-6 text-center text-xs font-mono text-slate-400">Loading audit trail...</div>
+      ) : logs.length === 0 ? (
+        <div className="py-8 text-center text-xs text-slate-400 font-mono bg-slate-50 dark:bg-slate-950/50 rounded-2xl border border-slate-200/50 dark:border-slate-800/50">
+          No role modifications logged yet. All user profiles currently maintain their initial HOD-assigned roles.
+        </div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-left font-sans text-xs">
+            <thead>
+              <tr className="border-b border-slate-200 dark:border-slate-800 text-[10px] font-mono font-extrabold uppercase tracking-wider text-slate-500">
+                <th className="py-2.5 px-3">Timestamp</th>
+                <th className="py-2.5 px-3">Target Clinician</th>
+                <th className="py-2.5 px-3">Previous Role</th>
+                <th className="py-2.5 px-3">New Assigned Role</th>
+                <th className="py-2.5 px-3">Modified By (HOD / Owner)</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60 font-medium">
+              {logs.map((log) => (
+                <tr key={log.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors">
+                  <td className="py-2.5 px-3 font-mono text-[11px] text-slate-400 whitespace-nowrap">
+                    {log.changedAt ? new Date(log.changedAt).toLocaleString() : 'N/A'}
+                  </td>
+                  <td className="py-2.5 px-3">
+                    <div className="font-bold text-slate-900 dark:text-white">{log.targetName || log.targetEmail}</div>
+                    <div className="text-[10px] text-slate-400 font-mono">{log.targetEmail}</div>
+                  </td>
+                  <td className="py-2.5 px-3">
+                    <span className="px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 font-mono text-[10px]">
+                      {log.previousRole || 'Unassigned'}
+                    </span>
+                  </td>
+                  <td className="py-2.5 px-3">
+                    <span className="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-mono font-bold text-[10px] border border-emerald-500/20">
+                      {log.newRole}
+                    </span>
+                  </td>
+                  <td className="py-2.5 px-3">
+                    <div className="font-semibold text-slate-800 dark:text-slate-200">{log.changedByName || log.changedByEmail}</div>
+                    <div className="text-[10px] text-slate-400 font-mono">{log.changedByEmail}</div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import OpenAI from 'openai';
 import Anthropic from '@anthropic-ai/sdk';
+import { GoogleGenAI } from '@google/genai';
 
 const VOICE_EXTRACTION_PROMPT = `
 You are a clinical data extraction engine for Indian Emergency Departments.
@@ -115,10 +116,19 @@ medications:
   Combiflam → Ibuprofen+Paracetamol
   [] if none mentioned.
 
+  ROUTE VALIDATION RULES:
+  - If medication starts with "Tab." or "Cap." or "Syr." → route MUST BE "Oral", NEVER "IV".
+  - If medication starts with "Inj." → route MUST BE "IV" or "IM".
+  - Do NOT create duplicate medication entries for generic vs brand names (e.g., deduplicate Omeprazole & Inj. Omeprazole).
+
 vitals:
   ONLY if doctor mentioned specific values.
   NEVER assume or default vitals.
   null for any not mentioned.
+  TEMPERATURE UNIT RULES:
+  - If value is 35.0-38.5 → unit is °C (e.g., 37.0°C).
+  - If value is 95.0-104.0 → unit is °F (e.g., 98.6°F).
+  - If value is 37 without unit → assume 37.0°C (98.6°F). NEVER write 37.0°F.
 
 PRIMARY SURVEY EXTRACTION:
   Map vitals to the correct ABCDE field:
@@ -351,12 +361,13 @@ export async function extractFromTranscript(
     console.log('[VoiceExtract] OPENAI_API_KEY not set, using Gemini fallback engine');
   }
 
+  // Fallback to Claude Haiku API if OpenAI key is missing or fails
   let anthropicClient: Anthropic | null = null;
-  if (process.env.ANTHROPIC_API_KEY) {
-    anthropicClient = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  const anthropicKey = process.env.ANTHROPIC_API_KEY;
+  if (anthropicKey && anthropicKey.trim() !== '' && anthropicKey !== 'MY_ANTHROPIC_API_KEY') {
+    anthropicClient = new Anthropic({ apiKey: anthropicKey });
   }
 
-  // Fallback to Claude Haiku API (NOT Gemini) if OpenAI key is missing or fails
   if (anthropicClient) {
     try {
       const msg = await anthropicClient.messages.create({
@@ -381,12 +392,40 @@ export async function extractFromTranscript(
       console.log(`[VoiceExtract] Claude Haiku fallback succeeded`);
       return { success: true, extracted: withDefaults, engine: 'claude-3-5-haiku-20241022' };
     } catch (haikuErr: any) {
-      console.error('[VoiceExtract] Claude Haiku fallback failed:', haikuErr?.message);
+      console.warn('[VoiceExtract] Claude Haiku fallback unavailable, trying Gemini 2.5 Flash:', haikuErr?.message || haikuErr);
+    }
+  }
+
+  // Fallback to Gemini 2.5 Flash
+  const geminiKey = process.env.GEMINI_API_KEY;
+  if (geminiKey && geminiKey.trim() !== '') {
+    try {
+      console.log('[VoiceExtract] Trying Gemini 2.5 Flash fallback...');
+      const ai = new GoogleGenAI({ apiKey: geminiKey });
+      const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: `${VOICE_EXTRACTION_PROMPT}\n\nTranscript:\n"""\n${cleanTranscript}\n"""`,
+        config: {
+          temperature: 0.0,
+          responseMimeType: 'application/json',
+        },
+      });
+
+      const rawText = response.text || '{}';
+      const cleanedJSON = rawText.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```$/s, '').trim();
+      const parsed = JSON.parse(cleanedJSON);
+      const sanitized = sanitizeExtracted(parsed);
+      const withDefaults = applyExamDefaults(sanitized);
+
+      console.log(`[VoiceExtract] Gemini 2.5 Flash fallback succeeded`);
+      return { success: true, extracted: withDefaults, engine: 'gemini-2.5-flash' };
+    } catch (geminiErr: any) {
+      console.error('[VoiceExtract] Gemini 2.5 Flash fallback failed:', geminiErr?.message || geminiErr);
     }
   }
 
   return {
     success: false,
-    error: 'Voice extraction failed — OpenAI and Claude Haiku services are both currently unavailable.',
+    error: 'Voice extraction failed — AI extraction engines are currently unavailable.',
   };
 }

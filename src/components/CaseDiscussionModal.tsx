@@ -411,7 +411,7 @@ ${isDeceased ? "⚠️ **Mortality Case Detected**: Ask for **Cause of Death Ana
           </div>
           <div className="text-[11px] text-slate-500 flex items-center gap-1 font-medium">
             <Sparkles className="w-3 h-3 text-amber-500" />
-            Patient context bound to Claude Sonnet AI
+            Patient context active in ErMate Clinical Assistant
           </div>
         </div>
 

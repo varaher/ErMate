@@ -11,6 +11,8 @@ import { getCasePendingStatus } from "../utils/caseHelper";
 import { triggerPrintWithTip } from "../utils/printWithTip";
 import { doc, updateDoc } from "firebase/firestore";
 import { db, auth } from "../firebase";
+import GoogleCalendarModal from "./GoogleCalendarModal";
+import MortalityAuditModal from "./MortalityAuditModal";
 
 interface DashboardViewProps {
   profile: UserProfile;
@@ -156,6 +158,12 @@ export default function DashboardView({
   const [copiedState, setCopiedState] = useState<{ [key: string]: boolean }>({});
   const [isHodPanelExpanded, setIsHodPanelExpanded] = useState<boolean>(false);
   const [isApprovalsHubExpanded, setIsApprovalsHubExpanded] = useState<boolean>(true);
+
+  // Google Calendar Modal State
+  const [isCalendarModalOpen, setIsCalendarModalOpen] = useState<boolean>(false);
+
+  // Mortality Audit Modal State
+  const [isMortalityModalOpen, setIsMortalityModalOpen] = useState<boolean>(false);
 
   // HOD Profile & Team Sync States
   const [isEditingHospital, setIsEditingHospital] = useState(false);
@@ -715,10 +723,16 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
               className="flex-1 md:flex-none px-3 py-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white text-[10px] md:text-[11px] font-bold rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer"
             >
               <Users className="w-3.5 h-3.5 text-purple-100" />
-              New Handover
+              Handover
             </button>
             <button
-              onClick={onStartHandoverSheet}
+              onClick={() => {
+                if (onStartDischargeSummary) {
+                  onStartDischargeSummary();
+                } else {
+                  onNavigateToTab("handover");
+                }
+              }}
               className={`flex-1 md:flex-none px-3 py-1.5 border font-bold rounded-xl text-[10px] md:text-[11px] transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
                 isDarkMode 
                   ? "bg-slate-800/80 hover:bg-slate-700 border-slate-700 text-slate-200" 
@@ -726,7 +740,7 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
               }`}
             >
               <FileText className="w-3.5 h-3.5 text-slate-150" />
-              Handover Sheet
+              Discharge Summary
             </button>
           </div>
         </div>
@@ -1242,6 +1256,14 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
             
             <div className={`flex-wrap gap-2 ${isHodPanelExpanded ? 'flex w-full md:w-auto' : 'hidden md:flex'}`}>
               <button
+                onClick={() => setIsCalendarModalOpen(true)}
+                className="flex-1 md:flex-none px-3.5 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-1.5 shadow-sm cursor-pointer"
+                title="Sync duty rotas, M&M audits, and handover events with Google Calendar"
+              >
+                <Calendar className="w-3.5 h-3.5 text-white" />
+                Sync Google Calendar
+              </button>
+              <button
                 onClick={() => onNavigateToTab("handover")}
                 className="flex-1 md:flex-none px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-1.5 shadow-sm"
               >
@@ -1395,6 +1417,106 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
                   );
                 })}
               </div>
+            </div>
+          </div>
+
+          {/* QUALITY & COMPLIANCE SECTION */}
+          <div className="space-y-3 pt-6 border-t border-slate-200 dark:border-slate-800">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 flex items-center gap-2">
+                  <ShieldCheck className="w-4 h-4 text-rose-500" />
+                  Quality & Clinical Compliance Suite
+                </h3>
+                <p className="text-[11px] text-slate-500">M&M Reviews, Clinical Audits & NABH Protocol Tracking</p>
+              </div>
+              <span className="text-[10px] bg-rose-100 dark:bg-rose-950/80 text-rose-700 dark:text-rose-300 px-2.5 py-0.5 rounded-full border border-rose-200 dark:border-rose-800 font-bold uppercase tracking-wider">
+                Confidential HOD Suite
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {/* Mortality & Morbidity Audit Card */}
+              <div 
+                onClick={() => setIsMortalityModalOpen(true)}
+                className="bg-gradient-to-br from-rose-50 to-white dark:from-slate-900 dark:to-slate-950 border border-rose-200/80 dark:border-rose-900/40 p-4 rounded-xl space-y-3 cursor-pointer hover:border-rose-400 dark:hover:border-rose-700 transition-all group shadow-sm"
+              >
+                <div className="flex items-center justify-between">
+                  <div className="p-2 bg-rose-100 dark:bg-rose-950 text-rose-600 dark:text-rose-400 rounded-lg group-hover:scale-105 transition-transform">
+                    <ShieldAlert className="w-4 h-4" />
+                  </div>
+                  <span className="text-[10px] bg-rose-200/60 dark:bg-rose-900/60 text-rose-800 dark:text-rose-300 font-bold px-2 py-0.5 rounded">
+                    M&M Audit
+                  </span>
+                </div>
+                <div>
+                  <h4 className="text-xs font-bold text-slate-900 dark:text-white group-hover:text-rose-600 dark:group-hover:text-rose-400 transition-colors">
+                    Mortality & Morbidity Audit
+                  </h4>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 line-clamp-2">
+                    Formal medico-legal review & cause-of-death deconstruction with clinical intelligence.
+                  </p>
+                </div>
+                <div className="pt-2 border-t border-rose-100 dark:border-slate-800/80 flex items-center justify-between text-[10px] font-semibold text-rose-600 dark:text-rose-400">
+                  <span>Last Audit: Today</span>
+                  <span className="flex items-center gap-0.5 group-hover:translate-x-0.5 transition-transform">
+                    Launch M&M Engine →
+                  </span>
+                </div>
+              </div>
+
+              {/* Department Statistics Card */}
+              <div className="bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-850 p-4 rounded-xl space-y-3 shadow-sm">
+                <div className="flex items-center justify-between">
+                  <div className="p-2 bg-blue-100 dark:bg-blue-950 text-blue-600 dark:text-blue-400 rounded-lg">
+                    <Activity className="w-4 h-4" />
+                  </div>
+                  <span className="text-[10px] bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 font-bold px-2 py-0.5 rounded">
+                    Analytics
+                  </span>
+                </div>
+                <div>
+                  <h4 className="text-xs font-bold text-slate-900 dark:text-white">
+                    Department Statistics
+                  </h4>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
+                    Turnaround time, bed occupancy, resus volume, and clinical workload distributions.
+                  </p>
+                </div>
+                <div className="pt-2 border-t border-slate-200 dark:border-slate-850 flex items-center justify-between text-[10px] font-semibold text-blue-600 dark:text-blue-400">
+                  <span>24 Active Cases</span>
+                  <button onClick={() => onNavigateToTab("analytics")} className="hover:underline cursor-pointer">
+                    View Analytics →
+                  </button>
+                </div>
+              </div>
+
+              {/* Shift Reports & Logs Card */}
+              <div className="bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-850 p-4 rounded-xl space-y-3 shadow-sm">
+                <div className="flex items-center justify-between">
+                  <div className="p-2 bg-purple-100 dark:bg-purple-950 text-purple-600 dark:text-purple-400 rounded-lg">
+                    <FileText className="w-4 h-4" />
+                  </div>
+                  <span className="text-[10px] bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300 font-bold px-2 py-0.5 rounded">
+                    Duty Rotas
+                  </span>
+                </div>
+                <div>
+                  <h4 className="text-xs font-bold text-slate-900 dark:text-white">
+                    Shift Reports & Roster Sync
+                  </h4>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
+                    Manage duty shifts, consultant on-call rotas, and sync events to Google Calendar.
+                  </p>
+                </div>
+                <div className="pt-2 border-t border-slate-200 dark:border-slate-850 flex items-center justify-between text-[10px] font-semibold text-purple-600 dark:text-purple-400">
+                  <span>Shift Sync Active</span>
+                  <button onClick={() => onNavigateToTab("roster")} className="hover:underline cursor-pointer">
+                    Open Roster Board →
+                  </button>
+                </div>
+              </div>
+
             </div>
           </div>
 
@@ -2448,8 +2570,21 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
         })()}
       </AnimatePresence>
 
+      {/* Google Calendar Sync Modal */}
+      <GoogleCalendarModal
+        isOpen={isCalendarModalOpen}
+        onClose={() => setIsCalendarModalOpen(false)}
+        defaultEventType="shift"
+        hospitalName={profile.hospital || "Emergency Department"}
+      />
 
-
+      {/* Mortality & Morbidity Audit Modal */}
+      <MortalityAuditModal
+        isOpen={isMortalityModalOpen}
+        onClose={() => setIsMortalityModalOpen(false)}
+        profile={profile}
+        cases={cases}
+      />
     </div>
   );
 }

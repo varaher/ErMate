@@ -120,6 +120,37 @@
         "createdByEmail": { "type": "string" }
       },
       "required": ["id", "name"]
+    },
+    "HandoverPatient": {
+      "title": "HandoverPatient",
+      "description": "Comprehensive ER Boarder shift handover patient card",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "patientLabel": { "type": "object" },
+        "alertBanner": { "type": "object" },
+        "presentingComplaint": { "type": "string" },
+        "courseInERDayWise": { "type": "array" },
+        "activeProblemList": { "type": "array" },
+        "story": { "type": "string" },
+        "pmh": { "type": "string" },
+        "diagnosis": { "type": "string" },
+        "crossConsultations": { "type": "array" },
+        "investigations": { "type": "object" },
+        "currentMedications": { "type": "array" },
+        "adjuncts": { "type": "object" },
+        "managementPlan": { "type": "object" },
+        "done": { "type": "array" },
+        "toBeDone": { "type": "array" },
+        "erBoardingStatus": { "type": "object" },
+        "bystanderConsent": { "type": "string" },
+        "latestVitals": { "type": "object" },
+        "vitalsNow": { "type": "string" },
+        "criticalAlerts": { "type": "array" },
+        "bystander": { "type": "string" },
+        "alertRow": { "type": "string" }
+      },
+      "required": ["patientLabel", "presentingComplaint", "diagnosis"]
     }
   },
   "firestore": {
@@ -130,6 +161,10 @@
     "/quick_paste_patients/{itemId}": {
       "schema": "QuickPastePatient",
       "description": "EMR Quick Paste roster patients synced across devices"
+    },
+    "/handoverPatients/{patientId}": {
+      "schema": "HandoverPatient",
+      "description": "ER Boarder handover patients synced across devices"
     },
     "/users/{userId}": {
       "schema": "UserProfile",

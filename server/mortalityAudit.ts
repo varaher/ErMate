@@ -5,7 +5,12 @@
 // ============================================================
 
 import Anthropic from "@anthropic-ai/sdk";
+import OpenAI from "openai";
 import { GoogleGenAI } from "@google/genai";
+import { 
+  Document, Packer, Paragraph, TextRun, HeadingLevel, Table, TableRow, TableCell, 
+  WidthType, BorderStyle, AlignmentType, ShadingType 
+} from "docx";
 
 // ── The extraction prompt ─────────────────────────────────────
 export const MORTALITY_AUDIT_PROMPT = `
@@ -213,15 +218,17 @@ export async function generateMortalityAudit(
 
   const prompt = MORTALITY_AUDIT_PROMPT.replace("${emrText}", cleaned);
 
-  // 1. Try Anthropic SDK if ANTHROPIC_API_KEY is available
-  if (process.env.ANTHROPIC_API_KEY && process.env.ANTHROPIC_API_KEY.trim() !== "") {
+  // 1. Primary Model: Claude Sonnet
+  const anthropicKey = process.env.ANTHROPIC_API_KEY;
+  if (anthropicKey && anthropicKey.trim() !== "" && anthropicKey !== "MY_ANTHROPIC_API_KEY") {
     try {
+      console.log("[MortalityAudit] Attempting primary model: Claude Sonnet...");
       const anthropic = new Anthropic({
-        apiKey: process.env.ANTHROPIC_API_KEY,
+        apiKey: anthropicKey,
       });
 
       const msg = await anthropic.messages.create({
-        model: "claude-3-5-sonnet-200000",
+        model: "claude-3-5-sonnet-20241022",
         max_tokens: 8096,
         temperature: 0.0,
         messages: [{ role: "user", content: prompt }],
@@ -232,44 +239,182 @@ export async function generateMortalityAudit(
       const audit = JSON.parse(cleanedJson);
       return { success: true, audit };
     } catch (err: any) {
-      console.warn("[MortalityAudit] Anthropic API failed, falling back to Gemini:", err?.message || err);
+      console.warn("[MortalityAudit] Claude Sonnet primary failed, trying fallback:", err?.message || err);
     }
   }
 
-  // 2. Gemini fallback / Primary Engine using @google/genai
-  try {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      throw new Error("Neither ANTHROPIC_API_KEY nor GEMINI_API_KEY is available.");
-    }
+  // 2. Fallback Model: GPT-4o
+  if (process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY.trim() !== "") {
+    try {
+      console.log("[MortalityAudit] Attempting fallback model: GPT-4o...");
+      const openai = new OpenAI({
+        apiKey: process.env.OPENAI_API_KEY,
+      });
 
-    const ai = new GoogleGenAI({
-      apiKey,
-      httpOptions: {
-        headers: {
-          "User-Agent": "aistudio-build",
+      const completion = await openai.chat.completions.create({
+        model: "gpt-4o",
+        temperature: 0.0,
+        response_format: { type: "json_object" },
+        messages: [
+          {
+            role: "system",
+            content: "You are a senior emergency medicine consultant producing a confidential medico-legal M&M mortality audit in strict JSON format.",
+          },
+          { role: "user", content: prompt },
+        ],
+      });
+
+      const raw = completion.choices[0]?.message?.content || "";
+      const cleanedJson = cleanJsonResponse(raw);
+      const audit = JSON.parse(cleanedJson);
+      return { success: true, audit };
+    } catch (err: any) {
+      console.warn("[MortalityAudit] GPT-4o fallback failed:", err?.message || err);
+    }
+  }
+
+  // 3. Fallback Model: Gemini 2.5 Flash / Gemini Pro
+  if (process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim() !== "") {
+    try {
+      console.log("[MortalityAudit] Attempting fallback model: Gemini 2.5 Flash...");
+      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+      const response = await ai.models.generateContent({
+        model: "gemini-2.5-flash",
+        contents: prompt,
+        config: {
+          temperature: 0.0,
+          responseMimeType: "application/json",
         },
-      },
-    });
+      });
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.6-flash",
-      contents: prompt,
-      config: {
-        temperature: 0.1,
-        responseMimeType: "application/json",
-      },
-    });
-
-    const raw = response.text || "";
-    const cleanedJson = cleanJsonResponse(raw);
-    const audit = JSON.parse(cleanedJson);
-    return { success: true, audit };
-  } catch (err: any) {
-    console.error("[MortalityAudit] Generation error:", err?.message || err);
-    return {
-      success: false,
-      error: "Could not generate mortality audit — please try again. " + (err?.message || ""),
-    };
+      const raw = response.text || "";
+      const cleanedJson = cleanJsonResponse(raw);
+      const audit = JSON.parse(cleanedJson);
+      return { success: true, audit };
+    } catch (err: any) {
+      console.error("[MortalityAudit] Gemini fallback failed:", err?.message || err);
+    }
   }
+
+  // If both Claude Sonnet and GPT-4o fail or are unavailable:
+  console.error("[MortalityAudit] Both Claude Sonnet and GPT-4o failed or lack API keys.");
+  return {
+    success: false,
+    error: "Audit generation unavailable. Please try again later.",
+  };
+}
+
+// ── Word Document (.docx) Generator for Mortality Audit ────────
+export async function generateMortalityAuditDocx(audit: Record<string, any>): Promise<Buffer> {
+  const info = audit.patientInfo || {};
+  const cause = audit.causeOfDeath || {};
+  const preventability = audit.preventabilityAssessment || {};
+
+  const doc = new Document({
+    sections: [
+      {
+        properties: {},
+        children: [
+          // Header
+          new Paragraph({
+            text: "CONFIDENTIAL MEDICO-LEGAL RECORD — FOR INTERNAL QUALITY IMPROVEMENT ONLY",
+            heading: HeadingLevel.HEADING_3,
+            alignment: AlignmentType.CENTER,
+          }),
+          new Paragraph({
+            text: "FORMAL MORTALITY & MORBIDITY (M&M) AUDIT REPORT",
+            heading: HeadingLevel.TITLE,
+            alignment: AlignmentType.CENTER,
+          }),
+          new Paragraph({ text: "" }),
+
+          // Patient Information Table
+          new Paragraph({ text: "1. PATIENT INFORMATION", heading: HeadingLevel.HEADING_1 }),
+          new Table({
+            width: { size: 100, type: WidthType.PERCENTAGE },
+            rows: [
+              new TableRow({
+                children: [
+                  new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "Patient Name / ID: ", bold: true }), new TextRun(info.name || "N/A")] })] }),
+                  new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "Age / Sex: ", bold: true }), new TextRun(info.ageSex || "N/A")] })] }),
+                ],
+              }),
+              new TableRow({
+                children: [
+                  new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "Date of Admission: ", bold: true }), new TextRun(info.dateAdmission || "N/A")] })] }),
+                  new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "Date & Time of Death: ", bold: true }), new TextRun(`${info.dateDeath || "N/A"} (${info.timeOfDeath || ""})`)] })] }),
+                ],
+              }),
+              new TableRow({
+                children: [
+                  new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "Total Stay (Days): ", bold: true }), new TextRun(String(info.totalStayDays ?? "N/A"))] })] }),
+                  new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "Known Allergies: ", bold: true }), new TextRun(info.allergy || "None Documented")] })] }),
+                ],
+              }),
+            ],
+          }),
+          new Paragraph({ text: "" }),
+
+          // Presenting Complaint & Past History
+          new Paragraph({ text: "2. CLINICAL PRESENTATION & PAST HISTORY", heading: HeadingLevel.HEADING_1 }),
+          new Paragraph({ children: [new TextRun({ text: "Presenting Complaint: ", bold: true }), new TextRun(audit.presentingComplaintAtAdmission || "N/A")] }),
+          new Paragraph({ children: [new TextRun({ text: "Past Medical / Surgical History: ", bold: true }), new TextRun(audit.pastHistory || "N/A")] }),
+          new Paragraph({ text: "" }),
+
+          // Diagnosis at Death
+          new Paragraph({ text: "3. DIAGNOSES AT TIME OF DEATH", heading: HeadingLevel.HEADING_1 }),
+          ...(Array.isArray(audit.diagnosisAtDeath)
+            ? audit.diagnosisAtDeath.map((dx: string) => new Paragraph({ text: `• ${dx}` }))
+            : [new Paragraph({ text: audit.diagnosisAtDeath || "N/A" })]),
+          new Paragraph({ text: "" }),
+
+          // Hospital Course
+          new Paragraph({ text: "4. CHRONOLOGICAL HOSPITAL COURSE", heading: HeadingLevel.HEADING_1 }),
+          new Paragraph({ text: audit.hospitalCourse || "N/A" }),
+          new Paragraph({ text: "" }),
+
+          // Cause of Death Breakdown
+          new Paragraph({ text: "5. CAUSE OF DEATH DECONSTRUCTION", heading: HeadingLevel.HEADING_1 }),
+          new Paragraph({ children: [new TextRun({ text: "Immediate Cause (Part I): ", bold: true }), new TextRun(cause.immediate || "N/A")] }),
+          new Paragraph({ children: [new TextRun({ text: "Precipitating Cause: ", bold: true }), new TextRun(cause.precipitating || "N/A")] }),
+          new Paragraph({ children: [new TextRun({ text: "Underlying Pathology: ", bold: true }), new TextRun(cause.underlying || "N/A")] }),
+          new Paragraph({
+            children: [
+              new TextRun({ text: "Contributing Factors (Part II): ", bold: true }),
+              new TextRun(Array.isArray(cause.contributing) ? cause.contributing.join("; ") : cause.contributing || "None"),
+            ],
+          }),
+          new Paragraph({ text: "" }),
+
+          // Preventability Assessment
+          new Paragraph({ text: "6. PREVENTABILITY ASSESSMENT", heading: HeadingLevel.HEADING_1 }),
+          new Paragraph({ children: [new TextRun({ text: "Category: ", bold: true }), new TextRun(preventability.category || "N/A")] }),
+          new Paragraph({ children: [new TextRun({ text: "Rationale: ", bold: true }), new TextRun(preventability.rationale || "N/A")] }),
+          new Paragraph({ text: "" }),
+
+          // System Issues Identified
+          new Paragraph({ text: "7. SYSTEM & PROCESS ISSUES IDENTIFIED", heading: HeadingLevel.HEADING_1 }),
+          ...(Array.isArray(audit.systemIssuesIdentified)
+            ? audit.systemIssuesIdentified.map((issue: string) => new Paragraph({ text: `• ${issue}` }))
+            : [new Paragraph({ text: audit.systemIssuesIdentified || "None identified" })]),
+          new Paragraph({ text: "" }),
+
+          // Key Learning Points
+          new Paragraph({ text: "8. KEY ACTIONABLE LEARNING POINTS", heading: HeadingLevel.HEADING_1 }),
+          ...(Array.isArray(audit.learningPoints)
+            ? audit.learningPoints.map((lp: string) => new Paragraph({ text: `• ${lp}` }))
+            : [new Paragraph({ text: audit.learningPoints || "N/A" })]),
+          new Paragraph({ text: "" }),
+
+          // References
+          new Paragraph({ text: "9. VERIFIABLE CLINICAL REFERENCES", heading: HeadingLevel.HEADING_1 }),
+          ...(Array.isArray(audit.references)
+            ? audit.references.map((ref: string) => new Paragraph({ text: `• ${ref}` }))
+            : [new Paragraph({ text: audit.references || "N/A" })]),
+        ],
+      },
+    ],
+  });
+
+  return await Packer.toBuffer(doc);
 }

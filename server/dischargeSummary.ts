@@ -11,9 +11,12 @@ import { preprocessEMR, reverseEMREntries } from './handover.ts';
 
 // ── Lazy Client Initializers (to prevent missing key crashes at startup) ──
 let anthropicClient: Anthropic | null = null;
+let isAnthropicDisabledInDischarge = false;
+
 function getAnthropic(): Anthropic | null {
+  if (isAnthropicDisabledInDischarge) return null;
   const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey || apiKey.trim() === '') return null;
+  if (!apiKey || apiKey.trim() === '' || apiKey === 'MY_ANTHROPIC_API_KEY') return null;
   if (!anthropicClient) {
     anthropicClient = new Anthropic({ apiKey });
   }
@@ -484,11 +487,14 @@ export async function generateDischargeSummary(
       const parsed = cleanAndParseJSON(raw);
       return { success: true, summary: parsed };
     } catch (err: any) {
-      console.warn('[Discharge] Claude Sonnet attempt failed, falling back to OpenAI GPT-4o:', err?.message || err);
+      console.warn('[Discharge] Claude Sonnet attempt failed, falling back:', err?.message || err);
+      if (err?.status === 400 || err?.status === 401 || err?.status === 402 || String(err?.message || "").includes("credit balance")) {
+        isAnthropicDisabledInDischarge = true;
+      }
     }
   }
 
-  // 2. Try OpenAI (GPT-4o, not mini) — Fallback AI engine (NOT Gemini)
+  // 2. Try OpenAI (GPT-4o, not mini) — Fallback AI engine
   const openai = getOpenAI();
   if (openai) {
     try {
@@ -506,6 +512,28 @@ export async function generateDischargeSummary(
       return { success: true, summary: parsed };
     } catch (err: any) {
       console.warn('[Discharge] OpenAI GPT-4o attempt failed:', err?.message || err);
+    }
+  }
+
+  // 3. Gemini 2.5 Flash Fallback
+  const geminiKey = process.env.GEMINI_API_KEY;
+  if (geminiKey && geminiKey.trim() !== '') {
+    try {
+      console.log('[Discharge] Requesting Gemini 2.5 Flash (Fallback)...');
+      const ai = new GoogleGenAI({ apiKey: geminiKey });
+      const res = await ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: prompt,
+        config: {
+          temperature: 0.0,
+          responseMimeType: 'application/json',
+        },
+      });
+
+      const parsed = cleanAndParseJSON(res.text || '{}');
+      return { success: true, summary: parsed };
+    } catch (err: any) {
+      console.warn('[Discharge] Gemini fallback failed:', err?.message || err);
     }
   }
 

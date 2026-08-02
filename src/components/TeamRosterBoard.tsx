@@ -5,6 +5,7 @@ import {
   Building2, Link, Copy, Check, BookOpen, FileText, CheckSquare, Square, ChevronRight, ClipboardList
 } from "lucide-react";
 import { TeamMember, UserProfile, ClinicalCase } from "../types";
+import GoogleCalendarModal from "./GoogleCalendarModal";
 
 export const ROTA_SHIFTS = [
   { id: "morning", name: "Morning", time: "08:00 - 14:00", color: "text-amber-600 bg-amber-50 border-amber-200 dark:text-amber-400 dark:bg-amber-400/10 dark:border-amber-400/20" },
@@ -15,6 +16,19 @@ export const ROTA_SHIFTS = [
   { id: "d2", name: "D2 Shift", time: "18:00 - 08:00", color: "text-rose-600 bg-rose-50 border-rose-200 dark:text-rose-400 dark:bg-rose-400/10 dark:border-rose-400/20" },
   { id: "g1", name: "G1 Shift", time: "08:00 - 16:00", color: "text-cyan-600 bg-cyan-50 border-cyan-200 dark:text-cyan-400 dark:bg-cyan-400/10 dark:border-cyan-400/20" },
   { id: "g2", name: "G2 Shift", time: "12:00 - 20:00", color: "text-emerald-600 bg-emerald-50 border-emerald-200 dark:text-emerald-400 dark:bg-emerald-400/10 dark:border-emerald-400/20" },
+];
+
+export const SHIFT_COLOR_OPTIONS = [
+  { label: "Amber / Morning", color: "text-amber-600 bg-amber-50 border-amber-200 dark:text-amber-400 dark:bg-amber-400/10 dark:border-amber-400/20" },
+  { label: "Orange / Evening", color: "text-orange-600 bg-orange-50 border-orange-200 dark:text-orange-400 dark:bg-orange-400/10 dark:border-orange-400/20" },
+  { label: "Indigo / Night", color: "text-indigo-600 bg-indigo-50 border-indigo-200 dark:text-indigo-400 dark:bg-indigo-400/10 dark:border-indigo-400/20" },
+  { label: "Slate / Off Duty", color: "text-slate-500 bg-slate-50 border-slate-200 dark:text-slate-400 dark:bg-slate-400/10 dark:border-slate-400/20" },
+  { label: "Teal / D1 Shift", color: "text-teal-600 bg-teal-50 border-teal-200 dark:text-teal-400 dark:bg-teal-400/10 dark:border-teal-400/20" },
+  { label: "Rose / D2 Shift", color: "text-rose-600 bg-rose-50 border-rose-200 dark:text-rose-400 dark:bg-rose-400/10 dark:border-rose-400/20" },
+  { label: "Cyan / G1 Shift", color: "text-cyan-600 bg-cyan-50 border-cyan-200 dark:text-cyan-400 dark:bg-cyan-400/10 dark:border-cyan-400/20" },
+  { label: "Emerald / G2 Shift", color: "text-emerald-600 bg-emerald-50 border-emerald-200 dark:text-emerald-400 dark:bg-emerald-400/10 dark:border-emerald-400/20" },
+  { label: "Purple / Resus", color: "text-purple-600 bg-purple-50 border-purple-200 dark:text-purple-400 dark:bg-purple-400/10 dark:border-purple-400/20" },
+  { label: "Blue / Triage", color: "text-blue-600 bg-blue-50 border-blue-200 dark:text-blue-400 dark:bg-blue-400/10 dark:border-blue-400/20" },
 ];
 
 interface TeamRosterBoardProps {
@@ -57,6 +71,14 @@ export default function TeamRosterBoard({
     setEditedShifts(JSON.parse(JSON.stringify(activeShifts)));
   }, [shifts, activeShifts]);
 
+  // Shift Manager State & Form States
+  const [showShiftManagerModal, setShowShiftManagerModal] = useState(false);
+  const [isAddingNewShift, setIsAddingNewShift] = useState(false);
+  const [addShiftName, setAddShiftName] = useState("");
+  const [addShiftTime, setAddShiftTime] = useState("");
+  const [addShiftColor, setAddShiftColor] = useState(SHIFT_COLOR_OPTIONS[0].color);
+  const [shiftActionMsg, setShiftActionMsg] = useState("");
+
   // Search and Filter States
   const [searchQuery, setSearchQuery] = useState("");
   const [shiftFilter, setShiftFilter] = useState("all");
@@ -78,6 +100,22 @@ export default function TeamRosterBoard({
   const [successMsg, setSuccessMsg] = useState("");
   const [copiedLink, setCopiedLink] = useState(false);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+
+  // Google Calendar Sync Modal State
+  const [isCalendarModalOpen, setIsCalendarModalOpen] = useState(false);
+  const [calendarModalConfig, setCalendarModalConfig] = useState<{
+    defaultEventType: "shift" | "audit" | "handover";
+    initialTitle: string;
+    initialDescription: string;
+    initialStartTime: string;
+    initialEndTime: string;
+  }>({
+    defaultEventType: "shift",
+    initialTitle: `ER Duty Shift — ${profile.hospital || "Hospital"}`,
+    initialDescription: `Assigned duty shift for Dr. ${profile.name} at ${profile.hospital || "Emergency Department"}.`,
+    initialStartTime: "08:00",
+    initialEndTime: "14:00",
+  });
 
   const userEmailLower = profile.email.toLowerCase().trim();
   const isUserHOD = true; // Enabled for all users to allow roster configuration and deleting sample doctors
@@ -135,12 +173,70 @@ export default function TeamRosterBoard({
     }
   };
 
+  const handleCreateNewShift = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!addShiftName.trim()) {
+      setShiftActionMsg("Please enter a shift title (e.g. S3 Shift or ICU Night).");
+      return;
+    }
+    const cleanName = addShiftName.trim();
+    const cleanTime = addShiftTime.trim() || "08:00 - 16:00";
+    const slugId = cleanName.toLowerCase().replace(/[^a-z0-9]/g, "_").slice(0, 10) + "_" + Math.floor(Math.random() * 1000);
+
+    const newShiftObj = {
+      id: slugId,
+      name: cleanName,
+      time: cleanTime,
+      color: addShiftColor || SHIFT_COLOR_OPTIONS[0].color,
+    };
+
+    const updated = [...editedShifts, newShiftObj];
+    setEditedShifts(updated);
+    setAddShiftName("");
+    setAddShiftTime("");
+    setIsAddingNewShift(false);
+    setShiftActionMsg(`Shift "${cleanName}" added successfully!`);
+
+    if (onUpdateShifts) {
+      await onUpdateShifts(updated);
+    }
+    setTimeout(() => setShiftActionMsg(""), 4000);
+  };
+
+  const handleUpdateShiftField = (shiftId: string, field: "name" | "time" | "color", value: string) => {
+    setEditedShifts(prev => {
+      return prev.map(item => {
+        if (item.id === shiftId) {
+          return { ...item, [field]: value };
+        }
+        return item;
+      });
+    });
+  };
+
+  const handleDeleteShift = async (shiftId: string) => {
+    if (editedShifts.length <= 1) {
+      alert("At least one shift slot must remain in the roster.");
+      return;
+    }
+    const target = editedShifts.find(s => s.id === shiftId);
+    const updated = editedShifts.filter(item => item.id !== shiftId);
+    setEditedShifts(updated);
+    if (onUpdateShifts) {
+      await onUpdateShifts(updated);
+    }
+    setShiftActionMsg(`Shift "${target?.name || shiftId}" deleted.`);
+    setTimeout(() => setShiftActionMsg(""), 3000);
+  };
+
   const handleSaveShifts = async () => {
     if (onUpdateShifts) {
       try {
         await onUpdateShifts(editedShifts);
+        setShiftActionMsg("Universal shift schedule saved and synchronized!");
+        setTimeout(() => setShiftActionMsg(""), 4000);
       } catch (err) {
-        console.error("Error saving shifts:", err);
+        setShiftActionMsg("Failed to save shifts. Please try again.");
       }
     }
   };
@@ -176,11 +272,32 @@ export default function TeamRosterBoard({
           </p>
         </div>
 
-        <div className="bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-850 px-3.5 py-1.5 rounded-xl flex items-center gap-2 text-[11px] text-slate-600 dark:text-slate-400 font-medium">
-          <UserCheck className="w-3.5 h-3.5 text-emerald-500" />
-          <span>
-            Logged in as <strong>{profile.name}</strong> ({isUserHOD ? "HOD / Admin" : profile.role})
-          </span>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              setCalendarModalConfig({
+                defaultEventType: "shift",
+                initialTitle: `ER Duty Shift — ${profile.hospital || "Emergency Dept"}`,
+                initialDescription: `Emergency Department duty shift schedule for Dr. ${profile.name}.`,
+                initialStartTime: "08:00",
+                initialEndTime: "14:00",
+              });
+              setIsCalendarModalOpen(true);
+            }}
+            className="px-3.5 py-1.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold text-xs rounded-xl flex items-center gap-1.5 transition-all shadow-sm cursor-pointer"
+            title="Sync shift rotas & events with Google Calendar"
+          >
+            <Calendar className="w-3.5 h-3.5 text-white" />
+            <span>Sync Google Calendar</span>
+          </button>
+
+          <div className="bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-850 px-3.5 py-1.5 rounded-xl flex items-center gap-2 text-[11px] text-slate-600 dark:text-slate-400 font-medium">
+            <UserCheck className="w-3.5 h-3.5 text-emerald-500" />
+            <span>
+              Logged in as <strong>{profile.name}</strong> ({isUserHOD ? "HOD / Admin" : profile.role})
+            </span>
+          </div>
         </div>
       </div>
 
@@ -369,52 +486,150 @@ export default function TeamRosterBoard({
 
           {/* Shift Time Configuration Panel */}
           <div className="bg-slate-50 dark:bg-slate-950/40 border border-slate-150 dark:border-slate-850 p-5 rounded-2xl space-y-4 col-span-1 lg:col-span-2">
-            <div className="space-y-1">
-              <span className="text-[10px] bg-purple-100 dark:bg-purple-500/10 text-purple-700 dark:text-purple-400 border border-purple-200 dark:border-purple-500/20 px-2.5 py-0.5 rounded-full font-mono font-bold uppercase tracking-wider">
-                Step 3: Customize Rota Shifts & Time Windows
-              </span>
-              <h3 className="text-sm font-bold text-slate-800 dark:text-slate-200 pt-1">Universal Shift Setup</h3>
-              <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-                As HOD, you can set the exact hours/intervals for all duty slots. Any modifications will instantly update across all team browsers, synchronization check-in popups, and rosters!
-              </p>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="space-y-1">
+                <span className="text-[10px] bg-purple-100 dark:bg-purple-500/10 text-purple-700 dark:text-purple-400 border border-purple-200 dark:border-purple-500/20 px-2.5 py-0.5 rounded-full font-mono font-bold uppercase tracking-wider">
+                  Step 3: Customize Rota Shifts & Time Windows
+                </span>
+                <h3 className="text-sm font-bold text-slate-800 dark:text-slate-200 pt-1">Universal Shift Setup</h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+                  As HOD, you can add new custom shifts, edit titles, and set exact duty hours. Modifications immediately update across all team browsers and rosters!
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setIsAddingNewShift(!isAddingNewShift)}
+                className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer shrink-0"
+              >
+                <Plus className="w-4 h-4" />
+                <span>{isAddingNewShift ? "Cancel Adding" : "+ Add New Shift"}</span>
+              </button>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 pt-2">
-              {activeShifts.map((s) => (
-                <div key={s.id} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3 rounded-xl space-y-2 shadow-xs">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-slate-800 dark:text-slate-200">{s.name}</span>
-                    <span className={`text-[9px] px-1.5 py-0.2 rounded border uppercase font-mono font-bold ${s.id === 'off' ? 'bg-slate-100 text-slate-500 border-slate-200' : 'bg-indigo-50 dark:bg-indigo-950/30 text-indigo-600 dark:text-indigo-400 border-indigo-100 dark:border-indigo-900/30'}`}>
-                      {s.id}
-                    </span>
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[9px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wide block">Duty Hours</label>
+            {/* Add Shift Inline Form */}
+            {isAddingNewShift && (
+              <form onSubmit={handleCreateNewShift} className="p-4 bg-white dark:bg-slate-900 border-2 border-dashed border-indigo-300 dark:border-indigo-800/80 rounded-2xl space-y-3">
+                <h4 className="text-xs font-bold text-indigo-600 dark:text-indigo-400 flex items-center gap-1.5 uppercase font-mono">
+                  <Sparkles className="w-3.5 h-3.5" /> Add New Shift Rota Option
+                </h4>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase block mb-1">Shift Name / Code</label>
                     <input
                       type="text"
-                      value={editedShifts.find(item => item.id === s.id)?.time || s.time}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        setEditedShifts(prev => {
-                          const copy = [...prev];
-                          const targetIdx = copy.findIndex(item => item.id === s.id);
-                          if (targetIdx !== -1) {
-                            copy[targetIdx] = { ...copy[targetIdx], time: val };
-                          } else {
-                            copy.push({ ...s, time: val });
-                          }
-                          return copy;
-                        });
-                      }}
-                      className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 dark:text-white font-mono"
-                      placeholder="e.g. 08:00 - 14:00"
+                      value={addShiftName}
+                      onChange={e => setAddShiftName(e.target.value)}
+                      placeholder="e.g. S3 Shift, Night Resus"
+                      className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-1.5 text-xs text-slate-900 dark:text-white font-bold"
                     />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase block mb-1">Duty Hours</label>
+                    <input
+                      type="text"
+                      value={addShiftTime}
+                      onChange={e => setAddShiftTime(e.target.value)}
+                      placeholder="e.g. 07:00 - 15:00"
+                      className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-1.5 text-xs text-slate-900 dark:text-white font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase block mb-1">Color Theme</label>
+                    <select
+                      value={addShiftColor}
+                      onChange={e => setAddShiftColor(e.target.value)}
+                      className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-1.5 text-xs text-slate-900 dark:text-white font-bold"
+                    >
+                      {SHIFT_COLOR_OPTIONS.map((c, i) => (
+                        <option key={i} value={c.color}>{c.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                <div className="flex justify-end gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setIsAddingNewShift(false)}
+                    className="px-3 py-1.5 text-xs text-slate-500 hover:text-slate-800 font-semibold cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-xs cursor-pointer"
+                  >
+                    Save & Add Shift
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {shiftActionMsg && (
+              <p className="text-xs font-bold text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-900/40 px-3 py-2 rounded-xl font-mono">
+                {shiftActionMsg}
+              </p>
+            )}
+
+            {/* Grid of Shifts */}
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 pt-2">
+              {editedShifts.map((s) => (
+                <div key={s.id} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3.5 rounded-2xl space-y-2.5 shadow-xs relative group">
+                  <div className="flex items-center justify-between gap-2">
+                    <input
+                      type="text"
+                      value={s.name}
+                      onChange={(e) => handleUpdateShiftField(s.id, "name", e.target.value)}
+                      className="bg-transparent text-xs font-bold text-slate-800 dark:text-slate-100 border-b border-transparent hover:border-slate-300 focus:border-indigo-500 focus:bg-slate-50 dark:focus:bg-slate-950 px-1 py-0.5 rounded transition-all w-full"
+                      placeholder="Shift Title"
+                    />
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <span className={`text-[9px] px-1.5 py-0.5 rounded border uppercase font-mono font-bold ${s.color || 'bg-indigo-50 text-indigo-600 border-indigo-100'}`}>
+                        {s.id.slice(0, 8)}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteShift(s.id)}
+                        className="p-1 text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 transition-colors cursor-pointer"
+                        title="Delete Shift Option"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 pt-1">
+                    <div>
+                      <label className="text-[9px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wide block">Duty Hours</label>
+                      <input
+                        type="text"
+                        value={s.time}
+                        onChange={(e) => handleUpdateShiftField(s.id, "time", e.target.value)}
+                        className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg px-2 py-1 text-xs text-slate-800 dark:text-white font-mono"
+                        placeholder="e.g. 08:00 - 14:00"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[9px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wide block">Badge Color</label>
+                      <select
+                        value={s.color}
+                        onChange={(e) => handleUpdateShiftField(s.id, "color", e.target.value)}
+                        className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg px-2 py-1 text-[10px] text-slate-800 dark:text-white font-bold"
+                      >
+                        {SHIFT_COLOR_OPTIONS.map((c, idx) => (
+                          <option key={idx} value={c.color}>{c.label}</option>
+                        ))}
+                      </select>
+                    </div>
                   </div>
                 </div>
               ))}
             </div>
 
-            <div className="flex justify-end pt-2">
+            <div className="flex justify-between items-center pt-2">
+              <span className="text-[11px] text-slate-400 font-mono">
+                Total configured shift slots: <strong className="text-slate-700 dark:text-slate-200">{editedShifts.length}</strong>
+              </span>
               <button
                 type="button"
                 onClick={handleSaveShifts}
@@ -444,7 +659,7 @@ export default function TeamRosterBoard({
         </div>
 
         <div className="px-3 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-[11px] font-mono shrink-0">
-          Total whitelisted: <strong className="text-indigo-600 dark:text-indigo-400 font-black">{teamMembers.length} seats</strong>
+          Total allowlisted: <strong className="text-indigo-600 dark:text-indigo-400 font-black">{teamMembers.length} seats</strong>
         </div>
       </div>
 
@@ -461,16 +676,29 @@ export default function TeamRosterBoard({
           />
         </div>
 
-        <select
-          value={shiftFilter}
-          onChange={e => setShiftFilter(e.target.value)}
-          className="bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-2 text-xs text-slate-800 dark:text-white focus:outline-none focus:border-indigo-500"
-        >
-          <option value="all">All Shifts</option>
-          {activeShifts.map(s => (
-            <option key={s.id} value={s.id}>{s.name} Duty</option>
-          ))}
-        </select>
+        <div className="flex items-center gap-2">
+          <select
+            value={shiftFilter}
+            onChange={e => setShiftFilter(e.target.value)}
+            className="bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-2 text-xs text-slate-800 dark:text-white focus:outline-none focus:border-indigo-500 font-bold"
+          >
+            <option value="all">All Shifts</option>
+            {activeShifts.map(s => (
+              <option key={s.id} value={s.id}>{s.name} Duty</option>
+            ))}
+          </select>
+
+          <button
+            type="button"
+            onClick={() => setShowShiftManagerModal(true)}
+            className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer shrink-0"
+            title="Add new shift or edit existing shift rotas"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">+ Add / Edit Shifts</span>
+            <span className="sm:hidden">+ Shifts</span>
+          </button>
+        </div>
       </div>
 
       {/* 5. Roster Table */}
@@ -583,7 +811,7 @@ export default function TeamRosterBoard({
                   <div className="col-span-1 md:col-span-3 space-y-1.5">
                     {/* Shift Dropdown for HOD OR if the user is changing their OWN shift */}
                     {isUserHOD || isSelf ? (
-                      <div className="space-y-1">
+                      <div className="flex items-center gap-1.5">
                         <select
                           value={member.shift}
                           onChange={async (e) => {
@@ -603,6 +831,24 @@ export default function TeamRosterBoard({
                             </option>
                           ))}
                         </select>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCalendarModalConfig({
+                              defaultEventType: "shift",
+                              initialTitle: `ER Duty Shift (${activeShift.name}) — Dr. ${member.name}`,
+                              initialDescription: `Scheduled Duty Shift (${activeShift.time}) for ${member.name} (${member.role}) at ${profile.hospital || "Emergency Department"}.`,
+                              initialStartTime: activeShift.time.split(" - ")[0] || "08:00",
+                              initialEndTime: activeShift.time.split(" - ")[1] || "14:00",
+                            });
+                            setIsCalendarModalOpen(true);
+                          }}
+                          className="p-1.5 bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800 rounded-lg hover:bg-blue-100 transition-colors cursor-pointer"
+                          title={`Sync ${member.name}'s ${activeShift.name} shift to Google Calendar`}
+                        >
+                          <Calendar className="w-3.5 h-3.5" />
+                        </button>
                       </div>
                     ) : (
                       <div className={`inline-flex flex-col px-3 py-1 border rounded-xl ${activeShift.color}`}>
@@ -895,6 +1141,176 @@ export default function TeamRosterBoard({
         );
       })()}
 
+      {/* Shift Manager Modal */}
+      {showShiftManagerModal && (
+        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto animate-fade-in">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl w-full max-w-2xl overflow-hidden shadow-2xl space-y-0 my-auto">
+            {/* Header */}
+            <div className="p-5 bg-gradient-to-r from-slate-900 to-indigo-950 text-white flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-indigo-500/20 rounded-xl border border-indigo-400/30 text-indigo-300">
+                  <Clock className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold tracking-tight">Department Duty Shift Manager</h3>
+                  <p className="text-xs text-slate-300">Add new shift slots or edit existing duty hours for Dr. {profile.name}'s department</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowShiftManagerModal(false)}
+                className="p-1.5 text-slate-400 hover:text-white rounded-lg transition-colors cursor-pointer text-sm font-bold"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="p-5 space-y-4 max-h-[70vh] overflow-y-auto">
+              {/* Add New Shift Section */}
+              <div className="p-4 bg-indigo-50/50 dark:bg-slate-950/40 border border-indigo-100 dark:border-indigo-900/30 rounded-2xl space-y-3">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-extrabold text-indigo-700 dark:text-indigo-400 uppercase tracking-wide flex items-center gap-1.5 font-mono">
+                    <Plus className="w-4 h-4" /> Add New Shift Rota
+                  </h4>
+                  <span className="text-[10px] text-slate-400 font-mono">e.g., Night Resus, S1, ICU Duty</span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase block mb-1">Shift Name</label>
+                    <input
+                      type="text"
+                      value={addShiftName}
+                      onChange={e => setAddShiftName(e.target.value)}
+                      placeholder="e.g. S3 Shift or ICU Night"
+                      className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-1.5 text-xs text-slate-900 dark:text-white font-bold"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase block mb-1">Duty Hours</label>
+                    <input
+                      type="text"
+                      value={addShiftTime}
+                      onChange={e => setAddShiftTime(e.target.value)}
+                      placeholder="e.g. 07:00 - 15:00"
+                      className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-1.5 text-xs text-slate-900 dark:text-white font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase block mb-1">Color Theme</label>
+                    <select
+                      value={addShiftColor}
+                      onChange={e => setAddShiftColor(e.target.value)}
+                      className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-1.5 text-xs text-slate-900 dark:text-white font-bold"
+                    >
+                      {SHIFT_COLOR_OPTIONS.map((c, i) => (
+                        <option key={i} value={c.color}>{c.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="flex justify-end pt-1">
+                  <button
+                    type="button"
+                    onClick={() => handleCreateNewShift()}
+                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold text-xs rounded-xl shadow-xs transition-all cursor-pointer flex items-center gap-1.5"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Create & Add Shift</span>
+                  </button>
+                </div>
+              </div>
+
+              {shiftActionMsg && (
+                <p className="text-xs font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900/30 px-3 py-2 rounded-xl font-mono">
+                  {shiftActionMsg}
+                </p>
+              )}
+
+              {/* List of Configured Shifts */}
+              <div className="space-y-2">
+                <h4 className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wide font-mono">
+                  Configured Shifts ({editedShifts.length})
+                </h4>
+
+                <div className="space-y-2.5">
+                  {editedShifts.map((s) => (
+                    <div key={s.id} className="p-3 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                      <div className="flex items-center gap-2 flex-1 w-full sm:w-auto">
+                        <input
+                          type="text"
+                          value={s.name}
+                          onChange={(e) => handleUpdateShiftField(s.id, "name", e.target.value)}
+                          className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg px-2.5 py-1 text-xs font-bold text-slate-900 dark:text-white flex-1"
+                          placeholder="Shift Name"
+                        />
+                        <input
+                          type="text"
+                          value={s.time}
+                          onChange={(e) => handleUpdateShiftField(s.id, "time", e.target.value)}
+                          className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg px-2.5 py-1 text-xs font-mono text-slate-800 dark:text-slate-200 w-32"
+                          placeholder="Duty Hours"
+                        />
+                      </div>
+
+                      <div className="flex items-center gap-2 shrink-0 w-full sm:w-auto justify-between sm:justify-end">
+                        <select
+                          value={s.color}
+                          onChange={(e) => handleUpdateShiftField(s.id, "color", e.target.value)}
+                          className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg px-2 py-1 text-[10px] font-bold text-slate-800 dark:text-slate-200"
+                        >
+                          {SHIFT_COLOR_OPTIONS.map((c, idx) => (
+                            <option key={idx} value={c.color}>{c.label}</option>
+                          ))}
+                        </select>
+
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteShift(s.id)}
+                          className="p-1.5 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/30 rounded-lg transition-colors cursor-pointer"
+                          title="Delete Shift"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="p-4 bg-slate-50 dark:bg-slate-950 border-t border-slate-200 dark:border-slate-800 flex justify-between items-center">
+              <span className="text-[11px] text-slate-400 font-mono">Changes sync automatically for all department members</span>
+              <button
+                type="button"
+                onClick={async () => {
+                  await handleSaveShifts();
+                  setShowShiftManagerModal(false);
+                }}
+                className="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl shadow-xs transition-all cursor-pointer flex items-center gap-1.5"
+              >
+                <Check className="w-4 h-4" />
+                <span>Save & Close</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Google Calendar Sync Modal */}
+      <GoogleCalendarModal
+        isOpen={isCalendarModalOpen}
+        onClose={() => setIsCalendarModalOpen(false)}
+        defaultEventType={calendarModalConfig.defaultEventType}
+        initialTitle={calendarModalConfig.initialTitle}
+        initialDescription={calendarModalConfig.initialDescription}
+        initialStartTime={calendarModalConfig.initialStartTime}
+        initialEndTime={calendarModalConfig.initialEndTime}
+        hospitalName={profile.hospital || "Emergency Department"}
+      />
     </div>
   );
 }

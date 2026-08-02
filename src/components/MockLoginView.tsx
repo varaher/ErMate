@@ -246,7 +246,7 @@ export default function MockLoginView({
     const steps = [
       { delay: 400, msg: "Establishing secure SSL connection to Google accounts..." },
       { delay: 800, msg: "Exchanging credentials and verifying security tokens..." },
-      { delay: 1200, msg: "Querying ERmate whitelisted clinical roster database..." },
+      { delay: 1200, msg: "Querying ERmate allowlisted clinical roster database..." },
       { delay: 1600, msg: "Applying security certificate. Logging you in..." }
     ];
 

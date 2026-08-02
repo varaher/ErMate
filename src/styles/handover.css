@@ -12,6 +12,8 @@
   background: white;
   box-shadow: 0 2px 8px rgba(13,43,26,0.08);
   transition: all 0.2s ease;
+  max-width: 100%;
+  word-break: break-word;
 }
 
 /* Header */
@@ -21,6 +23,7 @@
   padding: 10px 14px;
   gap: 10px;
   position: relative;
+  flex-wrap: wrap;
 }
 
 .hov-status-bar {
@@ -35,6 +38,7 @@
 .hov-header-content {
   flex: 1;
   padding-left: 6px;
+  min-width: 0;
 }
 
 .hov-bed-name {
@@ -42,6 +46,8 @@
   align-items: baseline;
   gap: 8px;
   margin-bottom: 2px;
+  flex-wrap: wrap;
+  min-width: 0;
 }
 
 .hov-bed {
@@ -50,6 +56,7 @@
   color: #5A8A6E;
   text-transform: uppercase;
   letter-spacing: 0.5px;
+  flex-shrink: 0;
 }
 
 .hov-name {
@@ -57,6 +64,10 @@
   font-weight: 800;
   color: #0D2B1A;
   letter-spacing: -0.3px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  word-break: break-word;
 }
 
 .hov-agesex {
@@ -115,14 +126,23 @@
 
 /* Critical + Vitals */
 .hov-two-col {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
+  display: flex;
+  flex-direction: column;
   border-top: 1px solid #F0F7F3;
+}
+
+@media (min-width: 640px) {
+  .hov-two-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
 }
 
 .hov-critical {
   background: #FEF2F2;
   border-right: 1px solid #FECACA;
+  min-width: 0;
+  word-break: break-word;
 }
 
 .hov-alert-item {
@@ -130,6 +150,8 @@
   font-weight: 700;
   color: #DC2626;
   line-height: 1.6;
+  min-width: 0;
+  word-break: break-word;
 }
 
 .hov-vitals {
@@ -137,17 +159,21 @@
   color: #0D2B1A;
   line-height: 1.8;
   font-family: 'JetBrains Mono', monospace;
+  min-width: 0;
+  word-break: break-word;
 }
 
 /* PMH */
 .hov-pmh {
   font-size: 12px;
   color: #374151;
+  word-break: break-word;
 }
 
 /* Diagnosis */
 .hov-dx {
   padding: 8px 14px 8px 12px;
+  word-break: break-word;
 }
 
 .hov-dx-text {
@@ -155,6 +181,7 @@
   font-weight: 600;
   color: #0D2B1A;
   line-height: 1.5;
+  word-break: break-word;
 }
 
 /* Management Plan */
@@ -169,23 +196,35 @@
 }
 
 .hov-mgmt {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 1px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
   background: #D4E8DC;
   margin: 0 14px 8px;
   border-radius: 8px;
   overflow: hidden;
+  padding: 1px;
+}
+
+@media (min-width: 640px) {
+  .hov-mgmt {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1px;
+    padding: 0;
+  }
 }
 
 .hov-done {
   background: #F0FFF4;
   padding: 8px;
+  min-width: 0;
 }
 
 .hov-todo {
   background: #FFFBEB;
   padding: 8px;
+  min-width: 0;
 }
 
 .hov-mgmt-header {
@@ -201,18 +240,26 @@
 
 /* Columns within done/todo */
 .hov-cols {
-  display: grid;
-  gap: 2px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
 }
 
-.hov-cols-1 { grid-template-columns: 1fr; }
-.hov-cols-2 { grid-template-columns: 1fr 1fr; }
-.hov-cols-3 { grid-template-columns: 1fr 1fr 1fr; }
+@media (min-width: 640px) {
+  .hov-cols {
+    display: grid;
+    gap: 2px;
+  }
+  .hov-cols-1 { grid-template-columns: 1fr; }
+  .hov-cols-2 { grid-template-columns: 1fr 1fr; }
+  .hov-cols-3 { grid-template-columns: 1fr 1fr 1fr; }
+}
 
 .hov-col {
   display: flex;
   flex-direction: column;
   gap: 3px;
+  min-width: 0;
 }
 
 .hov-done-item,
@@ -223,6 +270,9 @@
   font-size: 11.5px;
   line-height: 1.4;
   color: #0D2B1A;
+  min-width: 0;
+  word-break: break-word;
+  overflow-wrap: break-word;
 }
 
 .hov-tick {
@@ -244,6 +294,203 @@
 /* Bystander */
 .hov-bystander {
   background: #F5F3FF;
+}
+
+/* Alert Banner (Top of Card) */
+.hov-alert-banner {
+  padding: 8px 12px;
+  background: #FEF2F2;
+  border-bottom: 2px solid #FCA5A5;
+}
+
+.hov-alert-banner-safe {
+  background: #F0FDF4;
+  border-bottom: 1px solid #BBF7D0;
+}
+
+.hov-alert-banner-title {
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  margin-bottom: 4px;
+}
+
+.hov-alert-banner-content {
+  font-size: 12px;
+  line-height: 1.5;
+  font-weight: 600;
+}
+
+/* Day-Wise Timeline */
+.hov-timeline-row {
+  display: flex;
+  gap: 8px;
+  font-size: 12px;
+  padding: 3px 0;
+  border-bottom: 1px dashed #E5E7EB;
+}
+
+.hov-timeline-date {
+  font-weight: 700;
+  color: #1F2937;
+  white-space: nowrap;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+}
+
+.hov-timeline-summary {
+  color: #374151;
+}
+
+/* Problem List */
+.problem-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 12px;
+  padding: 3px 0;
+}
+
+.problem-status {
+  font-weight: 800;
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.problem-resolved {
+  background: #DCFCE7;
+  color: #166534;
+}
+
+.problem-ongoing {
+  background: #FEF3C7;
+  color: #92400E;
+}
+
+.problem-pending-workup {
+  background: #E0E7FF;
+  color: #3730A3;
+}
+
+.problem-text {
+  font-weight: 600;
+  color: #111827;
+}
+
+.problem-note {
+  font-size: 11px;
+  color: #6B7280;
+  margin-left: 4px;
+}
+
+/* Consultations Table */
+.consult-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11.5px;
+  margin-top: 4px;
+}
+
+.consult-table th {
+  text-align: left;
+  font-size: 9.5px;
+  font-weight: 800;
+  text-transform: uppercase;
+  color: #6B7280;
+  padding: 4px 6px;
+  background: #F9FAFB;
+  border-bottom: 1px solid #E5E7EB;
+}
+
+.consult-table td {
+  padding: 5px 6px;
+  border-bottom: 1px solid #F3F4F6;
+  color: #1F2937;
+}
+
+.consult-flagged {
+  background: #FFF1F2 !important;
+}
+
+.status-red {
+  color: #DC2626;
+  font-weight: 800;
+}
+
+.status-amber {
+  color: #D97706;
+  font-weight: 700;
+}
+
+.status-green {
+  color: #166534;
+  font-weight: 600;
+}
+
+/* ER Boarding Status */
+.hov-boarding {
+  background: #FFFBEB;
+  border-top: 1.5px solid #FCD34D;
+  border-bottom: 1.5px solid #FCD34D;
+}
+
+.hov-label-amber {
+  color: #B45309 !important;
+}
+
+.boarding-row {
+  display: flex;
+  gap: 6px;
+  font-size: 12px;
+  color: #78350F;
+  margin-bottom: 3px;
+}
+
+.boarding-reason {
+  font-size: 12px;
+  font-weight: 600;
+  color: #92400E;
+}
+
+.boarding-risk {
+  font-size: 11.5px;
+  color: #B45309;
+  font-style: italic;
+  margin-top: 2px;
+}
+
+/* Investigation Trends */
+.trend-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  padding: 2px 0;
+  border-bottom: 1px solid #F3F4F6;
+}
+
+.trend-param {
+  font-weight: 700;
+  color: #111827;
+}
+
+.trend-values {
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 600;
+  color: #2563EB;
+}
+
+/* Med Badges */
+.med-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  padding: 2px 0;
+  color: #111827;
 }
 
 /* Alert Row — always last, always bold */

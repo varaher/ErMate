@@ -77,8 +77,8 @@ service cloud.firestore {
 
     // Users collection
     match /users/{userId} {
-      allow read: if isLoggedIn() && isOwner(userId);
-      allow create, update: if isLoggedIn() && isOwner(userId)
+      allow read: if isLoggedIn();
+      allow create: if isLoggedIn() && isOwner(userId)
         && incoming().name is string && incoming().name.size() <= 100
         && incoming().email is string && incoming().email.size() <= 100
         && incoming().role is string && incoming().role.size() <= 100
@@ -86,6 +86,32 @@ service cloud.firestore {
         && (incoming().get('aiCredits', 0) is int)
         && (incoming().get('streak', 0) is int)
         && (incoming().get('subscriptionTier', '') is string);
+      allow update: if isLoggedIn()
+        && (
+          // HOD, Owner or varahgrp@gmail.com can update any user's profile including role
+          (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['hod', 'owner', 'HOD / Shift Lead', 'HOD / Department Lead'] || request.auth.token.email == 'varahgrp@gmail.com')
+          ||
+          // User updating their own profile EXCEPT role cannot be changed unless it matches existing role
+          (isOwner(userId) && (!('role' in incoming()) || incoming().role == existing().role))
+        )
+        && incoming().name is string && incoming().name.size() <= 100
+        && incoming().email is string && incoming().email.size() <= 100
+        && incoming().role is string && incoming().role.size() <= 100
+        && incoming().hospital is string && incoming().hospital.size() <= 100
+        && (incoming().get('aiCredits', 0) is int)
+        && (incoming().get('streak', 0) is int)
+        && (incoming().get('subscriptionTier', '') is string);
+    }
+
+    // Role Change Audit Log collection (NABH Compliance)
+    match /roleChangeLog/{logId} {
+      allow read: if isLoggedIn()
+        && (
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['hod', 'owner', 'HOD / Shift Lead', 'HOD / Department Lead']
+          || request.auth.token.email == 'varahgrp@gmail.com'
+        );
+      allow create: if isLoggedIn();
+      allow update, delete: if false;
     }
 
     // Handovers collection
@@ -97,6 +123,14 @@ service cloud.firestore {
     match /quick_paste_patients/{itemId} {
       allow read: if isLoggedIn();
       allow create, update, delete: if isLoggedIn();
+    }
+
+    match /handoverPatients/{patientId} {
+      allow read, create, update, delete: if true;
+    }
+
+    match /handover_patients/{patientId} {
+      allow read, create, update, delete: if true;
     }
 
     // Team members collection
@@ -114,6 +148,9 @@ service cloud.firestore {
         && incoming().hospital is string && incoming().hospital.size() <= 100;
       allow update: if isLoggedIn()
         && isValidId(memberId)
+        && (
+          (!('role' in incoming()) || incoming().role == existing().role || (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['hod', 'owner', 'HOD / Shift Lead', 'HOD / Department Lead'] || request.auth.token.email == 'varahgrp@gmail.com'))
+        )
         && incoming().id is string && incoming().id.size() <= 100
         && incoming().name is string && incoming().name.size() <= 100
         && incoming().email is string && incoming().email.size() <= 100
@@ -175,6 +212,31 @@ service cloud.firestore {
             ) && incoming().diff(existing()).affectedKeys().hasOnly(['title', 'mnemonic', 'category', 'breakdown', 'explanation'])
           )
         );
+    }
+
+    // ── Mortality Audits Rules (Confidential Medico-Legal Records) ──
+    match /mortalityAudits/{auditId} {
+      // Only HOD and consultants can read
+      allow read: if request.auth != null
+        && (
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['hod', 'consultant']
+          || request.auth.token.email == 'varahgrp@gmail.com'
+        );
+
+      // Only HOD can write
+      allow write: if request.auth != null
+        && (
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'hod'
+          || request.auth.token.email == 'varahgrp@gmail.com'
+        );
+
+      // Nobody can delete
+      allow delete: if false;
+    }
+
+    // ── Bound Chat Sessions Collection ──────────────
+    match /chatSessions/{sessionId} {
+      allow read, create, update, delete: if true;
     }
   }
 }

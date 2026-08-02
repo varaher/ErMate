@@ -5,13 +5,14 @@
 
 import Anthropic from '@anthropic-ai/sdk';
 import { GoogleGenAI } from '@google/genai';
+import { getRelevantLearnedRules, formatLearnedRulesPromptBlock } from './learningService.ts';
 
 // ── Models ────────────────────────────────────────────────────
 export const MODELS = {
   CLAUDE_SONNET:  'claude-3-5-sonnet-20241022',
   CLAUDE_HAIKU:   'claude-3-5-haiku-20241022',
-  GEMINI_FLASH:   'gemini-3.6-flash',
-  GEMINI_PRO:     'gemini-3.1-pro-preview',
+  GEMINI_FLASH:   'gemini-2.5-flash',
+  GEMINI_PRO:     'gemini-2.5-pro',
 };
 
 // ── Step 1: Preprocess — strip noise ─────────────────────────
@@ -139,200 +140,207 @@ export function selectModel(charCount: number): {
 
 // ── Step 4: The extraction prompt ────────────────────────────
 export function buildHandoverPrompt(processedText: string): string {
+  const relevantRules = getRelevantLearnedRules(processedText, "handover_synthesis", 8);
+  const rulesBlock = formatLearnedRulesPromptBlock(relevantRules);
   return `
-You are generating a CONCISE clinical handover for an
-Indian Emergency Department shift change.
+You are ErMate's handover synthesis engine for Indian Emergency Departments & Hospital Wards.
+
+You generate concise, clinically complete shift-to-shift handover cards for patients, including ER boarders and ward admissions.
+
+CORE PRINCIPLES:
+1. Section 3 (Initial Presentation at Arrival) is WRITE-ONCE and extracted ONLY from the EARLIEST entry (at top of reversed text).
+2. Section 10/11 (Adjuncts / Lines / Devices NOW) is MUTABLE and updated for the current shift.
+3. Conciseness is achieved by removing repetition and stable/normal data.
+4. NEVER remove abnormal, trending, or pending-critical data to save space.
+${rulesBlock}
 
 The EMR text below has been REVERSED chronologically.
 The OLDEST entry is at the TOP.
 The NEWEST entry is at the BOTTOM.
 Read TOP to BOTTOM.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-FIELD EXTRACTION GUIDE
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-PATIENT LABEL:
-  name: The patient's PROPER NAME only (e.g. Selvarani, Mini Unnikrishnan, Varghese KC).
-        NEVER put symptoms, complaints, or nursing text in the name field.
-        If a proper name is not found → null.
-  ageSex: Format: "57F" or "52M" or "38F" (number + M/F).
-          Extract from "57 year old female" → "57F".
-          NEVER put symptoms or complaints here.
-          If not found → null.
-  bed: bed number from header
-  erNumber: ER# or registration number
-  admittingConsultant: admitting specialty + doctor
-  inERSince: earliest timestamp in the text
-  status: critical/unstable/stable/discharge
-
-PRESENTING COMPLAINT:
-  From the FIRST (top) entry — look for
-  "Presenting Complaint:" or "Chief Complaint:"
-  or the earliest nursing arrival note.
-  2-3 lines maximum. Original complaint only.
-  NOT current status.
-
-STORY (2-3 sentences ONLY):
-  Write the clinical narrative a consultant
-  would use at ward rounds.
-  WHO (age/sex/key PMH) + WHY they came +
-  WHAT happened in ER + CURRENT STATUS +
-  MAIN CONCERN.
-  
-  NEVER include:
-  Nursing routine notes
-  "Vitals checked and recorded"
-  Document handover lines
-  Administrative details
-  
-  Example:
-  "52M with known CAD presented with chest pain.
-   ECG showed NSTEMI. Post-PCI with rising
-   creatinine (AKI). Main concern: renal function."
-
-PAST MEDICAL HISTORY:
-  Look in ALL entries for:
-  "Past Medical History:" / "K/C/O" / "Known case of"
-  Maximum 5 key conditions.
-  Abbreviate: DM, HTN, CAD, CKD, OSA etc.
-  One line format: "DM × 6y · HTN · CAD"
-  NEVER say "not documented" if PMH exists anywhere.
-
-DIAGNOSIS:
-  Primary source: "IMP:" in any consultant entry
-  Secondary: "Impression:" in imaging/USG/CT reports
-  Tertiary: "Differential Diagnosis:" in case record
-  Use most specific diagnosis found.
-  Include key supporting finding.
-  1-3 lines only.
-  NEVER use nursing handover lines as diagnosis.
-  Nursing lines start with "PATIENT HANDOVER RECEIVED"
-  — these are NEVER diagnoses.
-
-DONE LIST (short phrases only):
-  Past tense actions from ALL entries:
-  "given" / "done" / "taken" / "sent" / "started"
-  / "inserted" / "administered" / "completed"
-  / "catheterised" / "shifted to" / "allocated"
-  
-  Maximum 8 items.
-  SHORT phrases — no timestamps, no context.
-  Examples: "IV access" "VBG taken" "USG done"
-  "Kabimol 1g IV" "Urology called" "Room A215"
-
-TO DO LIST (action items only):
-  Future actions from "Adv:" / "Advice:" / "Plan:"
-  / "pending" / "awaited" / "monitor" / "to be done"
-  
-  Maximum 6 items. Most urgent first.
-  SHORT phrases.
-  Flag urgent ones with ⚠.
-  Examples: "Urology review ⚠" "URE pending"
-  "Monitor HR — was 171" "Final USG report"
-
-VITALS NOW (most recent values only):
-  From most recent entry in EMR notes.
-  CRITICAL: ALWAYS capture and include the exact timestamp/time of the latest vitals if present in the EMR notes.
-  Format: "@ [Time e.g. 08:18 PM or 08:28 AM] · BP 120/80 · HR 75 · SpO₂ 100%"
-  Example: "@ 08:18 PM · BP 120/80 · HR 75 · SpO₂ 100%" or "@ 08:28 AM · Vitals stable · GCS 15"
-  If no explicit timestamp is in the entry, omit the "@ [Time]" prefix.
-  Flag abnormals with ⚠.
-  One line only.
-
-BYSTANDER:
-  One line. Was family informed?
-  What were they told? Consent status?
-  If nothing documented: null
-
-CRITICAL ALERTS (abnormal values only):
-  List only if outside normal range:
-  HR > 100 or < 50 → include with number
-  SpO₂ < 95% → include with number
-  Temp > 100.4°F → include with number
-  SBP < 90 or > 160 → include
-  GRBS > 250 or < 70 → include
-  Troponin elevated → include
-  Lactate > 2 → include with number
-  K abnormal → include
-  Creatinine elevated → include
-  Any urgent pending → include
-
-ALERT ROW (the most critical line — read in 5 seconds):
-  This is the LAST LINE of the handover card.
-  Red background. White text. Bold.
-  One line that tells the receiving doctor
-  what NOT TO MISS.
-  
-  Format:
-  "⚠  [critical values] · [follow-up not done] · [? probable dx]"
-  
-  Separate items with " · "
-  Start with actual numbers: "HR 171" not "tachycardia"
-  
-  Examples:
-  "⚠  HR 171 · Temp 102°F · Urology not reviewed · ? Infected PCN"
-  "⚠  GRBS 415 · PAC not done (biopsy Thu) · Urine C&S pending · Glioma"
-  "⚠  SpO₂ on O₂ only · AKI Cr 1.3 · MICU shift pending · Cushing's"
-  
-  If stable: "✓  Stable · For discharge · [diagnosis]"
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-STRICT RULES — NEVER VIOLATE
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-NEVER use placeholder text:
-  ✗ "Comorbidities not explicitly documented"
-  ✗ "Vitals not documented"
-  ✗ "See raw notes for..."
-  ✗ "Evaluation of patient with acute symptoms"
-  ✗ "Complete active tasks"
-  ✗ "Parsed Notes Review Complete"
-  ✗ "Bystanders counselled" (too generic)
-  If genuinely absent → null
-
-NEVER include SBAR labels in output:
-  ✗ "Situation (S):"
-  ✗ "Assessment (A):"
-  ✗ "Background (B):"
-  ✗ "Recommendation (R):"
-  Extract CONTENT only. No structural labels.
-
-NEVER use nursing handover lines as:
-  Presenting complaint
-  Diagnosis
-  Clinical assessment
-
-ALWAYS read ALL entries before extracting.
-ALWAYS use IMP: as diagnosis source.
-ALWAYS use most recent vitals.
-ALWAYS include actual numbers in alert row.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Return strict JSON only. No markdown. No explanation.
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+REQUIRED OUTPUT STRUCTURE — STRICT JSON
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 {
   "patientLabel": {
-    "name": "string",
-    "ageSex": "string",
+    "name": "string (PROPER NAME only e.g. Selvarani, Varghese KC, or Bed X)",
+    "ageSex": "string (e.g. 57F, 48M)",
     "bed": "string | null",
+    "currentLocation": "string | null (e.g. ER Bay 3, OT, SICU Bed 2, Ward 4B - track physical location NOW)",
     "erNumber": "string | null",
     "admittingConsultant": "string | null",
-    "inERSince": "string | null",
-    "status": "critical | unstable | stable | discharge"
+    "admittingDepartment": "string | null",
+    "admissionDecisionDate": "string | null",
+    "daysInERSinceAdmission": "number | null",
+    "erBoarder": "boolean (true if admission order exists but patient remains physically in ER)",
+    "inERSince": "string | null (earliest timestamp or arrival time)",
+    "status": "critical | unstable | stable | discharge",
+    "treatingERPhysician": "string | null"
   },
-  "presentingComplaint": "string",
-  "story": "string",
-  "pmh": "string | null",
-  "diagnosis": "string",
-  "done": ["string"],
-  "toBeDone": ["string"],
-  "vitalsNow": "string | null",
-  "criticalAlerts": ["string"],
-  "bystander": "string | null",
-  "alertRow": "string"
+
+  "alertBanner": {
+    "criticalAllergies": "string | null",
+    "codeStatus": "string | null",
+    "criticalValues": ["string"],
+    "pendingCritical": ["string"],
+    "isolationPrecautions": "string | null",
+    "fallRisk": "boolean",
+    "summary": "string (A physician skimming ONLY this line should be safe. State 'No critical alerts flagged' if nothing qualifies)"
+  },
+
+  "initialPresentation": {
+    "chiefComplaint": "string (ONE LINE original chief complaint from EARLIEST entry)",
+    "initialVitals": "string | null (Vitals documented at initial presentation)",
+    "abcdeArrival": "string | null (Airway, Breathing, Circulation, Disability, Exposure findings on arrival)",
+    "initialImpression": "string | null (Initial clinical impression on arrival)",
+    "adjunctsAtArrival": {
+      "ecg": "string | null (e.g. Done · NSR rate 78 or ST elevation V1-V4 ⚠)",
+      "vbg": "string | null (Extract ALL values e.g. pH 7.2 · pCO2 58.6 · pO2 43.1 · HCO3 25.8 · Lac 6.7 · Glu 428 · Na 136 · K 4.6)",
+      "abg": "string | null (Formal ABG if done for intubated/respiratory cases)",
+      "grbs": "string | null (e.g. 204 mg/dL)",
+      "lactate": "string | null (e.g. 6.7 mmol/L)",
+      "troponinPOC": "string | null (e.g. Positive / Negative)",
+      "bedsideEcho": "string | null (e.g. Good LV · IVC collapsing · No pericardial effusion · No B-lines)",
+      "efast": "string | null (e.g. Pericardial: Negative · RUQ: Negative · LUQ: Negative · Suprapubic: Negative · Lungs: No pneumothorax)",
+      "outsideReports": "string | null (e.g. MRI Brain outside 19-07-2026 reviewed · CT Head outside Normal)",
+      "physicalOnArrival": "string | null (What patient physically came in with e.g. 18G IV cannula outside · O2 mask 5L)"
+    }
+  },
+
+  "presentingComplaint": "string (ONE LINE original chief complaint from EARLIEST entry)",
+
+  "adjunctsAtArrival": {
+    "ecg": "string | null",
+    "vbg": "string | null",
+    "abg": "string | null",
+    "grbs": "string | null",
+    "lactate": "string | null",
+    "troponinPOC": "string | null",
+    "bedsideEcho": "string | null",
+    "efast": "string | null",
+    "outsideReports": "string | null",
+    "physicalOnArrival": "string | null"
+  },
+
+  "courseInERDayWise": [
+    {
+      "date": "string (e.g. 25/07/2026)",
+      "summary": "string (One condensed line per calendar day of key changes/events/location updates. Use 'Stable Day 1-3' for quiet periods)"
+    }
+  ],
+
+  "activeProblemList": [
+    {
+      "problem": "string",
+      "status": "Resolved | Ongoing | Pending workup",
+      "note": "string | null"
+    }
+  ],
+
+  "pastMedicalHistory": "string | null (Condensed, relevant comorbidities e.g. DM x 6y · HTN · CAD)",
+
+  "crossConsultations": [
+    {
+      "department": "string",
+      "consultant": "string",
+      "dateSeen": "string",
+      "recommendation": "string",
+      "status": "Completed | Awaiting review | Awaiting re-consult | Not actioned",
+      "flagged": "boolean (true if recommendation not yet actioned)"
+    }
+  ],
+
+  "investigations": {
+    "trends": [
+      {
+        "parameter": "string (e.g. Creatinine, Hb, CRP)",
+        "values": "string (Show TREND: e.g. 1.0 → 1.3 → 2.9 ↑↑ or 7.9 → 8.4 → 8.8 ↑ improving)"
+      }
+    ],
+    "normalSummary": "string | null (e.g. Routine bloods otherwise unremarkable throughout)",
+    "imaging": "string | null",
+    "ecg": "string | null",
+    "echo": "string | null",
+    "vbg": "string | null",
+    "cultures": "string | null",
+    "other": "string | null"
+  },
+
+  "currentMedications": ["string (Current active orders, flag changes e.g. Inj Ceftriaxone 1g BD [NEW])"],
+
+  "adjunctsNow": {
+    "ivAccess": "string | null (e.g. 18G right AC · 16G left forearm)",
+    "centralLine": "string | null (e.g. Right IJV · Day 3 of insertion)",
+    "arterialLine": "string | null (e.g. Right radial for continuous BP)",
+    "catheter": "string | null (e.g. Foley 14F in situ · UO 35ml/hr)",
+    "oxygenDelivery": "string | null (e.g. 5L nasal prongs → SpO2 97% or ETT 7.5 depth 22cm CMV mode)",
+    "drains": "string | null (e.g. Right PCN tube in situ · Lumbar drain Day 2 · JP drain 50ml/day)",
+    "monitoring": "string | null (e.g. Cardiac monitor · SpO2 continuous · NIBP q1h)",
+    "ngt": "string | null (e.g. NGT in situ · feeds ongoing)",
+    "other": "string | null"
+  },
+
+  "adjuncts": {
+    "ivAccess": "string | null",
+    "centralLine": "string | null",
+    "arterialLine": "string | null",
+    "catheter": "string | null",
+    "oxygenDelivery": "string | null",
+    "drains": "string | null",
+    "monitoring": "string | null",
+    "ngt": "string | null",
+    "other": "string | null"
+  },
+
+  "managementPlan": {
+    "done": ["string (Past tense actions completed)"],
+    "pending": ["string (Action items pending with target date/time)"]
+  },
+
+  "erBoardingStatus": {
+    "reasonForERRetention": "string | null (e.g. No MICU bed available)",
+    "whoTrackingBed": "string | null",
+    "durationInERPostAdmission": "string | null",
+    "riskOfProlongedStay": "string | null (e.g. Fall risk from prolonged ER stay)"
+  },
+
+  "bystanderConsent": "string | null",
+
+  "latestVitals": {
+    "timestamp": "string | null (e.g. 08:30 AM)",
+    "hr": "string | null",
+    "bp": "string | null",
+    "spo2": "string | null",
+    "rr": "string | null",
+    "temp": "string | null",
+    "gcs": "string | null",
+    "grbs": "string | null",
+    "trend": "string | null (↑, ↓, → against prior reading)"
+  },
+
+  "story": "string (Clinical narrative summary, 2-3 sentences)",
+  "pmh": "string | null (Same as pastMedicalHistory)",
+  "diagnosis": "string (Primary provisional diagnosis from IMP:)",
+  "done": ["string (List of completed actions)"],
+  "toBeDone": ["string (List of pending items)"],
+  "vitalsNow": "string | null (Formatted string of latest vitals with timestamp)",
+  "criticalAlerts": ["string (Array of abnormal values)"],
+  "bystander": "string | null (Bystander update)",
+  "alertRow": "string (LAST LINE of handover card: ⚠ [critical values] · [pending] · [diagnosis] OR ✓ Stable · For discharge · [diagnosis])"
 }
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STRICT RULES — NEVER VIOLATE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+1. Section 3 (chief complaint & arrival findings) MUST come strictly from the earliest entry at the top.
+2. Never silently drop an abnormal or pending value.
+3. Flag anything new since last handover explicitly.
+4. Do NOT repeat 'vitals stable' across multiple days — say 'Stable Day 1-3' once.
+5. If a field is absent write null or empty array.
+6. Never use nursing handover lines as clinical diagnoses.
+7. Return STRICT VALID JSON ONLY. No markdown wrapper, no extra explanations.
 
 EMR TEXT (oldest entry at top):
 """
@@ -341,27 +349,42 @@ ${processedText}
 `;
 }
 
+let isAnthropicDisabledInHandover = false;
+
 // ── Claude caller ─────────────────────────────────────────────
 async function callClaude(
   prompt: string,
   model: string
 ): Promise<string> {
+  if (isAnthropicDisabledInHandover) {
+    throw new Error('Anthropic Claude API is disabled due to previous credit/auth issue.');
+  }
+
   const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
+  if (!apiKey || apiKey.trim() === '' || apiKey === 'MY_ANTHROPIC_API_KEY') {
+    isAnthropicDisabledInHandover = true;
     throw new Error('ANTHROPIC_API_KEY environment variable is missing.');
   }
 
-  const anthropic = new Anthropic({ apiKey });
-  const msg = await anthropic.messages.create({
-    model,
-    max_tokens: 2048,
-    temperature: 0.0,
-    messages: [{ role: 'user', content: prompt }],
-  });
-  return ((msg.content[0] as any).text as string)
-    .replace(/```json\n?/g, '')
-    .replace(/```\n?/g, '')
-    .trim();
+  try {
+    const anthropic = new Anthropic({ apiKey });
+    const msg = await anthropic.messages.create({
+      model,
+      max_tokens: 2048,
+      temperature: 0.0,
+      messages: [{ role: 'user', content: prompt }],
+    });
+    return ((msg.content[0] as any).text as string)
+      .replace(/```json\n?/g, '')
+      .replace(/```\n?/g, '')
+      .trim();
+  } catch (err: any) {
+    if (err?.status === 400 || err?.status === 401 || err?.status === 402 || String(err?.message || "").includes("credit balance")) {
+      console.warn('[Handover] Anthropic credit balance low or key issue. Routing handover tasks to Gemini.');
+      isAnthropicDisabledInHandover = true;
+    }
+    throw err;
+  }
 }
 
 // ── Gemini caller ─────────────────────────────────────────────
@@ -428,10 +451,123 @@ export function getAlertSeverity(
   return 'warning';
 }
 
+// ── Robust Name & Timestamp Extraction Utility ────────────────
+export function extractPatientNameAndTimestamp(rawText: string): {
+  name: string;
+  ageGender: string;
+  time: string;
+  bed: string | null;
+} {
+  if (!rawText || typeof rawText !== 'string') {
+    return { name: "Bed Patient", ageGender: "Unknown", time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), bed: null };
+  }
+
+  let name = "";
+  let ageGender = "";
+  let time = "";
+  let bed: string | null = null;
+
+  // 1. Bed Extraction
+  const bedMatch = rawText.match(/(?:bed|bay|room)\s*#?\s*:?\s*([a-z0-9\-]+)/i);
+  if (bedMatch) {
+    bed = bedMatch[1].trim();
+  }
+
+  // 2. Name Extraction
+  // Pattern A: Explicit label "PATIENT: ...", "Patient Name: ...", "Pt Name: ...", "Name: ..."
+  const labelMatch = rawText.match(/(?:patient(?:\s*name)?|pt(?:\s*name)?|name)\s*[:=-]\s*([A-Za-z\s\.']+?)(?=[,\n\r\t\d\/\(\);]|UHID|MLC|Age|Bed|Allergies|$)/i);
+  if (labelMatch && labelMatch[1].trim().length > 1) {
+    const candidate = labelMatch[1].trim();
+    if (!/^(?:unknown|bed|patient|male|female|adult|na|nil)$/i.test(candidate) && candidate.length < 35) {
+      name = candidate;
+    }
+  }
+
+  // Pattern B: Name before age/gender (e.g. "Raman Pillai, 58/M" or "Selvarani, 57F" or "Varghese KC / 48M")
+  if (!name) {
+    const ageSexNameMatch = rawText.match(/\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})\s*[\/,-]?\s*(\d{1,3}\s*[\/,-]?\s*[MFmf])\b/);
+    if (ageSexNameMatch) {
+      name = ageSexNameMatch[1].trim();
+      ageGender = ageSexNameMatch[2].replace(/\s+/g, '').toUpperCase();
+    }
+  }
+
+  // Pattern C: "Mr. Raman Pillai" or "Mrs. Selvarani" or "Pt. Varghese KC"
+  if (!name) {
+    const titleMatch = rawText.match(/(?:mr\.|mrs\.|ms\.|pt\.)\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})/i);
+    if (titleMatch) {
+      name = titleMatch[1].trim();
+    }
+  }
+
+  // Pattern D: Header pattern: "DD-MM-YYYY HH:MM AM/PM / Author / Name"
+  if (!name) {
+    const headerMatch = rawText.match(/\d{2}[-\/]\d{2}[-\/]\d{2,4}\s+\d{1,2}:\d{2}\s*(?:AM|PM)?\s*\/\s*(?:[^\/]+\/)?\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)/i);
+    if (headerMatch) {
+      name = headerMatch[1].trim();
+    }
+  }
+
+  // Fallback Name
+  if (!name) {
+    name = bed ? `Bed ${bed}` : "Bed Patient";
+  }
+
+  // 3. Age & Gender Extraction (if not matched yet)
+  if (!ageGender || ageGender === "Unknown") {
+    const ageMatch = rawText.match(/(\d{1,3})\s*(?:year|y\.?o\.?|yo|f|m|\/f|\/m)/i) || rawText.match(/(?:age)\s*[:=-]?\s*(\d{1,3})/i);
+    const genderMatch = rawText.match(/\b(female|male|f|m)\b/i);
+    if (ageMatch) {
+      const ageNum = ageMatch[1];
+      const genderLetter = genderMatch ? genderMatch[1].toUpperCase().charAt(0) : "";
+      ageGender = genderLetter ? `${ageNum}${genderLetter}` : `${ageNum}y`;
+    } else {
+      ageGender = "Unknown";
+    }
+  }
+
+  // 4. Time / Timestamp Extraction
+  // Pattern A: "ARRIVING VITALS (08:30 AM):" or "ARRIVING VITALS 08:30 AM"
+  const arrivingVitalsMatch = rawText.match(/(?:arriving\s+vitals|arrival\s+vitals|arrival|arrived)\s*\(?\s*([0-2]?\d:[0-5]\d(?:\s*[AP]M)?)\s*\)?/i);
+  if (arrivingVitalsMatch) {
+    time = arrivingVitalsMatch[1].trim();
+  }
+
+  // Pattern B: "@ 08:30 AM" or "Time: 08:30 AM" or "Arrived at: 08:30 AM"
+  if (!time) {
+    const explicitTimeMatch = rawText.match(/(?:@|time|arrived\s+at)\s*[:=-]?\s*([0-2]?\d:[0-5]\d(?:\s*[AP]M)?)/i);
+    if (explicitTimeMatch) {
+      time = explicitTimeMatch[1].trim();
+    }
+  }
+
+  // Pattern C: Full date-time "28-07-2026 08:30 AM" or "28/07/2026 10:15 AM"
+  if (!time) {
+    const dateTimeMatch = rawText.match(/\b\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4}\s+([0-2]?\d:[0-5]\d(?:\s*[AP]M)?)\b/i);
+    if (dateTimeMatch) {
+      time = dateTimeMatch[1].trim();
+    }
+  }
+
+  // Pattern D: Any standalone time "08:30 AM" or "10:15 PM" or "14:30"
+  if (!time) {
+    const timeMatch = rawText.match(/\b([0-2]?\d:[0-5]\d(?:\s*[AP]M))\b/i);
+    if (timeMatch) {
+      time = timeMatch[1].trim();
+    }
+  }
+
+  // Fallback Time
+  if (!time) {
+    time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+
+  return { name, ageGender, time, bed };
+}
+
 // ── Heuristic Fallback Handover Data ──────────────────────────
 function buildHeuristicFallback(rawText: string): any {
-  let name = "Bed Patient";
-  let ageSex = "Unknown";
+  const extracted = extractPatientNameAndTimestamp(rawText);
   let presentingComplaint = "Presenting complaint recorded in notes.";
 
   if (rawText) {
@@ -439,33 +575,82 @@ function buildHeuristicFallback(rawText: string): any {
     if (complaintMatch && complaintMatch[1]) {
       presentingComplaint = complaintMatch[1].trim();
     }
-
-    const nameMatch = rawText.match(/(?:patient|mr\.|ms\.|mrs\.)\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)/i);
-    if (nameMatch) name = nameMatch[1];
-
-    const ageMatch = rawText.match(/(\d{1,3})\s*-?(?:year|y\.?o\.?|yo|f|m)/i);
-    const genderMatch = rawText.match(/\b(female|male|f|m)\b/i);
-    if (ageMatch) {
-      ageSex = `${ageMatch[1]}${genderMatch && genderMatch[1].toUpperCase().startsWith("F") ? "F" : "M"}`;
-    }
   }
 
   return {
     patientLabel: {
-      name,
-      ageSex,
-      bed: null,
+      name: extracted.name,
+      ageSex: extracted.ageGender,
+      bed: extracted.bed,
       erNumber: null,
       admittingConsultant: null,
-      inERSince: null,
-      status: 'unstable'
+      admittingDepartment: null,
+      admissionDecisionDate: null,
+      daysInERSinceAdmission: null,
+      erBoarder: false,
+      inERSince: extracted.time,
+      status: 'unstable',
+      treatingERPhysician: null,
+    },
+    alertBanner: {
+      criticalAllergies: null,
+      codeStatus: null,
+      criticalValues: [],
+      pendingCritical: [],
+      isolationPrecautions: null,
+      fallRisk: false,
+      summary: "No critical alerts flagged"
     },
     presentingComplaint,
-    story: `Patient ${name} (${ageSex}) presenting for emergency care. Refer to raw notes for complete narrative.`,
+    courseInERDayWise: [],
+    activeProblemList: [],
+    story: `Patient ${extracted.name} (${extracted.ageGender}) presenting for emergency care. Refer to raw notes for complete narrative.`,
     pmh: null,
+    pastMedicalHistory: null,
     diagnosis: "Under evaluation",
+    crossConsultations: [],
+    investigations: {
+      trends: [],
+      normalSummary: "Routine bloods recorded in notes",
+      imaging: null,
+      ecg: null,
+      echo: null,
+      vbg: null,
+      cultures: null,
+      other: null
+    },
+    currentMedications: [],
+    adjuncts: {
+      ivAccess: null,
+      catheter: null,
+      oxygenDelivery: null,
+      monitoring: null,
+      other: null
+    },
+    managementPlan: {
+      done: ["Triage evaluation done", "Vitals recorded"],
+      pending: ["Doctor assessment pending", "Review investigation results"]
+    },
     done: ["Triage evaluation done", "Vitals recorded"],
     toBeDone: ["Doctor assessment pending", "Review investigation results"],
+    erBoardingStatus: {
+      reasonForERRetention: null,
+      whoTrackingBed: null,
+      durationInERPostAdmission: null,
+      riskOfProlongedStay: null
+    },
+    bystanderConsent: null,
+    latestVitals: {
+      timestamp: extracted.time,
+      hr: null,
+      bp: null,
+      spo2: null,
+      rr: null,
+      temp: null,
+      gcs: null,
+      grbs: null,
+      trend: "→"
+    },
     vitalsNow: "Vitals documented in raw notes",
     criticalAlerts: [],
     bystander: null,
@@ -516,6 +701,12 @@ function sanitizeHandoverPatient(data: any): any {
         cleanAgeSex = 'Unknown';
       }
     }
+  }
+
+  // Ensure inERSince is captured if missing
+  if (!pl.inERSince && result.rawNotes) {
+    const extractedTime = extractPatientNameAndTimestamp(result.rawNotes).time;
+    pl.inERSince = extractedTime;
   }
 
   pl.name = rawName;
@@ -573,8 +764,15 @@ export async function extractHandover(
   const tryExtract = async (
     m: string, p: 'claude' | 'gemini'
   ): Promise<string> => {
-    if (p === 'claude') return callClaude(prompt, m);
-    return callGemini(prompt, m);
+    if (p === 'claude' && !isAnthropicDisabledInHandover) {
+      try {
+        return await callClaude(prompt, m);
+      } catch (err: any) {
+        console.warn("[Handover] Claude failed, falling back to Gemini:", err?.message || err);
+        return await callGemini(prompt, MODELS.GEMINI_FLASH);
+      }
+    }
+    return callGemini(prompt, m === MODELS.GEMINI_PRO ? MODELS.GEMINI_PRO : MODELS.GEMINI_FLASH);
   };
 
   // Fallback chain
@@ -599,33 +797,137 @@ export async function extractHandover(
       const ageSex = pl.ageSex || parsed.ageGender || "Unknown";
       const status = pl.status || "unstable";
       const diagnosis = parsed.diagnosis || parsed.provisionalDiagnosis || "Under evaluation";
-      const done = Array.isArray(parsed.done) ? parsed.done : [];
-      const toBeDone = Array.isArray(parsed.toBeDone) ? parsed.toBeDone : [];
+      
+      const mgmtPlan = parsed.managementPlan || {};
+      const done = Array.isArray(parsed.done) ? parsed.done : (Array.isArray(mgmtPlan.done) ? mgmtPlan.done : []);
+      const toBeDone = Array.isArray(parsed.toBeDone) ? parsed.toBeDone : (Array.isArray(mgmtPlan.pending) ? mgmtPlan.pending : []);
       const vitalsNow = parsed.vitalsNow || parsed.vitals || null;
       const criticalAlerts = Array.isArray(parsed.criticalAlerts) ? parsed.criticalAlerts : [];
       const pmh = parsed.pmh || parsed.pastMedicalHistory || null;
       const story = parsed.story || "";
       const alertRow = parsed.alertRow || (diagnosis ? `⚠  ${diagnosis}` : "✓  Stable");
 
+      const alertBanner = parsed.alertBanner || {
+        criticalAllergies: null,
+        codeStatus: null,
+        criticalValues: criticalAlerts,
+        pendingCritical: [],
+        isolationPrecautions: null,
+        fallRisk: false,
+        summary: criticalAlerts.length > 0 ? criticalAlerts.join(" · ") : "No critical alerts flagged"
+      };
+
+      const courseInERDayWise = Array.isArray(parsed.courseInERDayWise) ? parsed.courseInERDayWise : [];
+      const activeProblemList = Array.isArray(parsed.activeProblemList) ? parsed.activeProblemList : [];
+      const crossConsultations = Array.isArray(parsed.crossConsultations) ? parsed.crossConsultations : [];
+      const currentMedications = Array.isArray(parsed.currentMedications) ? parsed.currentMedications : [];
+      
+      const investigations = parsed.investigations || {
+        trends: [],
+        normalSummary: null,
+        imaging: null,
+        ecg: null,
+        echo: null,
+        vbg: null,
+        cultures: null,
+        other: null
+      };
+
+      const adjunctsNow = parsed.adjunctsNow || parsed.adjuncts || {
+        ivAccess: null,
+        centralLine: null,
+        arterialLine: null,
+        catheter: null,
+        oxygenDelivery: null,
+        drains: null,
+        monitoring: null,
+        ngt: null,
+        other: null
+      };
+
+      const adjunctsAtArrival = parsed.adjunctsAtArrival || parsed.initialPresentation?.adjunctsAtArrival || {
+        ecg: null,
+        vbg: null,
+        abg: null,
+        grbs: null,
+        lactate: null,
+        troponinPOC: null,
+        bedsideEcho: null,
+        efast: null,
+        outsideReports: null,
+        physicalOnArrival: null
+      };
+
+      const initialPresentation = parsed.initialPresentation || {
+        chiefComplaint: parsed.presentingComplaint || "Presenting complaint recorded.",
+        initialVitals: parsed.vitalsNow || null,
+        abcdeArrival: null,
+        initialImpression: parsed.diagnosis || null,
+        adjunctsAtArrival
+      };
+
+      const erBoardingStatus = parsed.erBoardingStatus || {
+        reasonForERRetention: null,
+        whoTrackingBed: null,
+        durationInERPostAdmission: null,
+        riskOfProlongedStay: null
+      };
+
+      const latestVitals = parsed.latestVitals || {
+        timestamp: pl.inERSince || null,
+        hr: null,
+        bp: null,
+        spo2: null,
+        rr: null,
+        temp: null,
+        gcs: null,
+        grbs: null,
+        trend: "→"
+      };
+
       const normalizedExtracted = {
         patientLabel: {
           name,
           ageSex,
           bed: pl.bed || null,
+          currentLocation: pl.currentLocation || (pl.bed ? `Bed ${pl.bed}` : null),
           erNumber: pl.erNumber || null,
           admittingConsultant: pl.admittingConsultant || null,
+          admittingDepartment: pl.admittingDepartment || null,
+          admissionDecisionDate: pl.admissionDecisionDate || null,
+          daysInERSinceAdmission: typeof pl.daysInERSinceAdmission === 'number' ? pl.daysInERSinceAdmission : null,
+          erBoarder: Boolean(pl.erBoarder),
           inERSince: pl.inERSince || null,
-          status
+          status,
+          treatingERPhysician: pl.treatingERPhysician || null,
         },
-        presentingComplaint: parsed.presentingComplaint || "Presenting complaint recorded.",
+        alertBanner,
+        initialPresentation,
+        adjunctsAtArrival,
+        presentingComplaint: initialPresentation.chiefComplaint || parsed.presentingComplaint || "Presenting complaint recorded.",
+        courseInERDayWise,
+        activeProblemList,
         story,
         pmh,
+        pastMedicalHistory: pmh,
         diagnosis,
+        crossConsultations,
+        investigations,
+        currentMedications,
+        adjunctsNow,
+        adjuncts: adjunctsNow,
+        managementPlan: {
+          done,
+          pending: toBeDone
+        },
         done,
         toBeDone,
+        erBoardingStatus,
+        bystanderConsent: parsed.bystanderConsent || parsed.bystander || parsed.bystanderUpdate || null,
+        latestVitals,
         vitalsNow,
         criticalAlerts,
-        bystander: parsed.bystander || parsed.bystanderUpdate || null,
+        bystander: parsed.bystander || parsed.bystanderUpdate || parsed.bystanderConsent || null,
         alertRow,
 
         // Compatibility fields for QuickPastePatient & SBAR
@@ -674,4 +976,49 @@ export async function extractHandover(
       entriesFound,
     }
   };
+}
+
+/**
+ * saveHandoverPatient
+ * Implements write-once logic for Section 3 (Initial Presentation at Arrival).
+ * First write locks initialPresentation with a timestamp.
+ * Subsequent writes preserve initialPresentation and update mutable current shift fields.
+ */
+export function saveHandoverPatient(existing: any | null, incoming: any): any {
+  const isLocked = Boolean(existing?.initialPresentation_lockedAt || existing?.initialPresentation?.lockedAt);
+  const now = new Date().toISOString();
+
+  if (isLocked && existing) {
+    return {
+      ...incoming,
+      initialPresentation_lockedAt: existing.initialPresentation_lockedAt || existing.initialPresentation?.lockedAt || now,
+      initialPresentation: existing.initialPresentation,
+      adjunctsAtArrival: existing.adjunctsAtArrival || existing.initialPresentation?.adjunctsAtArrival,
+      presentingComplaint: existing.presentingComplaint || incoming.presentingComplaint,
+      adjunctsNow: incoming.adjunctsNow || incoming.adjuncts,
+      adjuncts: incoming.adjunctsNow || incoming.adjuncts,
+    };
+  } else {
+    const lockedAt = incoming.initialPresentation_lockedAt || now;
+    const initialPres = incoming.initialPresentation || {
+      chiefComplaint: incoming.presentingComplaint || "Presenting complaint recorded.",
+      initialVitals: incoming.latestVitals?.bp ? `BP ${incoming.latestVitals.bp}, HR ${incoming.latestVitals.hr}` : undefined,
+      adjunctsAtArrival: typeof incoming.adjunctsAtArrival === 'string' 
+        ? incoming.adjunctsAtArrival 
+        : (incoming.adjunctsAtArrival ? Object.values(incoming.adjunctsAtArrival).filter(Boolean).join(' · ') : undefined),
+      lockedAt,
+    };
+
+    return {
+      ...incoming,
+      initialPresentation_lockedAt: lockedAt,
+      initialPresentation: {
+        ...initialPres,
+        lockedAt,
+      },
+      adjunctsAtArrival: incoming.adjunctsAtArrival || incoming.adjuncts,
+      adjunctsNow: incoming.adjunctsNow || incoming.adjuncts,
+      adjuncts: incoming.adjunctsNow || incoming.adjuncts,
+    };
+  }
 }

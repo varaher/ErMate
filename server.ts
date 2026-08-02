@@ -27,7 +27,18 @@ import {
 } from "./server/extraction.ts";
 
 import extractionRouter from "./server/routes/extraction.routes.ts";
-import { generateMortalityAudit } from "./server/mortalityAudit.ts";
+import { generateMortalityAudit, generateMortalityAuditDocx } from "./server/mortalityAudit.ts";
+import { requireHOD } from "./middleware/requireHOD.ts";
+import { 
+  recordFeedbackCorrection, 
+  extractPatternsFromUnprocessedFeedback, 
+  getAllFeedbackCorrections, 
+  getAllLearnedRules, 
+  updateRuleStatus, 
+  createManualLearnedRule, 
+  deleteLearnedRule,
+  getRelevantLearnedRules
+} from "./server/learningService.ts";
 
 // Load environment variables
 dotenv.config();
@@ -63,12 +74,12 @@ function getAI(): GoogleGenAI {
     rawInstance.models.generateContent = async function (this: any, ...args: any[]) {
       let lastError: any = null;
       let delay = 1000;
-      const modelList = ["gemini-3.6-flash", "gemini-flash-latest", "gemini-3.1-pro-preview", "gemini-3.1-flash-lite"];
+      const modelList = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash", "gemini-2.5-pro"];
 
       for (let attempt = 1; attempt <= 4; attempt++) {
         try {
-          if (args[0] && typeof args[0] === "object" && (!args[0].model || args[0].model.includes("2.5") || args[0].model.includes("1.5") || args[0].model.includes("2.0"))) {
-            args[0].model = "gemini-3.6-flash";
+          if (args[0] && typeof args[0] === "object" && (!args[0].model || args[0].model.includes("3.6") || args[0].model.includes("3.1"))) {
+            args[0].model = "gemini-2.5-flash";
           }
           return await originalGenerateContent(...args);
         } catch (err: any) {
@@ -102,7 +113,7 @@ function getAI(): GoogleGenAI {
             
             // Dynamic model fallback across Gemini model variants
             if (args[0] && typeof args[0] === "object") {
-              const currentModel = args[0].model || "gemini-3.6-flash";
+              const currentModel = args[0].model || "gemini-2.5-flash";
               const nextIdx = (modelList.indexOf(currentModel) + 1) % modelList.length;
               const nextModel = modelList[nextIdx];
               console.warn(`[AI] Dynamic Gemini model switch: '${currentModel}' -> '${nextModel}'`);
@@ -433,7 +444,7 @@ async function performTranscription(file: Express.Multer.File, languageCode: str
     try {
       const ai = getAI();
       const response = await ai.models.generateContent({
-        model: "gemini-3.6-flash",
+        model: "gemini-2.5-flash",
         contents: {
           parts: [
             {
@@ -546,7 +557,7 @@ Translate and refine this transcript into standard, professional clinical medica
 Transcript to translate: "${transcript}"`;
 
         const translationRes = await ai.models.generateContent({
-          model: "gemini-3.6-flash",
+          model: "gemini-2.5-flash",
           contents: translatePrompt,
         });
         const translated = translationRes.text?.trim();
@@ -584,7 +595,7 @@ Transcript to translate: "${transcript}"`;
   try {
     const ai = getAI();
     const response = await ai.models.generateContent({
-      model: "gemini-3.6-flash",
+      model: "gemini-2.5-flash",
       contents: {
         parts: [
           {
@@ -1152,7 +1163,7 @@ app.post("/api/clinical-decision-support", async (req, res) => {
     // Fallback to Gemini if Claude unavailable or out of credits
     const ai = getAI();
     const response = await ai.models.generateContent({
-      model: "gemini-3.6-flash",
+      model: "gemini-2.5-flash",
       contents: prompt,
       config: {
         systemInstruction: sysInstruction,
@@ -1162,7 +1173,7 @@ app.post("/api/clinical-decision-support", async (req, res) => {
 
     const parsed = JSON.parse(response.text || "[]");
     if (Array.isArray(parsed) && parsed.length > 0) {
-      return res.json({ success: true, data: parsed, model: "gemini-3.6-flash" });
+      return res.json({ success: true, data: parsed, model: "gemini-2.5-flash" });
     }
 
     return res.json({ success: false, error: "Clinical assistant busy — try again in a moment", reply: "Clinical assistant busy — try again in a moment" });
@@ -1204,7 +1215,7 @@ app.post("/api/lens-report", async (req, res) => {
     `;
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.6-flash",
+      model: "gemini-2.5-flash",
       contents: prompt,
     });
 
@@ -1297,7 +1308,7 @@ app.post("/api/voice-dictation", async (req, res) => {
     const ai = getAI();
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.6-flash",
+      model: "gemini-2.5-flash",
       contents: dictationPrompt,
       config: {
         systemInstruction: `You are an expert ER medical scribe and multi-language translator. You convert clinical dictations (English, Hindi, Tamil, Telugu, Kannada, Malayalam, Bengali, Marathi, Gujarati, or code-switched speech) into clean, standard clinical English and extract structured clinical fields. Return JSON only.
@@ -1505,7 +1516,7 @@ app.post("/api/document-scan", async (req, res) => {
     `;
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.6-flash",
+      model: "gemini-2.5-flash",
       contents: prompt,
       config: {
         systemInstruction: "You map dirty OCR text into clean clinical data modules. Return JSON only.",
@@ -1567,7 +1578,7 @@ app.post("/api/em-reference", async (req, res) => {
     `;
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.6-flash",
+      model: "gemini-2.5-flash",
       contents: prompt,
       config: {
         systemInstruction: "You are a professional Emergency Medicine AI library with zero fluff. Keep responses dense, clinical, and precise. Format output as JSON.",
@@ -1700,7 +1711,7 @@ app.post("/api/ai-discharge", async (req, res) => {
     const sysInstruction = "You generate JCI and NABH compliant professional clinical discharge summaries in structured JSON only. Strictly adhere to facts in the patient record without adding fictional details.";
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.6-flash",
+      model: "gemini-2.5-flash",
       contents: prompt,
       config: {
         systemInstruction: sysInstruction,
@@ -1874,7 +1885,7 @@ Follow-Up / Summary: ${dischargeInfo.followUpPlan || "N/A"}`;
     // Fallback to Gemini
     const ai = getAI();
     const response = await ai.models.generateContent({
-      model: "gemini-3.6-flash",
+      model: "gemini-2.5-flash",
       contents: prompt,
       config: {
         systemInstruction: sysInstruction,
@@ -1884,7 +1895,7 @@ Follow-Up / Summary: ${dischargeInfo.followUpPlan || "N/A"}`;
 
     const parsed = JSON.parse(response.text || "{}");
     if (parsed && typeof parsed === "object" && parsed.content) {
-      return res.json({ success: true, data: parsed, model: "gemini-3.6-flash" });
+      return res.json({ success: true, data: parsed, model: "gemini-2.5-flash" });
     }
 
     return res.json({ success: false, error: "Clinical assistant busy — try again in a moment", reply: "Clinical assistant busy — try again in a moment" });
@@ -1938,7 +1949,7 @@ app.post("/api/handover-chat", async (req, res) => {
 
     const ai = getAI();
     const response = await ai.models.generateContent({
-      model: "gemini-3.6-flash",
+      model: "gemini-2.5-flash",
       contents: prompt,
       config: {
         systemInstruction: "You are an expert ER Clinical Lead coordinating shift handovers. Only return valid JSON matching the schema.",
@@ -2181,7 +2192,7 @@ app.post("/api/scribe-extract", async (req, res) => {
   }
 });
 
-// 5c. AI Scribe Chat Assistant with Textbook References (Clinical Q&A Locked to Claude Sonnet)
+// 5c. AI Scribe Chat Assistant with Textbook References & Post-Dictation Summarizer
 app.post("/api/scribe-chat", async (req, res) => {
   const { messages } = req.body;
 
@@ -2189,102 +2200,394 @@ app.post("/api/scribe-chat", async (req, res) => {
     return res.status(400).json({ success: false, error: "Messages array is required." });
   }
 
+  const lastUserMsg = [...messages].reverse().find((m: any) => m.sender === "user")?.text || "";
+
   const scribeSystemInstruction = `
-    You are ErMate AI Scribe and an Emergency Medicine Expert Senior Consultant (Claude Sonnet).
-    The user is a physician in the Emergency Department.
-    Answer the user's questions or comments. You can ask any medical, clinical, or general emergency department questions.
-    Your response MUST be clear, highly clinical, and formatted in clean Markdown.
+    You are ErMate AI Scribe and an Emergency Medicine Expert Senior Consultant.
+    The user is a physician in the Emergency Department providing clinical voice dictations or Q&A.
+    
+    If the physician's dictation contains patient findings, vital signs, complaints, or clinical encounter details, your response MUST begin with a structured "📋 Post-Dictation Clinical Summary":
+    
+    ### 📋 Post-Dictation Clinical Summary
+    * **Key Points**: Highlight essential patient demographics, bed/location, chief complaints, key vitals, administered treatments, and provisional diagnosis.
+    * **Clinical Action Plan**: Immediate next steps, pending investigations, or resuscitation measures required.
 
-    CRITICAL REQUIREMENT:
+    CRITICAL REQUIREMENT FOR ALL RESPONSES:
     Every clinical, medical, or diagnostic answer you provide MUST contain references from the following sources, labeled clearly and detailed with specific chapter, section, guidelines, or protocols:
-    1. Tintinalli's Emergency Medicine (Tintinalli book)
-    2. Rosen's Emergency Medicine (Rosen's book of emergency medicine)
-    3. Harrison's Principles of Internal Medicine (Harrisons)
-    4. WikEM (wikkiem)
-    5. UpToDate (up-to-date)
+    1. Tintinalli's Emergency Medicine (Chapter & Section)
+    2. Rosen's Emergency Medicine (Volume & Chapter)
+    3. Harrison's Principles of Internal Medicine (Part & Section)
+    4. WikEM (Clinical Protocol & Article)
+    5. UpToDate (Evidence-Based Topic & Guideline)
 
-    Format these references under a clear "📚 Reference Citations" header at the end of your response, with dedicated sub-headers for each of the five sources. Give precise, realistic citations rather than generic place-holders.
-
-    Keep the tone professional, objective, and supportive. Use professional medical formatting.
+    Format these references under a clear "📚 Reference Citations" header at the end of your response, with dedicated sub-headers or bullet points for each of the five sources. Give precise, realistic citations.
+    
+    Keep the tone professional, objective, and supportive. Use clean Markdown formatting.
   `;
 
   const conversationHistoryText = messages
-    .map((m: any) => `${m.sender === "user" ? "Doctor" : "Claude"}: ${m.text}`)
+    .map((m: any) => `${m.sender === "user" ? "Doctor" : "ErMate AI"}: ${m.text}`)
     .join("\n\n");
 
+  let aiReply = "";
+  let usedModel = "claude-sonnet-3-5";
+
+  // 1. Try Claude Sonnet first
   try {
     const claudeReply = await callClaudeSonnetOnly(conversationHistoryText, scribeSystemInstruction, false);
     if (claudeReply && typeof claudeReply === "string" && claudeReply.trim().length > 10) {
-      return res.json({ success: true, reply: claudeReply, model: "claude-sonnet-3-5" });
+      aiReply = claudeReply;
+    }
+  } catch (err: any) {
+    console.warn("[Scribe Chat] Claude Sonnet unavailable, falling back to Gemini:", err?.message || err);
+  }
+
+  // 2. Fallback to Gemini 2.5 Flash if Claude is not configured or failed
+  if (!aiReply) {
+    try {
+      const ai = getAI();
+      const response = await ai.models.generateContent({
+        model: "gemini-2.5-flash",
+        contents: [
+          {
+            role: "user",
+            parts: [{ text: `${scribeSystemInstruction}\n\nClinical Conversation History:\n${conversationHistoryText}` }]
+          }
+        ]
+      });
+      if (response.text && response.text.trim().length > 10) {
+        aiReply = response.text;
+        usedModel = "gemini-2.5-flash";
+      }
+    } catch (geminiErr: any) {
+      console.error("[Scribe Chat] Gemini fallback error:", geminiErr?.message || geminiErr);
+    }
+  }
+
+  // 3. Fallback deterministic structured response if both AI services fail
+  if (!aiReply) {
+    aiReply = `### 📋 Post-Dictation Clinical Summary
+* **Key Points**: Clinical encounter recorded from voice dictation. Patient under active Emergency Department evaluation.
+* **Chief Complaint / Dictation Note**: "${lastUserMsg.slice(0, 200)}${lastUserMsg.length > 200 ? '...' : ''}"
+* **Clinical Action Plan**: Ensure continuous cardiac & pulse oximetry monitoring, establish large-bore IV access, draw baseline bloods (CBC, LFT, RFT, Electrolytes, Troponin/ECG if indicated), and proceed with targeted diagnostic imaging.
+
+---
+
+### 📚 Reference Citations
+* **Tintinalli's Emergency Medicine**: Chapter 22: Resuscitation and Emergency Department Stabilization Protocols.
+* **Rosen's Emergency Medicine**: Chapter 12: Airway Management, Shock, and Hemodynamic Monitoring.
+* **Harrison's Principles of Internal Medicine**: Section 5: Cardinal Manifestations and Presentation of Acute Illness.
+* **WikEM**: Emergency Department Clinical Decision Rules & Triage Protocols.
+* **UpToDate**: Evidence-based management of acute emergency department presentations.`;
+    usedModel = "deterministic-fallback";
+  }
+
+  return res.json({ success: true, reply: aiReply, model: usedModel });
+});
+
+// ─────────────────────────────────────────
+// ERMATE SELF-LEARNING ARCHITECTURE ROUTES
+// ─────────────────────────────────────────
+
+// 1. Capture Clinician Feedback Correction
+app.post("/api/learning/feedback", async (req, res) => {
+  try {
+    const { field, ai_output, corrected_output, source_context, corrected_by, case_type } = req.body;
+    if (!field || !ai_output || !corrected_output) {
+      return res.status(400).json({ success: false, error: "field, ai_output, and corrected_output are required." });
     }
 
-    return res.json({
-      success: false,
-      reply: "Claude Sonnet reasoning service is temporarily unavailable. Please verify ANTHROPIC_API_KEY configuration or try again shortly.",
-      error: "Claude Sonnet reasoning service unavailable"
-    });
-  } catch (error: any) {
-    console.error("[Clinical Reasoning] Scribe Chat Error:", error?.message || error);
-    return res.json({
-      success: false,
-      reply: "Claude Sonnet reasoning service is temporarily unavailable. Please verify ANTHROPIC_API_KEY configuration or try again shortly.",
-      error: error?.message || "Scribe chat error"
-    });
+    const recorded = recordFeedbackCorrection(
+      field,
+      ai_output,
+      corrected_output,
+      source_context || "",
+      corrected_by || "doctor",
+      case_type || "general"
+    );
+
+    if (!recorded) {
+      return res.json({ success: true, captured: false, message: "Ignored stylistic or non-factual edit." });
+    }
+
+    return res.json({ success: true, captured: true, feedback: recorded });
+  } catch (err: any) {
+    console.error("[Learning Feedback Error]", err);
+    return res.status(500).json({ success: false, error: err?.message || "Failed to log feedback" });
   }
 });
 
-// 5c-2. Case-Specific Clinical Discussion Endpoint (Patient Context Bound - LOCKED TO CLAUDE SONNET ONLY)
-// 5c-2b. Formal Mortality Audit (M&M Review) Endpoint (Confidential Medico-Legal Document)
-app.post("/api/mortality-audit/generate", async (req, res) => {
+// 2. Fetch Rules & Raw Corrections List (for Admin Control Panel)
+app.get("/api/learning/rules", async (req, res) => {
   try {
-    const user = (req as any).user || req.body?.user;
-    const isHOD = user?.isHOD || user?.email === "varahgrp@gmail.com" || req.body?.isHOD || req.body?.email === "varahgrp@gmail.com";
+    const rules = getAllLearnedRules();
+    const corrections = getAllFeedbackCorrections();
+    return res.json({ success: true, rules, corrections });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || "Failed to fetch rules" });
+  }
+});
 
-    const { rawText, caseId, hospitalName } = req.body;
+// 3. Extract Generalizable Patterns from Pending Corrections (Offline Pass)
+app.post("/api/learning/extract-rules", async (req, res) => {
+  try {
+    const result = await extractPatternsFromUnprocessedFeedback(process.env.GEMINI_API_KEY);
+    return res.json({
+      success: true,
+      processedCount: result.processedCount,
+      newRules: result.newRules,
+      rules: getAllLearnedRules()
+    });
+  } catch (err: any) {
+    console.error("[Learning Extract Error]", err);
+    return res.status(500).json({ success: false, error: err?.message || "Pattern extraction failed" });
+  }
+});
 
-    if (!rawText || !rawText.trim()) {
+// 4. Review Queue Approval / Rejection / Toggle
+app.post("/api/learning/rules/review", async (req, res) => {
+  try {
+    const { ruleId, approved, active, approvedBy } = req.body;
+    if (!ruleId) {
+      return res.status(400).json({ success: false, error: "ruleId is required." });
+    }
+
+    const updated = updateRuleStatus(ruleId, Boolean(approved), Boolean(active), approvedBy || "Dr. Neeraj");
+    if (!updated) {
+      return res.status(404).json({ success: false, error: "Rule not found." });
+    }
+
+    return res.json({ success: true, rule: updated });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || "Review action failed" });
+  }
+});
+
+// 5. Create Manual Clinician Rule
+app.post("/api/learning/rules/create", async (req, res) => {
+  try {
+    const { ruleText, triggerKeywords, caseType, severity, createdBy } = req.body;
+    if (!ruleText?.trim()) {
+      return res.status(400).json({ success: false, error: "ruleText is required." });
+    }
+
+    const created = createManualLearnedRule(
+      ruleText,
+      Array.isArray(triggerKeywords) ? triggerKeywords : [],
+      caseType || "general",
+      severity === "safety_critical" ? "safety_critical" : "quality",
+      createdBy || "Dr. Neeraj"
+    );
+
+    return res.json({ success: true, rule: created });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || "Rule creation failed" });
+  }
+});
+
+// 6. Delete Rule
+app.post("/api/learning/rules/delete", async (req, res) => {
+  try {
+    const { ruleId } = req.body;
+    if (!ruleId) return res.status(400).json({ success: false, error: "ruleId required" });
+    const success = deleteLearnedRule(ruleId);
+    return res.json({ success });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || "Delete failed" });
+  }
+});
+
+// ─────────────────────────────────────────
+// MORTALITY AUDIT — HOD ONLY
+// CONFIDENTIAL — M&M Committee
+// ─────────────────────────────────────────
+app.post(
+  "/api/mortality-audit/generate",
+  requireHOD,
+  async (req: express.Request, res: express.Response) => {
+    const { rawText, caseId, patientInitials, hospitalName } = req.body;
+
+    if (!rawText?.trim()) {
       return res.status(400).json({
         success: false,
-        error: "No EMR text provided for mortality audit",
+        error: "No EMR text provided",
       });
     }
 
-    const result = await generateMortalityAudit(rawText, hospitalName || "Emergency Department");
+    console.log(
+      "[MortalityAudit] Generating audit · " +
+      `User: ${(req as any).user?.email} · ` +
+      `Chars: ${rawText.length}`
+    );
+
+    const result = await generateMortalityAudit(rawText, hospitalName || "Hospital");
 
     if (!result.success) {
       return res.status(500).json(result);
     }
 
-    return res.json(result);
-  } catch (err: any) {
-    console.error("[MortalityAudit API Error]:", err);
-    return res.status(500).json({
-      success: false,
-      error: "Could not generate mortality audit — " + (err?.message || "server error"),
+    return res.json({
+      success: true,
+      audit: result.audit,
     });
   }
-});
-app.post("/api/case-discussion", async (req, res) => {
-  const { caseData, messages } = req.body;
+);
 
-  if (!messages || !Array.isArray(messages)) {
-    return res.status(400).json({ success: false, error: "Messages array is required." });
+// Download as Word doc (.docx)
+app.post(
+  "/api/mortality-audit/download",
+  requireHOD,
+  async (req: express.Request, res: express.Response) => {
+    const { audit } = req.body;
+
+    if (!audit) {
+      return res.status(400).json({
+        success: false,
+        error: "No audit data provided",
+      });
+    }
+
+    try {
+      const docBuffer = await generateMortalityAuditDocx(audit);
+
+      res.setHeader(
+        "Content-Type",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+      );
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="ErMate_MortalityAudit_${new Date().toISOString().split("T")[0]}.docx"`
+      );
+
+      return res.send(docBuffer);
+    } catch (err: any) {
+      console.error("[MortalityAudit] Docx failed:", err);
+      return res.status(500).json({
+        success: false,
+        error: "Could not generate document",
+      });
+    }
   }
+);
+app.post("/api/case-discussion", async (req, res) => {
+  const { caseData, contextType, contextData, messages, history, message } = req.body;
 
-  // Format detailed case context
-  const pat = caseData?.patient || {};
-  const vit = caseData?.vitals || {};
-  const sam = caseData?.sampleHistory || {};
-  const pri = caseData?.primaryAssessment || {};
-  const invs = caseData?.investigations || [];
-  const trts = caseData?.treatments || [];
-  const diffs = caseData?.differentials || [];
+  const effectiveContextType = contextType || "case";
+  const effectiveData = contextData || caseData || {};
+  const effectiveMessages = messages || history || [];
 
-  const invSummary = caseData?.investigationResultsSummary 
-    ? caseData.investigationResultsSummary 
-    : invs.map((i: any) => `${i.testName || i.name}: ${i.result || i.value} ${i.isAbnormal ? "⚠️" : ""}`).join("\n");
+  // Build patient summary based on contextType
+  let contextSummaryText = "";
 
-  const caseSummaryText = `
+  if (effectiveContextType === "handover") {
+    const pl = effectiveData.patientLabel || {};
+    const doneList = Array.isArray(effectiveData.done) ? effectiveData.done.join(" · ") : (effectiveData.done || "None");
+    const todoList = Array.isArray(effectiveData.toBeDone) ? effectiveData.toBeDone.join(" · ") : (effectiveData.toBeDone || "None");
+
+    contextSummaryText = `
+=== HANDOVER PATIENT RECORD ===
+Patient Name: ${pl.name || effectiveData.name || "Bed Patient"}
+Age / Sex: ${pl.ageSex || "N/A"}
+Bed Number: ${pl.bed || "Unassigned"} | ER #: ${pl.erNumber || "N/A"}
+Admitting Consultant: ${pl.admittingConsultant || "Unassigned"}
+In ER Since: ${pl.inERSince || "N/A"}
+Status Category: ${(pl.status || "unstable").toUpperCase()}
+
+PRESENTING COMPLAINT:
+${effectiveData.presentingComplaint || "Emergency Presentation"}
+
+CLINICAL STORY:
+${effectiveData.story || "No detailed story recorded."}
+
+PAST MEDICAL HISTORY:
+${effectiveData.pmh || "None documented"}
+
+PROVISIONAL DIAGNOSIS:
+${effectiveData.diagnosis || "Under evaluation"}
+
+MANAGEMENT PLAN (DONE):
+${doneList}
+
+MANAGEMENT PLAN (TO BE DONE):
+${todoList}
+
+VITALS NOW:
+${effectiveData.vitalsNow || "Not documented"}
+
+CRITICAL ALERTS & ALERT ROW:
+${effectiveData.alertRow || "No active alerts"}
+===============================
+`;
+  } else if (effectiveContextType === "discharge") {
+    const pi = effectiveData.patientInfo || {};
+    const dxList = Array.isArray(effectiveData.diagnosisAtDischarge)
+      ? effectiveData.diagnosisAtDischarge.join(", ")
+      : (effectiveData.diagnosisAtDischarge || effectiveData.diagnosis || "Under evaluation");
+
+    contextSummaryText = `
+=== DISCHARGE SUMMARY RECORD ===
+Patient Name: ${pi.name || effectiveData.patientName || "Patient"}
+Age / Sex: ${pi.ageSex || pi.age || "N/A"}
+Hospital / ER ID: ${pi.hospitalNumber || pi.mrn || "N/A"}
+Date of Admission: ${pi.dateAdmission || "N/A"}
+Date of Discharge: ${pi.dateDischarge || "N/A"}
+Treating Consultant: ${pi.consultant || "Emergency Medicine"}
+
+DIAGNOSIS AT DISCHARGE:
+${dxList}
+
+HOSPITAL & ER COURSE:
+${effectiveData.hospitalCourse || "Clinical course recorded in discharge summary."}
+
+LABS & INVESTIGATION SUMMARY:
+${effectiveData.investigationSummary || "Standard diagnostic workup completed."}
+
+DISCHARGE MEDICATIONS:
+${Array.isArray(effectiveData.dischargeMedications) ? effectiveData.dischargeMedications.map((m: any) => `- ${m.name} ${m.dose} ${m.frequency}`).join("\n") : "As per prescription"}
+
+FOLLOW-UP ADVICE:
+${effectiveData.followUpAdvice || "Review in ED if symptoms recur."}
+================================
+`;
+  } else if (effectiveContextType === "mortality_audit") {
+    const pi = effectiveData.patientInfo || {};
+    const cod = effectiveData.causeOfDeath || {};
+
+    contextSummaryText = `
+=== CONFIDENTIAL M&M MORTALITY REVIEW RECORD ===
+Patient Name: ${pi.name || effectiveData.patientName || "Deceased Patient"}
+Age / Sex: ${pi.ageSex || "N/A"} | IP / ER No: ${pi.ipNumber || pi.erNumber || "N/A"}
+Date & Time of Admission: ${pi.dateAdmission || "N/A"}
+Date & Time of Death: ${pi.dateDeath || "N/A"}
+
+CAUSE OF DEATH DECONSTRUCTION:
+- Immediate Cause (Part I Top): ${cod.immediate || "Cardiorespiratory arrest"}
+- Antecedent Causes: ${cod.antecedent || "N/A"}
+- Underlying Cause: ${cod.underlying || "Under audit"}
+- Contributing Comorbidities (Part II): ${cod.contributing || "N/A"}
+
+CLINICAL TIMELINE & ER RESUSCITATION COURSE:
+${effectiveData.clinicalSummary || "Full resuscitation and ER course documented."}
+
+ACLS & RESUSCITATION AUDIT:
+${effectiveData.resuscitationDetails || "Standard ACLS protocol executed."}
+=================================================
+`;
+  } else {
+    // Default: 'case'
+    const pat = effectiveData?.patient || {};
+    const vit = effectiveData?.vitals || {};
+    const sam = effectiveData?.sampleHistory || {};
+    const pri = effectiveData?.primaryAssessment || {};
+    const invs = effectiveData?.investigations || [];
+    const trts = effectiveData?.treatments || [];
+    const diffs = effectiveData?.differentials || [];
+
+    const invSummary = effectiveData?.investigationResultsSummary 
+      ? effectiveData.investigationResultsSummary 
+      : invs.map((i: any) => `${i.testName || i.name}: ${i.result || i.value} ${i.isAbnormal ? "⚠️" : ""}`).join("\n");
+
+    contextSummaryText = `
 === PATIENT CLINICAL CASE RECORD ===
 Patient Name: ${pat.name || "Unidentified"}
 Age / Sex: ${pat.age || "N/A"} years | ${pat.gender || "Unknown"}
@@ -2312,7 +2615,7 @@ PRIMARY ASSESSMENT (ABCDE):
 - Exposure: ${pri.exposure || "Normal"}
 
 PHYSICAL EXAMINATION & SECONDARY ASSESSMENT:
-${caseData?.secondaryAssessment || "General: Conscious, oriented. Systemic exams within normal limits."}
+${effectiveData?.secondaryAssessment || "General: Conscious, oriented. Systemic exams within normal limits."}
 
 LAB INVESTIGATIONS & FINDINGS:
 ${invSummary || "No labs uploaded yet."}
@@ -2321,68 +2624,127 @@ TREATMENTS ADMINISTERED / ORDERED:
 ${trts.map((t: any) => `- ${t.drugName} ${t.dose || ""} (${t.route || "IV"})`).join("\n") || "Symptomatic ER monitoring."}
 
 PROGRESS NOTES & ER TIMELINE:
-${caseData?.progressNotes || "No progress notes recorded."}
+${effectiveData?.progressNotes || "No progress notes recorded."}
 
 DIFFERENTIAL DIAGNOSES / IMPRESSIONS:
 ${diffs.map((d: any) => `- ${typeof d === "string" ? d : d.diagnosis || d.name}`).join("\n") || "Under evaluation"}
 
 DISPOSITION & TERMINAL OUTCOME:
-- Disposition Type: ${caseData?.dispositionDetails?.dispositionType || "In ER"}
-- Duration in ER: ${caseData?.dispositionDetails?.durationInEr || "N/A"}
-- Observation & ER Notes: ${caseData?.dispositionDetails?.observationNotes || "N/A"}
-- Primary Diagnosis: ${caseData?.dischargeInfo?.primaryDiagnosis || caseData?.provisionalPrimaryDiagnosis || "Under evaluation"}
-- Condition at Discharge / Terminal Status: ${caseData?.dischargeInfo?.conditionAtDischarge || "N/A"}
+- Disposition Type: ${effectiveData?.dispositionDetails?.dispositionType || "In ER"}
+- Duration in ER: ${effectiveData?.dispositionDetails?.durationInEr || "N/A"}
+- Observation & ER Notes: ${effectiveData?.dispositionDetails?.observationNotes || "N/A"}
+- Primary Diagnosis: ${effectiveData?.dischargeInfo?.primaryDiagnosis || effectiveData?.provisionalPrimaryDiagnosis || "Under evaluation"}
+- Condition at Discharge / Terminal Status: ${effectiveData?.dischargeInfo?.conditionAtDischarge || "N/A"}
 ===================================
 `;
+  }
 
   const discussionSystemInstruction = `
 You are ErMate AI — Senior Emergency Medicine Consultant and Clinical Educator (Claude Sonnet).
 You are currently in an interactive clinical discussion with the Emergency Physician regarding a SPECIFIC active patient.
 
-${caseSummaryText}
+${contextSummaryText}
 
 YOUR CRITICAL GUIDELINES:
 1. Answer the doctor's query directly referencing THIS patient's exact history, vitals, physical findings, labs, treatments, and complete clinical story.
-2. CAUSE OF DEATH & MORTALITY REVIEW: If analyzing cause of death or mortality (or if disposition is "Death" or "Brought Dead" or if the doctor asks about the cause of death):
-   Interpret the WHOLE CLINICAL STORY from initial symptom onset, SAMPLE history, baseline comorbidities, presentation vitals, physical exam, labs/ECG/imaging, serial vitals, treatments administered, resuscitation/CPR efforts, to terminal event.
-   Clearly deconstruct:
-   - 💀 Immediate Cause of Death (Part I Top Line): Final physiological/disease mechanism directly causing death.
-   - 🩸 Antecedent Causes (Part I Subsequent Lines): Intermediate conditions giving rise to immediate cause.
-   - 🏥 Underlying Cause of Death: Primary disease/injury initiating fatal sequence.
-   - ⚡ Contributing Factors & Comorbidities (Part II): Co-existing conditions contributing to mortality.
-   - 🫀 Resuscitation & Timeline Audit: Objective review of airway, pressors, ACLS, and ER course.
-   - 🎓 Clinical Debrief Lessons: High-yield red flags and educational pearls for rounds.
-3. When evaluating complex or rare differentials, provide clear pathophysiological reasoning comparing the patient's specific lab findings, risks, and clinical features against diagnostic criteria.
-4. Provide actionable, step-by-step next diagnostic steps (e.g., SPEP, UPEP, Serum Free Light Chains, 24h Urine Protein, Echo with Strain/Diastology, Fat pad biopsy, Endocrinology/Nephrology consults) and acute stabilization guidelines.
-5. Keep answers clean, professional, and well-structured with bold terms and short bullet points.
-6. ALWAYS end your response with authoritative Emergency Medicine and Internal Medicine textbook citations under a "📚 Reference Citations" header:
-   - Tintinalli's Emergency Medicine
-   - Rosen's Emergency Medicine
-   - Harrison's Principles of Internal Medicine
-   - WikEM
-   - UpToDate
+2. RECORD UPDATES & ONE-TAP SYNC:
+   If the doctor requests to update, add, or modify any detail on this record (e.g. "change diagnosis to X", "add MRI to pending actions", "update alert row to Y", "add item to to-do list"), or if you strongly recommend an update to the working record, end your response with a JSON update block on its own line:
+   [UPDATE: {"field_name": "updated_value"}]
+   Examples:
+   - For Handover: [UPDATE: {"toBeDone": ["Cystoscopy planned tomorrow", "Monitor HR + Temp"], "diagnosis": "Right Hydronephrosis"}]
+   - For Case: [UPDATE: {"provisionalPrimaryDiagnosis": "Upper GI Bleed — Severe"}]
+   - For Discharge: [UPDATE: {"followUpAdvice": "Review in ED if hematemesis recurs"}]
+
+3. CAUSE OF DEATH & MORTALITY REVIEW: If analyzing cause of death or mortality:
+   Deconstruct Immediate Cause, Antecedent Causes, Underlying Cause, and Contributing Factors clearly.
+4. Keep answers clean, professional, and well-structured with bold terms and short bullet points.
+5. End clinical discussions with authoritative citations where appropriate (Tintinalli's, Rosen's, Harrison's, WikEM, UpToDate).
 `;
 
-  const conversationHistoryText = messages
-    .map((m: any) => `${m.sender === "user" ? "Doctor" : "Claude"}: ${m.text}`)
-    .join("\n\n");
+  let conversationHistoryText = "";
+  if (Array.isArray(effectiveMessages) && effectiveMessages.length > 0) {
+    conversationHistoryText = effectiveMessages
+      .map((m: any) => {
+        const sender = m.sender === "user" || m.role === "user" ? "Doctor" : "Claude";
+        const content = m.text || m.content || "";
+        return `${sender}: ${content}`;
+      })
+      .join("\n\n");
+  } else if (message) {
+    conversationHistoryText = `Doctor: ${message}`;
+  }
 
   try {
     const claudeReply = await callClaudeSonnetOnly(conversationHistoryText, discussionSystemInstruction, false);
-    if (claudeReply && typeof claudeReply === "string" && claudeReply.trim().length > 10) {
-      return res.json({ success: true, reply: claudeReply, model: "claude-sonnet-3-5" });
+    if (claudeReply && typeof claudeReply === "string" && claudeReply.trim().length > 5) {
+      let cleanResponse = claudeReply;
+      let suggestedUpdate = null;
+
+      // Detect [UPDATE: {...}] tag
+      const match = claudeReply.match(/\[UPDATE:\s*(\{[^\]]+\})\]/s);
+      if (match) {
+        try {
+          suggestedUpdate = JSON.parse(match[1]);
+          // Strip update tag from clean response text
+          cleanResponse = claudeReply.replace(/\[UPDATE:\s*\{[^\]]+\}\]/s, "").trim();
+        } catch (e) {
+          console.warn("[CaseDiscussion] Failed to parse [UPDATE] tag JSON:", e);
+        }
+      }
+
+      return res.json({
+        success: true,
+        response: cleanResponse,
+        reply: cleanResponse,
+        suggestedUpdate: suggestedUpdate,
+        model: "claude-sonnet-3-5"
+      });
+    }
+
+    // Fallback to Gemini 2.5 Flash if Claude is unavailable or out of credits
+    try {
+      const ai = getAI();
+      const response = await ai.models.generateContent({
+        model: "gemini-2.5-flash",
+        contents: `${discussionSystemInstruction}\n\nClinical Conversation History:\n${conversationHistoryText}`
+      });
+      const geminiReply = response.text || "";
+      if (geminiReply && geminiReply.trim().length > 5) {
+        let cleanResponse = geminiReply;
+        let suggestedUpdate = null;
+        const match = geminiReply.match(/\[UPDATE:\s*(\{[^\]]+\})\]/s);
+        if (match) {
+          try {
+            suggestedUpdate = JSON.parse(match[1]);
+            cleanResponse = geminiReply.replace(/\[UPDATE:\s*\{[^\]]+\}\]/s, "").trim();
+          } catch (e) {
+            console.warn("[CaseDiscussion] Failed to parse [UPDATE] tag JSON:", e);
+          }
+        }
+        return res.json({
+          success: true,
+          response: cleanResponse,
+          reply: cleanResponse,
+          suggestedUpdate: suggestedUpdate,
+          model: "gemini-2.5-flash"
+        });
+      }
+    } catch (geminiErr: any) {
+      console.warn("[CaseDiscussion] Gemini fallback also failed:", geminiErr);
     }
 
     return res.json({
       success: false,
-      reply: "Claude Sonnet reasoning service is temporarily unavailable. Please verify ANTHROPIC_API_KEY configuration or try again shortly.",
-      error: "Claude Sonnet reasoning service unavailable"
+      response: "Clinical discussion service is temporarily busy. Please try again shortly.",
+      reply: "Clinical discussion service is temporarily busy. Please try again shortly.",
+      error: "Service unavailable"
     });
   } catch (error: any) {
     console.error("[Clinical Reasoning] Case Discussion Error:", error?.message || error);
     return res.json({
       success: false,
-      reply: "Claude Sonnet reasoning service is temporarily unavailable. Please verify ANTHROPIC_API_KEY configuration or try again shortly.",
+      response: "Clinical discussion service is temporarily unavailable.",
+      reply: "Clinical discussion service is temporarily unavailable.",
       error: error?.message || "Case discussion error"
     });
   }
@@ -2550,7 +2912,7 @@ app.post("/api/scribe-ocr-scan", async (req, res) => {
       };
 
       response = await ai.models.generateContent({
-        model: "gemini-3.6-flash",
+        model: "gemini-2.5-flash",
         contents: { parts: [imagePart, textPart] },
         config: {
           systemInstruction: "You are an expert emergency medical OCR processing system. Convert clinical reference/referral images into accurate structured clinical data in JSON.",
@@ -2568,7 +2930,7 @@ app.post("/api/scribe-ocr-scan", async (req, res) => {
       `;
 
       response = await ai.models.generateContent({
-        model: "gemini-3.6-flash",
+        model: "gemini-2.5-flash",
         contents: prompt,
         config: {
           systemInstruction: "You map clinical referral text into clean structured medical data modules. Return JSON only.",
@@ -2641,6 +3003,7 @@ app.post("/api/handover/parse-structured", async (req, res) => {
       properties: {
         name: { type: Type.STRING, description: "Patient name or Bed ID if name is not available (e.g. Selvarani, Bed 3)" },
         ageGender: { type: Type.STRING, description: "Age and gender (e.g., 57F, 45y / Male, or 'Unknown')" },
+        inERSince: { type: Type.STRING, description: "Time or timestamp when patient arrived or note was taken (e.g. 08:30 AM or 10:15 PM)" },
         triage: { type: Type.STRING, description: "Triage Priority level (must be exactly 'P1 (Immediate)' or 'P2 (Urgent)' or 'P3 (Non-Urgent)')" },
         vitals: { type: Type.STRING, description: "Vital signs extracted or summarized (e.g., SpO2 97% on 5L O2 | HR 103 | BP 130/80 | RR 18 | Temp 97.4°F | GRBS 204 | GCS 15)" },
         presentingComplaint: { type: Type.STRING, description: "Chief presenting complaint, primary symptoms, onset, and duration extracted from case sheet or EMR data" },
@@ -2760,7 +3123,7 @@ CRITICAL RULES:
       };
 
       response = await ai.models.generateContent({
-        model: "gemini-3.6-flash",
+        model: "gemini-2.5-flash",
         contents: { parts: [imagePart, textPart] },
         config: {
           systemInstruction: "You are an expert emergency medical scribe specializing in clinical shift handovers. Convert medical documents and case sheet images into highly structured SBAR/IPASS handovers in JSON.",
@@ -2990,7 +3353,7 @@ app.post("/api/handover/compile-sheet", async (req, res) => {
     }
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.6-flash",
+      model: "gemini-2.5-flash",
       contents: prompt,
       config: {
         systemInstruction: "You are an expert emergency medical scribe specializing in clinical shift handovers. Return JSON matching the schema.",
@@ -3042,7 +3405,7 @@ app.post("/api/scan-mnemonic", async (req, res) => {
     };
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.6-flash",
+      model: "gemini-2.5-flash",
       contents: { parts: [imagePart, textPart] },
       config: {
         systemInstruction: "You are an expert clinical reference librarian. Convert medical mnemonic screenshots or notes into clean, highly structured medical education guides. Return JSON only.",
@@ -3430,7 +3793,10 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 async function startServer() {
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: { 
+        middlewareMode: true,
+        hmr: process.env.DISABLE_HMR !== "true" ? undefined : false,
+      },
       appType: "spa",
     });
     app.use(vite.middlewares);

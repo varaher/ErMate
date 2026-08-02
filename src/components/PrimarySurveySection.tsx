@@ -588,10 +588,10 @@ export function PrimarySurveySection({
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <VitalInput
             label="Temperature"
-            unit="°F"
-            normal="98.6"
-            flagHigh={100.4}
-            flagLow={96}
+            unit="°C / °F"
+            normal="37.0°C / 98.6°F"
+            flagHigh={38.0}
+            flagLow={35.5}
             value={data.exposure.temp || vitals?.temp || ""}
             onChange={(v) => {
               onChange("exposure.temp", v);

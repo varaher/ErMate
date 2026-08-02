@@ -598,22 +598,147 @@ export interface TeamMember {
   updatedAt?: string;
 }
 
+export interface HandoverAlertBanner {
+  criticalAllergies?: string | null;
+  codeStatus?: string | null;
+  criticalValues?: string[];
+  pendingCritical?: string[];
+  isolationPrecautions?: string | null;
+  fallRisk?: boolean;
+  summary?: string;
+}
+
+export interface DayWiseCourse {
+  date: string;
+  summary: string;
+}
+
+export interface ActiveProblem {
+  problem: string;
+  status: 'Resolved' | 'Ongoing' | 'Pending workup';
+  note?: string | null;
+}
+
+export interface CrossConsultation {
+  department: string;
+  consultant: string;
+  dateSeen: string;
+  recommendation: string;
+  status: 'Completed' | 'Awaiting review' | 'Awaiting re-consult' | 'Not actioned';
+  flagged?: boolean;
+}
+
+export interface InvestigationTrend {
+  parameter: string;
+  values: string;
+}
+
+export interface InvestigationsGroup {
+  trends?: InvestigationTrend[];
+  normalSummary?: string | null;
+  imaging?: string | null;
+  ecg?: string | null;
+  echo?: string | null;
+  vbg?: string | null;
+  cultures?: string | null;
+  other?: string | null;
+}
+
+export interface AdjunctsAtArrival {
+  ecg?: string | null;
+  vbg?: string | null;
+  abg?: string | null;
+  grbs?: string | null;
+  lactate?: string | null;
+  troponinPOC?: string | null;
+  bedsideEcho?: string | null;
+  efast?: string | null;
+  outsideReports?: string | null;
+  physicalOnArrival?: string | null;
+  [key: string]: string | null | undefined;
+}
+
+export interface AdjunctsDevices {
+  ivAccess?: string | null;
+  centralLine?: string | null;
+  arterialLine?: string | null;
+  catheter?: string | null;
+  oxygenDelivery?: string | null;
+  drains?: string | null;
+  monitoring?: string | null;
+  ngt?: string | null;
+  other?: string | null;
+  [key: string]: string | null | undefined;
+}
+
+export interface ERBoardingStatus {
+  reasonForERRetention?: string | null;
+  whoTrackingBed?: string | null;
+  durationInERPostAdmission?: string | null;
+  riskOfProlongedStay?: string | null;
+}
+
+export interface LatestVitalsInfo {
+  timestamp?: string | null;
+  hr?: string | null;
+  bp?: string | null;
+  spo2?: string | null;
+  rr?: string | null;
+  temp?: string | null;
+  gcs?: string | null;
+  grbs?: string | null;
+  trend?: string | null;
+}
+
 export interface HandoverPatient {
+  id?: string;
   patientLabel: {
     name: string;
     ageSex: string;
     bed: string | null;
+    currentLocation?: string | null;
     erNumber: string | null;
     admittingConsultant: string | null;
+    admittingDepartment?: string | null;
+    admissionDecisionDate?: string | null;
+    daysInERSinceAdmission?: number | null;
+    erBoarder?: boolean;
     inERSince: string | null;
     status: 'critical' | 'unstable' | 'stable' | 'discharge';
+    treatingERPhysician?: string | null;
   };
+  alertBanner?: HandoverAlertBanner;
+  initialPresentation_lockedAt?: string | null;
+  initialPresentation?: {
+    chiefComplaint?: string;
+    initialVitals?: string;
+    abcdeArrival?: string;
+    initialImpression?: string;
+    adjunctsAtArrival?: AdjunctsAtArrival | string | null;
+    lockedAt?: string | null;
+  };
+  adjunctsAtArrival?: AdjunctsAtArrival | string | null;
   presentingComplaint: string;
-  story: string;
+  courseInERDayWise?: DayWiseCourse[];
+  activeProblemList?: ActiveProblem[];
+  story?: string;
   pmh: string | null;
+  pastMedicalHistory?: string | null;
   diagnosis: string;
+  crossConsultations?: CrossConsultation[];
+  investigations?: InvestigationsGroup;
+  currentMedications?: string[];
+  adjuncts?: AdjunctsDevices;
+  adjunctsNow?: AdjunctsDevices | null;
+  managementPlan?: {
+    done: string[];
+    pending: string[];
+  };
   done: string[];
   toBeDone: string[];
+  erBoardingStatus?: ERBoardingStatus;
+  bystanderConsent?: string | null;
+  latestVitals?: LatestVitalsInfo;
   vitalsNow: string | null;
   criticalAlerts: string[];
   bystander: string | null;
