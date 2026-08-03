@@ -721,7 +721,8 @@ function sanitizeHandoverPatient(data: any): any {
 
 // ── Main extraction function ──────────────────────────────────
 export async function extractHandover(
-  rawText: string
+  rawText: string,
+  doctorName?: string
 ): Promise<{
   success: boolean;
   data?: any;
@@ -907,7 +908,7 @@ export async function extractHandover(
           erBoarder: Boolean(pl.erBoarder),
           inERSince: pl.inERSince || null,
           status,
-          treatingERPhysician: pl.treatingERPhysician || null,
+          treatingERPhysician: (pl.treatingERPhysician && pl.treatingERPhysician !== '[DOCTOR]') ? pl.treatingERPhysician : (doctorName || null),
         },
         alertBanner,
         initialPresentation,

@@ -3029,7 +3029,7 @@ app.post("/api/scribe-ocr-scan", async (req, res) => {
 
 // 6.5. AI-Assisted Structured Handover Parser (EMR Paste & Case Sheet Camera OCR)
 app.post("/api/handover/parse-structured", async (req, res) => {
-  const { image, mimeType, rawText } = req.body;
+  const { image, mimeType, rawText, doctorName } = req.body;
 
   try {
     const ai = getAI();
@@ -3171,7 +3171,7 @@ CRITICAL RULES:
       });
     } else {
       // Delegate text-based EMR paste analysis to the complete 5-step handover pipeline (preprocess -> reverse -> length route -> LLM -> JSON format)
-      const handoverResult = await extractHandoverData(rawText || "");
+      const handoverResult = await extractHandoverData(rawText || "", doctorName);
       return res.json(handoverResult);
     }
 

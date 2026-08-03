@@ -3017,6 +3017,32 @@ export default function ProfileSettingsView({
             </p>
           </div>
 
+          {/* DPDP Act 2023 Shield Highlight */}
+          <div className="bg-emerald-500/10 dark:bg-emerald-950/40 border border-emerald-500/30 p-3.5 rounded-2xl space-y-2 shadow-xs">
+            <div className="flex items-center gap-2">
+              <div className="w-6 h-6 rounded-lg bg-emerald-500 text-white flex items-center justify-center font-bold text-xs shadow-xs">
+                🛡️
+              </div>
+              <h5 className="font-extrabold text-emerald-800 dark:text-emerald-300 text-[11.5px] uppercase tracking-wide">
+                DPDP Act 2023 Compliant Data Architecture
+              </h5>
+            </div>
+            <p className="text-[11px] leading-relaxed text-slate-700 dark:text-slate-200 font-sans">
+              <strong>Patient Identifiers Removed in India (Cloud Run, asia-south1):</strong> All raw EMR text, case sheets, and voice transcripts undergo local on-the-fly de-identification on our secure Indian Cloud Run servers BEFORE any clinical AI processing. Patient names, UHIDs, phone numbers, Aadhaar numbers, and absolute calendar dates are stripped automatically. PHI never transits to overseas servers.
+            </p>
+            <div className="flex flex-wrap gap-2 pt-0.5 font-mono text-[10px]">
+              <span className="px-2 py-0.5 rounded-md bg-emerald-100 dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-200 font-semibold border border-emerald-300 dark:border-emerald-700">
+                ✓ On-The-Fly PHI Removal
+              </span>
+              <span className="px-2 py-0.5 rounded-md bg-emerald-100 dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-200 font-semibold border border-emerald-300 dark:border-emerald-700">
+                ✓ Relative Clinical Timeline
+              </span>
+              <span className="px-2 py-0.5 rounded-md bg-emerald-100 dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-200 font-semibold border border-emerald-300 dark:border-emerald-700">
+                ✓ Local Doctor Re-injection
+              </span>
+            </div>
+          </div>
+
           {/* Privacy Policy Accordion Section */}
           <div className="space-y-2">
             <h4 className="text-[10px] font-black tracking-widest text-slate-400 dark:text-slate-500 uppercase font-mono pl-1">

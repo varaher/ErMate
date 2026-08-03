@@ -366,6 +366,9 @@ export default function HandoverView({
   const activeSubTab = propActiveSubTab !== undefined ? propActiveSubTab : localActiveSubTab;
   const setActiveSubTab = propSetActiveSubTab !== undefined ? propSetActiveSubTab : setLocalActiveSubTab;
 
+  // DPDP Shield Protection Info Toast State
+  const [phiShieldInfo, setPhiShieldInfo] = useState<{ count: number; phiFound: string[]; details: Record<string, number> } | null>(null);
+
   // State for Registry Cases selection (by default select all active cases)
   const [selectedRegistryIds, setSelectedRegistryIds] = useState<string[]>(
     cases.filter(c => c.status === "Active").map(c => c.id)
@@ -1939,10 +1942,14 @@ function extractLatestVitalsWithTime(
         body: JSON.stringify({
           image: imageBase64,
           mimeType: "image/jpeg",
-          rawText: userText
+          rawText: userText,
+          doctorName: profile?.name ? (profile.name.startsWith("Dr") ? profile.name : `Dr. ${profile.name}`) : "EM Resident"
         })
       });
       const resData = await response.json();
+      if (resData.phiProtected && resData.phiProtected.count > 0) {
+        setPhiShieldInfo(resData.phiProtected);
+      }
       if (resData.success && (resData.data || resData.extracted)) {
         const parsed = resData.data || resData.extracted;
 
@@ -2555,6 +2562,29 @@ function extractLatestVitalsWithTime(
             }
           }
         ` }} />
+
+        {/* DPDP Act 2023 Shield Toast Banner */}
+        {phiShieldInfo && phiShieldInfo.count > 0 && (
+          <div className="bg-emerald-50 dark:bg-emerald-950/90 border border-emerald-300 dark:border-emerald-700 p-3 rounded-2xl text-emerald-900 dark:text-emerald-100 text-xs flex items-center justify-between shadow-xs no-print animate-fadeIn">
+            <div className="flex items-center gap-2.5">
+              <span className="text-lg leading-none">🛡️</span>
+              <div>
+                <div className="font-extrabold text-[11.5px] uppercase tracking-wide text-emerald-800 dark:text-emerald-300">
+                  DPDP Act 2023 Compliant De-identification Active
+                </div>
+                <div className="text-[11px] text-emerald-700 dark:text-emerald-200 mt-0.5 font-sans">
+                  Stripped <strong>{phiShieldInfo.count} patient identifier(s)</strong> ({phiShieldInfo.details?.names || 0} names, {phiShieldInfo.details?.ids || 0} hospital IDs, {phiShieldInfo.details?.dates || 0} dates) on Indian Cloud Run server before AI processing.
+                </div>
+              </div>
+            </div>
+            <button
+              onClick={() => setPhiShieldInfo(null)}
+              className="px-2.5 py-1 text-emerald-700 dark:text-emerald-300 font-bold hover:bg-emerald-200 dark:hover:bg-emerald-800 rounded-lg text-xs transition-colors cursor-pointer"
+            >
+              ✕ Dismiss
+            </button>
+          </div>
+        )}
 
         {/* Top bar control menu (hidden during print) */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 p-4 rounded-2xl shadow-sm no-print animate-fade-in">
