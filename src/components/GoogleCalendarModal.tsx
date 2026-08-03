@@ -205,36 +205,52 @@ export default function GoogleCalendarModal({
           
           {/* Auth Banner */}
           {!token ? (
-            <div className="bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800/60 rounded-2xl p-4 flex flex-col sm:flex-row items-center justify-between gap-4">
-              <div className="flex items-center gap-3">
-                <div className="p-2 bg-blue-600 text-white rounded-xl shrink-0">
-                  <Shield className="w-5 h-5" />
+            <div className="space-y-3">
+              <div className="bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800/60 rounded-2xl p-4 flex flex-col sm:flex-row items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-blue-600 text-white rounded-xl shrink-0">
+                    <Shield className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-slate-900 dark:text-white">Connect Google Calendar</h4>
+                    <p className="text-[11px] text-slate-600 dark:text-slate-300">
+                      Authorize ErMate to manage your emergency duty schedule and clinical events securely with your permission.
+                    </p>
+                  </div>
                 </div>
-                <div>
-                  <h4 className="text-xs font-bold text-slate-900 dark:text-white">Connect Google Calendar</h4>
-                  <p className="text-[11px] text-slate-600 dark:text-slate-300">
-                    Authorize ErMate to manage your emergency duty schedule and clinical events securely with your permission.
-                  </p>
+                <button
+                  type="button"
+                  onClick={handleLogin}
+                  disabled={isAuthenticating}
+                  className="gsi-material-button text-xs font-bold px-4 py-2.5 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-700 rounded-xl hover:bg-slate-50 transition-all flex items-center gap-2 shrink-0 cursor-pointer shadow-sm disabled:opacity-50"
+                >
+                  {isAuthenticating ? (
+                    <RefreshCw className="w-4 h-4 animate-spin text-blue-600" />
+                  ) : (
+                    <svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" className="w-4 h-4">
+                      <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"></path>
+                      <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"></path>
+                      <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"></path>
+                      <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"></path>
+                    </svg>
+                  )}
+                  <span>{isAuthenticating ? "Authenticating..." : "Sign in with Google"}</span>
+                </button>
+              </div>
+
+              {/* Step-by-Step OAuth Security Notice */}
+              <div className="p-3.5 bg-amber-500/10 border border-amber-500/30 rounded-xl text-[11px] text-amber-700 dark:text-amber-300 font-mono leading-relaxed space-y-1.5">
+                <div className="flex items-center gap-1.5 font-bold text-amber-800 dark:text-amber-300">
+                  <AlertCircle className="w-4 h-4 shrink-0 text-amber-500" />
+                  <span>How to authorize when Google shows "Google hasn't verified this app":</span>
+                </div>
+                <div className="pl-5 text-[10.5px] space-y-0.5 text-slate-700 dark:text-slate-300">
+                  <p>1. Click <strong>"Sign in with Google"</strong> above and pick your Google account.</p>
+                  <p>2. If Google displays <em>"Google hasn't verified this app"</em>, click <strong className="text-amber-600 dark:text-amber-400">"Advanced"</strong> at the bottom-left.</p>
+                  <p>3. Click <strong className="text-amber-600 dark:text-amber-400 font-bold">"Go to ErMate (unsafe)"</strong>.</p>
+                  <p>4. Grant Calendar permissions and click <strong>"Continue"</strong> to finish linking.</p>
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={handleLogin}
-                disabled={isAuthenticating}
-                className="gsi-material-button text-xs font-bold px-4 py-2.5 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-700 rounded-xl hover:bg-slate-50 transition-all flex items-center gap-2 shrink-0 cursor-pointer shadow-sm disabled:opacity-50"
-              >
-                {isAuthenticating ? (
-                  <RefreshCw className="w-4 h-4 animate-spin text-blue-600" />
-                ) : (
-                  <svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" className="w-4 h-4">
-                    <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"></path>
-                    <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"></path>
-                    <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"></path>
-                    <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"></path>
-                  </svg>
-                )}
-                <span>{isAuthenticating ? "Authenticating..." : "Sign in with Google"}</span>
-              </button>
             </div>
           ) : (
             <div className="bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/50 rounded-2xl p-3 px-4 flex items-center justify-between text-xs text-emerald-800 dark:text-emerald-300">

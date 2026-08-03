@@ -6,6 +6,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { GoogleGenAI } from '@google/genai';
 import { getRelevantLearnedRules, formatLearnedRulesPromptBlock } from './learningService.ts';
+import { deidentifyText } from './deidentify.ts';
 
 // ── Models ────────────────────────────────────────────────────
 export const MODELS = {
@@ -726,6 +727,7 @@ export async function extractHandover(
   data?: any;
   extracted?: any;
   error?: string;
+  phiProtected?: { count: number; phiFound: string[]; details: Record<string, number> };
   meta?: {
     originalChars: number;
     cleanedChars: number;
@@ -740,8 +742,14 @@ export async function extractHandover(
     };
   }
 
-  // STEP 1 — Preprocess
-  const cleaned = preprocessEMR(rawText);
+  // STEP 0 — DPDP Act 2023 On-The-Fly PHI De-identification (Local India Cloud Run)
+  const phiResult = deidentifyText(rawText);
+  if (phiResult.phiCount > 0) {
+    console.log(`[Handover] DPDP Protection Active: Stripped ${phiResult.phiCount} PHI item(s) (${phiResult.phiFound.slice(0, 3).join(', ')})`);
+  }
+
+  // STEP 1 — Preprocess de-identified text
+  const cleaned = preprocessEMR(phiResult.deidentified);
   console.log(
     `[Handover] Preprocessed: ${rawText.length} → ${cleaned.length} chars ` +
     `(${Math.round((1 - cleaned.length / Math.max(1, rawText.length)) * 100)}% reduction)`
@@ -951,6 +959,11 @@ export async function extractHandover(
         success: true,
         extracted: sanitizedHandover,
         data: sanitizedHandover,
+        phiProtected: {
+          count: phiResult.phiCount,
+          phiFound: phiResult.phiFound,
+          details: phiResult.details
+        },
         meta: {
           originalChars: rawText.length,
           cleanedChars: cleaned.length,

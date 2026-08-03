@@ -2640,11 +2640,11 @@ export default function App() {
 
             {/* Mobile-only action shortcuts */}
             <div className="flex md:hidden items-center gap-1.5">
-              <HeaderUpdateButton />
+              <HeaderUpdateButton hasUpdate={appUpdateBanner} onApplyUpdate={() => window.location.reload()} />
               <button
                 onClick={() => setShowUpdatesModal(true)}
                 className="p-1.5 hover:bg-emerald-50 dark:hover:bg-emerald-950/20 rounded-lg text-emerald-600 dark:text-emerald-400 transition-all"
-                title="v2.4.0 Updates"
+                title="Updates & Release Notes"
               >
                 <Sparkles className="w-4 h-4 animate-pulse" />
               </button>
@@ -2960,8 +2960,8 @@ export default function App() {
           {/* Theme toggles & Profile shortcut (Desktop Only) */}
           <div className="hidden md:flex items-center gap-2">
 
-            {/* Header Update Button (renders only when update is waiting) */}
-            <HeaderUpdateButton />
+            {/* Header Update Button (renders when update is waiting or banner active) */}
+            <HeaderUpdateButton hasUpdate={appUpdateBanner} onApplyUpdate={() => window.location.reload()} />
 
             {/* What's New & Announcements Button */}
             <button
@@ -2971,7 +2971,7 @@ export default function App() {
               id="whats-new-announcements-btn"
             >
               <Sparkles className="w-3.5 h-3.5 animate-pulse text-amber-500" />
-              <span className="text-[10px] font-extrabold tracking-tight uppercase hidden lg:inline">v{currentVersion}</span>
+              <span className="text-[10px] font-extrabold tracking-tight uppercase">v{currentVersion}</span>
               {appUpdateBanner && (
                 <span className="flex h-1.5 w-1.5 relative">
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>

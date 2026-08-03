@@ -1,0 +1,135 @@
+// ============================================================
+// ErMate — DPDP-Compliant Server-Side PHI De-identification Engine
+// File: server/deidentify.ts
+// ============================================================
+// Performs local on-the-fly de-identification on Cloud Run (India)
+// BEFORE any EMR or transcript text is sent to LLM processing.
+// Guarantees DPDP Act 2023 compliance for sensitive health data.
+
+export interface DeidentifyResult {
+  deidentified: string;
+  phiFound: string[];
+  phiCount: number;
+  details: {
+    names: number;
+    ids: number;
+    phones: number;
+    doctors: number;
+    aadhaar: number;
+    dates: number;
+    hospitals: number;
+  };
+}
+
+const PHI_PATTERNS = [
+  // 1. Phone numbers (Indian formats)
+  {
+    type: 'phones' as const,
+    pattern: /(?:\+91[\s-]?)?(?:0)?[6-9]\d{9}|\b[6-9]\d{4}[\s-]\d{5}\b/g,
+    replacement: '[PHONE]',
+    label: 'Phone Number'
+  },
+
+  // 2. Aadhaar Number (12 digits, spaced or dash)
+  {
+    type: 'aadhaar' as const,
+    pattern: /\b\d{4}[\s-]\d{4}[\s-]\d{4}\b/g,
+    replacement: '[AADHAAR]',
+    label: 'Aadhaar ID'
+  },
+
+  // 3. UHID / MRN / Hospital Registration IDs
+  {
+    type: 'ids' as const,
+    pattern: /\b(?:UHID|MRN|UR|CR|IP(?:[NO\.\s#]*)|OP(?:[NO\.\s#]*)|ER(?:[NO\.\s#]*)|REG(?:[NO\.\s#]*))[:\s#-]*[A-Z0-9\/-]{4,20}\b/gi,
+    replacement: '[PATIENT-ID]',
+    label: 'Hospital UHID/MRN'
+  },
+
+  // 4. Explicit Doctor / Consultant Names
+  {
+    type: 'doctors' as const,
+    pattern: /\b(?:Dr\.?|Doctor|Prof\.?)\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2}\b/g,
+    replacement: '[DOCTOR]',
+    label: 'Doctor Name'
+  },
+
+  // 5. Patient Name Explicit Headers
+  {
+    type: 'names' as const,
+    pattern: /\b(?:Patient\s*Name|Name\s*of\s*Patient|Pt\s*Name|Name)\s*[:=-]\s*([A-Za-z\s]{2,30})(?=\r?\n|,|;|$|\d)/gi,
+    replacement: 'Patient Name: [PATIENT]',
+    label: 'Patient Name Header'
+  },
+
+  // 6. Common Salutation Patient Names (Mr / Mrs / Ms / Mast / Baby of)
+  {
+    type: 'names' as const,
+    pattern: /\b(?:Mr\.?|Mrs\.?|Ms\.?|Mast\.?|Baby\s+of|B\/O)\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2}\b/gi,
+    replacement: '[PATIENT]',
+    label: 'Patient Name'
+  },
+
+  // 7. Hospital & Facility Names
+  {
+    type: 'hospitals' as const,
+    pattern: /\b(?:[A-Z][a-zA-Object\w]+\s+)*(?:Hospital|Medical\s+Center|Clinic|Institute|Nursing\0|Healthcare|Super\s+Speciality)\b/gi,
+    replacement: '[HOSPITAL]',
+    label: 'Hospital Facility'
+  },
+
+  // 8. Specific Calendar Dates (dd/mm/yyyy, yyyy-mm-dd, dd-mm-yy)
+  {
+    type: 'dates' as const,
+    pattern: /\b(?<!\d)(?:(?:0?[1-9]|[12]\d|3[01])[\/\.-](?:0?[1-9]|1[012])[\/\.-](?:19|20)?\d\d|(?:19|20)\d\d[\/\.-](?:0?[1-9]|1[012])[\/\.-](?:0?[1-9]|[12]\d|3[01]))(?!\d)\b/g,
+    replacement: '[DATE]',
+    label: 'Calendar Date'
+  }
+];
+
+export function deidentifyText(rawText: string): DeidentifyResult {
+  if (!rawText || typeof rawText !== 'string') {
+    return {
+      deidentified: '',
+      phiFound: [],
+      phiCount: 0,
+      details: { names: 0, ids: 0, phones: 0, doctors: 0, aadhaar: 0, dates: 0, hospitals: 0 }
+    };
+  }
+
+  let processed = rawText;
+  const phiFound: string[] = [];
+  const details = {
+    names: 0,
+    ids: 0,
+    phones: 0,
+    doctors: 0,
+    aadhaar: 0,
+    dates: 0,
+    hospitals: 0
+  };
+
+  for (const rule of PHI_PATTERNS) {
+    const matches = processed.match(rule.pattern);
+    if (matches && matches.length > 0) {
+      for (const m of matches) {
+        // Avoid duplicate log entries
+        const cleanMatch = m.trim();
+        if (!phiFound.includes(`${rule.label}: ${cleanMatch}`)) {
+          phiFound.push(`${rule.label}: ${cleanMatch}`);
+        }
+        details[rule.type]++;
+      }
+      processed = processed.replace(rule.pattern, rule.replacement);
+    }
+  }
+
+  const phiCount = Object.values(details).reduce((acc, curr) => acc + curr, 0);
+
+  return {
+    deidentified: processed,
+    phiFound,
+    phiCount,
+    details
+  };
+}

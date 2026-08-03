@@ -2639,7 +2639,34 @@ DISPOSITION & TERMINAL OUTCOME:
 `;
   }
 
-  const discussionSystemInstruction = `
+  let discussionSystemInstruction = "";
+
+  if (effectiveContextType === "reference") {
+    discussionSystemInstruction = `You are ErMate EM Reference — an emergency medicine clinical knowledge assistant for Indian ERs.
+
+Answer clinical questions with:
+1. Direct practical answer first
+2. Evidence-based reasoning
+3. Indian ER context where relevant
+4. Specific to the question asked (not just textbook summary)
+5. References from:
+   Tintinalli's Emergency Medicine
+   Rosen's Emergency Medicine
+   Relevant guidelines (ACC/AHA/BTS etc)
+   WikEM / UpToDate when applicable
+
+Format:
+  Lead with the clinical answer.
+  Then the reasoning.
+  Then dosing/protocol if relevant.
+  Then caveats/contraindications.
+  End with 1-2 key references.
+
+You are talking to an ER doctor who needs a practical answer NOW.
+Not a medical student needing an explanation of pathophysiology.
+Be concise and clinically precise.`;
+  } else {
+    discussionSystemInstruction = `
 You are ErMate AI — Senior Emergency Medicine Consultant and Clinical Educator (Claude Sonnet).
 You are currently in an interactive clinical discussion with the Emergency Physician regarding a SPECIFIC active patient.
 
@@ -2660,6 +2687,7 @@ YOUR CRITICAL GUIDELINES:
 4. Keep answers clean, professional, and well-structured with bold terms and short bullet points.
 5. End clinical discussions with authoritative citations where appropriate (Tintinalli's, Rosen's, Harrison's, WikEM, UpToDate).
 `;
+  }
 
   let conversationHistoryText = "";
   if (Array.isArray(effectiveMessages) && effectiveMessages.length > 0) {
@@ -2697,6 +2725,15 @@ YOUR CRITICAL GUIDELINES:
         response: cleanResponse,
         reply: cleanResponse,
         suggestedUpdate: suggestedUpdate,
+        model: "claude-sonnet-3-5"
+      });
+    }
+
+    if (effectiveContextType === "reference") {
+      return res.json({
+        success: true,
+        response: "Reference unavailable — try again",
+        reply: "Reference unavailable — try again",
         model: "claude-sonnet-3-5"
       });
     }

@@ -147,6 +147,13 @@ export const BoundChatModal: React.FC<BoundChatModalProps> = ({
           'Identify key clinical pearls & red flags',
           'Draft M&M case debrief'
         ];
+      case 'reference':
+        return [
+          'How do I use Ketofol in AF?',
+          'RSI drug doses paediatric',
+          'STEMI equivalents on ECG',
+          'Management of severe Sepsis in ER'
+        ];
       default:
         return ['Analyze patient record', 'Suggest next clinical steps'];
     }
@@ -154,26 +161,30 @@ export const BoundChatModal: React.FC<BoundChatModalProps> = ({
 
   const d = context.data || {};
   const patientDisplayName =
-    d.patientLabel?.name ||
-    d.patientInfo?.name ||
-    d.patient?.name ||
-    d.patientName ||
-    d.name ||
-    'Patient Record';
+    context.type === 'reference'
+      ? (title || 'ErMate Standalone EM Reference')
+      : (d.patientLabel?.name ||
+        d.patientInfo?.name ||
+        d.patient?.name ||
+        d.patientName ||
+        d.name ||
+        'Patient Record');
 
-  const contextBadgeColors = {
+  const contextBadgeColors: Record<string, string> = {
     case: 'bg-indigo-500/20 text-indigo-300 border-indigo-400/30',
     handover: 'bg-amber-500/20 text-amber-300 border-amber-400/30',
     discharge: 'bg-emerald-500/20 text-emerald-300 border-emerald-400/30',
     mortality_audit: 'bg-rose-500/20 text-rose-300 border-rose-400/30',
+    reference: 'bg-purple-500/20 text-purple-300 border-purple-400/30',
     general: 'bg-slate-500/20 text-slate-300 border-slate-400/30'
   };
 
-  const contextLabels = {
+  const contextLabels: Record<string, string> = {
     case: 'Clinical Case Chat',
     handover: 'Handover Duty Chat',
     discharge: 'Discharge Summary Chat',
     mortality_audit: 'M&M Audit Chat',
+    reference: 'EM Reference Chat',
     general: 'Clinical Chat'
   };
 

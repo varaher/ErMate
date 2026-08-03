@@ -7,6 +7,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
 import { GoogleGenAI } from "@google/genai";
+import { deidentifyText } from "./deidentify.ts";
 import { 
   Document, Packer, Paragraph, TextRun, HeadingLevel, Table, TableRow, TableCell, 
   WidthType, BorderStyle, AlignmentType, ShadingType 
@@ -205,10 +206,17 @@ export async function generateMortalityAudit(
 ): Promise<{
   success: boolean;
   audit?: Record<string, any>;
+  phiProtected?: { count: number; phiFound: string[]; details: Record<string, number> };
   error?: string;
 }> {
-  // Preprocess raw EMR text
-  const cleaned = rawText
+  // DPDP Act 2023 On-The-Fly PHI De-identification (Local India Cloud Run)
+  const phiResult = deidentifyText(rawText);
+  if (phiResult.phiCount > 0) {
+    console.log(`[MortalityAudit] DPDP Protection Active: Stripped ${phiResult.phiCount} PHI item(s)`);
+  }
+
+  // Preprocess de-identified EMR text
+  const cleaned = phiResult.deidentified
     .replace(/Acknowledged By\s*:.*$/gim, "")
     .replace(/Acknowledged DateTime\s*:.*$/gim, "")
     .replace(/VIP SCORE.*$/gim, "")
@@ -217,6 +225,12 @@ export async function generateMortalityAudit(
     .trim();
 
   const prompt = MORTALITY_AUDIT_PROMPT.replace("${emrText}", cleaned);
+
+  const phiProtected = {
+    count: phiResult.phiCount,
+    phiFound: phiResult.phiFound,
+    details: phiResult.details
+  };
 
   // 1. Primary Model: Claude Sonnet
   const anthropicKey = process.env.ANTHROPIC_API_KEY;
@@ -237,7 +251,7 @@ export async function generateMortalityAudit(
       const raw = (msg.content[0] as any)?.text || "";
       const cleanedJson = cleanJsonResponse(raw);
       const audit = JSON.parse(cleanedJson);
-      return { success: true, audit };
+      return { success: true, audit, phiProtected };
     } catch (err: any) {
       console.warn("[MortalityAudit] Claude Sonnet primary failed, trying fallback:", err?.message || err);
     }
@@ -267,7 +281,7 @@ export async function generateMortalityAudit(
       const raw = completion.choices[0]?.message?.content || "";
       const cleanedJson = cleanJsonResponse(raw);
       const audit = JSON.parse(cleanedJson);
-      return { success: true, audit };
+      return { success: true, audit, phiProtected };
     } catch (err: any) {
       console.warn("[MortalityAudit] GPT-4o fallback failed:", err?.message || err);
     }
@@ -290,7 +304,7 @@ export async function generateMortalityAudit(
       const raw = response.text || "";
       const cleanedJson = cleanJsonResponse(raw);
       const audit = JSON.parse(cleanedJson);
-      return { success: true, audit };
+      return { success: true, audit, phiProtected };
     } catch (err: any) {
       console.error("[MortalityAudit] Gemini fallback failed:", err?.message || err);
     }

@@ -1,27 +1,234 @@
 import React, { useState } from "react";
-import { BookOpen, Trophy, HelpCircle, Sparkles, Search, Library, FileText, ChevronRight, Download, ChevronLeft } from "lucide-react";
+import { 
+  BookOpen, Trophy, HelpCircle, Sparkles, Search, Library, FileText, 
+  ChevronRight, Download, ChevronLeft, GraduationCap, Bot, User, Send, 
+  Mic, MicOff, RefreshCw 
+} from "lucide-react";
+import { auth } from "../firebase";
+import { useBoundChat } from "../hooks/useBoundChat";
 import SimulationsView from "./SimulationsView";
 import TriviaView from "./TriviaView";
-
-interface EMReferenceResult {
-  answer: string;
-  citations: string[];
-  keyTeachingPoint: string;
-}
+import GoogleClassroomModal from "./GoogleClassroomModal";
 
 interface LearnViewProps {
   onNavigateToTab?: (tabId: string) => void;
   isDarkMode?: boolean;
 }
 
+function EMReferenceChatPanel() {
+  const currentUserUid = auth.currentUser?.uid || "guest_user";
+  const { messages, loading, sending, sendMessage } = useBoundChat({
+    type: "reference",
+    id: `${currentUserUid}_reference`,
+    data: {}
+  });
+
+  const [inputText, setInputText] = useState("");
+  const [isListening, setIsListening] = useState(false);
+  const messagesEndRef = React.useRef<HTMLDivElement>(null);
+  const recognitionRef = React.useRef<any>(null);
+
+  React.useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, sending]);
+
+  const handleSend = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!inputText.trim() || sending) return;
+    const text = inputText;
+    setInputText("");
+    sendMessage(text);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSend();
+    }
+  };
+
+  const toggleListening = () => {
+    if (isListening) {
+      recognitionRef.current?.stop();
+      setIsListening(false);
+      return;
+    }
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      alert("Speech recognition is not supported in your browser.");
+      return;
+    }
+    try {
+      const recognition = new SpeechRecognition();
+      recognition.continuous = false;
+      recognition.interimResults = false;
+      recognition.lang = "en-US";
+      recognition.onstart = () => setIsListening(true);
+      recognition.onresult = (event: any) => {
+        const transcript = event.results[0][0].transcript;
+        setInputText((prev) => (prev ? `${prev} ${transcript}` : transcript));
+        setIsListening(false);
+      };
+      recognition.onerror = () => setIsListening(false);
+      recognition.onend = () => setIsListening(false);
+      recognitionRef.current = recognition;
+      recognition.start();
+    } catch (err) {
+      console.warn("Speech recognition error:", err);
+      setIsListening(false);
+    }
+  };
+
+  const quickQuestions = [
+    "How do I use Ketofol in AF?",
+    "RSI drug doses paediatric",
+    "STEMI equivalents on ECG",
+    "Severe Sepsis ER resuscitation",
+    "Hyperkalemia acute shift protocol"
+  ];
+
+  return (
+    <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm overflow-hidden flex flex-col h-[75vh]">
+      {/* Reference Banner Header */}
+      <div className="p-4 bg-gradient-to-r from-purple-900 via-slate-900 to-indigo-950 text-white flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-purple-900/40 shrink-0">
+        <div className="flex items-center gap-3">
+          <div className="p-2.5 bg-purple-500/20 border border-purple-400/30 rounded-xl text-purple-300 shrink-0">
+            <BookOpen className="w-5 h-5" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-md border font-mono bg-purple-500/20 text-purple-300 border-purple-400/30">
+                EM Reference
+              </span>
+              <span className="text-[10px] text-emerald-400 font-mono font-bold flex items-center gap-1">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                Claude Sonnet Engine
+              </span>
+            </div>
+            <h3 className="text-sm sm:text-base font-extrabold tracking-tight text-white mt-0.5">
+              Emergency Medicine Standalone Clinical Reference
+            </h3>
+          </div>
+        </div>
+        <div className="text-[11px] text-purple-200/80 font-mono flex items-center gap-2 shrink-0">
+          <span>Tintinalli's · Rosen's · UpToDate · WikEM</span>
+        </div>
+      </div>
+
+      {/* Quick Question Chips */}
+      <div className="p-3 bg-slate-50 dark:bg-slate-900/60 border-b border-slate-200 dark:border-slate-800 flex items-center gap-2 overflow-x-auto no-scrollbar shrink-0">
+        <span className="text-[10px] text-slate-500 dark:text-slate-400 font-mono font-bold uppercase shrink-0">
+          Recent / Sample Questions:
+        </span>
+        {quickQuestions.map((q, idx) => (
+          <button
+            key={idx}
+            type="button"
+            onClick={() => sendMessage(q)}
+            disabled={sending}
+            className="text-[11px] font-medium bg-white dark:bg-slate-800 hover:bg-purple-50 dark:hover:bg-purple-950/40 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1 transition-all shrink-0 hover:border-purple-300 cursor-pointer disabled:opacity-50"
+          >
+            {q}
+          </button>
+        ))}
+      </div>
+
+      {/* Chat Messages Body */}
+      <div className="flex-1 p-4 overflow-y-auto space-y-4 bg-slate-50/50 dark:bg-slate-900/20">
+        {loading ? (
+          <div className="flex items-center justify-center h-full text-slate-400 text-xs font-mono gap-2">
+            <RefreshCw className="w-4 h-4 animate-spin text-purple-500" />
+            <span>Loading reference chat session...</span>
+          </div>
+        ) : (
+          messages.map((msg, i) => (
+            <div
+              key={i}
+              className={`flex gap-3 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+            >
+              {msg.role === 'assistant' && (
+                <div className="w-8 h-8 rounded-xl bg-purple-600 text-white flex items-center justify-center shrink-0 shadow-xs font-bold text-xs mt-1">
+                  <Bot className="w-4 h-4" />
+                </div>
+              )}
+              <div
+                className={`max-w-[85%] rounded-2xl p-4 text-xs leading-relaxed ${
+                  msg.role === 'user'
+                    ? 'bg-purple-600 text-white rounded-br-none shadow-sm'
+                    : 'bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 border border-slate-200 dark:border-slate-800 rounded-bl-none shadow-xs'
+                }`}
+              >
+                <div className="whitespace-pre-wrap font-sans font-normal leading-relaxed">
+                  {msg.content}
+                </div>
+                <div
+                  className={`text-[9px] font-mono mt-2 text-right ${
+                    msg.role === 'user' ? 'text-purple-200' : 'text-slate-400'
+                  }`}
+                >
+                  {msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+                </div>
+              </div>
+              {msg.role === 'user' && (
+                <div className="w-8 h-8 rounded-xl bg-slate-800 text-white flex items-center justify-center shrink-0 shadow-xs font-bold text-xs mt-1">
+                  <User className="w-4 h-4" />
+                </div>
+              )}
+            </div>
+          ))
+        )}
+
+        {sending && (
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-xl bg-purple-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+              <Bot className="w-4 h-4" />
+            </div>
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl rounded-bl-none p-3 px-4 text-xs text-purple-600 dark:text-purple-400 font-mono flex items-center gap-2 shadow-xs">
+              <Sparkles className="w-4 h-4 animate-spin" />
+              <span>Consulting Tintinalli's, Rosen's & UpToDate via Claude Sonnet...</span>
+            </div>
+          </div>
+        )}
+        <div ref={messagesEndRef} />
+      </div>
+
+      {/* Input Box */}
+      <form onSubmit={handleSend} className="p-3 bg-white dark:bg-slate-950 border-t border-slate-200 dark:border-slate-800 flex items-center gap-2 shrink-0">
+        <button
+          type="button"
+          onClick={toggleListening}
+          className={`p-2.5 rounded-xl border transition-all cursor-pointer ${
+            isListening
+              ? 'bg-rose-500 text-white border-rose-600 animate-pulse'
+              : 'bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-200'
+          }`}
+          title={isListening ? 'Stop Listening' : 'Dictate Question (Voice)'}
+        >
+          {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+        </button>
+        <textarea
+          rows={1}
+          value={inputText}
+          onChange={(e) => setInputText(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder="Ask any clinical question (e.g., 'How do I use Ketofol in AF?')..."
+          className="flex-1 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-purple-500 resize-none font-sans"
+        />
+        <button
+          type="submit"
+          disabled={!inputText.trim() || sending}
+          className="p-2.5 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white rounded-xl transition-all shadow-xs cursor-pointer"
+        >
+          <Send className="w-4 h-4" />
+        </button>
+      </form>
+    </div>
+  );
+}
+
 export default function LearnView({ onNavigateToTab, isDarkMode = false }: LearnViewProps) {
-  const [activeTab, setActiveTab] = useState<"simulations" | "library" | "trivia" | "memory">("simulations");
-  
-  // EM Reference state
-  const [libraryQuery, setLibraryQuery] = useState("");
-  const [refResult, setRefResult] = useState<EMReferenceResult | null>(null);
-  const [loadingRef, setLoadingRef] = useState(false);
-  const [errorMessage, setErrorMessage] = useState("");
+  const [activeTab, setActiveTab] = useState<"library" | "simulations" | "trivia" | "memory">("library");
+  const [isClassroomModalOpen, setIsClassroomModalOpen] = useState(false);
 
   // Clinical memories log state
   const [memories, setMemories] = useState<any[]>([]);
@@ -103,39 +310,6 @@ ${m.physicianReflections || "No reflections logged."}
     }
   };
 
-  const handleLibrarySearch = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!libraryQuery.trim()) return;
-
-    setLoadingRef(true);
-    setErrorMessage("");
-    setRefResult(null);
-
-    try {
-      const response = await fetch("/api/em-reference", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: libraryQuery })
-      });
-      const data = await response.json();
-      if (data.success && data.data) {
-        setRefResult(data.data);
-      } else if (data.data) {
-        // Fallback or partial
-        setRefResult(data.data);
-        if (data.simulated) {
-          console.log("Using local offline backup EM protocols");
-        }
-      } else {
-        setErrorMessage("Could not parse clinical response.");
-      }
-    } catch (err: any) {
-      setErrorMessage("Network error connecting to library backend.");
-    } finally {
-      setLoadingRef(false);
-    }
-  };
-
   return (
     <div className="space-y-6 animate-fade-in" id="learn-main-container">
       {onNavigateToTab && (
@@ -153,42 +327,42 @@ ${m.physicianReflections || "No reflections logged."}
         <div>
           <h1 className="text-xl md:text-2xl font-bold font-display text-slate-900 dark:text-white flex items-center gap-2">
             <BookOpen className="w-5 h-5 text-purple-600" />
-            Learn & Reference Suite
+            EM Reference & Learn Suite
           </h1>
           <p className="text-xs text-slate-400">
-            Hone emergency medicine skills through branched clinical simulators, PubMed reference lookups, and MCQ quizzes.
+            Ask generic evidence-based emergency medicine questions or hone skills with clinical simulators and MCQ quizzes.
           </p>
         </div>
 
         {/* Learn Tabs */}
         <div className="flex bg-slate-100 dark:bg-slate-900 p-1 rounded-xl w-fit">
           <button
-            onClick={() => setActiveTab("simulations")}
-            className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 ${
-              activeTab === "simulations"
+            onClick={() => setActiveTab("library")}
+            className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
+              activeTab === "library"
                 ? "bg-white dark:bg-slate-800 text-purple-600 dark:text-purple-400 shadow-xs"
+                : "text-slate-600 dark:text-slate-400 hover:text-slate-950"
+            }`}
+          >
+            <Library className="w-3.5 h-3.5" />
+            EM Reference
+          </button>
+
+          <button
+            onClick={() => setActiveTab("simulations")}
+            className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
+              activeTab === "simulations"
+                ? "bg-white dark:bg-slate-800 text-indigo-600 dark:text-indigo-400 shadow-xs"
                 : "text-slate-600 dark:text-slate-400 hover:text-slate-950"
             }`}
           >
             <Trophy className="w-3.5 h-3.5" />
             Simulations
           </button>
-          
-          <button
-            onClick={() => setActiveTab("library")}
-            className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 ${
-              activeTab === "library"
-                ? "bg-white dark:bg-slate-800 text-teal-600 dark:text-teal-400 shadow-xs"
-                : "text-slate-600 dark:text-slate-400 hover:text-slate-950"
-            }`}
-          >
-            <Library className="w-3.5 h-3.5" />
-            EM Reference Library
-          </button>
 
           <button
             onClick={() => setActiveTab("trivia")}
-            className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 ${
+            className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
               activeTab === "trivia"
                 ? "bg-white dark:bg-slate-800 text-emerald-600 dark:text-emerald-400 shadow-xs"
                 : "text-slate-600 dark:text-slate-400 hover:text-slate-950"
@@ -200,14 +374,23 @@ ${m.physicianReflections || "No reflections logged."}
 
           <button
             onClick={() => setActiveTab("memory")}
-            className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 ${
+            className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
               activeTab === "memory"
-                ? "bg-white dark:bg-slate-800 text-indigo-600 dark:text-indigo-400 shadow-xs"
+                ? "bg-white dark:bg-slate-800 text-blue-600 dark:text-blue-400 shadow-xs"
                 : "text-slate-600 dark:text-slate-400 hover:text-slate-950"
             }`}
           >
             <FileText className="w-3.5 h-3.5" />
             Clinical Memory Log
+          </button>
+
+          <button
+            onClick={() => setIsClassroomModalOpen(true)}
+            className="px-3 py-1.5 text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg transition-all flex items-center gap-1.5 cursor-pointer shadow-xs ml-1"
+            title="Open Google Classroom Residency Portal"
+          >
+            <GraduationCap className="w-3.5 h-3.5" />
+            <span>Google Classroom</span>
           </button>
         </div>
       </div>
@@ -215,130 +398,17 @@ ${m.physicianReflections || "No reflections logged."}
       {/* Render active sub-view */}
       <div className="transition-all duration-300">
         
+        {/* Sub-view: Standalone EM Reference Chat */}
+        {activeTab === "library" && (
+          <div className="animate-fade-in max-w-5xl mx-auto space-y-4">
+            <EMReferenceChatPanel />
+          </div>
+        )}
+
         {/* Sub-view: Branched clinical simulations */}
         {activeTab === "simulations" && (
           <div className="animate-fade-in space-y-4">
             <SimulationsView />
-          </div>
-        )}
-
-        {/* Sub-view: EM Reference Library */}
-        {activeTab === "library" && (
-          <div className="animate-fade-in max-w-4xl mx-auto space-y-6">
-            
-            {/* Search Card */}
-            <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-sm space-y-4">
-              <div className="space-y-1.5">
-                <span className="text-[10px] bg-indigo-50 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-400 px-2 py-0.5 rounded font-mono font-bold uppercase tracking-wider">
-                  PubMed Grounding Active
-                </span>
-                <h3 className="text-base font-bold font-display text-slate-850 dark:text-white">
-                  Evidence-Based Clinical Guidelines Search
-                </h3>
-                <p className="text-xs text-slate-400">
-                  Ask any EM question regarding pediatric dosages, advanced trauma algorithms (ATLS), or cardiac guidelines.
-                </p>
-              </div>
-
-              <form onSubmit={handleLibrarySearch} className="flex gap-2">
-                <div className="relative flex-1">
-                  <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-                  <input
-                    type="text"
-                    value={libraryQuery}
-                    onChange={(e) => setLibraryQuery(e.target.value)}
-                    placeholder="e.g. 'STEMI thrombolysis criteria', 'PALS epinephrine dosing', 'Anaphylaxis protocol'"
-                    className="w-full pl-10 pr-4 py-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-150 dark:border-slate-850 rounded-xl text-xs text-slate-800 dark:text-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                  />
-                </div>
-                <button
-                  type="submit"
-                  disabled={loadingRef || !libraryQuery.trim()}
-                  className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white text-xs font-bold rounded-xl transition-all shadow-sm shrink-0 flex items-center gap-1"
-                >
-                  {loadingRef ? "Searching..." : "Consult Reference"}
-                </button>
-              </form>
-
-              {/* Sample queries chips */}
-              <div className="flex flex-wrap gap-1.5 items-center pt-1.5">
-                <span className="text-[10px] text-slate-400 uppercase font-mono font-bold mr-1">Quick consults:</span>
-                <button
-                  onClick={() => { setLibraryQuery("Anaphylaxis protocol"); }}
-                  className="text-[11px] bg-slate-50 hover:bg-slate-100 dark:bg-slate-900 dark:hover:bg-slate-800 text-slate-500 px-2.5 py-1 rounded-md border"
-                >
-                  Anaphylaxis
-                </button>
-                <button
-                  onClick={() => { setLibraryQuery("Acute STEMI Management Protocol"); }}
-                  className="text-[11px] bg-slate-50 hover:bg-slate-100 dark:bg-slate-900 dark:hover:bg-slate-800 text-slate-500 px-2.5 py-1 rounded-md border"
-                >
-                  STEMI Reperfusion
-                </button>
-              </div>
-            </div>
-
-            {/* Reference Result Panel */}
-            {loadingRef && (
-              <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-850 rounded-2xl p-12 text-center shadow-xs">
-                <Sparkles className="w-10 h-10 text-indigo-500 animate-spin-slow mx-auto mb-3" />
-                <p className="text-xs font-mono text-slate-500">Retrieving standard emergency guidelines & citations...</p>
-              </div>
-            )}
-
-            {errorMessage && (
-              <div className="bg-rose-50 border border-rose-150 text-rose-700 p-4 rounded-xl text-xs">
-                {errorMessage}
-              </div>
-            )}
-
-            {refResult && (
-              <div className="space-y-4 animate-fade-in">
-                
-                {/* Result Display */}
-                <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-850 rounded-2xl p-6 shadow-sm space-y-4">
-                  <div className="flex items-center gap-2 border-b pb-3">
-                    <Library className="w-5 h-5 text-indigo-600" />
-                    <h4 className="text-sm font-bold text-slate-850 dark:text-white">Guideline Reference Review</h4>
-                  </div>
-
-                  <div className="prose prose-slate dark:prose-invert max-w-none text-xs leading-relaxed font-mono whitespace-pre-wrap text-slate-700 dark:text-slate-350 bg-slate-50 dark:bg-slate-900/40 p-4 rounded-xl border">
-                    {refResult.answer}
-                  </div>
-
-                  {/* Key teaching point card */}
-                  {refResult.keyTeachingPoint && (
-                    <div className="bg-amber-50/50 dark:bg-amber-950/15 border border-amber-200/50 p-4 rounded-xl space-y-1">
-                      <span className="text-[10px] font-extrabold text-amber-700 dark:text-amber-400 font-mono uppercase tracking-wider">
-                        High-Yield Teaching Point
-                      </span>
-                      <p className="text-xs font-semibold text-slate-800 dark:text-slate-200 leading-relaxed font-sans">
-                        {refResult.keyTeachingPoint}
-                      </p>
-                    </div>
-                  )}
-
-                  {/* Citations list */}
-                  {refResult.citations && refResult.citations.length > 0 && (
-                    <div className="pt-2">
-                      <span className="text-[10px] font-bold text-slate-400 uppercase font-mono block mb-1.5">References & Guidelines Cited:</span>
-                      <div className="flex flex-wrap gap-1.5">
-                        {refResult.citations.map((cite, index) => (
-                          <span 
-                            key={index} 
-                            className="bg-slate-50 dark:bg-slate-900 text-slate-500 border text-[10px] font-mono px-2.5 py-0.5 rounded-md"
-                          >
-                            {cite}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-              </div>
-            )}
-
           </div>
         )}
 
@@ -367,285 +437,121 @@ ${m.physicianReflections || "No reflections logged."}
         {/* Sub-view: Clinical Memory Lifelong Log */}
         {activeTab === "memory" && (
           <div className="animate-fade-in max-w-4xl mx-auto space-y-6 text-xs">
-            
-            {/* Header / Intro Card */}
-            <div className={`bg-gradient-to-r ${isDarkMode ? 'from-indigo-900 to-slate-900 border-indigo-500/20' : 'from-indigo-600 to-purple-600 border-transparent'} text-white p-5 md:p-6 rounded-2xl shadow-md space-y-3 relative overflow-hidden border`}>
-              <div className="absolute right-0 bottom-0 opacity-10 pointer-events-none translate-x-4 translate-y-4">
-                <FileText className="w-48 h-48" />
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white dark:bg-slate-900 p-4 border border-slate-200 dark:border-slate-800 rounded-2xl">
+              <div>
+                <h3 className="text-sm font-bold text-slate-800 dark:text-white">Lifelong Clinical Memory Bank</h3>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400">Review anonymized learning pearls auto-captured from resolved ER cases.</p>
               </div>
-              
-              <div className="flex flex-wrap items-center justify-between gap-4">
-                <div className="space-y-1">
-                  <span className={`text-[9px] px-2.5 py-0.5 rounded font-mono font-bold uppercase tracking-widest border ${
-                    isDarkMode 
-                      ? "bg-indigo-500/30 text-indigo-300 border-indigo-500/20" 
-                      : "bg-white/20 text-white border-white/10"
-                  }`}>
-                    🔒 Secure Lifelong Ledger
-                  </span>
-                  <h3 className="text-base md:text-lg font-bold font-display">
-                    My Private Clinical Memory Log
-                  </h3>
-                  <p className={`text-[11px] max-w-xl leading-relaxed ${
-                    isDarkMode ? "text-slate-300" : "text-indigo-100"
-                  }`}>
-                    A private clinical diary logging key pathophysiology pearls, atypical mimics, and personal physician reflections from every emergency patient encountered. Stored locally, fully HIPAA-safe.
-                  </p>
-                </div>
-                {memories.length > 0 && (
-                  <button
-                    onClick={handleExportMemories}
-                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center gap-1.5"
-                  >
-                    <Download className="w-3.5 h-3.5" />
-                    Export Study Portfolio
-                  </button>
-                )}
+
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  placeholder="Search memory pearls..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="px-3 py-1.5 bg-slate-50 dark:bg-slate-800 border rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                />
+                <button
+                  onClick={handleExportMemories}
+                  disabled={memories.length === 0}
+                  className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50"
+                >
+                  <Download className="w-3.5 h-3.5" /> Export Log
+                </button>
               </div>
             </div>
 
-            {/* Metrics Dashboard Row */}
-            {memories.length > 0 && (
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-850 p-4 rounded-xl flex items-center justify-between">
-                  <div className="space-y-0.5">
-                    <span className="text-[10px] font-bold text-slate-400 uppercase font-mono">Clinical Pearls Saved</span>
-                    <h4 className="text-lg font-black text-indigo-600 dark:text-indigo-400 font-mono">{memories.length}</h4>
-                  </div>
-                  <div className="w-10 h-10 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-500 rounded-lg flex items-center justify-center">
-                    <FileText className="w-5 h-5" />
-                  </div>
-                </div>
+            {memories.length === 0 ? (
+              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-8 text-center space-y-2">
+                <FileText className="w-8 h-8 text-slate-400 mx-auto" />
+                <h4 className="text-xs font-bold text-slate-700 dark:text-slate-300">No Clinical Memories Logged Yet</h4>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 max-w-md mx-auto">
+                  When you complete cases in ErMate, high-yield diagnostic and therapeutic learning pearls will be recorded here for lifelong review.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {memories
+                  .filter((m: any) => 
+                    !searchQuery.trim() || 
+                    m.memoryPearl?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                    m.diagnosis?.toLowerCase().includes(searchQuery.toLowerCase())
+                  )
+                  .map((m: any) => (
+                    <div key={m.id} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 space-y-3">
+                      <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-2">
+                        <span className="text-[10px] font-mono text-indigo-600 dark:text-indigo-400 font-bold uppercase">
+                          {m.diagnosis || "Clinical Case"} · Logged {new Date(m.savedAt).toLocaleDateString()}
+                        </span>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => {
+                              setEditingMemId(m.id);
+                              setTempReflections(m.physicianReflections || "");
+                            }}
+                            className="text-[10px] font-bold text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
+                          >
+                            Edit Reflection
+                          </button>
+                          <button
+                            onClick={() => handleDeleteMemory(m.id)}
+                            className="text-[10px] font-bold text-rose-500 hover:text-rose-700"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </div>
 
-                <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-850 p-4 rounded-xl flex items-center justify-between">
-                  <div className="space-y-0.5">
-                    <span className="text-[10px] font-bold text-slate-400 uppercase font-mono">Pediatric Encounters</span>
-                    <h4 className="text-lg font-black text-sky-600 dark:text-sky-400 font-mono">
-                      {memories.filter(m => m.isPediatric).length}
-                    </h4>
-                  </div>
-                  <div className="w-10 h-10 bg-sky-50 dark:bg-sky-950/40 text-sky-500 rounded-lg flex items-center justify-center">
-                    <Sparkles className="w-5 h-5" />
-                  </div>
-                </div>
+                      <div className="bg-slate-50 dark:bg-slate-800/50 p-3 rounded-xl border border-slate-150 dark:border-slate-800 font-sans leading-relaxed text-slate-800 dark:text-slate-200">
+                        <span className="text-[10px] font-bold text-slate-400 font-mono uppercase block mb-1">Clinical Pearl:</span>
+                        "{m.memoryPearl}"
+                      </div>
 
-                <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-850 p-4 rounded-xl flex items-center justify-between">
-                  <div className="space-y-0.5">
-                    <span className="text-[10px] font-bold text-slate-400 uppercase font-mono">Unique Diagnoses</span>
-                    <h4 className="text-lg font-black text-teal-600 dark:text-teal-400 font-mono">
-                      {new Set(memories.map(m => m.diagnosis)).size}
-                    </h4>
-                  </div>
-                  <div className="w-10 h-10 bg-teal-50 dark:bg-teal-950/40 text-teal-500 rounded-lg flex items-center justify-center">
-                    <Library className="w-5 h-5" />
-                  </div>
-                </div>
+                      {editingMemId === m.id ? (
+                        <div className="space-y-2">
+                          <textarea
+                            rows={2}
+                            value={tempReflections}
+                            onChange={(e) => setTempReflections(e.target.value)}
+                            placeholder="Add your personal clinical reflections or follow-up notes..."
+                            className="w-full p-2 bg-slate-50 dark:bg-slate-800 border rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                          />
+                          <div className="flex justify-end gap-2">
+                            <button
+                              onClick={() => setEditingMemId(null)}
+                              className="px-2.5 py-1 text-[11px] font-bold text-slate-500"
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              onClick={() => handleUpdateReflections(m.id)}
+                              className="px-3 py-1 text-[11px] font-bold bg-indigo-600 text-white rounded-lg"
+                            >
+                              Save Notes
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        m.physicianReflections && (
+                          <div className="text-[11px] text-slate-600 dark:text-slate-400 italic">
+                            <span className="font-bold not-italic">Reflections:</span> {m.physicianReflections}
+                          </div>
+                        )
+                      )}
+                    </div>
+                  ))}
               </div>
             )}
-
-            {/* Search and Timeline content */}
-            <div className="space-y-4">
-              
-              {memories.length > 0 && (
-                <div className="relative">
-                  <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-                  <input
-                    type="text"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Search clinical memory ledger (e.g. 'STEMI', 'Ramesh', 'ECG', 'Pain')..."
-                    className="w-full pl-10 pr-4 py-3 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-850 rounded-2xl text-xs text-slate-800 dark:text-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                  />
-                </div>
-              )}
-
-              {/* Memory List Rendering */}
-              {memories.length === 0 ? (
-                <div className="bg-slate-50 dark:bg-slate-900/40 border border-dashed border-slate-200 dark:border-slate-800 rounded-2xl p-10 text-center space-y-4">
-                  <div className="w-12 h-12 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 rounded-full flex items-center justify-center mx-auto">
-                    <Library className="w-6 h-6 animate-pulse" />
-                  </div>
-                  <div className="space-y-1 max-w-md mx-auto">
-                    <h4 className="font-bold text-slate-800 dark:text-white text-xs uppercase tracking-wide">
-                      Clinical Memory Portfolio Empty
-                    </h4>
-                    <p className="text-slate-400 text-[11px] leading-relaxed">
-                      Your Career Clinical Memory Portfolio tracks high-yield learning pearls and personal physician reflections offline-first and private.
-                    </p>
-                  </div>
-                  <div className="bg-white dark:bg-slate-950 p-4 rounded-xl border max-w-sm mx-auto text-left space-y-1.5 text-[10px]">
-                    <span className="font-extrabold text-indigo-700 dark:text-indigo-400 uppercase tracking-wide">💡 How to log a clinical pearl:</span>
-                    <p className="text-slate-500 leading-relaxed">
-                      Go to the <strong>Patient Cases</strong> tab, choose an active patient, click the <strong>🎓 Rounds & Debrief</strong> tab, select any thinking lens to fetch analysis, and click <strong>"Sync to Lifelong Clinical Ledger"</strong>. Or simply hit **Finish & Save Case** to invoke the post-save clinical debriefing nudge.
-                    </p>
-                  </div>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  {memories
-                    .filter((m) => {
-                      if (!searchQuery.trim()) return true;
-                      const q = searchQuery.toLowerCase();
-                      return (
-                        m.patientName?.toLowerCase().includes(q) ||
-                        m.diagnosis?.toLowerCase().includes(q) ||
-                        m.presentingComplaint?.toLowerCase().includes(q) ||
-                        m.memoryPearl?.toLowerCase().includes(q) ||
-                        m.physicianReflections?.toLowerCase().includes(q)
-                      );
-                    })
-                    .map((m) => (
-                      <div
-                        key={m.id}
-                        className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-850 rounded-2xl p-5 space-y-4 transition-all hover:border-slate-350 dark:hover:border-slate-750 flex flex-col justify-between"
-                      >
-                        
-                        {/* Top Metadata row */}
-                        <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-2">
-                          <div className="flex items-center gap-2">
-                            <span className="font-bold text-slate-800 dark:text-slate-100 font-display">
-                              {m.patientName || "Anonymous Patient"}
-                            </span>
-                            <span className="text-slate-300">|</span>
-                            <span className="text-[10px] text-slate-400 font-mono">
-                              {m.age}y {m.gender}
-                            </span>
-                            {m.isPediatric && (
-                              <span className="text-[8.5px] bg-sky-50 dark:bg-sky-950/40 text-sky-700 dark:text-sky-400 border border-sky-150 px-2 py-0.5 rounded font-extrabold uppercase">
-                                Pediatric
-                              </span>
-                            )}
-                          </div>
-                          
-                          <div className="flex items-center gap-2">
-                            <span className="text-[10px] text-slate-400 font-mono">
-                              Logged: {new Date(m.savedAt).toLocaleDateString()} at {new Date(m.savedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                            </span>
-                            {pendingDeleteMemId === m.id ? (
-                              <div className="flex items-center gap-1.5">
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    handleDeleteMemory(m.id);
-                                    setPendingDeleteMemId(null);
-                                  }}
-                                  className="text-[10px] bg-rose-600 hover:bg-rose-700 text-white font-bold px-2 py-0.5 rounded cursor-pointer transition-all"
-                                >
-                                  Confirm Delete
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => setPendingDeleteMemId(null)}
-                                  className="text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-slate-700 px-1.5 py-0.5 rounded cursor-pointer"
-                                >
-                                  Cancel
-                                </button>
-                              </div>
-                            ) : (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setPendingDeleteMemId(m.id);
-                                  setTimeout(() => setPendingDeleteMemId(prev => prev === m.id ? null : prev), 5000);
-                                }}
-                                className="text-slate-400 hover:text-rose-600 transition-all p-1 rounded text-[10px] font-bold cursor-pointer"
-                                title="Delete from log"
-                              >
-                                Delete
-                              </button>
-                            )}
-                          </div>
-                        </div>
-
-                        {/* Mid Row: Diagnosis / complaint details */}
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-[11px] text-slate-500 font-medium">
-                          <div>
-                            <span className="text-[10px] font-bold text-slate-400 block uppercase font-mono">Presenting Complaint</span>
-                            <p className="text-slate-800 dark:text-slate-200 font-sans mt-0.5">{m.presentingComplaint || "Not specified"}</p>
-                          </div>
-                          <div>
-                            <span className="text-[10px] font-bold text-slate-400 block uppercase font-mono">Confirmed / Provisional Diagnosis</span>
-                            <p className="text-indigo-600 dark:text-indigo-400 font-bold mt-0.5">{m.diagnosis || "Stabilized Emergency presentation"}</p>
-                          </div>
-                        </div>
-
-                        {/* Highlighted Clinical Pearl */}
-                        <div className="bg-amber-50/55 dark:bg-amber-950/15 border border-amber-200/50 p-4 rounded-xl space-y-1 shadow-xs">
-                          <div className="flex items-center gap-1.5">
-                            <BookOpen className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
-                            <span className="text-[9px] font-extrabold text-amber-700 dark:text-amber-400 font-mono uppercase tracking-widest">
-                              Logged Clinical Pearl
-                            </span>
-                          </div>
-                          <p className="text-xs font-semibold text-slate-800 dark:text-slate-200 leading-relaxed font-sans select-text">
-                            "{m.memoryPearl}"
-                          </p>
-                        </div>
-
-                        {/* physician reflections space */}
-                        <div className="bg-slate-50 dark:bg-slate-900 border border-slate-200/60 dark:border-slate-800/80 p-4 rounded-xl space-y-2">
-                          <div className="flex items-center justify-between">
-                            <span className="text-[9px] font-extrabold text-slate-400 font-mono uppercase tracking-wide block">
-                              My Clinical reflections
-                            </span>
-                            {editingMemId !== m.id && (
-                              <button
-                                onClick={() => {
-                                  setEditingMemId(m.id);
-                                  setTempReflections(m.physicianReflections || "");
-                                }}
-                                className="text-indigo-600 dark:text-indigo-400 hover:underline text-[10px] font-bold uppercase tracking-wide"
-                              >
-                                Edit reflections
-                              </button>
-                            )}
-                          </div>
-
-                          {editingMemId === m.id ? (
-                            <div className="space-y-2 animate-fade-in">
-                              <textarea
-                                rows={3}
-                                value={tempReflections}
-                                onChange={(e) => setTempReflections(e.target.value)}
-                                placeholder="Reflect on this clinical case: pitfalls, drug dosages, standard procedures, cognitive gaps..."
-                                className="w-full px-3 py-2 bg-white dark:bg-slate-950 border border-slate-200 rounded-xl text-xs text-slate-800 dark:text-white focus:outline-none"
-                              />
-                              <div className="flex justify-end gap-2">
-                                <button
-                                  type="button"
-                                  onClick={() => setEditingMemId(null)}
-                                  className="px-2.5 py-1 border rounded text-[10px] font-bold"
-                                >
-                                  Cancel
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => handleUpdateReflections(m.id)}
-                                  className="px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-[10px] font-bold"
-                                >
-                                  Save reflections
-                                </button>
-                              </div>
-                            </div>
-                          ) : (
-                            <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed italic select-text">
-                              {m.physicianReflections || "No personal clinician reflections recorded yet. Click 'Edit reflections' to log custom pitfalls or key reminders."}
-                            </p>
-                          )}
-                        </div>
-
-                      </div>
-                    ))}
-                </div>
-              )}
-
-            </div>
-
           </div>
         )}
 
       </div>
 
+      {/* Google Classroom Residency Modal */}
+      <GoogleClassroomModal
+        isOpen={isClassroomModalOpen}
+        onClose={() => setIsClassroomModalOpen(false)}
+      />
     </div>
   );
 }

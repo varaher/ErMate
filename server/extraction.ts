@@ -1,5 +1,6 @@
 import { GoogleGenAI } from "@google/genai";
 import { extractFromTranscript, sanitizeExtracted } from "./voiceExtraction.ts";
+import { deidentifyText } from "./deidentify.ts";
 
 // ── Model Config ──────────────────────────────────────────────
 export const MODELS = {
@@ -1274,6 +1275,7 @@ export async function extractClinicalData(
   extracted?: Record<string, any>;
   error?: string;
   isHeuristicFallback?: boolean;
+  phiProtected?: { count: number; phiFound: string[]; details: Record<string, number> };
 }> {
   const cleanTranscript = (transcript || "")
     .replace(/Based on your clinical (?:query|dictation):\s*["']?/gi, "")
@@ -1287,14 +1289,26 @@ export async function extractClinicalData(
     };
   }
 
+  // DPDP Act 2023 On-The-Fly PHI De-identification (Local India Cloud Run)
+  const phiResult = deidentifyText(cleanTranscript);
+  const targetTranscript = phiResult.deidentified;
+  if (phiResult.phiCount > 0) {
+    console.log(`[CaseExtract] DPDP Protection Active: Stripped ${phiResult.phiCount} PHI item(s)`);
+  }
+
   try {
-    const voiceRes = await extractFromTranscript(cleanTranscript);
+    const voiceRes = await extractFromTranscript(targetTranscript);
     if (voiceRes.success && voiceRes.extracted) {
-      const formatted = formatClinicalCaseObject(voiceRes.extracted, cleanTranscript);
+      const formatted = formatClinicalCaseObject(voiceRes.extracted, targetTranscript);
       return {
         success: true,
         data: formatted,
-        extracted: formatted
+        extracted: formatted,
+        phiProtected: {
+          count: phiResult.phiCount,
+          phiFound: phiResult.phiFound,
+          details: phiResult.details
+        }
       };
     }
   } catch (voiceErr: any) {
@@ -1302,17 +1316,22 @@ export async function extractClinicalData(
   }
 
   try {
-    const prompt = buildExtractionPrompt(cleanTranscript);
+    const prompt = buildExtractionPrompt(targetTranscript);
     const raw = await withFallback(prompt, "CaseExtract");
     const parsed = safeParseJSON(raw, "CaseExtract");
 
     if (parsed) {
       const withDefaults = applyExaminationDefaults(parsed);
-      const formatted = formatClinicalCaseObject(withDefaults, cleanTranscript);
+      const formatted = formatClinicalCaseObject(withDefaults, targetTranscript);
       return { 
         success: true, 
         data: formatted, 
-        extracted: formatted 
+        extracted: formatted,
+        phiProtected: {
+          count: phiResult.phiCount,
+          phiFound: phiResult.phiFound,
+          details: phiResult.details
+        }
       };
     }
   } catch (err: any) {
@@ -1320,14 +1339,19 @@ export async function extractClinicalData(
   }
 
   // Guaranteed heuristic fallback so save NEVER fails!
-  const heuristicParsed = parseHeuristicClinicalData(cleanTranscript);
-  const formattedFallback = formatClinicalCaseObject(heuristicParsed, cleanTranscript);
+  const heuristicParsed = parseHeuristicClinicalData(targetTranscript);
+  const formattedFallback = formatClinicalCaseObject(heuristicParsed, targetTranscript);
 
   return {
     success: true,
     data: formattedFallback,
     extracted: formattedFallback,
-    isHeuristicFallback: true
+    isHeuristicFallback: true,
+    phiProtected: {
+      count: phiResult.phiCount,
+      phiFound: phiResult.phiFound,
+      details: phiResult.details
+    }
   };
 }
 

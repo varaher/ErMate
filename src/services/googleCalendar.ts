@@ -21,6 +21,7 @@ export async function authenticateGoogleCalendar(): Promise<string> {
   }
 
   const calendarProvider = new GoogleAuthProvider();
+  calendarProvider.setCustomParameters({ prompt: "select_account" });
   calendarProvider.addScope("https://www.googleapis.com/auth/calendar");
   calendarProvider.addScope("https://www.googleapis.com/auth/calendar.events");
 

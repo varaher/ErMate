@@ -3,7 +3,7 @@ import {
   PlusCircle, Zap, TrendingUp, Clock, ArrowRight, Activity, 
   Calendar, Users, FileText, Heart, ShieldAlert, ChevronRight, Calculator,
   Mic, AlertTriangle, CheckCircle, Edit, Copy, Download, Check, Eye, ChevronDown, ChevronUp, Briefcase,
-  Camera, Building, Trash2, UserPlus, ShieldCheck, Share2, Lightbulb, BookOpen, MessageSquare
+  Camera, Building, Trash2, UserPlus, ShieldCheck, Share2, Lightbulb, BookOpen, MessageSquare, GraduationCap
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { ClinicalCase, UserProfile, HandoverRecord, TeamMember } from "../types";
@@ -12,6 +12,7 @@ import { triggerPrintWithTip } from "../utils/printWithTip";
 import { doc, updateDoc } from "firebase/firestore";
 import { db, auth } from "../firebase";
 import GoogleCalendarModal from "./GoogleCalendarModal";
+import GoogleClassroomModal from "./GoogleClassroomModal";
 import MortalityAuditModal from "./MortalityAuditModal";
 
 interface DashboardViewProps {
@@ -159,8 +160,9 @@ export default function DashboardView({
   const [isHodPanelExpanded, setIsHodPanelExpanded] = useState<boolean>(false);
   const [isApprovalsHubExpanded, setIsApprovalsHubExpanded] = useState<boolean>(true);
 
-  // Google Calendar Modal State
+  // Google Calendar & Classroom Modal States
   const [isCalendarModalOpen, setIsCalendarModalOpen] = useState<boolean>(false);
+  const [isClassroomModalOpen, setIsClassroomModalOpen] = useState<boolean>(false);
 
   // Mortality Audit Modal State
   const [isMortalityModalOpen, setIsMortalityModalOpen] = useState<boolean>(false);
@@ -1068,36 +1070,12 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
                 Shift Handover
               </h3>
               <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
-                Start a new handover or resume a previous session. AI synthesis constructs clean SBAR handover cards.
+                Start a new handover, build AI SBAR cards, or generate printable PDF/Word handover reports for active cases.
               </p>
             </div>
 
             <div className="mt-4 flex items-center justify-between text-xs font-bold text-indigo-600 dark:text-indigo-400 border-t border-slate-100 dark:border-slate-800/60 pt-3">
-              <span>Start Handover</span>
-              <ChevronRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
-            </div>
-          </div>
-
-          {/* Card 5: Handover Sheet */}
-          <div 
-            onClick={onStartHandoverSheet}
-            className="group relative bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 hover:border-blue-500 dark:hover:border-blue-600 cursor-pointer shadow-xs hover:shadow-md transition-all duration-200 flex flex-col justify-between h-48"
-          >
-            <div className="absolute right-4 top-4 p-2 bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 rounded-xl group-hover:scale-110 transition-transform">
-              <FileText className="w-5.5 h-5.5" />
-            </div>
-            
-            <div className="space-y-1.5 max-w-[85%]">
-              <h3 className="text-sm font-extrabold text-slate-900 dark:text-white flex items-center gap-1.5">
-                Handover Sheet
-              </h3>
-              <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
-                Review and generate a printable PDF or Word shift handover report for active/triage cases in your queue.
-              </p>
-            </div>
-
-            <div className="mt-4 flex items-center justify-between text-xs font-bold text-blue-600 dark:text-blue-400 border-t border-slate-100 dark:border-slate-800/60 pt-3">
-              <span>View Handover Sheet</span>
+              <span>Start Handover & Sheets</span>
               <ChevronRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
             </div>
           </div>
@@ -1262,6 +1240,14 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
               >
                 <Calendar className="w-3.5 h-3.5 text-white" />
                 Sync Google Calendar
+              </button>
+              <button
+                onClick={() => setIsClassroomModalOpen(true)}
+                className="flex-1 md:flex-none px-3.5 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-1.5 shadow-sm cursor-pointer"
+                title="Manage residency courses, coursework assignments, and announcements on Google Classroom"
+              >
+                <GraduationCap className="w-3.5 h-3.5 text-white" />
+                Google Classroom
               </button>
               <button
                 onClick={() => onNavigateToTab("handover")}
@@ -2576,6 +2562,14 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
         onClose={() => setIsCalendarModalOpen(false)}
         defaultEventType="shift"
         hospitalName={profile.hospital || "Emergency Department"}
+      />
+
+      {/* Google Classroom Portal Modal */}
+      <GoogleClassroomModal
+        isOpen={isClassroomModalOpen}
+        onClose={() => setIsClassroomModalOpen(false)}
+        hospitalName={profile.hospital || "Emergency Department"}
+        userRole={profile.role}
       />
 
       {/* Mortality & Morbidity Audit Modal */}

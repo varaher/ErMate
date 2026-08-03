@@ -71,16 +71,26 @@ export function useAppUpdate() {
   return { updateAvailable, applyUpdate };
 }
 
-export function HeaderUpdateButton() {
+export function HeaderUpdateButton({ hasUpdate, onApplyUpdate }: { hasUpdate?: boolean; onApplyUpdate?: () => void }) {
   const { updateAvailable, applyUpdate } = useAppUpdate();
 
-  if (!updateAvailable) return null;
+  const isReady = updateAvailable || hasUpdate;
+
+  if (!isReady) return null;
+
+  const handleAction = () => {
+    if (onApplyUpdate) {
+      onApplyUpdate();
+    } else {
+      applyUpdate();
+    }
+  };
 
   return (
     <button
       type="button"
-      onClick={applyUpdate}
-      className="animate-pulse bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-extrabold text-xs px-2.5 py-1.5 rounded-lg flex items-center gap-1.5 shadow-md shadow-emerald-500/20 border border-emerald-400/40 transition-all cursor-pointer shrink-0 z-50"
+      onClick={handleAction}
+      className="animate-pulse bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 active:from-emerald-800 active:to-teal-800 text-white font-extrabold text-xs px-2.5 py-1 rounded-lg flex items-center gap-1.5 shadow-md shadow-emerald-500/20 border border-emerald-400/40 transition-all cursor-pointer shrink-0 z-50"
       title="A new ErMate clinical update is ready! Click to reload and apply now."
     >
       <RefreshCw className="w-3.5 h-3.5 animate-spin" style={{ animationDuration: '3s' }} />

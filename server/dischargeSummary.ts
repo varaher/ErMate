@@ -8,6 +8,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
 import { GoogleGenAI } from '@google/genai';
 import { preprocessEMR, reverseEMREntries } from './handover.ts';
+import { deidentifyText } from './deidentify.ts';
 
 // ── Lazy Client Initializers (to prevent missing key crashes at startup) ──
 let anthropicClient: Anthropic | null = null;
@@ -458,6 +459,7 @@ export async function generateDischargeSummary(
 ): Promise<{
   success: boolean;
   summary?: Record<string, any>;
+  phiProtected?: { count: number; phiFound: string[]; details: Record<string, number> };
   error?: string;
 }> {
   if (!rawText || !rawText.trim()) {
@@ -467,9 +469,21 @@ export async function generateDischargeSummary(
     };
   }
 
-  const cleaned = preprocessEMR(rawText);
+  // DPDP Act 2023 On-The-Fly PHI De-identification (Local India Cloud Run)
+  const phiResult = deidentifyText(rawText);
+  if (phiResult.phiCount > 0) {
+    console.log(`[Discharge] DPDP Protection Active: Stripped ${phiResult.phiCount} PHI item(s)`);
+  }
+
+  const cleaned = preprocessEMR(phiResult.deidentified);
   const reversed = reverseEMREntries(cleaned);
-  const prompt = DISCHARGE_PROMPT.replace('\${processedText}', reversed);
+  const prompt = DISCHARGE_PROMPT.replace('${processedText}', reversed);
+
+  const phiProtected = {
+    count: phiResult.phiCount,
+    phiFound: phiResult.phiFound,
+    details: phiResult.details
+  };
 
   // 1. Try Anthropic (Claude Sonnet) — Primary AI engine for Discharge Summaries
   const anthropic = getAnthropic();
@@ -485,7 +499,7 @@ export async function generateDischargeSummary(
 
       const raw = ((msg.content[0] as any).text as string);
       const parsed = cleanAndParseJSON(raw);
-      return { success: true, summary: parsed };
+      return { success: true, summary: parsed, phiProtected };
     } catch (err: any) {
       console.warn('[Discharge] Claude Sonnet attempt failed, falling back:', err?.message || err);
       if (err?.status === 400 || err?.status === 401 || err?.status === 402 || String(err?.message || "").includes("credit balance")) {
@@ -509,7 +523,7 @@ export async function generateDischargeSummary(
       });
 
       const parsed = cleanAndParseJSON(res.choices[0].message.content || '{}');
-      return { success: true, summary: parsed };
+      return { success: true, summary: parsed, phiProtected };
     } catch (err: any) {
       console.warn('[Discharge] OpenAI GPT-4o attempt failed:', err?.message || err);
     }
@@ -531,7 +545,7 @@ export async function generateDischargeSummary(
       });
 
       const parsed = cleanAndParseJSON(res.text || '{}');
-      return { success: true, summary: parsed };
+      return { success: true, summary: parsed, phiProtected };
     } catch (err: any) {
       console.warn('[Discharge] Gemini fallback failed:', err?.message || err);
     }
@@ -539,6 +553,6 @@ export async function generateDischargeSummary(
 
   // 4. Heuristic Fallback
   console.warn('[Discharge] AI models failed or no API keys available. Using heuristic fallback.');
-  const fallbackSummary = buildHeuristicDischargeSummary(rawText);
-  return { success: true, summary: fallbackSummary };
+  const fallbackSummary = buildHeuristicDischargeSummary(phiResult.deidentified);
+  return { success: true, summary: fallbackSummary, phiProtected };
 }

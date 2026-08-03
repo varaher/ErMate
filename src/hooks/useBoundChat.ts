@@ -14,9 +14,9 @@ import {
 import { db, auth } from '../firebase';
 
 export interface ChatContext {
-  type: 'case' | 'handover' | 'discharge' | 'mortality_audit' | 'general';
-  id: string; // parent record ID
-  data: Record<string, any>; // full record data
+  type: 'case' | 'handover' | 'discharge' | 'mortality_audit' | 'reference' | 'general';
+  id: string; // parent record ID or user reference ID
+  data: Record<string, any>; // full record data or reference state
   canEdit?: boolean; // can update parent?
   onRecordUpdated?: (updatedData: Record<string, any>) => void;
 }
@@ -317,6 +317,14 @@ Date of Death: ${d.patientInfo?.dateDeath || d.dateDeath || 'N/A'}
 Primary Cause: ${d.causeOfDeath?.underlying || d.causeOfDeath || 'Under audit'}
 
 Ask questions regarding physiological timeline, ACLS/resuscitation audit, antecedent causes, or clinical pearls for rounds.`;
+      break;
+
+    case 'reference':
+      welcomeText = `📚 **ErMate EM Reference** — Evidence-Based Emergency Medicine Handbook
+
+Ask any clinical, pharmacological, or procedural emergency question (e.g., *"How do I use Ketofol in AF?"*, *"RSI drug doses paediatric"*). 
+
+Responses are generated directly using Claude Sonnet, cited with Tintinalli's, Rosen's, UpToDate, and WikEM guidelines.`;
       break;
 
     default:
