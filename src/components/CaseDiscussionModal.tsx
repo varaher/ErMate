@@ -296,7 +296,7 @@ ${isDeceased ? "⚠️ **Mortality Case Detected**: Ask for **Cause of Death Ana
 - Consider secondary systemic etiologies (such as Amyloidosis, Endocrine disorders, Nephrotic state).
 
 ### 📚 Reference Citations
-* **Tintinalli's Emergency Medicine**: Chapter 195: Renal and Endocrine Emergencies.
+* **Tintinalli's Emergency Medicine, 9th Ed**: Renal and Endocrine Emergencies
 * **Harrison's Principles of Internal Medicine**: Section 301: Plasma Cell Dyscrasias and Amyloidosis.
 * **UpToDate**: Approach to suspected secondary amyloidosis in complex medical patients.`,
         timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })

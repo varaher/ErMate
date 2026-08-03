@@ -794,16 +794,17 @@ export default function App() {
       const filteredCases = loadedCases.filter(c => {
         if (!c || !c.id) return false;
 
-        // Always reflect cases created/edited by the same user account across devices
-        if (auth.currentUser && (c.doctorEmail === auth.currentUser.email || c.lastEditedBy === auth.currentUser.uid || c.doctorEmail === profile.email)) {
-          return true;
-        }
+        // Exact account match (UID or Email) OR exact hospital name match (no fuzzy substring matching)
+        const currentEmail = (profile.email || auth.currentUser?.email || "").trim().toLowerCase();
+        const currentUid = auth.currentUser?.uid;
+        const isMyCase = Boolean(
+          (currentUid && (c.lastEditedBy === currentUid || (c as any).createdByUid === currentUid)) ||
+          (currentEmail && c.doctorEmail && c.doctorEmail.trim().toLowerCase() === currentEmail)
+        );
+        if (isMyCase) return true;
 
-        // Robust hospital string matching
-        const caseHospitalNorm = (c.hospital || "Varah Group Emergency Care").replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
-        const userHospitalNorm = (profile.hospital || "Varah Group Emergency Care").replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
-
-        return !profile.hospital || caseHospitalNorm === userHospitalNorm || caseHospitalNorm.includes(userHospitalNorm) || userHospitalNorm.includes(caseHospitalNorm);
+        const caseHospitalLower = (c.hospital || "Varah Group Emergency Care").trim().toLowerCase();
+        return caseHospitalLower === userHospitalLower;
       });
 
       // If this specific hospital has no cases yet, seed customized defaults so the dashboard looks great!
@@ -995,7 +996,9 @@ export default function App() {
       
       const filteredHandovers = loadedHandovers.filter(h => {
         const handoverHospital = (h.hospital || "Varah Group Emergency Care").trim().toLowerCase();
-        return handoverHospital === userHospitalLower;
+        const currentEmail = (profile.email || auth.currentUser?.email || "").trim().toLowerCase();
+        const senderEmail = (h.senderEmail || "").trim().toLowerCase();
+        return handoverHospital === userHospitalLower || (currentEmail && senderEmail === currentEmail);
       });
 
       // If there are no handovers in Firestore for this clinic, seed the defaults!
@@ -1078,28 +1081,35 @@ export default function App() {
       const filteredQuickPaste = loadedQuickPaste.filter(item => {
         const itemHospital = (item.hospital || "Varah Group Emergency Care").trim().toLowerCase();
         const itemEmail = (item.createdByEmail || "").trim().toLowerCase();
-        const currentEmail = (profile.email || "").trim().toLowerCase();
+        const currentEmail = (profile.email || auth.currentUser?.email || "").trim().toLowerCase();
         return itemHospital === userHospitalLower || (currentEmail && itemEmail === currentEmail);
       });
 
-      if (filteredQuickPaste.length > 0) {
-        filteredQuickPaste.sort((a, b) => (b.updatedAt || b.id || "").localeCompare(a.updatedAt || a.id || ""));
-        setQuickPasteList(filteredQuickPaste);
-        localStorage.setItem("ermate_quick_paste_list", JSON.stringify(filteredQuickPaste));
-      } else {
-        // Seed initial or local items to Firestore so all devices (desktop & mobile) are guaranteed to sync
+      filteredQuickPaste.sort((a, b) => (b.updatedAt || b.id || "").localeCompare(a.updatedAt || a.id || ""));
+      setQuickPasteList(filteredQuickPaste);
+      localStorage.setItem("ermate_quick_paste_list", JSON.stringify(filteredQuickPaste));
+
+      if (filteredQuickPaste.length === 0 && !profileRef.current?.seededQuickPaste) {
+        // Seed initial or local items to Firestore if first time
         const currentItems = quickPasteListRef.current.length > 0 ? quickPasteListRef.current : DEFAULT_QUICK_PASTE_PATIENTS;
         for (const item of currentItems) {
           const itemToSave: QuickPastePatient = {
             ...item,
             hospital: item.hospital || profile.hospital || "Varah Group Emergency Care",
-            createdByEmail: item.createdByEmail || profile.email,
+            createdByEmail: item.createdByEmail || profile.email || auth.currentUser?.email || undefined,
             updatedAt: new Date().toISOString()
           };
           try {
             await setDoc(doc(db, "quick_paste_patients", itemToSave.id), itemToSave);
           } catch (err) {
             console.error("Error seeding quick paste patient to Firestore:", err);
+          }
+        }
+        if (auth.currentUser) {
+          try {
+            await updateDoc(doc(db, "users", auth.currentUser.uid), { seededQuickPaste: true });
+          } catch (e) {
+            console.warn("Error updating seededQuickPaste:", e);
           }
         }
       }

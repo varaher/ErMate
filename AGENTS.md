@@ -45,9 +45,9 @@
 
 ## Implementation Log & Recent Changes
 
-### [2026-08-02] — DPDP Act 2023 Server-Side De-identification Engine & System Rules Update
-- **Engine Created (`/server/deidentify.ts`)**: Built on-the-fly local de-identification for Cloud Run (`asia-south1`).
-- **Relative Date Timeline Conversion**: Absolute calendar dates converted to `[Day 1]`, `[Day 2]` relative labels.
-- **Doctor Name Local Re-injection**: Treating physician name populated locally from user profile.
-- **UI Protection Shield**: Added `phiProtected` toast notification banner in `HandoverView.tsx` and detailed Privacy Architecture breakdown in `ProfileSettingsView.tsx`.
-- **Locked System Conventions Updated**: Updated `AGENTS.md` and `README.md` with route-specific AI model matrix, temperature rules, and DPDP compliance standards.
+### [2026-08-03] — Resolved System Issues & Architectural Enhancements
+- **Cross-Device Sync Data Isolation**: Updated Firestore real-time `onSnapshot` query filters in `App.tsx` for `cases`, `handovers`, and `quick_paste_patients`. Synchronization relies strictly on exact `auth.currentUser.uid`, normalized email identity, or exact hospital string matching — completely removing fuzzy substring/partial matching to eliminate any risk of cross-hospital data leakage.
+- **Firestore Security Rules**: Security rules in `firestore.rules` deployed and verified with strict role-based access control (RBAC), restricting administrative operations to HODs and preventing unauthorized user role modifications.
+- **Universal Portrait PDF Orientation**: Standardized all handover PDF generation, Word exports, and print worksheets to `A4 portrait` with 10mm margins across `HandoverView.tsx` and `ProfileSettingsView.tsx`.
+- **Multi-Patient Paste Splitting Engine**: Implemented `splitMultiPatientPasteText()` in `HandoverView.tsx` to automatically parse and split bulk EMR notes containing multiple patient records (by dividers, Bed headers, or Patient labels) into individual structured Quick Paste handover cards.
+- **Chapter Topic Citation Standard**: Enforced mandatory Chapter TOPIC Name citations (e.g., *Tintinalli's Emergency Medicine, 9th Ed — Cardiac Rhythm Disturbances*) across `server.ts`, `VoiceScribeChatView.tsx`, and `CaseDiscussionModal.tsx`, forbidding bare chapter numbers.

@@ -225,7 +225,7 @@ export default function VoiceScribeChatView({
       const aiMsg: Message = {
         id: "ai-fallback-" + Date.now(),
         sender: "ai",
-        text: `Based on your clinical query: "${userText}", here is the general clinical guideline summary:\n\nEnsure immediate resuscitation measures, check airway patency, secure large-bore IV access, and continuous cardiac monitoring.\n\n### 📚 Reference Citations\n* **Tintinalli's Emergency Medicine**: Chapter 22: Cardiac Rhythm Disturbances.\n* **Rosen's Emergency Medicine**: Chapter 12: Airway and Resuscitation protocols.\n* **Harrison's Principles of Internal Medicine**: Section 5: Cardinal Manifestations of Disease.\n* **WikEM**: Resuscitation and emergency department therapies.\n* **UpToDate**: Evidence-based management of acute emergency department presentations.`,
+        text: `Based on your clinical query: "${userText}", here is the general clinical guideline summary:\n\nEnsure immediate resuscitation measures, check airway patency, secure large-bore IV access, and continuous cardiac monitoring.\n\n### 📚 Reference Citations\n* **Tintinalli's Emergency Medicine, 9th Ed**: Cardiac Rhythm Disturbances (Tachyarrhythmias & Bradyarrhythmias)\n* **Rosen's Emergency Medicine, 10th Ed**: Airway and Resuscitation Protocols\n* **Harrison's Principles of Internal Medicine**: Cardinal Manifestations of Disease\n* **WikEM**: Resuscitation and Emergency Department Therapies\n* **UpToDate**: Evidence-Based Management of Acute ED Presentations`,
         timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
       };
       setMessages(prev => [...prev, aiMsg]);
@@ -282,7 +282,7 @@ export default function VoiceScribeChatView({
       const aiMsg: Message = {
         id: "ai-fallback-" + Date.now(),
         sender: "ai",
-        text: `Based on your clinical dictation: "${transcriptText}", here is the general clinical guideline summary:\n\nEnsure immediate resuscitation measures, check airway patency, secure large-bore IV access, and continuous cardiac monitoring.\n\n### 📚 Reference Citations\n* **Tintinalli's Emergency Medicine**: Chapter 22: Cardiac Rhythm Disturbances.\n* **Rosen's Emergency Medicine**: Chapter 12: Airway and Resuscitation protocols.\n* **Harrison's Principles of Internal Medicine**: Section 5: Cardinal Manifestations of Disease.\n* **WikEM**: Resuscitation and emergency department therapies.\n* **UpToDate**: Evidence-based management of acute emergency department presentations.`,
+        text: `Based on your clinical dictation: "${transcriptText}", here is the general clinical guideline summary:\n\nEnsure immediate resuscitation measures, check airway patency, secure large-bore IV access, and continuous cardiac monitoring.\n\n### 📚 Reference Citations\n* **Tintinalli's Emergency Medicine, 9th Ed**: Cardiac Rhythm Disturbances (Tachyarrhythmias & Bradyarrhythmias)\n* **Rosen's Emergency Medicine, 10th Ed**: Airway and Resuscitation Protocols\n* **Harrison's Principles of Internal Medicine**: Cardinal Manifestations of Disease\n* **WikEM**: Resuscitation and Emergency Department Therapies\n* **UpToDate**: Evidence-Based Management of Acute ED Presentations`,
         timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
       };
       setMessages(prev => [...prev, aiMsg]);

@@ -289,6 +289,24 @@ export function parseHandoverEntries(rawText: string | undefined | null): string
   return [rawText.trim()];
 }
 
+// Multi-patient paste splitter: detects multiple patients in bulk EMR text (by dividers, Bed headers, Pt headers)
+export function splitMultiPatientPasteText(rawText: string): string[] {
+  if (!rawText || typeof rawText !== "string") return [];
+  const trimmed = rawText.trim();
+  if (!trimmed) return [];
+
+  // 1. Explicit multi-patient dividers like ===, ---, ***, ###
+  const dividerSplit = trimmed.split(/\n\s*[-=_#*]{3,}\s*\n/).map(s => s.trim()).filter(s => s.length > 20);
+  if (dividerSplit.length > 1) return dividerSplit;
+
+  // 2. Pattern splitting on Bed X / Patient X / Pt X / UHID: / Patient Name:
+  const headerBoundary = /\n(?=(?:Bed\s*#?\s*:?\s*\d+|Patient\s*#?\s*:?\s*\d+|Pt\s*#?\s*:?\s*\d+|UHID\s*[:=-]|\bPatient\s*Name\s*[:=-]|\b[A-Z][a-z]+\s*,\s*\d{1,3}\s*[/-]?\s*[MFmf]\b))/i;
+  const headerSplit = trimmed.split(headerBoundary).map(s => s.trim()).filter(s => s.length > 20);
+  if (headerSplit.length > 1) return headerSplit;
+
+  return [trimmed];
+}
+
 // Auto-detect columns: 1-3 entries -> 1 col, 4-6 entries -> 2 cols, 7+ entries -> 3 cols
 // Maintains chronological order: left to right, top to bottom
 export function splitEntriesIntoColumns(entries: string[]): string[][] {
@@ -1842,8 +1860,8 @@ function extractLatestVitalsWithTime(
         <![endif]-->
         <style>
           @page {
-            size: landscape;
-            margin: 0.5in;
+            size: A4 portrait;
+            margin: 10mm 12mm;
           }
           body {
             font-family: Arial, sans-serif;
@@ -2450,8 +2468,8 @@ function extractLatestVitalsWithTime(
           <![endif]-->
           <style>
             @page {
-              size: landscape;
-              margin: 0.5in;
+              size: A4 portrait;
+              margin: 10mm 12mm;
             }
             body {
               font-family: Arial, sans-serif;
@@ -2557,8 +2575,8 @@ function extractLatestVitalsWithTime(
               font-family: Arial, sans-serif !important;
             }
             @page {
-              size: landscape;
-              margin: 0.5cm;
+              size: A4 portrait;
+              margin: 10mm 12mm;
             }
           }
         ` }} />

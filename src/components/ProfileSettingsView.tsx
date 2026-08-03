@@ -2340,7 +2340,7 @@ export default function ProfileSettingsView({
               </div>
               <div className="flex items-start gap-2 text-slate-650">
                 <CheckCircle className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
-                <span>Consolidated handover sheets ready for landscape PDF print.</span>
+                <span>Consolidated handover sheets ready for portrait PDF print.</span>
               </div>
             </div>
           </div>
