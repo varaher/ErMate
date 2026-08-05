@@ -75,10 +75,14 @@ ErMate enforces strict per-route AI model assignments and dedicated fallback cas
 | Path | Purpose |
 | :--- | :--- |
 | `/server/deidentify.ts` | On-the-fly local PHI stripping engine & date-to-relative-timeline converter |
+| `/server/clinicalRanges.ts` | Deterministic adult ED reference ranges & zero-hallucination abnormal flagger |
+| `/server/alertCompiler.ts` | Rule-based post-synthesis critical alert compiler (Section 0) |
+| `/server/crossConsultParser.ts` | Regex-first cross-consultation extractor & duration-conditioned section renderer |
 | `/server/handover.ts` | 5-Step Handover extraction pipeline |
 | `/server/dischargeSummary.ts` | Auto-Discharge summary synthesizer |
 | `/server/extraction.ts` | Voice dictation & clinical case parser |
 | `/server/mortalityAudit.ts` | M&M Audit generator & DOCX builder |
+| `/src/components/CaseSheetPrintView.tsx` | Official read-only, print-formatted Case Sheet document view |
 | `/src/components/HandoverView.tsx` | Interactive Handover UI & PHI Protection Toast |
 | `/src/components/ProfileSettingsView.tsx` | Settings, Privacy Policy & DPDP Shield Architecture Overview |
 

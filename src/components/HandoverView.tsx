@@ -12,7 +12,7 @@ import { ClinicalCase, UserProfile, HandoverRecord, QuickPastePatient, Investiga
 import { HandoverCard } from "./HandoverCard";
 import { BoundChatModal } from "./BoundChatModal";
 import { ChatContext } from "../hooks/useBoundChat";
-import { db } from "../firebase";
+import { db, auth } from "../firebase";
 import { doc, setDoc, deleteDoc, getDoc } from "firebase/firestore";
 import { captureFeedbackCorrection } from "../services/learningClient";
 
@@ -338,6 +338,8 @@ export function MultiColumnEntriesView({
   text: string | undefined | null; 
   fontFamily?: string;
 }) {
+  const [isExpanded, setIsExpanded] = useState(false);
+
   if (!text || !text.trim()) {
     return <span className="text-slate-400 italic text-xs">Nil logged</span>;
   }
@@ -345,6 +347,7 @@ export function MultiColumnEntriesView({
   const entries = parseHandoverEntries(text);
   if (entries.length === 0) return null;
 
+  const isLong = text.length > 280 || entries.length > 3;
   const columns = splitEntriesIntoColumns(entries);
   const numCols = columns.length;
 
@@ -353,16 +356,27 @@ export function MultiColumnEntriesView({
   if (numCols === 3) gridColsClass = "grid-cols-1 md:grid-cols-3 print:grid-cols-3";
 
   return (
-    <div className={`grid ${gridColsClass} gap-2 md:gap-3 divide-y md:divide-y-0 md:divide-x divide-slate-200 dark:divide-slate-800`}>
-      {columns.map((colEntries, cIdx) => (
-        <div key={cIdx} className={`space-y-1.5 ${cIdx > 0 ? "md:pl-2.5 pt-2 md:pt-0" : ""}`}>
-          {colEntries.map((entry, eIdx) => (
-            <div key={eIdx} className={`text-xs ${fontFamily} leading-relaxed text-slate-900 dark:text-slate-100 bg-white/80 dark:bg-slate-900/50 p-2 rounded-md border border-slate-200/80 dark:border-slate-800/80 shadow-2xs`}>
-              <HighlightedHandoverText text={entry} />
-            </div>
-          ))}
-        </div>
-      ))}
+    <div className="relative">
+      <div className={`grid ${gridColsClass} gap-2 md:gap-3 divide-y md:divide-y-0 md:divide-x divide-slate-200 dark:divide-slate-800 ${!isExpanded && isLong ? "max-h-40 overflow-hidden relative" : ""}`}>
+        {columns.map((colEntries, cIdx) => (
+          <div key={cIdx} className={`space-y-1.5 ${cIdx > 0 ? "md:pl-2.5 pt-2 md:pt-0" : ""}`}>
+            {colEntries.map((entry, eIdx) => (
+              <div key={eIdx} className={`text-xs ${fontFamily} leading-relaxed text-slate-900 dark:text-slate-100 bg-white/80 dark:bg-slate-900/50 p-2 rounded-md border border-slate-200/80 dark:border-slate-800/80 shadow-2xs`}>
+                <HighlightedHandoverText text={entry} />
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+      {isLong && (
+        <button
+          type="button"
+          onClick={() => setIsExpanded(!isExpanded)}
+          className="no-print mt-1.5 text-[10.5px] font-mono font-bold text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1 cursor-pointer"
+        >
+          {isExpanded ? "▲ Collapse to 1-Page Summary View" : `▼ Show Full Chronological Details (${entries.length} entries)`}
+        </button>
+      )}
     </div>
   );
 }
@@ -436,9 +450,7 @@ export default function HandoverView({
     ];
   });
 
-  const quickPasteList = (propQuickPasteList !== undefined && propQuickPasteList.length > 0) 
-    ? propQuickPasteList 
-    : (localQuickPasteList.length > 0 ? localQuickPasteList : (propQuickPasteList || []));
+  const quickPasteList = propQuickPasteList !== undefined ? propQuickPasteList : localQuickPasteList;
   const setQuickPasteList = propSetQuickPasteList !== undefined ? propSetQuickPasteList : setLocalQuickPasteList;
 
   // State for EMR Quick Paste selection
@@ -2018,6 +2030,45 @@ function extractLatestVitalsWithTime(
         };
 
         setQuickPasteList(prev => [...prev, newPatient]);
+        setSelectedQuickPasteIds(prev => Array.from(new Set([...prev, newPatient.id])));
+
+        const newTableRow: HandoverTableRow = {
+          id: newPatient.id,
+          bed: handoverCardData.patientLabel?.bed || "N/A",
+          name: newPatient.name,
+          ageGender: newPatient.ageGender || "",
+          erNo: handoverCardData.patientLabel?.erNumber || "",
+          doctor: handoverCardData.patientLabel?.admittingConsultant || handoverCardData.patientLabel?.treatingERPhysician || "",
+          bystander: "",
+          stayDuration: handoverCardData.patientLabel?.inERSince || "",
+          vitals: handoverCardData.vitalsNow || newPatient.vitals || "",
+          complaints: handoverCardData.presentingComplaint || "",
+          history: handoverCardData.pmh || "",
+          assessment: handoverCardData.diagnosis || "",
+          planDone: Array.isArray(handoverCardData.done) ? handoverCardData.done.join('\n') : (handoverCardData.done || ""),
+          planToBeDone: Array.isArray(handoverCardData.toBeDone) ? handoverCardData.toBeDone.join('\n') : (handoverCardData.toBeDone || ""),
+          alerts: handoverCardData.alertRow || handoverCardData.alertBanner?.summary || "",
+          chronologicalNotes: handoverCardData.story || newPatient.rawNotes || ""
+        };
+
+        setEditableRows(prev => {
+          const exists = prev.some(r => r.id === newTableRow.id);
+          if (exists) return prev.map(r => r.id === newTableRow.id ? { ...r, ...newTableRow } : r);
+          return [newTableRow, ...prev];
+        });
+
+        if (setHandovers) {
+          const newHandoverRecord: HandoverRecord = {
+            id: "H-" + Math.floor(1000 + Math.random() * 9000),
+            senderName: profile?.name ? (profile.name.startsWith("Dr") ? profile.name : `Dr. ${profile.name}`) : "EM Resident",
+            senderEmail: profile?.email || "",
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + " | Today",
+            caseCount: 1,
+            patientsText: `${newPatient.name} (${newPatient.triage ? newPatient.triage.split(" ")[0] : "P2"} - ${newPatient.presentingComplaint || newPatient.vitals})`,
+            hospital: profile?.hospital || "Varah Group Emergency Care"
+          };
+          setHandovers(prev => [newHandoverRecord, ...prev]);
+        }
 
         // 3. Create Bot Response Message with parsedPatient reference
         const botMsg: ScribeChatMessage = {
@@ -2097,6 +2148,19 @@ function extractLatestVitalsWithTime(
       };
 
       setQuickPasteList(prev => [...prev, fallbackPatient]);
+
+      if (setHandovers) {
+        const fallbackHandoverRecord: HandoverRecord = {
+          id: "H-" + Math.floor(1000 + Math.random() * 9000),
+          senderName: profile?.name ? (profile.name.startsWith("Dr") ? profile.name : `Dr. ${profile.name}`) : "EM Resident",
+          senderEmail: profile?.email || "",
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + " | Today",
+          caseCount: 1,
+          patientsText: `${fallbackPatient.name} (${fallbackPatient.triage ? fallbackPatient.triage.split(" ")[0] : "P2"} - ${fallbackPatient.presentingComplaint || fallbackPatient.vitals})`,
+          hospital: profile?.hospital || "Varah Group Emergency Care"
+        };
+        setHandovers(prev => [fallbackHandoverRecord, ...prev]);
+      }
 
       const botErrorMsg: ScribeChatMessage = {
         id: `bot-${Date.now()}`,
@@ -2204,6 +2268,19 @@ function extractLatestVitalsWithTime(
         structuredSBAR: structured
       };
       setQuickPasteList(prev => [...prev, newItem]);
+
+      if (setHandovers) {
+        const manualHandoverRecord: HandoverRecord = {
+          id: "H-" + Math.floor(1000 + Math.random() * 9000),
+          senderName: profile?.name ? (profile.name.startsWith("Dr") ? profile.name : `Dr. ${profile.name}`) : "EM Resident",
+          senderEmail: profile?.email || "",
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + " | Today",
+          caseCount: 1,
+          patientsText: `${newItem.name} (${newItem.triage ? newItem.triage.split(" ")[0] : "P2"} - ${newItem.presentingComplaint || newItem.vitals})`,
+          hospital: profile?.hospital || "Varah Group Emergency Care"
+        };
+        setHandovers(prev => [manualHandoverRecord, ...prev]);
+      }
     }
 
     // Reset Form
@@ -3953,7 +4030,7 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
                 const isBot = msg.sender === "ermate";
                 const targetId = msg.parsedPatient?.patientId;
                 const isCurrentlyInLogs = msg.parsedPatient 
-                  ? quickPasteList.some(p => p.id === targetId || p.name === msg.parsedPatient?.name)
+                  ? quickPasteList.some(p => p.id === targetId || (p.name && msg.parsedPatient?.name && p.name.trim().toLowerCase() === msg.parsedPatient.name.trim().toLowerCase()))
                   : false;
 
                 return (
@@ -4097,24 +4174,76 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
 
                                   <button
                                     onClick={() => {
+                                      const restoredCardData = msg.parsedPatient?.handoverCardData;
                                       const restoredPatient: QuickPastePatient = {
                                         id: targetId || `qp-pat-${Date.now()}`,
+                                        bed: restoredCardData?.patientLabel?.bed || undefined,
                                         name: msg.parsedPatient?.name || "Bed Patient",
                                         ageGender: msg.parsedPatient?.ageGender || "Unknown",
-                                        triage: msg.parsedPatient?.triage || "P2 (Urgent)",
-                                        vitals: msg.parsedPatient?.vitals || "Not documented",
+                                        triage: msg.parsedPatient?.triage || (restoredCardData?.patientLabel?.status === 'critical' ? "P1 (Immediate)" : "P2 (Urgent)"),
+                                        vitals: restoredCardData?.vitalsNow || msg.parsedPatient?.vitals || "Not documented",
+                                        presentingComplaint: restoredCardData?.presentingComplaint || (msg.parsedPatient?.rawNotes ? msg.parsedPatient.rawNotes.substring(0, 150) : "Presenting complaint recorded."),
                                         rawNotes: msg.parsedPatient?.rawNotes || "Pasted clinical notes",
                                         structuredSBAR: msg.parsedPatient?.structuredSBAR || {
-                                          situation: "No situation parsed.",
-                                          background: "No background parsed.",
-                                          assessment: "No assessment parsed.",
-                                          recommendation: "No recommendation parsed."
-                                        }
+                                          situation: restoredCardData?.story || "No situation parsed.",
+                                          background: restoredCardData?.pmh || "No background parsed.",
+                                          assessment: restoredCardData?.vitalsNow || "No assessment parsed.",
+                                          recommendation: restoredCardData?.done ? `Done: ${restoredCardData.done.join(', ')} | To Do: ${(restoredCardData.toBeDone || []).join(', ')}` : "No recommendation parsed."
+                                        },
+                                        handoverCardData: restoredCardData,
+                                        hospital: profile?.hospital || "Varah Group Emergency Care",
+                                        createdByEmail: profile?.email || auth.currentUser?.email || undefined
                                       };
-                                      setQuickPasteList(prev => [...prev, restoredPatient]);
-                                      setActionSuccessMsg(`Restored ${restoredPatient.name} to logs.`);
+
+                                      setQuickPasteList(prev => {
+                                        const exists = prev.some(p => p.id === restoredPatient.id || (p.name && restoredPatient.name && p.name.trim().toLowerCase() === restoredPatient.name.trim().toLowerCase()));
+                                        if (exists) {
+                                          return prev.map(p => (p.id === restoredPatient.id || (p.name && restoredPatient.name && p.name.trim().toLowerCase() === restoredPatient.name.trim().toLowerCase())) ? restoredPatient : p);
+                                        }
+                                        return [...prev, restoredPatient];
+                                      });
+                                      setSelectedQuickPasteIds(prev => Array.from(new Set([...prev, restoredPatient.id])));
+
+                                      const restoredTableRow: HandoverTableRow = {
+                                        id: restoredPatient.id,
+                                        bed: restoredCardData?.patientLabel?.bed || "N/A",
+                                        name: restoredPatient.name,
+                                        ageGender: restoredPatient.ageGender || "",
+                                        erNo: restoredCardData?.patientLabel?.erNumber || "",
+                                        doctor: restoredCardData?.patientLabel?.admittingConsultant || restoredCardData?.patientLabel?.treatingERPhysician || "",
+                                        bystander: "",
+                                        stayDuration: restoredCardData?.patientLabel?.inERSince || "",
+                                        vitals: restoredPatient.vitals || "",
+                                        complaints: restoredCardData?.presentingComplaint || restoredPatient.rawNotes?.slice(0, 100) || "",
+                                        history: restoredCardData?.pmh || "",
+                                        assessment: restoredPatient.structuredSBAR?.assessment || restoredCardData?.diagnosis || "",
+                                        planDone: restoredCardData?.done ? restoredCardData.done.join('\n') : (restoredPatient.structuredSBAR?.recommendation || ""),
+                                        planToBeDone: restoredCardData?.toBeDone ? restoredCardData.toBeDone.join('\n') : "",
+                                        alerts: restoredPatient.vitals || "",
+                                        chronologicalNotes: restoredPatient.rawNotes || ""
+                                      };
+
+                                      setEditableRows(prev => {
+                                        const exists = prev.some(r => r.id === restoredTableRow.id);
+                                        if (exists) return prev.map(r => r.id === restoredTableRow.id ? { ...r, ...restoredTableRow } : r);
+                                        return [restoredTableRow, ...prev];
+                                      });
+
+                                      if (setHandovers) {
+                                        const restoredRecord: HandoverRecord = {
+                                          id: "H-" + Math.floor(1000 + Math.random() * 9000),
+                                          senderName: profile?.name ? (profile.name.startsWith("Dr") ? profile.name : `Dr. ${profile.name}`) : "EM Resident",
+                                          senderEmail: profile?.email || "",
+                                          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + " | Today",
+                                          caseCount: 1,
+                                          patientsText: `${restoredPatient.name} (${restoredPatient.triage ? restoredPatient.triage.split(" ")[0] : "P2"} - ${restoredPatient.presentingComplaint || restoredPatient.vitals})`,
+                                          hospital: profile?.hospital || "Varah Group Emergency Care"
+                                        };
+                                        setHandovers(prev => [restoredRecord, ...prev]);
+                                      }
+                                      setActionSuccessMsg(`Restored ${restoredPatient.name} to active logs.`);
                                     }}
-                                    className="text-emerald-600 dark:text-emerald-400 hover:underline font-extrabold flex items-center gap-1"
+                                    className="text-emerald-600 dark:text-emerald-400 hover:underline font-extrabold flex items-center gap-1 cursor-pointer"
                                   >
                                     <Plus className="w-3 h-3" />
                                     Add Back to Active Logs

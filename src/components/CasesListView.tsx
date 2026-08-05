@@ -1,10 +1,12 @@
 import React, { useState } from "react";
-import { Search, Filter, Plus, Calendar, Activity, Eye, Trash2, Clock, CheckCircle, ChevronLeft, MessageSquare } from "lucide-react";
+import { Search, Filter, Plus, Calendar, Activity, Eye, Edit, Trash2, Clock, CheckCircle, ChevronLeft, MessageSquare, FileText } from "lucide-react";
 import { ClinicalCase } from "../types";
 
 interface CasesListViewProps {
   cases: ClinicalCase[];
   onSelectCase: (caseId: string) => void;
+  onViewSheet?: (caseId: string) => void;
+  onNavigateToDischarge?: (caseId: string) => void;
   onDeleteCase: (caseId: string) => void;
   onStartFullFlow: () => void;
   onStartQuickCase: () => void;
@@ -15,6 +17,8 @@ interface CasesListViewProps {
 export default function CasesListView({
   cases,
   onSelectCase,
+  onViewSheet,
+  onNavigateToDischarge,
   onDeleteCase,
   onStartFullFlow,
   onStartQuickCase,
@@ -234,12 +238,28 @@ export default function CasesListView({
                       </button>
                     )}
                     <button
-                      onClick={() => onSelectCase(c.id)}
-                      className="p-1.5 bg-slate-50 hover:bg-slate-100 text-slate-600 hover:text-slate-800 dark:bg-slate-900 dark:hover:bg-slate-800 dark:text-slate-400 rounded-lg transition-all"
-                      title="Open Case Sheet"
+                      onClick={() => onViewSheet ? onViewSheet(c.id) : onSelectCase(c.id)}
+                      className="p-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 dark:bg-indigo-950/40 dark:hover:bg-indigo-900/60 dark:text-indigo-300 rounded-lg transition-all cursor-pointer"
+                      title="View Case Sheet"
                     >
-                      <Eye className="w-4 h-4" />
+                      <Eye className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
                     </button>
+                    <button
+                      onClick={() => onSelectCase(c.id)}
+                      className="p-1.5 bg-slate-50 hover:bg-slate-100 text-slate-600 hover:text-slate-800 dark:bg-slate-900 dark:hover:bg-slate-800 dark:text-slate-400 rounded-lg transition-all cursor-pointer"
+                      title="Edit Case Sheet Form"
+                    >
+                      <Edit className="w-4 h-4" />
+                    </button>
+                    {onNavigateToDischarge && (
+                      <button
+                        onClick={() => onNavigateToDischarge(c.id)}
+                        className="p-1.5 bg-purple-50 hover:bg-purple-100 text-purple-700 dark:bg-purple-950/40 dark:hover:bg-purple-900/60 dark:text-purple-300 rounded-lg transition-all cursor-pointer"
+                        title="View / Edit Discharge Summary Card"
+                      >
+                        <FileText className="w-4 h-4 text-purple-600 dark:text-purple-400" />
+                      </button>
+                    )}
                     <button
                       onClick={() => onDeleteCase(c.id)}
                       className="p-1.5 bg-rose-50 hover:bg-rose-100 text-rose-500 hover:text-rose-700 dark:bg-rose-950/20 dark:hover:bg-rose-950/40 rounded-lg transition-all"

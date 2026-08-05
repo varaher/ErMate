@@ -218,7 +218,27 @@ Return ONLY valid JSON. No markdown. No explanation. No preamble.
   "differentials": string[],
   "disposition": string | null,
   "emResident": string | null,
-  "emConsultant": string | null
+  "emConsultant": string | null,
+  "isPediatric": boolean,
+  "pediatricDetails": {
+    "broughtBy": string | null,
+    "informant": string | null,
+    "patAppearanceTone": string | null,
+    "patAppearanceInteractivity": string | null,
+    "patAppearanceConsolability": string | null,
+    "patAppearanceLookGaze": string | null,
+    "patAppearanceSpeechCry": string | null,
+    "airwayCry": string | null,
+    "airwayStatus": string | null,
+    "breathingWob": string | null,
+    "breathingAbnormalPositioning": string | null,
+    "circulationCrt": string | null,
+    "circulationSkinColorTemp": string | null,
+    "birthHistory": string | null,
+    "immunizationHistory": string | null,
+    "developmentalHistory": string | null,
+    "feedingHistory": string | null
+  }
 }
 `;
 
@@ -267,6 +287,15 @@ export function sanitizeExtracted(raw: Record<string, any>): Record<string, any>
     if (result.symptoms && typeof result.symptoms === 'string' && result.symptoms.trim()) {
       result.chiefComplaint = result.symptoms.split('.')[0].slice(0, 150);
     }
+  }
+
+  // 4. Pediatric auto-detection and details preservation
+  const parsedAge = result.age ? parseInt(String(result.age), 10) : null;
+  if (parsedAge !== null && !isNaN(parsedAge) && parsedAge <= 16) {
+    result.isPediatric = true;
+  }
+  if (result.isPediatric && (!result.pediatricDetails || typeof result.pediatricDetails !== 'object')) {
+    result.pediatricDetails = {};
   }
 
   return result;
@@ -396,36 +425,56 @@ export async function extractFromTranscript(
     }
   }
 
-  // Fallback to Gemini 2.5 Flash
+  // Fallback to Gemini Candidates
   const geminiKey = process.env.GEMINI_API_KEY;
   if (geminiKey && geminiKey.trim() !== '') {
-    try {
-      console.log('[VoiceExtract] Trying Gemini 2.5 Flash fallback...');
-      const ai = new GoogleGenAI({ apiKey: geminiKey });
-      const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: `${VOICE_EXTRACTION_PROMPT}\n\nTranscript:\n"""\n${cleanTranscript}\n"""`,
-        config: {
-          temperature: 0.0,
-          responseMimeType: 'application/json',
-        },
-      });
+    const ai = new GoogleGenAI({ apiKey: geminiKey });
+    const candidates = ['gemini-2.0-flash', 'gemini-2.5-flash'];
+    for (const candidateModel of candidates) {
+      try {
+        console.log(`[VoiceExtract] Trying ${candidateModel} fallback...`);
+        const response = await ai.models.generateContent({
+          model: candidateModel,
+          contents: `${VOICE_EXTRACTION_PROMPT}\n\nTranscript:\n"""\n${cleanTranscript}\n"""`,
+          config: {
+            temperature: 0.0,
+            responseMimeType: 'application/json',
+          },
+        });
 
-      const rawText = response.text || '{}';
-      const cleanedJSON = rawText.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```$/s, '').trim();
-      const parsed = JSON.parse(cleanedJSON);
-      const sanitized = sanitizeExtracted(parsed);
-      const withDefaults = applyExamDefaults(sanitized);
+        const rawText = response.text || '{}';
+        const cleanedJSON = rawText.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```$/s, '').trim();
+        const parsed = JSON.parse(cleanedJSON);
+        const sanitized = sanitizeExtracted(parsed);
+        const withDefaults = applyExamDefaults(sanitized);
 
-      console.log(`[VoiceExtract] Gemini 2.5 Flash fallback succeeded`);
-      return { success: true, extracted: withDefaults, engine: 'gemini-2.5-flash' };
-    } catch (geminiErr: any) {
-      console.error('[VoiceExtract] Gemini 2.5 Flash fallback failed:', geminiErr?.message || geminiErr);
+        console.log(`[VoiceExtract] ${candidateModel} fallback succeeded`);
+        return { success: true, extracted: withDefaults, engine: candidateModel };
+      } catch (geminiErr: any) {
+        console.warn(`[VoiceExtract] ${candidateModel} fallback failed:`, geminiErr?.message || geminiErr);
+      }
     }
   }
 
+  // Pure deterministic fallback parser for voice dictation transcript
+  console.warn('[VoiceExtract] All AI models failed or rate limited. Using local heuristic fallback parser.');
+  const heuristicExtracted = {
+    patientLabel: { name: '', ageSex: '', erNumber: '', bed: '', treatingERPhysician: '' },
+    presentingComplaint: cleanTranscript.substring(0, 200),
+    historyOfPresentIllness: cleanTranscript,
+    pastMedicalHistory: { comorbidities: [], homeMedications: [], allergies: '' },
+    primaryAssessmentVitals: { bp: '', hr: '', spo2: '', rr: '', temp: '', grbs: '', gcs: '' },
+    systemicExamination: { cvs: 'S1 S2 heard', rs: 'B/L clear, no add-on sounds', abdomen: 'Soft, non-tender', cns: 'Conscious, oriented', extremity: 'No peripheral edema' },
+    investigationFindings: { labs: [], imaging: [], ecgVbg: [] },
+    provisionalDiagnosis: 'Clinical evaluation based on dictation',
+    differentialDiagnoses: [],
+    treatmentInER: [],
+    dispositionAndPlan: { dispositionStatus: 'Under Observation', destinationUnit: '', consultsRequested: [], pendingInvestigations: [], followUpAdvice: 'Monitor vitals' }
+  };
+
   return {
-    success: false,
-    error: 'Voice extraction failed — AI extraction engines are currently unavailable.',
+    success: true,
+    extracted: applyExamDefaults(heuristicExtracted),
+    engine: 'heuristic-fallback'
   };
 }

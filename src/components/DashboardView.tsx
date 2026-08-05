@@ -21,6 +21,7 @@ interface DashboardViewProps {
   onStartFullFlow: () => void;
   onStartQuickCase: () => void;
   onSelectCase: (caseId: string) => void;
+  onViewSheet?: (caseId: string) => void;
   onNavigateToDischarge: (caseId: string) => void;
   onNavigateToTab: (tabId: string) => void;
   onStartHandoverChat: () => void;
@@ -59,6 +60,7 @@ export default function DashboardView({
   onStartFullFlow,
   onStartQuickCase,
   onSelectCase,
+  onViewSheet,
   onNavigateToDischarge,
   onNavigateToTab,
   onStartHandoverChat,
@@ -2049,10 +2051,11 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
                                 
                                 <div className="grid grid-cols-2 gap-2 pt-1.5">
                                   <button
-                                    onClick={() => onSelectCase(c.id)}
-                                    className="flex items-center justify-center gap-1 px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-900 dark:hover:bg-slate-850 text-slate-700 dark:text-slate-300 rounded-md text-[11px] font-bold transition-all"
+                                    onClick={() => onViewSheet ? onViewSheet(c.id) : onSelectCase(c.id)}
+                                    className="flex items-center justify-center gap-1 px-2.5 py-1.5 bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/40 dark:hover:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 rounded-md text-[11px] font-extrabold transition-all cursor-pointer"
+                                    title="View Read-Only Printable Case Sheet"
                                   >
-                                    <Eye className="w-3.5 h-3.5" />
+                                    <Eye className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
                                     View Sheet
                                   </button>
                                   <button

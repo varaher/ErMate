@@ -1,11 +1,12 @@
 import { GoogleGenAI } from "@google/genai";
 import { extractFromTranscript, sanitizeExtracted } from "./voiceExtraction.ts";
 import { deidentifyText } from "./deidentify.ts";
+import { cleanExtractionOutput } from "./extractionCleanup.ts";
 
 // ── Model Config ──────────────────────────────────────────────
 export const MODELS = {
-  GEMINI_PRIMARY: "gemini-2.5-flash",
-  GEMINI_PRO: "gemini-2.5-pro",
+  GEMINI_PRIMARY: "gemini-2.0-flash",
+  GEMINI_PRO: "gemini-2.5-flash",
   CLAUDE_HAIKU: "claude-3-5-haiku-20241022",
   CLAUDE_SONNET: "claude-3-5-sonnet-20241022",
 };
@@ -281,7 +282,27 @@ No markdown. No explanation. No preamble.
   "disposition":             string | null,
   "emResident":              string | null,
   "emConsultant":            string | null,
-  "alerts":                  string[]
+  "alerts":                  string[],
+  "isPediatric":             boolean,
+  "pediatricDetails": {
+    "broughtBy":                         string | null,
+    "informant":                         string | null,
+    "patAppearanceTone":                 string | null,
+    "patAppearanceInteractivity":        string | null,
+    "patAppearanceConsolability":        string | null,
+    "patAppearanceLookGaze":             string | null,
+    "patAppearanceSpeechCry":            string | null,
+    "airwayCry":                         string | null,
+    "airwayStatus":                      string | null,
+    "breathingWob":                      string | null,
+    "breathingAbnormalPositioning":      string | null,
+    "circulationCrt":                    string | null,
+    "circulationSkinColorTemp":          string | null,
+    "birthHistory":                      string | null,
+    "immunizationHistory":               string | null,
+    "developmentalHistory":              string | null,
+    "feedingHistory":                    string | null
+  }
 }
 
 RULES FOR SPECIFIC FIELDS:
@@ -339,6 +360,12 @@ differentials:
 alerts:
   List anything urgent or pending.
   E.g. "Troponin pending", "AKI — avoid contrast", "Protein +++ in urine"
+
+isPediatric:
+  Set to true if age is <= 16 years, or if the patient is a child, infant, neonate, or pediatric case. Otherwise set to false.
+
+pediatricDetails:
+  Extract pediatric assessment findings (broughtBy, informant, PAT appearance/tone/cry/gaze, airway/breathing WOB, CRT, birth history, immunizations, developmental milestones, feeding history) whenever mentioned in pediatric dictations or case sheets. Null if unmentioned or not a pediatric case.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 TRANSCRIPT TO EXTRACT FROM:
@@ -537,7 +564,7 @@ async function callGemini(
   }
 
   const ai = new GoogleGenAI({ apiKey });
-  const modelCandidates = [model, "gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"];
+  const modelCandidates = [model, "gemini-2.0-flash", "gemini-2.5-flash"];
   const uniqueModels = Array.from(new Set(modelCandidates));
 
   let lastErr: any = null;
@@ -1071,6 +1098,20 @@ export function processSampleMedicationsAndPmh(
 
 export function formatClinicalCaseObject(rawExt: Record<string, any>, rawText: string): Record<string, any> {
   const ext = sanitizeExtracted(rawExt || {});
+  const cleanedEntities = cleanExtractionOutput(ext);
+
+  // Apply cleaned entity lists to ext if available
+  if (cleanedEntities.signsSymptoms && cleanedEntities.signsSymptoms.length > 0) {
+    ext.symptoms = cleanedEntities.signsSymptoms.join(", ");
+    ext.signsSymptoms = cleanedEntities.signsSymptoms;
+  }
+  if (cleanedEntities.drugs && cleanedEntities.drugs.length > 0) {
+    ext.medications = cleanedEntities.drugs;
+  }
+  if (cleanedEntities.plan && cleanedEntities.plan.length > 0) {
+    ext.treatment = cleanedEntities.plan;
+  }
+
   const ageVal = ext.age ? (typeof ext.age === "number" ? ext.age : parseInt(String(ext.age), 10) || null) : null;
   const genderVal = ext.sex === "Female" ? "Female" : ext.sex === "Male" ? "Male" : "Other";
   const triageCategory = ext.priority === "P1" || ext.priority === "P1 (Immediate)" ? "P1 (Immediate)" : (ext.priority === "P3" || ext.priority === "P3 (Non-Urgent)" ? "P3 (Non-Urgent)" : "P2 (Urgent)");

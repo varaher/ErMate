@@ -28,6 +28,7 @@ interface CaseSheetViewProps {
   initialCase: ClinicalCase;
   allCases?: ClinicalCase[];
   onSelectCase?: (caseId: string) => void;
+  onViewPrintSheet?: (caseId: string) => void;
   onBack: () => void;
   onSaveCase: (updatedCase: ClinicalCase) => void;
   onNavigateToDischarge: (caseId: string) => void;
@@ -43,6 +44,7 @@ export default function CaseSheetView({
   initialCase, 
   allCases,
   onSelectCase,
+  onViewPrintSheet,
   onBack, 
   onSaveCase,
   onNavigateToDischarge,
@@ -2480,7 +2482,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
             </button>
 
             <button
-              onClick={() => setShowPdfModal(true)}
+              onClick={() => onViewPrintSheet ? onViewPrintSheet(currentCase.id) : setShowPdfModal(true)}
               className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-extrabold rounded-lg transition-all shadow-xs cursor-pointer"
               title="Preview Case Sheet as official printable PDF document"
             >

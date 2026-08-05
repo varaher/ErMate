@@ -222,7 +222,7 @@ Do NOT wrap output in markdown fences if possible, or return valid JSON inside \
       try {
         const ai = new GoogleGenAI({ apiKey: key });
         const response = await ai.models.generateContent({
-          model: "gemini-2.5-flash",
+          model: "gemini-2.0-flash",
           contents: [{ role: "user", parts: [{ text: prompt }] }]
         });
 

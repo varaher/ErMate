@@ -89,7 +89,7 @@ service cloud.firestore {
       allow update: if isLoggedIn()
         && (
           // HOD, Owner or varahgrp@gmail.com can update any user's profile including role
-          (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['hod', 'owner', 'HOD / Shift Lead', 'HOD / Department Lead'] || request.auth.token.email == 'varahgrp@gmail.com')
+          (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['hod', 'owner', 'HOD / Shift Lead', 'HOD / Department Lead', 'Senior Consultant'] || request.auth.token.email == 'varahgrp@gmail.com')
           ||
           // User updating their own profile EXCEPT role cannot be changed unless it matches existing role
           (isOwner(userId) && (!('role' in incoming()) || incoming().role == existing().role))
@@ -103,11 +103,26 @@ service cloud.firestore {
         && (incoming().get('subscriptionTier', '') is string);
     }
 
+    // Role Change Requests collection (ErMate Rule 10 - HOD approval workflow for role elevation)
+    match /roleChangeRequests/{requestId} {
+      allow read: if isLoggedIn();
+      allow create: if isLoggedIn()
+        && incoming().requestedBy == request.auth.uid
+        && incoming().status == 'pending';
+      allow update: if isLoggedIn()
+        && (
+          incoming().requestedBy == request.auth.uid
+          || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['hod', 'owner', 'HOD / Shift Lead', 'HOD / Department Lead', 'Senior Consultant']
+          || request.auth.token.email == 'varahgrp@gmail.com'
+        );
+      allow delete: if false;
+    }
+
     // Role Change Audit Log collection (NABH Compliance)
     match /roleChangeLog/{logId} {
       allow read: if isLoggedIn()
         && (
-          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['hod', 'owner', 'HOD / Shift Lead', 'HOD / Department Lead']
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['hod', 'owner', 'HOD / Shift Lead', 'HOD / Department Lead', 'Senior Consultant']
           || request.auth.token.email == 'varahgrp@gmail.com'
         );
       allow create: if isLoggedIn();

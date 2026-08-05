@@ -15,6 +15,7 @@ import TeamRosterBoard from "./TeamRosterBoard";
 import TeamBuilder from "./TeamBuilder";
 import MortalityAuditModal from "./MortalityAuditModal";
 import { SelfLearningRulesPanel } from "./SelfLearningRulesPanel";
+import RoleChangeSection from "./RoleChangeSection";
 import { APP_VERSION } from "../changelog";
 
 interface ProfileSettingsViewProps {
@@ -372,18 +373,17 @@ export default function ProfileSettingsView({
   const handleSaveProfileForm = (e: React.FormEvent) => {
     e.preventDefault();
     setProfileSuccess("");
-    const finalRole = editRole || profile.role || "Senior Consultant";
     onSaveProfile({
       ...profile,
       name: editName,
       email: editEmail,
       age: editAge,
-      role: finalRole,
+      role: profile.role, // Preserved; role changes require HOD approval workflow (ErMate Rule 10)
       hospital: hospitalName,
       state: editState,
       hospitalAddress: editHospitalAddress
     });
-    setProfileSuccess(`Clinical profile updated successfully! Assigned role: ${finalRole}`);
+    setProfileSuccess(`Clinical profile updated successfully!`);
     setTimeout(() => setProfileSuccess(""), 3500);
   };
 
@@ -2531,87 +2531,7 @@ export default function ProfileSettingsView({
             </div>
           )}
 
-          <div className="space-y-3 bg-slate-900/80 border border-slate-800 rounded-2xl p-4">
-            <div className="flex items-center justify-between">
-              <label className="text-[10px] text-slate-300 block font-black uppercase tracking-wider font-mono">
-                Select Department Role
-              </label>
-              <span className="text-[9px] bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 px-2.5 py-0.5 rounded-full font-mono font-bold">
-                Selected: {editRole || profile.role || "Senior Consultant"}
-              </span>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
-              {/* Option 1: HOD / Department Lead */}
-              <div
-                onClick={() => setEditRole("HOD / Department Lead")}
-                className={`p-3.5 rounded-2xl border-2 transition-all cursor-pointer flex flex-col justify-between space-y-2 relative overflow-hidden ${
-                  (editRole || profile.role || "").toLowerCase().includes("hod") || (editRole || profile.role || "").toLowerCase().includes("head")
-                    ? "bg-gradient-to-br from-amber-500/20 via-amber-950/40 to-slate-900 border-amber-400 shadow-lg shadow-amber-500/20 ring-1 ring-amber-400"
-                    : "bg-slate-900 border-slate-800 hover:border-slate-700"
-                }`}
-              >
-                <div className="flex items-center justify-between">
-                  <span className="text-lg">👑</span>
-                  {((editRole || profile.role || "").toLowerCase().includes("hod") || (editRole || profile.role || "").toLowerCase().includes("head")) && (
-                    <CheckCircle2 className="w-4 h-4 text-amber-400 shrink-0" />
-                  )}
-                </div>
-                <div>
-                  <strong className="text-xs font-black text-amber-300 block">HOD / Dept Lead</strong>
-                  <p className="text-[10px] text-slate-400 mt-0.5 leading-snug font-sans">
-                    Full HOD dashboard, roster builder, M&M audits & self-learning rules.
-                  </p>
-                </div>
-              </div>
-
-              {/* Option 2: Senior Consultant */}
-              <div
-                onClick={() => setEditRole("Senior Consultant")}
-                className={`p-3.5 rounded-2xl border-2 transition-all cursor-pointer flex flex-col justify-between space-y-2 relative overflow-hidden ${
-                  (editRole || profile.role || "").toLowerCase().includes("consultant") && !((editRole || profile.role || "").toLowerCase().includes("hod"))
-                    ? "bg-gradient-to-br from-blue-500/20 via-blue-950/40 to-slate-900 border-blue-400 shadow-lg shadow-blue-500/20 ring-1 ring-blue-400"
-                    : "bg-slate-900 border-slate-800 hover:border-slate-700"
-                }`}
-              >
-                <div className="flex items-center justify-between">
-                  <span className="text-lg">🩺</span>
-                  {(editRole || profile.role || "").toLowerCase().includes("consultant") && !((editRole || profile.role || "").toLowerCase().includes("hod")) && (
-                    <CheckCircle2 className="w-4 h-4 text-blue-400 shrink-0" />
-                  )}
-                </div>
-                <div>
-                  <strong className="text-xs font-black text-blue-300 block">Senior Consultant</strong>
-                  <p className="text-[10px] text-slate-400 mt-0.5 leading-snug font-sans">
-                    Senior attending oversight, AI SBAR scribe, handovers & case logs.
-                  </p>
-                </div>
-              </div>
-
-              {/* Option 3: EM Resident */}
-              <div
-                onClick={() => setEditRole("EM Resident")}
-                className={`p-3.5 rounded-2xl border-2 transition-all cursor-pointer flex flex-col justify-between space-y-2 relative overflow-hidden ${
-                  ((editRole || profile.role || "").toLowerCase().includes("resident") || (editRole || profile.role || "").toLowerCase().includes("physician")) && !((editRole || profile.role || "").toLowerCase().includes("hod")) && !((editRole || profile.role || "").toLowerCase().includes("consultant"))
-                    ? "bg-gradient-to-br from-emerald-500/20 via-emerald-950/40 to-slate-900 border-emerald-400 shadow-lg shadow-emerald-500/20 ring-1 ring-emerald-400"
-                    : "bg-slate-900 border-slate-800 hover:border-slate-700"
-                }`}
-              >
-                <div className="flex items-center justify-between">
-                  <span className="text-lg">⚕️</span>
-                  {((editRole || profile.role || "").toLowerCase().includes("resident") || (editRole || profile.role || "").toLowerCase().includes("physician")) && !((editRole || profile.role || "").toLowerCase().includes("hod")) && !((editRole || profile.role || "").toLowerCase().includes("consultant")) && (
-                    <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                  )}
-                </div>
-                <div>
-                  <strong className="text-xs font-black text-emerald-300 block">EM Resident / Duty Doc</strong>
-                  <p className="text-[10px] text-slate-400 mt-0.5 leading-snug font-sans">
-                    Duty clinical scribe, case entry, discharge summaries & handovers.
-                  </p>
-                </div>
-              </div>
-            </div>
-          </div>
+          <RoleChangeSection profile={profile} />
 
           <div className="space-y-1.5">
             <label className="text-[10px] text-slate-450 block font-bold uppercase">Full Name</label>

@@ -7,13 +7,16 @@ import Anthropic from '@anthropic-ai/sdk';
 import { GoogleGenAI } from '@google/genai';
 import { getRelevantLearnedRules, formatLearnedRulesPromptBlock } from './learningService.ts';
 import { deidentifyText } from './deidentify.ts';
+import { compileAlerts, HandoverOutput } from './alertCompiler.ts';
+import { extractCrossConsultations, shouldRenderConsultSection } from './crossConsultParser.ts';
+import { isAbnormal } from './clinicalRanges.ts';
 
 // ── Models ────────────────────────────────────────────────────
 export const MODELS = {
   CLAUDE_SONNET:  'claude-3-5-sonnet-20241022',
   CLAUDE_HAIKU:   'claude-3-5-haiku-20241022',
-  GEMINI_FLASH:   'gemini-2.5-flash',
-  GEMINI_PRO:     'gemini-2.5-pro',
+  GEMINI_FLASH:   'gemini-2.0-flash',
+  GEMINI_PRO:     'gemini-2.5-flash',
 };
 
 // ── Step 1: Preprocess — strip noise ─────────────────────────
@@ -67,9 +70,9 @@ export function reverseEMREntries(cleanedText: string): string {
   if (!cleanedText || typeof cleanedText !== 'string') return '';
 
   // Full entry header pattern:
-  // "DD-MM-YYYY HH:MM AM/PM / Author Name" or timestamp boundaries
+  // "DD-MM-YYYY HH:MM AM/PM / Author Name" or "[Day X] HH:MM AM/PM / Author Name"
   const ENTRY_HEADER_PATTERN =
-    /^(\d{2}[-\/]\d{2}[-\/]\d{4})\s+(\d{1,2}:\d{2})\s*(AM|PM)?\s*\/\s*(.+)$/gim;
+    /^(?:\[?Day\s*-?\d+\]?|\d{2}[-\/]\d{2}[-\/]\d{4}|\d{1,2}-[A-Za-z]{3}-\d{2,4})\s+(\d{1,2}:\d{2})\s*(AM|PM)?\s*\/\s*(.+)$/gim;
 
   // Split text into entries
   const parts: string[] = [];
@@ -98,7 +101,7 @@ export function reverseEMREntries(cleanedText: string): string {
 
   // Fallback splitting if no regex header matches
   if (parts.length <= 1) {
-    const fallbackBoundary = /\n(?=(?:\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{1,2}-[A-Za-z]{3}-\d{2,4}|\d{1,2}:\d{2}\s*(?:AM|PM|hrs)?|Doctor Note|Nursing Note|Consultant Review|Primary Assessment)\b)/i;
+    const fallbackBoundary = /\n(?=(?:\[?Day\s*-?\d+\]?|\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{1,2}-[A-Za-z]{3}-\d{2,4}|\d{1,2}:\d{2}\s*(?:AM|PM|hrs)?|Doctor Note|Nursing Note|Consultant Review|Primary Assessment)\b)/i;
     const fallbackParts = cleanedText.split(fallbackBoundary).map(c => c.trim()).filter(c => c.length > 20);
     if (fallbackParts.length > 1) {
       console.log(`[Handover] Reversed ${fallbackParts.length} entries using fallback pattern`);
@@ -127,15 +130,15 @@ export function selectModel(charCount: number): {
     return {
       model: MODELS.CLAUDE_SONNET,
       provider: 'claude',
-      fallbackModel: MODELS.GEMINI_PRO,
-      fallbackProvider: 'gemini'
+      fallbackModel: MODELS.CLAUDE_HAIKU,
+      fallbackProvider: 'claude'
     };
   }
   return {
     model: MODELS.CLAUDE_HAIKU,
     provider: 'claude',
-    fallbackModel: MODELS.GEMINI_FLASH,
-    fallbackProvider: 'gemini'
+    fallbackModel: MODELS.CLAUDE_SONNET,
+    fallbackProvider: 'claude'
   };
 }
 
@@ -227,8 +230,8 @@ REQUIRED OUTPUT STRUCTURE — STRICT JSON
 
   "courseInERDayWise": [
     {
-      "date": "string (e.g. 25/07/2026)",
-      "summary": "string (One condensed line per calendar day of key changes/events/location updates. Use 'Stable Day 1-3' for quiet periods)"
+      "date": "string (e.g. [Day 1] or 25/07/2026)",
+      "summary": "string (SYNTHESISE — ONE condensed clinical sentence per calendar day. DO NOT copy raw entry lines or nursing logs!)"
     }
   ],
 
@@ -245,7 +248,7 @@ REQUIRED OUTPUT STRUCTURE — STRICT JSON
   "crossConsultations": [
     {
       "department": "string",
-      "consultant": "string",
+      "consultant": "string (SPECIALTY NAME ONLY e.g. 'General Medicine' or 'Cardiology' — NEVER DOCTOR NAMES like 'Dr. Salini' or 'Dr. Dawn')",
       "dateSeen": "string",
       "recommendation": "string",
       "status": "Completed | Awaiting review | Awaiting re-consult | Not actioned",
@@ -341,7 +344,26 @@ STRICT RULES — NEVER VIOLATE
 4. Do NOT repeat 'vitals stable' across multiple days — say 'Stable Day 1-3' once.
 5. If a field is absent write null or empty array.
 6. Never use nursing handover lines as clinical diagnoses.
-7. Return STRICT VALID JSON ONLY. No markdown wrapper, no extra explanations.
+7. courseInERDayWise Rules:
+   SYNTHESISE — do not copy raw entry lines or nursing logs.
+   WRONG (what you must NOT do):
+   "08:30: PATIENT VITALS EVALUATED. 09:00: HANDOVER GIVEN TO RN ABILA. 10:15: DR. PRINCE REVIEWED PATIENT."
+   RIGHT (what you must produce):
+   "[Day 1]: Arrived with breathlessness. SpO₂ 80%→97% on O₂. CT confirmed pericardial effusion. Gen Med reviewed. ICU referral made."
+
+   RULES FOR courseInERDayWise:
+   - One line per calendar day maximum.
+   - Synthesise all entries for that day into ONE clinical summary sentence.
+   - Include ONLY events that changed the clinical picture.
+   - EXCLUDE completely: Nursing handover lines, "Vitals checked and recorded", "No fresh complaints", "Handover given to RN [name]", "Documents handed over", staff/doctor names.
+   - INCLUDE only: New clinical findings, new investigations + results, new medications started, significant vital changes, consultation outcomes, procedures performed, disposition decisions.
+
+8. Doctor Names & Identities:
+   - NEVER output real doctor or consultant names in JSON fields.
+   - For consultations: use specialty/department name only ('General Medicine reviewed' NOT 'Dr. Salini reviewed').
+   - For treatingERPhysician: output null or '[DOCTOR]'.
+
+9. Return STRICT VALID JSON ONLY. No markdown wrapper, no extra explanations.
 
 EMR TEXT (oldest entry at top):
 """
@@ -395,18 +417,35 @@ async function callGemini(
 ): Promise<string> {
   const apiKey = process.env.GEMINI_API_KEY;
   const ai = new GoogleGenAI({ apiKey });
-  const response = await ai.models.generateContent({
+  const modelCandidates = [
     model,
-    contents: prompt,
-    config: {
-      temperature: 0.0,
-      responseMimeType: 'application/json',
-    },
-  });
-  return (response.text || '')
-    .replace(/```json\n?/g, '')
-    .replace(/```\n?/g, '')
-    .trim();
+    MODELS.GEMINI_FLASH,
+    'gemini-2.0-flash',
+    'gemini-2.5-flash'
+  ];
+  const uniqueModels = Array.from(new Set(modelCandidates));
+  let lastErr: any = null;
+
+  for (const candidate of uniqueModels) {
+    try {
+      const response = await ai.models.generateContent({
+        model: candidate,
+        contents: prompt,
+        config: {
+          temperature: 0.0,
+          responseMimeType: 'application/json',
+        },
+      });
+      return (response.text || '')
+        .replace(/```json\n?/g, '')
+        .replace(/```\n?/g, '')
+        .trim();
+    } catch (err: any) {
+      console.warn(`[Handover] Gemini candidate ${candidate} failed:`, err?.message || err);
+      lastErr = err;
+    }
+  }
+  throw lastErr;
 }
 
 // ── Safe JSON parse ───────────────────────────────────────────
@@ -578,7 +617,10 @@ function buildHeuristicFallback(rawText: string): any {
     }
   }
 
-  return {
+  const phiResult = deidentifyText(rawText);
+  const crossConsults = extractCrossConsultations(phiResult.deidentified);
+
+  const fallbackData: any = {
     patientLabel: {
       name: extracted.name,
       ageSex: extracted.ageGender,
@@ -609,7 +651,7 @@ function buildHeuristicFallback(rawText: string): any {
     pmh: null,
     pastMedicalHistory: null,
     diagnosis: "Under evaluation",
-    crossConsultations: [],
+    crossConsultations: crossConsults,
     investigations: {
       trends: [],
       normalSummary: "Routine bloods recorded in notes",
@@ -658,6 +700,19 @@ function buildHeuristicFallback(rawText: string): any {
     alertRow: "⚠  Patient under active evaluation in ER",
     rawNotes: rawText
   };
+
+  const compiledAlerts = compileAlerts({
+    patientHeader: { name: extracted.name, bed: extracted.bed },
+    labs: [],
+    latestVitals: { timestamp: extracted.time, bp: null, hr: null, rr: null, spo2: null, temp: null }
+  });
+
+  if (compiledAlerts) {
+    fallbackData.alertBanner.summary = compiledAlerts;
+    fallbackData.alertBanner.criticalValues = compiledAlerts.split(" | ");
+  }
+
+  return fallbackData;
 }
 
 function sanitizeHandoverPatient(data: any): any {
@@ -743,21 +798,20 @@ export async function extractHandover(
     };
   }
 
-  // STEP 0 — DPDP Act 2023 On-The-Fly PHI De-identification (Local India Cloud Run)
-  const phiResult = deidentifyText(rawText);
+  // STEP 1 — Preprocess (strip noise)
+  const cleaned = preprocessEMR(rawText);
+  console.log('[1] After preprocess:', cleaned.slice(0, 200));
+
+  // STEP 2 — De-identify (strip PHI)
+  const phiResult = deidentifyText(cleaned);
+  console.log('[2] After deidentify:', phiResult.deidentified.slice(0, 200));
   if (phiResult.phiCount > 0) {
     console.log(`[Handover] DPDP Protection Active: Stripped ${phiResult.phiCount} PHI item(s) (${phiResult.phiFound.slice(0, 3).join(', ')})`);
   }
 
-  // STEP 1 — Preprocess de-identified text
-  const cleaned = preprocessEMR(phiResult.deidentified);
-  console.log(
-    `[Handover] Preprocessed: ${rawText.length} → ${cleaned.length} chars ` +
-    `(${Math.round((1 - cleaned.length / Math.max(1, rawText.length)) * 100)}% reduction)`
-  );
-
-  // STEP 2 — Reverse entries
-  const reversed = reverseEMREntries(cleaned);
+  // STEP 3 — Reverse (oldest first)
+  const reversed = reverseEMREntries(phiResult.deidentified);
+  console.log('[3] After reverse:', reversed.slice(0, 200));
 
   // Count entries
   const entriesFound = (reversed.match(/───────────────────/g) || []).length + 1;
@@ -774,20 +828,17 @@ export async function extractHandover(
     m: string, p: 'claude' | 'gemini'
   ): Promise<string> => {
     if (p === 'claude' && !isAnthropicDisabledInHandover) {
-      try {
-        return await callClaude(prompt, m);
-      } catch (err: any) {
-        console.warn("[Handover] Claude failed, falling back to Gemini:", err?.message || err);
-        return await callGemini(prompt, MODELS.GEMINI_FLASH);
-      }
+      return await callClaude(prompt, m);
     }
     return callGemini(prompt, m === MODELS.GEMINI_PRO ? MODELS.GEMINI_PRO : MODELS.GEMINI_FLASH);
   };
 
-  // Fallback chain
+  // Fallback chain: Primary Claude -> Secondary Claude -> Gemini Pro -> Gemini Flash (last resort)
   const attempts: Array<{ model: string; provider: 'claude' | 'gemini' }> = [
     { model, provider },
     { model: fallbackModel, provider: fallbackProvider },
+    { model: MODELS.GEMINI_PRO, provider: 'gemini' },
+    { model: MODELS.GEMINI_FLASH, provider: 'gemini' },
   ];
 
   for (const attempt of attempts) {
@@ -828,9 +879,15 @@ export async function extractHandover(
 
       const courseInERDayWise = Array.isArray(parsed.courseInERDayWise) ? parsed.courseInERDayWise : [];
       const activeProblemList = Array.isArray(parsed.activeProblemList) ? parsed.activeProblemList : [];
-      const crossConsultations = Array.isArray(parsed.crossConsultations) ? parsed.crossConsultations : [];
+      let crossConsultations = Array.isArray(parsed.crossConsultations) ? parsed.crossConsultations : [];
       const currentMedications = Array.isArray(parsed.currentMedications) ? parsed.currentMedications : [];
-      
+
+      // Deterministic cross consultation parsing fallback/enhancement
+      const deterministicConsults = extractCrossConsultations(phiResult.deidentified);
+      if (crossConsultations.length === 0 && deterministicConsults.length > 0) {
+        crossConsultations = deterministicConsults;
+      }
+
       const investigations = parsed.investigations || {
         trends: [],
         normalSummary: null,
@@ -894,6 +951,54 @@ export async function extractHandover(
         trend: "→"
       };
 
+      // Post-synthesis Rule-based Alert Compilation
+      const handoverOutputShape: HandoverOutput = {
+        patientHeader: {
+          name,
+          bed: pl.bed || null,
+        },
+        initialPresentation: {
+          vitals: {
+            hr: latestVitals.hr,
+            spo2: latestVitals.spo2,
+            rr: latestVitals.rr,
+            bp: latestVitals.bp,
+            temp: latestVitals.temp,
+            grbs: latestVitals.grbs,
+          },
+          vbgAbg: {
+            ph: adjunctsAtArrival.vbg?.ph || null,
+            pco2: adjunctsAtArrival.vbg?.pco2 || null,
+            hco3: adjunctsAtArrival.vbg?.hco3 || null,
+            lactate: adjunctsAtArrival.vbg?.lactate || null,
+            na: adjunctsAtArrival.vbg?.na || null,
+            k: adjunctsAtArrival.vbg?.k || null,
+          }
+        },
+        labs: Array.isArray(investigations.trends) ? investigations.trends.map((t: any) => ({
+          panel: t.testName || "Lab Test",
+          values: Array.isArray(t.values) ? t.values.map((v: any) => ({
+            name: t.testName,
+            value: v.val || v.value,
+            isAbnormal: Boolean(v.isAbnormal || isAbnormal(t.testName?.toLowerCase() as any, parseFloat(v.val || v.value)))
+          })) : []
+        })) : [],
+        latestVitals: {
+          timestamp: latestVitals.timestamp || null,
+          bp: latestVitals.bp || null,
+          hr: typeof latestVitals.hr === 'number' ? latestVitals.hr : parseFloat(latestVitals.hr) || null,
+          rr: typeof latestVitals.rr === 'number' ? latestVitals.rr : parseFloat(latestVitals.rr) || null,
+          spo2: typeof latestVitals.spo2 === 'number' ? latestVitals.spo2 : parseFloat(latestVitals.spo2) || null,
+          temp: typeof latestVitals.temp === 'number' ? latestVitals.temp : parseFloat(latestVitals.temp) || null,
+        }
+      };
+
+      const compiledAlertsString = compileAlerts(handoverOutputShape);
+      if (compiledAlertsString) {
+        alertBanner.summary = compiledAlertsString;
+        alertBanner.criticalValues = compiledAlertsString.split(" | ");
+      }
+
       const normalizedExtracted = {
         patientLabel: {
           name,
@@ -908,7 +1013,7 @@ export async function extractHandover(
           erBoarder: Boolean(pl.erBoarder),
           inERSince: pl.inERSince || null,
           status,
-          treatingERPhysician: (pl.treatingERPhysician && pl.treatingERPhysician !== '[DOCTOR]') ? pl.treatingERPhysician : (doctorName || null),
+          treatingERPhysician: doctorName || null,
         },
         alertBanner,
         initialPresentation,

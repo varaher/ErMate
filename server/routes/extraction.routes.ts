@@ -4,6 +4,7 @@
 // ============================================================
 
 import { Router, Request, Response } from 'express';
+import { GoogleGenAI, Type } from '@google/genai';
 import {
   extractClinicalData,
   extractHandoverData,
@@ -45,27 +46,101 @@ router.post(
   }
 );
 
-// ── Route 2: Paste EMR → handover extraction ─────────────────
+// ── Route 2: Paste EMR & Case Sheet Image → handover extraction ─────────────────
 router.post(
   '/api/handover/parse-structured',
   async (req: Request, res: Response) => {
-    const { rawText, doctorName } = req.body;
+    const { image, mimeType, rawText, doctorName } = req.body;
 
-    if (!rawText || typeof rawText !== 'string' || !rawText.trim()) {
+    const hasText = typeof rawText === 'string' && rawText.trim().length > 0;
+    const hasImage = typeof image === 'string' && image.length > 10;
+
+    if (!hasText && !hasImage) {
       return res.status(400).json({
         success: false,
-        error: 'No text provided',
+        error: 'No text or image provided for handover extraction',
       });
     }
 
-    console.log('[Route] parse-structured — length:', rawText.length);
+    console.log('[Route] parse-structured — text length:', hasText ? rawText.length : 0, 'hasImage:', hasImage);
 
-    const result = await extractHandoverData(rawText, doctorName);
+    // If an image is uploaded (e.g. handwritten case sheet / camera scan)
+    if (hasImage) {
+      try {
+        const apiKey = process.env.GEMINI_API_KEY;
+        if (!apiKey) {
+          throw new Error('GEMINI_API_KEY is missing');
+        }
+        const ai = new GoogleGenAI({ apiKey });
 
-    if (!result.success) {
-      return res.status(500).json(result);
+        const schema = {
+          type: Type.OBJECT,
+          properties: {
+            name: { type: Type.STRING, description: "Patient name or Bed ID if name is not available" },
+            ageGender: { type: Type.STRING, description: "Age and gender (e.g., 57F, 45y / Male, or 'Unknown')" },
+            inERSince: { type: Type.STRING, description: "Time or timestamp when patient arrived" },
+            triage: { type: Type.STRING, description: "Triage Priority level ('P1 (Immediate)', 'P2 (Urgent)', 'P3 (Non-Urgent)')" },
+            vitals: { type: Type.STRING, description: "Vital signs extracted or summarized" },
+            presentingComplaint: { type: Type.STRING, description: "Chief presenting complaint, primary symptoms, onset, duration" },
+            rawNotes: { type: Type.STRING, description: "Transcription or compilation of raw text" },
+            structuredSBAR: {
+              type: Type.OBJECT,
+              properties: {
+                situation: { type: Type.STRING, description: "Situation (S): Bed/room, age/gender, and provisional diagnosis." },
+                background: { type: Type.STRING, description: "Background (B): Comorbidities and past medical history." },
+                assessment: { type: Type.STRING, description: "Assessment (A): Most recent vitals, physical exam highlights, investigations." },
+                recommendation: { type: Type.STRING, description: "Recommendation (R): Pending actions, transfers, consults." }
+              },
+              required: ["situation", "background", "assessment", "recommendation"]
+            }
+          },
+          required: ["name", "ageGender", "triage", "vitals", "presentingComplaint", "rawNotes", "structuredSBAR"]
+        };
+
+        const imagePart = {
+          inlineData: {
+            mimeType: mimeType || "image/jpeg",
+            data: image,
+          },
+        };
+        const textPart = {
+          text: `You are an expert Emergency Medicine Clinical Lead extracting a clinical handover from a case sheet photo or referral letter. Extract ALL clinical information (patient name, age/gender, triage, vitals, chief complaints, PMH, diagnosis, done actions, pending tasks). Text overlay: "${rawText || ""}"`
+        };
+
+        const candidates = ['gemini-2.0-flash', 'gemini-2.5-flash'];
+        let parsedData: any = null;
+
+        for (const modelCandidate of candidates) {
+          try {
+            const resp = await ai.models.generateContent({
+              model: modelCandidate,
+              contents: { parts: [imagePart, textPart] },
+              config: {
+                systemInstruction: "You are an expert emergency medical scribe specializing in clinical shift handovers. Convert medical documents and case sheet images into highly structured SBAR handovers in JSON.",
+                temperature: 0.0,
+                responseMimeType: "application/json",
+                responseSchema: schema
+              }
+            });
+            if (resp.text) {
+              parsedData = JSON.parse(resp.text);
+              break;
+            }
+          } catch (mErr) {
+            console.warn(`[Parse-Structured Vision] Candidate ${modelCandidate} failed:`, mErr);
+          }
+        }
+
+        if (parsedData) {
+          return res.json({ success: true, data: parsedData, extracted: parsedData });
+        }
+      } catch (imgErr) {
+        console.warn("[Parse-Structured] Image vision failed, falling back to text pipeline:", imgErr);
+      }
     }
 
+    // Default to full 5-step handover pipeline
+    const result = await extractHandoverData(rawText || "Uploaded Case Sheet Photo", doctorName);
     return res.json(result);
   }
 );

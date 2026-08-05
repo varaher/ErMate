@@ -533,10 +533,10 @@ export async function generateDischargeSummary(
   const geminiKey = process.env.GEMINI_API_KEY;
   if (geminiKey && geminiKey.trim() !== '') {
     try {
-      console.log('[Discharge] Requesting Gemini 2.5 Flash (Fallback)...');
+      console.log('[Discharge] Requesting Gemini 2.0 Flash (Fallback)...');
       const ai = new GoogleGenAI({ apiKey: geminiKey });
       const res = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
+        model: 'gemini-2.0-flash',
         contents: prompt,
         config: {
           temperature: 0.0,

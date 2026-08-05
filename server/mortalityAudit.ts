@@ -287,26 +287,32 @@ export async function generateMortalityAudit(
     }
   }
 
-  // 3. Fallback Model: Gemini 2.5 Flash / Gemini Pro
+  // 3. Fallback Model: Gemini Candidates (gemini-2.0-flash / gemini-2.5-flash)
   if (process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim() !== "") {
-    try {
-      console.log("[MortalityAudit] Attempting fallback model: Gemini 2.5 Flash...");
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-      const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash",
-        contents: prompt,
-        config: {
-          temperature: 0.0,
-          responseMimeType: "application/json",
-        },
-      });
+    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+    const geminiCandidates = ["gemini-2.0-flash", "gemini-2.5-flash"];
+    
+    for (const modelCandidate of geminiCandidates) {
+      try {
+        console.log(`[MortalityAudit] Attempting fallback model: ${modelCandidate}...`);
+        const response = await ai.models.generateContent({
+          model: modelCandidate,
+          contents: prompt,
+          config: {
+            temperature: 0.0,
+            responseMimeType: "application/json",
+          },
+        });
 
-      const raw = response.text || "";
-      const cleanedJson = cleanJsonResponse(raw);
-      const audit = JSON.parse(cleanedJson);
-      return { success: true, audit, phiProtected };
-    } catch (err: any) {
-      console.error("[MortalityAudit] Gemini fallback failed:", err?.message || err);
+        const raw = response.text || "";
+        const cleanedJson = cleanJsonResponse(raw);
+        const audit = JSON.parse(cleanedJson);
+        if (audit && typeof audit === "object") {
+          return { success: true, audit, phiProtected };
+        }
+      } catch (err: any) {
+        console.warn(`[MortalityAudit] Gemini candidate ${modelCandidate} failed:`, err?.message || err);
+      }
     }
   }
 

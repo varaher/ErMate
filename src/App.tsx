@@ -11,10 +11,12 @@ import {
   DischargeInfo, TriageCategory, ArrivalMode, HandoverRecord, TeamMember, QuickPastePatient, HandoverPatient
 } from "./types";
 import { saveHandoverPatient } from "./utils/handoverUtils";
+import { triggerPrintWithTip } from "./utils/printWithTip";
 
 import DashboardView from "./components/DashboardView";
 import CasesListView from "./components/CasesListView";
 import CaseSheetView from "./components/CaseSheetView";
+import CaseSheetPrintView from "./components/CaseSheetPrintView";
 import DischargeSummaryView from "./components/DischargeSummaryView";
 import TriageForm from "./components/TriageForm";
 import LearnView from "./components/LearnView";
@@ -1082,7 +1084,7 @@ export default function App() {
         const itemHospital = (item.hospital || "Varah Group Emergency Care").trim().toLowerCase();
         const itemEmail = (item.createdByEmail || "").trim().toLowerCase();
         const currentEmail = (profile.email || auth.currentUser?.email || "").trim().toLowerCase();
-        return itemHospital === userHospitalLower || (currentEmail && itemEmail === currentEmail);
+        return itemHospital === userHospitalLower || (currentEmail && itemEmail === currentEmail) || (!item.hospital && !item.createdByEmail);
       });
 
       filteredQuickPaste.sort((a, b) => (b.updatedAt || b.id || "").localeCompare(a.updatedAt || a.id || ""));
@@ -1337,6 +1339,7 @@ export default function App() {
 
   // View controllers
   const [selectedCaseId, setSelectedCaseId] = useState<string | null>(null);
+  const [viewCaseSheetPrintId, setViewCaseSheetPrintId] = useState<string | null>(null);
   const [activeFormMode, setActiveFormMode] = useState<"full" | "quick" | null>(null);
   const [showDischargeSummaryId, setShowDischargeSummaryId] = useState<string | null>(null);
   const [handoverSubTab, setHandoverSubTab] = useState<"registry" | "quickpaste">("registry");
@@ -1404,9 +1407,18 @@ export default function App() {
     }
   }, [isDarkMode]);
 
-  // Select a case for the Case Sheet view
+  // Select a case for the Case Sheet view (Editable Form)
   const handleSelectCase = (caseId: string) => {
     setSelectedCaseId(caseId);
+    setViewCaseSheetPrintId(null);
+    setActiveFormMode(null);
+    setShowDischargeSummaryId(null);
+  };
+
+  // Open read-only, print-styled Case Sheet view
+  const handleViewPrintSheet = (caseId: string) => {
+    setViewCaseSheetPrintId(caseId);
+    setSelectedCaseId(null);
     setActiveFormMode(null);
     setShowDischargeSummaryId(null);
   };
@@ -1750,6 +1762,7 @@ export default function App() {
   const handleNavigateToDischarge = (caseId: string) => {
     setShowDischargeSummaryId(caseId);
     setSelectedCaseId(null);
+    setViewCaseSheetPrintId(null);
     setActiveFormMode(null);
     setShowVoiceScribeChat(false);
   };
@@ -2549,6 +2562,7 @@ export default function App() {
   const navigateToTab = (tabId: string) => {
     setActiveTab(tabId as any);
     setSelectedCaseId(null);
+    setViewCaseSheetPrintId(null);
     setActiveFormMode(null);
     setShowDischargeSummaryId(null);
     setShowVoiceScribeChat(false);
@@ -3186,7 +3200,7 @@ export default function App() {
             ];
           })().map((tab) => {
             const Icon = tab.icon;
-            const active = activeTab === tab.id && !selectedCaseId && !activeFormMode && !showDischargeSummaryId && !showVoiceScribeChat && !showPediatricCalculator && !showPocketMirror;
+            const active = activeTab === tab.id && !selectedCaseId && !viewCaseSheetPrintId && !activeFormMode && !showDischargeSummaryId && !showVoiceScribeChat && !showPediatricCalculator && !showPocketMirror;
             return (
               <button
                 key={tab.id}
@@ -3216,7 +3230,7 @@ export default function App() {
             { id: "profile" as const, label: "Team & Set", icon: Settings },
           ].map((tab) => {
             const Icon = tab.icon;
-            const active = activeTab === tab.id && !selectedCaseId && !activeFormMode && !showDischargeSummaryId && !showVoiceScribeChat && !showPediatricCalculator && !showPocketMirror;
+            const active = activeTab === tab.id && !selectedCaseId && !viewCaseSheetPrintId && !activeFormMode && !showDischargeSummaryId && !showVoiceScribeChat && !showPediatricCalculator && !showPocketMirror;
             return (
               <button
                 key={tab.id}
@@ -3347,7 +3361,23 @@ export default function App() {
             />
           )}
 
-          {/* 2. Full Case Sheet View */}
+          {/* 1.5. Read-Only Printable Case Sheet View */}
+          {viewCaseSheetPrintId && !selectedCaseId && !activeFormMode && !showDischargeSummaryId && (
+            (() => {
+              const matched = cases.find(c => c.id === viewCaseSheetPrintId);
+              if (!matched) return <p className="p-8 text-center text-slate-500 font-sans font-bold">Case record not found</p>;
+              return (
+                <CaseSheetPrintView
+                  clinicalCase={matched}
+                  onBack={() => setViewCaseSheetPrintId(null)}
+                  onEdit={() => handleSelectCase(matched.id)}
+                  onPrint={() => triggerPrintWithTip()}
+                />
+              );
+            })()
+          )}
+
+          {/* 2. Full Case Sheet View (Editable Form) */}
           {selectedCaseId && !activeFormMode && !showDischargeSummaryId && (
             (() => {
               const matched = cases.find(c => c.id === selectedCaseId);
@@ -3357,6 +3387,7 @@ export default function App() {
                   initialCase={matched}
                   allCases={cases}
                   onSelectCase={handleSelectCase}
+                  onViewPrintSheet={handleViewPrintSheet}
                   onBack={() => setSelectedCaseId(null)}
                   onSaveCase={handleSaveCase}
                   onNavigateToDischarge={handleNavigateToDischarge}
@@ -3387,6 +3418,7 @@ export default function App() {
                   currentCase={matched}
                   onBack={() => setShowDischargeSummaryId(null)}
                   onSaveDischarge={handleSaveDischarge}
+                  profile={profile}
                 />
               );
             })()
@@ -3419,7 +3451,7 @@ export default function App() {
           )}
 
           {/* 6. Main Tab Views */}
-          {!selectedCaseId && !activeFormMode && !showDischargeSummaryId && !showVoiceScribeChat && !showPediatricCalculator && !showPocketMirror && (
+          {!selectedCaseId && !viewCaseSheetPrintId && !activeFormMode && !showDischargeSummaryId && !showVoiceScribeChat && !showPediatricCalculator && !showPocketMirror && (
             <>
               {activeTab === "dashboard" && (
                 <DashboardView
@@ -3430,6 +3462,7 @@ export default function App() {
                   onStartFullFlow={() => setActiveFormMode("full")}
                   onStartQuickCase={() => setActiveFormMode("quick")}
                   onSelectCase={handleSelectCase}
+                  onViewSheet={handleViewPrintSheet}
                   onNavigateToDischarge={handleNavigateToDischarge}
                   onNavigateToTab={navigateToTab}
                   onStartHandoverChat={() => {
@@ -3526,6 +3559,8 @@ export default function App() {
                 <CasesListView
                   cases={cases}
                   onSelectCase={handleSelectCase}
+                  onViewSheet={handleViewPrintSheet}
+                  onNavigateToDischarge={handleNavigateToDischarge}
                   onDeleteCase={handleDeleteCase}
                   onStartFullFlow={() => setActiveFormMode("full")}
                   onStartQuickCase={() => setActiveFormMode("quick")}

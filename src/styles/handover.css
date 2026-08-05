@@ -526,7 +526,8 @@
     margin-left: 12mm;
   }
 
-  .hov-card {
+  .hov-card,
+  .print-card {
     break-inside: avoid !important;
     page-break-inside: avoid !important;
     margin-bottom: 8px;
