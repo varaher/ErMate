@@ -416,38 +416,7 @@ export default function HandoverView({
         console.error("Error parsing saved quick paste list:", e);
       }
     }
-    return [
-      {
-        id: "qp-1",
-        name: "Bed 3 (John Doe)",
-        ageGender: "52y / Male",
-        triage: "P1 (Immediate)",
-        vitals: "BP 160/95 | HR 112 | SpO2 91%",
-        presentingComplaint: "Acute crushing retrosternal chest pain radiating to jaw for 2 hours with diaphoresis",
-        rawNotes: "Pasted from EMR:\nPatient presented with acute crushing chest pain for 2 hours, radiating to jaw. Diaphoretic. ECG shows 3mm ST elevation in V1-V4. Loading doses of Aspirin 325mg and Ticagrelor 180mg given at 10:15 AM. Cardiology consulted and patient accepted for immediate primary PCI in cath lab. Prep in progress. IV fluids running.",
-        structuredSBAR: {
-          situation: "52y Male in Bed 3 with acute retrosternal chest pain, diagnosed with Anterior Wall STEMI.",
-          background: "Known history of hypertension and hyperlipidemia. Smoker.",
-          assessment: "Hemodynamically stable but tachypneic. ST elevation in V1-V4. Antiplatelets loaded.",
-          recommendation: "Transfer immediately to Cath Lab. Secure patent IV and keep oxygen active."
-        }
-      },
-      {
-        id: "qp-2",
-        name: "Bed 7 (Clara Oswald)",
-        ageGender: "29y / Female",
-        triage: "P2 (Urgent)",
-        vitals: "BP 115/70 | HR 88 | SpO2 99%",
-        presentingComplaint: "Severe right lower quadrant abdominal pain for 12 hours with nausea",
-        rawNotes: "EMR Notes:\nSevere right lower quadrant abdominal pain for 12 hours. Nausea, no vomiting. Tender in RLQ with positive McBurney's sign. Ultrasound ordered, report shows swollen non-compressible appendix of 8.5mm with mild surrounding free fluid, consistent with acute appendicitis. NPO since 08:00 AM. IV Cefotetan 2g administered. Surgical resident Dr. Patel reviewed and posted for appendectomy. Waiting for OT vacancy.",
-        structuredSBAR: {
-          situation: "29y Female in Bed 7 with acute right lower quadrant abdominal pain, diagnosed with acute appendicitis.",
-          background: "Prior laparoscopic cholecystectomy 2 years ago. No known drug allergies.",
-          assessment: "Tender RLQ abdomen. Ultrasound confirmed appendicitis. Pre-op antibiotics given.",
-          recommendation: "Maintain NPO status, administer IV hydration, and monitor for OT transfer."
-        }
-      }
-    ];
+    return [];
   });
 
   const quickPasteList = propQuickPasteList !== undefined ? propQuickPasteList : localQuickPasteList;
@@ -2065,7 +2034,7 @@ function extractLatestVitalsWithTime(
             timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + " | Today",
             caseCount: 1,
             patientsText: `${newPatient.name} (${newPatient.triage ? newPatient.triage.split(" ")[0] : "P2"} - ${newPatient.presentingComplaint || newPatient.vitals})`,
-            hospital: profile?.hospital || "Varah Group Emergency Care"
+            hospital: profile?.hospital || ""
           };
           setHandovers(prev => [newHandoverRecord, ...prev]);
         }
@@ -2157,7 +2126,7 @@ function extractLatestVitalsWithTime(
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + " | Today",
           caseCount: 1,
           patientsText: `${fallbackPatient.name} (${fallbackPatient.triage ? fallbackPatient.triage.split(" ")[0] : "P2"} - ${fallbackPatient.presentingComplaint || fallbackPatient.vitals})`,
-          hospital: profile?.hospital || "Varah Group Emergency Care"
+          hospital: profile?.hospital || ""
         };
         setHandovers(prev => [fallbackHandoverRecord, ...prev]);
       }
@@ -2277,7 +2246,7 @@ function extractLatestVitalsWithTime(
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + " | Today",
           caseCount: 1,
           patientsText: `${newItem.name} (${newItem.triage ? newItem.triage.split(" ")[0] : "P2"} - ${newItem.presentingComplaint || newItem.vitals})`,
-          hospital: profile?.hospital || "Varah Group Emergency Care"
+          hospital: profile?.hospital || ""
         };
         setHandovers(prev => [manualHandoverRecord, ...prev]);
       }
@@ -4191,7 +4160,7 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
                                           recommendation: restoredCardData?.done ? `Done: ${restoredCardData.done.join(', ')} | To Do: ${(restoredCardData.toBeDone || []).join(', ')}` : "No recommendation parsed."
                                         },
                                         handoverCardData: restoredCardData,
-                                        hospital: profile?.hospital || "Varah Group Emergency Care",
+                                        hospital: profile?.hospital || "",
                                         createdByEmail: profile?.email || auth.currentUser?.email || undefined
                                       };
 
@@ -4237,7 +4206,7 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
                                           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + " | Today",
                                           caseCount: 1,
                                           patientsText: `${restoredPatient.name} (${restoredPatient.triage ? restoredPatient.triage.split(" ")[0] : "P2"} - ${restoredPatient.presentingComplaint || restoredPatient.vitals})`,
-                                          hospital: profile?.hospital || "Varah Group Emergency Care"
+                                          hospital: profile?.hospital || ""
                                         };
                                         setHandovers(prev => [restoredRecord, ...prev]);
                                       }

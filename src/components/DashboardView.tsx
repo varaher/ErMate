@@ -171,7 +171,7 @@ export default function DashboardView({
 
   // HOD Profile & Team Sync States
   const [isEditingHospital, setIsEditingHospital] = useState(false);
-  const [tempHospital, setTempHospital] = useState(profile.hospital || "Varah Group Emergency Care");
+  const [tempHospital, setTempHospital] = useState(profile.hospital || "");
   const [copiedInvite, setCopiedInvite] = useState(false);
   const [pendingDeleteMemberId, setPendingDeleteMemberId] = useState<string | null>(null);
 
@@ -319,7 +319,7 @@ DISPOSITION SUMMARY
 -------------------
 Disposition Status: ${c.dispositionDetails?.dispositionType || "Observation"}
 Duration in ER: ${c.dispositionDetails?.durationInEr || "N/A"}
-Consultant in Charge: ${c.dispositionDetails?.consultantName || "Dr. Varah"}
+Consultant in Charge: ${c.dispositionDetails?.consultantName || profile.name || "Duty Consultant"}
 Resident Doctor: ${c.dispositionDetails?.residentName || "N/A"}
 Observation Notes: ${c.dispositionDetails?.observationNotes || "N/A"}
 ==================================================`;
@@ -1771,7 +1771,7 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
                     ) : (
                       <div className="flex items-center justify-between gap-3">
                         <p className="text-sm font-black text-slate-800 dark:text-white leading-tight">
-                          {profile.hospital || "Varah Group Emergency Care"}
+                          {profile.hospital || "General Emergency Department"}
                         </p>
                         <button
                           onClick={() => {

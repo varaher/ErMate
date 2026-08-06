@@ -94,7 +94,7 @@ export default function ProfileSettingsView({
     status: "Active Now" | "Idle" | "Offline";
     lastActive: string;
   }>>([
-    { id: "dev-1", deviceName: "iPhone 15 Pro Max (Varah Mobile)", deviceType: "mobile", os: "iOS 17.5", location: "ER Ward A", status: "Active Now", lastActive: "Just now" },
+    { id: "dev-1", deviceName: "iPhone 15 Pro Max (Mobile App)", deviceType: "mobile", os: "iOS 17.5", location: "ER Ward A", status: "Active Now", lastActive: "Just now" },
     { id: "dev-2", deviceName: "Dell OptiPlex 7090 (Nurse Station 1 Desktop)", deviceType: "computer", os: "Windows 11 Pro", location: "Triage Reception", status: "Idle", lastActive: "15m ago" }
   ]);
   const [simulatorMode, setSimulatorMode] = useState<"computer" | "mobile">("computer");
@@ -122,17 +122,13 @@ export default function ProfileSettingsView({
 
 
 
-  const [hospitalName, setHospitalName] = useState<string>(profile.hospital || "Varah Emergency Hospital");
+  const [hospitalName, setHospitalName] = useState<string>(profile.hospital || "");
   const [departmentName, setDepartmentName] = useState<string>("Emergency Medicine Department");
   const [newMemberEmail, setNewMemberEmail] = useState<string>("");
   const [newMemberRole, setNewMemberRole] = useState<string>("EM Resident");
   const [newMemberUserId, setNewMemberUserId] = useState<string>("");
 
-  const [invitedMembers, setInvitedMembers] = useState([
-    { id: "mem-1", email: "dr.jenkins@gmail.com", userId: "usr_jenkins_01", role: "Senior Consultant", status: "Pending (Invited)", joinedAt: undefined },
-    { id: "mem-2", email: "chloe.harrison@gmail.com", userId: "usr_chloe_99", role: "Pediatric Consultant", status: "Pending (Invited)", joinedAt: undefined },
-    { id: "mem-3", email: "robert.miller@gmail.com", userId: "usr_robert_54", role: "EM Resident", status: "Pending (Invited)", joinedAt: undefined }
-  ]);
+  const [invitedMembers, setInvitedMembers] = useState<any[]>([]);
 
   const [bulkEmails, setBulkEmails] = useState<string>("");
   const [copiedLink, setCopiedLink] = useState<boolean>(false);
@@ -490,7 +486,7 @@ export default function ProfileSettingsView({
             </button>
 
             <span className="text-[10px] bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800/60 rounded-full px-2.5 py-1 font-mono font-bold">
-              {profile.hospital || "Varah Group Emergency Care"}
+              {profile.hospital || "General Emergency Department"}
             </span>
           </div>
 
@@ -998,7 +994,7 @@ export default function ProfileSettingsView({
             <div className="flex items-center justify-between bg-slate-50 dark:bg-slate-900/40 px-3 py-2 rounded-xl border border-slate-100 dark:border-slate-800/50">
               <div className="flex items-center gap-2 min-w-0">
                 <Building className="w-4 h-4 text-emerald-500 shrink-0" />
-                <span className="text-xs font-bold text-slate-800 dark:text-slate-200 truncate">{profile.hospital || "Varah Group Emergency Care"}</span>
+                <span className="text-xs font-bold text-slate-800 dark:text-slate-200 truncate">{profile.hospital || "General Emergency Department"}</span>
               </div>
               <span className="text-[9px] bg-emerald-100 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20 px-2 py-0.5 rounded-full font-mono font-bold uppercase tracking-wide shrink-0">
                 Synced
@@ -1058,7 +1054,7 @@ export default function ProfileSettingsView({
               </div>
             )}
 
-            {profile.hospital && profile.hospital !== "Varah Group Emergency Care" && onLeaveTeam && (
+            {profile.hospital && profile.hospital.trim() !== "" && onLeaveTeam && (
               <div className="pt-3 flex justify-end">
                 <button
                   type="button"
@@ -1361,7 +1357,7 @@ export default function ProfileSettingsView({
 
                   <div className="border-t border-slate-100 pt-2.5 text-[10.5px] text-slate-700 text-left space-y-1.5">
                     <p><span className="text-slate-450 font-medium">Chief Complaint:</span> {item.chiefComplaint || "Cardiovascular evaluation"}</p>
-                    <p><span className="text-slate-450 font-medium">Sender Doctor:</span> {item.assignedDoctor || "Dr. Vipin Kumar"}</p>
+                    <p><span className="text-slate-450 font-medium">Sender Doctor:</span> {item.assignedDoctor || "Emergency Physician"}</p>
                     <p><span className="text-slate-450 font-medium">Pending Actions:</span> <span className="text-amber-600 font-black">{item.pendingActions || "Verify lab reports & monitor vitals"}</span></p>
                   </div>
 
@@ -1558,212 +1554,7 @@ export default function ProfileSettingsView({
 
       const myCases = cases.filter(c => c.doctorEmail?.toLowerCase().trim() === profile.email.toLowerCase().trim());
       const hasRealLogs = myCases.length > 0;
-
-      const demoCases: ClinicalCase[] = [
-        {
-          id: "demo-1",
-          bedNo: "ER-04",
-          savedTime: new Date(Date.now() - 3600000 * 2).toISOString(),
-          timeSpentMin: 45,
-          patient: {
-            name: "Rajesh Sharma",
-            age: 48,
-            gender: "Male",
-            presentingComplaint: "Acute sudden chest pain radiation to left arm and diaphoresis.",
-            triageCategory: TriageCategory.P1,
-            arrivalMode: ArrivalMode.WalkIn,
-            dateOpened: new Date(Date.now() - 3600000 * 2).toISOString(),
-            isMlc: false,
-            caseType: "Medical",
-            uhid: "UHID-2026-9841",
-          },
-          vitals: {
-            hr: "110",
-            bp: "140/90",
-            spo2: "94",
-            rr: "24",
-            temp: "98.6",
-            gcs: "15",
-            gcs_e: "4",
-            gcs_v: "5",
-            gcs_m: "6",
-            grbs: "148",
-            avpu: "Alert",
-            painScore: "8",
-          },
-          sampleHistory: {
-            symptoms: "Chest pain, diaphoresis",
-            allergies: "None",
-            medications: "Amlodipine 5mg",
-            pastHistory: "Hypertension for 5 years",
-            lastMeal: "2h ago",
-            events: "Pain started suddenly while walking",
-            socialHistory: "None",
-            familyHistory: "None",
-            psychiatricFlags: "None",
-          },
-          primaryAssessment: {
-            airway: "Patent",
-            airwayStatus: "Normal",
-            breathing: "Tachypnea",
-            breathingStatus: "Normal",
-            circulation: "Peripheral pulses present",
-            circulationStatus: "Normal",
-            disability: "GCS 15/15",
-            disabilityStatus: "Normal",
-            exposure: "Warm and diaphoretic",
-            exposureStatus: "Normal",
-          },
-          secondaryAssessment: "Normal chest expansion. S1 S2 heard, no murmurs.",
-          investigations: [],
-          treatments: [],
-          progressNotes: "Aspirin 325mg given. ECG shows ST elevation in V1-V4. Cardiopulmonary team notified.",
-          dischargeInfo: null,
-          differentials: [],
-          isPediatric: false,
-          provisionalPrimaryDiagnosis: "Acute Anterior Wall MI / STEMI",
-          proceduresChecked: ["iv_access", "abg_punch"],
-          otherProcedures: "12-Lead ECG Acquisition",
-          status: "Discharged",
-          doctorEmail: profile.email
-        },
-        {
-          id: "demo-2",
-          bedNo: "ER-09",
-          savedTime: new Date(Date.now() - 3600000 * 8).toISOString(),
-          timeSpentMin: 30,
-          patient: {
-            name: "Anjali Gupta",
-            age: 29,
-            gender: "Female",
-            presentingComplaint: "Severe respiratory distress with bronchospasm wheezing.",
-            triageCategory: TriageCategory.P2,
-            arrivalMode: ArrivalMode.WalkIn,
-            dateOpened: new Date(Date.now() - 3600000 * 8).toISOString(),
-            isMlc: false,
-            caseType: "Medical",
-            uhid: "UHID-2026-4432",
-          },
-          vitals: {
-            hr: "98",
-            bp: "120/80",
-            spo2: "89",
-            rr: "28",
-            temp: "98.4",
-            gcs: "15",
-            gcs_e: "4",
-            gcs_v: "5",
-            gcs_m: "6",
-            grbs: "105",
-            avpu: "Alert",
-            painScore: "2",
-          },
-          sampleHistory: {
-            symptoms: "Shortness of breath, cough",
-            allergies: "Dust mites",
-            medications: "Salbutamol inhaler",
-            pastHistory: "Bronchial Asthma since childhood",
-            lastMeal: "4h ago",
-            events: "Triggered by sweeping dusty room",
-            socialHistory: "None",
-            familyHistory: "None",
-            psychiatricFlags: "None",
-          },
-          primaryAssessment: {
-            airway: "Patent",
-            airwayStatus: "Normal",
-            breathing: "Bilateral polyphonic wheeze",
-            breathingStatus: "Abnormal",
-            circulation: "Tachycardia present",
-            circulationStatus: "Normal",
-            disability: "GCS 15/15",
-            disabilityStatus: "Normal",
-            exposure: "No signs of trauma",
-            exposureStatus: "Normal",
-          },
-          secondaryAssessment: "Bilateral polyphonic wheeze present. Accessory muscles in use.",
-          investigations: [],
-          treatments: [],
-          progressNotes: "Nebulized with Levosalbutamol + Ipratropium. IV Hydrocortisone administered.",
-          dischargeInfo: null,
-          differentials: [],
-          isPediatric: false,
-          provisionalPrimaryDiagnosis: "Acute Severe Asthma Exacerbation",
-          proceduresChecked: ["nebulization"],
-          otherProcedures: "Non-Invasive Ventilation (NIV)",
-          status: "Active",
-          doctorEmail: profile.email
-        },
-        {
-          id: "demo-3",
-          bedNo: "ER-12",
-          savedTime: new Date(Date.now() - 3600000 * 24).toISOString(),
-          timeSpentMin: 60,
-          patient: {
-            name: "Master Kabir",
-            age: 6,
-            gender: "Male",
-            presentingComplaint: "High-grade fever with febrile convulsion lasting 2 minutes.",
-            triageCategory: TriageCategory.P1,
-            arrivalMode: ArrivalMode.WalkIn,
-            dateOpened: new Date(Date.now() - 3600000 * 24).toISOString(),
-            isMlc: false,
-            caseType: "Medical",
-            uhid: "UHID-2026-1192",
-          },
-          vitals: {
-            hr: "124",
-            bp: "100/65",
-            spo2: "98",
-            rr: "32",
-            temp: "103.1",
-            gcs: "12",
-            gcs_e: "3",
-            gcs_v: "4",
-            gcs_m: "5",
-            grbs: "94",
-            avpu: "Voice",
-            painScore: "0",
-          },
-          sampleHistory: {
-            symptoms: "Fever, generalized tonic-clonic movements",
-            allergies: "Penicillin",
-            medications: "Paracetamol syrup",
-            pastHistory: "Prior simple febrile seizure at age 3",
-            lastMeal: "1h ago",
-            events: "Had a seizure lasting 2 min, currently post-ictal",
-            socialHistory: "None",
-            familyHistory: "None",
-            psychiatricFlags: "None",
-          },
-          primaryAssessment: {
-            airway: "Patent",
-            airwayStatus: "Normal",
-            breathing: "Normal breathing effort",
-            breathingStatus: "Normal",
-            circulation: "Pulses rapid but full",
-            circulationStatus: "Normal",
-            disability: "Drowsy, localizes to pain",
-            disabilityStatus: "Abnormal",
-            exposure: "Hot to touch",
-            exposureStatus: "Normal",
-          },
-          secondaryAssessment: "Post-ictal state. Chest clear. Pupillary reflexes prompt and reactive.",
-          investigations: [],
-          treatments: [],
-          progressNotes: "IV Paracetamol infused. Temperature reduced to 99.1F. Patient regained full consciousness.",
-          dischargeInfo: null,
-          differentials: [],
-          isPediatric: true,
-          provisionalPrimaryDiagnosis: "Febrile Convulsion / Seizure",
-          proceduresChecked: ["iv_access"],
-          otherProcedures: "Sponging Therapy",
-          status: "Discharged",
-          doctorEmail: profile.email
-        }
-      ];
-
-      const activeLogs = hasRealLogs ? myCases : demoCases;
+      const activeLogs = myCases;
 
       // Filtered cases list based on search and triage
       const filteredCases = activeLogs.filter(c => {
@@ -2572,7 +2363,7 @@ export default function ProfileSettingsView({
               type="text"
               value={hospitalName}
               onChange={(e) => setHospitalName(e.target.value)}
-              placeholder="Varah Emergency Hospital"
+              placeholder="e.g. City General Hospital"
               className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-200"
             />
           </div>
@@ -2766,7 +2557,7 @@ export default function ProfileSettingsView({
           content: (
             <div className="space-y-2">
               <p>ErMate is a specialized Emergency Room Electronic Medical Records (EMR) and team management solution, available as an optimized Web Dashboard and Native Companion Client designed specifically for licensed healthcare professionals.</p>
-              <p>Developed by Varah Group.</p>
+              <p>Developed for ErMate Clinical Systems.</p>
               <p>This Privacy Policy explains how we collect, use, store, and protect data within the ErMate application stack.</p>
               <p>By registering or using ErMate, you acknowledge and agree to the practices detailed in this policy.</p>
             </div>
@@ -2913,7 +2704,7 @@ export default function ProfileSettingsView({
           color: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20",
           content: (
             <div className="space-y-1">
-              <p>For data privacy queries, consent withdrawals, or compliance reports, contact Varah Group:</p>
+              <p>For data privacy queries, consent withdrawals, or compliance reports, contact ErMate Support:</p>
               <p>Email: varahgrp@gmail.com</p>
               <p>Website: www.varahgrp.com</p>
             </div>
@@ -2930,7 +2721,7 @@ export default function ProfileSettingsView({
               <ShieldCheck className="w-4.5 h-4.5 text-emerald-500" /> Privacy Policy
             </h5>
             <p className="text-[10.5px] leading-relaxed text-slate-600 dark:text-slate-300 font-sans">
-              ErMate by Varah Group takes patient data privacy seriously. All clinical information is handled with the highest standards of security and confidentiality.
+              ErMate Clinical Systems takes patient data privacy seriously. All clinical information is handled with the highest standards of security and confidentiality.
             </p>
             <p className="text-[10px] text-slate-500 dark:text-slate-400 font-mono mt-1 pt-1 border-t border-slate-100 dark:border-slate-800/40">
               Version: v2.1.0-Release (Last Updated: July 2026)
@@ -3125,7 +2916,7 @@ export default function ProfileSettingsView({
           <div className="pt-2.5 border-t border-slate-150 dark:border-slate-850 flex items-center gap-2 text-[9px] text-slate-500 dark:text-slate-500 leading-normal font-sans">
             <Mail className="w-3.5 h-3.5 text-slate-400 shrink-0 animate-none" />
             <span>
-              For privacy-related concerns, contact Varah Group at <strong className="text-slate-600 dark:text-slate-400">varahgrp@gmail.com</strong> | <a href="https://www.varahgrp.com" target="_blank" rel="noopener noreferrer" className="hover:underline text-indigo-500 font-bold">www.varahgrp.com</a>
+              For privacy-related concerns, contact ErMate Support at <strong className="text-slate-600 dark:text-slate-400">support@ermate.in</strong>
             </span>
           </div>
 

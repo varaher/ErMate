@@ -261,7 +261,7 @@ export default function UserGuideView({ onNavigateToFeature, onNavigateToTab }: 
                 Need specialized assistance with ErMate?
               </h4>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                Reach out to Varah Group at <span className="font-semibold text-blue-600 dark:text-blue-400">support@ermate.com</span> or access our website <span className="underline font-semibold text-blue-600 dark:text-blue-400">ermate.in</span>.
+                Reach out to ErMate Support at <span className="font-semibold text-blue-600 dark:text-blue-400">support@ermate.in</span> or access our website <span className="underline font-semibold text-blue-600 dark:text-blue-400">ermate.in</span>.
               </p>
             </div>
           </div>

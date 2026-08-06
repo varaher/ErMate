@@ -12,6 +12,7 @@ import { ClinicalSummaryCard, ClinicalSummaryData } from "./ClinicalSummaryCard"
 import { UserProfile } from "../types";
 import { useCaseSheetSave } from "../hooks/useCaseSheetSave";
 import { SaveStatusPill } from "./SaveStatusPill";
+import { subscribeChatHistory, appendChatMessage, generateNewCaseId } from "../services/scribeChatStorage";
 
 interface Message {
   id: string;
@@ -25,6 +26,7 @@ interface Message {
 }
 
 interface VoiceScribeChatViewProps {
+  caseId?: string | null;
   onBack: () => void;
   onSaveExtractedCase: (extractedData: any, options?: { autoNavigate?: boolean; existingCaseId?: string | null }) => Promise<string> | void;
   profile?: UserProfile;
@@ -34,6 +36,7 @@ interface VoiceScribeChatViewProps {
 }
 
 export default function VoiceScribeChatView({ 
+  caseId: propCaseId,
   onBack, 
   onSaveExtractedCase,
   profile,
@@ -89,9 +92,39 @@ export default function VoiceScribeChatView({
   const [isProcessing, setIsProcessing] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [activeVoiceCaseId, setActiveVoiceCaseId] = useState<string | null>(null);
+  const [activeVoiceCaseId, setActiveVoiceCaseId] = useState<string | null>(propCaseId || null);
   const activeVoiceCaseIdRef = useRef<string | null>(null);
   activeVoiceCaseIdRef.current = activeVoiceCaseId;
+
+  useEffect(() => {
+    if (propCaseId) {
+      setActiveVoiceCaseId(propCaseId);
+      activeVoiceCaseIdRef.current = propCaseId;
+    } else if (!activeVoiceCaseId) {
+      const newId = generateNewCaseId();
+      setActiveVoiceCaseId(newId);
+      activeVoiceCaseIdRef.current = newId;
+    }
+  }, [propCaseId]);
+
+  useEffect(() => {
+    const targetCaseId = propCaseId || activeVoiceCaseId;
+    if (!targetCaseId) return;
+
+    const unsubscribe = subscribeChatHistory(targetCaseId, (history) => {
+      if (history && history.length > 0) {
+        const mapped: Message[] = history.map(h => ({
+          id: h.id,
+          sender: h.role === "user" ? "user" : "ai",
+          text: h.content,
+          timestamp: new Date(h.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        }));
+        setMessages(mapped);
+      }
+    });
+
+    return () => unsubscribe();
+  }, [propCaseId, activeVoiceCaseId]);
 
   const { saveToCaseSheet, retrySave, saveStatus, saveError } = useCaseSheetSave(async (extractedData) => {
     await onSaveExtractedCase(extractedData, {

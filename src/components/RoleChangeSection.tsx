@@ -127,7 +127,7 @@ export default function RoleChangeSection({ profile, onRoleUpdated }: RoleChange
         reason: requestReason.trim(),
         status: "pending",
         createdAt: new Date().toISOString(),
-        hospital: profile.hospital || "Varah Emergency Department"
+        hospital: profile.hospital || ""
       });
 
       setRequestSuccess("Role change request submitted! Sent to Department Head (HOD) for review.");

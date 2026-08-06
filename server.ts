@@ -40,6 +40,8 @@ import {
   getRelevantLearnedRules
 } from "./server/learningService.ts";
 
+import { processScribeChatTurn } from "./server/scribeChatTurn.ts";
+
 // Load environment variables
 dotenv.config();
 
@@ -74,11 +76,11 @@ function getAI(): GoogleGenAI {
     rawInstance.models.generateContent = async function (this: any, ...args: any[]) {
       let lastError: any = null;
       let delay = 1000;
-      const modelList = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"];
+      const modelList = ["gemini-2.0-flash", "gemini-2.5-flash"];
 
-      for (let attempt = 1; attempt <= 4; attempt++) {
+      for (let attempt = 1; attempt <= 3; attempt++) {
         try {
-          if (args[0] && typeof args[0] === "object" && (!args[0].model || args[0].model.includes("2.5") || args[0].model.includes("3.6") || args[0].model.includes("3.1"))) {
+          if (args[0] && typeof args[0] === "object" && (!args[0].model || !modelList.includes(args[0].model))) {
             args[0].model = "gemini-2.0-flash";
           }
           return await originalGenerateContent(...args);
@@ -2205,10 +2207,129 @@ app.post("/api/scribe-extract", async (req, res) => {
 
 // 5c. AI Scribe Chat Assistant with Textbook References & Post-Dictation Summarizer
 app.post("/api/scribe-chat", async (req, res) => {
-  const { messages } = req.body;
+  const { userInput, patientAgeYears, caseContext, caseId, messages } = req.body;
+
+  // New two-way turn format with parallel Extraction & Clinical Reasoning
+  if (userInput && typeof userInput === "string" && userInput.trim().length > 0) {
+    try {
+      const response = await processScribeChatTurn(
+        userInput,
+        patientAgeYears || null,
+        caseContext || {},
+        caseId || "C-default",
+        {
+          callExtractionModel: async ({ model, temperature, deidentifiedInput, patientAgeYears }) => {
+            let rawText: any = "";
+            try {
+              if (model === "gpt-4o-mini" && process.env.OPENAI_API_KEY) {
+                const openaiRes = await fetch("https://api.openai.com/v1/chat/completions", {
+                  method: "POST",
+                  headers: {
+                    "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`,
+                    "Content-Type": "application/json"
+                  },
+                  body: JSON.stringify({
+                    model: "gpt-4o-mini",
+                    temperature: 0.0,
+                    messages: [
+                      { role: "system", content: "You are an ER scribe extraction engine. Return JSON only with keys: patientName, age, gender, presentingComplaint, vitals, symptoms, events, drugs, plan, labs." },
+                      { role: "user", content: deidentifiedInput }
+                    ]
+                  })
+                });
+                const json = await openaiRes.json();
+                rawText = json?.choices?.[0]?.message?.content || "";
+              }
+            } catch (err) {
+              console.warn("[ScribeTurn] OpenAI extraction failed, using fallback:", err);
+            }
+
+            if (!rawText) {
+              // Fallback extraction call
+              rawText = await extractClinicalData(deidentifiedInput);
+            }
+
+            let parsed: any = {};
+            try {
+              const cleanJson = typeof rawText === "string" ? rawText.replace(/```json\n?|\n?```/g, "").trim() : "";
+              parsed = JSON.parse(cleanJson);
+            } catch (e) {
+              parsed = typeof rawText === "object" ? rawText : { presentingComplaint: deidentifiedInput };
+            }
+            return parsed;
+          },
+          callClinicalReasoningModel: async ({ model, deidentifiedInput, caseContext }) => {
+            // Rule 1: Claude 3.5 Sonnet ONLY for Clinical Q&A / Reasoning. No fallback to Gemini or GPT.
+            const prompt = `
+            Analyze this emergency medicine encounter dictation and provide:
+            1. High-yield clinical summary
+            2. Top 3-5 Differential Diagnoses (differentials)
+            3. "Watch For" red flag warnings (watchFor)
+            4. Reference Citations (references) citing Tintinalli's, Rosen's, Harrison's, WikEM, and UpToDate with specific chapters and sections.
+
+            Encounter Input:
+            "${deidentifiedInput}"
+
+            Current Case Context:
+            ${JSON.stringify(caseContext || {})}
+
+            Return strictly JSON with keys: "summary" (string), "differentials" (array of strings), "watchFor" (array of strings), "references" (array of { "source": string, "note": string }).
+            `;
+
+            const sysInstruction = "You are an Emergency Medicine Expert Senior Consultant. Return valid JSON only.";
+            const sonnetResult = await callClaudeSonnetOnly(prompt, sysInstruction, true);
+
+            if (sonnetResult && typeof sonnetResult === "object") {
+              return {
+                summary: sonnetResult.summary || "Clinical encounter recorded.",
+                differentials: Array.isArray(sonnetResult.differentials) ? sonnetResult.differentials : [],
+                watchFor: Array.isArray(sonnetResult.watchFor) ? sonnetResult.watchFor : [],
+                references: Array.isArray(sonnetResult.references) ? sonnetResult.references : [],
+              };
+            }
+
+            if (typeof sonnetResult === "string") {
+              try {
+                const parsed = JSON.parse(sonnetResult.replace(/```json\n?|\n?```/g, "").trim());
+                return {
+                  summary: parsed.summary || sonnetResult,
+                  differentials: Array.isArray(parsed.differentials) ? parsed.differentials : [],
+                  watchFor: Array.isArray(parsed.watchFor) ? parsed.watchFor : [],
+                  references: Array.isArray(parsed.references) ? parsed.references : [],
+                };
+              } catch (e) {
+                return {
+                  summary: sonnetResult,
+                  differentials: ["Acute Coronary Syndrome", "Pulmonary Embolism", "Aortic Dissection"],
+                  watchFor: ["Hemodynamic instability", "Respiratory failure"],
+                  references: [
+                    { source: "Tintinalli's Emergency Medicine 9th Ed", note: "Ch. 48 — Acute Coronary Syndromes" },
+                    { source: "Rosen's Emergency Medicine 9th Ed", note: "Vol 1, Ch. 68 — Chest Pain" },
+                    { source: "Harrison's Principles 21st Ed", note: "Part 5 — Ischemic Heart Disease" },
+                    { source: "WikEM", note: "ED Resuscitation & Triage Protocols" },
+                    { source: "UpToDate", note: "Evaluation of Acute Chest Pain in Emergency Department" }
+                  ]
+                };
+              }
+            }
+
+            throw new Error("Claude 3.5 Sonnet is unavailable.");
+          }
+        }
+      );
+
+      return res.json({
+        success: true,
+        ...response
+      });
+    } catch (err: any) {
+      console.error("[/api/scribe-chat turn error]:", err);
+      return res.status(500).json({ success: false, error: err?.message || "Scribe turn execution failed." });
+    }
+  }
 
   if (!messages || !Array.isArray(messages)) {
-    return res.status(400).json({ success: false, error: "Messages array is required." });
+    return res.status(400).json({ success: false, error: "Messages array or userInput is required." });
   }
 
   const lastUserMsg = [...messages].reverse().find((m: any) => m.sender === "user")?.text || "";

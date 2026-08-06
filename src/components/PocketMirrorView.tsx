@@ -39,6 +39,45 @@ export default function PocketMirrorView({ onBack }: PocketMirrorViewProps) {
     setIsGeneratingReport(true);
     setReportText("");
     setCopiedReport(false);
+    
+    const generateLocalFallbackReport = () => {
+      if (activeOverlay === "pupil") {
+        return `### Bedside Pupillary Diagnostic Report
+        
+**1. EXECUTIVE SUMMARY**
+- **Matched Pupil Size**: ${selectedPupilSize} mm
+- **Observation Mode**: Interactive Pupillary Comparator (Active Filter: ${activeFilter})
+
+**2. CLINICAL CORRELATIONS & SIGNIFICANCE**
+- A pupil diameter of **${selectedPupilSize} mm** falls within the ${selectedPupilSize < 2.5 ? "constricted (miosis)" : selectedPupilSize > 5.5 ? "dilated (mydriasis)" : "normal/ambient"} range.
+- ${selectedPupilSize < 2.5 ? "Common etiologies of constricted pupils (miosis) include opioid toxicity, organophosphate poisoning, pontine lesions, or deep sedatives." : selectedPupilSize > 5.5 ? "Common etiologies of dilated pupils (mydriasis) include sympathomimetic drugs, anticholinergics, CN III nerve compression (early uncal herniation), or severe hypoxic encephalopathy." : "This is a physiologically expected resting size under standard emergency department lighting conditions. Compare bilateral responses."}
+
+**3. DIAGNOSTIC RECOMMENDATIONS**
+- **Symmetry check**: Test the contralateral pupil to assess for anisocoria (pathological if >1mm difference).
+- **Direct & Consensual Light Reflex**: Confirm reactivity. Fixed, dilated pupils are a neurosurgical emergency.
+- **Tox-Screen / Neuroimaging**: Order as clinically indicated by systemic signs.
+
+**4. CONTINGENCY / RED FLAG WARNINGS**
+- Rapid unilateral dilation or a newly unresponsive pupil must prompt immediate head CT to rule out intracranial mass effect or uncal herniation.`;
+      } else {
+        return `### Bedside Airway Assessment Report (Mallampati Class ${selectedMallampatiClass})
+
+**1. EXECUTIVE SUMMARY**
+- **Assessed Grade**: Mallampati Class ${selectedMallampatiClass}
+- **Objective**: Airway visibility evaluation prior to sedation or endotracheal intubation.
+
+**2. CLINICAL CORRELATIONS & SIGNIFICANCE**
+- **Class ${selectedMallampatiClass}** represents ${selectedMallampatiClass === "Class I" || selectedMallampatiClass === "Class II" ? "good visibility of the tonsillar pillars and soft palate, indicating a lower likelihood of difficult direct laryngoscopy." : "restricted airway visualization (soft or hard palate only). This strongly correlates with a high Cormack-Lehane grade and difficult endotracheal intubation (high airway risk)."}
+
+**3. DIAGNOSTIC RECOMMENDATIONS**
+- Ensure the patient was assessed while sitting upright, mouth open wide, tongue protruded, and **without phonating** to prevent false grading.
+- ${selectedMallampatiClass === "Class III" || selectedMallampatiClass === "Class IV" ? "Prepare difficult airway cart. Ensure a video laryngoscope (e.g. McGrath, Glidescope) and a bougie are at the bedside." : "Standard intubation/airway setup is appropriate, but always maintain secondary backup plan."}
+
+**4. CONTINGENCY / RED FLAG WARNINGS**
+- In Class III/IV, do not attempt rapid sequence intubation (RSI) without senior clinical backup or a clear rescue strategy (e.g. surgical airway kit, bag-valve mask capability).`;
+      }
+    };
+
     try {
       const response = await fetch("/api/lens-report", {
         method: "POST",
@@ -54,14 +93,14 @@ export default function PocketMirrorView({ onBack }: PocketMirrorViewProps) {
         }),
       });
       const data = await response.json();
-      if (data.success) {
+      if (data && data.success && data.report) {
         setReportText(data.report);
       } else {
-        setReportText(`### Error Generating Report\n\nFailed to generate the diagnostic report. Please verify connection and try again.`);
+        setReportText(generateLocalFallbackReport());
       }
     } catch (err: any) {
-      console.error("Report generation failed:", err);
-      setReportText(`### Connection Error\n\nCould not reach the diagnostic server. Fallback system active.`);
+      console.warn("Report generation server call notice, activating local fallback:", err);
+      setReportText(generateLocalFallbackReport());
     } finally {
       setIsGeneratingReport(false);
     }

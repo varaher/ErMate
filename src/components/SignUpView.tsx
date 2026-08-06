@@ -354,7 +354,7 @@ export default function SignUpView({
                       type="text"
                       value={hospital}
                       onChange={(e) => setHospital(e.target.value)}
-                      placeholder="Varah Group Emergency Care"
+                      placeholder="e.g. City General Hospital"
                       className={`${isEmerald ? 'bg-slate-50 border-slate-200 text-slate-800 focus:ring-emerald-500' : 'bg-slate-900 border-slate-800 text-slate-200 focus:ring-blue-500'} block w-full pl-9 pr-3 py-2 text-xs rounded-lg font-sans font-semibold focus:outline-none focus:ring-1`}
                       required
                     />

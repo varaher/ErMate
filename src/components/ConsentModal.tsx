@@ -238,7 +238,7 @@ export default function ConsentModal({ isOpen, profile, onConsent, onClose, isFi
                       Where It's Stored
                     </h4>
                     <p className="text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed font-sans">
-                      Google Cloud Storage, Mumbai, India (asia-south1). Encrypted at rest and in transit. Only Varah Group has access.
+                      Google Cloud Storage, Mumbai, India (asia-south1). Encrypted at rest and in transit. Only authorized healthcare facility personnel have access.
                     </p>
                   </div>
 

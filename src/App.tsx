@@ -50,40 +50,7 @@ interface StaticReference {
   keyPoints: string[];
 }
 
-const DEFAULT_QUICK_PASTE_PATIENTS: QuickPastePatient[] = [
-  {
-    id: "qp-1",
-    bed: "Bed 3",
-    name: "John Doe",
-    ageGender: "52y / Male",
-    triage: "P1 (Immediate)",
-    vitals: "BP 160/95 | HR 112 | SpO2 91%",
-    presentingComplaint: "Acute crushing retrosternal chest pain radiating to jaw for 2 hours with diaphoresis",
-    rawNotes: "Pasted from EMR:\nPatient presented with acute crushing chest pain for 2 hours, radiating to jaw. Diaphoretic. ECG shows 3mm ST elevation in V1-V4. Loading doses of Aspirin 325mg and Ticagrelor 180mg given at 10:15 AM. Cardiology consulted and patient accepted for immediate primary PCI in cath lab. Prep in progress. IV fluids running.",
-    structuredSBAR: {
-      situation: "52y Male in Bed 3 with acute retrosternal chest pain, diagnosed with Anterior Wall STEMI.",
-      background: "Known history of hypertension and hyperlipidemia. Smoker.",
-      assessment: "Hemodynamically stable but tachypneic. ST elevation in V1-V4. Antiplatelets loaded.",
-      recommendation: "Transfer immediately to Cath Lab. Secure patent IV and keep oxygen active."
-    }
-  },
-  {
-    id: "qp-2",
-    bed: "Bed 7",
-    name: "Clara Oswald",
-    ageGender: "29y / Female",
-    triage: "P2 (Urgent)",
-    vitals: "BP 115/70 | HR 88 | SpO2 99%",
-    presentingComplaint: "Severe right lower quadrant abdominal pain for 12 hours with nausea",
-    rawNotes: "EMR Notes:\nSevere right lower quadrant abdominal pain for 12 hours. Nausea, no vomiting. Tender in RLQ with positive McBurney's sign. Ultrasound ordered, report shows swollen non-compressible appendix of 8.5mm with mild surrounding free fluid, consistent with acute appendicitis. NPO since 08:00 AM. IV Cefotetan 2g administered. Surgical resident Dr. Patel reviewed and posted for appendectomy. Waiting for OT vacancy.",
-    structuredSBAR: {
-      situation: "29y Female in Bed 7 with acute right lower quadrant abdominal pain, diagnosed with acute appendicitis.",
-      background: "Prior laparoscopic cholecystectomy 2 years ago. No known drug allergies.",
-      assessment: "Tender RLQ abdomen. Ultrasound confirmed appendicitis. Pre-op antibiotics given.",
-      recommendation: "Maintain NPO status, administer IV hydration, and monitor for OT transfer."
-    }
-  }
-];
+const DEFAULT_QUICK_PASTE_PATIENTS: QuickPastePatient[] = [];
 
 const LOCAL_REFERENCES: StaticReference[] = [
   {
@@ -439,6 +406,7 @@ export default function App() {
     setDiscussionModalCase(prev => prev && prev.id === caseId ? { ...prev, discussionMessages: messages } : prev);
   };
   const [showVoiceScribeChat, setShowVoiceScribeChat] = useState<boolean>(false);
+  const [voiceScribeCaseId, setVoiceScribeCaseId] = useState<string | null>(null);
   const [scribeMessages, setScribeMessages] = useState<any[]>([
     {
       id: "msg-1",
@@ -515,13 +483,13 @@ export default function App() {
 
   // App data states
   const [profile, setProfile] = useState<UserProfile>({
-    name: "Varah",
-    email: "varahgrp@gmail.com",
-    role: "Senior Consultant",
-    hospital: "Varah Group Emergency Care",
-    aiCredits: 350,
-    streak: 5,
-    subscriptionTier: "Enterprise Platinum"
+    name: "Emergency Physician",
+    email: "",
+    role: "EM Resident",
+    hospital: "Emergency Department",
+    aiCredits: 100,
+    streak: 1,
+    subscriptionTier: "Free Standard"
   });
 
   const profileRef = useRef(profile);
@@ -556,16 +524,7 @@ export default function App() {
     doctorName?: string;
     doctorEmail?: string;
     status?: "planned" | "actual" | "gap";
-  }>>([
-    { day: 1, shift: "Morning", doctorName: "Dr. Vipin Kumar", doctorEmail: "dr.vipin@gmail.com", status: "actual" },
-    { day: 1, shift: "Evening", doctorName: "Dr. Priya Nair", doctorEmail: "priya.nair@gmail.com", status: "actual" },
-    { day: 1, shift: "Night", doctorName: "Dr. Sanjay Verma", doctorEmail: "sanjay.verma@gmail.com", status: "actual" },
-    { day: 14, shift: "Morning", doctorName: "Dr. Priya Nair", doctorEmail: "priya.nair@gmail.com", status: "actual" },
-    { day: 14, shift: "Evening", doctorName: "Dr. Sanjay Verma", doctorEmail: "sanjay.verma@gmail.com", status: "actual" },
-    { day: 14, shift: "Night", doctorName: "Dr. Vipin Kumar", doctorEmail: "dr.vipin@gmail.com", status: "gap" }, // Gap!
-    { day: 15, shift: "Morning", doctorName: "Dr. Priya Nair", doctorEmail: "priya.nair@gmail.com", status: "planned" },
-    { day: 15, shift: "Evening", doctorName: "", doctorEmail: "", status: "planned" }, // Open slot!
-  ]);
+  }>>([]);
 
   const [activeShiftDoctors, setActiveShiftDoctors] = useState<Array<{
     id: string;
@@ -573,11 +532,7 @@ export default function App() {
     role: string;
     caseCount: number;
     timeOnShift: string;
-  }>>([
-    { id: "doc-priya", name: "Dr. Priya Nair", role: "Senior Consultant", caseCount: 4, timeOnShift: "3h 20m" },
-    { id: "doc-rahul", name: "Dr. Rahul", role: "EM Resident", caseCount: 3, timeOnShift: "3h 20m" },
-    { id: "doc-sanjay", name: "Dr. Sanjay Verma", role: "EM Resident", caseCount: 2, timeOnShift: "1h 10m" },
-  ]);
+  }>>([]);
 
   const [cases, setCases] = useState<ClinicalCase[]>([]);
   const [savedBanner, setSavedBanner] = useState<{
@@ -609,7 +564,6 @@ export default function App() {
     const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
       setAuthLoading(true);
       if (user) {
-        setIsLoggedIn(true);
         const profileDocRef = doc(db, "users", user.uid);
         try {
           const profileSnap = await getDoc(profileDocRef);
@@ -622,7 +576,7 @@ export default function App() {
             const memberDocRef = doc(db, "team_members", memberId);
             const memberSnap = await getDoc(memberDocRef);
 
-            let initialHospital = "Varah Group Emergency Care";
+            let initialHospital = "";
             let initialTier = "Free Standard";
             let initialRole = "Senior Consultant";
 
@@ -710,18 +664,20 @@ export default function App() {
           }
 
           setProfile(currentProfile);
+          setIsLoggedIn(true);
         } catch (err) {
           console.warn("Offline or error checking profile/invites, using fallback profile:", err);
           const fallbackProfile: UserProfile = {
             name: user.displayName || "Dr. " + (user.email?.split("@")[0] || "Doctor"),
             email: user.email || "doctor@ermate.in",
             role: "Senior Consultant",
-            hospital: "Varah Group Emergency Care",
+            hospital: "",
             aiCredits: 350,
             streak: 5,
             subscriptionTier: "Hospital Team Premium (Department Covered)"
           };
           setProfile(fallbackProfile);
+          setIsLoggedIn(true);
         }
 
         // Set up real-time onSnapshot listener for UserProfile
@@ -758,6 +714,11 @@ export default function App() {
 
       } else {
         setIsLoggedIn(false);
+        setProfile(null as any);
+        setCases([]);
+        setHandovers([]);
+        setQuickPasteList([]);
+        setTeamMembers([]);
         if (unsubscribeProfile) {
           unsubscribeProfile();
           unsubscribeProfile = null;
@@ -776,14 +737,14 @@ export default function App() {
 
   // Real-time Firestore sync for cases & handovers when logged in
   useEffect(() => {
-    if (!isLoggedIn) return;
+    if (!isLoggedIn || !profile) return;
 
     isInitialCases.current = true;
     isInitialHandovers.current = true;
 
-    const userHospital = profile.hospital || "Varah Group Emergency Care";
+    const userHospital = profile.hospital || "";
     const userHospitalLower = userHospital.trim().toLowerCase();
-    const docName = profile.name.startsWith("Dr. ") ? profile.name : `Dr. ${profile.name}`;
+    const docName = (profile.name || "").startsWith("Dr. ") ? profile.name : `Dr. ${profile.name || "Physician"}`;
 
     // Stream Cases
     const casesQuery = collection(db, "cases");
@@ -805,8 +766,8 @@ export default function App() {
         );
         if (isMyCase) return true;
 
-        const caseHospitalLower = (c.hospital || "Varah Group Emergency Care").trim().toLowerCase();
-        return caseHospitalLower === userHospitalLower;
+        const caseHospitalLower = (c.hospital || "").trim().toLowerCase();
+        return userHospitalLower ? caseHospitalLower === userHospitalLower : true;
       });
 
       // If this specific hospital has no cases yet, seed customized defaults so the dashboard looks great!
@@ -955,7 +916,7 @@ export default function App() {
         if (!isInitialCases.current) {
           snapshot.docChanges().forEach((change) => {
             const data = change.doc.data() as ClinicalCase;
-            const caseHospital = (data.hospital || "Varah Group Emergency Care").trim().toLowerCase();
+            const caseHospital = (data.hospital || "").trim().toLowerCase();
             const isOurHospital = caseHospital === userHospitalLower;
             const isByOtherDoctor = data.doctorEmail !== profile.email;
 
@@ -997,50 +958,19 @@ export default function App() {
       });
       
       const filteredHandovers = loadedHandovers.filter(h => {
-        const handoverHospital = (h.hospital || "Varah Group Emergency Care").trim().toLowerCase();
+        const handoverHospital = (h.hospital || "").trim().toLowerCase();
         const currentEmail = (profile.email || auth.currentUser?.email || "").trim().toLowerCase();
         const senderEmail = (h.senderEmail || "").trim().toLowerCase();
-        return handoverHospital === userHospitalLower || (currentEmail && senderEmail === currentEmail);
+        return (userHospitalLower && handoverHospital === userHospitalLower) || (currentEmail && senderEmail === currentEmail);
       });
 
-      // If there are no handovers in Firestore for this clinic, seed the defaults!
-      if (filteredHandovers.length === 0 && !profileRef.current?.seededHandovers) {
-        const defaultHandovers: HandoverRecord[] = [
-          {
-            id: "H-8210",
-            senderName: "Dr. Priya Nair",
-            senderEmail: "priya.nair@gmail.com",
-            timestamp: "06:15 AM | Jul 14",
-            caseCount: 3,
-            patientsText: "Bed 3: Abdulahad (Chest pain)\nBed 7: Siya Sibi (Abdominal pain)\nBed 9: Pradeep (Fever)",
-            acknowledgedBy: docName,
-            acknowledgedTime: "06:22 AM | Jul 14",
-            hospital: userHospital
-          }
-        ];
-        for (const h of defaultHandovers) {
-          try {
-            await setDoc(doc(db, "handovers", h.id), h);
-          } catch (err) {
-            console.error("Error seeding default handover:", err);
-          }
-        }
-
-        if (auth.currentUser) {
-          try {
-            await updateDoc(doc(db, "users", auth.currentUser.uid), { seededHandovers: true });
-          } catch (err) {
-            console.error("Error updating seededHandovers status in Firestore:", err);
-          }
-        }
-      } else {
-        setHandovers(filteredHandovers.sort((a, b) => b.id.localeCompare(a.id)));
+      setHandovers(filteredHandovers.sort((a, b) => b.id.localeCompare(a.id)));
 
         // Real-time alert for updates made by other users
         if (!isInitialHandovers.current) {
           snapshot.docChanges().forEach((change) => {
             const data = change.doc.data() as HandoverRecord;
-            const handoverHospital = (data.hospital || "Varah Group Emergency Care").trim().toLowerCase();
+            const handoverHospital = (data.hospital || "").trim().toLowerCase();
             const isOurHospital = handoverHospital === userHospitalLower;
 
             if (isOurHospital) {
@@ -1063,7 +993,6 @@ export default function App() {
           });
         }
         isInitialHandovers.current = false;
-      }
     }, (error) => {
       handleFirestoreError(error, OperationType.LIST, "handovers");
     });
@@ -1081,10 +1010,10 @@ export default function App() {
       });
 
       const filteredQuickPaste = loadedQuickPaste.filter(item => {
-        const itemHospital = (item.hospital || "Varah Group Emergency Care").trim().toLowerCase();
+        const itemHospital = (item.hospital || "").trim().toLowerCase();
         const itemEmail = (item.createdByEmail || "").trim().toLowerCase();
         const currentEmail = (profile.email || auth.currentUser?.email || "").trim().toLowerCase();
-        return itemHospital === userHospitalLower || (currentEmail && itemEmail === currentEmail) || (!item.hospital && !item.createdByEmail);
+        return (userHospitalLower && itemHospital === userHospitalLower) || (currentEmail && itemEmail === currentEmail) || (!item.hospital && !item.createdByEmail);
       });
 
       filteredQuickPaste.sort((a, b) => (b.updatedAt || b.id || "").localeCompare(a.updatedAt || a.id || ""));
@@ -1097,7 +1026,7 @@ export default function App() {
         for (const item of currentItems) {
           const itemToSave: QuickPastePatient = {
             ...item,
-            hospital: item.hospital || profile.hospital || "Varah Group Emergency Care",
+            hospital: item.hospital || profile.hospital || "",
             createdByEmail: item.createdByEmail || profile.email || auth.currentUser?.email || undefined,
             updatedAt: new Date().toISOString()
           };
@@ -1122,167 +1051,122 @@ export default function App() {
     // Stream Team Members
     const teamQuery = collection(db, "team_members");
     const unsubscribeTeam = onSnapshot(teamQuery, async (snapshot) => {
+      const DEMO_EMAILS = [
+        "dr.vipin@gmail.com",
+        "priya.nair@gmail.com",
+        "sanjay.verma@gmail.com",
+        "dr.ananya@gmail.com",
+        "dr.jenkins@gmail.com",
+        "chloe.harrison@gmail.com",
+        "robert.miller@gmail.com"
+      ];
+
       const loadedTeam: TeamMember[] = [];
-      snapshot.forEach((doc) => {
-        loadedTeam.push(doc.data() as TeamMember);
+      snapshot.forEach((docSnap) => {
+        const data = docSnap.data() as TeamMember;
+        const emailLower = (data.email || "").toLowerCase().trim();
+        const idLower = (data.id || docSnap.id).toLowerCase();
+
+        if (DEMO_EMAILS.includes(emailLower) || idLower.startsWith("mem-vipin") || idLower.startsWith("mem-priya") || idLower.startsWith("mem-sanjay") || idLower.startsWith("mem-ananya") || ["mem-1", "mem-2", "mem-3", "mem-4"].includes(idLower)) {
+          // Permanently purge demo documents from Firestore database
+          deleteDoc(doc(db, "team_members", docSnap.id)).catch(() => {});
+        } else {
+          loadedTeam.push(data);
+        }
       });
 
       const filteredTeam = loadedTeam.filter(m => {
-        const memberHospital = (m.hospital || "Varah Group Emergency Care").trim().toLowerCase();
-        return memberHospital === userHospitalLower;
+        const memberHospital = (m.hospital || "").trim().toLowerCase();
+        return userHospitalLower ? memberHospital === userHospitalLower : true;
       });
 
-      if (filteredTeam.length === 0 && !profileRef.current?.seededTeam) {
-        const defaultTeam: TeamMember[] = [
-          {
-            id: "mem-vipin",
-            name: "Dr. Vipin Kumar",
-            email: "dr.vipin@gmail.com",
-            role: "HOD / Shift Lead",
-            status: "Pending Invite",
-            shift: "morning",
-            hospital: userHospital
-          },
-          {
-            id: "mem-priya",
-            name: "Dr. Priya Nair",
-            email: "priya.nair@gmail.com",
-            role: "Senior Consultant",
-            status: "Active (Joined)",
-            shift: "evening",
-            hospital: userHospital
-          },
-          {
-            id: "mem-sanjay",
-            name: "Dr. Sanjay Verma",
-            email: "sanjay.verma@gmail.com",
-            role: "EM Resident",
-            status: "Pending Invite",
-            shift: "night",
-            hospital: userHospital
-          },
-          {
-            id: "mem-ananya",
-            name: "Dr. Ananya",
-            email: "dr.ananya@gmail.com",
-            role: "Scribe Specialist",
-            status: "Pending Invite",
-            shift: "off",
-            hospital: userHospital
-          }
-        ];
-
-        // Also add current logged in user if not in defaults
-        const currentEmail = profile.email.toLowerCase().trim();
-        if (!defaultTeam.some(m => m.email.toLowerCase().trim() === currentEmail)) {
-          defaultTeam.push({
-            id: `mem-${profile.email.replace(/[^a-zA-Z0-9]/g, "-")}`,
-            name: profile.name,
-            email: profile.email,
-            role: profile.role || "EM Resident",
-            status: "Active (Joined)",
-            shift: "morning",
-            hospital: userHospital
-          });
+      // If logged in user is not in the team list, let's automatically add them to the team list so they are displayed!
+      const currentEmail = (profile?.email || "").toLowerCase().trim();
+      const hasSelf = currentEmail ? filteredTeam.some(m => m.email.toLowerCase().trim() === currentEmail) : true;
+      if (!hasSelf && profile?.email) {
+        const selfMember: TeamMember = {
+          id: `mem-${profile.email.replace(/[^a-zA-Z0-9]/g, "-")}`,
+          name: profile.name || "Physician",
+          email: profile.email,
+          role: profile.role || "EM Resident",
+          status: "Active (Joined)",
+          shift: "morning",
+          hospital: userHospital
+        };
+        try {
+          await setDoc(doc(db, "team_members", selfMember.id), selfMember);
+        } catch (err) {
+          console.error("Error auto-adding self to team list:", err);
         }
-
-        for (const member of defaultTeam) {
-          try {
-            await setDoc(doc(db, "team_members", member.id), member);
-          } catch (err) {
-            console.error("Error seeding team member:", err);
-          }
-        }
-
-        if (auth.currentUser) {
-          try {
-            await updateDoc(doc(db, "users", auth.currentUser.uid), { seededTeam: true });
-          } catch (err) {
-            console.error("Error updating seededTeam status in Firestore:", err);
-          }
-        }
-      } else {
-        // If logged in user is not in the team list, let's automatically add them to the team list so they are displayed!
-        const currentEmail = profile.email.toLowerCase().trim();
-        const hasSelf = filteredTeam.some(m => m.email.toLowerCase().trim() === currentEmail);
-        if (!hasSelf && profile.email) {
-          const selfMember: TeamMember = {
-            id: `mem-${profile.email.replace(/[^a-zA-Z0-9]/g, "-")}`,
-            name: profile.name,
-            email: profile.email,
-            role: profile.role || "EM Resident",
-            status: "Active (Joined)",
-            shift: "morning",
-            hospital: userHospital
-          };
-          try {
-            await setDoc(doc(db, "team_members", selfMember.id), selfMember);
-          } catch (err) {
-            console.error("Error auto-adding self to team list:", err);
-          }
-        }
-
-        setTeamMembers(filteredTeam);
       }
+
+      setTeamMembers(filteredTeam);
     }, (error) => {
       handleFirestoreError(error, OperationType.LIST, "team_members");
     });
 
-    // Stream Hospital Subscription
-    const hospitalSlug = userHospitalLower.replace(/[^a-z0-9]/g, "-");
-    const subDocRef = doc(db, "hospital_subscriptions", hospitalSlug);
-    const unsubscribeSub = onSnapshot(subDocRef, async (snapshot) => {
-      if (snapshot.exists()) {
-        const data = snapshot.data();
-        setHospitalSubscription({
-          active: data.active,
-          subscriptionTier: data.subscriptionTier
-        });
-      } else {
-        // If snapshot doesn't exist, check if current profile has a team plan.
-        const tier = profile.subscriptionTier || "Free Plan";
-        const isTeamPlan = tier.toLowerCase().includes("team") || tier.toLowerCase().includes("enterprise");
-        if (isTeamPlan) {
-          // Auto initialize the hospital subscription so all members benefit!
-          const initialSub = {
-            id: hospitalSlug,
-            hospital: userHospital,
-            subscriptionTier: tier,
-            active: true,
-            updatedAt: new Date().toISOString()
-          };
-          try {
-            await setDoc(subDocRef, initialSub);
-            setHospitalSubscription({
-              active: true,
-              subscriptionTier: tier
-            });
-          } catch (err) {
-            console.error("Error creating hospital subscription:", err);
-          }
-        } else {
-          setHospitalSubscription(null);
-        }
-      }
-    });
+    // Stream Hospital Subscription & Shifts Configuration
+    let unsubscribeSub: () => void = () => {};
+    let unsubscribeShifts: () => void = () => {};
 
-    // Stream Hospital Shifts Configuration
-    const shiftDocRef = doc(db, "hospital_shifts", hospitalSlug);
-    const unsubscribeShifts = onSnapshot(shiftDocRef, (snapshot) => {
-      if (snapshot.exists()) {
-        const data = snapshot.data();
-        if (data.shifts && Array.isArray(data.shifts)) {
-          setShifts(data.shifts);
+    const hospitalSlug = userHospitalLower.replace(/[^a-z0-9]/g, "-").replace(/^-+|-+$/g, "");
+    if (hospitalSlug && hospitalSlug.trim().length > 0) {
+      const subDocRef = doc(db, "hospital_subscriptions", hospitalSlug);
+      unsubscribeSub = onSnapshot(subDocRef, async (snapshot) => {
+        if (snapshot.exists()) {
+          const data = snapshot.data();
+          setHospitalSubscription({
+            active: data.active,
+            subscriptionTier: data.subscriptionTier
+          });
+        } else {
+          // If snapshot doesn't exist, check if current profile has a team plan.
+          const tier = profile?.subscriptionTier || "Free Plan";
+          const isTeamPlan = tier.toLowerCase().includes("team") || tier.toLowerCase().includes("enterprise");
+          if (isTeamPlan) {
+            // Auto initialize the hospital subscription so all members benefit!
+            const initialSub = {
+              id: hospitalSlug,
+              hospital: userHospital,
+              subscriptionTier: tier,
+              active: true,
+              updatedAt: new Date().toISOString()
+            };
+            try {
+              await setDoc(subDocRef, initialSub);
+              setHospitalSubscription({
+                active: true,
+                subscriptionTier: tier
+              });
+            } catch (err) {
+              console.error("Error creating hospital subscription:", err);
+            }
+          } else {
+            setHospitalSubscription(null);
+          }
+        }
+      });
+
+      const shiftDocRef = doc(db, "hospital_shifts", hospitalSlug);
+      unsubscribeShifts = onSnapshot(shiftDocRef, (snapshot) => {
+        if (snapshot.exists()) {
+          const data = snapshot.data();
+          if (data.shifts && Array.isArray(data.shifts)) {
+            setShifts(data.shifts);
+          } else {
+            setShifts(ROTA_SHIFTS);
+          }
         } else {
           setShifts(ROTA_SHIFTS);
         }
-      } else {
+      }, (error) => {
+        console.error("Error fetching hospital shifts:", error);
         setShifts(ROTA_SHIFTS);
-      }
-    }, (error) => {
-      console.error("Error fetching hospital shifts:", error);
+      });
+    } else {
+      setHospitalSubscription(null);
       setShifts(ROTA_SHIFTS);
-    });
+    }
 
     // Stream Clinical Contributions for Peer Review Notifications
     const contributionsQuery = collection(db, "contributions");
@@ -1335,7 +1219,7 @@ export default function App() {
       unsubscribeShifts();
       unsubscribeContributions();
     };
-  }, [isLoggedIn, profile.hospital, profile.email, profile.subscriptionTier]);
+  }, [isLoggedIn, profile?.hospital, profile?.email, profile?.subscriptionTier]);
 
   // View controllers
   const [selectedCaseId, setSelectedCaseId] = useState<string | null>(null);
@@ -1505,7 +1389,7 @@ export default function App() {
     const consultantName = consultantOnShift ? consultantOnShift.name || "Dr. Nirmal" : "Dr. Nirmal";
     const createdByUid = auth.currentUser?.uid || "uid_priya";
     const createdByRoleVal = profile.role.toLowerCase().includes("hod") ? "hod" : (profile.role.toLowerCase().includes("consultant") ? "consultant" : "resident");
-    const hospitalSlug = (profile.hospital || "Varah Group Emergency Care").trim().toLowerCase().replace(/[^a-z0-9]/g, "-");
+    const hospitalSlug = (profile.hospital || "general-er").trim().toLowerCase().replace(/[^a-z0-9]/g, "-");
 
     const newCase: ClinicalCase = {
       id: "C-" + Math.floor(1000 + Math.random() * 9000),
@@ -1767,7 +1651,8 @@ export default function App() {
     setShowVoiceScribeChat(false);
   };
 
-  const handleStartVoiceScribe = () => {
+  const handleStartVoiceScribe = (caseId?: string) => {
+    setVoiceScribeCaseId(caseId || null);
     setShowVoiceScribeChat(true);
     setSelectedCaseId(null);
     setActiveFormMode(null);
@@ -1799,7 +1684,7 @@ export default function App() {
     const consultantName = consultantOnShift ? consultantOnShift.name || "Dr. Nirmal" : "Dr. Nirmal";
     const createdByUid = auth.currentUser?.uid || "uid_priya";
     const createdByRoleVal = profile.role.toLowerCase().includes("hod") ? "hod" : (profile.role.toLowerCase().includes("consultant") ? "consultant" : "resident");
-    const hospitalSlug = (profile.hospital || "Varah Group Emergency Care").trim().toLowerCase().replace(/[^a-z0-9]/g, "-");
+    const hospitalSlug = (profile.hospital || "general-er").trim().toLowerCase().replace(/[^a-z0-9]/g, "-");
 
     // Robust parsing helpers to completely prevent NaN values in Firestore
     const parsedAge = (extracted.age !== null && extracted.age !== undefined && extracted.age !== "") ? Number(extracted.age) : null;
@@ -1988,7 +1873,7 @@ export default function App() {
     if (!auth.currentUser || !initialHospital) return;
     try {
       // Enforce: one user id or email id valid for one team, but allow switching with confirmation
-      if (profile.hospital && profile.hospital.trim() !== "" && profile.hospital.toLowerCase().trim() !== "varah group emergency care".trim() && profile.hospital.toLowerCase().trim() !== initialHospital.toLowerCase().trim()) {
+      if (profile.hospital && profile.hospital.trim() !== "" && profile.hospital.toLowerCase().trim() !== initialHospital.toLowerCase().trim()) {
         setShowAffiliationConflictModal(true);
       } else {
         setShowRoleSelectionModal(true);
@@ -2089,7 +1974,7 @@ export default function App() {
         if (!userSnap.empty) {
           const userDocRef = doc(db, "users", userSnap.docs[0].id);
           await updateDoc(userDocRef, {
-            hospital: "Varah Group Emergency Care",
+            hospital: "",
             subscriptionTier: "Free Standard"
           });
         }
@@ -2118,7 +2003,7 @@ export default function App() {
       // Reset user profile back to default
       const profileDocRef = doc(db, "users", auth.currentUser.uid);
       await updateDoc(profileDocRef, {
-        hospital: "Varah Group Emergency Care",
+        hospital: "",
         subscriptionTier: "Free Standard"
       });
       
@@ -2142,7 +2027,7 @@ export default function App() {
       
       const profileDocRef = doc(db, "users", auth.currentUser.uid);
       await updateDoc(profileDocRef, {
-        hospital: "Varah Group Emergency Care",
+        hospital: "",
         subscriptionTier: "Free Standard"
       });
       
@@ -2357,7 +2242,7 @@ export default function App() {
   };
 
   const handleUpdateHospitalShifts = async (newShifts: any[]) => {
-    const userHospital = profile.hospital || "Varah Group Emergency Care";
+    const userHospital = profile.hospital || "General Emergency Department";
     const userHospitalLower = userHospital.trim().toLowerCase();
     const hospitalSlug = userHospitalLower.replace(/[^a-z0-9]/g, "-");
     try {
@@ -2395,15 +2280,17 @@ export default function App() {
         // Also update shared hospital subscription if the user upgraded to a team/enterprise plan
         const tier = newProfile.subscriptionTier || "Free Plan";
         const isTeamPlan = tier.toLowerCase().includes("team") || tier.toLowerCase().includes("enterprise");
-        if (isTeamPlan && newProfile.hospital) {
-          const hospitalSlug = newProfile.hospital.trim().toLowerCase().replace(/[^a-z0-9]/g, "-");
-          await setDoc(doc(db, "hospital_subscriptions", hospitalSlug), {
-            id: hospitalSlug,
-            hospital: newProfile.hospital,
-            subscriptionTier: tier,
-            active: true,
-            updatedAt: new Date().toISOString()
-          });
+        if (isTeamPlan && newProfile.hospital && newProfile.hospital.trim()) {
+          const hospitalSlug = newProfile.hospital.trim().toLowerCase().replace(/[^a-z0-9]/g, "-").replace(/^-+|-+$/g, "");
+          if (hospitalSlug) {
+            await setDoc(doc(db, "hospital_subscriptions", hospitalSlug), {
+              id: hospitalSlug,
+              hospital: newProfile.hospital,
+              subscriptionTier: tier,
+              active: true,
+              updatedAt: new Date().toISOString()
+            });
+          }
         }
 
         // Sync with Cloud SQL (PostgreSQL) backend
@@ -2522,7 +2409,7 @@ export default function App() {
     for (const item of processedList) {
       const itemToSave: QuickPastePatient = {
         ...item,
-        hospital: item.hospital || profile.hospital || "Varah Group Emergency Care",
+        hospital: item.hospital || profile.hospital || "",
         createdByEmail: item.createdByEmail || profile.email,
         updatedAt: new Date().toISOString()
       };
@@ -2549,10 +2436,27 @@ export default function App() {
   // Secure sign out
   const handleSignOut = async () => {
     try {
-      await signOut(auth);
+      // 1. Switch views & unmount logged-in components FIRST before clearing data underneath them
       setIsLoggedIn(false);
       setLoginScreenMode("login");
       setIsOnShift(false);
+      setSelectedCaseId(null);
+      setViewCaseSheetPrintId(null);
+      setActiveFormMode(null);
+      setShowDischargeSummaryId(null);
+      setShowVoiceScribeChat(false);
+
+      // 2. Clear session state now that views are unmounted
+      setProfile(null as any);
+      setCases([]);
+      setHandovers([]);
+      setQuickPasteList([]);
+      setTeamMembers([]);
+      setShifts([]);
+      setHospitalSubscription(null);
+
+      // 3. Finally sign out of Firebase Auth
+      await signOut(auth);
     } catch (err) {
       console.error("Error signing out:", err);
     }
@@ -2567,6 +2471,20 @@ export default function App() {
     setShowDischargeSummaryId(null);
     setShowVoiceScribeChat(false);
   };
+
+  if (authLoading) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-slate-950 text-white font-sans">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-9 h-9 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" />
+          <div className="flex items-center gap-2 text-xs font-mono text-slate-400">
+            <Activity className="w-4 h-4 text-emerald-400 animate-pulse" />
+            <span>Loading clinical session...</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (!isLoggedIn) {
     const currentTheme = isDarkMode ? "dark" : "emerald";
@@ -2654,7 +2572,7 @@ export default function App() {
             <div className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-xs">
               <Building2 className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
               <span className="text-slate-500 dark:text-slate-400 font-medium">Active Hospital:</span>
-              <strong className="text-slate-800 dark:text-white font-bold">{profile.hospital || "Varah Group Emergency Care"}</strong>
+              <strong className="text-slate-800 dark:text-white font-bold">{profile?.hospital || "General Emergency Department"}</strong>
               {hospitalSubscription?.active && (
                 <span className="ml-1 px-1.5 py-0.2 bg-emerald-500/10 text-emerald-500 dark:text-emerald-400 border border-emerald-500/20 rounded text-[9px] font-bold uppercase tracking-wider">
                   Team Licensed
@@ -3174,7 +3092,7 @@ export default function App() {
                 VM
               </div>
               <div className="text-left hidden sm:block">
-                <span className="block text-[11px] font-bold leading-tight">Dr. {profile.name}</span>
+                <span className="block text-[11px] font-bold leading-tight">Dr. {profile?.name || "Physician"}</span>
                 <span className="block text-[9px] text-slate-400 tracking-wider">Enterprise Scribe</span>
               </div>
             </div>
@@ -3276,7 +3194,7 @@ export default function App() {
                       Verification Pending
                     </h2>
                     <p className="text-xs text-slate-500 dark:text-slate-400 font-mono">
-                      Hospital Team: <span className="text-indigo-600 dark:text-indigo-400 font-bold font-sans">{profile.hospital}</span>
+                      Hospital Team: <span className="text-indigo-600 dark:text-indigo-400 font-bold font-sans">{profile?.hospital || "General Emergency Department"}</span>
                     </p>
                   </div>
                   <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed max-w-md mx-auto">
@@ -3402,7 +3320,7 @@ export default function App() {
                     setSelectedCaseId(null);
                   }}
                   hasActiveScribeSession={scribeMessages.length > 1}
-                  onDiscussCase={(c) => setDiscussionModalCase(c)}
+                  onDiscussCase={(c) => handleStartVoiceScribe(c.id)}
                 />
               );
             })()
@@ -3427,7 +3345,11 @@ export default function App() {
           {/* 5. Voice Scribe Chat View */}
           {showVoiceScribeChat && !selectedCaseId && !activeFormMode && !showDischargeSummaryId && (
             <VoiceScribeChatView
-              onBack={() => setShowVoiceScribeChat(false)}
+              caseId={voiceScribeCaseId}
+              onBack={() => {
+                setShowVoiceScribeChat(false);
+                setVoiceScribeCaseId(null);
+              }}
               onSaveExtractedCase={handleSaveExtractedVoiceCase}
               profile={profile}
               onSaveProfile={handleSaveProfile}
@@ -3458,7 +3380,7 @@ export default function App() {
                   profile={profile}
                   cases={cases}
                   pendingContributionsCount={pendingContributionsCount}
-                  onDiscussCase={(c) => setDiscussionModalCase(c)}
+                  onDiscussCase={(c) => handleStartVoiceScribe(c.id)}
                   onStartFullFlow={() => setActiveFormMode("full")}
                   onStartQuickCase={() => setActiveFormMode("quick")}
                   onSelectCase={handleSelectCase}
@@ -3565,7 +3487,7 @@ export default function App() {
                   onStartFullFlow={() => setActiveFormMode("full")}
                   onStartQuickCase={() => setActiveFormMode("quick")}
                   onNavigateToTab={navigateToTab}
-                  onDiscussCase={(c) => setDiscussionModalCase(c)}
+                  onDiscussCase={(c) => handleStartVoiceScribe(c.id)}
                 />
               )}
 
@@ -3618,7 +3540,7 @@ export default function App() {
 
       {/* Simple Footer details */}
       <footer className="bg-white dark:bg-slate-950 border-t border-slate-200 dark:border-slate-800 py-4 px-4 text-center text-[11px] text-slate-400 no-print mt-auto">
-        <p>© 2026 Varah Group Medical Systems. All Rights Reserved. Complies with ATLS & PALS Clinical Guidelines.</p>
+        <p>© 2026 ErMate Clinical Systems. All Rights Reserved. Complies with ATLS & PALS Clinical Guidelines.</p>
       </footer>
 
       {/* Global Search Protocol & Reference Overlay Modal */}
@@ -3910,10 +3832,10 @@ export default function App() {
             
             <div className="p-6 space-y-4 text-slate-700 dark:text-slate-300">
               <p className="text-xs font-semibold leading-normal">
-                You are currently active on the roster for <span className="text-indigo-600 dark:text-indigo-400 font-bold">"{profile.hospital}"</span>. A clinician can only belong to one hospital team at a time.
+                You are currently active on the roster for <span className="text-indigo-600 dark:text-indigo-400 font-bold">"{profile?.hospital || ""}"</span>. A clinician can only belong to one hospital team at a time.
               </p>
               <p className="text-xs text-slate-500 dark:text-slate-400 leading-normal font-medium">
-                Joining <span className="font-extrabold text-slate-800 dark:text-slate-200">"{initialHospital}"</span> will safely archive your membership at <span className="font-semibold">"{profile.hospital}"</span>. Your local medical cases, rounds history, and personal scribe notes will remain perfectly intact.
+                Joining <span className="font-extrabold text-slate-800 dark:text-slate-200">"{initialHospital}"</span> will safely archive your membership at <span className="font-semibold">"{profile?.hospital || ""}"</span>. Your local medical cases, rounds history, and personal scribe notes will remain perfectly intact.
               </p>
             </div>
 
@@ -3922,7 +3844,7 @@ export default function App() {
                 onClick={() => setShowAffiliationConflictModal(false)}
                 className="px-4 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-extrabold rounded-xl transition-all cursor-pointer bg-transparent border-0"
               >
-                Keep "{profile.hospital}"
+                Keep "{profile?.hospital || "Current Hospital"}"
               </button>
               <button
                 onClick={handleConfirmLeaveAndJoin}

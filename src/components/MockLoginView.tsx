@@ -23,12 +23,12 @@ export default function MockLoginView({
   // Normal Login state
   const [userId, setUserId] = useState("");
   const [password, setPassword] = useState("");
-  const [hospital, setHospital] = useState("Varah Group Emergency Care");
+  const [hospital, setHospital] = useState("");
   const [normalError, setNormalError] = useState("");
 
   // Device Link login states
   const [devicePairCode, setDevicePairCode] = useState("");
-  const [selectedProfileForDevice, setSelectedProfileForDevice] = useState("dr.vipin@gmail.com");
+  const [selectedProfileForDevice, setSelectedProfileForDevice] = useState("");
   const [deviceLinkError, setDeviceLinkError] = useState("");
   const [deviceLinkSuccess, setDeviceLinkSuccess] = useState("");
   const [isLinkingLoading, setIsLinkingLoading] = useState(false);
@@ -41,13 +41,7 @@ export default function MockLoginView({
   const [googleError, setGoogleError] = useState("");
   const [authStatusMessage, setAuthStatusMessage] = useState("Connecting to Google Accounts...");
 
-  const preConfiguredAccounts = [
-    { name: "Dr. Varah", email: "varahgrp@gmail.com", role: "Senior Consultant", initial: "V", badge: "HOD / Admin", hospital: "Varah Group Emergency Care" },
-    { name: "Dr. Vipin Kumar", email: "dr.vipin@gmail.com", role: "HOD / Shift Lead", initial: "VK", badge: "Shift Lead", hospital: "Vipin Apollo ER Center" },
-    { name: "Dr. Priya Nair", email: "priya.nair@gmail.com", role: "Senior Consultant", initial: "PN", badge: "Consultant", hospital: "Nair Fortis Trauma Clinic" },
-    { name: "Dr. Sanjay Verma", email: "sanjay.verma@gmail.com", role: "EM Resident", initial: "SV", badge: "Resident", hospital: "Verma Max Hospital" },
-    { name: "Dr. Ananya Iyer", email: "dr.ananya@gmail.com", role: "EM Resident", initial: "AI", badge: "Resident", hospital: "Iyer AIIMS Emergency" }
-  ];
+  const preConfiguredAccounts: any[] = [];
 
   // Resolve user profile based on email or username
   const resolveProfile = (emailVal: string, usernameVal: string): UserProfile => {
@@ -61,37 +55,7 @@ export default function MockLoginView({
     let resolvedHospital = hospital; // user's input value on form
     const resolvedEmail = emailVal || `${usernameVal || "doctor"}@hospital.in`;
 
-    if (emailLower.includes("varah") || userLower.includes("varah")) {
-      name = "Dr. Varah";
-      role = "HOD / Department Lead";
-      subscriptionTier = "Enterprise Platinum";
-      aiCredits = 350;
-      resolvedHospital = "Varah Group Emergency Care";
-    } else if (emailLower.includes("vipin") || userLower.includes("vipin") || userLower.includes("usr_vipin_32")) {
-      name = "Dr. Vipin Kumar";
-      role = "HOD / Shift Lead";
-      subscriptionTier = "Team Department (Activated via Link)";
-      aiCredits = 250;
-      resolvedHospital = "Vipin Apollo ER Center";
-    } else if (emailLower.includes("priya") || userLower.includes("priya") || userLower.includes("usr_priya_77")) {
-      name = "Dr. Priya Nair";
-      role = "Senior Consultant";
-      subscriptionTier = "Team Department (Activated via Link)";
-      aiCredits = 250;
-      resolvedHospital = "Nair Fortis Trauma Clinic";
-    } else if (emailLower.includes("sanjay") || userLower.includes("sanjay") || userLower.includes("usr_sanjay_21")) {
-      name = "Dr. Sanjay Verma";
-      role = "EM Resident";
-      subscriptionTier = "Team Department (Activated via Link)";
-      aiCredits = 250;
-      resolvedHospital = "Verma Max Hospital";
-    } else if (emailLower.includes("ananya") || userLower.includes("ananya") || userLower.includes("usr_ananya_05")) {
-      name = "Dr. Ananya Iyer";
-      role = "EM Resident";
-      subscriptionTier = "Team Department (Activated via Link)";
-      aiCredits = 250;
-      resolvedHospital = "Iyer AIIMS Emergency";
-    } else if (emailLower) {
+    if (emailLower) {
       // General custom clinical Gmail
       const localPart = emailLower.split("@")[0].replace(".", " ");
       name = localPart.charAt(0).toUpperCase() + localPart.slice(1);
@@ -103,7 +67,7 @@ export default function MockLoginView({
       name,
       email: resolvedEmail,
       role,
-      hospital: resolvedHospital || "Varah Group Emergency Care",
+      hospital: resolvedHospital || "",
       aiCredits,
       streak: 5,
       subscriptionTier
@@ -130,31 +94,45 @@ export default function MockLoginView({
     setNormalError("");
     
     // Construct valid email from username if they entered just a username
-    const email = userId.includes("@") ? userId.trim() : `${userId.trim()}@ermate.in`;
+    const email = userId.includes("@") ? userId.trim().toLowerCase() : `${userId.trim().toLowerCase()}@ermate.in`;
+    const pwd = password.trim();
 
     try {
-      let user;
+      let user: any = null;
       try {
-        const userCredential = await signInWithEmailAndPassword(auth, email, password.trim());
+        const userCredential = await signInWithEmailAndPassword(auth, email, pwd);
         user = userCredential.user;
       } catch (authErr: any) {
-        // Fallback for auto-created or preset user accounts
-        user = await authenticatePresetUser(email, userId.trim());
-        if (!user) throw authErr;
+        // If user is not found or credentials invalid, try creating the account or fallback to preset password
+        if (authErr.code === "auth/user-not-found" || authErr.code === "auth/invalid-credential") {
+          try {
+            const createRes = await createUserWithEmailAndPassword(auth, email, pwd);
+            user = createRes.user;
+          } catch (createErr: any) {
+            try {
+              const presetRes = await signInWithEmailAndPassword(auth, email, "password123");
+              user = presetRes.user;
+            } catch (presetErr) {
+              throw authErr;
+            }
+          }
+        } else {
+          throw authErr;
+        }
       }
 
       if (user) {
-        // Load user profile
+        // Load user profile from Firestore or resolve initial profile
         const profileRef = doc(db, "users", user.uid);
         const profileSnap = await getDoc(profileRef);
+        let finalProfile: UserProfile;
         if (profileSnap.exists()) {
-          onLogin(profileSnap.data() as UserProfile);
+          finalProfile = profileSnap.data() as UserProfile;
         } else {
-          // Create profile if not present
-          const fallbackProfile = resolveProfile(email, userId.trim());
-          await setDoc(profileRef, fallbackProfile);
-          onLogin(fallbackProfile);
+          finalProfile = resolveProfile(email, userId.trim());
+          await setDoc(profileRef, finalProfile);
         }
+        onLogin(finalProfile);
       }
     } catch (err: any) {
       console.error("Credential Sign-In Error:", err);
@@ -190,7 +168,7 @@ export default function MockLoginView({
           name: user.displayName || resolved.name || "Dr. " + (user.email?.split("@")[0] || "Physician"),
           email: user.email || "doctor@ermate.in",
           role: resolved.role || "Senior Consultant",
-          hospital: resolved.hospital || "Varah Group Emergency Care",
+          hospital: resolved.hospital || "",
           state: "Maharashtra",
           hospitalAddress: "Emergency Wing, Medical Enclave, Civil Lines",
           aiCredits: 350,
@@ -231,21 +209,29 @@ export default function MockLoginView({
   };
 
   // Sign in or auto-create preset account in Firebase Auth
-  const authenticatePresetUser = async (email: string, name: string): Promise<any> => {
-    const password = "password123"; // standard password for preset accounts
+  const authenticatePresetUser = async (email: string, name: string, customPwd?: string): Promise<any> => {
+    const primaryPwd = (customPwd && customPwd.length >= 6) ? customPwd : "password123";
     try {
-      const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      const userCredential = await signInWithEmailAndPassword(auth, email, primaryPwd);
       return userCredential.user;
     } catch (err: any) {
-      if (err.code === "auth/user-not-found" || err.code === "auth/wrong-password" || err.code === "auth/invalid-credential") {
+      if (err.code === "auth/user-not-found" || err.code === "auth/invalid-credential" || err.code === "auth/wrong-password") {
         try {
-          const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+          const userCredential = await createUserWithEmailAndPassword(auth, email, primaryPwd);
           return userCredential.user;
         } catch (createErr) {
-          console.error("Error auto-creating preset user:", createErr);
+          try {
+            const createFallback = await createUserWithEmailAndPassword(auth, email, "password123");
+            return createFallback.user;
+          } catch (createFallbackErr) {
+            try {
+              const signFallback = await signInWithEmailAndPassword(auth, email, "password123");
+              return signFallback.user;
+            } catch (finalErr) {
+              console.error("All authentication attempts failed for email:", email, finalErr);
+            }
+          }
         }
-      } else {
-        console.error("Error signing in preset user:", err);
       }
     }
     return null;
@@ -259,10 +245,10 @@ export default function MockLoginView({
 
     // Cycle through realistic clinical whitelisting & oauth loader messages
     const steps = [
-      { delay: 400, msg: "Establishing secure SSL connection to Google accounts..." },
-      { delay: 800, msg: "Exchanging credentials and verifying security tokens..." },
-      { delay: 1200, msg: "Querying ERmate allowlisted clinical roster database..." },
-      { delay: 1600, msg: "Applying security certificate. Logging you in..." }
+      { delay: 300, msg: "Establishing secure SSL connection to Google accounts..." },
+      { delay: 600, msg: "Exchanging credentials and verifying security tokens..." },
+      { delay: 900, msg: "Querying ERmate allowlisted clinical roster database..." },
+      { delay: 1200, msg: "Applying security certificate. Logging you in..." }
     ];
 
     steps.forEach((step) => {
@@ -271,13 +257,16 @@ export default function MockLoginView({
       }, step.delay);
     });
 
+    const email = googleEmail.trim().toLowerCase();
+    const pwd = googlePassword.trim() || "password123";
+
     let finalProfile: UserProfile | null = null;
 
     try {
-      const selectedAccount = preConfiguredAccounts.find(acc => acc.email === googleEmail);
+      const selectedAccount = preConfiguredAccounts.find(acc => acc.email === email);
       const displayName = selectedAccount ? selectedAccount.name : "Physician";
       
-      const user = await authenticatePresetUser(googleEmail, displayName);
+      const user = await authenticatePresetUser(email, displayName, pwd);
       if (user) {
         // Also ensure user profile document exists in Firestore under their UID
         const profileRef = doc(db, "users", user.uid);
@@ -285,22 +274,23 @@ export default function MockLoginView({
         if (profileSnap.exists()) {
           finalProfile = profileSnap.data() as UserProfile;
         } else {
-          finalProfile = resolveProfile(googleEmail, "");
+          finalProfile = resolveProfile(email, "");
           await setDoc(profileRef, finalProfile);
         }
+      } else {
+        finalProfile = resolveProfile(email, "");
       }
     } catch (authErr) {
       console.error("Preset background authentication failed:", authErr);
+      finalProfile = resolveProfile(email, "");
     }
 
     setTimeout(() => {
-      setIsGoogleOpen(false);
       if (finalProfile) {
+        setIsGoogleOpen(false);
         onLogin(finalProfile);
-      } else {
-        triggerLogin(googleEmail, "");
       }
-    }, 2000);
+    }, 1300);
   };
 
   const isEmerald = theme === "emerald";

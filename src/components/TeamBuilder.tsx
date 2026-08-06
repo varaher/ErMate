@@ -25,7 +25,7 @@ export default function TeamBuilder({
   onSaveConfig
 }: TeamBuilderProps) {
   // Team configuration states
-  const [teamName, setTeamName] = useState(profile?.teamName || "Varah Emergency Core");
+  const [teamName, setTeamName] = useState(profile?.teamName || "");
   const [department, setDepartment] = useState(profile?.department || "Trauma & Resuscitation Unit");
   const [teamColor, setTeamColor] = useState<"emerald" | "blue" | "indigo" | "violet">(profile?.teamColor || "blue");
   const [isConfigSaved, setIsConfigSaved] = useState(true);
@@ -50,12 +50,7 @@ export default function TeamBuilder({
   }, [profile?.teamColor]);
 
   // Members states
-  const [localMembers, setLocalMembers] = useState<TeamMember[]>([
-    { id: "mem-1", email: "dr.vipin@gmail.com", role: "HOD / Shift Lead", status: "Pending Invite" },
-    { id: "mem-2", email: "priya.nair@gmail.com", role: "Senior Consultant", status: "Pending Invite" },
-    { id: "mem-3", email: "sanjay.verma@gmail.com", role: "EM Resident", status: "Pending Invite" },
-    { id: "mem-4", email: "dr.ananya@gmail.com", role: "Scribe Specialist", status: "Pending Invite" },
-  ]);
+  const [localMembers, setLocalMembers] = useState<TeamMember[]>([]);
 
   const members = externalMembers || localMembers;
   const setMembers = (update: TeamMember[] | ((prev: TeamMember[]) => TeamMember[])) => {
@@ -369,7 +364,7 @@ export default function TeamBuilder({
                     setIsConfigSaved(false);
                   }}
                   className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-850 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all font-mono"
-                  placeholder="e.g. Varah Group Emergency Care"
+                  placeholder="e.g. City General Emergency Care"
                 />
               </div>
 

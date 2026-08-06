@@ -1635,7 +1635,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}
 - **Disposition:** ${currentCase.dispositionDetails?.dispositionType || "Discharge"} (ICU, Room, Ward, Referral, DAMA)
 - **Differential Diagnosis:** ${currentCase.differentials.length > 0 ? currentCase.differentials.map((d, idx) => `${idx + 1}. ${d.diagnosis} (${d.status})`).join("\n") : "None recorded"}
 - **EM Resident:** ${currentCase.dispositionDetails?.residentName || "Dr. Thomas"}
-- **EM Consultant:** ${currentCase.dispositionDetails?.consultantName || "Dr. Varah"}
+- **EM Consultant:** ${currentCase.dispositionDetails?.consultantName || currentCase.consultantName || "Duty Consultant"}
 
 --------------------------------------------------
 **Hospital Information:**
@@ -1773,7 +1773,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
   <li><strong>Disposition:</strong> ${currentCase.dispositionDetails?.dispositionType || "Discharge"} (ICU, Room, Ward, Referral, DAMA)</li>
   <li><strong>Differential Diagnosis:</strong> ${currentCase.differentials.length > 0 ? currentCase.differentials.map((d, idx) => `${idx + 1}. ${d.diagnosis} (${d.status})`).join("<br/>") : "None recorded"}</li>
   <li><strong>EM Resident:</strong> ${currentCase.dispositionDetails?.residentName || "Dr. Thomas"}</li>
-  <li><strong>EM Consultant:</strong> ${currentCase.dispositionDetails?.consultantName || "Dr. Varah"}</li>
+  <li><strong>EM Consultant:</strong> ${currentCase.dispositionDetails?.consultantName || currentCase.consultantName || "Duty Consultant"}</li>
 </ul>
 <br/>
 <hr/>
@@ -3027,7 +3027,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                           disposition: "Ward",
                           differentialDiagnosis: "Unremarkable. Baseline clinical clearance.",
                           emResident: "Dr. Thomas",
-                          emConsultant: "Dr. Varah"
+                          emConsultant: "Duty Consultant"
                         }
                       }));
                     }}
@@ -3902,7 +3902,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                       type="text"
                       value={(currentCase.pediatricDetails || {}).emConsultant || ""}
                       onChange={(e) => updatePediatricDetails("emConsultant", e.target.value)}
-                      placeholder="e.g. Dr. Varah"
+                      placeholder="e.g. Duty Consultant"
                       className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded text-xs"
                     />
                   </div>
@@ -3993,8 +3993,8 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                       </label>
                       <input
                         type="text"
-                        placeholder="e.g. Dr. Varah"
-                        value={currentCase.dispositionDetails?.consultantName || "Dr. Varah"}
+                        placeholder="e.g. Duty Consultant"
+                        value={currentCase.dispositionDetails?.consultantName || ""}
                         onChange={(e) => updateDisposition("consultantName", e.target.value)}
                         className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-xs"
                       />
@@ -6882,7 +6882,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                 <strong>EM Resident:</strong> {currentCase.pediatricDetails?.emResident || "Dr. Thomas"}
               </div>
               <div>
-                <strong>EM Consultant:</strong> {currentCase.pediatricDetails?.emConsultant || "Dr. Varah"}
+                <strong>EM Consultant:</strong> {currentCase.pediatricDetails?.emConsultant || currentCase.consultantName || "Duty Consultant"}
               </div>
             </div>
           </div>
@@ -7152,7 +7152,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                 <strong>EM Resident:</strong> {currentCase.dispositionDetails?.residentName || "Dr. Thomas"}
               </div>
               <div>
-                <strong>EM Consultant:</strong> {currentCase.dispositionDetails?.consultantName || "Dr. Varah"}
+                <strong>EM Consultant:</strong> {currentCase.dispositionDetails?.consultantName || currentCase.consultantName || "Duty Consultant"}
               </div>
             </div>
           </>

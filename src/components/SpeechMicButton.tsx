@@ -119,6 +119,8 @@ interface SpeechMicButtonProps {
   className?: string;
   placeholder?: string;
   chatLayout?: boolean;
+  disabled?: boolean;
+  isProcessing?: boolean;
   onProcessingChange?: (processing: boolean) => void;
 }
 
