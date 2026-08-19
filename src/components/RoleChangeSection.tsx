@@ -6,6 +6,7 @@ import {
 import { collection, query, where, getDocs, addDoc, updateDoc, doc, onSnapshot, getDoc } from "firebase/firestore";
 import { db, auth } from "../firebase";
 import { UserProfile } from "../types";
+import VoiceRecorder from "./shared/VoiceRecorder";
 
 interface RoleChangeSectionProps {
   profile: UserProfile;
@@ -231,18 +232,18 @@ export default function RoleChangeSection({ profile, onRoleUpdated }: RoleChange
   };
 
   return (
-    <div className="space-y-4 bg-slate-900/80 border border-slate-800 rounded-2xl p-4">
+    <div className="space-y-4 bg-white dark:bg-slate-900/80 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 shadow-sm">
       {/* Header */}
-      <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+      <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
         <div className="flex items-center space-x-2.5">
-          <div className="p-2 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-400">
+          <div className="p-2 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-600 dark:text-amber-400">
             <Lock className="w-4 h-4" />
           </div>
           <div>
-            <h3 className="text-xs font-black text-slate-100 uppercase font-mono tracking-wider">
+            <h3 className="text-xs font-black text-slate-900 dark:text-slate-100 uppercase font-mono tracking-wider">
               Clinical Role Designation & Governance
             </h3>
-            <p className="text-[10px] text-slate-400 font-sans mt-0.5">
+            <p className="text-[10px] text-slate-500 dark:text-slate-400 font-sans mt-0.5">
               DPDP Act 2023 & NABH Compliant Role-Based Governance (Rule 10)
             </p>
           </div>
@@ -251,10 +252,10 @@ export default function RoleChangeSection({ profile, onRoleUpdated }: RoleChange
         <div className="flex items-center space-x-2">
           <span className={`text-[9px] font-mono font-bold px-2.5 py-1 rounded-full border ${
             isHOD
-              ? "bg-amber-500/15 text-amber-300 border-amber-500/30"
+              ? "bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30"
               : userRoleLower.includes("consultant")
-              ? "bg-blue-500/15 text-blue-300 border-blue-500/30"
-              : "bg-emerald-500/15 text-emerald-300 border-emerald-500/30"
+              ? "bg-blue-500/15 text-blue-700 dark:text-blue-300 border-blue-500/30"
+              : "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30"
           }`}>
             Current: {currentRole}
           </span>
@@ -266,23 +267,23 @@ export default function RoleChangeSection({ profile, onRoleUpdated }: RoleChange
         <div className="space-y-3 pt-1">
           {/* Active Pending Request Card */}
           {userPendingRequest ? (
-            <div className="p-3.5 rounded-xl bg-amber-950/30 border border-amber-500/30 space-y-2">
+            <div className="p-3.5 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-500/30 space-y-2">
               <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-2 text-amber-300 text-xs font-bold font-mono">
+                <div className="flex items-center space-x-2 text-amber-800 dark:text-amber-300 text-xs font-bold font-mono">
                   <Clock className="w-4 h-4 animate-spin-slow shrink-0" />
                   <span>Role Promotion Request Pending HOD Review</span>
                 </div>
                 <button
                   onClick={() => handleCancelRequest(userPendingRequest.id)}
-                  className="text-[10px] font-mono text-slate-400 hover:text-red-400 transition-colors"
+                  className="text-[10px] font-mono text-slate-500 hover:text-red-600 dark:text-slate-400 dark:hover:text-red-400 transition-colors"
                 >
                   Cancel Request
                 </button>
               </div>
-              <p className="text-[11px] text-slate-300">
-                Requested Elevation to <strong className="text-amber-200">{userPendingRequest.requestedRole}</strong>
+              <p className="text-[11px] text-slate-700 dark:text-slate-300">
+                Requested Elevation to <strong className="text-amber-900 dark:text-amber-200">{userPendingRequest.requestedRole}</strong>
               </p>
-              <div className="p-2 rounded bg-slate-900/60 border border-slate-800 text-[10px] text-slate-400 font-sans italic">
+              <div className="p-2 rounded bg-slate-100 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 text-[10px] text-slate-600 dark:text-slate-400 font-sans italic">
                 "{userPendingRequest.reason}"
               </div>
               <p className="text-[9px] font-mono text-slate-500">
@@ -292,19 +293,19 @@ export default function RoleChangeSection({ profile, onRoleUpdated }: RoleChange
           ) : (
             <>
               {requestSuccess && (
-                <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs flex items-center space-x-2 font-mono">
-                  <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400" />
+                <div className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/30 text-emerald-800 dark:text-emerald-300 text-xs flex items-center space-x-2 font-mono">
+                  <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
                   <span>{requestSuccess}</span>
                 </div>
               )}
 
               {!showRequestForm ? (
-                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between p-3.5 rounded-xl bg-slate-950/60 border border-slate-800/80 gap-3">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between p-3.5 rounded-xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800/80 gap-3">
                   <div className="space-y-0.5">
-                    <strong className="text-xs text-slate-200 font-bold block">
+                    <strong className="text-xs text-slate-900 dark:text-slate-200 font-bold block">
                       Need Role Elevation or Title Update?
                     </strong>
-                    <p className="text-[10px] text-slate-400">
+                    <p className="text-[10px] text-slate-500 dark:text-slate-400">
                       Role changes require official Department Head (HOD) approval according to ErMate governance rules.
                     </p>
                   </div>
@@ -317,7 +318,7 @@ export default function RoleChangeSection({ profile, onRoleUpdated }: RoleChange
                   </button>
                 </div>
               ) : (
-                <form onSubmit={handleFormSubmit} className="p-4 rounded-xl bg-slate-950/90 border border-slate-800 space-y-3 animate-fade-in">
+                <form onSubmit={handleFormSubmit} className="p-4 rounded-xl bg-slate-50 dark:bg-slate-950/90 border border-slate-200 dark:border-slate-800 space-y-3 animate-fade-in">
                   <div className="flex items-center justify-between border-b border-slate-800 pb-2">
                     <strong className="text-xs font-mono font-bold text-indigo-300">
                       Submit Role Elevation Request
@@ -375,13 +376,16 @@ export default function RoleChangeSection({ profile, onRoleUpdated }: RoleChange
                     <label className="text-[10px] font-mono font-bold text-slate-300 uppercase">
                       Clinical Justification & Reason (min 10 chars)
                     </label>
-                    <textarea
-                      value={requestReason}
-                      onChange={(e) => setRequestReason(e.target.value)}
-                      placeholder="e.g., Promoted to Senior Consultant following Departmental Committee Review on Aug 2026..."
-                      rows={2}
-                      className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500 font-sans"
-                    />
+                    <div className="flex gap-2">
+                      <textarea
+                        value={requestReason}
+                        onChange={(e) => setRequestReason(e.target.value)}
+                        placeholder="e.g., Promoted to Senior Consultant following Departmental Committee Review on Aug 2026..."
+                        rows={2}
+                        className="flex-1 w-full bg-slate-900 border border-slate-800 rounded-lg p-2.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500 font-sans"
+                      />
+                      <VoiceRecorder renderMode="compact-button" onTranscript={(txt) => setRequestReason(prev => prev ? `${prev} ${txt}` : txt)} />
+                    </div>
                   </div>
 
                   <div className="flex justify-end space-x-2 pt-1">

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { 
   ArrowLeft, Save, Sparkles, Mic, FileText, CheckCircle, CheckCircle2,
-  Trash2, Plus, ShieldAlert, BookOpen, Clock, Heart, 
+  Trash2, Plus, ShieldAlert, BookOpen, Clock, Heart, Baby,
   Eye, RefreshCw, Printer, AlertTriangle, ClipboardCheck, 
   User, Check, Shield, FileCheck, Users, LogOut, ChevronRight,
   Copy, Download, ChevronDown, TrendingUp, PlusCircle, Activity, Edit3,
@@ -14,15 +14,102 @@ import {
   IpsgChecklist, VulnerableAssessment, ConsentTimeOut, DispositionDetails, MlcDetails, VitalsRecord,
   UserProfile, PediatricDetails, DischargeInfo
 } from "../types";
+import { 
+  PediatricAirwaySection,
+  PediatricBreathingSection,
+  PediatricCirculationSection,
+  PediatricDisabilitySection,
+  PediatricExposureSection,
+  PediatricEfastSection,
+  PediatricFocusedPhysicalExam,
+  PediatricGeneralExamSection,
+  PediatricQuickNormalPresets,
+  PEDIATRIC_NORMAL_PRESETS,
+  PediatricDispositionSection
+} from "./PediatricABCDESections";
 import { PrimarySurveySection } from "./PrimarySurveySection";
+import { MlcCaseToggle } from "./CaseSheetAdjunctsAndMlc";
+import { PediatricAssessmentTriangle } from "./PediatricCaseSheetFields";
+import { SecondarySurveySection } from "./SecondarySurveySection";
 import { triggerPrintWithTip } from "../utils/printWithTip";
 import { 
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend
 } from "recharts";
-import SpeechMicButton from "./SpeechMicButton";
+import VoiceRecorder from "./shared/VoiceRecorder";
 import { getCasePendingStatus } from "../utils/caseHelper";
 import { classifyEmergencyTriage } from "../utils/triageClassifier";
 import { formatTemperature, formatDoctorName, deduplicateMeds, validateMedRoute, formatDisabilityAssessment } from "../utils/clinicalFormatter";
+import { isTriageCategoryPending } from "./NewPatientEntryMenu";
+
+export function parseSecondaryAssessment(text: string) {
+  if (!text) return { General: "", CVS: "", RS: "", PA: "", CNS: "", Extremities: "" };
+  const fields = { General: "", CVS: "", RS: "", PA: "", CNS: "", Extremities: "" };
+  
+  // Find the first occurrence of a section header
+  const firstHeaderMatch = text.match(/(General|CVS|RS|PA|CNS|Extremities)\s*:/i);
+  
+  if (firstHeaderMatch) {
+    const preamble = text.substring(0, firstHeaderMatch.index).trim();
+    if (preamble) {
+      fields.General = preamble;
+    }
+  } else if (text.trim()) {
+    // If no headers at all, dump everything into General
+    fields.General = text.trim();
+  }
+
+  const regex = /(General|CVS|RS|PA|CNS|Extremities)\s*:\s*(.*?)(?=(General|CVS|RS|PA|CNS|Extremities)\s*:|$)/igs;
+  let match;
+  while ((match = regex.exec(text)) !== null) {
+    const key = Object.keys(fields).find(k => k.toLowerCase() === match[1].toLowerCase());
+    if (key) { 
+      // Append if already has something (e.g., from preamble)
+      fields[key as keyof typeof fields] = fields[key as keyof typeof fields] 
+        ? fields[key as keyof typeof fields] + "\n" + match[2].trim()
+        : match[2].trim();
+    }
+  }
+  
+  return fields;
+}
+
+function mergeUnique(existing: string[] | undefined, incoming: string[] | undefined): string[] {
+  const base = existing || [];
+  const additions = incoming || [];
+  const combined = [...base];
+  for (const item of additions) {
+    if (item && !combined.includes(item)) {
+      combined.push(item);
+    }
+  }
+  return combined;
+}
+
+export function MarkTabNormalButton({
+  tabLabel,
+  isActive,
+  onMarkNormal,
+}: {
+  tabLabel: string;
+  isActive: boolean;
+  onMarkNormal: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onMarkNormal}
+      className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-xl transition-all border ${
+        isActive
+          ? "bg-blue-600 text-white border-blue-600 shadow-xs"
+          : "bg-slate-100 dark:bg-slate-900 hover:bg-slate-200 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800"
+      }`}
+      title={`Pre-fill normal findings for ${tabLabel} only`}
+    >
+      <CheckCircle className={`w-3.5 h-3.5 ${isActive ? "text-white animate-pulse" : "text-emerald-500"}`} />
+      {isActive ? "Normal Active" : "Mark as Normal"}
+    </button>
+  );
+}
 
 interface CaseSheetViewProps {
   initialCase: ClinicalCase;
@@ -40,6 +127,23 @@ interface CaseSheetViewProps {
   onDiscussCase?: (patientCase: ClinicalCase) => void;
 }
 
+
+
+export function SaveSectionButton({ onSave }: { onSave: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onSave}
+      className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold rounded-lg shadow-sm flex items-center gap-1.5 cursor-pointer transition-colors"
+    >
+      <Save className="w-3.5 h-3.5" />
+      <span>Save Changes</span>
+    </button>
+  );
+}
+
+import { recomputeIsPediatric } from "./NewPatientEntryMenu";
+
 export default function CaseSheetView({ 
   initialCase, 
   allCases,
@@ -56,8 +160,10 @@ export default function CaseSheetView({
   onDiscussCase
 }: CaseSheetViewProps) {
   const [activeTab, setActiveTab] = useState<
-    "complaints" | "primary-survey" | "history" | "secondary-survey" | "investigations" | "trends" | "treatment" | "notes" | "disposition" | "pediatrics-sheet" | "rounds"
+    "complaints" | "primary-survey" | "history" | "secondary-survey" | "investigations" | "trends" | "treatment" | "notes" | "disposition" | "rounds"
   >("complaints");
+  
+  const [showJciForm, setShowJciForm] = useState<boolean>(false);
 
   // Clinical Rounds & 7-Lens Debrief States
   const [roundsLens, setRoundsLens] = useState<
@@ -153,7 +259,7 @@ export default function CaseSheetView({
     const points: VitalsRecord[] = [];
     const count = 4;
     
-    const isP1 = currentCase.patient.triageCategory.includes("P1");
+    const isP1 = String(currentCase.patient.triageCategory || "").includes("P1");
     
     for (let i = count - 1; i >= 0; i--) {
       if (i === 0) {
@@ -278,32 +384,22 @@ export default function CaseSheetView({
     onSaveCase(updatedCase);
   };
 
-  const [pediatricWeight, setPediatricWeight] = useState<number>(() => {
-    const age = initialCase.patient.age;
-    if (age === null) return 15;
-    if (age < 1) return 7;
-    if (age >= 1 && age <= 5) return (age * 2) + 8;
-    if (age > 5 && age <= 12) return (age * 3) + 7;
-    return (age * 3) + 10;
-  });
+  const [pediatricWeight, setPediatricWeight] = useState<number | "">("");
+  const getAPLSEstimate = (ageNum: number | null) => {
+    if (ageNum === null) return 15;
+    if (ageNum < 1) return 7;
+    if (ageNum >= 1 && ageNum <= 5) return (ageNum * 2) + 8;
+    if (ageNum > 5 && ageNum <= 12) return (ageNum * 3) + 7;
+    return (ageNum * 3) + 10;
+  };
 
   useEffect(() => {
     setCurrentCase(initialCase);
     setIsNormalToggled(false);
-    setActiveTab(initialCase.isPediatric ? "pediatrics-sheet" : "history");
-    setPediatricWeight(() => {
-      const age = initialCase.patient.age;
-      if (age === null) return 15;
-      if (age < 1) return 7;
-      if (age >= 1 && age <= 5) return (age * 2) + 8;
-      if (age > 5 && age <= 12) return (age * 3) + 7;
-      return (age * 3) + 10;
-    });
+    setActiveTab("complaints");
+    setPediatricWeight("");
 
     // Sync rounds and discussion chat history
-    const cid = initialCase.id;
-    const pname = initialCase.patient?.name?.trim()?.toLowerCase();
-
     if (initialCase.discussionMessages && Array.isArray(initialCase.discussionMessages) && initialCase.discussionMessages.length > 0) {
       const converted = initialCase.discussionMessages.map((m: any) => ({
         role: m.sender === "ai" ? ("model" as const) : ("user" as const),
@@ -311,24 +407,7 @@ export default function CaseSheetView({
       }));
       setRoundsChatHistory(converted);
     } else {
-      const storedRounds = localStorage.getItem(`ermate_rounds_chat_${cid}`) || (pname ? localStorage.getItem(`ermate_rounds_chat_${pname}`) : null);
-      if (storedRounds) {
-        try { setRoundsChatHistory(JSON.parse(storedRounds)); } catch(e){}
-      } else {
-        const storedDisc = localStorage.getItem(`ermate_discussion_${cid}`) || (pname ? localStorage.getItem(`ermate_discussion_name_${pname}`) : null);
-        if (storedDisc) {
-          try {
-            const parsed = JSON.parse(storedDisc);
-            const converted = parsed.map((m: any) => ({
-              role: m.sender === "ai" ? ("model" as const) : ("user" as const),
-              text: m.text
-            }));
-            setRoundsChatHistory(converted);
-          } catch(e){}
-        } else {
-          setRoundsChatHistory([]);
-        }
-      }
+      setRoundsChatHistory([]);
     }
   }, [initialCase.id]);
 
@@ -406,7 +485,7 @@ export default function CaseSheetView({
       if (backupCase) {
         setCurrentCase(backupCase);
         setIsNormalToggled(false);
-        await syncDischargeSummary(backupCase);
+        syncDischargeSummary(backupCase).catch(e => console.error("Background discharge sync failed:", e));
       }
     } else {
       setBackupCase(JSON.parse(JSON.stringify(currentCase)));
@@ -558,7 +637,7 @@ export default function CaseSheetView({
       }, 4000);
 
       // Auto-update discharge summary in background
-      await syncDischargeSummary(normalCase);
+      syncDischargeSummary(normalCase).catch(e => console.error("Background discharge sync failed:", e));
     }
   };
 
@@ -567,6 +646,13 @@ export default function CaseSheetView({
   const [smartDictationText, setSmartDictationText] = useState("");
   const [showDictationModal, setShowDictationModal] = useState(false);
   const [aiLoading, setAiLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  const showError = (msg: string) => {
+    setErrorMessage(msg);
+    setTimeout(() => setErrorMessage(null), 5000);
+  };
+
   const [dictationSuccess, setDictationSuccess] = useState<boolean>(false);
 
   // Indian Languages Multilingual Dictation States
@@ -574,15 +660,24 @@ export default function CaseSheetView({
   const [isListening, setIsListening] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const recognitionRef = React.useRef<any>(null);
+  const mediaRecorderRef = React.useRef<MediaRecorder | null>(null);
+  const streamRef = React.useRef<MediaStream | null>(null);
+  const audioChunksRef = React.useRef<Blob[]>([]);
   const isListeningActiveRef = React.useRef(false);
   const timerRef = React.useRef<any>(null);
 
   useEffect(() => {
     return () => {
-      // Clean up speech recognition and timer on unmount
+      // Clean up speech recognition, media recorder, and timer on unmount
       if (recognitionRef.current) {
         recognitionRef.current.onend = null;
-        recognitionRef.current.stop();
+        try { recognitionRef.current.stop(); } catch (e) {}
+      }
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+        try { mediaRecorderRef.current.stop(); } catch (e) {}
+      }
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((t) => t.stop());
       }
       if (timerRef.current) {
         clearInterval(timerRef.current);
@@ -596,90 +691,102 @@ export default function CaseSheetView({
     return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
   };
 
-  const startRecording = () => {
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      alert("Web Speech API is not supported in this browser. Please use Google Chrome or Safari.");
-      return;
-    }
-    const recognition = new SpeechRecognition();
-    recognition.continuous = true;
-    recognition.interimResults = true;
-    recognition.lang = dictationLang;
+  const startRecording = async () => {
+    // Universal MediaRecorder Pipeline (ErMate STT primary via /api/voice/transcribe)
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+      audioChunksRef.current = [];
 
-    setRecordingSeconds(0);
-    if (timerRef.current) clearInterval(timerRef.current);
-    timerRef.current = setInterval(() => {
-      setRecordingSeconds(prev => prev + 1);
-    }, 1000);
+      const supportedTypes = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg", "audio/wav"];
+      const mimeType = supportedTypes.find((t) => typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported(t)) || "audio/webm";
 
-    recognition.onstart = () => {
-      setIsListening(true);
-      isListeningActiveRef.current = true;
-      setIsDictating(true);
-    };
+      const recorder = new MediaRecorder(stream, { mimeType, audioBitsPerSecond: 24000 });
+      mediaRecorderRef.current = recorder;
 
-    recognition.onresult = (event: any) => {
-      let finalTranscript = "";
-      for (let i = event.resultIndex; i < event.results.length; ++i) {
-        if (event.results[i].isFinal) {
-          finalTranscript += event.results[i][0].transcript;
-        }
-      }
-      if (finalTranscript) {
-        setSmartDictationText(prev => prev ? (prev.trim() + " " + finalTranscript.trim()) : finalTranscript.trim());
-      }
-    };
+      stream.getAudioTracks().forEach(track => {
+        track.onended = () => {
+          if (recorder.state !== "inactive") recorder.stop();
+        };
+      });
 
-    recognition.onerror = (event: any) => {
-      console.error("Speech Recognition Error:", event.error);
-      if (event.error === "no-speech") {
-        // Ignore silent gaps to keep listening continuously in ER environments
-        return;
-      }
-      setIsListening(false);
-      isListeningActiveRef.current = false;
-      setIsDictating(false);
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-        timerRef.current = null;
-      }
-    };
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunksRef.current.push(e.data);
+      };
 
-    recognition.onend = () => {
-      if (isListeningActiveRef.current) {
-        try {
-          recognition.start();
-        } catch (err) {
-          console.warn("Failed to auto-restart multilingual speech recognition:", err);
-          setIsListening(false);
-          isListeningActiveRef.current = false;
-          setIsDictating(false);
-          if (timerRef.current) {
-            clearInterval(timerRef.current);
-            timerRef.current = null;
-          }
-        }
-      } else {
+      recorder.onstop = async () => {
+        streamRef.current?.getTracks().forEach((t) => t.stop());
+        if (timerRef.current) clearInterval(timerRef.current);
+
+        const actualMime = recorder.mimeType || mimeType;
+        const ext = actualMime.includes("mp4") ? "mp4" : actualMime.includes("ogg") ? "ogg" : "webm";
+        const audioBlob = new Blob(audioChunksRef.current, { type: actualMime });
+
         setIsListening(false);
         isListeningActiveRef.current = false;
         setIsDictating(false);
-        if (timerRef.current) {
-          clearInterval(timerRef.current);
-          timerRef.current = null;
-        }
-      }
-    };
 
-    recognitionRef.current = recognition;
-    recognition.start();
+        if (audioBlob.size > 500) {
+          const runTranscribe = async () => {
+            try {
+              const formData = new FormData();
+              formData.append("file", audioBlob, `dictation.${ext}`);
+              formData.append("language_code", dictationLang);
+
+              const res = await fetch("/api/voice/transcribe", { method: "POST", body: formData });
+              const data = await res.json();
+              if (data.success && data.transcript) {
+                setSmartDictationText(prev => prev ? (prev.trim() + " " + data.transcript.trim()) : data.transcript.trim());
+              }
+            } catch (e) {
+              console.error("Server transcription error:", e);
+            }
+          };
+
+          if (document.visibilityState === "hidden") {
+            const resumeTranscribing = () => {
+               if (document.visibilityState === "visible") {
+                  document.removeEventListener("visibilitychange", resumeTranscribing);
+                  runTranscribe();
+               }
+            };
+            document.addEventListener("visibilitychange", resumeTranscribing);
+          } else {
+            runTranscribe();
+          }
+        }
+      };
+
+      setRecordingSeconds(0);
+      if (timerRef.current) clearInterval(timerRef.current);
+      timerRef.current = setInterval(() => {
+        setRecordingSeconds(prev => prev + 1);
+      }, 1000);
+
+      recorder.start();
+      setIsListening(true);
+      isListeningActiveRef.current = true;
+      setIsDictating(true);
+    } catch (micErr) {
+      console.error("Microphone access failed:", micErr);
+      showError("Could not access microphone. Please check browser microphone permissions.");
+      setIsListening(false);
+      isListeningActiveRef.current = false;
+      setIsDictating(false);
+    }
   };
 
   const stopRecording = () => {
     isListeningActiveRef.current = false;
     if (recognitionRef.current) {
-      recognitionRef.current.onend = null; // Disable auto-restart loop
-      recognitionRef.current.stop();
+      recognitionRef.current.onend = null;
+      try { recognitionRef.current.stop(); } catch (e) {}
+    }
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+      try { mediaRecorderRef.current.stop(); } catch (e) {}
+    }
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((t) => t.stop());
     }
     setIsListening(false);
     setIsDictating(false);
@@ -701,6 +808,22 @@ export default function CaseSheetView({
   const [dischargeSyncStatus, setDischargeSyncStatus] = useState<"idle" | "syncing" | "synced" | "error">("synced");
 
   const syncDischargeSummary = async (caseToSync: ClinicalCase) => {
+    // GATE: never generate a discharge summary before disposition is set.
+    // Without this, every save/dictation/normal-toggle generates a
+    // discharge summary for patients who just arrived — wasted API
+    // calls, premature data, and PHI sent to the AI model before there
+    // is any legitimate reason to.
+    const hasDisposition = Boolean(
+      caseToSync.dispositionDetails?.dispositionType ||
+      caseToSync.dispositionAndPlan?.dispositionStatus ||
+      caseToSync.dischargeInfo?.dispositionStatus
+    );
+    if (!hasDisposition) {
+      console.log("[syncDischargeSummary] Skipped — disposition not yet set.");
+      setDischargeSyncStatus("idle");
+      return caseToSync;
+    }
+
     setDischargeSyncStatus("syncing");
     try {
       const response = await fetch("/api/ai-discharge", {
@@ -722,16 +845,16 @@ export default function CaseSheetView({
           ...existingDischarge,
           primaryDiagnosis: existingDischarge.primaryDiagnosis || resData.data.primaryDiagnosis || caseToSync.provisionalPrimaryDiagnosis || caseToSync.patient.presentingComplaint || "",
           secondaryDiagnosis: existingDischarge.secondaryDiagnosis || resData.data.secondaryDiagnosis || caseToSync.sampleHistory?.pastHistory || "",
-          conditionAtDischarge: existingDischarge.conditionAtDischarge || resData.data.conditionAtDischarge || "Stable at time of discharge",
-          dischargeMedications: existingDischarge.dischargeMedications || resData.data.dischargeMedications || (caseToSync.treatments && caseToSync.treatments.length > 0 ? caseToSync.treatments.map((t, idx) => `${idx + 1}. ${t.drugName} ${t.dose || ""} (${t.route || ""}) - ${t.timeGiven || "Given in ER"}`).join("\n") : "None prescribed in ER"),
-          followUpPlan: existingDischarge.followUpPlan || resData.data.followUpPlan || "Review in OPD / Primary care clinic in 3-5 days. Return to emergency department immediately if warning symptoms develop.",
+          conditionAtDischarge: existingDischarge.conditionAtDischarge || resData.data.conditionAtDischarge || "",
+          dischargeMedications: existingDischarge.dischargeMedications || resData.data.dischargeMedications || (caseToSync.treatments && caseToSync.treatments.length > 0 ? caseToSync.treatments.map((t, idx) => `${idx + 1}. ${t.drugName} ${t.dose || ""} (${t.route || ""}) - ${t.timeGiven || "Given in ER"}`).join("\n") : ""),
+          followUpPlan: existingDischarge.followUpPlan || resData.data.followUpPlan || "",
           patientInstructions: existingDischarge.patientInstructions || resData.data.patientInstructions || "",
-          courseInHospital: existingDischarge.courseInHospital || resData.data.courseInHospital || caseToSync.progressNotes || `Patient evaluated in ER for ${caseToSync.patient.presentingComplaint || "acute complaint"}. Clinical evaluation and stabilization provided.`,
-          investigationsResults: existingDischarge.investigationsResults || (caseToSync.investigations && caseToSync.investigations.length > 0 ? caseToSync.investigations.map(i => `${i.testName}: ${i.result || "Done"}`).join("\n") : "No investigations ordered."),
+          courseInHospital: existingDischarge.courseInHospital || resData.data.courseInHospital || caseToSync.progressNotes || "",
+          investigationsResults: existingDischarge.investigationsResults || (caseToSync.investigations && caseToSync.investigations.length > 0 ? caseToSync.investigations.map(i => `${i.testName}: ${i.result || "Done"}`).join("\n") : ""),
           presentingComplaints: existingDischarge.presentingComplaints || caseToSync.patient.presentingComplaint || "",
           historyOfPresentIllness: existingDischarge.historyOfPresentIllness || caseToSync.sampleHistory?.events || caseToSync.sampleHistory?.symptoms || "",
-          pastMedicalHistory: existingDischarge.pastMedicalHistory || caseToSync.sampleHistory?.pastHistory || "None recorded",
-          allergies: existingDischarge.allergies || caseToSync.sampleHistory?.allergies || "NKDA",
+          pastMedicalHistory: existingDischarge.pastMedicalHistory || caseToSync.sampleHistory?.pastHistory || "",
+          allergies: existingDischarge.allergies || caseToSync.sampleHistory?.allergies || "",
           arrivalHr: existingDischarge.arrivalHr || caseToSync.vitals.hr || "",
           arrivalBp: existingDischarge.arrivalBp || caseToSync.vitals.bp || "",
           arrivalRr: existingDischarge.arrivalRr || caseToSync.vitals.rr || "",
@@ -740,14 +863,15 @@ export default function CaseSheetView({
           arrivalTemp: existingDischarge.arrivalTemp || caseToSync.vitals.temp || "",
           arrivalGrbs: existingDischarge.arrivalGrbs || caseToSync.vitals.grbs || "",
           arrivalPainScore: existingDischarge.arrivalPainScore || caseToSync.vitals.painScore || "",
-          dischargeHr: existingDischarge.dischargeHr || caseToSync.dispositionDetails?.dischargeVitals?.hr || caseToSync.vitals.hr || "",
-          dischargeBp: existingDischarge.dischargeBp || caseToSync.dispositionDetails?.dischargeVitals?.bp || caseToSync.vitals.bp || "",
-          dischargeRr: existingDischarge.dischargeRr || caseToSync.dispositionDetails?.dischargeVitals?.rr || caseToSync.vitals.rr || "",
-          dischargeSpo2: existingDischarge.dischargeSpo2 || caseToSync.dispositionDetails?.dischargeVitals?.spo2 || caseToSync.vitals.spo2 || "",
-          dischargeGcs: existingDischarge.dischargeGcs || caseToSync.dispositionDetails?.dischargeVitals?.gcs || caseToSync.vitals.gcs || "",
+          dischargeHr: existingDischarge.dischargeHr || caseToSync.dispositionDetails?.dischargeVitals?.hr || "",
+          dischargeBp: existingDischarge.dischargeBp || caseToSync.dispositionDetails?.dischargeVitals?.bp || "",
+          dischargeRr: existingDischarge.dischargeRr || caseToSync.dispositionDetails?.dischargeVitals?.rr || "",
+          dischargeSpo2: existingDischarge.dischargeSpo2 || caseToSync.dispositionDetails?.dischargeVitals?.spo2 || "",
+          dischargeGcs: existingDischarge.dischargeGcs || caseToSync.dispositionDetails?.dischargeVitals?.gcs || "",
           emResidentName: existingDischarge.emResidentName || caseToSync.dispositionDetails?.residentName || "",
           emConsultantName: existingDischarge.emConsultantName || caseToSync.dispositionDetails?.consultantName || "",
-          aiDrafted: true
+          aiDrafted: true,
+          aiGenerated: !resData.simulated
         };
         
         const finalizedCase = {
@@ -1037,25 +1161,103 @@ Extremities: No deformity. No peripheral oedema. Peripheral pulses present.`,
     });
   };
 
+  const handleInterpretABG = async () => {
+    const abg = currentCase.primaryAssessment?.survey?.adjuncts?.abg;
+    if (!abg) return;
+
+    const hasValues = ["ph", "pco2", "po2", "hco3", "lactate", "sao2"].some(k => !!(abg as any)[k]);
+    if (!hasValues) {
+      showError("Please enter some ABG values first.");
+      return;
+    }
+
+    try {
+      const parts = [];
+      if (abg.ph) parts.push(`pH: ${abg.ph}`);
+      if (abg.pco2) parts.push(`pCO2: ${abg.pco2}`);
+      if (abg.po2) parts.push(`pO2: ${abg.po2}`);
+      if (abg.hco3) parts.push(`HCO3: ${abg.hco3}`);
+      if (abg.be) parts.push(`BE: ${abg.be}`);
+      if (abg.lactate) parts.push(`Lactate: ${abg.lactate}`);
+      if (abg.sao2) parts.push(`SaO2: ${abg.sao2}%`);
+      if (abg.na) parts.push(`Na: ${abg.na}`);
+      if (abg.k) parts.push(`K: ${abg.k}`);
+      if (abg.cl) parts.push(`Cl: ${abg.cl}`);
+      if (abg.glucose) parts.push(`Glucose: ${abg.glucose}`);
+      const abgString = parts.join(", ");
+
+      const response = await fetch("/api/interpret-abg", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          abgValues: abgString,
+          patientContext: {
+            age: currentCase.patient.age,
+            sex: currentCase.patient.gender,
+            presenting_complaint: currentCase.patient.presentingComplaint,
+            vitals: JSON.stringify(currentCase.vitals)
+          }
+        })
+      });
+
+      if (!response.ok) throw new Error("Failed to interpret ABG");
+      const data = await response.json();
+      
+      setCurrentCase(prev => {
+        const prevSurvey = prev.primaryAssessment?.survey || getInitialPrimarySurvey(prev.patient.caseType);
+        return {
+          ...prev,
+          primaryAssessment: {
+            ...prev.primaryAssessment,
+            survey: {
+              ...prevSurvey,
+              adjuncts: {
+                ...(prevSurvey as any).adjuncts,
+                abg: {
+                  ...(prevSurvey as any).adjuncts?.abg,
+                  finalDiagnosis: data.interpretation
+                }
+              }
+            }
+          }
+        };
+      });
+    } catch (err) {
+      console.error(err);
+      showError("Failed to interpret ABG. Please try again.");
+    }
+  };
+
   const markPrimarySurveyNormal = () => {
     const initialSurvey = getInitialPrimarySurvey(currentCase.patient.caseType);
-    setCurrentCase(prev => ({
-      ...prev,
-      vitals: {
-        ...prev.vitals,
-        rr: initialSurvey.breathing.rr || "16",
-        spo2: initialSurvey.breathing.spo2 || "98",
-        hr: initialSurvey.circulation.hr || "80",
-        bp: "120/80",
-        gcs: initialSurvey.disability.gcsTotal || "15",
-        temp: "37.0"
-      },
-      primaryAssessment: {
-        ...prev.primaryAssessment,
-        survey: initialSurvey,
-        ...SECTION_NORMALS.primarySurvey
-      }
-    }));
+    setCurrentCase(prev => {
+      const prevSurvey = prev.primaryAssessment?.survey || {};
+      const newSurvey = {
+        ...initialSurvey,
+        airway: { ...initialSurvey.airway, cSpine: "not_applicable" },
+        breathing: { ...initialSurvey.breathing, chestWall: "Normal", rr: "16", spo2: "98" },
+        circulation: { ...initialSurvey.circulation, bleeding: "Nil", ivAccess: "18G", hr: "80", sbp: "120", dbp: "80" },
+        disability: { ...initialSurvey.disability, focalDeficit: "None", grbs: "100" },
+        exposure: { ...initialSurvey.exposure, skin: "Normal", temp: "37.0" },
+        adjuncts: (prevSurvey as any).adjuncts || {}
+      };
+      return {
+        ...prev,
+        vitals: {
+          ...prev.vitals,
+          rr: "16",
+          spo2: "98",
+          hr: "80",
+          bp: "120/80",
+          gcs: "15",
+          temp: "37.0"
+        },
+        primaryAssessment: {
+          ...prev.primaryAssessment,
+          survey: newSurvey as any
+        }
+      };
+    });
     setNormalMarkedBanner(true);
     setTimeout(() => setNormalMarkedBanner(false), 4000);
   };
@@ -1109,6 +1311,8 @@ Extremities: No deformity. No peripheral oedema. Peripheral pulses present.`,
           ...prev,
           differentials: resData.data
         }));
+      } else {
+        showError(resData.error || "Clinical assistant busy — try again in a moment");
       }
     } catch (err) {
       console.error(err);
@@ -1186,8 +1390,8 @@ Extremities: No deformity. No peripheral oedema. Peripheral pulses present.`,
             ...currentCase.patient,
             name: parsed.patientName || currentCase.patient.name,
             age: parsed.age || currentCase.patient.age,
-            gender: parsed.gender || currentCase.patient.gender,
-            presentingComplaint: parsed.presentingComplaint || currentCase.patient.presentingComplaint
+            gender: parsed.gender || parsed.sex || currentCase.patient.gender,
+            presentingComplaint: parsed.presentingComplaint || parsed.chiefComplaint || currentCase.patient.presentingComplaint
           },
           vitals: {
             ...currentCase.vitals,
@@ -1200,15 +1404,56 @@ Extremities: No deformity. No peripheral oedema. Peripheral pulses present.`,
           },
           sampleHistory: {
             ...currentCase.sampleHistory,
-            symptoms: parsed.sampleHistory?.symptoms || currentCase.sampleHistory.symptoms,
-            allergies: parsed.sampleHistory?.allergies || currentCase.sampleHistory.allergies,
-            medications: parsed.sampleHistory?.medications || currentCase.sampleHistory.medications,
-            pastHistory: parsed.sampleHistory?.pastHistory || currentCase.sampleHistory.pastHistory,
+            symptoms: parsed.sampleHistory?.symptoms || parsed.symptoms || currentCase.sampleHistory.symptoms,
+            allergies: parsed.sampleHistory?.allergies || parsed.allergies || currentCase.sampleHistory.allergies,
+            medications: parsed.sampleHistory?.medications || (Array.isArray(parsed.medications) ? parsed.medications.join(", ") : parsed.medications) || currentCase.sampleHistory.medications,
+            pastHistory: parsed.sampleHistory?.pastHistory || parsed.pastMedicalHistory || currentCase.sampleHistory.pastHistory,
             lastMeal: parsed.sampleHistory?.lastMeal || currentCase.sampleHistory.lastMeal,
-            events: parsed.sampleHistory?.events || currentCase.sampleHistory.events
+            events: parsed.sampleHistory?.events || parsed.events || currentCase.sampleHistory.events
           },
           investigations: newInvestigations,
-          treatments: newTreatments
+          treatments: newTreatments,
+
+          treatment: {
+            ...currentCase.treatment,
+            medications: mergeUnique(currentCase.treatment?.medications, parsed.treatment?.prescribedMedications || (Array.isArray(parsed.treatment) ? parsed.treatment : undefined)),
+            infusions: mergeUnique(currentCase.treatment?.infusions, parsed.treatment?.prescribedInfusions),
+            otherNotes: parsed.treatment?.treatmentNotes
+              ? `${currentCase.treatment?.otherNotes ? currentCase.treatment.otherNotes + "\n" : ""}${parsed.treatment.treatmentNotes}`
+              : currentCase.treatment?.otherNotes,
+          },
+
+          dispositionAndPlan: {
+            ...currentCase.dispositionAndPlan,
+            dispositionStatus: parsed.disposition?.dispositionStatus || (typeof parsed.disposition === "string" ? parsed.disposition : undefined) || currentCase.dispositionAndPlan?.dispositionStatus,
+            destinationUnit: parsed.disposition?.destinationUnit || currentCase.dispositionAndPlan?.destinationUnit,
+            consultsRequested: mergeUnique(currentCase.dispositionAndPlan?.consultsRequested, parsed.disposition?.consultsRequested),
+            pendingInvestigations: mergeUnique(currentCase.dispositionAndPlan?.pendingInvestigations, parsed.disposition?.pendingReports),
+            followUpAdvice: parsed.disposition?.followUp || currentCase.dispositionAndPlan?.followUpAdvice,
+          },
+
+          ...((currentCase.patient?.caseType as any) === "Pediatric" || (currentCase.patient as any)?.isPediatric || currentCase.isPediatric
+            ? {
+                pediatricDetails: {
+                  ...currentCase.pediatricDetails,
+                  patientWeight: parsed.pediatricDetails?.patientWeight || currentCase.pediatricDetails?.patientWeight,
+                  immunizationHistory: parsed.pediatricDetails?.immunizationHistory || currentCase.pediatricDetails?.immunizationHistory,
+                  birthHistory: parsed.pediatricDetails?.birthHistory || currentCase.pediatricDetails?.birthHistory,
+                  feedingHistory: parsed.pediatricDetails?.feedingHistory || currentCase.pediatricDetails?.feedingHistory,
+                  developmentalHistory: parsed.pediatricDetails?.developmentalHistory || currentCase.pediatricDetails?.developmentalHistory,
+                  patAppearance: parsed.pediatricDetails?.patAppearance || currentCase.pediatricDetails?.patAppearance,
+                  patWorkOfBreathing: parsed.pediatricDetails?.patWorkOfBreathing || currentCase.pediatricDetails?.patWorkOfBreathing,
+                  patCirculation: parsed.pediatricDetails?.patCirculation || currentCase.pediatricDetails?.patCirculation,
+                  historySignsSymptoms: parsed.sampleHistory?.symptoms || parsed.symptoms || currentCase.pediatricDetails?.historySignsSymptoms || "",
+                  historyAllergies: parsed.sampleHistory?.allergies || parsed.allergies || currentCase.pediatricDetails?.historyAllergies || "",
+                  historyMedications: parsed.sampleHistory?.medications || (Array.isArray(parsed.medications) ? parsed.medications.join(", ") : parsed.medications) || currentCase.pediatricDetails?.historyMedications || "",
+                  historyPastMedical: parsed.sampleHistory?.pastHistory || parsed.pastMedicalHistory || currentCase.pediatricDetails?.historyPastMedical || "",
+                  historyLastMeal: parsed.sampleHistory?.lastMeal || currentCase.pediatricDetails?.historyLastMeal || "",
+                  historyEvents: parsed.sampleHistory?.events || parsed.events || currentCase.pediatricDetails?.historyEvents || "",
+                  presentingComplaints: parsed.presentingComplaint || parsed.chiefComplaint || currentCase.pediatricDetails?.presentingComplaints || ""
+                },
+              }
+            : {}),
         };
 
         if (currentCase.isPediatric) {
@@ -1229,6 +1474,7 @@ Extremities: No deformity. No peripheral oedema. Peripheral pulses present.`,
         updatedCase.patient.triageCategory = triageResult.category;
 
         setCurrentCase(updatedCase);
+        onSaveCase(updatedCase);
         setShowDictationModal(false);
         setSmartDictationText("");
         setDictationSuccess(true);
@@ -1237,11 +1483,11 @@ Extremities: No deformity. No peripheral oedema. Peripheral pulses present.`,
         }, 8000);
 
         // Auto-update discharge summary in background
-        await syncDischargeSummary(updatedCase);
+        syncDischargeSummary(updatedCase).catch(e => console.error("Background discharge sync failed:", e));
       }
     } catch (err: any) {
       console.error(err);
-      alert(err.message || "Failed to process voice dictation.");
+      showError(err.message || "Failed to process voice dictation.");
     } finally {
       setAiLoading(false);
     }
@@ -1259,28 +1505,29 @@ Extremities: No deformity. No peripheral oedema. Peripheral pulses present.`,
       const resData = await response.json();
       if (resData.success && resData.data) {
         const parsed = resData.data;
-        setCurrentCase(prev => {
-          const updatedPatient = {
-            ...prev.patient,
-            name: parsed.patientName || prev.patient.name,
-            age: parsed.age || prev.patient.age
-          };
-          const triageResult = classifyEmergencyTriage(updatedPatient.age, updatedPatient.presentingComplaint, prev.vitals);
-          return {
-            ...prev,
-            patient: {
-              ...updatedPatient,
-              triageCategory: triageResult.category
-            },
-            sampleHistory: {
-              ...prev.sampleHistory,
-              allergies: parsed.allergies || prev.sampleHistory.allergies,
-              medications: parsed.medications || prev.sampleHistory.medications,
-              pastHistory: parsed.pastHistory || prev.sampleHistory.pastHistory,
-              events: parsed.extractedSummary || prev.sampleHistory.events
-            }
-          };
-        });
+        const updatedPatient = {
+          ...currentCase.patient,
+          name: parsed.patientName || currentCase.patient.name,
+          age: parsed.age || currentCase.patient.age
+        };
+        const triageResult = classifyEmergencyTriage(updatedPatient.age, updatedPatient.presentingComplaint, currentCase.vitals);
+        const updatedCase: ClinicalCase = {
+          ...currentCase,
+          patient: {
+            ...updatedPatient,
+            triageCategory: triageResult.category
+          },
+          sampleHistory: {
+            ...currentCase.sampleHistory,
+            allergies: parsed.allergies || currentCase.sampleHistory.allergies,
+            medications: parsed.medications || currentCase.sampleHistory.medications,
+            pastHistory: parsed.pastHistory || currentCase.sampleHistory.pastHistory,
+            events: parsed.extractedSummary || currentCase.sampleHistory.events
+          }
+        };
+
+        setCurrentCase(updatedCase);
+        onSaveCase(updatedCase);
         setShowScanModal(false);
         setOcrText("");
       }
@@ -1360,15 +1607,8 @@ Extremities: No deformity. No peripheral oedema. Peripheral pulses present.`,
         const finalHistory = [...updatedHistory, { role: "model" as const, text: replyContent }];
         setRoundsChatHistory(finalHistory);
 
-        // Persist to LocalStorage & Discussion format
-        const cid = currentCase.id;
-        const pname = currentCase.patient?.name?.trim()?.toLowerCase();
+        // Persist to Discussion format & Firestore via onSaveCase
         try {
-          localStorage.setItem(`ermate_rounds_chat_${cid}`, JSON.stringify(finalHistory));
-          if (pname) {
-            localStorage.setItem(`ermate_rounds_chat_${pname}`, JSON.stringify(finalHistory));
-          }
-
           const convertedMsgs = finalHistory.map((h, idx) => ({
             id: "rounds-" + idx + "-" + Date.now(),
             sender: h.role === "model" ? ("ai" as const) : ("user" as const),
@@ -1376,10 +1616,6 @@ Extremities: No deformity. No peripheral oedema. Peripheral pulses present.`,
             timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
           }));
 
-          localStorage.setItem(`ermate_discussion_${cid}`, JSON.stringify(convertedMsgs));
-          if (pname) {
-            localStorage.setItem(`ermate_discussion_name_${pname}`, JSON.stringify(convertedMsgs));
-          }
           if (onSaveCase) {
             onSaveCase({ ...currentCase, discussionMessages: convertedMsgs });
           }
@@ -1398,15 +1634,8 @@ Extremities: No deformity. No peripheral oedema. Peripheral pulses present.`,
 
   const handleSaveRoundsDraft = () => {
     if (!currentCase || !roundsChatHistory.length) return;
-    const cid = currentCase.id;
-    const pname = currentCase.patient?.name?.trim()?.toLowerCase();
 
     try {
-      localStorage.setItem(`ermate_rounds_chat_${cid}`, JSON.stringify(roundsChatHistory));
-      if (pname) {
-        localStorage.setItem(`ermate_rounds_chat_${pname}`, JSON.stringify(roundsChatHistory));
-      }
-
       const convertedMsgs = roundsChatHistory.map((h, idx) => ({
         id: "rounds-" + idx + "-" + Date.now(),
         sender: h.role === "model" ? ("ai" as const) : ("user" as const),
@@ -1414,10 +1643,6 @@ Extremities: No deformity. No peripheral oedema. Peripheral pulses present.`,
         timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
       }));
 
-      localStorage.setItem(`ermate_discussion_${cid}`, JSON.stringify(convertedMsgs));
-      if (pname) {
-        localStorage.setItem(`ermate_discussion_name_${pname}`, JSON.stringify(convertedMsgs));
-      }
       if (onSaveCase) {
         onSaveCase({ ...currentCase, discussionMessages: convertedMsgs });
       }
@@ -1468,10 +1693,10 @@ Extremities: No deformity. No peripheral oedema. Peripheral pulses present.`,
   };
 
   // Commit to backend (Save)
-  const handleSave = async () => {
+  const handleSave = () => {
     // Audit & sanitize clinical fields before saving
     const ageNum = currentCase.patient.age;
-    const isPeds = currentCase.isPediatric || (ageNum !== null && ageNum <= 16);
+    const isPeds = currentCase.isPediatric || (ageNum !== null && recomputeIsPediatric(ageNum));
     
     const formattedVitals = {
       ...currentCase.vitals,
@@ -1502,20 +1727,21 @@ Extremities: No deformity. No peripheral oedema. Peripheral pulses present.`,
     }, 5000);
     
     // Auto-update discharge summary in background
-    await syncDischargeSummary(caseToSave);
+    syncDischargeSummary(caseToSave).catch(e => console.error("Background discharge sync failed:", e));
 
     // Auto-populate first principles learning for the saved modal and trigger the Post-Save Debrief Nudge
-    fetchRoundsDebrief("first-principles");
-    setShowPostSaveModal(true);
+    fetchRoundsDebrief("first-principles").catch(e => console.error("Background rounds debrief failed:", e));
+    /* setShowPostSaveModal(true) removed */;
   };
 
   const handleSaveFromDisposition = async () => {
-    await handleSave();
+    handleSave();
     const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     setDispositionSaveMessage(`Case Sheet saved to Dashboard successfully at ${timeStr}`);
     setTimeout(() => {
       setDispositionSaveMessage(null);
-    }, 6000);
+      onBack();
+    }, 1500);
   };
 
   // Calculated composite GCS based on subscale variables
@@ -1527,6 +1753,18 @@ Extremities: No deformity. No peripheral oedema. Peripheral pulses present.`,
     const mlcText = currentCase.patient.isMlc 
       ? `YES (Incident: ${currentCase.patient.mlcDetails?.natureOfIncident || 'N/A'}, Station: ${currentCase.patient.mlcDetails?.policeStation || 'N/A'}, GD Entry: ${currentCase.patient.mlcDetails?.ddEntryNo || 'N/A'}, Brought By: ${currentCase.patient.mlcDetails?.informantBroughtBy || 'Self'})`
       : 'NO';
+
+    const pediatricText = currentCase.isPediatric
+      ? `\n**Pediatric Assessment Triangle (PAT):**
+- **Appearance (TICLS):** Tone: ${currentCase.pediatricDetails?.patAppearanceTone || "N/A"}, Interactivity: ${currentCase.pediatricDetails?.patAppearanceInteractivity || "N/A"}, Consolability: ${currentCase.pediatricDetails?.patAppearanceConsolability || "N/A"}, Look/Gaze: ${currentCase.pediatricDetails?.patAppearanceLookGaze || "N/A"}, Speech/Cry: ${currentCase.pediatricDetails?.patAppearanceSpeechCry || "N/A"}
+- **Work of Breathing:** ${currentCase.pediatricDetails?.patWorkOfBreathing || "N/A"}
+- **Circulation to Skin:** ${currentCase.pediatricDetails?.patCirculation || "N/A"}
+- **Birth History:** ${currentCase.pediatricDetails?.birthHistory || "N/A"}
+- **Feeding History:** ${currentCase.pediatricDetails?.feedingHistory || "N/A"}
+- **Developmental History:** ${currentCase.pediatricDetails?.developmentalHistory || "N/A"}
+- **Immunizations:** ${currentCase.pediatricDetails?.immunizationHistory || "N/A"}
+- **Brought By / Informant:** ${currentCase.pediatricDetails?.broughtBy || "N/A"} / ${currentCase.pediatricDetails?.informant || "N/A"}
+- **Weight:** ${currentCase.pediatricDetails?.patientWeight || (currentCase.pediatricDetails as any)?.weight || "N/A"} kg\n` : "";
 
     const treatmentsText = currentCase.treatments.length > 0
       ? currentCase.treatments.map((t, idx) => `${idx + 1}. ${t.drugName} ${t.dose} (${t.route}) - Logged at ${t.timeGiven}`).join("\n")
@@ -1571,7 +1809,7 @@ Extremities: No deformity. No peripheral oedema. Peripheral pulses present.`,
  
 **Chief Complaints / Presenting Complaint:**
 - ${currentCase.patient.presentingComplaint || "None"}
-
+${pediatricText}
 **Primary Survey (ABCDE):**
 - **Airway (A)** → ${currentCase.primaryAssessment.airway || "Patent"} / ${currentCase.primaryAssessment.airwayStatus || "Normal"}, **Intervention:** ${currentCase.primaryAssessment.airway === "Patent" ? "None" : "Oral airway / Collar"}
 - **Breathing (B)** → **RR:** ${currentCase.vitals.rr || "N/A"}, **SPO2:** ${currentCase.vitals.spo2 || "N/A"}%, **Work of breathing:** ${currentCase.primaryAssessment.breathing || "Normal"}, **Air entry:** Symmetrical bilaterally, **CCT:** Normal, **Subcutaneous emphysema:** Absent, **EFAST:** Negative, **Intervention:** None.
@@ -1580,9 +1818,9 @@ Extremities: No deformity. No peripheral oedema. Peripheral pulses present.`,
 - **Exposure (E)** → **Temp:** ${currentCase.vitals.temp || "N/A"} °F, **Logroll:** Completed (No spinal tenderness), **Local Examination:** ${currentCase.primaryAssessment.exposure || "Unremarkable"}
 
 **Adjuvants to Primary:**
-- **ECG:** Normal sinus rhythm, no acute ST-T changes.
-- **VBG:** PH: 7.38 | PCO2: 40 mmHg | HCO3: 24 mEq/L | HB: 14.2 g/dL | GLU: 105 mg/dL | LAC: 1.1 mmol/L | NA: 138 mEq/L | K: 4.1 mEq/L | CR: 0.9 mg/dL
-- **Bedside Echo:** Good LVM, IVC Collapsing, No B-lines, No RWMA, No RA RV strain.
+- **ECG:** ${currentCase.primaryAssessment.survey?.circulation?.ecg || "Normal sinus rhythm, no acute ST-T changes."}
+- **VBG/ABG:** Not done.
+- **Bedside Echo / EFAST:** ${currentCase.primaryAssessment.survey?.circulation?.efast ? 'Pericardial: ' + currentCase.primaryAssessment.survey.circulation.efast.pericardial + ', RUQ: ' + currentCase.primaryAssessment.survey.circulation.efast.ruq + ', LUQ: ' + currentCase.primaryAssessment.survey.circulation.efast.luq + ', Suprapubic: ' + currentCase.primaryAssessment.survey.circulation.efast.suprapubic : "Not done."}
 
 **History (SAMPLE):**
 - **S - Signs & Symptoms:** ${currentCase.sampleHistory.symptoms || "None"}
@@ -1595,27 +1833,24 @@ Extremities: No deformity. No peripheral oedema. Peripheral pulses present.`,
 - **LMP:** ${currentCase.isPediatric ? "N/A" : "Normal / Not applicable"}
 
 **Secondary Survey (Systemic & General Examination):**
-- **General Examination (Pallor, Icterus, etc.):**
-  - **Pallor:** Absent
-  - **Icterus:** Absent
-  - **Clubbing:** Absent
-  - **Lymphadenopathy:** None
-  - **Thyroid:** Normal
-  - **Varicose Veins:** None
+${(() => {
+  const sec = parseSecondaryAssessment(currentCase.secondaryAssessment || "");
+  return `- **General Examination:** ${sec.General || "Pallor: Absent, Icterus: Absent, Clubbing: Absent, Lymphadenopathy: None, Thyroid: Normal, Varicose Veins: None."}
 - **Systemic Examination (CVS, CHEST, Abdomen, CNS):**
-  - **CVS:** S1, S2: Normal, Pulse: Regular ${currentCase.vitals.hr || "75"} bpm, Apex Beat: Normal, localized in the 5th intercostal space, midclavicular line. Precordial Heave: Absent, Added Sounds: None, Murmurs: None
-  - **CHEST:** Expansion: Equal bilaterally, Percussion: Resonant bilaterally, Breath Sounds: Vesicular, equal bilaterally, Vocal Resonance: Normal, Added Sounds: None.
-  - **Abdomen:** Umbilical: Central, no abnormalities, Organomegaly: None, Percussion: Normal tympany, no dullness. Bowel Sounds: Normal, active in all quadrants, External Genitalia: Normal, no abnormalities. Hernial Orifices: No bulging, Per Rectal: No tenderness, normal tone, Per Vaginal: Normal findings.
-  - **CNS:** Higher Mental Functions: Normal, alert and oriented, Cranial Nerves: Intact (I-XII), Sensory System: Normal, intact to light touch, pain, and temperature, Motor System: Normal muscle tone, strength 5/5 in all limbs, Reflex: Normal deep tendon reflexes (2+), no pathological reflexes, Romberg Sign: Negative, Cerebellar Signs: No dysmetria, normal finger-nose test, Signs of Meningeal Irritation: None, Gait: Normal, steady, no ataxia, Carotid Bruit: None.
-- **Extremities and Back:** No visible abnormalities at the time of examination.
+  - **CVS:** ${sec.CVS || `S1, S2: Normal, Pulse: Regular ${currentCase.vitals.hr || "75"} bpm, Apex Beat: Normal, localized in the 5th intercostal space, midclavicular line. Precordial Heave: Absent, Added Sounds: None, Murmurs: None`}
+  - **CHEST / RS:** ${sec.RS || `Expansion: Equal bilaterally, Percussion: Resonant bilaterally, Breath Sounds: Vesicular, equal bilaterally, Vocal Resonance: Normal, Added Sounds: None.`}
+  - **Abdomen (PA):** ${sec.PA || `Umbilical: Central, no abnormalities, Organomegaly: None, Percussion: Normal tympany, no dullness. Bowel Sounds: Normal, active in all quadrants, External Genitalia: Normal, no abnormalities. Hernial Orifices: No bulging, Per Rectal: No tenderness, normal tone, Per Vaginal: Normal findings.`}
+  - **CNS:** ${sec.CNS || `Higher Mental Functions: Normal, alert and oriented, Cranial Nerves: Intact (I-XII), Sensory System: Normal, intact to light touch, pain, and temperature, Motor System: Normal muscle tone, strength 5/5 in all limbs, Reflex: Normal deep tendon reflexes (2+), no pathological reflexes, Romberg Sign: Negative, Cerebellar Signs: No dysmetria, normal finger-nose test, Signs of Meningeal Irritation: None, Gait: Normal, steady, no ataxia, Carotid Bruit: None.`}
+- **Extremities and Back:** ${sec.Extremities || `No visible abnormalities at the time of examination.`}`;
+})()}
 - **Psychological Assessment:**
-  - **Persistent low mood/anxiety/anger/focus issues:** No.
-  - **Hallucinations/restlessness/hyper-energy:** No.
-  - **Alcohol/tobacco/substance use:** No.
-  - **Confusion/agitation:** No.
-  - **Suicidal thoughts/self-harm:** No.
-  - **Prior mental health treatment:** No.
-  - **Additional Observations:** Nil
+  - **Suicidal Ideation:** ${currentCase.psychologicalAssessment?.suicidalIdeation ? "YES ⚠️" : "No."}
+  - **Self-Harm History:** ${currentCase.psychologicalAssessment?.selfHarmHistory ? "YES ⚠️" : "No."}
+  - **Intent to Harm Others:** ${currentCase.psychologicalAssessment?.intentToHarmOthers ? "YES ⚠️" : "No."}
+  - **Substance Abuse:** ${currentCase.psychologicalAssessment?.substanceAbuse ? "Yes." : "No."}
+  - **Psychiatric History:** ${currentCase.psychologicalAssessment?.psychiatricHistory ? "Yes." : "No."}
+  - **Prior mental health treatment:** ${currentCase.psychologicalAssessment?.currentlyOnPsychiatricTreatment ? "Yes." : "No."}
+  - **Additional Observations:** ${currentCase.psychologicalAssessment?.notes || "Nil"}
 
 **Investigations:**
 ${investigationsText}
@@ -1647,6 +1882,24 @@ ${currentCase.progressNotes || "No progress notes recorded."}
     const mlcText = currentCase.patient.isMlc 
       ? `YES (Incident: ${currentCase.patient.mlcDetails?.natureOfIncident || 'N/A'}, Station: ${currentCase.patient.mlcDetails?.policeStation || 'N/A'}, GD Entry: ${currentCase.patient.mlcDetails?.ddEntryNo || 'N/A'}, Brought By: ${currentCase.patient.mlcDetails?.informantBroughtBy || 'Self'})`
       : 'NO';
+
+    const pediatricHtml = currentCase.isPediatric
+      ? `
+      <div style="margin-top: 15px; margin-bottom: 15px; border-left: 3px solid #8b5cf6; padding-left: 10px;">
+        <h4 style="margin: 0 0 5px 0;">Pediatric Assessment</h4>
+        <ul style="margin: 0; padding-left: 20px;">
+          <li><strong>Appearance (TICLS):</strong> Tone: ${currentCase.pediatricDetails?.patAppearanceTone || "N/A"}, Interactivity: ${currentCase.pediatricDetails?.patAppearanceInteractivity || "N/A"}, Consolability: ${currentCase.pediatricDetails?.patAppearanceConsolability || "N/A"}, Look/Gaze: ${currentCase.pediatricDetails?.patAppearanceLookGaze || "N/A"}, Speech/Cry: ${currentCase.pediatricDetails?.patAppearanceSpeechCry || "N/A"}</li>
+          <li><strong>Work of Breathing:</strong> ${currentCase.pediatricDetails?.patWorkOfBreathing || "N/A"}</li>
+          <li><strong>Circulation to Skin:</strong> ${currentCase.pediatricDetails?.patCirculation || "N/A"}</li>
+          <li><strong>Birth History:</strong> ${currentCase.pediatricDetails?.birthHistory || "N/A"}</li>
+          <li><strong>Feeding History:</strong> ${currentCase.pediatricDetails?.feedingHistory || "N/A"}</li>
+          <li><strong>Developmental History:</strong> ${currentCase.pediatricDetails?.developmentalHistory || "N/A"}</li>
+          <li><strong>Immunizations:</strong> ${currentCase.pediatricDetails?.immunizationHistory || "N/A"}</li>
+          <li><strong>Brought By / Informant:</strong> ${currentCase.pediatricDetails?.broughtBy || "N/A"} / ${currentCase.pediatricDetails?.informant || "N/A"}</li>
+          <li><strong>Weight:</strong> ${currentCase.pediatricDetails?.patientWeight || (currentCase.pediatricDetails as any)?.weight || "N/A"} kg</li>
+        </ul>
+      </div>
+      ` : "";
 
     const treatmentsText = currentCase.treatments.length > 0
       ? currentCase.treatments.map((t, idx) => `${idx + 1}. ${t.drugName} ${t.dose} (${t.route}) - Logged at ${t.timeGiven}`).join("<br/>")
@@ -1693,7 +1946,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}
 <ul>
   <li>${currentCase.patient.presentingComplaint || "None"}</li>
 </ul>
-<br/>
+${pediatricHtml}
 <strong>Primary Survey (ABCDE):</strong><br/>
 <ul>
   <li><strong>Airway (A)</strong> → ${currentCase.primaryAssessment.airway || "Patent"} / ${currentCase.primaryAssessment.airwayStatus || "Normal"}, <strong>Intervention:</strong> ${currentCase.primaryAssessment.airway === "Patent" ? "None" : "Oral airway / Collar"}</li>
@@ -1703,11 +1956,12 @@ ${currentCase.progressNotes || "No progress notes recorded."}
   <li><strong>Exposure (E)</strong> → <strong>Temp:</strong> ${currentCase.vitals.temp || "N/A"} °F, <strong>Logroll:</strong> Completed (No spinal tenderness), <strong>Local Examination:</strong> ${currentCase.primaryAssessment.exposure || "Unremarkable"}</li>
 </ul>
 <br/>
-<strong>Adjuvants to Primary:</strong><br/>
+<strong>Adjuvants to Primary:</strong>
 <ul>
-  <li><strong>ECG:</strong> Normal sinus rhythm, no acute ST-T changes.</li>
-  <li><strong>VBG:</strong> PH: 7.38 | PCO2: 40 mmHg | HCO3: 24 mEq/L | HB: 14.2 g/dL | GLU: 105 mg/dL | LAC: 1.1 mmol/L | NA: 138 mEq/L | K: 4.1 mEq/L | CR: 0.9 mg/dL</li>
-  <li><strong>Bedside Echo:</strong> Good LVM, IVC Collapsing, No B-lines, No RWMA, No RA RV strain.</li>
+  <li><strong>ECG:</strong> ${currentCase.primaryAssessment.survey?.circulation?.ecg || "Normal sinus rhythm, no acute ST-T changes."}</li>
+  <li><strong>VBG/ABG:</strong> Not done.</li>
+  <li><strong>Bedside Echo / EFAST:</strong> ${currentCase.primaryAssessment.survey?.circulation?.efast ? 'Pericardial: ' + currentCase.primaryAssessment.survey.circulation.efast.pericardial + ', RUQ: ' + currentCase.primaryAssessment.survey.circulation.efast.ruq + ', LUQ: ' + currentCase.primaryAssessment.survey.circulation.efast.luq + ', Suprapubic: ' + currentCase.primaryAssessment.survey.circulation.efast.suprapubic : "Not done."}</li>
+</ul>
 </ul>
 <br/>
 <strong>History (SAMPLE):</strong><br/>
@@ -1723,33 +1977,31 @@ ${currentCase.progressNotes || "No progress notes recorded."}
 </ul>
 <br/>
 <strong>Secondary Survey (Systemic & General Examination):</strong><br/>
-<strong>General Examination:</strong>
+${(() => {
+  const sec = parseSecondaryAssessment(currentCase.secondaryAssessment || "");
+  return `<strong>General Examination:</strong>
 <ul>
-  <li><strong>Pallor:</strong> Absent</li>
-  <li><strong>Icterus:</strong> Absent</li>
-  <li><strong>Clubbing:</strong> Absent</li>
-  <li><strong>Lymphadenopathy:</strong> None</li>
-  <li><strong>Thyroid:</strong> Normal</li>
-  <li><strong>Varicose Veins:</strong> None</li>
+  <li>${sec.General || "Pallor: Absent, Icterus: Absent, Clubbing: Absent, Lymphadenopathy: None, Thyroid: Normal, Varicose Veins: None."}</li>
 </ul>
 <strong>Systemic Examination:</strong>
 <ul>
-  <li><strong>CVS:</strong> S1, S2: Normal, Pulse: Regular ${currentCase.vitals.hr || "75"} bpm, Apex Beat: Normal, localized in the 5th intercostal space, midclavicular line. Precordial Heave: Absent, Added Sounds: None, Murmurs: None</li>
-  <li><strong>CHEST:</strong> Expansion: Equal bilaterally, Percussion: Resonant bilaterally, Breath Sounds: Vesicular, equal bilaterally, Vocal Resonance: Normal, Added Sounds: None.</li>
-  <li><strong>Abdomen:</strong> Umbilical: Central, no abnormalities, Organomegaly: None, Percussion: Normal tympany, no dullness. Bowel Sounds: Normal, active in all quadrants, External Genitalia: Normal, no abnormalities. Hernial Orifices: No bulging, Per Rectal: No tenderness, normal tone, Per Vaginal: Normal findings.</li>
-  <li><strong>CNS:</strong> Higher Mental Functions: Normal, alert and oriented, Cranial Nerves: Intact (I-XII), Sensory System: Normal, intact to light touch, pain, and temperature, Motor System: Normal muscle tone, strength 5/5 in all limbs, Reflex: Normal deep tendon reflexes (2+), no pathological reflexes, Romberg Sign: Negative, Cerebellar Signs: No dysmetria, normal finger-nose test, Signs of Meningeal Irritation: None, Gait: Normal, steady, no ataxia, Carotid Bruit: None.</li>
+  <li><strong>CVS:</strong> ${sec.CVS || `S1, S2: Normal, Pulse: Regular ${currentCase.vitals.hr || "75"} bpm, Apex Beat: Normal, localized in the 5th intercostal space, midclavicular line. Precordial Heave: Absent, Added Sounds: None, Murmurs: None`}</li>
+  <li><strong>CHEST / RS:</strong> ${sec.RS || `Expansion: Equal bilaterally, Percussion: Resonant bilaterally, Breath Sounds: Vesicular, equal bilaterally, Vocal Resonance: Normal, Added Sounds: None.`}</li>
+  <li><strong>Abdomen (PA):</strong> ${sec.PA || `Umbilical: Central, no abnormalities, Organomegaly: None, Percussion: Normal tympany, no dullness. Bowel Sounds: Normal, active in all quadrants, External Genitalia: Normal, no abnormalities. Hernial Orifices: No bulging, Per Rectal: No tenderness, normal tone, Per Vaginal: Normal findings.`}</li>
+  <li><strong>CNS:</strong> ${sec.CNS || `Higher Mental Functions: Normal, alert and oriented, Cranial Nerves: Intact (I-XII), Sensory System: Normal, intact to light touch, pain, and temperature, Motor System: Normal muscle tone, strength 5/5 in all limbs, Reflex: Normal deep tendon reflexes (2+), no pathological reflexes, Romberg Sign: Negative, Cerebellar Signs: No dysmetria, normal finger-nose test, Signs of Meningeal Irritation: None, Gait: Normal, steady, no ataxia, Carotid Bruit: None.`}</li>
 </ul>
-<strong>Extremities and Back:</strong> No visible abnormalities at the time of examination.<br/>
+<strong>Extremities and Back:</strong> ${sec.Extremities || "No visible abnormalities at the time of examination."}<br/>`;
+})()}
 <br/>
 <strong>Psychological Assessment:</strong>
 <ul>
-  <li><strong>Persistent low mood/anxiety/anger/focus issues:</strong> No.</li>
-  <li><strong>Hallucinations/restlessness/hyper-energy:</strong> No.</li>
-  <li><strong>Alcohol/tobacco/substance use:</strong> No.</li>
-  <li><strong>Confusion/agitation:</strong> No.</li>
-  <li><strong>Suicidal thoughts/self-harm:</strong> No.</li>
-  <li><strong>Prior mental health treatment:</strong> No.</li>
-  <li><strong>Additional Observations:</strong> Nil</li>
+  <li><strong>Suicidal Ideation:</strong> ${currentCase.psychologicalAssessment?.suicidalIdeation ? "YES ⚠️" : "No."}</li>
+  <li><strong>Self-Harm History:</strong> ${currentCase.psychologicalAssessment?.selfHarmHistory ? "YES ⚠️" : "No."}</li>
+  <li><strong>Intent to Harm Others:</strong> ${currentCase.psychologicalAssessment?.intentToHarmOthers ? "YES ⚠️" : "No."}</li>
+  <li><strong>Substance Abuse:</strong> ${currentCase.psychologicalAssessment?.substanceAbuse ? "Yes." : "No."}</li>
+  <li><strong>Psychiatric History:</strong> ${currentCase.psychologicalAssessment?.psychiatricHistory ? "Yes." : "No."}</li>
+  <li><strong>Prior treatment:</strong> ${currentCase.psychologicalAssessment?.currentlyOnPsychiatricTreatment ? "Yes." : "No."}</li>
+  <li><strong>Observations:</strong> ${currentCase.psychologicalAssessment?.notes || "Nil"}</li>
 </ul>
 <br/>
 <strong>Investigations:</strong><br/>
@@ -1883,21 +2135,66 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
         residentName: "",
         consultantName: "",
         observationNotes: "",
-        ...prev.dispositionDetails,
+        ...(prev as any).dispositionDetails,
         [field]: value
       }
     }));
   };
 
   return (
-    <div className="w-full">
-      {/* Interactive UI Screen */}
+    <div className="w-full pb-28 sm:pb-36 relative">
+      {errorMessage && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[99999] bg-rose-600 border border-rose-400 text-white px-4 py-2 rounded-xl shadow-2xl font-bold text-sm flex items-center gap-2 animate-in fade-in slide-in-from-top-4">
+          <ShieldAlert className="w-4 h-4 shrink-0" />
+          {errorMessage}
+        </div>
+      )}
+      {/* Persistent "Not Yet Triaged" Warning Chip  */}
+      {isTriageCategoryPending(currentCase.patient.triageCategory) && (
+        <div className="max-w-7xl mx-auto mb-4 bg-amber-500/15 dark:bg-amber-950/80 border-2 border-amber-500/80 rounded-2xl p-3 shadow-md flex flex-wrap items-center justify-between gap-3 animate-pulse no-print">
+          <div className="flex items-center gap-2.5">
+            <AlertTriangle className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0" />
+            <div>
+              <span className="text-xs font-black text-amber-900 dark:text-amber-200 uppercase tracking-wider block">
+                ⚠️ NOT YET TRIAGED
+              </span>
+              <span className="text-[11px] text-amber-800 dark:text-amber-300 font-medium">
+                Patient triage category is currently pending. Select a priority level to complete triage:
+              </span>
+            </div>
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0">
+            {[
+              { label: "P1 (Resuscitative)", cat: "P1 (Resuscitative)" },
+              { label: "P2 (Emergent)", cat: "P2 (Emergent)" },
+              { label: "P3 (Urgent)", cat: "P3 (Urgent)" },
+              { label: "P4 (Non-Urgent)", cat: "P4 (Non-Urgent)" }
+            ].map((item) => (
+              <button
+                key={item.cat}
+                type="button"
+                onClick={() => {
+                  setCurrentCase(prev => ({
+                    ...prev,
+                    patient: { ...prev.patient, triageCategory: item.cat as any }
+                  }));
+                }}
+                className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-[10px] font-extrabold transition-all cursor-pointer shadow-xs"
+              >
+                Set {item.label.split(" ")[0]}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Interactive UI Screen  */}
       <div className="flex flex-col xl:flex-row gap-6 max-w-7xl mx-auto no-print" id="case-sheet-container">
       
-      {/* Left Column: Demographics & Abnormal Vitals Monitor */}
+      {/* Left Column: Demographics & Abnormal Vitals Monitor  */}
       <div className="w-full xl:w-80 space-y-4 shrink-0">
         
-        {/* Back and Status */}
+        {/* Back and Status  */}
         <div className="flex items-center justify-between no-print">
           <div className="flex items-center gap-3">
             <button
@@ -1922,7 +2219,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
           </span>
         </div>
 
-        {/* ER CASE QUICK-SWITCHER WIDGET */}
+        {/* ER CASE QUICK-SWITCHER WIDGET  */}
         <div className="bg-slate-100/50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-3.5 space-y-2 relative no-print shadow-xs">
           <div className="flex items-center justify-between">
             <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider font-mono">
@@ -1962,7 +2259,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                 />
                 <div className="absolute left-0 right-0 mt-1 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xl z-50 overflow-hidden max-h-72 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800 animate-slide-down">
                   
-                  {/* Action: Register / Attend New Patient */}
+                  {/* Action: Register / Attend New Patient  */}
                   {onStartNewTriage && (
                     <button
                       onClick={() => {
@@ -1979,7 +2276,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                     </button>
                   )}
 
-                  {/* List of other cases */}
+                  {/* List of other cases  */}
                   {(() => {
                     const otherCases = (allCases || []).filter(c => c.id !== currentCase.id);
                     if (otherCases.length === 0) {
@@ -2017,17 +2314,17 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                           <div className="flex items-center justify-between text-[10px] text-slate-400">
                             <span>{oc.patient.gender} • {oc.patient.age}y</span>
                             <span className={`font-mono font-bold text-[9px] ${
-                              oc.patient.triageCategory.includes("P1") 
+                              String(oc.patient.triageCategory || "").includes("P1") 
                                 ? "text-rose-500" 
-                                : oc.patient.triageCategory.includes("P2")
+                                : String(oc.patient.triageCategory || "").includes("P2")
                                 ? "text-amber-500"
                                 : "text-emerald-500"
                             }`}>
-                              {oc.patient.triageCategory.split(" ")[0]}
+                              {String(oc.patient.triageCategory || "P2").split(" ")[0]}
                             </span>
                           </div>
 
-                          {/* Pending Sections Details */}
+                          {/* Pending Sections Details  */}
                           {oStatus.isPending ? (
                             <div className="bg-amber-50/50 dark:bg-amber-950/20 border border-amber-100/50 dark:border-amber-900/30 rounded p-1.5 text-[9.5px] text-amber-700 dark:text-amber-400 font-medium space-y-0.5">
                               <div className="flex items-center justify-between font-bold">
@@ -2054,7 +2351,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
           </div>
         </div>
 
-        {/* MLC WARNING CARD (From user screenshot: Yellow Medico-Legal Warning Header) */}
+        {/* MLC WARNING CARD (From user screenshot: Yellow Medico-Legal Warning Header)  */}
         {currentCase.patient.isMlc && (
           <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-900 rounded-xl p-4 space-y-2 text-xs">
             <div className="flex items-center gap-1.5 text-amber-800 dark:text-amber-400 font-extrabold uppercase tracking-wide">
@@ -2070,7 +2367,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
           </div>
         )}
 
-        {/* Patient Profile Brief Card */}
+        {/* Patient Profile Brief Card  */}
         <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl p-5 shadow-sm space-y-3">
           {isEditingDemographics ? (
             <div className="space-y-3 text-xs">
@@ -2108,7 +2405,13 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                       value={currentCase.patient.age || ""}
                       onChange={(e) => {
                         const val = e.target.value ? parseInt(e.target.value) : 0;
-                        setCurrentCase(prev => ({ ...prev, patient: { ...prev.patient, age: val } }));
+                        const newIsPeds = recomputeIsPediatric(val);
+                        setCurrentCase(prev => {
+                          if (newIsPeds && !prev.isPediatric) {
+                            // removed
+                          }
+                          return { ...prev, patient: { ...prev.patient, age: val }, isPediatric: newIsPeds };
+                        });
                       }}
                       className="w-full px-2 py-1 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded focus:ring-1 focus:ring-blue-500 font-medium font-mono"
                     />
@@ -2143,15 +2446,23 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                 </div>
                 <div>
                   <label className="block text-[10px] text-slate-400 font-mono font-semibold uppercase mb-1">Presenting Complaint</label>
-                  <textarea
-                    rows={2}
-                    value={currentCase.patient.presentingComplaint || ""}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      setCurrentCase(prev => ({ ...prev, patient: { ...prev.patient, presentingComplaint: val } }));
-                    }}
-                    className="w-full px-2 py-1 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded focus:ring-1 focus:ring-blue-500 font-medium"
-                  />
+                  <div className="flex gap-2">
+                    <textarea
+                      rows={2}
+                      value={currentCase.patient.presentingComplaint || ""}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setCurrentCase(prev => ({ ...prev, patient: { ...prev.patient, presentingComplaint: val } }));
+                      }}
+                      className="flex-1 w-full px-2 py-1 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded focus:ring-1 focus:ring-blue-500 font-medium"
+                    />
+                    <VoiceRecorder
+                      renderMode="compact-button"
+                      onTranscript={(txt) => {
+                        setCurrentCase(prev => ({ ...prev, patient: { ...prev.patient, presentingComplaint: (prev.patient.presentingComplaint ? prev.patient.presentingComplaint + " " : "") + txt } }));
+                      }}
+                    />
+                  </div>
                 </div>
               </div>
             </div>
@@ -2187,6 +2498,11 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                   </div>
                 </div>
                 
+                {isTriageCategoryPending(currentCase.patient.triageCategory) && (
+                  <span className="text-[9px] font-extrabold bg-amber-500 text-white px-2 py-0.5 rounded uppercase tracking-wider animate-pulse shadow-sm">
+                    ⚠ Not Yet Triaged
+                  </span>
+                )}
                 {currentCase.isPediatric ? (
                   <span className="text-[9px] font-extrabold bg-sky-50 text-sky-700 dark:bg-sky-950/30 dark:text-sky-300 border border-sky-200 px-2 py-0.5 rounded uppercase">
                     Pediatric PALS
@@ -2208,7 +2524,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                 </div>
                 <div className="flex justify-between">
                   <span>Triage Category:</span>
-                  <span className="font-semibold text-slate-700 dark:text-slate-300">{currentCase.patient.triageCategory.split(" ")[0]}</span>
+                  <span className="font-semibold text-slate-700 dark:text-slate-300">{currentCase.patient.triageCategory?.toString().split(" ")[0]}</span>
                 </div>
                 <div className="flex justify-between">
                   <span>Arrival Mode:</span>
@@ -2225,7 +2541,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
           )}
         </div>
 
-        {/* Dynamic Vitals Panel with Abnormal Threshold Alerts & Pain scale (5th vital sign) */}
+        {/* Dynamic Vitals Panel with Abnormal Threshold Alerts & Pain scale (5th vital sign)  */}
         <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl p-5 shadow-sm space-y-3">
           <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center justify-between gap-1.5 border-b border-slate-100 dark:border-slate-900 pb-2">
             <span className="flex items-center gap-1.5">
@@ -2243,6 +2559,26 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
           </h3>
 
           <div className="space-y-2.5">
+          {/* Vitals Reference Box  */}
+          <div className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-3 mb-3">
+            {currentCase.patient.age === 0 || currentCase.patient.age === null ? (
+              <div className="text-xs text-slate-600 dark:text-slate-400">
+                <span className="font-bold text-slate-800 dark:text-slate-200 block mb-1">General — confirm age for precise range</span>
+                Universal Adult Reference: HR 60-100, RR 12-20, BP 120/80
+              </div>
+            ) : currentCase.patient.age < 16 ? (
+              <div className="text-xs text-sky-700 dark:text-sky-300">
+                <span className="font-bold text-sky-800 dark:text-sky-200 block mb-1">Pediatric PALS Reference (Age {currentCase.patient.age})</span>
+                {getPalsNormalParameters(currentCase.patient.age).comment}
+                <div className="text-[10px] mt-1 opacity-70">Note: PALS defines pediatric age up to 18, but ErMate cuts at 16 for adult routing.</div>
+              </div>
+            ) : (
+              <div className="text-xs text-slate-600 dark:text-slate-400">
+                <span className="font-bold text-slate-800 dark:text-slate-200 block mb-1">Universal Adult Reference</span>
+                Universal Adult Reference: HR 60-100, RR 12-20, BP 120/80
+              </div>
+            )}
+          </div>
             {[
               { field: "bp", label: "BP (mmHg)", placeholder: "120/80" },
               { field: "hr", label: "Heart Rate (bpm)", placeholder: "80" },
@@ -2272,7 +2608,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
               );
             })}
 
-            {/* GCS Interactive Subscale Widget */}
+            {/* GCS Interactive Subscale Widget  */}
             <div className="border-t border-slate-100 dark:border-slate-900 pt-2 space-y-1">
               <div className="flex justify-between items-center text-xs">
                 <span className="text-slate-500 font-medium">GCS Score:</span>
@@ -2326,7 +2662,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
               </div>
             </div>
 
-            {/* Pain score (5th vital sign - JCI Mandate) */}
+            {/* Pain score (5th vital sign - JCI Mandate)  */}
             <div className="border-t border-slate-100 dark:border-slate-900 pt-2 space-y-1.5">
               <div className="flex justify-between items-center text-xs">
                 <span className="text-slate-500 font-medium">Pain Score:</span>
@@ -2363,7 +2699,8 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                     min="1"
                     max="150"
                     value={pediatricWeight}
-                    onChange={(e) => setPediatricWeight(Math.max(1, parseInt(e.target.value) || 1))}
+                    placeholder={`Est: ${getAPLSEstimate(currentCase.patient.age)}`}
+                    onChange={(e) => setPediatricWeight(e.target.value === "" ? "" : Math.max(1, parseInt(e.target.value) || 1))}
                     className="w-20 px-2 py-1 text-right text-xs font-mono font-bold rounded border bg-sky-50 border-sky-200 text-sky-700 dark:bg-sky-950/20 dark:border-sky-900 dark:text-sky-300 focus:ring-1 focus:ring-sky-500"
                   />
                   <span className="text-[10px] text-slate-400 font-mono">kg</span>
@@ -2375,28 +2712,51 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
 
       </div>
 
-      {/* Right Column: Case Sheets Tabbed Flow */}
+      {/* Right Column: Case Sheets Tabbed Flow  */}
       <div className="flex-1 flex flex-col space-y-4">
         
-        {/* Actions bar */}
-        <div className="flex flex-wrap items-center justify-between gap-3 bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm no-print">
-          
-          {/* Quick AI Dictate, Scan and Print utilities */}
-          <div className="flex flex-wrap gap-2">
-            <button
-              onClick={handleMarkAsNormal}
-              className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-extrabold rounded-lg transition-all border ${
-                isNormalToggled
-                  ? "bg-blue-600 text-white border-blue-600 shadow-sm hover:bg-blue-700"
-                  : "bg-blue-50 dark:bg-blue-950/20 hover:bg-blue-100 text-blue-700 dark:text-blue-300 border-blue-200/50 dark:border-blue-900/50"
-              }`}
-              title={isNormalToggled ? "Click to revert to previous custom case state" : "Pre-fill the entire case sheet with standard normal findings"}
-            >
-              <CheckCircle className={`w-3.5 h-3.5 ${isNormalToggled ? "text-white animate-pulse" : ""}`} />
-              {isNormalToggled ? "Normal Active (Toggle Off)" : "Mark as Normal"}
-            </button>
+        {/* Top Action Toolbar: Primary Actions  */}
+        <div className="bg-white dark:bg-slate-950 p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm no-print">
+          <div className="flex flex-wrap items-center justify-between gap-2.5">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[10px] font-black text-purple-600 dark:text-purple-400 uppercase tracking-wider font-mono">Primary Actions:</span>
+              <button
+                type="button"
+                onClick={() => {
+                  document.getElementById('quick-voice-scribe-section')?.scrollIntoView({ behavior: 'smooth' });
+                  const textarea = document.getElementById('scribe-textarea');
+                  if (textarea) textarea.focus();
+                }}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-purple-600 hover:bg-purple-700 text-white text-xs font-extrabold rounded-xl transition-all shadow-xs cursor-pointer"
+                title="Navigate directly to the real-time Voice Scribe Dictation Desk"
+              >
+                <Mic className="w-3.5 h-3.5 text-amber-300 animate-pulse" />
+                Direct Voice Scribe
+              </button>
 
-            {/* Case Type Toggle Button directly inside Case Sheet toolbar */}
+              {onDiscussCase && (
+                <button
+                  type="button"
+                  onClick={() => onDiscussCase(currentCase)}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-extrabold rounded-xl transition-all shadow-xs cursor-pointer"
+                  title="Discuss this active case with AI Clinical Assistant"
+                >
+                  <MessageSquare className="w-3.5 h-3.5 text-blue-200" />
+                  Discuss Case
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={() => setShowScanModal(true)}
+                className="inline-flex items-center gap-1.5 px-3 py-2 bg-slate-100 dark:bg-slate-900 hover:bg-slate-200 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-800 text-xs font-bold rounded-xl transition-all"
+              >
+                <FileText className="w-3.5 h-3.5 text-purple-500" />
+                Scan Document
+              </button>
+            </div>
+
+            {/* Case Type Toggle  */}
             <div className="flex bg-slate-100 dark:bg-slate-900 rounded-lg p-0.5 border border-slate-200 dark:border-slate-800 items-center">
               <span className="text-[10px] font-bold text-slate-400 px-2 uppercase">TYPE:</span>
               <button
@@ -2411,7 +2771,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                 className={`text-[10px] px-2.5 py-1 rounded-md font-bold transition-all ${
                   currentCase.patient.caseType === "Medical"
                     ? "bg-blue-600 text-white shadow-xs"
-                    : "text-slate-500 hover:text-slate-800"
+                    : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
                 }`}
               >
                 Medical
@@ -2428,134 +2788,16 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                 className={`text-[10px] px-2.5 py-1 rounded-md font-bold transition-all ${
                   currentCase.patient.caseType === "Trauma"
                     ? "bg-rose-600 text-white shadow-xs"
-                    : "text-slate-500 hover:text-slate-800"
+                    : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
                 }`}
               >
                 Trauma
               </button>
             </div>
-
-            {onDiscussCase && (
-              <button
-                type="button"
-                onClick={() => onDiscussCase(currentCase)}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-bold rounded-lg transition-all dark:bg-blue-950/30 dark:text-blue-300 ring-1 ring-blue-200 dark:ring-blue-800"
-                title="Discuss this active case with AI Clinical Assistant"
-              >
-                <MessageSquare className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
-                Discuss Case
-              </button>
-            )}
-
-            <button
-              onClick={() => {
-                document.getElementById('quick-voice-scribe-section')?.scrollIntoView({ behavior: 'smooth' });
-                const textarea = document.getElementById('scribe-textarea');
-                if (textarea) textarea.focus();
-              }}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-purple-50 hover:bg-purple-100 text-purple-700 text-xs font-bold rounded-lg transition-all dark:bg-purple-950/20 dark:text-purple-300 ring-1 ring-purple-100 dark:ring-purple-900"
-              title="Navigate directly to the real-time Voice Scribe Dictation Desk"
-            >
-              <Mic className="w-3.5 h-3.5 text-purple-600 animate-pulse" />
-              Direct Voice Scribe
-            </button>
-
-            <button
-              onClick={() => setShowScanModal(true)}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-bold rounded-lg transition-all dark:bg-blue-950/20 dark:text-purple-300"
-            >
-              <FileText className="w-3.5 h-3.5" />
-              Scan Document
-            </button>
-            
-            <button
-              onClick={handleCopyCaseSheet}
-              className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg transition-all border ${
-                copiedCaseText
-                  ? "bg-emerald-600 border-emerald-600 text-white"
-                  : "bg-amber-50 dark:bg-amber-950/20 hover:bg-amber-100 text-amber-700 dark:text-amber-300 border-amber-200/50 dark:border-amber-900/50"
-              }`}
-              title="Copy Case Sheet to Clipboard to paste directly into hospital EMR"
-            >
-              {copiedCaseText ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-              {copiedCaseText ? "Copied to EMR!" : "Copy to EMR"}
-            </button>
-
-            <button
-              onClick={() => onViewPrintSheet ? onViewPrintSheet(currentCase.id) : setShowPdfModal(true)}
-              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-extrabold rounded-lg transition-all shadow-xs cursor-pointer"
-              title="Preview Case Sheet as official printable PDF document"
-            >
-              <Eye className="w-3.5 h-3.5" />
-              View Case Sheet PDF
-            </button>
-
-            <button
-              onClick={handleDownloadCaseSheet}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs font-bold rounded-lg transition-all dark:bg-slate-800 dark:text-slate-300 border border-slate-200 dark:border-slate-800"
-              title="Download Case Sheet as plain text file"
-            >
-              <Download className="w-3.5 h-3.5" />
-              Download Text
-            </button>
-
-            <button
-              onClick={() => triggerPrintWithTip()}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs font-bold rounded-lg transition-all dark:bg-slate-800 dark:text-slate-300"
-            >
-              <Printer className="w-3.5 h-3.5" />
-              Print
-            </button>
-          </div>
-
-          <div className="flex items-center gap-2">
-            {dischargeSyncStatus === "syncing" && (
-              <span className="text-[10px] text-purple-700 bg-purple-50 dark:bg-purple-950/40 border border-purple-200/50 px-2.5 py-1 rounded-full font-mono font-bold animate-pulse flex items-center gap-1">
-                <RefreshCw className="w-3 h-3 animate-spin text-purple-600" />
-                ErMate: Updating Discharge Summary...
-              </span>
-            )}
-            {dischargeSyncStatus === "synced" && currentCase.dischargeInfo?.aiDrafted && (
-              <span className="text-[10px] text-emerald-700 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200/50 px-2.5 py-1 rounded-full font-mono font-bold flex items-center gap-1">
-                <CheckCircle className="w-3 h-3 text-emerald-500" />
-                Discharge Summary Auto-Updated ⚡
-              </span>
-            )}
-            {dischargeSyncStatus === "error" && (
-              <span className="text-[10px] text-rose-700 bg-rose-50 dark:bg-rose-950/40 border border-rose-200/50 px-2.5 py-1 rounded-full font-mono font-bold flex items-center gap-1">
-                <AlertTriangle className="w-3 h-3 text-rose-500" />
-                Discharge Summary Sync Failed
-              </span>
-            )}
-          </div>
-
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={handleMarkAsNormal}
-              className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-lg transition-all dark:bg-slate-800 dark:text-slate-200 flex items-center gap-1.5 cursor-pointer"
-              title="Pre-fill normal findings across primary survey, secondary survey, and psychological assessment"
-            >
-              <CheckCircle className="w-3.5 h-3.5 text-slate-500" />
-              Mark entire case sheet normal
-            </button>
-            <button
-              onClick={() => onNavigateToDischarge(currentCase.id)}
-              className="px-4 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 text-xs font-extrabold rounded-lg transition-all dark:bg-emerald-950/20 dark:text-emerald-300"
-            >
-              Discharge Flow
-            </button>
-            <button
-              onClick={handleSave}
-              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-lg shadow-sm transition-all flex items-center gap-1.5"
-            >
-              <Save className="w-3.5 h-3.5" />
-              Commit to Backend
-            </button>
           </div>
         </div>
 
-        {/* Save Confirmed Banner */}
+        {/* Save Confirmed Banner  */}
         {saveBanner?.show && (
           <div className="bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900 text-emerald-700 dark:text-emerald-300 p-4 rounded-xl flex items-center justify-between no-print">
             <div className="flex items-center gap-2 text-sm font-semibold">
@@ -2569,7 +2811,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
           </div>
         )}
 
-        {/* Normal Findings Applied Banner */}
+        {/* Normal Findings Applied Banner  */}
         {normalMarkedBanner && (
           <div className="bg-sky-50 dark:bg-sky-950/30 border border-sky-200 dark:border-sky-900 text-sky-700 dark:text-sky-300 p-4 rounded-xl flex items-center justify-between animate-fade-in no-print">
             <div className="flex items-center gap-2 text-xs font-semibold">
@@ -2584,7 +2826,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
           </div>
         )}
 
-        {/* Success Banner after Voice dictation parses */}
+        {/* Success Banner after Voice dictation parses  */}
         {dictationSuccess && (
           <div className="bg-purple-50 dark:bg-purple-950/30 border border-purple-200 dark:border-purple-900 text-purple-700 dark:text-purple-300 p-4 rounded-xl flex items-center justify-between animate-fade-in no-print">
             <div className="flex items-center gap-2.5 text-xs font-semibold">
@@ -2599,7 +2841,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
           </div>
         )}
 
-        {/* Quick Direct Voice Scribe Desk */}
+        {/* Quick Direct Voice Scribe Desk  */}
         <div 
           id="quick-voice-scribe-section" 
           className="bg-gradient-to-r from-purple-50/60 to-indigo-50/60 dark:from-purple-950/10 dark:to-indigo-950/10 border border-purple-200 dark:border-purple-900/40 rounded-xl p-5 shadow-xs space-y-4 no-print"
@@ -2622,7 +2864,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
               </div>
             </div>
 
-            {/* Language Selector */}
+            {/* Language Selector  */}
             <div className="flex items-center gap-2 self-start sm:self-auto bg-white dark:bg-slate-900 border border-purple-200 dark:border-purple-900 px-2.5 py-1 rounded-lg">
               <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider font-mono">Input:</span>
               <select
@@ -2647,7 +2889,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
           </div>
 
           <div className="space-y-3">
-            {/* Dictation Box */}
+            {/* Dictation Box  */}
             <div className="relative">
               <textarea
                 id="scribe-textarea"
@@ -2658,48 +2900,24 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                 className="w-full pr-14 pl-4 py-3 bg-white dark:bg-slate-900 border border-purple-100 dark:border-purple-900/60 rounded-xl text-xs font-mono placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-purple-500 text-slate-800 dark:text-slate-100 shadow-inner"
               />
               
-              {/* Voice toggle button inside the dictation box */}
-              <button
-                type="button"
-                onClick={toggleRecording}
-                className={`absolute right-3.5 bottom-3.5 p-2.5 rounded-full shadow-md transition-all cursor-pointer ${
-                  isListening 
-                    ? "bg-rose-500 text-white animate-pulse scale-105" 
-                    : "bg-purple-600 hover:bg-purple-700 text-white hover:scale-105"
-                }`}
-                title={isListening ? "Stop Recording" : "Start Live Mic Dictation"}
-              >
-                <Mic className="w-4 h-4" />
-              </button>
+              {/* Standardized ErMate Voice Recorder inside the dictation box  */}
+              <div className="absolute right-3.5 bottom-3.5">
+                <VoiceRecorder
+                  languageCode={dictationLang}
+                  renderMode="compact-button"
+                  onTranscript={(text) => {
+                    setSmartDictationText(prev => prev ? (prev.trim() + " " + text.trim()) : text.trim());
+                  }}
+                />
+              </div>
             </div>
 
-            {/* Bottom action row with Listening status & buttons */}
+            {/* Bottom action row  */}
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-1">
               <div className="flex-1">
-                {isListening ? (
-                  <div className="flex items-center gap-2 px-1 text-rose-500 dark:text-rose-400 animate-pulse text-[11px] font-bold">
-                    <span className="flex h-2 w-2 relative">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
-                      <span className="relative inline-flex rounded-full h-2 w-2 bg-rose-500"></span>
-                    </span>
-                    <span>
-                      Listening live in {
-                        dictationLang === "hi-IN" ? "Hindi" : 
-                        dictationLang === "ta-IN" ? "Tamil" : 
-                        dictationLang === "te-IN" ? "Telugu" : 
-                        dictationLang === "kn-IN" ? "Kannada" :
-                        dictationLang === "ml-IN" ? "Malayalam" : "English"
-                      }... Speak clearly. Click mic to finish.
-                    </span>
-                    <span className="bg-rose-100 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 px-2 py-0.5 rounded-full text-[10px] font-black font-mono ml-1.5">
-                      {formatRecordingTime(recordingSeconds)}
-                    </span>
-                  </div>
-                ) : (
-                  <span className="text-[10px] text-slate-400 font-medium">
-                    ⚡ Use multilingual voice dictation to auto-fill the whole case sheet instantly.
-                  </span>
-                )}
+                <span className="text-[10px] text-slate-400 font-medium">
+                  ⚡ Use multilingual voice dictation to auto-fill the whole case sheet instantly via ErMate Saaras v3.
+                </span>
               </div>
 
               <div className="flex gap-2 shrink-0">
@@ -2739,52 +2957,57 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
           </div>
         </div>
 
-        {/* Tab Selection */}
-        <div className="border-b border-slate-200 dark:border-slate-800 flex overflow-x-auto scrollbar-thin gap-1 no-print">
-          {[
-            { id: "complaints", label: "Chief Complaints", icon: ClipboardCheck },
-            { id: "primary-survey", label: "Primary Survey", icon: Activity },
-            { id: "history", label: "History (SAMPLE)", icon: Clock },
-            { id: "secondary-survey", label: "Secondary Survey", icon: Eye },
-            { id: "investigations", label: "Investigations", icon: FileCheck },
-            { id: "treatment", label: "Treatment", icon: Heart },
-            { id: "notes", label: "Notes", icon: FileText },
-            { id: "disposition", label: "Disposition", icon: LogOut },
-            ...(currentCase.isPediatric ? [{ id: "pediatrics-sheet", label: "Pediatrics Sheet", icon: FileText }] : []),
-            { id: "trends", label: "Vitals Trends", icon: TrendingUp },
-            { id: "rounds", label: "🎓 Rounds & Debrief", icon: Sparkles },
-          ].map((tab) => {
-            const Icon = tab.icon;
-            return (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id as any)}
-                className={`text-xs px-5 py-3 font-bold transition-all border-b-2 shrink-0 flex items-center gap-1.5 ${
-                  activeTab === tab.id
-                    ? "border-blue-600 text-blue-600 dark:text-blue-400 font-extrabold"
-                    : "border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300"
-                }`}
-              >
-                <Icon className="w-4 h-4" />
-                {tab.label}
-              </button>
-            );
-          })}
+        {/* Fixed Bottom Clinical Section Navigation Bar (Prominent & Responsive)  */}
+        <div className="fixed bottom-0 left-0 right-0 z-50 bg-white/98 dark:bg-slate-950/98 backdrop-blur-md border-t-2 border-slate-300 dark:border-slate-800 shadow-[0_-8px_30px_rgba(0,0,0,0.15)] px-2 py-2.5 sm:px-4 sm:py-3.5 no-print">
+          <div className="max-w-7xl mx-auto w-full flex items-center gap-2 sm:gap-2.5 overflow-x-auto scrollbar-thin scrollbar-thumb-slate-300 dark:scrollbar-thumb-slate-700 py-1 px-1">
+            {[
+              { id: "complaints", label: "Chief Complaints", icon: ClipboardCheck },
+              { id: "primary-survey", label: "Primary Survey", icon: Activity },
+              { id: "history", label: "History (SAMPLE)", icon: Clock },
+              { id: "secondary-survey", label: "Secondary Survey", icon: Eye },
+              { id: "investigations", label: "Investigations", icon: FileCheck },
+              { id: "treatment", label: "Treatment", icon: Heart },
+              { id: "notes", label: "Notes", icon: FileText },
+              { id: "disposition", label: "Disposition", icon: LogOut },
+              { id: "trends", label: "Vitals Trends", icon: TrendingUp },
+              { id: "rounds", label: "Rounds & Debrief", icon: BookOpen },
+            ].map((tab) => {
+              const Icon = tab.icon;
+              const isActive = activeTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setActiveTab(tab.id as any)}
+                  className={`text-xs sm:text-sm font-extrabold px-4 py-2.5 sm:px-5 sm:py-3 rounded-xl transition-all shrink-0 flex items-center gap-2 whitespace-nowrap cursor-pointer touch-manipulation min-h-[42px] sm:min-h-[46px] ${
+                    isActive
+                      ? "bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-700 text-white shadow-md ring-2 ring-blue-400/50 scale-[1.02]"
+                      : "bg-slate-100 dark:bg-slate-900 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-800 border border-slate-200/80 dark:border-slate-800"
+                  }`}
+                >
+                  <Icon className={`w-4 h-4 sm:w-4.5 sm:h-4.5 shrink-0 ${isActive ? "text-white" : "text-blue-600 dark:text-blue-400"}`} />
+                  <span className="tracking-tight">{tab.label}</span>
+                </button>
+              );
+            })}
+          </div>
         </div>
 
-        {/* Tab content area */}
+        {/* Tab content area  */}
         <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl p-5 md:p-6 shadow-sm min-h-[350px]">
           
-          {/* Chief Complaints & Editable Demographics */}
+          {/* Chief Complaints & Editable Demographics  */}
           {activeTab === "complaints" && (
             <div className="space-y-6 animate-fade-in">
-              <div className="border-b pb-2.5 flex items-center justify-between">
+              <div className="flex justify-end mb-2"><SaveSectionButton onSave={handleSave} /></div>
+<div className="border-b pb-2.5 flex items-center justify-between">
                 <div>
                   <h3 className="text-sm font-bold text-slate-800 dark:text-white uppercase tracking-wide">
                     Chief Complaints & Patient Demographics
                   </h3>
                   <p className="text-[10px] text-slate-400">Review and edit primary patient demographics and presenting complaints.</p>
                 </div>
+                <SaveSectionButton onSave={handleSave} />
               </div>
 
               <div className="bg-slate-50 dark:bg-slate-900/50 p-5 border border-slate-200 dark:border-slate-850 rounded-xl space-y-4">
@@ -2811,7 +3034,10 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                         value={currentCase.patient.age || ""}
                         onChange={(e) => {
                           const val = e.target.value ? parseInt(e.target.value) : 0;
-                          setCurrentCase(prev => ({ ...prev, patient: { ...prev.patient, age: val } }));
+                          const newIsPeds = recomputeIsPediatric(val);
+                          setCurrentCase(prev => {
+                            return { ...prev, patient: { ...prev.patient, age: val }, isPediatric: newIsPeds };
+                          });
                         }}
                         className="w-full px-3 py-2 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-xs font-semibold focus:ring-1 focus:ring-blue-500 text-slate-850 dark:text-white"
                         placeholder="e.g. 45"
@@ -2895,6 +3121,36 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                   </div>
                 </div>
 
+                <div className="pt-2 pb-2">
+                  <MlcCaseToggle
+                    state={{
+                      isMlc: currentCase.patient.isMlc || false,
+                      natureOfIncident: currentCase.patient.mlcDetails?.natureOfIncident || "",
+                      dateTimeOfIncident: currentCase.patient.mlcDetails?.dateTimeOfIncident || "",
+                      placeOfIncident: currentCase.patient.mlcDetails?.placeOfIncident || "",
+                      identificationMark: currentCase.patient.mlcDetails?.identificationMark || "",
+                      informantBroughtBy: currentCase.patient.mlcDetails?.informantBroughtBy || "",
+                    }}
+                    onChange={(s) => {
+                      setCurrentCase(prev => ({
+                        ...prev,
+                        patient: {
+                          ...prev.patient,
+                          isMlc: s.isMlc,
+                          mlcDetails: {
+                            ...(prev.patient.mlcDetails || {} as any),
+                            natureOfIncident: s.natureOfIncident,
+                            dateTimeOfIncident: s.dateTimeOfIncident,
+                            placeOfIncident: s.placeOfIncident,
+                            identificationMark: s.identificationMark,
+                            informantBroughtBy: s.informantBroughtBy,
+                          }
+                        }
+                      }));
+                    }}
+                  />
+                </div>
+
                 <div className="pt-2">
                   <div className="flex items-center justify-between mb-1">
                     <label className="block text-[11px] text-slate-500 font-semibold">Presenting Chief Complaint</label>
@@ -2912,7 +3168,8 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                       className="w-full pl-3 pr-10 py-2 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-xs font-semibold focus:ring-1 focus:ring-blue-500 text-slate-800 dark:text-white leading-relaxed"
                     />
                     <div className="absolute right-2 bottom-3">
-                      <SpeechMicButton
+                      <VoiceRecorder
+                        renderMode="compact-button"
                         onTranscript={(text) => {
                           setCurrentCase(prev => ({
                             ...prev,
@@ -2930,990 +3187,38 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
             </div>
           )}
           
-          {/* Pediatrics Case Sheet Tab (Medicine & Trauma Format) */}
-          {activeTab === "pediatrics-sheet" && (
-            <div className="space-y-6">
-              <div className="border-b pb-3 flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <h3 className="text-sm font-bold text-sky-800 dark:text-sky-300 flex items-center gap-1.5 uppercase tracking-wide">
-                    <FileText className="w-4 h-4 text-sky-500" />
-                    Pediatric Case Sheet Record (Medicine and Trauma)
-                  </h3>
-                  <p className="text-[10px] text-slate-400 font-mono mt-0.5">JCI / NABH Clinical Guideline Compliant Pediatric ED Record</p>
-                </div>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      // Pre-fill normal findings specifically for Pediatrics
-                      const params = getPalsNormalParameters(currentCase.patient.age);
-                      setPediatricWeight(params.weight);
-                      setCurrentCase(prev => ({
-                        ...prev,
-                        vitals: {
-                          ...prev.vitals,
-                          bp: params.bp,
-                          hr: params.hr,
-                          spo2: "99",
-                          rr: params.rr,
-                          temp: "98.1",
-                          gcs: "15",
-                          grbs: "95",
-                          avpu: "Alert"
-                        },
-                        pediatricDetails: {
-                          ...(prev.pediatricDetails || {}),
-                          address: "Chunangamvely, Aluva, Ernakulam, Kerala - 683 112",
-                          dateTimeOfIncident: "N/A",
-                          placeOfIncident: "N/A",
-                          natureOfIncident: "N/A",
-                          mechanismOfInjury: "N/A",
-                          broughtBy: "Parents",
-                          informant: "Mother",
-                          identificationMark: "Black mole over face/neck",
-                          presentingComplaints: prev.patient.presentingComplaint,
-                          patAppearanceTone: "Moves spontaneously, resists examination, sits or stands active",
-                          patAppearanceInteractivity: "Appears alert and engaged with clinician, interacts well with people",
-                          patAppearanceConsolability: "Comfortable, playful with parents, stops crying with holding",
-                          patAppearanceLookGaze: "Makes eye contact with physician, tracks visually, normal behavior",
-                          patAppearanceSpeechCry: "Uses age appropriate speech and vocalizations, vigorous cry",
-                          airwayCry: "Good",
-                          airwayStatus: "Patent",
-                          airwayIntervention: "None. Airway self-maintained.",
-                          breathingRr: params.rr,
-                          breathingSpo2: "99",
-                          breathingWob: "Normal work of breathing, no retractions, grunting, or nasal flaring",
-                          breathingAbnormalPositioning: "NO",
-                          breathingAirEntry: "Normal",
-                          breathingSubcutaneousEmphysema: "NO",
-                          breathingIntervention: "None. Breathing on room air.",
-                          circulationCrt: "Normal",
-                          circulationHr: params.hr,
-                          circulationBp: params.bp,
-                          circulationSkinColorTemp: "Pink, warm to touch, capillary refill < 2s",
-                          circulationDistendedNeckVeins: "NO",
-                          circulationIntervention: "None.",
-                          disabilityAvpuGcs: "Alert, GCS 15 (E4V5M6)",
-                          disabilityPupils: "Pupils 2mm equal, round, and reactive to light (PEARLA)",
-                          disabilityAbnormalResponses: "None. Normal age-appropriate responses.",
-                          disabilityGrbs: "95 mg/dL",
-                          exposureTemp: "98.1 F",
-                          exposureTraumaLogroll: "Completed under cervical spine precautions. No midline spinal tenderness.",
-                          exposureSignsOfTrauma: "No visible rashes, petechiae, ecchymosis, bruises, or burns.",
-                          exposureEvidenceInfectionBleeding: "None.",
-                          exposureLongBoneDeformities: "NO",
-                          exposureExtremitiesCheck: "No deformities, swelling, or localized bone tenderness. Warm extremities.",
-                          exposureImmobilizeInjuredLimbs: "NO",
-                          adjuvantEfastHeart: "No pericardial effusion detected.",
-                          adjuvantEfastAbdomen: "No free fluid detected (Negative FAST).",
-                          adjuvantEfastLungs: "Bilateral lung sliding present. No pneumothorax / effusion.",
-                          adjuvantEfastPelvis: "Pelvis stable, no pain on lateral compression.",
-                          historySignsSymptoms: "Stable. Denial of active vomiting, loose stools, or persistent coughing.",
-                          historyAllergies: "No Known Drug Allergies (NKDA)",
-                          historyMedications: "None.",
-                          historyPastMedical: "Full term normal vaginal delivery. Normal developmental milestones. Up-to-date with immunization.",
-                          historyLastMeal: "Light oral fluids and soft snack 2 hours ago. Tolerating feeding well.",
-                          historyEvents: "",
-                          examHeent: "Normocephalic, pupils equal and reactive, throat clear, neck supple.",
-                          examRespiratory: "Symmetrical chest expansion, vesicular breath sounds, lungs clear, no wheezing.",
-                          examCardiovascular: "S1 S2 heard clearly, regular rhythm, no murmurs. Warm peripheries.",
-                          examAbdomen: "Soft, non-distended, non-tender, active bowel sounds, no hepatosplenomegaly.",
-                          examBack: "Normal vertebral alignment, no swelling, bruising, or tenderness.",
-                          examExtremities: "Full range of motion, no swelling, deformities, or splinting required.",
-                          courseInHospital: "Patient evaluated in the ER. Monitored for stable vitals. Active and drinking oral fluids.",
-                          treatmentGiven: "Observation only. Standard reassurance provided.",
-                          provisionalDiagnosisDischarge: "Clinically stable child. No acute medical/trauma intervention required.",
-                          conditionAtShift: "Stable",
-                          disposition: "Ward",
-                          differentialDiagnosis: "Unremarkable. Baseline clinical clearance.",
-                          emResident: "Dr. Thomas",
-                          emConsultant: "Duty Consultant"
-                        }
-                      }));
-                    }}
-                    className="px-2.5 py-1 text-[10px] font-bold bg-sky-100 hover:bg-sky-200 text-sky-700 dark:bg-sky-950 dark:text-sky-300 rounded border border-sky-200 transition-all cursor-pointer"
-                  >
-                    ⚡ Fill Normal PALS Findings
-                  </button>
-                </div>
-              </div>
-
-              {/* 1. DEMOGRAPHIC AND REGISTRATION DETAILS */}
-              <div className="bg-slate-50/50 dark:bg-slate-900/20 border border-slate-100 dark:border-slate-850 p-4 rounded-xl space-y-4">
-                <h4 className="text-xs font-extrabold text-slate-700 dark:text-slate-200 uppercase tracking-wider flex items-center gap-1.5 border-b border-slate-200 dark:border-slate-800 pb-1.5">
-                  <User className="w-3.5 h-3.5 text-blue-500" />
-                  1. Demographic & Registration Details (WMO Format)
-                </h4>
-                
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
-                  <div className="space-y-1">
-                    <label className="font-semibold text-slate-400">Patient Name:</label>
-                    <input
-                      type="text"
-                      value={currentCase.patient.name}
-                      readOnly
-                      className="w-full px-2.5 py-1.5 bg-slate-100 dark:bg-slate-850 border border-slate-200 dark:border-slate-800 rounded text-slate-500 font-bold"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="font-semibold text-slate-400">Age / Gender:</label>
-                    <input
-                      type="text"
-                      value={`${currentCase.patient.age || "N/A"} years / ${currentCase.patient.gender}`}
-                      readOnly
-                      className="w-full px-2.5 py-1.5 bg-slate-100 dark:bg-slate-850 border border-slate-200 dark:border-slate-800 rounded text-slate-500 font-semibold"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="font-semibold text-slate-400">Date & Time of Arrival:</label>
-                    <input
-                      type="text"
-                      value={currentCase.patient.dateOpened}
-                      readOnly
-                      className="w-full px-2.5 py-1.5 bg-slate-100 dark:bg-slate-850 border border-slate-200 dark:border-slate-800 rounded text-slate-500 font-mono"
-                    />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
-                  <div className="space-y-1">
-                    <label className="font-semibold text-slate-500">Address:</label>
-                    <textarea
-                      rows={2}
-                      value={(currentCase.pediatricDetails || {}).address || ""}
-                      onChange={(e) => updatePediatricDetails("address", e.target.value)}
-                      placeholder="Chunangamvely, Aluva, Ernakulam, Kerala - 683 112"
-                      className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="font-semibold text-slate-500">Identification Mark:</label>
-                    <textarea
-                      rows={2}
-                      value={(currentCase.pediatricDetails || {}).identificationMark || ""}
-                      onChange={(e) => updatePediatricDetails("identificationMark", e.target.value)}
-                      placeholder="Black mole over face/neck or visible scars"
-                      className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded"
-                    />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
-                  <div className="space-y-1">
-                    <label className="font-semibold text-slate-505">Date & Time of Incident:</label>
-                    <input
-                      type="text"
-                      value={(currentCase.pediatricDetails || {}).dateTimeOfIncident || ""}
-                      onChange={(e) => updatePediatricDetails("dateTimeOfIncident", e.target.value)}
-                      placeholder="e.g. 15/07/2026 10:30 AM"
-                      className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="font-semibold text-slate-500">Place of Incident:</label>
-                    <input
-                      type="text"
-                      value={(currentCase.pediatricDetails || {}).placeOfIncident || ""}
-                      onChange={(e) => updatePediatricDetails("placeOfIncident", e.target.value)}
-                      placeholder="e.g. Home, School, Road side"
-                      className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="font-semibold text-slate-500">Nature / Type of Incident:</label>
-                    <input
-                      type="text"
-                      value={(currentCase.pediatricDetails || {}).natureOfIncident || ""}
-                      onChange={(e) => updatePediatricDetails("natureOfIncident", e.target.value)}
-                      placeholder="e.g. Fall, Burn, Trauma, Poisoning"
-                      className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded"
-                    />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
-                  <div className="space-y-1">
-                    <label className="font-semibold text-slate-500">Mechanism of Injury:</label>
-                    <input
-                      type="text"
-                      value={(currentCase.pediatricDetails || {}).mechanismOfInjury || ""}
-                      onChange={(e) => updatePediatricDetails("mechanismOfInjury", e.target.value)}
-                      placeholder="e.g. Fall from bed standing height"
-                      className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="font-semibold text-slate-500">Brought By:</label>
-                    <input
-                      type="text"
-                      value={(currentCase.pediatricDetails || {}).broughtBy || ""}
-                      onChange={(e) => updatePediatricDetails("broughtBy", e.target.value)}
-                      placeholder="e.g. Parents, Relative, Ambulance crew"
-                      className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="font-semibold text-slate-500">Informant:</label>
-                    <input
-                      type="text"
-                      value={(currentCase.pediatricDetails || {}).informant || ""}
-                      onChange={(e) => updatePediatricDetails("informant", e.target.value)}
-                      placeholder="e.g. Mother, Father, Self"
-                      className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded"
-                    />
-                  </div>
-                </div>
-
-                <div className="space-y-1 text-xs">
-                  <label className="font-semibold text-slate-500 block">Presenting Complaints:</label>
-                  <textarea
-                    rows={2}
-                    value={(currentCase.pediatricDetails || {}).presentingComplaints || ""}
-                    onChange={(e) => updatePediatricDetails("presentingComplaints", e.target.value)}
-                    placeholder="Describe main presenting symptoms (cough, fever, vomiting, crying status)"
-                    className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded"
-                  />
-                </div>
-              </div>
-
-              {/* 2. PRIMARY ASSESSMENT (PAT - PEDIATRIC ASSESSMENT TRIANGLE) */}
-              <div className="border border-sky-200 dark:border-sky-900 rounded-xl p-4 bg-sky-50/10 space-y-4">
-                <h4 className="text-xs font-extrabold text-sky-800 dark:text-sky-300 uppercase tracking-wider flex items-center gap-1.5 border-b border-sky-200 dark:border-sky-900/30 pb-1.5">
-                  <Activity className="w-3.5 h-3.5 text-sky-500" />
-                  2. Primary Assessment & Pediatric Assessment Triangle (PAT)
-                </h4>
-
-                {/* PAT: TICLS APPEARANCE */}
-                <div className="space-y-3 bg-white dark:bg-slate-950 p-4 rounded-xl border border-sky-100/60 shadow-xs">
-                  <h5 className="text-[11px] font-extrabold text-sky-700 dark:text-sky-400 uppercase tracking-wide">
-                    Appearance (TICLS Parameters)
-                  </h5>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {[
-                      {
-                        field: "patAppearanceTone",
-                        label: "Tone (Muscle tone & spontaneous movement)",
-                        placeholder: "e.g. moves spontaneously, resists examination, sits or stands active",
-                        pills: ["Moves spontaneously", "Resists examination", "Limp / Hypotensive", "Hypotonic / Flaccid"]
-                      },
-                      {
-                        field: "patAppearanceInteractivity",
-                        label: "Interactivity (Alertness & engagement with environment)",
-                        placeholder: "e.g. Appears alert or engaged with clinician, interacts well with people",
-                        pills: ["Alert & engaged", "Interacts well with people", "Reaches for objects", "Lethargic / Sleepy"]
-                      },
-                      {
-                        field: "patAppearanceConsolability",
-                        label: "Consolability (Comfort by caregiver)",
-                        placeholder: "e.g. stops crying with holding or comforting by caregiver",
-                        pills: ["Stops crying with holding", "Easily comforted", "Inconsolable crying", "Lethargic, not crying"]
-                      },
-                      {
-                        field: "patAppearanceLookGaze",
-                        label: "Look or Gaze (Eye contact & visual tracking)",
-                        placeholder: "e.g. makes eye contact with physician, tracks visually",
-                        pills: ["Makes eye contact", "Tracks visually", "Staring blankly", "Glassy-eyed gaze"]
-                      },
-                      {
-                        field: "patAppearanceSpeechCry",
-                        label: "Speech / Cry",
-                        placeholder: "e.g. Uses age appropriate speech, vigorous cry",
-                        pills: ["Age appropriate speech", "Vigorous loud cry", "Weak cry / Whimper", "No cry / Silent"]
-                      }
-                    ].map((item) => (
-                      <div key={item.field} className="space-y-1 text-xs">
-                        <label className="font-semibold text-slate-500 dark:text-slate-400">{item.label}</label>
-                        <div className="flex gap-2">
-                          <textarea
-                            rows={2}
-                            value={(currentCase.pediatricDetails || {})[item.field as keyof PediatricDetails] || ""}
-                            onChange={(e) => updatePediatricDetails(item.field as any, e.target.value)}
-                            placeholder={item.placeholder}
-                            className="flex-1 px-2.5 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded text-xs"
-                          />
-                          <SpeechMicButton onTranscript={(txt) => updatePediatricDetails(item.field as any, ((currentCase.pediatricDetails || {})[item.field as keyof PediatricDetails] || "") + " " + txt)} />
-                        </div>
-                        <div className="flex flex-wrap gap-1 mt-1">
-                          {item.pills.map(p => (
-                            <button
-                              key={p}
-                              type="button"
-                              onClick={() => updatePediatricDetails(item.field as any, p)}
-                              className="text-[9px] bg-sky-50 hover:bg-sky-100 dark:bg-sky-950/20 dark:hover:bg-sky-950/50 text-sky-700 dark:text-sky-300 px-1.5 py-0.5 rounded font-mono font-medium border border-sky-100"
-                            >
-                              + {p}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* AIRWAY SECTION */}
-                <div className="space-y-3 bg-white dark:bg-slate-950 p-4 rounded-xl border border-sky-100/60 shadow-xs text-xs">
-                  <h5 className="text-[11px] font-extrabold text-sky-700 dark:text-sky-400 uppercase tracking-wide border-b pb-1">
-                    Airway
-                  </h5>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                    <div className="space-y-1">
-                      <label className="font-semibold text-slate-500">Cry Sound Quality:</label>
-                      <select
-                        value={(currentCase.pediatricDetails || {}).airwayCry || ""}
-                        onChange={(e) => updatePediatricDetails("airwayCry", e.target.value as any)}
-                        className="w-full px-2 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded focus:outline-none"
-                      >
-                        <option value="">-- Select --</option>
-                        <option value="Good">Good / Strong</option>
-                        <option value="Weak">Weak / Whimpering</option>
-                        <option value="No Cry">No Cry / Silent</option>
-                      </select>
-                    </div>
-                    <div className="space-y-1">
-                      <label className="font-semibold text-slate-500">Airway Patency Status:</label>
-                      <select
-                        value={(currentCase.pediatricDetails || {}).airwayStatus || ""}
-                        onChange={(e) => updatePediatricDetails("airwayStatus", e.target.value as any)}
-                        className="w-full px-2 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded focus:outline-none"
-                      >
-                        <option value="">-- Select --</option>
-                        <option value="Patent">Patent</option>
-                        <option value="Threatened">Threatened</option>
-                        <option value="Compromised">Compromised</option>
-                      </select>
-                    </div>
-                    <div className="space-y-1 md:col-span-1">
-                      <label className="font-semibold text-slate-500">Airway Intervention:</label>
-                      <input
-                        type="text"
-                        value={(currentCase.pediatricDetails || {}).airwayIntervention || ""}
-                        onChange={(e) => updatePediatricDetails("airwayIntervention", e.target.value)}
-                        placeholder="e.g. None, chin lift, suctioning, tube"
-                        className="w-full px-2.5 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded text-xs"
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                {/* BREATHING SECTION */}
-                <div className="space-y-3 bg-white dark:bg-slate-950 p-4 rounded-xl border border-sky-100/60 shadow-xs text-xs">
-                  <h5 className="text-[11px] font-extrabold text-sky-700 dark:text-sky-400 uppercase tracking-wide border-b pb-1">
-                    Breathing
-                  </h5>
-                  <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-                    <div className="space-y-1">
-                      <label className="font-semibold text-slate-500">Respiratory Rate (RR):</label>
-                      <input
-                        type="text"
-                        value={currentCase.vitals.rr}
-                        onChange={(e) => updateVitals("rr", e.target.value)}
-                        placeholder="e.g. 24"
-                        className="w-full px-2.5 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded font-mono"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="font-semibold text-slate-500">SPO2 (%):</label>
-                      <input
-                        type="text"
-                        value={currentCase.vitals.spo2}
-                        onChange={(e) => updateVitals("spo2", e.target.value)}
-                        placeholder="e.g. 98"
-                        className="w-full px-2.5 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded font-mono"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="font-semibold text-slate-500">Abnormal Positioning:</label>
-                      <select
-                        value={(currentCase.pediatricDetails || {}).breathingAbnormalPositioning || ""}
-                        onChange={(e) => updatePediatricDetails("breathingAbnormalPositioning", e.target.value as any)}
-                        className="w-full px-2 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded focus:outline-none"
-                      >
-                        <option value="">-- Select --</option>
-                        <option value="YES">YES (Tripod, sniffing)</option>
-                        <option value="NO">NO (Preferred flat/reclining)</option>
-                      </select>
-                    </div>
-                    <div className="space-y-1">
-                      <label className="font-semibold text-slate-500">Air Entry & Chest Expansion:</label>
-                      <select
-                        value={(currentCase.pediatricDetails || {}).breathingAirEntry || ""}
-                        onChange={(e) => updatePediatricDetails("breathingAirEntry", e.target.value as any)}
-                        className="w-full px-2 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded focus:outline-none"
-                      >
-                        <option value="">-- Select --</option>
-                        <option value="Normal">Normal Symmetrical</option>
-                        <option value="Abnormal">Abnormal / Unequal</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                    <div className="space-y-1">
-                      <label className="font-semibold text-slate-500">Subcutaneous Emphysema:</label>
-                      <select
-                        value={(currentCase.pediatricDetails || {}).breathingSubcutaneousEmphysema || ""}
-                        onChange={(e) => updatePediatricDetails("breathingSubcutaneousEmphysema", e.target.value as any)}
-                        className="w-full px-2 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded focus:outline-none"
-                      >
-                        <option value="">-- Select --</option>
-                        <option value="YES">YES present</option>
-                        <option value="NO">NO absent</option>
-                      </select>
-                    </div>
-                    <div className="space-y-1 md:col-span-2">
-                      <label className="font-semibold text-slate-500">Work of Breathing (WOB) details:</label>
-                      <div className="flex gap-2">
-                        <input
-                          type="text"
-                          value={(currentCase.pediatricDetails || {}).breathingWob || ""}
-                          onChange={(e) => updatePediatricDetails("breathingWob", e.target.value)}
-                          placeholder="nasal flaring, chest/subcostal retractions, grunting, wheezing, stridor, snoring"
-                          className="flex-1 px-2.5 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded text-xs"
-                        />
-                        <SpeechMicButton onTranscript={(txt) => updatePediatricDetails("breathingWob", ((currentCase.pediatricDetails || {}).breathingWob || "") + " " + txt)} />
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="space-y-1">
-                    <label className="font-semibold text-slate-500">Breathing Intervention:</label>
-                    <input
-                      type="text"
-                      value={(currentCase.pediatricDetails || {}).breathingIntervention || ""}
-                      onChange={(e) => updatePediatricDetails("breathingIntervention", e.target.value)}
-                      placeholder="e.g. Oxygen 2L/min nasal cannula, neb, CPAP"
-                      className="w-full px-2.5 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded text-xs"
-                    />
-                  </div>
-                </div>
-
-                {/* CIRCULATION SECTION */}
-                <div className="space-y-3 bg-white dark:bg-slate-950 p-4 rounded-xl border border-sky-100/60 shadow-xs text-xs">
-                  <h5 className="text-[11px] font-extrabold text-sky-700 dark:text-sky-400 uppercase tracking-wide border-b pb-1">
-                    Circulation
-                  </h5>
-                  <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-                    <div className="space-y-1">
-                      <label className="font-semibold text-slate-500">Heart Rate (HR):</label>
-                      <input
-                        type="text"
-                        value={currentCase.vitals.hr}
-                        onChange={(e) => updateVitals("hr", e.target.value)}
-                        placeholder="e.g. 105"
-                        className="w-full px-2.5 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded font-mono"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="font-semibold text-slate-500">Blood Pressure (BP):</label>
-                      <input
-                        type="text"
-                        value={currentCase.vitals.bp}
-                        onChange={(e) => updateVitals("bp", e.target.value)}
-                        placeholder="e.g. 95/60"
-                        className="w-full px-2.5 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded font-mono"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="font-semibold text-slate-500">Capillary Refill Time (CRT):</label>
-                      <select
-                        value={(currentCase.pediatricDetails || {}).circulationCrt || ""}
-                        onChange={(e) => updatePediatricDetails("circulationCrt", e.target.value as any)}
-                        className="w-full px-2 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded focus:outline-none"
-                      >
-                        <option value="">-- Select --</option>
-                        <option value="Normal">Normal (&lt; 2 seconds)</option>
-                        <option value="Delayed">Delayed (&gt; 2 seconds)</option>
-                      </select>
-                    </div>
-                    <div className="space-y-1">
-                      <label className="font-semibold text-slate-500">Distended Neck Veins:</label>
-                      <select
-                        value={(currentCase.pediatricDetails || {}).circulationDistendedNeckVeins || ""}
-                        onChange={(e) => updatePediatricDetails("circulationDistendedNeckVeins", e.target.value as any)}
-                        className="w-full px-2 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded focus:outline-none"
-                      >
-                        <option value="">-- Select --</option>
-                        <option value="YES">YES present</option>
-                        <option value="NO">NO absent</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <div className="space-y-1">
-                      <label className="font-semibold text-slate-500">Skin Colour & Temperature:</label>
-                      <div className="flex gap-2">
-                        <input
-                          type="text"
-                          value={(currentCase.pediatricDetails || {}).circulationSkinColorTemp || ""}
-                          onChange={(e) => updatePediatricDetails("circulationSkinColorTemp", e.target.value)}
-                          placeholder="e.g. Pink, warm / Pale, cool / Cyanosed / Mottled"
-                          className="flex-1 px-2.5 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded text-xs"
-                        />
-                        <div className="flex gap-1">
-                          {["Pink, warm", "Pale, cool", "Cyanosed", "Mottled"].map(s => (
-                            <button
-                              key={s}
-                              type="button"
-                              onClick={() => updatePediatricDetails("circulationSkinColorTemp", s)}
-                              className="text-[9px] bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 border px-1 py-0.5 rounded font-mono text-slate-600 dark:text-slate-300"
-                            >
-                              {s.split(",")[0]}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                    <div className="space-y-1">
-                      <label className="font-semibold text-slate-500">Circulation Intervention:</label>
-                      <input
-                        type="text"
-                        value={(currentCase.pediatricDetails || {}).circulationIntervention || ""}
-                        onChange={(e) => updatePediatricDetails("circulationIntervention", e.target.value)}
-                        placeholder="e.g. IV access, saline bolus, none"
-                        className="w-full px-2.5 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded text-xs"
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                {/* DISABILITY SECTION */}
-                <div className="space-y-3 bg-white dark:bg-slate-950 p-4 rounded-xl border border-sky-100/60 shadow-xs text-xs">
-                  <h5 className="text-[11px] font-extrabold text-sky-700 dark:text-sky-400 uppercase tracking-wide border-b pb-1">
-                    Disability
-                  </h5>
-                  <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-                    <div className="space-y-1">
-                      <label className="font-semibold text-slate-500">AVPU / GCS Status:</label>
-                      <input
-                        type="text"
-                        value={(currentCase.pediatricDetails || {}).disabilityAvpuGcs || ""}
-                        onChange={(e) => updatePediatricDetails("disabilityAvpuGcs", e.target.value)}
-                        placeholder="e.g. Alert / GCS 15"
-                        className="w-full px-2.5 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded text-xs"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="font-semibold text-slate-500">Pupils (Size & Response):</label>
-                      <input
-                        type="text"
-                        value={(currentCase.pediatricDetails || {}).disabilityPupils || ""}
-                        onChange={(e) => updatePediatricDetails("disabilityPupils", e.target.value)}
-                        placeholder="e.g. 2mm equal and reactive PEARLA"
-                        className="w-full px-2.5 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded text-xs"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="font-semibold text-slate-500">Abnormal Responses:</label>
-                      <input
-                        type="text"
-                        value={(currentCase.pediatricDetails || {}).disabilityAbnormalResponses || ""}
-                        onChange={(e) => updatePediatricDetails("disabilityAbnormalResponses", e.target.value)}
-                        placeholder="e.g. Pinpoint, dilated, unequal"
-                        className="w-full px-2.5 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded text-xs"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="font-semibold text-slate-500">Blood Glucose (GRBS):</label>
-                      <input
-                        type="text"
-                        value={currentCase.vitals.grbs}
-                        onChange={(e) => updateVitals("grbs", e.target.value)}
-                        placeholder="e.g. 95 mg/dL"
-                        className="w-full px-2.5 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded font-mono"
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                {/* EXPOSURE SECTION */}
-                <div className="space-y-3 bg-white dark:bg-slate-950 p-4 rounded-xl border border-sky-100/60 shadow-xs text-xs">
-                  <h5 className="text-[11px] font-extrabold text-sky-700 dark:text-sky-400 uppercase tracking-wide border-b pb-1">
-                    Exposure
-                  </h5>
-                  <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-                    <div className="space-y-1">
-                      <label className="font-semibold text-slate-500">Temperature (°F):</label>
-                      <input
-                        type="text"
-                        value={currentCase.vitals.temp}
-                        onChange={(e) => updateVitals("temp", e.target.value)}
-                        placeholder="e.g. 98.6"
-                        className="w-full px-2.5 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded font-mono"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="font-semibold text-slate-500">Long Bone Deformities:</label>
-                      <select
-                        value={(currentCase.pediatricDetails || {}).exposureLongBoneDeformities || ""}
-                        onChange={(e) => updatePediatricDetails("exposureLongBoneDeformities", e.target.value as any)}
-                        className="w-full px-2 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded focus:outline-none"
-                      >
-                        <option value="">-- Select --</option>
-                        <option value="YES">YES present</option>
-                        <option value="NO">NO absent</option>
-                      </select>
-                    </div>
-                    <div className="space-y-1">
-                      <label className="font-semibold text-slate-500">Immobilize Injured Limbs:</label>
-                      <select
-                        value={(currentCase.pediatricDetails || {}).exposureImmobilizeInjuredLimbs || ""}
-                        onChange={(e) => updatePediatricDetails("exposureImmobilizeInjuredLimbs", e.target.value as any)}
-                        className="w-full px-2 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded focus:outline-none"
-                      >
-                        <option value="">-- Select --</option>
-                        <option value="YES">YES</option>
-                        <option value="NO">NO</option>
-                      </select>
-                    </div>
-                    <div className="space-y-1">
-                      <label className="font-semibold text-slate-500">Evidence Infection / Bleed:</label>
-                      <input
-                        type="text"
-                        value={(currentCase.pediatricDetails || {}).exposureEvidenceInfectionBleeding || ""}
-                        onChange={(e) => updatePediatricDetails("exposureEvidenceInfectionBleeding", e.target.value)}
-                        placeholder="e.g. Petechiae or Purpura"
-                        className="w-full px-2.5 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded text-xs"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                    <div className="space-y-1">
-                      <label className="font-semibold text-slate-500">Trauma Survey (Logroll check):</label>
-                      <textarea
-                        rows={2}
-                        value={(currentCase.pediatricDetails || {}).exposureTraumaLogroll || ""}
-                        onChange={(e) => updatePediatricDetails("exposureTraumaLogroll", e.target.value)}
-                        placeholder="Logroll to inspect back and vertebral midline"
-                        className="w-full px-2.5 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded text-xs"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="font-semibold text-slate-500">Signs of Trauma or Illness:</label>
-                      <textarea
-                        rows={2}
-                        value={(currentCase.pediatricDetails || {}).exposureSignsOfTrauma || ""}
-                        onChange={(e) => updatePediatricDetails("exposureSignsOfTrauma", e.target.value)}
-                        placeholder="Rashes, Petechiae, Ecchymosis, Bruises, Burns"
-                        className="w-full px-2.5 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded text-xs"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="font-semibold text-slate-500">Extremities Check details:</label>
-                      <textarea
-                        rows={2}
-                        value={(currentCase.pediatricDetails || {}).exposureExtremitiesCheck || ""}
-                        onChange={(e) => updatePediatricDetails("exposureExtremitiesCheck", e.target.value)}
-                        placeholder="Tenderness, swelling, or bone bruising on arms/legs"
-                        className="w-full px-2.5 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded text-xs"
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                {/* ADJUVANT EFAST SECTION */}
-                <div className="space-y-3 bg-white dark:bg-slate-950 p-4 rounded-xl border border-sky-100/60 shadow-xs text-xs">
-                  <h5 className="text-[11px] font-extrabold text-sky-700 dark:text-sky-400 uppercase tracking-wide border-b pb-1">
-                    Adjuvants (EFAST Screening Ultrasonography)
-                  </h5>
-                  <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-                    <div className="space-y-1">
-                      <label className="font-semibold text-slate-500">Heart (Pericardial effusion):</label>
-                      <input
-                        type="text"
-                        value={(currentCase.pediatricDetails || {}).adjuvantEfastHeart || ""}
-                        onChange={(e) => updatePediatricDetails("adjuvantEfastHeart", e.target.value)}
-                        placeholder="e.g. No pericardial fluid"
-                        className="w-full px-2.5 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded text-xs"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="font-semibold text-slate-500">Abdomen (Free fluid):</label>
-                      <input
-                        type="text"
-                        value={(currentCase.pediatricDetails || {}).adjuvantEfastAbdomen || ""}
-                        onChange={(e) => updatePediatricDetails("adjuvantEfastAbdomen", e.target.value)}
-                        placeholder="e.g. No fluid in Morisons pouch"
-                        className="w-full px-2.5 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded text-xs"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="font-semibold text-slate-500">Lungs (Sliding / Pneumothorax):</label>
-                      <input
-                        type="text"
-                        value={(currentCase.pediatricDetails || {}).adjuvantEfastLungs || ""}
-                        onChange={(e) => updatePediatricDetails("adjuvantEfastLungs", e.target.value)}
-                        placeholder="e.g. Bilateral lung sliding present"
-                        className="w-full px-2.5 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded text-xs"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="font-semibold text-slate-500">Pelvis (Injury/Fracture watch):</label>
-                      <input
-                        type="text"
-                        value={(currentCase.pediatricDetails || {}).adjuvantEfastPelvis || ""}
-                        onChange={(e) => updatePediatricDetails("adjuvantEfastPelvis", e.target.value)}
-                        placeholder="e.g. Stable pelvis"
-                        className="w-full px-2.5 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded text-xs"
-                      />
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* 3. SECONDARY ASSESSMENT (FOCUSED HISTORY & PHYSICAL EXAM) */}
-              <div className="bg-slate-50/50 dark:bg-slate-900/20 border border-slate-100 dark:border-slate-850 p-4 rounded-xl space-y-4">
-                <h4 className="text-xs font-extrabold text-slate-700 dark:text-slate-200 uppercase tracking-wider flex items-center gap-1.5 border-b border-slate-200 dark:border-slate-800 pb-1.5">
-                  <BookOpen className="w-3.5 h-3.5 text-blue-500" />
-                  3. Secondary Assessment (Focused History & Physical Exam)
-                </h4>
-
-                {/* FOCUSED HISTORY */}
-                <div className="space-y-3 bg-white dark:bg-slate-950 p-4 rounded-xl border border-slate-100/60 shadow-xs">
-                  <h5 className="text-[11px] font-extrabold text-slate-600 dark:text-slate-400 uppercase tracking-wide">
-                    Focused Pediatric History
-                  </h5>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {[
-                      {
-                        field: "historySignsSymptoms",
-                        label: "Signs and Symptoms (e.g., cough, breathing difficulty, fever, vomiting, diarrhea)",
-                        pills: ["Cough, tachypnea", "Fever, irritability", "Vomiting, diarrhea", "Decreased oral intake"]
-                      },
-                      {
-                        field: "historyAllergies",
-                        label: "Allergies (Medications, foods, latex, etc.)",
-                        pills: ["NKDA (No Known Allergies)", "Penicillin Allergy", "Egg/Milk Allergy", "Latex Allergy"]
-                      },
-                      {
-                        field: "historyMedications",
-                        label: "Medications (Current outpatient medications, last dose time)",
-                        pills: ["None", "Paracetamol 15mg/kg", "Salbutamol inhaler as needed"]
-                      },
-                      {
-                        field: "historyPastMedical",
-                        label: "Past Medical History (Premature birth, illnesses, asthma, immunizations)",
-                        pills: ["Term delivery, fully immunized", "Premature birth, respiratory watch", "History of asthma"]
-                      },
-                      {
-                        field: "historyLastMeal",
-                        label: "Last Meal (Time and nature of last oral intake)",
-                        pills: ["Light fluids 2 hrs ago", "Breast milk 3 hrs ago", "Solid foods 4 hrs ago"]
-                      },
-                      {
-                        field: "historyEvents",
-                        label: "E - Events / Environment (Preceding Trauma / Precipitants)",
-                        pills: ["Mechanical fall from bed", "Accidental injury", "Smoke / toxic inhalation"]
-                      }
-                    ].map((item) => (
-                      <div key={item.field} className="space-y-1 text-xs">
-                        <label className="font-semibold text-slate-500 dark:text-slate-400">{item.label}</label>
-                        <div className="flex gap-2">
-                          <textarea
-                            rows={2}
-                            value={(currentCase.pediatricDetails || {})[item.field as keyof PediatricDetails] || ""}
-                            onChange={(e) => updatePediatricDetails(item.field as any, e.target.value)}
-                            placeholder="Enter focused history findings..."
-                            className="flex-1 px-2.5 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded text-xs"
-                          />
-                          <SpeechMicButton onTranscript={(txt) => updatePediatricDetails(item.field as any, ((currentCase.pediatricDetails || {})[item.field as keyof PediatricDetails] || "") + " " + txt)} />
-                        </div>
-                        <div className="flex flex-wrap gap-1 mt-1">
-                          {item.pills.map(p => (
-                            <button
-                              key={p}
-                              type="button"
-                              onClick={() => updatePediatricDetails(item.field as any, p)}
-                              className="text-[9px] bg-slate-100 hover:bg-slate-200 dark:bg-slate-850 dark:text-slate-400 px-1.5 py-0.5 rounded font-mono border text-slate-600 dark:text-slate-300"
-                            >
-                              + {p}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* FOCUSED PHYSICAL EXAM */}
-                <div className="space-y-3 bg-white dark:bg-slate-950 p-4 rounded-xl border border-slate-100/60 shadow-xs">
-                  <h5 className="text-[11px] font-extrabold text-slate-600 dark:text-slate-400 uppercase tracking-wide">
-                    Focused Pediatric Physical Examination
-                  </h5>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {[
-                      {
-                        field: "examHeent",
-                        label: "HEENT (Head, eyes, ears, nose, throat, thyroid & lymph nodes)",
-                        pills: ["Normocephalic, throat clear, pupils PEARLA", "Tympanic membranes red, throat congested", "Skull contusion without depression"]
-                      },
-                      {
-                        field: "examRespiratory",
-                        label: "Respiratory System (Chest, breath sounds, nasal block, retractions)",
-                        pills: ["Lungs clear, normal breath sounds bilaterally", "Symmetrical chest rise, no wheezing/crackles", "Bilateral expiratory wheezing"]
-                      },
-                      {
-                        field: "examCardiovascular",
-                        label: "Cardiovascular (Murmurs, heart failure signs, perfusion, cold limbs)",
-                        pills: ["S1 S2 clear, normal rhythm, pulses strong, warm limbs", "Tachycardia, warm extremities, normal perfusion", "Cyanosis, weak pulses, cold limbs"]
-                      },
-                      {
-                        field: "examAbdomen",
-                        label: "Abdomen (Tenderness, distention, injury, hepatomegaly)",
-                        pills: ["Soft, non-distended, non-tender, active bowel sounds", "Mild tenderness without guarding", "Abdomen distended, non-tender"]
-                      },
-                      {
-                        field: "examBack",
-                        label: "Back (Spine or vertebral injury/tenderness)",
-                        pills: ["Normal alignment, no spinal tenderness", "No bruising, vertebral midline clear"]
-                      },
-                      {
-                        field: "examExtremities",
-                        label: "Extremities (Fractures, swelling, bruising, deformities)",
-                        pills: ["Full range of motion, no swelling or bruising", "No fractures, warm peripheries", "Immobilization / splint applied"]
-                      }
-                    ].map((item) => (
-                      <div key={item.field} className="space-y-1 text-xs">
-                        <label className="font-semibold text-slate-500 dark:text-slate-400">{item.label}</label>
-                        <div className="flex gap-2">
-                          <textarea
-                            rows={2}
-                            value={(currentCase.pediatricDetails || {})[item.field as keyof PediatricDetails] || ""}
-                            onChange={(e) => updatePediatricDetails(item.field as any, e.target.value)}
-                            placeholder="Enter physical examination details..."
-                            className="flex-1 px-2.5 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded text-xs"
-                          />
-                          <SpeechMicButton onTranscript={(txt) => updatePediatricDetails(item.field as any, ((currentCase.pediatricDetails || {})[item.field as keyof PediatricDetails] || "") + " " + txt)} />
-                        </div>
-                        <div className="flex flex-wrap gap-1 mt-1">
-                          {item.pills.map(p => (
-                            <button
-                              key={p}
-                              type="button"
-                              onClick={() => updatePediatricDetails(item.field as any, p)}
-                              className="text-[9px] bg-slate-100 hover:bg-slate-200 dark:bg-slate-850 dark:text-slate-400 px-1.5 py-0.5 rounded font-mono border text-slate-600 dark:text-slate-300"
-                            >
-                              + {p}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              {/* 4. COURSE, DIAGNOSIS, AND DISPOSITION */}
-              <div className="bg-slate-50/50 dark:bg-slate-900/20 border border-slate-100 dark:border-slate-850 p-4 rounded-xl space-y-4 text-xs">
-                <h4 className="text-xs font-extrabold text-slate-700 dark:text-slate-200 uppercase tracking-wider flex items-center gap-1.5 border-b border-slate-200 dark:border-slate-800 pb-1.5">
-                  <LogOut className="w-3.5 h-3.5 text-blue-500" />
-                  4. Course in Hospital, Provisional Diagnosis, & Disposition
-                </h4>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="space-y-1">
-                    <label className="font-semibold text-slate-500">Course in the Hospital (Clinical treatment progress):</label>
-                    <textarea
-                      rows={3}
-                      value={(currentCase.pediatricDetails || {}).courseInHospital || ""}
-                      onChange={(e) => updatePediatricDetails("courseInHospital", e.target.value)}
-                      placeholder="e.g. Monitored for 2 hours in ER, oral rehydration completed. Sepsis screen negative."
-                      className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded text-xs"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="font-semibold text-slate-500">Treatment Given in Hospital:</label>
-                    <textarea
-                      rows={3}
-                      value={(currentCase.pediatricDetails || {}).treatmentGiven || ""}
-                      onChange={(e) => updatePediatricDetails("treatmentGiven", e.target.value)}
-                      placeholder="e.g. Nebulization with Salbutamol, IV fluids, Paracetamol syrup"
-                      className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded text-xs"
-                    />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                  <div className="space-y-1">
-                    <label className="font-semibold text-slate-500">Provisional Diagnosis at Discharge/Shift:</label>
-                    <input
-                      type="text"
-                      value={(currentCase.pediatricDetails || {}).provisionalDiagnosisDischarge || ""}
-                      onChange={(e) => updatePediatricDetails("provisionalDiagnosisDischarge", e.target.value)}
-                      placeholder="e.g. Respiratory distress, Dehydration, Seizure"
-                      className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded text-xs font-bold"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="font-semibold text-slate-505">Condition at Time of Shift:</label>
-                    <select
-                      value={(currentCase.pediatricDetails || {}).conditionAtShift || ""}
-                      onChange={(e) => updatePediatricDetails("conditionAtShift", e.target.value as any)}
-                      className="w-full px-2 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded focus:outline-none"
-                    >
-                      <option value="">-- Select --</option>
-                      <option value="Stable">Stable</option>
-                      <option value="Unstable">Unstable</option>
-                    </select>
-                  </div>
-                  <div className="space-y-1">
-                    <label className="font-semibold text-slate-500">Disposition Target:</label>
-                    <select
-                      value={(currentCase.pediatricDetails || {}).disposition || ""}
-                      onChange={(e) => updatePediatricDetails("disposition", e.target.value as any)}
-                      className="w-full px-2 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded focus:outline-none"
-                    >
-                      <option value="">-- Select --</option>
-                      <option value="ICU">ICU</option>
-                      <option value="Room">Room</option>
-                      <option value="Ward">Ward</option>
-                      <option value="Referral">Referral to Higher Center</option>
-                      <option value="DAMA">DAMA (Discharged Against Medical Advice)</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div className="space-y-1">
-                  <label className="font-semibold text-slate-500">Differential Diagnosis list:</label>
-                  <textarea
-                    rows={2}
-                    value={(currentCase.pediatricDetails || {}).differentialDiagnosis || ""}
-                    onChange={(e) => updatePediatricDetails("differentialDiagnosis", e.target.value)}
-                    placeholder="e.g. Simple febrile seizure vs Meningitis vs Electrolyte abnormality"
-                    className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded text-xs"
-                  />
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <div className="space-y-1">
-                    <label className="font-semibold text-slate-500">EM Resident Name:</label>
-                    <input
-                      type="text"
-                      value={(currentCase.pediatricDetails || {}).emResident || ""}
-                      onChange={(e) => updatePediatricDetails("emResident", e.target.value)}
-                      placeholder="e.g. Dr. Thomas"
-                      className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded text-xs"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="font-semibold text-slate-500">EM Consultant Name:</label>
-                    <input
-                      type="text"
-                      value={(currentCase.pediatricDetails || {}).emConsultant || ""}
-                      onChange={(e) => updatePediatricDetails("emConsultant", e.target.value)}
-                      placeholder="e.g. Duty Consultant"
-                      className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded text-xs"
-                    />
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Patient Demographics & Disposition Tab (Accreditation Level) */}
+          {/* Patient Demographics & Disposition Tab (Accreditation Level)  */}
           {activeTab === "disposition" && (
             <div className="space-y-6">
+              <div className="flex justify-end mb-2"><SaveSectionButton onSave={handleSave} /></div>
+
+              {currentCase.isPediatric && (
+                <PediatricDispositionSection
+                  state={{
+                    provisionalDiagnosis: currentCase.pediatricDetails?.dispositionProvisionalDiagnosis || "",
+                    conditionAtShift: currentCase.pediatricDetails?.dispositionConditionAtShift || "",
+                    dispositionType: (currentCase as any).disposition?.dispositionType || "Ward",
+                    differentialDiagnosis: currentCase.differentials ? currentCase.differentials.map((d: any) => d.diagnosis).join(", ") : "",
+                    emResident: currentCase.pediatricDetails?.dispositionEmResident || (currentCase as any).treatingERPhysician || "",
+                    emConsultant: currentCase.pediatricDetails?.dispositionEmConsultant || ""
+                  }}
+                  onChange={s => setCurrentCase(prev => ({
+                    ...prev,
+                    pediatricDetails: {
+                      ...(prev.pediatricDetails || {}),
+                      dispositionProvisionalDiagnosis: s.provisionalDiagnosis,
+                      dispositionConditionAtShift: s.conditionAtShift,
+                      dispositionEmResident: s.emResident,
+                      dispositionEmConsultant: s.emConsultant
+                    },
+                    disposition: {
+                      ...((prev as any).disposition || { recommendedSpecialty: "", estimatedStayHrs: 0, dispositionType: "Ward" }),
+                      dispositionType: s.dispositionType as any
+                    }
+                  }))}
+                />
+              )}
+
               <div>
                 <h3 className="text-sm font-bold text-slate-800 dark:text-white border-b pb-2 flex items-center gap-1.5">
                   <User className="w-4 h-4 text-blue-500" />
@@ -3935,7 +3240,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                 </div>
               </div>
 
-              {/* NABH Mandated Disposition & Log Panel */}
+              {/* NABH Mandated Disposition & Log Panel  */}
               <div className="border-t border-slate-150 dark:border-slate-850 pt-5 space-y-4">
                 <h3 className="text-sm font-bold text-slate-800 dark:text-white border-b pb-2 flex items-center gap-1.5">
                   <LogOut className="w-4 h-4 text-emerald-500" />
@@ -4015,7 +3320,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                   />
                 </div>
 
-                {/* Condition at Time of Shift */}
+                {/* Condition at Time of Shift  */}
                 <div className="pt-2">
                   <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1.5">
                     Condition at Time of Shift
@@ -4040,7 +3345,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                   </div>
                 </div>
 
-                {/* Handover & Save Actions */}
+                {/* Handover & Save Actions  */}
                 <div className="pt-5 border-t border-slate-100 dark:border-slate-800 space-y-4">
                   {dispositionSaveMessage && (
                     <div className="bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200 p-3.5 rounded-xl flex items-center justify-between text-xs font-bold animate-fade-in shadow-xs">
@@ -4093,7 +3398,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                   </div>
                 </div>
 
-                {/* OPEN CASES - TAP TO SWITCH */}
+                {/* OPEN CASES - TAP TO SWITCH  */}
                 {allCases && allCases.length > 0 && (
                   <div className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 space-y-3 no-print mt-6">
                     <h4 className="text-[10px] font-extrabold text-slate-500 uppercase tracking-widest font-mono">
@@ -4161,10 +3466,13 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
             </div>
           )}
 
-          {/* Vitals Trends Tab */}
+          {/* Pediatrics Sheet Tab  */}
+
+          {/* Vitals Trends Tab  */}
           {activeTab === "trends" && (
             <div className="space-y-6 animate-fade-in">
-              <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 border-b pb-3">
+              <div className="flex justify-end mb-2"><SaveSectionButton onSave={handleSave} /></div>
+<div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 border-b pb-3">
                 <div>
                   <h3 className="text-sm font-bold text-slate-800 dark:text-white uppercase tracking-wide flex items-center gap-2">
                     <Activity className="w-4 h-4 text-rose-500 animate-pulse" />
@@ -4190,10 +3498,10 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                 </div>
               </div>
 
-              {/* Vitals Charts Bento Grid */}
+              {/* Vitals Charts Bento Grid  */}
               <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
                 
-                {/* Chart 1: Heart Rate */}
+                {/* Chart 1: Heart Rate  */}
                 <div className="bg-slate-50 dark:bg-slate-900/40 border border-slate-100 dark:border-slate-850 rounded-xl p-4 space-y-2">
                   <div className="flex items-center justify-between">
                     <h4 className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5 uppercase">
@@ -4220,7 +3528,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                   </div>
                 </div>
 
-                {/* Chart 2: Blood Pressure */}
+                {/* Chart 2: Blood Pressure  */}
                 <div className="bg-slate-50 dark:bg-slate-900/40 border border-slate-100 dark:border-slate-850 rounded-xl p-4 space-y-2">
                   <div className="flex items-center justify-between">
                     <h4 className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5 uppercase">
@@ -4249,7 +3557,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                   </div>
                 </div>
 
-                {/* Chart 3: Oxygen Saturation */}
+                {/* Chart 3: Oxygen Saturation  */}
                 <div className="bg-slate-50 dark:bg-slate-900/40 border border-slate-100 dark:border-slate-850 rounded-xl p-4 space-y-2">
                   <div className="flex items-center justify-between">
                     <h4 className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5 uppercase">
@@ -4278,10 +3586,10 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
 
               </div>
 
-              {/* Log Vitals form and log history block */}
+              {/* Log Vitals form and log history block  */}
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 pt-2">
                 
-                {/* Form to log new entries */}
+                {/* Form to log new entries  */}
                 <div className="lg:col-span-1 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl p-5 space-y-4">
                   <h4 className="text-xs font-bold text-slate-800 dark:text-white uppercase tracking-wider flex items-center gap-1.5 border-b pb-2">
                     <PlusCircle className="w-4 h-4 text-blue-500" />
@@ -4368,7 +3676,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                   </div>
                 </div>
 
-                {/* Vitals Log Timeline / Table */}
+                {/* Vitals Log Timeline / Table  */}
                 <div className="lg:col-span-2 bg-slate-50 dark:bg-slate-900/40 border border-slate-100 dark:border-slate-850 rounded-xl p-5 space-y-3">
                   <div className="flex items-center justify-between border-b pb-2">
                     <h4 className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
@@ -4423,10 +3731,44 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
             </div>
           )}
 
-          {/* SAMPLE History Tab */}
+          
+          {/* SAMPLE History Tab  */}
           {activeTab === "history" && (
             <div className="space-y-4">
-              <div className="flex items-center justify-between border-b pb-2">
+              <div className="flex justify-end mb-2"><SaveSectionButton onSave={handleSave} /></div>
+
+              {currentCase.isPediatric && (
+                <div className="bg-sky-50 dark:bg-sky-950/20 border border-sky-100 dark:border-sky-900 rounded-xl p-4 mb-4">
+                  <h4 className="font-extrabold text-sm text-sky-800 dark:text-sky-300 uppercase tracking-wide border-b border-sky-100 dark:border-sky-900 pb-2 mb-3">Focused Pediatric History</h4>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                    <div className="space-y-1">
+                      <label className="font-semibold text-slate-500 uppercase">Brought By / Informant</label>
+                      <div className="flex gap-2">
+                        <input type="text" placeholder="Brought by..." value={(currentCase.pediatricDetails || {}).broughtBy || ""} onChange={(e) => updatePediatricDetails("broughtBy", e.target.value)} className="flex-1 px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded" />
+                        <input type="text" placeholder="Informant..." value={(currentCase.pediatricDetails || {}).informant || ""} onChange={(e) => updatePediatricDetails("informant", e.target.value)} className="flex-1 px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded" />
+                      </div>
+                    </div>
+                    <div className="space-y-1">
+                      <label className="font-semibold text-slate-500 uppercase">Immunization History</label>
+                      <input type="text" placeholder="Up to date?" value={(currentCase.pediatricDetails || {}).immunizationHistory || ""} onChange={(e) => updatePediatricDetails("immunizationHistory", e.target.value)} className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded" />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="font-semibold text-slate-500 uppercase">Birth History</label>
+                      <input type="text" placeholder="Term/Preterm, NICU stay..." value={(currentCase.pediatricDetails || {}).birthHistory || ""} onChange={(e) => updatePediatricDetails("birthHistory", e.target.value)} className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded" />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="font-semibold text-slate-500 uppercase">Feeding & Development</label>
+                      <div className="flex gap-2">
+                        <input type="text" placeholder="Feeding..." value={(currentCase.pediatricDetails || {}).feedingHistory || ""} onChange={(e) => updatePediatricDetails("feedingHistory", e.target.value)} className="flex-1 px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded" />
+                        <input type="text" placeholder="Developmental milestones..." value={(currentCase.pediatricDetails || {}).developmentalHistory || ""} onChange={(e) => updatePediatricDetails("developmentalHistory", e.target.value)} className="flex-1 px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded" />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+
+<div className="flex items-center justify-between border-b pb-2">
                 <h3 className="text-sm font-bold text-slate-800 dark:text-white">SAMPLE History Module</h3>
                 <span className="text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-500 font-mono px-2 py-0.5 rounded">ATLS / PALS Guideline Standard</span>
               </div>
@@ -4451,13 +3793,13 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                         onChange={(e) => updateHistory(item.field as keyof SampleHistory, e.target.value)}
                         className="flex-1 px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
                       />
-                      <SpeechMicButton onTranscript={(txt) => updateHistory(item.field as keyof SampleHistory, (currentCase.sampleHistory[item.field as keyof SampleHistory] || "") + " " + txt)} />
+                      <VoiceRecorder renderMode="compact-button" onTranscript={(txt) => updateHistory(item.field as keyof SampleHistory, (currentCase.sampleHistory[item.field as keyof SampleHistory] || "") + " " + txt)} />
                     </div>
                   </div>
                 ))}
               </div>
 
-              {/* Extra Medical details */}
+              {/* Extra Medical details  */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-4 border-t">
                 <div className="space-y-1">
                   <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">
@@ -4509,137 +3851,379 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
             </div>
           )}
 
-          {/* Primary Assessment ABCDE Tab */}
+          
+          {/* Primary Assessment ABCDE Tab  */}
           {activeTab === "primary-survey" && (
-            <PrimarySurveySection
-              data={currentCase.primaryAssessment?.survey || getInitialPrimarySurvey(currentCase.patient.caseType)}
-              onChange={handleSurveyChange}
-              caseType={currentCase.patient.caseType}
-              onMarkNormal={markPrimarySurveyNormal}
-              vitals={currentCase.vitals}
-              onUpdateVitals={updateVitals}
-            />
-          )}
-
-          {/* Secondary Assessment head-to-toe Exam Tab */}
-          {activeTab === "secondary-survey" && (
             <div className="space-y-4">
-              <div className="flex items-center justify-between border-b pb-2">
-                <h3 className="text-sm font-bold text-slate-800 dark:text-white uppercase tracking-wide">Secondary Head-to-Toe Examination Findings</h3>
-                <button
-                  type="button"
-                  onClick={markSecondarySurveyNormal}
-                  className="text-xs font-bold px-3 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 dark:bg-emerald-950/30 dark:text-emerald-300 dark:border-emerald-800 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer"
-                >
-                  <CheckCircle className="w-3.5 h-3.5 text-emerald-600" />
-                  Mark Normal
-                </button>
-              </div>
-              
-              <div className="space-y-2">
-                <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400">
-                  Full Clinical Review of Systems
-                </label>
-                <div className="flex gap-2">
-                  <textarea
-                    rows={10}
-                    placeholder="Record findings for Head, Eyes, Ears, Nose, Throat (HEENT), Cardiovascular, Respiratory, Abdomen, Musculoskeletal, and Neurological exams."
-                    value={currentCase.secondaryAssessment || ""}
-                    onChange={(e) => setCurrentCase(prev => ({ ...prev, secondaryAssessment: e.target.value }))}
-                    className="flex-1 px-4 py-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  />
-                  <SpeechMicButton onTranscript={(txt) => setCurrentCase(prev => ({ ...prev, secondaryAssessment: (prev.secondaryAssessment || "") + " " + txt }))} />
-                </div>
-              </div>
+              <div className="flex justify-end mb-2"><SaveSectionButton onSave={handleSave} /></div>
 
-              {/* Normal Exam Presets (from user adult normal template) */}
-              <div className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3.5 space-y-2 text-xs">
-                <span className="font-bold text-slate-700 dark:text-slate-300 block uppercase tracking-wide">
-                  Quick Normal Presets (Adult Normal & Trauma Case Sheet Format)
-                </span>
-                <p className="text-[10px] text-slate-500">
-                  Click a preset to instantly append standard JCI/NABH-compliant normal findings to the clinical review of systems:
-                </p>
-                <div className="flex flex-wrap gap-2">
-                  {[
-                    {
-                      label: "Normal CNS",
-                      text: "CNS: Higher Mental Functions: Normal, alert and oriented; Cranial Nerves: Intact (I-XII); Sensory System: Normal, intact to light touch, pain, and temperature; Motor System: Normal muscle tone, strength 5/5 in all limbs; Reflexes: Normal deep tendon reflexes (2+), no pathological reflexes; Romberg Sign: Negative; Cerebellar Signs: Normal."
-                    },
-                    {
-                      label: "Normal CVS",
-                      text: "CVS: S1 S2 heard, no murmurs, no gallops, peripheral pulses felt equally bilateral."
-                    },
-                    {
-                      label: "Normal Respiratory (RS)",
-                      text: "Respiratory System: Bilateral normal vesicular breath sounds, chest symmetrical, no added sounds (wheeze/crepitations)."
-                    },
-                    {
-                      label: "Normal Abdomen (PA)",
-                      text: "Per Abdomen (PA): Soft, non-tender, no organomegaly, bowel sounds heard."
-                    },
-                    {
-                      label: "Normal Trauma Head-to-Toe",
-                      text: "Head-to-Toe Trauma Exam: Cervical spine tenderness absent, chest stable, pelvis stable on compression, extremities clear of obvious deformity or external bleed, logroll shows normal midline spine without tenderness."
-                    }
-                  ].map((preset) => (
-                    <button
-                      key={preset.label}
-                      type="button"
-                      onClick={() => {
-                        const current = currentCase.secondaryAssessment || "";
-                        const separator = current.trim() ? "\n\n" : "";
-                        setCurrentCase(prev => ({
-                          ...prev,
-                          secondaryAssessment: current + separator + preset.text
-                        }));
-                      }}
-                      className="px-2.5 py-1.5 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 hover:border-blue-500 hover:text-blue-600 dark:hover:text-blue-400 rounded-lg text-[10px] font-bold transition-all shadow-xs"
-                    >
-                      + {preset.label}
-                    </button>
-                  ))}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const allNormals = [
-                        "CNS: Higher Mental Functions: Normal, alert and oriented; Cranial Nerves: Intact (I-XII); Sensory System: Normal, intact to light touch, pain, and temperature; Motor System: Normal muscle tone, strength 5/5 in all limbs; Reflexes: Normal deep tendon reflexes (2+), no pathological reflexes; Romberg Sign: Negative; Cerebellar Signs: Normal.",
-                        "CVS: S1 S2 heard, no murmurs, no gallops, peripheral pulses felt equally bilateral.",
-                        "Respiratory System: Bilateral normal vesicular breath sounds, chest symmetrical, no added sounds (wheeze/crepitations).",
-                        "Per Abdomen (PA): Soft, non-tender, no organomegaly, bowel sounds heard.",
-                        "Head-to-Toe Trauma Exam: Cervical spine tenderness absent, chest stable, pelvis stable on compression, extremities clear of obvious deformity or external bleed, logroll shows normal midline spine without tenderness."
-                      ].join("\n\n");
-                      setCurrentCase(prev => ({
-                        ...prev,
-                        secondaryAssessment: allNormals
-                      }));
+              {currentCase.isPediatric && (
+                <div className="bg-sky-50 dark:bg-sky-950/20 border border-sky-100 dark:border-sky-900 rounded-xl p-4 space-y-4 mb-4">
+                  <PediatricAssessmentTriangle
+                    state={{
+                      appearance: {
+                        tone: currentCase.pediatricDetails?.patAppearanceTone || "",
+                        interactivity: currentCase.pediatricDetails?.patAppearanceInteractivity || "",
+                        consolability: currentCase.pediatricDetails?.patAppearanceConsolability || "",
+                        lookGaze: currentCase.pediatricDetails?.patAppearanceLookGaze || "",
+                        speechCry: currentCase.pediatricDetails?.patAppearanceSpeechCry || ""
+                      },
+                      workOfBreathing: currentCase.pediatricDetails?.patWorkOfBreathing ? currentCase.pediatricDetails.patWorkOfBreathing.split(", ").filter(Boolean) : [],
+                      circulationToSkin: currentCase.pediatricDetails?.patCirculation ? currentCase.pediatricDetails.patCirculation.split(", ").filter(Boolean) : []
                     }}
-                    className="px-2.5 py-1.5 bg-emerald-50 dark:bg-emerald-950/20 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-900 hover:bg-emerald-600 hover:text-white transition-all rounded-lg text-[10px] font-extrabold shadow-xs"
-                  >
-                    🚀 Fill All Normal Findings
-                  </button>
+                    onChange={s => setCurrentCase(prev => ({
+                      ...prev,
+                      pediatricDetails: {
+                        ...(prev.pediatricDetails || {}),
+                        patAppearanceTone: s.appearance.tone,
+                        patAppearanceInteractivity: s.appearance.interactivity,
+                        patAppearanceConsolability: s.appearance.consolability,
+                        patAppearanceLookGaze: s.appearance.lookGaze,
+                        patAppearanceSpeechCry: s.appearance.speechCry,
+                        patWorkOfBreathing: s.workOfBreathing.join(", "),
+                        patCirculation: s.circulationToSkin.join(", ")
+                      }
+                    }))}
+                  />
                 </div>
-              </div>
+              )}
+
+
+              {currentCase.isPediatric ? (
+                <div className="space-y-4">
+                  <PediatricAirwaySection
+                    state={{
+                      cry: currentCase.pediatricDetails?.airwayCry || "",
+                      airwayStatus: currentCase.pediatricDetails?.airwayStatus || "",
+                      intervention: currentCase.pediatricDetails?.airwayIntervention || ""
+                    }}
+                    onChange={s => setCurrentCase(prev => ({
+                      ...prev,
+                      pediatricDetails: {
+                        ...(prev.pediatricDetails || {}),
+                        airwayCry: s.cry as any,
+                        airwayStatus: s.airwayStatus as any,
+                        airwayIntervention: s.intervention
+                      }
+                    }))}
+                  />
+                  <PediatricBreathingSection
+                    state={{
+                      rr: currentCase.pediatricDetails?.breathingRr || "",
+                      spo2: currentCase.pediatricDetails?.breathingSpo2 || "",
+                      wobFindings: currentCase.pediatricDetails?.breathingWob ? currentCase.pediatricDetails.breathingWob.split(",").filter(Boolean) : [],
+                      abnormalPositioning: currentCase.pediatricDetails?.breathingAbnormalPositioning ? [currentCase.pediatricDetails.breathingAbnormalPositioning] : [],
+                      airEntry: currentCase.pediatricDetails?.breathingAirEntry || "",
+                      subcutaneousEmphysema: currentCase.pediatricDetails?.breathingSubcutaneousEmphysema || "",
+                      intervention: currentCase.pediatricDetails?.breathingIntervention || ""
+                    }}
+                    onChange={s => setCurrentCase(prev => ({
+                      ...prev,
+                      pediatricDetails: {
+                        ...(prev.pediatricDetails || {}),
+                        breathingRr: s.rr,
+                        breathingSpo2: s.spo2,
+                        breathingWob: s.wobFindings.join(","),
+                        breathingAbnormalPositioning: s.abnormalPositioning[0] as any || "",
+                        breathingAirEntry: s.airEntry as any,
+                        breathingSubcutaneousEmphysema: s.subcutaneousEmphysema as any,
+                        breathingIntervention: s.intervention
+                      }
+                    }))}
+                  />
+                  <PediatricCirculationSection
+                    state={{
+                      crt: currentCase.pediatricDetails?.circulationCrt || "",
+                      hr: currentCase.pediatricDetails?.circulationHr || "",
+                      bp: currentCase.pediatricDetails?.circulationBp || "",
+                      skinColorTemp: currentCase.pediatricDetails?.circulationSkinColorTemp || "",
+                      distendedNeckVeins: currentCase.pediatricDetails?.circulationDistendedNeckVeins || "",
+                      intervention: currentCase.pediatricDetails?.circulationIntervention || ""
+                    }}
+                    onChange={s => setCurrentCase(prev => ({
+                      ...prev,
+                      pediatricDetails: {
+                        ...(prev.pediatricDetails || {}),
+                        circulationCrt: s.crt as any,
+                        circulationHr: s.hr,
+                        circulationBp: s.bp,
+                        circulationSkinColorTemp: s.skinColorTemp,
+                        circulationDistendedNeckVeins: s.distendedNeckVeins as any,
+                        circulationIntervention: s.intervention
+                      }
+                    }))}
+                  />
+                  <PediatricDisabilitySection
+                    state={{
+                      avpuGcs: currentCase.pediatricDetails?.disabilityAvpuGcs || "",
+                      pupils: currentCase.pediatricDetails?.disabilityPupils || "",
+                      abnormalResponses: currentCase.pediatricDetails?.disabilityAbnormalResponses || "",
+                      grbs: currentCase.pediatricDetails?.disabilityGrbs || ""
+                    }}
+                    onChange={s => setCurrentCase(prev => ({
+                      ...prev,
+                      pediatricDetails: {
+                        ...(prev.pediatricDetails || {}),
+                        disabilityAvpuGcs: s.avpuGcs,
+                        disabilityPupils: s.pupils,
+                        disabilityAbnormalResponses: s.abnormalResponses,
+                        disabilityGrbs: s.grbs
+                      }
+                    }))}
+                  />
+                  <PediatricExposureSection
+                    state={{
+                      temperature: currentCase.pediatricDetails?.exposureTemp || "",
+                      traumaLogroll: currentCase.pediatricDetails?.exposureTraumaLogroll || "",
+                      signsOfTrauma: currentCase.pediatricDetails?.exposureSignsOfTrauma ? currentCase.pediatricDetails.exposureSignsOfTrauma.split(",").filter(Boolean) : [],
+                      infectionBleedingEvidence: currentCase.pediatricDetails?.exposureEvidenceInfectionBleeding || "",
+                      longBoneDeformities: currentCase.pediatricDetails?.exposureLongBoneDeformities || "",
+                      extremitiesFindings: currentCase.pediatricDetails?.exposureExtremitiesCheck || "",
+                      extremitiesImmobilized: currentCase.pediatricDetails?.exposureImmobilizeInjuredLimbs || ""
+                    }}
+                    onChange={s => setCurrentCase(prev => ({
+                      ...prev,
+                      pediatricDetails: {
+                        ...(prev.pediatricDetails || {}),
+                        exposureTemp: s.temperature,
+                        exposureTraumaLogroll: s.traumaLogroll,
+                        exposureSignsOfTrauma: s.signsOfTrauma.join(","),
+                        exposureEvidenceInfectionBleeding: s.infectionBleedingEvidence,
+                        exposureLongBoneDeformities: s.longBoneDeformities as any,
+                        exposureExtremitiesCheck: s.extremitiesFindings,
+                        exposureImmobilizeInjuredLimbs: s.extremitiesImmobilized as any
+                      }
+                    }))}
+                  />
+                  <PediatricEfastSection
+                    state={{
+                      heart: currentCase.pediatricDetails?.adjuvantEfastHeart || "",
+                      abdomen: currentCase.pediatricDetails?.adjuvantEfastAbdomen || "",
+                      lungs: currentCase.pediatricDetails?.adjuvantEfastLungs || "",
+                      pelvis: currentCase.pediatricDetails?.adjuvantEfastPelvis || "",
+                      extremities: currentCase.pediatricDetails?.adjuvantEfastExtremities || ""
+                    }}
+                    onChange={s => setCurrentCase(prev => ({
+                      ...prev,
+                      pediatricDetails: {
+                        ...(prev.pediatricDetails || {}),
+                        adjuvantEfastHeart: s.heart,
+                        adjuvantEfastAbdomen: s.abdomen,
+                        adjuvantEfastLungs: s.lungs,
+                        adjuvantEfastPelvis: s.pelvis,
+                        adjuvantEfastExtremities: s.extremities
+                      }
+                    }))}
+                  />
+                </div>
+              ) : (
+                <PrimarySurveySection
+                  data={currentCase.primaryAssessment?.survey || getInitialPrimarySurvey(currentCase.patient.caseType)}
+                  onChange={handleSurveyChange}
+                  caseType={currentCase.patient.caseType}
+                  onMarkNormal={markPrimarySurveyNormal}
+                  onInterpretABG={handleInterpretABG}
+                  vitals={currentCase.vitals}
+                  onUpdateVitals={updateVitals}
+                />
+              )}
             </div>
           )}
 
-          {/* JCI/NABH Accreditation & Patient Safety Tab */}
+          {/* Secondary Assessment head-to-toe Exam Tab  */}
+          {activeTab === "secondary-survey" && (
+            <div className="space-y-4">
+              <div className="flex justify-end mb-2"><SaveSectionButton onSave={handleSave} /></div>
+              {currentCase.isPediatric ? (
+                <div className="space-y-4">
+                  <PediatricFocusedPhysicalExam
+                    state={{
+                      heent: currentCase.pediatricDetails?.focusedHeent || "",
+                      respiratory: currentCase.pediatricDetails?.focusedRespiratory || "",
+                      cardiovascular: currentCase.pediatricDetails?.focusedCardiovascular || "",
+                      abdomen: currentCase.pediatricDetails?.focusedAbdomen || "",
+                      back: currentCase.pediatricDetails?.focusedBack || "",
+                      extremities: currentCase.pediatricDetails?.focusedExtremities || ""
+                    }}
+                    onChange={s => setCurrentCase(prev => ({
+                      ...prev,
+                      pediatricDetails: {
+                        ...(prev.pediatricDetails || {}),
+                        focusedHeent: s.heent,
+                        focusedRespiratory: s.respiratory,
+                        focusedCardiovascular: s.cardiovascular,
+                        focusedAbdomen: s.abdomen,
+                        focusedBack: s.back,
+                        focusedExtremities: s.extremities
+                      }
+                    }))}
+                  />
+                  <PediatricGeneralExamSection
+                    state={{
+                      pallor: currentCase.pediatricDetails?.examHeent?.includes("Pallor") || false,
+                      icterus: currentCase.pediatricDetails?.examHeent?.includes("Icterus") || false,
+                      cyanosis: currentCase.pediatricDetails?.examHeent?.includes("Cyanosis") || false,
+                      clubbing: currentCase.pediatricDetails?.examHeent?.includes("Clubbing") || false,
+                      lymphadenopathy: currentCase.pediatricDetails?.examHeent?.includes("Lymphadenopathy") || false,
+                      edema: currentCase.pediatricDetails?.examHeent?.includes("Edema") || false
+                    }}
+                    onChange={s => {
+                       const findings = [];
+                       if (s.pallor) findings.push("Pallor");
+                       if (s.icterus) findings.push("Icterus");
+                       if (s.cyanosis) findings.push("Cyanosis");
+                       if (s.clubbing) findings.push("Clubbing");
+                       if (s.lymphadenopathy) findings.push("Lymphadenopathy");
+                       if (s.edema) findings.push("Edema");
+                       setCurrentCase(prev => ({
+                         ...prev,
+                         pediatricDetails: {
+                           ...(prev.pediatricDetails || {}),
+                           examHeent: findings.length > 0 ? findings.join(", ") : "No pallor, icterus, cyanosis, clubbing, lymphadenopathy, or pedal edema."
+                         }
+                       }));
+                    }}
+                  />
+                  <PediatricQuickNormalPresets
+                    onApply={(section, text) => {
+                      setCurrentCase(prev => ({
+                        ...prev,
+                        pediatricDetails: {
+                           ...(prev.pediatricDetails || {}),
+                           ...(section === 'general' ? { examHeent: text } : {}),
+                           ...(section === 'heent' ? { focusedHeent: text } : {}),
+                           ...(section === 'respiratory' ? { focusedRespiratory: text } : {}),
+                           ...(section === 'cardiovascular' ? { focusedCardiovascular: text } : {}),
+                           ...(section === 'abdomen' ? { focusedAbdomen: text } : {}),
+                           ...(section === 'back' ? { focusedBack: text } : {}),
+                           ...(section === 'extremities' ? { focusedExtremities: text } : {})
+                        }
+                      }));
+                    }}
+                    onFillAll={() => {
+                      setCurrentCase(prev => ({
+                        ...prev,
+                        pediatricDetails: {
+                           ...(prev.pediatricDetails || {}),
+                           examHeent: PEDIATRIC_NORMAL_PRESETS.general,
+                           focusedHeent: PEDIATRIC_NORMAL_PRESETS.heent,
+                           focusedRespiratory: PEDIATRIC_NORMAL_PRESETS.respiratory,
+                           focusedCardiovascular: PEDIATRIC_NORMAL_PRESETS.cardiovascular,
+                           focusedAbdomen: PEDIATRIC_NORMAL_PRESETS.abdomen,
+                           focusedBack: PEDIATRIC_NORMAL_PRESETS.back,
+                           focusedExtremities: PEDIATRIC_NORMAL_PRESETS.extremities
+                        }
+                      }));
+                    }}
+                  />
+                </div>
+              ) : (
+                <>
+                  <SecondarySurveySection
+                    secondaryAssessment={currentCase.secondaryAssessment || ""}
+                    onChange={(val) => setCurrentCase(prev => ({ ...prev, secondaryAssessment: val }))}
+                    onMarkNormal={markSecondarySurveyNormal}
+                  />
+                  {/* Normal Exam Presets (from user adult normal template)  */}
+                  <div className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3.5 space-y-2 text-xs">
+                    <span className="font-bold text-slate-700 dark:text-slate-300 block uppercase tracking-wide">
+                      Quick Normal Presets (Adult Normal & Trauma Case Sheet Format)
+                    </span>
+                    <p className="text-[10px] text-slate-500">
+                      Click a preset to instantly append standard JCI/NABH-compliant normal findings to the clinical review of systems:
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {[
+                        {
+                          label: "Normal CNS",
+                          text: "CNS: Higher Mental Functions: Normal, alert and oriented; Cranial Nerves: Intact (I-XII); Sensory System: Normal, intact to light touch, pain, and temperature; Motor System: Normal muscle tone, strength 5/5 in all limbs; Reflexes: Normal deep tendon reflexes (2+), no pathological reflexes; Romberg Sign: Negative; Cerebellar Signs: Normal."
+                        },
+                        {
+                          label: "Normal CVS",
+                          text: "CVS: S1 S2 heard, no murmurs, no gallops, peripheral pulses felt equally bilateral."
+                        },
+                        {
+                          label: "Normal Respiratory (RS)",
+                          text: "RS: Bilateral normal vesicular breath sounds, chest symmetrical, no added sounds (wheeze/crepitations)."
+                        },
+                        {
+                          label: "Normal P/A (Abdomen)",
+                          text: "P/A: Soft, non-tender, non-distended, no organomegaly, bowel sounds present."
+                        },
+                        {
+                          label: "Normal Extremities",
+                          text: "Extremities: No clubbing, cyanosis, edema. Normal range of motion, peripheral pulses 2+ and symmetric."
+                        },
+                        {
+                          label: "General Examination",
+                          text: "General: Patient is conscious, cooperative, comfortably seated. No pallor, icterus, cyanosis, clubbing, lymphadenopathy, or pedal edema."
+                        }
+                      ].map((preset, idx) => (
+                        <button
+                          key={idx}
+                          type="button"
+                          onClick={() => {
+                            setCurrentCase(prev => ({
+                              ...prev,
+                              secondaryAssessment: (prev.secondaryAssessment || "") + "\n\n" + preset.text
+                            }));
+                          }}
+                          className="px-2.5 py-1.5 bg-slate-200 hover:bg-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded transition-colors"
+                        >
+                          + {preset.label}
+                        </button>
+                      ))}
+                      <button
+                        type="button"
+                        onClick={() => {
+                           const cns = "CNS: Higher Mental Functions: Normal, alert and oriented; Cranial Nerves: Intact (I-XII); Sensory System: Normal, intact to light touch, pain, and temperature; Motor System: Normal muscle tone, strength 5/5 in all limbs; Reflexes: Normal deep tendon reflexes (2+), no pathological reflexes; Romberg Sign: Negative; Cerebellar Signs: Normal.";
+                           const cvs = "CVS: S1 S2 heard, no murmurs, no gallops, peripheral pulses felt equally bilateral.";
+                           const rs = "RS: Bilateral normal vesicular breath sounds, chest symmetrical, no added sounds (wheeze/crepitations).";
+                           const pa = "P/A: Soft, non-tender, non-distended, no organomegaly, bowel sounds present.";
+                           const ext = "Extremities: No clubbing, cyanosis, edema. Normal range of motion, peripheral pulses 2+ and symmetric.";
+                           const gen = "General: Patient is conscious, cooperative, comfortably seated. No pallor, icterus, cyanosis, clubbing, lymphadenopathy, or pedal edema.";
+                           setCurrentCase(prev => ({
+                              ...prev,
+                              secondaryAssessment: [gen, cns, cvs, rs, pa, ext].join("\n\n")
+                           }));
+                        }}
+                        className="px-3 py-1.5 bg-emerald-100 hover:bg-emerald-200 dark:bg-emerald-900/30 dark:hover:bg-emerald-800/50 text-emerald-700 dark:text-emerald-400 font-medium rounded transition-colors"
+                      >
+                        🚀 Fill All Normal Findings
+                      </button>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          {/* JCI/NABH Accreditation & Patient Safety Tab  */}
           {activeTab === "disposition" && (
             <div className="space-y-6">
-              <div className="border-b pb-2.5 flex items-center justify-between">
+              <div className="flex justify-end mb-2"><SaveSectionButton onSave={handleSave} /></div>
+              <div 
+                className="border pb-2.5 pt-2.5 px-3 rounded-lg border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 flex items-center justify-between cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                onClick={() => setShowJciForm(!showJciForm)}
+              >
                 <div>
-                  <h3 className="text-sm font-bold text-slate-800 dark:text-white uppercase tracking-wide">
+                  <h3 className="text-sm font-bold text-slate-800 dark:text-white uppercase tracking-wide flex items-center gap-2">
                     JCI & NABH Accreditation Audit Form
+                    <span className="text-[10px] bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-bold uppercase flex items-center gap-1 font-mono">
+                      <Shield className="w-3 h-3" /> JCI IPSG Compliant
+                    </span>
                   </h3>
-                  <p className="text-[10px] text-slate-400">Mandated safety metrics and checklist audits.</p>
+                  <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">Mandated safety metrics and checklist audits (Optional).</p>
                 </div>
-                <span className="text-[10px] bg-blue-100 text-blue-700 px-3 py-1 rounded-full font-bold uppercase flex items-center gap-1 font-mono">
-                  <Shield className="w-3.5 h-3.5" /> JCI IPSG Compliant
-                </span>
+                <div className="p-1">
+                  {showJciForm ? <ChevronDown className="w-5 h-5 text-slate-400" /> : <ChevronRight className="w-5 h-5 text-slate-400" />}
+                </div>
               </div>
 
-              {/* IPSG Checklist Block */}
-              <div className="bg-slate-50 dark:bg-slate-900 p-4 border border-slate-200 dark:border-slate-850 rounded-xl space-y-3">
+              {showJciForm && (
+                <div className="space-y-6 animate-in fade-in slide-in-from-top-2">
+                  {/* IPSG Checklist Block  */}
+                  <div className="bg-slate-50 dark:bg-slate-900 p-4 border border-slate-200 dark:border-slate-850 rounded-xl space-y-3">
                 <div className="flex items-center gap-1.5 border-b pb-2 border-slate-100 dark:border-slate-800">
                   <ClipboardCheck className="w-4.5 h-4.5 text-blue-600" />
                   <h4 className="font-extrabold text-xs text-slate-700 dark:text-slate-300 uppercase tracking-wide">
@@ -4648,7 +4232,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
-                  {/* IPSG Checkboxes */}
+                  {/* IPSG Checkboxes  */}
                   <div className="space-y-3">
                     <label className="flex items-start gap-2.5 cursor-pointer">
                       <input
@@ -4732,7 +4316,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                 </div>
               </div>
 
-              {/* Vulnerable Patient Assessment & Abuse Screen */}
+              {/* Vulnerable Patient Assessment & Abuse Screen  */}
               <div className="bg-slate-50 dark:bg-slate-900 p-4 border border-slate-200 dark:border-slate-850 rounded-xl space-y-4">
                 <div className="flex items-center gap-1.5 border-b pb-2 border-slate-100 dark:border-slate-800 justify-between flex-wrap">
                   <div className="flex items-center gap-1.5">
@@ -4831,7 +4415,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                   </div>
                 </div>
 
-                {/* 7 JCI/NABH Mandatory Indicators Grid */}
+                {/* 7 JCI/NABH Mandatory Indicators Grid  */}
                 <div className="border border-slate-200 dark:border-slate-800 rounded-xl p-4 bg-white dark:bg-slate-950 space-y-3">
                   <p className="text-[11px] font-bold text-slate-700 dark:text-slate-300 flex items-center justify-between">
                     <span>MANDATORY DETAILED SCREENING QUESTIONS (Word Document Format)</span>
@@ -4933,7 +4517,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                 </div>
               </div>
 
-              {/* Procedure Consent & Time-Out (IPSG 4 Surgery / Procedure Checklist) */}
+              {/* Procedure Consent & Time-Out (IPSG 4 Surgery / Procedure Checklist)  */}
               <div className="bg-slate-50 dark:bg-slate-900 p-4 border border-slate-200 dark:border-slate-850 rounded-xl space-y-3">
                 <div className="flex items-center gap-1.5 border-b pb-2 border-slate-100 dark:border-slate-800">
                   <FileCheck className="w-4.5 h-4.5 text-emerald-600" />
@@ -4970,18 +4554,21 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                   </label>
                 </div>
               </div>
+              </div>
+              )}
             </div>
           )}
 
-          {/* Investigations (Labs & Imaging) Tab */}
+          {/* Investigations (Labs & Imaging) Tab  */}
           {activeTab === "investigations" && (
             <div className="space-y-6 pt-4 border-t border-slate-100 dark:border-slate-800">
-              <div className="border-b pb-2 flex items-center justify-between">
+              <div className="flex justify-end mb-2"><SaveSectionButton onSave={handleSave} /></div>
+<div className="border-b pb-2 flex items-center justify-between">
                 <h3 className="text-sm font-bold text-slate-800 dark:text-white uppercase tracking-wide">Lab & Imaging Investigations Log</h3>
                 <span className="text-[10px] bg-emerald-50 text-emerald-700 border border-emerald-100 px-2 py-0.5 rounded font-mono font-bold">OCR Sync Ready</span>
               </div>
 
-              {/* Quick Investigation Panels (from user template screenshots) */}
+              {/* Quick Investigation Panels (from user template screenshots)  */}
               <div className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 space-y-3">
                 <div className="flex items-center gap-1.5 border-b pb-2 border-slate-150 dark:border-slate-800">
                   <ClipboardCheck className="w-4.5 h-4.5 text-blue-600" />
@@ -5030,7 +4617,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                 </div>
               </div>
 
-              {/* Investigations Ordered Checklist (Extracted from Voice Scribe) */}
+              {/* Investigations Ordered Checklist (Extracted from Voice Scribe)  */}
               {currentCase.investigationsOrdered && currentCase.investigationsOrdered.length > 0 && (
                 <div className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 space-y-3">
                   <div className="flex items-center justify-between border-b pb-2 border-slate-200 dark:border-slate-800">
@@ -5075,7 +4662,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                 </div>
               )}
 
-              {/* Investigation Results Table (Structured with Abnormal Flags) */}
+              {/* Investigation Results Table (Structured with Abnormal Flags)  */}
               {currentCase.investigationResults && currentCase.investigationResults.length > 0 && (
                 <div className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 space-y-3">
                   <div className="flex items-center justify-between border-b pb-2 border-slate-200 dark:border-slate-800">
@@ -5134,7 +4721,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                 </div>
               )}
 
-              {/* Lab/Imaging Text fields */}
+              {/* Lab/Imaging Text fields  */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
                 <div className="space-y-1">
                   <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">
@@ -5148,7 +4735,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                       onChange={(e) => setCurrentCase(prev => ({ ...prev, investigationLabsOrdered: e.target.value }))}
                       className="flex-1 px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-xs text-slate-900 dark:text-slate-100"
                     />
-                    <SpeechMicButton onTranscript={(txt) => setCurrentCase(prev => ({ ...prev, investigationLabsOrdered: (prev.investigationLabsOrdered || "") + " " + txt }))} />
+                    <VoiceRecorder renderMode="compact-button" onTranscript={(txt) => setCurrentCase(prev => ({ ...prev, investigationLabsOrdered: (prev.investigationLabsOrdered || "") + " " + txt }))} />
                   </div>
                 </div>
 
@@ -5164,7 +4751,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                       onChange={(e) => setCurrentCase(prev => ({ ...prev, investigationImaging: e.target.value }))}
                       className="flex-1 px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-xs text-slate-900 dark:text-slate-100"
                     />
-                    <SpeechMicButton onTranscript={(txt) => setCurrentCase(prev => ({ ...prev, investigationImaging: (prev.investigationImaging || "") + " " + txt }))} />
+                    <VoiceRecorder renderMode="compact-button" onTranscript={(txt) => setCurrentCase(prev => ({ ...prev, investigationImaging: (prev.investigationImaging || "") + " " + txt }))} />
                   </div>
                 </div>
 
@@ -5180,12 +4767,12 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                       onChange={(e) => setCurrentCase(prev => ({ ...prev, investigationResultsSummary: e.target.value }))}
                       className="flex-1 px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-xs text-slate-900 dark:text-slate-100"
                     />
-                    <SpeechMicButton onTranscript={(txt) => setCurrentCase(prev => ({ ...prev, investigationResultsSummary: (prev.investigationResultsSummary || "") + " " + txt }))} />
+                    <VoiceRecorder renderMode="compact-button" onTranscript={(txt) => setCurrentCase(prev => ({ ...prev, investigationResultsSummary: (prev.investigationResultsSummary || "") + " " + txt }))} />
                   </div>
                 </div>
               </div>
 
-              {/* Provisional Diagnoses */}
+              {/* Provisional Diagnoses  */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs border-t pt-4 border-slate-150 dark:border-slate-850">
                 <div className="space-y-1">
                   <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">
@@ -5199,7 +4786,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                       onChange={(e) => setCurrentCase(prev => ({ ...prev, provisionalPrimaryDiagnosis: e.target.value }))}
                       className="flex-1 px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-xs text-slate-900 dark:text-slate-100"
                     />
-                    <SpeechMicButton onTranscript={(txt) => setCurrentCase(prev => ({ ...prev, provisionalPrimaryDiagnosis: (prev.provisionalPrimaryDiagnosis || "") + " " + txt }))} />
+                    <VoiceRecorder renderMode="compact-button" onTranscript={(txt) => setCurrentCase(prev => ({ ...prev, provisionalPrimaryDiagnosis: (prev.provisionalPrimaryDiagnosis || "") + " " + txt }))} />
                   </div>
                 </div>
 
@@ -5215,12 +4802,12 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                       onChange={(e) => setCurrentCase(prev => ({ ...prev, provisionalDifferentialDiagnoses: e.target.value }))}
                       className="flex-1 px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-xs text-slate-900 dark:text-slate-100"
                     />
-                    <SpeechMicButton onTranscript={(txt) => setCurrentCase(prev => ({ ...prev, provisionalDifferentialDiagnoses: (prev.provisionalDifferentialDiagnoses || "") + " " + txt }))} />
+                    <VoiceRecorder renderMode="compact-button" onTranscript={(txt) => setCurrentCase(prev => ({ ...prev, provisionalDifferentialDiagnoses: (prev.provisionalDifferentialDiagnoses || "") + " " + txt }))} />
                   </div>
                 </div>
               </div>
 
-              {/* Add form */}
+              {/* Add form  */}
               <div className="bg-slate-50 dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
                 <div>
                   <label className="block text-[11px] font-semibold text-slate-500 uppercase mb-1">Test/Order Name</label>
@@ -5251,7 +4838,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                 </button>
               </div>
 
-              {/* Table list */}
+              {/* Table list  */}
               <div className="overflow-x-auto border rounded-xl border-slate-200 dark:border-slate-800">
                 <table className="w-full text-left border-collapse text-xs">
                   <thead>
@@ -5298,52 +4885,53 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
             </div>
           )}
 
-          {/* Treatment Logs & Resuscitation Dosages Tab with IPSG Drug Double-Checks */}
+          {/* Treatment Logs & Resuscitation Dosages Tab with IPSG Drug Double-Checks  */}
           {activeTab === "treatment" && (
             <div className="space-y-6">
-              <div className="border-b pb-2 flex items-center justify-between">
+              <div className="flex justify-end mb-2"><SaveSectionButton onSave={handleSave} /></div>
+<div className="border-b pb-2 flex items-center justify-between">
                 <h3 className="text-sm font-bold text-slate-800 dark:text-white uppercase tracking-wide font-display">Medications & Procedures Handover Log</h3>
                 {currentCase.isPediatric && (
                   <span className="text-[10px] bg-sky-50 text-sky-700 border border-sky-100 px-2 py-0.5 rounded font-mono font-bold">PALS Calcs Active</span>
                 )}
               </div>
 
-              {/* Drug calculators if Pediatric */}
+              {/* Drug calculators if Pediatric  */}
               {currentCase.isPediatric && (
                 <div className="bg-sky-50/50 dark:bg-sky-950/10 border border-sky-200 rounded-xl p-4 space-y-2 text-xs">
                   <div className="flex justify-between items-center border-b border-sky-100/50 dark:border-sky-900/30 pb-1.5 mb-1">
                     <h4 className="font-bold text-sky-800 dark:text-sky-300">PALS Pediatric Emergency Dosing Quick Calculator</h4>
                     <span className="bg-sky-100 dark:bg-sky-900/50 text-sky-800 dark:text-sky-200 px-2.5 py-0.5 rounded text-[10px] font-bold font-mono">
-                      Weight: {pediatricWeight} kg
+                      Weight: {pediatricWeight === "" ? getAPLSEstimate(currentCase.patient.age) : pediatricWeight} kg
                     </span>
                   </div>
                   <p className="text-slate-500 text-[10px] leading-snug">Based on standard weight calculation. Confirm patient actual weight on admission.</p>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-[11px] font-mono leading-relaxed pt-1">
                     <div className="bg-white dark:bg-slate-900 border border-sky-100/60 p-2 rounded hover:shadow-sm transition-all">
                       <span className="font-semibold text-sky-600 block text-[10px]">Adrenaline (1:10k)</span>
-                      <p className="text-slate-700 dark:text-slate-300 font-bold mt-0.5 text-xs">{(0.1 * pediatricWeight).toFixed(1)} mL IV/IO</p>
+                      <p className="text-slate-700 dark:text-slate-300 font-bold mt-0.5 text-xs">{(0.1 * (pediatricWeight === "" ? (getAPLSEstimate(currentCase.patient.age) as number) : pediatricWeight)).toFixed(1)} mL IV/IO</p>
                       <span className="text-[9px] text-slate-400 block mt-0.5">0.1 mL/kg (0.01 mg/kg)</span>
                     </div>
                     <div className="bg-white dark:bg-slate-900 border border-sky-100/60 p-2 rounded hover:shadow-sm transition-all">
                       <span className="font-semibold text-sky-600 block text-[10px]">Amiodarone Bolus</span>
-                      <p className="text-slate-700 dark:text-slate-300 font-bold mt-0.5 text-xs">{(5 * pediatricWeight).toFixed(0)} mg IV/IO</p>
+                      <p className="text-slate-700 dark:text-slate-300 font-bold mt-0.5 text-xs">{(5 * (pediatricWeight === "" ? (getAPLSEstimate(currentCase.patient.age) as number) : pediatricWeight)).toFixed(0)} mg IV/IO</p>
                       <span className="text-[9px] text-slate-400 block mt-0.5">5 mg/kg</span>
                     </div>
                     <div className="bg-white dark:bg-slate-900 border border-sky-100/60 p-2 rounded hover:shadow-sm transition-all">
                       <span className="font-semibold text-sky-600 block text-[10px]">Fluid Bolus (NS/LR)</span>
-                      <p className="text-slate-700 dark:text-slate-300 font-bold mt-0.5 text-xs">{(20 * pediatricWeight).toFixed(0)} mL IV/IO</p>
+                      <p className="text-slate-700 dark:text-slate-300 font-bold mt-0.5 text-xs">{(20 * (pediatricWeight === "" ? (getAPLSEstimate(currentCase.patient.age) as number) : pediatricWeight)).toFixed(0)} mL IV/IO</p>
                       <span className="text-[9px] text-slate-400 block mt-0.5">20 mL/kg</span>
                     </div>
                     <div className="bg-white dark:bg-slate-900 border border-sky-100/60 p-2 rounded hover:shadow-sm transition-all">
                       <span className="font-semibold text-sky-600 block text-[10px]">Atropine IV/IO</span>
-                      <p className="text-slate-700 dark:text-slate-300 font-bold mt-0.5 text-xs">{Math.max(0.1, 0.02 * pediatricWeight).toFixed(2)} mg</p>
+                      <p className="text-slate-700 dark:text-slate-300 font-bold mt-0.5 text-xs">{Math.max(0.1, 0.02 * (pediatricWeight === "" ? (getAPLSEstimate(currentCase.patient.age) as number) : pediatricWeight)).toFixed(2)} mg</p>
                       <span className="text-[9px] text-slate-400 block mt-0.5">0.02 mg/kg (min 0.1 mg)</span>
                     </div>
                   </div>
                 </div>
               )}
 
-              {/* Extracted & Prescribed Medications Section (from Voice Scribe AI Extraction) */}
+              {/* Extracted & Prescribed Medications Section (from Voice Scribe AI Extraction)  */}
               <div className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 space-y-3">
                 <div className="flex items-center justify-between border-b pb-2 border-slate-200 dark:border-slate-800">
                   <div className="flex items-center gap-2">
@@ -5413,7 +5001,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                 )}
               </div>
 
-              {/* Add form */}
+              {/* Add form  */}
               <div className="bg-slate-50 dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
                 <div>
                   <label className="block text-[11px] font-semibold text-slate-500 uppercase mb-1">Medication / Procedure</label>
@@ -5460,7 +5048,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                 </button>
               </div>
 
-              {/* Table list with IPSG High-alert Verification Tags (JCI standard) */}
+              {/* Table list with IPSG High-alert Verification Tags (JCI standard)  */}
               <div className="overflow-x-auto border rounded-xl border-slate-200 dark:border-slate-800">
                 <table className="w-full text-left border-collapse text-xs">
                   <thead>
@@ -5525,7 +5113,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                 </table>
               </div>
 
-              {/* Other Medications */}
+              {/* Other Medications  */}
               <div className="space-y-1 mt-4">
                 <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">
                   Other / Outpatient Medications Notes
@@ -5538,11 +5126,11 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                     onChange={(e) => setCurrentCase(prev => ({ ...prev, otherMedications: e.target.value }))}
                     className="flex-1 px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-xs text-slate-900 dark:text-slate-100"
                   />
-                  <SpeechMicButton onTranscript={(txt) => setCurrentCase(prev => ({ ...prev, otherMedications: (prev.otherMedications || "") + " " + txt }))} />
+                  <VoiceRecorder renderMode="compact-button" onTranscript={(txt) => setCurrentCase(prev => ({ ...prev, otherMedications: (prev.otherMedications || "") + " " + txt }))} />
                 </div>
               </div>
 
-              {/* Infusions & IV Fluids Log */}
+              {/* Infusions & IV Fluids Log  */}
               <div className="pt-4 border-t border-slate-150 dark:border-slate-850 space-y-4">
                 <h4 className="text-xs font-bold text-slate-800 dark:text-white uppercase tracking-wide">
                   Infusions & IV Fluids Log
@@ -5597,7 +5185,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                   </button>
                 </div>
 
-                {/* Infusion List Table */}
+                {/* Infusion List Table  */}
                 <div className="overflow-x-auto border rounded-xl border-slate-200 dark:border-slate-800 text-xs">
                   <table className="w-full text-left border-collapse">
                     <thead>
@@ -5638,13 +5226,13 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                 </div>
               </div>
 
-              {/* Procedures Checkboxes */}
+              {/* Procedures Checkboxes  */}
               <div className="pt-4 border-t border-slate-150 dark:border-slate-850 space-y-3 text-xs">
                 <h4 className="text-xs font-bold text-slate-800 dark:text-white uppercase tracking-wide">
                   Procedures Checked / Performed
                 </h4>
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4 bg-slate-50 dark:bg-slate-900 p-4 border border-slate-200 dark:border-slate-850 rounded-xl">
-                  {/* GU Section */}
+                  {/* GU Section  */}
                   <div className="space-y-2">
                     <span className="font-bold text-[10px] text-indigo-600 dark:text-indigo-400 uppercase tracking-wider block border-b pb-1 border-indigo-100 dark:border-indigo-900">GU</span>
                     <label className="flex items-center gap-2 cursor-pointer text-[11px] font-semibold">
@@ -5662,7 +5250,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                     </label>
                   </div>
 
-                  {/* GI Section */}
+                  {/* GI Section  */}
                   <div className="space-y-2">
                     <span className="font-bold text-[10px] text-blue-600 dark:text-blue-400 uppercase tracking-wider block border-b pb-1 border-blue-100 dark:border-blue-900">GI</span>
                     <div className="flex flex-col gap-1.5">
@@ -5695,7 +5283,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                     </div>
                   </div>
 
-                  {/* Wound Section */}
+                  {/* Wound Section  */}
                   <div className="space-y-2">
                     <span className="font-bold text-[10px] text-emerald-600 dark:text-emerald-400 uppercase tracking-wider block border-b pb-1 border-emerald-100 dark:border-emerald-900">Wound</span>
                     <div className="flex flex-col gap-1.5">
@@ -5728,7 +5316,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                     </div>
                   </div>
 
-                  {/* Ortho Section */}
+                  {/* Ortho Section  */}
                   <div className="space-y-2">
                     <span className="font-bold text-[10px] text-amber-600 dark:text-amber-400 uppercase tracking-wider block border-b pb-1 border-amber-100 dark:border-amber-900">Ortho</span>
                     <div className="flex flex-col gap-1.5">
@@ -5774,17 +5362,18 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                       onChange={(e) => setCurrentCase(prev => ({ ...prev, otherProcedures: e.target.value }))}
                       className="flex-1 px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-xs text-slate-900 dark:text-slate-100"
                     />
-                    <SpeechMicButton onTranscript={(txt) => setCurrentCase(prev => ({ ...prev, otherProcedures: (prev.otherProcedures || "") + " " + txt }))} />
+                    <VoiceRecorder renderMode="compact-button" onTranscript={(txt) => setCurrentCase(prev => ({ ...prev, otherProcedures: (prev.otherProcedures || "") + " " + txt }))} />
                   </div>
                 </div>
               </div>
             </div>
           )}
 
-          {/* Progress Notes Tab */}
+          {/* Progress Notes Tab  */}
           {activeTab === "notes" && (
             <div className="space-y-4">
-              <h3 className="text-sm font-bold text-slate-800 dark:text-white border-b pb-2 uppercase tracking-wide">Continuous Progress Notes Log</h3>
+              <div className="flex justify-end mb-2"><SaveSectionButton onSave={handleSave} /></div>
+<h3 className="text-sm font-bold text-slate-800 dark:text-white border-b pb-2 uppercase tracking-wide">Continuous Progress Notes Log</h3>
               
               <div className="space-y-2">
                 <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400">
@@ -5798,16 +5387,17 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                     onChange={(e) => setCurrentCase(prev => ({ ...prev, progressNotes: e.target.value }))}
                     className="flex-1 px-4 py-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500 font-mono"
                   />
-                  <SpeechMicButton onTranscript={(txt) => setCurrentCase(prev => ({ ...prev, progressNotes: (prev.progressNotes || "") + " " + txt }))} />
+                  <VoiceRecorder renderMode="compact-button" onTranscript={(txt) => setCurrentCase(prev => ({ ...prev, progressNotes: (prev.progressNotes || "") + " " + txt }))} />
                 </div>
               </div>
             </div>
           )}
 
-          {/* AI Clinical Decision Support Tab */}
+          {/* AI Clinical Decision Support Tab  */}
           {activeTab === "treatment" && (
             <div className="space-y-6 mt-8 pt-8 border-t-2 border-dashed border-slate-200 dark:border-slate-800">
-              <div className="border-b pb-3 flex flex-wrap items-center justify-between gap-4">
+              <div className="flex justify-end mb-2"><SaveSectionButton onSave={handleSave} /></div>
+<div className="border-b pb-3 flex flex-wrap items-center justify-between gap-4">
                 <div>
                   <h3 className="text-sm font-bold text-slate-800 dark:text-white uppercase tracking-wide">ErMate Differential & CDS Support</h3>
                   <p className="text-xs text-slate-400 mt-0.5">Evaluate diagnostic differentials and citations using secure LLM models.</p>
@@ -5832,7 +5422,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                 </button>
               </div>
 
-              {/* Disclaimer Alert */}
+              {/* Disclaimer Alert  */}
               <div className="bg-amber-50/50 border border-amber-200 dark:bg-amber-950/20 dark:border-amber-900/60 p-4 rounded-xl text-xs text-amber-800 dark:text-amber-300 leading-relaxed flex items-start gap-2">
                 <ShieldAlert className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
                 <div>
@@ -5840,7 +5430,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                 </div>
               </div>
 
-              {/* Results */}
+              {/* Results  */}
               {currentCase.differentials.length === 0 ? (
                 <div className="p-8 text-center border-2 border-dashed border-slate-200 dark:border-slate-800 rounded-xl">
                   <Sparkles className="w-10 h-10 mx-auto text-slate-300 dark:text-slate-700 mb-3" />
@@ -5874,7 +5464,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                       </p>
 
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 text-[11px] font-mono">
-                        {/* Next Steps */}
+                        {/* Next Steps  */}
                         <div className="space-y-1 bg-white dark:bg-slate-950 p-3 rounded-lg border border-slate-200/50 dark:border-slate-850">
                           <span className="font-semibold text-slate-400 text-[10px] uppercase tracking-wide">Next steps / Suggested Orders</span>
                           <ul className="list-disc pl-4 space-y-0.5 text-slate-600 dark:text-slate-400 mt-1">
@@ -5882,7 +5472,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                           </ul>
                         </div>
 
-                        {/* Citations */}
+                        {/* Citations  */}
                         <div className="space-y-1 bg-white dark:bg-slate-950 p-3 rounded-lg border border-slate-200/50 dark:border-slate-850">
                           <span className="font-semibold text-slate-400 text-[10px] uppercase tracking-wide">Guideline References / Citations</span>
                           <ul className="list-disc pl-4 space-y-0.5 text-slate-600 dark:text-slate-400 mt-1">
@@ -5897,11 +5487,11 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
             </div>
           )}
 
-          {/* Clinical Rounds & Case Debrief Tab */}
+          {/* Clinical Rounds & Case Debrief Tab  */}
           {activeTab === "rounds" && (
             <div className="space-y-6 animate-fade-in text-xs">
               
-              {/* Header block */}
+              {/* Header block  */}
               <div className="border-b pb-3.5 flex flex-col md:flex-row md:items-center justify-between gap-3">
                 <div>
                   <h3 className="text-sm font-bold text-slate-800 dark:text-white uppercase tracking-wide flex items-center gap-2">
@@ -5919,7 +5509,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                 </div>
               </div>
 
-              {/* How To Use & Purpose Guide Box */}
+              {/* How To Use & Purpose Guide Box  */}
               <div className="bg-indigo-50/70 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-850 rounded-2xl p-4 md:p-5 text-xs text-indigo-950 dark:text-indigo-100 space-y-3 transition-all">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
@@ -5972,7 +5562,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                 )}
               </div>
 
-              {/* Lens Selection Bar */}
+              {/* Lens Selection Bar  */}
               <div className="flex overflow-x-auto scrollbar-thin pb-2 gap-1.5 no-print">
                 {[
                   { id: "first-principles", label: "First Principles", icon: Brain, desc: "Fundamental physiological deconstruction" },
@@ -6009,13 +5599,13 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                 })}
               </div>
 
-              {/* Main Content Layout */}
+              {/* Main Content Layout  */}
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 
-                {/* Left Side: Clinical Debrief & Rounds Chat (2 Columns) */}
+                {/* Left Side: Clinical Debrief & Rounds Chat (2 Columns)  */}
                 <div className="lg:col-span-2 space-y-6">
                   
-                  {/* Analysis Content Panel */}
+                  {/* Analysis Content Panel  */}
                   <div className="bg-slate-50 dark:bg-slate-900/40 border border-slate-150 dark:border-slate-850 rounded-2xl p-5 space-y-4 shadow-xs">
                     
                     {roundsLoading ? (
@@ -6043,7 +5633,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                           </span>
                         </div>
 
-                        {/* Custom formatted Markdown container */}
+                        {/* Custom formatted Markdown container  */}
                         <div className="text-xs text-slate-700 dark:text-slate-300 leading-relaxed font-sans whitespace-pre-wrap select-text">
                           {(() => {
                             return roundsContent.split("\n").map((line, idx) => {
@@ -6118,7 +5708,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
 
                   </div>
 
-                  {/* Interactive Rounds Mentor Chat (Unlimited) */}
+                  {/* Interactive Rounds Mentor Chat (Unlimited)  */}
                   <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-850 rounded-2xl p-5 space-y-4">
                     <div className="flex items-center justify-between border-b pb-2.5">
                       <div className="flex items-center gap-2">
@@ -6151,7 +5741,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                       </div>
                     )}
 
-                    {/* Chat logs */}
+                    {/* Chat logs  */}
                     <div className="space-y-3 max-h-80 overflow-y-auto scrollbar-thin pr-1">
                       {roundsChatHistory.length === 0 && (
                         <div className="py-4 text-center text-slate-400 text-[11px] bg-slate-50 dark:bg-slate-900/50 rounded-xl p-4">
@@ -6199,7 +5789,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                       )}
                     </div>
 
-                    {/* Dynamic follow-up chips generated by AI */}
+                    {/* Dynamic follow-up chips generated by AI  */}
                     {roundsSuggestedQuestions && roundsSuggestedQuestions.length > 0 && (
                       <div className="space-y-1.5 pt-1.5">
                         <span className="text-[9px] font-extrabold text-slate-400 uppercase tracking-wider font-mono">
@@ -6223,10 +5813,10 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                       </div>
                     )}
 
-                    {/* Chat Input */}
+                    {/* Chat Input  */}
                     <div className="relative flex items-end gap-2 bg-white dark:bg-slate-900 p-2 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xs">
                       
-                      {/* 3-Dots Menu Button (More Actions) */}
+                      {/* 3-Dots Menu Button (More Actions)  */}
                       <div className="relative" ref={roundsMoreMenuRef}>
                         <button
                           type="button"
@@ -6237,7 +5827,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                           <MoreHorizontal className="w-4 h-4" />
                         </button>
 
-                        {/* Popup Dropdown Menu */}
+                        {/* Popup Dropdown Menu  */}
                         {showRoundsMoreMenu && (
                           <div className="absolute left-0 bottom-full mb-2 z-50 w-56 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xl p-1.5 animate-fade-in flex flex-col space-y-0.5">
                             <div className="px-2.5 py-1 text-[9px] font-extrabold text-slate-400 uppercase tracking-wider border-b border-slate-100 dark:border-slate-800/85 mb-1">
@@ -6270,7 +5860,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                         )}
                       </div>
 
-                      {/* Main Textarea */}
+                      {/* Main Textarea  */}
                       <div className="flex-1">
                         <textarea
                           ref={roundsTextareaRef}
@@ -6288,12 +5878,12 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                         />
                       </div>
 
-                      {/* Right side actions: WhatsApp-style dynamic Mic/Send toggle */}
+                      {/* Right side actions: WhatsApp-style dynamic Mic/Send toggle  */}
                       <div className="flex items-center gap-1 shrink-0 pb-0.5">
                         {roundsUserMessage.trim() === "" ? (
-                          <SpeechMicButton 
+                          <VoiceRecorder 
+                            renderMode="compact-button"
                             onTranscript={(txt) => setRoundsUserMessage(prev => prev ? `${prev} ${txt}` : txt)} 
-                            className="!w-10 !h-10 !rounded-full !bg-indigo-600 hover:!bg-indigo-700 !text-white dark:!text-white !border-none shadow-md flex items-center justify-center cursor-pointer transition-transform active:scale-95"
                           />
                         ) : (
                           <button
@@ -6314,10 +5904,10 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
 
                 </div>
 
-                {/* Right Side: High-Yield Summary & Private Clinical Memory Portfolio */}
+                {/* Right Side: High-Yield Summary & Private Clinical Memory Portfolio  */}
                 <div className="space-y-6">
                   
-                  {/* High-Yield Key Takeaway Box */}
+                  {/* High-Yield Key Takeaway Box  */}
                   {roundsKeyTakeaway && (
                     <div className="bg-gradient-to-br from-amber-50 to-orange-50/50 dark:from-amber-950/15 dark:to-orange-950/5 border border-amber-200/50 dark:border-amber-900/30 p-4.5 rounded-2xl space-y-2 animate-fade-in shadow-xs">
                       <div className="flex items-center gap-1.5">
@@ -6332,7 +5922,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                     </div>
                   )}
 
-                  {/* HIPAA Private Clinical Memory Sync */}
+                  {/* HIPAA Private Clinical Memory Sync  */}
                   <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-850 rounded-2xl p-5 space-y-4">
                     <div className="flex items-center gap-1.5 border-b pb-2">
                       <BookOpen className="w-4 h-4 text-indigo-500" />
@@ -6345,7 +5935,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                       Log this patient presentation's core physiological lesson to your lifelong, private learning ledger for self-reflection and professional progress logs.
                     </p>
 
-                    {/* Core Pearl Textarea */}
+                    {/* Core Pearl Textarea  */}
                     <div className="space-y-1">
                       <label className="block text-[10px] font-bold text-slate-400 font-mono uppercase tracking-wide">
                         Core Learning Pearl (Editable)
@@ -6359,7 +5949,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                       />
                     </div>
 
-                    {/* Physician reflections notebooks */}
+                    {/* Physician reflections notebooks  */}
                     <div className="space-y-1">
                       <label className="block text-[10px] font-bold text-slate-400 font-mono uppercase tracking-wide">
                         Private Physician Reflections (Optional)
@@ -6373,7 +5963,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                       />
                     </div>
 
-                    {/* Sync Action */}
+                    {/* Sync Action  */}
                     <button
                       type="button"
                       onClick={() => saveCaseToClinicalMemory()}
@@ -6409,7 +5999,94 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
 
         </div>
 
-        {/* Clinical Reference Widget */}
+        {/* Export + Finalize Actions Toolbar (End of Workflow)  */}
+        <div className="bg-white dark:bg-slate-950 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm space-y-3.5 no-print mb-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            {/* Group 3: Export Actions  */}
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[10px] font-black text-amber-600 dark:text-amber-400 uppercase tracking-wider font-mono">Export Actions:</span>
+              <button
+                type="button"
+                onClick={handleCopyCaseSheet}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-xl transition-all border ${
+                  copiedCaseText
+                    ? "bg-emerald-600 border-emerald-600 text-white"
+                    : "bg-amber-50 dark:bg-amber-950/20 hover:bg-amber-100 text-amber-800 dark:text-amber-300 border-amber-200 dark:border-amber-900/50"
+                }`}
+                title="Copy Case Sheet to Clipboard to paste directly into hospital EMR"
+              >
+                {copiedCaseText ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                {copiedCaseText ? "Copied to EMR!" : "Copy to EMR"}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => onViewPrintSheet ? onViewPrintSheet(currentCase.id) : setShowPdfModal(true)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 dark:bg-indigo-950/30 hover:bg-indigo-100 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 text-xs font-bold rounded-xl transition-all"
+                title="Preview Case Sheet as official printable PDF document"
+              >
+                <Eye className="w-3.5 h-3.5 text-indigo-600" />
+                View PDF
+              </button>
+
+              <button
+                type="button"
+                onClick={handleDownloadCaseSheet}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-100 dark:bg-slate-900 hover:bg-slate-200 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-800 text-xs font-bold rounded-xl transition-all"
+                title="Download Case Sheet as plain text file"
+              >
+                <Download className="w-3.5 h-3.5" />
+                Download
+              </button>
+
+              <button
+                type="button"
+                onClick={() => triggerPrintWithTip()}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-100 dark:bg-slate-900 hover:bg-slate-200 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-800 text-xs font-bold rounded-xl transition-all"
+              >
+                <Printer className="w-3.5 h-3.5" />
+                Print
+              </button>
+            </div>
+
+            {/* Group 4: Finalize Actions  */}
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="text-[10px] font-black text-emerald-600 dark:text-emerald-400 uppercase tracking-wider font-mono">Finalize:</span>
+              <button
+                type="button"
+                onClick={() => onNavigateToDischarge(currentCase.id)}
+                className="px-3.5 py-2 bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 text-xs font-bold rounded-xl transition-all"
+              >
+                Discharge Flow
+              </button>
+              {dischargeSyncStatus === "syncing" && (
+                <span className="text-[10px] text-purple-700 bg-purple-50 dark:bg-purple-950/40 border border-purple-200/50 px-2.5 py-1 rounded-full font-mono font-bold animate-pulse flex items-center gap-1">
+                  <RefreshCw className="w-3 h-3 animate-spin text-purple-600" />
+                  Syncing Discharge...
+                </span>
+              )}
+
+              <button
+                type="button"
+                onClick={handleSave}
+                className="px-4 py-2.5 bg-emerald-50 dark:bg-emerald-950/30 hover:bg-emerald-100 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 text-xs font-bold rounded-xl transition-all flex items-center gap-2 cursor-pointer transform hover:scale-[1.01] active:scale-[0.99]"
+              >
+                <Save className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                <span>Save Draft</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => { handleSave(); onBack(); }}
+                className="px-6 py-2.5 bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 hover:from-emerald-700 hover:to-teal-800 text-white text-xs font-black rounded-xl shadow-md hover:shadow-lg transition-all flex items-center gap-2 cursor-pointer transform hover:scale-[1.01] active:scale-[0.99] border border-emerald-500/50"
+              >
+                <Save className="w-4 h-4 text-emerald-200" />
+                <span>Save & Go to Dashboard</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Clinical Reference Widget  */}
         <div className="bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl p-4 text-xs space-y-2.5 no-print">
           <div className="flex items-center gap-1.5 font-bold text-slate-700 dark:text-slate-300">
             <BookOpen className="w-3.5 h-3.5" />
@@ -6420,13 +6097,13 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
               <div className="border-b border-slate-200/50 pb-1">
                 <strong className="text-sky-600 dark:text-sky-400">PALS Resuscitation Dose:</strong> Adrenaline 1:10,000 is <span className="font-bold text-slate-800 dark:text-slate-200">0.01 mg/kg (0.1 mL/kg) IV/IO</span>.
                 <div className="mt-1 bg-sky-50/50 dark:bg-sky-950/10 p-1 rounded border border-sky-100/50 dark:border-sky-900/30 text-[9px] text-sky-700 dark:text-sky-300 font-semibold">
-                  Calculated Dose ({pediatricWeight} kg): <span className="font-bold font-mono">{(0.01 * pediatricWeight).toFixed(2)} mg ({(0.1 * pediatricWeight).toFixed(1)} mL)</span>
+                  Calculated Dose ({pediatricWeight === "" ? getAPLSEstimate(currentCase.patient.age) : pediatricWeight} kg): <span className="font-bold font-mono">{(0.01 * (pediatricWeight === "" ? (getAPLSEstimate(currentCase.patient.age) as number) : pediatricWeight)).toFixed(2)} mg ({(0.1 * (pediatricWeight === "" ? (getAPLSEstimate(currentCase.patient.age) as number) : pediatricWeight)).toFixed(1)} mL)</span>
                 </div>
               </div>
               <div>
                 <strong className="text-sky-600 dark:text-sky-400">Defibrillation Energy:</strong> First shock: <span className="font-bold">2 J/kg</span>. Second: <span className="font-bold">4 J/kg</span>.
                 <div className="mt-1 bg-sky-50/50 dark:bg-sky-950/10 p-1 rounded border border-sky-100/50 dark:border-sky-900/30 text-[9px] text-sky-700 dark:text-sky-300 font-semibold">
-                  Energy ({pediatricWeight} kg): <span className="font-bold font-mono">{2 * pediatricWeight} J / {4 * pediatricWeight} J</span>
+                  Energy ({pediatricWeight === "" ? getAPLSEstimate(currentCase.patient.age) : pediatricWeight} kg): <span className="font-bold font-mono">{2 * (pediatricWeight === "" ? (getAPLSEstimate(currentCase.patient.age) as number) : pediatricWeight)} J / {4 * (pediatricWeight === "" ? (getAPLSEstimate(currentCase.patient.age) as number) : pediatricWeight)} J</span>
                 </div>
               </div>
             </div>
@@ -6444,7 +6121,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
 
       </div>
 
-      {/* 1. Voice Dictation Modal Simulation */}
+      {/* 1. Voice Dictation Modal Simulation  */}
       {showDictationModal && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fade-in no-print">
           <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl w-full max-w-lg p-5 md:p-6 shadow-2xl space-y-4">
@@ -6465,7 +6142,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
             </div>
 
             <div className="space-y-3">
-              {/* Language Selection */}
+              {/* Language Selection  */}
               <div>
                 <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wide mb-1.5">
                   Select Dictation / Speech Language
@@ -6505,18 +6182,24 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                   className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-purple-500 font-mono"
                 />
                 
-                {/* Voice toggle button */}
-                <button
-                  onClick={toggleRecording}
-                  className={`absolute right-3 bottom-3 p-2.5 rounded-full shadow-md transition-all ${
-                    isListening 
-                      ? "bg-rose-500 text-white animate-pulse" 
-                      : "bg-purple-600 text-white hover:bg-purple-700 hover:scale-105"
-                  }`}
-                  title={isListening ? "Stop Recording" : "Start Live Mic Dictation"}
-                >
-                  <Mic className="w-4.5 h-4.5" />
-                </button>
+                {/* Voice toggle button  */}
+                <div className="absolute right-3.5 bottom-3.5">
+                  <VoiceRecorder
+                    languageCode={dictationLang}
+                    renderMode="compact-button"
+                    onRecordingStateChange={(recording) => {
+                      if (recording && !isListening) {
+                        // Keep parent state in sync if needed for UI
+                        // startRecording(); 
+                        // Actually VoiceRecorder handles its own state, but we can set a dummy state if needed.
+                        // For now just let VoiceRecorder handle it.
+                      }
+                    }}
+                    onTranscript={(text) => {
+                      setSmartDictationText(prev => prev ? (prev.trim() + " " + text.trim()) : text.trim());
+                    }}
+                  />
+                </div>
               </div>
 
               {isListening && (
@@ -6529,7 +6212,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                 </p>
               )}
 
-              {/* Indian Language quick-simulate buttons */}
+              {/* Indian Language quick-simulate buttons  */}
               <div className="space-y-2 pt-2">
                 <span className="block text-[10px] font-extrabold text-slate-400 uppercase tracking-wider">
                   Test Indian Languages (Preloaded Demo Scenarios)
@@ -6611,7 +6294,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
         </div>
       )}
 
-      {/* 2. Document Scanning Modal Simulation */}
+      {/* 2. Document Scanning Modal Simulation  */}
       {showScanModal && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fade-in no-print">
           <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl w-full max-w-lg p-5 md:p-6 shadow-2xl space-y-4">
@@ -6680,16 +6363,16 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
         </div>
       )}
 
-      {/* Interactive UI Screen Close */}
+      {/* Interactive UI Screen Close  */}
       </div>
 
-      {/* Printable Document - Hidden on screen, shown only when printing */}
+      {/* Printable Document - Hidden on screen, shown only when printing  */}
       <div className="hidden print:block p-8 md:p-10 font-sans leading-relaxed text-[11px] text-slate-900 bg-white space-y-5 select-text max-w-full print:p-0">
         
         {currentCase.isPediatric ? (
           // BEAUTIFUL PEDIATRIC PRINT RECORD
           <div className="space-y-4">
-            {/* Header section matching clinical template layout */}
+            {/* Header section matching clinical template layout  */}
             <div className="border-b-4 border-double border-slate-800 pb-3 text-center space-y-1">
               <h2 className="text-sm md:text-base font-extrabold tracking-wide uppercase font-serif text-slate-950">
                 <strong>{displayHospitalName}</strong>
@@ -6707,7 +6390,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
               </h1>
             </div>
 
-            {/* Demographics */}
+            {/* Demographics  */}
             <div className="grid grid-cols-2 gap-y-2 gap-x-4 border border-slate-300 p-3 rounded-xl bg-slate-50/40 text-[10px]">
               <div className="space-y-1">
                 <p className="flex justify-between border-b border-slate-100 pb-0.5">
@@ -6720,7 +6403,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                 </p>
                 <p className="flex justify-between border-b border-slate-100 pb-0.5">
                   <span className="font-extrabold text-slate-500 uppercase"><strong>Weight:</strong></span>
-                  <span className="font-bold text-slate-950"><strong>{pediatricWeight} kg</strong></span>
+                  <span className="font-bold text-slate-950"><strong>{pediatricWeight === "" ? getAPLSEstimate(currentCase.patient.age) : pediatricWeight} kg</strong></span>
                 </p>
                 <p className="flex justify-between border-b border-slate-100 pb-0.5">
                   <span className="font-extrabold text-slate-500 uppercase"><strong>Address:</strong></span>
@@ -6755,7 +6438,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
               </div>
             </div>
 
-            {/* Presenting Complaints */}
+            {/* Presenting Complaints  */}
             <div className="space-y-1 text-[10px]">
               <span className="font-black text-slate-950 block uppercase tracking-wide border-b pb-0.5 border-slate-300">
                 <strong>Presenting Complaints</strong>
@@ -6765,21 +6448,34 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
               </p>
             </div>
 
-            {/* Primary Assessment Triangle (PAT) */}
+            {/* Primary Assessment Triangle (PAT)  */}
             <div className="space-y-1.5 text-[10px]">
               <span className="font-black text-slate-950 block uppercase tracking-wide border-b pb-0.5 border-slate-300">
-                <strong>Pediatric Assessment Triangle (PAT) - TICLS Appearance</strong>
+                <strong>Pediatric Assessment Triangle (PAT)</strong>
               </span>
-              <div className="border border-slate-300 rounded-xl p-3 bg-slate-50/20 grid grid-cols-2 gap-2 text-[10px]">
-                <p><strong>Tone:</strong> {currentCase.pediatricDetails?.patAppearanceTone || "Normal spontaneous tone"}</p>
-                <p><strong>Interactivity:</strong> {currentCase.pediatricDetails?.patAppearanceInteractivity || "Normal alert interactivity"}</p>
-                <p><strong>Consolability:</strong> {currentCase.pediatricDetails?.patAppearanceConsolability || "Easily consolable by parent"}</p>
-                <p><strong>Look/Gaze:</strong> {currentCase.pediatricDetails?.patAppearanceLookGaze || "Makes normal eye contact"}</p>
-                <p className="col-span-2"><strong>Speech/Cry:</strong> {currentCase.pediatricDetails?.patAppearanceSpeechCry || "Age-appropriate vocalizations"}</p>
+              <div className="border border-slate-300 rounded-xl p-3 bg-slate-50/20 space-y-2 text-[10px]">
+                <div>
+                  <strong className="text-slate-700 block mb-1 underline">Appearance (TICLS)</strong>
+                  <div className="grid grid-cols-2 gap-2">
+                    <p><strong>Tone:</strong> {currentCase.pediatricDetails?.patAppearanceTone || "Normal spontaneous tone"}</p>
+                    <p><strong>Interactivity:</strong> {currentCase.pediatricDetails?.patAppearanceInteractivity || "Normal alert interactivity"}</p>
+                    <p><strong>Consolability:</strong> {currentCase.pediatricDetails?.patAppearanceConsolability || "Easily consolable by parent"}</p>
+                    <p><strong>Look/Gaze:</strong> {currentCase.pediatricDetails?.patAppearanceLookGaze || "Makes normal eye contact"}</p>
+                    <p className="col-span-2"><strong>Speech/Cry:</strong> {currentCase.pediatricDetails?.patAppearanceSpeechCry || "Age-appropriate vocalizations"}</p>
+                  </div>
+                </div>
+                <div>
+                  <strong className="text-orange-700 block mb-1 underline">Work of Breathing</strong>
+                  <p>{currentCase.pediatricDetails?.patWorkOfBreathing || "Normal, no distress"}</p>
+                </div>
+                <div>
+                  <strong className="text-red-700 block mb-1 underline">Circulation to Skin</strong>
+                  <p>{currentCase.pediatricDetails?.patCirculation || "Pink, warm"}</p>
+                </div>
               </div>
             </div>
 
-            {/* ABCD Vital Assessment */}
+            {/* ABCD Vital Assessment  */}
             <div className="space-y-1.5 text-[10px]">
               <span className="font-black text-slate-950 block uppercase tracking-wide border-b pb-0.5 border-slate-300">
                 <strong>Primary Survey (Airway, Breathing, Circulation, Disability, Exposure)</strong>
@@ -6832,7 +6528,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
               </div>
             </div>
 
-            {/* Secondary Survey History & Examination */}
+            {/* Secondary Survey History & Examination  */}
             <div className="space-y-1.5 text-[10px]">
               <span className="font-black text-slate-950 block uppercase tracking-wide border-b pb-0.5 border-slate-300">
                 <strong>Secondary Assessment (Focused Pediatric History & Examination)</strong>
@@ -6860,7 +6556,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
               </div>
             </div>
 
-            {/* Course, Diagnosis & Disposition */}
+            {/* Course, Diagnosis & Disposition  */}
             <div className="space-y-1.5 text-[10px]">
               <span className="font-black text-slate-950 block uppercase tracking-wide border-b pb-0.5 border-slate-300">
                 <strong>Course, Treatment, & Provisional Diagnosis</strong>
@@ -6873,7 +6569,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
               </div>
             </div>
 
-            {/* Disposition & Clinicians */}
+            {/* Disposition & Clinicians  */}
             <div className="grid grid-cols-3 gap-4 border border-slate-300 p-3 rounded-xl bg-slate-50/40 text-[10px] mt-4">
               <div>
                 <strong>Disposition / Condition:</strong> {currentCase.pediatricDetails?.disposition || "Ward"} / {currentCase.pediatricDetails?.conditionAtShift || "Stable"}
@@ -6889,7 +6585,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
         ) : (
           // STANDARD ADULT PRINT RECORD
           <>
-            {/* Header section matching clinical template layout */}
+            {/* Header section matching clinical template layout  */}
             <div className="border-b-4 border-double border-slate-800 pb-3 text-center space-y-1">
               <h2 className="text-sm md:text-base font-extrabold tracking-wide uppercase font-serif text-slate-950">
                 <strong>{displayHospitalName}</strong>
@@ -6907,7 +6603,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
               </h1>
             </div>
 
-            {/* Patient Demographics & MLC info */}
+            {/* Patient Demographics & MLC info  */}
             <div className="grid grid-cols-2 gap-y-2 gap-x-4 border border-slate-300 p-3.5 rounded-xl bg-slate-50/40 text-[10px]">
               <div className="space-y-1">
                 <p className="flex justify-between border-b border-slate-100 pb-0.5">
@@ -6963,7 +6659,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
               </div>
             </div>
 
-            {/* Presenting Complaint */}
+            {/* Presenting Complaint  */}
             <div className="space-y-1">
               <span className="font-black text-[10px] text-slate-900 block uppercase tracking-wide border-b pb-0.5 border-slate-300">
                 <strong>Presenting Complaint</strong>
@@ -6973,7 +6669,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
               </p>
             </div>
 
-            {/* Primary Assessment */}
+            {/* Primary Assessment  */}
             <div className="space-y-1.5">
               <span className="font-black text-slate-950 block uppercase text-[10px] tracking-wide border-b pb-0.5 border-slate-400">
                 <strong>Primary Assessment</strong>
@@ -6987,7 +6683,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
               </div>
             </div>
 
-            {/* Adjuvants to Primary */}
+            {/* Adjuvants to Primary  */}
             <div className="space-y-1.5">
               <span className="font-black text-slate-950 block uppercase text-[10px] tracking-wide border-b pb-0.5 border-slate-400">
                 <strong>Adjuvants to Primary</strong>
@@ -6999,7 +6695,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
               </div>
             </div>
 
-            {/* History of Present Illness */}
+            {/* History of Present Illness  */}
             <div className="space-y-1">
               <span className="font-black text-slate-950 block uppercase text-[10px] tracking-wide border-b pb-0.5 border-slate-400">
                 <strong>History of Present Illness</strong>
@@ -7009,7 +6705,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
               </p>
             </div>
 
-            {/* Secondary Survey */}
+            {/* Secondary Survey  */}
             <div className="space-y-1.5">
               <span className="font-black text-slate-950 block uppercase text-[10px] tracking-wide border-b pb-0.5 border-slate-400">
                 <strong>Secondary Survey</strong>
@@ -7027,40 +6723,47 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
               </div>
             </div>
 
-            {/* General Examination & Systemic Examination */}
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-1.5">
-                <span className="font-black text-slate-950 block uppercase text-[10px] tracking-wide border-b pb-0.5 border-slate-400">
-                  <strong>General Examination</strong>
-                </span>
-                <p className="p-2 bg-slate-50 rounded text-[10px] leading-relaxed">
-                  Pallor: Absent, Icterus: Absent, Clubbing: Absent, Lymphadenopathy: None, Thyroid: Normal, Varicose Veins: None. (P/I/C/C/L/E)
-                </p>
-              </div>
-              <div className="space-y-1.5">
-                <span className="font-black text-slate-950 block uppercase text-[10px] tracking-wide border-b pb-0.5 border-slate-400">
-                  <strong>Extremities and Back</strong>
-                </span>
-                <p className="p-2 bg-slate-50 rounded text-[10px] leading-relaxed">
-                  No visible abnormalities at the time of examination.
-                </p>
-              </div>
-            </div>
+            {/* General Examination & Systemic Examination  */}
+            {(() => {
+              const sec = parseSecondaryAssessment(currentCase.secondaryAssessment || "");
+              return (
+                <>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-1.5">
+                      <span className="font-black text-slate-950 block uppercase text-[10px] tracking-wide border-b pb-0.5 border-slate-400">
+                        <strong>General Examination</strong>
+                      </span>
+                      <p className="p-2 bg-slate-50 rounded text-[10px] leading-relaxed">
+                        {sec.General || "Pallor: Absent, Icterus: Absent, Clubbing: Absent, Lymphadenopathy: None, Thyroid: Normal, Varicose Veins: None. (P/I/C/C/L/E)"}
+                      </p>
+                    </div>
+                    <div className="space-y-1.5">
+                      <span className="font-black text-slate-950 block uppercase text-[10px] tracking-wide border-b pb-0.5 border-slate-400">
+                        <strong>Extremities and Back</strong>
+                      </span>
+                      <p className="p-2 bg-slate-50 rounded text-[10px] leading-relaxed">
+                        {sec.Extremities || "No visible abnormalities at the time of examination."}
+                      </p>
+                    </div>
+                  </div>
 
-            {/* Systemic Examination */}
-            <div className="space-y-1.5">
-              <span className="font-black text-slate-950 block uppercase text-[10px] tracking-wide border-b pb-0.5 border-slate-400">
-                <strong>Systemic Examination</strong>
-              </span>
-              <div className="border border-slate-300 rounded-xl p-3 bg-slate-50/20 space-y-1.5 text-[10px]">
-                <p><strong>CVS:</strong> - S1, S2: Normal, Pulse: Regular {currentCase.vitals.hr || "75"} bpm, Apex Beat: Normal, localized in the 5th intercostal space, midclavicular line. Precordial Heave: Absent, Added Sounds: None, Murmurs: None</p>
-                <p><strong>CHEST:</strong> - Expansion: Equal bilaterally, Percussion: Resonant bilaterally, Breath Sounds: Vesicular, equal bilaterally, Vocal Resonance: Normal, Added Sounds: None.</p>
-                <p><strong>Abdomen:</strong> - Umbilical: Central, no abnormalities, Organomegaly: None, Percussion: Normal tympany, no dullness. Bowel Sounds: Normal, active in all quadrants, External Genitalia: Normal, no abnormalities. Hernial Orifices: No bulging, Per Rectal: No tenderness, normal tone, Per Vaginal: Normal findings.</p>
-                <p><strong>CNS:</strong> - Higher Mental Functions: Normal, alert and oriented, Cranial Nerves: Intact (I-XII), Sensory System: Normal, intact to light touch, pain, and temperature, Motor System: Normal muscle tone, strength 5/5 in all limbs, Reflex: Normal deep tendon reflexes (2+), no pathological reflexes, Romberg Sign: Negative, Cerebellar Signs: No dysmetria, normal finger-nose test, Signs of Meningeal Irritation: None, Gait: Normal, steady, no ataxia, Carotid Bruit: None.</p>
-              </div>
-            </div>
+                  {/* Systemic Examination  */}
+                  <div className="space-y-1.5">
+                    <span className="font-black text-slate-950 block uppercase text-[10px] tracking-wide border-b pb-0.5 border-slate-400">
+                      <strong>Systemic Examination</strong>
+                    </span>
+                    <div className="border border-slate-300 rounded-xl p-3 bg-slate-50/20 space-y-1.5 text-[10px]">
+                      <p><strong>CVS:</strong> {sec.CVS || `- S1, S2: Normal, Pulse: Regular ${currentCase.vitals.hr || "75"} bpm, Apex Beat: Normal, localized in the 5th intercostal space, midclavicular line. Precordial Heave: Absent, Added Sounds: None, Murmurs: None`}</p>
+                      <p><strong>CHEST / RS:</strong> {sec.RS || `- Expansion: Equal bilaterally, Percussion: Resonant bilaterally, Breath Sounds: Vesicular, equal bilaterally, Vocal Resonance: Normal, Added Sounds: None.`}</p>
+                      <p><strong>Abdomen (PA):</strong> {sec.PA || `- Umbilical: Central, no abnormalities, Organomegaly: None, Percussion: Normal tympany, no dullness. Bowel Sounds: Normal, active in all quadrants, External Genitalia: Normal, no abnormalities. Hernial Orifices: No bulging, Per Rectal: No tenderness, normal tone, Per Vaginal: Normal findings.`}</p>
+                      <p><strong>CNS:</strong> {sec.CNS || `- Higher Mental Functions: Normal, alert and oriented, Cranial Nerves: Intact (I-XII), Sensory System: Normal, intact to light touch, pain, and temperature, Motor System: Normal muscle tone, strength 5/5 in all limbs, Reflex: Normal deep tendon reflexes (2+), no pathological reflexes, Romberg Sign: Negative, Cerebellar Signs: No dysmetria, normal finger-nose test, Signs of Meningeal Irritation: None, Gait: Normal, steady, no ataxia, Carotid Bruit: None.`}</p>
+                    </div>
+                  </div>
+                </>
+              );
+            })()}
 
-            {/* Psychological Assessment */}
+            {/* Psychological Assessment  */}
             <div className="space-y-1.5">
               <span className="font-black text-slate-950 block uppercase text-[10px] tracking-wide border-b pb-0.5 border-slate-400">
                 <strong>Psychological Assessment</strong>
@@ -7076,7 +6779,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
               </div>
             </div>
 
-            {/* Investigations */}
+            {/* Investigations  */}
             <div className="space-y-1.5">
               <span className="font-black text-slate-950 block uppercase text-[10px] tracking-wide border-b pb-0.5 border-slate-400">
                 <strong>Investigations</strong>
@@ -7099,7 +6802,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
               </div>
             </div>
 
-            {/* Treatment Plan & Active Meds */}
+            {/* Treatment Plan & Active Meds  */}
             <div className="grid grid-cols-2 gap-4 text-[10px]">
               <div className="space-y-1">
                 <span className="font-black text-slate-950 block uppercase text-[10px] tracking-wide border-b pb-0.5 border-slate-400">
@@ -7132,7 +6835,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
               </div>
             </div>
 
-            {/* Progress Notes */}
+            {/* Progress Notes  */}
             <div className="space-y-1">
               <span className="font-black text-slate-950 block uppercase text-[10px] tracking-wide border-b pb-0.5 border-slate-400">
                 <strong>Continuous Progress Notes Log</strong>
@@ -7142,7 +6845,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
               </p>
             </div>
 
-            {/* Disposition & Clinicians */}
+            {/* Disposition & Clinicians  */}
             <div className="grid grid-cols-3 gap-4 border border-slate-300 p-3.5 rounded-xl bg-slate-50/40 text-[10px] mt-4">
               <div>
                 <strong>Disposition:</strong> {currentCase.dispositionDetails?.dispositionType || "Discharge"}
@@ -7160,12 +6863,12 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
 
       </div>
 
-      {/* 3. Post-Save Clinical Debrief Nudge Modal */}
+      {/* 3. Post-Save Clinical Debrief Nudge Modal  */}
       {showPostSaveModal && (
         <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-fade-in no-print">
           <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-3xl w-full max-w-xl p-6 shadow-2xl space-y-6">
             
-            {/* Success Banner */}
+            {/* Success Banner  */}
             <div className="text-center space-y-2">
               <div className="w-12 h-12 bg-emerald-100 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 rounded-full flex items-center justify-center mx-auto shadow-sm">
                 <Check className="w-6 h-6 stroke-[3]" />
@@ -7178,7 +6881,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
               </p>
             </div>
 
-            {/* Post-save nudge content */}
+            {/* Post-save nudge content  */}
             <div className="bg-slate-50 dark:bg-slate-900/40 border border-slate-150 dark:border-slate-850 rounded-2xl p-4 space-y-4">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-1.5">
@@ -7190,7 +6893,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                 <span className="text-[9px] text-slate-400 font-mono">Select any lens for immediate debrief</span>
               </div>
 
-              {/* Grid of 3 quick lenses */}
+              {/* Grid of 3 quick lenses  */}
               <div className="grid grid-cols-3 gap-3">
                 {[
                   { id: "first-principles" as const, label: "First Principles", icon: Brain, desc: "Physiologic deconstruction" },
@@ -7221,7 +6924,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
               </div>
             </div>
 
-            {/* Quick Clinical Memory Save */}
+            {/* Quick Clinical Memory Save  */}
             <div className="bg-gradient-to-br from-indigo-50 to-blue-50/40 dark:from-indigo-950/15 dark:to-blue-950/5 border border-indigo-150 dark:border-indigo-900/30 p-4 rounded-2xl flex items-center justify-between gap-4">
               <div className="space-y-1">
                 <h4 className="font-bold text-indigo-950 dark:text-indigo-400 uppercase tracking-wide text-[10px]">
@@ -7254,7 +6957,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
               </button>
             </div>
 
-            {/* Modal Actions */}
+            {/* Modal Actions  */}
             <div className="flex justify-end gap-3 pt-2">
               <button
                 type="button"
@@ -7282,11 +6985,11 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
         </div>
       )}
 
-      {/* View Case Sheet PDF Modal Preview Overlay */}
+      {/* View Case Sheet PDF Modal Preview Overlay  */}
       {showPdfModal && (
         <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 md:p-6 animate-fade-in no-print">
           <div className="bg-white dark:bg-slate-900 w-full max-w-4xl h-[92vh] rounded-2xl shadow-2xl overflow-hidden flex flex-col border border-slate-200 dark:border-slate-800">
-            {/* Modal Top Control Header */}
+            {/* Modal Top Control Header  */}
             <div className="px-5 py-3.5 bg-slate-900 text-white flex items-center justify-between shrink-0 border-b border-slate-800">
               <div className="flex items-center gap-2.5">
                 <div className="p-2 bg-indigo-600/30 border border-indigo-500/40 rounded-xl text-indigo-400">
@@ -7329,10 +7032,10 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
               </div>
             </div>
 
-            {/* Modal Document Container */}
+            {/* Modal Document Container  */}
             <div className="flex-1 overflow-y-auto p-4 md:p-8 bg-slate-100 dark:bg-slate-950 flex justify-center">
               <div className="bg-white text-slate-900 p-6 md:p-10 rounded-xl shadow-lg border border-slate-200 w-full max-w-3xl font-sans text-[11px] leading-relaxed space-y-5 select-text">
-                {/* Header section matching clinical template layout */}
+                {/* Header section matching clinical template layout  */}
                 <div className="border-b-4 border-double border-slate-800 pb-3 text-center space-y-1">
                   <h2 className="text-sm md:text-base font-extrabold tracking-wide uppercase font-serif text-slate-950">
                     <strong>{displayHospitalName}</strong>
@@ -7350,7 +7053,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                   </h1>
                 </div>
 
-                {/* Patient Demographics Box */}
+                {/* Patient Demographics Box  */}
                 <div className="grid grid-cols-2 gap-y-2 gap-x-4 border border-slate-300 p-3 rounded-xl bg-slate-50/40 text-[10px]">
                   <div className="space-y-1">
                     <p className="flex justify-between border-b border-slate-100 pb-0.5">
@@ -7390,7 +7093,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                   </div>
                 </div>
 
-                {/* Presenting Complaints & Vitals */}
+                {/* Presenting Complaints & Vitals  */}
                 <div className="space-y-2">
                   <h4 className="font-black text-slate-900 uppercase border-b border-slate-300 pb-0.5 text-[10px]">
                     Presenting Complaint & Initial Vitals
@@ -7407,7 +7110,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                   </div>
                 </div>
 
-                {/* Primary Survey (ABCDE) */}
+                {/* Primary Survey (ABCDE)  */}
                 <div className="space-y-1">
                   <h4 className="font-black text-slate-900 uppercase border-b border-slate-300 pb-0.5 text-[10px]">
                     Primary Survey (ABCDE Assessment)
@@ -7421,7 +7124,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                   </div>
                 </div>
 
-                {/* SAMPLE History */}
+                {/* SAMPLE History  */}
                 <div className="space-y-1">
                   <h4 className="font-black text-slate-900 uppercase border-b border-slate-300 pb-0.5 text-[10px]">
                     SAMPLE History & Clinical Evolution
@@ -7435,7 +7138,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                   </div>
                 </div>
 
-                {/* Treatments Administered */}
+                {/* Treatments Administered  */}
                 {currentCase.treatments && currentCase.treatments.length > 0 && (
                   <div className="space-y-1">
                     <h4 className="font-black text-slate-900 uppercase border-b border-slate-300 pb-0.5 text-[10px]">
@@ -7464,7 +7167,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                   </div>
                 )}
 
-                {/* Disposition & Signatures */}
+                {/* Disposition & Signatures  */}
                 <div className="space-y-2 pt-2 border-t border-slate-300">
                   <div className="flex justify-between text-[10px]">
                     <p><strong>Disposition Outcome:</strong> <span className="uppercase font-bold text-indigo-800">{currentCase.dispositionDetails?.dispositionType || "Discharged"}</span></p>

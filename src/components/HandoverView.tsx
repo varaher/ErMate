@@ -5,8 +5,9 @@ import {
   AlertTriangle, ShieldAlert, ChevronLeft, X, Camera, UploadCloud, Sparkles, Send,
   MoreHorizontal, BookmarkCheck, MessageSquare
 } from "lucide-react";
-import SpeechMicButton from "./SpeechMicButton";
+import VoiceRecorder from "./shared/VoiceRecorder";
 import { sanitizeDoctorError } from "../utils/sanitizeError";
+import { sanitizeForFirestore } from "../utils/firestoreSanitizer";
 import { triggerPrintWithTip } from "../utils/printWithTip";
 import { ClinicalCase, UserProfile, HandoverRecord, QuickPastePatient, InvestigationItem, HandoverPatient, DirectDischargeSummaryItem } from "../types";
 import { HandoverCard } from "./HandoverCard";
@@ -23,8 +24,8 @@ interface HandoverViewProps {
   setHandovers: React.Dispatch<React.SetStateAction<HandoverRecord[]>>;
   onNavigateToTab?: (tabId: string) => void;
   isDarkMode?: boolean;
-  activeSubTab?: "registry" | "quickpaste" | "discharge_direct";
-  setActiveSubTab?: (tab: "registry" | "quickpaste" | "discharge_direct") => void;
+  activeSubTab?: "registry" | "quickpaste";
+  setActiveSubTab?: (tab: "registry" | "quickpaste") => void;
   quickPasteList?: QuickPastePatient[];
   setQuickPasteList?: React.Dispatch<React.SetStateAction<QuickPastePatient[]>>;
 }
@@ -393,10 +394,10 @@ export default function HandoverView({
   quickPasteList: propQuickPasteList,
   setQuickPasteList: propSetQuickPasteList
 }: HandoverViewProps) {
-  // Main view navigation: "registry" (Active Cases), "quickpaste" (EMR Quick Paste), or "discharge_direct" (Direct Discharge Summary)
-  const [localActiveSubTab, setLocalActiveSubTab] = useState<"registry" | "quickpaste" | "discharge_direct">("registry");
+  // Main view navigation: "registry" (Active Cases) or "quickpaste" (EMR Quick Paste)
+  const [localActiveSubTab, setLocalActiveSubTab] = useState<"registry" | "quickpaste">("registry");
   const activeSubTab = propActiveSubTab !== undefined ? propActiveSubTab : localActiveSubTab;
-  const setActiveSubTab = propSetActiveSubTab !== undefined ? propSetActiveSubTab : setLocalActiveSubTab;
+  const setActiveSubTab = propSetActiveSubTab !== undefined ? propSetActiveSubTab : setLocalActiveSubTab as any;
 
   // DPDP Shield Protection Info Toast State
   const [phiShieldInfo, setPhiShieldInfo] = useState<{ count: number; phiFound: string[]; details: Record<string, number> } | null>(null);
@@ -405,6 +406,27 @@ export default function HandoverView({
   const [selectedRegistryIds, setSelectedRegistryIds] = useState<string[]>(
     cases.filter(c => c.status === "Active").map(c => c.id)
   );
+
+  const seenRegistryIdsRef = useRef<Set<string>>(new Set(cases.filter(c => c.status === "Active").map(c => c.id)));
+
+  useEffect(() => {
+    const activeCaseIds = cases.filter(c => c.status === "Active").map(c => c.id);
+    
+    setSelectedRegistryIds(prev => {
+      let changed = false;
+      const newSelection = [...prev];
+      for (const id of activeCaseIds) {
+        if (!seenRegistryIdsRef.current.has(id)) {
+          seenRegistryIdsRef.current.add(id);
+          if (!newSelection.includes(id)) {
+            newSelection.push(id);
+            changed = true;
+          }
+        }
+      }
+      return changed ? newSelection : prev;
+    });
+  }, [cases]);
 
   // Quick Paste lists state (synced with Firestore if provided via props, else local state)
   const [localQuickPasteList, setLocalQuickPasteList] = useState<QuickPastePatient[]>(() => {
@@ -428,19 +450,29 @@ export default function HandoverView({
     return quickPasteList.map(qp => qp.id);
   });
 
+  const seenQuickPasteIdsRef = useRef<Set<string>>(new Set(quickPasteList.map(p => p.id)));
+
   // Auto-sync selectedQuickPasteIds when quickPasteList is modified
   useEffect(() => {
     const quickPasteIds = quickPasteList.map(p => p.id);
     setSelectedQuickPasteIds(prev => {
-      const newIds = quickPasteIds.filter(id => !prev.includes(id));
-      if (newIds.length > 0) {
-        return [...prev, ...newIds];
+      let changed = false;
+      const newSelection = [...prev];
+      for (const id of quickPasteIds) {
+        if (!seenQuickPasteIdsRef.current.has(id)) {
+          seenQuickPasteIdsRef.current.add(id);
+          if (!newSelection.includes(id)) {
+            newSelection.push(id);
+            changed = true;
+          }
+        }
       }
-      const existingPrev = prev.filter(id => quickPasteIds.includes(id));
-      if (existingPrev.length !== prev.length) {
+      
+      const existingPrev = newSelection.filter(id => quickPasteIds.includes(id));
+      if (existingPrev.length !== newSelection.length) {
         return existingPrev;
       }
-      return prev;
+      return changed ? newSelection : prev;
     });
   }, [quickPasteList]);
 
@@ -918,8 +950,8 @@ export default function HandoverView({
         story: row.chronologicalNotes || row.complaints,
         pmh: row.history,
         diagnosis: row.assessment,
-        done: row.planDone ? row.planDone.split('\n') : [],
-        toBeDone: row.planToBeDone ? row.planToBeDone.split('\n') : [],
+        done: typeof row.planDone === "string" ? row.planDone.split("\n") : (Array.isArray(row.planDone) ? row.planDone : []),
+        toBeDone: typeof row.planToBeDone === "string" ? row.planToBeDone.split("\n") : (Array.isArray(row.planToBeDone) ? row.planToBeDone : []),
         vitalsNow: row.vitals,
         alertRow: row.alerts
       },
@@ -1053,7 +1085,7 @@ export default function HandoverView({
               status: "Discharged" as const,
               hospital: targetCase.hospital || profile.hospital
             };
-            await setDoc(doc(db, "cases", id), updated);
+            await setDoc(doc(db, "cases", id), sanitizeForFirestore(updated));
           }
         }
         setActionSuccessMsg(`Successfully discharged & archived ${idsToCleanup.length} cases from the active board!`);
@@ -1352,6 +1384,7 @@ function extractLatestVitalsWithTime(
     formattedAssessment: string;
     alertsList: string[];
     planDoneLabsText: string;
+    fullInvText: string;
   } {
     const alertsList: string[] = [];
     const investigationLines: { timeStr?: string; text: string; isAlert: boolean; timestamp: number }[] = [];
@@ -1421,22 +1454,19 @@ function extractLatestVitalsWithTime(
     investigationLines.sort((a, b) => a.timestamp - b.timestamp);
 
     let formattedAssessment = assessmentStr || "";
+    let fullInvText = "";
     if (investigationLines.length > 0) {
       const invSectionText = investigationLines.map(item => {
         const prefix = item.timeStr ? `[${item.timeStr}] ` : "• ";
         return `${prefix}${item.text}`;
       }).join("\n");
 
-      if (!formattedAssessment.toLowerCase().includes("investigation") && !formattedAssessment.toLowerCase().includes("lab result")) {
-        formattedAssessment = `${formattedAssessment ? `${formattedAssessment}\n\n` : ''}INVESTIGATION FINDINGS (Chronological Order):\n${invSectionText}`;
-      } else if (!formattedAssessment.includes("INVESTIGATION FINDINGS")) {
-        formattedAssessment += `\n\nINVESTIGATION FINDINGS (Chronological Order):\n${invSectionText}`;
-      }
+      fullInvText = `INVESTIGATION FINDINGS (Chronological Order):\n${invSectionText}`;
     }
 
     const planDoneLabsText = completedLabNames.length > 0 ? `✓ Completed Investigations: ${completedLabNames.join(", ")}` : "✓ Investigations reviewed.";
 
-    return { formattedAssessment, alertsList, planDoneLabsText };
+    return { formattedAssessment, alertsList, planDoneLabsText, fullInvText };
   }
 
   const getRegistryRows = (): HandoverTableRow[] => {
@@ -1449,7 +1479,7 @@ function extractLatestVitalsWithTime(
         : "PROVISIONAL DIAGNOSIS: Under evaluation";
 
       // Extract investigation details, chronological ordering, and alerts
-      const { formattedAssessment, alertsList: invAlerts, planDoneLabsText } = extractChronologicalInvestigationsAndAlerts(
+      const { formattedAssessment, alertsList: invAlerts, planDoneLabsText, fullInvText: invsFullText } = extractChronologicalInvestigationsAndAlerts(
         `${c.notes?.map(n => n.content).join("\n") || ''} ${c.investigationResultsSummary || ''} ${c.investigationImaging || ''}`,
         diagnosisText,
         c.investigations || []
@@ -1461,6 +1491,8 @@ function extractLatestVitalsWithTime(
       if (c.vitals && (c.vitals.bp || c.vitals.hr || c.vitals.spo2)) {
         doneParts.push(`✓ Vitals logged: BP ${c.vitals.bp || 'N/A'} | HR ${c.vitals.hr || 'N/A'} | SpO2 ${c.vitals.spo2 || 'N/A'}%`);
       }
+      
+      if (invsFullText) doneParts.push(`\n${invsFullText}`);
       const planDoneText = doneParts.length > 0 ? doneParts.join("\n") : "✓ Initial emergency evaluation & vitals recorded.";
 
       const planToBeDoneText = c.dispositionDetails?.observationNotes ? `□ ${c.dispositionDetails.observationNotes}` : "□ Monitor clinical status and complete all pending orders as per shift schedule.";
@@ -1599,7 +1631,7 @@ function extractLatestVitalsWithTime(
         ? qp.rawNotes.split(/\n\s*\n+/).map(l => l.trim()).filter(l => l.length > 0).join("\n\n")
         : sit;
 
-      const { formattedAssessment, alertsList: invAlerts, planDoneLabsText } = extractChronologicalInvestigationsAndAlerts(
+      const { formattedAssessment, alertsList: invAlerts, planDoneLabsText, fullInvText: invsFullText } = extractChronologicalInvestigationsAndAlerts(
         qp.rawNotes || "",
         `PROVISIONAL DIAGNOSIS: ${sit}\nASSESSMENT: ${ass}`,
         []
@@ -1621,8 +1653,7 @@ function extractLatestVitalsWithTime(
           bystanderQP = bystanderMatchQP[0].trim();
         }
       }
-
-      const doneItems = [];
+      const doneItems: string[] = [];
       if (card?.done && card.done.length > 0) {
         card.done.forEach(d => doneItems.push(`✓ ${d}`));
       } else {
@@ -1630,8 +1661,14 @@ function extractLatestVitalsWithTime(
         if (planDoneLabsText) doneItems.push(planDoneLabsText);
       }
 
+      if (invsFullText) doneItems.push(`\n${invsFullText}`);
+
       let toBeDoneText = "";
       if (card?.toBeDone && card.toBeDone.length > 0) {
+        toBeDoneText = card.toBeDone.map(t => `□ ${t}`).join("\n");
+
+
+
         toBeDoneText = card.toBeDone.map(t => `□ ${t}`).join("\n");
       } else if (qp.structuredSBAR?.recommendation) {
         toBeDoneText = `□ ${qp.structuredSBAR.recommendation}`;
@@ -1660,7 +1697,7 @@ function extractLatestVitalsWithTime(
     return sortRowsByBedNumber(rows);
   };
 
-  const refineSheetWithGemini = async (items: any[]) => {
+  const refineSheetWithErMate = async (items: any[]) => {
     setIsAiCompilingSheet(true);
     try {
       const res = await fetch("/api/handover/compile-sheet", {
@@ -1670,43 +1707,48 @@ function extractLatestVitalsWithTime(
       });
       const json = await res.json();
       if (json.success && json.rows && Array.isArray(json.rows) && json.rows.length > 0) {
-        const mappedRows = json.rows.map((row: HandoverTableRow) => {
-          // 1. Patient ID match (BEST - Exact match on patient ID)
-          let orig = items.find(it => it.id && row.id && String(it.id).trim() === String(row.id).trim());
+        setEditableRows(prevRows => {
+          const newRows = prevRows.map(existingRow => {
+            // 1. Patient ID match
+            let aiRow = json.rows.find((r: any) => r.id && String(r.id).trim() === String(existingRow.id).trim());
 
-          // 2. Bed Number match (GOOD - If Patient ID missing or altered by AI)
-          if (!orig && (row.bed || orig?.bed || orig?.bedNo)) {
-            orig = items.find(it => {
-              const itBed = (it.bed || it.bedNo || "").toString().toLowerCase().trim();
-              const rBed = (row.bed || "").toString().toLowerCase().trim();
-              if (!itBed || !rBed) return false;
-              const cleanIt = itBed.replace(/^(bed|room|bay|cot|icu|hdu)?\s*#?\s*/i, "");
-              const cleanR = rBed.replace(/^(bed|room|bay|cot|icu|hdu)?\s*#?\s*/i, "");
-              return cleanIt === cleanR || itBed === rBed;
-            });
-          }
+            // 2. Bed Number match fallback
+            if (!aiRow && existingRow.bed) {
+              aiRow = json.rows.find((r: any) => {
+                const itBed = (existingRow.bed || "").toString().toLowerCase().trim();
+                const rBed = (r.bed || "").toString().toLowerCase().trim();
+                if (!itBed || !rBed) return false;
+                const cleanIt = itBed.replace(/^(bed|room|bay|cot|icu|hdu)?\s*#?\s*/i, "");
+                const cleanR = rBed.replace(/^(bed|room|bay|cot|icu|hdu)?\s*#?\s*/i, "");
+                return cleanIt === cleanR || itBed === rBed;
+              });
+            }
 
-          // STRICT CLINICAL SAFETY RULE:
-          // If neither Patient ID nor Bed Number matched, SKIP this row!
-          // NEVER match by Patient Name or Array Index to prevent cross-patient data corruption.
-          if (!orig) {
-            console.warn(`[Handover] Skipped unassigned AI row (ID: ${row.id}, Bed: ${row.bed}, Name: ${row.name}) - No safe ID or Bed match in active selection.`);
-            return null;
-          }
+            // If AI missed it, preserve the local row exactly as it was
+            if (!aiRow) {
+              return existingRow;
+            }
 
-          const fallbackName = orig?.name || orig?.patientLabel?.name || row.name;
-          const finalName = (row.name && !/anonymous|bed patient/i.test(row.name)) ? row.name : fallbackName;
+            const fallbackName = existingRow.name || aiRow.name;
+            const finalName = (aiRow.name && !/anonymous|bed patient/i.test(aiRow.name)) ? aiRow.name : fallbackName;
 
-          return {
-            ...row,
-            id: orig.id, // Strictly preserve original Patient ID
-            bed: row.bed && !/bed \d+/i.test(row.bed) ? row.bed : (orig?.bed || orig?.bedNo || row.bed),
-            name: finalName
-          };
-        }).filter(Boolean) as HandoverTableRow[];
-        const sorted = sortRowsByBedNumber(mappedRows);
-        setEditableRows(sorted);
-        saveRefinedHandoverSheet(sorted, handoverMeta);
+            return {
+              ...existingRow,
+              ...aiRow, // Overwrite with AI refined data
+              id: existingRow.id, // Strictly preserve original ID
+              bed: aiRow.bed && !/bed \d+/i.test(aiRow.bed) ? aiRow.bed : existingRow.bed,
+              name: finalName
+            };
+          });
+
+          const sorted = sortRowsByBedNumber(newRows);
+          saveRefinedHandoverSheet(sorted, handoverMeta);
+          return sorted;
+        });
+        setActionSuccessMsg("ErMate successfully refined the handover sheet!");
+        setTimeout(() => setActionSuccessMsg(null), 3000);
+      } else {
+        console.warn("ErMate returned empty or invalid rows array.");
       }
     } catch (err) {
       console.error("AI handover sheet compilation error:", err);
@@ -1721,7 +1763,7 @@ function extractLatestVitalsWithTime(
     saveRefinedHandoverSheet(localRows, handoverMeta);
     const selectedCases = cases.filter(c => selectedRegistryIds.includes(c.id));
     if (selectedCases.length > 0) {
-      refineSheetWithGemini(selectedCases);
+      refineSheetWithErMate(selectedCases);
     }
     setIsViewingSheet(true);
   };
@@ -1732,7 +1774,7 @@ function extractLatestVitalsWithTime(
     saveRefinedHandoverSheet(localRows, handoverMeta);
     const selectedQuick = quickPasteList.filter(qp => selectedQuickPasteIds.includes(qp.id));
     if (selectedQuick.length > 0) {
-      refineSheetWithGemini(selectedQuick);
+      refineSheetWithErMate(selectedQuick);
     }
     setIsViewingSheet(true);
   };
@@ -1751,9 +1793,17 @@ function extractLatestVitalsWithTime(
       }
       return chunks;
     };
-
     const pageChunks = chunkRows(rows, 2);
     const totalPages = Math.max(1, pageChunks.length);
+
+    const formatWordCell = (text: string) => {
+        if (!text) return "";
+        let formatted = text.replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br/>");
+        // Highlight lines with alert icon or numbers that are highlighted in UI
+        formatted = formatted.replace(/(.*(?:⚠|⚠️).*)/g, '<span style="color: #dc2626; font-weight: bold;">$1</span>');
+        return formatted;
+    };
+
 
     let htmlBody = "";
     
@@ -1803,12 +1853,12 @@ function extractLatestVitalsWithTime(
                   <div style="font-weight: bold; color: #4f46e5; font-size: 9pt; margin-top: 4px;">${row.name}</div>
                   <div style="font-family: monospace; font-size: 8pt; color: #4b5563; margin-top: 2px;">${row.ageGender}</div>
                 </td>
-                <td style="border: 1px solid #000000; padding: 8px; vertical-align: top; font-size: 8.5pt; white-space: pre-wrap; color: #1f2937;">${row.complaints}</td>
-                <td style="border: 1px solid #000000; padding: 8px; vertical-align: top; font-size: 8.5pt; white-space: pre-wrap; color: #1f2937;">${row.history}</td>
-                <td style="border: 1px solid #000000; padding: 8px; vertical-align: top; font-size: 8.5pt; white-space: pre-wrap; color: #1f2937;">${row.assessment}</td>
-                <td style="border: 1px solid #000000; padding: 8px; vertical-align: top; font-size: 8.5pt; white-space: pre-wrap; color: #1f2937;">${row.planDone}</td>
-                <td style="border: 1px solid #000000; padding: 8px; vertical-align: top; font-size: 8.5pt; white-space: pre-wrap; color: #1f2937;">${row.planToBeDone}</td>
-                <td style="border: 1px solid #000000; padding: 8px; vertical-align: top; font-size: 8.5pt; white-space: pre-wrap; color: #1f2937;">${row.bystander}</td>
+                <td style="border: 1px solid #000000; padding: 8px; vertical-align: top; font-size: 8.5pt; white-space: pre-wrap; color: #1f2937; line-height: 1.6;">${formatWordCell(row.complaints)}</td>
+                <td style="border: 1px solid #000000; padding: 8px; vertical-align: top; font-size: 8.5pt; white-space: pre-wrap; color: #1f2937; line-height: 1.6;">${formatWordCell(row.history)}</td>
+                <td style="border: 1px solid #000000; padding: 8px; vertical-align: top; font-size: 8.5pt; white-space: pre-wrap; color: #1f2937; line-height: 1.6;">${formatWordCell(row.assessment)}</td>
+                <td style="border: 1px solid #000000; padding: 8px; vertical-align: top; font-size: 8.5pt; white-space: pre-wrap; color: #1f2937; line-height: 1.6;">${formatWordCell(row.planDone)}</td>
+                <td style="border: 1px solid #000000; padding: 8px; vertical-align: top; font-size: 8.5pt; white-space: pre-wrap; color: #1f2937; line-height: 1.6;">${formatWordCell(row.planToBeDone)}</td>
+                <td style="border: 1px solid #000000; padding: 8px; vertical-align: top; font-size: 8.5pt; white-space: pre-wrap; color: #1f2937; line-height: 1.6;">${formatWordCell(row.bystander)}</td>
               </tr>
         `;
       });
@@ -1841,16 +1891,24 @@ function extractLatestVitalsWithTime(
         <![endif]-->
         <style>
           @page {
-            size: A4 portrait;
+            size: A4 landscape;
             margin: 10mm 12mm;
           }
+          @page WordSection1 {
+            size: 841.9pt 595.3pt; /* A4 landscape exact sizes */
+            mso-page-orientation: landscape;
+            margin: 10mm 12mm;
+          }
+          div.WordSection1 { page: WordSection1; }
           body {
             font-family: Arial, sans-serif;
           }
         </style>
       </head>
       <body>
-        ${htmlBody}
+        <div class="WordSection1">
+          ${htmlBody}
+        </div>
       </body>
       </html>
     `;
@@ -1942,7 +2000,8 @@ function extractLatestVitalsWithTime(
           image: imageBase64,
           mimeType: "image/jpeg",
           rawText: userText,
-          doctorName: profile?.name ? (profile.name.startsWith("Dr") ? profile.name : `Dr. ${profile.name}`) : "EM Resident"
+          doctorName: profile?.name ? (profile.name.startsWith("Dr") ? profile.name : `Dr. ${profile.name}`) : "EM Resident",
+          patientName: extractedMeta.name && extractedMeta.name !== "Bed Patient" ? extractedMeta.name : undefined
         })
       });
       const resData = await response.json();
@@ -1965,7 +2024,7 @@ function extractLatestVitalsWithTime(
             erNumber: parsed.patientLabel?.erNumber || null,
             admittingConsultant: parsed.patientLabel?.admittingConsultant || null,
             inERSince: resolvedTime,
-            status: parsed.patientLabel?.status || ((parsed.triage && parsed.triage.includes("P1")) ? 'critical' : 'unstable')
+            status: parsed.patientLabel?.status || ((parsed.triage && String(parsed.triage || "").includes("P1")) ? 'critical' : 'unstable')
           },
           presentingComplaint: parsed.presentingComplaint || "Presenting complaint recorded.",
           story: parsed.story || parsed.structuredSBAR?.situation || "Clinical story recorded.",
@@ -2033,7 +2092,7 @@ function extractLatestVitalsWithTime(
             senderEmail: profile?.email || "",
             timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + " | Today",
             caseCount: 1,
-            patientsText: `${newPatient.name} (${newPatient.triage ? newPatient.triage.split(" ")[0] : "P2"} - ${newPatient.presentingComplaint || newPatient.vitals})`,
+            patientsText: `${newPatient.name} (${newPatient.triage ? String(newPatient.triage || "P2").split(" ")[0] : "P2"} - ${newPatient.presentingComplaint || newPatient.vitals})`,
             hospital: profile?.hospital || ""
           };
           setHandovers(prev => [newHandoverRecord, ...prev]);
@@ -2125,7 +2184,7 @@ function extractLatestVitalsWithTime(
           senderEmail: profile?.email || "",
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + " | Today",
           caseCount: 1,
-          patientsText: `${fallbackPatient.name} (${fallbackPatient.triage ? fallbackPatient.triage.split(" ")[0] : "P2"} - ${fallbackPatient.presentingComplaint || fallbackPatient.vitals})`,
+          patientsText: `${fallbackPatient.name} (${fallbackPatient.triage ? String(fallbackPatient.triage || "P2").split(" ")[0] : "P2"} - ${fallbackPatient.presentingComplaint || fallbackPatient.vitals})`,
           hospital: profile?.hospital || ""
         };
         setHandovers(prev => [fallbackHandoverRecord, ...prev]);
@@ -2245,7 +2304,7 @@ function extractLatestVitalsWithTime(
           senderEmail: profile?.email || "",
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + " | Today",
           caseCount: 1,
-          patientsText: `${newItem.name} (${newItem.triage ? newItem.triage.split(" ")[0] : "P2"} - ${newItem.presentingComplaint || newItem.vitals})`,
+          patientsText: `${newItem.name} (${newItem.triage ? String(newItem.triage || "P2").split(" ")[0] : "P2"} - ${newItem.presentingComplaint || newItem.vitals})`,
           hospital: profile?.hospital || ""
         };
         setHandovers(prev => [manualHandoverRecord, ...prev]);
@@ -2296,8 +2355,8 @@ function extractLatestVitalsWithTime(
           doctor: c.createdByName || c.doctorName || `Dr. ${profile.name}`,
           vitals: `HR ${c.vitals.hr || "N/A"}, BP ${c.vitals.bp || "N/A"}, SpO2 ${c.vitals.spo2 || "N/A"}%`,
           complaints: c.patient.presentingComplaint,
-          assessment: c.progressNotes || c.sampleHistory?.symptoms || "Stable",
-          planToBeDone: c.treatments?.map(t => `${t.drugName} ${t.dose}`).join(", ") || "Active monitoring",
+          assessment: c.progressNotes || c.sampleHistory?.symptoms || "Not documented",
+          planToBeDone: c.treatments?.map(t => `${t.drugName} ${t.dose}`).join(", ") || "No plan documented",
           alerts: c.sampleHistory?.allergies || "None"
         }));
       } else {
@@ -2380,7 +2439,7 @@ function extractLatestVitalsWithTime(
       text += `     - Medications: ${c.sampleHistory?.medications || "N/A"}\n`;
       text += `   Primary Assessment: A-${c.primaryAssessment?.airwayStatus || "Normal"}, B-${c.primaryAssessment?.breathingStatus || "Normal"}, C-${c.primaryAssessment?.circulationStatus || "Normal"}\n`;
       text += `   ER Treatment Given: ${c.treatments.map(t => `${t.drugName} ${t.dose}`).join(", ") || "None recorded"}\n`;
-      text += `   Progress Notes Summary: ${c.progressNotes || "Stable."}\n`;
+      text += `   Progress Notes Summary: ${c.progressNotes || "Not documented."}\n`;
       text += `--------------------------------------------------\n\n`;
     });
 
@@ -2428,7 +2487,14 @@ function extractLatestVitalsWithTime(
     const totalPages = Math.max(1, pageChunks.length);
 
     const handleDownloadDoc = () => {
+      const formatWordCell = (text: string) => {
+        if (!text) return "";
+        let formatted = text.replace(/</g, "\&lt;").replace(/>/g, "\&gt;").replace(/\n/g, "<br/>");
+        formatted = formatted.replace(/(.*(?:⚠|⚠️).*)/g, '<span style="color: #dc2626; font-weight: bold;">$1</span>');
+        return formatted;
+      };
       let htmlBody = "";
+
       
       pageChunks.forEach((chunk, pageIdx) => {
         htmlBody += `
@@ -2476,12 +2542,12 @@ function extractLatestVitalsWithTime(
                     <div style="font-weight: bold; color: #4f46e5; font-size: 9pt; margin-top: 4px;">${row.name}</div>
                     <div style="font-family: monospace; font-size: 8pt; color: #4b5563; margin-top: 2px;">${row.ageGender}</div>
                   </td>
-                  <td style="border: 1px solid #000000; padding: 8px; vertical-align: top; font-size: 8.5pt; white-space: pre-wrap; color: #1f2937;">${row.complaints}</td>
-                  <td style="border: 1px solid #000000; padding: 8px; vertical-align: top; font-size: 8.5pt; white-space: pre-wrap; color: #1f2937;">${row.history}</td>
-                  <td style="border: 1px solid #000000; padding: 8px; vertical-align: top; font-size: 8.5pt; white-space: pre-wrap; color: #1f2937;">${row.assessment}</td>
-                  <td style="border: 1px solid #000000; padding: 8px; vertical-align: top; font-size: 8.5pt; white-space: pre-wrap; color: #1f2937;">${row.planDone}</td>
-                  <td style="border: 1px solid #000000; padding: 8px; vertical-align: top; font-size: 8.5pt; white-space: pre-wrap; color: #1f2937;">${row.planToBeDone}</td>
-                  <td style="border: 1px solid #000000; padding: 8px; vertical-align: top; font-size: 8.5pt; white-space: pre-wrap; color: #1f2937;">${row.bystander}</td>
+                  <td style="border: 1px solid #000000; padding: 8px; vertical-align: top; font-size: 8.5pt; white-space: pre-wrap; color: #1f2937; line-height: 1.6;">${formatWordCell(row.complaints)}</td>
+                  <td style="border: 1px solid #000000; padding: 8px; vertical-align: top; font-size: 8.5pt; white-space: pre-wrap; color: #1f2937; line-height: 1.6;">${formatWordCell(row.history)}</td>
+                  <td style="border: 1px solid #000000; padding: 8px; vertical-align: top; font-size: 8.5pt; white-space: pre-wrap; color: #1f2937; line-height: 1.6;">${formatWordCell(row.assessment)}</td>
+                  <td style="border: 1px solid #000000; padding: 8px; vertical-align: top; font-size: 8.5pt; white-space: pre-wrap; color: #1f2937; line-height: 1.6;">${formatWordCell(row.planDone)}</td>
+                  <td style="border: 1px solid #000000; padding: 8px; vertical-align: top; font-size: 8.5pt; white-space: pre-wrap; color: #1f2937; line-height: 1.6;">${formatWordCell(row.planToBeDone)}</td>
+                  <td style="border: 1px solid #000000; padding: 8px; vertical-align: top; font-size: 8.5pt; white-space: pre-wrap; color: #1f2937; line-height: 1.6;">${formatWordCell(row.bystander)}</td>
                 </tr>
           `;
         });
@@ -2682,10 +2748,10 @@ function extractLatestVitalsWithTime(
               onClick={() => {
                 if (activeSubTab === "registry") {
                   const selectedCases = cases.filter(c => selectedRegistryIds.includes(c.id));
-                  refineSheetWithGemini(selectedCases);
+                  refineSheetWithErMate(selectedCases);
                 } else {
                   const selectedQuick = quickPasteList.filter(qp => selectedQuickPasteIds.includes(qp.id));
-                  refineSheetWithGemini(selectedQuick);
+                  refineSheetWithErMate(selectedQuick);
                 }
               }}
               disabled={isAiCompilingSheet}
@@ -2818,7 +2884,7 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
           </div>
         </div>
 
-        {/* Gemini AI Compiling Indicator Banner */}
+        {/* ErMate AI Compiling Indicator Banner */}
         {isAiCompilingSheet && (
           <div className="bg-gradient-to-r from-indigo-900/90 to-purple-900/90 text-white p-3.5 rounded-2xl flex items-center gap-3 no-print shadow-md animate-pulse text-xs font-semibold border border-indigo-500/30">
             <Sparkles className="w-5 h-5 text-amber-300 animate-spin shrink-0" />
@@ -3392,7 +3458,7 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
                 // Registry Cases Print Layout
                 <div className="space-y-6">
                   {cases.filter(c => selectedRegistryIds.includes(c.id)).map((c, idx) => (
-                    <div key={c.id} className="border border-slate-200 rounded-xl p-4 space-y-3 bg-slate-50/20">
+                    <div key={`${c.id}-${idx}`} className="border border-slate-200 rounded-xl p-4 space-y-3 bg-slate-50/20">
                       <div className="flex items-center justify-between border-b pb-2">
                         <h3 className="text-sm font-bold text-slate-900">
                           {idx + 1}. {c.patient.name} ({c.patient.age}y / {c.patient.gender})
@@ -3428,7 +3494,7 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
                 // Quick Paste Print Layout
                 <div className="space-y-6">
                   {quickPasteList.map((item, idx) => (
-                    <div key={item.id} className="border border-slate-200 rounded-xl p-4 space-y-3 bg-slate-50/20">
+                    <div key={`${item.id}-${idx}`} className="border border-slate-200 rounded-xl p-4 space-y-3 bg-slate-50/20">
                       <div className="flex items-center justify-between border-b pb-2">
                         <div className="flex items-center gap-2">
                           {item.bed && (
@@ -3635,25 +3701,6 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
             Always Free
           </span>
         </button>
-        <button
-          onClick={() => {
-            setActiveSubTab("discharge_direct");
-            setIsViewingSheet(false);
-          }}
-          className={`px-3.5 py-2.5 rounded-lg text-xs font-bold transition-all flex items-center justify-between sm:justify-start gap-2 ${
-            activeSubTab === "discharge_direct"
-              ? "bg-white dark:bg-slate-950 text-indigo-600 dark:text-indigo-400 shadow-sm"
-              : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
-          }`}
-        >
-          <span className="flex items-center gap-2">
-            <FileText className="w-4 h-4 shrink-0" />
-            <span>Discharge Summary Generator</span>
-          </span>
-          <span className="text-[10px] px-1.5 py-0.2 bg-purple-100 dark:bg-purple-950/40 text-purple-600 dark:text-purple-400 rounded-full font-mono font-bold shrink-0">
-            Universal Hospital Format
-          </span>
-        </button>
       </div>
 
       {/* SUB-TAB 1: REGISTERED ER CASES HANDOVER */}
@@ -3685,11 +3732,11 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {activeCases.map((c) => {
+                  {activeCases.map((c, idx) => {
                     const isSelected = selectedRegistryIds.includes(c.id);
                     return (
                       <div 
-                        key={c.id}
+                        key={`${c.id}-${idx}`}
                         onClick={() => handleToggleRegistryCase(c.id)}
                         className={`p-4 rounded-xl border transition-all cursor-pointer select-none flex items-start gap-3.5 ${
                           isSelected
@@ -3712,13 +3759,13 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
                             <h4 className="font-bold text-slate-800 dark:text-white">{c.patient.name}</h4>
                             <span className="text-[9px] text-slate-400 font-mono">({c.patient.age}y / {c.patient.gender})</span>
                             <span className={`text-[8.5px] px-1.5 py-0.2 rounded font-bold font-mono uppercase ${
-                              c.patient.triageCategory.includes("P1")
+                              String(c.patient.triageCategory || "").includes("P1")
                                 ? "bg-rose-50 border border-rose-200 text-rose-700"
-                                : c.patient.triageCategory.includes("P2")
+                                : String(c.patient.triageCategory || "").includes("P2")
                                 ? "bg-amber-50 border border-amber-200 text-amber-700"
                                 : "bg-emerald-50 border border-emerald-200 text-emerald-700"
                             }`}>
-                              {c.patient.triageCategory.split(" ")[0]}
+                              {String(c.patient.triageCategory || "P2").split(" ")[0]}
                             </span>
                           </div>
                           
@@ -3773,7 +3820,7 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
                   disabled={selectedRegistryIds.length === 0}
                   onClick={() => {
                     const selected = cases.filter(c => selectedRegistryIds.includes(c.id));
-                    const patientsSummary = selected.map(s => `${s.patient.name} (${s.patient.triageCategory.split(" ")[0]} - ${s.patient.presentingComplaint})`).join(", ");
+                    const patientsSummary = selected.map(s => `${s.patient.name} (${String(s.patient.triageCategory || "P2").split(" ")[0]} - ${s.patient.presentingComplaint})`).join(", ");
                     const record: HandoverRecord = {
                       id: "H-" + Math.floor(1000 + Math.random() * 9000),
                       senderName: "Dr. " + profile.name,
@@ -3850,10 +3897,10 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
                 <p className="text-[11px] text-slate-400 text-center py-4">No logged handovers for today's shift.</p>
               ) : (
                 <div className="space-y-3 max-h-[300px] overflow-y-auto pr-1">
-                  {handovers.map((hand) => {
+                  {handovers.map((hand, idx) => {
                     const isAckBySomeone = !!hand.acknowledgedBy;
                     return (
-                      <div key={hand.id} className="p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-850 rounded-xl space-y-2">
+                      <div key={`${hand.id}-${idx}`} className="p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-850 rounded-xl space-y-2">
                         <div className="flex items-center justify-between gap-2">
                           <span className="font-mono text-[10px] font-bold text-slate-700 dark:text-slate-300 bg-slate-200/50 dark:bg-slate-800 px-1.5 py-0.5 rounded">
                             {hand.id}
@@ -4068,9 +4115,9 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
                                   </div>
                                   <div className="flex items-center gap-1.5">
                                     <span className={`text-[8px] px-1.5 py-0.2 rounded font-extrabold ${
-                                      msg.parsedPatient.triage.includes("P1")
+                                      String(msg.parsedPatient.triage || "").includes("P1")
                                         ? "bg-rose-50 border border-rose-200 text-rose-700"
-                                        : msg.parsedPatient.triage.includes("P2")
+                                        : String(msg.parsedPatient.triage || "").includes("P2")
                                         ? "bg-amber-50 border border-amber-250 text-amber-700"
                                         : "bg-emerald-50 border border-emerald-250 text-emerald-700"
                                     }`}>
@@ -4205,7 +4252,7 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
                                           senderEmail: profile?.email || "",
                                           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + " | Today",
                                           caseCount: 1,
-                                          patientsText: `${restoredPatient.name} (${restoredPatient.triage ? restoredPatient.triage.split(" ")[0] : "P2"} - ${restoredPatient.presentingComplaint || restoredPatient.vitals})`,
+                                          patientsText: `${restoredPatient.name} (${restoredPatient.triage ? String(restoredPatient.triage || "P2").split(" ")[0] : "P2"} - ${restoredPatient.presentingComplaint || restoredPatient.vitals})`,
                                           hospital: profile?.hospital || ""
                                         };
                                         setHandovers(prev => [restoredRecord, ...prev]);
@@ -4393,7 +4440,7 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
                 </div>
 
                 {/* Text Area Input */}
-                <div className="flex-1">
+                <div className="flex-1 flex gap-2">
                   <textarea
                     ref={scribeTextareaRef}
                     rows={1}
@@ -4443,9 +4490,9 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
                   </button>
 
                   {qpRawNotes.trim() === "" && !handoverImgBase64 ? (
-                    <SpeechMicButton 
+                    <VoiceRecorder 
+                      renderMode="compact-button"
                       onTranscript={(txt) => setQpRawNotes(prev => prev ? `${prev} ${txt}` : txt)} 
-                      className="!w-10 !h-10 !rounded-full !bg-indigo-600 hover:!bg-indigo-700 !text-white dark:!text-white !border-none shadow-md flex items-center justify-center cursor-pointer transition-transform active:scale-95"
                     />
                   ) : (
                     <button
@@ -4500,19 +4547,19 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
                   <div>
                     <span className="text-[8px] uppercase font-black text-rose-500 block">P1 Critical</span>
                     <strong className="text-xs font-black text-rose-700 dark:text-rose-400 font-mono">
-                      {quickPasteList.filter(p => p.triage.includes("P1")).length}
+                      {quickPasteList.filter(p => String(p.triage || "").includes("P1")).length}
                     </strong>
                   </div>
                   <div>
                     <span className="text-[8px] uppercase font-black text-amber-500 block">P2 Urgent</span>
                     <strong className="text-xs font-black text-amber-700 dark:text-amber-400 font-mono">
-                      {quickPasteList.filter(p => p.triage.includes("P2")).length}
+                      {quickPasteList.filter(p => String(p.triage || "").includes("P2")).length}
                     </strong>
                   </div>
                   <div>
                     <span className="text-[8px] uppercase font-black text-emerald-500 block">P3 Routine</span>
                     <strong className="text-xs font-black text-emerald-700 dark:text-emerald-400 font-mono">
-                      {quickPasteList.filter(p => p.triage.includes("P3")).length}
+                      {quickPasteList.filter(p => String(p.triage || "").includes("P3")).length}
                     </strong>
                   </div>
                 </div>
@@ -4583,13 +4630,13 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
                             </div>
                             <div className="flex items-center gap-1.5 flex-wrap pt-1">
                               <span className={`text-[7px] px-1.5 py-0.2 rounded font-black font-mono uppercase ${
-                                item.triage.includes("P1")
+                                String(item.triage || "").includes("P1")
                                   ? "bg-rose-50 border border-rose-200 text-rose-700"
-                                  : item.triage.includes("P2")
+                                  : String(item.triage || "").includes("P2")
                                   ? "bg-amber-50 border border-amber-250 text-amber-700"
                                   : "bg-emerald-50 border border-emerald-250 text-emerald-700"
                               }`}>
-                                {item.triage.split(" ")[0]}
+                                {String(item.triage || "P2").split(" ")[0]}
                               </span>
                               <span className="text-[9px] font-mono text-slate-400 font-bold">Vitals: {item.vitals}</span>
                             </div>
@@ -4733,586 +4780,6 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
         </div>
       )}
 
-      {/* SUB-TAB 3: DIRECT EMR DISCHARGE SUMMARY */}
-      {activeSubTab === "discharge_direct" && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-fade-in">
-          
-          {/* Left Panel: Paste & Extraction Interface (1/3 Width) */}
-          <div className="lg:col-span-1 space-y-4">
-            <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-xs space-y-4">
-              <div className="flex items-center justify-between border-b pb-3">
-                <div className="flex items-center gap-2">
-                  <div className="p-2 bg-purple-50 dark:bg-purple-950/50 rounded-xl text-purple-600 dark:text-purple-400">
-                    <Sparkles className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <h3 className="text-sm font-bold text-slate-800 dark:text-white">EMR Case Sheet Scribe</h3>
-                    <p className="text-[10px] text-slate-400 font-medium">Paste raw EMR notes or case sheet dump</p>
-                  </div>
-                </div>
-              </div>
-
-              {dischargeError && (
-                <div className="p-3 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/50 rounded-xl text-xs text-rose-700 dark:text-rose-300 flex items-start gap-2">
-                  <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-                  <span>{dischargeError}</span>
-                </div>
-              )}
-
-              <div className="space-y-2">
-                <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 flex items-center justify-between">
-                  <span>Paste Unstructured Case Sheet Text</span>
-                  <span className="text-[10px] text-slate-400 font-mono">Universal Hospital Format</span>
-                </label>
-                <textarea
-                  value={directInputText}
-                  onChange={(e) => setDirectInputText(e.target.value)}
-                  placeholder="Paste complete EMR case sheet dump here... (Doctor notes, nursing notes, vitals, lab reports, treatment given)"
-                  rows={14}
-                  className="w-full p-3.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-mono text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-purple-500/50 resize-y"
-                />
-              </div>
-
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => handleGenerateDirectDischarge()}
-                  disabled={isGeneratingDischarge || !directInputText.trim()}
-                  className="flex-1 py-3 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white font-black text-xs rounded-xl transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer"
-                >
-                  {isGeneratingDischarge ? (
-                    <>
-                      <RefreshCw className="w-4 h-4 animate-spin" />
-                      Structuring Medico-Legal Summary...
-                    </>
-                  ) : (
-                    <>
-                      <Sparkles className="w-4 h-4" />
-                      Generate Discharge Summary
-                    </>
-                  )}
-                </button>
-                {directInputText && (
-                  <button
-                    onClick={() => setDirectInputText("")}
-                    className="p-3 text-slate-400 hover:text-slate-600 bg-slate-100 dark:bg-slate-900 rounded-xl text-xs font-bold"
-                  >
-                    Clear
-                  </button>
-                )}
-              </div>
-
-              {/* Preset Sample EMR Cases */}
-              <div className="border-t pt-3 space-y-2">
-                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block font-mono">
-                  Quick Preset Cases for Testing
-                </span>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    onClick={() => setDirectInputText(`PATIENT: Raman Pillai, 58/M, UHID: 4810294, MLC: Nil
-Allergies: NKDA
-ARRIVING VITALS (08:30 AM): HR 108/min, BP 150/90 mmHg, RR 22/min, SpO2 94% on room air, GCS 15/15, GRBS 184 mg/dl, Temp 98.4 F.
-PRESENTING COMPLAINT:
-Severe retrosternal chest pain for 3 hours with radiation to left shoulder and profuse diaphoresis.
-HPI:
-58-year-old male with history of Type 2 DM and HTN presented with sudden onset oppressive substernal chest pain starting at 5:30 AM. Accompanied by nausea and breathlessness. Received Aspirin 300mg at local clinic.
-PAST HISTORY: DM x 10 years on Tab Metformin 500mg BD. HTN x 5 years on Tab Amlodipine 5mg OD.
-GENERAL EXAMINATION:
-Moderate distress due to pain. Conscious, oriented. No pallor, icterus, cyanosis, or pedal edema.
-PRIMARY SURVEY:
-Airway: Patent.
-Breathing: RR 22, SpO2 94% room air. Oxygen started @ 3L/min via NC. Air entry bilaterally equal.
-Circulation: HR 108, BP 150/90. CRT < 2s. 2 large bore IV access secured.
-Disability: GCS E4V5M6, Pupils equal & reactive. GRBS 184.
-Exposure: Temp 98.4 F.
-COURSE IN ED:
-Patient was connected to cardiac monitor. Stat 12-lead ECG showed 3mm ST-segment elevation in V1-V4 (Acute Anterior Wall STEMI). Loading doses of Tab Ticagrelor 180mg and Tab Atorvastatin 80mg administered at 08:40 AM. IV Heparin 5000 IU bolus given. Urgent Cardiology consult called (Dr. Jayakrishnan). Patient accepted for immediate primary PCI in Cath Lab. Echocardiogram showed anterior wall hypokinesia, LVEF 40%. Patient transferred safely to Cath Lab at 09:15 AM.
-INVESTIGATIONS:
-CBC: Hb: 13.8 g/dL, WBC: 12,400 /cu.mm ↑, Platelets: 2.4 lakh
-LFT: Total Bili: 0.8 mg/dL, SGOT: 45 U/L, SGPT: 38 U/L
-RFT: Urea: 28 mg/dL, Creatinine: 1.0 mg/dL
-Electrolytes: Na: 138 mEq/L, K: 4.2 mEq/L
-Cardiac: Troponin-I: 2.8 ng/mL ↑ (ref < 0.04)
-ECG: Acute Anterior Wall STEMI. Echo: LVEF 40%.
-DIAGNOSIS AT DISCHARGE:
-1. Acute Anterior Wall ST-Elevation Myocardial Infarction (Anterior STEMI)
-2. Type 2 Diabetes Mellitus
-3. Essential Hypertension
-DISPOSITION: Transferred / Admitted for Primary PCI (Cath Lab / Cardiac ICU) under Dr. Jayakrishnan (Cardiology).
-CONDITION AT DISCHARGE: STABLE, chest pain relieved.
-DISCHARGE VITALS: HR 78/min, BP 120/80 mmHg, RR 16/min, SpO2 99% on 2L O2.
-EM Resident: Dr. Rahul V.
-EM Consultant: Dr. Suresh Menon`)}
-                    className="p-2 text-left bg-purple-50/50 dark:bg-purple-950/20 hover:bg-purple-100 dark:hover:bg-purple-900/40 border border-purple-200/60 dark:border-purple-800/50 rounded-lg text-[10.5px] font-bold text-purple-700 dark:text-purple-300 transition-all cursor-pointer"
-                  >
-                    ❤️ STEMI Case
-                  </button>
-
-                  <button
-                    onClick={() => setDirectInputText(`PATIENT: Anjali Kumar, 24/F, UHID: 992014, MLC: Nil
-Allergies: Penicillin (Rash)
-ARRIVING VITALS: HR 112/min, BP 110/70 mmHg, RR 20/min, SpO2 98% room air, GCS 15/15, Temp 101.2 F.
-PRESENTING COMPLAINT:
-Severe right lower quadrant abdominal pain for 24 hours with low-grade fever and vomiting x 2 episodes.
-HPI:
-24-year-old female presented with periumbilical pain that migrated to the right iliac fossa over 12 hours. Pain is sharp, aggravated by movement and coughing. Anorexia present. LMP: 14 days ago, regular.
-PAST HISTORY: Nil significant.
-PHYSICAL EXAM:
-Tenderness in right iliac fossa with localized guarding and rebound tenderness at McBurney's point. Rovsing sign positive.
-COURSE IN ED:
-IV access secured. IV Normal Saline 1000ml bolus initiated. IV Paracetamol 1g given for fever/pain. IV Ondansetron 4mg given. Urgent USG Abdomen & Pelvis performed at 10:30 AM showing a non-compressible, aperistaltic appendiceal structure measuring 8.5mm with periappendiceal fat stranding (Acute Appendicitis). General Surgery consult called (Dr. Thomas). Patient accepted for Laparoscopic Appendectomy.
-INVESTIGATIONS:
-CBC: Hb: 12.1 g/dL, WBC: 15,200 /cu.mm ↑ (82% Neutrophils), Platelets: 2.1 lakh
-RFT: Urea: 22 mg/dL, Creatinine: 0.7 mg/dL
-Urine: Pus cells 2-3/hpf, Urine pregnancy test (UPT): Negative
-USG Abdomen: Features diagnostic of Acute Appendicitis.
-DIAGNOSIS AT DISCHARGE:
-1. Acute Suppurative Appendicitis
-DISPOSITION: Admitted under Dr. Thomas (General Surgery) for Laparoscopic Appendectomy.
-CONDITION AT DISCHARGE: STABLE.
-DISCHARGE VITALS: HR 84/min, BP 116/74 mmHg, RR 16/min, SpO2 99% room air, Temp 98.6 F.
-EM Resident: Dr. Anjana S.
-EM Consultant: Dr. Suresh Menon`)}
-                    className="p-2 text-left bg-purple-50/50 dark:bg-purple-950/20 hover:bg-purple-100 dark:hover:bg-purple-900/40 border border-purple-200/60 dark:border-purple-800/50 rounded-lg text-[10.5px] font-bold text-purple-700 dark:text-purple-300 transition-all cursor-pointer"
-                  >
-                    🩺 Appendicitis Case
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Right Panel: Generated Summaries List (2/3 Width) */}
-          <div className="lg:col-span-2 space-y-4">
-            <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-xs space-y-4">
-              <div className="flex items-center justify-between border-b pb-3">
-                <div>
-                  <h3 className="text-sm font-bold text-slate-800 dark:text-white flex items-center gap-2">
-                    <FileText className="w-4.5 h-4.5 text-purple-600 dark:text-purple-400" />
-                    Direct Generated Discharge Summaries Roster
-                  </h3>
-                  <p className="text-[10px] text-slate-400 font-medium">Universal Medico-Legal Format</p>
-                </div>
-                {directDischargeList.length > 0 && (
-                  <button
-                    onClick={handleClearAllDirectDischarge}
-                    className="text-[10px] font-bold text-rose-600 dark:text-rose-400 hover:underline px-2.5 py-1 bg-rose-50/50 dark:bg-rose-950/25 rounded"
-                  >
-                    Clear Roster ({directDischargeList.length})
-                  </button>
-                )}
-              </div>
-
-              {directDischargeList.length === 0 ? (
-                <div className="text-center py-16 text-slate-400 text-xs space-y-3">
-                  <FileText className="w-12 h-12 mx-auto text-purple-200 dark:text-purple-950 animate-pulse" />
-                  <p className="font-bold text-slate-600 dark:text-slate-300">No Direct Discharge Summaries Generated Yet</p>
-                  <p className="text-[11px] text-slate-400 max-w-sm mx-auto">
-                    Paste raw EMR notes or click one of the quick preset cases on the left to extract a structured discharge summary.
-                  </p>
-                </div>
-              ) : (
-                <div className="space-y-4 max-h-[620px] overflow-y-auto pr-1">
-                  {directDischargeList.map((item) => {
-                    const s = item.summary || {};
-                    const vArrival = s.vitalsOnArrival || {};
-
-                    return (
-                      <div
-                        key={item.id}
-                        className="bg-slate-50/70 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-800 rounded-xl p-4 space-y-3 hover:border-purple-300 dark:hover:border-purple-800 transition-all shadow-xs"
-                      >
-                        {/* Header Bar */}
-                        <div className="flex items-start justify-between border-b border-slate-200/80 dark:border-slate-800 pb-2.5">
-                          <div className="space-y-1">
-                            <div className="flex items-center gap-2">
-                              <span className="font-extrabold text-sm text-slate-900 dark:text-white">
-                                {item.patientName}
-                              </span>
-                              <span className="text-[10px] font-mono px-2 py-0.5 bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300 rounded font-bold">
-                                UHID: {item.uhid}
-                              </span>
-                              {s.mlc && (
-                                <span className="text-[10px] font-bold px-2 py-0.5 bg-rose-100 text-rose-700 rounded">
-                                  MLC: {s.mlc}
-                                </span>
-                              )}
-                            </div>
-                            <div className="text-[10.5px] text-slate-400 flex items-center gap-3">
-                              <span>Generated: {item.createdAt}</span>
-                              {s.disposition && (
-                                <span className="font-bold text-indigo-600 dark:text-indigo-400">
-                                  • {s.disposition}
-                                </span>
-                              )}
-                            </div>
-                          </div>
-
-                          {/* Action Buttons */}
-                          <div className="flex items-center gap-1.5">
-                            <button
-                              onClick={() => setSelectedDischargeModal(item)}
-                              className="px-2.5 py-1.5 bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-lg text-[11px] flex items-center gap-1 shadow-xs cursor-pointer"
-                              title="View & Print Full Summary Sheet"
-                            >
-                              <Printer className="w-3.5 h-3.5" />
-                              View / Print
-                            </button>
-                            <button
-                              onClick={() => handleDownloadDischargeWord(item)}
-                              className="px-2.5 py-1.5 bg-indigo-50 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 font-bold rounded-lg text-[11px] flex items-center gap-1 cursor-pointer border border-indigo-200 dark:border-indigo-900"
-                              title="Download Word Document (.doc)"
-                            >
-                              <Download className="w-3.5 h-3.5" />
-                              Word
-                            </button>
-                            <button
-                              onClick={() => {
-                                const s = item.summary || {};
-                                const vArr = s.vitalsOnArrival || {};
-                                const vDis = s.vitalsAtDischarge || {};
-                                const prim = s.primarySurvey || {};
-                                const air = prim.airway || {};
-                                const br = prim.breathing || {};
-                                const circ = prim.circulation || {};
-                                const dis = prim.disability || {};
-                                const exp = prim.exposure || {};
-                                const inv = s.investigations || {};
-
-                                const invText = Object.entries(inv)
-                                  .filter(([_, v]) => Boolean(v))
-                                  .map(([k, v]) => `${k.toUpperCase()}: ${v}`)
-                                  .join('\n');
-
-                                const fullTxt = `Discharge Summary
-MLC: ${s.mlc || "Nil"}
-Allergy : ${s.allergy || "Nil"}
-Vitals at the time of arrival:
-HR- ${vArr.hr || "-"} ,BP- ${vArr.bp || "-"} ,RR-${vArr.rr || "-"} ,Spo2- ${vArr.spo2 || "-"} ,GCS-${vArr.gcs || "-"} ,Pain Score- ${vArr.painScore || "-"} ,GRBS- ${vArr.grbs || "-"} ,Temp- ${vArr.temp || "-"}
-
-Presenting Complaints:
-${s.presentingComplaints || "N/A"}
-
-History of Present Illness:
-${s.hpi || "N/A"}
-
-Past Medical/Surgical Histories:
-${s.pastHistory || "Nil recorded"}
-Family / Gynae History : ${s.familyGynaeHistory || "Nil"}
-LMP : ${s.lmp || "N/A"}
-
-General Examination / Systemic examination:
-${s.generalAndSystemicExam || "General condition fair."}
-
-Primary Assessment:
-Airway → ${air.status || "Patent"} ,Intervention- ${air.intervention || "None"}
-Breathing → Work of breathing- ${br.workOfBreathing || "Normal"} ,Air entry- ${br.airEntry || "Bilaterally equal"} ,CCT- ${br.cct || "N/A"} ,Subcutaneous emphysema- ${br.subcutaneousEmphysema || "Nil"} ,EFAST- ${br.efast || "N/A"} ,Intervention- ${br.intervention || "None"}
-Circulation → CRT- ${circ.crt || "< 2s"} ,, Distended Neck Veins- ${circ.distendedNeckVeins || "Nil"} , PCT- ${circ.pct || "N/A"} Long bone deformity- ${circ.longBoneDeformity || "Nil"} ,FAST- ${circ.fast || "N/A"} ,Interventions- ${circ.intervention || "None"}
-Disability → AVPU/GCS- ${dis.gcs || "15/15"} ,Pupils- ${dis.pupils || "Equal & reactive"} ,GRBS- ${dis.grbs || "N/A"}
-Exposure → Temp- ${exp.temp || "98.6°F"} | Trauma- Logroll ${exp.logRoll || "N/A"}
-
-Course in Hospital with Medications and Procedure:
-${s.courseInHospital || "Evaluated and treated in ED."}
-
-Investigations:
-${invText || "No lab results documented."}
-
-Diagnosis at the time of discharge:
-${(s.diagnosisAtDischarge || ["Emergency Evaluation"]).map((d: string, i: number) => `${i + 1}. ${d}`).join('\n')}
-
-Discharge Medications:
-${Array.isArray(s.dischargeMedications) ? s.dischargeMedications.join('\n') : (s.dischargeMedications || "Nil")}
-
-Disposition:
-${s.disposition || "Normal Discharge"}
-
-Condition at time of discharge: (${s.conditionAtDischarge || "STABLE"})
-
-Vitals at the time of Discharge:
-HR- ${vDis.hr || "-"} ,BP- ${vDis.bp || "-"} ,RR-${vDis.rr || "-"} ,Sp02- ${vDis.spo2 || "-"} ,GCS-${vDis.gcs || "-"} ,Pain Score- ${vDis.painScore || "-"} ,GRBS- ${vDis.grbs || "-"} ,Temp- ${vDis.temp || "-"}
-
-Follow-Up Advice:
-${s.followUpAdvice || "Review in ED if symptoms recur."}
-
-ED Resident: ${s.edResident || "Duty Resident"} | ED Consultant: ${s.edConsultant || "ED Consultant"}
-Sign and Time: [Pending] | Sign and Time: [Pending]
-Date: ${s.dateTime || item.createdAt}
-
-This discharge summary provides clinical information meant to facilitate continuity of patient care. For statutory purposes, a treatment/discharge certificate shall be issued on request. For a disability certificate, approach a Government-constituted Medical Board.`;
-                                navigator.clipboard.writeText(fullTxt);
-                                alert("Discharge summary text copied to clipboard!");
-                              }}
-                              className="p-1.5 text-slate-500 hover:text-slate-700 bg-white dark:bg-slate-900 border rounded-lg cursor-pointer"
-                              title="Copy Text"
-                            >
-                              <ClipboardCopy className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              onClick={() => handleDeleteDirectDischarge(item.id)}
-                              className="p-1.5 text-slate-400 hover:text-rose-500 bg-white dark:bg-slate-900 border rounded-lg cursor-pointer"
-                              title="Delete"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        </div>
-
-                        {/* Summary Grid Preview */}
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
-                          <div className="bg-white dark:bg-slate-950 p-2.5 rounded-lg border space-y-1">
-                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
-                              Presenting Complaints & HPI
-                            </span>
-                            <p className="text-slate-800 dark:text-slate-200 line-clamp-3 font-sans leading-relaxed">
-                              {s.presentingComplaints || s.hpi || "N/A"}
-                            </p>
-                          </div>
-
-                          <div className="bg-white dark:bg-slate-950 p-2.5 rounded-lg border space-y-1">
-                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
-                              Diagnosis & Disposition
-                            </span>
-                            <div className="font-bold text-purple-700 dark:text-purple-400">
-                              {(s.diagnosisAtDischarge || ["Emergency Evaluation"]).join(", ")}
-                            </div>
-                            <div className="text-[10.5px] text-slate-500 mt-1">
-                              Status: <strong className="text-emerald-600">{s.conditionAtDischarge || "STABLE"}</strong>
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Vitals Bar */}
-                        <div className="flex items-center gap-4 bg-white dark:bg-slate-950 p-2 rounded-lg border text-[11px] font-mono overflow-x-auto">
-                          <span className="font-bold text-slate-500 shrink-0">Arrival Vitals:</span>
-                          <span>HR: <strong>{vArrival.hr || "N/A"}</strong></span>
-                          <span>BP: <strong>{vArrival.bp || "N/A"}</strong></span>
-                          <span>SpO₂: <strong>{vArrival.spo2 || "N/A"}</strong></span>
-                          <span>GCS: <strong>{vArrival.gcs || "N/A"}</strong></span>
-                          <span>GRBS: <strong>{vArrival.grbs || "N/A"}</strong></span>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          </div>
-
-        </div>
-      )}
-
-      {/* FULL RAJAGIRI PRINTABLE DISCHARGE SUMMARY MODAL */}
-      {selectedDischargeModal && (
-        <div className="fixed inset-0 bg-slate-950/80 z-55 flex items-center justify-center p-4 overflow-y-auto no-print">
-          <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-3xl w-full p-6 shadow-2xl space-y-5 my-8 max-h-[90vh] overflow-y-auto relative">
-            <button
-              onClick={() => setSelectedDischargeModal(null)}
-              className="absolute right-4 top-4 p-2 bg-slate-100 dark:bg-slate-900 rounded-xl text-slate-400 hover:text-slate-600 cursor-pointer"
-            >
-              <X className="w-5 h-5" />
-            </button>
-
-            {/* Modal Actions Header */}
-            <div className="flex items-center justify-between border-b pb-3 pr-10">
-              <div className="flex items-center gap-2">
-                <FileText className="w-5 h-5 text-purple-600" />
-                <h3 className="text-base font-black text-slate-900 dark:text-white">
-                  Discharge Summary Generator
-                </h3>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => triggerPrintWithTip()}
-                  className="px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-lg text-xs flex items-center gap-1.5 cursor-pointer"
-                >
-                  <Printer className="w-3.5 h-3.5" />
-                  Print / Save PDF
-                </button>
-                <button
-                  onClick={() => handleDownloadDischargeWord(selectedDischargeModal)}
-                  className="px-3 py-1.5 bg-indigo-50 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 font-bold rounded-lg text-xs flex items-center gap-1.5 border cursor-pointer"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  Word (.doc)
-                </button>
-              </div>
-            </div>
-
-            {/* Print Document Content */}
-            <div className="p-6 bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 space-y-4 border rounded-xl font-sans text-xs leading-relaxed">
-              {/* Header Banner */}
-              <div className="border-b-2 border-indigo-900 pb-3 flex justify-between items-end">
-                <div>
-                  <h1 className="text-xl font-black text-indigo-950 dark:text-indigo-400 uppercase tracking-tight">
-                    {(hospitalName || "EMERGENCY DEPARTMENT").toUpperCase()}
-                  </h1>
-                  <p className="text-xs font-bold text-slate-600 dark:text-slate-400">
-                    DEPARTMENT OF EMERGENCY MEDICINE
-                  </p>
-                  <p className="text-[10px] text-slate-400">
-                    24x7 Emergency Care &amp; Medico-Legal Records
-                  </p>
-                </div>
-                <div className="text-right">
-                  <span className="text-sm font-black text-indigo-900 dark:text-indigo-300 block">
-                    EMERGENCY DISCHARGE SUMMARY
-                  </span>
-                  <span className="text-[11px] font-mono text-slate-500">
-                    Date: {selectedDischargeModal.summary?.dateTime || selectedDischargeModal.createdAt}
-                  </span>
-                </div>
-              </div>
-
-              {/* Demographics Table */}
-              <div className="grid grid-cols-2 gap-2 bg-slate-50 dark:bg-slate-900 p-3 rounded-lg border font-mono">
-                <div><strong>Patient Name:</strong> {selectedDischargeModal.patientName}</div>
-                <div><strong>UHID / Bed:</strong> {selectedDischargeModal.uhid}</div>
-                <div><strong>MLC Status:</strong> {selectedDischargeModal.summary?.mlc ? `YES (${selectedDischargeModal.summary.mlc})` : "NO / Nil"}</div>
-                <div><strong>Allergies:</strong> {selectedDischargeModal.summary?.allergy || "Nil known"}</div>
-              </div>
-
-              {/* Arrival Vitals */}
-              <div className="space-y-1">
-                <h4 className="font-extrabold text-indigo-900 dark:text-indigo-300 border-b pb-1 text-xs uppercase">
-                  1. Vitals On Arrival
-                </h4>
-                <div className="grid grid-cols-4 gap-2 bg-slate-50 dark:bg-slate-900 p-2 rounded font-mono text-[11px]">
-                  <div>HR: <strong>{selectedDischargeModal.summary?.vitalsOnArrival?.hr || "N/A"}</strong></div>
-                  <div>BP: <strong>{selectedDischargeModal.summary?.vitalsOnArrival?.bp || "N/A"}</strong></div>
-                  <div>RR: <strong>{selectedDischargeModal.summary?.vitalsOnArrival?.rr || "N/A"}</strong></div>
-                  <div>SpO₂: <strong>{selectedDischargeModal.summary?.vitalsOnArrival?.spo2 || "N/A"}</strong></div>
-                  <div>GCS: <strong>{selectedDischargeModal.summary?.vitalsOnArrival?.gcs || "N/A"}</strong></div>
-                  <div>GRBS: <strong>{selectedDischargeModal.summary?.vitalsOnArrival?.grbs || "N/A"}</strong></div>
-                  <div>Temp: <strong>{selectedDischargeModal.summary?.vitalsOnArrival?.temp || "N/A"}</strong></div>
-                  <div>Pain: <strong>{selectedDischargeModal.summary?.vitalsOnArrival?.painScore || "N/A"}</strong></div>
-                </div>
-              </div>
-
-              {/* Presenting Complaints & HPI */}
-              <div className="space-y-1">
-                <h4 className="font-extrabold text-indigo-900 dark:text-indigo-300 border-b pb-1 text-xs uppercase">
-                  2. Clinical Presentation & History
-                </h4>
-                <p><strong>Presenting Complaints:</strong> {selectedDischargeModal.summary?.presentingComplaints || "N/A"}</p>
-                <p><strong>History of Present Illness:</strong> {selectedDischargeModal.summary?.hpi || "N/A"}</p>
-                <p><strong>Past Medical / Surgical Histories:</strong> {selectedDischargeModal.summary?.pastHistory || "Nil recorded"}</p>
-                {(selectedDischargeModal.summary?.familyGynaeHistory || selectedDischargeModal.summary?.lmp) && (
-                  <p><strong>Family / Gynae History:</strong> {selectedDischargeModal.summary?.familyGynaeHistory || "Nil"} | <strong>LMP:</strong> {selectedDischargeModal.summary?.lmp || "N/A"}</p>
-                )}
-              </div>
-
-              {/* Primary Assessment */}
-              <div className="space-y-1">
-                <h4 className="font-extrabold text-indigo-900 dark:text-indigo-300 border-b pb-1 text-xs uppercase">
-                  3. Primary Assessment
-                </h4>
-                <div className="bg-slate-50 dark:bg-slate-900 p-2.5 rounded border text-[11px] font-mono space-y-1">
-                  <div><strong>Airway:</strong> {selectedDischargeModal.summary?.primarySurvey?.airway?.status || "Patent"} {selectedDischargeModal.summary?.primarySurvey?.airway?.intervention ? `(Intervention: ${selectedDischargeModal.summary?.primarySurvey?.airway?.intervention})` : ''}</div>
-                  <div><strong>Breathing:</strong> Work of breathing: {selectedDischargeModal.summary?.primarySurvey?.breathing?.workOfBreathing || "Normal"}, Air entry: {selectedDischargeModal.summary?.primarySurvey?.breathing?.airEntry || "Bilaterally equal"}{selectedDischargeModal.summary?.primarySurvey?.breathing?.efast ? `, EFAST: ${selectedDischargeModal.summary?.primarySurvey?.breathing?.efast}` : ''}{selectedDischargeModal.summary?.primarySurvey?.breathing?.intervention ? `, Intervention: ${selectedDischargeModal.summary?.primarySurvey?.breathing?.intervention}` : ''}</div>
-                  <div><strong>Circulation:</strong> CRT: {selectedDischargeModal.summary?.primarySurvey?.circulation?.crt || "< 2s"}{selectedDischargeModal.summary?.primarySurvey?.circulation?.fast ? `, FAST: ${selectedDischargeModal.summary?.primarySurvey?.circulation?.fast}` : ''}{selectedDischargeModal.summary?.primarySurvey?.circulation?.intervention ? `, Interventions: ${selectedDischargeModal.summary?.primarySurvey?.circulation?.intervention}` : ''}</div>
-                  <div><strong>Disability:</strong> GCS: {selectedDischargeModal.summary?.primarySurvey?.disability?.gcs || "15/15"}, Pupils: {selectedDischargeModal.summary?.primarySurvey?.disability?.pupils || "Equal & reactive"}, GRBS: {selectedDischargeModal.summary?.primarySurvey?.disability?.grbs || "N/A"}</div>
-                  <div><strong>Exposure:</strong> Temp: {selectedDischargeModal.summary?.primarySurvey?.exposure?.temp || "Normal"}{selectedDischargeModal.summary?.primarySurvey?.exposure?.logRoll ? ` | Trauma / Logroll: ${selectedDischargeModal.summary?.primarySurvey?.exposure?.logRoll}` : ''}</div>
-                </div>
-              </div>
-
-              {/* General & Systemic Exam */}
-              {selectedDischargeModal.summary?.generalAndSystemicExam && (
-                <div className="space-y-1">
-                  <h4 className="font-extrabold text-indigo-900 dark:text-indigo-300 border-b pb-1 text-xs uppercase">
-                    4. General & Systemic Examination
-                  </h4>
-                  <p>{selectedDischargeModal.summary.generalAndSystemicExam}</p>
-                </div>
-              )}
-
-              {/* Course in Hospital */}
-              <div className="space-y-1">
-                <h4 className="font-extrabold text-indigo-900 dark:text-indigo-300 border-b pb-1 text-xs uppercase">
-                  {selectedDischargeModal.summary?.generalAndSystemicExam ? '5' : '4'}. Course In Hospital & ER Treatment Given
-                </h4>
-                <p>{selectedDischargeModal.summary?.courseInHospital || "Evaluated and managed in the Emergency Department."}</p>
-              </div>
-
-              {/* Investigations */}
-              <div className="space-y-1">
-                <h4 className="font-extrabold text-indigo-900 dark:text-indigo-300 border-b pb-1 text-xs uppercase">
-                  {selectedDischargeModal.summary?.generalAndSystemicExam ? '6' : '5'}. Key Lab Investigations & Imaging
-                </h4>
-                <div className="space-y-1 font-mono text-[11px]">
-                  {Object.entries(selectedDischargeModal.summary?.investigations || {}).map(([k, v]) => (
-                    v ? <div key={k}><strong>{k.toUpperCase()}:</strong> {v as string}</div> : null
-                  ))}
-                  {Object.values(selectedDischargeModal.summary?.investigations || {}).every(val => !val) && (
-                    <p className="font-sans text-slate-500">No key lab results documented.</p>
-                  )}
-                </div>
-              </div>
-
-              {/* Diagnosis */}
-              <div className="space-y-1">
-                <h4 className="font-extrabold text-indigo-900 dark:text-indigo-300 border-b pb-1 text-xs uppercase">
-                  {selectedDischargeModal.summary?.generalAndSystemicExam ? '7' : '6'}. Diagnosis At Discharge
-                </h4>
-                <ul className="list-disc pl-5 font-bold text-slate-800 dark:text-slate-200">
-                  {(selectedDischargeModal.summary?.diagnosisAtDischarge || ["Emergency Evaluation"]).map((d: string, idx: number) => (
-                    <li key={idx}>{d}</li>
-                  ))}
-                </ul>
-              </div>
-
-              {/* Discharge Medications & Advice */}
-              <div className="space-y-1">
-                <h4 className="font-extrabold text-indigo-900 dark:text-indigo-300 border-b pb-1 text-xs uppercase">
-                  {selectedDischargeModal.summary?.generalAndSystemicExam ? '8' : '7'}. Discharge Advice & Medications
-                </h4>
-                {Array.isArray(selectedDischargeModal.summary?.dischargeMedications) && selectedDischargeModal.summary.dischargeMedications.length > 0 ? (
-                  <ul className="list-disc pl-5">
-                    {selectedDischargeModal.summary.dischargeMedications.map((m: string, idx: number) => (
-                      <li key={idx}>{m}</li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p>No oral discharge medications prescribed. Patient transferred / admitted as noted.</p>
-                )}
-                <p className="pt-1"><strong>Follow-Up Advice:</strong> {selectedDischargeModal.summary?.followUpAdvice || "Review in ED if warning symptoms recur."}</p>
-              </div>
-
-              {/* Disposition & Condition */}
-              <div className="space-y-1">
-                <h4 className="font-extrabold text-indigo-900 dark:text-indigo-300 border-b pb-1 text-xs uppercase">
-                  {selectedDischargeModal.summary?.generalAndSystemicExam ? '9' : '8'}. Disposition & Vitals At Discharge
-                </h4>
-                <div className="grid grid-cols-2 gap-2 bg-slate-50 dark:bg-slate-900 p-2.5 rounded border text-[11px] font-mono">
-                  <div><strong>Disposition Status:</strong> {selectedDischargeModal.summary?.disposition || "Normal Discharge"}</div>
-                  <div><strong>Condition at Discharge:</strong> <span className="font-bold text-emerald-600 dark:text-emerald-400">{selectedDischargeModal.summary?.conditionAtDischarge || "STABLE"}</span></div>
-                  <div className="col-span-2 border-t pt-1.5 mt-1">
-                    <strong>Discharge Vitals:</strong> HR: {selectedDischargeModal.summary?.vitalsAtDischarge?.hr || "N/A"} | BP: {selectedDischargeModal.summary?.vitalsAtDischarge?.bp || "N/A"} | RR: {selectedDischargeModal.summary?.vitalsAtDischarge?.rr || "N/A"} | SpO₂: {selectedDischargeModal.summary?.vitalsAtDischarge?.spo2 || "N/A"} | GCS: {selectedDischargeModal.summary?.vitalsAtDischarge?.gcs || "N/A"} | Temp: {selectedDischargeModal.summary?.vitalsAtDischarge?.temp || "N/A"}
-                  </div>
-                </div>
-              </div>
-
-              {/* Signatures */}
-              <div className="pt-8 grid grid-cols-2 gap-4 font-bold border-t">
-                <div>
-                  <p>______________________________</p>
-                  <p>Dr. {selectedDischargeModal.summary?.edResident || "Duty EM Resident"}</p>
-                  <p className="text-[10px] text-slate-400 font-normal">Emergency Medicine Resident</p>
-                </div>
-                <div className="text-right">
-                  <p>______________________________</p>
-                  <p>Dr. {selectedDischargeModal.summary?.edConsultant || "ED Consultant"}</p>
-                  <p className="text-[10px] text-slate-400 font-normal">Consultant Emergency Medicine</p>
-                </div>
-              </div>
-
-              {/* Statutory Disclaimer */}
-              <p className="text-[10px] text-slate-400 border-t pt-3 mt-4 text-center leading-normal font-sans">
-                This discharge summary provides clinical information meant to facilitate continuity of patient care. For statutory purposes, a treatment/discharge certificate shall be issued on request as per applicable Medico-legal regulations. For a disability certificate, approach a Government-constituted Medical Board.
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* POST-PRINT SHIFT CLEANUP ADVISOR MODAL */}
       {showPostPrintCleanPrompt && (
         <div className="fixed inset-0 bg-slate-950/80 z-55 flex items-center justify-center p-4 no-print">
@@ -5344,14 +4811,14 @@ This discharge summary provides clinical information meant to facilitate continu
                 <div className="max-h-[120px] overflow-y-auto space-y-1.5 pr-2">
                   {postPrintDataType === "registry" ? (
                     cases.filter(c => idsToCleanup.includes(c.id)).map((c, i) => (
-                      <div key={c.id} className="text-[11px] font-mono flex justify-between text-slate-600 dark:text-slate-400 bg-white dark:bg-slate-950 p-1.5 rounded border border-slate-100">
+                      <div key={`${c.id}-${i}`} className="text-[11px] font-mono flex justify-between text-slate-600 dark:text-slate-400 bg-white dark:bg-slate-950 p-1.5 rounded border border-slate-100">
                         <span className="font-bold">{i + 1}. {c.patient.name}</span>
                         <span>{c.patient.age}y / {c.patient.gender} • {c.patient.triageCategory}</span>
                       </div>
                     ))
                   ) : (
                     quickPasteList.map((p, i) => (
-                      <div key={p.id} className="text-[11px] font-mono flex justify-between text-slate-600 dark:text-slate-400 bg-white dark:bg-slate-950 p-1.5 rounded border border-slate-100">
+                      <div key={`${p.id}-${i}`} className="text-[11px] font-mono flex justify-between text-slate-600 dark:text-slate-400 bg-white dark:bg-slate-950 p-1.5 rounded border border-slate-100">
                         <span className="font-bold">{i + 1}. {p.name}</span>
                         <span>{p.triage}</span>
                       </div>
@@ -5518,77 +4985,131 @@ This discharge summary provides clinical information meant to facilitate continu
                 
                 <div className="space-y-1">
                   <label className="font-bold text-blue-700 dark:text-blue-400">[S] Situation</label>
-                  <textarea
-                    rows={2}
-                    value={editingPatient.structuredSBAR?.situation || ""}
-                    onChange={(e) => setEditingPatient({
-                      ...editingPatient,
-                      structuredSBAR: {
-                        ...(editingPatient.structuredSBAR || { situation: '', background: '', assessment: '', recommendation: '' }),
-                        situation: e.target.value
-                      }
-                    })}
-                    className="w-full p-2.5 bg-slate-50 dark:bg-slate-900 border rounded-lg focus:ring-1 focus:ring-indigo-500 font-medium text-slate-800 dark:text-slate-100"
-                  />
+                  <div className="flex gap-2">
+                    <textarea
+                      rows={2}
+                      value={editingPatient.structuredSBAR?.situation || ""}
+                      onChange={(e) => setEditingPatient({
+                        ...editingPatient,
+                        structuredSBAR: {
+                          ...(editingPatient.structuredSBAR || { situation: '', background: '', assessment: '', recommendation: '' }),
+                          situation: e.target.value
+                        }
+                      })}
+                      className="flex-1 w-full p-2.5 bg-slate-50 dark:bg-slate-900 border rounded-lg focus:ring-1 focus:ring-indigo-500 font-medium text-slate-800 dark:text-slate-100"
+                    />
+                    <VoiceRecorder
+                      renderMode="compact-button"
+                      onTranscript={(txt) => setEditingPatient({
+                        ...editingPatient,
+                        structuredSBAR: {
+                          ...(editingPatient.structuredSBAR || { situation: '', background: '', assessment: '', recommendation: '' }),
+                          situation: (editingPatient.structuredSBAR?.situation ? editingPatient.structuredSBAR?.situation + " " : "") + txt
+                        }
+                      })}
+                    />
+                  </div>
                 </div>
 
                 <div className="space-y-1">
                   <label className="font-bold text-purple-700 dark:text-purple-400">[B] Background</label>
-                  <textarea
-                    rows={2}
-                    value={editingPatient.structuredSBAR?.background || ""}
-                    onChange={(e) => setEditingPatient({
-                      ...editingPatient,
-                      structuredSBAR: {
-                        ...(editingPatient.structuredSBAR || { situation: '', background: '', assessment: '', recommendation: '' }),
-                        background: e.target.value
-                      }
-                    })}
-                    className="w-full p-2.5 bg-slate-50 dark:bg-slate-900 border rounded-lg focus:ring-1 focus:ring-indigo-500 font-medium text-slate-800 dark:text-slate-100"
-                  />
+                  <div className="flex gap-2">
+                    <textarea
+                      rows={2}
+                      value={editingPatient.structuredSBAR?.background || ""}
+                      onChange={(e) => setEditingPatient({
+                        ...editingPatient,
+                        structuredSBAR: {
+                          ...(editingPatient.structuredSBAR || { situation: '', background: '', assessment: '', recommendation: '' }),
+                          background: e.target.value
+                        }
+                      })}
+                      className="flex-1 w-full p-2.5 bg-slate-50 dark:bg-slate-900 border rounded-lg focus:ring-1 focus:ring-indigo-500 font-medium text-slate-800 dark:text-slate-100"
+                    />
+                    <VoiceRecorder
+                      renderMode="compact-button"
+                      onTranscript={(txt) => setEditingPatient({
+                        ...editingPatient,
+                        structuredSBAR: {
+                          ...(editingPatient.structuredSBAR || { situation: '', background: '', assessment: '', recommendation: '' }),
+                          background: (editingPatient.structuredSBAR?.background ? editingPatient.structuredSBAR?.background + " " : "") + txt
+                        }
+                      })}
+                    />
+                  </div>
                 </div>
 
                 <div className="space-y-1">
                   <label className="font-bold text-amber-700 dark:text-amber-400">[A] Assessment</label>
-                  <textarea
-                    rows={2}
-                    value={editingPatient.structuredSBAR?.assessment || ""}
-                    onChange={(e) => setEditingPatient({
-                      ...editingPatient,
-                      structuredSBAR: {
-                        ...(editingPatient.structuredSBAR || { situation: '', background: '', assessment: '', recommendation: '' }),
-                        assessment: e.target.value
-                      }
-                    })}
-                    className="w-full p-2.5 bg-slate-50 dark:bg-slate-900 border rounded-lg focus:ring-1 focus:ring-indigo-500 font-medium text-slate-800 dark:text-slate-100"
-                  />
+                  <div className="flex gap-2">
+                    <textarea
+                      rows={2}
+                      value={editingPatient.structuredSBAR?.assessment || ""}
+                      onChange={(e) => setEditingPatient({
+                        ...editingPatient,
+                        structuredSBAR: {
+                          ...(editingPatient.structuredSBAR || { situation: '', background: '', assessment: '', recommendation: '' }),
+                          assessment: e.target.value
+                        }
+                      })}
+                      className="flex-1 w-full p-2.5 bg-slate-50 dark:bg-slate-900 border rounded-lg focus:ring-1 focus:ring-indigo-500 font-medium text-slate-800 dark:text-slate-100"
+                    />
+                    <VoiceRecorder
+                      renderMode="compact-button"
+                      onTranscript={(txt) => setEditingPatient({
+                        ...editingPatient,
+                        structuredSBAR: {
+                          ...(editingPatient.structuredSBAR || { situation: '', background: '', assessment: '', recommendation: '' }),
+                          assessment: (editingPatient.structuredSBAR?.assessment ? editingPatient.structuredSBAR?.assessment + " " : "") + txt
+                        }
+                      })}
+                    />
+                  </div>
                 </div>
 
                 <div className="space-y-1">
                   <label className="font-bold text-emerald-700 dark:text-emerald-400 font-bold">[R] Recommendation</label>
-                  <textarea
-                    rows={2}
-                    value={editingPatient.structuredSBAR?.recommendation || ""}
-                    onChange={(e) => setEditingPatient({
-                      ...editingPatient,
-                      structuredSBAR: {
-                        ...(editingPatient.structuredSBAR || { situation: '', background: '', assessment: '', recommendation: '' }),
-                        recommendation: e.target.value
-                      }
-                    })}
-                    className="w-full p-2.5 bg-slate-50 dark:bg-slate-900 border rounded-lg focus:ring-1 focus:ring-indigo-500 font-medium text-slate-800 dark:text-slate-100"
-                  />
+                  <div className="flex gap-2">
+                    <textarea
+                      rows={2}
+                      value={editingPatient.structuredSBAR?.recommendation || ""}
+                      onChange={(e) => setEditingPatient({
+                        ...editingPatient,
+                        structuredSBAR: {
+                          ...(editingPatient.structuredSBAR || { situation: '', background: '', assessment: '', recommendation: '' }),
+                          recommendation: e.target.value
+                        }
+                      })}
+                      className="flex-1 w-full p-2.5 bg-slate-50 dark:bg-slate-900 border rounded-lg focus:ring-1 focus:ring-indigo-500 font-medium text-slate-800 dark:text-slate-100"
+                    />
+                    <VoiceRecorder
+                      renderMode="compact-button"
+                      onTranscript={(txt) => setEditingPatient({
+                        ...editingPatient,
+                        structuredSBAR: {
+                          ...(editingPatient.structuredSBAR || { situation: '', background: '', assessment: '', recommendation: '' }),
+                          recommendation: (editingPatient.structuredSBAR?.recommendation ? editingPatient.structuredSBAR?.recommendation + " " : "") + txt
+                        }
+                      })}
+                    />
+                  </div>
                 </div>
               </div>
 
               <div className="space-y-1">
                 <label className="font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Raw Input Notes / Clinical Snippet</label>
-                <textarea
-                  rows={3}
-                  value={editingPatient.rawNotes}
-                  onChange={(e) => setEditingPatient({ ...editingPatient, rawNotes: e.target.value })}
-                  className="w-full p-2.5 bg-slate-50 dark:bg-slate-900 border rounded-lg focus:ring-1 focus:ring-indigo-500 font-mono text-[10.5px] text-slate-800 dark:text-slate-100"
-                />
+                <div className="flex gap-2">
+                  <textarea
+                    rows={3}
+                    value={editingPatient.rawNotes}
+                    onChange={(e) => setEditingPatient({ ...editingPatient, rawNotes: e.target.value })}
+                    className="flex-1 w-full p-2.5 bg-slate-50 dark:bg-slate-900 border rounded-lg focus:ring-1 focus:ring-indigo-500 font-mono text-[10.5px] text-slate-800 dark:text-slate-100"
+                  />
+                  <VoiceRecorder
+                    renderMode="compact-button"
+                    onTranscript={(txt) => setEditingPatient({ ...editingPatient, rawNotes: (editingPatient.rawNotes ? editingPatient.rawNotes + " " : "") + txt })}
+                  />
+                </div>
               </div>
 
               <div className="flex items-center justify-end gap-2 pt-3 border-t">

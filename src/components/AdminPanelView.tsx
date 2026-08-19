@@ -9,6 +9,7 @@ import { collection, onSnapshot, query, doc, updateDoc } from "firebase/firestor
 import { db, auth } from "../firebase";
 import { UserProfile, ClinicalCase, ApiLogItem } from "../types";
 import { SelfLearningRulesPanel } from "./SelfLearningRulesPanel";
+import AdminHodClaimReview from "./AdminHodClaimReview";
 
 interface AdminPanelViewProps {
   currentProfile: UserProfile;
@@ -116,8 +117,8 @@ export default function AdminPanelView({
   if (currentProfile.hospital) allHospitalsSet.add(currentProfile.hospital);
 
   // Default fallback statistics for API usage calculations if logs collection is empty
-  const estimatedGeminiFlashCalls = Math.max(activeCasesCount * 12 + 180, 240);
-  const estimatedGeminiProCalls = Math.max(activeCasesCount * 3 + 45, 60);
+  const estimatedErMateFlashCalls = Math.max(activeCasesCount * 12 + 180, 240);
+  const estimatedErMateProCalls = Math.max(activeCasesCount * 3 + 45, 60);
   const estimatedOcrScans = Math.max(Math.floor(activeCasesCount * 1.5) + 32, 40);
   const estimatedVoiceMinutes = Math.max(activeCasesCount * 6 + 120, 150);
   const estimatedSearchQueries = Math.max(Math.floor(activeCasesCount * 0.8) + 15, 20);
@@ -125,19 +126,19 @@ export default function AdminPanelView({
   const estimatedFirestoreWrites = Math.max(activeCasesCount * 18 + 420, 500);
 
   // Calculated Pricing Metrics (USD)
-  const geminiFlashCost = (estimatedGeminiFlashCalls * 0.00085); // ~$0.00085 per standard flash prompt context
-  const geminiProCost = (estimatedGeminiProCalls * 0.0125);       // ~$0.0125 per deep reasoning call
+  const ermateFlashCost = (estimatedErMateFlashCalls * 0.00085); // ~$0.00085 per standard flash prompt context
+  const ermateProCost = (estimatedErMateProCalls * 0.0125);       // ~$0.0125 per deep reasoning call
   const ocrCost = (estimatedOcrScans * 0.0015);                  // $1.50 / 1000 scans
   const voiceCost = (estimatedVoiceMinutes * 0.016);              // $0.016 / audio minute
   const searchCost = (estimatedSearchQueries * 0.035);            // $0.035 / grounded query
   const firestoreCost = (estimatedFirestoreReads / 100000 * 0.06) + (estimatedFirestoreWrites / 100000 * 0.18);
 
-  const totalCostUSD = geminiFlashCost + geminiProCost + ocrCost + voiceCost + searchCost + firestoreCost;
+  const totalCostUSD = ermateFlashCost + ermateProCost + ocrCost + voiceCost + searchCost + firestoreCost;
   const totalCostDisplay = currency === "INR" 
     ? `₹${(totalCostUSD * exchangeRateINR).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
     : `$${totalCostUSD.toFixed(2)}`;
 
-  const totalInvocations = estimatedGeminiFlashCalls + estimatedGeminiProCalls + estimatedOcrScans + estimatedVoiceMinutes + estimatedSearchQueries;
+  const totalInvocations = estimatedErMateFlashCalls + estimatedErMateProCalls + estimatedOcrScans + estimatedVoiceMinutes + estimatedSearchQueries;
 
   // Format currency helper
   const formatAmt = (usdVal: number) => {
@@ -195,11 +196,11 @@ export default function AdminPanelView({
   const handleExportCsv = () => {
     const headers = ["API Service", "Units Used", "Unit Price (USD)", "Estimated Cost (USD)", "Estimated Cost (INR)"];
     const rows = [
-      ["Gemini 2.5 Flash API", `${estimatedGeminiFlashCalls} calls`, "$0.00085 / call", `$${geminiFlashCost.toFixed(3)}`, `₹${(geminiFlashCost * exchangeRateINR).toFixed(2)}`],
-      ["Gemini 3.6 Pro API", `${estimatedGeminiProCalls} calls`, "$0.0125 / call", `$${geminiProCost.toFixed(3)}`, `₹${(geminiProCost * exchangeRateINR).toFixed(2)}`],
+      ["ErMate Standard AI", `${estimatedErMateFlashCalls} calls`, "$0.00085 / call", `$${ermateFlashCost.toFixed(3)}`, `₹${(ermateFlashCost * exchangeRateINR).toFixed(2)}`],
+      ["ErMate Pro AI", `${estimatedErMateProCalls} calls`, "$0.0125 / call", `$${ermateProCost.toFixed(3)}`, `₹${(ermateProCost * exchangeRateINR).toFixed(2)}`],
       ["Google Cloud Vision OCR", `${estimatedOcrScans} images`, "$0.0015 / scan", `$${ocrCost.toFixed(3)}`, `₹${(ocrCost * exchangeRateINR).toFixed(2)}`],
       ["Speech-to-Text Voice API", `${estimatedVoiceMinutes} minutes`, "$0.016 / min", `$${voiceCost.toFixed(3)}`, `₹${(voiceCost * exchangeRateINR).toFixed(2)}`],
-      ["Gemini Search Grounding", `${estimatedSearchQueries} searches`, "$0.035 / query", `$${searchCost.toFixed(3)}`, `₹${(searchCost * exchangeRateINR).toFixed(2)}`],
+      ["ErMate Search Grounding", `${estimatedSearchQueries} searches`, "$0.035 / query", `$${searchCost.toFixed(3)}`, `₹${(searchCost * exchangeRateINR).toFixed(2)}`],
       ["Firestore DB Operations", `${estimatedFirestoreReads} reads, ${estimatedFirestoreWrites} writes`, "$0.06/100k reads", `$${firestoreCost.toFixed(3)}`, `₹${(firestoreCost * exchangeRateINR).toFixed(2)}`],
       ["TOTAL OPERATIONAL COST", `${totalInvocations} total calls`, "-", `$${totalCostUSD.toFixed(2)}`, `₹${(totalCostUSD * exchangeRateINR).toFixed(2)}`]
     ];
@@ -236,7 +237,7 @@ export default function AdminPanelView({
               App Analytics & API Cost Intelligence
             </h1>
             <p className="text-xs text-slate-400 max-w-2xl leading-relaxed">
-              Real-time monitoring of registered hospital nodes, state distributions, clinical cases processed, and detailed API token cost incurred across Google Cloud & Gemini services.
+              Real-time monitoring of registered hospital nodes, state distributions, clinical cases processed, and detailed API token cost incurred across Google Cloud & ErMate services.
             </p>
           </div>
 
@@ -330,7 +331,7 @@ export default function AdminPanelView({
             </h2>
             <p className="text-[11px] text-slate-500 mt-1 flex items-center gap-1 font-medium">
               <Sparkles className="w-3.5 h-3.5 text-indigo-500" />
-              <span>Gemini 2.5 Flash, 3.6 Pro, OCR & Voice</span>
+              <span>ErMate 2.5 Flash, 3.6 Pro, OCR & Voice</span>
             </p>
           </div>
         </div>
@@ -386,7 +387,7 @@ export default function AdminPanelView({
               <BarChart3 className="w-5 h-5 text-indigo-500" /> API Usage & Incurred Cost Breakdown
             </h2>
             <p className="text-xs text-slate-500 mt-0.5 font-medium">
-              Detailed metering of Gemini models, Google Cloud Vision, Speech-to-Text, Search Grounding, and Firestore sharding.
+              Detailed metering of ErMate models, Google Cloud Vision, Speech-to-Text, Search Grounding, and Firestore sharding.
             </p>
           </div>
           <span className="px-3 py-1 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 text-xs font-mono font-bold rounded-xl border border-indigo-200 dark:border-indigo-800 w-fit">
@@ -407,7 +408,7 @@ export default function AdminPanelView({
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60 font-medium">
               
-              {/* Row 1: Gemini 2.5 Flash */}
+              {/* Row 1: ErMate 2.5 Flash */}
               <tr className="hover:bg-slate-50/60 dark:hover:bg-slate-800/30 transition-colors">
                 <td className="py-3.5 px-4">
                   <div className="flex items-center gap-2.5">
@@ -415,19 +416,19 @@ export default function AdminPanelView({
                       <Cpu className="w-4 h-4" />
                     </div>
                     <div>
-                      <p className="font-bold text-slate-900 dark:text-slate-100">Gemini 2.5 Flash API</p>
+                      <p className="font-bold text-slate-900 dark:text-slate-100">ErMate Standard AI</p>
                       <p className="text-[10px] text-slate-500 font-mono">Scribe, SBAR & Handover Summarizer</p>
                     </div>
                   </div>
                 </td>
                 <td className="py-3.5 px-4 font-mono text-slate-700 dark:text-slate-300">
-                  {estimatedGeminiFlashCalls.toLocaleString()} calls
+                  {estimatedErMateFlashCalls.toLocaleString()} calls
                 </td>
                 <td className="py-3.5 px-4 font-mono text-slate-500 text-[11px]">
                   $0.075 / 1M Input Tokens
                 </td>
                 <td className="py-3.5 px-4 font-mono font-black text-slate-900 dark:text-white">
-                  {formatAmt(geminiFlashCost)}
+                  {formatAmt(ermateFlashCost)}
                 </td>
                 <td className="py-3.5 px-4 text-right">
                   <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-mono text-[10px] font-bold">
@@ -436,7 +437,7 @@ export default function AdminPanelView({
                 </td>
               </tr>
 
-              {/* Row 2: Gemini 3.6 Pro */}
+              {/* Row 2: ErMate 3.6 Pro */}
               <tr className="hover:bg-slate-50/60 dark:hover:bg-slate-800/30 transition-colors">
                 <td className="py-3.5 px-4">
                   <div className="flex items-center gap-2.5">
@@ -444,19 +445,19 @@ export default function AdminPanelView({
                       <Sparkles className="w-4 h-4" />
                     </div>
                     <div>
-                      <p className="font-bold text-slate-900 dark:text-slate-100">Gemini 3.6 Pro API</p>
+                      <p className="font-bold text-slate-900 dark:text-slate-100">ErMate Pro AI</p>
                       <p className="text-[10px] text-slate-500 font-mono">7-Lens Clinical Debrief & Differential AI</p>
                     </div>
                   </div>
                 </td>
                 <td className="py-3.5 px-4 font-mono text-slate-700 dark:text-slate-300">
-                  {estimatedGeminiProCalls.toLocaleString()} calls
+                  {estimatedErMateProCalls.toLocaleString()} calls
                 </td>
                 <td className="py-3.5 px-4 font-mono text-slate-500 text-[11px]">
                   $1.25 / 1M Input Tokens
                 </td>
                 <td className="py-3.5 px-4 font-mono font-black text-slate-900 dark:text-white">
-                  {formatAmt(geminiProCost)}
+                  {formatAmt(ermateProCost)}
                 </td>
                 <td className="py-3.5 px-4 text-right">
                   <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-mono text-[10px] font-bold">
@@ -523,7 +524,7 @@ export default function AdminPanelView({
                 </td>
               </tr>
 
-              {/* Row 5: Gemini Search Grounding */}
+              {/* Row 5: ErMate Search Grounding */}
               <tr className="hover:bg-slate-50/60 dark:hover:bg-slate-800/30 transition-colors">
                 <td className="py-3.5 px-4">
                   <div className="flex items-center gap-2.5">
@@ -531,7 +532,7 @@ export default function AdminPanelView({
                       <Globe className="w-4 h-4" />
                     </div>
                     <div>
-                      <p className="font-bold text-slate-900 dark:text-slate-100">Gemini Search Grounding Tool</p>
+                      <p className="font-bold text-slate-900 dark:text-slate-100">ErMate Search Grounding Tool</p>
                       <p className="text-[10px] text-slate-500 font-mono">Live Medical Journal & Web Grounding</p>
                     </div>
                   </div>
@@ -747,6 +748,9 @@ export default function AdminPanelView({
         </div>
 
       </div>
+
+      {/* HOD Claim Review Gate (Initial Bootstrapping Gate) */}
+      <AdminHodClaimReview />
 
       {/* Role Change Audit Log Panel (NABH Compliance) */}
       <RoleChangeAuditLogPanel />

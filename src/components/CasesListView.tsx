@@ -71,13 +71,13 @@ export default function CasesListView({
         </div>
         <div className="flex flex-wrap gap-2.5">
           <button
-            onClick={onStartFullFlow}
+            onClick={() => onStartFullFlow()}
             className="px-4 py-2 bg-gradient-to-r from-emerald-600 via-teal-600 to-purple-600 hover:from-emerald-700 hover:via-teal-700 hover:to-purple-700 text-white text-xs font-bold rounded-lg transition-all flex items-center gap-1 shadow-sm"
           >
             <Plus className="w-4 h-4" /> Standard Triage Case
           </button>
           <button
-            onClick={onStartQuickCase}
+            onClick={() => onStartQuickCase()}
             className="px-4 py-2 bg-slate-100 dark:bg-slate-900 hover:bg-slate-200 dark:hover:bg-slate-800 border text-slate-700 dark:text-slate-300 text-xs font-semibold rounded-lg transition-all"
           >
             Quick Case
@@ -145,7 +145,7 @@ export default function CasesListView({
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filteredCases.map((c) => {
+          {filteredCases.map((c, idx) => {
             const abnormalVitals = Object.entries(c.vitals).filter(([k, v]) => {
               if (!v) return false;
               const n = parseFloat(v);
@@ -164,7 +164,7 @@ export default function CasesListView({
 
             return (
               <div
-                key={c.id}
+                key={`${c.id}-${idx}`}
                 className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 hover:border-blue-300 dark:hover:border-blue-900 rounded-xl p-5 shadow-sm hover:shadow-md transition-all flex flex-col justify-between group"
               >
                 <div className="space-y-3">
@@ -172,13 +172,13 @@ export default function CasesListView({
                     <div className="space-y-1">
                       <div className="flex items-center gap-1.5 flex-wrap">
                         <span className={`text-[9px] px-2 py-0.5 rounded font-mono font-bold border ${
-                          c.patient.triageCategory.includes("P1")
+                          String(c.patient.triageCategory || "").includes("P1")
                             ? "bg-rose-50 border-rose-250 text-rose-700 dark:bg-rose-950/20 dark:text-rose-400"
-                            : c.patient.triageCategory.includes("P2")
+                            : String(c.patient.triageCategory || "").includes("P2")
                             ? "bg-amber-50 border-amber-250 text-amber-700 dark:bg-amber-950/20 dark:text-amber-400"
                             : "bg-emerald-50 border-emerald-250 text-emerald-700 dark:bg-emerald-950/20 dark:text-emerald-400"
                         }`}>
-                          {c.patient.triageCategory.split(" ")[0]}
+                          {String(c.patient.triageCategory || "P2").split(" ")[0]}
                         </span>
                         {c.isPediatric ? (
                           <span className="text-[9px] bg-sky-50 text-sky-700 border border-sky-100 px-1.5 py-0.2 rounded font-semibold uppercase">

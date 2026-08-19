@@ -170,7 +170,7 @@ export function cleanExtractionOutput(raw: RawExtractionFields): CleanedExtracti
     .filter(e => e.description.length > 0);
 
   // Drugs / Medications — straightforward entity list
-  const rawDrugs: any = raw.drugs ?? raw.medications;
+  const rawDrugs: any = raw.drugs ?? raw.medications ?? raw.treatment ?? raw.treatmentInER;
   let drugsArray: string[] = [];
   if (Array.isArray(rawDrugs)) {
     drugsArray = rawDrugs.map(d => String(d));
@@ -180,26 +180,25 @@ export function cleanExtractionOutput(raw: RawExtractionFields): CleanedExtracti
   const drugs = cleanEntityList(drugsArray);
 
   // Plan / Treatment — accept array or single string, normalize
-  const rawPlan: any = raw.plan ?? raw.treatment;
+  const rawPlan: any = raw.plan ?? raw.disposition ?? raw.dispositionAndPlan;
   let planArray: string[] = [];
   if (Array.isArray(rawPlan)) {
-    planArray = rawPlan.map(p => String(p));
+    planArray = rawPlan.map(p => typeof p === "string" ? p : JSON.stringify(p));
   } else if (typeof rawPlan === "string" && rawPlan.trim().length > 0) {
     planArray = rawPlan.split(/;|\n/).map(p => p.trim());
+  } else if (rawPlan && typeof rawPlan === "object") {
+    if (rawPlan.dispositionStatus) planArray.push(`Disposition: ${rawPlan.dispositionStatus}`);
+    if (rawPlan.followUpAdvice) planArray.push(`Advice: ${rawPlan.followUpAdvice}`);
   }
   const plan = cleanEntityList(planArray);
 
   // Labs — clean name only; value is numeric/lab-native, left untouched
   let rawLabs: { name: string; value: string | number | null }[] = [];
-  if (Array.isArray(raw.labs)) {
-    rawLabs = raw.labs;
-  } else if (raw.labs && typeof raw.labs === "object") {
-    rawLabs = Object.entries(raw.labs).map(([name, value]) => ({
-      name,
-      value: value as any,
-    }));
-  } else if (raw.investigationResults && typeof raw.investigationResults === "object") {
-    rawLabs = Object.entries(raw.investigationResults).map(([name, value]) => ({
+  const labsField = raw.labs ?? raw.investigationResults ?? raw.investigations ?? raw.investigationFindings?.labs;
+  if (Array.isArray(labsField)) {
+    rawLabs = labsField.map(l => typeof l === 'string' ? { name: l, value: null } : l);
+  } else if (labsField && typeof labsField === "object") {
+    rawLabs = Object.entries(labsField).map(([name, value]) => ({
       name,
       value: value as any,
     }));

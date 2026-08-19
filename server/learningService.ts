@@ -215,28 +215,6 @@ Do NOT wrap output in markdown fences if possible, or return valid JSON inside \
     }
   }
 
-  // Secondary Fallback: Gemini 2.5 Flash if Claude Sonnet is unavailable
-  if (extractedList.length === 0) {
-    const key = apiKey || process.env.GEMINI_API_KEY;
-    if (key) {
-      try {
-        const ai = new GoogleGenAI({ apiKey: key });
-        const response = await ai.models.generateContent({
-          model: "gemini-2.0-flash",
-          contents: [{ role: "user", parts: [{ text: prompt }] }]
-        });
-
-        const text = response.text || "";
-        const jsonMatch = text.match(/\[[\s\S]*\]/);
-        if (jsonMatch) {
-          extractedList = JSON.parse(jsonMatch[0]);
-        }
-      } catch (err) {
-        console.error("[Learning Pattern Extraction - Gemini Fallback Error]", err);
-      }
-    }
-  }
-
   // Fallback pattern extraction if offline or no key
   if (extractedList.length === 0) {
     unprocessed.forEach(c => {

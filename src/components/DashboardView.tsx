@@ -1,3 +1,4 @@
+import VoiceRecorder from "./shared/VoiceRecorder";
 import React, { useState } from "react";
 import { 
   PlusCircle, Zap, TrendingUp, Clock, ArrowRight, Activity, 
@@ -11,6 +12,7 @@ import { getCasePendingStatus } from "../utils/caseHelper";
 import { triggerPrintWithTip } from "../utils/printWithTip";
 import { doc, updateDoc } from "firebase/firestore";
 import { db, auth } from "../firebase";
+import { createTeamInvite } from "../services/teamInviteService";
 import GoogleCalendarModal from "./GoogleCalendarModal";
 import GoogleClassroomModal from "./GoogleClassroomModal";
 import MortalityAuditModal from "./MortalityAuditModal";
@@ -130,6 +132,30 @@ export default function DashboardView({
     }))
     .filter(x => x.status.isPending);
 
+  // Active invite link generated dynamically
+  const [activeInviteLink, setActiveInviteLink] = useState<string>("");
+  const [modalShiftId, setModalShiftId] = useState<string>("");
+
+  React.useEffect(() => {
+    if (showShiftCheckIn) {
+      setModalShiftId(activeUserShiftId);
+    }
+  }, [showShiftCheckIn, activeUserShiftId]);
+
+
+  React.useEffect(() => {
+    let active = true;
+    if (profile?.hospital) {
+      createTeamInvite(profile.hospital, auth.currentUser?.uid || "hod", profile.name || "HOD").then(res => {
+        if (active) {
+          setActiveInviteLink(res.link);
+        }
+      });
+    } else {
+      setActiveInviteLink(`${window.location.origin}/join/general-er-invite`);
+    }
+    return () => { active = false; };
+  }, [profile?.hospital, profile?.name]);
   // Shift & Countdown Warning States
   const [showShiftWarning, setShowShiftWarning] = useState<boolean>(false);
   const [warningSeconds, setWarningSeconds] = useState<number>(300); // 5 minutes
@@ -161,6 +187,17 @@ export default function DashboardView({
   const [copiedState, setCopiedState] = useState<{ [key: string]: boolean }>({});
   const [isHodPanelExpanded, setIsHodPanelExpanded] = useState<boolean>(false);
   const [isApprovalsHubExpanded, setIsApprovalsHubExpanded] = useState<boolean>(true);
+  const [showHODModal, setShowHODModal] = useState<boolean>(false);
+
+  // Department HOD calculations
+  const departmentHODMember = teamMembers.find(m => 
+    m.role?.toLowerCase().includes("hod") || 
+    m.role?.toLowerCase().includes("head") || 
+    m.role?.toLowerCase().includes("lead")
+  );
+  const isSelfHOD = profile.role?.toLowerCase().includes("hod") || profile.role?.toLowerCase().includes("owner") || profile.role?.toLowerCase().includes("head");
+  const hodDisplayName = departmentHODMember ? departmentHODMember.name : (isSelfHOD ? profile.name : (profile.hospital ? `Dr. ${profile.hospital.split(' ')[0]} HOD` : "Department Head"));
+  const hodEmail = departmentHODMember ? departmentHODMember.email : (isSelfHOD ? profile.email : "hod@" + (profile.hospital ? profile.hospital.toLowerCase().replace(/[^a-z]/g, '') : "ermate") + ".in");
 
   // Google Calendar & Classroom Modal States
   const [isCalendarModalOpen, setIsCalendarModalOpen] = useState<boolean>(false);
@@ -243,85 +280,183 @@ export default function DashboardView({
   };
 
   const generateCaseSheetText = (c: ClinicalCase): string => {
+    const hospitalLine = c.hospital ? `Hospital: ${c.hospital}` : "";
+    const mlcFlag = c.patient?.isMlc ? " | MLC CASE" : "";
+
+    // ── Adjuncts to Primary (VBG/ABG, ECG, Echo, EFAST) ──
+    const adj = (c as any).adjuncts || {};
+    const adjunctsSection = `
+ADJUNCTS TO PRIMARY:
+- VBG/ABG: ${adj.abgStatus === "done"
+      ? `pH ${adj.abgPh || "N/A"}, pCO2 ${adj.abgPco2 || "N/A"}, HCO3 ${adj.abgHco3 || "N/A"}, Lactate ${adj.abgLactate || "N/A"}, Na ${adj.abgNa || "N/A"}, K ${adj.abgK || "N/A"}`
+      : "Not documented"}
+- ECG: ${adj.ecgInterpretation && adj.ecgInterpretation !== "Not done" ? `${adj.ecgInterpretation}${adj.ecgNotes ? ` — ${adj.ecgNotes}` : ""}` : (adj.ecgFindings || "Not documented")}
+- Bedside Echo: ${adj.echoInterpretation && adj.echoInterpretation !== "Not done" ? `${adj.echoInterpretation}${adj.echoNotes ? ` — ${adj.echoNotes}` : ""}` : (adj.echoFindings || "Not documented")}
+- EFAST: ${adj.efastInterpretation && adj.efastInterpretation !== "Not done" ? `${adj.efastInterpretation}${adj.efastNotes ? ` — ${adj.efastNotes}` : ""}` : (adj.efastFindings || "Not documented")}`;
+
+    // ── Structured Secondary Survey ──
+    const sec = (c as any).secondarySurvey || {};
+    const structuredSecondary = [
+      sec.general ? `General: ${sec.general}` : "",
+      sec.cvs ? `CVS: ${sec.cvs}` : "",
+      sec.respiratory ? `Respiratory: ${sec.respiratory}` : "",
+      sec.abdomen ? `Abdomen: ${sec.abdomen}` : "",
+      sec.cns ? `CNS: ${sec.cns}` : "",
+      sec.extremities ? `Extremities: ${sec.extremities}` : "",
+    ].filter(Boolean).join("\n");
+    const secondarySection = structuredSecondary || (typeof c.secondaryAssessment === "string" ? c.secondaryAssessment : "General exam within normal limits.");
+
+    // ── Psychological Assessment ──
+    const psych = (c as any).psychologicalAssessment || (c.vulnerableAssessment || c.sampleHistory?.psychiatricFlags ? {
+      suicidalIdeation: !!c.vulnerableAssessment?.suicidalIdeationRisk,
+      selfHarmHistory: !!c.vulnerableAssessment?.suicidalIdeationRisk,
+      intentToHarmOthers: false,
+      substanceAbuse: false,
+      psychiatricHistory: false,
+      currentlyOnPsychiatricTreatment: false,
+      hasSupportSystem: true,
+      notes: c.sampleHistory?.psychiatricFlags || null,
+    } : null);
+
+    const psychSection = psych ? `
+PSYCHOLOGICAL ASSESSMENT:
+- Suicidal Ideation: ${psych.suicidalIdeation ? "YES ⚠️" : "No"}
+- Self-Harm History: ${psych.selfHarmHistory ? "YES ⚠️" : "No"}
+- Intent to Harm Others: ${psych.intentToHarmOthers ? "YES ⚠️" : "No"}
+- Substance Abuse: ${psych.substanceAbuse ? "Yes" : "No"}
+- Psychiatric History: ${psych.psychiatricHistory ? "Yes" : "No"}
+- Currently on Psychiatric Treatment: ${psych.currentlyOnPsychiatricTreatment ? "Yes" : "No"}
+- Has Support System: ${psych.hasSupportSystem ? "Yes" : "No"}
+${psych.notes ? `- Notes: ${psych.notes}` : ""}` : "";
+
+    // ── Investigations — includes abnormal flags ──
+    const legacyInvestigations = c.investigations?.map(i => `- ${i.testName}: ${i.result || "Pending"}`).join("\n") || "";
+    const flaggedResults = c.investigationResults?.map(r =>
+      `- ${r.name}: ${r.value}${r.unit ? ` ${r.unit}` : ""}${r.isAbnormal ? ` ⚠️ ${r.flag || "ABNORMAL"}` : ""}`
+    ).join("\n") || "";
+    const imaging = c.investigationImaging ? `\nImaging: ${c.investigationImaging}` : "";
+    const summary = c.investigationResultsSummary ? `\nSummary: ${c.investigationResultsSummary}` : "";
+    const investigationsSection = [legacyInvestigations, flaggedResults, imaging, summary].filter(Boolean).join("\n") || "None ordered";
+
+    // ── Treatments — includes infusions & procedures ──
+    const meds = c.treatments?.map(t => `- ${t.timeGiven ? `[${t.timeGiven}] ` : ""}${t.drugName} ${t.dose || ""} (${t.route || "IV"})`).join("\n") || "";
+    const infusionsList = c.infusions?.map(f => `- ${f.fluidName} ${f.dose || ""}, diluted ${f.dilution || "N/A"}, rate ${f.rate || "N/A"}`).join("\n") || "";
+    const procedures = c.proceduresChecked?.length ? `\nProcedures: ${c.proceduresChecked.join(", ")}` : "";
+    const otherProc = c.otherProcedures ? `\nOther Procedures: ${c.otherProcedures}` : "";
+    const treatmentSection = [meds, infusionsList, procedures, otherProc].filter(Boolean).join("\n") || "Symptomatic care";
+
+    // ── Disposition ──
+    const dap = c.dispositionAndPlan || {};
+    const dispositionSection = `
+DISPOSITION & PLAN:
+- Status: ${c.dispositionDetails?.dispositionType || dap.dispositionStatus || "In ER Evaluation"}
+- Destination: ${dap.destinationUnit || "N/A"}
+- Duration in ER: ${c.dispositionDetails?.durationInEr || "N/A"}
+- Consults Requested: ${dap.consultsRequested?.length ? dap.consultsRequested.join(", ") : "None"}
+- Pending Investigations: ${dap.pendingInvestigations?.length ? dap.pendingInvestigations.join(", ") : "None"}
+- Follow-Up Advice: ${dap.followUpAdvice || "N/A"}
+- Observation Notes: ${c.dispositionDetails?.observationNotes || "N/A"}`;
+
+    // ── Notes / Addendum ──
+    const notesSection = `
+CLINICAL NOTES & ADDENDUM:
+${c.progressNotes || "No progress notes recorded."}
+${c.addendumNotes ? `\nAddendum: ${c.addendumNotes}` : ""}`;
+
+    // ── MLC Details ──
+    const mlc = (c.patient as any)?.mlcDetails;
+    const mlcSection = c.patient?.isMlc && mlc ? `
+MLC DETAILS:
+- Nature of Incident: ${mlc.natureOfIncident || "Not recorded"}
+- Date & Time of Incident: ${mlc.dateTimeOfIncident || "Not recorded"}
+- Place of Incident: ${mlc.placeOfIncident || "Not recorded"}
+- Identification Mark: ${mlc.identificationMark || "Not recorded"}
+- Informant/Brought By: ${mlc.informantBroughtBy || "Not recorded"}` : "";
+
+    // ── Pediatrics ──
+    const peds = c.pediatricDetails as any;
+    const pediatricsSection = c.isPediatric && peds ? `
+PEDIATRIC ASSESSMENT:
+- Weight: ${peds.patientWeight || peds.weight ? `${peds.patientWeight || peds.weight} kg` : "Not recorded"}
+- PAT — Appearance (TICLS): Tone: ${peds.patAppearanceTone || "N/A"}, Interactivity: ${peds.patAppearanceInteractivity || "N/A"}, Consolability: ${peds.patAppearanceConsolability || "N/A"}, Look/Gaze: ${peds.patAppearanceLookGaze || "N/A"}, Speech/Cry: ${peds.patAppearanceSpeechCry || "N/A"}
+- Work of Breathing: ${peds.patWorkOfBreathing || peds.workOfBreathing || "N/A"} | Circulation: ${peds.patCirculation || peds.circulation || "N/A"}
+- Immunization Status: ${peds.immunizationHistory || "N/A"}
+- Birth History: ${peds.birthHistory || "N/A"}
+- Feeding History: ${peds.feedingHistory || "N/A"}
+- Developmental History: ${peds.developmentalHistory || "N/A"}
+- Brought By: ${peds.broughtBy || "N/A"}
+- Informant: ${peds.informant || "N/A"}
+${peds.medicationsInEnvironment ? `- Medications in Environment: ${peds.medicationsInEnvironment}` : ""}
+${peds.signsAndSymptoms ? `- Signs & Symptoms: ${peds.signsAndSymptoms}` : ""}` : "";
+
+    // NABH / JCI Safety Checklists
+    const ipsg = c.ipsgChecklist;
+    const vuln = c.vulnerableAssessment;
+    const consent = c.consentTimeOut;
+    const safetySection = (ipsg || vuln || consent) ? `
+NABH/JCI SAFETY & GOVERNANCE CHECKLIST:
+${ipsg ? `- IPSG Checklist: Identifiers: ${ipsg.ipsg1IdentifiersVerified ? "Verified" : "Pending"}, ReadBack: ${ipsg.ipsg2ReadBackPerformed ? "Yes" : "No"}, HighAlert: ${ipsg.ipsg3HighAlertDoubleChecked ? "Checked" : "No"}, FallRisk: ${ipsg.ipsg6FallRiskAssessed}` : ""}
+${vuln ? `- Vulnerable Assessment: Vulnerable: ${vuln.isVulnerable ? `Yes (${vuln.vulnerableType})` : "No"}, Functional: ${vuln.functionalAssessmentScore}` : ""}
+${consent ? `- Consent/Time-Out: Consent Obtained: ${consent.procedureConsentObtained ? "Yes" : "No"}, Time-Out Performed: ${consent.procedureTimeOutPerformed ? "Yes" : "No"}` : ""}` : "";
+
+    const gcsVal = c.vitals?.gcs || (c.vitals?.gcs_e || c.vitals?.gcs_v || c.vitals?.gcs_m ? `${c.vitals?.gcs_e || "?"}/${c.vitals?.gcs_v || "?"}/${c.vitals?.gcs_m || "?"}` : "15/15");
+
     return `==================================================
-ERMATE ELECTRONIC MEDICAL RECORD - CLINICAL CASE SHEET
+EMERGENCY DEPARTMENT EMR CASE SHEET
+${hospitalLine}
 ==================================================
 CASE ID: ${c.id}
-UHID: ${c.patient.uhid}
-DATE OPENED: ${c.patient.dateOpened}
-ASSIGNED CLINICIAN: ${c.doctorEmail || "Unassigned"}
+UHID: ${c.patient?.uhid || "N/A"}
+DATE OPENED: ${c.patient?.dateOpened || c.savedTime || "N/A"}
+ASSIGNED CLINICIAN: ${c.doctorName || c.doctorEmail || "Unassigned"}
 CASE STATUS: ${c.status}
 
-PATIENT DEMOGRAPHICS
---------------------
-Full Name: ${c.patient.name}
-Age & Gender: ${c.patient.age}y / ${c.patient.gender}
-Phone Number: ${c.patient.phone || "N/A"}
-Arrival Mode: ${c.patient.arrivalMode}
-Triage Category: ${c.patient.triageCategory}
-Medico-Legal Case (MLC): ${c.patient.isMlc ? "YES" : "NO"}
-Category Type: ${c.patient.caseType || "Medical"}
+PATIENT DEMOGRAPHICS:
+- Name: ${c.patient?.name || "N/A"} (${c.patient?.age || "N/A"}y / ${c.patient?.gender || "N/A"})
+- Bed No: ${c.bedNo || "Unassigned"} | UHID: ${c.patient?.uhid || "N/A"}
+- Triage: ${c.patient?.triageCategory || "P2"} | Arrival: ${c.patient?.arrivalMode || "Walk-in"}
+- Chief Complaint: ${c.patient?.presentingComplaint || "N/A"}
+- Case Type: ${c.patient?.caseType || "Medical"}${mlcFlag}
 
-CHIEF COMPLAINT
----------------
-${c.patient.presentingComplaint}
+INITIAL PRESENTATION VITALS:
+- BP: ${c.vitals?.bp || "N/A"} mmHg | HR: ${c.vitals?.hr || "N/A"} bpm
+- SpO2: ${c.vitals?.spo2 || "N/A"}% | RR: ${c.vitals?.rr || "N/A"} /min
+- Temp: ${c.vitals?.temp || "N/A"} °F | GCS: ${gcsVal}
+- GRBS: ${c.vitals?.grbs || "N/A"} mg/dL | Pain Score: ${c.vitals?.painScore || "0"}/10
 
-INITIAL VITALS (AT TRIAGE)
---------------------------
-Blood Pressure: ${c.vitals.bp || "N/A"} mmHg
-Heart Rate: ${c.vitals.hr || "N/A"} bpm
-Oxygen Saturation: ${c.vitals.spo2 || "N/A"}% on Room Air
-Respiratory Rate: ${c.vitals.rr || "N/A"} /min
-Temperature: ${c.vitals.temp || "N/A"} °F
-GCS Score: ${c.vitals.gcs || "15"}/15 (E${c.vitals.gcs_e || "4"} V${c.vitals.gcs_v || "5"} M${c.vitals.gcs_m || "6"})
-GRBS (Glucose): ${c.vitals.grbs || "N/A"} mg/dL
-AVPU Scale: ${c.vitals.avpu || "Alert"}
-Pain Score: ${c.vitals.painScore || "0"}/10
+SAMPLE HISTORY:
+- Symptoms: ${c.sampleHistory?.symptoms || "N/A"}
+- Allergies: ${c.sampleHistory?.allergies || "NKDA"}
+- Past Medical History: ${c.sampleHistory?.pastHistory || "None"}
+- Outpatient Meds: ${c.sampleHistory?.medications || "None"}
+- Last Meal: ${c.sampleHistory?.lastMeal || "N/A"}
+- Events: ${c.sampleHistory?.events || "N/A"}
 
-SAMPLE CLINICAL HISTORY
------------------------
-Signs & Symptoms: ${c.sampleHistory?.symptoms || "None documented"}
-Allergies: ${c.sampleHistory?.allergies || "NKDA (No Known Drug Allergies)"}
-Medications: ${c.sampleHistory?.medications || "None"}
-Past Medical History: ${c.sampleHistory?.pastHistory || "None"}
-Last Oral Intake: ${c.sampleHistory?.lastMeal || "N/A"}
-Events Leading to Illness: ${c.sampleHistory?.events || "N/A"}
+PRIMARY SURVEY (ABCDE):
+- Airway: ${c.primaryAssessment?.airwayStatus || c.primaryAssessment?.airway || "Normal"}
+- Breathing: ${c.primaryAssessment?.breathingStatus || c.primaryAssessment?.breathing || "Normal"}
+- Circulation: ${c.primaryAssessment?.circulationStatus || c.primaryAssessment?.circulation || "Normal"}
+- Disability: ${c.primaryAssessment?.disabilityStatus || c.primaryAssessment?.disability || "Normal"}
+- Exposure: ${c.primaryAssessment?.exposureStatus || c.primaryAssessment?.exposure || "Normal"}
+${adjunctsSection}
 
-PRIMARY ASSESSMENT (A-B-C-D-E)
-------------------------------
-Airway Status: ${c.primaryAssessment?.airwayStatus || "Normal"} ${c.primaryAssessment?.airway ? `- ${c.primaryAssessment.airway}` : ""}
-Breathing Status: ${c.primaryAssessment?.breathingStatus || "Normal"} ${c.primaryAssessment?.breathing ? `- ${c.primaryAssessment.breathing}` : ""}
-Circulation Status: ${c.primaryAssessment?.circulationStatus || "Normal"} ${c.primaryAssessment?.circulation ? `- ${c.primaryAssessment.circulation}` : ""}
-Disability Status: ${c.primaryAssessment?.disabilityStatus || "Normal"} ${c.primaryAssessment?.disability ? `- ${c.primaryAssessment.disability}` : ""}
-Exposure Status: ${c.primaryAssessment?.exposureStatus || "Normal"} ${c.primaryAssessment?.exposure ? `- ${c.primaryAssessment.exposure}` : ""}
+SECONDARY ASSESSMENT / EXAMINATION:
+${secondarySection}
+${pediatricsSection}
+${psychSection}
 
-SECONDARY ASSESSMENT
---------------------
-${c.secondaryAssessment || "Systemic examination unremarkable."}
+INVESTIGATIONS ORDERED / RESULTS:
+${investigationsSection}
 
-ER INVESTIGATIONS ORDERED & RESULTS
------------------------------------
-${c.investigations && c.investigations.length > 0 
-  ? c.investigations.map(i => `* [${i.orderTime}] ${i.testName} -> Result: ${i.result} (${i.resultTime})`).join("\n")
-  : "No investigations/diagnostic labs ordered for this case."}
+TREATMENTS & MEDICATION ORDERS:
+${treatmentSection}
 
-EMERGENCY TREATMENTS & DRUGS GIVEN
-----------------------------------
-${c.treatments && c.treatments.length > 0
-  ? c.treatments.map(t => `* [${t.timeGiven}] ${t.drugName} ${t.dose} via ${t.route} (IPSG Verified: ${t.ipsgVerified ? "YES" : "NO"})`).join("\n")
-  : "Symptomatic supportive treatment administered. No active medications recorded."}
-
-CLINICAL PROGRESS NOTES
------------------------
-${c.progressNotes || "Patient stable in ER. Under observation."}
-
-DISPOSITION SUMMARY
--------------------
-Disposition Status: ${c.dispositionDetails?.dispositionType || "Observation"}
-Duration in ER: ${c.dispositionDetails?.durationInEr || "N/A"}
-Consultant in Charge: ${c.dispositionDetails?.consultantName || profile.name || "Duty Consultant"}
-Resident Doctor: ${c.dispositionDetails?.residentName || "N/A"}
-Observation Notes: ${c.dispositionDetails?.observationNotes || "N/A"}
+DIFFERENTIAL DIAGNOSES:
+${c.differentials?.map(d => `- ${d.diagnosis} (${d.status || "EVALUATING"})`).join("\n") || "Under evaluation"}
+${dispositionSection}
+${notesSection}
+${mlcSection}
+${safetySection}
 ==================================================`;
   };
 
@@ -636,11 +771,24 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
             <div className="bg-slate-50 dark:bg-slate-900/40 p-4 rounded-xl border border-slate-100 dark:border-slate-800 space-y-2.5">
               <div className="flex items-center justify-between text-xs font-bold text-slate-700 dark:text-slate-300">
                 <span className="uppercase tracking-wider">Shift Name:</span>
-                <span className="text-indigo-600 dark:text-indigo-400 font-extrabold">{assignedShift.name}</span>
+                <div className="relative flex items-center">
+                  <select 
+                    value={modalShiftId}
+                    onChange={(e) => setModalShiftId(e.target.value)}
+                    className="bg-transparent text-indigo-600 dark:text-indigo-400 font-extrabold outline-none text-right appearance-none cursor-pointer pr-5 pl-2 py-0.5"
+                  >
+                    {activeShiftsList.map(s => (
+                      <option key={s.id} value={s.id} className="text-slate-900 dark:text-slate-100 bg-white dark:bg-slate-900">
+                        {s.name}
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown className="w-3 h-3 text-indigo-600 dark:text-indigo-400 absolute right-0 pointer-events-none" />
+                </div>
               </div>
               <div className="flex items-center justify-between text-xs font-bold text-slate-700 dark:text-slate-300">
                 <span className="uppercase tracking-wider">Time Window:</span>
-                <span className="font-semibold text-slate-800 dark:text-slate-200">{assignedShift.time}</span>
+                <span className="font-semibold text-slate-800 dark:text-slate-200">{activeShiftsList.find(s => s.id === modalShiftId)?.time || assignedShift.time}</span>
               </div>
               <div className="flex items-center justify-between text-xs font-bold text-slate-700 dark:text-slate-300">
                 <span className="uppercase tracking-wider">Clinical Facility:</span>
@@ -649,13 +797,13 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
               <div className="border-t border-slate-250 dark:border-slate-800/80 my-2 pt-2 flex items-center justify-between text-[11px] text-slate-400 font-mono">
                 <span>Residents Active:</span>
                 <span className="font-bold text-slate-700 dark:text-slate-300">
-                  {teamMembers.filter(m => m.role.toLowerCase().includes("resident") && m.shift === activeUserShiftId).length} active
+                  {teamMembers.filter(m => m.role.toLowerCase().includes("resident") && m.shift === modalShiftId).length} active
                 </span>
               </div>
               <div className="flex items-center justify-between text-[11px] text-slate-400 font-mono">
                 <span>Consultants Active:</span>
                 <span className="font-bold text-slate-700 dark:text-slate-300">
-                  {teamMembers.filter(m => (m.role.toLowerCase().includes("consultant") || m.role.toLowerCase().includes("hod") || m.role.toLowerCase().includes("lead")) && m.shift === activeUserShiftId).length} active
+                  {teamMembers.filter(m => (m.role.toLowerCase().includes("consultant") || m.role.toLowerCase().includes("hod") || m.role.toLowerCase().includes("lead")) && m.shift === modalShiftId).length} active
                 </span>
               </div>
             </div>
@@ -671,6 +819,9 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
               </button>
               <button
                 onClick={() => {
+                  if (modalShiftId !== activeUserShiftId && currentUserMember && onUpdateShift) {
+                    onUpdateShift(currentUserMember.id, modalShiftId);
+                  }
                   setIsOnShift(true);
                   setShowShiftCheckIn(false);
                 }}
@@ -705,6 +856,18 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
               }`}>
                 Shift Active • {profile.hospital}
               </span>
+              <button
+                type="button"
+                onClick={() => setShowHODModal(true)}
+                className={`px-2.5 py-0.5 rounded-full font-mono font-bold uppercase tracking-wider border cursor-pointer transition-all flex items-center gap-1 hover:scale-105 ${
+                  isDarkMode 
+                    ? "bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 border-amber-500/40 text-[8px] md:text-[10px]" 
+                    : "bg-amber-400/25 text-amber-100 hover:bg-amber-400/40 border-amber-300/40 text-[8px] md:text-[10px]"
+                }`}
+                title="Click to view Head of Department details"
+              >
+                <span>👑 HOD: {hodDisplayName}</span>
+              </button>
             </div>
             
             <h1 className={`text-lg md:text-2xl font-extrabold font-display tracking-tight ${
@@ -723,7 +886,7 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
           
           <div className="flex gap-2 shrink-0 w-full md:w-auto">
             <button
-              onClick={onStartHandoverChat}
+              onClick={() => { if (!isOnShift) setShowShiftCheckIn(true); else onStartHandoverChat(); }}
               className="flex-1 md:flex-none px-3 py-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white text-[10px] md:text-[11px] font-bold rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer"
             >
               <Users className="w-3.5 h-3.5 text-purple-100" />
@@ -732,7 +895,7 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
             <button
               onClick={() => {
                 if (onStartDischargeSummary) {
-                  onStartDischargeSummary();
+                  if (!isOnShift) setShowShiftCheckIn(true); else onStartDischargeSummary();
                 } else {
                   onNavigateToTab("handover");
                 }
@@ -794,13 +957,13 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
                   <div className="flex items-center justify-between text-[10.5px] text-slate-400 font-medium">
                     <span>{pc.patient.gender} • {pc.patient.age || "N/A"} years</span>
                     <span className={`font-mono font-bold text-[9.5px] uppercase tracking-wider px-1.5 py-0.2 rounded ${
-                      pc.patient.triageCategory.includes("P1")
+                      String(pc.patient.triageCategory || "").includes("P1")
                         ? "bg-rose-500/10 text-rose-500 border border-rose-500/20"
-                        : pc.patient.triageCategory.includes("P2")
+                        : String(pc.patient.triageCategory || "").includes("P2")
                         ? "bg-amber-500/10 text-amber-500 border border-amber-500/20"
                         : "bg-emerald-500/10 text-emerald-500 border border-emerald-500/20"
                     }`}>
-                      {pc.patient.triageCategory.split(" ")[0]}
+                      {String(pc.patient.triageCategory || "P2").split(" ")[0]}
                     </span>
                   </div>
 
@@ -852,7 +1015,11 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
         </div>
       )}
 
-      {/* Primary Simplified Workflows Entry Section */}
+      {/* Desktop side-by-side layout wrapper */}
+      <div className="flex flex-col lg:flex-row lg:items-start gap-6 w-full">
+        {/* Left Column: Workflows & Stats */}
+        <div className="flex-1 space-y-6 min-w-0 w-full">
+          {/* Primary Simplified Workflows Entry Section */}
       <div className="space-y-3 no-print">
         <h2 className="text-xs font-black text-slate-400 uppercase tracking-widest font-mono">
           Clinical Tools & Active Workflows
@@ -862,7 +1029,7 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
         <div className="grid grid-cols-2 gap-3 md:hidden">
           {/* Card 1: New Patient Intake */}
           <button 
-            onClick={onStartFullFlow}
+            onClick={() => { if (!isOnShift) setShowShiftCheckIn(true); else onStartFullFlow(); }}
             className="flex flex-col justify-between p-3 bg-emerald-500/10 dark:bg-emerald-950/20 border border-emerald-500/20 rounded-xl text-left hover:bg-emerald-500/15 transition-all shadow-xs h-[88px] w-full"
           >
             <div className="w-7 h-7 bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 rounded-lg flex items-center justify-center">
@@ -878,7 +1045,7 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
           <button 
             onClick={() => {
               if (onStartDischargeSummary) {
-                onStartDischargeSummary();
+                if (!isOnShift) setShowShiftCheckIn(true); else onStartDischargeSummary();
               } else {
                 onNavigateToTab("handover");
               }
@@ -896,7 +1063,7 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
 
           {/* Card 3: Voice Scribe Desk */}
           <button 
-            onClick={onStartVoiceScribe}
+            onClick={() => { if (!isOnShift) setShowShiftCheckIn(true); else onStartVoiceScribe(); }}
             className="flex flex-col justify-between p-3 bg-purple-500/10 dark:bg-purple-950/20 border border-purple-500/20 rounded-xl text-left hover:bg-purple-500/15 transition-all shadow-xs h-[88px] w-full"
           >
             <div className="w-7 h-7 bg-purple-500/20 text-purple-600 dark:text-purple-400 rounded-lg flex items-center justify-center">
@@ -910,7 +1077,7 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
 
           {/* Card 4: Shift Handover */}
           <button 
-            onClick={onStartHandoverChat}
+            onClick={() => { if (!isOnShift) setShowShiftCheckIn(true); else onStartHandoverChat(); }}
             className="flex flex-col justify-between p-3 bg-indigo-500/10 dark:bg-indigo-950/20 border border-indigo-500/20 rounded-xl text-left hover:bg-indigo-500/15 transition-all shadow-xs h-[88px] w-full"
           >
             <div className="w-7 h-7 bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 rounded-lg flex items-center justify-center">
@@ -924,7 +1091,7 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
 
           {/* Card 5: iPhone Pocket Mirror */}
           <button 
-            onClick={onOpenPocketMirror}
+            onClick={() => onOpenPocketMirror()}
             className="col-span-2 flex items-center justify-between p-3 bg-rose-500/10 dark:bg-rose-950/20 border border-rose-500/20 rounded-xl text-left hover:bg-rose-500/15 transition-all shadow-xs h-[64px] w-full"
           >
             <div className="flex items-center gap-2.5">
@@ -958,7 +1125,7 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
 
           {/* Card 7: Pediatric Drug Calculator (Mobile) */}
           <button 
-            onClick={onOpenPediatricCalculator}
+            onClick={() => onOpenPediatricCalculator()}
             className="col-span-2 flex items-center justify-between p-3 bg-sky-500/10 dark:bg-sky-950/20 border border-sky-500/20 rounded-xl text-left hover:bg-sky-500/15 transition-all shadow-xs h-[64px] w-full"
           >
             <div className="flex items-center gap-2.5">
@@ -979,7 +1146,7 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
           
           {/* Card 1: New Patient Intake */}
           <div 
-            onClick={onStartFullFlow}
+            onClick={() => { if (!isOnShift) setShowShiftCheckIn(true); else onStartFullFlow(); }}
             className="group relative bg-emerald-500/10 dark:bg-emerald-950/20 border border-emerald-500/25 dark:border-emerald-500/10 rounded-2xl p-5 hover:border-emerald-500 dark:hover:border-emerald-500 cursor-pointer shadow-xs hover:shadow-md transition-all duration-200 flex flex-col justify-between h-48"
           >
             <div className="absolute right-4 top-4 p-2 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 rounded-xl group-hover:scale-110 transition-transform">
@@ -1005,7 +1172,7 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
           <div 
             onClick={() => {
               if (onStartDischargeSummary) {
-                onStartDischargeSummary();
+                if (!isOnShift) setShowShiftCheckIn(true); else onStartDischargeSummary();
               } else {
                 onNavigateToTab("handover");
               }
@@ -1036,7 +1203,7 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
 
           {/* Card 3: Voice Scribe Desk */}
           <div 
-            onClick={onStartVoiceScribe}
+            onClick={() => { if (!isOnShift) setShowShiftCheckIn(true); else onStartVoiceScribe(); }}
             className="group relative bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 hover:border-purple-500 dark:hover:border-purple-600 cursor-pointer shadow-xs hover:shadow-md transition-all duration-200 flex flex-col justify-between h-48"
           >
             <div className="absolute right-4 top-4 p-2 bg-purple-50 dark:bg-purple-950/40 text-purple-600 dark:text-purple-400 rounded-xl group-hover:scale-110 transition-transform">
@@ -1060,7 +1227,7 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
 
           {/* Card 4: Shift Handover */}
           <div 
-            onClick={onStartHandoverChat}
+            onClick={() => { if (!isOnShift) setShowShiftCheckIn(true); else onStartHandoverChat(); }}
             className="group relative bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 hover:border-indigo-500 dark:hover:border-indigo-600 cursor-pointer shadow-xs hover:shadow-md transition-all duration-200 flex flex-col justify-between h-48"
           >
             <div className="absolute right-4 top-4 p-2 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 rounded-xl group-hover:scale-110 transition-transform">
@@ -1084,7 +1251,7 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
 
           {/* Card 6: iPhone Pocket Mirror */}
           <div 
-            onClick={onOpenPocketMirror}
+            onClick={() => onOpenPocketMirror()}
             className="group relative bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 hover:border-rose-500 dark:hover:border-rose-600 cursor-pointer shadow-xs hover:shadow-md transition-all duration-200 flex flex-col justify-between h-48"
           >
             <div className="absolute right-4 top-4 p-2 bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 rounded-xl group-hover:scale-110 transition-transform">
@@ -1138,7 +1305,7 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
 
           {/* Card 8: Pediatric Drug Calculator (Desktop) */}
           <div 
-            onClick={onOpenPediatricCalculator}
+            onClick={() => onOpenPediatricCalculator()}
             className="group relative bg-sky-500/10 dark:bg-sky-950/20 border border-sky-500/25 dark:border-sky-500/10 rounded-2xl p-5 hover:border-sky-500 dark:hover:border-sky-500 cursor-pointer shadow-xs hover:shadow-md transition-all duration-200 flex flex-col justify-between h-48"
           >
             <div className="absolute right-4 top-4 p-2 bg-sky-500/10 text-sky-600 dark:text-sky-400 rounded-xl group-hover:scale-110 transition-transform">
@@ -1812,13 +1979,13 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
                     <input
                       type="text"
                       readOnly
-                      value={`${window.location.origin}/join/${(profile.hospital || "").toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)+/g, "")}?ref=team_invite`}
+                      value={activeInviteLink || `${window.location.origin}/join/${(profile.hospital || "").toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)+/g, "")}?ref=team_invite`}
                       className="bg-transparent text-slate-600 dark:text-slate-300 text-[10.5px] font-mono font-medium block w-full focus:outline-none select-all truncate"
                     />
                     <button
                       onClick={() => {
-                        const link = `${window.location.origin}/join/${(profile.hospital || "").toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)+/g, "")}?ref=team_invite`;
-                        navigator.clipboard.writeText(link);
+                        const linkToCopy = activeInviteLink || `${window.location.origin}/join/${(profile.hospital || "").toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)+/g, "")}?ref=team_invite`;
+                        navigator.clipboard.writeText(linkToCopy);
                         setCopiedInvite(true);
                         setTimeout(() => setCopiedInvite(false), 2000);
                       }}
@@ -1845,8 +2012,12 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
         </div>
       )}
 
-      {/* 3. Main Content Area */}
-      <div className="space-y-6">
+        </div> {/* End Left Column */}
+
+        {/* Right Column: Registry */}
+        <div className="w-full lg:w-[360px] xl:w-[420px] shrink-0">
+          {/* 3. Main Content Area */}
+          <div className="space-y-6">
           
           <div className="space-y-4 no-print">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-slate-200 dark:border-slate-800 pb-3">
@@ -1946,11 +2117,11 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
 
               return (
                 <div className="space-y-3">
-                  {displayedCases.map((c) => {
+                  {displayedCases.map((c, idx) => {
                     const isExpanded = expandedCaseId === c.id;
                     return (
                       <div
-                        key={c.id}
+                        key={`${c.id}-${idx}`}
                         className={`bg-white dark:bg-slate-950 border rounded-xl shadow-xs transition-all flex flex-col overflow-hidden ${
                           isExpanded 
                             ? "border-indigo-500 dark:border-indigo-500 ring-1 ring-indigo-100 dark:ring-indigo-950" 
@@ -1965,13 +2136,13 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
                           <div className="space-y-1 min-w-0 flex-1">
                             <div className="flex items-center gap-2 flex-wrap">
                               <span className={`text-[9px] px-2 py-0.5 rounded border font-bold font-mono uppercase ${
-                                c.patient.triageCategory.includes("P1")
+                                String(c.patient.triageCategory || "").includes("P1")
                                   ? "bg-rose-50 border-rose-250 text-rose-700 dark:bg-rose-950/20 dark:text-rose-400"
-                                  : c.patient.triageCategory.includes("P2")
+                                  : String(c.patient.triageCategory || "").includes("P2")
                                   ? "bg-amber-50 border-amber-250 text-amber-700 dark:bg-amber-950/20 dark:text-amber-400"
                                   : "bg-emerald-50 border-emerald-250 text-emerald-700 dark:bg-emerald-950/20 dark:text-emerald-400"
                               }`}>
-                                {c.patient.triageCategory.split(" ")[0]}
+                                {String(c.patient.triageCategory || "P2").split(" ")[0]}
                               </span>
                               <h4 className="text-sm font-bold text-slate-800 dark:text-white truncate">
                                 {c.patient.name}
@@ -2214,6 +2385,13 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
                                         placeholder="Add clinical oversight notes, teaching points, or confirmation of treatment plan..."
                                         className="flex-1 bg-white dark:bg-slate-950 border text-xs p-2.5 rounded-xl min-h-[60px]"
                                       />
+                                      <VoiceRecorder
+                                        renderMode="compact-button"
+                                        onTranscript={(txt) => {
+                                          const currentTxt = consultantReviewTexts[c.id] !== undefined ? consultantReviewTexts[c.id] : (c.consultantReview?.reviewText || "");
+                                          setConsultantReviewTexts(prev => ({ ...prev, [c.id]: (currentTxt ? currentTxt + " " : "") + txt }));
+                                        }}
+                                      />
                                     </div>
                                     <div className="flex justify-between items-center pt-1">
                                       <p className="text-[10px] text-slate-400">
@@ -2258,6 +2436,8 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
             })()}
           </div>
         </div>
+        </div> {/* End Right Column */}
+      </div> {/* End Desktop Layout Wrapper */}
 
       {/* HOD Clinician Case Explorer and Takeover Modal */}
       <AnimatePresence>
@@ -2368,12 +2548,12 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
                       </div>
 
                       <div className="space-y-2.5">
-                        {clinicianCases.map((c) => {
+                        {clinicianCases.map((c, idx) => {
                           const isActive = c.status === "Active" || c.status === "Triage";
                           const isSelected = selectedClinicianCaseIds.includes(c.id);
                           return (
                             <div
-                              key={c.id}
+                              key={`${c.id}-${idx}`}
                               onClick={() => isActive && (
                                 selectedClinicianCaseIds.includes(c.id)
                                   ? setSelectedClinicianCaseIds(selectedClinicianCaseIds.filter(id => id !== c.id))
@@ -2415,13 +2595,13 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
                                     </span>
                                   </div>
                                   <span className={`text-[8px] uppercase font-black font-mono px-1.5 py-0.2 rounded border ${
-                                    c.patient.triageCategory?.includes("P1")
+                                    String(c.patient.triageCategory || "").includes("P1")
                                       ? "bg-rose-50 border-rose-200 text-rose-700"
-                                      : c.patient.triageCategory?.includes("P2")
+                                      : String(c.patient.triageCategory || "").includes("P2")
                                       ? "bg-amber-50 border-amber-250 text-amber-700"
                                       : "bg-emerald-50 border-emerald-250 text-emerald-700"
                                   }`}>
-                                    {c.patient.triageCategory?.split(" ")[0] || "P3"}
+                                    {String(c.patient.triageCategory || "P2").split(" ")[0] || "P3"}
                                   </span>
                                 </div>
 
@@ -2490,7 +2670,7 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
 
                       <div className="max-h-[160px] overflow-y-auto text-[10px] space-y-2.5 font-sans leading-relaxed text-slate-600 dark:text-slate-350 pr-1">
                         {cases.filter(c => selectedClinicianCaseIds.includes(c.id)).map((c, idx) => (
-                          <div key={c.id} className="border-b border-slate-100 dark:border-slate-850 pb-2.5">
+                          <div key={`${c.id}-${idx}`} className="border-b border-slate-100 dark:border-slate-850 pb-2.5">
                             <p className="font-extrabold text-slate-800 dark:text-white text-[10.5px]">#{idx + 1} Patient: {c.patient.name}</p>
                             <p className="mt-1"><strong className="text-blue-700 dark:text-blue-400 font-bold">[S] Situation:</strong> Presents with {c.patient.presentingComplaint}</p>
                             <p><strong className="text-purple-700 dark:text-purple-400 font-bold">[B] Background:</strong> {c.sampleHistory?.pastHistory || "Nil past history documented."}</p>
@@ -2582,6 +2762,83 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
         profile={profile}
         cases={cases}
       />
+
+      {/* Head of Department (HOD) Details Modal */}
+      {showHODModal && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fade-in">
+          <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-5 text-left">
+            <div className="flex items-center justify-between border-b pb-4 border-slate-100 dark:border-slate-900">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-amber-500/20 text-amber-500 flex items-center justify-center border border-amber-500/30">
+                  <ShieldAlert className="w-5 h-5 text-amber-500" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black uppercase text-slate-900 dark:text-white tracking-wider font-mono">
+                    Department Leadership (HOD)
+                  </h3>
+                  <p className="text-[11px] text-slate-400 font-mono">Hospital Clinical Authority</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowHODModal(false)}
+                className="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-900 hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-500 flex items-center justify-center text-xs font-bold transition-all cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="bg-gradient-to-br from-amber-500/10 via-amber-500/5 to-indigo-500/10 border border-amber-500/25 p-4 rounded-2xl space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-black uppercase tracking-widest text-amber-600 dark:text-amber-400 font-mono">
+                  Head of Department (HOD)
+                </span>
+                <span className="text-[9px] bg-amber-500/20 text-amber-700 dark:text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded-full font-bold uppercase font-mono">
+                  Verified Leadership
+                </span>
+              </div>
+
+              <div>
+                <strong className="text-base font-extrabold text-slate-900 dark:text-white block">
+                  {hodDisplayName}
+                </strong>
+                <span className="text-xs text-slate-500 dark:text-slate-400 font-mono block mt-0.5">
+                  {hodEmail}
+                </span>
+              </div>
+
+              <div className="border-t border-amber-500/20 pt-3 grid grid-cols-2 gap-2 text-[11px] font-mono">
+                <div>
+                  <span className="text-slate-400 block text-[9px] uppercase">Facility / ER Dept</span>
+                  <strong className="text-slate-700 dark:text-slate-200 block truncate">{profile.hospital || "General ED"}</strong>
+                </div>
+                <div>
+                  <span className="text-slate-400 block text-[9px] uppercase">Shift Oversight</span>
+                  <strong className="text-indigo-600 dark:text-indigo-400 block uppercase">{departmentHODMember?.shift || "Active Duty"}</strong>
+                </div>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed font-sans">
+              All resident registrations, duty shift changes, and role elevations within <strong className="text-slate-700 dark:text-slate-300">{profile.hospital || "General ED"}</strong> are supervised and approved by your Head of Department.
+            </p>
+
+            <div className="flex gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowHODModal(false);
+                  onNavigateToTab("roster");
+                }}
+                className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs shadow-sm transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <Users className="w-4 h-4" />
+                <span>View Full Team Roster</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

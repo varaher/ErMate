@@ -1,0 +1,15 @@
+src/components/CaseSheetView.tsx(5138,16): error TS2304: Cannot find name 'Results'.
+src/components/CaseSheetView.tsx(5180,26): error TS2304: Cannot find name 'Citations'.
+src/components/CaseSheetView.tsx(6092,14): error TS2304: Cannot find name 'Demographics'.
+src/components/CaseSheetView.tsx(6258,14): error TS2304: Cannot find name 'Course'.
+src/components/CaseSheetView.tsx(6258,14): error TS2695: Left side of comma operator is unused and has no side effects.
+src/components/CaseSheetView.tsx(6258,14): error TS18007: JSX expressions may not use the comma operator. Did you mean to write an array?
+src/components/CaseSheetView.tsx(6258,22): error TS2304: Cannot find name 'Diagnosis'.
+src/components/CaseSheetView.tsx(6258,34): error TS2304: Cannot find name 'Disposition'.
+src/components/CaseSheetView.tsx(6271,14): error TS2304: Cannot find name 'Disposition'.
+src/components/CaseSheetView.tsx(6271,28): error TS2304: Cannot find name 'Clinicians'.
+src/components/CaseSheetView.tsx(6481,14): error TS2304: Cannot find name 'Investigations'.
+src/components/CaseSheetView.tsx(6547,14): error TS2304: Cannot find name 'Disposition'.
+src/components/CaseSheetView.tsx(6547,28): error TS2304: Cannot find name 'Clinicians'.
+src/components/CaseSheetView.tsx(6869,18): error TS2304: Cannot find name 'Disposition'.
+src/components/CaseSheetView.tsx(6869,32): error TS2304: Cannot find name 'Signatures'.

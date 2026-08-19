@@ -35,20 +35,10 @@ export const CaseDiscussionModal: React.FC<CaseDiscussionModalProps> = ({
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Helper to persist discussion state across local storage, state & Firestore
+  // Helper to persist discussion state across state & Firestore
   const saveDiscussionState = async (caseId: string, updatedMsgs: Message[]) => {
     if (!caseId) return;
     const cleanId = caseId.trim();
-    const patientName = patientCase?.patient?.name?.trim()?.toLowerCase();
-
-    try {
-      localStorage.setItem(`ermate_discussion_${cleanId}`, JSON.stringify(updatedMsgs));
-      if (patientName) {
-        localStorage.setItem(`ermate_discussion_name_${patientName}`, JSON.stringify(updatedMsgs));
-      }
-    } catch (err) {
-      console.warn("[CaseDiscussion] LocalStorage save error:", err);
-    }
 
     if (onSaveDiscussionHistory) {
       onSaveDiscussionHistory(cleanId, updatedMsgs);
@@ -72,7 +62,7 @@ export const CaseDiscussionModal: React.FC<CaseDiscussionModalProps> = ({
         }, { merge: true });
       }
     } catch (err) {
-      console.warn("[CaseDiscussion] Firestore save notice:", err);
+      console.error("[CaseDiscussion] Firestore save FAILED — discussion may not persist:", err);
     }
   };
 
@@ -82,7 +72,6 @@ export const CaseDiscussionModal: React.FC<CaseDiscussionModalProps> = ({
 
     const loadCaseDiscussion = async () => {
       const caseId = patientCase.id;
-      const patientName = patientCase.patient?.name?.trim()?.toLowerCase();
 
       // 1. Direct prop check
       if (patientCase.discussionMessages && Array.isArray(patientCase.discussionMessages) && patientCase.discussionMessages.length > 0) {
@@ -90,58 +79,7 @@ export const CaseDiscussionModal: React.FC<CaseDiscussionModalProps> = ({
         return;
       }
 
-      // 2. Check LocalStorage by case ID
-      try {
-        const localData = localStorage.getItem(`ermate_discussion_${caseId}`);
-        if (localData) {
-          const parsed = JSON.parse(localData);
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            setMessages(parsed);
-            return;
-          }
-        }
-      } catch (err) {
-        console.warn("Error reading local discussion by id:", err);
-      }
-
-      // 3. Check LocalStorage by patient name (fallback)
-      if (patientName) {
-        try {
-          const localByName = localStorage.getItem(`ermate_discussion_name_${patientName}`);
-          if (localByName) {
-            const parsed = JSON.parse(localByName);
-            if (Array.isArray(parsed) && parsed.length > 0) {
-              setMessages(parsed);
-              return;
-            }
-          }
-        } catch (err) {
-          console.warn("Error reading local discussion by name:", err);
-        }
-      }
-
-      // 4. Check LocalStorage rounds chat (from Rounds & Debrief tab)
-      try {
-        const roundsChatData = localStorage.getItem(`ermate_rounds_chat_${caseId}`) || (patientName ? localStorage.getItem(`ermate_rounds_chat_${patientName}`) : null);
-        if (roundsChatData) {
-          const parsed = JSON.parse(roundsChatData);
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            const converted: Message[] = parsed.map((item: any, idx: number) => ({
-              id: "rounds-" + idx + "-" + Date.now(),
-              sender: item.role === "model" ? "ai" : "user",
-              text: item.text,
-              timestamp: "Rounds Session"
-            }));
-            setMessages(converted);
-            saveDiscussionState(caseId, converted);
-            return;
-          }
-        }
-      } catch (err) {
-        console.warn("Error reading rounds chat history:", err);
-      }
-
-      // 5. Check Firestore active_session or main case document
+      // 2. Firestore — now the ONLY persisted source.
       try {
         if (db && caseId) {
           const discussionRef = doc(db, "cases", caseId, "discussions", "active_session");
@@ -164,10 +102,10 @@ export const CaseDiscussionModal: React.FC<CaseDiscussionModalProps> = ({
           }
         }
       } catch (err) {
-        console.warn("Error reading Firestore discussion:", err);
+        console.error("[CaseDiscussion] Error reading Firestore discussion:", err);
       }
 
-      // 6. If no prior session exists anywhere, create initial welcome message and persist it immediately
+      // 3. If no prior session exists anywhere, create initial welcome message and persist it immediately
       const isDeceased = patientCase.dispositionDetails?.dispositionType === "Death" || patientCase.dischargeInfo?.conditionAtDischarge?.toLowerCase().includes("decease") || patientCase.dischargeInfo?.conditionAtDischarge?.toLowerCase().includes("death") || patientCase.dischargeInfo?.conditionAtDischarge?.toLowerCase().includes("expired");
 
       const initialWelcomeMsg: Message = {

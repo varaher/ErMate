@@ -1,6 +1,15 @@
 import React, { useState } from "react";
 import { Search, BookOpen, ChevronRight, HelpCircle, ArrowUpRight, Sparkles, AlertCircle, ChevronLeft } from "lucide-react";
-import { GUIDE_SECTIONS, GuideSection } from "../data/guide";
+import { guideData } from "../data/guide";
+
+export interface GuideSection {
+  id: string;
+  title: string;
+  badge: string;
+  content: string;
+}
+
+const GUIDE_SECTIONS: GuideSection[] = guideData as GuideSection[];
 
 interface UserGuideViewProps {
   onNavigateToFeature?: (featureId: string) => void;
@@ -10,7 +19,7 @@ interface UserGuideViewProps {
 export default function UserGuideView({ onNavigateToFeature, onNavigateToTab }: UserGuideViewProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedSectionId, setSelectedSectionId] = useState(GUIDE_SECTIONS[0].id);
-  const [activeTab, setActiveTab] = useState<"all" | "core" | "clinical" | "ai" | "account">("all");
+  const [activeTab, setActiveTab] = useState<"all" | "core" | "clinical" | "ai" | "education" | "account">("all");
 
   const filteredSections = GUIDE_SECTIONS.filter((section) => {
     const matchesSearch =
@@ -23,7 +32,8 @@ export default function UserGuideView({ onNavigateToFeature, onNavigateToTab }: 
     if (activeTab === "core" && section.badge === "Core") return true;
     if (activeTab === "clinical" && section.badge === "Clinical") return true;
     if (activeTab === "ai" && section.badge === "ErMate Feature") return true;
-    if (activeTab === "account" && (section.badge === "Account" || section.badge === "Workflow")) return true;
+    if (activeTab === "account" && (section.badge === "Account" || section.badge === "Workflow" || section.badge === "Nav")) return true;
+    if (activeTab === "education" && section.badge === "Education") return false;
     return true;
   });
 
@@ -39,6 +49,8 @@ export default function UserGuideView({ onNavigateToFeature, onNavigateToTab }: 
         return "bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-900/30 dark:text-purple-300 dark:border-purple-800";
       case "Account":
         return "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/30 dark:text-amber-300 dark:border-amber-800";
+      case "Education":
+        return "bg-indigo-50 text-indigo-700 border-indigo-200 dark:bg-indigo-900/30 dark:text-indigo-300 dark:border-indigo-800";
       default:
         return "bg-slate-50 text-slate-700 border-slate-200 dark:bg-slate-900/30 dark:text-slate-300 dark:border-slate-800";
     }
@@ -166,6 +178,7 @@ export default function UserGuideView({ onNavigateToFeature, onNavigateToTab }: 
             { id: "core", label: "Core" },
             { id: "clinical", label: "Clinical" },
             { id: "ai", label: "ErMate Support" },
+            { id: "education", label: "Education" },
             { id: "account", label: "Workflow" }
           ].map((tab) => (
             <button

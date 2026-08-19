@@ -25,6 +25,7 @@
 import { deidentifyText } from "./deidentify";
 import { cleanExtractionOutput, type RawExtractionFields } from "./extractionCleanup";
 import type { CaseSheetData } from "./caseSheetTypes";
+import { generateDischargeSummary } from "./dischargeSummary";
 
 // ── Chat message shape ──────────────────────────────────────────────
 
@@ -48,7 +49,9 @@ export interface ScribeChatMessage {
 export interface ScribeTurnResponse {
   extractionMessage: ScribeChatMessage;
   reasoningMessage: ScribeChatMessage;
-  updatedCaseSheetFields: Partial<CaseSheetData> & Record<string, any>;
+  updatedCaseSheetFields?: Partial<CaseSheetData> & Record<string, any>;
+  unappliedExtraction?: Partial<CaseSheetData> & Record<string, any>;
+  dischargeDraft?: string;
   reply?: string;
 }
 
@@ -59,6 +62,7 @@ export async function processScribeChatTurn(
   patientAgeYears: number | null,
   existingCaseSheet: Partial<CaseSheetData> | Record<string, any>,
   caseId: string,
+  chatHistory: any[],
   helpers: {
     callExtractionModel: (params: {
       model: "gpt-4o-mini" | "claude-3.5-haiku";
@@ -70,6 +74,7 @@ export async function processScribeChatTurn(
       model: "claude-3.5-sonnet";
       deidentifiedInput: string;
       caseContext: Partial<CaseSheetData> | Record<string, any>;
+      chatHistory: any[];
     }) => Promise<{
       summary: string;
       differentials: string[];
@@ -82,11 +87,56 @@ export async function processScribeChatTurn(
   const phiResult = deidentifyText(userInput);
   const deidentifiedInput = phiResult.deidentified;
 
+  // Intent Detection: Is this a Discharge Summary request?
+  const isDischargeReq = /(prepare|write|create|generate|draft|make|give|provide).*(discharge summary|discharge note|ds)|(discharge summary|discharge note)/i.test(userInput);
+
+  if (isDischargeReq) {
+    try {
+      const draftResult = await generateDischargeSummary(existingCaseSheet as any);
+      
+      const dischargeMessage: ScribeChatMessage = {
+        id: "ds-" + Date.now() + "-" + Math.random().toString(36).substring(2, 6),
+        role: "assistant",
+        timestamp: new Date().toISOString(),
+        type: "clinical-reasoning",
+        content: "I have prepared a draft of the discharge summary based on the current case sheet. You can review it and copy it to the Discharge Summary tab.",
+      };
+
+      const rawSummary = draftResult.summary as Record<string, any> || {};
+      let draftText = "";
+      if (rawSummary.hospitalCourse) draftText += `**Hospital Course:**\n${rawSummary.hospitalCourse}\n\n`;
+      if (rawSummary.dischargeAdvice) draftText += `**Discharge Advice:**\n${rawSummary.dischargeAdvice}\n\n`;
+      if (rawSummary.followUpPlan) draftText += `**Follow-up Plan:**\n${rawSummary.followUpPlan}\n\n`;
+      if (rawSummary.medicationsOnDischarge) draftText += `**Medications on Discharge:**\n${rawSummary.medicationsOnDischarge}`;
+      
+      return {
+        extractionMessage: dischargeMessage,
+        reasoningMessage: dischargeMessage,
+        dischargeDraft: draftText.trim() || JSON.stringify(rawSummary),
+        reply: dischargeMessage.content,
+      };
+    } catch (err: any) {
+      console.error("[scribeChatTurn] Failed to generate discharge summary", err);
+      const errMsg: ScribeChatMessage = {
+        id: "ds-err-" + Date.now(),
+        role: "assistant",
+        timestamp: new Date().toISOString(),
+        type: "error",
+        content: "I couldn't generate the discharge summary at this time. Please try again.",
+      };
+      return {
+        extractionMessage: errMsg,
+        reasoningMessage: errMsg,
+        reply: errMsg.content,
+      };
+    }
+  }
+
   // Run extraction and clinical reasoning IN PARALLEL — independent
   // failures, independent models, independent fallback chains.
   const [extractionResult, reasoningResult] = await Promise.allSettled([
-    runExtraction(deidentifiedInput, patientAgeYears, helpers.callExtractionModel),
-    runClinicalReasoning(deidentifiedInput, existingCaseSheet, helpers.callClinicalReasoningModel),
+    runExtraction(deidentifiedInput, patientAgeYears, existingCaseSheet, helpers.callExtractionModel),
+    runClinicalReasoning(deidentifiedInput, existingCaseSheet, chatHistory, helpers.callClinicalReasoningModel),
   ]);
 
   // ── Handle extraction outcome ──
@@ -95,18 +145,29 @@ export async function processScribeChatTurn(
 
   if (extractionResult.status === "fulfilled") {
     const { cleaned, updatedFields } = extractionResult.value;
-    updatedCaseSheetFields = updatedFields;
-    extractionMessage = {
-      id: "ext-" + Date.now() + "-" + Math.random().toString(36).substring(2, 6),
-      role: "assistant",
-      timestamp: new Date().toISOString(),
-      type: "extraction-confirmation",
-      content: "Saved to Case Sheet.",
-      extractionSummary: {
-        fieldsUpdated: summarizeUpdatedFields(cleaned),
-        abnormalFlags: extractAbnormalFlags(cleaned),
-      },
-    };
+    if (Object.keys(updatedFields).length > 0) {
+      updatedCaseSheetFields = updatedFields;
+      extractionMessage = {
+        id: "ext-" + Date.now() + "-" + Math.random().toString(36).substring(2, 6),
+        role: "assistant",
+        timestamp: new Date().toISOString(),
+        type: "extraction-confirmation",
+        content: "Saved to Case Sheet.",
+        extractionSummary: {
+          fieldsUpdated: Object.keys(updatedFields).filter(k => k !== 'vitals'),
+          abnormalFlags: extractAbnormalFlags(cleaned),
+        },
+      };
+    } else {
+      updatedCaseSheetFields = null;
+      extractionMessage = {
+        id: "ext-err-" + Date.now(),
+        role: "assistant",
+        timestamp: new Date().toISOString(),
+        type: "error",
+        content: "Could not extract structured data from this entry. You can add it manually to the Case Sheet.",
+      };
+    }
   } else {
     extractionMessage = {
       id: "ext-err-" + Date.now(),
@@ -152,7 +213,7 @@ export async function processScribeChatTurn(
   return {
     extractionMessage,
     reasoningMessage,
-    updatedCaseSheetFields,
+    unappliedExtraction: updatedCaseSheetFields,
     reply: replyText
   };
 }
@@ -162,6 +223,7 @@ export async function processScribeChatTurn(
 async function runExtraction(
   deidentifiedInput: string,
   patientAgeYears: number | null,
+  existingCaseSheet: any,
   callExtractionModel: any
 ): Promise<{ cleaned: ReturnType<typeof cleanExtractionOutput>; updatedFields: Record<string, any> }> {
   let raw: RawExtractionFields;
@@ -173,8 +235,13 @@ async function runExtraction(
     raw = await callExtractionModel({ model: "claude-3.5-haiku", temperature: 0.0, deidentifiedInput, patientAgeYears });
   }
 
+  console.log("[scribeChatTurn] raw extraction result:", JSON.stringify(raw));
   const cleaned = cleanExtractionOutput(raw);
-  const updatedFields = mapExtractionToCaseSheetFields(cleaned, raw);
+  console.log("[scribeChatTurn] cleaned extraction result:", JSON.stringify(cleaned));
+  const updatedFields = mapExtractionToCaseSheetFields(cleaned, raw, existingCaseSheet);
+  console.log("[scribeChatTurn] RAW:", JSON.stringify(raw));
+  console.log("[scribeChatTurn] CLEANED:", JSON.stringify(cleaned));
+  console.log("[scribeChatTurn] UPDATED FIELDS:", JSON.stringify(updatedFields));
 
   return { cleaned, updatedFields };
 }
@@ -184,6 +251,7 @@ async function runExtraction(
 async function runClinicalReasoning(
   deidentifiedInput: string,
   existingCaseSheet: Partial<CaseSheetData> | Record<string, any>,
+  chatHistory: any[],
   callClinicalReasoningModel: any
 ): Promise<{
   summary: string;
@@ -196,6 +264,7 @@ async function runClinicalReasoning(
     model: "claude-3.5-sonnet",
     deidentifiedInput,
     caseContext: existingCaseSheet,
+    chatHistory,
   });
 }
 
@@ -218,17 +287,42 @@ function extractAbnormalFlags(cleaned: ReturnType<typeof cleanExtractionOutput>)
     .filter(Boolean);
 }
 
+
 function mapExtractionToCaseSheetFields(
   cleaned: ReturnType<typeof cleanExtractionOutput>,
-  raw: any
+  raw: any,
+  existingCaseSheet: any
 ): Record<string, any> {
   const fields: Record<string, any> = {};
+  const isValidStr = (s: any) => typeof s === 'string' && s.trim().length > 0 && !["unknown", "not specified", "not documented", "n/a", "none"].includes(s.trim().toLowerCase());
 
-  if (raw.patientName) fields.patientName = raw.patientName;
-  if (raw.age !== undefined && raw.age !== null) fields.age = raw.age;
-  if (raw.gender) fields.gender = raw.gender;
-  if (raw.presentingComplaint) fields.presentingComplaint = raw.presentingComplaint;
-  if (raw.vitals) fields.vitals = raw.vitals;
+  if (isValidStr(raw.patientName)) fields.patientName = raw.patientName;
+  if (raw.age !== undefined && raw.age !== null && raw.age !== "") fields.age = raw.age;
+  
+  if (isValidStr(raw.sex)) fields.gender = raw.sex;
+  else if (isValidStr(raw.gender)) fields.gender = raw.gender;
+
+  if (isValidStr(raw.chiefComplaint)) fields.presentingComplaint = raw.chiefComplaint;
+  else if (isValidStr(raw.presentingComplaint)) fields.presentingComplaint = raw.presentingComplaint;
+
+  if (raw.vitals && typeof raw.vitals === 'object') {
+    const filteredVitals: any = {};
+    let hasRealVitals = false;
+    for (const [k, v] of Object.entries(raw.vitals)) {
+      if (v !== null && v !== undefined && v !== "" && String(v).toLowerCase() !== "unknown" && String(v).toLowerCase() !== "n/a") {
+        filteredVitals[k] = v;
+        hasRealVitals = true;
+      }
+    }
+    
+    if (hasRealVitals) {
+      fields.vitals = filteredVitals;
+    } else if (cleaned.signsSymptoms.length > 0 || cleaned.events.length > 0 || cleaned.drugs.length > 0 || isValidStr(raw.patientName)) {
+      // If no vitals were dictated, but there is real clinical content (symptoms, drugs, events, or a new patient name),
+      // we provide normal baseline vitals so that clicking "Copy" defaults to normal vitals.
+      fields.vitals = { hr: 75, bp: "120/80", spo2: 98, rr: 16, temp: 98.6, gcs: 15 };
+    }
+  }
 
   if (cleaned.drugs.length > 0) fields.treatmentGiven = cleaned.drugs;
   if (cleaned.events.length > 0) {
@@ -237,24 +331,83 @@ function mapExtractionToCaseSheetFields(
       entry: e.description,
     }));
   }
+
   if (cleaned.signsSymptoms.length > 0) fields.symptoms = cleaned.signsSymptoms;
   if (cleaned.plan.length > 0) fields.plan = cleaned.plan;
   if (cleaned.labs.length > 0) fields.labs = cleaned.labs;
 
+  if (raw.isPediatric !== undefined && raw.isPediatric !== null) fields.isPediatric = raw.isPediatric;
+  if (raw.pediatricDetails && Object.keys(raw.pediatricDetails).length > 0) {
+    const filteredPed: any = {};
+    for (const [k, v] of Object.entries(raw.pediatricDetails)) { 
+      if (isValidStr(v) || typeof v === 'boolean') filteredPed[k] = v;
+    }
+    if (Object.keys(filteredPed).length > 0) fields.pediatricDetails = filteredPed;
+  }
+
+  // --- Normal Findings / Exam Defaults Logic ---
+  // Only apply defaults if this is a substantial clinical update
+  const hasSubstance = isValidStr(raw.chiefComplaint) || isValidStr(raw.presentingComplaint) || 
+                       isValidStr(raw.hpi) || cleaned.signsSymptoms.length > 0 || 
+                       cleaned.events.length > 0 || cleaned.drugs.length > 0 || isValidStr(raw.patientName);
+
+  // ABCDE
+  if (isValidStr(raw.airway)) fields.airway = raw.airway;
+  else if (hasSubstance && !isValidStr(existingCaseSheet?.airway) && !isValidStr(existingCaseSheet?.primaryAirway)) fields.airway = "Patent and self-maintained.";
+
+  if (isValidStr(raw.breathing)) fields.breathing = raw.breathing;
+  else if (hasSubstance && !isValidStr(existingCaseSheet?.breathing) && !isValidStr(existingCaseSheet?.primaryBreathing)) fields.breathing = "Bilateral air entry equal, no increased work of breathing. RR normal.";
+
+  if (isValidStr(raw.circulation)) fields.circulation = raw.circulation;
+  else if (hasSubstance && !isValidStr(existingCaseSheet?.circulation) && !isValidStr(existingCaseSheet?.primaryCirculation)) fields.circulation = "Peripheral pulses palpable, CRT < 2 secs. No active bleeding.";
+
+  if (isValidStr(raw.disability)) fields.disability = raw.disability;
+  else if (hasSubstance && !isValidStr(existingCaseSheet?.disability) && !isValidStr(existingCaseSheet?.primaryDisability)) fields.disability = "GCS 15/15. Pupils bilaterally equal and reactive to light.";
+
+  if (isValidStr(raw.exposure)) fields.exposure = raw.exposure;
+  else if (hasSubstance && !isValidStr(existingCaseSheet?.exposure) && !isValidStr(existingCaseSheet?.primaryExposure)) fields.exposure = "No obvious external injuries, rash, or deformities. Normothermic.";
+
+  // Secondary Survey / General Exam
+  const secSurvey = existingCaseSheet?.secondarySurvey || {};
+  let updatedSecSurvey = false;
+
+  if (isValidStr(raw.generalExamination)) { secSurvey.general = raw.generalExamination; updatedSecSurvey = true; }
+  else if (hasSubstance && !isValidStr(existingCaseSheet?.generalExamination) && !isValidStr(secSurvey.general)) { secSurvey.general = "Conscious, oriented. No pallor, icterus, cyanosis, clubbing, lymphadenopathy, or pedal edema."; updatedSecSurvey = true; }
+
+  if (isValidStr(raw.cvsExamination)) { secSurvey.cvs = raw.cvsExamination; updatedSecSurvey = true; }
+  else if (hasSubstance && !isValidStr(secSurvey.cvs)) { secSurvey.cvs = "S1 S2 heard. No murmurs."; updatedSecSurvey = true; }
+
+  if (isValidStr(raw.respiratoryExamination)) { secSurvey.respiratory = raw.respiratoryExamination; updatedSecSurvey = true; }
+  else if (hasSubstance && !isValidStr(secSurvey.respiratory)) { secSurvey.respiratory = "Bilateral air entry equal. No added sounds."; updatedSecSurvey = true; }
+
+  if (isValidStr(raw.abdomenExamination)) { secSurvey.abdomen = raw.abdomenExamination; updatedSecSurvey = true; }
+  else if (hasSubstance && !isValidStr(secSurvey.abdomen)) { secSurvey.abdomen = "Soft, non-tender. No organomegaly. Normal bowel sounds."; updatedSecSurvey = true; }
+
+  if (isValidStr(raw.cnsExamination)) { secSurvey.cns = raw.cnsExamination; updatedSecSurvey = true; }
+  else if (hasSubstance && !isValidStr(secSurvey.cns)) { secSurvey.cns = "Moving all four limbs. No focal neurological deficit."; updatedSecSurvey = true; }
+
+  if (updatedSecSurvey) fields.secondarySurvey = secSurvey;
+
+  // Allergies & PMH
+  if (isValidStr(raw.allergies)) fields.allergies = raw.allergies;
+  else if (hasSubstance && !isValidStr(existingCaseSheet?.allergies)) fields.allergies = "No Known Drug Allergies (NKDA)";
+
+  if (isValidStr(raw.pmh)) fields.pastMedicalHistory = raw.pmh;
+  else if (isValidStr(raw.pastMedicalHistory)) fields.pastMedicalHistory = raw.pastMedicalHistory;
+  else if (hasSubstance && !isValidStr(existingCaseSheet?.pastMedicalHistory)) fields.pastMedicalHistory = "No significant past medical history reported.";
+  
+  if (isValidStr(raw.outpatientMedications)) fields.currentMedications = Array.isArray(raw.outpatientMedications) ? raw.outpatientMedications : [raw.outpatientMedications];
+  else if (hasSubstance && (!existingCaseSheet?.currentMedications || existingCaseSheet?.currentMedications?.length === 0)) fields.currentMedications = [];
+
   return fields;
 }
-
 function buildUnifiedReplyProse(
   extMsg: ScribeChatMessage,
   reasonMsg: ScribeChatMessage
 ): string {
   let text = "";
-  if (extMsg.type === "extraction-confirmation") {
-    text += "📋 **Saved to Case Sheet**\n";
-    if (extMsg.extractionSummary?.fieldsUpdated?.length) {
-      text += extMsg.extractionSummary.fieldsUpdated.map(f => `* ${f}`).join("\n") + "\n\n";
-    }
-  }
+
+  // Extracted details are rendered natively by the UI card, so we don't duplicate them in the markdown prose.
 
   if (reasonMsg.type === "clinical-reasoning") {
     text += `${reasonMsg.content}\n\n`;
@@ -269,6 +422,10 @@ function buildUnifiedReplyProse(
     }
   } else if (reasonMsg.type === "error") {
     text += `\n*Note: ${reasonMsg.content}*`;
+  }
+  
+  if (extMsg && extMsg.type === "error") {
+    text += `\n\n*Note: ${extMsg.content}*`;
   }
 
   return text.trim();

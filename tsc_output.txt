@@ -1,0 +1,196 @@
+src/components/CaseSheetView.tsx(2070,19): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(2070,50): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(2109,20): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(2109,30): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(2112,13): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(2112,60): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(2115,15): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(2115,26): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(2140,13): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(2140,40): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(2180,26): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(2180,58): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(2197,25): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(2197,40): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(2245,36): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(2245,53): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(2272,14): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(2272,86): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(2288,18): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(2288,37): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(2448,18): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(2448,92): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(2466,19): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(2466,33): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(2515,18): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(2515,46): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(2569,19): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(2569,56): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(2619,14): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(2619,46): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(2622,14): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(2622,46): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(2663,19): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(2663,31): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(2704,15): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(2704,32): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(2718,17): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(2718,41): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(2733,18): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(2733,54): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(2748,16): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(2748,41): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(2771,23): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(2771,32): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(2796,24): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(2796,28): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(2807,29): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(2807,76): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(2818,21): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(2818,32): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(2863,16): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(2863,80): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(2900,14): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(2900,27): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(2903,18): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(2903,53): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(3061,20): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(3061,73): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(3086,21): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(3086,54): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(3166,28): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(3166,45): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(3191,34): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(3191,42): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(3244,23): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(3244,45): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(3312,23): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(3312,33): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(3325,26): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(3325,63): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(3401,19): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(3401,30): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(3431,23): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(3431,41): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(3434,24): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(3434,38): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(3461,24): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(3461,42): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(3490,24): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(3490,45): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(3519,20): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(3519,54): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(3522,23): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(3522,42): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(3609,25): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(3609,46): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(3665,19): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(3665,31): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(3732,22): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(3732,38): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(3785,20): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(3785,41): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(3830,22): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(3830,54): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(3840,23): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(3840,70): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(3916,21): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(3916,56): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(3932,21): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(3932,37): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(3942,25): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(3942,36): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(4026,27): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(4026,61): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(4125,20): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(4125,55): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(4227,26): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(4227,84): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(4267,44): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(4267,48): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(4276,22): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(4276,76): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(4325,31): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(4325,79): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(4370,30): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(4370,77): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(4429,28): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(4429,40): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(4480,28): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(4480,38): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(4515,20): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(4515,25): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(4546,22): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(4546,27): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(4593,22): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(4593,84): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(4604,21): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(4604,46): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(4639,39): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(4639,93): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(4709,20): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(4709,25): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(4756,22): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(4756,81): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(4821,22): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(4821,34): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(4838,31): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(4838,42): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(4893,27): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(4893,38): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(4934,27): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(4934,38): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(4940,23): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(4940,31): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(4958,23): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(4958,31): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(4991,26): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(4991,34): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(5024,26): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(5024,34): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(5077,21): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(5077,31): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(5101,15): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(5101,45): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(5130,27): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(5130,33): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(5172,31): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(5172,37): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(5195,21): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(5195,47): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(5199,23): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(5199,29): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(5217,20): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(5217,47): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(5270,21): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(5270,35): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(5307,21): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(5307,36): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(5310,23): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(5310,72): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(5313,29): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(5313,43): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(5341,33): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(5341,62): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(5416,32): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(5416,63): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(5449,27): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(5449,32): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(5497,30): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(5497,62): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(5521,27): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(5521,33): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(5524,31): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(5524,58): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(5535,32): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(5535,46): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(5568,29): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(5568,38): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(5586,30): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(5586,83): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(5612,24): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(5612,85): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(5615,31): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(5615,48): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/CaseSheetView.tsx(5630,26): error TS1005: '}' expected.
+src/components/CaseSheetView.tsx(5630,55): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?

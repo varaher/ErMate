@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import { UserProfile, ClinicalCase } from "../types";
 import { BoundChatModal } from "./BoundChatModal";
+import VoiceRecorder from "./shared/VoiceRecorder";
 
 interface MortalityAuditModalProps {
   isOpen: boolean;
@@ -191,7 +192,7 @@ Clinical Progress Notes: ${foundCase.progressNotes || "Deteriorated despite CPR 
                 </span>
               </div>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                Confidential Medico-Legal Review · Sonnet / GPT-4o Quality Guaranteed
+                Confidential Medico-Legal Review · ErMate AI Quality Guaranteed
               </p>
             </div>
           </div>
@@ -234,8 +235,8 @@ Clinical Progress Notes: ${foundCase.progressNotes || "Deteriorated despite CPR 
                     className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-medium text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-rose-500/20"
                   >
                     <option value="">-- Select a patient case from ER log --</option>
-                    {cases.map((c) => (
-                      <option key={c.id} value={c.id}>
+                    {cases.map((c, idx) => (
+                      <option key={`${c.id}-${idx}`} value={c.id}>
                         {c.patient?.name || "Unidentified"} ({c.patient?.age ?? "?"}y/{c.patient?.gender || "?"}) — Presenting: {c.patient?.presentingComplaint || "N/A"}
                       </option>
                     ))}
@@ -251,13 +252,16 @@ Clinical Progress Notes: ${foundCase.progressNotes || "Deteriorated despite CPR 
                     Paste raw text (Chronological or Reverse order)
                   </span>
                 </label>
-                <textarea
-                  value={rawText}
-                  onChange={(e) => setRawText(e.target.value)}
-                  rows={9}
-                  placeholder="Paste raw EMR notes, triage history, resuscitation progress notes, ABG/ECG reports, and death notes here..."
-                  className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-mono text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-rose-500/20 resize-y"
-                />
+                <div className="flex gap-2">
+                  <textarea
+                    value={rawText}
+                    onChange={(e) => setRawText(e.target.value)}
+                    rows={9}
+                    placeholder="Paste raw EMR notes, triage history, resuscitation progress notes, ABG/ECG reports, and death notes here..."
+                    className="flex-1 w-full px-4 py-3 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-mono text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-rose-500/20 resize-y"
+                  />
+                  <VoiceRecorder renderMode="compact-button" onTranscript={(txt) => setRawText(prev => prev ? `${prev} ${txt}` : txt)} />
+                </div>
               </div>
 
               {errorMsg && (

@@ -505,11 +505,11 @@ export default function GoogleClassroomModal({
                   </div>
                 ) : (
                   <div className="space-y-2 max-h-[380px] overflow-y-auto pr-1">
-                    {courses.map((c) => {
+                    {courses.map((c, idx) => {
                       const isSelected = selectedCourse?.id === c.id;
                       return (
                         <div
-                          key={c.id}
+                          key={`${c.id}-${idx}`}
                           onClick={() => setSelectedCourse(c)}
                           className={`p-3 rounded-2xl border transition-all cursor-pointer ${
                             isSelected

@@ -24,6 +24,11 @@ export interface MlcDetails {
   policeStation: string;
   policeIntimationTime: string;
   ddEntryNo: string;
+  historyStatedBy?: string;
+  allegedCauseOfInjury?: string;
+  opinion?: string;
+  certificateRequestedBy?: string;
+  issuingDoctorRegistration?: string;
 }
 
 export interface PatientDemographics {
@@ -58,6 +63,7 @@ export interface PatientVitals {
 }
 
 export interface SampleHistory {
+  medicationsInEnvironment?: string;
   symptoms: string;
   allergies: string;
   medications: string;
@@ -124,9 +130,38 @@ export interface PrimarySurvey {
     longBones: string | null;
     hypothermiaPrevention: boolean | null;
   };
+
+  adjuncts?: {
+    abg?: {
+      sampleType?: string;
+      interpretation?: string;
+      ph?: string;
+      pco2?: string;
+      po2?: string;
+      hco3?: string;
+      be?: string;
+      lactate?: string;
+      sao2?: string;
+      fio2?: string;
+      na?: string;
+      k?: string;
+      cl?: string;
+      ag?: string;
+      glucose?: string;
+      hb?: string;
+      aa?: string;
+      notes?: string;
+      finalDiagnosis?: string;
+      clinicalInterpretation?: string;
+    };
+    ecgStatus?: string;
+    efastStatus?: string;
+    echoStatus?: string;
+  };
 }
 
 export interface PrimaryAssessment {
+
   airway: string;
   airwayStatus: "Normal" | "Abnormal";
   breathing: string;
@@ -235,6 +270,17 @@ export interface IpsgChecklist {
   ipsg6FallRiskAssessed: "Low" | "Medium" | "High";
 }
 
+export interface PsychologicalAssessment {
+  suicidalIdeation: boolean;
+  selfHarmHistory: boolean;
+  intentToHarmOthers: boolean;
+  substanceAbuse: boolean;
+  psychiatricHistory: boolean;
+  currentlyOnPsychiatricTreatment: boolean;
+  hasSupportSystem: boolean;
+  notes: string | null;
+}
+
 export interface VulnerableAssessment {
   isVulnerable: boolean;
   vulnerableType: string; // Pediatric, Geriatric, Pregnant, Physically Challenged, etc.
@@ -269,6 +315,7 @@ export interface DispositionDetails {
     gcs?: string;
     temp?: string;
     grbs?: string;
+    painScore?: string;
   };
 }
 
@@ -280,6 +327,7 @@ export interface DischargeInfo {
   followUpPlan: string;
   patientInstructions: string;
   aiDrafted?: boolean;
+  aiGenerated?: boolean;
   dischargeDateTime?: string;
   dispositionType?: string;
   emResidentName?: string;
@@ -389,6 +437,7 @@ export interface ClinicalCase {
   hospital?: string; // hospital name for data isolation and security
   ipsgChecklist?: IpsgChecklist;
   vulnerableAssessment?: VulnerableAssessment;
+  psychologicalAssessment?: PsychologicalAssessment;
   consentTimeOut?: ConsentTimeOut;
   dispositionDetails?: DispositionDetails;
   vitalsHistory?: VitalsRecord[];
@@ -412,6 +461,18 @@ export interface ClinicalCase {
   escalated?: boolean;
   consultantReview?: { reviewedBy: string; reviewText: string; timestamp: string };
   pediatricDetails?: PediatricDetails;
+  dispositionAndPlan?: {
+    dispositionStatus?: string;
+    destinationUnit?: string;
+    consultsRequested?: string[];
+    pendingInvestigations?: string[];
+    followUpAdvice?: string;
+  };
+  treatment?: {
+    medications?: string[];
+    infusions?: string[];
+    otherNotes?: string;
+  };
   
   // Handover timeline & status fields
   notes?: Array<{ id?: string; timestamp?: string; authorName?: string; authorRole?: string; content: string }>;
@@ -422,8 +483,10 @@ export interface ClinicalCase {
   
   // Creation, shift, and audit fields for access model
   createdBy?: string;
+  createdByEmail?: string;
   createdByName?: string;
   createdByRole?: string;
+  entrySource?: "quick_discharge" | "full_case";
   shiftId?: string;
   shiftDate?: string;
   shiftName?: string;
@@ -440,6 +503,19 @@ export interface ClinicalCase {
 }
 
 export interface PediatricDetails {
+  patientWeight?: string;
+  otherSymptoms?: string;
+  adjuvantEfastExtremities?: string;
+  focusedHeent?: string;
+  focusedRespiratory?: string;
+  focusedCardiovascular?: string;
+  focusedAbdomen?: string;
+  focusedBack?: string;
+  focusedExtremities?: string;
+  dispositionProvisionalDiagnosis?: string;
+  dispositionConditionAtShift?: string;
+  dispositionEmResident?: string;
+  dispositionEmConsultant?: string;
   // Demographic and Registration Details
   address?: string;
   dateTimeOfIncident?: string;
@@ -526,6 +602,14 @@ export interface PediatricDetails {
   conditionAtShift?: "Stable" | "Unstable" | "";
   disposition?: "ICU" | "Room" | "Ward" | "Referral" | "DAMA" | "";
   differentialDiagnosis?: string;
+  // Additional Pediatric History & PAT fields
+  immunizationHistory?: string;
+  birthHistory?: string;
+  feedingHistory?: string;
+  developmentalHistory?: string;
+  patAppearance?: string;
+  patWorkOfBreathing?: string;
+  patCirculation?: string;
   emResident?: string;
   emConsultant?: string;
 }
@@ -546,7 +630,9 @@ export interface UserProfile {
   email: string;
   role: string;
   hospital: string;
+  place?: string;
   state?: string;
+  pincode?: string;
   hospitalAddress?: string;
   aiCredits: number;
   streak: number;
@@ -561,10 +647,27 @@ export interface UserProfile {
   hasConsentedToLearning?: boolean;
 }
 
+export interface HodClaimRequest {
+  id: string;
+  hospital: string;
+  place: string;
+  state: string;
+  pincode: string;
+  claimedByUid: string;
+  claimedByName: string;
+  claimedByEmail: string;
+  reason: string;
+  status: "pending" | "approved" | "rejected";
+  createdAt: string;
+  reviewedAt: string | null;
+  reviewedBy: string | null;
+  rejectionNote: string | null;
+}
+
 export interface ApiLogItem {
   id: string;
   timestamp: string;
-  service: "Gemini 2.5 Flash" | "Gemini 3.6 Pro" | "Google Vision OCR" | "Speech-to-Text Voice" | "Gemini Search Grounding" | "Firestore Operations";
+  service: "ErMate 2.0 Flash" | "ErMate 3.6 Pro" | "Google Vision OCR" | "Speech-to-Text Voice" | "ErMate Search Grounding" | "Firestore Operations";
   feature: string;
   userEmail: string;
   hospital: string;

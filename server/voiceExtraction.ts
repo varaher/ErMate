@@ -1,8 +1,8 @@
 import OpenAI from 'openai';
 import Anthropic from '@anthropic-ai/sdk';
-import { GoogleGenAI } from '@google/genai';
+import { deidentifyText } from './deidentify.ts';
 
-const VOICE_EXTRACTION_PROMPT = `
+export const VOICE_EXTRACTION_PROMPT = `
 You are a clinical data extraction engine for Indian Emergency Departments.
 
 CRITICAL — READ FIRST:
@@ -221,6 +221,7 @@ Return ONLY valid JSON. No markdown. No explanation. No preamble.
   "emConsultant": string | null,
   "isPediatric": boolean,
   "pediatricDetails": {
+    "weight": string | null,
     "broughtBy": string | null,
     "informant": string | null,
     "patAppearanceTone": string | null,
@@ -356,6 +357,13 @@ export async function extractFromTranscript(
     .replace(/["']?\s*$/, '')
     .trim();
 
+  // DPDP Act 2023 Server-Side De-identification (Rule 4)
+  const phiResult = deidentifyText(cleanTranscript);
+  const deidentifiedTranscript = phiResult.deidentified;
+  if (phiResult.phiCount > 0) {
+    console.log(`[VoiceExtract] DPDP Protection Active: Stripped ${phiResult.phiCount} PHI item(s) prior to model extraction`);
+  }
+
   const openai = getOpenAI();
 
   if (openai) {
@@ -371,7 +379,7 @@ export async function extractFromTranscript(
           },
           {
             role: 'user',
-            content: `Transcript:\n"""\n${cleanTranscript}\n"""`,
+            content: `Transcript:\n"""\n${deidentifiedTranscript}\n"""`,
           },
         ],
       });
@@ -387,7 +395,7 @@ export async function extractFromTranscript(
       console.error('[VoiceExtract] OpenAI GPT failed, attempting fallback:', err?.message);
     }
   } else {
-    console.log('[VoiceExtract] OPENAI_API_KEY not set, using Gemini fallback engine');
+    console.log('[VoiceExtract] OPENAI_API_KEY not set, using Claude Haiku fallback engine');
   }
 
   // Fallback to Claude Haiku API if OpenAI key is missing or fails
@@ -407,7 +415,7 @@ export async function extractFromTranscript(
         messages: [
           {
             role: 'user',
-            content: `Transcript:\n"""\n${cleanTranscript}\n"""`,
+            content: `Transcript:\n"""\n${deidentifiedTranscript}\n"""`,
           },
         ],
       });
@@ -421,60 +429,80 @@ export async function extractFromTranscript(
       console.log(`[VoiceExtract] Claude Haiku fallback succeeded`);
       return { success: true, extracted: withDefaults, engine: 'claude-3-5-haiku-20241022' };
     } catch (haikuErr: any) {
-      console.warn('[VoiceExtract] Claude Haiku fallback unavailable, trying Gemini 2.5 Flash:', haikuErr?.message || haikuErr);
+      console.warn('[VoiceExtract] Claude Haiku fallback unavailable, attempting retry:', haikuErr?.message || haikuErr);
     }
   }
 
-  // Fallback to Gemini Candidates
-  const geminiKey = process.env.GEMINI_API_KEY;
-  if (geminiKey && geminiKey.trim() !== '') {
-    const ai = new GoogleGenAI({ apiKey: geminiKey });
-    const candidates = ['gemini-2.0-flash', 'gemini-2.5-flash'];
-    for (const candidateModel of candidates) {
-      try {
-        console.log(`[VoiceExtract] Trying ${candidateModel} fallback...`);
-        const response = await ai.models.generateContent({
-          model: candidateModel,
-          contents: `${VOICE_EXTRACTION_PROMPT}\n\nTranscript:\n"""\n${cleanTranscript}\n"""`,
-          config: {
-            temperature: 0.0,
-            responseMimeType: 'application/json',
-          },
-        });
+  // TIER 3: Secondary retry — Claude 3.5 Haiku (transient-failure recovery)
+  //
+  // This is NOT a different model — it's one retry of the same
+  // authorized fallback model from Tier 2, in case that failure was a
+  // transient network/timeout issue rather than a real outage. This
+  // keeps the cascade entirely within GPT-4o-mini / Claude 3.5 Haiku,
+  // per the locked Voice & Case Extraction model matrix. No Gemini.
+  if (anthropicClient) {
+    try {
+      console.log('[VoiceExtract] Retrying Claude 3.5 Haiku after transient failure...');
+      const msg = await anthropicClient.messages.create({
+        model: 'claude-3-5-haiku-20241022',
+        max_tokens: 2048,
+        temperature: 0.0,
+        system: VOICE_EXTRACTION_PROMPT,
+        messages: [{ role: 'user', content: `Transcript:\n"""\n${deidentifiedTranscript}\n"""` }],
+      });
 
-        const rawText = response.text || '{}';
-        const cleanedJSON = rawText.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```$/s, '').trim();
-        const parsed = JSON.parse(cleanedJSON);
-        const sanitized = sanitizeExtracted(parsed);
-        const withDefaults = applyExamDefaults(sanitized);
+      const rawText = (msg.content[0] as any)?.text || '{}';
+      const cleanedJSON = rawText.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```$/s, '').trim();
+      const parsed = JSON.parse(cleanedJSON);
+      const sanitized = sanitizeExtracted(parsed);
+      const withDefaults = applyExamDefaults(sanitized);
 
-        console.log(`[VoiceExtract] ${candidateModel} fallback succeeded`);
-        return { success: true, extracted: withDefaults, engine: candidateModel };
-      } catch (geminiErr: any) {
-        console.warn(`[VoiceExtract] ${candidateModel} fallback failed:`, geminiErr?.message || geminiErr);
-      }
+      console.log('[VoiceExtract] Claude Haiku retry succeeded');
+      return { success: true, extracted: withDefaults, engine: 'claude-3-5-haiku-20241022-retry' };
+    } catch (retryErr: any) {
+      console.warn('[VoiceExtract] Claude Haiku retry also failed, falling through to manual-entry fallback:', retryErr?.message || retryErr);
     }
   }
 
-  // Pure deterministic fallback parser for voice dictation transcript
-  console.warn('[VoiceExtract] All AI models failed or rate limited. Using local heuristic fallback parser.');
+  // TIER 4: Ultimate Local Deterministic Heuristic Fallback Engine
+  //
+  // CRITICAL: This tier must NEVER fabricate clinical findings. When all
+  // AI models fail, the safe behavior is to preserve whatever raw text
+  // the doctor dictated (so nothing is lost) and leave every structured
+  // clinical field EMPTY — never populate exam findings, vitals, or
+  // diagnoses with invented "normal" defaults. A doctor must not be able
+  // to mistake a fallback failure for a real completed extraction.
+  console.warn('[VoiceExtract] All AI models failed or rate limited. Returning manual-entry fallback.');
+
   const heuristicExtracted = {
     patientLabel: { name: '', ageSex: '', erNumber: '', bed: '', treatingERPhysician: '' },
-    presentingComplaint: cleanTranscript.substring(0, 200),
-    historyOfPresentIllness: cleanTranscript,
+    // Do NOT force the raw transcript into presentingComplaint/HPI —
+    // that's still an unverified guess at structure. Preserve it
+    // separately instead, verbatim, for the doctor to read and enter
+    // manually.
+    presentingComplaint: '',
+    historyOfPresentIllness: '',
+    rawDictationText: cleanTranscript, // NEW FIELD — full transcript preserved for manual review
     pastMedicalHistory: { comorbidities: [], homeMedications: [], allergies: '' },
     primaryAssessmentVitals: { bp: '', hr: '', spo2: '', rr: '', temp: '', grbs: '', gcs: '' },
-    systemicExamination: { cvs: 'S1 S2 heard', rs: 'B/L clear, no add-on sounds', abdomen: 'Soft, non-tender', cns: 'Conscious, oriented', extremity: 'No peripheral edema' },
+    // NEVER auto-fill exam findings here — leave genuinely empty, not "normal"
+    systemicExamination: { cvs: '', rs: '', abdomen: '', cns: '', extremity: '' },
     investigationFindings: { labs: [], imaging: [], ecgVbg: [] },
-    provisionalDiagnosis: 'Clinical evaluation based on dictation',
+    provisionalDiagnosis: '',
     differentialDiagnoses: [],
     treatmentInER: [],
-    dispositionAndPlan: { dispositionStatus: 'Under Observation', destinationUnit: '', consultsRequested: [], pendingInvestigations: [], followUpAdvice: 'Monitor vitals' }
+    dispositionAndPlan: { dispositionStatus: '', destinationUnit: '', consultsRequested: [], pendingInvestigations: [], followUpAdvice: '' },
+    requiresManualEntry: true, // NEW FIELD — frontend MUST check this and show a visible banner
   };
 
+  // NOTE: applyExamDefaults() is intentionally NOT called here — that
+  // function is for filling gaps in a SUCCESSFUL extraction (normal
+  // defaults only for exam fields omitted from dictation), not for
+  // fabricating an entire exam when extraction never happened at all.
   return {
-    success: true,
-    extracted: applyExamDefaults(heuristicExtracted),
-    engine: 'heuristic-fallback'
+    success: false, // CHANGED from true — this was NOT a successful extraction
+    extracted: heuristicExtracted,
+    engine: 'heuristic-fallback',
+    error: 'AI extraction unavailable. Transcript preserved — please complete the case sheet manually.',
   };
 }

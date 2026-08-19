@@ -16,7 +16,7 @@ export const MODELS = {
   CLAUDE_SONNET:  'claude-3-5-sonnet-20241022',
   CLAUDE_HAIKU:   'claude-3-5-haiku-20241022',
   GEMINI_FLASH:   'gemini-2.0-flash',
-  GEMINI_PRO:     'gemini-2.5-flash',
+  GEMINI_PRO:     'gemini-2.0-flash',
 };
 
 // ── Step 1: Preprocess — strip noise ─────────────────────────
@@ -380,7 +380,7 @@ async function callClaude(
   model: string
 ): Promise<string> {
   if (isAnthropicDisabledInHandover) {
-    throw new Error('Anthropic Claude API is disabled due to previous credit/auth issue.');
+    throw new Error('ErMate AI API is disabled due to previous credit/auth issue.');
   }
 
   const apiKey = process.env.ANTHROPIC_API_KEY;
@@ -421,7 +421,7 @@ async function callGemini(
     model,
     MODELS.GEMINI_FLASH,
     'gemini-2.0-flash',
-    'gemini-2.5-flash'
+    'gemini-1.5-flash'
   ];
   const uniqueModels = Array.from(new Set(modelCandidates));
   let lastErr: any = null;
@@ -777,7 +777,8 @@ function sanitizeHandoverPatient(data: any): any {
 // ── Main extraction function ──────────────────────────────────
 export async function extractHandover(
   rawText: string,
-  doctorName?: string
+  doctorName?: string,
+  patientName?: string
 ): Promise<{
   success: boolean;
   data?: any;
@@ -810,7 +811,21 @@ export async function extractHandover(
   }
 
   // STEP 3 — Reverse (oldest first)
-  const reversed = reverseEMREntries(phiResult.deidentified);
+  let deidentifiedText = phiResult.deidentified;
+  if (patientName && patientName !== "Bed Patient") {
+    const nameParts = patientName.split(/\s+/).filter(p => p.length > 2);
+    for (const part of nameParts) {
+      const escapedName = part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const namePattern = new RegExp(`\\b${escapedName}\\b`, "gi");
+      const countBefore = (deidentifiedText.match(namePattern) || []).length;
+      if (countBefore > 0) {
+        deidentifiedText = deidentifiedText.replace(namePattern, "[PATIENT]");
+        phiResult.phiCount += countBefore;
+        phiResult.phiFound.push("Patient Name (Explicit)");
+      }
+    }
+  }
+  const reversed = reverseEMREntries(deidentifiedText);
   console.log('[3] After reverse:', reversed.slice(0, 200));
 
   // Count entries
@@ -833,12 +848,11 @@ export async function extractHandover(
     return callGemini(prompt, m === MODELS.GEMINI_PRO ? MODELS.GEMINI_PRO : MODELS.GEMINI_FLASH);
   };
 
-  // Fallback chain: Primary Claude -> Secondary Claude -> Gemini Pro -> Gemini Flash (last resort)
+  // Fallback chain per Rule 1: Primary Claude -> Secondary Claude -> Gemini Pro (never Gemini Flash)
   const attempts: Array<{ model: string; provider: 'claude' | 'gemini' }> = [
     { model, provider },
     { model: fallbackModel, provider: fallbackProvider },
     { model: MODELS.GEMINI_PRO, provider: 'gemini' },
-    { model: MODELS.GEMINI_FLASH, provider: 'gemini' },
   ];
 
   for (const attempt of attempts) {

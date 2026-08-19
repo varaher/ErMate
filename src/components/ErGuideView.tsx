@@ -595,7 +595,7 @@ export default function ErGuideView({ onBack, isDarkMode }: EMDrugsViewProps) {
                       >
                         <button
                           onClick={() => setExpandedSection(isExpanded ? null : step.step)}
-                          className="w-full flex items-center justify-between p-3.5 text-left hover:bg-slate-50 dark:hover:bg-slate-900/40 transition-all"
+                          className="w-full flex items-center justify-between p-3.5 text-left hover:bg-slate-50 dark:hover:dark:bg-slate-900/40 transition-all"
                         >
                           <div className="flex items-center gap-3">
                             <span className="w-7 h-7 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-mono font-black text-xs flex items-center justify-center">
@@ -1227,7 +1227,7 @@ export default function ErGuideView({ onBack, isDarkMode }: EMDrugsViewProps) {
                       <div key={idx} className="bg-white dark:bg-slate-950/40 border border-slate-150 dark:border-slate-850 rounded-xl overflow-hidden shadow-xs">
                         <button
                           onClick={() => setExpandedSection(isExpanded ? null : `cvc-${idx}`)}
-                          className="w-full p-4 flex items-center justify-between text-left hover:bg-slate-50 dark:hover:bg-slate-900/40 transition-all border-b border-transparent dark:border-transparent"
+                          className="w-full p-4 flex items-center justify-between text-left hover:bg-slate-50 dark:hover:dark:bg-slate-900/40 transition-all border-b border-transparent dark:border-transparent"
                         >
                           <div>
                             <span className="text-xs bg-blue-500/10 text-blue-600 dark:text-blue-400 font-black px-2.5 py-0.5 rounded font-mono uppercase tracking-wider">
@@ -1301,7 +1301,7 @@ export default function ErGuideView({ onBack, isDarkMode }: EMDrugsViewProps) {
                       <div key={idx} className="bg-white dark:bg-slate-950/40 border border-slate-150 dark:border-slate-850 rounded-xl overflow-hidden shadow-xs">
                         <button
                           onClick={() => setExpandedSection(isExpanded ? null : `art-${idx}`)}
-                          className="w-full p-4 flex items-center justify-between text-left hover:bg-slate-50 dark:hover:bg-slate-900/40 transition-all border-b border-transparent dark:border-transparent"
+                          className="w-full p-4 flex items-center justify-between text-left hover:bg-slate-50 dark:hover:dark:bg-slate-900/40 transition-all border-b border-transparent dark:border-transparent"
                         >
                           <div>
                             <span className="text-xs bg-teal-500/10 text-teal-600 dark:text-teal-400 font-black px-2.5 py-0.5 rounded font-mono uppercase tracking-wider">
@@ -1518,7 +1518,7 @@ export default function ErGuideView({ onBack, isDarkMode }: EMDrugsViewProps) {
                         Have a screenshot, handwritten note, or reference card? Upload it here! ErMate will scan and extract the Title, Mnemonic Key, Category, and detailed Breakdown to populate the fields below automatically.
                       </p>
 
-                      <div className="flex flex-col items-center justify-center border border-dashed border-slate-200 dark:border-slate-800 rounded-lg p-4 bg-white/50 dark:bg-slate-950/40 hover:bg-slate-50 dark:hover:bg-slate-950/80 transition-all cursor-pointer relative group">
+                      <div className="flex flex-col items-center justify-center border border-dashed border-slate-200 dark:border-slate-800 rounded-lg p-4 bg-white/50 dark:bg-slate-950/40 hover:bg-slate-50 dark:hover:dark:bg-slate-950/80 transition-all cursor-pointer relative group">
                         <input
                           type="file"
                           accept="image/*"
@@ -1743,7 +1743,7 @@ export default function ErGuideView({ onBack, isDarkMode }: EMDrugsViewProps) {
                         <div className="pt-3 border-t border-slate-100 dark:border-slate-850 flex items-center justify-between">
                           <span className="text-[9px] text-slate-400 font-mono flex items-center gap-1">
                             <User className="w-3 h-3 text-slate-400" />
-                            By {item.submittedBy}
+                            By {(item as any).submittedBy}
                           </span>
 
                           <div className="flex items-center gap-2">
@@ -1816,14 +1816,14 @@ export default function ErGuideView({ onBack, isDarkMode }: EMDrugsViewProps) {
                         <div key={item.id || idx} className="bg-white dark:bg-slate-950/40 border border-slate-150 dark:border-slate-850 rounded-xl overflow-hidden shadow-xs">
                           <button
                             onClick={() => setExpandedSection(isExpanded ? null : `mnemonic-${item.id}`)}
-                            className="w-full p-4 flex items-center justify-between text-left hover:bg-slate-50 dark:hover:bg-slate-900/40 transition-all"
+                            className="w-full p-4 flex items-center justify-between text-left hover:bg-slate-50 dark:hover:dark:bg-slate-900/40 transition-all"
                           >
                             <div>
                               <div className="flex items-center gap-2">
                                 <span className="text-[9px] bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-black px-2.5 py-0.5 rounded font-mono uppercase tracking-wider">
                                   {item.category}
                                 </span>
-                                {item.isUserSubmitted && (
+                                {(item as any).isUserSubmitted && (
                                   <span className="text-[9px] bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 font-extrabold px-2 py-0.5 rounded font-mono flex items-center gap-1">
                                     <ShieldCheck className="w-3 h-3 text-indigo-500" />
                                     Clinician Peer Approved
@@ -1862,9 +1862,9 @@ export default function ErGuideView({ onBack, isDarkMode }: EMDrugsViewProps) {
                                 </div>
                               )}
 
-                              {item.isUserSubmitted && (
+                              {(item as any).isUserSubmitted && (
                                 <div className="text-[10px] text-slate-400 font-mono text-right italic">
-                                  Contributed to the community database by: {item.submittedBy}
+                                  Contributed to the community database by: {(item as any).submittedBy}
                                 </div>
                               )}
 

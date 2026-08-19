@@ -1,0 +1,1 @@
+sed -i '/ddEntryNo: string;/a\  historyStatedBy?: string;\n  allegedCauseOfInjury?: string;\n  opinion?: string;\n  certificateRequestedBy?: string;\n  issuingDoctorRegistration?: string;' src/types.ts

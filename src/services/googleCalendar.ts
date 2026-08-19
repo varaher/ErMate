@@ -74,7 +74,7 @@ export async function createGoogleCalendarEvent(
       payload.attendees = event.attendeesEmails.map(email => ({ email }));
     }
 
-    const response = await fetch("https://www.googleapis.com/calendar/v3/calendars/primary/events", {
+    const response = await fetch("https://www.googleapis.com/calendar/v3/calendars/primary/events?sendUpdates=all", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${accessToken}`,

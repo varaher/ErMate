@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { ArrowLeft, User, Heart, ShieldAlert, ChevronRight, Scale, Clock, Phone, Hash, FileText, Check, BrainCircuit } from "lucide-react";
 import { TriageCategory, ArrivalMode, PatientDemographics, PatientVitals, MlcDetails } from "../types";
-import SpeechMicButton from "./SpeechMicButton";
+import VoiceRecorder from "./shared/VoiceRecorder";
 import { classifyEmergencyTriage } from "../utils/triageClassifier";
 
 interface TriageFormProps {
@@ -85,7 +85,9 @@ export default function TriageForm({ onBack, onSubmit, initialMode }: TriageForm
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name.trim()) return;
+
+    const finalName = name.trim() || "Emergency Patient";
+    const finalComplaint = presentingComplaint.trim() || "Unspecified Presentation";
 
     const mlcData: MlcDetails = {
       natureOfIncident: isMlc ? natureOfIncident : "",
@@ -99,18 +101,18 @@ export default function TriageForm({ onBack, onSubmit, initialMode }: TriageForm
     };
 
     const demographics: PatientDemographics = {
-      name,
+      name: finalName,
       age: ageNum,
       gender,
-      presentingComplaint: presentingComplaint || "Unspecified",
+      presentingComplaint: finalComplaint,
       triageCategory,
       arrivalMode,
       dateOpened: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + " | " + new Date().toLocaleDateString([], { month: 'short', day: 'numeric' }),
-      uhid: uhid || undefined,
-      phone: phone || undefined,
+      uhid: uhid || "",
+      phone: phone || "",
       isMlc,
       caseType,
-      mlcDetails: isMlc ? mlcData : undefined
+      ...(isMlc ? { mlcDetails: mlcData } : {})
     };
 
     const vitals: PatientVitals = {
@@ -199,13 +201,12 @@ export default function TriageForm({ onBack, onSubmit, initialMode }: TriageForm
               <div className="flex gap-2">
                 <input
                   type="text"
-                  required
                   placeholder="Full name (e.g. Robert Miller)"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   className="flex-1 px-4 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 dark:text-slate-100"
                 />
-                <SpeechMicButton onTranscript={(txt) => setName(prev => prev ? `${prev} ${txt}` : txt)} />
+                <VoiceRecorder renderMode="compact-button" onTranscript={(txt) => setName(prev => prev ? `${prev} ${txt}` : txt)} />
               </div>
             </div>
 
@@ -395,14 +396,13 @@ export default function TriageForm({ onBack, onSubmit, initialMode }: TriageForm
             </label>
             <div className="flex gap-2">
               <textarea
-                required
                 rows={2}
                 placeholder="State key symptoms, onset details, or injury mechanism (e.g. Chest pain for 2 hours, radiating to left arm)"
                 value={presentingComplaint}
                 onChange={(e) => setPresentingComplaint(e.target.value)}
                 className="flex-1 px-4 py-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 dark:text-slate-100"
               />
-              <SpeechMicButton onTranscript={(txt) => setPresentingComplaint(prev => prev ? `${prev} ${txt}` : txt)} />
+              <VoiceRecorder renderMode="compact-button" onTranscript={(txt) => setPresentingComplaint(prev => prev ? `${prev} ${txt}` : txt)} />
             </div>
           </div>
 

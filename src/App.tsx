@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, Suspense } from "react";
 import { 
   Activity, Sparkles, BookOpen, User, Clock, ShieldAlert, 
-  Settings, HelpCircle, Trophy, ClipboardList, Zap, Moon, Sun, Users,
+  Settings, HelpCircle, FileWarning,  Trophy, ClipboardList, Zap, Moon, Sun, Users,
   Search, X, TrendingUp, Bell, BellRing, Trash2, Check, Mic, ShieldCheck, RefreshCw,
   Download, Smartphone, Building2, UserCheck, CheckCircle2
 } from "lucide-react";
@@ -14,31 +14,37 @@ import { saveHandoverPatient } from "./utils/handoverUtils";
 import { triggerPrintWithTip } from "./utils/printWithTip";
 
 import DashboardView from "./components/DashboardView";
-import CasesListView from "./components/CasesListView";
-import CaseSheetView from "./components/CaseSheetView";
-import CaseSheetPrintView from "./components/CaseSheetPrintView";
-import DischargeSummaryView from "./components/DischargeSummaryView";
-import TriageForm from "./components/TriageForm";
-import LearnView from "./components/LearnView";
-import ProfileSettingsView from "./components/ProfileSettingsView";
-import MockLoginView from "./components/MockLoginView";
-import VoiceScribeChatView from "./components/VoiceScribeChatView";
-import SignUpView from "./components/SignUpView";
-import ForgotPasswordView from "./components/ForgotPasswordView";
-import PediatricDrugCalculatorView from "./components/PediatricDrugCalculatorView";
-import ErGuideView from "./components/ErGuideView";
-import AnalyticsView from "./components/AnalyticsView";
-import HandoverView from "./components/HandoverView";
-import PocketMirrorView from "./components/PocketMirrorView";
-import AdminPanelView from "./components/AdminPanelView";
+const CasesListView = React.lazy(() => import("./components/CasesListView"));
+const CaseSheetView = React.lazy(() => import("./components/CaseSheetView"));
+const CaseSheetPrintView = React.lazy(() => import("./components/CaseSheetPrintView"));
+const DischargeSummaryView = React.lazy(() => import("./components/DischargeSummaryView"));
+const TriageForm = React.lazy(() => import("./components/TriageForm"));
+const LearnView = React.lazy(() => import("./components/LearnView"));
+const ProfileSettingsView = React.lazy(() => import("./components/ProfileSettingsView"));
+const MockLoginView = React.lazy(() => import("./components/MockLoginView"));
+const VoiceScribeChatView = React.lazy(() => import("./components/VoiceScribeChatView"));
+const SignUpView = React.lazy(() => import("./components/SignUpView"));
+const ForgotPasswordView = React.lazy(() => import("./components/ForgotPasswordView"));
+const PediatricDrugCalculatorView = React.lazy(() => import("./components/PediatricDrugCalculatorView"));
+const ErGuideView = React.lazy(() => import("./components/ErGuideView"));
+const AnalyticsView = React.lazy(() => import("./components/AnalyticsView"));
+const HandoverView = React.lazy(() => import("./components/HandoverView"));
+const PocketMirrorView = React.lazy(() => import("./components/PocketMirrorView"));
+const QuickDischargeIntake = React.lazy(() => import("./components/QuickDischargeIntake"));
+const AdminPanelView = React.lazy(() => import("./components/AdminPanelView"));
+const DoctorsDirectoryView = React.lazy(() => import("./components/DoctorsDirectoryView"));
+import NewPatientEntryMenu, { type EntryMethod } from "./components/NewPatientEntryMenu";
+import { validateTeamInvite } from "./services/teamInviteService";
 import ConsentModal from "./components/ConsentModal";
-import { CaseDiscussionModal } from "./components/CaseDiscussionModal";
 import { BoundChatModal } from "./components/BoundChatModal";
 import { ROTA_SHIFTS } from "./components/TeamRosterBoard";
+import { MlcCertificatesView } from "./components/MlcCertificatesView";
+import PWABadge from "./components/PWABadge";
 import { APP_VERSION, CHANGELOG } from "./changelog";
 import { HeaderUpdateButton } from "./hooks/useAppUpdate";
 
 import { auth, db, handleFirestoreError, OperationType } from "./firebase";
+import { sanitizeForFirestore } from "./utils/firestoreSanitizer";
 import { onAuthStateChanged, signOut } from "firebase/auth";
 import { doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, collection, addDoc, onSnapshot, query, where } from "firebase/firestore";
 
@@ -201,41 +207,35 @@ export default function App() {
   const [loginScreenMode, setLoginScreenMode] = useState<"login" | "signup" | "forgot_password">("login");
   const [initialHospital, setInitialHospital] = useState<string>("");
   const [initialRole, setInitialRole] = useState<"Resident" | "Consultant" | "HOD">("Resident");
+  const [activeInviteToken, setActiveInviteToken] = useState<string>("");
+  const [inviteValidationError, setInviteValidationError] = useState<string>("");
 
-  // Parse invite links on page load
+  // Parse and validate invite links on page load
   useEffect(() => {
     if (typeof window === "undefined") return;
     const path = window.location.pathname;
     
     if (path.includes("/join/")) {
-      const slug = path.split("/join/")[1];
-      if (slug) {
-        const cleanSlug = slug.split("?")[0].replace(/\/+$/, "");
-        const hospitalSlug = cleanSlug.replace(/-er-invite$/, "");
-        
-        const unslugified = hospitalSlug
-          .split("-")
-          .map(word => word.charAt(0).toUpperCase() + word.slice(1))
-          .join(" ");
-        
-        if (unslugified) {
-          setInitialHospital(unslugified);
-          setLoginScreenMode("signup");
-        }
+      const token = path.split("/join/")[1]?.split("?")[0]?.replace(/\/+$/, "");
+      if (token) {
+        validateTeamInvite(token).then(result => {
+          if (result.valid && result.hospital) {
+            setInitialHospital(result.hospital);
+            setActiveInviteToken(token);
+            setInviteValidationError("");
+            if (typeof sessionStorage !== "undefined") {
+              sessionStorage.setItem("ermate_pending_invite_token", token);
+              sessionStorage.setItem("ermate_pending_invite_hospital", result.hospital);
+            }
+            setLoginScreenMode("signup");
+          } else {
+            setInviteValidationError(result.error || "Invalid or expired invitation link.");
+            setLoginScreenMode("signup");
+          }
+        });
       }
     } else if (path.endsWith("/join")) {
       setLoginScreenMode("signup");
-    }
-    
-    const params = new URLSearchParams(window.location.search);
-    const roleParam = params.get("role") || params.get("ref");
-    
-    if (roleParam === "HOD" || (roleParam && roleParam.includes("hod"))) {
-      setInitialRole("HOD");
-    } else if (roleParam === "Consultant" || (roleParam && roleParam.includes("consultant"))) {
-      setInitialRole("Consultant");
-    } else {
-      setInitialRole("Resident");
     }
   }, []);
 
@@ -398,7 +398,7 @@ export default function App() {
   }, [isLoggedIn]);
 
   // Navigation
-  const [activeTab, setActiveTab] = useState<"dashboard" | "analytics" | "admin" | "handover" | "cases" | "learn" | "profile" | "emdrugs">("dashboard");
+  const [activeTab, setActiveTab] = useState<"dashboard" | "analytics" | "admin" | "handover" | "cases" | "learn" | "profile" | "emdrugs" | "directory" | "mlc">("dashboard");
   const [discussionModalCase, setDiscussionModalCase] = useState<ClinicalCase | null>(null);
 
   const handleSaveDiscussionHistory = (caseId: string, messages: any[]) => {
@@ -417,6 +417,8 @@ export default function App() {
   ]);
   const [showPediatricCalculator, setShowPediatricCalculator] = useState<boolean>(false);
   const [showPocketMirror, setShowPocketMirror] = useState<boolean>(false);
+  const [showQuickDischarge, setShowQuickDischarge] = useState<boolean>(false);
+  const [quickDischargeCase, setQuickDischargeCase] = useState<ClinicalCase | null>(null);
   
   // Theme state
   const [isDarkMode, setIsDarkMode] = useState<boolean>(() => {
@@ -616,12 +618,16 @@ export default function App() {
             currentProfile = initialProfile;
           } else {
             currentProfile = profileSnap.data() as UserProfile;
+            // Unblock UI immediately for existing users!
+            setProfile(currentProfile);
+            setIsLoggedIn(true);
+            setAuthLoading(false);
 
             // For existing profiles, check if they have a pending team invite that wasn't incorporated yet
             const emailClean = (user.email || "").trim().toLowerCase();
             const memberId = `mem-${emailClean.replace(/[^a-zA-Z0-9]/g, "-")}`;
             const memberDocRef = doc(db, "team_members", memberId);
-            const memberSnap = await getDoc(memberDocRef);
+            getDoc(memberDocRef).then(async (memberSnap) => {
 
             if (memberSnap.exists()) {
               const mData = memberSnap.data();
@@ -661,10 +667,11 @@ export default function App() {
                 });
               }
             }
+          }).catch(e => console.warn("Background invite check failed:", e));
           }
-
           setProfile(currentProfile);
           setIsLoggedIn(true);
+          setAuthLoading(false);
         } catch (err) {
           console.warn("Offline or error checking profile/invites, using fallback profile:", err);
           const fallbackProfile: UserProfile = {
@@ -747,7 +754,7 @@ export default function App() {
     const docName = (profile.name || "").startsWith("Dr. ") ? profile.name : `Dr. ${profile.name || "Physician"}`;
 
     // Stream Cases
-    const casesQuery = collection(db, "cases");
+    const casesQuery = userHospital ? query(collection(db, "cases"), where("hospital", "==", userHospital)) : (profile.email ? query(collection(db, "cases"), where("doctorEmail", "==", profile.email)) : collection(db, "cases"));
     const unsubscribeCases = onSnapshot(casesQuery, async (snapshot) => {
       const loadedCases: ClinicalCase[] = [];
       snapshot.forEach((doc) => {
@@ -770,147 +777,13 @@ export default function App() {
         return userHospitalLower ? caseHospitalLower === userHospitalLower : true;
       });
 
-      // If this specific hospital has no cases yet, seed customized defaults so the dashboard looks great!
-      if (filteredCases.length === 0 && !profileRef.current?.seededCases) {
-        const defaultCases: ClinicalCase[] = [
-          {
-            id: "C-9041",
-            patient: {
-              name: "Arthur Pendelton",
-              age: 62,
-              gender: "Male",
-              presentingComplaint: "Crushing retrosternal chest pain radiating to the left arm for 3 hours, associated with diaphoresis.",
-              triageCategory: TriageCategory.P1,
-              arrivalMode: ArrivalMode.Ambulance,
-              dateOpened: "09:12 AM | Jul 09",
-              uhid: "UHID-904128",
-              phone: "+91 94451 09281",
-              isMlc: false,
-              caseType: "Medical"
-            },
-            vitals: {
-              bp: "145/95",
-              hr: "108",
-              spo2: "93",
-              rr: "20",
-              temp: "98.8",
-              gcs: "15",
-              gcs_e: "4",
-              gcs_v: "5",
-              gcs_m: "6",
-              grbs: "142",
-              avpu: "Alert",
-              painScore: "8"
-            },
-            sampleHistory: {
-              symptoms: "Chest pain, shortness of breath, left arm numbness.",
-              allergies: "NKDA",
-              medications: "Metoprolol 50mg, Aspirin 75mg",
-              pastHistory: "Hypertension, Hyperlipidemia",
-              lastMeal: "Light breakfast 2 hours ago",
-              events: "Pain started suddenly while drinking tea.",
-              socialHistory: "Active smoker (1 pack/day), social drinker.",
-              familyHistory: "Father died of MI at age 55.",
-              psychiatricFlags: "None"
-            },
-            primaryAssessment: {
-              airway: "Patent, speaking in full sentences.",
-              airwayStatus: "Normal",
-              breathing: "Symmetrical chest rise, bilateral breath sounds equal.",
-              breathingStatus: "Normal",
-              circulation: "Tachycardic, warm skin, peripheral pulses strong.",
-              circulationStatus: "Normal",
-              disability: "Pupils equal and reactive, GCS 15.",
-              disabilityStatus: "Normal",
-              exposure: "No sign of trauma, warm skin.",
-              exposureStatus: "Normal"
-            },
-            secondaryAssessment: `Aorta non-tender, neck veins not distended, lungs clear to auscultation. ECG reveals 2mm ST-elevation in V1-V4 (Antero-septal STEMI). Cardiac enzymes pending.`,
-            investigations: [
-              { id: "i-1", testName: "12-Lead ECG", result: "2mm ST-segment elevation in V1-V4.", orderTime: "09:15 AM", resultTime: "09:18 AM" },
-              { id: "i-2", testName: "Troponin T", result: "0.45 ng/mL (Elevated).", orderTime: "09:15 AM", resultTime: "09:35 AM" }
-            ],
-            treatments: [
-              { id: "t-1", drugName: "Aspirin", dose: "300mg", route: "PO (Chew)", timeGiven: "09:15 AM", ipsgVerified: true },
-              { id: "t-2", drugName: "Clopidogrel", dose: "300mg", route: "PO", timeGiven: "09:15 AM", ipsgVerified: true },
-              { id: "t-3", drugName: "Glyceryl Trinitrate (GTN)", dose: "0.4mg", route: "SL (Sublingual)", timeGiven: "09:16 AM", ipsgVerified: true },
-              { id: "t-4", drugName: "Morphine", dose: "2mg", route: "IV", timeGiven: "09:20 AM", ipsgVerified: true }
-            ],
-            progressNotes: `Patient was triaged as P1 immediately upon arrival. STEMI protocol activated. Primary PCI team notified at ${userHospital} Cath Lab. Patient's chest pain decreased from 8/10 to 3/10 after NTG and Morphine. Transfer to Cath Lab arranged.`,
-            dischargeInfo: null,
-            differentials: [
-              {
-                diagnosis: "Acute Antero-septal Myocardial Infarction",
-                status: "CONSISTENT",
-                reasoning: "ST-elevation in V1-V4 and elevated Troponin T.",
-                citations: ["ACC/AHA STEMI Guidelines"],
-                nextSteps: ["Immediate coronary angiography/PCI"]
-              },
-              {
-                diagnosis: "Acute Pericarditis",
-                status: "LESS LIKELY",
-                reasoning: "Chest pain is not positional or pleuritic.",
-                citations: [],
-                nextSteps: []
-              }
-            ],
-            isPediatric: false,
-            status: "Active",
-            savedTime: "09:12 AM",
-            timeSpentMin: 45,
-            doctorEmail: profile.email || "doctor@ermate.in",
-            doctorName: docName,
-            hospital: userHospital,
-            ipsgChecklist: {
-              ipsg1IdentifiersVerified: true,
-              ipsg2ReadBackPerformed: true,
-              ipsg3HighAlertDoubleChecked: true,
-              ipsg4TimeOutPerformed: true,
-              ipsg5HandHygieneComplied: true,
-              ipsg6FallRiskAssessed: "Low"
-            },
-            vulnerableAssessment: {
-              isVulnerable: false,
-              vulnerableType: "",
-              nutritionalScreenPassed: true,
-              functionalAssessmentScore: "Independent",
-              abuseScreenNegative: true
-            },
-            consentTimeOut: {
-              procedureConsentObtained: true,
-              procedureTimeOutPerformed: true
-            },
-            dispositionDetails: {
-              dispositionType: "Admit",
-              durationInEr: "45 mins",
-              residentName: "Dr. Thomas",
-              consultantName: docName,
-              observationNotes: `Anteroseptal STEMI. Transporting to Cath Lab with cardiac monitor and emergency drugs.`
-            },
-            vitalsHistory: [
-              { timestamp: "09:12 AM", bp: "145/95", systolic: 145, diastolic: 95, hr: 108, spo2: 93, rr: 20, temp: 98.8 },
-              { timestamp: "09:25 AM", bp: "128/80", systolic: 128, diastolic: 80, hr: 94, spo2: 97, rr: 18, temp: 98.6 }
-            ]
+        const uniqueMap = new Map<string, ClinicalCase>();
+        filteredCases.forEach(c => {
+          if (c && c.id && !uniqueMap.has(c.id)) {
+            uniqueMap.set(c.id, c);
           }
-        ];
-        
-        for (const c of defaultCases) {
-          try {
-            await setDoc(doc(db, "cases", c.id), c);
-          } catch (err) {
-            console.error("Error seeding default case:", err);
-          }
-        }
-
-        if (auth.currentUser) {
-          try {
-            await updateDoc(doc(db, "users", auth.currentUser.uid), { seededCases: true });
-          } catch (err) {
-            console.error("Error updating seededCases status in Firestore:", err);
-          }
-        }
-      } else {
-        setCases(filteredCases);
+        });
+        setCases(Array.from(uniqueMap.values()));
 
         // Real-time alert for updates made by other users
         if (!isInitialCases.current) {
@@ -944,13 +817,12 @@ export default function App() {
           });
         }
         isInitialCases.current = false;
-      }
     }, (error) => {
       handleFirestoreError(error, OperationType.LIST, "cases");
     });
 
     // Stream Handovers
-    const handoversQuery = collection(db, "handovers");
+    const handoversQuery = userHospital ? query(collection(db, "handovers"), where("hospital", "==", userHospital)) : (profile.email ? query(collection(db, "handovers"), where("senderEmail", "==", profile.email)) : collection(db, "handovers"));
     const unsubscribeHandovers = onSnapshot(handoversQuery, async (snapshot) => {
       const loadedHandovers: HandoverRecord[] = [];
       snapshot.forEach((doc) => {
@@ -998,7 +870,7 @@ export default function App() {
     });
 
     // Stream Quick Paste Patients (Synced Handover Roster across Desktop and Mobile)
-    const quickPasteQuery = collection(db, "quick_paste_patients");
+    const quickPasteQuery = userHospital ? query(collection(db, "quick_paste_patients"), where("hospital", "==", userHospital)) : (profile.email ? query(collection(db, "quick_paste_patients"), where("createdByEmail", "==", profile.email)) : collection(db, "quick_paste_patients"));
     const unsubscribeQuickPaste = onSnapshot(quickPasteQuery, async (snapshot) => {
       const loadedQuickPaste: QuickPastePatient[] = [];
       snapshot.forEach((docSnap) => {
@@ -1020,7 +892,7 @@ export default function App() {
       setQuickPasteList(filteredQuickPaste);
       localStorage.setItem("ermate_quick_paste_list", JSON.stringify(filteredQuickPaste));
 
-      if (filteredQuickPaste.length === 0 && !profileRef.current?.seededQuickPaste) {
+      if (filteredQuickPaste.length === 0 && !profileRef.current?.hospital) {
         // Seed initial or local items to Firestore if first time
         const currentItems = quickPasteListRef.current.length > 0 ? quickPasteListRef.current : DEFAULT_QUICK_PASTE_PATIENTS;
         for (const item of currentItems) {
@@ -1049,7 +921,7 @@ export default function App() {
     });
 
     // Stream Team Members
-    const teamQuery = collection(db, "team_members");
+    const teamQuery = userHospital ? query(collection(db, "team_members"), where("hospital", "==", userHospital)) : collection(db, "team_members");
     const unsubscribeTeam = onSnapshot(teamQuery, async (snapshot) => {
       const DEMO_EMAILS = [
         "dr.vipin@gmail.com",
@@ -1082,24 +954,24 @@ export default function App() {
 
       // If logged in user is not in the team list, let's automatically add them to the team list so they are displayed!
       const currentEmail = (profile?.email || "").toLowerCase().trim();
+      const existingMember = currentEmail ? loadedTeam.find(m => m.email.toLowerCase().trim() === currentEmail) : undefined;
       const hasSelf = currentEmail ? filteredTeam.some(m => m.email.toLowerCase().trim() === currentEmail) : true;
       if (!hasSelf && profile?.email) {
         const selfMember: TeamMember = {
-          id: `mem-${profile.email.replace(/[^a-zA-Z0-9]/g, "-")}`,
-          name: profile.name || "Physician",
-          email: profile.email,
-          role: profile.role || "EM Resident",
+          id: existingMember?.id || `mem-${profile.email.replace(/[^a-zA-Z0-9]/g, "-")}`,
+          name: profile.name || existingMember?.name || "Physician",
+          email: profile.email || existingMember?.email || "",
+          role: profile.role || existingMember?.role || "EM Resident",
           status: "Active (Joined)",
-          shift: "morning",
-          hospital: userHospital
+          shift: existingMember?.shift || "morning",
+          hospital: userHospital || existingMember?.hospital || ""
         };
         try {
-          await setDoc(doc(db, "team_members", selfMember.id), selfMember);
+          await setDoc(doc(db, "team_members", selfMember.id), sanitizeForFirestore(selfMember), { merge: true });
         } catch (err) {
           console.error("Error auto-adding self to team list:", err);
         }
       }
-
       setTeamMembers(filteredTeam);
     }, (error) => {
       handleFirestoreError(error, OperationType.LIST, "team_members");
@@ -1145,6 +1017,9 @@ export default function App() {
             setHospitalSubscription(null);
           }
         }
+      }, (error) => {
+        console.warn("Subscription onSnapshot offline warning:", error?.message || error);
+        setHospitalSubscription(null);
       });
 
       const shiftDocRef = doc(db, "hospital_shifts", hospitalSlug);
@@ -1169,7 +1044,7 @@ export default function App() {
     }
 
     // Stream Clinical Contributions for Peer Review Notifications
-    const contributionsQuery = collection(db, "contributions");
+    const contributionsQuery = userHospital ? query(collection(db, "contributions"), where("hospital", "==", userHospital)) : collection(db, "contributions");
     const unsubscribeContributions = onSnapshot(contributionsQuery, (snapshot) => {
       const loadedContributions: any[] = [];
       snapshot.forEach((docSnap) => {
@@ -1223,8 +1098,10 @@ export default function App() {
 
   // View controllers
   const [selectedCaseId, setSelectedCaseId] = useState<string | null>(null);
+  const [pendingNewCase, setPendingNewCase] = useState<ClinicalCase | null>(null);
   const [viewCaseSheetPrintId, setViewCaseSheetPrintId] = useState<string | null>(null);
   const [activeFormMode, setActiveFormMode] = useState<"full" | "quick" | null>(null);
+  const [showEntryMenu, setShowEntryMenu] = useState<boolean>(false);
   const [showDischargeSummaryId, setShowDischargeSummaryId] = useState<string | null>(null);
   const [handoverSubTab, setHandoverSubTab] = useState<"registry" | "quickpaste">("registry");
 
@@ -1315,7 +1192,7 @@ export default function App() {
       await deleteDoc(doc(db, "cases", caseId));
       
       // Also delete from department subcollection if applicable
-      const deptId = targetCase?.departmentId || profile.hospitalId || "er";
+      const deptId = targetCase?.departmentId || profile.hospital || "er";
       try {
         await deleteDoc(doc(db, "departments", deptId, "cases", caseId));
       } catch (subErr) {
@@ -1345,7 +1222,7 @@ export default function App() {
       for (const c of currentCases) {
         console.log('[Delete All] Path: cases/' + c.id);
         await deleteDoc(doc(db, "cases", c.id));
-        const deptId = c.departmentId || profile.hospitalId || "er";
+        const deptId = c.departmentId || profile.hospital || "er";
         try {
           await deleteDoc(doc(db, "departments", deptId, "cases", c.id));
         } catch (e) {}
@@ -1376,25 +1253,25 @@ export default function App() {
     const todayDateStr = new Date().toISOString().split('T')[0];
     const todayDateCompact = todayDateStr.replace(/-/g, '');
     const currentUserMember = teamMembers.find(
-      m => m.email.toLowerCase().trim() === profile.email.toLowerCase().trim()
+      m => (m.email || "").toLowerCase().trim() === (profile.email || "").toLowerCase().trim()
     );
     const activeUserShiftId = currentUserMember?.shift || "morning";
     const activeShiftName = activeUserShiftId.charAt(0).toUpperCase() + activeUserShiftId.slice(1);
     const computedShiftId = `shift_${activeUserShiftId}_${todayDateCompact}`;
     
     const consultantOnShift = teamMembers.find(
-      m => (m.role.toLowerCase().includes("consultant") || m.role.toLowerCase().includes("hod") || m.role.toLowerCase().includes("lead")) && m.shift === activeUserShiftId
+      m => ((m.role || "").toLowerCase().includes("consultant") || (m.role || "").toLowerCase().includes("hod") || (m.role || "").toLowerCase().includes("lead")) && m.shift === activeUserShiftId
     );
     const consultantId = consultantOnShift ? consultantOnShift.id : "uid_nirmal";
     const consultantName = consultantOnShift ? consultantOnShift.name || "Dr. Nirmal" : "Dr. Nirmal";
     const createdByUid = auth.currentUser?.uid || "uid_priya";
-    const createdByRoleVal = profile.role.toLowerCase().includes("hod") ? "hod" : (profile.role.toLowerCase().includes("consultant") ? "consultant" : "resident");
+    const createdByRoleVal = (profile.role || "").toLowerCase().includes("hod") ? "hod" : ((profile.role || "").toLowerCase().includes("consultant") ? "consultant" : "resident");
     const hospitalSlug = (profile.hospital || "general-er").trim().toLowerCase().replace(/[^a-z0-9]/g, "-");
 
     const newCase: ClinicalCase = {
       id: "C-" + Math.floor(1000 + Math.random() * 9000),
       createdBy: createdByUid,
-      createdByName: profile.name.startsWith("Dr. ") ? profile.name : "Dr. " + profile.name,
+      createdByName: (profile.name || "").startsWith("Dr. ") ? profile.name : "Dr. " + (profile.name || "Doctor"),
       createdByRole: createdByRoleVal,
       shiftId: computedShiftId,
       shiftDate: todayDateStr,
@@ -1482,13 +1359,13 @@ export default function App() {
     };
 
     try {
-      await setDoc(doc(db, "cases", newCase.id), newCase);
+      await setDoc(doc(db, "cases", newCase.id), sanitizeForFirestore(newCase));
     } catch (err: any) {
       console.error("Error saving triaged case:", err);
       handleFirestoreError(err, OperationType.WRITE, "cases");
     }
 
-    setCases(prev => [newCase, ...prev]);
+    setCases(prev => [newCase, ...prev.filter(c => c.id !== newCase.id)]);
     setSelectedCaseId(newCase.id);
     setActiveFormMode(null);
     checkConsentOnCaseSaved();
@@ -1496,13 +1373,16 @@ export default function App() {
 
   // Save changes inside Case Sheet View
   const handleSaveCase = async (updatedCase: ClinicalCase) => {
-    const editRole = profile.role.toLowerCase().includes("hod") ? "hod" : (profile.role.toLowerCase().includes("consultant") ? "consultant" : "resident");
+    const editRole = (profile.role || "").toLowerCase().includes("hod") ? "hod" : ((profile.role || "").toLowerCase().includes("consultant") ? "consultant" : "resident");
     const editUid = auth.currentUser?.uid || "uid_priya";
-    const editName = profile.name.startsWith("Dr. ") ? profile.name : "Dr. " + profile.name;
+    const editName = (profile.name || "").startsWith("Dr. ") ? profile.name : "Dr. " + (profile.name || "Doctor");
 
     const caseToSave: ClinicalCase = {
       ...updatedCase,
       hospital: updatedCase.hospital || profile.hospital,
+      doctorEmail: updatedCase.doctorEmail || profile.email,
+      doctorName: updatedCase.doctorName || profile.name || "Emergency Doctor",
+      createdBy: (updatedCase as any).createdBy || auth.currentUser?.uid,
       lastEditedBy: editUid,
       lastEditedByName: editName,
       lastEditedByRole: editRole,
@@ -1510,7 +1390,7 @@ export default function App() {
     };
 
     try {
-      await setDoc(doc(db, "cases", caseToSave.id), caseToSave);
+      await setDoc(doc(db, "cases", caseToSave.id), sanitizeForFirestore(caseToSave));
       
       // Determine changed fields across all patient sections (Demographics, Vitals, Primary Survey, SAMPLE history, Treatments, Labs, Differentials, Notes, Disposition, Pediatric)
       const previousCase = cases.find(c => c.id === updatedCase.id);
@@ -1591,7 +1471,11 @@ export default function App() {
       console.error("Error saving case or audit trail:", err);
       handleFirestoreError(err, OperationType.WRITE, "cases");
     }
-    setCases(prev => prev.map(c => c.id === updatedCase.id ? caseToSave : c));
+    setCases(prev => {
+      const exists = prev.some(c => c.id === caseToSave.id);
+      if (exists) return prev.map(c => c.id === caseToSave.id ? caseToSave : c);
+      return [caseToSave, ...prev];
+    });
     checkConsentOnCaseSaved();
   };
 
@@ -1600,9 +1484,9 @@ export default function App() {
     if (!showDischargeSummaryId) return;
     const targetCase = cases.find(c => c.id === showDischargeSummaryId);
     if (targetCase) {
-      const editRole = profile.role.toLowerCase().includes("hod") ? "hod" : (profile.role.toLowerCase().includes("consultant") ? "consultant" : "resident");
+      const editRole = (profile.role || "").toLowerCase().includes("hod") ? "hod" : ((profile.role || "").toLowerCase().includes("consultant") ? "consultant" : "resident");
       const editUid = auth.currentUser?.uid || "uid_priya";
-      const editName = profile.name.startsWith("Dr. ") ? profile.name : "Dr. " + profile.name;
+      const editName = (profile.name || "").startsWith("Dr. ") ? profile.name : "Dr. " + (profile.name || "Doctor");
 
       const updated: ClinicalCase = {
         ...targetCase,
@@ -1615,7 +1499,7 @@ export default function App() {
         lastEditedAt: new Date().toISOString()
       };
       try {
-        await setDoc(doc(db, "cases", updated.id), updated);
+        await setDoc(doc(db, "cases", updated.id), sanitizeForFirestore(updated));
 
         // Add audit log to addenda subcollection
         const addendumId = "add-" + Math.floor(100000 + Math.random() * 900000);
@@ -1671,19 +1555,19 @@ export default function App() {
     const todayDateStr = new Date().toISOString().split('T')[0];
     const todayDateCompact = todayDateStr.replace(/-/g, '');
     const currentUserMember = teamMembers.find(
-      m => m.email.toLowerCase().trim() === profile.email.toLowerCase().trim()
+      m => (m.email || "").toLowerCase().trim() === (profile.email || "").toLowerCase().trim()
     );
     const activeUserShiftId = currentUserMember?.shift || "morning";
     const activeShiftName = activeUserShiftId.charAt(0).toUpperCase() + activeUserShiftId.slice(1);
     const computedShiftId = `shift_${activeUserShiftId}_${todayDateCompact}`;
     
     const consultantOnShift = teamMembers.find(
-      m => (m.role.toLowerCase().includes("consultant") || m.role.toLowerCase().includes("hod") || m.role.toLowerCase().includes("lead")) && m.shift === activeUserShiftId
+      m => ((m.role || "").toLowerCase().includes("consultant") || (m.role || "").toLowerCase().includes("hod") || (m.role || "").toLowerCase().includes("lead")) && m.shift === activeUserShiftId
     );
     const consultantId = consultantOnShift ? consultantOnShift.id : "uid_nirmal";
     const consultantName = consultantOnShift ? consultantOnShift.name || "Dr. Nirmal" : "Dr. Nirmal";
     const createdByUid = auth.currentUser?.uid || "uid_priya";
-    const createdByRoleVal = profile.role.toLowerCase().includes("hod") ? "hod" : (profile.role.toLowerCase().includes("consultant") ? "consultant" : "resident");
+    const createdByRoleVal = (profile.role || "").toLowerCase().includes("hod") ? "hod" : ((profile.role || "").toLowerCase().includes("consultant") ? "consultant" : "resident");
     const hospitalSlug = (profile.hospital || "general-er").trim().toLowerCase().replace(/[^a-z0-9]/g, "-");
 
     // Robust parsing helpers to completely prevent NaN values in Firestore
@@ -1751,17 +1635,19 @@ export default function App() {
         painScore: extracted.vitals?.painScore || existingMatch?.vitals.painScore || "0"
       },
       sampleHistory: {
-        symptoms: extracted.sampleHistory?.symptoms || existingMatch?.sampleHistory.symptoms || "",
+        symptoms: extracted.sampleHistory?.symptoms || (Array.isArray(extracted.symptoms) ? extracted.symptoms.join(", ") : extracted.symptoms) || existingMatch?.sampleHistory.symptoms || "",
         allergies: extracted.sampleHistory?.allergies || existingMatch?.sampleHistory.allergies || "",
         medications: extracted.sampleHistory?.medications || existingMatch?.sampleHistory.medications || "",
         pastHistory: extracted.sampleHistory?.pastHistory || existingMatch?.sampleHistory.pastHistory || "",
         lastMeal: extracted.sampleHistory?.lastMeal || existingMatch?.sampleHistory.lastMeal || "",
         events: extracted.sampleHistory?.events || existingMatch?.sampleHistory.events || "",
-        socialHistory: "",
-        familyHistory: "",
-        psychiatricFlags: ""
+        socialHistory: extracted.sampleHistory?.socialHistory || existingMatch?.sampleHistory?.socialHistory || "",
+        familyHistory: extracted.sampleHistory?.familyHistory || existingMatch?.sampleHistory?.familyHistory || "",
+        psychiatricFlags: extracted.sampleHistory?.psychiatricFlags || existingMatch?.sampleHistory?.psychiatricFlags || ""
       },
       primaryAssessment: {
+        ...(existingMatch?.primaryAssessment || {}),
+        ...(extracted.primaryAssessment || {}),
         airway: extracted.primaryAssessment?.airway || existingMatch?.primaryAssessment.airway || "",
         airwayStatus: extracted.primaryAssessment?.airwayStatus || existingMatch?.primaryAssessment.airwayStatus || "Normal",
         breathing: extracted.primaryAssessment?.breathing || existingMatch?.primaryAssessment.breathing || "",
@@ -1774,9 +1660,9 @@ export default function App() {
         exposureStatus: extracted.primaryAssessment?.exposureStatus || existingMatch?.primaryAssessment.exposureStatus || "Normal"
       },
       secondaryAssessment: extracted.secondaryAssessment || existingMatch?.secondaryAssessment || "",
-      investigations: extracted.investigations || existingMatch?.investigations || [],
-      treatments: extracted.treatments || existingMatch?.treatments || [],
-      progressNotes: extracted.progressNotes || existingMatch?.progressNotes || "Case created via ErMate Voice Scribe dictation.",
+      investigations: extracted.investigations || (extracted.labs ? extracted.labs.map((l: any, i: number) => ({ id: `inv-${Date.now()}-${i}`, testName: l.name || l, result: l.value || "Ordered", orderTime: new Date().toLocaleTimeString(), resultTime: "Pending", isAbnormal: false })) : null) || existingMatch?.investigations || [],
+      treatments: extracted.treatments || (extracted.treatmentGiven ? extracted.treatmentGiven.map((t: any, i: number) => ({ id: `trt-${Date.now()}-${i}`, drugName: t.name || t, dose: "Stat", route: "IV", timeGiven: new Date().toLocaleTimeString(), ipsgVerified: true })) : null) || existingMatch?.treatments || [],
+      progressNotes: extracted.progressNotes || (extracted.chronologicalNotes ? extracted.chronologicalNotes.map((n: any) => n.entry).join("\n") : null) || existingMatch?.progressNotes || "Case created via ErMate Voice Scribe dictation.",
       dischargeInfo: null,
       differentials: existingMatch?.differentials || [],
       isPediatric: extracted.isPediatric !== undefined ? Boolean(extracted.isPediatric) : (finalAge !== null && finalAge <= 16),
@@ -1828,9 +1714,10 @@ export default function App() {
     };
 
     try {
-      await setDoc(doc(db, "cases", newCase.id), newCase, { merge: true });
+      const cleanCase = sanitizeForFirestore(newCase);
+      await setDoc(doc(db, "cases", newCase.id), cleanCase, { merge: true });
       if (newCase.departmentId) {
-        await setDoc(doc(db, "departments", newCase.departmentId, "cases", newCase.id), newCase, { merge: true });
+        await setDoc(doc(db, "departments", newCase.departmentId, "cases", newCase.id), cleanCase, { merge: true });
       }
     } catch (err: any) {
       console.error("Error saving extracted voice case:", err);
@@ -2043,16 +1930,16 @@ export default function App() {
 
   // Roster Management Handlers
   const handleAddTeamMember = async (name: string, email: string, role: string, shift: string) => {
-    const memberId = `mem-${email.replace(/[^a-zA-Z0-9]/g, "-")}`;
     const cleanEmail = email.trim().toLowerCase();
+    const memberId = `mem-${cleanEmail.replace(/[^a-zA-Z0-9]/g, "-")}`;
     const newMember: TeamMember = {
       id: memberId,
-      name,
+      name: name || "",
       email: cleanEmail,
-      role,
+      role: role || "",
       status: "Pending Invite",
-      shift,
-      hospital: profile.hospital
+      shift: shift || "",
+      hospital: profile.hospital || ""
     };
 
     try {
@@ -2131,12 +2018,12 @@ export default function App() {
 
         // Set roster status to Active (Joined)
         newMember.status = "Active (Joined)";
-        await setDoc(doc(db, "team_members", memberId), newMember);
+        await setDoc(doc(db, "team_members", memberId), sanitizeForFirestore(newMember));
 
         triggerNotification("User Auto-Synced", `${name} is already registered! They have been incorporated into the team and subscription updated successfully.`, "success");
       } else {
         // User doesn't have an account registration yet, add as pending invite
-        await setDoc(doc(db, "team_members", memberId), newMember);
+        await setDoc(doc(db, "team_members", memberId), sanitizeForFirestore(newMember));
         triggerNotification("Roster Updated", `Added ${name} to the team roster. Pending registration.`, "info");
       }
     } catch (err: any) {
@@ -2489,12 +2376,13 @@ export default function App() {
   if (!isLoggedIn) {
     const currentTheme = isDarkMode ? "dark" : "emerald";
     return (
-      <div className={`min-h-screen ${isDarkMode ? 'bg-slate-900' : 'bg-emerald-50/20'} flex flex-col justify-center relative overflow-hidden transition-colors duration-200`}>
+      <div className={`min-h-screen ${isDarkMode ? 'bg-slate-50 dark:bg-slate-900' : 'bg-emerald-50/20'} flex flex-col justify-center relative overflow-hidden transition-colors duration-200`}>
         {loginScreenMode === "signup" ? (
           <SignUpView
             theme={currentTheme}
             initialHospital={initialHospital}
             initialRole={initialRole}
+            inviteToken={activeInviteToken}
             onSignUp={(newProfile) => {
               setProfile(newProfile);
               setIsLoggedIn(true);
@@ -2525,27 +2413,28 @@ export default function App() {
   }
 
   // Compute global search matches
-  const query = searchQuery.trim().toLowerCase();
-  const matchedCases = query
+  const searchTerm = searchQuery.trim().toLowerCase();
+  const matchedCases = searchTerm
     ? cases.filter(c => 
-        c.patient.name.toLowerCase().includes(query) ||
-        c.id.toLowerCase().includes(query) ||
-        (c.patient.uhid && c.patient.uhid.toLowerCase().includes(query)) ||
-        c.patient.presentingComplaint.toLowerCase().includes(query)
+        c.patient.name.toLowerCase().includes(searchTerm) ||
+        c.id.toLowerCase().includes(searchTerm) ||
+        (c.patient.uhid && c.patient.uhid.toLowerCase().includes(searchTerm)) ||
+        c.patient.presentingComplaint.toLowerCase().includes(searchTerm)
       )
     : [];
 
-  const matchedReferences = query
+  const matchedReferences = searchTerm
     ? LOCAL_REFERENCES.filter(r => 
-        r.title.toLowerCase().includes(query) ||
-        r.category.toLowerCase().includes(query) ||
-        r.summary.toLowerCase().includes(query) ||
-        r.keyPoints.some(pt => pt.toLowerCase().includes(query))
+        r.title.toLowerCase().includes(searchTerm) ||
+        r.category.toLowerCase().includes(searchTerm) ||
+        r.summary.toLowerCase().includes(searchTerm) ||
+        r.keyPoints.some(pt => pt.toLowerCase().includes(searchTerm))
       )
     : [];
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-900 text-slate-850 dark:text-slate-100 flex flex-col font-sans transition-colors duration-200">
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-50 dark:bg-slate-900 text-slate-850 dark:text-slate-100 flex flex-col font-sans transition-colors duration-200">
+      <PWABadge />
       
       {/* Upper Navigation & Branding Header */}
       <header className="bg-white dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 py-3.5 px-4 md:px-6 shadow-xs sticky top-0 z-40 no-print relative">
@@ -2569,7 +2458,7 @@ export default function App() {
             </div>
 
             {/* Hospital Workplace Badge */}
-            <div className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-xs">
+            <div className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 bg-slate-50 dark:bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-xs">
               <Building2 className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
               <span className="text-slate-500 dark:text-slate-400 font-medium">Active Hospital:</span>
               <strong className="text-slate-800 dark:text-white font-bold">{profile?.hospital || "General Emergency Department"}</strong>
@@ -2625,7 +2514,7 @@ export default function App() {
                     <div className="absolute right-0 mt-2 w-72 sm:w-80 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl shadow-lg z-50 overflow-hidden divide-y divide-slate-100 dark:divide-slate-900 animate-fade-in select-none">
                       
                       {/* Header */}
-                      <div className="p-3 bg-slate-50 dark:bg-slate-900/60 flex items-center justify-between">
+                      <div className="p-3 bg-slate-50 dark:bg-slate-50 dark:bg-slate-900/60 flex items-center justify-between">
                         <span className="text-xs font-bold text-slate-800 dark:text-white flex items-center gap-1.5 font-display">
                           <Activity className="w-3.5 h-3.5 text-emerald-500" />
                           <span>ER Clinician Alerts</span>
@@ -2686,8 +2575,8 @@ export default function App() {
                                   // Close dropdown
                                   setShowNotificationsDropdown(false);
                                 }}
-                                className={`p-3 text-left transition-all hover:bg-slate-50/80 dark:hover:bg-slate-900/60 cursor-pointer flex gap-2.5 items-start ${
-                                  isUnread ? "bg-slate-50/40 dark:bg-slate-900/10 border-l-2 border-emerald-500" : ""
+                                className={`p-3 text-left transition-all hover:bg-slate-50/80 dark:hover:bg-slate-50 dark:bg-slate-900/60 cursor-pointer flex gap-2.5 items-start ${
+                                  isUnread ? "bg-slate-50/40 dark:bg-slate-50 dark:bg-slate-900/10 border-l-2 border-emerald-500" : ""
                                 }`}
                               >
                                 <div className={`mt-1.5 shrink-0 w-2 h-2 rounded-full ${
@@ -2756,7 +2645,7 @@ export default function App() {
                   setSearchResultsOpen(true);
                 }}
                 onFocus={() => setSearchResultsOpen(true)}
-                className="w-full bg-slate-100 dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-xl pl-9 pr-8 py-2 text-xs text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 transition-all shadow-inner"
+                className="w-full bg-slate-100 dark:bg-slate-50 dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-xl pl-9 pr-8 py-2 text-xs text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 transition-all shadow-inner"
               />
               {searchQuery && (
                 <button
@@ -2790,15 +2679,15 @@ export default function App() {
                         Matched ER Patients ({matchedCases.length})
                       </span>
                       <div className="space-y-1">
-                        {matchedCases.map(c => (
+                        {matchedCases.map((c, idx) => (
                           <div
-                            key={c.id}
+                            key={`${c.id}-${idx}`}
                             onClick={() => {
                               handleSelectCase(c.id);
                               setSearchQuery("");
                               setSearchResultsOpen(false);
                             }}
-                            className="flex items-center justify-between p-2 hover:bg-blue-50/60 dark:hover:bg-slate-900 rounded-lg cursor-pointer transition-all"
+                            className="flex items-center justify-between p-2 hover:bg-blue-50/60 dark:hover:bg-slate-50 dark:bg-slate-900 rounded-lg cursor-pointer transition-all"
                           >
                             <div className="min-w-0">
                               <span className="block text-xs font-bold text-slate-800 dark:text-slate-100 truncate">
@@ -2819,7 +2708,7 @@ export default function App() {
                                   ? "bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300"
                                   : "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300"
                               }`}>
-                                {c.patient.triageCategory.split(" ")[0]}
+                                {String(c.patient.triageCategory || "P2").split(" ")[0]}
                               </span>
                             </div>
                           </div>
@@ -2861,7 +2750,7 @@ export default function App() {
                   )}
 
                   {/* Search fallback block */}
-                  <div className="p-2 flex flex-col gap-1.5 bg-slate-50/60 dark:bg-slate-900/30">
+                  <div className="p-2 flex flex-col gap-1.5 bg-slate-50/60 dark:bg-slate-50 dark:bg-slate-900/30">
                     <button
                       type="button"
                       onClick={() => {
@@ -2966,7 +2855,7 @@ export default function App() {
                   <div className="absolute right-0 mt-2 w-80 md:w-96 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl shadow-lg z-50 overflow-hidden divide-y divide-slate-100 dark:divide-slate-900 animate-fade-in select-none">
                     
                     {/* Header */}
-                    <div className="p-3 bg-slate-50 dark:bg-slate-900/60 flex items-center justify-between">
+                    <div className="p-3 bg-slate-50 dark:bg-slate-50 dark:bg-slate-900/60 flex items-center justify-between">
                       <span className="text-xs font-bold text-slate-800 dark:text-white flex items-center gap-1.5 font-display">
                         <Activity className="w-3.5 h-3.5 text-emerald-500" />
                         <span>ER Clinician Alerts</span>
@@ -3027,8 +2916,8 @@ export default function App() {
                                 // Close dropdown
                                 setShowNotificationsDropdown(false);
                               }}
-                              className={`p-3 text-left transition-all hover:bg-slate-50/80 dark:hover:bg-slate-900/60 cursor-pointer flex gap-2.5 items-start ${
-                                isUnread ? "bg-slate-50/40 dark:bg-slate-900/10 border-l-2 border-emerald-500" : ""
+                              className={`p-3 text-left transition-all hover:bg-slate-50/80 dark:hover:bg-slate-50 dark:bg-slate-900/60 cursor-pointer flex gap-2.5 items-start ${
+                                isUnread ? "bg-slate-50/40 dark:bg-slate-50 dark:bg-slate-900/10 border-l-2 border-emerald-500" : ""
                               }`}
                             >
                               <div className={`mt-1.5 shrink-0 w-2 h-2 rounded-full ${
@@ -3109,9 +2998,11 @@ export default function App() {
             return [
               { id: "dashboard", label: "Dashboard", icon: Activity, activeClass: "bg-emerald-600 text-white shadow-sm shadow-emerald-600/15" },
               { id: "analytics", label: "Analytics", icon: TrendingUp, activeClass: "bg-indigo-600 text-white shadow-sm shadow-indigo-600/15" },
-              ...(isAdminUser ? [{ id: "admin", label: "Admin & Cost Panel", icon: ShieldCheck, activeClass: "bg-slate-900 text-white shadow-sm shadow-slate-900/15" }] : []),
+              ...(isAdminUser ? [{ id: "admin", label: "Admin & Cost Panel", icon: ShieldCheck, activeClass: "bg-slate-50 dark:bg-slate-900 text-white shadow-sm shadow-slate-900/15" }] : []),
               { id: "handover", label: "Handover", icon: Users, activeClass: "bg-blue-600 text-white shadow-sm shadow-blue-600/15" },
+              { id: "directory", label: "Directory", icon: Building2, activeClass: "bg-amber-600 text-white shadow-sm shadow-amber-600/15" },
               { id: "cases", label: "Cases Registry", icon: ClipboardList, activeClass: "bg-teal-600 text-white shadow-sm shadow-teal-600/15" },
+              { id: "mlc", label: "MLC", icon: FileWarning, activeClass: "bg-orange-600 text-white shadow-sm shadow-orange-600/15" },
               { id: "emdrugs", label: "EM Drugs", icon: ShieldAlert, activeClass: "bg-red-600 text-white shadow-sm shadow-red-600/15" },
               { id: "learn", label: "Learn & Reference", icon: BookOpen, activeClass: "bg-purple-600 text-white shadow-sm shadow-purple-600/15" },
               { id: "profile", label: "Team & Subscriptions", icon: Settings, activeClass: "bg-fuchsia-600 text-white shadow-sm shadow-fuchsia-600/15" },
@@ -3126,7 +3017,7 @@ export default function App() {
                 className={`text-xs px-4 py-2.5 font-bold rounded-lg transition-all flex items-center gap-2 shrink-0 ${
                   active
                     ? tab.activeClass
-                    : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-900"
+                    : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-50 dark:bg-slate-900"
                 }`}
               >
                 <Icon className="w-4 h-4" />
@@ -3173,6 +3064,13 @@ export default function App() {
       {/* Main Content Render Space */}
       <main className="flex-1 p-4 md:p-6 pb-24 md:pb-6">
         <div className="max-w-7xl mx-auto">
+
+        <Suspense fallback={
+          <div className="flex flex-col items-center justify-center min-h-[50vh] text-slate-500">
+            <div className="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin mb-3"></div>
+            <span className="text-xs font-mono font-bold uppercase tracking-widest animate-pulse">Loading Module...</span>
+          </div>
+        }>
           
           {/* Verification Pending Block Screen */}
           {(() => {
@@ -3185,7 +3083,7 @@ export default function App() {
               const departmentHOD = teamMembers.find(m => m.role?.toLowerCase().includes("hod") || m.role?.toLowerCase().includes("lead"));
               const hodName = departmentHOD ? `Dr. ${departmentHOD.name}` : "the Clinical HOD";
               return (
-                <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-8 md:p-12 text-center max-w-2xl mx-auto shadow-xl space-y-6 my-12 animate-fade-in" id="pending-approval-overlay">
+                <div className="bg-white dark:bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-8 md:p-12 text-center max-w-2xl mx-auto shadow-xl space-y-6 my-12 animate-fade-in" id="pending-approval-overlay">
                   <div className="w-16 h-16 bg-amber-500/10 text-amber-500 rounded-full flex items-center justify-center mx-auto mb-4 animate-pulse">
                     <Clock className="w-8 h-8" />
                   </div>
@@ -3298,7 +3196,7 @@ export default function App() {
           {/* 2. Full Case Sheet View (Editable Form) */}
           {selectedCaseId && !activeFormMode && !showDischargeSummaryId && (
             (() => {
-              const matched = cases.find(c => c.id === selectedCaseId);
+              const matched = cases.find(c => c.id === selectedCaseId) || (pendingNewCase?.id === selectedCaseId ? pendingNewCase : null);
               if (!matched) return <p>Case not found</p>;
               return (
                 <CaseSheetView
@@ -3306,7 +3204,10 @@ export default function App() {
                   allCases={cases}
                   onSelectCase={handleSelectCase}
                   onViewPrintSheet={handleViewPrintSheet}
-                  onBack={() => setSelectedCaseId(null)}
+                  onBack={() => {
+                    setPendingNewCase(null);
+                    setSelectedCaseId(null);
+                  }}
                   onSaveCase={handleSaveCase}
                   onNavigateToDischarge={handleNavigateToDischarge}
                   onStartNewTriage={() => {
@@ -3320,21 +3221,24 @@ export default function App() {
                     setSelectedCaseId(null);
                   }}
                   hasActiveScribeSession={scribeMessages.length > 1}
-                  onDiscussCase={(c) => handleStartVoiceScribe(c.id)}
+                  onDiscussCase={(c) => setDiscussionModalCase(c)}
                 />
               );
             })()
           )}
 
           {/* 3. Discharge Summary View */}
-          {showDischargeSummaryId && !selectedCaseId && !activeFormMode && (
+          {showDischargeSummaryId && !selectedCaseId && !activeFormMode && !showQuickDischarge && (
             (() => {
-              const matched = cases.find(c => c.id === showDischargeSummaryId);
-              if (!matched) return <p>Case not found</p>;
+              const matched = cases.find(c => c.id === showDischargeSummaryId) || (quickDischargeCase?.id === showDischargeSummaryId ? quickDischargeCase : null);
+              if (!matched) return <p className="p-6 text-slate-400">Case not found</p>;
               return (
                 <DischargeSummaryView
                   currentCase={matched}
-                  onBack={() => setShowDischargeSummaryId(null)}
+                  onBack={() => {
+                    setShowDischargeSummaryId(null);
+                    setQuickDischargeCase(null);
+                  }}
                   onSaveDischarge={handleSaveDischarge}
                   profile={profile}
                 />
@@ -3342,13 +3246,34 @@ export default function App() {
             })()
           )}
 
+          {/* Quick Discharge Intake View */}
+          {showQuickDischarge && !selectedCaseId && !activeFormMode && (
+            <QuickDischargeIntake
+              currentUserEmail={profile?.email || auth.currentUser?.email || "doctor@ermate.ai"}
+              currentUserName={profile?.name || "Emergency Physician"}
+              hospitalName={profile?.hospital || "General Hospital"}
+              onCaseReady={(minimalCase) => {
+                setShowQuickDischarge(false);
+                handleSaveCase(minimalCase);
+                setQuickDischargeCase(minimalCase);
+                setShowDischargeSummaryId(minimalCase.id);
+              }}
+              onCancel={() => setShowQuickDischarge(false)}
+            />
+          )}
+
           {/* 5. Voice Scribe Chat View */}
           {showVoiceScribeChat && !selectedCaseId && !activeFormMode && !showDischargeSummaryId && (
             <VoiceScribeChatView
               caseId={voiceScribeCaseId}
+              caseData={cases.find(c => c.id === voiceScribeCaseId) || (selectedCaseId ? cases.find(c => c.id === selectedCaseId) : null)}
               onBack={() => {
                 setShowVoiceScribeChat(false);
                 setVoiceScribeCaseId(null);
+              }}
+              onOpenCaseSheet={(cId) => {
+                setShowVoiceScribeChat(false);
+                setSelectedCaseId(cId);
               }}
               onSaveExtractedCase={handleSaveExtractedVoiceCase}
               profile={profile}
@@ -3373,15 +3298,15 @@ export default function App() {
           )}
 
           {/* 6. Main Tab Views */}
-          {!selectedCaseId && !viewCaseSheetPrintId && !activeFormMode && !showDischargeSummaryId && !showVoiceScribeChat && !showPediatricCalculator && !showPocketMirror && (
+          {!selectedCaseId && !viewCaseSheetPrintId && !activeFormMode && !showDischargeSummaryId && !showVoiceScribeChat && !showPediatricCalculator && !showPocketMirror && !showQuickDischarge && (
             <>
               {activeTab === "dashboard" && (
                 <DashboardView
                   profile={profile}
                   cases={cases}
                   pendingContributionsCount={pendingContributionsCount}
-                  onDiscussCase={(c) => handleStartVoiceScribe(c.id)}
-                  onStartFullFlow={() => setActiveFormMode("full")}
+                  onDiscussCase={(c) => setDiscussionModalCase(c)}
+                  onStartFullFlow={() => setShowEntryMenu(true)}
                   onStartQuickCase={() => setActiveFormMode("quick")}
                   onSelectCase={handleSelectCase}
                   onViewSheet={handleViewPrintSheet}
@@ -3396,8 +3321,7 @@ export default function App() {
                     setActiveTab("handover");
                   }}
                   onStartDischargeSummary={() => {
-                    setHandoverSubTab("discharge_direct");
-                    setActiveTab("handover");
+                    setShowQuickDischarge(true);
                   }}
                   onStartVoiceScribe={handleStartVoiceScribe}
                   onOpenPediatricCalculator={() => setShowPediatricCalculator(true)}
@@ -3442,7 +3366,7 @@ export default function App() {
                     onNavigateToTab={navigateToTab}
                   />
                 ) : (
-                  <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-8 text-center max-w-md mx-auto shadow-xl space-y-4 my-12 font-sans">
+                  <div className="bg-white dark:bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-8 text-center max-w-md mx-auto shadow-xl space-y-4 my-12 font-sans">
                     <div className="w-14 h-14 bg-red-500/10 text-red-500 rounded-2xl flex items-center justify-center mx-auto">
                       <ShieldAlert className="w-7 h-7" />
                     </div>
@@ -3477,6 +3401,13 @@ export default function App() {
                 />
               )}
 
+              {activeTab === "directory" && (
+                <DoctorsDirectoryView
+                  currentProfile={profile}
+                  onNavigateToTab={navigateToTab}
+                />
+              )}
+
               {activeTab === "cases" && (
                 <CasesListView
                   cases={cases}
@@ -3484,13 +3415,20 @@ export default function App() {
                   onViewSheet={handleViewPrintSheet}
                   onNavigateToDischarge={handleNavigateToDischarge}
                   onDeleteCase={handleDeleteCase}
-                  onStartFullFlow={() => setActiveFormMode("full")}
+                  onStartFullFlow={() => setShowEntryMenu(true)}
                   onStartQuickCase={() => setActiveFormMode("quick")}
                   onNavigateToTab={navigateToTab}
-                  onDiscussCase={(c) => handleStartVoiceScribe(c.id)}
+                  onDiscussCase={(c) => setDiscussionModalCase(c)}
                 />
               )}
 
+              {activeTab === "mlc" && (
+                <MlcCertificatesView
+                  cases={cases.filter(c => c.patient?.isMlc)}
+                  profile={profile}
+                  onSelectCase={handleSelectCase}
+                />
+              )}
               {activeTab === "emdrugs" && (
                 <ErGuideView
                   onBack={() => navigateToTab("dashboard")}
@@ -3535,8 +3473,48 @@ export default function App() {
             );
           })()}
 
+        </Suspense>
         </div>
       </main>
+
+      {/* New Patient Entry Method Selection Menu */}
+      {showEntryMenu && (
+        <NewPatientEntryMenu
+          currentUserName={profile?.name || "Duty Doctor"}
+          hospitalName={profile?.hospital || "Emergency Dept"}
+          onClose={() => setShowEntryMenu(false)}
+          onSelect={async (method: EntryMethod, newCase: ClinicalCase) => {
+            setShowEntryMenu(false);
+            
+            // Optimistically add to cases so it's instantly available for CaseSheetView to render without refetch race conditions
+            const caseToSave = {
+              ...newCase,
+              hospital: newCase.hospital || profile.hospital,
+              doctorEmail: newCase.doctorEmail || profile.email,
+              doctorName: newCase.doctorName || profile.name || "Emergency Doctor",
+            };
+            setCases(prev => [caseToSave, ...prev.filter(c => c.id !== newCase.id)]);
+            
+            // Do NOT await, let it save in background so UI navigates instantly!
+            handleSaveCase(newCase).catch(console.error);
+
+            switch (method) {
+              case "triage":
+                setActiveFormMode("full");
+                break;
+              case "speak":
+                handleStartVoiceScribe(newCase.id);
+                break;
+              case "type":
+              case "adult-direct":
+              case "pediatric-direct":
+                setPendingNewCase(caseToSave);
+                setSelectedCaseId(newCase.id);
+                break;
+            }
+          }}
+        />
+      )}
 
       {/* Simple Footer details */}
       <footer className="bg-white dark:bg-slate-950 border-t border-slate-200 dark:border-slate-800 py-4 px-4 text-center text-[11px] text-slate-400 no-print mt-auto">
@@ -3554,7 +3532,7 @@ export default function App() {
               setCustomReferenceError("");
             }}
           />
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col shadow-2xl relative z-10">
+          <div className="bg-white dark:bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col shadow-2xl relative z-10">
             
             {/* Modal Header */}
             <div className="p-5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-950/20">
@@ -3645,7 +3623,7 @@ export default function App() {
                   {customReferenceResult && (
                     <div className="space-y-4 animate-fade-in">
                       {/* Answer markdown prose */}
-                      <div className="prose prose-slate dark:prose-invert max-w-none text-xs leading-relaxed font-mono whitespace-pre-wrap text-slate-700 dark:text-slate-350 bg-slate-50 dark:bg-slate-900/40 p-4 rounded-xl border border-slate-150 dark:border-slate-850">
+                      <div className="prose prose-slate dark:prose-invert max-w-none text-xs leading-relaxed font-mono whitespace-pre-wrap text-slate-700 dark:text-slate-350 bg-slate-50 dark:bg-slate-50 dark:bg-slate-900/40 p-4 rounded-xl border border-slate-150 dark:border-slate-850">
                         {customReferenceResult.answer}
                       </div>
 
@@ -3719,12 +3697,12 @@ export default function App() {
       {/* System-wide Updates & Announcements Modal */}
       {showUpdatesModal && (
         <div 
-          className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-4"
+          className="fixed inset-0 bg-slate-50 dark:bg-slate-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-4"
           id="system-updates-modal"
         >
           <div className="bg-white dark:bg-slate-950 rounded-2xl max-w-sm w-full overflow-hidden shadow-2xl border border-slate-200 dark:border-slate-800 animate-in fade-in zoom-in-95 duration-250 flex flex-col">
             {/* Header Banner */}
-            <div className="p-5 bg-slate-900 text-white relative border-b border-emerald-500/30">
+            <div className="p-5 bg-slate-50 dark:bg-slate-900 text-white relative border-b border-emerald-500/30">
               <button 
                 onClick={handleLaterApp}
                 className="absolute top-4 right-4 text-white/70 hover:text-white transition-all bg-white/10 hover:bg-white/20 p-1.5 rounded-lg cursor-pointer"
@@ -3765,7 +3743,7 @@ export default function App() {
             </div>
 
             {/* Footer */}
-            <div className="p-4 bg-slate-50 dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2 shrink-0">
+            <div className="p-4 bg-slate-50 dark:bg-slate-50 dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2 shrink-0">
               {isHigherVersion(remoteVersion, APP_VERSION) ? (
                 <>
                   <button
@@ -3812,7 +3790,7 @@ export default function App() {
       {/* 1. Affiliation Conflict Modal */}
       {showAffiliationConflictModal && (
         <div 
-          className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-4"
+          className="fixed inset-0 bg-slate-50 dark:bg-slate-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-4"
           id="affiliation-conflict-modal"
         >
           <div className="bg-white dark:bg-slate-950 rounded-2xl max-w-md w-full overflow-hidden shadow-2xl border border-slate-200 dark:border-slate-800 animate-in fade-in zoom-in-95 duration-200 flex flex-col">
@@ -3839,7 +3817,7 @@ export default function App() {
               </p>
             </div>
 
-            <div className="p-6 bg-slate-50 dark:bg-slate-900/40 border-t border-slate-100 dark:border-slate-800 flex items-center justify-end gap-3">
+            <div className="p-6 bg-slate-50 dark:bg-slate-50 dark:bg-slate-900/40 border-t border-slate-100 dark:border-slate-800 flex items-center justify-end gap-3">
               <button
                 onClick={() => setShowAffiliationConflictModal(false)}
                 className="px-4 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-extrabold rounded-xl transition-all cursor-pointer bg-transparent border-0"
@@ -3860,7 +3838,7 @@ export default function App() {
       {/* 2. Role Selection / Onboarding Modal */}
       {showRoleSelectionModal && (
         <div 
-          className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-4"
+          className="fixed inset-0 bg-slate-50 dark:bg-slate-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-4"
           id="role-selection-modal"
         >
           <div className="bg-white dark:bg-slate-950 rounded-2xl max-w-md w-full overflow-hidden shadow-2xl border border-slate-200 dark:border-slate-800 animate-in fade-in zoom-in-95 duration-200 flex flex-col">
@@ -3919,7 +3897,7 @@ export default function App() {
               </div>
             </div>
 
-            <div className="p-6 bg-slate-50 dark:bg-slate-900/40 border-t border-slate-100 dark:border-slate-800 flex items-center justify-end gap-3">
+            <div className="p-6 bg-slate-50 dark:bg-slate-50 dark:bg-slate-900/40 border-t border-slate-100 dark:border-slate-800 flex items-center justify-end gap-3">
               <button
                 onClick={() => setShowRoleSelectionModal(false)}
                 className="px-4 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-extrabold rounded-xl transition-all cursor-pointer bg-transparent border-0"
@@ -3940,7 +3918,7 @@ export default function App() {
       {/* PWA Universal Download / Installation Guide Modal */}
       {showInstallModal && (
         <div 
-          className="fixed inset-0 bg-slate-900/70 backdrop-blur-xs z-55 flex items-center justify-center p-4 no-print"
+          className="fixed inset-0 bg-slate-50 dark:bg-slate-900/70 backdrop-blur-xs z-55 flex items-center justify-center p-4 no-print"
           id="pwa-install-modal"
         >
           <div className="bg-white dark:bg-slate-950 rounded-2xl max-w-lg w-full overflow-hidden shadow-2xl border border-slate-200 dark:border-slate-800 animate-in fade-in zoom-in-95 duration-250 flex flex-col max-h-[90vh]">
@@ -3999,7 +3977,7 @@ export default function App() {
                 <span className="block text-[10px] font-extrabold text-slate-400 uppercase tracking-wider font-mono">Platform Installation Manuals</span>
                 
                 {/* 1. iOS Safari (iPhone / iPad) */}
-                <div className="p-4 bg-slate-50 dark:bg-slate-900 rounded-xl border border-slate-100 dark:border-slate-850 space-y-2">
+                <div className="p-4 bg-slate-50 dark:bg-slate-50 dark:bg-slate-900 rounded-xl border border-slate-100 dark:border-slate-850 space-y-2">
                   <div className="flex items-center gap-2">
                     <span className="text-xs font-black text-slate-800 dark:text-white flex items-center gap-1.5 font-display">
                       <span className="w-5 h-5 rounded-md bg-slate-200 dark:bg-slate-800 flex items-center justify-center text-[10px] font-mono text-slate-700 dark:text-slate-300 font-bold">iOS</span>
@@ -4015,7 +3993,7 @@ export default function App() {
                 </div>
 
                 {/* 2. Android (Chrome) */}
-                <div className="p-4 bg-slate-50 dark:bg-slate-900 rounded-xl border border-slate-100 dark:border-slate-850 space-y-2">
+                <div className="p-4 bg-slate-50 dark:bg-slate-50 dark:bg-slate-900 rounded-xl border border-slate-100 dark:border-slate-850 space-y-2">
                   <div className="flex items-center gap-2">
                     <span className="text-xs font-black text-slate-800 dark:text-white flex items-center gap-1.5 font-display">
                       <span className="w-5 h-5 rounded-md bg-slate-200 dark:bg-slate-800 flex items-center justify-center text-[10px] font-mono text-slate-700 dark:text-slate-300 font-bold">And</span>
@@ -4030,7 +4008,7 @@ export default function App() {
                 </div>
 
                 {/* 3. Desktop (Chrome, Edge, Safari) */}
-                <div className="p-4 bg-slate-50 dark:bg-slate-900 rounded-xl border border-slate-100 dark:border-slate-850 space-y-2">
+                <div className="p-4 bg-slate-50 dark:bg-slate-50 dark:bg-slate-900 rounded-xl border border-slate-100 dark:border-slate-850 space-y-2">
                   <div className="flex items-center gap-2">
                     <span className="text-xs font-black text-slate-800 dark:text-white flex items-center gap-1.5 font-display">
                       <span className="w-5 h-5 rounded-md bg-slate-200 dark:bg-slate-800 flex items-center justify-center text-[10px] font-mono text-slate-700 dark:text-slate-300 font-bold">PC</span>
@@ -4047,7 +4025,7 @@ export default function App() {
             </div>
 
             {/* Footer */}
-            <div className="p-4 bg-slate-50 dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 flex justify-end shrink-0">
+            <div className="p-4 bg-slate-50 dark:bg-slate-50 dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 flex justify-end shrink-0">
               <button
                 type="button"
                 onClick={() => setShowInstallModal(false)}
@@ -4062,7 +4040,7 @@ export default function App() {
 
       {/* Saved Case Confirmation Banner */}
       {savedBanner.visible && (
-        <div className="fixed bottom-20 right-4 md:right-6 z-50 bg-slate-900 dark:bg-slate-950 text-white px-4 py-3 rounded-2xl shadow-2xl border border-emerald-500/40 flex items-center gap-3 animate-slide-up max-w-sm w-full">
+        <div className="fixed bottom-20 right-4 md:right-6 z-50 bg-slate-50 dark:bg-slate-900 dark:bg-slate-950 text-white px-4 py-3 rounded-2xl shadow-2xl border border-emerald-500/40 flex items-center gap-3 animate-slide-up max-w-sm w-full">
           <div className="w-2.5 h-10 bg-emerald-500 rounded-full shrink-0" />
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-1.5 font-bold text-xs text-emerald-400">

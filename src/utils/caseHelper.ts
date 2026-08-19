@@ -63,11 +63,9 @@ export function getCasePendingStatus(c: ClinicalCase): CasePendingStatus {
 
   // 5. Disposition & Checklist
   const dd = c.dispositionDetails;
-  const isDispositionPending = !dd || 
-    !dd.durationInEr?.trim() || 
-    !dd.residentName?.trim() || 
-    !dd.observationNotes?.trim();
-
+  // A disposition is considered pending if there is no disposition type set, or it is left blank.
+  const isDispositionPending = !dd || !dd.dispositionType?.trim();
+  
   if (isDispositionPending) {
     pendingSections.push("Disposition Details");
   }

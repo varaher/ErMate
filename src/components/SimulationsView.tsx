@@ -86,9 +86,9 @@ export default function SimulationsView() {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {SIMULATION_CASES.map((c) => (
+            {SIMULATION_CASES.map((c, idx) => (
               <div
-                key={c.id}
+                key={`${c.id}-${idx}`}
                 className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl p-5 shadow-sm hover:shadow-md transition-all flex flex-col justify-between"
               >
                 <div className="space-y-3">

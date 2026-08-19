@@ -4,6 +4,7 @@ import { UserProfile } from "../types";
 import { createUserWithEmailAndPassword } from "firebase/auth";
 import { doc, setDoc } from "firebase/firestore";
 import { auth, db, handleFirestoreError, OperationType } from "../firebase";
+import { incrementInviteUsage } from "../services/teamInviteService";
 
 interface SignUpViewProps {
   onSignUp: (profile: UserProfile) => void;
@@ -11,6 +12,7 @@ interface SignUpViewProps {
   theme?: "emerald" | "dark";
   initialHospital?: string;
   initialRole?: "Resident" | "Consultant" | "HOD";
+  inviteToken?: string;
 }
 
 export default function SignUpView({ 
@@ -18,19 +20,17 @@ export default function SignUpView({
   onBackToLogin, 
   theme = "emerald",
   initialHospital = "",
-  initialRole = "Resident"
+  initialRole = "Resident",
+  inviteToken = ""
 }: SignUpViewProps) {
   const [name, setName] = useState("");
   const [age, setAge] = useState<string>("");
   const [hospital, setHospital] = useState(initialHospital);
   const [stateName, setStateName] = useState("Maharashtra");
   const [hospitalAddress, setHospitalAddress] = useState("");
-  const [role, setRole] = useState<"Resident" | "Consultant" | "HOD">(initialRole);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [subscription, setSubscription] = useState<"Free Trial" | "Pro Doctor" | "Team Department">(
-    initialRole === "HOD" ? "Team Department" : "Free Trial"
-  );
+  const [subscription, setSubscription] = useState<"Free Trial" | "Pro Doctor" | "Team Department">("Free Trial");
   const [acceptOffer, setAcceptOffer] = useState(true);
 
   // Sync state if initial props change
@@ -39,15 +39,6 @@ export default function SignUpView({
       setHospital(initialHospital);
     }
   }, [initialHospital]);
-
-  React.useEffect(() => {
-    if (initialRole) {
-      setRole(initialRole);
-      if (initialRole === "HOD") {
-        setSubscription("Team Department");
-      }
-    }
-  }, [initialRole]);
   
   const [error, setError] = useState("");
   const [isRegistering, setIsRegistering] = useState(false);
@@ -137,7 +128,7 @@ export default function SignUpView({
         const newProfile: UserProfile = {
           name: formattedName,
           email: email.trim().toLowerCase(),
-          role: role === "HOD" ? "HOD / Shift Lead" : role === "Consultant" ? "Senior Consultant" : "EM Resident",
+          role: "EM Resident", // Hardcoded - all public signups register as EM Resident
           hospital: hospital.trim(),
           state: stateName.trim(),
           hospitalAddress: hospitalAddress.trim(),
@@ -150,6 +141,15 @@ export default function SignUpView({
         // Write user profile to firestore
         await setDoc(doc(db, "users", user.uid), newProfile);
 
+        // If registered via team invite token, increment usage
+        const activeInviteToken = inviteToken || (typeof sessionStorage !== "undefined" ? sessionStorage.getItem("ermate_pending_invite_token") : "");
+        if (activeInviteToken) {
+          await incrementInviteUsage(activeInviteToken);
+          if (typeof sessionStorage !== "undefined") {
+            sessionStorage.removeItem("ermate_pending_invite_token");
+          }
+        }
+
         // Auto-add or update team member registration
         if (acceptOffer && hospital.trim()) {
           const emailClean = email.trim().toLowerCase();
@@ -159,7 +159,7 @@ export default function SignUpView({
             id: memberId,
             name: formattedName,
             email: emailClean,
-            role: role === "HOD" ? "HOD / Shift Lead" : role === "Consultant" ? "Senior Consultant" : "EM Resident",
+            role: "EM Resident",
             status: "Active (Joined)",
             shift: "off",
             hospital: hospital.trim(),
@@ -303,41 +303,22 @@ export default function SignUpView({
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-4">
-                  {/* Age */}
-                  <div className="space-y-1">
-                    <label htmlFor="signup-age" className={`block text-[9px] font-bold uppercase tracking-wider font-mono ${isEmerald ? 'text-slate-500' : 'text-slate-400'}`}>
-                      Age (Years)
-                    </label>
-                    <input
-                      id="signup-age"
-                      type="number"
-                      value={age}
-                      onChange={(e) => setAge(e.target.value)}
-                      placeholder="e.g. 34"
-                      min="19"
-                      max="100"
-                      className={`${isEmerald ? 'bg-slate-50 border-slate-200 text-slate-800 focus:ring-emerald-500' : 'bg-slate-900 border-slate-800 text-slate-200 focus:ring-blue-500'} block w-full px-3 py-2 text-xs rounded-lg font-mono font-semibold focus:outline-none focus:ring-1`}
-                      required
-                    />
-                  </div>
-
-                  {/* Hospital Designation Role */}
-                  <div className="space-y-1">
-                    <label htmlFor="signup-role" className={`block text-[9px] font-bold uppercase tracking-wider font-mono ${isEmerald ? 'text-slate-500' : 'text-slate-400'}`}>
-                      Designation Role
-                    </label>
-                    <select
-                      id="signup-role"
-                      value={role}
-                      onChange={(e) => setRole(e.target.value as any)}
-                      className={`${isEmerald ? 'bg-slate-50 border-slate-200 text-slate-800 focus:ring-emerald-500' : 'bg-slate-900 border-slate-800 text-slate-200 focus:ring-blue-500'} block w-full px-2 py-2 text-xs rounded-lg font-bold focus:outline-none focus:ring-1`}
-                    >
-                      <option value="Resident">EM Resident</option>
-                      <option value="Consultant">Senior Consultant</option>
-                      <option value="HOD">HOD / Shift Lead</option>
-                    </select>
-                  </div>
+                {/* Age */}
+                <div className="space-y-1">
+                  <label htmlFor="signup-age" className={`block text-[9px] font-bold uppercase tracking-wider font-mono ${isEmerald ? 'text-slate-500' : 'text-slate-400'}`}>
+                    Age (Years)
+                  </label>
+                  <input
+                    id="signup-age"
+                    type="number"
+                    value={age}
+                    onChange={(e) => setAge(e.target.value)}
+                    placeholder="e.g. 34"
+                    min="19"
+                    max="100"
+                    className={`${isEmerald ? 'bg-slate-50 border-slate-200 text-slate-800 focus:ring-emerald-500' : 'bg-slate-900 border-slate-800 text-slate-200 focus:ring-blue-500'} block w-full px-3 py-2 text-xs rounded-lg font-mono font-semibold focus:outline-none focus:ring-1`}
+                    required
+                  />
                 </div>
 
                 {/* Hospital Name */}

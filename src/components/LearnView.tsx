@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import VoiceRecorder from "./shared/VoiceRecorder";
 import { 
   BookOpen, Trophy, HelpCircle, Sparkles, Search, Library, FileText, 
   ChevronRight, Download, ChevronLeft, GraduationCap, Bot, User, Send, 
@@ -24,9 +25,7 @@ function EMReferenceChatPanel() {
   });
 
   const [inputText, setInputText] = useState("");
-  const [isListening, setIsListening] = useState(false);
   const messagesEndRef = React.useRef<HTMLDivElement>(null);
-  const recognitionRef = React.useRef<any>(null);
 
   React.useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -44,38 +43,6 @@ function EMReferenceChatPanel() {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSend();
-    }
-  };
-
-  const toggleListening = () => {
-    if (isListening) {
-      recognitionRef.current?.stop();
-      setIsListening(false);
-      return;
-    }
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      alert("Speech recognition is not supported in your browser.");
-      return;
-    }
-    try {
-      const recognition = new SpeechRecognition();
-      recognition.continuous = false;
-      recognition.interimResults = false;
-      recognition.lang = "en-US";
-      recognition.onstart = () => setIsListening(true);
-      recognition.onresult = (event: any) => {
-        const transcript = event.results[0][0].transcript;
-        setInputText((prev) => (prev ? `${prev} ${transcript}` : transcript));
-        setIsListening(false);
-      };
-      recognition.onerror = () => setIsListening(false);
-      recognition.onend = () => setIsListening(false);
-      recognitionRef.current = recognition;
-      recognition.start();
-    } catch (err) {
-      console.warn("Speech recognition error:", err);
-      setIsListening(false);
     }
   };
 
@@ -102,7 +69,7 @@ function EMReferenceChatPanel() {
               </span>
               <span className="text-[10px] text-emerald-400 font-mono font-bold flex items-center gap-1">
                 <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                Claude Sonnet Engine
+                ErMate Engine
               </span>
             </div>
             <h3 className="text-sm sm:text-base font-extrabold tracking-tight text-white mt-0.5">
@@ -185,7 +152,7 @@ function EMReferenceChatPanel() {
             </div>
             <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl rounded-bl-none p-3 px-4 text-xs text-purple-600 dark:text-purple-400 font-mono flex items-center gap-2 shadow-xs">
               <Sparkles className="w-4 h-4 animate-spin" />
-              <span>Consulting Tintinalli's, Rosen's & UpToDate via Claude Sonnet...</span>
+              <span>Consulting Tintinalli's, Rosen's & UpToDate via ErMate...</span>
             </div>
           </div>
         )}
@@ -194,26 +161,20 @@ function EMReferenceChatPanel() {
 
       {/* Input Box */}
       <form onSubmit={handleSend} className="p-3 bg-white dark:bg-slate-950 border-t border-slate-200 dark:border-slate-800 flex items-center gap-2 shrink-0">
-        <button
-          type="button"
-          onClick={toggleListening}
-          className={`p-2.5 rounded-xl border transition-all cursor-pointer ${
-            isListening
-              ? 'bg-rose-500 text-white border-rose-600 animate-pulse'
-              : 'bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-200'
-          }`}
-          title={isListening ? 'Stop Listening' : 'Dictate Question (Voice)'}
-        >
-          {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
-        </button>
-        <textarea
-          rows={1}
-          value={inputText}
-          onChange={(e) => setInputText(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder="Ask any clinical question (e.g., 'How do I use Ketofol in AF?')..."
-          className="flex-1 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-purple-500 resize-none font-sans"
+        <VoiceRecorder
+          renderMode="compact-button"
+          onTranscript={(txt) => setInputText((prev) => (prev ? `${prev} ${txt}` : txt))}
         />
+        <div className="flex-1 flex gap-2">
+          <textarea
+            rows={1}
+            value={inputText}
+            onChange={(e) => setInputText(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="Ask any clinical question (e.g., 'How do I use Ketofol in AF?')..."
+            className="flex-1 w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-purple-500 resize-none font-sans"
+          />
+        </div>
         <button
           type="submit"
           disabled={!inputText.trim() || sending}
@@ -509,13 +470,19 @@ ${m.physicianReflections || "No reflections logged."}
 
                       {editingMemId === m.id ? (
                         <div className="space-y-2">
-                          <textarea
-                            rows={2}
-                            value={tempReflections}
-                            onChange={(e) => setTempReflections(e.target.value)}
-                            placeholder="Add your personal clinical reflections or follow-up notes..."
-                            className="w-full p-2 bg-slate-50 dark:bg-slate-800 border rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                          />
+                          <div className="flex gap-2">
+                            <textarea
+                              rows={2}
+                              value={tempReflections}
+                              onChange={(e) => setTempReflections(e.target.value)}
+                              placeholder="Add your personal clinical reflections or follow-up notes..."
+                              className="flex-1 w-full p-2 bg-slate-50 dark:bg-slate-800 border rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                            />
+                            <VoiceRecorder
+                              renderMode="compact-button"
+                              onTranscript={(txt) => setTempReflections((prev) => (prev ? prev + " " : "") + txt)}
+                            />
+                          </div>
                           <div className="flex justify-end gap-2">
                             <button
                               onClick={() => setEditingMemId(null)}

@@ -1,3 +1,4 @@
+import { WorkspaceRotaSyncModal } from "./shared/WorkspaceRotaSyncModal";
 import React, { useState, useEffect } from "react";
 import { 
   Users, Plus, Trash2, Shield, Clock, Search, UserCheck, 
@@ -6,6 +7,8 @@ import {
 } from "lucide-react";
 import { TeamMember, UserProfile, ClinicalCase } from "../types";
 import GoogleCalendarModal from "./GoogleCalendarModal";
+import { createTeamInvite } from "../services/teamInviteService";
+import { auth } from "../firebase";
 
 export const ROTA_SHIFTS = [
   { id: "morning", name: "Morning", time: "08:00 - 14:00", color: "text-amber-600 bg-amber-50 border-amber-200 dark:text-amber-400 dark:bg-amber-400/10 dark:border-amber-400/20" },
@@ -74,6 +77,8 @@ export default function TeamRosterBoard({
   // Shift Manager State & Form States
   const [showShiftManagerModal, setShowShiftManagerModal] = useState(false);
   const [isAddingNewShift, setIsAddingNewShift] = useState(false);
+  const [showWorkspaceSync, setShowWorkspaceSync] = useState(false);
+
   const [addShiftName, setAddShiftName] = useState("");
   const [addShiftTime, setAddShiftTime] = useState("");
   const [addShiftColor, setAddShiftColor] = useState(SHIFT_COLOR_OPTIONS[0].color);
@@ -128,7 +133,21 @@ export default function TeamRosterBoard({
   };
 
   const currentOrigin = typeof window !== "undefined" ? window.location.origin : "https://ermate.app";
-  const generatedLink = `${currentOrigin}/join/${slugify(profile.hospital || "department")}?ref=team_invite`;
+  const [generatedLink, setGeneratedLink] = useState<string>(
+    `${currentOrigin}/join/${slugify(profile.hospital || "department")}?ref=team_invite`
+  );
+
+  useEffect(() => {
+    let active = true;
+    if (profile.hospital) {
+      createTeamInvite(profile.hospital, auth.currentUser?.uid || "hod", profile.name || "HOD").then(res => {
+        if (active) {
+          setGeneratedLink(res.link);
+        }
+      });
+    }
+    return () => { active = false; };
+  }, [profile.hospital, profile.name]);
 
   const handleCopyLink = () => {
     navigator.clipboard.writeText(generatedLink);
@@ -300,6 +319,59 @@ export default function TeamRosterBoard({
           </div>
         </div>
       </div>
+
+      {/* Department Leadership & HOD Info Banner */}
+      {(() => {
+        const departmentHODMember = teamMembers.find(m => 
+          m.role?.toLowerCase().includes("hod") || 
+          m.role?.toLowerCase().includes("head") || 
+          m.role?.toLowerCase().includes("lead")
+        );
+        const isSelfHOD = profile.role?.toLowerCase().includes("hod") || profile.role?.toLowerCase().includes("owner") || profile.role?.toLowerCase().includes("head");
+        const hodDisplayName = departmentHODMember ? departmentHODMember.name : (isSelfHOD ? profile.name : (profile.hospital ? `Dr. ${profile.hospital.split(' ')[0]} HOD` : "Department Head"));
+        const hodEmail = departmentHODMember ? departmentHODMember.email : (isSelfHOD ? profile.email : "hod@" + (profile.hospital ? profile.hospital.toLowerCase().replace(/[^a-z]/g, '') : "ermate") + ".in");
+        const hodShift = departmentHODMember ? (departmentHODMember.shift || "Active") : "On Duty / Oversight";
+
+        return (
+          <div className="bg-gradient-to-r from-amber-500/15 via-amber-500/5 to-indigo-500/15 border border-amber-500/30 rounded-2xl p-4 md:p-5 shadow-sm space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-amber-500/20 text-amber-500 border border-amber-500/30 flex items-center justify-center shrink-0 shadow-xs">
+                  <ShieldAlert className="w-5 h-5 text-amber-500" />
+                </div>
+                <div className="text-left">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-black uppercase tracking-widest text-amber-600 dark:text-amber-400 font-mono flex items-center gap-1">
+                      👑 Head of Department (HOD) / Clinical Chief
+                    </span>
+                    <span className="text-[9px] bg-amber-500/20 text-amber-700 dark:text-amber-300 border border-amber-500/30 px-2 py-0.2 rounded-full font-bold uppercase font-mono">
+                      Department Lead
+                    </span>
+                  </div>
+                  <h3 className="text-sm md:text-base font-extrabold text-slate-900 dark:text-white flex items-center gap-1.5 mt-0.5">
+                    {hodDisplayName}
+                    {isSelfHOD && (
+                      <span className="text-[9px] bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 px-1.5 py-0.2 rounded font-mono font-bold uppercase">
+                        (You are HOD)
+                      </span>
+                    )}
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 font-mono">
+                    {hodEmail} • Hospital: <strong className="text-slate-700 dark:text-slate-200">{profile.hospital || "General Emergency Dept"}</strong>
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 self-start sm:self-center">
+                <div className="bg-white/80 dark:bg-slate-900/80 border border-amber-500/20 px-3.5 py-1.5 rounded-xl text-left">
+                  <span className="text-[9px] text-slate-400 uppercase font-mono font-bold block">Duty Shift Status</span>
+                  <span className="text-xs font-black text-indigo-600 dark:text-indigo-400 font-mono uppercase">{hodShift}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Pending Join Requests for HOD */}
       {isUserHOD && teamMembers.filter(m => m.status === "Pending Approval").length > 0 && (
@@ -497,7 +569,17 @@ export default function TeamRosterBoard({
                 </p>
               </div>
 
-              <button
+              
+              <div className="flex gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setShowWorkspaceSync(true)}
+                  className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
+                >
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>
+                  <span>Sync via Workspace</span>
+                </button>
+  <button
                 type="button"
                 onClick={() => setIsAddingNewShift(!isAddingNewShift)}
                 className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer shrink-0"
@@ -505,6 +587,7 @@ export default function TeamRosterBoard({
                 <Plus className="w-4 h-4" />
                 <span>{isAddingNewShift ? "Cancel Adding" : "+ Add New Shift"}</span>
               </button>
+              </div>
             </div>
 
             {/* Add Shift Inline Form */}
@@ -1019,11 +1102,11 @@ export default function TeamRosterBoard({
                     </div>
                   ) : (
                     <div className="space-y-2 max-h-[300px] overflow-y-auto pr-1">
-                      {activeMemberCases.map(c => {
+                      {activeMemberCases.map((c, idx) => {
                         const isSelected = selectedCaseIdsToTake.includes(c.id);
                         return (
                           <div
-                            key={c.id}
+                            key={`${c.id}-${idx}`}
                             onClick={() => handleToggleSelectCase(c.id)}
                             className={`p-3.5 border rounded-xl flex items-center gap-3 cursor-pointer transition-all ${
                               isSelected
@@ -1078,9 +1161,9 @@ export default function TeamRosterBoard({
                     </div>
                   ) : (
                     <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1">
-                      {dischargedMemberCases.map(c => (
+                      {dischargedMemberCases.map((c, idx) => (
                         <div
-                          key={c.id}
+                          key={`${c.id}-${idx}`}
                           className="p-3 bg-slate-50 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-850 rounded-xl flex justify-between items-center text-left"
                         >
                           <div className="space-y-1">
@@ -1311,6 +1394,16 @@ export default function TeamRosterBoard({
         initialEndTime={calendarModalConfig.initialEndTime}
         hospitalName={profile.hospital || "Emergency Department"}
       />
+    
+      {showWorkspaceSync && (
+        <WorkspaceRotaSyncModal
+          onClose={() => setShowWorkspaceSync(false)}
+          onSuccess={(count) => {
+             setShowWorkspaceSync(false);
+             alert(`Successfully synced ${count} shifts to Google Calendar!`);
+          }}
+        />
+      )}
     </div>
   );
 }

@@ -13,6 +13,7 @@ ErMate implements **Local On-The-Fly PHI De-identification** hosted on Indian Cl
 ### Key Privacy Pillars:
 1. **Server-Side Local PHI Stripping (`server/deidentify.ts`)**:
    - **Identifiers Removed**: Patient names, hospital UHIDs, MRNs, Aadhaar numbers, phone numbers, consultant names, and hospital facility labels are automatically detected and masked (`[PATIENT]`, `[PATIENT-ID]`, `[PHONE]`, `[AADHAAR]`).
+   - **Universal Coverage**: Applied across all extraction routes—including Voice Dictation (`server/voiceExtraction.ts`), Case Extractions, Handover Parsing, Discharge Summaries, and Clinical Chats.
    - **Relative Clinical Timeline Conversion**: Absolute calendar dates (e.g., `25/07/2026`, `27/07/2026`) are converted into relative clinical timeline anchors (`[Day 1]`, `[Day 3]`). This preserves vital disease progression context while stripping calendar-based PHI.
 2. **Local Doctor Re-Injection**:
    - The AI model never sees doctor identities. The treating physician name (`Dr. Name`) is securely attached locally post-extraction via the logged-in user profile (`currentUser.displayName`).
@@ -28,8 +29,9 @@ ErMate implements **Local On-The-Fly PHI De-identification** hosted on Indian Cl
 - **SBAR Structure**: Situation, Background, Assessment, Recommendation, Alert Banners, Pending Labs, and Vitals Trajectory.
 - **Direct PDF & WhatsApp Export**: One-click formatted handover sheets for shift transitions.
 
-### 2. Auto-Discharge Summary Generator
-- Converts complex ED stay trajectories into NABH-ready Discharge Summaries.
+### 2. Auto-Discharge Summary & Quick Discharge Generator
+- Converts complex ED stay trajectories into NABH/JCI-ready Discharge Summaries.
+- **Standalone Quick Discharge Intake**: Fast, direct discharge creation via EMR Text Paste, Voice Dictation, or Photo Capture without requiring full 11-tab case documentation. Tagged with `entrySource: "quick_discharge"` for unified NABH case registry traceability and always 100% free (`bypassCreditCheck: true`).
 - Extracts Presenting Complaints, Physical Examination Findings, Diagnostic Course, Procedures Performed, Discharge Medications, and Red-Flag Advice.
 
 ### 3. Voice & Text Case Sheet Extraction
@@ -62,7 +64,7 @@ ErMate enforces strict per-route AI model assignments and dedicated fallback cas
 
 - **Frontend**: React 18, Vite, Tailwind CSS, Lucide Icons, Motion (Framer Motion).
 - **Backend**: Express.js custom server (`server.ts`, TypeScript, CommonJS bundled with `esbuild`).
-- **Database & Sync**: Firebase Firestore (or Cloud SQL PostgreSQL) with automatic offline local persistence.
+- **Database & Sync**: Firebase Firestore (or Cloud SQL PostgreSQL) with automatic offline local persistence, real-time `onSnapshot` deduplication, and cross-origin frame error protection.
 - **Build / Dev Commands**:
   - `npm run dev`: Boots server via `tsx server.ts` on port 3000.
   - `npm run build`: Builds Vite SPA bundle and compiles Express server into `dist/server.cjs`.

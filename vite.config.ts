@@ -14,8 +14,6 @@ export default defineConfig(() => {
         injectRegister: 'auto',
         workbox: {
           maximumFileSizeToCacheInBytes: 6 * 1024 * 1024, // 6 MiB limit for precaching main bundle
-          skipWaiting: true,
-          clientsClaim: true,
           navigateFallback: 'index.html',
           runtimeCaching: [
             {

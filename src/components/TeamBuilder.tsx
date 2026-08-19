@@ -6,6 +6,8 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { TeamMember } from "../types";
+import { createTeamInvite } from "../services/teamInviteService";
+import { auth } from "../firebase";
 
 interface TeamBuilderProps {
   hospitalName: string;
@@ -134,7 +136,21 @@ export default function TeamBuilder({
 
   // Generated Link format based on hospital & team configurations
   const currentOrigin = typeof window !== "undefined" ? window.location.origin : "https://ermate.hospital.in";
-  const generatedLink = `${currentOrigin}/join/${slugify(hospitalName)}?team=${slugify(teamName)}&dept=${slugify(department)}&ref=hosp_sub_active`;
+  const [generatedLink, setGeneratedLink] = useState<string>(
+    `${currentOrigin}/join/${slugify(hospitalName)}?team=${slugify(teamName)}&dept=${slugify(department)}&ref=hosp_sub_active`
+  );
+
+  useEffect(() => {
+    let active = true;
+    if (hospitalName) {
+      createTeamInvite(hospitalName, auth.currentUser?.uid || "hod", profile?.name || "HOD").then(res => {
+        if (active) {
+          setGeneratedLink(res.link);
+        }
+      });
+    }
+    return () => { active = false; };
+  }, [hospitalName, profile?.name]);
 
   const showNotification = (text: string, type: "success" | "error" = "success") => {
     setNotification({ text, type });
@@ -645,7 +661,7 @@ export default function TeamBuilder({
                             {member.status === "Active (Joined)" ? (
                               <span className="bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900/50 text-emerald-600 dark:text-emerald-400 font-bold font-mono text-[9px] px-2 py-0.5 rounded-full inline-flex items-center gap-1">
                                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                                {member.joinedAt || "Joined"}
+                                {(member as any).joinedAt || "Joined"}
                               </span>
                             ) : (
                               <span className="bg-amber-50 dark:bg-amber-950/20 border border-amber-200/50 dark:border-amber-900/30 text-amber-600 dark:text-amber-400 font-bold font-mono text-[9px] px-2 py-0.5 rounded-full inline-flex items-center gap-1">

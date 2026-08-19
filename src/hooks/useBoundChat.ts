@@ -6,6 +6,7 @@ import {
   where,
   getDocs,
   addDoc,
+  setDoc,
   updateDoc,
   serverTimestamp,
   orderBy,
@@ -51,30 +52,40 @@ export function useBoundChat(context: ChatContext) {
 
     try {
       if (db) {
+        // Simplified query to bypass Firestore composite index requirements
         const q = query(
           collection(db, 'chatSessions'),
-          where('contextType', '==', context.type),
-          where('contextId', '==', context.id),
-          where('createdBy', '==', currentUserUid),
-          orderBy('lastMessageAt', 'desc'),
-          limit(1)
+          where('contextId', '==', context.id)
         );
 
-        const snap = await getDocs(q).catch((e) => {
-          console.warn('[BoundChat] Firestore query fallback:', e);
+        
+        const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000));
+        const snap = await Promise.race([getDocs(q), timeoutPromise]).catch((e) => {
+          console.warn('[BoundChat] Firestore query fallback or timeout:', e);
           return null;
         });
 
-        if (snap && !snap.empty) {
-          const sessionDoc = snap.docs[0];
-          setSessionId(sessionDoc.id);
-          const data = sessionDoc.data();
-          setMessages(data.messages || []);
-          if (data.pendingUpdates) {
-            setPendingUpdates(data.pendingUpdates);
+        if (snap && !(snap as any).empty) {
+          // Filter and sort client-side to avoid needing a composite index
+          const validDocs = (snap as any).docs
+            .filter(d => d.data().createdBy === currentUserUid && d.data().contextType === context.type)
+            .sort((a, b) => {
+              const timeA = a.data().lastMessageAt?.toMillis?.() || new Date(a.data().createdAt || 0).getTime();
+              const timeB = b.data().lastMessageAt?.toMillis?.() || new Date(b.data().createdAt || 0).getTime();
+              return timeB - timeA;
+            });
+
+          if (validDocs.length > 0) {
+            const sessionDoc = validDocs[0];
+            setSessionId(sessionDoc.id);
+            const data = sessionDoc.data();
+            setMessages(data.messages || []);
+            if (data.pendingUpdates) {
+              setPendingUpdates(data.pendingUpdates);
+            }
+            setLoading(false);
+            return;
           }
-          setLoading(false);
-          return;
         }
       }
 
@@ -109,15 +120,21 @@ export function useBoundChat(context: ChatContext) {
         pendingUpdates: null,
       };
 
+      
+
+
       let newDocId = `session_${Date.now()}`;
       if (db) {
         try {
-          const docRef = await addDoc(collection(db, 'chatSessions'), {
+          const docRef = doc(collection(db, 'chatSessions'));
+          newDocId = docRef.id;
+          setDoc(docRef, {
             ...newSessionData,
             createdAt: serverTimestamp(),
             lastMessageAt: serverTimestamp(),
+          }).catch(err => {
+            console.warn('[BoundChat] Firestore session creation fallback:', err);
           });
-          newDocId = docRef.id;
         } catch (err) {
           console.warn('[BoundChat] Firestore session creation fallback:', err);
         }
@@ -129,6 +146,54 @@ export function useBoundChat(context: ChatContext) {
         `ermate_chat_session_${context.type}_${context.id}`,
         JSON.stringify({ id: newDocId, messages: [welcomeMsg] })
       );
+
+// Trigger automatic AI summary generation asynchronously
+      setTimeout(async () => {
+        try {
+          const summaryPrompt = "Please provide a concise clinical summary of this case based on the provided record, and then ask me what I would like to focus on or what follow-up queries I have.";
+          setSending(true);
+          const response = await fetch('/api/case-discussion', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              message: summaryPrompt,
+              contextType: context.type,
+              contextData: context.data,
+              caseData: context.data,
+              history: [],
+              messages: [{ sender: 'user', text: summaryPrompt }]
+            }),
+          });
+          const data = await response.json();
+          const assistantContent = data.response || "Summary unavailable.";
+          const assistantMsg: ChatMessage = {
+            role: 'assistant',
+            content: assistantContent,
+            timestamp: new Date().toISOString()
+          };
+          
+          setMessages(prev => {
+            const newMsgs = [...prev, assistantMsg];
+            // Save local
+            localStorage.setItem(
+              `ermate_chat_session_${context.type}_${context.id}`,
+              JSON.stringify({ id: newDocId, messages: newMsgs })
+            );
+            return newMsgs;
+          });
+          
+          if (db && newDocId) {
+             updateDoc(doc(db, 'chatSessions', newDocId), {
+                messages: [welcomeMsg, assistantMsg],
+                lastMessageAt: serverTimestamp()
+             }).catch(() => {});
+          }
+        } catch (e) {
+          console.warn('Failed to auto-generate summary', e);
+        } finally {
+          setSending(false);
+        }
+      }, 500);
     } catch (err) {
       console.error('[BoundChat] Initialization error:', err);
       const welcomeMsg = buildWelcomeMessage(context);
@@ -201,11 +266,11 @@ export function useBoundChat(context: ChatContext) {
 
       if (db && sessionId && !sessionId.startsWith('local_') && !sessionId.startsWith('fallback_')) {
         try {
-          await updateDoc(doc(db, 'chatSessions', sessionId), {
+          updateDoc(doc(db, 'chatSessions', sessionId), {
             messages: finalMessages,
             lastMessageAt: serverTimestamp(),
             pendingUpdates: suggestedUpdate || null,
-          });
+          }).catch(e => console.warn('[BoundChat] Firestore update doc promise rejection:', e));
         } catch (e) {
           console.warn('[BoundChat] Firestore update error:', e);
         }
@@ -235,7 +300,7 @@ export function useBoundChat(context: ChatContext) {
 
       if (db) {
         const parentRef = doc(db, collectionName, context.id);
-        await updateDoc(parentRef, {
+        updateDoc(parentRef, {
           ...updatePayload,
           lastUpdatedFromChat: serverTimestamp(),
           lastUpdatedBy: auth.currentUser?.uid || 'chat_assistant',
@@ -251,7 +316,7 @@ export function useBoundChat(context: ChatContext) {
       setTimeout(() => setBannerNotice(null), 4000);
 
       if (db && sessionId && !sessionId.startsWith('local_')) {
-        await updateDoc(doc(db, 'chatSessions', sessionId), {
+        updateDoc(doc(db, 'chatSessions', sessionId), {
           pendingUpdates: null,
         }).catch(() => {});
       }
@@ -324,7 +389,7 @@ Ask questions regarding physiological timeline, ACLS/resuscitation audit, antece
 
 Ask any clinical, pharmacological, or procedural emergency question (e.g., *"How do I use Ketofol in AF?"*, *"RSI drug doses paediatric"*). 
 
-Responses are generated directly using Claude Sonnet, cited with Tintinalli's, Rosen's, UpToDate, and WikEM guidelines.`;
+Responses are generated directly using ErMate, cited with Tintinalli's, Rosen's, UpToDate, and WikEM guidelines.`;
       break;
 
     default:

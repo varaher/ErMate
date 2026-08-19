@@ -210,31 +210,40 @@ export default function MockLoginView({
 
   // Sign in or auto-create preset account in Firebase Auth
   const authenticatePresetUser = async (email: string, name: string, customPwd?: string): Promise<any> => {
-    const primaryPwd = (customPwd && customPwd.length >= 6) ? customPwd : "password123";
-    try {
-      const userCredential = await signInWithEmailAndPassword(auth, email, primaryPwd);
-      return userCredential.user;
-    } catch (err: any) {
-      if (err.code === "auth/user-not-found" || err.code === "auth/invalid-credential" || err.code === "auth/wrong-password") {
-        try {
-          const userCredential = await createUserWithEmailAndPassword(auth, email, primaryPwd);
-          return userCredential.user;
-        } catch (createErr) {
+    const passwordsToTry = Array.from(new Set([
+      (customPwd && customPwd.length >= 6) ? customPwd : "",
+      "password123"
+    ].filter(Boolean)));
+
+    // Try signing in with candidate passwords
+    for (const pwd of passwordsToTry) {
+      try {
+        const userCredential = await signInWithEmailAndPassword(auth, email, pwd);
+        return userCredential.user;
+      } catch (e) {
+        // Continue trying next candidate password
+      }
+    }
+
+    // Try creating account if sign in failed
+    for (const pwd of passwordsToTry) {
+      try {
+        const userCredential = await createUserWithEmailAndPassword(auth, email, pwd);
+        return userCredential.user;
+      } catch (createErr: any) {
+        if (createErr.code === "auth/email-already-in-use") {
+          // Account already exists under another credential, try signing in with default fallback password
           try {
-            const createFallback = await createUserWithEmailAndPassword(auth, email, "password123");
-            return createFallback.user;
-          } catch (createFallbackErr) {
-            try {
-              const signFallback = await signInWithEmailAndPassword(auth, email, "password123");
-              return signFallback.user;
-            } catch (finalErr) {
-              console.error("All authentication attempts failed for email:", email, finalErr);
-            }
+            const fallbackSign = await signInWithEmailAndPassword(auth, email, "password123");
+            return fallbackSign.user;
+          } catch (signErr) {
+            console.warn("Fallback signin after email-in-use failed:", signErr);
           }
         }
       }
     }
-    return null;
+
+    return auth.currentUser || null;
   };
 
   // Google Password submitted & flow begins

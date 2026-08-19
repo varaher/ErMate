@@ -18,7 +18,6 @@
  */
 
 import {
-  getFirestore,
   collection,
   addDoc,
   query,
@@ -27,9 +26,8 @@ import {
   serverTimestamp,
   type Unsubscribe,
 } from "firebase/firestore";
+import { db } from "../firebase";
 import type { ScribeChatMessage } from "../../server/scribeChatTurn";
-
-const db = getFirestore();
 
 /**
  * Subscribes to a case's chat history in real time. Call this when
@@ -56,13 +54,16 @@ export function subscribeChatHistory(
       const data = doc.data();
       return {
         id: data.id || doc.id,
+        docId: doc.id,
         role: data.role || "assistant",
         timestamp: data.timestamp || new Date().toISOString(),
         type: data.type || "text",
         content: data.content || "",
         extractionSummary: data.extractionSummary,
         clinicalReasoning: data.clinicalReasoning,
-      } as ScribeChatMessage;
+        unappliedExtraction: data.unappliedExtraction,
+        dischargeDraft: data.dischargeDraft,
+      } as any;
     });
     onMessages(messages);
   }, error => {
@@ -80,9 +81,12 @@ export async function appendChatMessage(caseId: string, message: ScribeChatMessa
   if (!caseId) return;
   try {
     const messagesRef = collection(db, "cases", caseId, "scribeChatMessages");
+    // Firestore addDoc throws on undefined values. Strip them out.
+    const cleanMessage = JSON.parse(JSON.stringify(message));
+    
     await addDoc(messagesRef, {
-      ...message,
-      serverTimestamp: serverTimestamp(), // for reliable ordering even with clock skew
+      ...cleanMessage,
+      serverTimestamp: serverTimestamp(),
     });
   } catch (err) {
     console.warn(`[appendChatMessage] Error writing chat message for case ${caseId}:`, err);
@@ -97,4 +101,15 @@ export async function appendChatMessage(caseId: string, message: ScribeChatMessa
  */
 export function generateNewCaseId(): string {
   return "C-" + Math.floor(1000 + Math.random() * 9000);
+}
+
+import { doc, updateDoc } from "firebase/firestore";
+export async function updateChatMessage(caseId: string, messageId: string, updates: Partial<ScribeChatMessage>): Promise<void> {
+  if (!caseId || !messageId) return;
+  try {
+    const messageRef = doc(db, "cases", caseId, "scribeChatMessages", messageId);
+    await updateDoc(messageRef, updates);
+  } catch (err) {
+    console.warn(`[updateChatMessage] Error updating message ${messageId} for case ${caseId}:`, err);
+  }
 }

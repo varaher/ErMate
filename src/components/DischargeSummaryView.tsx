@@ -1,7 +1,7 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { ArrowLeft, Sparkles, CheckCircle, Save, RefreshCw, AlertCircle, Printer, ShieldAlert, FileText, Check, AlertTriangle, ListFilter, Copy, Download, ChevronDown, FileCheck, MessageSquare } from "lucide-react";
 import { ClinicalCase, DischargeInfo, UserProfile } from "../types";
-import SpeechMicButton from "./SpeechMicButton";
+import VoiceRecorder from "./shared/VoiceRecorder";
 import { triggerPrintWithTip } from "../utils/printWithTip";
 import { BoundChatModal } from "./BoundChatModal";
 import { captureFeedbackCorrection } from "../services/learningClient";
@@ -145,32 +145,67 @@ export default function DischargeSummaryView({
     currentCase.dischargeInfo?.primaryExposureTrauma || ""
   );
 
+  // --- Parse Secondary Assessment ---
+  let parsedGeneral = "";
+  let parsedCvs = "";
+  let parsedRs = "";
+  let parsedPa = "";
+  let parsedCns = "";
+  let parsedExtremities = "";
+  if (typeof currentCase.secondaryAssessment === "string") {
+    const text = currentCase.secondaryAssessment;
+    const regex = /(General|CVS|RS|Respiratory|Chest \/ RS|Respiratory System|Abdomen|PA|Per Abdomen \(PA\)|PA \/ Abdomen|Per Abdomen|CNS|Psych|Extremities|Local Examination|Head-to-Toe Trauma Exam)\s*:\s*(.*?)(?=(General|CVS|RS|Respiratory|Chest \/ RS|Respiratory System|Abdomen|PA|Per Abdomen \(PA\)|PA \/ Abdomen|Per Abdomen|CNS|Psych|Extremities|Local Examination|Head-to-Toe Trauma Exam)\s*:|$)/igs;
+    let match;
+    let foundAny = false;
+    while ((match = regex.exec(text)) !== null) {
+      foundAny = true;
+      const key = match[1].toLowerCase();
+      const val = match[2].trim();
+      if (key.includes('general')) parsedGeneral = val;
+      else if (key.includes('cvs')) parsedCvs = val;
+      else if (key.includes('rs') || key.includes('respiratory')) parsedRs = val;
+      else if (key.includes('abdomen') || key.includes('pa')) parsedPa = val;
+      else if (key.includes('cns')) parsedCns = val;
+      else if (key.includes('extremities') || key.includes('local') || key.includes('trauma')) parsedExtremities = val;
+    }
+    if (!foundAny) {
+      parsedGeneral = text;
+    }
+  }
+
   // --- Secondary Assessment ---
   const [secondaryPicle, setSecondaryPicle] = useState(
-    currentCase.dischargeInfo?.secondaryPicle || (typeof currentCase.secondaryAssessment === "string" ? currentCase.secondaryAssessment : "")
+    currentCase.dischargeInfo?.secondaryPicle || parsedGeneral
   );
   const [secondaryChest, setSecondaryChest] = useState(
-    currentCase.dischargeInfo?.secondaryChest || ""
+    currentCase.dischargeInfo?.secondaryChest || parsedRs
   );
   const [secondaryCvs, setSecondaryCvs] = useState(
-    currentCase.dischargeInfo?.secondaryCvs || ""
+    currentCase.dischargeInfo?.secondaryCvs || parsedCvs
   );
   const [secondaryPa, setSecondaryPa] = useState(
-    currentCase.dischargeInfo?.secondaryPa || ""
+    currentCase.dischargeInfo?.secondaryPa || parsedPa
   );
   const [secondaryCns, setSecondaryCns] = useState(
-    currentCase.dischargeInfo?.secondaryCns || ""
+    currentCase.dischargeInfo?.secondaryCns || parsedCns
   );
   const [secondaryExtremities, setSecondaryExtremities] = useState(
-    currentCase.dischargeInfo?.secondaryExtremities || ""
+    currentCase.dischargeInfo?.secondaryExtremities || parsedExtremities
   );
 
   // --- Course, Investigations, Diagnosis, Medications ---
+  const _safeCourseInHospital = (course: any) => {
+    if (!course) return "";
+    if (typeof course === 'string') return course;
+    if (typeof course === 'object') return Object.values(course).filter(v => typeof v === 'string').join("\n\n");
+    return String(course);
+  };
+
   const [courseInHospital, setCourseInHospital] = useState(
-    currentCase.dischargeInfo?.courseInHospital || currentCase.progressNotes || `Patient evaluated in ER for ${currentCase.patient.presentingComplaint || "acute presentation"}. Clinical evaluation and stabilization provided.`
+    _safeCourseInHospital(currentCase.dischargeInfo?.courseInHospital) || currentCase.progressNotes || ""
   );
   const [investigationsResults, setInvestigationsResults] = useState(
-    currentCase.dischargeInfo?.investigationsResults || (currentCase.investigations && currentCase.investigations.length > 0 ? currentCase.investigations.map(i => `${i.testName}: ${i.result || "Done"}`).join("\n") : "No investigations ordered.")
+    currentCase.dischargeInfo?.investigationsResults || (currentCase.investigations && currentCase.investigations.length > 0 ? currentCase.investigations.map(i => `${i.testName}: ${i.result || "Done"}`).join("\n") : "")
   );
   const [primaryDiagnosis, setPrimaryDiagnosis] = useState(
     currentCase.dischargeInfo?.primaryDiagnosis || currentCase.provisionalPrimaryDiagnosis || (currentCase.differentials?.[0]?.diagnosis) || currentCase.patient.presentingComplaint || ""
@@ -178,30 +213,41 @@ export default function DischargeSummaryView({
   const [secondaryDiagnosis, setSecondaryDiagnosis] = useState(
     currentCase.dischargeInfo?.secondaryDiagnosis || currentCase.sampleHistory?.pastHistory || ""
   );
+  const _safeStringFromMixed = (val: any) => {
+    if (!val) return "";
+    if (typeof val === 'string') return val;
+    if (Array.isArray(val)) return val.join("\n");
+    if (typeof val === 'object') return Object.values(val).filter(v => typeof v === 'string').join("\n");
+    return String(val);
+  };
+
   const [dischargeMedications, setDischargeMedications] = useState(
-    currentCase.dischargeInfo?.dischargeMedications || (currentCase.treatments && currentCase.treatments.length > 0 ? currentCase.treatments.map((t, idx) => `${idx + 1}. ${t.drugName} ${t.dose || ""} (${t.route || ""}) - ${t.timeGiven || "Given in ER"}`).join("\n") : "No outpatient medications prescribed.")
+    _safeStringFromMixed(currentCase.dischargeInfo?.dischargeMedications) || (currentCase.treatments && currentCase.treatments.length > 0 ? currentCase.treatments.map((t, idx) => `${idx + 1}. ${t.drugName} ${t.dose || ""} (${t.route || ""}) - ${t.timeGiven || "Given in ER"}`).join("\n") : "")
   );
 
   // --- Discharge Vitals & Follow-Up ---
-  const [dischargeHr, setDischargeHr] = useState(currentCase.dischargeInfo?.dischargeHr || currentCase.dispositionDetails?.dischargeVitals?.hr || currentCase.vitals.hr || "");
-  const [dischargeBp, setDischargeBp] = useState(currentCase.dischargeInfo?.dischargeBp || currentCase.dispositionDetails?.dischargeVitals?.bp || currentCase.vitals.bp || "");
-  const [dischargeRr, setDischargeRr] = useState(currentCase.dischargeInfo?.dischargeRr || currentCase.dispositionDetails?.dischargeVitals?.rr || currentCase.vitals.rr || "");
-  const [dischargeSpo2, setDischargeSpo2] = useState(currentCase.dischargeInfo?.dischargeSpo2 || currentCase.dispositionDetails?.dischargeVitals?.spo2 || currentCase.vitals.spo2 || "");
-  const [dischargeGcs, setDischargeGcs] = useState(currentCase.dischargeInfo?.dischargeGcs || currentCase.dispositionDetails?.dischargeVitals?.gcs || currentCase.vitals.gcs || "");
-  const [dischargePainScore, setDischargePainScore] = useState(currentCase.dischargeInfo?.dischargePainScore || currentCase.vitals.painScore || "");
-  const [dischargeGrbs, setDischargeGrbs] = useState(currentCase.dischargeInfo?.dischargeGrbs || currentCase.vitals.grbs || "");
-  const [dischargeTemp, setDischargeTemp] = useState(currentCase.dischargeInfo?.dischargeTemp || currentCase.vitals.temp || "");
+  const [dischargeHr, setDischargeHr] = useState(currentCase.dischargeInfo?.dischargeHr || currentCase.dispositionDetails?.dischargeVitals?.hr || "");
+  const [dischargeBp, setDischargeBp] = useState(currentCase.dischargeInfo?.dischargeBp || currentCase.dispositionDetails?.dischargeVitals?.bp || "");
+  const [dischargeRr, setDischargeRr] = useState(currentCase.dischargeInfo?.dischargeRr || currentCase.dispositionDetails?.dischargeVitals?.rr || "");
+  const [dischargeSpo2, setDischargeSpo2] = useState(currentCase.dischargeInfo?.dischargeSpo2 || currentCase.dispositionDetails?.dischargeVitals?.spo2 || "");
+  const [dischargeGcs, setDischargeGcs] = useState(currentCase.dischargeInfo?.dischargeGcs || currentCase.dispositionDetails?.dischargeVitals?.gcs || "");
+  const [dischargePainScore, setDischargePainScore] = useState(currentCase.dischargeInfo?.dischargePainScore || currentCase.dispositionDetails?.dischargeVitals?.painScore || "");
+  const [dischargeGrbs, setDischargeGrbs] = useState(currentCase.dischargeInfo?.dischargeGrbs || currentCase.dispositionDetails?.dischargeVitals?.grbs || "");
+  const [dischargeTemp, setDischargeTemp] = useState(currentCase.dischargeInfo?.dischargeTemp || currentCase.dispositionDetails?.dischargeVitals?.temp || "");
 
   const [dischargeCondition, setDischargeCondition] = useState(
-    currentCase.dischargeInfo?.dischargeCondition || "Stable at time of discharge"
+    currentCase.dischargeInfo?.dischargeCondition || currentCase.dischargeInfo?.conditionAtDischarge || ""
   );
   const [followUpPlan, setFollowUpPlan] = useState(
-    currentCase.dischargeInfo?.followUpPlan || "Review in OPD / Primary care clinic in 3-5 days. Return to emergency department immediately if warning symptoms develop."
+    currentCase.dischargeInfo?.followUpPlan || ""
+  );
+  const [patientInstructions, setPatientInstructions] = useState(
+    currentCase.dischargeInfo?.patientInstructions || "Emergency warnings: return immediately if you experience breathing difficulty, high fever, chest tightness or severe pain."
   );
 
   // Consultant / Resident Names
   const [emResidentName, setEmResidentName] = useState(
-    currentCase.dischargeInfo?.emResidentName || currentCase.dispositionDetails?.residentName || ""
+    currentCase.dischargeInfo?.emResidentName || currentCase.dispositionDetails?.residentName || profile?.name || profile?.name || ""
   );
   const [emConsultantName, setEmConsultantName] = useState(
     currentCase.dischargeInfo?.emConsultantName || currentCase.dispositionDetails?.consultantName || ""
@@ -210,6 +256,7 @@ export default function DischargeSummaryView({
   // States for actions
   const [aiDrafted, setAiDrafted] = useState(currentCase.dischargeInfo?.aiDrafted || false);
   const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
   const [saveBanner, setSaveBanner] = useState(false);
 
   // Safety standards
@@ -226,6 +273,17 @@ export default function DischargeSummaryView({
     : (profile?.state ? `Department of Emergency Medicine, ${profile.state}` : "Department of Emergency Medicine & Level 1 Trauma Services");
 
   const getFormattedDischargeSummaryText = () => {
+    const pedInfo = currentCase.isPediatric && currentCase.pediatricDetails ? `
+**PEDIATRIC INITIAL ASSESSMENT & HISTORY:**
+--------------------------------------------------
+- **Weight:** ${currentCase.pediatricDetails.patientWeight ? `${currentCase.pediatricDetails.patientWeight} kg` : "Not recorded"}
+- **PAT Appearance (TICLS):** Tone: ${currentCase.pediatricDetails.patAppearanceTone || "N/A"}, Interactivity: ${currentCase.pediatricDetails.patAppearanceInteractivity || "N/A"}, Consolability: ${currentCase.pediatricDetails.patAppearanceConsolability || "N/A"}, Look/Gaze: ${currentCase.pediatricDetails.patAppearanceLookGaze || "N/A"}, Speech/Cry: ${currentCase.pediatricDetails.patAppearanceSpeechCry || "N/A"}
+- **PAT Work of Breathing:** ${currentCase.pediatricDetails.patWorkOfBreathing || "Not recorded"}
+- **PAT Circulation:** ${currentCase.pediatricDetails.patCirculation || "Not recorded"}
+- **Immunization Status:** ${currentCase.pediatricDetails.immunizationHistory || "Not recorded"}
+- **Brought By / Informant:** ${currentCase.pediatricDetails.broughtBy || currentCase.pediatricDetails.informant || "Not recorded"}
+` : "";
+
     return `**CLINICAL DISCHARGE SUMMARY & INSTRUCTIONS CARD**
 **${displayHospitalName}**
 **${displayHospitalAddress}**
@@ -234,7 +292,7 @@ export default function DischargeSummaryView({
 **AGE / GENDER:** ${currentCase.patient.age || "N/A"} Years / ${currentCase.patient.gender}
 **UHID / CR NUMBER:** ${uhid}
 **MLC RECORD STATUS:** ${isMlc === "Yes" ? `Yes (${mlcNo})` : "No / Non-MedicoLegal"}
-**ALLERGIES:** ${allergies}
+**ALLERGIES:** ${allergies || "NKDA"}
 
 **DATE OF ARRIVAL:** ${currentCase.patient.dateOpened || "Immediate on-shift"}
 **DATE OF DISCHARGE:** ${dischargeDateTime}
@@ -244,14 +302,14 @@ export default function DischargeSummaryView({
 
 **Vitals on Arrival:**
 --------------------------------------------------
-- **HR / Pulse:** ${arrivalHr} bpm
-- **Blood Pres.:** ${arrivalBp} mmHg
-- **Resp Rate:** ${arrivalRr} /min
-- **SpO2 %:** ${arrivalSpo2}%
-- **GCS Score:** ${arrivalGcs}/15
-- **Pain Score:** ${arrivalPainScore}/10
-- **GRBS Glu.:** ${arrivalGrbs} mg/dL
-- **Body Temp:** ${arrivalTemp} °F
+- **HR / Pulse:** ${arrivalHr ? `${arrivalHr} bpm` : "Not recorded"}
+- **Blood Pres.:** ${arrivalBp || "Not recorded"}
+- **Resp Rate:** ${arrivalRr ? `${arrivalRr} /min` : "Not recorded"}
+- **SpO2 %:** ${arrivalSpo2 ? `${arrivalSpo2}%` : "Not recorded"}
+- **GCS Score:** ${arrivalGcs ? `${arrivalGcs}/15` : "Not recorded"}
+- **Pain Score:** ${arrivalPainScore ? `${arrivalPainScore}/10` : "Not recorded"}
+- **GRBS Glu.:** ${arrivalGrbs ? `${arrivalGrbs} mg/dL` : "Not recorded"}
+- **Body Temp:** ${arrivalTemp ? `${arrivalTemp} °F` : "Not recorded"}
 
 **PRESENTING COMPLAINTS:**
 ${presentingComplaints || "None recorded"}
@@ -260,77 +318,95 @@ ${presentingComplaints || "None recorded"}
 ${historyOfPresentIllness || "None recorded"}
 
 **PAST MEDICAL / SURGICAL HISTORIES:**
-${pastMedicalHistory || "None"}
+${pastMedicalHistory || "None recorded"}
 
 **FAMILY / GYNAE HISTORY:**
-${familyGynaeHistory} (LMP: ${lmp})
-
+${familyGynaeHistory || "None recorded"} (LMP: ${lmp})
+${pedInfo}
 **Primary Survey:**
 --------------------------------------------------
-- **Airway:** ${primaryAirway} | **Intervention:** ${primaryAirwayIntervention}
-- **Breathing:** ${primaryBreathing}
-  - **Chest Work:** ${primaryBreathingWork} | **Air Entry:** ${primaryBreathingAirEntry}
-  - **CCT:** ${primaryBreathingCct} | **Subcut Emphysema:** ${primaryBreathingSubcut} | **EFAST:** ${primaryBreathingEfast}
-  - **Intervention:** ${primaryBreathingIntervention}
+- **Airway:** ${primaryAirway || "Not documented"} | **Intervention:** ${primaryAirwayIntervention || "Not documented"}
+- **Breathing:** ${primaryBreathing || "Not documented"}
+  - **Chest Work:** ${primaryBreathingWork || "Not documented"} | **Air Entry:** ${primaryBreathingAirEntry || "Not documented"}
+  - **CCT:** ${primaryBreathingCct || "Not documented"} | **Subcut Emphysema:** ${primaryBreathingSubcut || "Not documented"} | **EFAST:** ${primaryBreathingEfast || "Not documented"}
+  - **Intervention:** ${primaryBreathingIntervention || "Not documented"}
 - **Circulation:**
-  - **CRT:** ${primaryCirculationCrt} | **Dist. Neck Veins:** ${primaryCirculationDnv}
-  - **PCT:** ${primaryCirculationPct} | **Long Bone Deformity:** ${primaryCirculationDeformity} | **FAST:** ${primaryCirculationFast}
-  - **Intervention:** ${primaryCirculationInterventions}
+  - **CRT:** ${primaryCirculationCrt || "Not documented"} | **Dist. Neck Veins:** ${primaryCirculationDnv || "Not documented"}
+  - **PCT:** ${primaryCirculationPct || "Not documented"} | **Long Bone Deformity:** ${primaryCirculationDeformity || "Not documented"} | **FAST:** ${primaryCirculationFast || "Not documented"}
+  - **Intervention:** ${primaryCirculationInterventions || "Not documented"}
 - **Disability:**
-  - **AVPU/GCS:** ${primaryDisabilityAvpuGcs} | **Pupils:** ${primaryDisabilityPupils} | **GRBS:** ${primaryDisabilityGrbs}
+  - **AVPU/GCS:** ${primaryDisabilityAvpuGcs || "Not documented"} | **Pupils:** ${primaryDisabilityPupils || "Not documented"} | **GRBS:** ${primaryDisabilityGrbs || "Not documented"}
 - **Exposure:**
-  - **Temp:** ${primaryExposureTemp} °F | **Trauma-Logroll:** ${primaryExposureTrauma}
+  - **Temp:** ${primaryExposureTemp ? `${primaryExposureTemp} °F` : "Not documented"} | **Trauma-Logroll:** ${primaryExposureTrauma || "Not documented"}
 
 **Secondary Physical & Systemic Examinations:**
 --------------------------------------------------
-- **General Exam (P/I/C/C/L/E):** ${secondaryPicle}
-- **Respiratory (CHEST):** ${secondaryChest}
-- **Cardiovascular (CVS):** ${secondaryCvs}
-- **Abdominal / Gastro (P/A):** ${secondaryPa}
-- **Central Nervous System (CNS):** ${secondaryCns}
-- **Musculoskeletal / Extremities:** ${secondaryExtremities}
+- **General Exam (P/I/C/C/L/E):** ${secondaryPicle || "Not documented"}
+- **Respiratory (CHEST):** ${secondaryChest || "Not documented"}
+- **Cardiovascular (CVS):** ${secondaryCvs || "Not documented"}
+- **Abdominal / Gastro (P/A):** ${secondaryPa || "Not documented"}
+- **Central Nervous System (CNS):** ${secondaryCns || "Not documented"}
+- **Musculoskeletal / Extremities:** ${secondaryExtremities || "Not documented"}
 
 **Course in Emergency Ward with Medications & Procedures:**
 --------------------------------------------------
-${courseInHospital}
+${courseInHospital || "Patient evaluated and stabilized in ER."}
 
 **Diagnostic Investigations Performed & Results Summary:**
 --------------------------------------------------
-${investigationsResults}
+${investigationsResults || "No investigations ordered."}
 
 **Diagnosis at Discharge:**
 --------------------------------------------------
-- **FINAL DIAGNOSIS:** ${primaryDiagnosis}
-- **ASSOCIATED COMORBIDITIES:** ${secondaryDiagnosis || "None"}
+- **FINAL DIAGNOSIS:** ${primaryDiagnosis || "Under Evaluation"}
+- **ASSOCIATED COMORBIDITIES:** ${secondaryDiagnosis || "None recorded"}
 
 **Discharge medications:**
 --------------------------------------------------
-${dischargeMedications}
+${dischargeMedications || "No outpatient medications prescribed."}
 
 **Disposition Stats & Decision:**
 --------------------------------------------------
 - **DISPOSITION MODE:** ${dispositionStatus}
-- **PATIENT CONDITION AT DISCHARGE:** ${dischargeCondition}
+- **PATIENT CONDITION AT DISCHARGE:** ${dischargeCondition || "Not Recorded"}
 - **DISCHARGE VITALS:**
-  - **HR:** ${dischargeHr} bpm | **BP:** ${dischargeBp} mmHg
-  - **RR:** ${dischargeRr} /min | **SpO2:** ${dischargeSpo2}%
-  - **GCS:** ${dischargeGcs}/15 | **Pain:** ${dischargePainScore}/10
-  - **GRBS:** ${dischargeGrbs} mg/dL | **Temp:** ${dischargeTemp} °F
+  - **HR:** ${dischargeHr ? `${dischargeHr} bpm` : "Not recorded"} | **BP:** ${dischargeBp || "Not recorded"}
+  - **RR:** ${dischargeRr ? `${dischargeRr} /min` : "Not recorded"} | **SpO2:** ${dischargeSpo2 ? `${dischargeSpo2}%` : "Not recorded"}
+  - **GCS:** ${dischargeGcs ? `${dischargeGcs}/15` : "Not recorded"} | **Pain:** ${dischargePainScore ? `${dischargePainScore}/10` : "Not recorded"}
+  - **GRBS:** ${dischargeGrbs ? `${dischargeGrbs} mg/dL` : "Not recorded"} | **Temp:** ${dischargeTemp ? `${dischargeTemp} °F` : "Not recorded"}
 
-**FOLLOW-UP PLAN & SAFE-RETURN WARNINGS:**
+**FOLLOW-UP PLAN:**
 --------------------------------------------------
-${followUpPlan}
+${followUpPlan || "None recorded"}
+
+**GENERAL INSTRUCTIONS & SAFE-RETURN WARNINGS:**
+--------------------------------------------------
+${patientInstructions || "Emergency warnings: return immediately if you experience breathing difficulty, high fever, chest tightness or severe pain."}
 
 **ATTENDING CLINICIANS:**
 --------------------------------------------------
-**Emergency Medicine Duty Resident:** ${emResidentName}
-**Attending EM Consultant:** ${emConsultantName}
+**Emergency Medicine Duty Resident:** ${emResidentName || "Not Recorded"}
+**Attending EM Consultant:** ${emConsultantName || "Not Recorded"}
 
 🚨 **IN CASE OF EMERGENCY / RE-ACCESS TO TRAUMA SERVICES, CALL ER HOTLINE** 🚨
 `;
   };
 
   const getFormattedDischargeSummaryHtml = () => {
+    const pedHtml = currentCase.isPediatric && currentCase.pediatricDetails ? `
+<strong>PEDIATRIC INITIAL ASSESSMENT & HISTORY:</strong>
+<hr/>
+<ul>
+  <li><strong>Weight:</strong> ${currentCase.pediatricDetails.patientWeight ? `${currentCase.pediatricDetails.patientWeight} kg` : "Not recorded"}</li>
+  <li><strong>PAT Appearance (TICLS):</strong> Tone: ${currentCase.pediatricDetails.patAppearanceTone || "N/A"}, Interactivity: ${currentCase.pediatricDetails.patAppearanceInteractivity || "N/A"}, Consolability: ${currentCase.pediatricDetails.patAppearanceConsolability || "N/A"}, Look/Gaze: ${currentCase.pediatricDetails.patAppearanceLookGaze || "N/A"}, Speech/Cry: ${currentCase.pediatricDetails.patAppearanceSpeechCry || "N/A"}</li>
+  <li><strong>PAT Work of Breathing:</strong> ${currentCase.pediatricDetails.patWorkOfBreathing || "Not recorded"}</li>
+  <li><strong>PAT Circulation:</strong> ${currentCase.pediatricDetails.patCirculation || "Not recorded"}</li>
+  <li><strong>Immunization Status:</strong> ${currentCase.pediatricDetails.immunizationHistory || "Not recorded"}</li>
+  <li><strong>Brought By / Informant:</strong> ${currentCase.pediatricDetails.broughtBy || currentCase.pediatricDetails.informant || "Not recorded"}</li>
+</ul>
+<br/>
+` : "";
+
     return `<h3><strong>CLINICAL DISCHARGE SUMMARY & INSTRUCTIONS CARD</strong></h3>
 <h4><strong>${displayHospitalName}</strong></h4>
 <h5><strong>${displayHospitalAddress}</strong></h5>
@@ -339,7 +415,7 @@ ${followUpPlan}
 <strong>AGE / GENDER:</strong> ${currentCase.patient.age || "N/A"} Years / ${currentCase.patient.gender}<br/>
 <strong>UHID / CR NUMBER:</strong> ${uhid}<br/>
 <strong>MLC RECORD STATUS:</strong> ${isMlc === "Yes" ? `Yes (${mlcNo})` : "No / Non-MedicoLegal"}<br/>
-<strong>ALLERGIES:</strong> ${allergies}<br/>
+<strong>ALLERGIES:</strong> ${allergies || "NKDA"}<br/>
 <br/>
 <strong>DATE OF ARRIVAL:</strong> ${currentCase.patient.dateOpened || "Immediate on-shift"}<br/>
 <strong>DATE OF DISCHARGE:</strong> ${dischargeDateTime}<br/>
@@ -350,14 +426,14 @@ ${followUpPlan}
 <strong>Vitals on Arrival:</strong>
 <hr/>
 <ul>
-  <li><strong>HR / Pulse:</strong> ${arrivalHr} bpm</li>
-  <li><strong>Blood Pres.:</strong> ${arrivalBp} mmHg</li>
-  <li><strong>Resp Rate:</strong> ${arrivalRr} /min</li>
-  <li><strong>SpO2 %:</strong> ${arrivalSpo2}%</li>
-  <li><strong>GCS Score:</strong> ${arrivalGcs}/15</li>
-  <li><strong>Pain Score:</strong> ${arrivalPainScore}/10</li>
-  <li><strong>GRBS Glu.:</strong> ${arrivalGrbs} mg/dL</li>
-  <li><strong>Body Temp:</strong> ${arrivalTemp} °F</li>
+  <li><strong>HR / Pulse:</strong> ${arrivalHr ? `${arrivalHr} bpm` : "Not recorded"}</li>
+  <li><strong>Blood Pres.:</strong> ${arrivalBp || "Not recorded"}</li>
+  <li><strong>Resp Rate:</strong> ${arrivalRr ? `${arrivalRr} /min` : "Not recorded"}</li>
+  <li><strong>SpO2 %:</strong> ${arrivalSpo2 ? `${arrivalSpo2}%` : "Not recorded"}</li>
+  <li><strong>GCS Score:</strong> ${arrivalGcs ? `${arrivalGcs}/15` : "Not recorded"}</li>
+  <li><strong>Pain Score:</strong> ${arrivalPainScore ? `${arrivalPainScore}/10` : "Not recorded"}</li>
+  <li><strong>GRBS Glu.:</strong> ${arrivalGrbs ? `${arrivalGrbs} mg/dL` : "Not recorded"}</li>
+  <li><strong>Body Temp:</strong> ${arrivalTemp ? `${arrivalTemp} °F` : "Not recorded"}</li>
 </ul>
 <br/>
 <strong>PRESENTING COMPLAINTS:</strong><br/>
@@ -367,37 +443,38 @@ ${presentingComplaints || "None recorded"}<br/>
 ${historyOfPresentIllness || "None recorded"}<br/>
 <br/>
 <strong>PAST MEDICAL / SURGICAL HISTORIES:</strong><br/>
-${pastMedicalHistory || "None"}<br/>
+${pastMedicalHistory || "None recorded"}<br/>
 <br/>
 <strong>FAMILY / GYNAE HISTORY:</strong><br/>
-${familyGynaeHistory} (LMP: ${lmp})<br/>
+${familyGynaeHistory || "None recorded"} (LMP: ${lmp})<br/>
 <br/>
+${pedHtml}
 <strong>Primary Survey:</strong>
 <hr/>
 <ul>
-  <li><strong>Airway:</strong> ${primaryAirway} | <strong>Intervention:</strong> ${primaryAirwayIntervention}</li>
-  <li><strong>Breathing:</strong> ${primaryBreathing}
+  <li><strong>Airway:</strong> ${primaryAirway || "Not documented"} | <strong>Intervention:</strong> ${primaryAirwayIntervention || "Not documented"}</li>
+  <li><strong>Breathing:</strong> ${primaryBreathing || "Not documented"}
     <ul>
-      <li><strong>Chest Work:</strong> ${primaryBreathingWork} | <strong>Air Entry:</strong> ${primaryBreathingAirEntry}</li>
-      <li><strong>CCT:</strong> ${primaryBreathingCct} | <strong>Subcut Emphysema:</strong> ${primaryBreathingSubcut} | <strong>EFAST:</strong> ${primaryBreathingEfast}</li>
-      <li><strong>Intervention:</strong> ${primaryBreathingIntervention}</li>
+      <li><strong>Chest Work:</strong> ${primaryBreathingWork || "Not documented"} | <strong>Air Entry:</strong> ${primaryBreathingAirEntry || "Not documented"}</li>
+      <li><strong>CCT:</strong> ${primaryBreathingCct || "Not documented"} | <strong>Subcut Emphysema:</strong> ${primaryBreathingSubcut || "Not documented"} | <strong>EFAST:</strong> ${primaryBreathingEfast || "Not documented"}</li>
+      <li><strong>Intervention:</strong> ${primaryBreathingIntervention || "Not documented"}</li>
     </ul>
   </li>
   <li><strong>Circulation:</strong>
     <ul>
-      <li><strong>CRT:</strong> ${primaryCirculationCrt} | <strong>Dist. Neck Veins:</strong> ${primaryCirculationDnv}</li>
-      <li><strong>PCT:</strong> ${primaryCirculationPct} | <strong>Long Bone Deformity:</strong> ${primaryCirculationDeformity} | <strong>FAST:</strong> ${primaryCirculationFast}</li>
-      <li><strong>Intervention:</strong> ${primaryCirculationInterventions}</li>
+      <li><strong>CRT:</strong> ${primaryCirculationCrt || "Not documented"} | <strong>Dist. Neck Veins:</strong> ${primaryCirculationDnv || "Not documented"}</li>
+      <li><strong>PCT:</strong> ${primaryCirculationPct || "Not documented"} | <strong>Long Bone Deformity:</strong> ${primaryCirculationDeformity || "Not documented"} | <strong>FAST:</strong> ${primaryCirculationFast || "Not documented"}</li>
+      <li><strong>Intervention:</strong> ${primaryCirculationInterventions || "Not documented"}</li>
     </ul>
   </li>
   <li><strong>Disability:</strong>
     <ul>
-      <li><strong>AVPU/GCS:</strong> ${primaryDisabilityAvpuGcs} | <strong>Pupils:</strong> ${primaryDisabilityPupils} | <strong>GRBS:</strong> ${primaryDisabilityGrbs}</li>
+      <li><strong>AVPU/GCS:</strong> ${primaryDisabilityAvpuGcs || "Not documented"} | <strong>Pupils:</strong> ${primaryDisabilityPupils || "Not documented"} | <strong>GRBS:</strong> ${primaryDisabilityGrbs || "Not documented"}</li>
     </ul>
   </li>
   <li><strong>Exposure:</strong>
     <ul>
-      <li><strong>Temp:</strong> ${primaryExposureTemp} °F | <strong>Trauma-Logroll:</strong> ${primaryExposureTrauma}</li>
+      <li><strong>Temp:</strong> ${primaryExposureTemp ? `${primaryExposureTemp} °F` : "Not documented"} | <strong>Trauma-Logroll:</strong> ${primaryExposureTrauma || "Not documented"}</li>
     </ul>
   </li>
 </ul>
@@ -405,56 +482,60 @@ ${familyGynaeHistory} (LMP: ${lmp})<br/>
 <strong>Secondary Physical & Systemic Examinations:</strong>
 <hr/>
 <ul>
-  <li><strong>General Exam (P/I/C/C/L/E):</strong> ${secondaryPicle}</li>
-  <li><strong>Respiratory (CHEST):</strong> ${secondaryChest}</li>
-  <li><strong>Cardiovascular (CVS):</strong> ${secondaryCvs}</li>
-  <li><strong>Abdominal / Gastro (P/A):</strong> ${secondaryPa}</li>
-  <li><strong>Central Nervous System (CNS):</strong> ${secondaryCns}</li>
-  <li><strong>Musculoskeletal / Extremities:</strong> ${secondaryExtremities}</li>
+  <li><strong>General Exam (P/I/C/C/L/E):</strong> ${secondaryPicle || "Not documented"}</li>
+  <li><strong>Respiratory (CHEST):</strong> ${secondaryChest || "Not documented"}</li>
+  <li><strong>Cardiovascular (CVS):</strong> ${secondaryCvs || "Not documented"}</li>
+  <li><strong>Abdominal / Gastro (P/A):</strong> ${secondaryPa || "Not documented"}</li>
+  <li><strong>Central Nervous System (CNS):</strong> ${secondaryCns || "Not documented"}</li>
+  <li><strong>Musculoskeletal / Extremities:</strong> ${secondaryExtremities || "Not documented"}</li>
 </ul>
 <br/>
 <strong>Course in Emergency Ward with Medications & Procedures:</strong>
 <hr/>
-${courseInHospital}<br/>
+${courseInHospital || "Patient evaluated and stabilized in ER."}<br/>
 <br/>
 <strong>Diagnostic Investigations Performed & Results Summary:</strong>
 <hr/>
-${investigationsResults}<br/>
+${investigationsResults || "No investigations ordered."}<br/>
 <br/>
 <strong>Diagnosis at Discharge:</strong>
 <hr/>
 <ul>
-  <li><strong>FINAL DIAGNOSIS:</strong> ${primaryDiagnosis}</li>
-  <li><strong>ASSOCIATED COMORBIDITIES:</strong> ${secondaryDiagnosis || "None"}</li>
+  <li><strong>FINAL DIAGNOSIS:</strong> ${primaryDiagnosis || "Under Evaluation"}</li>
+  <li><strong>ASSOCIATED COMORBIDITIES:</strong> ${secondaryDiagnosis || "None recorded"}</li>
 </ul>
 <br/>
 <strong>Discharge medications:</strong>
 <hr/>
-${dischargeMedications}<br/>
+${dischargeMedications || "No outpatient medications prescribed."}<br/>
 <br/>
 <strong>Disposition Stats & Decision:</strong>
 <hr/>
 <ul>
   <li><strong>DISPOSITION MODE:</strong> ${dispositionStatus}</li>
-  <li><strong>PATIENT CONDITION AT DISCHARGE:</strong> ${dischargeCondition}</li>
+  <li><strong>PATIENT CONDITION AT DISCHARGE:</strong> ${dischargeCondition || "Not Recorded"}</li>
   <li><strong>DISCHARGE VITALS:</strong>
     <ul>
-      <li><strong>HR:</strong> ${dischargeHr} bpm | <strong>BP:</strong> ${dischargeBp} mmHg</li>
-      <li><strong>RR:</strong> ${dischargeRr} /min | <strong>SpO2:</strong> ${dischargeSpo2}%</li>
-      <li><strong>GCS:</strong> ${dischargeGcs}/15 | <strong>Pain:</strong> ${dischargePainScore}/10</li>
-      <li><strong>GRBS:</strong> ${dischargeGrbs} mg/dL | <strong>Temp:</strong> ${dischargeTemp} °F</li>
+      <li><strong>HR:</strong> ${dischargeHr ? `${dischargeHr} bpm` : "Not recorded"} | <strong>BP:</strong> ${dischargeBp || "Not recorded"}</li>
+      <li><strong>RR:</strong> ${dischargeRr ? `${dischargeRr} /min` : "Not recorded"} | <strong>SpO2:</strong> ${dischargeSpo2 ? `${dischargeSpo2}%` : "Not recorded"}</li>
+      <li><strong>GCS:</strong> ${dischargeGcs ? `${dischargeGcs}/15` : "Not recorded"} | <strong>Pain:</strong> ${dischargePainScore ? `${dischargePainScore}/10` : "Not recorded"}</li>
+      <li><strong>GRBS:</strong> ${dischargeGrbs ? `${dischargeGrbs} mg/dL` : "Not recorded"} | <strong>Temp:</strong> ${dischargeTemp ? `${dischargeTemp} °F` : "Not recorded"}</li>
     </ul>
   </li>
 </ul>
 <br/>
-<strong>FOLLOW-UP PLAN & SAFE-RETURN WARNINGS:</strong>
+<strong>FOLLOW-UP PLAN:</strong>
 <hr/>
-${followUpPlan}<br/>
+${followUpPlan || "None recorded"}<br/>
+<br/>
+<strong>GENERAL INSTRUCTIONS & SAFE-RETURN WARNINGS:</strong>
+<hr/>
+${patientInstructions || "Emergency warnings: return immediately if you experience breathing difficulty, high fever, chest tightness or severe pain."}<br/>
 <br/>
 <strong>ATTENDING CLINICIANS:</strong>
 <hr/>
-<strong>Emergency Medicine Duty Resident:</strong> ${emResidentName}<br/>
-<strong>Attending EM Consultant:</strong> ${emConsultantName}<br/>
+<strong>Emergency Medicine Duty Resident:</strong> ${emResidentName || "Not Recorded"}<br/>
+<strong>Attending EM Consultant:</strong> ${emConsultantName || "Not Recorded"}<br/>
 <br/>
 🚨 <strong>IN CASE OF EMERGENCY / RE-ACCESS TO TRAUMA SERVICES, CALL ER HOTLINE</strong> 🚨
 `;
@@ -515,13 +596,18 @@ ${followUpPlan}<br/>
   };
 
   // Auto-Draft API integration
+  
+  
   const handleAiDraft = async () => {
     setAiLoading(true);
+    setAiError(null);
     try {
       const response = await fetch("/api/ai-discharge", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          profileState: profile?.state,
+          hospitalName: profile?.hospital,
           caseData: {
             ...currentCase,
             dispositionDetails: {
@@ -537,18 +623,36 @@ ${followUpPlan}<br/>
       if (resData.success && resData.data) {
         if (resData.data.primaryDiagnosis) setPrimaryDiagnosis(resData.data.primaryDiagnosis);
         if (resData.data.secondaryDiagnosis) setSecondaryDiagnosis(resData.data.secondaryDiagnosis);
-        if (resData.data.conditionAtDischarge) setGeneralExamination(resData.data.conditionAtDischarge);
-        if (resData.data.dischargeMedications) setDischargeMedications(resData.data.dischargeMedications);
+        if (resData.data.conditionAtDischarge) setDischargeCondition(resData.data.conditionAtDischarge);
+        if (resData.data.dischargeMedications) setDischargeMedications(_safeStringFromMixed(resData.data.dischargeMedications));
         if (resData.data.followUpPlan) setFollowUpPlan(resData.data.followUpPlan);
-        if (resData.data.courseInHospital) setCourseInHospital(resData.data.courseInHospital);
+        if (resData.data.patientInstructions) setPatientInstructions(resData.data.patientInstructions);
+        if (resData.data.courseInHospital) {
+          setCourseInHospital(_safeCourseInHospital(resData.data.courseInHospital));
+        }
         setAiDrafted(true);
+
+        if (resData.simulated) {
+          setAiError("⚠️ AI models were unavailable — this draft was generated from case data using a deterministic template, not AI reasoning. Please review carefully before finalizing.");
+        }
+      } else {
+        setAiError("Failed to generate AI draft. Please try again.");
       }
     } catch (err) {
-      console.error(err);
+      console.error("AI Discharge Draft error:", err);
+      setAiError("Network error generating AI draft.");
     } finally {
       setAiLoading(false);
     }
   };
+
+  
+  // Automatically trigger AI Draft / Course Generation on mount if not already done
+  useEffect(() => {
+    if (!currentCase.dischargeInfo?.courseInHospital && !aiDrafted && !aiLoading) {
+      handleAiDraft();
+    }
+  }, []);
 
   const handleSave = () => {
     if (aiDrafted && currentCase?.dischargeInfo) {
@@ -567,7 +671,7 @@ ${followUpPlan}<br/>
       conditionAtDischarge: generalExamination,
       dischargeMedications,
       followUpPlan,
-      patientInstructions: "Emergency warnings: return immediately if you experience breathing difficulty, high fever, chest tightness or severe pain.",
+      patientInstructions,
       aiDrafted,
       dischargeDateTime,
       dispositionType: dispositionStatus,
@@ -779,6 +883,23 @@ ${followUpPlan}<br/>
         </div>
       )}
 
+      {/* AI Error / Simulated Warning Banner */}
+      {aiError && (
+        <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 text-amber-800 dark:text-amber-200 p-4 rounded-xl flex items-center justify-between gap-2 text-xs font-semibold no-print">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0" />
+            <span>{aiError}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setAiError(null)}
+            className="text-amber-600 hover:text-amber-800 dark:text-amber-400 font-bold px-2 py-0.5 rounded cursor-pointer"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
       {/* Main Grid Layout: left inputs, right print sheet */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         
@@ -905,7 +1026,7 @@ ${followUpPlan}<br/>
               <div className="space-y-3 text-xs">
                 <h4 className="font-bold text-indigo-600 dark:text-indigo-400 border-b pb-1">Administrative & Demographics</h4>
                 
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <div className="space-y-1">
                     <label className="font-bold text-slate-500 uppercase text-[9px]">UHID / CR Number</label>
                     <input
@@ -926,7 +1047,7 @@ ${followUpPlan}<br/>
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <div className="space-y-1">
                     <label className="font-bold text-slate-500 uppercase text-[9px]">Is MLC Case?</label>
                     <select
@@ -962,7 +1083,7 @@ ${followUpPlan}<br/>
                 </div>
 
                 <h4 className="font-bold text-indigo-600 dark:text-indigo-400 border-b pb-1 pt-2">Admission Arrival Vitals</h4>
-                <div className="grid grid-cols-4 gap-2">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
                   <div className="space-y-1">
                     <label className="text-[9px] text-slate-400 font-bold uppercase">HR</label>
                     <input type="text" value={arrivalHr} onChange={(e) => setArrivalHr(e.target.value)} className="w-full p-1 bg-slate-50 border rounded font-mono" />
@@ -980,7 +1101,7 @@ ${followUpPlan}<br/>
                     <input type="text" value={arrivalSpo2} onChange={(e) => setArrivalSpo2(e.target.value)} className="w-full p-1 bg-slate-50 border rounded font-mono" />
                   </div>
                 </div>
-                <div className="grid grid-cols-4 gap-2">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
                   <div className="space-y-1">
                     <label className="text-[9px] text-slate-400 font-bold uppercase">GCS</label>
                     <input type="text" value={arrivalGcs} onChange={(e) => setArrivalGcs(e.target.value)} className="w-full p-1 bg-slate-50 border rounded font-mono" />
@@ -1000,7 +1121,7 @@ ${followUpPlan}<br/>
                 </div>
 
                 <h4 className="font-bold text-indigo-600 dark:text-indigo-400 border-b pb-1 pt-2">Discharge Vitals & Status</h4>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <div className="space-y-1">
                     <label className="font-bold text-slate-500 uppercase text-[9px]">Discharge Condition</label>
                     <select
@@ -1027,7 +1148,7 @@ ${followUpPlan}<br/>
                   </div>
                 </div>
 
-                <div className="grid grid-cols-4 gap-2">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
                   <div className="space-y-1">
                     <label className="text-[9px] text-slate-400 font-bold uppercase">HR</label>
                     <input type="text" value={dischargeHr} onChange={(e) => setDischargeHr(e.target.value)} className="w-full p-1 bg-slate-50 border rounded font-mono" />
@@ -1045,7 +1166,7 @@ ${followUpPlan}<br/>
                     <input type="text" value={dischargeSpo2} onChange={(e) => setDischargeSpo2(e.target.value)} className="w-full p-1 bg-slate-50 border rounded font-mono" />
                   </div>
                 </div>
-                <div className="grid grid-cols-4 gap-2">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
                   <div className="space-y-1">
                     <label className="text-[9px] text-slate-400 font-bold uppercase">GCS</label>
                     <input type="text" value={dischargeGcs} onChange={(e) => setDischargeGcs(e.target.value)} className="w-full p-1 bg-slate-50 border rounded font-mono" />
@@ -1073,7 +1194,7 @@ ${followUpPlan}<br/>
                 <div className="space-y-1">
                   <div className="flex justify-between items-center">
                     <label className="font-bold text-slate-500 uppercase text-[9px]">Presenting Complaints</label>
-                    <SpeechMicButton onTranscript={(txt) => setPresentingComplaints(prev => prev ? `${prev} ${txt}` : txt)} />
+                    <VoiceRecorder renderMode="compact-button" onTranscript={(txt) => setPresentingComplaints(prev => prev ? `${prev} ${txt}` : txt)} />
                   </div>
                   <textarea
                     rows={2}
@@ -1086,7 +1207,7 @@ ${followUpPlan}<br/>
                 <div className="space-y-1">
                   <div className="flex justify-between items-center">
                     <label className="font-bold text-slate-500 uppercase text-[9px]">History of Present Illness (HPI)</label>
-                    <SpeechMicButton onTranscript={(txt) => setHistoryOfPresentIllness(prev => prev ? `${prev} ${txt}` : txt)} />
+                    <VoiceRecorder renderMode="compact-button" onTranscript={(txt) => setHistoryOfPresentIllness(prev => prev ? `${prev} ${txt}` : txt)} />
                   </div>
                   <textarea
                     rows={3}
@@ -1099,7 +1220,7 @@ ${followUpPlan}<br/>
                 <div className="space-y-1">
                   <div className="flex justify-between items-center">
                     <label className="font-bold text-slate-500 uppercase text-[9px]">Past Medical / Surgical History</label>
-                    <SpeechMicButton onTranscript={(txt) => setPastMedicalHistory(prev => prev ? `${prev} ${txt}` : txt)} />
+                    <VoiceRecorder renderMode="compact-button" onTranscript={(txt) => setPastMedicalHistory(prev => prev ? `${prev} ${txt}` : txt)} />
                   </div>
                   <textarea
                     rows={2}
@@ -1109,7 +1230,7 @@ ${followUpPlan}<br/>
                   />
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <div className="space-y-1">
                     <label className="font-bold text-slate-500 uppercase text-[9px]">Family / Gynae History</label>
                     <input
@@ -1133,7 +1254,7 @@ ${followUpPlan}<br/>
                 <div className="space-y-1">
                   <div className="flex justify-between items-center">
                     <label className="font-bold text-slate-500 uppercase text-[9px]">General / Systemic Examination Narrative</label>
-                    <SpeechMicButton onTranscript={(txt) => setGeneralExamination(prev => prev ? `${prev} ${txt}` : txt)} />
+                    <VoiceRecorder renderMode="compact-button" onTranscript={(txt) => setGeneralExamination(prev => prev ? `${prev} ${txt}` : txt)} />
                   </div>
                   <textarea
                     rows={3}
@@ -1149,7 +1270,7 @@ ${followUpPlan}<br/>
               <div className="space-y-3 text-xs">
                 <h4 className="font-bold text-indigo-600 dark:text-indigo-400 border-b pb-1">Primary Assessment (Arrival Stabilization)</h4>
                 
-                <div className="grid grid-cols-2 gap-3 bg-slate-50 dark:bg-slate-900 p-2.5 rounded-lg border">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 bg-slate-50 dark:bg-slate-900 p-2.5 rounded-lg border">
                   <div className="space-y-1">
                     <label className="font-bold text-slate-500 uppercase text-[9px]">Airway Status</label>
                     <input
@@ -1172,7 +1293,7 @@ ${followUpPlan}<br/>
 
                 <div className="bg-slate-50 dark:bg-slate-900 p-2.5 rounded-lg border space-y-2">
                   <span className="font-extrabold text-[9px] text-slate-500 uppercase block">Breathing Assessment</span>
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                     <div className="space-y-1">
                       <label className="text-[8px] font-bold text-slate-400 uppercase">Rate/Pattern</label>
                       <input type="text" value={primaryBreathing} onChange={(e) => setPrimaryBreathing(e.target.value)} className="w-full p-1 bg-white border rounded" />
@@ -1206,7 +1327,7 @@ ${followUpPlan}<br/>
 
                 <div className="bg-slate-50 dark:bg-slate-900 p-2.5 rounded-lg border space-y-2">
                   <span className="font-extrabold text-[9px] text-slate-500 uppercase block">Circulation Assessment</span>
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                     <div className="space-y-1">
                       <label className="text-[8px] font-bold text-slate-400 uppercase">Capillary Refill (CRT)</label>
                       <input type="text" value={primaryCirculationCrt} onChange={(e) => setPrimaryCirculationCrt(e.target.value)} className="w-full p-1 bg-white border rounded" />
@@ -1234,7 +1355,7 @@ ${followUpPlan}<br/>
                   </div>
                 </div>
 
-                <div className="bg-slate-50 dark:bg-slate-900 p-2.5 rounded-lg border grid grid-cols-3 gap-2">
+                <div className="bg-slate-50 dark:bg-slate-900 p-2.5 rounded-lg border grid grid-cols-1 md:grid-cols-3 gap-2">
                   <div className="space-y-1">
                     <label className="text-[8px] font-bold text-slate-400 uppercase">Disability GCS</label>
                     <input type="text" value={primaryDisabilityAvpuGcs} onChange={(e) => setPrimaryDisabilityAvpuGcs(e.target.value)} className="w-full p-1 bg-white border rounded" />
@@ -1249,7 +1370,7 @@ ${followUpPlan}<br/>
                   </div>
                 </div>
 
-                <div className="bg-slate-50 dark:bg-slate-900 p-2.5 rounded-lg border grid grid-cols-2 gap-2">
+                <div className="bg-slate-50 dark:bg-slate-900 p-2.5 rounded-lg border grid grid-cols-1 md:grid-cols-2 gap-2">
                   <div className="space-y-1">
                     <label className="text-[8px] font-bold text-slate-400 uppercase">Exposure Temp (°F)</label>
                     <input type="text" value={primaryExposureTemp} onChange={(e) => setPrimaryExposureTemp(e.target.value)} className="w-full p-1 bg-white border rounded" />
@@ -1276,7 +1397,7 @@ ${followUpPlan}<br/>
                   />
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <div className="space-y-1">
                     <label className="font-bold text-slate-500 uppercase text-[9px]">Respiratory (CHEST)</label>
                     <input
@@ -1297,7 +1418,7 @@ ${followUpPlan}<br/>
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <div className="space-y-1">
                     <label className="font-bold text-slate-500 uppercase text-[9px]">Gastrointestinal (P/A)</label>
                     <input
@@ -1369,7 +1490,7 @@ ${followUpPlan}<br/>
                   />
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <div className="space-y-1">
                     <label className="font-bold text-slate-500 uppercase text-[9px]">Discharge Diagnosis</label>
                     <input
@@ -1405,14 +1526,24 @@ ${followUpPlan}<br/>
                 <div className="space-y-1">
                   <label className="font-bold text-slate-500 uppercase text-[9px]">Follow-Up advice & emergency criteria</label>
                   <textarea
-                    rows={3}
+                    rows={2}
                     value={followUpPlan}
                     onChange={(e) => setFollowUpPlan(e.target.value)}
                     className="w-full px-2.5 py-1.5 bg-slate-50 dark:bg-slate-900 border rounded-lg leading-relaxed text-slate-800 dark:text-slate-200"
                   />
                 </div>
+                
+                <div className="space-y-1">
+                  <label className="font-bold text-slate-500 uppercase text-[9px]">General Instructions / Safe-Return Warnings</label>
+                  <textarea
+                    rows={2}
+                    value={patientInstructions}
+                    onChange={(e) => setPatientInstructions(e.target.value)}
+                    className="w-full px-2.5 py-1.5 bg-slate-50 dark:bg-slate-900 border rounded-lg leading-relaxed text-slate-800 dark:text-slate-200"
+                  />
+                </div>
 
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <div className="space-y-1">
                     <label className="font-bold text-slate-500 uppercase text-[9px]">Duty ER Resident</label>
                     <input
@@ -1451,328 +1582,86 @@ ${followUpPlan}<br/>
           </div>
 
           {/* Actual Printable Page Wrapper */}
-          <div className="p-8 md:p-10 font-sans leading-relaxed text-[11px] text-slate-900 bg-white space-y-5 select-text max-w-full print:p-0 print:m-0 print:w-full print:max-w-full" id="print-sheet-content">
-            
-            {/* Header section matching clinical template layout */}
-            <div className="border-b-4 border-double border-slate-800 pb-3 text-center space-y-1">
-              <h2 className="text-sm md:text-base font-extrabold tracking-wide uppercase font-serif text-slate-950">
-                <strong>{displayHospitalName}</strong>
-              </h2>
-              <p className="text-[10px] text-slate-600 tracking-wide uppercase font-semibold">
-                <strong>Department of Emergency Medicine & Trauma Services</strong>
-              </p>
-              <div className="text-[9px] text-slate-500 font-mono flex flex-wrap justify-center gap-x-4 gap-y-1">
-                <span><strong>{displayHospitalAddress}</strong></span>
-                <span>•</span>
-                <span><strong>24x7 ER Hotline Available</strong></span>
-              </div>
-              <h1 className="text-xs font-black uppercase tracking-widest bg-slate-950 text-white py-1 px-4 rounded-md inline-block mt-2">
-                <strong>CLINICAL DISCHARGE SUMMARY & INSTRUCTIONS CARD</strong>
-              </h1>
-            </div>
+          <div className="p-8 md:p-10 font-sans leading-relaxed text-[12px] text-slate-900 bg-white space-y-4 select-text max-w-full print:p-0 print:m-0 print:w-full print:max-w-full print:text-[12px] whitespace-pre-wrap" id="print-sheet-content">
+  <div className="font-bold mb-4 text-[14px]">Discharge Summary</div>
 
-            {/* Patient Demographics & Arrivals block */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-y-2 gap-x-4 border border-slate-300 p-3.5 rounded-xl bg-slate-50/40">
-              <div className="space-y-1">
-                <p className="flex justify-between border-b border-slate-100 pb-0.5"><span className="font-extrabold text-slate-500 uppercase"><strong>PATIENT NAME:</strong></span> <span className="font-bold text-[12px] text-slate-950 uppercase"><strong>{currentCase.patient.name}</strong></span></p>
-                <p className="flex justify-between border-b border-slate-100 pb-0.5"><span className="font-extrabold text-slate-500 uppercase"><strong>AGE / GENDER:</strong></span> <span className="font-bold text-slate-850"><strong>{currentCase.patient.age || "N/A"} Years / {currentCase.patient.gender}</strong></span></p>
-                <p className="flex justify-between border-b border-slate-100 pb-0.5"><span className="font-extrabold text-slate-500 uppercase"><strong>UHID / CR NUMBER:</strong></span> <span className="font-bold font-mono text-slate-950"><strong>{uhid}</strong></span></p>
-                <p className="flex justify-between border-b border-slate-100 pb-0.5"><span className="font-extrabold text-slate-500 uppercase"><strong>MLC RECORD STATUS:</strong></span> <span className="font-bold text-rose-700"><strong>{isMlc === "Yes" ? `Yes (${mlcNo})` : "No / Non-MedicoLegal"}</strong></span></p>
-                <p className="flex justify-between"><span className="font-extrabold text-slate-500 uppercase"><strong>ALLERGIES:</strong></span> <span className="font-black text-rose-600 bg-rose-50 px-1.5 rounded"><strong>{allergies}</strong></span></p>
-              </div>
-              <div className="space-y-1 md:border-l md:pl-4">
-                <p className="flex justify-between border-b border-slate-100 pb-0.5"><span className="font-extrabold text-slate-500 uppercase"><strong>DATE OF ARRIVAL:</strong></span> <span className="font-semibold text-slate-850"><strong>{currentCase.patient.dateOpened || "Immediate on-shift"}</strong></span></p>
-                <p className="flex justify-between border-b border-slate-100 pb-0.5"><span className="font-extrabold text-slate-500 uppercase"><strong>DATE OF DISCHARGE:</strong></span> <span className="font-bold text-slate-950"><strong>{dischargeDateTime}</strong></span></p>
-                <p className="flex justify-between border-b border-slate-100 pb-0.5"><span className="font-extrabold text-slate-500 uppercase"><strong>BROUGHT BY / INFORMANT:</strong></span> <span className="font-semibold text-slate-850"><strong>{broughtBy}</strong></span></p>
-                <p className="flex justify-between border-b border-slate-100 pb-0.5"><span className="font-extrabold text-slate-500 uppercase"><strong>CASE CATEGORY:</strong></span> <span className="font-semibold text-slate-800"><strong>{currentCase.patient.caseType || "Medical"}</strong></span></p>
-                <p className="flex justify-between"><span className="font-extrabold text-slate-500 uppercase"><strong>LAST MENSTRUAL PERIOD:</strong></span> <span className="font-bold text-slate-800"><strong>{lmp}</strong></span></p>
-              </div>
-            </div>
+  <div><span className="font-bold">MLC:</span> {isMlc === "Yes" ? `Yes (${mlcNo})` : "No"}</div>
 
-            {/* Arrival Vitals Table */}
-            <div className="space-y-1.5">
-              <span className="font-black text-slate-950 block uppercase text-[10px] tracking-wide border-b pb-0.5 border-slate-400">
-                <strong>Vitals on Arrival</strong>
-              </span>
-              <div className="grid grid-cols-4 md:grid-cols-8 gap-1.5 text-center font-mono">
-                <div className="border border-slate-200 p-1.5 rounded bg-slate-50/50">
-                  <span className="block text-[7px] font-bold text-slate-500 uppercase"><strong>HR / Pulse</strong></span>
-                  <span className="font-bold text-[10px] text-slate-950"><strong>{arrivalHr} bpm</strong></span>
-                </div>
-                <div className="border border-slate-200 p-1.5 rounded bg-slate-50/50">
-                  <span className="block text-[7px] font-bold text-slate-500 uppercase"><strong>Blood Pres.</strong></span>
-                  <span className="font-bold text-[10px] text-slate-950"><strong>{arrivalBp}</strong></span>
-                </div>
-                <div className="border border-slate-200 p-1.5 rounded bg-slate-50/50">
-                  <span className="block text-[7px] font-bold text-slate-500 uppercase"><strong>Resp Rate</strong></span>
-                  <span className="font-bold text-[10px] text-slate-950"><strong>{arrivalRr} /min</strong></span>
-                </div>
-                <div className="border border-slate-200 p-1.5 rounded bg-slate-50/50">
-                  <span className="block text-[7px] font-bold text-slate-500 uppercase"><strong>SpO2 %</strong></span>
-                  <span className="font-bold text-[10px] text-slate-950"><strong>{arrivalSpo2}%</strong></span>
-                </div>
-                <div className="border border-slate-200 p-1.5 rounded bg-slate-50/50">
-                  <span className="block text-[7px] font-bold text-slate-500 uppercase"><strong>GCS Score</strong></span>
-                  <span className="font-bold text-[10px] text-slate-950"><strong>{arrivalGcs}/15</strong></span>
-                </div>
-                <div className="border border-slate-200 p-1.5 rounded bg-slate-50/50">
-                  <span className="block text-[7px] font-bold text-slate-500 uppercase"><strong>Pain Score</strong></span>
-                  <span className="font-bold text-[10px] text-slate-950"><strong>{arrivalPainScore}/10</strong></span>
-                </div>
-                <div className="border border-slate-200 p-1.5 rounded bg-slate-50/50">
-                  <span className="block text-[7px] font-bold text-slate-500 uppercase"><strong>GRBS Glu.</strong></span>
-                  <span className="font-bold text-[10px] text-slate-950"><strong>{arrivalGrbs} mg/dl</strong></span>
-                </div>
-                <div className="border border-slate-200 p-1.5 rounded bg-slate-50/50">
-                  <span className="block text-[7px] font-bold text-slate-500 uppercase"><strong>Body Temp</strong></span>
-                  <span className="font-bold text-[10px] text-slate-950"><strong>{arrivalTemp} °F</strong></span>
-                </div>
-              </div>
-            </div>
+  <div><span className="font-bold">Allergy :</span> {allergies}</div>
 
-            {/* Complaints and History Section */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-1">
-                <span className="font-black text-[9px] text-slate-500 block uppercase"><strong>PRESENTING COMPLAINTS</strong></span>
-                <p className="bg-slate-50/40 p-2 border border-slate-200 rounded text-slate-850 whitespace-pre-wrap">
-                  {presentingComplaints || "None recorded"}
-                </p>
-              </div>
-              <div className="space-y-1">
-                <span className="font-black text-[9px] text-slate-500 block uppercase"><strong>HISTORY OF PRESENT ILLNESS</strong></span>
-                <p className="bg-slate-50/40 p-2 border border-slate-200 rounded text-slate-850 whitespace-pre-wrap">
-                  {historyOfPresentIllness || "None recorded"}
-                </p>
-              </div>
-            </div>
+  <div className="font-bold mt-4">Vitals at the time of arrival:</div>
+  <div>HR-{arrivalHr} ,BP-{arrivalBp} ,RR-{arrivalRr} ,SpO2-{arrivalSpo2} ,GCS-{arrivalGcs} ,Pain Score-{arrivalPainScore} ,GRBS-{arrivalGrbs} ,Temp-{arrivalTemp}</div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-1">
-                <span className="font-black text-[9px] text-slate-500 block uppercase"><strong>PAST MEDICAL / SURGICAL HISTORIES</strong></span>
-                <p className="bg-slate-50/40 p-2 border border-slate-200 rounded text-slate-850 whitespace-pre-wrap">
-                  {pastMedicalHistory}
-                </p>
-              </div>
-              <div className="space-y-1">
-                <span className="font-black text-[9px] text-slate-500 block uppercase"><strong>FAMILY / GYNAE HISTORY</strong></span>
-                <p className="bg-slate-50/40 p-2 border border-slate-200 rounded text-slate-850 whitespace-pre-wrap">
-                  {familyGynaeHistory} (LMP: {lmp})
-                </p>
-              </div>
-            </div>
+  <div className="font-bold mt-4">Presenting Complaints:</div>
+  <div>{presentingComplaints}</div>
 
-            {/* Primary Assessment Section */}
-            <div className="space-y-1.5">
-              <span className="font-black text-slate-950 block uppercase text-[10px] tracking-wide border-b pb-0.5 border-slate-400">
-                <strong>Primary Survey</strong>
-              </span>
-              <div className="border border-slate-300 rounded-xl overflow-hidden text-[9.5px]">
-                <table className="w-full border-collapse text-left">
-                  <thead>
-                    <tr className="bg-slate-100 border-b border-slate-300 font-bold text-slate-800">
-                      <th className="p-1.5 border-r border-slate-200 w-1/4"><strong>Assessment System</strong></th>
-                      <th className="p-1.5 border-r border-slate-200"><strong>Clinical Findings & Status</strong></th>
-                      <th className="p-1.5 w-1/3"><strong>Interventions Applied</strong></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr className="border-b border-slate-200">
-                      <td className="p-1.5 border-r border-slate-200 font-extrabold text-slate-700"><strong>Airway</strong></td>
-                      <td className="p-1.5 border-r border-slate-200"><strong>{primaryAirway}</strong></td>
-                      <td className="p-1.5 text-slate-800 font-mono"><strong>{primaryAirwayIntervention}</strong></td>
-                    </tr>
-                    <tr className="border-b border-slate-200">
-                      <td className="p-1.5 border-r border-slate-200 font-extrabold text-slate-700"><strong>Breathing</strong></td>
-                      <td className="p-1.5 border-r border-slate-200 space-y-0.5">
-                        <p><strong><span className="font-bold text-slate-500">Chest:</span> {primaryBreathing}</strong></p>
-                        <p><strong><span className="font-bold text-slate-500">Work:</span> {primaryBreathingWork} | <span className="font-bold text-slate-500">Air Entry:</span> {primaryBreathingAirEntry}</strong></p>
-                        <p><strong><span className="font-bold text-slate-500">CCT:</span> {primaryBreathingCct} | <span className="font-bold text-slate-500">Subcut Emphysema:</span> {primaryBreathingSubcut} | <span className="font-bold text-slate-500">EFAST:</span> {primaryBreathingEfast}</strong></p>
-                      </td>
-                      <td className="p-1.5 text-slate-800 font-mono"><strong>{primaryBreathingIntervention}</strong></td>
-                    </tr>
-                    <tr className="border-b border-slate-200">
-                      <td className="p-1.5 border-r border-slate-200 font-extrabold text-slate-700"><strong>Circulation</strong></td>
-                      <td className="p-1.5 border-r border-slate-200 space-y-0.5">
-                        <p><strong><span className="font-bold text-slate-500">CRT:</span> {primaryCirculationCrt} | <span className="font-bold text-slate-500">Dist. Neck Veins:</span> {primaryCirculationDnv}</strong></p>
-                        <p><strong><span className="font-bold text-slate-500">PCT:</span> {primaryCirculationPct} | <span className="font-bold text-slate-500">Long Bone Deformity:</span> {primaryCirculationDeformity} | <span className="font-bold text-slate-500">FAST:</span> {primaryCirculationFast}</strong></p>
-                      </td>
-                      <td className="p-1.5 text-slate-800 font-mono"><strong>{primaryCirculationInterventions}</strong></td>
-                    </tr>
-                    <tr className="border-b border-slate-200">
-                      <td className="p-1.5 border-r border-slate-200 font-extrabold text-slate-700"><strong>Disability</strong></td>
-                      <td className="p-1.5 border-r border-slate-200 space-y-0.5">
-                        <p><strong><span className="font-bold text-slate-500">AVPU/GCS:</span> {primaryDisabilityAvpuGcs}</strong></p>
-                        <p><strong><span className="font-bold text-slate-500">Pupils:</span> {primaryDisabilityPupils} | <span className="font-bold text-slate-500">GRBS:</span> {primaryDisabilityGrbs}</strong></p>
-                      </td>
-                      <td className="p-1.5 text-slate-400 italic font-mono"><strong>Continuous Monitor</strong></td>
-                    </tr>
-                    <tr>
-                      <td className="p-1.5 border-r border-slate-200 font-extrabold text-slate-700"><strong>Exposure</strong></td>
-                      <td className="p-1.5 border-r border-slate-200">
-                        <p><strong><span className="font-bold text-slate-500">Temp:</span> {primaryExposureTemp} °F | <span className="font-bold text-slate-500">Trauma-Logroll:</span> {primaryExposureTrauma}</strong></p>
-                      </td>
-                      <td className="p-1.5 text-slate-400 italic font-mono"><strong>Environment safe</strong></td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            </div>
+  <div className="font-bold mt-4">History of Present Illness:</div>
+  <div>{historyOfPresentIllness}</div>
 
-            {/* Secondary Systemic Assessment */}
-            <div className="space-y-1.5">
-              <span className="font-black text-slate-950 block uppercase text-[10px] tracking-wide border-b pb-0.5 border-slate-400">
-                <strong>Secondary Physical & Systemic Examinations</strong>
-              </span>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-2.5 p-3 border border-slate-200 rounded-xl bg-slate-50/30">
-                <p><strong><span className="font-bold text-slate-500 uppercase tracking-wide text-[9px] block">General Exam (P/I/C/C/L/E)</span></strong> <span className="text-slate-950 font-medium"><strong>{secondaryPicle}</strong></span></p>
-                <p><strong><span className="font-bold text-slate-500 uppercase tracking-wide text-[9px] block">Respiratory (CHEST)</span></strong> <span className="text-slate-950 font-medium"><strong>{secondaryChest}</strong></span></p>
-                <p><strong><span className="font-bold text-slate-500 uppercase tracking-wide text-[9px] block">Cardiovascular (CVS)</span></strong> <span className="text-slate-950 font-medium"><strong>{secondaryCvs}</strong></span></p>
-                <p><strong><span className="font-bold text-slate-500 uppercase tracking-wide text-[9px] block">Abdominal / Gastro (P/A)</span></strong> <span className="text-slate-950 font-medium"><strong>{secondaryPa}</strong></span></p>
-                <p><strong><span className="font-bold text-slate-500 uppercase tracking-wide text-[9px] block">Central Nervous System (CNS)</span></strong> <span className="text-slate-950 font-medium"><strong>{secondaryCns}</strong></span></p>
-                <p><strong><span className="font-bold text-slate-500 uppercase tracking-wide text-[9px] block">Musculoskeletal / Extremities</span></strong> <span className="text-slate-950 font-medium"><strong>{secondaryExtremities}</strong></span></p>
-              </div>
-            </div>
+  <div className="font-bold mt-4">Past Medical/Surgical Histories:</div>
+  <div>{pastMedicalHistory}</div>
 
-            {/* Hospital Course and Labs */}
-            <div className="space-y-1.5">
-              <span className="font-black text-slate-950 block uppercase text-[10px] tracking-wide border-b pb-0.5 border-slate-400">
-                <strong>Course in Emergency Ward with Medications & Procedures</strong>
-              </span>
-              <p className="bg-slate-50 border p-2.5 rounded-lg leading-relaxed text-slate-950 font-mono text-[9.5px] whitespace-pre-wrap">
-                {courseInHospital}
-              </p>
-            </div>
+  <div><span className="font-bold">Family / Gynae History :</span> {familyGynaeHistory}</div>
+  <div><span className="font-bold">LMP :</span> {lmp}</div>
 
-            <div className="space-y-1.5">
-              <span className="font-black text-slate-950 block uppercase text-[10px] tracking-wide border-b pb-0.5 border-slate-400">
-                <strong>Diagnostic Investigations Performed & Results Summary</strong>
-              </span>
-              <p className="bg-slate-50 border p-2.5 rounded-lg leading-relaxed text-slate-950 font-mono text-[9.5px] whitespace-pre-wrap">
-                {investigationsResults}
-              </p>
-            </div>
+  <div className="font-bold mt-4">General Examination / Systemic examination:</div>
+  <div>{generalExamination}</div>
+  
+  <div className="font-bold mt-4">Primary Assessment:</div>
+  <div><span className="font-bold">Airway &rarr;</span> {primaryAirway} ,Intervention- {primaryAirwayIntervention}</div>
+  <div><span className="font-bold">Breathing &rarr;</span> Work of breathing- {primaryBreathingWork} ,Air entry- {primaryBreathingAirEntry}</div>
+  <div><span className="font-bold">Circulation &rarr;</span> CRT- {primaryCirculationCrt} , Distended Neck Veins- {primaryCirculationDnv} , PCT- {primaryCirculationPct}</div>
+  <div>Long bone deformity- {primaryCirculationDeformity} ,FAST- {primaryCirculationFast} ,Interventions- {primaryCirculationInterventions}</div>
+  <div><span className="font-bold">Disability &rarr;</span> AVPU/GCS- {primaryDisabilityAvpuGcs} ,Pupils- {primaryDisabilityPupils} ,GRBS- {primaryDisabilityGrbs}</div>
+  <div><span className="font-bold">Exposure &rarr;</span> Temp- {primaryExposureTemp} | Trauma- {primaryExposureTrauma}</div>
 
-            {/* Diagnoses block */}
-            <div className="border-2 border-slate-800 rounded-xl p-3.5 space-y-2 bg-white">
-              <div>
-                <span className="font-extrabold text-[9px] text-blue-700 uppercase tracking-wider block"><strong>FINAL DIAGNOSIS AT DISCHARGE</strong></span>
-                <p className="text-[13px] font-black text-slate-950 border-l-4 border-blue-600 pl-3 uppercase">
-                  <strong>{primaryDiagnosis}</strong>
-                </p>
-              </div>
+  <div className="font-bold mt-4">Secondary Assesment:</div>
+  <div>Pallor Icterus Cyanosis Clubbing Lymphadenopathy Edema : {secondaryPicle}</div>
+  <div><span className="font-bold">CHEST-</span> {secondaryChest}</div>
+  <div><span className="font-bold">CVS-</span> {secondaryCvs}</div>
+  <div><span className="font-bold">P/A-</span> {secondaryPa}</div>
+  <div><span className="font-bold">CNS-</span> {secondaryCns}</div>
+  <div><span className="font-bold">EXTREMITIES-</span> {secondaryExtremities}</div>
 
-              {secondaryDiagnosis && (
-                <div className="border-t pt-2 mt-2">
-                  <span className="font-bold text-[9px] text-slate-500 uppercase tracking-wider block"><strong>ASSOCIATED COMORBIDITIES</strong></span>
-                  <p className="font-bold text-slate-900 pl-3 text-[10.5px]">
-                    <strong>{secondaryDiagnosis}</strong>
-                  </p>
-                </div>
-              )}
-            </div>
+  <div className="font-bold mt-4">Course in Hospital with Medications and Procedure:</div>
+  <div>{courseInHospital}</div>
+  <div>{dischargeMedications}</div>
 
-            {/* Outpatient Prescriptions */}
-            <div className="border border-emerald-300 bg-emerald-50/10 rounded-xl p-3.5 space-y-1.5">
-              <span className="font-extrabold text-[10px] text-emerald-850 uppercase tracking-wide block border-b border-emerald-200 pb-0.5 flex items-center gap-1">
-                <strong>💊 Discharge medications</strong>
-              </span>
-              <p className="font-mono text-[11px] text-emerald-950 font-bold whitespace-pre-wrap leading-relaxed pl-2 border-l-2 border-emerald-500">
-                <strong>{dischargeMedications}</strong>
-              </p>
-              <p className="text-[8px] text-slate-500 italic mt-1 leading-normal">
-                <strong>* Please consult your pharmacist or general practitioner for proper demonstration, correct drug scheduling, and safety directions.</strong>
-              </p>
-            </div>
+  <div className="font-bold mt-4">Investigations:</div>
+  <div>{investigationsResults}</div>
 
-            {/* Disposition Status, Condition, Vitals at Discharge */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 border border-slate-300 p-3.5 rounded-xl bg-slate-50/20">
-              <div className="space-y-1.5">
-                <span className="font-black text-slate-500 text-[9px] uppercase tracking-wide block"><strong>DISPOSITION STATS & DECISION</strong></span>
-                <div className="space-y-1 text-[9.5px] font-bold text-slate-900">
-                  <div className="flex items-center gap-2">
-                    <span className={`w-3.5 h-3.5 border border-slate-400 rounded flex items-center justify-center text-[10px] ${dispositionStatus === "Normal Discharge" ? "bg-slate-900 text-white border-slate-900" : ""}`}>
-                      {dispositionStatus === "Normal Discharge" ? "✓" : ""}
-                    </span>
-                    <span><strong>Normal Discharge</strong></span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className={`w-3.5 h-3.5 border border-slate-400 rounded flex items-center justify-center text-[10px] ${dispositionStatus === "Discharge at Request" ? "bg-slate-900 text-white border-slate-900" : ""}`}>
-                      {dispositionStatus === "Discharge at Request" ? "✓" : ""}
-                    </span>
-                    <span><strong>Discharge at Request</strong></span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className={`w-3.5 h-3.5 border border-slate-400 rounded flex items-center justify-center text-[10px] ${dispositionStatus === "Discharge Against Medical Advice" ? "bg-slate-900 text-white border-slate-900" : ""}`}>
-                      {dispositionStatus === "Discharge Against Medical Advice" ? "✓" : ""}
-                    </span>
-                    <span><strong>Discharge Against Medical Advice (DAMA)</strong></span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className={`w-3.5 h-3.5 border border-slate-400 rounded flex items-center justify-center text-[10px] ${dispositionStatus === "Referred" ? "bg-slate-900 text-white border-slate-900" : ""}`}>
-                      {dispositionStatus === "Referred" ? "✓" : ""}
-                    </span>
-                    <span><strong>Referred / Higher Center Clinic</strong></span>
-                  </div>
-                </div>
-                <div className="pt-2 border-t mt-2">
-                  <span className="font-black text-slate-500 text-[8.5px] uppercase block"><strong>PATIENT CONDITION AT DISCHARGE:</strong></span>
-                  <span className="font-extrabold text-[12px] text-blue-700"><strong>{dischargeCondition}</strong></span>
-                </div>
-              </div>
+  <div className="font-bold mt-4">Condition at time of discharge:</div>
+  <div>({dischargeCondition})</div>
 
-              <div className="space-y-1 md:border-l md:pl-4">
-                <span className="font-black text-slate-500 text-[9px] uppercase tracking-wide block"><strong>DISCHARGE VITAL SIGNS</strong></span>
-                <div className="grid grid-cols-2 gap-y-1 gap-x-2 text-[9.5px] font-mono leading-normal pt-1 text-slate-900 font-semibold">
-                  <p><strong>HR: {dischargeHr} bpm</strong></p>
-                  <p><strong>BP: {dischargeBp}</strong></p>
-                  <p><strong>RR: {dischargeRr} /min</strong></p>
-                  <p><strong>SpO2: {dischargeSpo2}%</strong></p>
-                  <p><strong>GCS: {dischargeGcs}/15</strong></p>
-                  <p><strong>Pain: {dischargePainScore}/10</strong></p>
-                  <p><strong>GRBS: {dischargeGrbs} mg/dl</strong></p>
-                  <p><strong>Temp: {dischargeTemp} °F</strong></p>
-                </div>
-              </div>
-            </div>
+  <div className="font-bold mt-4">Vitals at the time of Discharge:</div>
+  <div>HR-{dischargeHr} ,BP-{dischargeBp} ,RR-{dischargeRr} ,SpO2-{dischargeSpo2} ,GCS-{dischargeGcs} ,Pain Score-{dischargePainScore} ,GRBS-{dischargeGrbs} ,Temp-{dischargeTemp}</div>
 
-            {/* Follow up advice */}
-            <div className="border border-slate-200 rounded-lg p-3 bg-slate-50/40">
-              <span className="font-black text-[9px] text-slate-600 uppercase block tracking-wider mb-1"><strong>Follow-Up advice & safe-return warnings</strong></span>
-              <p className="font-semibold text-slate-900 whitespace-pre-wrap leading-relaxed text-[10px]">
-                <strong>{followUpPlan}</strong>
-              </p>
-            </div>
+  <div className="font-bold mt-4">Follow-Up Advice:</div>
+  <div>{followUpPlan}</div>
 
-            {/* Hospital Signatures section with Dates / Times */}
-            <div className="border-t border-slate-300 pt-7 flex justify-between gap-4">
-              <div className="text-center w-40 space-y-0.5">
-                <div className="h-9 border-b border-dashed border-slate-400"></div>
-                <span className="block font-bold text-slate-900 uppercase text-[10px]"><strong>{emResidentName}</strong></span>
-                <span className="block text-[7.5px] text-slate-400 uppercase tracking-wide"><strong>Emergency Medicine Duty Resident</strong></span>
-                <p className="text-[7px] text-slate-400 font-mono">Sign & Time: __________________</p>
-                <p className="text-[7px] text-slate-400 font-mono">Date: {new Date().toLocaleDateString([], { dateStyle: 'short' })}</p>
-              </div>
+  <div className="font-bold mt-4">General Instructions:</div>
+  <div>{patientInstructions}</div>
 
-              <div className="text-center w-40 space-y-0.5">
-                <div className="h-9 border-b border-dashed border-slate-400"></div>
-                <span className="block font-extrabold text-slate-950 uppercase text-[10px]"><strong>{emConsultantName}</strong></span>
-                <span className="block text-[7.5px] text-slate-400 uppercase tracking-wide"><strong>Attending EM Consultant (Sign & Stamp)</strong></span>
-                <p className="text-[7px] text-slate-400 font-mono">Sign & Time: __________________</p>
-                <p className="text-[7px] text-slate-400 font-mono">Date: {new Date().toLocaleDateString([], { dateStyle: 'short' })}</p>
-              </div>
-            </div>
+  <div className="mt-8 flex gap-8">
+    <div><span className="font-bold">ED Resident:</span> {emResidentName}</div>
+    <div><span className="font-bold">ED Consultant:</span> {emConsultantName}</div>
+  </div>
 
-            {/* Emergency Contacts & Hospital Legal Universal disclaimer */}
-            <div className="border-t-2 border-slate-800 pt-3 text-center space-y-1">
-              <div className="text-[8.5px] font-black text-rose-700 uppercase">
-                <strong>🚨 IN CASE OF EMERGENCY / RE-ACCESS TO TRAUMA SERVICES, CALL ER HOTLINE 🚨</strong>
-              </div>
-              <p className="text-[8px] text-slate-500 leading-normal italic text-justify">
-                <strong>Universal Clinical Notice:</strong> This discharge summary provides clinical information meant to facilitate continuity of patient care. For statutory purposes, a treatment/discharge certificate shall be issued on request (As per the clinical Medico-legal Code approved by the Government). For a disability certificate, approach a Government-constituted Medical Board.
-              </p>
-            </div>
+  <div className="flex gap-8 mt-2">
+    <div><span className="font-bold">Sign and Time:</span> ___________________</div>
+    <div><span className="font-bold">Sign and Time:</span> ___________________</div>
+  </div>
+  
+  <div className="mt-2"><span className="font-bold">Date:</span> {new Date().toLocaleDateString([], { dateStyle: 'short' })}</div>
 
-          </div>
+  <div className="mt-8">In case of emergency, contact: 0484-2905100</div>
+  <div className="mt-2 font-bold">Hospital Address and Contact Information:</div>
+  <div>Chunangamvely, Aluva, Ernakulam, Kerala - 683 112</div>
+  <div>Phone: 0484-2905000 / 0484-2905100</div>
+
+  <div className="mt-8 text-[11px] leading-snug">This discharge summary provides clinical information meant to facilitate continuity of patient care. For statutory purposes, a physical copy of this record must be preserved.</div>
+
+</div>
 
           {/* Bottom Advice Area (No Print) */}
           <div className="bg-slate-50 dark:bg-slate-900 p-4 border-t text-xs text-slate-500 leading-relaxed flex items-start gap-1.5 no-print">

@@ -50,7 +50,7 @@ router.post(
 router.post(
   '/api/handover/parse-structured',
   async (req: Request, res: Response) => {
-    const { image, mimeType, rawText, doctorName } = req.body;
+    const { image, mimeType, rawText, doctorName, patientName } = req.body;
 
     const hasText = typeof rawText === 'string' && rawText.trim().length > 0;
     const hasImage = typeof image === 'string' && image.length > 10;
@@ -69,7 +69,7 @@ router.post(
       try {
         const apiKey = process.env.GEMINI_API_KEY;
         if (!apiKey) {
-          throw new Error('GEMINI_API_KEY is missing');
+          throw new Error('ErMate API key is missing');
         }
         const ai = new GoogleGenAI({ apiKey });
 
@@ -107,7 +107,7 @@ router.post(
           text: `You are an expert Emergency Medicine Clinical Lead extracting a clinical handover from a case sheet photo or referral letter. Extract ALL clinical information (patient name, age/gender, triage, vitals, chief complaints, PMH, diagnosis, done actions, pending tasks). Text overlay: "${rawText || ""}"`
         };
 
-        const candidates = ['gemini-2.0-flash', 'gemini-2.5-flash'];
+        const candidates = ['gemini-2.0-flash', 'gemini-1.5-flash'];
         let parsedData: any = null;
 
         for (const modelCandidate of candidates) {
@@ -140,7 +140,7 @@ router.post(
     }
 
     // Default to full 5-step handover pipeline
-    const result = await extractHandoverData(rawText || "Uploaded Case Sheet Photo", doctorName);
+    const result = await extractHandoverData(rawText || "Uploaded Case Sheet Photo", doctorName, patientName);
     return res.json(result);
   }
 );

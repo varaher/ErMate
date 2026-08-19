@@ -41,8 +41,7 @@ service cloud.firestore {
     match /cases/{caseId} {
       allow read, create, update, delete: if true;
 
-      // Addenda subcollection under cases
-      match /addenda/{addendumId} {
+      match /{allSubcollections=**} {
         allow read, create, update, delete: if true;
       }
     }
@@ -72,7 +71,7 @@ service cloud.firestore {
     }
 
     function isValidId(id) {
-      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-@.]+$');
     }
 
     // Users collection
@@ -81,7 +80,7 @@ service cloud.firestore {
       allow create: if isLoggedIn() && isOwner(userId)
         && incoming().name is string && incoming().name.size() <= 100
         && incoming().email is string && incoming().email.size() <= 100
-        && incoming().role is string && incoming().role.size() <= 100
+        && incoming().role in ['EM Resident', 'Resident', 'resident', 'Doctor', 'Physician', 'Emergency Physician']
         && incoming().hospital is string && incoming().hospital.size() <= 100
         && (incoming().get('aiCredits', 0) is int)
         && (incoming().get('streak', 0) is int)
@@ -127,6 +126,27 @@ service cloud.firestore {
         );
       allow create: if isLoggedIn();
       allow update, delete: if false;
+    }
+
+    // HOD Claim Requests collection (Manual gate for bootstrapping initial department lead)
+    match /hodClaimRequests/{claimId} {
+      allow create: if isLoggedIn()
+        && incoming().claimedByUid == request.auth.uid
+        && incoming().status == 'pending'
+        && incoming().hospital is string
+        && incoming().place is string
+        && incoming().state is string
+        && incoming().pincode is string;
+
+      allow read: if isLoggedIn()
+        && (
+          resource.data.claimedByUid == request.auth.uid
+          || request.auth.token.email == 'varahgrp@gmail.com'
+          || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['hod', 'owner', 'HOD / Shift Lead', 'HOD / Department Lead']
+        );
+
+      allow update: if isLoggedIn()
+        && request.auth.token.email == 'varahgrp@gmail.com';
     }
 
     // Handovers collection
@@ -183,6 +203,23 @@ service cloud.firestore {
         && incoming().hospital is string && incoming().hospital.size() <= 100
         && incoming().subscriptionTier is string && incoming().subscriptionTier.size() <= 100
         && incoming().active is bool;
+    }
+
+    // Team Invites collection (Token-based securely generated department invitations)
+    match /teamInvites/{token} {
+      allow read: if true;
+      allow create: if isLoggedIn()
+        && (
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['hod', 'owner', 'HOD / Shift Lead', 'HOD / Department Lead', 'Senior Consultant']
+          || request.auth.token.email == 'varahgrp@gmail.com'
+        );
+      allow update: if isLoggedIn()
+        && incoming().diff(existing()).affectedKeys().hasOnly(['usedCount']);
+      allow delete: if isLoggedIn()
+        && (
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['hod', 'owner', 'HOD / Shift Lead', 'HOD / Department Lead', 'Senior Consultant']
+          || request.auth.token.email == 'varahgrp@gmail.com'
+        );
     }
 
     // Hospital shifts configuration collection

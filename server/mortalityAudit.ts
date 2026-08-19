@@ -287,10 +287,10 @@ export async function generateMortalityAudit(
     }
   }
 
-  // 3. Fallback Model: Gemini Candidates (gemini-2.0-flash / gemini-2.5-flash)
+  // 3. Fallback Model: Gemini Candidates (gemini-2.0-flash / gemini-1.5-flash)
   if (process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim() !== "") {
     const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-    const geminiCandidates = ["gemini-2.0-flash", "gemini-2.5-flash"];
+    const geminiCandidates = ["gemini-2.0-flash", "gemini-1.5-flash"];
     
     for (const modelCandidate of geminiCandidates) {
       try {

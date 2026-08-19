@@ -164,7 +164,7 @@ primarySurvey:
     logRoll: findings if done (trauma)
 
 courseInHospital:
-  Write a STRUCTURED CLINICAL NARRATIVE.
+  Write a CONCISE STRUCTURED CLINICAL NARRATIVE. Keep all paragraphs brief and direct (1-3 sentences max).
   NOT a list of actions.
   NOT raw notes compressed together.
   NOT bullet points.
@@ -368,15 +368,39 @@ function cleanAndParseJSON(rawStr: string): any {
     .replace(/```$/s, '')
     .trim();
 
+  let parsed: any;
   try {
-    return JSON.parse(cleaned);
+    parsed = JSON.parse(cleaned);
   } catch {
     const match = cleaned.match(/\{[\s\S]*\}/);
     if (match) {
-      return JSON.parse(match[0]);
+      parsed = JSON.parse(match[0]);
+    } else {
+      throw new Error('Could not parse valid JSON from AI response');
     }
-    throw new Error('Could not parse valid JSON from AI response');
   }
+
+  // GPT-4o often hallucinates courseInHospital as an object if paragraphs are named in prompt
+  if (parsed && typeof parsed === 'object' && parsed.courseInHospital && typeof parsed.courseInHospital === 'object') {
+    const courseObj = parsed.courseInHospital;
+    const parts = [];
+    if (courseObj.arrivalAndPrimarySurvey) parts.push(courseObj.arrivalAndPrimarySurvey);
+    if (courseObj.investigations) parts.push(courseObj.investigations);
+    if (courseObj.treatment) parts.push(courseObj.treatment);
+    if (courseObj.consultations) parts.push(courseObj.consultations);
+    if (courseObj.clinicalCourse) parts.push(courseObj.clinicalCourse);
+    if (courseObj.disposition) parts.push(courseObj.disposition);
+    
+    // If we matched any known keys, join them. Otherwise stringify the whole thing.
+    if (parts.length > 0) {
+      parsed.courseInHospital = parts.join("\n\n");
+    } else {
+      // Fallback
+      parsed.courseInHospital = Object.values(courseObj).join("\n\n");
+    }
+  }
+
+  return parsed;
 }
 
 // Fallback heuristic generator when AI APIs are unavailable
@@ -486,6 +510,29 @@ export async function generateDischargeSummary(
   };
 
   // 1. Try Anthropic (Claude Sonnet) — Primary AI engine for Discharge Summaries
+  const runOpenAIFallback = async () => {
+    const openai = getOpenAI();
+    if (openai) {
+      try {
+        console.log('[Discharge] Requesting OpenAI GPT-4o (Fallback)...');
+        const res = await openai.chat.completions.create({
+          model: 'gpt-4o',
+          temperature: 0.0,
+          response_format: { type: 'json_object' },
+          messages: [
+            { role: 'user', content: prompt },
+          ],
+        });
+        const parsed = cleanAndParseJSON(res.choices[0].message.content || '{}');
+        return { success: true, summary: parsed, phiProtected };
+      } catch (err: any) {
+        console.warn('[Discharge] OpenAI GPT-4o attempt failed:', err?.message || err);
+      }
+    }
+    
+    return null;
+  };
+
   const anthropic = getAnthropic();
   if (anthropic) {
     try {
@@ -505,53 +552,15 @@ export async function generateDischargeSummary(
       if (err?.status === 400 || err?.status === 401 || err?.status === 402 || String(err?.message || "").includes("credit balance")) {
         isAnthropicDisabledInDischarge = true;
       }
+      const openaiRes = await runOpenAIFallback();
+      if (openaiRes) return openaiRes;
     }
+  } else {
+    const openaiRes = await runOpenAIFallback();
+    if (openaiRes) return openaiRes;
   }
 
-  // 2. Try OpenAI (GPT-4o, not mini) — Fallback AI engine
-  const openai = getOpenAI();
-  if (openai) {
-    try {
-      console.log('[Discharge] Requesting OpenAI GPT-4o (Fallback)...');
-      const res = await openai.chat.completions.create({
-        model: 'gpt-4o',
-        temperature: 0.0,
-        response_format: { type: 'json_object' },
-        messages: [
-          { role: 'user', content: prompt },
-        ],
-      });
-
-      const parsed = cleanAndParseJSON(res.choices[0].message.content || '{}');
-      return { success: true, summary: parsed, phiProtected };
-    } catch (err: any) {
-      console.warn('[Discharge] OpenAI GPT-4o attempt failed:', err?.message || err);
-    }
-  }
-
-  // 3. Gemini 2.5 Flash Fallback
-  const geminiKey = process.env.GEMINI_API_KEY;
-  if (geminiKey && geminiKey.trim() !== '') {
-    try {
-      console.log('[Discharge] Requesting Gemini 2.0 Flash (Fallback)...');
-      const ai = new GoogleGenAI({ apiKey: geminiKey });
-      const res = await ai.models.generateContent({
-        model: 'gemini-2.0-flash',
-        contents: prompt,
-        config: {
-          temperature: 0.0,
-          responseMimeType: 'application/json',
-        },
-      });
-
-      const parsed = cleanAndParseJSON(res.text || '{}');
-      return { success: true, summary: parsed, phiProtected };
-    } catch (err: any) {
-      console.warn('[Discharge] Gemini fallback failed:', err?.message || err);
-    }
-  }
-
-  // 4. Heuristic Fallback
+  // 3. Heuristic Fallback
   console.warn('[Discharge] AI models failed or no API keys available. Using heuristic fallback.');
   const fallbackSummary = buildHeuristicDischargeSummary(phiResult.deidentified);
   return { success: true, summary: fallbackSummary, phiProtected };

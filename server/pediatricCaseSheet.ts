@@ -164,7 +164,7 @@ export function getTotalAgeMonths(patient: PediatricCaseSheetData["patient"]): n
 }
 
 export function formatPediatricVital(
-  param: PediatricVitalParam,
+  param: "hr" | "rr" | "sbp" | "spo2" | "temp",
   value: number | null | undefined,
   patient: PediatricCaseSheetData["patient"]
 ): string {
@@ -177,7 +177,7 @@ export function formatPediatricVital(
  * pediatric schema/extraction path instead of adult.
  */
 export function isPediatricPatient(ageYears: number | null): boolean {
-  return ageYears !== null && ageYears < 18;
+  return ageYears !== null && ageYears < 16;
 }
 
 // ── Adapter: map pediatric case sheet -> shared CaseSheetData ────────
