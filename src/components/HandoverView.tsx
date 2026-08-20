@@ -994,6 +994,7 @@ export default function HandoverView({
     time: "07:15 AM",
   });
   const [isViewingSheet, setIsViewingSheet] = useState(false);
+  const [includeRawNotesInExport, setIncludeRawNotesInExport] = useState(false);
   const [hospitalName, setHospitalName] = useState(() => {
     return profile?.hospital || "EMERGENCY DEPARTMENT";
   });
@@ -1779,7 +1780,33 @@ function extractLatestVitalsWithTime(
     setIsViewingSheet(true);
   };
 
-  const handleDownloadWordDirect = (type: "registry" | "quickpaste") => {
+  const handleDownloadWordDirect = async (type: "registry" | "quickpaste") => {
+    const selectedIds = type === "registry" ? selectedRegistryIds : selectedQuickPasteIds;
+    const selectedCases = cases.filter(c => selectedIds.includes(c.id));
+    if (selectedCases.length === 1) {
+      const { generateDetailedPatientDocx } = await import("../utils/docxGenerator");
+      const blob = await generateDetailedPatientDocx(selectedCases[0]);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `Handover_${selectedCases[0].patient.name.replace(/[^a-zA-Z0-9]/g, '_')}.docx`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      return;
+    }
+    
+    const { generateCompactRosterDocx } = await import("../utils/docxGenerator");
+    const compactBlob = await generateCompactRosterDocx(selectedCases);
+    const cUrl = URL.createObjectURL(compactBlob);
+    const cLink = document.createElement("a");
+    cLink.href = cUrl;
+    cLink.download = `Doctors_Handover_Roster_${handoverMeta.date.replace(/\//g, "-")}.docx`;
+    document.body.appendChild(cLink);
+    cLink.click();
+    document.body.removeChild(cLink);
+    return;
+    // Legacy HTML method ignored intentionally for this task
     const rows = (isViewingSheet && editableRows && editableRows.length > 0) 
       ? editableRows 
       : (type === "registry" ? getRegistryRows() : getQuickPasteRows());
@@ -1915,9 +1942,9 @@ function extractLatestVitalsWithTime(
 
     const blob = new Blob(['\ufeff' + fullHtml], { type: "application/msword;charset=utf-8" });
     const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `Emergency_Doctors_Handover_${type === "registry" ? "Registry" : "SBAR"}_${handoverMeta.date.replace(/\//g, "-")}.doc`;
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `Emergency_Doctors_Handover_${type === "registry" ? "Registry" : "SBAR"}_${handoverMeta.date.replace(/\//g, "-")}.doc`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -2464,7 +2491,6 @@ function extractLatestVitalsWithTime(
       text += `     [B] Background: ${item.structuredSBAR?.background}\n`;
       text += `     [A] Assessment: ${item.structuredSBAR?.assessment}\n`;
       text += `     [R] Recommendation: ${item.structuredSBAR?.recommendation}\n`;
-      text += `   Pasted Raw EMR Audit:\n   "${item.rawNotes.replace(/\n/g, "\n   ")}"\n`;
       text += `--------------------------------------------------\n\n`;
     });
 
@@ -2728,6 +2754,16 @@ function extractLatestVitalsWithTime(
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            <label className="flex items-center gap-2 cursor-pointer no-print ml-4">
+              <input 
+                type="checkbox" 
+                checked={includeRawNotesInExport} 
+                onChange={(e) => setIncludeRawNotesInExport(e.target.checked)} 
+                className="w-3.5 h-3.5 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500"
+              />
+              <span className="text-xs font-bold text-slate-700 dark:text-slate-300">Include Raw EMR Notes in Print/Export</span>
+            </label>
+
             {autoSaveStatus === "saving" && (
               <span className="text-[11px] font-semibold text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/80 px-2.5 py-1.5 rounded-lg border border-amber-200 dark:border-amber-800 flex items-center gap-1.5 animate-pulse">
                 <RefreshCw className="w-3 h-3 animate-spin" /> Auto-saving...
@@ -3065,7 +3101,7 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
                     </div>
 
                     {/* 2. INITIAL ASSESSMENT & CHRONOLOGICAL NOTES (OLDEST -> NEWEST): Multi-column (1, 2, or 3 cols based on entry count) */}
-                    <div className="p-3 bg-slate-50/50 dark:bg-slate-900/30 print-section">
+                    <div className={`p-3 bg-slate-50/50 dark:bg-slate-900/30 print-section ${!includeRawNotesInExport ? 'print:hidden' : ''}`}>
                       <div className="flex items-center justify-between mb-1.5 pb-1 border-b border-slate-200 dark:border-slate-800">
                         <span className="text-[10.5px] font-black uppercase tracking-wider text-indigo-700 dark:text-indigo-400 font-mono flex items-center gap-1">
                           2. INITIAL ASSESSMENT &amp; CHRONOLOGICAL NOTES (OLDEST &rarr; NEWEST)
@@ -3533,10 +3569,6 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
                         </div>
                       </div>
 
-                      <div className="text-[10px] bg-slate-100 p-2 rounded font-mono text-slate-500 whitespace-pre-wrap">
-                        <strong className="block mb-1 text-[9px] uppercase tracking-wider text-slate-400">Raw EMR Pasted Records:</strong>
-                        {item.rawNotes}
-                      </div>
                     </div>
                   ))}
                 </div>

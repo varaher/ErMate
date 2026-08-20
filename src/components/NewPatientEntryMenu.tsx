@@ -1,3 +1,4 @@
+import { generateUHID } from "../utils/caseHelper";
 import React from "react";
 import { Mic, PenLine, ClipboardList, User, Heart, ChevronRight, X } from "lucide-react";
 import { ClinicalCase } from "../types";
@@ -58,7 +59,7 @@ function createNewCase(
       name: "",
       age: 0,
       gender: "",
-      uhid: `UH-${Math.floor(100000 + Math.random() * 900000)}`,
+      uhid: generateUHID(),
       triageCategory: "" as any, // intentionally empty, not a fabricated default — see triage-skip note below
       presentingComplaint: "",
       arrivalMode: "Walk-in",

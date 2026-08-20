@@ -20,15 +20,13 @@ import {
   PediatricCirculationSection,
   PediatricDisabilitySection,
   PediatricExposureSection,
-  PediatricEfastSection,
   PediatricFocusedPhysicalExam,
   PediatricGeneralExamSection,
   PediatricQuickNormalPresets,
   PEDIATRIC_NORMAL_PRESETS,
   PediatricDispositionSection
 } from "./PediatricABCDESections";
-import { PrimarySurveySection } from "./PrimarySurveySection";
-import { MlcCaseToggle } from "./CaseSheetAdjunctsAndMlc";
+import { PrimarySurveySection, IsolatedPrimarySurveyAdjuncts } from "./PrimarySurveySection";
 import { PediatricAssessmentTriangle } from "./PediatricCaseSheetFields";
 import { SecondarySurveySection } from "./SecondarySurveySection";
 import { triggerPrintWithTip } from "../utils/printWithTip";
@@ -160,10 +158,8 @@ export default function CaseSheetView({
   onDiscussCase
 }: CaseSheetViewProps) {
   const [activeTab, setActiveTab] = useState<
-    "complaints" | "primary-survey" | "history" | "secondary-survey" | "investigations" | "trends" | "treatment" | "notes" | "disposition" | "rounds"
-  >("complaints");
-  
-  const [showJciForm, setShowJciForm] = useState<boolean>(false);
+    "triage" | "complaints" | "primary-survey" | "history" | "secondary-survey" | "investigations" | "trends" | "treatment" | "notes" | "disposition" | "rounds"
+  >("triage");
 
   // Clinical Rounds & 7-Lens Debrief States
   const [roundsLens, setRoundsLens] = useState<
@@ -485,7 +481,7 @@ export default function CaseSheetView({
       if (backupCase) {
         setCurrentCase(backupCase);
         setIsNormalToggled(false);
-        syncDischargeSummary(backupCase).catch(e => console.error("Background discharge sync failed:", e));
+        await syncDischargeSummary(backupCase);
       }
     } else {
       setBackupCase(JSON.parse(JSON.stringify(currentCase)));
@@ -637,7 +633,7 @@ export default function CaseSheetView({
       }, 4000);
 
       // Auto-update discharge summary in background
-      syncDischargeSummary(normalCase).catch(e => console.error("Background discharge sync failed:", e));
+      await syncDischargeSummary(normalCase);
     }
   };
 
@@ -646,13 +642,6 @@ export default function CaseSheetView({
   const [smartDictationText, setSmartDictationText] = useState("");
   const [showDictationModal, setShowDictationModal] = useState(false);
   const [aiLoading, setAiLoading] = useState(false);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-
-  const showError = (msg: string) => {
-    setErrorMessage(msg);
-    setTimeout(() => setErrorMessage(null), 5000);
-  };
-
   const [dictationSuccess, setDictationSuccess] = useState<boolean>(false);
 
   // Indian Languages Multilingual Dictation States
@@ -704,12 +693,6 @@ export default function CaseSheetView({
       const recorder = new MediaRecorder(stream, { mimeType, audioBitsPerSecond: 24000 });
       mediaRecorderRef.current = recorder;
 
-      stream.getAudioTracks().forEach(track => {
-        track.onended = () => {
-          if (recorder.state !== "inactive") recorder.stop();
-        };
-      });
-
       recorder.ondataavailable = (e) => {
         if (e.data.size > 0) audioChunksRef.current.push(e.data);
       };
@@ -727,32 +710,18 @@ export default function CaseSheetView({
         setIsDictating(false);
 
         if (audioBlob.size > 500) {
-          const runTranscribe = async () => {
-            try {
-              const formData = new FormData();
-              formData.append("file", audioBlob, `dictation.${ext}`);
-              formData.append("language_code", dictationLang);
+          try {
+            const formData = new FormData();
+            formData.append("file", audioBlob, `dictation.${ext}`);
+            formData.append("language_code", dictationLang);
 
-              const res = await fetch("/api/voice/transcribe", { method: "POST", body: formData });
-              const data = await res.json();
-              if (data.success && data.transcript) {
-                setSmartDictationText(prev => prev ? (prev.trim() + " " + data.transcript.trim()) : data.transcript.trim());
-              }
-            } catch (e) {
-              console.error("Server transcription error:", e);
+            const res = await fetch("/api/voice/transcribe", { method: "POST", body: formData });
+            const data = await res.json();
+            if (data.success && data.transcript) {
+              setSmartDictationText(prev => prev ? (prev.trim() + " " + data.transcript.trim()) : data.transcript.trim());
             }
-          };
-
-          if (document.visibilityState === "hidden") {
-            const resumeTranscribing = () => {
-               if (document.visibilityState === "visible") {
-                  document.removeEventListener("visibilitychange", resumeTranscribing);
-                  runTranscribe();
-               }
-            };
-            document.addEventListener("visibilitychange", resumeTranscribing);
-          } else {
-            runTranscribe();
+          } catch (e) {
+            console.error("Server transcription error:", e);
           }
         }
       };
@@ -769,7 +738,7 @@ export default function CaseSheetView({
       setIsDictating(true);
     } catch (micErr) {
       console.error("Microphone access failed:", micErr);
-      showError("Could not access microphone. Please check browser microphone permissions.");
+      alert("Could not access microphone. Please check browser microphone permissions.");
       setIsListening(false);
       isListeningActiveRef.current = false;
       setIsDictating(false);
@@ -1167,7 +1136,7 @@ Extremities: No deformity. No peripheral oedema. Peripheral pulses present.`,
 
     const hasValues = ["ph", "pco2", "po2", "hco3", "lactate", "sao2"].some(k => !!(abg as any)[k]);
     if (!hasValues) {
-      showError("Please enter some ABG values first.");
+      alert("Please enter some ABG values first.");
       return;
     }
 
@@ -1212,9 +1181,9 @@ Extremities: No deformity. No peripheral oedema. Peripheral pulses present.`,
             survey: {
               ...prevSurvey,
               adjuncts: {
-                ...(prevSurvey as any).adjuncts,
+                ...prevSurvey.adjuncts,
                 abg: {
-                  ...(prevSurvey as any).adjuncts?.abg,
+                  ...prevSurvey.adjuncts?.abg,
                   finalDiagnosis: data.interpretation
                 }
               }
@@ -1224,7 +1193,7 @@ Extremities: No deformity. No peripheral oedema. Peripheral pulses present.`,
       });
     } catch (err) {
       console.error(err);
-      showError("Failed to interpret ABG. Please try again.");
+      alert("Failed to interpret ABG. Please try again.");
     }
   };
 
@@ -1232,6 +1201,7 @@ Extremities: No deformity. No peripheral oedema. Peripheral pulses present.`,
     const initialSurvey = getInitialPrimarySurvey(currentCase.patient.caseType);
     setCurrentCase(prev => {
       const prevSurvey = prev.primaryAssessment?.survey || {};
+      const adjuncts = (prev.primaryAssessment?.survey as any)?.adjuncts || {};
       const newSurvey = {
         ...initialSurvey,
         airway: { ...initialSurvey.airway, cSpine: "not_applicable" },
@@ -1239,7 +1209,7 @@ Extremities: No deformity. No peripheral oedema. Peripheral pulses present.`,
         circulation: { ...initialSurvey.circulation, bleeding: "Nil", ivAccess: "18G", hr: "80", sbp: "120", dbp: "80" },
         disability: { ...initialSurvey.disability, focalDeficit: "None", grbs: "100" },
         exposure: { ...initialSurvey.exposure, skin: "Normal", temp: "37.0" },
-        adjuncts: (prevSurvey as any).adjuncts || {}
+        adjuncts: adjuncts
       };
       return {
         ...prev,
@@ -1312,7 +1282,7 @@ Extremities: No deformity. No peripheral oedema. Peripheral pulses present.`,
           differentials: resData.data
         }));
       } else {
-        showError(resData.error || "Clinical assistant busy — try again in a moment");
+        alert(resData.error || "Clinical assistant busy — try again in a moment");
       }
     } catch (err) {
       console.error(err);
@@ -1432,7 +1402,7 @@ Extremities: No deformity. No peripheral oedema. Peripheral pulses present.`,
             followUpAdvice: parsed.disposition?.followUp || currentCase.dispositionAndPlan?.followUpAdvice,
           },
 
-          ...((currentCase.patient?.caseType as any) === "Pediatric" || (currentCase.patient as any)?.isPediatric || currentCase.isPediatric
+          ...(currentCase.isPediatric
             ? {
                 pediatricDetails: {
                   ...currentCase.pediatricDetails,
@@ -1483,11 +1453,11 @@ Extremities: No deformity. No peripheral oedema. Peripheral pulses present.`,
         }, 8000);
 
         // Auto-update discharge summary in background
-        syncDischargeSummary(updatedCase).catch(e => console.error("Background discharge sync failed:", e));
+        await syncDischargeSummary(updatedCase);
       }
     } catch (err: any) {
       console.error(err);
-      showError(err.message || "Failed to process voice dictation.");
+      alert(err.message || "Failed to process voice dictation.");
     } finally {
       setAiLoading(false);
     }
@@ -1693,7 +1663,7 @@ Extremities: No deformity. No peripheral oedema. Peripheral pulses present.`,
   };
 
   // Commit to backend (Save)
-  const handleSave = () => {
+  const handleSave = async () => {
     // Audit & sanitize clinical fields before saving
     const ageNum = currentCase.patient.age;
     const isPeds = currentCase.isPediatric || (ageNum !== null && recomputeIsPediatric(ageNum));
@@ -1727,15 +1697,15 @@ Extremities: No deformity. No peripheral oedema. Peripheral pulses present.`,
     }, 5000);
     
     // Auto-update discharge summary in background
-    syncDischargeSummary(caseToSave).catch(e => console.error("Background discharge sync failed:", e));
+    await syncDischargeSummary(caseToSave);
 
     // Auto-populate first principles learning for the saved modal and trigger the Post-Save Debrief Nudge
-    fetchRoundsDebrief("first-principles").catch(e => console.error("Background rounds debrief failed:", e));
+    fetchRoundsDebrief("first-principles");
     /* setShowPostSaveModal(true) removed */;
   };
 
   const handleSaveFromDisposition = async () => {
-    handleSave();
+    await handleSave();
     const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     setDispositionSaveMessage(`Case Sheet saved to Dashboard successfully at ${timeStr}`);
     setTimeout(() => {
@@ -2135,20 +2105,49 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
         residentName: "",
         consultantName: "",
         observationNotes: "",
-        ...(prev as any).dispositionDetails,
+        ...prev.dispositionDetails,
         [field]: value
       }
     }));
   };
 
   return (
-    <div className="w-full pb-28 sm:pb-36 relative">
-      {errorMessage && (
-        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[99999] bg-rose-600 border border-rose-400 text-white px-4 py-2 rounded-xl shadow-2xl font-bold text-sm flex items-center gap-2 animate-in fade-in slide-in-from-top-4">
-          <ShieldAlert className="w-4 h-4 shrink-0" />
-          {errorMessage}
+    <div className="w-full pb-28 sm:pb-36">
+      {/* Global Header (Back Button & Patient Info) */}
+      <div className="max-w-7xl mx-auto px-2 sm:px-0 mb-4 flex items-center justify-between no-print">
+        <div className="flex items-center gap-4">
+          <button
+            onClick={onBack}
+            className="flex items-center gap-1.5 text-xs font-bold text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 transition-all uppercase"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            Cases List
+          </button>
+          <div className="h-4 w-px bg-slate-300 dark:bg-slate-700"></div>
+          <div className="flex items-center gap-2">
+            <span className="font-bold text-slate-800 dark:text-white text-sm">{currentCase.patient.name}</span>
+            <span className="text-xs text-slate-500 dark:text-slate-400 font-mono">{currentCase.patient.age || "N/A"}y / {currentCase.patient.gender}</span>
+            {currentCase.patient.uhid && (
+              <span className="text-xs text-blue-600 dark:text-blue-400 font-mono font-medium ml-1 border-l border-slate-300 dark:border-slate-700 pl-2">
+                UHID: {currentCase.patient.uhid}
+              </span>
+            )}
+          </div>
+          {onReturnToScribe && (
+            <button
+              onClick={onReturnToScribe}
+              className="flex items-center gap-1 px-2 py-1 bg-purple-50 hover:bg-purple-100 text-purple-700 dark:bg-purple-950/25 dark:text-purple-300 text-[10px] font-bold rounded border border-purple-100 dark:border-purple-900 transition-all uppercase shrink-0"
+            >
+              <Mic className="w-3 h-3 text-purple-500 animate-pulse" />
+              Resume Dictation
+            </button>
+          )}
         </div>
-      )}
+        <span className="text-[10px] px-2.5 py-0.5 rounded-full border bg-blue-50 text-blue-700 dark:bg-blue-950/30 dark:text-blue-300 font-mono font-bold animate-pulse-slow">
+          {currentCase.status}
+        </span>
+      </div>
+
       {/* Persistent "Not Yet Triaged" Warning Chip  */}
       {isTriageCategoryPending(currentCase.patient.triageCategory) && (
         <div className="max-w-7xl mx-auto mb-4 bg-amber-500/15 dark:bg-amber-950/80 border-2 border-amber-500/80 rounded-2xl p-3 shadow-md flex flex-wrap items-center justify-between gap-3 animate-pulse no-print">
@@ -2192,32 +2191,8 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
       <div className="flex flex-col xl:flex-row gap-6 max-w-7xl mx-auto no-print" id="case-sheet-container">
       
       {/* Left Column: Demographics & Abnormal Vitals Monitor  */}
-      <div className="w-full xl:w-80 space-y-4 shrink-0">
-        
-        {/* Back and Status  */}
-        <div className="flex items-center justify-between no-print">
-          <div className="flex items-center gap-3">
-            <button
-              onClick={onBack}
-              className="flex items-center gap-1.5 text-xs font-bold text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 transition-all uppercase"
-            >
-              <ArrowLeft className="w-4 h-4" />
-              Cases List
-            </button>
-            {onReturnToScribe && (
-              <button
-                onClick={onReturnToScribe}
-                className="flex items-center gap-1 px-2 py-1 bg-purple-50 hover:bg-purple-100 text-purple-700 dark:bg-purple-950/25 dark:text-purple-300 text-[10px] font-bold rounded border border-purple-100 dark:border-purple-900 transition-all uppercase shrink-0"
-              >
-                <Mic className="w-3 h-3 text-purple-500 animate-pulse" />
-                Resume Dictation
-              </button>
-            )}
-          </div>
-          <span className="text-[10px] px-2.5 py-0.5 rounded-full border bg-blue-50 text-blue-700 dark:bg-blue-950/30 dark:text-blue-300 font-mono font-bold animate-pulse-slow">
-            {currentCase.status}
-          </span>
-        </div>
+      {(activeTab === "triage" || activeTab === "trends") && (
+      <div className="w-full xl:w-80 space-y-4 shrink-0 animate-fade-in">
 
         {/* ER CASE QUICK-SWITCHER WIDGET  */}
         <div className="bg-slate-100/50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-3.5 space-y-2 relative no-print shadow-xs">
@@ -2444,25 +2419,60 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                     className="w-full px-2 py-1 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded focus:ring-1 focus:ring-blue-500 font-medium font-mono"
                   />
                 </div>
-                <div>
-                  <label className="block text-[10px] text-slate-400 font-mono font-semibold uppercase mb-1">Presenting Complaint</label>
-                  <div className="flex gap-2">
-                    <textarea
-                      rows={2}
-                      value={currentCase.patient.presentingComplaint || ""}
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[10px] text-slate-400 font-mono font-semibold uppercase mb-1">UHID / CR</label>
+                    <input
+                      type="text"
+                      value={currentCase.patient.uhid || ""}
                       onChange={(e) => {
                         const val = e.target.value;
-                        setCurrentCase(prev => ({ ...prev, patient: { ...prev.patient, presentingComplaint: val } }));
+                        setCurrentCase(prev => ({ ...prev, patient: { ...prev.patient, uhid: val } }));
                       }}
-                      className="flex-1 w-full px-2 py-1 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded focus:ring-1 focus:ring-blue-500 font-medium"
-                    />
-                    <VoiceRecorder
-                      renderMode="compact-button"
-                      onTranscript={(txt) => {
-                        setCurrentCase(prev => ({ ...prev, patient: { ...prev.patient, presentingComplaint: (prev.patient.presentingComplaint ? prev.patient.presentingComplaint + " " : "") + txt } }));
-                      }}
+                      className="w-full px-2 py-1 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded focus:ring-1 focus:ring-blue-500 font-medium font-mono"
                     />
                   </div>
+                  <div>
+                    <label className="block text-[10px] text-slate-400 font-mono font-semibold uppercase mb-1">Arrival</label>
+                    <select
+                      value={currentCase.patient.arrivalMode || "Walk-in"}
+                      onChange={(e) => {
+                        const val = e.target.value as any;
+                        setCurrentCase(prev => ({ ...prev, patient: { ...prev.patient, arrivalMode: val } }));
+                      }}
+                      className="w-full px-2 py-1 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded focus:ring-1 focus:ring-blue-500 font-medium"
+                    >
+                      <option value="Walk-in">Walk-in</option>
+                      <option value="Ambulance">Ambulance</option>
+                      <option value="Referred">Referred</option>
+                    </select>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-[10px] text-slate-400 font-mono font-semibold uppercase mb-1">Case Type</label>
+                  <select
+                    value={currentCase.patient.caseType || "Medical"}
+                    onChange={(e) => {
+                      const val = e.target.value as any;
+                      setCurrentCase(prev => ({ ...prev, patient: { ...prev.patient, caseType: val } }));
+                    }}
+                    className="w-full px-2 py-1 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded focus:ring-1 focus:ring-blue-500 font-medium"
+                  >
+                    <option value="Medical">Medical</option>
+                    <option value="Trauma">Trauma</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] text-slate-400 font-mono font-semibold uppercase mb-1">Presenting Complaint</label>
+                  <textarea
+                    rows={2}
+                    value={currentCase.patient.presentingComplaint || ""}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setCurrentCase(prev => ({ ...prev, patient: { ...prev.patient, presentingComplaint: val } }));
+                    }}
+                    className="w-full px-2 py-1 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded focus:ring-1 focus:ring-blue-500 font-medium"
+                  />
                 </div>
               </div>
             </div>
@@ -2712,6 +2722,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
 
       </div>
 
+      )}
       {/* Right Column: Case Sheets Tabbed Flow  */}
       <div className="flex-1 flex flex-col space-y-4">
         
@@ -2903,7 +2914,6 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
               {/* Standardized ErMate Voice Recorder inside the dictation box  */}
               <div className="absolute right-3.5 bottom-3.5">
                 <VoiceRecorder
-                  languageCode={dictationLang}
                   renderMode="compact-button"
                   onTranscript={(text) => {
                     setSmartDictationText(prev => prev ? (prev.trim() + " " + text.trim()) : text.trim());
@@ -2961,6 +2971,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
         <div className="fixed bottom-0 left-0 right-0 z-50 bg-white/98 dark:bg-slate-950/98 backdrop-blur-md border-t-2 border-slate-300 dark:border-slate-800 shadow-[0_-8px_30px_rgba(0,0,0,0.15)] px-2 py-2.5 sm:px-4 sm:py-3.5 no-print">
           <div className="max-w-7xl mx-auto w-full flex items-center gap-2 sm:gap-2.5 overflow-x-auto scrollbar-thin scrollbar-thumb-slate-300 dark:scrollbar-thumb-slate-700 py-1 px-1">
             {[
+              { id: "triage", label: "Triage", icon: AlertTriangle },
               { id: "complaints", label: "Chief Complaints", icon: ClipboardCheck },
               { id: "primary-survey", label: "Primary Survey", icon: Activity },
               { id: "history", label: "History (SAMPLE)", icon: Clock },
@@ -2996,6 +3007,19 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
         {/* Tab content area  */}
         <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl p-5 md:p-6 shadow-sm min-h-[350px]">
           
+          {/* Triage Tab  */}
+          {activeTab === "triage" && (
+            <div className="space-y-6 animate-fade-in text-center p-8 border-2 border-dashed border-slate-200 dark:border-slate-800 rounded-xl">
+              <AlertTriangle className="w-12 h-12 text-amber-500 mx-auto mb-4 opacity-75" />
+              <h3 className="text-lg font-bold text-slate-800 dark:text-white uppercase tracking-wide">
+                Triage & Patient Registration
+              </h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400 max-w-md mx-auto mt-2">
+                Use the left panel to update demographics, set the emergency triage category, manage medico-legal (MLC) details, and record initial vital signs.
+              </p>
+            </div>
+          )}
+
           {/* Chief Complaints & Editable Demographics  */}
           {activeTab === "complaints" && (
             <div className="space-y-6 animate-fade-in">
@@ -3011,146 +3035,6 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
               </div>
 
               <div className="bg-slate-50 dark:bg-slate-900/50 p-5 border border-slate-200 dark:border-slate-850 rounded-xl space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
-                  <div>
-                    <label className="block text-[11px] text-slate-500 font-semibold mb-1">Patient Name</label>
-                    <input
-                      type="text"
-                      value={currentCase.patient.name}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        setCurrentCase(prev => ({ ...prev, patient: { ...prev.patient, name: val } }));
-                      }}
-                      className="w-full px-3 py-2 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-xs font-semibold focus:ring-1 focus:ring-blue-500 text-slate-800 dark:text-white"
-                      placeholder="e.g. Ramesh Kumar"
-                    />
-                  </div>
-                  
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-[11px] text-slate-500 font-semibold mb-1">Age (Years)</label>
-                      <input
-                        type="number"
-                        value={currentCase.patient.age || ""}
-                        onChange={(e) => {
-                          const val = e.target.value ? parseInt(e.target.value) : 0;
-                          const newIsPeds = recomputeIsPediatric(val);
-                          setCurrentCase(prev => {
-                            return { ...prev, patient: { ...prev.patient, age: val }, isPediatric: newIsPeds };
-                          });
-                        }}
-                        className="w-full px-3 py-2 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-xs font-semibold focus:ring-1 focus:ring-blue-500 text-slate-850 dark:text-white"
-                        placeholder="e.g. 45"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[11px] text-slate-500 font-semibold mb-1">Gender</label>
-                      <select
-                        value={currentCase.patient.gender}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          setCurrentCase(prev => ({ ...prev, patient: { ...prev.patient, gender: val } }));
-                        }}
-                        className="w-full px-3 py-2 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-xs font-semibold focus:ring-1 focus:ring-blue-500 text-slate-800 dark:text-white"
-                      >
-                        <option value="Male">Male</option>
-                        <option value="Female">Female</option>
-                        <option value="Other">Other</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-[11px] text-slate-500 font-semibold mb-1">UHID / CR Number</label>
-                    <input
-                      type="text"
-                      value={currentCase.patient.uhid || ""}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        setCurrentCase(prev => ({ ...prev, patient: { ...prev.patient, uhid: val } }));
-                      }}
-                      className="w-full px-3 py-2 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-xs font-semibold focus:ring-1 focus:ring-blue-500 text-slate-800 dark:text-white font-mono"
-                      placeholder="e.g. MC-4890-Y"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-[11px] text-slate-500 font-semibold mb-1">Phone Number</label>
-                    <input
-                      type="text"
-                      value={currentCase.patient.phone || ""}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        setCurrentCase(prev => ({ ...prev, patient: { ...prev.patient, phone: val } }));
-                      }}
-                      className="w-full px-3 py-2 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-xs font-semibold focus:ring-1 focus:ring-blue-500 text-slate-800 dark:text-white font-mono"
-                      placeholder="e.g. +91 98765 43210"
-                    />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs pt-2">
-                  <div>
-                    <label className="block text-[11px] text-slate-500 font-semibold mb-1">Arrival Mode</label>
-                    <select
-                      value={currentCase.patient.arrivalMode}
-                      onChange={(e) => {
-                        const val = e.target.value as any;
-                        setCurrentCase(prev => ({ ...prev, patient: { ...prev.patient, arrivalMode: val } }));
-                      }}
-                      className="w-full px-3 py-2 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-xs font-semibold focus:ring-1 focus:ring-blue-500 text-slate-800 dark:text-white"
-                    >
-                      <option value="Walk-in">Walk-in</option>
-                      <option value="Ambulance">Ambulance</option>
-                      <option value="Referred">Referred</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-[11px] text-slate-500 font-semibold mb-1">Case Category Type</label>
-                    <select
-                      value={currentCase.patient.caseType}
-                      onChange={(e) => {
-                        const val = e.target.value as any;
-                        setCurrentCase(prev => ({ ...prev, patient: { ...prev.patient, caseType: val } }));
-                      }}
-                      className="w-full px-3 py-2 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-xs font-semibold focus:ring-1 focus:ring-blue-500 text-slate-800 dark:text-white"
-                    >
-                      <option value="Medical">Medical</option>
-                      <option value="Trauma">Trauma Case</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div className="pt-2 pb-2">
-                  <MlcCaseToggle
-                    state={{
-                      isMlc: currentCase.patient.isMlc || false,
-                      natureOfIncident: currentCase.patient.mlcDetails?.natureOfIncident || "",
-                      dateTimeOfIncident: currentCase.patient.mlcDetails?.dateTimeOfIncident || "",
-                      placeOfIncident: currentCase.patient.mlcDetails?.placeOfIncident || "",
-                      identificationMark: currentCase.patient.mlcDetails?.identificationMark || "",
-                      informantBroughtBy: currentCase.patient.mlcDetails?.informantBroughtBy || "",
-                    }}
-                    onChange={(s) => {
-                      setCurrentCase(prev => ({
-                        ...prev,
-                        patient: {
-                          ...prev.patient,
-                          isMlc: s.isMlc,
-                          mlcDetails: {
-                            ...(prev.patient.mlcDetails || {} as any),
-                            natureOfIncident: s.natureOfIncident,
-                            dateTimeOfIncident: s.dateTimeOfIncident,
-                            placeOfIncident: s.placeOfIncident,
-                            identificationMark: s.identificationMark,
-                            informantBroughtBy: s.informantBroughtBy,
-                          }
-                        }
-                      }));
-                    }}
-                  />
-                </div>
-
                 <div className="pt-2">
                   <div className="flex items-center justify-between mb-1">
                     <label className="block text-[11px] text-slate-500 font-semibold">Presenting Chief Complaint</label>
@@ -3199,10 +3083,12 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                     conditionAtShift: currentCase.pediatricDetails?.dispositionConditionAtShift || "",
                     dispositionType: (currentCase as any).disposition?.dispositionType || "Ward",
                     differentialDiagnosis: currentCase.differentials ? currentCase.differentials.map((d: any) => d.diagnosis).join(", ") : "",
-                    emResident: currentCase.pediatricDetails?.dispositionEmResident || (currentCase as any).treatingERPhysician || "",
+                    emResident: currentCase.pediatricDetails?.dispositionEmResident || currentCase.doctorName || "",
                     emConsultant: currentCase.pediatricDetails?.dispositionEmConsultant || ""
                   }}
-                  onChange={s => setCurrentCase(prev => ({
+                  onChange={s => setCurrentCase(prev => {
+                    let updatedDisposition = (prev as any).disposition || { recommendedSpecialty: "", estimatedStayHrs: 0, dispositionType: "Ward" };
+                    return {
                     ...prev,
                     pediatricDetails: {
                       ...(prev.pediatricDetails || {}),
@@ -3212,33 +3098,13 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                       dispositionEmConsultant: s.emConsultant
                     },
                     disposition: {
-                      ...((prev as any).disposition || { recommendedSpecialty: "", estimatedStayHrs: 0, dispositionType: "Ward" }),
+                      ...updatedDisposition,
                       dispositionType: s.dispositionType as any
                     }
-                  }))}
+                  } as ClinicalCase;
+                  })}
                 />
               )}
-
-              <div>
-                <h3 className="text-sm font-bold text-slate-800 dark:text-white border-b pb-2 flex items-center gap-1.5">
-                  <User className="w-4 h-4 text-blue-500" />
-                  Demographics & Registration Details
-                </h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs mt-3">
-                  <div className="space-y-2 bg-slate-50 dark:bg-slate-900 p-4 rounded-xl border border-slate-100 dark:border-slate-850">
-                    <p><span className="font-semibold text-slate-400">Case ID:</span> <span className="font-mono font-bold text-slate-700 dark:text-slate-200">{currentCase.id}</span></p>
-                    <p><span className="font-semibold text-slate-400">UHID (JCI Identifier):</span> <span className="font-mono font-bold text-slate-700 dark:text-slate-200">{currentCase.patient.uhid || "Not Provided"}</span></p>
-                    <p><span className="font-semibold text-slate-400">Patient Name:</span> <span className="font-bold text-slate-700 dark:text-slate-200">{currentCase.patient.name}</span></p>
-                    <p><span className="font-semibold text-slate-400">Age / Gender:</span> <span className="font-semibold text-slate-700 dark:text-slate-200">{currentCase.patient.age || "N/A"} years | {currentCase.patient.gender}</span></p>
-                  </div>
-                  <div className="space-y-2 bg-slate-50 dark:bg-slate-900 p-4 rounded-xl border border-slate-100 dark:border-slate-850">
-                    <p><span className="font-semibold text-slate-400">Case Classification:</span> <span className="font-bold text-blue-600 dark:text-blue-400">{currentCase.patient.caseType} Mode</span></p>
-                    <p><span className="font-semibold text-slate-400">Triage Assignment:</span> <span className="font-semibold text-slate-700 dark:text-slate-200">{currentCase.patient.triageCategory}</span></p>
-                    <p><span className="font-semibold text-slate-400">DateTime Opened:</span> <span className="font-mono text-slate-700 dark:text-slate-200">{currentCase.patient.dateOpened}</span></p>
-                    <p><span className="font-semibold text-slate-400">Medico-Legal Case:</span> <span className={`font-bold px-2 py-0.5 rounded text-[10px] ${currentCase.patient.isMlc ? "bg-amber-100 text-amber-800" : "bg-slate-100 text-slate-600"}`}>{currentCase.patient.isMlc ? "YES (MLC Active)" : "NO"}</span></p>
-                  </div>
-                </div>
-              </div>
 
               {/* NABH Mandated Disposition & Log Panel  */}
               <div className="border-t border-slate-150 dark:border-slate-850 pt-5 space-y-4">
@@ -3995,25 +3861,10 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                       }
                     }))}
                   />
-                  <PediatricEfastSection
-                    state={{
-                      heart: currentCase.pediatricDetails?.adjuvantEfastHeart || "",
-                      abdomen: currentCase.pediatricDetails?.adjuvantEfastAbdomen || "",
-                      lungs: currentCase.pediatricDetails?.adjuvantEfastLungs || "",
-                      pelvis: currentCase.pediatricDetails?.adjuvantEfastPelvis || "",
-                      extremities: currentCase.pediatricDetails?.adjuvantEfastExtremities || ""
-                    }}
-                    onChange={s => setCurrentCase(prev => ({
-                      ...prev,
-                      pediatricDetails: {
-                        ...(prev.pediatricDetails || {}),
-                        adjuvantEfastHeart: s.heart,
-                        adjuvantEfastAbdomen: s.abdomen,
-                        adjuvantEfastLungs: s.lungs,
-                        adjuvantEfastPelvis: s.pelvis,
-                        adjuvantEfastExtremities: s.extremities
-                      }
-                    }))}
+                  <IsolatedPrimarySurveyAdjuncts
+                    data={currentCase.primaryAssessment?.survey || getInitialPrimarySurvey(currentCase.patient.caseType)}
+                    onChange={handleSurveyChange}
+                    onInterpretABG={handleInterpretABG}
                   />
                 </div>
               ) : (
@@ -4202,28 +4053,20 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
           {activeTab === "disposition" && (
             <div className="space-y-6">
               <div className="flex justify-end mb-2"><SaveSectionButton onSave={handleSave} /></div>
-              <div 
-                className="border pb-2.5 pt-2.5 px-3 rounded-lg border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 flex items-center justify-between cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-                onClick={() => setShowJciForm(!showJciForm)}
-              >
+<div className="border-b pb-2.5 flex items-center justify-between">
                 <div>
-                  <h3 className="text-sm font-bold text-slate-800 dark:text-white uppercase tracking-wide flex items-center gap-2">
+                  <h3 className="text-sm font-bold text-slate-800 dark:text-white uppercase tracking-wide">
                     JCI & NABH Accreditation Audit Form
-                    <span className="text-[10px] bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-bold uppercase flex items-center gap-1 font-mono">
-                      <Shield className="w-3 h-3" /> JCI IPSG Compliant
-                    </span>
                   </h3>
-                  <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">Mandated safety metrics and checklist audits (Optional).</p>
+                  <p className="text-[10px] text-slate-400">Mandated safety metrics and checklist audits.</p>
                 </div>
-                <div className="p-1">
-                  {showJciForm ? <ChevronDown className="w-5 h-5 text-slate-400" /> : <ChevronRight className="w-5 h-5 text-slate-400" />}
-                </div>
+                <span className="text-[10px] bg-blue-100 text-blue-700 px-3 py-1 rounded-full font-bold uppercase flex items-center gap-1 font-mono">
+                  <Shield className="w-3.5 h-3.5" /> JCI IPSG Compliant
+                </span>
               </div>
 
-              {showJciForm && (
-                <div className="space-y-6 animate-in fade-in slide-in-from-top-2">
-                  {/* IPSG Checklist Block  */}
-                  <div className="bg-slate-50 dark:bg-slate-900 p-4 border border-slate-200 dark:border-slate-850 rounded-xl space-y-3">
+              {/* IPSG Checklist Block  */}
+              <div className="bg-slate-50 dark:bg-slate-900 p-4 border border-slate-200 dark:border-slate-850 rounded-xl space-y-3">
                 <div className="flex items-center gap-1.5 border-b pb-2 border-slate-100 dark:border-slate-800">
                   <ClipboardCheck className="w-4.5 h-4.5 text-blue-600" />
                   <h4 className="font-extrabold text-xs text-slate-700 dark:text-slate-300 uppercase tracking-wide">
@@ -4554,8 +4397,6 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                   </label>
                 </div>
               </div>
-              </div>
-              )}
             </div>
           )}
 
@@ -6076,7 +5917,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
               </button>
               <button
                 type="button"
-                onClick={() => { handleSave(); onBack(); }}
+                onClick={async () => { await handleSave(); onBack(); }}
                 className="px-6 py-2.5 bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 hover:from-emerald-700 hover:to-teal-800 text-white text-xs font-black rounded-xl shadow-md hover:shadow-lg transition-all flex items-center gap-2 cursor-pointer transform hover:scale-[1.01] active:scale-[0.99] border border-emerald-500/50"
               >
                 <Save className="w-4 h-4 text-emerald-200" />
@@ -6183,23 +6024,17 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                 />
                 
                 {/* Voice toggle button  */}
-                <div className="absolute right-3.5 bottom-3.5">
-                  <VoiceRecorder
-                    languageCode={dictationLang}
-                    renderMode="compact-button"
-                    onRecordingStateChange={(recording) => {
-                      if (recording && !isListening) {
-                        // Keep parent state in sync if needed for UI
-                        // startRecording(); 
-                        // Actually VoiceRecorder handles its own state, but we can set a dummy state if needed.
-                        // For now just let VoiceRecorder handle it.
-                      }
-                    }}
-                    onTranscript={(text) => {
-                      setSmartDictationText(prev => prev ? (prev.trim() + " " + text.trim()) : text.trim());
-                    }}
-                  />
-                </div>
+                <button
+                  onClick={toggleRecording}
+                  className={`absolute right-3 bottom-3 p-2.5 rounded-full shadow-md transition-all ${
+                    isListening 
+                      ? "bg-rose-500 text-white animate-pulse" 
+                      : "bg-purple-600 text-white hover:bg-purple-700 hover:scale-105"
+                  }`}
+                  title={isListening ? "Stop Recording" : "Start Live Mic Dictation"}
+                >
+                  <Mic className="w-4.5 h-4.5" />
+                </button>
               </div>
 
               {isListening && (

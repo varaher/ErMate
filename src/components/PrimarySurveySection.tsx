@@ -1,3 +1,223 @@
+
+export function PrimarySurveyAdjuncts({ data, onChange, openSections, toggleSection, onInterpretABG }: any) {
+  return (
+    <>
+      <h3 className="text-lg text-slate-800 dark:text-slate-200 mt-6 mb-3 px-1">Adjuncts to Primary Survey</h3>
+
+      {/* ── ABG / VBG ─────────────────────────────────────────── */}
+      <AccordionItem
+        title="ABG / VBG"
+        iconLetter="?"
+        iconBgClass="bg-emerald-600"
+        iconTextClass="text-emerald-600"
+        isOpen={openSections.abg}
+        onToggle={() => toggleSection('abg')}
+      >
+        <div className="flex gap-3 mb-4">
+          <button className="flex-1 flex items-center justify-center gap-2 border border-emerald-500 text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 py-2 rounded-lg text-sm font-bold">
+            <Camera className="w-4 h-4" /> Camera
+          </button>
+          <button className="flex-1 flex items-center justify-center gap-2 border border-emerald-500 text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 py-2 rounded-lg text-sm font-bold">
+            <ImageIcon className="w-4 h-4" /> Gallery
+          </button>
+        </div>
+        <button className="w-full flex items-center justify-center gap-2 border border-emerald-500 text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 py-2 rounded-lg text-sm font-bold mb-4">
+          <CheckCircle className="w-4 h-4" /> Fill Normal Values
+        </button>
+
+        <div className="grid grid-cols-2 gap-4 mb-4">
+          <DropdownSelect
+            label="Sample Type"
+            options={["Arterial (ABG)", "Venous (VBG)"]}
+            value={data.adjuncts?.abg?.sampleType}
+            onChange={(v) => onChange("adjuncts.abg.sampleType", v)}
+          />
+          <DropdownSelect
+            label="Interpretation"
+            options={["Not done", "Normal", "Abnormal"]}
+            value={data.adjuncts?.abg?.interpretation}
+            onChange={(v) => onChange("adjuncts.abg.interpretation", v)}
+          />
+        </div>
+
+        <div className="bg-slate-50 dark:bg-slate-900 p-3 rounded-lg text-xs mb-4">
+          <div className="font-bold text-emerald-600 dark:text-emerald-400 mb-2">Normal Values Reference</div>
+          <div className="grid grid-cols-2 gap-y-1">
+            <div className="flex justify-between px-2"><span className="text-slate-500">pH</span><span>7.35 - 7.45</span></div>
+            <div className="flex justify-between px-2"><span className="text-slate-500">pCO₂</span><span>35 - 45 mmHg</span></div>
+            <div className="flex justify-between px-2"><span className="text-slate-500">pO₂</span><span>80 - 100 mmHg</span></div>
+            <div className="flex justify-between px-2"><span className="text-slate-500">HCO₃</span><span>22 - 26 mEq/L</span></div>
+            <div className="flex justify-between px-2"><span className="text-slate-500">BE</span><span>-2 to +2</span></div>
+            <div className="flex justify-between px-2"><span className="text-slate-500">Lactate</span><span>0.5 - 2.0</span></div>
+            <div className="flex justify-between px-2"><span className="text-slate-500">SaO₂</span><span>95 - 100%</span></div>
+            <div className="flex justify-between px-2"><span className="text-slate-500">A-a</span><span>&lt;10-15</span></div>
+          </div>
+        </div>
+
+        <div className="text-sm font-bold mb-2">Blood Gas Values (Optional)</div>
+        <div className="grid grid-cols-4 gap-3 mb-4">
+          <VitalInput label="pH" value={data.adjuncts?.abg?.ph} onChange={(v) => onChange("adjuncts.abg.ph", v)} />
+          <VitalInput label="pCO₂" value={data.adjuncts?.abg?.pco2} onChange={(v) => onChange("adjuncts.abg.pco2", v)} />
+          <VitalInput label="pO₂" value={data.adjuncts?.abg?.po2} onChange={(v) => onChange("adjuncts.abg.po2", v)} />
+          <VitalInput label="HCO₃" value={data.adjuncts?.abg?.hco3} onChange={(v) => onChange("adjuncts.abg.hco3", v)} />
+          <VitalInput label="BE" value={data.adjuncts?.abg?.be} onChange={(v) => onChange("adjuncts.abg.be", v)} />
+          <VitalInput label="Lactate" value={data.adjuncts?.abg?.lactate} onChange={(v) => onChange("adjuncts.abg.lactate", v)} />
+          <VitalInput label="SaO₂%" value={data.adjuncts?.abg?.sao2} onChange={(v) => onChange("adjuncts.abg.sao2", v)} />
+          <VitalInput label="FiO₂%" value={data.adjuncts?.abg?.fio2} onChange={(v) => onChange("adjuncts.abg.fio2", v)} />
+        </div>
+
+        <div className="text-sm font-bold mb-2">Electrolytes (Optional)</div>
+        <div className="grid grid-cols-4 gap-3 mb-4">
+          <VitalInput label="Na⁺" value={data.adjuncts?.abg?.na} onChange={(v) => onChange("adjuncts.abg.na", v)} />
+          <VitalInput label="K⁺" value={data.adjuncts?.abg?.k} onChange={(v) => onChange("adjuncts.abg.k", v)} />
+          <VitalInput label="Cl⁻" value={data.adjuncts?.abg?.cl} onChange={(v) => onChange("adjuncts.abg.cl", v)} />
+          <VitalInput label="AG" value={data.adjuncts?.abg?.ag} onChange={(v) => onChange("adjuncts.abg.ag", v)} />
+          <VitalInput label="Glucose" value={data.adjuncts?.abg?.glucose} onChange={(v) => onChange("adjuncts.abg.glucose", v)} />
+          <VitalInput label="Hb" value={data.adjuncts?.abg?.hb} onChange={(v) => onChange("adjuncts.abg.hb", v)} />
+          <VitalInput label="A-a" value={data.adjuncts?.abg?.aa} onChange={(v) => onChange("adjuncts.abg.aa", v)} />
+        </div>
+
+        <div className="mb-4">
+          <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wide block mb-1">Additional Notes</label>
+          <div className="flex gap-2">
+            <textarea
+              placeholder="Sample time, clinical context, etc..."
+              value={data.adjuncts?.abg?.notes || ""}
+              onChange={(e) => onChange("adjuncts.abg.notes", e.target.value)}
+              className="flex-1 w-full px-3 py-2 rounded-lg text-sm bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              rows={3}
+            />
+            <VoiceRecorder
+              renderMode="compact-button"
+              onTranscript={(txt) => onChange("adjuncts.abg.notes", (data.adjuncts?.abg?.notes ? data.adjuncts?.abg?.notes + " " : "") + txt)}
+            />
+          </div>
+        </div>
+
+        <button type="button" onClick={onInterpretABG} className="w-full bg-indigo-500 hover:bg-indigo-600 active:scale-95 text-white font-bold py-2 rounded-lg mb-4 flex items-center justify-center gap-2 transition-all cursor-pointer shadow-sm">
+          <Activity className="w-4 h-4" /> Interpret ABG
+        </button>
+
+        <div className="mb-4">
+          <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wide block mb-1">Final ABG Diagnosis</label>
+          <div className="flex gap-2">
+            <textarea
+              placeholder="e.g. Mixed respiratory and metabolic acidosis with lactic acidosis"
+              value={data.adjuncts?.abg?.finalDiagnosis || ""}
+              onChange={(e) => onChange("adjuncts.abg.finalDiagnosis", e.target.value)}
+              className="flex-1 w-full px-3 py-2 rounded-lg text-sm bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              rows={2}
+            />
+            <VoiceRecorder
+              renderMode="compact-button"
+              onTranscript={(txt) => onChange("adjuncts.abg.finalDiagnosis", (data.adjuncts?.abg?.finalDiagnosis ? data.adjuncts?.abg?.finalDiagnosis + " " : "") + txt)}
+            />
+          </div>
+        </div>
+
+        <div>
+          <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wide block mb-1">Your Interpretation (Optional)</label>
+          <div className="flex gap-2">
+            <textarea
+              placeholder="Your clinical interpretation of the ABG..."
+              value={data.adjuncts?.abg?.clinicalInterpretation || ""}
+              onChange={(e) => onChange("adjuncts.abg.clinicalInterpretation", e.target.value)}
+              className="flex-1 w-full px-3 py-2 rounded-lg text-sm bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              rows={2}
+            />
+            <VoiceRecorder
+              renderMode="compact-button"
+              onTranscript={(txt) => onChange("adjuncts.abg.clinicalInterpretation", (data.adjuncts?.abg?.clinicalInterpretation ? data.adjuncts?.abg?.clinicalInterpretation + " " : "") + txt)}
+            />
+          </div>
+        </div>
+      </AccordionItem>
+
+      {/* ── ECG ─────────────────────────────────────────── */}
+      <AccordionItem
+        title="ECG"
+        iconLetter="?"
+        iconBgClass="bg-emerald-600"
+        iconTextClass="text-emerald-600"
+        isOpen={openSections.ecg}
+        onToggle={() => toggleSection('ecg')}
+      >
+        <DropdownSelect
+          label="ECG Interpretation"
+          options={[
+            "Not done",
+            "Normal sinus rhythm",
+            "Sinus tachycardia",
+            "Sinus bradycardia",
+            "Atrial fibrillation",
+            "Atrial flutter",
+            "SVT",
+            "VT",
+            "VF",
+            "STEMI"
+          ]}
+          value={data.adjuncts?.ecgStatus}
+          onChange={(v) => onChange("adjuncts.ecgStatus", v)}
+        />
+      </AccordionItem>
+
+      {/* ── EFAST ─────────────────────────────────────────── */}
+      <AccordionItem
+        title="EFAST"
+        iconLetter="?"
+        iconBgClass="bg-emerald-600"
+        iconTextClass="text-emerald-600"
+        isOpen={openSections.efast}
+        onToggle={() => toggleSection('efast')}
+      >
+        <DropdownSelect
+          label="EFAST Result"
+          options={[
+            "Not done",
+            "Negative",
+            "Positive - RUQ",
+            "Positive - LUQ",
+            "Positive - Pelvis",
+            "Positive - Pericardial",
+            "Positive - Pneumothorax",
+            "Positive - Multiple"
+          ]}
+          value={data.adjuncts?.efastStatus}
+          onChange={(v) => onChange("adjuncts.efastStatus", v)}
+        />
+      </AccordionItem>
+
+      {/* ── Bedside Echo ─────────────────────────────────────────── */}
+      <AccordionItem
+        title="Bedside Echo"
+        iconLetter="?"
+        iconBgClass="bg-emerald-600"
+        iconTextClass="text-emerald-600"
+        isOpen={openSections.bedsideEcho}
+        onToggle={() => toggleSection('bedsideEcho')}
+      >
+        <DropdownSelect
+          label="Bedside Echo Result"
+          options={[
+            "Not done",
+            "Normal",
+            "Reduced EF",
+            "RV strain",
+            "Pericardial effusion",
+            "Tamponade physiology",
+            "Hypovolemia (IVC collapse)"
+          ]}
+          value={data.adjuncts?.echoStatus}
+          onChange={(v) => onChange("adjuncts.echoStatus", v)}
+        />
+      </AccordionItem>
+
+    
+    </>
+  );
+}
+
+
 import VoiceRecorder from "./shared/VoiceRecorder";
 import React, { useState } from "react";
 import { PrimarySurvey, PatientVitals } from "../types";
@@ -57,7 +277,7 @@ function QuickSelect({
   );
 }
 
-function VitalInput({
+export function VitalInput({
   label,
   unit,
   placeholder,
@@ -156,7 +376,7 @@ function TextInput({
   );
 }
 
-function DropdownSelect({
+export function DropdownSelect({
   label,
   options,
   value,
@@ -193,7 +413,7 @@ function DropdownSelect({
   );
 }
 
-function AccordionItem({
+export function AccordionItem({
   title,
   iconLetter,
   iconBgClass,
@@ -657,216 +877,23 @@ export function PrimarySurveySection({
         )}
       </AccordionItem>
 
-      <h3 className="text-lg text-slate-800 dark:text-slate-200 mt-6 mb-3 px-1">Adjuncts to Primary Survey</h3>
-
-      {/* ── ABG / VBG ─────────────────────────────────────────── */}
-      <AccordionItem
-        title="ABG / VBG"
-        iconLetter="?"
-        iconBgClass="bg-emerald-600"
-        iconTextClass="text-emerald-600"
-        isOpen={openSections.abg}
-        onToggle={() => toggleSection('abg')}
-      >
-        <div className="flex gap-3 mb-4">
-          <button className="flex-1 flex items-center justify-center gap-2 border border-emerald-500 text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 py-2 rounded-lg text-sm font-bold">
-            <Camera className="w-4 h-4" /> Camera
-          </button>
-          <button className="flex-1 flex items-center justify-center gap-2 border border-emerald-500 text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 py-2 rounded-lg text-sm font-bold">
-            <ImageIcon className="w-4 h-4" /> Gallery
-          </button>
-        </div>
-        <button className="w-full flex items-center justify-center gap-2 border border-emerald-500 text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 py-2 rounded-lg text-sm font-bold mb-4">
-          <CheckCircle className="w-4 h-4" /> Fill Normal Values
-        </button>
-
-        <div className="grid grid-cols-2 gap-4 mb-4">
-          <DropdownSelect
-            label="Sample Type"
-            options={["Arterial (ABG)", "Venous (VBG)"]}
-            value={data.adjuncts?.abg?.sampleType}
-            onChange={(v) => onChange("adjuncts.abg.sampleType", v)}
-          />
-          <DropdownSelect
-            label="Interpretation"
-            options={["Not done", "Normal", "Abnormal"]}
-            value={data.adjuncts?.abg?.interpretation}
-            onChange={(v) => onChange("adjuncts.abg.interpretation", v)}
-          />
-        </div>
-
-        <div className="bg-slate-50 dark:bg-slate-900 p-3 rounded-lg text-xs mb-4">
-          <div className="font-bold text-emerald-600 dark:text-emerald-400 mb-2">Normal Values Reference</div>
-          <div className="grid grid-cols-2 gap-y-1">
-            <div className="flex justify-between px-2"><span className="text-slate-500">pH</span><span>7.35 - 7.45</span></div>
-            <div className="flex justify-between px-2"><span className="text-slate-500">pCO₂</span><span>35 - 45 mmHg</span></div>
-            <div className="flex justify-between px-2"><span className="text-slate-500">pO₂</span><span>80 - 100 mmHg</span></div>
-            <div className="flex justify-between px-2"><span className="text-slate-500">HCO₃</span><span>22 - 26 mEq/L</span></div>
-            <div className="flex justify-between px-2"><span className="text-slate-500">BE</span><span>-2 to +2</span></div>
-            <div className="flex justify-between px-2"><span className="text-slate-500">Lactate</span><span>0.5 - 2.0</span></div>
-            <div className="flex justify-between px-2"><span className="text-slate-500">SaO₂</span><span>95 - 100%</span></div>
-            <div className="flex justify-between px-2"><span className="text-slate-500">A-a</span><span>&lt;10-15</span></div>
-          </div>
-        </div>
-
-        <div className="text-sm font-bold mb-2">Blood Gas Values (Optional)</div>
-        <div className="grid grid-cols-4 gap-3 mb-4">
-          <VitalInput label="pH" value={data.adjuncts?.abg?.ph} onChange={(v) => onChange("adjuncts.abg.ph", v)} />
-          <VitalInput label="pCO₂" value={data.adjuncts?.abg?.pco2} onChange={(v) => onChange("adjuncts.abg.pco2", v)} />
-          <VitalInput label="pO₂" value={data.adjuncts?.abg?.po2} onChange={(v) => onChange("adjuncts.abg.po2", v)} />
-          <VitalInput label="HCO₃" value={data.adjuncts?.abg?.hco3} onChange={(v) => onChange("adjuncts.abg.hco3", v)} />
-          <VitalInput label="BE" value={data.adjuncts?.abg?.be} onChange={(v) => onChange("adjuncts.abg.be", v)} />
-          <VitalInput label="Lactate" value={data.adjuncts?.abg?.lactate} onChange={(v) => onChange("adjuncts.abg.lactate", v)} />
-          <VitalInput label="SaO₂%" value={data.adjuncts?.abg?.sao2} onChange={(v) => onChange("adjuncts.abg.sao2", v)} />
-          <VitalInput label="FiO₂%" value={data.adjuncts?.abg?.fio2} onChange={(v) => onChange("adjuncts.abg.fio2", v)} />
-        </div>
-
-        <div className="text-sm font-bold mb-2">Electrolytes (Optional)</div>
-        <div className="grid grid-cols-4 gap-3 mb-4">
-          <VitalInput label="Na⁺" value={data.adjuncts?.abg?.na} onChange={(v) => onChange("adjuncts.abg.na", v)} />
-          <VitalInput label="K⁺" value={data.adjuncts?.abg?.k} onChange={(v) => onChange("adjuncts.abg.k", v)} />
-          <VitalInput label="Cl⁻" value={data.adjuncts?.abg?.cl} onChange={(v) => onChange("adjuncts.abg.cl", v)} />
-          <VitalInput label="AG" value={data.adjuncts?.abg?.ag} onChange={(v) => onChange("adjuncts.abg.ag", v)} />
-          <VitalInput label="Glucose" value={data.adjuncts?.abg?.glucose} onChange={(v) => onChange("adjuncts.abg.glucose", v)} />
-          <VitalInput label="Hb" value={data.adjuncts?.abg?.hb} onChange={(v) => onChange("adjuncts.abg.hb", v)} />
-          <VitalInput label="A-a" value={data.adjuncts?.abg?.aa} onChange={(v) => onChange("adjuncts.abg.aa", v)} />
-        </div>
-
-        <div className="mb-4">
-          <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wide block mb-1">Additional Notes</label>
-          <div className="flex gap-2">
-            <textarea
-              placeholder="Sample time, clinical context, etc..."
-              value={data.adjuncts?.abg?.notes || ""}
-              onChange={(e) => onChange("adjuncts.abg.notes", e.target.value)}
-              className="flex-1 w-full px-3 py-2 rounded-lg text-sm bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-              rows={3}
-            />
-            <VoiceRecorder
-              renderMode="compact-button"
-              onTranscript={(txt) => onChange("adjuncts.abg.notes", (data.adjuncts?.abg?.notes ? data.adjuncts?.abg?.notes + " " : "") + txt)}
-            />
-          </div>
-        </div>
-
-        <button type="button" onClick={onInterpretABG} className="w-full bg-indigo-500 hover:bg-indigo-600 active:scale-95 text-white font-bold py-2 rounded-lg mb-4 flex items-center justify-center gap-2 transition-all cursor-pointer shadow-sm">
-          <Activity className="w-4 h-4" /> Interpret ABG
-        </button>
-
-        <div className="mb-4">
-          <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wide block mb-1">Final ABG Diagnosis</label>
-          <div className="flex gap-2">
-            <textarea
-              placeholder="e.g. Mixed respiratory and metabolic acidosis with lactic acidosis"
-              value={data.adjuncts?.abg?.finalDiagnosis || ""}
-              onChange={(e) => onChange("adjuncts.abg.finalDiagnosis", e.target.value)}
-              className="flex-1 w-full px-3 py-2 rounded-lg text-sm bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-              rows={2}
-            />
-            <VoiceRecorder
-              renderMode="compact-button"
-              onTranscript={(txt) => onChange("adjuncts.abg.finalDiagnosis", (data.adjuncts?.abg?.finalDiagnosis ? data.adjuncts?.abg?.finalDiagnosis + " " : "") + txt)}
-            />
-          </div>
-        </div>
-
-        <div>
-          <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wide block mb-1">Your Interpretation (Optional)</label>
-          <div className="flex gap-2">
-            <textarea
-              placeholder="Your clinical interpretation of the ABG..."
-              value={data.adjuncts?.abg?.clinicalInterpretation || ""}
-              onChange={(e) => onChange("adjuncts.abg.clinicalInterpretation", e.target.value)}
-              className="flex-1 w-full px-3 py-2 rounded-lg text-sm bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-              rows={2}
-            />
-            <VoiceRecorder
-              renderMode="compact-button"
-              onTranscript={(txt) => onChange("adjuncts.abg.clinicalInterpretation", (data.adjuncts?.abg?.clinicalInterpretation ? data.adjuncts?.abg?.clinicalInterpretation + " " : "") + txt)}
-            />
-          </div>
-        </div>
-      </AccordionItem>
-
-      {/* ── ECG ─────────────────────────────────────────── */}
-      <AccordionItem
-        title="ECG"
-        iconLetter="?"
-        iconBgClass="bg-emerald-600"
-        iconTextClass="text-emerald-600"
-        isOpen={openSections.ecg}
-        onToggle={() => toggleSection('ecg')}
-      >
-        <DropdownSelect
-          label="ECG Interpretation"
-          options={[
-            "Not done",
-            "Normal sinus rhythm",
-            "Sinus tachycardia",
-            "Sinus bradycardia",
-            "Atrial fibrillation",
-            "Atrial flutter",
-            "SVT",
-            "VT",
-            "VF",
-            "STEMI"
-          ]}
-          value={data.adjuncts?.ecgStatus}
-          onChange={(v) => onChange("adjuncts.ecgStatus", v)}
-        />
-      </AccordionItem>
-
-      {/* ── EFAST ─────────────────────────────────────────── */}
-      <AccordionItem
-        title="EFAST"
-        iconLetter="?"
-        iconBgClass="bg-emerald-600"
-        iconTextClass="text-emerald-600"
-        isOpen={openSections.efast}
-        onToggle={() => toggleSection('efast')}
-      >
-        <DropdownSelect
-          label="EFAST Result"
-          options={[
-            "Not done",
-            "Negative",
-            "Positive - RUQ",
-            "Positive - LUQ",
-            "Positive - Pelvis",
-            "Positive - Pericardial",
-            "Positive - Pneumothorax",
-            "Positive - Multiple"
-          ]}
-          value={data.adjuncts?.efastStatus}
-          onChange={(v) => onChange("adjuncts.efastStatus", v)}
-        />
-      </AccordionItem>
-
-      {/* ── Bedside Echo ─────────────────────────────────────────── */}
-      <AccordionItem
-        title="Bedside Echo"
-        iconLetter="?"
-        iconBgClass="bg-emerald-600"
-        iconTextClass="text-emerald-600"
-        isOpen={openSections.bedsideEcho}
-        onToggle={() => toggleSection('bedsideEcho')}
-      >
-        <DropdownSelect
-          label="Bedside Echo Result"
-          options={[
-            "Not done",
-            "Normal",
-            "Reduced EF",
-            "RV strain",
-            "Pericardial effusion",
-            "Tamponade physiology",
-            "Hypovolemia (IVC collapse)"
-          ]}
-          value={data.adjuncts?.echoStatus}
-          onChange={(v) => onChange("adjuncts.echoStatus", v)}
-        />
-      </AccordionItem>
-
-    </div>
+      <PrimarySurveyAdjuncts data={data} onChange={onChange} openSections={openSections} toggleSection={toggleSection} onInterpretABG={onInterpretABG} />
+</div>
   );
+}
+
+
+export function IsolatedPrimarySurveyAdjuncts({ data, onChange, onInterpretABG }: any) {
+  const [openSections, setOpenSections] = React.useState({
+    abg: true,
+    ecg: true,
+    efast: true,
+    bedsideEcho: true
+  });
+  
+  const toggleSection = (section: string) => {
+    setOpenSections(prev => ({ ...prev, [section]: !prev[section] }));
+  };
+
+  return <PrimarySurveyAdjuncts data={data} onChange={onChange} openSections={openSections} toggleSection={toggleSection} onInterpretABG={onInterpretABG} />;
 }

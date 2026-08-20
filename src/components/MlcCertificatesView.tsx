@@ -257,7 +257,7 @@ function MlcCertificatePreview({ clinicalCase, profile }: { clinicalCase: Clinic
   };
 
   const getSecondaryList = () => {
-    const s = c;
+    const s = c as any;
     const items = [];
     if (s.secondaryPicle && s.secondaryPicle !== "Normal") items.push(`Head/Neck: ${s.secondaryPicle}`);
     if (s.secondaryChest && s.secondaryChest !== "Normal") items.push(`Chest: ${s.secondaryChest}`);
@@ -266,7 +266,7 @@ function MlcCertificatePreview({ clinicalCase, profile }: { clinicalCase: Clinic
     if (s.secondaryExtremities && s.secondaryExtremities !== "Normal") items.push(`Extremities: ${s.secondaryExtremities}`);
     if (s.secondaryCns && s.secondaryCns !== "Normal") items.push(`Neurological: ${s.secondaryCns}`);
     if (s.skin && s.skin !== "Normal") items.push(`Skin: ${s.skin}`);
-    if (m.additionalNotes) items.push(`Other Notes: ${m.additionalNotes}`);
+    if ((m as any).additionalNotes) items.push(`Other Notes: ${(m as any).additionalNotes}`);
     return items;
   };
 
@@ -303,25 +303,25 @@ function MlcCertificatePreview({ clinicalCase, profile }: { clinicalCase: Clinic
 
         <div className="space-y-4 text-sm leading-relaxed">
           <div className="grid grid-cols-2 gap-4 mb-2">
-            <div><strong>1. Serial No:</strong> {c.uhid || "_________________"}</div>
-            <div><strong>2. Date & Time of Examination:</strong> {new Date(c.patient.arrivalTime).toLocaleString()}</div>
+            <div><strong>1. Serial No:</strong> {(c as any).uhid || "_________________"}</div>
+            <div><strong>2. Date & Time of Examination:</strong> {new Date((c.patient as any).arrivalTime || c.patient.dateOpened).toLocaleString()}</div>
           </div>
 
           <div><strong>3. Name, Sex & Age:</strong> {c.patient.name}, {c.patient.gender} / {c.patient.age} years</div>
-          <div><strong>4. Address:</strong> {m.placeOfIncident || "__________________________________________________________"}</div>
-          <div><strong>5. Identification Marks:</strong> {m.identificationMark || "1) ________________________ 2) ________________________"}</div>
-          <div><strong>6. Brought by (Name & Address):</strong> {m.informantBroughtBy || "____________________________________"}</div>
-          <div><strong>7. History was stated by:</strong> {m.historyStatedBy || "____________________________________"}</div>
+          <div><strong>4. Address:</strong> {(m as any).placeOfIncident || "__________________________________________________________"}</div>
+          <div><strong>5. Identification Marks:</strong> {(m as any).identificationMark || "1) ________________________ 2) ________________________"}</div>
+          <div><strong>6. Brought by (Name & Address):</strong> {(m as any).informantBroughtBy || "____________________________________"}</div>
+          <div><strong>7. History was stated by:</strong> {(m as any).historyStatedBy || "____________________________________"}</div>
           
           <div className="mt-4">
             <strong>8. History and alleged cause of injury:</strong>
-            <p className="mt-1 pl-4 min-h-[40px] whitespace-pre-wrap">{m.allegedCauseOfInjury || "__________________________________________________________________"}</p>
+            <p className="mt-1 pl-4 min-h-[40px] whitespace-pre-wrap">{(m as any).allegedCauseOfInjury || "__________________________________________________________________"}</p>
           </div>
 
           <div className="mt-4">
             <strong>9. Findings of physical examination:</strong>
             <div className="pl-4 mt-1 grid grid-cols-2 gap-y-1">
-              <div><span className="font-semibold">Central Nervous System:</span> {c.primaryAssessment?.disability?.gcsTotal ? `GCS ${c.primaryAssessment.disability.gcsTotal}` : (c.primaryAssessment?.disability?.avpu || "___________")}</div>
+              <div><span className="font-semibold">Central Nervous System:</span> {(c.primaryAssessment as any)?.disability?.gcsTotal ? `GCS ${(c.primaryAssessment as any).disability.gcsTotal}` : ((c.primaryAssessment as any)?.disability?.avpu || "___________")}</div>
               <div><span className="font-semibold">Respiratory System:</span> {c.primaryAssessment?.breathingStatus || "___________"}</div>
               <div><span className="font-semibold">Circulatory System:</span> {c.primaryAssessment?.circulationStatus || "___________"}</div>
               <div><span className="font-semibold">Pre-existing Conditions:</span> {c.sampleHistory?.pastHistory || "Not Reported"}</div>
@@ -335,21 +335,21 @@ function MlcCertificatePreview({ clinicalCase, profile }: { clinicalCase: Clinic
           <div className="mt-4">
             <strong>10. Details of injury:</strong>
             <div className="pl-4 mt-1 min-h-[100px] whitespace-pre-wrap">
-              {c.investigationImaging || c.notes?.map(n=>n.content).join("\n") || "1.\n2.\n3.\n"}
+              {(c as any).investigationImaging || c.notes?.map(n=>n.content).join("\n") || "1.\n2.\n3.\n"}
             </div>
           </div>
 
           <div className="grid grid-cols-2 gap-4 mt-4">
-            <div><strong>11. Whether admitted or not:</strong> {c.dispositionDetails?.decision === "Admit" ? `Admitted (IP No: _________)` : (c.dispositionDetails?.decision || "__________________")}</div>
+            <div><strong>11. Whether admitted or not:</strong> {(c.dispositionDetails as any)?.decision === "Admit" ? `Admitted (IP No: _________)` : ((c.dispositionDetails as any)?.decision || "__________________")}</div>
           </div>
 
           <div className="mt-4">
             <strong>12. Opinion:</strong>
-            <p className="mt-1 pl-4 min-h-[40px] whitespace-pre-wrap">{m.opinion || "__________________________________________________________________"}</p>
+            <p className="mt-1 pl-4 min-h-[40px] whitespace-pre-wrap">{(m as any).opinion || "__________________________________________________________________"}</p>
           </div>
           
           <div className="mt-4">
-            <strong>13. Certificate issued at request of:</strong> {m.certificateRequestedBy || "____________________________________"}
+            <strong>13. Certificate issued at request of:</strong> {(m as any).certificateRequestedBy || "____________________________________"}
           </div>
 
           <div className="mt-12 flex justify-between items-end border-t border-gray-300 pt-8">
@@ -360,7 +360,7 @@ function MlcCertificatePreview({ clinicalCase, profile }: { clinicalCase: Clinic
             <div className="text-right text-sm">
               <div className="border-b border-black w-48 mb-1 inline-block"></div>
               <div className="font-bold">{profile?.name || "Dr. Name"}</div>
-              <div>{m.issuingDoctorRegistration || "Reg No: ____________"}</div>
+              <div>{(m as any).issuingDoctorRegistration || "Reg No: ____________"}</div>
               <div className="italic text-gray-600">{profile?.hospital || "Hospital"}</div>
             </div>
           </div>

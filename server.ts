@@ -2912,12 +2912,14 @@ CRITICAL RULES:
 // 6.6. AI Handover Sheet Compiler (Extracts & Maps All Clinical Data into Doctors' Handover Sheet Columns)
 app.post("/api/handover/compile-sheet", async (req, res) => {
   const { patients } = req.body;
-
   if (!patients || !Array.isArray(patients) || patients.length === 0) {
     return res.status(400).json({ success: false, error: "No patient records provided for compilation." });
   }
 
   // Preprocess, de-identify, & reverse raw notes for each patient (oldest at top)
+  // NOTE: processedPatients is the DE-IDENTIFIED version sent to the LLM only.
+  // We keep a separate map of ORIGINAL (real name, real raw notes) data to
+  // reconstruct the final output — never trust the LLM to echo these back correctly.
   const processedPatients = patients.map((p: any) => {
     const raw = p.rawNotes || p.chronologicalNotes || "";
     let safeNotes = raw;
@@ -2935,6 +2937,11 @@ app.post("/api/handover/compile-sheet", async (req, res) => {
       chronologicalNotes: safeNotes
     };
   });
+
+  // FIX: preserve a lookup of the ORIGINAL, real-identity patient records
+  // so we can re-inject real name + verified raw notes locally after the AI call,
+  // the same way doctor identity is re-injected elsewhere in the app (rule 5).
+  const originalById = new Map(patients.map((p: any) => [p.id, p]));
 
   try {
     const ai = getAI();
@@ -2954,16 +2961,18 @@ app.post("/api/handover/compile-sheet", async (req, res) => {
               doctor: { type: Type.STRING, description: "Lead clinician / primary doctor e.g. Dr. Manoj, Dr. Elizabeth" },
               stayDuration: { type: Type.STRING, description: "Admission date and stay duration in ER e.g. In ER since: 25-07-2026 (12h)" },
               complaints: { type: Type.STRING, description: "PRESENTING COMPLAINT: Chief complaints, symptoms, duration, and onset from initial presentation" },
-              chronologicalNotes: { type: Type.STRING, description: "INITIAL ASSESSMENT & CHRONOLOGICAL NOTES: Exhaustive, date-stamped, time-stamped clinical notes ordered STRICTLY from OLDEST to NEWEST" },
               history: { type: Type.STRING, description: "PAST MEDICAL HISTORY: Comorbidities (e.g. T2DM x 22y, HTN x 22y, Hypothyroidism x 5y, Cushing's syndrome, Morbid Obesity, OSA), home medications, surgical history, and allergies" },
               assessment: { type: Type.STRING, description: "PROVISIONAL DIAGNOSIS & ASSESSMENT: Exact provisional diagnosis (e.g. Fluid overload state with pericardial & pleural effusion, moderate ascites, metabolic acidosis, AKI), full imaging/lab report findings" },
               planDone: { type: Type.STRING, description: "MANAGEMENT PLAN DONE ✓: List ALL completed investigations, medications given, IV lines, procedures, catheterization, and completed consults with ✓" },
               planToBeDone: { type: Type.STRING, description: "MANAGEMENT PLAN TO BE DONE □: List ALL pending investigations, pending consults, transfer plans (e.g. Shift to 3rd MICU), and scheduled procedures with □" },
               bystander: { type: Type.STRING, description: "BYSTANDER UPDATE: Exact details of WHO was counselled and WHAT was communicated (e.g. Explained in detail regarding need of ICU admission...)" },
-              vitals: { type: Type.STRING, description: "VITALS: Latest vital signs e.g. SpO2 97% on 5L O2 · HR 103 · BP 130/80 · RR 18 · Temp 97.4°F · GRBS 204 · GCS E4V5M6" },
+              vitals: {
+                type: Type.STRING,
+                description: "VITALS: Latest vital signs e.g. SpO2 97% on 5L O2 · HR 103 · BP 130/80 · RR 18 · Temp 97.4°F · GRBS 204 · GCS E4V5M6. If any individual vital is missing from the notes, OMIT it entirely from the string — never output a label with no value (e.g. never 'SpO2: %')."
+              },
               alerts: { type: Type.STRING, description: "CRITICAL ALERTS STRIP: Warning flags for abnormal labs, dangerous vitals, or urgent pending consults e.g. ⚠ Shifting to MICU · ⚠ Metabolic Acidosis · ⚠ Trop I pending" }
             },
-            required: ["id", "bed", "name", "ageGender", "complaints", "chronologicalNotes", "history", "assessment", "planDone", "planToBeDone", "bystander", "vitals", "alerts"]
+            required: ["id", "bed", "name", "ageGender", "complaints", "history", "assessment", "planDone", "planToBeDone", "bystander", "vitals", "alerts"]
           }
         }
       },
@@ -2973,154 +2982,72 @@ app.post("/api/handover/compile-sheet", async (req, res) => {
     const prompt = `
       You are an expert Emergency Medicine Senior Consultant and Scribe Lead.
       Synthesize the following ${patients.length} patient clinical records into a standardized, exhaustive Vertical Portrait Doctors' Handover Sheet.
-
       PATIENTS DATA TO EXTRACT:
       ${JSON.stringify(processedPatients, null, 2)}
 
       CRITICAL EXTRACTION RULES:
       0. ZERO HALLUCINATION / DETERMINISTIC OUTPUT (TEMPERATURE = 0.0): Never invent or guess any diagnostic values, vitals, drugs, past history, or doctor names. Return empty string or null for absent items.
       1. ZERO GENERIC PLACEHOLDERS: NEVER output generic strings like "Comorbidities not explicitly documented in raw input", "Vitals not documented", "Evaluation of patient with acute symptoms", "Complete active tasks", "Parsed Notes Review Complete", or "Bystanders counselled". If data is present, extract it thoroughly; if genuinely absent, leave as empty string.
-      2. READ EVERY ENTRY IN REVERSE CHRONOLOGICAL NOTES: Scan every single consultant review (General Medicine, Nephrology, MICU), nurse entry, and lab parameter.
+      2. READ EVERY ENTRY IN THE CHRONOLOGICAL NOTES: Scan every single consultant review (General Medicine, Nephrology, MICU), nurse entry, and lab parameter to inform the fields below — but do NOT reproduce the chronological notes themselves in your output; that is handled separately.
       3. SEPARATE NURSING ACTIONS FROM CLINICAL FINDINGS:
-         Nursing actions ("Patient shifted for CT", "CT slot called", "Foley catheter inserted", "IV cannulated") -> Place in Management Plan DONE ✓ list / Chronological Notes.
+         Nursing actions ("Patient shifted for CT", "CT slot called", "Foley catheter inserted", "IV cannulated") -> Place in Management Plan DONE ✓ list.
          Clinical findings ("CT Abdomen: Pericardial & pleural effusion, moderate ascites") -> Place in Provisional Diagnosis & Assessment / Investigation findings.
       4. PAST MEDICAL HISTORY: Scan all entries for "Known case of", "K/C/O", "Comorbidities", "Past Medical History". Extract every single condition with duration and home drugs (e.g., T2DM x 22y, HTN with Nephropathy, Hypothyroidism x 5y, Cushing's syndrome, Morbid Obesity, OSA).
       5. PROVISIONAL DIAGNOSIS: Look for "IMP:", "Impression:", "Differential Diagnosis:", or consultant review conclusions. Extract the explicit diagnosis (e.g., "Fluid overload state with pericardial effusion and right pleural effusion, Moderate ascites, Metabolic acidosis, Acute kidney injury").
       6. MANAGEMENT DONE ✓: Extract ALL past-tense completed actions (IV, VBG, O2 delivery, Foley catheter, CT done, Chest X-ray done, Troponin sent, Echo done, Consults done). Format with ✓.
       7. MANAGEMENT TO BE DONE □: Extract ALL future/pending actions (Shift to MICU, Critical care consultation, Trop I result awaited, NIV if O2 req increases, Monitor VBG/UO). Format with □.
       8. BYSTANDER UPDATE: Extract exact details of family counselling (WHO was told, WHAT was explained).
-      9. VITALS: Format latest vitals clearly (SpO2, HR, BP, RR, Temp, GRBS, GCS).
+      9. VITALS: Format latest vitals clearly (SpO2, HR, BP, RR, Temp, GRBS, GCS). Omit any individual value not present in the notes — never leave a blank label.
       10. CRITICAL ALERTS: Flag abnormal lab findings, metabolic acidosis, pending cardiac markers, or ICU transfers with ⚠.
       11. PRESERVE PATIENT ID: The "id" field in each row MUST match the exact "id" field provided in the corresponding input patient object.
-
-      Expected JSON schema:
-      {
-        "rows": [
-          {
-            "id": "string",
-            "bed": "string",
-            "name": "string",
-            "ageGender": "string",
-            "erNo": "string",
-            "doctor": "string",
-            "stayDuration": "string",
-            "complaints": "string",
-            "chronologicalNotes": "string",
-            "history": "string",
-            "assessment": "string",
-            "planDone": "string",
-            "planToBeDone": "string",
-            "bystander": "string",
-            "vitals": "string",
-            "alerts": "string"
-          }
-        ]
-      }
     `;
 
-    // Try Claude Sonnet for Handover Sheet Compilation
-    const claudeResult = await callClaudeSonnetHandover(
-      prompt,
-      "You are an expert emergency medical scribe specializing in clinical shift handovers. Only return JSON matching the schema with key 'rows'."
-    );
+    const fullPrompt = prompt + "\n\nCRITICAL: Return strictly valid JSON containing the 'rows' array matching the specified schema fields.";
 
-    if (claudeResult && claudeResult.rows) {
-      return res.json({ success: true, rows: claudeResult.rows, provider: "anthropic-claude-sonnet-5" });
+    let aiResponse;
+    let modelUsed;
+
+    try {
+      aiResponse = await callClaudeSonnetOnly(
+        fullPrompt,
+        "You are an expert emergency medical scribe specializing in clinical shift handovers. Only return JSON matching the schema with key 'rows'.",
+        true
+      );
+      modelUsed = "claude-3-5-sonnet";
+    } catch (sonnetError) {
+      console.warn("[compile-sheet] Claude Sonnet unavailable, falling back to Gemini Pro:", sonnetError);
+      const geminiResponse = await ai.models.generateContent({
+        model: "gemini-1.5-pro",
+        contents: prompt,
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: schema as any,
+          temperature: 0.0,
+        },
+      });
+      aiResponse = JSON.parse(geminiResponse.text() || "{}");
+      modelUsed = "gemini-pro-fallback";
     }
 
-    const geminiCandidates = ["gemini-1.5-pro", "gemini-1.5-pro-latest"];
-    for (const modelName of geminiCandidates) {
-      try {
-        const response = await ai.models.generateContent({
-          model: modelName,
-          contents: prompt,
-          config: {
-            systemInstruction: "You are an expert emergency medical scribe specializing in clinical shift handovers. Return JSON matching the schema.",
-            temperature: 0.0,
-            responseMimeType: "application/json",
-            responseSchema: schema
-          }
-        });
+    const result = typeof aiResponse === "string" ? JSON.parse(aiResponse) : aiResponse;
 
-        const data = JSON.parse(response.text || "{}");
-        if (data && data.rows && Array.isArray(data.rows) && data.rows.length > 0) {
-          return res.json({ success: true, rows: data.rows, provider: `google-${modelName}` });
-        }
-      } catch (geminiErr: any) {
-        console.warn(`[CompileSheet] Candidate ${modelName} failed:`, geminiErr?.message || geminiErr);
-      }
-    }
-
-    console.warn("[CompileSheet] AI models failed or rate-limited. Serving heuristic compile sheet.");
-    const fallbackRows = processedPatients.map((p: any) => {
-      const name = p.name || p.patientLabel?.name || "Bed Patient";
-      const bed = p.bed || p.bedNo || p.patientLabel?.bed || "Unassigned";
-      const ageGender = p.ageGender || p.ageSex || p.patientLabel?.ageSex || "Unknown";
-      const erNo = p.erNo || p.erNumber || p.patientLabel?.erNumber || "";
-      const doctor = p.doctor || p.treatingERPhysician || p.patientLabel?.treatingERPhysician || "";
-      const stayDuration = p.stayDuration || p.inERSince || "";
-      const complaints = p.complaints || p.presentingComplaint || p.chiefComplaint || "Documented in EMR notes";
-      const chronologicalNotes = p.chronologicalNotes || p.rawNotes || "";
-      const history = p.history || p.pastMedicalHistory || p.pmh || "Comorbidities recorded in notes";
-      const assessment = p.assessment || p.diagnosis || p.provisionalDiagnosis || "Under evaluation";
-      
-      let planDone = p.planDone || "";
-      if (!planDone) {
-        const doneArr = p.managementPlan?.done || p.done || [];
-        planDone = Array.isArray(doneArr) && doneArr.length > 0 ? doneArr.map((d: string) => `✓ ${d}`).join(" · ") : "✓ Initial management initiated";
-      }
-      
-      let planToBeDone = p.planToBeDone || "";
-      if (!planToBeDone) {
-        const pendingArr = p.managementPlan?.pending || p.toBeDone || [];
-        planToBeDone = Array.isArray(pendingArr) && pendingArr.length > 0 ? pendingArr.map((d: string) => `□ ${d}`).join(" · ") : "□ Monitor vitals & review lab results";
-      }
-      
-      const bystander = p.bystander || p.bystanderUpdate || p.bystanderConsent || "Bystanders counselled regarding clinical plan";
-      const vitals = p.vitals || p.vitalsNow || "Vitals documented in notes";
-      const alerts = p.alerts || p.alertRow || (p.alertBanner?.summary) || "✓ Stable";
+    const finalRows = (result.rows || []).map((row: any) => {
+      const original = originalById.get(row.id) || {};
+      const processed = processedPatients.find((p: any) => p.id === row.id) || {};
 
       return {
-        id: p.id || `pat-${Math.random()}`,
-        bed,
-        name,
-        ageGender,
-        erNo,
-        doctor,
-        stayDuration,
-        complaints,
-        chronologicalNotes,
-        history,
-        assessment,
-        planDone,
-        planToBeDone,
-        bystander,
-        vitals,
-        alerts
+        ...row,                                          // AI-extracted fields first (assessment, planDone, etc.)
+        id: row.id,
+        name: original.name || processed.name || row.name,       // real name re-injected locally, never AI-sourced
+        chronologicalNotes: processed.chronologicalNotes || "",  // verified pass-through, never AI-regenerated
+        rawNotes: processed.rawNotes || "",
       };
     });
-    return res.json({ success: true, rows: fallbackRows, provider: "heuristic-fallback" });
+
+    res.json({ success: true, rows: finalRows, modelUsed });
   } catch (error: any) {
-    console.error("AI handover sheet compilation error:", error);
-    const fallbackRows = processedPatients.map((p: any) => ({
-      id: p.id || `pat-${Math.random()}`,
-      bed: p.bed || "Unassigned",
-      name: p.name || "Bed Patient",
-      ageGender: p.ageGender || "Unknown",
-      erNo: p.erNo || "",
-      doctor: p.doctor || "",
-      stayDuration: p.stayDuration || "",
-      complaints: p.complaints || p.presentingComplaint || "",
-      chronologicalNotes: p.chronologicalNotes || p.rawNotes || "",
-      history: p.history || p.pastMedicalHistory || "",
-      assessment: p.assessment || p.diagnosis || "",
-      planDone: p.planDone || "✓ Initial management initiated",
-      planToBeDone: p.planToBeDone || "□ Monitor vitals",
-      bystander: p.bystander || "Bystanders counselled",
-      vitals: p.vitals || "",
-      alerts: p.alerts || "✓ Stable"
-    }));
-    res.json({ success: true, rows: fallbackRows, provider: "heuristic-fallback-catch" });
+    console.error("AI Compilation Error:", error);
+    res.status(500).json({ success: false, error: "Failed to compile sheet" });
   }
 });
 

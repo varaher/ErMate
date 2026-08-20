@@ -1,3 +1,4 @@
+import { generateUHID } from "../utils/caseHelper";
 import React, { useState, useRef } from "react";
 import { Mic, Camera, FileText, Loader2, ArrowRight } from "lucide-react";
 import { ClinicalCase, TriageCategory, ArrivalMode } from "../types";
@@ -55,7 +56,7 @@ function createQuickDischargeCase(
       name: "Unassigned Patient",
       age: 0,
       gender: "Male",
-      uhid: `UH-${Math.floor(100000 + Math.random() * 900000)}`,
+      uhid: generateUHID(),
       presentingComplaint: "Quick discharge intake",
       triageCategory: TriageCategory.P2,
       arrivalMode: ArrivalMode.WalkIn,
@@ -170,7 +171,7 @@ export default function QuickDischargeIntake({
           name: ext.patientName || "Unassigned Patient",
           age: typeof ext.age === "number" ? ext.age : parseInt(ext.age, 10) || 0,
           gender: ext.gender || "Male",
-          uhid: `UH-${Math.floor(100000 + Math.random() * 900000)}`,
+          uhid: generateUHID(),
           presentingComplaint: ext.presentingComplaint || ext.chiefComplaint || "Quick discharge intake",
           triageCategory: TriageCategory.P2,
           arrivalMode: ArrivalMode.WalkIn,
@@ -363,7 +364,7 @@ export default function QuickDischargeIntake({
             name: ocr.patientName || "Unassigned Patient",
             age: typeof ocr.age === "number" ? ocr.age : parseInt(ocr.age, 10) || 0,
             gender: ocr.gender || "Male",
-            uhid: `UH-${Math.floor(100000 + Math.random() * 900000)}`,
+            uhid: generateUHID(),
             presentingComplaint: ocr.presentingComplaint || "Quick discharge intake",
             triageCategory: TriageCategory.P2,
             arrivalMode: ArrivalMode.WalkIn,
