@@ -12,6 +12,7 @@ interface CasesListViewProps {
   onStartQuickCase: () => void;
   onNavigateToTab?: (tabId: string) => void;
   onDiscussCase?: (patientCase: ClinicalCase) => void;
+  onDeleteAllCases?: () => void;
 }
 
 export default function CasesListView({
@@ -24,6 +25,7 @@ export default function CasesListView({
   onStartQuickCase,
   onNavigateToTab,
   onDiscussCase,
+  onDeleteAllCases,
 }: CasesListViewProps) {
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState<"All" | "Active" | "Triage" | "Discharged">("All");
@@ -82,6 +84,19 @@ export default function CasesListView({
           >
             Quick Case
           </button>
+          {onDeleteAllCases && (
+            <button
+              onClick={() => {
+                if (window.confirm("Are you sure you want to delete ALL cases in ErMate? This action cannot be undone.")) {
+                  onDeleteAllCases();
+                }
+              }}
+              className="px-4 py-2 bg-red-50 dark:bg-red-950/30 hover:bg-red-100 dark:hover:bg-red-900/40 border border-red-200 dark:border-red-900/50 text-red-600 dark:text-red-400 text-xs font-semibold rounded-lg transition-all flex items-center gap-1 shadow-sm"
+              title="Delete All Cases"
+            >
+              <Trash2 className="w-4 h-4" /> Clear All
+            </button>
+          )}
         </div>
       </div>
 
@@ -261,7 +276,11 @@ export default function CasesListView({
                       </button>
                     )}
                     <button
-                      onClick={() => onDeleteCase(c.id)}
+                      onClick={() => {
+                        if (window.confirm(`Are you sure you want to delete the case for "${c.patient.name}"? This action cannot be undone.`)) {
+                          onDeleteCase(c.id);
+                        }
+                      }}
                       className="p-1.5 bg-rose-50 hover:bg-rose-100 text-rose-500 hover:text-rose-700 dark:bg-rose-950/20 dark:hover:bg-rose-950/40 rounded-lg transition-all"
                       title="Archived/Delete"
                     >

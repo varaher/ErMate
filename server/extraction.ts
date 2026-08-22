@@ -837,7 +837,7 @@ export function parseHeuristicClinicalData(transcript: string): Record<string, a
     }
   }
 
-  const complaintStr = structuredComplaint || text.slice(0, 180) + (text.length > 180 ? "..." : "");
+  const complaintStr = structuredComplaint || text;
 
   return {
     patientName: parsedName,

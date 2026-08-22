@@ -14,7 +14,7 @@ import { HandoverCard } from "./HandoverCard";
 import { BoundChatModal } from "./BoundChatModal";
 import { ChatContext } from "../hooks/useBoundChat";
 import { db, auth } from "../firebase";
-import { doc, setDoc, deleteDoc, getDoc } from "firebase/firestore";
+import { doc, setDoc, deleteDoc, getDoc, updateDoc, onSnapshot, arrayRemove, deleteField } from "firebase/firestore";
 import { captureFeedbackCorrection } from "../services/learningClient";
 
 interface HandoverViewProps {
@@ -957,16 +957,27 @@ export default function HandoverView({
       },
       canEdit: true,
       onRecordUpdated: (updatedFields) => {
-        setEditableRows(prev => prev.map(r => {
-          if (r.id !== row.id) return r;
-          return {
-            ...r,
-            ...(updatedFields.diagnosis ? { assessment: updatedFields.diagnosis } : {}),
-            ...(updatedFields.toBeDone ? { planToBeDone: Array.isArray(updatedFields.toBeDone) ? updatedFields.toBeDone.join('\n') : updatedFields.toBeDone } : {}),
-            ...(updatedFields.done ? { planDone: Array.isArray(updatedFields.done) ? updatedFields.done.join('\n') : updatedFields.done } : {}),
-            ...(updatedFields.alertRow ? { alerts: updatedFields.alertRow } : {})
-          };
-        }));
+        setEditableRows(prev => {
+          const updated = prev.map(r => {
+            if (r.id !== row.id) return r;
+            return {
+              ...r,
+              ...(updatedFields.diagnosis ? { assessment: updatedFields.diagnosis } : {}),
+              ...(updatedFields.toBeDone ? { planToBeDone: Array.isArray(updatedFields.toBeDone) ? updatedFields.toBeDone.join('\n') : updatedFields.toBeDone } : {}),
+              ...(updatedFields.done ? { planDone: Array.isArray(updatedFields.done) ? updatedFields.done.join('\n') : updatedFields.done } : {}),
+              ...(updatedFields.alertRow ? { alerts: updatedFields.alertRow } : {})
+            };
+          });
+          const modifiedRow = updated.find(r => r.id === row.id);
+          if (modifiedRow) {
+            const activeDocRef = doc(db, "handover_sheets", "active_shift");
+            updateDoc(activeDocRef, {
+              [`rows.${row.id}`]: modifiedRow,
+              updatedAt: new Date().toISOString()
+            }).catch(e => console.warn("Row update failed:", e));
+          }
+          return updated;
+        });
       }
     });
     setIsBoundChatOpen(true);
@@ -1010,8 +1021,17 @@ export default function HandoverView({
     }
 
     const activeDocRef = doc(db, "handover_sheets", "active_shift");
+    
+    const rowsMap = {} as Record<string, any>;
+    const rowOrder = [] as string[];
+    rows.forEach(r => {
+      rowsMap[r.id] = r;
+      rowOrder.push(r.id);
+    });
+
     setDoc(activeDocRef, {
-      rows,
+      rows: rowsMap,
+      rowOrder,
       meta,
       hospitalName,
       updatedAt: new Date().toISOString(),
@@ -1026,39 +1046,54 @@ export default function HandoverView({
 
   // Restore saved handover state on mount
   useEffect(() => {
-    try {
-      const savedStr = localStorage.getItem("ermate_refined_handover_rows_v2");
-      const savedMetaStr = localStorage.getItem("ermate_refined_handover_meta_v2");
-      if (savedStr) {
-        const parsed = JSON.parse(savedStr);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          setEditableRows(parsed);
-        }
-      }
-      if (savedMetaStr) {
-        const parsedMeta = JSON.parse(savedMetaStr);
-        if (parsedMeta && typeof parsedMeta === "object") {
-          setHandoverMeta(prev => ({ ...prev, ...parsedMeta }));
-        }
-      }
-    } catch (e) {
-      console.warn("Failed to load saved handover rows from localStorage:", e);
-    }
-
     const activeDocRef = doc(db, "handover_sheets", "active_shift");
-    getDoc(activeDocRef).then((snapshot) => {
-      if (snapshot.exists()) {
-        const data = snapshot.data();
-        if (data && Array.isArray(data.rows) && data.rows.length > 0) {
-          setEditableRows(data.rows);
-          if (data.meta) {
-            setHandoverMeta(prev => ({ ...prev, ...data.meta }));
+    let hasReceivedFirstSnapshot = false;
+
+    const unsubscribe = onSnapshot(
+      activeDocRef,
+      (snapshot) => {
+        hasReceivedFirstSnapshot = true;
+        if (snapshot.exists()) {
+          const data = snapshot.data();
+          if (data) {
+            // Support legacy array format for seamless migration
+            if (Array.isArray(data.rows)) {
+              setEditableRows(data.rows);
+              localStorage.setItem("ermate_refined_handover_rows_v2", JSON.stringify(data.rows));
+            } else if (data.rows && Array.isArray(data.rowOrder)) {
+              const orderedRows = data.rowOrder
+                .map((id) => data.rows[id])
+                .filter(Boolean);
+              setEditableRows(orderedRows);
+              localStorage.setItem("ermate_refined_handover_rows_v2", JSON.stringify(orderedRows));
+            }
+            if (data.meta) {
+              setHandoverMeta(prev => ({ ...prev, ...data.meta }));
+              localStorage.setItem("ermate_refined_handover_meta_v2", JSON.stringify(data.meta));
+            }
           }
         }
+      },
+      (error) => {
+        console.warn("[HandoverView] onSnapshot failed, falling back to localStorage cache:", error);
+        try {
+          const savedStr = localStorage.getItem("ermate_refined_handover_rows_v2");
+          const savedMetaStr = localStorage.getItem("ermate_refined_handover_meta_v2");
+          if (savedStr) {
+            const parsed = JSON.parse(savedStr);
+            if (Array.isArray(parsed) && parsed.length > 0) setEditableRows(parsed);
+          }
+          if (savedMetaStr) {
+            const parsedMeta = JSON.parse(savedMetaStr);
+            if (parsedMeta && typeof parsedMeta === "object") setHandoverMeta(prev => ({ ...prev, ...parsedMeta }));
+          }
+        } catch (e) {
+          console.warn("[HandoverView] localStorage fallback parse error:", e);
+        }
       }
-    }).catch(err => {
-      console.warn("Firestore handover sheet fetch error:", err);
-    });
+    );
+
+    return () => unsubscribe();
   }, []);
 
   useEffect(() => {
@@ -1951,10 +1986,15 @@ function extractLatestVitalsWithTime(
   };
 
   const handleUpdateCell = (id: string, field: keyof HandoverTableRow, value: string) => {
-    setEditableRows(prev => {
-      const updated = prev.map(row => row.id === id ? { ...row, [field]: value } : row);
-      saveRefinedHandoverSheet(updated, handoverMeta);
-      return updated;
+    setEditableRows(prev => prev.map(row => row.id === id ? { ...row, [field]: value } : row));
+
+    const activeDocRef = doc(db, "handover_sheets", "active_shift");
+    updateDoc(activeDocRef, {
+      [`rows.${id}.${field}`]: value,
+      updatedAt: new Date().toISOString(),
+      updatedBy: profile?.name || "Doctor"
+    }).catch((e) => {
+      console.warn("[HandoverView] Row update failed:", e);
     });
   };
 
@@ -2056,7 +2096,7 @@ function extractLatestVitalsWithTime(
           presentingComplaint: parsed.presentingComplaint || "Presenting complaint recorded.",
           story: parsed.story || parsed.structuredSBAR?.situation || "Clinical story recorded.",
           pmh: parsed.pmh || parsed.structuredSBAR?.background || null,
-          diagnosis: parsed.diagnosis || parsed.structuredSBAR?.situation || "Under evaluation",
+          diagnosis: parsed.diagnosis || parsed.structuredSBAR?.situation || "",
           done: Array.isArray(parsed.done) ? parsed.done : (parsed.structuredSBAR?.recommendation ? [parsed.structuredSBAR.recommendation] : []),
           toBeDone: Array.isArray(parsed.toBeDone) ? parsed.toBeDone : [],
           vitalsNow: parsed.vitalsNow || parsed.vitals || null,
@@ -2076,9 +2116,9 @@ function extractLatestVitalsWithTime(
           presentingComplaint: handoverCardData.presentingComplaint || (userText ? userText.substring(0, 150) : "Presenting complaint recorded."),
           rawNotes: parsed.rawNotes || userText || "Pasted clinical notes",
           structuredSBAR: parsed.structuredSBAR || {
-            situation: handoverCardData.story || "No situation parsed.",
-            background: handoverCardData.pmh || "No background parsed.",
-            assessment: handoverCardData.vitalsNow || "No assessment parsed.",
+            situation: handoverCardData.story || "",
+            background: handoverCardData.pmh || "",
+            assessment: handoverCardData.vitalsNow || "",
             recommendation: `Done: ${handoverCardData.done.join(', ')} | To Do: ${handoverCardData.toBeDone.join(', ')}`
           },
           handoverCardData
@@ -2108,8 +2148,23 @@ function extractLatestVitalsWithTime(
 
         setEditableRows(prev => {
           const exists = prev.some(r => r.id === newTableRow.id);
-          if (exists) return prev.map(r => r.id === newTableRow.id ? { ...r, ...newTableRow } : r);
-          return [newTableRow, ...prev];
+          const updated = exists ? prev.map(r => r.id === newTableRow.id ? { ...r, ...newTableRow } : r) : [newTableRow, ...prev];
+          
+          const activeDocRef = doc(db, "handover_sheets", "active_shift");
+          if (exists) {
+            updateDoc(activeDocRef, {
+              [`rows.${newTableRow.id}`]: newTableRow,
+              updatedAt: new Date().toISOString()
+            }).catch(e => console.warn("Row update failed:", e));
+          } else {
+            const updatedOrder = [newTableRow.id, ...prev.map(r => r.id)];
+            setDoc(activeDocRef, {
+              rows: { [newTableRow.id]: newTableRow },
+              rowOrder: updatedOrder,
+              updatedAt: new Date().toISOString()
+            }, { merge: true }).catch(e => console.warn("Row add failed:", e));
+          }
+          return updated;
         });
 
         if (setHandovers) {
@@ -2175,7 +2230,7 @@ function extractLatestVitalsWithTime(
         presentingComplaint: userText ? userText.substring(0, 150) : "Presenting complaint recorded.",
         story: userText ? userText.substring(0, 200) : "Clinical evaluation in progress.",
         pmh: pmhM ? pmhM[1].trim() : null,
-        diagnosis: diagM ? diagM[1].trim() : "Under evaluation",
+        diagnosis: diagM ? diagM[1].trim() : "",
         done: ["Triage evaluation done"],
         toBeDone: ["Review workup"],
         vitalsNow: extractedVitals || null,
@@ -3365,7 +3420,15 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
                   {/* Card Actions (no-print) */}
                   <div className="no-print bg-slate-100 dark:bg-slate-900 px-3 py-1.5 border-t border-slate-200 dark:border-slate-800 flex items-center justify-end gap-2">
                     <button
-                      onClick={() => setEditableRows(prev => prev.filter(r => r.id !== row.id))}
+                      onClick={() => {
+                        setEditableRows(prev => prev.filter(r => r.id !== row.id));
+                        const activeDocRef = doc(db, "handover_sheets", "active_shift");
+                        updateDoc(activeDocRef, {
+                          [`rows.${row.id}`]: deleteField(),
+                          rowOrder: arrayRemove(row.id),
+                          updatedAt: new Date().toISOString()
+                        }).catch(e => console.warn("Row removal failed:", e));
+                      }}
                       className="text-xs text-red-600 hover:text-red-700 dark:text-red-400 font-bold flex items-center gap-1 cursor-pointer"
                     >
                       <Trash2 className="w-3.5 h-3.5" /> Remove Patient Card
@@ -4233,9 +4296,9 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
                                         presentingComplaint: restoredCardData?.presentingComplaint || (msg.parsedPatient?.rawNotes ? msg.parsedPatient.rawNotes.substring(0, 150) : "Presenting complaint recorded."),
                                         rawNotes: msg.parsedPatient?.rawNotes || "Pasted clinical notes",
                                         structuredSBAR: msg.parsedPatient?.structuredSBAR || {
-                                          situation: restoredCardData?.story || "No situation parsed.",
-                                          background: restoredCardData?.pmh || "No background parsed.",
-                                          assessment: restoredCardData?.vitalsNow || "No assessment parsed.",
+                                          situation: restoredCardData?.story || "",
+                                          background: restoredCardData?.pmh || "",
+                                          assessment: restoredCardData?.vitalsNow || "",
                                           recommendation: restoredCardData?.done ? `Done: ${restoredCardData.done.join(', ')} | To Do: ${(restoredCardData.toBeDone || []).join(', ')}` : "No recommendation parsed."
                                         },
                                         handoverCardData: restoredCardData,
@@ -4273,8 +4336,23 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
 
                                       setEditableRows(prev => {
                                         const exists = prev.some(r => r.id === restoredTableRow.id);
-                                        if (exists) return prev.map(r => r.id === restoredTableRow.id ? { ...r, ...restoredTableRow } : r);
-                                        return [restoredTableRow, ...prev];
+                                        const updated = exists ? prev.map(r => r.id === restoredTableRow.id ? { ...r, ...restoredTableRow } : r) : [restoredTableRow, ...prev];
+                                        
+                                        const activeDocRef = doc(db, "handover_sheets", "active_shift");
+                                        if (exists) {
+                                          updateDoc(activeDocRef, {
+                                            [`rows.${restoredTableRow.id}`]: restoredTableRow,
+                                            updatedAt: new Date().toISOString()
+                                          }).catch(e => console.warn("Row update failed:", e));
+                                        } else {
+                                          const updatedOrder = [restoredTableRow.id, ...prev.map(r => r.id)];
+                                          setDoc(activeDocRef, {
+                                            rows: { [restoredTableRow.id]: restoredTableRow },
+                                            rowOrder: updatedOrder,
+                                            updatedAt: new Date().toISOString()
+                                          }, { merge: true }).catch(e => console.warn("Row add failed:", e));
+                                        }
+                                        return updated;
                                       });
 
                                       if (setHandovers) {

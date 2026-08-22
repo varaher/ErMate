@@ -474,7 +474,7 @@ DOCUMENTED DATA:
 
 Return JSON format:
 {
-  "course_in_hospital": "Detailed chronological narrative...",
+  "course_in_hospital": "Detailed chronological narrative of the stay. Include all full details without truncation.",
   "diagnosis": "Final Refined Working Diagnosis"
 }`;
 

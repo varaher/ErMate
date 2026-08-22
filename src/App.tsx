@@ -1670,30 +1670,30 @@ export default function App() {
       },
       sampleHistory: {
         symptoms: extracted.sampleHistory?.symptoms || (Array.isArray(extracted.symptoms) ? extracted.symptoms.join(", ") : extracted.symptoms) || existingMatch?.sampleHistory.symptoms || "",
-        allergies: extracted.sampleHistory?.allergies || existingMatch?.sampleHistory.allergies || "",
-        medications: extracted.sampleHistory?.medications || existingMatch?.sampleHistory.medications || "",
-        pastHistory: extracted.sampleHistory?.pastHistory || existingMatch?.sampleHistory.pastHistory || "",
-        lastMeal: extracted.sampleHistory?.lastMeal || existingMatch?.sampleHistory.lastMeal || "",
-        events: extracted.sampleHistory?.events || existingMatch?.sampleHistory.events || "",
-        socialHistory: extracted.sampleHistory?.socialHistory || existingMatch?.sampleHistory?.socialHistory || "",
-        familyHistory: extracted.sampleHistory?.familyHistory || existingMatch?.sampleHistory?.familyHistory || "",
-        psychiatricFlags: extracted.sampleHistory?.psychiatricFlags || existingMatch?.sampleHistory?.psychiatricFlags || ""
+        allergies: extracted.sampleHistory?.allergies || extracted.allergies || existingMatch?.sampleHistory.allergies || "",
+        medications: extracted.sampleHistory?.medications || extracted.medications || existingMatch?.sampleHistory.medications || "",
+        pastHistory: extracted.sampleHistory?.pastHistory || extracted.pastMedicalHistory || extracted.pastHistory || existingMatch?.sampleHistory.pastHistory || "",
+        lastMeal: extracted.sampleHistory?.lastMeal || extracted.lastMeal || existingMatch?.sampleHistory.lastMeal || "",
+        events: extracted.sampleHistory?.events || extracted.events || existingMatch?.sampleHistory.events || "",
+        socialHistory: extracted.sampleHistory?.socialHistory || extracted.socialHistory || existingMatch?.sampleHistory?.socialHistory || "",
+        familyHistory: extracted.sampleHistory?.familyHistory || extracted.familyHistory || existingMatch?.sampleHistory?.familyHistory || "",
+        psychiatricFlags: extracted.sampleHistory?.psychiatricFlags || extracted.psychiatricFlags || existingMatch?.sampleHistory?.psychiatricFlags || ""
       },
       primaryAssessment: {
         ...(existingMatch?.primaryAssessment || {}),
         ...(extracted.primaryAssessment || {}),
-        airway: extracted.primaryAssessment?.airway || existingMatch?.primaryAssessment.airway || "",
-        airwayStatus: extracted.primaryAssessment?.airwayStatus || existingMatch?.primaryAssessment.airwayStatus || "Normal",
-        breathing: extracted.primaryAssessment?.breathing || existingMatch?.primaryAssessment.breathing || "",
-        breathingStatus: extracted.primaryAssessment?.breathingStatus || existingMatch?.primaryAssessment.breathingStatus || "Normal",
-        circulation: extracted.primaryAssessment?.circulation || existingMatch?.primaryAssessment.circulation || "",
-        circulationStatus: extracted.primaryAssessment?.circulationStatus || existingMatch?.primaryAssessment.circulationStatus || "Normal",
-        disability: extracted.primaryAssessment?.disability || existingMatch?.primaryAssessment.disability || "",
-        disabilityStatus: extracted.primaryAssessment?.disabilityStatus || existingMatch?.primaryAssessment.disabilityStatus || "Normal",
-        exposure: extracted.primaryAssessment?.exposure || existingMatch?.primaryAssessment.exposure || "",
-        exposureStatus: extracted.primaryAssessment?.exposureStatus || existingMatch?.primaryAssessment.exposureStatus || "Normal"
+        airway: extracted.primaryAssessment?.airway || extracted.airway || existingMatch?.primaryAssessment.airway || "",
+        airwayStatus: extracted.primaryAssessment?.airwayStatus || extracted.airwayStatus || existingMatch?.primaryAssessment.airwayStatus || "Normal",
+        breathing: extracted.primaryAssessment?.breathing || extracted.breathing || existingMatch?.primaryAssessment.breathing || "",
+        breathingStatus: extracted.primaryAssessment?.breathingStatus || extracted.breathingStatus || existingMatch?.primaryAssessment.breathingStatus || "Normal",
+        circulation: extracted.primaryAssessment?.circulation || extracted.circulation || existingMatch?.primaryAssessment.circulation || "",
+        circulationStatus: extracted.primaryAssessment?.circulationStatus || extracted.circulationStatus || existingMatch?.primaryAssessment.circulationStatus || "Normal",
+        disability: extracted.primaryAssessment?.disability || extracted.disability || existingMatch?.primaryAssessment.disability || "",
+        disabilityStatus: extracted.primaryAssessment?.disabilityStatus || extracted.disabilityStatus || existingMatch?.primaryAssessment.disabilityStatus || "Normal",
+        exposure: extracted.primaryAssessment?.exposure || extracted.exposure || existingMatch?.primaryAssessment.exposure || "",
+        exposureStatus: extracted.primaryAssessment?.exposureStatus || extracted.exposureStatus || existingMatch?.primaryAssessment.exposureStatus || "Normal"
       },
-      secondaryAssessment: extracted.secondaryAssessment || existingMatch?.secondaryAssessment || "",
+      secondaryAssessment: extracted.secondaryAssessment || (extracted.secondarySurvey ? Object.entries(extracted.secondarySurvey).map(([k,v]) => `${k.toUpperCase()}: ${v}`).join("\n") : null) || existingMatch?.secondaryAssessment || "",
       investigations: extracted.investigations || (extracted.labs ? extracted.labs.map((l: any, i: number) => ({ id: `inv-${Date.now()}-${i}`, testName: l.name || l, result: l.value || "Ordered", orderTime: new Date().toLocaleTimeString(), resultTime: "Pending", isAbnormal: false })) : null) || existingMatch?.investigations || [],
       treatments: extracted.treatments || (extracted.treatmentGiven ? extracted.treatmentGiven.map((t: any, i: number) => ({ id: `trt-${Date.now()}-${i}`, drugName: t.name || t, dose: "Stat", route: "IV", timeGiven: new Date().toLocaleTimeString(), ipsgVerified: true })) : null) || existingMatch?.treatments || [],
       progressNotes: extracted.progressNotes || (extracted.chronologicalNotes ? extracted.chronologicalNotes.map((n: any) => n.entry).join("\n") : null) || existingMatch?.progressNotes || "Case created via ErMate Voice Scribe dictation.",
@@ -1782,7 +1782,7 @@ export default function App() {
       setActiveFormMode(null);
       setShowDischargeSummaryId(null);
     } else {
-      triggerNotification("Auto-Saved to Dashboard", `Voice case (${newCase.patient.name}) updated in Emergency Dashboard.`, "info");
+      triggerNotification("Case Sheet Extracted", `Case sheet extracted and saved. Voice case (${newCase.patient.name}) updated in Emergency Dashboard.`, "info");
     }
 
     checkConsentOnCaseSaved();
@@ -3255,6 +3255,7 @@ export default function App() {
                   }}
                   hasActiveScribeSession={scribeMessages.length > 1}
                   onDiscussCase={(c) => setDiscussionModalCase(c)}
+                  onDeleteCase={handleDeleteCase}
                 />
               );
             })()
@@ -3274,6 +3275,7 @@ export default function App() {
                   }}
                   onSaveDischarge={handleSaveDischarge}
                   profile={profile}
+                  onDeleteCase={handleDeleteCase}
                 />
               );
             })()
@@ -3345,6 +3347,8 @@ export default function App() {
                   onViewSheet={handleViewPrintSheet}
                   onNavigateToDischarge={handleNavigateToDischarge}
                   onNavigateToTab={navigateToTab}
+                  onDeleteAllCases={handleDeleteAllCases}
+                  onDeleteCase={handleDeleteCase}
                   onStartHandoverChat={() => {
                     setHandoverSubTab("quickpaste");
                     setActiveTab("handover");
@@ -3451,6 +3455,7 @@ export default function App() {
                   onStartFullFlow={() => setShowEntryMenu(true)}
                   onStartQuickCase={() => setActiveFormMode("quick")}
                   onNavigateToTab={navigateToTab}
+                  onDeleteAllCases={handleDeleteAllCases}
                   onDiscussCase={(c) => setDiscussionModalCase(c)}
                 />
               )}

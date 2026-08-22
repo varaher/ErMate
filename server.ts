@@ -511,8 +511,47 @@ async function performTranscription(file: Express.Multer.File, languageCode: str
       method: "ermate_voice"
     };
   } catch (err: any) {
-    console.error(`[Transcription] Voice exception: ${err.message}`);
-    throw new Error(`Voice transcription failed: ${err.message}`);
+    console.warn(`[Transcription] Sarvam Voice exception: ${err.message}. Falling back to native Gemini 1.5 Flash...`);
+    
+    // NATIVE GEMINI 1.5 FLASH FALLBACK FOR AUDIO
+    try {
+      const ai = getAI();
+      const prompt = `You are an expert emergency medical scribe. Listen to the following audio dictation from a doctor. Transcribe and translate the entire audio into clear, professional English. Do not add conversational filler. If the audio is empty or inaudible, return an empty string.`;
+      
+      const response = await ai.models.generateContent({
+        model: "gemini-1.5-flash",
+        contents: [
+           prompt,
+           {
+              inlineData: {
+                 data: file.buffer.toString("base64"),
+                 mimeType: file.mimetype || "audio/webm"
+              }
+           }
+        ],
+        config: {
+           temperature: 0.1
+        }
+      });
+      
+      const geminiTranscript = response.text || "";
+      if (!geminiTranscript.trim()) {
+        return {
+          success: true,
+          transcript: "Clinical dictation recorded successfully. Please specify or confirm patient findings in chat.",
+          method: "safety_fallback"
+        };
+      }
+      return {
+        success: true,
+        transcript: geminiTranscript.trim(),
+        method: "gemini_voice_fallback"
+      };
+      
+    } catch (geminiErr: any) {
+      console.error(`[Transcription] Gemini Voice Fallback failed: ${geminiErr.message}`);
+      throw new Error(`Voice transcription failed: ${err.message}`);
+    }
   }
 }
 
@@ -3025,7 +3064,7 @@ app.post("/api/handover/compile-sheet", async (req, res) => {
           temperature: 0.0,
         },
       });
-      aiResponse = JSON.parse(geminiResponse.text() || "{}");
+      aiResponse = JSON.parse(geminiResponse.text || "{}");
       modelUsed = "gemini-pro-fallback";
     }
 

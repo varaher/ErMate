@@ -409,6 +409,10 @@ function buildUnifiedReplyProse(
 
   // Extracted details are rendered natively by the UI card, so we don't duplicate them in the markdown prose.
 
+  if (extMsg.type === "extraction-confirmation") {
+    text += "✅ Case sheet extracted and saved.\n\n";
+  }
+  
   if (reasonMsg.type === "clinical-reasoning") {
     text += `${reasonMsg.content}\n\n`;
     if (reasonMsg.clinicalReasoning?.differentials?.length) {

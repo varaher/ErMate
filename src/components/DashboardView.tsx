@@ -54,6 +54,8 @@ interface DashboardViewProps {
   pendingContributionsCount?: number;
   onDiscussCase?: (patientCase: ClinicalCase) => void;
   onStartDischargeSummary?: () => void;
+  onDeleteAllCases?: () => void;
+  onDeleteCase?: (caseId: string) => void;
 }
 
 export default function DashboardView({
@@ -68,6 +70,8 @@ export default function DashboardView({
   onStartHandoverChat,
   onStartHandoverSheet,
   onStartDischargeSummary,
+  onDeleteAllCases,
+  onDeleteCase,
   onStartVoiceScribe,
   onOpenPediatricCalculator,
   onOpenPocketMirror,
@@ -2078,6 +2082,19 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
                   </button>
                 </div>
               )}
+              {onDeleteAllCases && (
+                <button
+                  onClick={() => {
+                    if (window.confirm("Are you sure you want to delete ALL cases in ErMate? This action cannot be undone.")) {
+                      onDeleteAllCases();
+                    }
+                  }}
+                  className="ml-auto px-3 py-1.5 bg-red-50 dark:bg-red-950/30 hover:bg-red-100 dark:hover:bg-red-900/40 border border-red-200 dark:border-red-900/50 text-red-600 dark:text-red-400 text-[11px] font-bold rounded-lg transition-all flex items-center gap-1 shadow-sm shrink-0"
+                  title="Clear All Shift Cases"
+                >
+                  <Trash2 className="w-3.5 h-3.5" /> Clear All Cases
+                </button>
+              )}
             </div>
 
             {(() => {
@@ -2422,6 +2439,21 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
                                         Save Review ✓
                                       </button>
                                     </div>
+                                  </div>
+                                )}
+                                
+                                {onDeleteCase && (
+                                  <div className="pt-2 border-t border-slate-100 dark:border-slate-800/50 mt-4">
+                                    <button
+                                      onClick={() => {
+                                        if (window.confirm(`Are you sure you want to delete the case for "${c.patient.name}"? This action cannot be undone.`)) {
+                                          onDeleteCase(c.id);
+                                        }
+                                      }}
+                                      className="flex items-center justify-center gap-1.5 w-full py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-600 dark:bg-rose-950/20 dark:hover:bg-rose-900/40 dark:text-rose-400 rounded-lg text-xs font-bold transition-all border border-rose-100 dark:border-rose-900/30"
+                                    >
+                                      <Trash2 className="w-4 h-4" /> Delete Case Record
+                                    </button>
                                   </div>
                                 )}
                               </div>

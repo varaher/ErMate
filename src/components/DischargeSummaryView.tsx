@@ -11,6 +11,7 @@ interface DischargeSummaryViewProps {
   onBack: () => void;
   onSaveDischarge: (dischargeInfo: DischargeInfo) => void;
   profile?: UserProfile;
+  onDeleteCase?: (caseId: string) => void;
 }
 
 type TabType = "admin-vitals" | "clinical-hx" | "primary-assessment" | "secondary-assessment" | "course-plans";
@@ -777,6 +778,22 @@ ${patientInstructions || "Emergency warnings: return immediately if you experien
         </div>
 
         <div className="flex gap-2">
+          {onDeleteCase && (
+            <button
+              type="button"
+              onClick={() => {
+                if (window.confirm(`Are you sure you want to delete the case for "${currentCase.patient.name}"? This action cannot be undone.`)) {
+                  onDeleteCase(currentCase.id);
+                  onBack();
+                }
+              }}
+              className="inline-flex items-center gap-1.5 px-3 py-2 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/20 dark:hover:bg-rose-900/40 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-900/30 text-xs font-bold rounded-lg transition-all cursor-pointer"
+              title="Delete Case"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>Delete</span>
+            </button>
+          )}
           <button
             type="button"
             onClick={() => setIsDiscussModalOpen(true)}
@@ -1571,7 +1588,7 @@ ${patientInstructions || "Emergency warnings: return immediately if you experien
         </div>
 
         {/* Live Printable Paper Preview Sheet (7 Cols) */}
-        <div className="lg:col-span-7 bg-white text-slate-900 border border-slate-300 rounded-2xl shadow-lg overflow-hidden flex flex-col print:border-0 print:shadow-none print:rounded-none print:col-span-12 print:w-full print:p-0 print:m-0">
+        <div className="lg:col-span-7 bg-white text-slate-900 border border-slate-300 rounded-2xl shadow-lg overflow-hidden print:overflow-visible h-[calc(100vh-140px)] print:h-auto flex flex-col print:border-0 print:shadow-none print:rounded-none print:col-span-12 print:w-full print:p-0 print:m-0">
           
           {/* Top Banner (No Print) */}
           <div className="bg-slate-100 dark:bg-slate-900 border-b p-3 px-4 flex items-center justify-between text-xs text-slate-600 dark:text-slate-400 no-print">
@@ -1582,7 +1599,7 @@ ${patientInstructions || "Emergency warnings: return immediately if you experien
           </div>
 
           {/* Actual Printable Page Wrapper */}
-          <div className="p-8 md:p-10 font-sans leading-relaxed text-[12px] text-slate-900 bg-white space-y-4 select-text max-w-full print:p-0 print:m-0 print:w-full print:max-w-full print:text-[12px] whitespace-pre-wrap" id="print-sheet-content">
+          <div className="flex-1 overflow-y-auto p-8 md:p-10 font-sans leading-relaxed text-[12px] text-slate-900 bg-white space-y-4 select-text max-w-full print:p-0 print:m-0 print:w-full print:max-w-full print:text-[12px] whitespace-pre-wrap" id="print-sheet-content">
   <div className="font-bold mb-4 text-[14px]">Discharge Summary</div>
 
   <div><span className="font-bold">MLC:</span> {isMlc === "Yes" ? `Yes (${mlcNo})` : "No"}</div>

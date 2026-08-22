@@ -96,7 +96,7 @@ export default function VoiceScribeChatView({
       // Show feedback toast
       const toast = document.createElement("div");
       toast.className = "fixed bottom-10 left-1/2 -translate-x-1/2 z-[9999] px-4 py-2.5 rounded-lg border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 font-bold text-xs shadow-xl flex items-center gap-2 animate-in fade-in slide-in-from-bottom-4";
-      toast.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg> Copied to Case Sheet`;
+      toast.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg> Case sheet extracted and saved.`;
       document.body.appendChild(toast);
       setTimeout(() => toast.remove(), 3000);
     } catch (e) {
@@ -288,8 +288,10 @@ export default function VoiceScribeChatView({
                     // Mark them all as applied locally so they show the green checkmark if user comes back
                     setMessages(prev => prev.map(m => m.extractionData ? { ...m, extractionApplied: true } : m));
                   } else {
-                    // Initialize blank case if there is no data
-                    await onSaveExtractedCase({}, { existingCaseId: activeCaseId, autoNavigate: false });
+                    // Only initialize blank case if there are literally zero messages with extraction data (meaning no dictation happened)
+                    if (messages.filter(m => m.extractionData).length === 0) {
+                      await onSaveExtractedCase({}, { existingCaseId: activeCaseId, autoNavigate: false });
+                    }
                   }
                 } catch (e) {
                   console.warn("[VoiceScribeChatView] Failed to initialize case:", e);
@@ -376,7 +378,7 @@ export default function VoiceScribeChatView({
                           : "bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm"
                       }`}
                     >
-                      {msg.extractionApplied ? "✅ Copied to Case Sheet" : "Copy to Case Sheet"}
+                      {msg.extractionApplied ? "✅ Case sheet extracted and saved." : "Copy to Case Sheet"}
                     </button>
                   </div>
                 </div>

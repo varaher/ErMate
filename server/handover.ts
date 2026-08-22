@@ -243,7 +243,7 @@ REQUIRED OUTPUT STRUCTURE — STRICT JSON
     }
   ],
 
-  "pastMedicalHistory": "string | null (Condensed, relevant comorbidities e.g. DM x 6y · HTN · CAD)",
+  "pastMedicalHistory": "string | null (Extract ALL past medical history, comorbidities, and surgical history. If buried in the presenting complaint, extract it here. NEVER return null if PMH exists.)",
 
   "crossConsultations": [
     {
@@ -325,8 +325,8 @@ REQUIRED OUTPUT STRUCTURE — STRICT JSON
   },
 
   "story": "string (Clinical narrative summary, 2-3 sentences)",
-  "pmh": "string | null (Same as pastMedicalHistory)",
-  "diagnosis": "string (Primary provisional diagnosis from IMP:)",
+  "pmh": "string | null (Extract ALL past medical history, comorbidities, and surgical history. NEVER return null if PMH exists anywhere in the text)",
+  "diagnosis": "string (Extract the FULL primary provisional diagnosis or assessment. DO NOT output generic placeholders like \"Under evaluation\" if clinical details or angiogram findings exist)",
   "done": ["string (List of completed actions)"],
   "toBeDone": ["string (List of pending items)"],
   "vitalsNow": "string | null (Formatted string of latest vitals with timestamp)",
@@ -650,7 +650,7 @@ function buildHeuristicFallback(rawText: string): any {
     story: `Patient ${extracted.name} (${extracted.ageGender}) presenting for emergency care. Refer to raw notes for complete narrative.`,
     pmh: null,
     pastMedicalHistory: null,
-    diagnosis: "Under evaluation",
+    diagnosis: "",
     crossConsultations: crossConsults,
     investigations: {
       trends: [],
@@ -870,7 +870,7 @@ export async function extractHandover(
       const name = pl.name || parsed.name || "Bed Patient";
       const ageSex = pl.ageSex || parsed.ageGender || "Unknown";
       const status = pl.status || "unstable";
-      const diagnosis = parsed.diagnosis || parsed.provisionalDiagnosis || "Under evaluation";
+      const diagnosis = parsed.diagnosis || parsed.provisionalDiagnosis || "";
       
       const mgmtPlan = parsed.managementPlan || {};
       const done = Array.isArray(parsed.done) ? parsed.done : (Array.isArray(mgmtPlan.done) ? mgmtPlan.done : []);

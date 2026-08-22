@@ -123,6 +123,7 @@ interface CaseSheetViewProps {
   onReturnToScribe?: () => void;
   hasActiveScribeSession?: boolean;
   onDiscussCase?: (patientCase: ClinicalCase) => void;
+  onDeleteCase?: (caseId: string) => void;
 }
 
 
@@ -2765,6 +2766,22 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                 <FileText className="w-3.5 h-3.5 text-purple-500" />
                 Scan Document
               </button>
+              {onDeleteCase && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (window.confirm(`Are you sure you want to delete the case for "${currentCase.patient.name}"? This action cannot be undone.`)) {
+                      onDeleteCase(currentCase.id);
+                      onBack();
+                    }
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/20 dark:hover:bg-rose-900/40 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-900/30 text-xs font-bold rounded-xl transition-all cursor-pointer"
+                  title="Delete Case"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  Delete Case
+                </button>
+              )}
             </div>
 
             {/* Case Type Toggle  */}
@@ -5915,6 +5932,21 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                 <Save className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
                 <span>Save Draft</span>
               </button>
+              {onDeleteCase && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (window.confirm(`Are you sure you want to delete the case for "${currentCase.patient.name}"? This action cannot be undone.`)) {
+                      onDeleteCase(currentCase.id);
+                      onBack();
+                    }
+                  }}
+                  className="px-4 py-2.5 bg-rose-50 dark:bg-rose-950/30 hover:bg-rose-100 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-900/50 text-xs font-bold rounded-xl transition-all flex items-center gap-2 cursor-pointer transform hover:scale-[1.01] active:scale-[0.99]"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  <span>Delete Case</span>
+                </button>
+              )}
               <button
                 type="button"
                 onClick={async () => { await handleSave(); onBack(); }}

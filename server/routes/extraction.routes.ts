@@ -86,8 +86,8 @@ router.post(
             structuredSBAR: {
               type: Type.OBJECT,
               properties: {
-                situation: { type: Type.STRING, description: "Situation (S): Bed/room, age/gender, and provisional diagnosis." },
-                background: { type: Type.STRING, description: "Background (B): Comorbidities and past medical history." },
+                situation: { type: Type.STRING, description: "Situation (S): Bed/room, age/gender, and FULL provisional diagnosis. Do not use generic placeholders like 'Under evaluation'." },
+                background: { type: Type.STRING, description: "Background (B): Extract ALL details of comorbidities, past medical history, and surgical history. NEVER return 'No background parsed'." },
                 assessment: { type: Type.STRING, description: "Assessment (A): Most recent vitals, physical exam highlights, investigations." },
                 recommendation: { type: Type.STRING, description: "Recommendation (R): Pending actions, transfers, consults." }
               },
