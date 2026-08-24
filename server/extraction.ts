@@ -666,9 +666,11 @@ export function parseHeuristicClinicalData(transcript: string): Record<string, a
     parsedAge = parseInt(ageMatch[1], 10);
   }
 
-  let parsedGender = "Male";
+  let parsedGender = "Unknown";
   if (/female|woman|girl|lady|she|her/i.test(text)) {
     parsedGender = "Female";
+  } else if (/male|man|boy|he|him/i.test(text)) {
+    parsedGender = "Male";
   } else if (/other|non-binary/i.test(text)) {
     parsedGender = "Other";
   }
@@ -686,25 +688,39 @@ export function parseHeuristicClinicalData(transcript: string): Record<string, a
     parsedTriage = "P3";
   }
 
-  let bpVal = "120/80";
+  // ══════════════════════════════════════════════════════════════
+  // FIX (Rule 8 compliance, same as formatClinicalCaseObject): this
+  // is the LAST-RESORT heuristic parser, used only when both primary
+  // AI extraction models have already failed. It must NEVER invent
+  // plausible-looking vitals ("120/80", "80", "98") when the doctor
+  // didn't actually dictate them — a degraded regex fallback
+  // fabricating numbers is exactly the kind of silent error this
+  // system exists to prevent. Only return a value if the regex
+  // genuinely matched something in the transcript; otherwise null.
+  // ══════════════════════════════════════════════════════════════
+  let bpVal: string | null = null;
   const bpMatch = text.match(/(\d{2,3}\/\d{2,3})/);
   if (bpMatch) bpVal = bpMatch[1];
 
-  let hrVal = "80";
+  let hrVal: string | null = null;
   const hrMatch = text.match(/(hr|pulse|heart rate)\s*(is|of|at)?\s*(\d{2,3})/i);
   if (hrMatch) hrVal = hrMatch[3];
 
-  let spo2Val = "98";
+  let spo2Val: string | null = null;
   const spo2Match = text.match(/(spo2|saturation|sat|sats)\s*(is|of|at)?\s*(\d{2,3})/i);
   if (spo2Match) spo2Val = spo2Match[3];
 
-  let rrVal = "16";
+  let rrVal: string | null = null;
   const rrMatch = text.match(/(rr|respiratory|resp rate)\s*(is|of|at)?\s*(\d{2})/i);
   if (rrMatch) rrVal = rrMatch[3];
 
-  let tempVal = "98.6";
+  let tempVal: string | null = null;
   const tempMatch = text.match(/(temp|temperature)\s*(is|of|at)?\s*(\d{2,3}\.?\d?)/i);
   if (tempMatch) tempVal = tempMatch[3];
+
+  let gcsVal: string | null = null;
+  const gcsMatch = text.match(/gcs\s*(is|of|at)?\s*([e]?\d[v]?\d?[m]?\d?|\d{1,2}\/15)/i);
+  if (gcsMatch) gcsVal = gcsMatch[2];
 
   // Heuristic Medication Extraction
   const BRAND_MAP: Record<string, string> = {
@@ -853,21 +869,25 @@ export function parseHeuristicClinicalData(transcript: string): Record<string, a
       spo2: spo2Val,
       rr: rrVal,
       temp: tempVal,
-      gcs: "15",
-      grbs: "",
-      pain: "0"
+      gcs: gcsVal,
+      grbs: null,
+      pain: null
     },
-    airway: structuredAirway || "Patent",
-    breathing: structuredBreathing || "Air entry bilaterally equal. Normal vesicular breath sounds.",
-    circulation: structuredCirculation || "S1 S2 heard. Pulses normal.",
-    disability: structuredDisability || "GCS 15/15. Pupils equal and reactive.",
-    exposure: structuredExposure || "Warm, no trauma.",
-    generalExamination: structuredGenExam || EXAM_DEFAULTS.generalExamination,
-    cvsExamination: structuredCvs || EXAM_DEFAULTS.cvsExamination,
-    respiratoryExamination: structuredChest || EXAM_DEFAULTS.respiratoryExamination,
-    abdomenExamination: structuredAbdomen || EXAM_DEFAULTS.abdomenExamination,
-    cnsExamination: structuredCns || EXAM_DEFAULTS.cnsExamination,
-    psychologicalAssessment: EXAM_DEFAULTS.psychologicalAssessment,
+    // NEW — flags this record as a degraded/heuristic extraction so
+    // the UI can show a visible "please verify manually" banner,
+    // matching voiceExtraction.ts's Tier 4 fallback behavior.
+    requiresManualEntry: true,
+    airway: structuredAirway || null,
+    breathing: structuredBreathing || null,
+    circulation: structuredCirculation || null,
+    disability: structuredDisability || null,
+    exposure: structuredExposure || null,
+    generalExamination: structuredGenExam || null,
+    cvsExamination: structuredCvs || null,
+    respiratoryExamination: structuredChest || null,
+    abdomenExamination: structuredAbdomen || null,
+    cnsExamination: structuredCns || null,
+    psychologicalAssessment: null,
     medications: extractedMeds,
     investigationsOrdered: orderedList,
     investigationResults: resultsObj,
@@ -875,7 +895,7 @@ export function parseHeuristicClinicalData(transcript: string): Record<string, a
     treatment: extractedMeds,
     differentials: structuredDiffs ? structuredDiffs.split(/\n|,|;/).map(d => d.trim()).filter(Boolean) : [],
     procedures: [],
-    allergies: "NKDA"
+    allergies: null
   };
 }
 
@@ -1065,7 +1085,6 @@ export function formatClinicalCaseObject(rawExt: Record<string, any>, rawText: s
   // Extract medications into TreatmentItem[] array
   const rawMeds: string[] = Array.isArray(ext.medications) ? ext.medications : [];
   let treatmentsList = rawMeds.map((medStr: string, idx: number) => {
-    // Match e.g. "Aspirin (Ecosprin) 325mg oral stat"
     const match = medStr.match(/^(.*?)\s+(\d+[\.\d]*\s*(?:mg|g|mcg|iu|ml|puffs?|nebs?|tablets?|tbl|caps?))\s*(.*)$/i);
     if (match) {
       const name = match[1].trim();
@@ -1090,7 +1109,6 @@ export function formatClinicalCaseObject(rawExt: Record<string, any>, rawText: s
     };
   });
 
-  // Process SAMPLE history refinement and treatment/PMH separation
   const finalSymptoms = refineSymptomsText(ext.symptoms, ext.chiefComplaint, ext.hpi, rawText);
   const finalEvents = refineEventsText(ext.events, ext.hpi, finalSymptoms, rawText);
   const medPmh = processSampleMedicationsAndPmh(
@@ -1100,7 +1118,6 @@ export function formatClinicalCaseObject(rawExt: Record<string, any>, rawText: s
     rawText
   );
 
-  // Merge any acute treatments into treatmentsList if not already present
   medPmh.acuteTreatments.forEach((medStr, idx) => {
     if (medStr && !treatmentsList.some(t => t.drugName.toLowerCase() === medStr.toLowerCase())) {
       const r = getProperRoute(medStr, "IV");
@@ -1115,7 +1132,6 @@ export function formatClinicalCaseObject(rawExt: Record<string, any>, rawText: s
     }
   });
 
-  // Deduplicate treatments (e.g. Inj. Omeprazole vs Omeprazole, Inj. Emeset (Ondansetron) vs Ondansetron)
   const seenDrugKeys = new Map<string, any>();
   treatmentsList.forEach((t) => {
     let key = t.drugName.toLowerCase()
@@ -1138,9 +1154,8 @@ export function formatClinicalCaseObject(rawExt: Record<string, any>, rawText: s
   });
   treatmentsList = Array.from(seenDrugKeys.values());
 
-  // Extract Investigations into InvestigationItem[] array
   const investigationItems: any[] = [];
-  
+
   if (ext.investigationResults && typeof ext.investigationResults === "object") {
     Object.entries(ext.investigationResults).forEach(([testName, resVal], idx) => {
       const resStr = String(resVal);
@@ -1156,8 +1171,8 @@ export function formatClinicalCaseObject(rawExt: Record<string, any>, rawText: s
     });
   }
 
-  const orderedList: string[] = Array.isArray(ext.investigationsOrdered) 
-    ? ext.investigationsOrdered 
+  const orderedList: string[] = Array.isArray(ext.investigationsOrdered)
+    ? ext.investigationsOrdered
     : (Array.isArray(ext.investigations) ? ext.investigations : []);
 
   orderedList.forEach((testName: string, idx: number) => {
@@ -1178,6 +1193,38 @@ export function formatClinicalCaseObject(rawExt: Record<string, any>, rawText: s
     ? Object.entries(ext.investigationResults).map(([k, v]) => `${k}: ${v}`).join("; ")
     : "";
 
+  // ══════════════════════════════════════════════════════════════
+  // FIX (Rule 8 compliance): vitals must NEVER receive fabricated
+  // "normal" defaults. Only return what was actually dictated.
+  // Missing values return null (rendered as "Not documented" by the
+  // UI), never a fake number silently mixed in beside real ones.
+  // ══════════════════════════════════════════════════════════════
+  const isRealVital = (v: any) =>
+    v !== null && v !== undefined && String(v).trim() !== "" &&
+    !["unknown", "n/a", "na", "not documented"].includes(String(v).trim().toLowerCase());
+
+  const rawVitals = ext.vitals || {};
+  const vitalsBlock = {
+    bp: isRealVital(rawVitals.bp) ? rawVitals.bp : null,
+    hr: isRealVital(rawVitals.hr) ? rawVitals.hr : null,
+    spo2: isRealVital(rawVitals.spo2) ? rawVitals.spo2 : null,
+    rr: isRealVital(rawVitals.rr) ? rawVitals.rr : null,
+    temp: isRealVital(rawVitals.temp) ? rawVitals.temp : null,
+    gcs: isRealVital(rawVitals.gcs) ? rawVitals.gcs : null,
+    grbs: isRealVital(rawVitals.grbs) ? rawVitals.grbs : null,
+    painScore: isRealVital(rawVitals.pain) ? rawVitals.pain : null,
+  };
+  const vitalsIsDefault = {
+    bp: vitalsBlock.bp === null,
+    hr: vitalsBlock.hr === null,
+    spo2: vitalsBlock.spo2 === null,
+    rr: vitalsBlock.rr === null,
+    temp: vitalsBlock.temp === null,
+    gcs: vitalsBlock.gcs === null,
+    grbs: vitalsBlock.grbs === null,
+    painScore: vitalsBlock.painScore === null,
+  };
+
   return {
     patientName: ext.patientName || null,
     age: ageVal,
@@ -1186,16 +1233,8 @@ export function formatClinicalCaseObject(rawExt: Record<string, any>, rawText: s
     triageCategory: triageCategory,
     caseType: (ext.procedures?.some((p: string) => /trauma|wound|fracture/i.test(p)) || /trauma|fall|injury/i.test(ext.chiefComplaint || "")) ? "Trauma" : "Medical",
     arrivalMode: "Walk-in",
-    vitals: {
-      bp: ext.vitals?.bp || "120/80",
-      hr: ext.vitals?.hr || "80",
-      spo2: ext.vitals?.spo2 || "98",
-      rr: ext.vitals?.rr || "16",
-      temp: ext.vitals?.temp || "37.0",
-      gcs: ext.vitals?.gcs || "15",
-      grbs: ext.vitals?.grbs || "",
-      painScore: ext.vitals?.pain || "0"
-    },
+    vitals: vitalsBlock,
+    vitals_isDefault: vitalsIsDefault, // UI should render "Not documented" for any true flag here
     sampleHistory: {
       symptoms: finalSymptoms,
       allergies: ext.allergies || "NKDA",
@@ -1214,9 +1253,9 @@ export function formatClinicalCaseObject(rawExt: Record<string, any>, rawText: s
       breathingStatus: "Normal",
       circulation: ext.circulation || EXAM_DEFAULTS.cvsExamination,
       circulationStatus: "Normal",
-      disability: ext.disability || `GCS ${ext.vitals?.gcs || '15'}/15 (E4V5M6 - Alert), Pupils: Equal & Reactive (2mm), Motor: ${EXAM_DEFAULTS.cnsExamination}`,
+      disability: ext.disability || `GCS ${vitalsBlock.gcs ?? "Not documented"}/15 (E4V5M6 - Alert), Pupils: Equal & Reactive (2mm), Motor: ${EXAM_DEFAULTS.cnsExamination}`,
       disabilityStatus: "Normal",
-      exposure: ext.exposure || `Temp: ${ext.vitals?.temp || '37.0'}°C (98.6°F), Skin: Normal, clear`,
+      exposure: ext.exposure || `Temp: ${vitalsBlock.temp ?? "Not documented"}, Skin: Normal, clear`,
       exposureStatus: "Normal"
     },
     secondaryAssessment: [

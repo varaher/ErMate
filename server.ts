@@ -3563,6 +3563,64 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
   });
 });
 
+
+// ══════════════════════════════════════════════════════════════════
+// Antigravity Interactions API Route
+// ══════════════════════════════════════════════════════════════════
+app.post("/api/antigravity", express.json(), async (req, res) => {
+  try {
+    const { input, previous_interaction_id } = req.body;
+    
+    if (!input) {
+      return res.status(400).json({ success: false, error: "Input is required" });
+    }
+
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      return res.status(500).json({ success: false, error: "GEMINI_API_KEY is not configured" });
+    }
+
+    const ai = new GoogleGenAI({ apiKey });
+    
+    const interactionParams = {
+      agent: "antigravity-preview-05-2026",
+      input,
+      environment: "remote",
+    };
+
+    if (previous_interaction_id) {
+      interactionParams.previous_interaction_id = previous_interaction_id;
+    }
+
+    // Call Antigravity using Interactions API
+    const interaction = await ai.interactions.create(interactionParams, { timeout: 300000 });
+    
+    // Antigravity agents generate incremental model_output steps. Combine all text outputs:
+    let fullOutput = "";
+    for (const step of interaction.steps) {
+      if (step.type === 'model_output') {
+        const textContent = step.content?.find(c => c.type === 'text');
+        if (textContent && textContent.text) {
+          fullOutput += textContent.text;
+        }
+      }
+    }
+
+    res.json({
+      success: true,
+      data: {
+        interaction_id: interaction.id,
+        environment_id: interaction.environment_id,
+        output_text: fullOutput || "Agent completed without returning text output."
+      }
+    });
+
+  } catch (error) {
+    console.error("[Antigravity Route Error]:", error);
+    res.status(500).json({ success: false, error: error.message || "Failed to process Antigravity request." });
+  }
+});
+
 // Setup Vite Dev Server / Static Asset Serving
 async function startServer() {
   if (process.env.NODE_ENV !== "production") {
