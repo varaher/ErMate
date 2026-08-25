@@ -1088,6 +1088,16 @@ Extremities: No deformity. No peripheral oedema. Peripheral pulses present.`,
     psychological: 'No features of depression, anxiety, psychosis, agitation, suicidal ideation, or substance use. Behaviour appropriate.'
   };
 
+buildPrimaryAssessmentNarratives
+function buildPrimaryAssessmentNarratives(survey: PrimarySurvey, isTrauma: boolean) {
+  return {
+    airway: `Airway ${survey.airway.status}${survey.airway.intervention ? `, Intervention: ${survey.airway.intervention}` : ''}${isTrauma ? `, C-Spine: ${survey.airway.cSpine}` : ''}`,
+    breathing: `RR: ${survey.breathing.rr || '16'}/min, SpO2: ${survey.breathing.spo2 || '98'}% on ${survey.breathing.o2Delivery || 'Room air'}, Work: ${survey.breathing.workOfBreathing || 'normal'}, Air Entry: ${survey.breathing.airEntry || 'Bilaterally equal'}, Sounds: ${survey.breathing.addedSounds || 'Clear'}`,
+    circulation: `HR: ${survey.circulation.hr || '80'}/min ${survey.circulation.rhythm || 'regular'}, BP: ${survey.circulation.sbp || '120'}/${survey.circulation.dbp || '80'} mmHg, CRT: ${survey.circulation.crt || '<2sec'}, Pulses: ${survey.circulation.peripheralPulses || 'normal'}, Skin: ${survey.circulation.skinPerfusion || 'Warm + dry'}`,
+    disability: `GCS: ${survey.disability.gcsTotal || '15'}/15 (E${survey.disability.gcsE || '4'}V${survey.disability.gcsV || '5'}M${survey.disability.gcsM || '6'}), Pupils: ${survey.disability.pupilSizeR || '3'}mm R / ${survey.disability.pupilSizeL || '3'}mm L (${survey.disability.pupilReaction || 'reactive'}), GRBS: ${survey.disability.grbs || 'N/A'}`,
+    exposure: `Temp: ${survey.exposure.temp || '37.0'}°C, Skin: ${survey.exposure.skin || 'Clear'}${isTrauma ? `, Logroll: ${survey.exposure.logRoll || 'Spine clear'}, Pelvis: ${survey.exposure.pelvis || 'stable'}` : ''}`
+  };
+}
   const handleSurveyChange = (fieldPath: string, value: any) => {
     setCurrentCase(prev => {
       const isTrauma = prev.patient.caseType === "Trauma";
@@ -1115,17 +1125,15 @@ Extremities: No deformity. No peripheral oedema. Peripheral pulses present.`,
       if (fieldPath === "disability.grbs" && value) newVitals.grbs = String(value);
       if (fieldPath === "exposure.temp" && value) newVitals.temp = String(value);
 
+          const narratives = buildPrimaryAssessmentNarratives(newSurvey, isTrauma);
+
       return {
         ...prev,
         vitals: newVitals,
         primaryAssessment: {
           ...prev.primaryAssessment,
           survey: newSurvey,
-          airway: `Airway ${newSurvey.airway.status}${newSurvey.airway.intervention ? `, Intervention: ${newSurvey.airway.intervention}` : ''}${isTrauma ? `, C-Spine: ${newSurvey.airway.cSpine}` : ''}`,
-          breathing: `RR: ${newSurvey.breathing.rr || '16'}/min, SpO2: ${newSurvey.breathing.spo2 || '98'}% on ${newSurvey.breathing.o2Delivery || 'Room air'}, Work: ${newSurvey.breathing.workOfBreathing || 'normal'}, Air Entry: ${newSurvey.breathing.airEntry || 'Bilaterally equal'}, Sounds: ${newSurvey.breathing.addedSounds || 'Clear'}`,
-          circulation: `HR: ${newSurvey.circulation.hr || '80'}/min ${newSurvey.circulation.rhythm || 'regular'}, BP: ${newSurvey.circulation.sbp || '120'}/${newSurvey.circulation.dbp || '80'} mmHg, CRT: ${newSurvey.circulation.crt || '<2sec'}, Pulses: ${newSurvey.circulation.peripheralPulses || 'normal'}, Skin: ${newSurvey.circulation.skinPerfusion || 'Warm + dry'}`,
-          disability: `GCS: ${newSurvey.disability.gcsTotal || '15'}/15 (E${newSurvey.disability.gcsE || '4'}V${newSurvey.disability.gcsV || '5'}M${newSurvey.disability.gcsM || '6'}), Pupils: ${newSurvey.disability.pupilSizeR || '3'}mm R / ${newSurvey.disability.pupilSizeL || '3'}mm L (${newSurvey.disability.pupilReaction || 'reactive'}), GRBS: ${newSurvey.disability.grbs || 'N/A'}`,
-          exposure: `Temp: ${newSurvey.exposure.temp || '37.0'}°C, Skin: ${newSurvey.exposure.skin || 'Clear'}${isTrauma ? `, Logroll: ${newSurvey.exposure.logRoll || 'Spine clear'}, Pelvis: ${newSurvey.exposure.pelvis || 'stable'}` : ''}`
+          ...narratives
         }
       };
     });
@@ -1292,6 +1300,52 @@ Extremities: No deformity. No peripheral oedema. Peripheral pulses present.`,
     }
   };
 
+function mapVoiceParsedToSurvey(
+  parsed: any,
+  existingSurvey: PrimarySurvey,
+  vitals: PatientVitals,
+  isTrauma: boolean
+): PrimarySurvey {
+  const bpParts = (vitals.bp || "").split("/");
+  return {
+    ...existingSurvey,
+    breathing: { ...existingSurvey.breathing, rr: vitals.rr || existingSurvey.breathing.rr, spo2: vitals.spo2 || existingSurvey.breathing.spo2 },
+    circulation: { ...existingSurvey.circulation, hr: vitals.hr || existingSurvey.circulation.hr, sbp: bpParts[0] || existingSurvey.circulation.sbp, dbp: bpParts[1] || existingSurvey.circulation.dbp },
+    disability: { ...existingSurvey.disability, gcsTotal: vitals.gcs || existingSurvey.disability.gcsTotal, grbs: vitals.grbs || existingSurvey.disability.grbs },
+    exposure: { ...existingSurvey.exposure, temp: vitals.temp || existingSurvey.exposure.temp },
+  };
+}
+mapVoiceParsedToPediatricDetails
+function mapVoiceParsedToPediatricDetails(parsed: any, existing: PediatricDetails | undefined, vitals: PatientVitals) {
+  const pd = parsed.pediatricDetails || {};
+  return {
+    ...(existing || {}),
+    breathingRr: vitals.rr || existing?.breathingRr || "",
+    breathingSpo2: vitals.spo2 || existing?.breathingSpo2 || "",
+    circulationHr: vitals.hr || existing?.circulationHr || "",
+    circulationBp: vitals.bp || existing?.circulationBp || "",
+    disabilityAvpuGcs: vitals.avpu || existing?.disabilityAvpuGcs || "",
+    disabilityGrbs: vitals.grbs || existing?.disabilityGrbs || "",
+    exposureTemp: vitals.temp || existing?.exposureTemp || "",
+    airwayCry: pd.airwayCry || existing?.airwayCry || "",
+    airwayStatus: pd.airwayStatus || existing?.airwayStatus || "",
+    breathingWob: pd.breathingWob || existing?.breathingWob || "",
+    breathingAbnormalPositioning: pd.breathingAbnormalPositioning || existing?.breathingAbnormalPositioning || "",
+    circulationCrt: pd.circulationCrt || existing?.circulationCrt || "",
+    circulationSkinColorTemp: pd.circulationSkinColorTemp || existing?.circulationSkinColorTemp || "",
+    broughtBy: pd.broughtBy || existing?.broughtBy || "",
+    informant: pd.informant || existing?.informant || "",
+    patAppearanceTone: pd.patAppearanceTone || existing?.patAppearanceTone || "",
+    patAppearanceInteractivity: pd.patAppearanceInteractivity || existing?.patAppearanceInteractivity || "",
+    patAppearanceConsolability: pd.patAppearanceConsolability || existing?.patAppearanceConsolability || "",
+    patAppearanceLookGaze: pd.patAppearanceLookGaze || existing?.patAppearanceLookGaze || "",
+    patAppearanceSpeechCry: pd.patAppearanceSpeechCry || existing?.patAppearanceSpeechCry || "",
+    birthHistory: pd.birthHistory || existing?.birthHistory || "",
+    immunizationHistory: pd.immunizationHistory || existing?.immunizationHistory || "",
+    developmentalHistory: pd.developmentalHistory || existing?.developmentalHistory || "",
+    feedingHistory: pd.feedingHistory || existing?.feedingHistory || "",
+  };
+}
   // AI Voice Dictation trigger
   const handleVoiceSubmit = async () => {
     if (!smartDictationText.trim()) return;
@@ -1439,7 +1493,27 @@ Extremities: No deformity. No peripheral oedema. Peripheral pulses present.`,
             presentingComplaints: parsed.presentingComplaint || currentCase.pediatricDetails?.presentingComplaints || ""
           };
         }
+        // Sync structured survey + pediatric ABCDE fields so the
+        // interactive Primary Survey tab reflects dictation, not
+        // just the flat narrative strings used by print/export.
+        const isTraumaCase = updatedCase.patient.caseType === "Trauma";
+        const existingSurvey = currentCase.primaryAssessment?.survey || getInitialPrimarySurvey(updatedCase.patient.caseType);
+        const newSurvey = mapVoiceParsedToSurvey(parsed, existingSurvey, updatedCase.vitals, isTraumaCase);
+        const narratives = buildPrimaryAssessmentNarratives(newSurvey, isTraumaCase);
 
+        updatedCase.primaryAssessment = {
+          ...updatedCase.primaryAssessment,
+          ...narratives,
+          survey: newSurvey
+        };
+
+        if (updatedCase.isPediatric) {
+          updatedCase.pediatricDetails = mapVoiceParsedToPediatricDetails(
+            parsed,
+            updatedCase.pediatricDetails,
+            updatedCase.vitals
+          );
+        }
         // Recalculate triage category based on updated clinical information
         const triageResult = classifyEmergencyTriage(updatedCase.patient.age, updatedCase.patient.presentingComplaint, updatedCase.vitals);
         updatedCase.patient.triageCategory = triageResult.category;
@@ -1496,7 +1570,27 @@ Extremities: No deformity. No peripheral oedema. Peripheral pulses present.`,
             events: parsed.extractedSummary || currentCase.sampleHistory.events
           }
         };
+        // Sync structured survey + pediatric ABCDE fields so the
+        // interactive Primary Survey tab reflects dictation, not
+        // just the flat narrative strings used by print/export.
+        const isTraumaCase = updatedCase.patient.caseType === "Trauma";
+        const existingSurvey = currentCase.primaryAssessment?.survey || getInitialPrimarySurvey(updatedCase.patient.caseType);
+        const newSurvey = mapVoiceParsedToSurvey(parsed, existingSurvey, updatedCase.vitals, isTraumaCase);
+        const narratives = buildPrimaryAssessmentNarratives(newSurvey, isTraumaCase);
 
+        updatedCase.primaryAssessment = {
+          ...updatedCase.primaryAssessment,
+          ...narratives,
+          survey: newSurvey
+        };
+
+        if (updatedCase.isPediatric) {
+          updatedCase.pediatricDetails = mapVoiceParsedToPediatricDetails(
+            parsed,
+            updatedCase.pediatricDetails,
+            updatedCase.vitals
+          );
+        }
         setCurrentCase(updatedCase);
         onSaveCase(updatedCase);
         setShowScanModal(false);
