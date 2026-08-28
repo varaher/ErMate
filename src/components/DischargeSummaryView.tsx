@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from "react";
-import { ArrowLeft, Sparkles, CheckCircle, Save, RefreshCw, AlertCircle, Printer, ShieldAlert, FileText, Check, AlertTriangle, ListFilter, Copy, Download, ChevronDown, FileCheck, MessageSquare } from "lucide-react";
+import { ArrowLeft, Sparkles, CheckCircle, Save, RefreshCw, AlertCircle, Printer, ShieldAlert, FileText, Check, AlertTriangle, ListFilter, Copy, Download, ChevronDown, FileCheck, MessageSquare, Trash2 } from "lucide-react";
 import { ClinicalCase, DischargeInfo, UserProfile } from "../types";
 import VoiceRecorder from "./shared/VoiceRecorder";
 import { triggerPrintWithTip } from "../utils/printWithTip";
 import { BoundChatModal } from "./BoundChatModal";
 import { captureFeedbackCorrection } from "../services/learningClient";
+import { formatDischargeSummaryText, formatDischargeSummaryHtml, DischargeSummaryData } from "../utils/dischargeSummaryFormat";
 
 interface DischargeSummaryViewProps {
   currentCase: ClinicalCase;
@@ -273,274 +274,45 @@ export default function DischargeSummaryView({
     ? `${profile.hospitalAddress}${profile?.state ? `, ${profile.state}` : ''}`
     : (profile?.state ? `Department of Emergency Medicine, ${profile.state}` : "Department of Emergency Medicine & Level 1 Trauma Services");
 
-  const getFormattedDischargeSummaryText = () => {
-    const pedInfo = currentCase.isPediatric && currentCase.pediatricDetails ? `
-**PEDIATRIC INITIAL ASSESSMENT & HISTORY:**
---------------------------------------------------
-- **Weight:** ${currentCase.pediatricDetails.patientWeight ? `${currentCase.pediatricDetails.patientWeight} kg` : "Not recorded"}
-- **PAT Appearance (TICLS):** Tone: ${currentCase.pediatricDetails.patAppearanceTone || "N/A"}, Interactivity: ${currentCase.pediatricDetails.patAppearanceInteractivity || "N/A"}, Consolability: ${currentCase.pediatricDetails.patAppearanceConsolability || "N/A"}, Look/Gaze: ${currentCase.pediatricDetails.patAppearanceLookGaze || "N/A"}, Speech/Cry: ${currentCase.pediatricDetails.patAppearanceSpeechCry || "N/A"}
-- **PAT Work of Breathing:** ${currentCase.pediatricDetails.patWorkOfBreathing || "Not recorded"}
-- **PAT Circulation:** ${currentCase.pediatricDetails.patCirculation || "Not recorded"}
-- **Immunization Status:** ${currentCase.pediatricDetails.immunizationHistory || "Not recorded"}
-- **Brought By / Informant:** ${currentCase.pediatricDetails.broughtBy || currentCase.pediatricDetails.informant || "Not recorded"}
-` : "";
+  // --- Canonical discharge summary formatter (shared with HandoverView's paste-from-EMR path) ---
+  const buildDischargeSummaryData = (): DischargeSummaryData => ({
+    patientName: currentCase.patient.name,
+    patientAge: currentCase.patient.age || "N/A",
+    patientGender: currentCase.patient.gender,
+    uhid,
+    isMlc,
+    mlcNo,
+    allergies,
+    arrivalHr, arrivalBp, arrivalRr, arrivalSpo2, arrivalGcs, arrivalPainScore, arrivalGrbs, arrivalTemp,
+    presentingComplaints, historyOfPresentIllness, pastMedicalHistory, familyGynaeHistory, lmp, generalExamination,
+    primaryAirway, primaryAirwayIntervention,
+    primaryBreathingWork, primaryBreathingAirEntry, primaryBreathingCct, primaryBreathingSubcut, primaryBreathingEfast, primaryBreathingIntervention,
+    primaryCirculationCrt, primaryCirculationDnv, primaryCirculationPct, primaryCirculationDeformity, primaryCirculationFast, primaryCirculationInterventions,
+    primaryDisabilityAvpuGcs, primaryDisabilityPupils, primaryDisabilityGrbs,
+    primaryExposureTemp, primaryExposureTrauma,
+    secondaryPicle, secondaryChest, secondaryCvs, secondaryPa, secondaryCns, secondaryExtremities,
+    courseInHospital, investigationsResults,
+    primaryDiagnosis, secondaryDiagnosis,
+    dischargeMedications,
+    dispositionStatus,
+    dischargeCondition,
+    dischargeHr, dischargeBp, dischargeRr, dischargeSpo2, dischargeGcs, dischargePainScore, dischargeGrbs, dischargeTemp,
+    followUpPlan,
+    emResidentName, emConsultantName,
+    dischargeDateTime,
+    hospitalAddressLine: profile?.hospitalAddress
+      ? `${profile.hospitalAddress}${profile?.state ? `, ${profile.state}` : ''}`
+      : undefined,
+    pediatric: currentCase.isPediatric && currentCase.pediatricDetails ? {
+      weight: currentCase.pediatricDetails.patientWeight,
+      workOfBreathing: currentCase.pediatricDetails.patWorkOfBreathing,
+      circulation: currentCase.pediatricDetails.patCirculation,
+      immunization: currentCase.pediatricDetails.immunizationHistory
+    } : null
+  });
 
-    return `**CLINICAL DISCHARGE SUMMARY & INSTRUCTIONS CARD**
-**${displayHospitalName}**
-**${displayHospitalAddress}**
---------------------------------------------------
-**PATIENT NAME:** ${currentCase.patient.name}
-**AGE / GENDER:** ${currentCase.patient.age || "N/A"} Years / ${currentCase.patient.gender}
-**UHID / CR NUMBER:** ${uhid}
-**MLC RECORD STATUS:** ${isMlc === "Yes" ? `Yes (${mlcNo})` : "No / Non-MedicoLegal"}
-**ALLERGIES:** ${allergies || "NKDA"}
-
-**DATE OF ARRIVAL:** ${currentCase.patient.dateOpened || "Immediate on-shift"}
-**DATE OF DISCHARGE:** ${dischargeDateTime}
-**BROUGHT BY / INFORMANT:** ${broughtBy}
-**CASE CATEGORY:** ${currentCase.patient.caseType || "Medical"}
-**LAST MENSTRUAL PERIOD:** ${lmp}
-
-**Vitals on Arrival:**
---------------------------------------------------
-- **HR / Pulse:** ${arrivalHr ? `${arrivalHr} bpm` : "Not recorded"}
-- **Blood Pres.:** ${arrivalBp || "Not recorded"}
-- **Resp Rate:** ${arrivalRr ? `${arrivalRr} /min` : "Not recorded"}
-- **SpO2 %:** ${arrivalSpo2 ? `${arrivalSpo2}%` : "Not recorded"}
-- **GCS Score:** ${arrivalGcs ? `${arrivalGcs}/15` : "Not recorded"}
-- **Pain Score:** ${arrivalPainScore ? `${arrivalPainScore}/10` : "Not recorded"}
-- **GRBS Glu.:** ${arrivalGrbs ? `${arrivalGrbs} mg/dL` : "Not recorded"}
-- **Body Temp:** ${arrivalTemp ? `${arrivalTemp} °F` : "Not recorded"}
-
-**PRESENTING COMPLAINTS:**
-${presentingComplaints || "None recorded"}
-
-**HISTORY OF PRESENT ILLNESS:**
-${historyOfPresentIllness || "None recorded"}
-
-**PAST MEDICAL / SURGICAL HISTORIES:**
-${pastMedicalHistory || "None recorded"}
-
-**FAMILY / GYNAE HISTORY:**
-${familyGynaeHistory || "None recorded"} (LMP: ${lmp})
-${pedInfo}
-**Primary Survey:**
---------------------------------------------------
-- **Airway:** ${primaryAirway || "Not documented"} | **Intervention:** ${primaryAirwayIntervention || "Not documented"}
-- **Breathing:** ${primaryBreathing || "Not documented"}
-  - **Chest Work:** ${primaryBreathingWork || "Not documented"} | **Air Entry:** ${primaryBreathingAirEntry || "Not documented"}
-  - **CCT:** ${primaryBreathingCct || "Not documented"} | **Subcut Emphysema:** ${primaryBreathingSubcut || "Not documented"} | **EFAST:** ${primaryBreathingEfast || "Not documented"}
-  - **Intervention:** ${primaryBreathingIntervention || "Not documented"}
-- **Circulation:**
-  - **CRT:** ${primaryCirculationCrt || "Not documented"} | **Dist. Neck Veins:** ${primaryCirculationDnv || "Not documented"}
-  - **PCT:** ${primaryCirculationPct || "Not documented"} | **Long Bone Deformity:** ${primaryCirculationDeformity || "Not documented"} | **FAST:** ${primaryCirculationFast || "Not documented"}
-  - **Intervention:** ${primaryCirculationInterventions || "Not documented"}
-- **Disability:**
-  - **AVPU/GCS:** ${primaryDisabilityAvpuGcs || "Not documented"} | **Pupils:** ${primaryDisabilityPupils || "Not documented"} | **GRBS:** ${primaryDisabilityGrbs || "Not documented"}
-- **Exposure:**
-  - **Temp:** ${primaryExposureTemp ? `${primaryExposureTemp} °F` : "Not documented"} | **Trauma-Logroll:** ${primaryExposureTrauma || "Not documented"}
-
-**Secondary Physical & Systemic Examinations:**
---------------------------------------------------
-- **General Exam (P/I/C/C/L/E):** ${secondaryPicle || "Not documented"}
-- **Respiratory (CHEST):** ${secondaryChest || "Not documented"}
-- **Cardiovascular (CVS):** ${secondaryCvs || "Not documented"}
-- **Abdominal / Gastro (P/A):** ${secondaryPa || "Not documented"}
-- **Central Nervous System (CNS):** ${secondaryCns || "Not documented"}
-- **Musculoskeletal / Extremities:** ${secondaryExtremities || "Not documented"}
-
-**Course in Emergency Ward with Medications & Procedures:**
---------------------------------------------------
-${courseInHospital || "Patient evaluated and stabilized in ER."}
-
-**Diagnostic Investigations Performed & Results Summary:**
---------------------------------------------------
-${investigationsResults || "No investigations ordered."}
-
-**Diagnosis at Discharge:**
---------------------------------------------------
-- **FINAL DIAGNOSIS:** ${primaryDiagnosis || "Under Evaluation"}
-- **ASSOCIATED COMORBIDITIES:** ${secondaryDiagnosis || "None recorded"}
-
-**Discharge medications:**
---------------------------------------------------
-${dischargeMedications || "No outpatient medications prescribed."}
-
-**Disposition Stats & Decision:**
---------------------------------------------------
-- **DISPOSITION MODE:** ${dispositionStatus}
-- **PATIENT CONDITION AT DISCHARGE:** ${dischargeCondition || "Not Recorded"}
-- **DISCHARGE VITALS:**
-  - **HR:** ${dischargeHr ? `${dischargeHr} bpm` : "Not recorded"} | **BP:** ${dischargeBp || "Not recorded"}
-  - **RR:** ${dischargeRr ? `${dischargeRr} /min` : "Not recorded"} | **SpO2:** ${dischargeSpo2 ? `${dischargeSpo2}%` : "Not recorded"}
-  - **GCS:** ${dischargeGcs ? `${dischargeGcs}/15` : "Not recorded"} | **Pain:** ${dischargePainScore ? `${dischargePainScore}/10` : "Not recorded"}
-  - **GRBS:** ${dischargeGrbs ? `${dischargeGrbs} mg/dL` : "Not recorded"} | **Temp:** ${dischargeTemp ? `${dischargeTemp} °F` : "Not recorded"}
-
-**FOLLOW-UP PLAN:**
---------------------------------------------------
-${followUpPlan || "None recorded"}
-
-**GENERAL INSTRUCTIONS & SAFE-RETURN WARNINGS:**
---------------------------------------------------
-${patientInstructions || "Emergency warnings: return immediately if you experience breathing difficulty, high fever, chest tightness or severe pain."}
-
-**ATTENDING CLINICIANS:**
---------------------------------------------------
-**Emergency Medicine Duty Resident:** ${emResidentName || "Not Recorded"}
-**Attending EM Consultant:** ${emConsultantName || "Not Recorded"}
-
-🚨 **IN CASE OF EMERGENCY / RE-ACCESS TO TRAUMA SERVICES, CALL ER HOTLINE** 🚨
-`;
-  };
-
-  const getFormattedDischargeSummaryHtml = () => {
-    const pedHtml = currentCase.isPediatric && currentCase.pediatricDetails ? `
-<strong>PEDIATRIC INITIAL ASSESSMENT & HISTORY:</strong>
-<hr/>
-<ul>
-  <li><strong>Weight:</strong> ${currentCase.pediatricDetails.patientWeight ? `${currentCase.pediatricDetails.patientWeight} kg` : "Not recorded"}</li>
-  <li><strong>PAT Appearance (TICLS):</strong> Tone: ${currentCase.pediatricDetails.patAppearanceTone || "N/A"}, Interactivity: ${currentCase.pediatricDetails.patAppearanceInteractivity || "N/A"}, Consolability: ${currentCase.pediatricDetails.patAppearanceConsolability || "N/A"}, Look/Gaze: ${currentCase.pediatricDetails.patAppearanceLookGaze || "N/A"}, Speech/Cry: ${currentCase.pediatricDetails.patAppearanceSpeechCry || "N/A"}</li>
-  <li><strong>PAT Work of Breathing:</strong> ${currentCase.pediatricDetails.patWorkOfBreathing || "Not recorded"}</li>
-  <li><strong>PAT Circulation:</strong> ${currentCase.pediatricDetails.patCirculation || "Not recorded"}</li>
-  <li><strong>Immunization Status:</strong> ${currentCase.pediatricDetails.immunizationHistory || "Not recorded"}</li>
-  <li><strong>Brought By / Informant:</strong> ${currentCase.pediatricDetails.broughtBy || currentCase.pediatricDetails.informant || "Not recorded"}</li>
-</ul>
-<br/>
-` : "";
-
-    return `<h3><strong>CLINICAL DISCHARGE SUMMARY & INSTRUCTIONS CARD</strong></h3>
-<h4><strong>${displayHospitalName}</strong></h4>
-<h5><strong>${displayHospitalAddress}</strong></h5>
-<hr/>
-<strong>PATIENT NAME:</strong> ${currentCase.patient.name}<br/>
-<strong>AGE / GENDER:</strong> ${currentCase.patient.age || "N/A"} Years / ${currentCase.patient.gender}<br/>
-<strong>UHID / CR NUMBER:</strong> ${uhid}<br/>
-<strong>MLC RECORD STATUS:</strong> ${isMlc === "Yes" ? `Yes (${mlcNo})` : "No / Non-MedicoLegal"}<br/>
-<strong>ALLERGIES:</strong> ${allergies || "NKDA"}<br/>
-<br/>
-<strong>DATE OF ARRIVAL:</strong> ${currentCase.patient.dateOpened || "Immediate on-shift"}<br/>
-<strong>DATE OF DISCHARGE:</strong> ${dischargeDateTime}<br/>
-<strong>BROUGHT BY / INFORMANT:</strong> ${broughtBy}<br/>
-<strong>CASE CATEGORY:</strong> ${currentCase.patient.caseType || "Medical"}<br/>
-<strong>LAST MENSTRUAL PERIOD:</strong> ${lmp}<br/>
-<br/>
-<strong>Vitals on Arrival:</strong>
-<hr/>
-<ul>
-  <li><strong>HR / Pulse:</strong> ${arrivalHr ? `${arrivalHr} bpm` : "Not recorded"}</li>
-  <li><strong>Blood Pres.:</strong> ${arrivalBp || "Not recorded"}</li>
-  <li><strong>Resp Rate:</strong> ${arrivalRr ? `${arrivalRr} /min` : "Not recorded"}</li>
-  <li><strong>SpO2 %:</strong> ${arrivalSpo2 ? `${arrivalSpo2}%` : "Not recorded"}</li>
-  <li><strong>GCS Score:</strong> ${arrivalGcs ? `${arrivalGcs}/15` : "Not recorded"}</li>
-  <li><strong>Pain Score:</strong> ${arrivalPainScore ? `${arrivalPainScore}/10` : "Not recorded"}</li>
-  <li><strong>GRBS Glu.:</strong> ${arrivalGrbs ? `${arrivalGrbs} mg/dL` : "Not recorded"}</li>
-  <li><strong>Body Temp:</strong> ${arrivalTemp ? `${arrivalTemp} °F` : "Not recorded"}</li>
-</ul>
-<br/>
-<strong>PRESENTING COMPLAINTS:</strong><br/>
-${presentingComplaints || "None recorded"}<br/>
-<br/>
-<strong>HISTORY OF PRESENT ILLNESS:</strong><br/>
-${historyOfPresentIllness || "None recorded"}<br/>
-<br/>
-<strong>PAST MEDICAL / SURGICAL HISTORIES:</strong><br/>
-${pastMedicalHistory || "None recorded"}<br/>
-<br/>
-<strong>FAMILY / GYNAE HISTORY:</strong><br/>
-${familyGynaeHistory || "None recorded"} (LMP: ${lmp})<br/>
-<br/>
-${pedHtml}
-<strong>Primary Survey:</strong>
-<hr/>
-<ul>
-  <li><strong>Airway:</strong> ${primaryAirway || "Not documented"} | <strong>Intervention:</strong> ${primaryAirwayIntervention || "Not documented"}</li>
-  <li><strong>Breathing:</strong> ${primaryBreathing || "Not documented"}
-    <ul>
-      <li><strong>Chest Work:</strong> ${primaryBreathingWork || "Not documented"} | <strong>Air Entry:</strong> ${primaryBreathingAirEntry || "Not documented"}</li>
-      <li><strong>CCT:</strong> ${primaryBreathingCct || "Not documented"} | <strong>Subcut Emphysema:</strong> ${primaryBreathingSubcut || "Not documented"} | <strong>EFAST:</strong> ${primaryBreathingEfast || "Not documented"}</li>
-      <li><strong>Intervention:</strong> ${primaryBreathingIntervention || "Not documented"}</li>
-    </ul>
-  </li>
-  <li><strong>Circulation:</strong>
-    <ul>
-      <li><strong>CRT:</strong> ${primaryCirculationCrt || "Not documented"} | <strong>Dist. Neck Veins:</strong> ${primaryCirculationDnv || "Not documented"}</li>
-      <li><strong>PCT:</strong> ${primaryCirculationPct || "Not documented"} | <strong>Long Bone Deformity:</strong> ${primaryCirculationDeformity || "Not documented"} | <strong>FAST:</strong> ${primaryCirculationFast || "Not documented"}</li>
-      <li><strong>Intervention:</strong> ${primaryCirculationInterventions || "Not documented"}</li>
-    </ul>
-  </li>
-  <li><strong>Disability:</strong>
-    <ul>
-      <li><strong>AVPU/GCS:</strong> ${primaryDisabilityAvpuGcs || "Not documented"} | <strong>Pupils:</strong> ${primaryDisabilityPupils || "Not documented"} | <strong>GRBS:</strong> ${primaryDisabilityGrbs || "Not documented"}</li>
-    </ul>
-  </li>
-  <li><strong>Exposure:</strong>
-    <ul>
-      <li><strong>Temp:</strong> ${primaryExposureTemp ? `${primaryExposureTemp} °F` : "Not documented"} | <strong>Trauma-Logroll:</strong> ${primaryExposureTrauma || "Not documented"}</li>
-    </ul>
-  </li>
-</ul>
-<br/>
-<strong>Secondary Physical & Systemic Examinations:</strong>
-<hr/>
-<ul>
-  <li><strong>General Exam (P/I/C/C/L/E):</strong> ${secondaryPicle || "Not documented"}</li>
-  <li><strong>Respiratory (CHEST):</strong> ${secondaryChest || "Not documented"}</li>
-  <li><strong>Cardiovascular (CVS):</strong> ${secondaryCvs || "Not documented"}</li>
-  <li><strong>Abdominal / Gastro (P/A):</strong> ${secondaryPa || "Not documented"}</li>
-  <li><strong>Central Nervous System (CNS):</strong> ${secondaryCns || "Not documented"}</li>
-  <li><strong>Musculoskeletal / Extremities:</strong> ${secondaryExtremities || "Not documented"}</li>
-</ul>
-<br/>
-<strong>Course in Emergency Ward with Medications & Procedures:</strong>
-<hr/>
-${courseInHospital || "Patient evaluated and stabilized in ER."}<br/>
-<br/>
-<strong>Diagnostic Investigations Performed & Results Summary:</strong>
-<hr/>
-${investigationsResults || "No investigations ordered."}<br/>
-<br/>
-<strong>Diagnosis at Discharge:</strong>
-<hr/>
-<ul>
-  <li><strong>FINAL DIAGNOSIS:</strong> ${primaryDiagnosis || "Under Evaluation"}</li>
-  <li><strong>ASSOCIATED COMORBIDITIES:</strong> ${secondaryDiagnosis || "None recorded"}</li>
-</ul>
-<br/>
-<strong>Discharge medications:</strong>
-<hr/>
-${dischargeMedications || "No outpatient medications prescribed."}<br/>
-<br/>
-<strong>Disposition Stats & Decision:</strong>
-<hr/>
-<ul>
-  <li><strong>DISPOSITION MODE:</strong> ${dispositionStatus}</li>
-  <li><strong>PATIENT CONDITION AT DISCHARGE:</strong> ${dischargeCondition || "Not Recorded"}</li>
-  <li><strong>DISCHARGE VITALS:</strong>
-    <ul>
-      <li><strong>HR:</strong> ${dischargeHr ? `${dischargeHr} bpm` : "Not recorded"} | <strong>BP:</strong> ${dischargeBp || "Not recorded"}</li>
-      <li><strong>RR:</strong> ${dischargeRr ? `${dischargeRr} /min` : "Not recorded"} | <strong>SpO2:</strong> ${dischargeSpo2 ? `${dischargeSpo2}%` : "Not recorded"}</li>
-      <li><strong>GCS:</strong> ${dischargeGcs ? `${dischargeGcs}/15` : "Not recorded"} | <strong>Pain:</strong> ${dischargePainScore ? `${dischargePainScore}/10` : "Not recorded"}</li>
-      <li><strong>GRBS:</strong> ${dischargeGrbs ? `${dischargeGrbs} mg/dL` : "Not recorded"} | <strong>Temp:</strong> ${dischargeTemp ? `${dischargeTemp} °F` : "Not recorded"}</li>
-    </ul>
-  </li>
-</ul>
-<br/>
-<strong>FOLLOW-UP PLAN:</strong>
-<hr/>
-${followUpPlan || "None recorded"}<br/>
-<br/>
-<strong>GENERAL INSTRUCTIONS & SAFE-RETURN WARNINGS:</strong>
-<hr/>
-${patientInstructions || "Emergency warnings: return immediately if you experience breathing difficulty, high fever, chest tightness or severe pain."}<br/>
-<br/>
-<strong>ATTENDING CLINICIANS:</strong>
-<hr/>
-<strong>Emergency Medicine Duty Resident:</strong> ${emResidentName || "Not Recorded"}<br/>
-<strong>Attending EM Consultant:</strong> ${emConsultantName || "Not Recorded"}<br/>
-<br/>
-🚨 <strong>IN CASE OF EMERGENCY / RE-ACCESS TO TRAUMA SERVICES, CALL ER HOTLINE</strong> 🚨
-`;
-  };
+  const getFormattedDischargeSummaryText = () => formatDischargeSummaryText(buildDischargeSummaryData());
+  const getFormattedDischargeSummaryHtml = () => formatDischargeSummaryHtml(buildDischargeSummaryData());
 
   const handleCopyDischargeSummary = () => {
     const plainText = getFormattedDischargeSummaryText();
@@ -597,8 +369,6 @@ ${patientInstructions || "Emergency warnings: return immediately if you experien
   };
 
   // Auto-Draft API integration
-  
-  
   const handleAiDraft = async () => {
     setAiLoading(true);
     setAiError(null);
@@ -647,7 +417,6 @@ ${patientInstructions || "Emergency warnings: return immediately if you experien
     }
   };
 
-  
   // Automatically trigger AI Draft / Course Generation on mount if not already done
   useEffect(() => {
     if (!currentCase.dischargeInfo?.courseInHospital && !aiDrafted && !aiLoading) {
@@ -1602,12 +1371,16 @@ ${patientInstructions || "Emergency warnings: return immediately if you experien
           <div className="flex-1 overflow-y-auto p-8 md:p-10 font-sans leading-relaxed text-[12px] text-slate-900 bg-white space-y-4 select-text max-w-full print:p-0 print:m-0 print:w-full print:max-w-full print:text-[12px] whitespace-pre-wrap" id="print-sheet-content">
   <div className="font-bold mb-4 text-[14px]">Discharge Summary</div>
 
-  <div><span className="font-bold">MLC:</span> {isMlc === "Yes" ? `Yes (${mlcNo})` : "No"}</div>
+  <div><span className="font-bold">PATIENT NAME:</span> {currentCase.patient.name}</div>
+  <div><span className="font-bold">AGE / GENDER:</span> {currentCase.patient.age || "N/A"} Years / {currentCase.patient.gender}</div>
+  <div><span className="font-bold">UHID / CR NUMBER:</span> {uhid}</div>
+
+  <div className="mt-4"><span className="font-bold">MLC:</span> {isMlc === "Yes" ? `Yes (${mlcNo})` : "No"}</div>
 
   <div><span className="font-bold">Allergy :</span> {allergies}</div>
 
   <div className="font-bold mt-4">Vitals at the time of arrival:</div>
-  <div>HR-{arrivalHr} ,BP-{arrivalBp} ,RR-{arrivalRr} ,SpO2-{arrivalSpo2} ,GCS-{arrivalGcs} ,Pain Score-{arrivalPainScore} ,GRBS-{arrivalGrbs} ,Temp-{arrivalTemp}</div>
+  <div>HR-{arrivalHr} ,BP-{arrivalBp} ,RR-{arrivalRr} ,Spo2-{arrivalSpo2} ,GCS-{arrivalGcs} ,Pain Score-{arrivalPainScore} ,GRBS-{arrivalGrbs} ,Temp-{arrivalTemp}</div>
 
   <div className="font-bold mt-4">Presenting Complaints:</div>
   <div>{presentingComplaints}</div>
@@ -1618,22 +1391,30 @@ ${patientInstructions || "Emergency warnings: return immediately if you experien
   <div className="font-bold mt-4">Past Medical/Surgical Histories:</div>
   <div>{pastMedicalHistory}</div>
 
-  <div><span className="font-bold">Family / Gynae History :</span> {familyGynaeHistory}</div>
+  <div className="mt-2"><span className="font-bold">Family / Gynae History :</span> {familyGynaeHistory}</div>
   <div><span className="font-bold">LMP :</span> {lmp}</div>
+
+  {currentCase.isPediatric && currentCase.pediatricDetails && (
+    <div className="mt-2 text-slate-600">
+      <div className="font-bold">Pediatric Notes (supplemental):</div>
+      <div>Weight: {currentCase.pediatricDetails.patientWeight ? `${currentCase.pediatricDetails.patientWeight} kg` : "Not recorded"}</div>
+      <div>Work of Breathing: {currentCase.pediatricDetails.patWorkOfBreathing || "Not recorded"}</div>
+      <div>Circulation: {currentCase.pediatricDetails.patCirculation || "Not recorded"}</div>
+    </div>
+  )}
 
   <div className="font-bold mt-4">General Examination / Systemic examination:</div>
   <div>{generalExamination}</div>
-  
+
   <div className="font-bold mt-4">Primary Assessment:</div>
   <div><span className="font-bold">Airway &rarr;</span> {primaryAirway} ,Intervention- {primaryAirwayIntervention}</div>
-  <div><span className="font-bold">Breathing &rarr;</span> Work of breathing- {primaryBreathingWork} ,Air entry- {primaryBreathingAirEntry}</div>
-  <div><span className="font-bold">Circulation &rarr;</span> CRT- {primaryCirculationCrt} , Distended Neck Veins- {primaryCirculationDnv} , PCT- {primaryCirculationPct}</div>
-  <div>Long bone deformity- {primaryCirculationDeformity} ,FAST- {primaryCirculationFast} ,Interventions- {primaryCirculationInterventions}</div>
+  <div><span className="font-bold">Breathing &rarr;</span> Work of breathing- {primaryBreathingWork} ,Air entry- {primaryBreathingAirEntry} ,CCT- {primaryBreathingCct} ,Subcutaneous emphysema- {primaryBreathingSubcut} ,EFAST- {primaryBreathingEfast} ,Intervention- {primaryBreathingIntervention}.</div>
+  <div><span className="font-bold">Circulation &rarr;</span> CRT- {primaryCirculationCrt} , Distended Neck Veins- {primaryCirculationDnv} , PCT- {primaryCirculationPct} ,Long bone deformity- {primaryCirculationDeformity} ,FAST- {primaryCirculationFast} ,Interventions- {primaryCirculationInterventions}.</div>
   <div><span className="font-bold">Disability &rarr;</span> AVPU/GCS- {primaryDisabilityAvpuGcs} ,Pupils- {primaryDisabilityPupils} ,GRBS- {primaryDisabilityGrbs}</div>
-  <div><span className="font-bold">Exposure &rarr;</span> Temp- {primaryExposureTemp} | Trauma- {primaryExposureTrauma}</div>
+  <div><span className="font-bold">Exposure &rarr;</span> Temp- {primaryExposureTemp} | Trauma-Logroll- {primaryExposureTrauma}</div>
 
   <div className="font-bold mt-4">Secondary Assesment:</div>
-  <div>Pallor Icterus Cyanosis Clubbing Lymphadenopathy Edema : {secondaryPicle}</div>
+  <div>Pallor Icterus Cyanosis Clubbing Lymphadenopathy Edema- {secondaryPicle}</div>
   <div><span className="font-bold">CHEST-</span> {secondaryChest}</div>
   <div><span className="font-bold">CVS-</span> {secondaryCvs}</div>
   <div><span className="font-bold">P/A-</span> {secondaryPa}</div>
@@ -1642,22 +1423,30 @@ ${patientInstructions || "Emergency warnings: return immediately if you experien
 
   <div className="font-bold mt-4">Course in Hospital with Medications and Procedure:</div>
   <div>{courseInHospital}</div>
-  <div>{dischargeMedications}</div>
 
   <div className="font-bold mt-4">Investigations:</div>
   <div>{investigationsResults}</div>
 
-  <div className="font-bold mt-4">Condition at time of discharge:</div>
-  <div>({dischargeCondition})</div>
+  <div className="font-bold mt-4">Diagnosis at the time of discharge:</div>
+  <div>{primaryDiagnosis}{secondaryDiagnosis ? ` ; ${secondaryDiagnosis}` : ""}</div>
+
+  <div className="font-bold mt-4">Discharge Medications:</div>
+  <div>{dischargeMedications}</div>
+
+  <div className="font-bold mt-4">Disposition:</div>
+  <div>[{dispositionStatus === "Normal Discharge" ? "x" : " "}] Normal Discharge</div>
+  <div>[{dispositionStatus === "Discharge at Request" ? "x" : " "}] Discharge at Request</div>
+  <div>[{dispositionStatus === "Discharge Against Medical Advice" ? "x" : " "}] Discharge Against Medical Advice</div>
+  <div>[{dispositionStatus === "Referred" ? "x" : " "}] Referred</div>
+
+  <div className="font-bold mt-4">Condition at time of discharge:(STABLE/UNSTABLE)</div>
+  <div>{dischargeCondition}</div>
 
   <div className="font-bold mt-4">Vitals at the time of Discharge:</div>
-  <div>HR-{dischargeHr} ,BP-{dischargeBp} ,RR-{dischargeRr} ,SpO2-{dischargeSpo2} ,GCS-{dischargeGcs} ,Pain Score-{dischargePainScore} ,GRBS-{dischargeGrbs} ,Temp-{dischargeTemp}</div>
+  <div>HR-{dischargeHr} ,BP-{dischargeBp} ,RR-{dischargeRr} ,Sp02-{dischargeSpo2} ,GCS-{dischargeGcs} ,Pain Score-{dischargePainScore} ,GRBS-{dischargeGrbs} ,Temp-{dischargeTemp}</div>
 
   <div className="font-bold mt-4">Follow-Up Advice:</div>
   <div>{followUpPlan}</div>
-
-  <div className="font-bold mt-4">General Instructions:</div>
-  <div>{patientInstructions}</div>
 
   <div className="mt-8 flex gap-8">
     <div><span className="font-bold">ED Resident:</span> {emResidentName}</div>
@@ -1668,15 +1457,15 @@ ${patientInstructions || "Emergency warnings: return immediately if you experien
     <div><span className="font-bold">Sign and Time:</span> ___________________</div>
     <div><span className="font-bold">Sign and Time:</span> ___________________</div>
   </div>
-  
-  <div className="mt-2"><span className="font-bold">Date:</span> {new Date().toLocaleDateString([], { dateStyle: 'short' })}</div>
+
+  <div className="mt-2"><span className="font-bold">Date:</span> {dischargeDateTime}</div>
 
   <div className="mt-8">In case of emergency, contact: 0484-2905100</div>
   <div className="mt-2 font-bold">Hospital Address and Contact Information:</div>
-  <div>Chunangamvely, Aluva, Ernakulam, Kerala - 683 112</div>
+  <div>{profile?.hospitalAddress ? `${profile.hospitalAddress}${profile?.state ? `, ${profile.state}` : ''}` : "Chunangamvely, Aluva, Ernakulam, Kerala - 683 112"}</div>
   <div>Phone: 0484-2905000 / 0484-2905100</div>
 
-  <div className="mt-8 text-[11px] leading-snug">This discharge summary provides clinical information meant to facilitate continuity of patient care. For statutory purposes, a physical copy of this record must be preserved.</div>
+  <div className="mt-8 text-[11px] leading-snug">This discharge summary provides clinical information meant to facilitate continuity of patient care. For statutory purposes, a treatment/discharge certificate shall be issued on request (As per the Kerala Medico-legal Code approved by the Government of Kerala in 2011). For a disability certificate, approach a Government-constituted Medical Board.</div>
 
 </div>
 
