@@ -156,7 +156,8 @@ export default function CaseSheetView({
   onSaveProfile,
   onReturnToScribe,
   hasActiveScribeSession,
-  onDiscussCase
+  onDiscussCase,
+  onDeleteCase
 }: CaseSheetViewProps) {
   const [activeTab, setActiveTab] = useState<
     "triage" | "complaints" | "primary-survey" | "history" | "secondary-survey" | "investigations" | "trends" | "treatment" | "notes" | "disposition" | "rounds"
@@ -1934,7 +1935,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}
 **Disposition:**
 - **Disposition:** ${currentCase.dispositionDetails?.dispositionType || "Discharge"} (ICU, Room, Ward, Referral, DAMA)
 - **Differential Diagnosis:** ${currentCase.differentials.length > 0 ? currentCase.differentials.map((d, idx) => `${idx + 1}. ${d.diagnosis} (${d.status})`).join("\n") : "None recorded"}
-- **EM Resident:** ${currentCase.dispositionDetails?.residentName || "Dr. Thomas"}
+**EM Resident:** ${currentCase.dispositionDetails?.residentName || "Not recorded"}
 - **EM Consultant:** ${currentCase.dispositionDetails?.consultantName || currentCase.consultantName || "Duty Consultant"}
 
 --------------------------------------------------
@@ -2089,7 +2090,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
 <ul>
   <li><strong>Disposition:</strong> ${currentCase.dispositionDetails?.dispositionType || "Discharge"} (ICU, Room, Ward, Referral, DAMA)</li>
   <li><strong>Differential Diagnosis:</strong> ${currentCase.differentials.length > 0 ? currentCase.differentials.map((d, idx) => `${idx + 1}. ${d.diagnosis} (${d.status})`).join("<br/>") : "None recorded"}</li>
-  <li><strong>EM Resident:</strong> ${currentCase.dispositionDetails?.residentName || "Dr. Thomas"}</li>
+ <li><strong>EM Resident:</strong> ${currentCase.dispositionDetails?.residentName || "Not recorded"}</li>
   <li><strong>EM Consultant:</strong> ${currentCase.dispositionDetails?.consultantName || currentCase.consultantName || "Duty Consultant"}</li>
 </ul>
 <br/>
@@ -3264,7 +3265,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                       <input
                         type="text"
                         placeholder="e.g. Dr. Thomas"
-                        value={currentCase.dispositionDetails?.residentName || "Dr. Thomas"}
+                       value={currentCase.dispositionDetails?.residentName || ""}
                         onChange={(e) => updateDisposition("residentName", e.target.value)}
                         className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-xs"
                       />
@@ -6536,7 +6537,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                 <strong>Disposition / Condition:</strong> {currentCase.pediatricDetails?.disposition || "Ward"} / {currentCase.pediatricDetails?.conditionAtShift || "Stable"}
               </div>
               <div>
-                <strong>EM Resident:</strong> {currentCase.pediatricDetails?.emResident || "Dr. Thomas"}
+                <strong>EM Resident:</strong> {currentCase.pediatricDetails?.emResident || "Not Recorded"}
               </div>
               <div>
                 <strong>EM Consultant:</strong> {currentCase.pediatricDetails?.emConsultant || currentCase.consultantName || "Duty Consultant"}
@@ -6813,7 +6814,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                 <p className="text-[9px] text-slate-500 mt-0.5">(ICU, Room, Ward, Referral, DAMA)</p>
               </div>
               <div>
-                <strong>EM Resident:</strong> {currentCase.dispositionDetails?.residentName || "Dr. Thomas"}
+                <strong>EM Resident:</strong> {currentCase.dispositionDetails?.residentName || "Not Recorded"}
               </div>
               <div>
                 <strong>EM Consultant:</strong> {currentCase.dispositionDetails?.consultantName || currentCase.consultantName || "Duty Consultant"}

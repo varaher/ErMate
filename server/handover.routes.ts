@@ -11,7 +11,7 @@ const router = Router();
 router.post(
   '/api/handover/parse-structured',
   async (req: Request, res: Response) => {
-    const { rawText } = req.body;
+    const { rawText, doctorName, patientName } = req.body;
 
     if (!rawText || typeof rawText !== 'string' || !rawText.trim()) {
       return res.status(400).json({
@@ -20,7 +20,7 @@ router.post(
       });
     }
 
-    const result = await extractHandover(rawText);
+    const result = await extractHandover(rawText, doctorName, patientName);
 
     if (!result.success) {
       return res.status(500).json(result);

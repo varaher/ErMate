@@ -1,0 +1,4 @@
+
+> react-example@3.0.0 lint
+> tsc --noEmit
+

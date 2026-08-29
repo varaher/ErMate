@@ -15,8 +15,8 @@ import { isAbnormal } from './clinicalRanges.ts';
 export const MODELS = {
   CLAUDE_SONNET:  'claude-3-5-sonnet-20241022',
   CLAUDE_HAIKU:   'claude-3-5-haiku-20241022',
-  GEMINI_FLASH:   'gemini-2.0-flash',
-  GEMINI_PRO:     'gemini-2.0-flash',
+  GEMINI_FLASH:   'gemini-2.0-flash',   // whitelisted ONLY for vision/OCR — never call from here
+  GEMINI_PRO:     'gemini-1.5-pro',     // ⚠ VERIFY against your current Google AI Studio available-models list before deploying — model IDs change. This must resolve to an actual Pro-tier model, not any string containing "flash".
 };
 
 // ── Step 1: Preprocess — strip noise ─────────────────────────
@@ -372,20 +372,25 @@ ${processedText}
 `;
 }
 
-let isAnthropicDisabledInHandover = false;
+let anthropicDisabledUntil = 0; // epoch ms; 0 = not disabled
+const ANTHROPIC_DISABLE_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
+
+function isAnthropicCurrentlyDisabled(): boolean {
+  return Date.now() < anthropicDisabledUntil;
+}
 
 // ── Claude caller ─────────────────────────────────────────────
 async function callClaude(
   prompt: string,
   model: string
 ): Promise<string> {
-  if (isAnthropicDisabledInHandover) {
-    throw new Error('ErMate AI API is disabled due to previous credit/auth issue.');
+    if (isAnthropicCurrentlyDisabled()) {
+    throw new Error('ErMate is disabled due to previous credit/auth issue.');
   }
 
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey || apiKey.trim() === '' || apiKey === 'MY_ANTHROPIC_API_KEY') {
-    isAnthropicDisabledInHandover = true;
+      anthropicDisabledUntil = Date.now() + ANTHROPIC_DISABLE_COOLDOWN_MS;
     throw new Error('ANTHROPIC_API_KEY environment variable is missing.');
   }
 
@@ -403,8 +408,8 @@ async function callClaude(
       .trim();
   } catch (err: any) {
     if (err?.status === 400 || err?.status === 401 || err?.status === 402 || String(err?.message || "").includes("credit balance")) {
-      console.warn('[Handover] Anthropic credit balance low or key issue. Routing handover tasks to Gemini.');
-      isAnthropicDisabledInHandover = true;
+            console.warn('[Handover] Anthropic credit balance low or key issue. Routing handover tasks to Gemini.');
+      anthropicDisabledUntil = Date.now() + ANTHROPIC_DISABLE_COOLDOWN_MS;
     }
     throw err;
   }
@@ -416,36 +421,31 @@ async function callGemini(
   model: string
 ): Promise<string> {
   const apiKey = process.env.GEMINI_API_KEY;
-  const ai = new GoogleGenAI({ apiKey });
-  const modelCandidates = [
-    model,
-    MODELS.GEMINI_FLASH,
-    'gemini-2.0-flash',
-    'gemini-1.5-flash'
-  ];
-  const uniqueModels = Array.from(new Set(modelCandidates));
-  let lastErr: any = null;
-
-  for (const candidate of uniqueModels) {
-    try {
-      const response = await ai.models.generateContent({
-        model: candidate,
-        contents: prompt,
-        config: {
-          temperature: 0.0,
-          responseMimeType: 'application/json',
-        },
-      });
-      return (response.text || '')
-        .replace(/```json\n?/g, '')
-        .replace(/```\n?/g, '')
-        .trim();
-    } catch (err: any) {
-      console.warn(`[Handover] Gemini candidate ${candidate} failed:`, err?.message || err);
-      lastErr = err;
-    }
+  if (!apiKey || apiKey.trim() === '') {
+    throw new Error('GEMINI_API_KEY environment variable is missing.');
   }
-  throw lastErr;
+  const ai = new GoogleGenAI({ apiKey });
+
+  // Do NOT include any Flash-tier model here. If the requested Pro model
+  // fails, that failure must propagate up to the caller (which falls
+  // through to the heuristic fallback) — never silently substitute Flash.
+  try {
+    const response = await ai.models.generateContent({
+      model,
+      contents: prompt,
+      config: {
+        temperature: 0.0,
+        responseMimeType: 'application/json',
+      },
+    });
+    return (response.text || '')
+      .replace(/```json\n?/g, '')
+      .replace(/```\n?/g, '')
+      .trim();
+  } catch (err: any) {
+    console.warn(`[Handover] Gemini Pro (${model}) failed:`, err?.message || err);
+    throw err;
+  }
 }
 
 // ── Safe JSON parse ───────────────────────────────────────────
@@ -654,7 +654,7 @@ function buildHeuristicFallback(rawText: string): any {
     crossConsultations: crossConsults,
     investigations: {
       trends: [],
-      normalSummary: "Routine bloods recorded in notes",
+      normalSummary: null,
       imaging: null,
       ecg: null,
       echo: null,
@@ -671,11 +671,11 @@ function buildHeuristicFallback(rawText: string): any {
       other: null
     },
     managementPlan: {
-      done: ["Triage evaluation done", "Vitals recorded"],
-      pending: ["Doctor assessment pending", "Review investigation results"]
-    },
-    done: ["Triage evaluation done", "Vitals recorded"],
-    toBeDone: ["Doctor assessment pending", "Review investigation results"],
+  done: [],
+  pending: ["ErMate extraction failed — review raw notes manually before handover"]
+},
+done: [],
+toBeDone: ["Ermate extraction failed — review raw notes manually before handover"],
     erBoardingStatus: {
       reasonForERRetention: null,
       whoTrackingBed: null,
@@ -694,19 +694,19 @@ function buildHeuristicFallback(rawText: string): any {
       grbs: null,
       trend: "→"
     },
-    vitalsNow: "Vitals documented in raw notes",
+      vitalsNow: null,
     criticalAlerts: [],
     bystander: null,
-    alertRow: "⚠  Patient under active evaluation in ER",
+    alertRow: "⚠ ErMate extraction failed — vitals and status not verified. Review raw notes.",
     rawNotes: rawText
   };
 
-  const compiledAlerts = compileAlerts({
+   const compiledAlerts = compileAlerts({
     patientHeader: { name: extracted.name, bed: extracted.bed },
     labs: [],
-    latestVitals: { timestamp: extracted.time, bp: null, hr: null, rr: null, spo2: null, temp: null }
+    crossConsultations: crossConsults,
+    latestVitals: { timestamp: extracted.time, bp: null, hr: null, rr: null, spo2: null, temp: null, grbs: null, gcs: null }
   });
-
   if (compiledAlerts) {
     fallbackData.alertBanner.summary = compiledAlerts;
     fallbackData.alertBanner.criticalValues = compiledAlerts.split(" | ");
@@ -842,7 +842,7 @@ export async function extractHandover(
   const tryExtract = async (
     m: string, p: 'claude' | 'gemini'
   ): Promise<string> => {
-    if (p === 'claude' && !isAnthropicDisabledInHandover) {
+       if (p === 'claude' && !isAnthropicCurrentlyDisabled()) {
       return await callClaude(prompt, m);
     }
     return callGemini(prompt, m === MODELS.GEMINI_PRO ? MODELS.GEMINI_PRO : MODELS.GEMINI_FLASH);
@@ -879,18 +879,19 @@ export async function extractHandover(
       const criticalAlerts = Array.isArray(parsed.criticalAlerts) ? parsed.criticalAlerts : [];
       const pmh = parsed.pmh || parsed.pastMedicalHistory || null;
       const story = parsed.story || "";
-      const alertRow = parsed.alertRow || (diagnosis ? `⚠  ${diagnosis}` : "✓  Stable");
+     const alertRow = parsed.alertRow || "⚠ Alert status not determined by ErMate — review full notes before handover";
 
-      const alertBanner = parsed.alertBanner || {
-        criticalAllergies: null,
-        codeStatus: null,
-        criticalValues: criticalAlerts,
-        pendingCritical: [],
-        isolationPrecautions: null,
-        fallRisk: false,
-        summary: criticalAlerts.length > 0 ? criticalAlerts.join(" · ") : "No critical alerts flagged"
-      };
-
+const alertBanner = parsed.alertBanner || {
+  criticalAllergies: null,
+  codeStatus: null,
+  criticalValues: criticalAlerts,
+  pendingCritical: [],
+  isolationPrecautions: null,
+  fallRisk: false,
+  summary: criticalAlerts.length > 0
+    ? criticalAlerts.join(" · ")
+    : "⚠ Alert status not determined by ErMate — review full notes before handover"
+};
       const courseInERDayWise = Array.isArray(parsed.courseInERDayWise) ? parsed.courseInERDayWise : [];
       const activeProblemList = Array.isArray(parsed.activeProblemList) ? parsed.activeProblemList : [];
       let crossConsultations = Array.isArray(parsed.crossConsultations) ? parsed.crossConsultations : [];
@@ -966,11 +967,13 @@ export async function extractHandover(
       };
 
       // Post-synthesis Rule-based Alert Compilation
+         // Post-synthesis Rule-based Alert Compilation
       const handoverOutputShape: HandoverOutput = {
         patientHeader: {
           name,
           bed: pl.bed || null,
         },
+        criticalAllergies: alertBanner.criticalAllergies || null,
         initialPresentation: {
           vitals: {
             hr: latestVitals.hr,
@@ -980,14 +983,11 @@ export async function extractHandover(
             temp: latestVitals.temp,
             grbs: latestVitals.grbs,
           },
-          vbgAbg: {
-            ph: adjunctsAtArrival.vbg?.ph || null,
-            pco2: adjunctsAtArrival.vbg?.pco2 || null,
-            hco3: adjunctsAtArrival.vbg?.hco3 || null,
-            lactate: adjunctsAtArrival.vbg?.lactate || null,
-            na: adjunctsAtArrival.vbg?.na || null,
-            k: adjunctsAtArrival.vbg?.k || null,
-          }
+          // adjunctsAtArrival.vbg is a free-text STRING per the AI schema,
+          // not an object — pass it through as-is, compileAlerts()
+          // handles the string-vs-object parsing internally.
+          vbgAbg: adjunctsAtArrival.vbg as any,
+          troponinPOC: adjunctsAtArrival.troponinPOC || null,
         },
         labs: Array.isArray(investigations.trends) ? investigations.trends.map((t: any) => ({
           panel: t.testName || "Lab Test",
@@ -997,6 +997,10 @@ export async function extractHandover(
             isAbnormal: Boolean(v.isAbnormal || isAbnormal(t.testName?.toLowerCase() as any, parseFloat(v.val || v.value)))
           })) : []
         })) : [],
+        managementPlan: {
+          pending: Array.isArray(toBeDone) ? toBeDone : []
+        },
+        crossConsultations: Array.isArray(crossConsultations) ? crossConsultations : [],
         latestVitals: {
           timestamp: latestVitals.timestamp || null,
           bp: latestVitals.bp || null,
@@ -1004,6 +1008,8 @@ export async function extractHandover(
           rr: typeof latestVitals.rr === 'number' ? latestVitals.rr : parseFloat(latestVitals.rr) || null,
           spo2: typeof latestVitals.spo2 === 'number' ? latestVitals.spo2 : parseFloat(latestVitals.spo2) || null,
           temp: typeof latestVitals.temp === 'number' ? latestVitals.temp : parseFloat(latestVitals.temp) || null,
+          grbs: typeof latestVitals.grbs === 'number' ? latestVitals.grbs : parseFloat(latestVitals.grbs) || null,
+          gcs: latestVitals.gcs || null,
         }
       };
 

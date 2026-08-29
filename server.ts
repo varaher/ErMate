@@ -3582,7 +3582,7 @@ app.post("/api/antigravity", express.json(), async (req, res) => {
 
     const ai = new GoogleGenAI({ apiKey });
     
-    const interactionParams = {
+    const interactionParams: Record<string, any> = {
       agent: "antigravity-preview-05-2026",
       input,
       environment: "remote",
@@ -3593,7 +3593,7 @@ app.post("/api/antigravity", express.json(), async (req, res) => {
     }
 
     // Call Antigravity using Interactions API
-    const interaction = await ai.interactions.create(interactionParams, { timeout: 300000 });
+    const interaction = await ai.interactions.create(interactionParams as any, { timeout: 300000 });
     
     // Antigravity agents generate incremental model_output steps. Combine all text outputs:
     let fullOutput = "";

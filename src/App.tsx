@@ -3,7 +3,7 @@ import {
   Activity, Sparkles, BookOpen, User, Clock, ShieldAlert, 
   Settings, HelpCircle, FileWarning,  Trophy, ClipboardList, Zap, Moon, Sun, Users,
   Search, X, TrendingUp, Bell, BellRing, Trash2, Check, Mic, ShieldCheck, RefreshCw,
-  Download, Smartphone, Building2, UserCheck, CheckCircle2
+  Download, Smartphone, Building2, UserCheck, CheckCircle2, Terminal
 } from "lucide-react";
 
 import { 
@@ -2845,15 +2845,7 @@ export default function App() {
             </button>
 
             
-            {/* Antigravity Sandbox Button */}
-            <button
-              onClick={() => setShowAntigravity(true)}
-              className="p-1.5 px-2.5 hover:bg-fuchsia-50 dark:hover:bg-fuchsia-950/20 rounded-lg text-fuchsia-600 dark:text-fuchsia-400 transition-all flex items-center gap-1.5 cursor-pointer border border-fuchsia-200/50 dark:border-fuchsia-800/30 font-sans shadow-sm"
-              title="Remote AI Sandbox (Antigravity)"
-            >
-              <Terminal className="w-3.5 h-3.5" />
-              <span className="text-[10px] font-extrabold tracking-tight uppercase">Terminal</span>
-            </button>
+
             
             {/* PWA Download / Install App Option */}
             <button

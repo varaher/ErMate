@@ -21,7 +21,8 @@ export default function DischargeSummaryView({
   currentCase,
   onBack,
   onSaveDischarge,
-  profile
+  profile,
+  onDeleteCase
 }: DischargeSummaryViewProps) {
   // Prepopulate from case records or existing dischargeInfo
   const [activeTab, setActiveTab] = useState<TabType>("admin-vitals");
