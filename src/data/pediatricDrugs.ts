@@ -6,6 +6,9 @@ import { ANTIHISTAMINICS_DRUGS } from "./pediatricDrugs_antihistaminics";
 import { STEROIDS_DRUGS } from "./pediatricDrugs_steroids";
 import { COMBINATION_DRUGS } from "./pediatricDrugs_combinations";
 import { GASTROINTESTINAL_DRUGS } from "./pediatricDrugs_gastrointestinal";
+import { ANTIHELMINTICS_DRUGS } from "./pediatricDrugs_antihelmintics";
+import { ANTIHYPERTENSIVES_DRUGS } from "./pediatricDrugs_antihypertensives";
+import { ANTIVIRAL_DRUGS } from "./pediatricDrugs_antiviral";
 
 export type { PediatricDrug, DrugCategory };
 
@@ -180,5 +183,8 @@ export const PEDIATRIC_DRUGS: PediatricDrug[] = [
   ...ANTIHISTAMINICS_DRUGS,
   ...STEROIDS_DRUGS,
   ...COMBINATION_DRUGS,
-  ...GASTROINTESTINAL_DRUGS
+  ...GASTROINTESTINAL_DRUGS,
+  ...ANTIHELMINTICS_DRUGS,
+  ...ANTIHYPERTENSIVES_DRUGS,
+  ...ANTIVIRAL_DRUGS
 ];

@@ -16,6 +16,7 @@ import { createTeamInvite } from "../services/teamInviteService";
 import GoogleCalendarModal from "./GoogleCalendarModal";
 import GoogleClassroomModal from "./GoogleClassroomModal";
 import MortalityAuditModal from "./MortalityAuditModal";
+import { ConfirmModal } from "./shared/ConfirmModal";
 
 interface DashboardViewProps {
   profile: UserProfile;
@@ -229,6 +230,8 @@ export default function DashboardView({
   const [addShift, setAddShift] = useState("morning");
   const [isAddingMember, setIsAddingMember] = useState(false);
   const [addSuccessMessage, setAddSuccessMessage] = useState("");
+  const [caseToDelete, setCaseToDelete] = useState<{ id: string; name: string } | null>(null);
+  const [showDeleteAllConfirm, setShowDeleteAllConfirm] = useState(false);
 
   const handleLocalAddMember = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -478,16 +481,16 @@ DISCHARGE STATUS: Clinically Discharged
 DATE/TIME OF DISCHARGE: ${d?.dischargeDateTime || new Date().toLocaleTimeString() + " | Today"}
 PATIENT CONDITION AT DISCHARGE: ${d?.dischargeCondition || "Hemodynamically stable, alert, conscious, ambulatory"}
 
-DISCHARGE VITALS (STABLE)
+DISCHARGE VITALS
 -------------------------
-Blood Pressure: ${d?.dischargeBp || c.vitals.bp || "N/A"} mmHg
-Heart Rate: ${d?.dischargeHr || c.vitals.hr || "N/A"} bpm
-Oxygen Saturation: ${d?.dischargeSpo2 || c.vitals.spo2 || "N/A"}% on Room Air
-Respiratory Rate: ${d?.dischargeRr || c.vitals.rr || "N/A"} /min
-Temperature: ${d?.dischargeTemp || c.vitals.temp || "N/A"} °F
-GCS Score: ${d?.dischargeGcs || c.vitals.gcs || "15"}/15
-Pain Score: ${d?.dischargePainScore || "0"}/10
-GRBS (Glucose): ${d?.dischargeGrbs || c.vitals.grbs || "N/A"} mg/dL
+Blood Pressure: ${d?.dischargeBp || "Not recorded"} mmHg
+Heart Rate: ${d?.dischargeHr || "Not recorded"} bpm
+Oxygen Saturation: ${d?.dischargeSpo2 || "Not recorded"}% on Room Air
+Respiratory Rate: ${d?.dischargeRr || "Not recorded"} /min
+Temperature: ${d?.dischargeTemp || "Not recorded"} °F
+GCS Score: ${d?.dischargeGcs || "Not recorded"}
+Pain Score: ${d?.dischargePainScore || "Not recorded"}
+GRBS (Glucose): ${d?.dischargeGrbs || "Not recorded"} mg/dL
 
 CHIEF COMPLAINTS & INITIAL DIAGNOSIS
 ------------------------------------
@@ -505,8 +508,7 @@ ${c.treatments && c.treatments.length > 0
 
 DISCHARGE MEDICATIONS & OUTPATIENT RX
 --------------------------------------
-${d?.dischargeMedications || "* Tab Paracetamol 650mg SOS for fever or body pain.\n* Follow-up in OPD as recommended."}
-
+${d?.dischargeMedications || "Not documented"}
 RED FLAG WARNINGS / EMERGENCY RETURN
 ------------------------------------
 THE PATIENT MUST RETURN TO THE EMERGENCY ROOM IMMEDIATELY IF THEY EXPERIENCE:
@@ -993,6 +995,20 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
                 </div>
 
                 <div className="flex items-center gap-2 mt-2.5">
+                  {onDeleteCase && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        e.preventDefault();
+                        setCaseToDelete({ id: pc.id, name: pc.patient.name });
+                      }}
+                      className="px-3 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 dark:bg-rose-950/40 dark:hover:bg-rose-900/60 dark:text-rose-400 border border-rose-200 dark:border-rose-800 rounded-lg text-[10.5px] font-bold transition-all flex items-center justify-center shrink-0"
+                      title="Delete Case"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  )}
                   {onDiscussCase && (
                     <button
                       type="button"
@@ -1074,8 +1090,8 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
               <Mic className="w-4.5 h-4.5" />
             </div>
             <div>
-              <span className="block font-black text-xs text-slate-800 dark:text-purple-300">Voice Scribe</span>
-              <span className="block text-[8px] text-slate-400 font-medium">Scribe in native language</span>
+              <span className="block font-black text-xs text-slate-800 dark:text-purple-300">Assistant</span>
+              <span className="block text-[8px] text-slate-400 font-medium leading-tight mt-0.5">Scribe in native language or discuss any complex case</span>
             </div>
           </button>
 
@@ -1216,15 +1232,15 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
             
             <div className="space-y-1.5 max-w-[85%]">
               <h3 className="text-sm font-extrabold text-slate-900 dark:text-white flex items-center gap-1.5">
-                Voice Scribe Desk
+                Assistant
               </h3>
               <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
-                Free-form emergency room medical scribe. Record natural conversations and extract clinical data.
+                Scribe in native language or discuss any complex case.
               </p>
             </div>
 
             <div className="mt-4 flex items-center justify-between text-xs font-bold text-purple-600 dark:text-purple-400 border-t border-slate-100 dark:border-slate-800/60 pt-3">
-              <span>Open Voice Scribe</span>
+              <span>Open Assistant</span>
               <ChevronRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
             </div>
           </div>
@@ -2085,9 +2101,7 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
               {onDeleteAllCases && (
                 <button
                   onClick={() => {
-                    if (window.confirm("Are you sure you want to delete ALL cases in ErMate? This action cannot be undone.")) {
-                      onDeleteAllCases();
-                    }
+                    setShowDeleteAllConfirm(true);
                   }}
                   className="ml-auto px-3 py-1.5 bg-red-50 dark:bg-red-950/30 hover:bg-red-100 dark:hover:bg-red-900/40 border border-red-200 dark:border-red-900/50 text-red-600 dark:text-red-400 text-[11px] font-bold rounded-lg transition-all flex items-center gap-1 shadow-sm shrink-0"
                   title="Clear All Shift Cases"
@@ -2191,6 +2205,7 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
                               <span className="font-semibold text-slate-700 dark:text-slate-300">Complaint:</span> {c.patient.presentingComplaint}
                             </p>
                             <div className="flex gap-4 text-[10px] text-slate-400 font-mono pt-1 flex-wrap">
+                              <span>Captured: {c.createdAt ? new Date(c.createdAt).toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "N/A"}</span>
                               <span>Age: {c.patient.age}y</span>
                               <span>Gender: {c.patient.gender}</span>
                               <span>UHID: {c.patient.uhid}</span>
@@ -2445,10 +2460,11 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
                                 {onDeleteCase && (
                                   <div className="pt-2 border-t border-slate-100 dark:border-slate-800/50 mt-4">
                                     <button
-                                      onClick={() => {
-                                        if (window.confirm(`Are you sure you want to delete the case for "${c.patient.name}"? This action cannot be undone.`)) {
-                                          onDeleteCase(c.id);
-                                        }
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        e.preventDefault();
+                                        setCaseToDelete({ id: c.id, name: c.patient.name });
                                       }}
                                       className="flex items-center justify-center gap-1.5 w-full py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-600 dark:bg-rose-950/20 dark:hover:bg-rose-900/40 dark:text-rose-400 rounded-lg text-xs font-bold transition-all border border-rose-100 dark:border-rose-900/30"
                                     >
@@ -2871,6 +2887,35 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
           </div>
         </div>
       )}
+      {/* Delete Single Case Modal */}
+      <ConfirmModal
+        isOpen={!!caseToDelete}
+        title="Delete Case"
+        message={
+          <>
+            Are you sure you want to delete the case for <strong className="text-slate-900 dark:text-white">{caseToDelete?.name}</strong>? This action cannot be undone.
+          </>
+        }
+        confirmText="Delete Case"
+        onConfirm={() => {
+          if (caseToDelete && onDeleteCase) onDeleteCase(caseToDelete.id);
+          setCaseToDelete(null);
+        }}
+        onCancel={() => setCaseToDelete(null)}
+      />
+
+      {/* Delete All Cases Modal */}
+      <ConfirmModal
+        isOpen={showDeleteAllConfirm}
+        title="Delete All Cases"
+        message="Are you sure you want to delete ALL cases in ErMate? This action cannot be undone."
+        confirmText="Delete All"
+        onConfirm={() => {
+          if (onDeleteAllCases) onDeleteAllCases();
+          setShowDeleteAllConfirm(false);
+        }}
+        onCancel={() => setShowDeleteAllConfirm(false)}
+      />
     </div>
   );
 }

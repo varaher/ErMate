@@ -6,15 +6,19 @@ import { createGoogleCalendarEvent } from "../../services/googleCalendar";
 interface Props {
   onClose: () => void;
   onSuccess: (count: number) => void;
+  teamMembers: { email: string; name: string }[];
 }
 
-export function WorkspaceRotaSyncModal({ onClose, onSuccess }: Props) {
+export function WorkspaceRotaSyncModal({ onClose, onSuccess, teamMembers }: Props) {
   const [loading, setLoading] = useState(false);
   const [spreadsheets, setSpreadsheets] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [step, setStep] = useState<"auth" | "select" | "parsing" | "syncing">("auth");
+  const [step, setStep] = useState<"auth" | "select" | "parsing" | "review" | "syncing">("auth");
   const [progress, setProgress] = useState(0);
   const [total, setTotal] = useState(0);
+  const [parsedShifts, setParsedShifts] = useState<any[]>([]);
+  const [validatedRows, setValidatedRows] = useState<{ shift: any; matchedEmail: string | null; matchedName: string | null }[]>([]);
+  const [confirmedToken, setConfirmedToken] = useState<string | null>(null);
 
   useEffect(() => {
     initAuth();
@@ -42,10 +46,10 @@ export function WorkspaceRotaSyncModal({ onClose, onSuccess }: Props) {
     try {
       const token = await authenticateGoogleWorkspace();
       const rows = await getSpreadsheetData(token, fileId);
-      
+
       // Convert 2D array to CSV string
       const csvData = rows.map((r: any[]) => r.join(",")).join("\n");
-      
+
       // Send to AI for parsing
       const parseRes = await fetch("/api/parse-rota", {
         method: "POST",
@@ -54,52 +58,73 @@ export function WorkspaceRotaSyncModal({ onClose, onSuccess }: Props) {
       });
       const parseData = await parseRes.json();
       if (!parseData.success) throw new Error(parseData.error || "Failed to parse rota");
-      
+
       const shifts = parseData.shifts || [];
       if (shifts.length === 0) throw new Error("No valid shifts found in the selected file.");
-      
-      setStep("syncing");
-      setTotal(shifts.length);
-      
-      let successCount = 0;
-      for (const shift of shifts) {
-        if (!shift.startTime || !shift.endTime || !shift.doctorEmail) {
-          setProgress(p => p + 1);
-          continue;
-        }
-        
-        let start = shift.startTime;
-        let end = shift.endTime;
-        
-        // Ensure they are ISO strings if they are dates, or if they are just times, we attach the date
-        if (!start.includes("T")) {
-           // Basic inference: if it's "08:00 AM", attach to shiftDate
-           start = new Date(`${shift.shiftDate} ${shift.startTime}`).toISOString();
-           end = new Date(`${shift.shiftDate} ${shift.endTime}`).toISOString();
-        }
-        
-        try {
-          await createGoogleCalendarEvent(token, {
-            summary: `ER Shift: ${shift.shiftType} - ${shift.doctorName}`,
-            description: `Automatic Rota Sync\nShift: ${shift.shiftType}`,
-            startDateTime: start,
-            endDateTime: end,
-            attendeesEmails: [shift.doctorEmail]
-          });
-          successCount++;
-        } catch (e) {
-          console.warn("Failed to create event for", shift.doctorName, e);
-        }
-        setProgress(p => p + 1);
-      }
-      
-      onSuccess(successCount);
+
+      // Validate every parsed row against the REAL team roster before showing
+      // anything to the HOD. An AI-parsed email is never trusted on its own —
+      // it must exactly match an existing team member's email.
+      const rosterByEmail = new Map(
+        teamMembers.map(m => [m.email.toLowerCase().trim(), m.name])
+      );
+
+      const validated = shifts.map((shift: any) => {
+        const rawEmail = (shift.doctorEmail || "").toLowerCase().trim();
+        const matchedName = rosterByEmail.get(rawEmail) || null;
+        return {
+          shift,
+          matchedEmail: matchedName ? rawEmail : null,
+          matchedName,
+        };
+      });
+
+      setParsedShifts(shifts);
+      setValidatedRows(validated);
+      setConfirmedToken(token);
+      setStep("review");
     } catch (err: any) {
       setError(err.message || "An error occurred.");
       setStep("select");
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleConfirmSync = async () => {
+    if (!confirmedToken) return;
+    setStep("syncing");
+    const rowsToSync = validatedRows.filter(r => r.matchedEmail && r.shift.startTime && r.shift.endTime);
+    setTotal(rowsToSync.length);
+    setProgress(0);
+
+    let successCount = 0;
+    for (const row of rowsToSync) {
+      const shift = row.shift;
+      let start = shift.startTime;
+      let end = shift.endTime;
+
+      if (!start.includes("T")) {
+        start = new Date(`${shift.shiftDate} ${shift.startTime}`).toISOString();
+        end = new Date(`${shift.shiftDate} ${shift.endTime}`).toISOString();
+      }
+
+      try {
+        await createGoogleCalendarEvent(confirmedToken, {
+          summary: `ER Shift: ${shift.shiftType} - ${row.matchedName}`,
+          description: `Automatic Rota Sync\nShift: ${shift.shiftType}`,
+          startDateTime: start,
+          endDateTime: end,
+          attendeesEmails: [row.matchedEmail as string]
+        });
+        successCount++;
+      } catch (e) {
+        console.warn("Failed to create event for", row.matchedName, e);
+      }
+      setProgress(p => p + 1);
+    }
+
+    onSuccess(successCount);
   };
 
   return (
@@ -157,6 +182,53 @@ export function WorkspaceRotaSyncModal({ onClose, onSuccess }: Props) {
             </div>
           )}
 
+          {step === "review" && (
+            <div className="space-y-4">
+              <p className="text-sm font-semibold text-slate-600 dark:text-slate-300">
+                Review parsed shifts before sending calendar invites. Only rows matching a real team member's email will be synced.
+              </p>
+              <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                {validatedRows.map((row, idx) => (
+                  <div
+                    key={idx}
+                    className={`p-3 rounded-xl border flex items-center justify-between gap-3 text-sm ${
+                      row.matchedEmail
+                        ? "border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/20"
+                        : "border-rose-200 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/20"
+                    }`}
+                  >
+                    <div>
+                      <p className="font-bold text-slate-800 dark:text-slate-100">
+                        {row.shift.doctorName || "Unknown"} — {row.shift.shiftType || "Shift"}
+                      </p>
+                      <p className="text-xs text-slate-500 dark:text-slate-400">
+                        {row.shift.doctorEmail || "No email parsed"}
+                      </p>
+                    </div>
+                    <span className={`text-xs font-bold ${row.matchedEmail ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"}`}>
+                      {row.matchedEmail ? "✓ Matches roster" : "✗ Not on roster — will skip"}
+                    </span>
+                  </div>
+                ))}
+              </div>
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  onClick={onClose}
+                  className="px-4 py-2 text-sm font-bold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleConfirmSync}
+                  disabled={!validatedRows.some(r => r.matchedEmail)}
+                  className="px-4 py-2 text-sm font-bold bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl transition-colors"
+                >
+                  Send Invites to Matched Doctors
+                </button>
+              </div>
+            </div>
+          )}
+
           {(step === "parsing" || step === "syncing") && (
             <div className="py-12 flex flex-col items-center justify-center text-center">
               <Loader2 className="w-10 h-10 text-emerald-500 animate-spin mb-6" />
@@ -166,8 +238,8 @@ export function WorkspaceRotaSyncModal({ onClose, onSuccess }: Props) {
               {step === "syncing" && total > 0 && (
                 <div className="w-full max-w-xs">
                   <div className="h-2 w-full bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden mb-2">
-                    <div 
-                      className="h-full bg-emerald-500 transition-all duration-300" 
+                    <div
+                      className="h-full bg-emerald-500 transition-all duration-300"
                       style={{ width: `${(progress / total) * 100}%` }}
                     />
                   </div>

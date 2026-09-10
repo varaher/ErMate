@@ -353,17 +353,23 @@ export default function GoogleClassroomModal({
                 </button>
               </div>
 
-              {/* Step-by-Step OAuth Security Notice */}
+                           {/* OAuth Verification Status Notice */}
               <div className="p-3.5 bg-amber-500/10 border border-amber-500/30 rounded-xl text-[11px] text-amber-700 dark:text-amber-300 font-mono leading-relaxed space-y-1.5">
                 <div className="flex items-center gap-1.5 font-bold text-amber-800 dark:text-amber-300">
                   <AlertCircle className="w-4 h-4 shrink-0 text-amber-500" />
-                  <span>How to authorize when Google shows "Google hasn't verified this app":</span>
+                  <span>Google verification pending for this integration</span>
                 </div>
-                <div className="pl-5 text-[10.5px] space-y-0.5 text-slate-700 dark:text-slate-300">
-                  <p>1. Click <strong>"Sign in with Google"</strong> above and pick your Google account.</p>
-                  <p>2. If Google displays <em>"Google hasn't verified this app"</em>, look at the bottom-left and click <strong className="text-amber-600 dark:text-amber-400">"Advanced"</strong>.</p>
-                  <p>3. Click <strong className="text-amber-600 dark:text-amber-400 font-bold">"Go to ErMate (unsafe)"</strong>.</p>
-                  <p>4. Check all Classroom permission checkboxes and click <strong>"Continue"</strong> to finish linking.</p>
+                <div className="pl-5 text-[10.5px] space-y-1 text-slate-700 dark:text-slate-300">
+                  <p>
+                    ErMate's Google Classroom integration is currently in internal pilot testing and has
+                    not yet completed Google's app verification review. During this period, only
+                    hospital staff explicitly added as test users by ErMate can connect this feature.
+                  </p>
+                  <p>
+                    If you see a warning from Google during sign-in, do not proceed unless you were
+                    specifically told by your department to test this feature. Contact your HOD or
+                    ErMate support before continuing if you're unsure.
+                  </p>
                 </div>
               </div>
             </div>

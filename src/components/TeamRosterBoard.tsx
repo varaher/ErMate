@@ -122,8 +122,13 @@ export default function TeamRosterBoard({
     initialEndTime: "14:00",
   });
 
-  const userEmailLower = profile.email.toLowerCase().trim();
-  const isUserHOD = true; // Enabled for all users to allow roster configuration and deleting sample doctors
+   const userEmailLower = profile.email.toLowerCase().trim();
+  const roleLower = (profile.role || "").toLowerCase();
+  const isUserHOD =
+    roleLower.includes("hod") ||
+    roleLower.includes("head") ||
+    roleLower.includes("owner") ||
+    userEmailLower === "varahgrp@gmail.com";
 
   const slugify = (text: string) => {
     return text
@@ -1395,13 +1400,14 @@ export default function TeamRosterBoard({
         hospitalName={profile.hospital || "Emergency Department"}
       />
     
-      {showWorkspaceSync && (
+           {showWorkspaceSync && (
         <WorkspaceRotaSyncModal
           onClose={() => setShowWorkspaceSync(false)}
           onSuccess={(count) => {
              setShowWorkspaceSync(false);
              alert(`Successfully synced ${count} shifts to Google Calendar!`);
           }}
+          teamMembers={teamMembers.map(m => ({ email: m.email, name: m.name || m.email }))}
         />
       )}
     </div>

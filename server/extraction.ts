@@ -3,14 +3,25 @@ import { deidentifyText } from "./deidentify.ts";
 import { cleanExtractionOutput } from "./extractionCleanup.ts";
 
 // ── Model Config ──────────────────────────────────────────────
+import { getChecklistForKind, buildChecklistPromptSection } from "./caseSheetChecklist";
+
 export const MODELS = {
-  CLAUDE_HAIKU: "claude-3-5-haiku-20241022",
-  CLAUDE_SONNET: "claude-3-5-sonnet-20241022",
+  CLAUDE_HAIKU: "claude-haiku-4-5-20251001",
+  CLAUDE_SONNET: "claude-sonnet-4-6",
 };
 
-// ── Normal examination defaults ───────────────────────────────
-// Applied ONLY when doctor did not mention that system at all.
-// Clinically appropriate — matches Indian EMR standard format.
+// ── Normal examination PRESET TEXT ────────────────────────────
+// IMPORTANT (VOICE-03 / FAB-21 fix, Sept 2026):
+// These are the standard Indian EMR "normal" phrasings — the SAME wording
+// used by the manual "Mark Normal" preset buttons in CaseSheetView.tsx.
+// They are applied ONLY when the doctor explicitly says an ABCDE or
+// systemic-exam normalcy phrase (see detectNormalcyPhrases below), NEVER
+// silently just because a field happens to be empty. Silent application
+// on empty fields was the FAB-21 bug — a doctor dictating one unrelated
+// finding could previously cause an entire fabricated normal exam to be
+// written into the record. That silent path has been removed. If a field
+// is empty and no normalcy phrase was said, it must resolve to null /
+// "Not documented" — never this preset text.
 export const EXAM_DEFAULTS = {
   airway: "Patent",
 
@@ -33,28 +44,76 @@ export const EXAM_DEFAULTS = {
     "No features of depression, anxiety, psychosis, agitation, suicidal ideation, or substance use.",
 };
 
-// ── Apply defaults after extraction ──────────────────────────
-// Only fills in examination fields that are completely absent.
-// NEVER touches factual fields (vitals, name, diagnosis etc).
+// ── Explicit normalcy-phrase detection (VOICE-03) ─────────────
+// Detects whether the doctor EXPLICITLY dictated that the primary survey
+// (ABCDE) and/or the systemic/secondary exam were normal/unremarkable.
+// This is the ONLY thing allowed to trigger EXAM_DEFAULTS text. It is
+// deliberately narrower than "any content was dictated" (the old
+// hasSubstance-style gate) — silence about a section must never be
+// treated as an implicit "normal" claim.
+export function detectNormalcyPhrases(text: string): {
+  abcdeNormal: boolean;
+  systemicNormal: boolean;
+} {
+  const t = (text || "").toLowerCase();
+
+  const everythingNormal =
+    /\b(everything|all)\s+(is\s+|was\s+)?(normal|unremarkable|wnl|within normal limits)\b/.test(t);
+
+  const abcdeNormal =
+    everythingNormal ||
+    /\b(abcde|primary survey|airway,?\s*breathing,?\s*circulation)\b[^.]{0,60}\b(normal|unremarkable|within normal limits|wnl|nad|no abnormality|nothing significant)\b/.test(t) ||
+    /\b(normal|unremarkable)\s+(abcde|primary survey)\b/.test(t);
+
+  const systemicNormal =
+    everythingNormal ||
+    /\b(systemic exam(ination)?|secondary survey|secondary assessment|general (and )?systemic exam(ination)?)\b[^.]{0,60}\b(normal|unremarkable|within normal limits|wnl|nad|nothing significant|no abnormality)\b/.test(t) ||
+    /\bnothing significant on exam(ination)?\b/.test(t) ||
+    /\b(normal|unremarkable)\s+(systemic|secondary)\s+(exam(ination)?|survey|assessment)\b/.test(t);
+
+  return { abcdeNormal, systemicNormal };
+}
+
+// ── Apply normalcy-triggered exam text after extraction ───────
+// Only fills in examination fields when the doctor explicitly said the
+// relevant section was normal (see detectNormalcyPhrases). Otherwise the
+// field resolves to null so the UI/case sheet shows "Not documented" —
+// never a plausible-looking fabricated finding. NEVER touches vitals,
+// GCS, name, diagnosis, or any other factual field.
 export function applyExaminationDefaults(
-  extracted: Record<string, any>
+  extracted: Record<string, any>,
+  rawText: string = ""
 ): Record<string, any> {
   if (!extracted || typeof extracted !== "object") return extracted || {};
   const result = { ...extracted };
+  const { abcdeNormal, systemicNormal } = detectNormalcyPhrases(rawText);
+
+  // Of the EXAM_DEFAULTS keys, only "airway" belongs to the primary
+  // survey (ABCDE) trigger; the rest belong to the systemic/secondary
+  // exam trigger.
+  const PRIMARY_SURVEY_FIELDS = new Set(["airway"]);
 
   for (const [field, defaultValue] of Object.entries(EXAM_DEFAULTS)) {
-    // Only apply if field is completely missing
-    if (
+    const isEmpty =
       !result[field] ||
       result[field] === "" ||
       result[field] === null ||
-      result[field] === undefined
-    ) {
+      result[field] === undefined;
+
+    if (!isEmpty) {
+      // Doctor mentioned this — keep their value, never overwrite.
+      result[`${field}_isDefault`] = false;
+      continue;
+    }
+
+    const trigger = PRIMARY_SURVEY_FIELDS.has(field) ? abcdeNormal : systemicNormal;
+
+    if (trigger) {
       result[field] = defaultValue;
-      // Flag as default so UI can show subtle indicator
       result[`${field}_isDefault`] = true;
     } else {
-      // Doctor mentioned this — keep their value
+      // Not mentioned AND no explicit normalcy phrase — leave undocumented.
+      result[field] = null;
       result[`${field}_isDefault`] = false;
     }
   }
@@ -111,15 +170,18 @@ NEVER INVENT THESE — return null if not stated:
   Lab results and values
   Allergy history (do NOT assume NKDA)
   History details not mentioned
+  Examination findings for any system not explicitly examined
 
-NORMAL DEFAULTS ALLOWED for these ONLY:
-  airway, generalExamination,
-  cvsExamination, respiratoryExamination,
-  abdomenExamination, cnsExamination,
-  psychologicalAssessment
-  → Only when completely unmentioned
-  → Use Indian EMR standard normal text
-  → The code will apply these after you return null for them
+If the doctor says the primary survey (ABCDE) or systemic/secondary exam
+was "normal" / "unremarkable" / "nothing significant", set the relevant
+fields to null anyway and simply note in your output that normalcy was
+stated — the SERVER applies the standard normal-exam wording deterministically
+based on that phrase, not you. Never write your own "normal" exam prose.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+COMPLETE FIELD CHECKLIST — every field below must be attempted
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+${buildChecklistPromptSection("adult")}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 INDIAN MEDICAL KNOWLEDGE & MEDICATIONS
@@ -204,9 +266,9 @@ VBG / ABG — extract all components:
   pH, pCO2, pO2, HCO3, BE,
   Lactate, Na, K, Glucose, Hb
   
-  Return as:
-  "vbg": { "ph": "7.32", "lactate": "3.9" }
-  or null if not done
+   Return as:
+  "vbg": { "ph": "7.32", "lactate": "3.9", "cl": "108" }
+  or null if not done. Include "cl" (chloride) whenever stated.
 
 ECG findings:
   Return as "ecg": string | null
@@ -265,7 +327,23 @@ No markdown. No explanation. No preamble.
   "respiratoryExamination":  string | null,
   "abdomenExamination":      string | null,
   "cnsExamination":          string | null,
+  "extremitiesExamination":  string | null,
   "psychologicalAssessment": string | null,
+  "fastFindings": {
+    "heart":    string | null,
+    "abdomen":  string | null,
+    "pelvis":   string | null
+  } | null,
+  "mlcDetails": {
+    "isMlc":            boolean,
+    "natureOfIncident":  string | null,
+    "placeOfIncident":   string | null,
+    "dateTimeOfIncident": string | null,
+    "mechanismOfInjury": string | null,
+    "broughtBy":         string | null,
+    "informant":         string | null,
+    "identificationMark": string | null
+  },
   "ecg":                     string | null,
   "echo":                    string | null,
   "vbg":                     object | string | null,
@@ -337,18 +415,10 @@ NEVER GENERATE:
 outpatientMedications:
   Daily home medications taken regularly by patient before ER arrival (e.g. "Tab Metformin 500mg BD").
   CRITICAL: Acute ER treatments given or suggested by doctor in ER (e.g. Paracetamol 1g IV stat, Esomeprazole 40mg IV stat) MUST go into "treatment", NOT "outpatientMedications".
-  AUTOMATIC RULE: If PMH or dictation states "No past medical history" / "Nil past medical history" / "No comorbidities" / "NKCO" and no daily home meds are mentioned, return "Nil regular medications".
+  If no home medications are explicitly mentioned, return null — do NOT infer "Nil regular medications" yourself; the server applies that wording only when the doctor explicitly denied a history.
 
 pmh:
-  Past medical and surgical history. If dictated as "no past medical history" or "no surgical history" or no comorbidities, return "No past medical history".
-
-chiefComplaint:
-  NEVER null — always extract concise chief complaint.
-  If input is a case sheet, extract text from "Presenting Complaint:" or "CHIEF COMPLAINT:".
-
-hpi:
-  Write as clinical narrative paragraph.
-  If input has "History of Present Illness:", extract that narrative directly.
+  Past medical and surgical history, verbatim from what was dictated. If the doctor did not mention past history at all, return null. Only return "No past medical history" if the doctor EXPLICITLY said "no past medical history" / "no comorbidities" / "NKCO" or equivalent.
 
 differentials:
   List 2-4 with brief clinical reasoning each.
@@ -363,7 +433,15 @@ isPediatric:
 
 pediatricDetails:
   Extract pediatric assessment findings (broughtBy, informant, PAT appearance/tone/cry/gaze, airway/breathing WOB, CRT, birth history, immunizations, developmental milestones, feeding history) whenever mentioned in pediatric dictations or case sheets. Null if unmentioned or not a pediatric case.
-
+mlcDetails:
+  Set "isMlc": true whenever the case involves trauma, assault, RTA/road traffic accident,
+  poisoning, burns, or any legally reportable incident — even if the doctor never says
+  the word "MLC" explicitly. Extract natureOfIncident, placeOfIncident,
+  dateTimeOfIncident, mechanismOfInjury, broughtBy, and informant from whatever
+  was dictated about the incident. identificationMark stays null unless a doctor
+  explicitly describes a specific mark — never default to any example text.
+  If the case is not trauma/legally-reportable, set "isMlc": false and leave the
+  rest of mlcDetails null.
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 TRANSCRIPT TO EXTRACT FROM:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -873,7 +951,7 @@ export function parseHeuristicClinicalData(transcript: string): Record<string, a
       grbs: null,
       pain: null
     },
-    // NEW — flags this record as a degraded/heuristic extraction so
+    // Flags this record as a degraded/heuristic extraction so
     // the UI can show a visible "please verify manually" banner,
     // matching voiceExtraction.ts's Tier 4 fallback behavior.
     requiresManualEntry: true,
@@ -984,8 +1062,15 @@ export function refineEventsText(
 
 /**
  * Processes PMH and Outpatient Medications.
- * Trigger: If patient has "no past medical/surgical history", automatically sets medications to "Nil regular medications".
- * Also separates acute ER treatment orders from regular home medications.
+ *
+ * VOICE-03 FIX (Sept 2026): "No past medical history" / "Nil regular
+ * medications" are now ONLY applied when the doctor EXPLICITLY denied a
+ * history ("no past medical history", "NKCO", "no comorbidities", etc).
+ * If the doctor simply never mentioned PMH/medications at all, this now
+ * returns "Not documented" instead of silently assuming none — a doctor's
+ * silence about a section is not the same as an explicit denial, and
+ * silently converting "not mentioned" into "confirmed absent" was itself
+ * a fabrication risk in a medico-legal document.
  */
 export function processSampleMedicationsAndPmh(
   pmhRaw: any,
@@ -996,11 +1081,13 @@ export function processSampleMedicationsAndPmh(
   const pmhStr = typeof pmhRaw === "string" ? pmhRaw.trim() : "";
   const rawTextLower = (rawText || "").toLowerCase();
 
-  const isNoPmh = !pmhStr ||
+  const explicitlyDenied =
     /no\s+(past\s+)?(medical|surgical)\s+(history|hx)|nil\s+past|no\s+comorbidities|nkco|none\s+(documented|recorded)?|no\s+known\s+medical|no\s+past\s+hx/i.test(pmhStr) ||
     /no\s+(past\s+)?medical|no\s+(past\s+)?surgical|no\s+comorbidities|nil\s+past\s+history/i.test(rawTextLower);
 
-  const pastHistory = isNoPmh ? "No past medical history" : pmhStr;
+  const pastHistory = explicitlyDenied
+    ? "No past medical history"
+    : (pmhStr || "Not documented");
 
   let rawMedsArray: string[] = [];
   if (Array.isArray(medsRaw)) {
@@ -1034,12 +1121,16 @@ export function processSampleMedicationsAndPmh(
     }
   }
 
-  let medications = "Nil regular medications";
-
+  // Only default to "Nil regular medications" when the doctor EXPLICITLY
+  // denied a history alongside no home meds being mentioned. Otherwise,
+  // if nothing was said either way, leave it as "Not documented".
+  let medications: string;
   if (homeMeds.length > 0) {
     medications = homeMeds.join(", ");
-  } else {
+  } else if (explicitlyDenied) {
     medications = "Nil regular medications";
+  } else {
+    medications = "Not documented";
   }
 
   return {
@@ -1068,6 +1159,11 @@ export function formatClinicalCaseObject(rawExt: Record<string, any>, rawText: s
   const ageVal = ext.age ? (typeof ext.age === "number" ? ext.age : parseInt(String(ext.age), 10) || null) : null;
   const genderVal = ext.sex === "Female" ? "Female" : ext.sex === "Male" ? "Male" : "Other";
   const triageCategory = ext.priority === "P1" || ext.priority === "P1 (Immediate)" ? "P1 (Immediate)" : (ext.priority === "P3" || ext.priority === "P3 (Non-Urgent)" ? "P3 (Non-Urgent)" : "P2 (Urgent)");
+
+  // VOICE-03: detect explicit ABCDE / systemic-exam normalcy phrases in the
+  // raw dictation. This is the ONLY thing allowed to trigger the standard
+  // normal-exam wording below — never mere presence of other content.
+  const { abcdeNormal, systemicNormal } = detectNormalcyPhrases(rawText);
 
   // Helper to infer proper route
   const getProperRoute = (drugName: string, rawRoute?: string) => {
@@ -1194,10 +1290,10 @@ export function formatClinicalCaseObject(rawExt: Record<string, any>, rawText: s
     : "";
 
   // ══════════════════════════════════════════════════════════════
-  // FIX (Rule 8 compliance): vitals must NEVER receive fabricated
-  // "normal" defaults. Only return what was actually dictated.
-  // Missing values return null (rendered as "Not documented" by the
-  // UI), never a fake number silently mixed in beside real ones.
+  // Vitals must NEVER receive fabricated "normal" defaults. Only
+  // return what was actually dictated. Missing values return null
+  // (rendered as "Not documented" by the UI), never a fake number
+  // silently mixed in beside real ones. Unchanged from prior fix.
   // ══════════════════════════════════════════════════════════════
   const isRealVital = (v: any) =>
     v !== null && v !== undefined && String(v).trim() !== "" &&
@@ -1225,11 +1321,26 @@ export function formatClinicalCaseObject(rawExt: Record<string, any>, rawText: s
     painScore: vitalsBlock.painScore === null,
   };
 
+  // ══════════════════════════════════════════════════════════════
+  // VOICE-03 FIX: Primary Assessment (ABCDE) qualitative findings are
+  // now gated strictly by abcdeNormal (explicit "ABCDE normal" phrase).
+  // GCS is NEVER embedded/fabricated here — it's sourced only from
+  // vitalsBlock.gcs (already real-or-null) and shown separately.
+  // Pupils/motor/skin descriptive text only appears when abcdeNormal.
+  // ══════════════════════════════════════════════════════════════
+  const disabilityText = ext.disability
+    ? ext.disability
+    : (abcdeNormal ? `Pupils: Equal & Reactive, Motor: ${EXAM_DEFAULTS.cnsExamination}` : null);
+
+  const exposureText = ext.exposure
+    ? ext.exposure
+    : (abcdeNormal ? "Skin: Normal, clear, no rash or trauma" : null);
+
   return {
     patientName: ext.patientName || null,
     age: ageVal,
     gender: genderVal,
-    presentingComplaint: ext.chiefComplaint || ext.hpi || rawText.slice(0, 150) || "Emergency presentation",
+    presentingComplaint: ext.chiefComplaint || ext.hpi || null,
     triageCategory: triageCategory,
     caseType: (ext.procedures?.some((p: string) => /trauma|wound|fracture/i.test(p)) || /trauma|fall|injury/i.test(ext.chiefComplaint || "")) ? "Trauma" : "Medical",
     arrivalMode: "Walk-in",
@@ -1237,34 +1348,34 @@ export function formatClinicalCaseObject(rawExt: Record<string, any>, rawText: s
     vitals_isDefault: vitalsIsDefault, // UI should render "Not documented" for any true flag here
     sampleHistory: {
       symptoms: finalSymptoms,
-      allergies: ext.allergies || "NKDA",
+      allergies: ext.allergies || "Not documented",
       medications: medPmh.medications,
       pastHistory: medPmh.pastHistory,
       lastMeal: ext.lastMeal || "",
       events: finalEvents,
       socialHistory: "",
       familyHistory: ext.familyHistory || "",
-      psychiatricFlags: ext.psychologicalAssessment || "No active cognitive, psychiatric, or psychological flags."
+      psychiatricFlags: ext.psychologicalAssessment || (systemicNormal ? EXAM_DEFAULTS.psychologicalAssessment : "Not documented")
     },
     primaryAssessment: {
-      airway: ext.airway || EXAM_DEFAULTS.airway,
-      airwayStatus: "Normal",
-      breathing: ext.breathing || EXAM_DEFAULTS.respiratoryExamination,
-      breathingStatus: "Normal",
-      circulation: ext.circulation || EXAM_DEFAULTS.cvsExamination,
-      circulationStatus: "Normal",
-      disability: ext.disability || `GCS ${vitalsBlock.gcs ?? "Not documented"}/15 (E4V5M6 - Alert), Pupils: Equal & Reactive (2mm), Motor: ${EXAM_DEFAULTS.cnsExamination}`,
-      disabilityStatus: "Normal",
-      exposure: ext.exposure || `Temp: ${vitalsBlock.temp ?? "Not documented"}, Skin: Normal, clear`,
-      exposureStatus: "Normal"
+      airway: ext.airway || (abcdeNormal ? EXAM_DEFAULTS.airway : null),
+      airwayStatus: (ext.airway || abcdeNormal) ? "Normal" : "Not documented",
+      breathing: ext.breathing || (abcdeNormal ? EXAM_DEFAULTS.respiratoryExamination : null),
+      breathingStatus: (ext.breathing || abcdeNormal) ? "Normal" : "Not documented",
+      circulation: ext.circulation || (abcdeNormal ? EXAM_DEFAULTS.cvsExamination : null),
+      circulationStatus: (ext.circulation || abcdeNormal) ? "Normal" : "Not documented",
+      disability: disabilityText,
+      disabilityStatus: disabilityText ? "Normal" : "Not documented",
+      exposure: exposureText,
+      exposureStatus: exposureText ? "Normal" : "Not documented"
     },
     secondaryAssessment: [
-      `General: ${ext.generalExamination || EXAM_DEFAULTS.generalExamination}`,
-      `CVS: ${ext.cvsExamination || EXAM_DEFAULTS.cvsExamination}`,
-      `RS: ${ext.respiratoryExamination || EXAM_DEFAULTS.respiratoryExamination}`,
-      `Abdomen: ${ext.abdomenExamination || EXAM_DEFAULTS.abdomenExamination}`,
-      `CNS: ${ext.cnsExamination || EXAM_DEFAULTS.cnsExamination}`,
-      `Psych: ${ext.psychologicalAssessment || EXAM_DEFAULTS.psychologicalAssessment}`
+      `General: ${ext.generalExamination || (systemicNormal ? EXAM_DEFAULTS.generalExamination : "Not documented")}`,
+      `CVS: ${ext.cvsExamination || (systemicNormal ? EXAM_DEFAULTS.cvsExamination : "Not documented")}`,
+      `RS: ${ext.respiratoryExamination || (systemicNormal ? EXAM_DEFAULTS.respiratoryExamination : "Not documented")}`,
+      `Abdomen: ${ext.abdomenExamination || (systemicNormal ? EXAM_DEFAULTS.abdomenExamination : "Not documented")}`,
+      `CNS: ${ext.cnsExamination || (systemicNormal ? EXAM_DEFAULTS.cnsExamination : "Not documented")}`,
+      `Psych: ${ext.psychologicalAssessment || (systemicNormal ? EXAM_DEFAULTS.psychologicalAssessment : "Not documented")}`
     ].join("\n"),
     treatments: treatmentsList,
     investigations: investigationItems,
@@ -1334,7 +1445,9 @@ export async function extractClinicalData(
     const parsed = safeParseJSON(raw, "CaseExtract");
 
     if (parsed) {
-      const withDefaults = applyExaminationDefaults(parsed);
+      // VOICE-03: pass rawText through so defaults are gated by explicit
+      // normalcy phrases, not applied silently to every empty field.
+      const withDefaults = applyExaminationDefaults(parsed, targetTranscript);
       const formatted = formatClinicalCaseObject(withDefaults, targetTranscript);
       return { 
         success: true, 

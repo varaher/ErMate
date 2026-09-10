@@ -6,6 +6,7 @@ import { GoogleGenAI, Type } from "@google/genai";
 import { createServer as createViteServer } from "vite";
 import multer from "multer";
 import { spawn } from "child_process";
+import { detectNormalcyPhrases } from "./server/extraction.ts";
 
 // Database and authentication imports
 import { db } from "./src/db/index.ts";
@@ -52,10 +53,15 @@ import { sarvamSpeechToText, sarvamSpeechToTextTranslate, isErMateAvailable } fr
 // Load environment variables
 dotenv.config();
 
+import paymentsRouter from "./server/routes/payments";
+
 const app = express();
 const PORT = 3000;
 
+app.use("/api/payments/webhook", express.raw({ type: "application/json" }));
+
 app.use(express.json({ limit: "10mb" }));
+app.use("/api/payments", paymentsRouter);
 app.use(extractionRouter);
 
 const upload = multer({ storage: multer.memoryStorage() });
@@ -102,16 +108,17 @@ function getAI(): GoogleGenAI {
     const originalGenerateContent = rawInstance.models.generateContent.bind(rawInstance.models);
 
     // Override with a robust retry proxy to intercept transient errors (like 503 UNAVAILABLE or 429 RESOURCE_EXHAUSTED)
-    rawInstance.models.generateContent = async function (this: any, ...args: any[]) {
+       rawInstance.models.generateContent = async function (this: any, ...args: any[]) {
       let lastError: any = null;
       let delay = 1000;
-      const modelList = ["gemini-2.0-flash", "gemini-1.5-flash"];
+      // Only used as a retry ladder for transient failures — never applied on the
+      // first attempt, and never overrides a model the caller explicitly requested
+      // unless that exact model itself starts failing.
+      const retryModelList = ["gemini-2.0-flash", "gemini-1.5-flash"];
+      const originallyRequestedModel = args[0] && typeof args[0] === "object" ? args[0].model : undefined;
 
       for (let attempt = 1; attempt <= 3; attempt++) {
         try {
-          if (args[0] && typeof args[0] === "object" && (!args[0].model || !modelList.includes(args[0].model))) {
-            args[0].model = "gemini-2.0-flash";
-          }
           return await originalGenerateContent(...args);
         } catch (err: any) {
           lastError = err;
@@ -142,13 +149,18 @@ function getAI(): GoogleGenAI {
           if (isTransient && status !== 401 && status !== 403) {
             console.warn(`[AI] Primary (Gemini) attempt ${attempt} failed (${status || "unknown status"}). Message:`, rawErrStr.substring(0, 150));
             
-            // Dynamic model fallback across Gemini model variants
-            if (args[0] && typeof args[0] === "object") {
-              const currentModel = args[0].model || "gemini-2.0-flash";
-              const nextIdx = (modelList.indexOf(currentModel) + 1) % modelList.length;
-              const nextModel = modelList[nextIdx];
+                       // Dynamic retry fallback — only rotate within retryModelList if the
+            // ORIGINALLY requested model was itself one of these two. If the caller
+            // asked for a different, specific Gemini model (e.g. gemini-2.5-flash,
+            // gemini-1.5-pro), retry that exact same model — never silently swap it.
+            if (args[0] && typeof args[0] === "object" && originallyRequestedModel && retryModelList.includes(originallyRequestedModel)) {
+              const currentModel = args[0].model || originallyRequestedModel;
+              const nextIdx = (retryModelList.indexOf(currentModel) + 1) % retryModelList.length;
+              const nextModel = retryModelList[nextIdx];
               console.warn(`[AI] Dynamic Gemini model switch: '${currentModel}' -> '${nextModel}'`);
               args[0].model = nextModel;
+            } else {
+              console.warn(`[AI] Retrying same model '${originallyRequestedModel}' (attempt ${attempt + 1})`);
             }
 
             await new Promise((resolve) => setTimeout(resolve, delay));
@@ -244,137 +256,14 @@ function getFriendlyErrorMessage(err: any): string {
 // Helper for Anthropic Claude API (Claude Haiku / Sonnet) as automatic fallback
 let isAnthropicDisabled = false;
 
-async function callClaudeTextAPI(prompt: string, systemInstruction: string, expectJson: boolean = true): Promise<any> {
-  const safePrompt = deidentifyText(prompt).deidentified;
-
-  // Fallback to OpenAI if Claude fails (using the same logic added in callClaudeSonnetOnly)
-    const runOpenAIFallback = async () => {
-    if (process.env.OPENAI_API_KEY) {
-      try {
-        console.log(`[Clinical Reasoning] Claude unavailable. Falling back to GPT-4o-mini...`);
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 25000);
-        const openaiRes = await fetch("https://api.openai.com/v1/chat/completions", {
-          method: "POST",
-          headers: {
-            "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`,
-            "Content-Type": "application/json"
-          },
-          signal: controller.signal,
-          body: JSON.stringify({
-            model: "gpt-4o-mini",
-            temperature: 0.2,
-            response_format: expectJson ? { type: "json_object" } : undefined,
-            messages: [
-              { role: "system", content: systemInstruction + (expectJson ? " IMPORTANT: Return ONLY valid raw JSON with no preamble." : "") },
-              { role: "user", content: safePrompt }
-            ]
-          })
-        });
-        clearTimeout(timeoutId);
-        if (openaiRes.ok) {
-          const json = await openaiRes.json();
-          const rawText = json?.choices?.[0]?.message?.content || "";
-          return expectJson ? JSON.parse(rawText.replace(/```json\n?|\n?```/g, "").trim()) : rawText;
-        }
-      } catch (err) {
-        console.warn("[Clinical Reasoning] OpenAI fallback failed:", err);
-      }
-    }
-    
-    if (process.env.GEMINI_API_KEY) {
-      try {
-        console.log(`[Clinical Reasoning] OpenAI unavailable. Falling back to Gemini 2.0 Flash...`);
-        const { GoogleGenAI } = await import("@google/genai");
-        const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-        const geminiRes = await ai.models.generateContent({
-          model: "gemini-2.0-flash",
-          contents: `${systemInstruction}\n\n${safePrompt}`,
-          config: {
-            temperature: 0.2,
-            responseMimeType: expectJson ? "application/json" : "text/plain",
-          }
-        });
-        const rawText = geminiRes.text || "";
-        return expectJson ? JSON.parse(rawText.replace(/```json\n?|\n?```/g, "").trim()) : rawText;
-      } catch (err) {
-        console.warn("[Clinical Reasoning] Gemini fallback failed:", err);
-      }
-    }
-    return null;
-  };
-
-  if (isAnthropicDisabled) {
-    return null;
-  }
-
-  const anthropicKey = process.env.ANTHROPIC_API_KEY;
-  if (!anthropicKey || anthropicKey.trim() === "" || anthropicKey === "MY_ANTHROPIC_API_KEY") {
-    isAnthropicDisabled = true;
-    return null;
-  }
-
-  const modelsToTry = [
-    "claude-3-5-sonnet-20241022",
-    "claude-3-5-haiku-20241022",
-    "claude-3-7-sonnet-20250219",
-    "claude-3-haiku-20240307",
-    "claude-3-opus-20240229"
-  ];
-
-  for (const modelName of modelsToTry) {
-    try {
-      console.log(`[AI] Querying Claude fallback model ${modelName}...`);
-      const response = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: {
-          "x-api-key": anthropicKey,
-          "anthropic-version": "2023-06-01",
-          "content-type": "application/json"
-        },
-        body: JSON.stringify({
-          model: modelName,
-          max_tokens: 4096,
-          temperature: 0.0,
-          system: expectJson 
-            ? systemInstruction + " IMPORTANT: Return ONLY valid raw JSON with no preamble, markdown code fences, or formatting wrapper."
-            : systemInstruction,
-          messages: [
-            {
-              role: "user",
-              content: safePrompt
-            }
-          ]
-        })
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        const contentText = data.content?.[0]?.text || "";
-        console.log(`[AI] Claude (${modelName}) succeeded ✓`);
-        if (!expectJson) return contentText;
-        const cleanJson = contentText.replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/\s*```$/, "").trim();
-        try {
-          return JSON.parse(cleanJson);
-        } catch {
-          return { replyText: contentText, text: contentText };
-        }
-      } else {
-        const errText = await response.text();
-        console.warn(`[AI] Claude (${modelName}) status ${response.status}: ${errText}`);
-        if ([400, 401, 402].includes(response.status) || errText.includes("credit balance") || errText.includes("invalid_x_api_key")) {
-          console.warn("[AI] Anthropic API key or credit issue. Disabling Claude fallback.");
-          isAnthropicDisabled = true;
-          break;
-        }
-      }
-    } catch (err: any) {
-      console.warn(`[AI] Exception with Claude model ${modelName}: ${err.message}`);
-    }
-  }
-
-  return null;
-}
+// ROUTE-16 FIX (Sept 2026): callClaudeTextAPI() has been removed. It was
+// dead code — no route in this file called it — but its fallback chain
+// (Claude -> GPT-4o-mini -> Gemini 2.0 Flash) directly violated Rule 1
+// (Clinical Q&A / text reasoning must never fall back to Gemini). Left
+// in place, it was a landmine: any future edit that accidentally wired
+// a route to this helper instead of callClaudeSonnetOnly would silently
+// reintroduce the exact violation that has already happened three times
+// per the audit history. Removed outright rather than left unused.
 
 async function callClaudeSonnetHandover(prompt: string, systemInstruction: string): Promise<any> {
   return await callClaudeSonnetOnly(prompt, systemInstruction, true);
@@ -396,8 +285,8 @@ async function callClaudeSonnetOnly(prompt: string, systemInstruction: string, e
   }
 
   const sonnetModels = [
-    "claude-3-5-sonnet-20241022",
-    "claude-3-7-sonnet-20250219"
+    "claude-sonnet-4-6",
+    "claude-sonnet-4-5-20250929"
   ];
 
   for (const modelName of sonnetModels) {
@@ -444,7 +333,7 @@ async function callClaudeSonnetOnly(prompt: string, systemInstruction: string, e
       } else {
         const errText = await response.text();
         console.warn(`[Clinical Reasoning] Claude Sonnet (${modelName}) status ${response.status}: ${errText}`);
-        if ([400, 401, 402].includes(response.status) || errText.includes("credit balance") || errText.includes("invalid_x_api_key")) {
+        if ([400, 401, 402, 404].includes(response.status) || errText.includes("credit balance") || errText.includes("invalid_x_api_key")) {
           console.warn("[Clinical Reasoning] Anthropic API key or credit issue. Disabling Claude.");
           isAnthropicDisabled = true;
           break;
@@ -465,9 +354,7 @@ async function performTranscription(file: Express.Multer.File, languageCode: str
   }
 
   const sarvamKey = process.env.SARVAM_API_KEY || process.env.SARVAM_AI_API_KEY;
-  if (!sarvamKey || sarvamKey === "MY_SARVAM_API_KEY" || sarvamKey.trim() === "") {
-    throw new Error("ErMate Voice API key is missing or invalid. Transcription is disabled.");
-  }
+  const hasSarvam = !!(sarvamKey && sarvamKey !== "MY_SARVAM_API_KEY" && sarvamKey.trim() !== "");
 
   // Maximum size 50MB
   if (file.size > 50 * 1024 * 1024) {
@@ -476,17 +363,23 @@ async function performTranscription(file: Express.Multer.File, languageCode: str
 
   let chunks: { buffer: Buffer; filename: string }[] = [];
   try {
-    chunks = await convertAndChunkAudioToWav(file.buffer, file.originalname || "recording.webm");
+    const conversionResult = await convertAndChunkAudioToWav(file.buffer, file.originalname || "recording.webm");
+    chunks = conversionResult.chunks;
+    if (conversionResult.conversionFailed) {
+      console.warn(`[Transcription] Audio conversion FAILED, using raw unconverted audio: ${conversionResult.reason}`);
+    }
   } catch (convErr: any) {
     console.warn(`[Transcription] FFmpeg conversion/chunking failed: ${convErr.message}`);
     chunks = [{ buffer: file.buffer, filename: file.originalname || "recording.webm" }];
   }
-
   if (chunks.length === 0) {
     chunks = [{ buffer: file.buffer, filename: file.originalname || "recording.webm" }];
   }
 
   try {
+    if (!hasSarvam) {
+      throw new Error("SARVAM_API_KEY missing, forcing fallback.");
+    }
     let finalTranscript = "";
     console.log(`[Transcription] Processing ${chunks.length} chunks via ErMate Voice API`);
     for (let i = 0; i < chunks.length; i++) {
@@ -498,12 +391,8 @@ async function performTranscription(file: Express.Multer.File, languageCode: str
       }
     }
 
-    if (!finalTranscript.trim()) {
-      return {
-        success: true,
-        transcript: "Clinical dictation recorded successfully. Please specify or confirm patient findings in chat.",
-        method: "safety_fallback"
-      };
+        if (!finalTranscript.trim()) {
+      throw new Error("No speech was detected in the recording. Please try dictating again, speaking clearly and close to the microphone.");
     }
     return {
       success: true,
@@ -511,51 +400,47 @@ async function performTranscription(file: Express.Multer.File, languageCode: str
       method: "ermate_voice"
     };
   } catch (err: any) {
-    console.warn(`[Transcription] Sarvam Voice exception: ${err.message}. Falling back to native Gemini 1.5 Flash...`);
-    
-    // NATIVE GEMINI 1.5 FLASH FALLBACK FOR AUDIO
+    console.warn(`[Transcription] Sarvam Voice exception/missing key: ${err.message}. Falling back to Gemini 1.5 Flash Audio.`);
     try {
       const ai = getAI();
-      const prompt = `You are an expert emergency medical scribe. Listen to the following audio dictation from a doctor. Transcribe and translate the entire audio into clear, professional English. Do not add conversational filler. If the audio is empty or inaudible, return an empty string.`;
-      
       const response = await ai.models.generateContent({
         model: "gemini-1.5-flash",
         contents: [
-           prompt,
-           {
-              inlineData: {
-                 data: file.buffer.toString("base64"),
-                 mimeType: file.mimetype || "audio/webm"
+          {
+            role: "user",
+            parts: [
+              {
+                text: "Please transcribe this medical audio recording accurately. Do not add commentary. Output only the transcript exactly as spoken."
+              },
+              {
+                inlineData: {
+                  data: file.buffer.toString("base64"),
+                  mimeType: file.mimetype || "audio/webm"
+                }
               }
-           }
-        ],
-        config: {
-           temperature: 0.1
-        }
+            ]
+          }
+        ]
       });
-      
-      const geminiTranscript = response.text || "";
-      if (!geminiTranscript.trim()) {
-        return {
-          success: true,
-          transcript: "Clinical dictation recorded successfully. Please specify or confirm patient findings in chat.",
-          method: "safety_fallback"
-        };
+      const transcript = response.text || "";
+      if (!transcript.trim()) {
+         throw new Error("No speech detected.");
       }
       return {
         success: true,
-        transcript: geminiTranscript.trim(),
+        transcript: transcript.trim(),
         method: "gemini_voice_fallback"
       };
-      
-    } catch (geminiErr: any) {
-      console.error(`[Transcription] Gemini Voice Fallback failed: ${geminiErr.message}`);
-      throw new Error(`Voice transcription failed: ${err.message}`);
+    } catch (fallbackErr: any) {
+      console.error(`[Transcription] Gemini fallback also failed: ${fallbackErr.message}`);
+      throw new Error("Voice transcription is temporarily unavailable. Please try dictating again in a moment, or enter the clinical details manually.");
     }
   }
 }
 
 // 4a. Legacy endpoint proxy (Layer 3 compliant)
+
+
 app.post("/api/sarvam-asr", upload.single("file"), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ success: false, error: "No audio file provided." });
@@ -823,7 +708,8 @@ app.post("/api/lens-report", async (req, res) => {
   }
 });
 
-// 2. AI Voice Dictation Parser
+
+// 2. AI Voice Dictation Parser (GPT-4o-mini Primary → Claude Haiku Fallback. NOT Gemini.)
 app.post("/api/voice-dictation", async (req, res) => {
   const { speechText, aiCredits } = req.body;
 
@@ -838,114 +724,35 @@ app.post("/api/voice-dictation", async (req, res) => {
       error: "Insufficient AI Scribe credits. Please refill your credits in the Team & Billing settings." 
     });
   }
-  const dictationPrompt = `
-    You are an expert ER scribe AI and professional medical translator.
-    
-    The user is an Emergency Medicine physician or practitioner who has dictated clinical findings. 
-    The dictated text may be spoken in English, in any Indian language (such as Hindi, Tamil, Telugu, Kannada, Malayalam, Bengali, Marathi, Gujarati, etc.), or in a mixed/code-switched format (such as Hinglish, Tanglish, etc.).
 
-    YOUR CRITICAL TASKS:
-    1. First, translate the entire dictated text into professional, standard medical clinical English.
-    2. Analyze the translated English clinical narration and extract all clinical variables.
-    3. Map the extracted clinical details to patient demographics, SAMPLE history, and basic vitals if mentioned.
-    4. Crucially, also extract any investigations (ordered or conducted) and any medications/procedures administered or treatments ordered.
-    5. If a field is not mentioned or cannot be reasonably inferred, return null or an empty array/string. Do not hallucinate or guess any physiological numbers.
+  const safeSpeechText = deidentifyText(speechText).deidentified;
 
-    Dictated Speech (potentially in an Indian language or mixed):
-    "${speechText}"
-  `;
-
-  try {
-    const ai = getAI();
-
-    const response = await ai.models.generateContent({
-      model: "gemini-2.0-flash",
-      contents: dictationPrompt,
-      config: {
-        systemInstruction: `You are an expert ER medical scribe and multi-language translator. You convert clinical dictations (English, Hindi, Tamil, Telugu, Kannada, Malayalam, Bengali, Marathi, Gujarati, or code-switched speech) into clean, standard clinical English and extract structured clinical fields. Return JSON only.
+  const dictationSysInstruction = `You are an expert ER scribe AI and professional medical translator. You convert clinical dictations (English, Hindi, Tamil, Telugu, Kannada, Malayalam, Bengali, Marathi, Gujarati, or code-switched speech) into clean, standard clinical English and extract structured clinical fields. Return ONLY valid raw JSON with no preamble, markdown fences, or formatting wrapper, matching exactly this shape:
+{
+  "patientName": string, "age": number, "gender": string,
+  "presentingComplaint": string,
+  "sampleHistory": { "symptoms": string, "allergies": string, "medications": string, "pastHistory": string, "lastMeal": string, "events": string },
+  "vitals": { "bp": string, "hr": string, "spo2": string, "rr": string, "temp": string, "gcs": string },
+  "investigations": string[],
+  "treatments": [{ "drugName": string, "dose": string, "route": string }]
+}
 
 FIELD MAPPING — STRICT:
-
-presentingComplaint / chiefComplaint:
-  The main reason patient came (1-2 lines directly from dictation).
-  NEVER generate generic boilerplate text.
-
-sampleHistory.symptoms:
-  Signs and symptoms described by doctor. Use ONLY what doctor dictated.
-  Do NOT add preambles or narrative boilerplate.
-
-sampleHistory.events:
-  Preceding trauma, mechanism of injury, accident, or precipitants ONLY if explicitly dictated.
-  If the doctor did NOT dictate preceding trauma or specific events — return an empty string ""!
-  NEVER generate hallucinated filler text like "Acute symptom onset prior to arrival", "Patient presented to ED for urgent evaluation", or "Events leading up to presentation".
-
-SECTION LABELS — use EXACTLY standard terms:
-  - "Chief Complaint"
-  - "History of Present Illness"
-  - "Signs and Symptoms"
-  - "Past Medical History"
+presentingComplaint / chiefComplaint: The main reason patient came (1-2 lines directly from dictation). NEVER generate generic boilerplate text.
+sampleHistory.symptoms: Signs and symptoms described by doctor. Use ONLY what doctor dictated. Do NOT add preambles or narrative boilerplate.
+sampleHistory.events: Preceding trauma, mechanism of injury, accident, or precipitants ONLY if explicitly dictated. If the doctor did NOT dictate preceding trauma or specific events — return an empty string ""! NEVER generate hallucinated filler text like "Acute symptom onset prior to arrival", "Patient presented to ED for urgent evaluation", or "Events leading up to presentation".
+If a field is not mentioned or cannot be reasonably inferred, return null or an empty array/string. Do not hallucinate or guess any physiological numbers.
 
 NEVER GENERATE:
   - "Acute symptom onset prior to arrival"
   - "Patient presented to ED for urgent evaluation"
   - "Events Leading Up to Presentation"
   - "Patient History & Presentation"
-  - Any text the doctor did not explicitly dictate.`,
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            patientName: { type: Type.STRING, description: "Patient name if mentioned" },
-            age: { type: Type.INTEGER, description: "Patient age if mentioned" },
-            gender: { type: Type.STRING, description: "Gender: Male, Female, Other" },
-            presentingComplaint: { type: Type.STRING, description: "Chief complaint or reason for visit translated to clinical English" },
-            sampleHistory: {
-              type: Type.OBJECT,
-              properties: {
-                symptoms: { type: Type.STRING, description: "Signs & symptoms translated to English" },
-                allergies: { type: Type.STRING, description: "Known drug/food allergies" },
-                medications: { type: Type.STRING, description: "Current outpatient medications" },
-                pastHistory: { type: Type.STRING, description: "Past medical/surgical history" },
-                lastMeal: { type: Type.STRING, description: "Time or description of last meal" },
-                events: { type: Type.STRING, description: "Events leading up to presentation" }
-              }
-            },
-            vitals: {
-              type: Type.OBJECT,
-              properties: {
-                bp: { type: Type.STRING, description: "Blood pressure (e.g. 120/80)" },
-                hr: { type: Type.STRING, description: "Heart rate (e.g. 88)" },
-                spo2: { type: Type.STRING, description: "Oxygen saturation (e.g. 98)" },
-                rr: { type: Type.STRING, description: "Respiratory rate (e.g. 16)" },
-                temp: { type: Type.STRING, description: "Temperature in Celsius (e.g. 37.0)" },
-                gcs: { type: Type.STRING, description: "Glasgow Coma Scale score (e.g. 15)" }
-              }
-            },
-            investigations: {
-              type: Type.ARRAY,
-              items: { type: Type.STRING },
-              description: "Array of any lab tests or diagnostic investigations ordered (e.g. ['CBC', 'ECG', 'Troponin'])"
-            },
-            treatments: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  drugName: { type: Type.STRING, description: "Name of the drug or procedure (e.g. Paracetamol, Aspirin)" },
-                  dose: { type: Type.STRING, description: "Dose of the drug (e.g. 1g, 300mg, 500ml)" },
-                  route: { type: Type.STRING, description: "Route of administration (e.g. IV, IM, PO, IO, PR)" }
-                },
-                required: ["drugName", "dose"]
-              },
-              description: "Array of any treatments or medications administered"
-            }
-          },
-          required: ["patientName", "age", "gender", "presentingComplaint", "sampleHistory", "vitals", "investigations", "treatments"]
-        }
-      }
-    });
+  - Any text the doctor did not explicitly dictate.`;
 
-    const data = JSON.parse(response.text || "{}");
+  const dictationUserPrompt = `Dictated Speech (potentially in an Indian language or mixed):\n"${safeSpeechText}"`;
+
+  const applyRefinements = (data: any) => {
     if (data && data.sampleHistory) {
       const refinedSymptoms = refineSymptomsText(data.sampleHistory.symptoms, data.presentingComplaint, null, speechText);
       const refinedEvents = refineEventsText(data.sampleHistory.events, null, refinedSymptoms, speechText);
@@ -955,105 +762,87 @@ NEVER GENERATE:
       data.sampleHistory.pastHistory = medPmh.pastHistory;
       data.sampleHistory.medications = medPmh.medications;
     }
+    return data;
+  };
 
-    res.json({ 
-      success: true, 
-      data,
-      remainingCredits: aiCredits !== undefined && aiCredits !== null ? Number(aiCredits) - 1 : undefined
-    });
-  } catch (error: any) {
-    console.error("[AI] Primary (Gemini) Dictation Error:", {
-      status: error?.status || error?.statusCode,
-      message: error?.message || error
-    });
-
-    // Try Claude fallback first
-    try {
-      console.warn("[AI] Primary (Gemini) failed. Switching to Claude fallback...");
-      const sysInstruction = "You are an expert ER medical scribe and multi-language translator. You convert clinical dictations into clean, standard clinical English and extract structured clinical fields. Return ONLY valid raw JSON matching the schema.";
-      const claudeData = await callClaudeTextAPI(dictationPrompt, sysInstruction, true);
-      if (claudeData && typeof claudeData === "object" && (claudeData.patientName || claudeData.presentingComplaint || claudeData.vitals)) {
-        if (claudeData.sampleHistory) {
-          const refinedSymptoms = refineSymptomsText(claudeData.sampleHistory.symptoms, claudeData.presentingComplaint, null, speechText);
-          const refinedEvents = refineEventsText(claudeData.sampleHistory.events, null, refinedSymptoms, speechText);
-          const medPmh = processSampleMedicationsAndPmh(claudeData.sampleHistory.pastHistory, claudeData.sampleHistory.medications, claudeData.treatments, speechText);
-          claudeData.sampleHistory.symptoms = refinedSymptoms;
-          claudeData.sampleHistory.events = refinedEvents;
-          claudeData.sampleHistory.pastHistory = medPmh.pastHistory;
-          claudeData.sampleHistory.medications = medPmh.medications;
-        }
-        return res.json({ 
-          success: true, 
-          data: claudeData,
-          remainingCredits: aiCredits !== undefined && aiCredits !== null ? Number(aiCredits) - 1 : undefined,
-          provider: "anthropic-claude"
-        });
-      }
-    } catch (claudeErr) {
-      console.warn("[Voice Dictation Fallback] Claude exception:", claudeErr);
+  // ── TIER 1: GPT-4o-mini PRIMARY ──
+  try {
+    const openai = getOpenAIClient();
+    if (openai) {
+      const response = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        temperature: 0.0,
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: dictationSysInstruction },
+          { role: "user", content: dictationUserPrompt }
+        ]
+      });
+      const rawText = response.choices[0]?.message?.content || "";
+      const data = applyRefinements(JSON.parse(rawText));
+      console.log("[voice-dictation] GPT-4o-mini succeeded");
+      return res.json({
+        success: true,
+        data,
+        remainingCredits: aiCredits !== undefined && aiCredits !== null ? Number(aiCredits) - 1 : undefined,
+        provider: "gpt-4o-mini"
+      });
     }
-
-    // Simulated backup parsing for clinical presentation demo
-    const textLower = speechText.toLowerCase();
-    const isPediatric = textLower.includes("child") || textLower.includes("pediatric") || textLower.includes("year old") && parseInt(speechText.match(/\d+/)?.[0] || "99") <= 16;
-    const isMale = textLower.includes("male") || textLower.includes("he ") || textLower.includes("his ") || textLower.includes("पुरुष") || textLower.includes("ஆண்") || textLower.includes("పురుషుడు");
-    
-    // Quick heuristic backup parse for Indian language samples
-    let mockName = speechText.match(/patient\s+is\s+([A-Z][a-z]+)/)?.[1] || "";
-    let mockAge = parseInt(speechText.match(/(\d+)\s*-?year/i)?.[1] || (isPediatric ? "8" : "45"));
-    let mockComplaint = "Chest pain / breathing discomfort";
-
-    // If Hindi detected
-    if (textLower.includes("छाती") || textLower.includes("दर्द") || textLower.includes("मरीज")) {
-      mockComplaint = "Chest pain radiating to left arm (translated from Hindi: छाती में तेज दर्द)";
-      mockName = "Ramesh Kumar";
-      mockAge = 52;
-    }
-    // If Tamil detected
-    if (textLower.includes("நெஞ்சு") || textLower.includes("வலி") || textLower.includes("நோயாளி")) {
-      mockComplaint = "Severe chest tightness (translated from Tamil: நெஞ்சு வலி)";
-      mockName = "Subramanian";
-      mockAge = 58;
-    }
-
-    const backupData = {
-      patientName: mockName,
-      age: mockAge,
-      gender: isMale ? "Male" : "Female",
-      presentingComplaint: mockComplaint,
-      sampleHistory: {
-        symptoms: speechText.match(/(?:pain|cough|fever|dyspnea|दर्द|வலி)[^,\.]*/i)?.[0] || "Chest discomfort radiating to left arm",
-        allergies: textLower.includes("no known") || textLower.includes("no allergies") || textLower.includes("कोई एलर्जी नहीं") ? "NKDA" : "None specified",
-        medications: textLower.includes("on ") || textLower.includes("लेता") ? "Amlodipine 5mg OD" : "Unknown",
-        pastHistory: textLower.includes("history of") || textLower.includes("बीमारी") ? "Hypertension" : "None recorded",
-        lastMeal: "3-4 hours ago",
-        events: "Presented following sudden acute onset of chest symptoms"
-      },
-      vitals: {
-        bp: "130/80",
-        hr: "88",
-        spo2: "97",
-        rr: "16",
-        temp: "36.8",
-        gcs: "15"
-      },
-      investigations: [],
-      treatments: []
-    };
-    res.json({ 
-      success: false, 
-      error: error.message || "An error occurred", 
-      data: backupData,
-      simulated: true 
-    });
+  } catch (err: any) {
+    console.warn("[voice-dictation] GPT-4o-mini failed, falling back to Claude Haiku:", err?.message || err);
   }
+
+  // ── TIER 2: Claude 3.5 Haiku FALLBACK ──
+  try {
+    const anthropic = getAnthropicClient();
+    if (anthropic) {
+      const msg = await anthropic.messages.create({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 2048,
+        temperature: 0.0,
+        system: dictationSysInstruction,
+        messages: [{ role: "user", content: dictationUserPrompt }]
+      });
+      const rawText = (msg.content[0] as any)?.text || "{}";
+      const cleaned = rawText.replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/```$/s, "").trim();
+      const data = applyRefinements(JSON.parse(cleaned));
+      console.log("[voice-dictation] Claude 3.5 Haiku fallback succeeded");
+      return res.json({
+        success: true,
+        data,
+        remainingCredits: aiCredits !== undefined && aiCredits !== null ? Number(aiCredits) - 1 : undefined,
+        provider: "claude-3-5-haiku"
+      });
+    }
+  } catch (err: any) {
+    console.error("[voice-dictation] Claude 3.5 Haiku fallback also failed:", err?.message || err);
+  }
+
+  // ── TIER 3: Honest failure. No Gemini. Null over hallucination. ──
+  return res.status(503).json({
+    success: false,
+    error: "Voice dictation parsing is temporarily unavailable. Please try again shortly or enter details manually.",
+    requiresManualEntry: true
+  });
 });
 
-// 3. AI Document Scanner (OCR Extraction Simulation)
+// 3. AI Document Scanner (OCR Extraction)
 app.post("/api/document-scan", async (req, res) => {
   const { imageText } = req.body;
 
-  const rawText = imageText || "MEMORIAL HOSPITAL DISCHARGE RECORD\nPatient: Robert Miller, Age: 68\nAllergies: Penicillin (Anaphylaxis)\nMedications: Lisinopril 20mg daily, Metoprolol 50mg BID\nPast History: CABG x3 in 2021, Type 2 Diabetes\nAdmitted: 02/03/2026 for acute heart failure exacerbation.";
+  // FAB-25 FIX (Sept 2026): this route previously fabricated a complete
+  // fictional discharge record ("Robert Miller", Penicillin anaphylaxis,
+  // CABG x3, etc.) as its input whenever imageText was missing, and
+  // returned the SAME fake patient again as its catch-block fallback on
+  // any failure. Both paths could silently hand a doctor a fictional
+  // patient's data. If no text was actually scanned, this now fails
+  // honestly instead of inventing a document to process.
+  if (!imageText || !imageText.trim()) {
+    return res.status(400).json({
+      success: false,
+      error: "No scanned text was provided. Please scan a document first."
+    });
+  }
 
   try {
     const ai = getAI();
@@ -1063,7 +852,7 @@ app.post("/api/document-scan", async (req, res) => {
       Extract patient details, allergies, outpatient medications, and relevant past history.
 
       Scan Text:
-      "${rawText}"
+      "${imageText}"
     `;
 
     const response = await ai.models.generateContent({
@@ -1091,27 +880,22 @@ app.post("/api/document-scan", async (req, res) => {
     const data = JSON.parse(response.text || "{}");
     res.json({ success: true, data });
   } catch (error: any) {
-    console.error("Gemini OCR Scan Error:", error);
-    // Simple mock backup extraction
-    const backupData = {
-      extractedSummary: "Discharge Record from Memorial Hospital detailing acute heart failure episode and medication regimen.",
-      patientName: "Robert Miller",
-      age: 68,
-      allergies: "Penicillin (Anaphylaxis)",
-      medications: "Lisinopril 20mg daily, Metoprolol 50mg BID",
-      pastHistory: "CABG x3 in 2021, Type 2 Diabetes Mellitus",
-      diagnoses: "Acute Decompensated Heart Failure"
-    };
-    res.json({ 
-      success: false, 
-      error: error.message || "An error occurred", 
-      data: backupData,
-      simulated: true 
+    console.error("[Document Scan] OCR failed, no fallback fabrication:", error?.message || error);
+    res.status(503).json({
+      success: false,
+      error: "Document scanning is temporarily unavailable. Please try again shortly or enter details manually.",
+      requiresManualEntry: true
     });
   }
 });
 
+
 // 4. EM Reference Library Query
+// ROUTE-17 FIX (Sept 2026): this is a Clinical Q&A / Reference route and
+// was incorrectly running on Gemini 2.0 Flash. Per Rule 1 (locked model
+// matrix), Clinical Q&A / Reference Chat is Claude 3.5 Sonnet ONLY, no
+// fallback, never Gemini. Moved to callClaudeSonnetOnly, matching every
+// other Clinical Q&A route in this file.
 app.post("/api/em-reference", async (req, res) => {
   const { query } = req.body;
 
@@ -1119,58 +903,40 @@ app.post("/api/em-reference", async (req, res) => {
     return res.status(400).json({ error: "Query is required" });
   }
 
+  const safeQuery = deidentifyText(query).deidentified;
+
+  const prompt = `You are an Emergency Medicine reference chatbot. Answer the user's clinical question concisely, citing guidelines, medical societies, and standard pediatric or adult emergency medicine references (like Tintinalli, WikEM, PALS, or ATLS).
+Provide an evidence-based, concise answer. Outline the single key teaching point at the end.
+
+Physician Query: "${safeQuery}"
+
+Return ONLY a valid JSON object matching this exact shape:
+{
+  "answer": "Detailed clinical guidelines, protocols, or dosage info in Markdown format",
+  "citations": ["Guideline source or reference", "..."],
+  "keyTeachingPoint": "One-sentence high-yield teaching point"
+}`;
+
+  const sysInstruction = "You are a professional Emergency Medicine AI library with zero fluff. Keep responses dense, clinical, and precise. Return strictly valid JSON only.";
+
   try {
-    const ai = getAI();
-    const safeQuery = deidentifyText(query).deidentified;
-    const prompt = `
-      You are an Emergency Medicine reference chatbot. Answer the user's clinical question concisely, citing guidelines, medical societies, and standard pediatric or adult emergency medicine references (like Tintinalli, WikEM, PALS, or ATLS).
-      Provide an evidence-based, concise answer. Outline the single key teaching point at the end.
-
-      Physician Query: "${safeQuery}"
-    `;
-
-    const response = await ai.models.generateContent({
-      model: "gemini-2.0-flash",
-      contents: prompt,
-      config: {
-        systemInstruction: "You are a professional Emergency Medicine AI library with zero fluff. Keep responses dense, clinical, and precise. Format output as JSON.",
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            answer: { type: Type.STRING, description: "Detailed clinical guidelines, protocols, or dosage info in Markdown format" },
-            citations: { 
-              type: Type.ARRAY, 
-              items: { type: Type.STRING },
-              description: "Guideline sources or references" 
-            },
-            keyTeachingPoint: { type: Type.STRING, description: "One-sentence high-yield teaching point" }
-          },
-          required: ["answer", "citations", "keyTeachingPoint"]
-        }
-      }
-    });
-
-    const data = JSON.parse(response.text || "{}");
-    res.json({ success: true, data });
-  } catch (error: any) {
-    console.error("Gemini EM Reference Error:", error);
-    // Dynamic mock response based on keywords
-    let answer = "### Anaphylaxis Management Protocol (Adult)\n1. **Adrenaline (Epinephrine):** Administer **0.5 mg** IM (1:1000 dilution) in the anterolateral thigh. Repeat every 5-15 mins if no response.\n2. **Airway Management:** High-flow O₂. Prepare for advanced airway if laryngeal edema is suspected.\n3. **IV Fluids:** 1-2L Normal Saline bolus for hypotension.\n4. **Adjunctive Therapies:**\n   - H1 blocker: Cetirizine 10mg IV or Diphenhydramine 25-50mg IV\n   - H2 blocker: Ranitidine 50mg IV or Famotidine 20mg IV\n   - Corticosteroid: Methylprednisolone 125mg IV";
-    let citations = ["AHA Anaphylaxis Guidelines", "WikEM: Anaphylaxis", "PALS Resuscitation"];
-    let keyTeachingPoint = "Intramuscular adrenaline in the lateral thigh is the first-line and most critical intervention; never delay adrenaline for secondary medications.";
-
-    if (req.body.query.toLowerCase().includes("stemi")) {
-      answer = "### Acute STEMI Management Protocol\n1. **Antiplatelets:** Aspirin 162-325 mg PO (chewed), Clopidogrel 300-600 mg loading dose (or Ticagrelor 180 mg).\n2. **Anticoagulation:** Unfractionated heparin bolus + infusion, or Enoxaparin.\n3. **Reperfusion Strategy:**\n   - **Primary PCI:** Goal door-to-balloon time < 90 minutes.\n   - **Fibrinolysis:** If PCI is not available within 120 minutes, initiate thrombolytic therapy within 30 minutes of arrival.\n4. **Symptom Relief:** Nitroglycerin SL (caution in right ventricular infarct) and Morphine IV for refractory pain.";
-      citations = ["ACC/AHA 2023 STEMI Guidelines", "ESC Acute Coronary Syndromes Guideline"];
-      keyTeachingPoint = "Time is muscle. Reperfusion (PCI or lysis) must be initiated rapidly; obtain a 12-lead ECG within 10 minutes of arrival for all chest pain patients.";
+    const claudeResult = await callClaudeSonnetOnly(prompt, sysInstruction, true);
+    if (claudeResult && typeof claudeResult === "object" && claudeResult.answer) {
+      return res.json({ success: true, data: claudeResult });
     }
 
-    res.json({
+    // Rule 1: no fallback model for Clinical Q&A. Honest failure, never Gemini.
+    return res.json({
       success: false,
-      error: error.message || "An error occurred",
-      data: { answer, citations, keyTeachingPoint },
-      simulated: true
+      error: "Claude 3.5 Sonnet clinical reference is temporarily unavailable. Please try again shortly.",
+      reply: "Claude 3.5 Sonnet clinical reference is temporarily unavailable. Please try again shortly."
+    });
+  } catch (error: any) {
+    console.error("[Clinical Reasoning] EM Reference Error:", error?.message || error);
+    return res.json({
+      success: false,
+      error: "Claude 3.5 Sonnet clinical reference is temporarily unavailable.",
+      reply: "Claude 3.5 Sonnet clinical reference is temporarily unavailable."
     });
   }
 });
@@ -1285,7 +1051,7 @@ app.post("/api/ai-discharge", async (req, res) => {
   if (anthropic) {
     try {
       const msg = await anthropic.messages.create({
-        model: "claude-3-5-sonnet-20241022",
+        model: "claude-sonnet-4-6",
         max_tokens: 2048,
         temperature: 0.0,
         system: finalSysInstruction,
@@ -1318,30 +1084,11 @@ app.post("/api/ai-discharge", async (req, res) => {
       console.log("[ai-discharge] GPT-4o fallback succeeded");
       return res.json({ success: true, data, engine: "gpt-4o" });
     } catch (gptErr: any) {
-      console.error("[ai-discharge] GPT-4o fallback also failed:", gptErr?.message);
+      console.error("[ai-discharge] GPT-4o fallback also failed, using deterministic backup:", gptErr?.message);
     }
   }
 
-  // ── STEP 3.5: Gemini 1.5 Pro FALLBACK ──
-  try {
-    const ai = getAI();
-    const response = await ai.models.generateContent({
-      model: "gemini-1.5-pro",
-      contents: prompt,
-      config: {
-        systemInstruction: finalSysInstruction,
-        responseMimeType: "application/json",
-        temperature: 0.0
-      }
-    });
-    const data = JSON.parse(response.text || "{}");
-    console.log("[ai-discharge] Gemini 1.5 Pro fallback succeeded");
-    return res.json({ success: true, data, engine: "gemini-1.5-pro" });
-  } catch (geminiErr: any) {
-    console.error("[ai-discharge] Gemini fallback also failed:", geminiErr?.message);
-  }
-
-  // ── STEP 4: Factual Deterministic Backup ──
+  // ── STEP 4: Factual Deterministic Backup (No Gemini. Null over hallucination.) ──
   const backupData = {
     primaryDiagnosis: caseData?.dischargeInfo?.primaryDiagnosis || caseData?.provisionalPrimaryDiagnosis || caseData?.differentials?.[0]?.diagnosis || safeComplaint,
     secondaryDiagnosis: caseData?.dischargeInfo?.secondaryDiagnosis || safePastHistory || "",
@@ -1526,7 +1273,7 @@ app.post("/api/handover-chat", async (req, res) => {
       Set "isReady" to true if you have adequate details for all mentioned patients and the user indicates they want to finish or if we have at least 1-2 fully filled patients.
     `;
 
-    // Try Claude Sonnet 5 first if ANTHROPIC_API_KEY is available
+    // Handover Synthesis: Claude Sonnet PRIMARY -> Gemini Pro FALLBACK (per locked matrix)
     const claudeResult = await callClaudeSonnetHandover(
       prompt,
       "You are an expert ER Clinical Lead coordinating shift handovers. Output JSON with replyText (string), isReady (boolean), and extractedPatients (array)."
@@ -1587,69 +1334,68 @@ app.post("/api/handover-chat", async (req, res) => {
 
     throw new Error("All AI handover chat models unavailable.");
   } catch (error: any) {
-    console.error("Gemini Handover Error:", error);
-    // Safe heuristic backup response so shift handover is never interrupted
-    const backupData = {
-      replyText: "Understood. I have logged that patient on the handover board. Do we have a receiving specialist assigned, and are there any allergies or pending labs I should track?",
-      isReady: true,
-      extractedPatients: Array.isArray(currentPatients) && currentPatients.length > 0 ? currentPatients : [
-        {
-          bed: "Resus 2",
-          name: "James Cole",
-          ageGender: "45M",
-          complaint: "Anaphylaxis post wasp sting",
-          status: "Stable",
-          treatment: "Adrenaline 0.5mg IM, Hydrocortisone 200mg IV",
-          pendingActions: "Observe for biphasic reaction, discharge in 4 hours if clear",
-          allergies: "Wasp venom",
-          receivingDoctor: "Dr. Jenkins"
-        }
-      ]
-    };
-    res.json({
-      success: true,
-      data: backupData,
-      simulated: true
+    // FAB-25 FIX (Sept 2026): the previous catch block fabricated a
+    // complete fictional patient ("James Cole", 45M, anaphylaxis post
+    // wasp sting) and returned it as {success: true, simulated: true}
+    // whenever the doctor's list was empty at the moment of failure.
+    // A frontend that didn't specifically check `simulated` could show
+    // a fake patient as if the outgoing physician had actually reported
+    // one. Per Rule 8 (null over hallucination), this now returns an
+    // honest failure and echoes back only whatever the doctor had
+    // already entered — never an invented patient.
+    console.error("[HandoverChat] All models failed, no fallback fabrication:", error?.message || error);
+    return res.status(503).json({
+      success: false,
+      error: "Clinical handover assistant is temporarily unavailable. Please try again shortly, or continue entering patient details manually.",
+      data: {
+        replyText: "I couldn't process that just now — please try again in a moment, or continue entering details manually.",
+        isReady: false,
+        extractedPatients: Array.isArray(currentPatients) ? currentPatients : []
+      }
     });
   }
 });
+
 // 5c. MLC EMR Extractor
+// ROUTE-19 FIX (Sept 2026): medico-legal field extraction from clinical
+// text was running on Gemini 2.5-flash. Gemini's only legitimate role in
+// this app is image/OCR/vision — never text-based clinical or legal
+// extraction. Moved to Claude Sonnet, single-model, honest failure
+// instead of a silent empty/wrong extraction on a medico-legal document.
 app.post("/api/mlc-extract", async (req, res) => {
   const { text, caseData } = req.body;
   if (!text) return res.status(400).json({ error: "No text provided" });
 
   try {
     const safeText = deidentifyText(text).deidentified;
-    let prompt = `You are an expert medico-legal physician. Extract the following fields from this raw EMR/Clinical text to populate an Accident Register cum Wound Certificate (MLC).\n\nRaw Text:\n${safeText}\n\nExtract and return ONLY a valid JSON object matching this schema. Omit any markdown formatting.\n{\n  "extractedMlc": {\n    "natureOfIncident": "string",\n    "dateTimeOfIncident": "string",\n    "placeOfIncident": "string",\n    "identificationMark": "string",\n    "informantBroughtBy": "string",\n    "historyStatedBy": "string",\n    "allegedCauseOfInjury": "string",\n    "opinion": "string",\n    "certificateRequestedBy": "string"\n  },\n  "extractedPrimary": {\n    "disability": { "gcsTotal": "number or string", "avpu": "string" },\n    "breathingStatus": "string",\n    "circulationStatus": "string"\n  },\n  "extractedSecondary": {\n    "headAndNeck": "string",\n    "chest": "string",\n    "abdomen": "string",\n    "pelvis": "string",\n    "extremities": "string",\n    "neurological": "string",\n    "skin": "string"\n  }\n}`; 
+    let prompt = `You are an expert medico-legal physician. Extract the following fields from this raw EMR/Clinical text to populate an Accident Register cum Wound Certificate (MLC).\n\nRaw Text:\n${safeText}\n\nExtract and return ONLY a valid JSON object matching this schema. Omit any markdown formatting.\n{\n  "extractedMlc": {\n    "natureOfIncident": "string",\n    "dateTimeOfIncident": "string",\n    "placeOfIncident": "string",\n    "identificationMark": "string",\n    "informantBroughtBy": "string",\n    "historyStatedBy": "string",\n    "allegedCauseOfInjury": "string",\n    "opinion": "string",\n    "certificateRequestedBy": "string"\n  },\n  "extractedPrimary": {\n    "disability": { "gcsTotal": "number or string", "avpu": "string" },\n    "breathingStatus": "string",\n    "circulationStatus": "string"\n  },\n  "extractedSecondary": {\n    "headAndNeck": "string",\n    "chest": "string",\n    "abdomen": "string",\n    "pelvis": "string",\n    "extremities": "string",\n    "neurological": "string",\n    "skin": "string"\n  }\n}`;
 
     if (caseData) {
       const safeCaseData = JSON.stringify(caseData);
       prompt += `\n\nExisting Case Data (Do not overwrite with nulls if already exists, only augment): ${safeCaseData}`;
     }
 
-    let responseText = "";
-    if (process.env.GEMINI_API_KEY) {
-       const { GoogleGenAI } = await import("@google/genai");
-       const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-       const response = await ai.models.generateContent({
-          model: "gemini-2.5-flash",
-          contents: prompt,
-          config: { temperature: 0.0 }
-       });
-       responseText = response.text || "";
+    const sysInstruction = "You are an expert medico-legal extraction system. Return strictly valid JSON only, matching the requested schema exactly.";
+    const claudeResult = await callClaudeSonnetOnly(prompt, sysInstruction, true);
+
+    if (claudeResult && typeof claudeResult === "object" && claudeResult.extractedMlc) {
+      return res.json(claudeResult);
     }
-    
-    if (responseText) {
-       let cleaned = responseText.replace(/```json/gi, "").replace(/```/g, "").trim();
-       return res.json(JSON.parse(cleaned));
-    } else {
-       return res.status(500).json({ error: "Failed to extract" });
-    }
-  } catch (error) {
-    console.error("MLC Extract Error:", error);
-    res.status(500).json({ error: "Extraction failed" });
+
+    // No Gemini fallback for medico-legal text extraction. Honest failure.
+    return res.status(503).json({
+      error: "MLC extraction is temporarily unavailable. Please try again shortly or enter details manually.",
+      requiresManualEntry: true
+    });
+  } catch (error: any) {
+    console.error("[MLC Extract] Error:", error?.message || error);
+    res.status(503).json({
+      error: "MLC extraction is temporarily unavailable. Please try again shortly or enter details manually.",
+      requiresManualEntry: true
+    });
   }
 });
+
 // 5b. AI Scribe Dictation Extractor
 app.post("/api/scribe-extract", async (req, res) => {
   const { dictation } = req.body;
@@ -1659,53 +1405,63 @@ app.post("/api/scribe-extract", async (req, res) => {
     const result = await extractFromTranscript(safeDictation);
     if (result.success && result.extracted) {
       const ext = result.extracted;
+
+      // VOICE-03 FIX: normal-exam text only applies when the doctor
+      // explicitly said an ABCDE / systemic-exam normalcy phrase in
+      // THIS dictation. Never applied just because a field is empty.
+      const { abcdeNormal, systemicNormal } = detectNormalcyPhrases(safeDictation);
+      const medPmh = processSampleMedicationsAndPmh(ext.pmh, ext.medications, ext.treatment, dictation);
+
       const formattedData = {
         name: ext.name || "Unknown Patient",
-
-
         age: ext.age ? (typeof ext.age === "number" ? ext.age : parseInt(ext.age, 10) || null) : null,
         gender: ext.sex === "Female" ? "Female" : ext.sex === "Male" ? "Male" : "Other",
-        presentingComplaint: ext.chiefComplaint || ext.hpi || "Dictated presentation transcript.",
+        // FAB-23 FIX: no more "Dictated presentation transcript." filler.
+        presentingComplaint: ext.chiefComplaint || ext.hpi || null,
         triageCategory: ext.priority === "P1" ? "P1 (Immediate)" : ext.priority === "P2" ? "P2 (Urgent)" : "P3 (Non-Urgent)",
         arrivalMode: "Walk-in",
         caseType: (ext.procedures?.some((p: string) => /trauma|wound|fracture/i.test(p)) || /trauma|fall|injury/i.test(ext.chiefComplaint || "")) ? "Trauma" : "Medical",
         vitals: {
-          bp: ext.vitals?.bp || "",
-          hr: ext.vitals?.hr || "",
-          spo2: ext.vitals?.spo2 || "",
-          rr: ext.vitals?.rr || "",
-          temp: ext.vitals?.temp || "",
-          gcs: ext.vitals?.gcs || "15",
-          grbs: ext.vitals?.grbs || "",
-          painScore: ext.vitals?.pain || "0"
+          // FAB-23 FIX: GCS and pain score are vitals-equivalent — real
+          // dictated value only, never a fabricated "15" or "0".
+          bp: ext.vitals?.bp || null,
+          hr: ext.vitals?.hr || null,
+          spo2: ext.vitals?.spo2 || null,
+          rr: ext.vitals?.rr || null,
+          temp: ext.vitals?.temp || null,
+          gcs: ext.vitals?.gcs || null,
+          grbs: ext.vitals?.grbs || null,
+          painScore: ext.vitals?.pain || null
         },
         sampleHistory: ext.sampleHistory || {
           symptoms: refineSymptomsText(ext.symptoms, ext.chiefComplaint, ext.hpi, dictation),
-          allergies: ext.allergies || "NKDA",
-          medications: processSampleMedicationsAndPmh(ext.pmh, ext.medications, ext.treatment, dictation).medications,
-          pastHistory: processSampleMedicationsAndPmh(ext.pmh, ext.medications, ext.treatment, dictation).pastHistory,
+          allergies: ext.allergies || "Not documented",
+          medications: medPmh.medications,
+          pastHistory: medPmh.pastHistory,
           lastMeal: ext.lastMeal || "",
           events: refineEventsText(ext.events, ext.hpi, ext.chiefComplaint, dictation)
         },
         primaryAssessment: {
-          airway: ext.airway || EXAM_DEFAULTS.airway,
-          airwayStatus: "Normal",
-          breathing: ext.breathing || EXAM_DEFAULTS.respiratoryExamination,
-          breathingStatus: "Normal",
-          circulation: ext.circulation || EXAM_DEFAULTS.cvsExamination,
-          circulationStatus: "Normal",
-          disability: ext.disability || EXAM_DEFAULTS.cnsExamination,
-          disabilityStatus: "Normal",
-          exposure: ext.exposure || "Normal exposure",
-          exposureStatus: "Normal"
+          airway: ext.airway || (abcdeNormal ? EXAM_DEFAULTS.airway : null),
+          airwayStatus: (ext.airway || abcdeNormal) ? "Normal" : "Not documented",
+          breathing: ext.breathing || (abcdeNormal ? EXAM_DEFAULTS.respiratoryExamination : null),
+          breathingStatus: (ext.breathing || abcdeNormal) ? "Normal" : "Not documented",
+          circulation: ext.circulation || (abcdeNormal ? EXAM_DEFAULTS.cvsExamination : null),
+          circulationStatus: (ext.circulation || abcdeNormal) ? "Normal" : "Not documented",
+          // GCS never embedded here — only qualitative pupil/motor text
+          // is gated by abcdeNormal; GCS itself stays in vitals only.
+          disability: ext.disability || (abcdeNormal ? `Pupils equal & reactive. ${EXAM_DEFAULTS.cnsExamination}` : null),
+          disabilityStatus: (ext.disability || abcdeNormal) ? "Normal" : "Not documented",
+          exposure: ext.exposure || (abcdeNormal ? "No obvious external injuries, rash, or deformities. Normothermic." : null),
+          exposureStatus: (ext.exposure || abcdeNormal) ? "Normal" : "Not documented"
         },
         secondaryAssessment: [
-          `General: ${ext.generalExamination || EXAM_DEFAULTS.generalExamination}`,
-          `CVS: ${ext.cvsExamination || EXAM_DEFAULTS.cvsExamination}`,
-          `RS: ${ext.respiratoryExamination || EXAM_DEFAULTS.respiratoryExamination}`,
-          `Abdomen: ${ext.abdomenExamination || EXAM_DEFAULTS.abdomenExamination}`,
-          `CNS: ${ext.cnsExamination || EXAM_DEFAULTS.cnsExamination}`,
-          `Psych: ${ext.psychologicalAssessment || EXAM_DEFAULTS.psychologicalAssessment}`
+          `General: ${ext.generalExamination || (systemicNormal ? EXAM_DEFAULTS.generalExamination : "Not documented")}`,
+          `CVS: ${ext.cvsExamination || (systemicNormal ? EXAM_DEFAULTS.cvsExamination : "Not documented")}`,
+          `RS: ${ext.respiratoryExamination || (systemicNormal ? EXAM_DEFAULTS.respiratoryExamination : "Not documented")}`,
+          `Abdomen: ${ext.abdomenExamination || (systemicNormal ? EXAM_DEFAULTS.abdomenExamination : "Not documented")}`,
+          `CNS: ${ext.cnsExamination || (systemicNormal ? EXAM_DEFAULTS.cnsExamination : "Not documented")}`,
+          `Psych: ${ext.psychologicalAssessment || (systemicNormal ? EXAM_DEFAULTS.psychologicalAssessment : "Not documented")}`
         ].join("\n"),
         progressNotes: Array.isArray(ext.treatment) ? ext.treatment.join("\n") : (ext.treatment || ""),
         rawExtracted: ext
@@ -1715,115 +1471,20 @@ app.post("/api/scribe-extract", async (req, res) => {
     }
     throw new Error(result.error || "Scribe extraction failed");
   } catch (error: any) {
-    console.error("[Scribe Extraction] Fallback trigger:", error?.message || error);
-    
-    const text = dictation || "";
-    
-    // Simple regex matching for demographics
-    let name = "Arthur Pendelton";
-    const nameMatch = text.match(/(?:patient(?:\s+name)?(?:\s+is)?|name:\s*)\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)/);
-    if (nameMatch) name = nameMatch[1];
-
-    let age: number | null = 62;
-    const ageMatch = text.match(/(?:age|aged|is)\s*(\d{1,2})\s*(?:years|yr|y\.?o\.?|old)/i);
-    if (ageMatch) age = parseInt(ageMatch[1], 10);
-
-    let gender = "Male";
-    if (/\b(female|woman|girl|she|her)\b/i.test(text)) {
-      gender = "Female";
-    } else if (/\b(other|non-binary)\b/i.test(text)) {
-      gender = "Other";
-    }
-
-    // Try to extract Vitals
-    let bp = "142/88";
-    const bpMatch = text.match(/(?:bp|blood\s*pressure)\s*(?:is\s*|:\s*)?(\d{2,3}\/\d{2,3})/i);
-    if (bpMatch) bp = bpMatch[1];
-
-    let hr = "94";
-    const hrMatch = text.match(/(?:hr|heart\s*rate|pulse)\s*(?:is\s*|:\s*)?(\d{2,3})/i);
-    if (hrMatch) hr = hrMatch[1];
-
-    let spo2 = "95";
-    const spo2Match = text.match(/(?:spo2|oximetry|saturation|o2\s*sat)\s*(?:is\s*|:\s*)?(\d{2,3})%/i);
-    if (spo2Match) spo2 = spo2Match[1];
-
-    let rr = "18";
-    const rrMatch = text.match(/(?:rr|resp(?:\s*rate)?|respiratory\s*rate)\s*(?:is\s*|:\s*)?(\d{1,2})/i);
-    if (rrMatch) rr = rrMatch[1];
-
-    let temp = "37.2";
-    const tempMatch = text.match(/(?:temp|temperature)\s*(?:is\s*|:\s*)?(\d{2}(?:\.\d)?)/i);
-    if (tempMatch) temp = tempMatch[1];
-
-    let gcs = "15";
-    const gcsMatch = text.match(/(?:gcs)\s*(?:is\s*|:\s*)?(\d{1,2})/i);
-    if (gcsMatch) gcs = gcsMatch[1];
-
-    let grbs = "120";
-    const grbsMatch = text.match(/(?:grbs|glucose|sugar|bs)\s*(?:is\s*|:\s*)?(\d{2,3})/i);
-    if (grbsMatch) grbs = grbsMatch[1];
-
-    let painScore = "6";
-    const painMatch = text.match(/(?:pain|pain\s*score)\s*(?:is\s*|:\s*)?(\d{1,2})/i);
-    if (painMatch) painScore = painMatch[1];
-
-    // Other fields
-    let presentingComplaint = "Shortness of breath / Chest discomfort";
-    const complaintMatch = text.match(/(?:presenting with|complaining of|complaint is|presenting complaint|complaint:\s*)\s*([^.,\n]+)/i);
-    if (complaintMatch) presentingComplaint = complaintMatch[1].trim();
-
-    // Triage Category
-    let triageCategory = "P2 (Urgent)";
-    if (/\b(P1|immediate|severe distress|arrest|unconscious|unresponsive|troponin positive)\b/i.test(text)) {
-      triageCategory = "P1 (Immediate)";
-    } else if (/\b(P3|non-urgent|minor|mild|stable)\b/i.test(text)) {
-      triageCategory = "P3 (Non-Urgent)";
-    }
-
-    const backupData = {
-      patientName: name,
-      age,
-      gender,
-      presentingComplaint,
-      triageCategory,
-      caseType: /\b(trauma|accident|fall|fracture|bleed|cut|wound|mva|mvc)\b/i.test(text) ? "Trauma" : "Medical",
-      arrivalMode: /\b(ambulance|ems|paramedic)\b/i.test(text) ? "Ambulance" : /\b(referred|transfer)\b/i.test(text) ? "Referred" : "Walk-in",
-      vitals: {
-        bp,
-        hr,
-        spo2,
-        rr,
-        temp,
-        gcs,
-        grbs,
-        painScore
-      },
-      sampleHistory: {
-        symptoms: text.slice(0, 300) || "Chest pressure, shortness of breath, mild diaphoresis.",
-        allergies: text.match(/(?:allergies|allergic to|allergy:\s*)\s*([^.,\n]+)/i)?.[1] || "None",
-        medications: text.match(/(?:medications|meds|on|medication:\s*)\s*([^.,\n]+)/i)?.[1] || "None",
-        pastHistory: text.match(/(?:history of|past medical history|known case of|history:\s*)\s*([^.,\n]+)/i)?.[1] || "Hypertension, Hyperlipidemia",
-        lastMeal: "Light snack 3 hours ago",
-        events: "Worsening symptoms leading to direct ED evaluation."
-      },
-      primaryAssessment: {
-        airway: "Patent, speaking in full sentences",
-        airwayStatus: "Normal",
-        breathing: "Reduced breath sounds at bases, tachypneic but talking",
-        breathingStatus: /\b(wheeze|crepitation|crackles|stridor|dyspnea|shortness of breath)\b/i.test(text) ? "Abnormal" : "Normal",
-        circulation: "Capillary refill < 2 seconds, radial pulses symmetric",
-        circulationStatus: "Normal",
-        disability: "GCS 15, pupils equal and reactive",
-        disabilityStatus: "Normal",
-        exposure: "No trauma or active rash, body temperature checked",
-        exposureStatus: "Normal"
-      },
-      secondaryAssessment: "Auscultation of chest reveals normal heart sounds, soft non-tender abdomen.",
-      progressNotes: "Obtain immediate ECG, cardiac enzymes, basic metabolic panel. Maintain continuous telemetry."
-    };
-
-    res.json({ success: true, data: backupData, simulated: true });
+    // FAB-24 FIX: the previous catch block fabricated a complete
+    // fictional patient ("Arthur Pendelton", 62yo, BP 142/88, HR 94,
+    // etc.) via regex-with-fallback-to-invented-defaults, returned as
+    // {success: true, simulated: true} — meaning a frontend that didn't
+    // specifically check `simulated` could display a fake patient as if
+    // real. Per Rule 8 (null over hallucination) and the same pattern
+    // used in /api/voice-dictation's Tier 3 honest failure, this now
+    // returns a clear, honest failure instead of inventing a case.
+    console.error("[Scribe Extraction] Failed, no fallback fabrication:", error?.message || error);
+    return res.status(503).json({
+      success: false,
+      error: "Voice dictation parsing is temporarily unavailable. Please try again shortly or enter details manually.",
+      requiresManualEntry: true
+    });
   }
 });
 
@@ -2625,9 +2286,9 @@ app.post("/api/scribe-ocr-scan", async (req, res) => {
           responseSchema: schema
         }
       });
-    } else {
+    } else if (imageText && imageText.trim()) {
       // Text-based OCR parser
-      const safeImageText = deidentifyText(imageText || "").deidentified;
+      const safeImageText = deidentifyText(imageText).deidentified;
       const prompt = `
         You are an expert clinical OCR processing system.
         Extract patient details, clinical history, vitals, allergies, and chief reasons for transfer from this hospital reference/referral letter text:
@@ -2644,54 +2305,32 @@ app.post("/api/scribe-ocr-scan", async (req, res) => {
           responseSchema: schema
         }
       });
+    } else {
+      // FAB-26 FIX: no image and no text was provided at all — there is
+      // nothing to scan. Fail honestly instead of falling through to
+      // fabricated data below.
+      return res.status(400).json({
+        success: false,
+        error: "No image or text was provided to scan."
+      });
     }
 
     const data = JSON.parse(response.text || "{}");
     res.json({ success: true, data });
   } catch (error: any) {
-    console.error("Gemini OCR Scan Error:", error);
-    // Mock referral data backup
-    const backupData = {
-      hospitalName: "Metro Heart & General Hospital",
-      patientName: "Robert Miller",
-      age: 68,
-      gender: "Male",
-      presentingComplaint: "Acute shortness of breath and chest pressure",
-      triageCategory: "P1 (Immediate)",
-      caseType: "Medical",
-      arrivalMode: "Referred",
-      bp: "165/95",
-      hr: "98",
-      spo2: "91",
-      rr: "24",
-      temp: "37.1",
-      gcs: "15",
-      grbs: "135",
-      painScore: "7",
-      symptoms: "Worsening dyspnea over 2 days, orthopnea, paroxysmal nocturnal dyspnea, bilateral pitting pedal edema.",
-      allergies: "Penicillin (Anaphylaxis)",
-      medications: "Lisinopril 20mg OD, Metoprolol succinate 50mg OD, Furosemide 40mg OD",
-      pastHistory: "Congestive Heart Failure, CABG x2 in 2020, Chronic Kidney Disease Stage 3",
-      lastMeal: "Light breakfast 5 hours ago",
-      events: "Transferred from Metro Heart clinic for cardiology review and advanced diuretic therapy due to decompensation.",
-      airway: "Clear, speaking in partial sentences",
-      airwayStatus: "Normal",
-      breathing: "Tachypneic, diffuse fine crepitations in bilateral lung bases, accessory muscle use",
-      breathingStatus: "Abnormal",
-      circulation: "Bilateral 2+ pitting pedal edema up to mid-shin, warm extremities, bounding peripheral pulses",
-      circulationStatus: "Normal",
-      disability: "Pupils equal and reactive, GCS 15, slightly anxious but fully oriented",
-      disabilityStatus: "Normal",
-      exposure: "No active rashes, warm skin, temp 37.1 C",
-      exposureStatus: "Normal",
-      secondaryAssessment: "Moderate respiratory distress, jugular venous distention present (~8 cm H2O).",
-      progressNotes: "Plan immediate IV furosemide challenge, continuous pulse oximetry, cardiac telemetry, and obtain chest X-ray.",
-      clinicalNarrative: "Metro Heart Clinic Referral: 68 y/o Male with acute decompensated heart failure exacerbation, penicillin anaphylaxis allergy, needing urgent inpatient cardiology intervention."
-    };
-    res.json({
-      success: true,
-      data: backupData,
-      simulated: true
+    // FAB-26 FIX (Sept 2026): the previous catch block fabricated a
+    // complete fictional referral letter ("Robert Miller", 68, Metro
+    // Heart & General Hospital, penicillin anaphylaxis, CABG x2, CKD
+    // Stage 3, etc.) and returned it as {success: true, simulated: true}
+    // on ANY OCR failure. A frontend that didn't specifically check
+    // `simulated` could populate a doctor's case sheet with a wholly
+    // invented patient referral. Per Rule 8 (null over hallucination),
+    // this now fails honestly instead of inventing a referral letter.
+    console.error("[Scribe OCR Scan] OCR failed, no fallback fabrication:", error?.message || error);
+    res.status(503).json({
+      success: false,
+      error: "Document scanning is temporarily unavailable. Please try again shortly or enter details manually.",
+      requiresManualEntry: true
     });
   }
 });
@@ -3052,6 +2691,7 @@ app.post("/api/handover/compile-sheet", async (req, res) => {
         "You are an expert emergency medical scribe specializing in clinical shift handovers. Only return JSON matching the schema with key 'rows'.",
         true
       );
+      if (!aiResponse) throw new Error("Claude Sonnet returned null");
       modelUsed = "claude-3-5-sonnet";
     } catch (sonnetError) {
       console.warn("[compile-sheet] Claude Sonnet unavailable, falling back to Gemini Pro:", sonnetError);
@@ -3640,19 +3280,20 @@ async function startServer() {
     });
   }
 
-  const server = 
-app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
-  console.error("Unhandled Error:", err);
-  if (!res.headersSent) {
-    res.status(err.status || 500).json({ success: false, error: err.message || "Internal Server Error" });
-  }
-});
+  app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+    console.error("Unhandled Error:", err);
+    if (!res.headersSent) {
+      res.status(err.status || 500).json({ success: false, error: err.message || "Internal Server Error" });
+    }
+  });
 
-  app.listen(PORT, "0.0.0.0", () => {
+  const server = app.listen(PORT, "0.0.0.0", () => {
     console.log(`[ErMate Server] Running on http://0.0.0.0:${PORT}`);
   });
 
   // Set generous connection and request timeouts to support unlimited clinical recordings and long translation/transcription processes
+  server.setTimeout(30 * 60 * 1000);
+  server.keepAliveTimeout = 30 * 60 * 1000;
 
 
 

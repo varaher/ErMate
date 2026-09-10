@@ -1,11 +1,11 @@
 import { GoogleGenAI } from "@google/genai";
 import Anthropic from "@anthropic-ai/sdk";
-
+import { deidentifyText } from "./deidentify";
 let anthropicClient: Anthropic | null = null;
-let isAnthropicDisabledInLearning = false;
+let anthropicDisabledUntilInLearning = 0; // epoch ms; 0 = not disabled
 
 function getAnthropic(): Anthropic | null {
-  if (isAnthropicDisabledInLearning) return null;
+  if (Date.now() < anthropicDisabledUntilInLearning) return null;
   if (!anthropicClient) {
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (apiKey && apiKey.trim() !== "" && apiKey !== "MY_ANTHROPIC_API_KEY") {
@@ -41,7 +41,9 @@ export interface LearnedRule {
   approvedBy?: string;
 }
 
-// In-memory backing store (hydrated and mirrored to Firestore/JSON in production)
+// In-memory ONLY — NOT persisted. Resets on every server restart/redeploy.
+// Firestore persistence is scoped (SCOPE-03) but not yet built. Do not
+// treat this as durable storage or claim otherwise in docs/comments.
 let feedbackCorrectionsStore: FeedbackCorrection[] = [
   {
     id: "corr_001",
@@ -144,12 +146,22 @@ export function recordFeedbackCorrection(
     return null; // Discard purely stylistic or identical edits
   }
 
+  // DPDP Act 2023 — de-identify BEFORE storage. This is the only place
+  // PHI can enter the learning pipeline, so it must be stripped here,
+  // not downstream. A rule built from un-de-identified text can later
+  // surface in a completely different patient's generation prompt via
+  // formatLearnedRulesPromptBlock(), so this is a cross-patient leakage
+  // control, not just a storage-hygiene one.
+  const deidAiOutput = deidentifyText(aiOutput || "").deidentified;
+  const deidCorrectedOutput = deidentifyText(correctedOutput || "").deidentified;
+  const deidSourceContext = deidentifyText(sourceContext || "Direct clinician field edit").deidentified;
+
   const correction: FeedbackCorrection = {
     id: `corr_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
     field,
-    ai_output: aiOutput,
-    corrected_output: correctedOutput,
-    source_context: sourceContext || "Direct clinician field edit",
+    ai_output: deidAiOutput,
+    corrected_output: deidCorrectedOutput,
+    source_context: deidSourceContext,
     corrected_by: correctedBy,
     timestamp: new Date().toISOString(),
     case_type: caseType || "general",
@@ -196,7 +208,7 @@ Do NOT wrap output in markdown fences if possible, or return valid JSON inside \
   if (anthropic) {
     try {
       const msg = await anthropic.messages.create({
-        model: "claude-3-5-sonnet-20241022",
+        model: "claude-sonnet-4-6",
         max_tokens: 1500,
         temperature: 0.1,
         messages: [{ role: "user", content: prompt }]
@@ -208,9 +220,9 @@ Do NOT wrap output in markdown fences if possible, or return valid JSON inside \
         extractedList = JSON.parse(jsonMatch[0]);
       }
     } catch (err: any) {
-      console.warn("[Learning Pattern Extraction] Claude Sonnet unavailable or credit limit reached, failing over to Gemini 2.5 Flash:", err?.message || err);
+          console.warn("[Learning Pattern Extraction] Claude Sonnet unavailable or credit limit reached, using offline fallback extraction:", err?.message || err);
       if (err?.status === 400 || err?.status === 401 || err?.status === 402 || String(err?.message || "").includes("credit balance")) {
-        isAnthropicDisabledInLearning = true;
+        anthropicDisabledUntilInLearning = Date.now() + 5 * 60 * 1000; // 5-minute circuit breaker, matches ROUTE-07/13
       }
     }
   }

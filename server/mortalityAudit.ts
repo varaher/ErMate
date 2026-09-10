@@ -198,7 +198,82 @@ function cleanJsonResponse(raw: string): string {
     .replace(/\s*```$/i, "")
     .trim();
 }
+// Heuristic fallback when Claude, GPT-4o, AND Gemini Pro are all unavailable.
+// CRITICAL: This audit cannot substitute for clinical judgment. Objective
+// fields (name, dates, complaint) are regex-extracted where possible.
+// Every subjective/judgment field (cause of death breakdown, clinical
+// decision review, preventability, learning points) is explicitly left
+// empty or flagged for manual review — NEVER approximate a preventability
+// category, a decision assessment, or a learning point here. A wrong
+// judgment call in an M&M document is worse than no document.
+function buildHeuristicMortalityAudit(rawText: string): Record<string, any> {
+  const nameM = rawText.match(/(?:patient\s*name|patient|name)\s*[:=-]?\s*([^\n,\d]+)/i) ||
+                rawText.match(/(?:mr\.|mrs\.|ms\.|pt\.?|baby|master)\s+([A-Za-z\s]+)/i);
+  const ageSexM = rawText.match(/(\d{1,3})\s*-?\s*(?:year|y\.?o\.?|yo)?\s*[\/,]?\s*(male|female|m|f)\b/i);
+  const admissionDateM = rawText.match(/(?:date\s*of\s*admission|admission\s*date|admitted\s*on)\s*[:=-]?\s*([\d\/\-]{6,10})/i);
+  const deathDateM = rawText.match(/(?:date\s*of\s*death|death\s*date|expired\s*on|declared\s*dead)\s*[:=-]?\s*([\d\/\-]{6,10})/i);
+  const deathTimeM = rawText.match(/(?:time\s*of\s*death)\s*[:=-]?\s*([\d:]{3,5}\s*(?:am|pm)?)/i);
+  const allergyM = rawText.match(/allerg(?:y|ies)\s*[:=]?\s*([^\n]+)/i);
+  const complaintM = rawText.match(/(?:presenting\s+complaint|chief\ complaint|complaints|c\/o)\s*[:=-]?\s*([^\n]+)/i);
+  const pastHistM = rawText.match(/(?:past|history|pmh|k\/c\/o)\s*[:=]?\s*([^\n]+)/i);
+  const dxM = rawText.match(/(?:diagnosis|imp|impression|assessment|cause\s*of\s*death)\s*[:=-]?\s*([^\n]+)/i);
 
+  // Only compute stay length if BOTH dates were actually found and parse cleanly —
+  // never guess a duration.
+  let totalStayDays: number | null = null;
+  if (admissionDateM && deathDateM) {
+    const parseDate = (s: string) => {
+      const parts = s.split(/[\/\-]/).map(Number);
+      if (parts.length === 3) {
+        const [d, m, y] = parts;
+        const year = y < 100 ? 2000 + y : y;
+        return new Date(year, m - 1, d);
+      }
+      return null;
+    };
+    const d1 = parseDate(admissionDateM[1]);
+    const d2 = parseDate(deathDateM[1]);
+    if (d1 && d2 && !isNaN(d1.getTime()) && !isNaN(d2.getTime())) {
+      totalStayDays = Math.max(0, Math.round((d2.getTime() - d1.getTime()) / (1000 * 60 * 60 * 24)));
+    }
+  }
+
+  return {
+    requiresManualReview: true,
+    generatedBy: "heuristic_fallback_no_ai_available",
+    patientInfo: {
+      name: nameM ? nameM[1].trim() : null,
+      ageSex: ageSexM ? `${ageSexM[1]}y / ${ageSexM[2].toUpperCase().startsWith("F") ? "Female" : "Male"}` : null,
+      allergy: allergyM ? allergyM[1].trim() : null,
+      dateAdmission: admissionDateM ? admissionDateM[1] : null,
+      dateDeath: deathDateM ? deathDateM[1] : null,
+      timeOfDeath: deathTimeM ? deathTimeM[1] : null,
+      totalStayDays: totalStayDays,
+      admittingTeam: null,
+      icuTeam: null,
+      emTeam: null
+    },
+    presentingComplaintAtAdmission: complaintM ? complaintM[1].trim() : "Not documented — automated fallback used, AI review unavailable.",
+    pastHistory: pastHistM ? pastHistM[1].trim() : "Not documented — automated fallback used, AI review unavailable.",
+    diagnosisAtDeath: dxM ? [dxM[1].trim()] : ["Not documented — requires manual clinical review"],
+    hospitalCourse: "NOT GENERATED — AI models were unavailable. This audit requires a clinician or M&M committee member to manually review the complete EMR and write the hospital course narrative before this report can be used for discussion.",
+    causeOfDeath: {
+      immediate: "NOT DOCUMENTED — MANUAL ENTRY REQUIRED",
+      underlying: "NOT DOCUMENTED — MANUAL ENTRY REQUIRED",
+      precipitating: "NOT DOCUMENTED — MANUAL ENTRY REQUIRED",
+      contributing: []
+    },
+    clinicalDecisionReview: [],
+    keyAuditQuestions: ["AI-generated audit was unavailable. This case requires full manual M&M review before discussion questions can be identified."],
+    preventabilityAssessment: {
+      category: "NOT ASSESSED — MANUAL REVIEW REQUIRED",
+      rationale: "Automated preventability assessment requires AI clinical reasoning, which was unavailable when this report was generated. Do not treat the absence of an assessment as a determination of non-preventability."
+    },
+    systemIssuesIdentified: [],
+    learningPoints: [],
+    references: []
+  };
+}
 // ── Main function ─────────────────────────────────────────────
 export async function generateMortalityAudit(
   rawText: string,
@@ -242,7 +317,7 @@ export async function generateMortalityAudit(
       });
 
       const msg = await anthropic.messages.create({
-        model: "claude-3-5-sonnet-20241022",
+        model: "claude-sonnet-4-6",
         max_tokens: 8096,
         temperature: 0.0,
         messages: [{ role: "user", content: prompt }],

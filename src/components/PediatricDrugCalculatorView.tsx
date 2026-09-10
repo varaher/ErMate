@@ -40,9 +40,60 @@ export default function PediatricDrugCalculatorView({ onBack, initialWeight }: P
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [expandedDrugId, setExpandedDrugId] = useState<string | null>(null);
-
   const numericWeight = parseFloat(weight);
   const isWeightValid = !isNaN(numericWeight) && numericWeight > 0;
+
+  const [viewMode, setViewMode] = useState<"drugs" | "fluids">("drugs");
+  const [dehydrationPercent, setDehydrationPercent] = useState<string>("");
+
+  // Holliday-Segar 4-2-1 maintenance rate (mL/hr)
+  const maintenanceRate = useMemo(() => {
+    if (!isWeightValid) return null;
+    const w = numericWeight;
+    let rate = 0;
+    if (w <= 10) {
+      rate = w * 4;
+    } else if (w <= 20) {
+      rate = 40 + (w - 10) * 2;
+    } else {
+      rate = 60 + (w - 20) * 1;
+    }
+    return {
+      hourlyRate: rate,
+      dailyVolume: rate * 24,
+      breakdown:
+        w <= 10
+          ? `${w} kg × 4 mL/kg/hr = ${rate.toFixed(1)} mL/hr`
+          : w <= 20
+          ? `(10 kg × 4) + (${(w - 10).toFixed(1)} kg × 2) = ${rate.toFixed(1)} mL/hr`
+          : `(10 kg × 4) + (10 kg × 2) + (${(w - 20).toFixed(1)} kg × 1) = ${rate.toFixed(1)} mL/hr`
+    };
+  }, [isWeightValid, numericWeight]);
+
+  // Resuscitation bolus: 10-20 mL/kg isotonic crystalloid
+  const bolusRange = useMemo(() => {
+    if (!isWeightValid) return null;
+    return {
+      low: Math.round(numericWeight * 10),
+      high: Math.round(numericWeight * 20)
+    };
+  }, [isWeightValid, numericWeight]);
+
+  // Dehydration deficit: % dehydration x weight x 10 = mL deficit
+  const numericDehydration = parseFloat(dehydrationPercent);
+  const isDehydrationValid = !isNaN(numericDehydration) && numericDehydration > 0 && numericDehydration <= 15;
+  const deficitVolume = useMemo(() => {
+    if (!isWeightValid || !isDehydrationValid) return null;
+    const deficit = numericDehydration * numericWeight * 10;
+       const total = Math.round(deficit);
+    const firstHalf = Math.round(total / 2);
+    return {
+      totalMl: total,
+      firstHalf,
+      remainingHalf: total - firstHalf
+    };
+  }, [isWeightValid, isDehydrationValid, numericDehydration, numericWeight]);
+  const isWeightImplausible = isWeightValid && (numericWeight > 80 || numericWeight < 1);
 
   // Filtered drug categories counts for UI display
   const categoryCounts = useMemo(() => {
@@ -135,14 +186,48 @@ export default function PediatricDrugCalculatorView({ onBack, initialWeight }: P
             </div>
           </div>
           
-          <div className="text-[10px] text-amber-600 dark:text-amber-500/90 font-medium font-mono flex items-center gap-1 bg-amber-500/5 border border-amber-500/10 p-2.5 rounded-lg">
+                   <div className="text-[10px] text-amber-600 dark:text-amber-500/90 font-medium font-mono flex items-center gap-1 bg-amber-500/5 border border-amber-500/10 p-2.5 rounded-lg">
             <Info className="w-3.5 h-3.5 shrink-0" />
             <span>Enter patient weight for dose calculations</span>
           </div>
+
+          {isWeightImplausible && (
+            <div className="text-[10px] text-rose-700 dark:text-rose-400 font-bold font-mono flex items-center gap-1.5 bg-rose-500/10 border border-rose-500/30 p-2.5 rounded-lg">
+              <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+              <span>{numericWeight} kg is outside the typical pediatric range — double-check this weight before trusting the calculated dose below.</span>
+            </div>
+          )}
+        </div>
+
+               {/* Mode Toggle: Drugs vs Fluids */}
+        <div className="flex bg-slate-100 dark:bg-slate-900 p-1 rounded-xl gap-1">
+          <button
+            type="button"
+                        onClick={() => { setViewMode("drugs"); setExpandedDrugId(null); setSelectedCategory(null); setSearchQuery(""); }}
+            className={`flex-1 py-2 rounded-lg text-xs font-bold uppercase tracking-wider transition-all ${
+              viewMode === "drugs"
+                ? "bg-white dark:bg-slate-800 shadow-sm text-sky-600 dark:text-sky-400"
+                : "text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-850"
+            }`}
+          >
+            Drug Dosing
+          </button>
+          <button
+            type="button"
+            onClick={() => setViewMode("fluids")}
+            className={`flex-1 py-2 rounded-lg text-xs font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 ${
+              viewMode === "fluids"
+                ? "bg-white dark:bg-slate-800 shadow-sm text-sky-600 dark:text-sky-400"
+                : "text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-850"
+            }`}
+          >
+            <Droplet className="w-3.5 h-3.5" />
+            Fluids & Resuscitation
+          </button>
         </div>
 
         {/* 2. Global Drug Search Bar (only shown on categories list screen) */}
-        {!selectedCategory && (
+        {viewMode === "drugs" && !selectedCategory && (
           <div className="relative">
             <Search className="w-4 h-4 text-slate-500 absolute left-4 top-1/2 -translate-y-1/2" />
             <input
@@ -158,8 +243,8 @@ export default function PediatricDrugCalculatorView({ onBack, initialWeight }: P
           </div>
         )}
 
-        {/* 3. Main content area */}
-        {searchQuery.trim() !== "" ? (
+                {/* 3. Main content area */}
+        {viewMode === "drugs" && (searchQuery.trim() !== "" ? (
           // SEARCH RESULTS ACTIVE
           <div className="space-y-4">
             <div className="flex justify-between items-center px-1">
@@ -240,8 +325,8 @@ export default function PediatricDrugCalculatorView({ onBack, initialWeight }: P
               <h3 className="text-xs font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest font-mono">
                 Drug Categories
               </h3>
-              <p className="text-[11px] text-slate-400 dark:text-slate-500 font-mono mt-0.5">
-                133 drugs across 24 categories • Compliant with PALS standard guidelines
+                            <p className="text-[11px] text-slate-400 dark:text-slate-500 font-mono mt-0.5">
+                {PEDIATRIC_DRUGS.length} drugs across {DRUG_CATEGORIES.length} categories • Compliant with PALS standard guidelines
               </p>
             </div>
 
@@ -267,8 +352,97 @@ export default function PediatricDrugCalculatorView({ onBack, initialWeight }: P
                       </span>
                     </div>
                   </div>
-                );
+                               );
               })}
+            </div>
+          </div>
+        ))}
+
+        {/* Fluids & Resuscitation section */}
+        {viewMode === "fluids" && (
+          <div className="space-y-4">
+            <div className="bg-white dark:bg-slate-950/50 border border-slate-200 dark:border-slate-850 rounded-2xl p-5 space-y-3">
+              <h3 className="text-xs font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest font-mono">
+                Maintenance Fluid Rate — Holliday-Segar (4-2-1 Rule)
+              </h3>
+              {isWeightValid && maintenanceRate ? (
+                <div className="bg-indigo-50 dark:bg-indigo-500/5 border border-indigo-150 dark:border-indigo-500/15 rounded-xl p-4 space-y-1">
+                  <span className="text-2xl font-black text-indigo-600 dark:text-indigo-300 font-mono">
+                    {maintenanceRate.hourlyRate.toFixed(1)} mL/hr
+                  </span>
+                  <p className="text-xs text-slate-600 dark:text-slate-300 font-mono">{maintenanceRate.breakdown}</p>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 font-mono">
+                    ≈ {maintenanceRate.dailyVolume.toFixed(0)} mL/24hr
+                  </p>
+                </div>
+              ) : (
+                <div className="bg-slate-50 dark:bg-slate-900/40 border border-slate-150 dark:border-slate-850 rounded-xl p-3 text-[10px] font-mono text-slate-500 flex items-center gap-1.5">
+                  <Info className="w-3.5 h-3.5 shrink-0" />
+                  <span>Enter weight above to calculate maintenance rate.</span>
+                </div>
+              )}
+            </div>
+
+            <div className="bg-white dark:bg-slate-950/50 border border-slate-200 dark:border-slate-850 rounded-2xl p-5 space-y-3">
+              <h3 className="text-xs font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest font-mono">
+                Resuscitation Bolus (Isotonic Crystalloid — NS / RL)
+              </h3>
+              {isWeightValid && bolusRange ? (
+                <div className="bg-rose-50 dark:bg-rose-500/5 border border-rose-150 dark:border-rose-500/15 rounded-xl p-4 space-y-1">
+                  <span className="text-2xl font-black text-rose-600 dark:text-rose-300 font-mono">
+                    {bolusRange.low}–{bolusRange.high} mL
+                  </span>
+                  <p className="text-xs text-slate-600 dark:text-slate-300 font-mono">
+                    10–20 mL/kg × {numericWeight} kg
+                  </p>
+                  <p className="text-[11px] text-amber-700 dark:text-amber-400 font-mono flex items-center gap-1 pt-1">
+                    <AlertCircle className="w-3 h-3 shrink-0" />
+                    Reassess after each bolus (perfusion, lung findings, mental status) before repeating.
+                  </p>
+                </div>
+              ) : (
+                <div className="bg-slate-50 dark:bg-slate-900/40 border border-slate-150 dark:border-slate-850 rounded-xl p-3 text-[10px] font-mono text-slate-500 flex items-center gap-1.5">
+                  <Info className="w-3.5 h-3.5 shrink-0" />
+                  <span>Enter weight above to calculate bolus range.</span>
+                </div>
+              )}
+            </div>
+
+            <div className="bg-white dark:bg-slate-950/50 border border-slate-200 dark:border-slate-850 rounded-2xl p-5 space-y-3">
+              <h3 className="text-xs font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest font-mono">
+                Dehydration Deficit Replacement
+              </h3>
+              <div className="flex items-center gap-3">
+                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">% Dehydration</label>
+                <input
+                  type="number"
+                  value={dehydrationPercent}
+                  onChange={(e) => setDehydrationPercent(e.target.value)}
+                  placeholder="e.g. 5, 10"
+                  className="w-24 px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-sm font-mono text-center focus:outline-none focus:border-sky-500"
+                />
+                <span className="text-xs text-slate-400 font-mono">%</span>
+              </div>
+
+              {isWeightValid && isDehydrationValid && deficitVolume ? (
+                <div className="bg-amber-50 dark:bg-amber-500/5 border border-amber-150 dark:border-amber-500/15 rounded-xl p-4 space-y-2">
+                  <span className="text-2xl font-black text-amber-700 dark:text-amber-300 font-mono">
+                    {deficitVolume.totalMl} mL total deficit
+                  </span>
+                  <p className="text-xs text-slate-600 dark:text-slate-300 font-mono">
+                    {numericDehydration}% × {numericWeight} kg × 10 = {deficitVolume.totalMl} mL
+                  </p>
+                  <div className="text-[11px] text-slate-600 dark:text-slate-300 font-mono space-y-0.5 pt-1 border-t border-amber-200/50 dark:border-amber-900/40">
+                    <p>First 8 hours: {deficitVolume.firstHalf} mL (½ deficit) + maintenance rate</p>
+                    <p>Next 16 hours: {deficitVolume.remainingHalf} mL (remaining ½ deficit) + maintenance rate</p>
+                  </div>
+                </div>
+              ) : (
+                <div className="bg-slate-50 dark:bg-slate-900/40 border border-slate-150 dark:border-slate-850 rounded-xl p-3 text-[10px] font-mono text-slate-500 flex items-center gap-1.5">
+                  <Info className="w-3.5 h-3.5 shrink-0" />
+                  <span>Enter weight and % dehydration (typically 5–10%, max 15%) to calculate.</span>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -279,9 +453,13 @@ export default function PediatricDrugCalculatorView({ onBack, initialWeight }: P
             <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
             <span>Clinical Disclaimer</span>
           </div>
-          <p>
-            Dosages referenced from Harriet Lane Handbook, Nelson's Textbook of Pediatrics, and BNF for Children. Always verify doses before administration. This calculator is a clinical aid, not a substitute for clinical judgment. Standard concentration values may vary by local hospital formulary protocols.
+                   <p>
+            Dosages and fluid rates referenced from Harriet Lane Handbook, Nelson's Textbook of Pediatrics, and BNF for Children. Always verify doses before administration. This calculator is a clinical aid, not a substitute for clinical judgment. Standard concentration values may vary by local hospital formulary protocols.
           </p>
+          <p className="text-amber-700 dark:text-amber-400 font-bold">
+            Always consult a pediatrician or follow your hospital's own protocol before administering any medication or fluid therapy based on this tool.
+          </p>
+        
         </div>
 
       </div>

@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from "react";
+import { ConfirmModal } from "./shared/ConfirmModal";
 import { ArrowLeft, Sparkles, CheckCircle, Save, RefreshCw, AlertCircle, Printer, ShieldAlert, FileText, Check, AlertTriangle, ListFilter, Copy, Download, ChevronDown, FileCheck, MessageSquare, Trash2 } from "lucide-react";
 import { ClinicalCase, DischargeInfo, UserProfile } from "../types";
 import VoiceRecorder from "./shared/VoiceRecorder";
 import { triggerPrintWithTip } from "../utils/printWithTip";
 import { BoundChatModal } from "./BoundChatModal";
 import { captureFeedbackCorrection } from "../services/learningClient";
-import { formatDischargeSummaryText, formatDischargeSummaryHtml, DischargeSummaryData } from "../utils/dischargeSummaryFormat";
+import { formatDischargeSummaryText, formatDischargeSummaryHtml, DischargeSummaryData, STATUTORY_FOOTER } from "../utils/dischargeSummaryFormat";
 
 interface DischargeSummaryViewProps {
   currentCase: ClinicalCase;
@@ -25,6 +26,7 @@ export default function DischargeSummaryView({
   onDeleteCase
 }: DischargeSummaryViewProps) {
   // Prepopulate from case records or existing dischargeInfo
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [activeTab, setActiveTab] = useState<TabType>("admin-vitals");
   const [downloadMenuOpen, setDownloadMenuOpen] = useState(false);
   const [isDiscussModalOpen, setIsDiscussModalOpen] = useState(false);
@@ -268,12 +270,13 @@ export default function DischargeSummaryView({
   const [doseDoubleChecked, setDoseDoubleChecked] = useState(true);
   const [redFlagsInstructed, setRedFlagsInstructed] = useState(true);
 
-  const [copiedDischargeText, setCopiedDischargeText] = useState(false);
+    const [copiedDischargeText, setCopiedDischargeText] = useState(false);
 
-  const displayHospitalName = (currentCase.hospital || profile?.hospital || "Emergency Care & Trauma Center").toUpperCase();
+  const displayHospitalName = (currentCase.hospital || profile?.hospital || "").trim().toUpperCase() || "[HOSPITAL NAME NOT SET]";
   const displayHospitalAddress = profile?.hospitalAddress 
     ? `${profile.hospitalAddress}${profile?.state ? `, ${profile.state}` : ''}`
-    : (profile?.state ? `Department of Emergency Medicine, ${profile.state}` : "Department of Emergency Medicine & Level 1 Trauma Services");
+    : "Hospital address not set in profile";
+   
 
   // --- Canonical discharge summary formatter (shared with HandoverView's paste-from-EMR path) ---
   const buildDischargeSummaryData = (): DischargeSummaryData => ({
@@ -301,6 +304,8 @@ export default function DischargeSummaryView({
     followUpPlan,
     emResidentName, emConsultantName,
     dischargeDateTime,
+        hospitalName: currentCase.hospital || profile?.hospital,
+    hospitalPhone: profile?.hospitalPhone,
     hospitalAddressLine: profile?.hospitalAddress
       ? `${profile.hospitalAddress}${profile?.state ? `, ${profile.state}` : ''}`
       : undefined,
@@ -424,8 +429,24 @@ export default function DischargeSummaryView({
       handleAiDraft();
     }
   }, []);
+  const handleMarkDischargeRoutine = () => {
+    setDischargeCondition("STABLE");
+    setDischargeHr(arrivalHr);
+    setDischargeBp(arrivalBp);
+    setDischargeRr(arrivalRr);
+    setDischargeSpo2(arrivalSpo2);
+    setDischargeGcs(arrivalGcs);
+    setDischargePainScore(arrivalPainScore);
+    setDischargeGrbs(arrivalGrbs);
+    setDischargeTemp(arrivalTemp);
+    setDispositionStatus("Normal Discharge");
+    if (!followUpPlan.trim()) {
+      setFollowUpPlan("Follow up with General OPD / Primary care physician within 3 to 5 days, or sooner if symptoms persist or deteriorate.");
+    }
+  };
 
   const handleSave = () => {
+  
     if (aiDrafted && currentCase?.dischargeInfo) {
       const caseAny = currentCase as any;
       if (currentCase.dischargeInfo.primaryDiagnosis !== primaryDiagnosis) {
@@ -552,10 +573,7 @@ export default function DischargeSummaryView({
             <button
               type="button"
               onClick={() => {
-                if (window.confirm(`Are you sure you want to delete the case for "${currentCase.patient.name}"? This action cannot be undone.`)) {
-                  onDeleteCase(currentCase.id);
-                  onBack();
-                }
+                setShowDeleteConfirm(true);
               }}
               className="inline-flex items-center gap-1.5 px-3 py-2 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/20 dark:hover:bg-rose-900/40 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-900/30 text-xs font-bold rounded-lg transition-all cursor-pointer"
               title="Delete Case"
@@ -906,8 +924,16 @@ export default function DischargeSummaryView({
                     <input type="text" value={arrivalTemp} onChange={(e) => setArrivalTemp(e.target.value)} className="w-full p-1 bg-slate-50 border rounded font-mono" />
                   </div>
                 </div>
-
+                <button
+                  type="button"
+                  onClick={handleMarkDischargeRoutine}
+                  className="w-full py-2 bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/30 dark:hover:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5"
+                >
+                  <CheckCircle className="w-3.5 h-3.5" />
+                  Mark Discharge as Routine (fills stable vitals & standard follow-up)
+                </button>
                 <h4 className="font-bold text-indigo-600 dark:text-indigo-400 border-b pb-1 pt-2">Discharge Vitals & Status</h4>
+                
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <div className="space-y-1">
                     <label className="font-bold text-slate-500 uppercase text-[9px]">Discharge Condition</label>
@@ -1370,6 +1396,8 @@ export default function DischargeSummaryView({
 
           {/* Actual Printable Page Wrapper */}
           <div className="flex-1 overflow-y-auto p-8 md:p-10 font-sans leading-relaxed text-[12px] text-slate-900 bg-white space-y-4 select-text max-w-full print:p-0 print:m-0 print:w-full print:max-w-full print:text-[12px] whitespace-pre-wrap" id="print-sheet-content">
+   <div className="font-bold text-[13px]">{displayHospitalName}</div>
+  <div className="text-[11px] mb-3">{displayHospitalAddress}</div>
   <div className="font-bold mb-4 text-[14px]">Discharge Summary</div>
 
   <div><span className="font-bold">PATIENT NAME:</span> {currentCase.patient.name}</div>
@@ -1461,12 +1489,12 @@ export default function DischargeSummaryView({
 
   <div className="mt-2"><span className="font-bold">Date:</span> {dischargeDateTime}</div>
 
-  <div className="mt-8">In case of emergency, contact: 0484-2905100</div>
-  <div className="mt-2 font-bold">Hospital Address and Contact Information:</div>
-  <div>{profile?.hospitalAddress ? `${profile.hospitalAddress}${profile?.state ? `, ${profile.state}` : ''}` : "Chunangamvely, Aluva, Ernakulam, Kerala - 683 112"}</div>
-  <div>Phone: 0484-2905000 / 0484-2905100</div>
+    <div className="mt-8 font-bold">Hospital Address and Contact Information:</div>
+  <div>{displayHospitalName}</div>
+  <div>{displayHospitalAddress}</div>
+  <div>{profile?.hospitalPhone ? `Phone: ${profile.hospitalPhone}` : "Hospital contact number not set in profile"}</div>
 
-  <div className="mt-8 text-[11px] leading-snug">This discharge summary provides clinical information meant to facilitate continuity of patient care. For statutory purposes, a treatment/discharge certificate shall be issued on request (As per the Kerala Medico-legal Code approved by the Government of Kerala in 2011). For a disability certificate, approach a Government-constituted Medical Board.</div>
+    <div className="mt-8 text-[11px] leading-snug">{STATUTORY_FOOTER}</div>
 
 </div>
 
@@ -1509,7 +1537,22 @@ export default function DischargeSummaryView({
         isOpen={isDiscussModalOpen}
         onClose={() => setIsDiscussModalOpen(false)}
       />
-
+      <ConfirmModal
+        isOpen={showDeleteConfirm}
+        title="Delete Case"
+        message={
+          <>
+            Are you sure you want to delete the case for <strong className="text-slate-900 dark:text-white">{currentCase.patient.name}</strong>? This action cannot be undone.
+          </>
+        }
+        confirmText="Delete Case"
+        onConfirm={() => {
+          onDeleteCase(currentCase.id);
+          setShowDeleteConfirm(false);
+          onBack();
+        }}
+        onCancel={() => setShowDeleteConfirm(false)}
+      />
     </div>
   );
 }

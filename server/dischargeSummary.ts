@@ -12,10 +12,10 @@ import { deidentifyText } from './deidentify.ts';
 
 // ── Lazy Client Initializers (to prevent missing key crashes at startup) ──
 let anthropicClient: Anthropic | null = null;
-let isAnthropicDisabledInDischarge = false;
+let anthropicDisabledUntilInDischarge = 0; // epoch ms; 0 = not disabled
 
 function getAnthropic(): Anthropic | null {
-  if (isAnthropicDisabledInDischarge) return null;
+  if (Date.now() < anthropicDisabledUntilInDischarge) return null;
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey || apiKey.trim() === '' || apiKey === 'MY_ANTHROPIC_API_KEY') return null;
   if (!anthropicClient) {
@@ -404,6 +404,12 @@ function cleanAndParseJSON(rawStr: string): any {
 }
 
 // Fallback heuristic generator when AI APIs are unavailable
+// CRITICAL: This function fires only when BOTH Claude Sonnet and GPT-4o
+// are unreachable. There is no AI available to determine clinical values,
+// so every field either comes from a direct regex match on the actual
+// text, or is explicitly marked as not documented. NEVER invent a
+// plausible clinical default here — a wrong value in a heuristic fallback
+// is exactly the "wrong AI output is worse than no output" failure mode.
 function buildHeuristicDischargeSummary(rawText: string): Record<string, any> {
   const bpM = rawText.match(/(?:bp|blood\s*pressure)?\s*[:=-]?\s*(\d{2,3}\/\d{2,3})/i);
   const hrM = rawText.match(/(?:hr|pulse)?\s*[:=-]?\s*(\d{2,3})/i);
@@ -415,64 +421,63 @@ function buildHeuristicDischargeSummary(rawText: string): Record<string, any> {
 
   const nameM = rawText.match(/(?:patient\s*name|patient|name)\s*[:=-]?\s*([^\n,\d]+)/i) ||
                 rawText.match(/(?:mr\.|mrs\.|ms\.|pt\.?|baby|master)\s+([A-Za-z\s]+)/i);
-  const extractedName = nameM ? nameM[1].trim() : "Emergency Patient";
+  const extractedName = nameM ? nameM[1].trim() : null;
 
   const ageM = rawText.match(/(\d{1,3})\s*-?\s*(?:year|y\.?o\.?|yo|f|m)/i);
   const genderM = rawText.match(/\b(male|female|m|f)\b/i);
 
   const complaintM = rawText.match(/(?:presenting\s+complaint|chief\ complaint|complaints|c\/o|complaining\ of|reason\ for\ visit)\s*[:=-]?\s*([^\n]+)/i);
-  const actualComplaint = complaintM ? complaintM[1].trim() : "Emergency medical evaluation";
+  const allergyM = rawText.match(/allerg(?:y|ies)\s*[:=]?\s*([^\n]+)/i);
+  const pastHistM = rawText.match(/(?:past|history|pmh|k\/c\/o)\s*[:=]?\s*([^\n]+)/i);
 
   return {
+    // Top-level flag: frontend MUST visually distinguish this document
+    // (banner/border/watermark) and block it from being finalized or
+    // printed without a doctor completing the flagged fields.
+    requiresManualReview: true,
+    generatedBy: "heuristic_fallback_no_ai_available",
+
     patientName: extractedName,
     age: ageM ? `${ageM[1]}y` : null,
     gender: genderM ? (genderM[1].toUpperCase().startsWith("F") ? "Female" : "Male") : null,
     uhid: rawText.match(/(?:uhid|mrn|er\s*no|bed)\s*[:=-]?\s*(\w+)/i)?.[1] || null,
     mlc: rawText.match(/mlc\s*no?\b[:.\s]*(\w+)/i)?.[1] || null,
-    allergy: rawText.match(/allerg(?:y|ies)\s*[:=]?\s*([^\n]+)/i)?.[1] || "Nil known",
+    allergy: allergyM ? allergyM[1].trim() : null,
     vitalsOnArrival: {
       hr: hrM ? hrM[1] : null,
       bp: bpM ? bpM[1] : null,
       rr: rrM ? rrM[1] : null,
       spo2: spo2M ? spo2M[1] : null,
-      gcs: gcsM ? gcsM[1] : "15/15",
+      gcs: gcsM ? gcsM[1] : null,
       grbs: grbsM ? grbsM[1] : null,
-      temp: "98.6°F",
+      temp: null,
       painScore: null
     },
-    presentingComplaints: actualComplaint,
-    hpi: rawText.substring(0, 500),
-    pastHistory: rawText.match(/(?:past|history|pmh|k\/c\/o)\s*[:=]?\s*([^\n]+)/i)?.[1] || "None recorded",
+    presentingComplaints: complaintM ? complaintM[1].trim() : "Not documented — automated fallback used, AI extraction unavailable.",
+    hpi: rawText.substring(0, 500) || "Not documented — automated fallback used, AI extraction unavailable.",
+    pastHistory: pastHistM ? pastHistM[1].trim() : null,
     familyGynaeHistory: null,
-    lmp: "N/A",
-    generalAndSystemicExam: "General condition fair. Conscious and oriented.",
+    lmp: null,
+    generalAndSystemicExam: null,
     primarySurvey: {
-      airway: { status: "Patent", intervention: null },
-      breathing: { rr: rrM ? rrM[1] : "18", spo2: spo2M ? spo2M[1] : "98", o2delivery: "Room air", workOfBreathing: "Normal", airEntry: "Bilaterally equal", addedSounds: "Clear", efast: null, intervention: null },
-      circulation: { hr: hrM ? hrM[1] : "80", bp: bpM ? bpM[1] : "120/80", crt: "< 2 sec", fast: null, intervention: null },
-      disability: { gcs: gcsM ? gcsM[1] : "E4V5M6", pupils: "Equal & reactive", grbs: grbsM ? grbsM[1] : null },
-      exposure: { temp: "98.6°F", logRoll: null }
+      airway: { status: "Not documented", intervention: null },
+      breathing: { rr: rrM ? rrM[1] : null, spo2: spo2M ? spo2M[1] : null, o2delivery: null, workOfBreathing: null, airEntry: null, addedSounds: null, efast: null, intervention: null },
+      circulation: { hr: hrM ? hrM[1] : null, bp: bpM ? bpM[1] : null, crt: null, fast: null, intervention: null },
+      disability: { gcs: gcsM ? gcsM[1] : null, pupils: null, grbs: grbsM ? grbsM[1] : null },
+      exposure: { temp: null, logRoll: null }
     },
-    courseInHospital: "Patient evaluated in the Emergency Department. Clinical history recorded, vitals monitored, and initial care delivered as per protocol.",
+    courseInHospital: "Not documented — automated fallback used because AI extraction was unavailable. This document requires manual completion by the treating physician before finalization.",
     investigations: {
       cbc: null, lft: null, rft: null, electrolytes: null, coagulation: null, urine: null, cardiac: null, vbg: null, ecg: null, imaging: null, other: null
     },
-    diagnosisAtDischarge: dxM ? [dxM[1].trim()] : ["Emergency Clinical Evaluation"],
-    dischargeMedications: ["As per ED prescription / Discharge advise"],
-    disposition: "Normal Discharge",
-    conditionAtDischarge: "STABLE",
-    vitalsAtDischarge: {
-      hr: hrM ? hrM[1] : "78",
-      bp: bpM ? bpM[1] : "120/80",
-      rr: rrM ? rrM[1] : "16",
-      spo2: spo2M ? spo2M[1] : "99",
-      gcs: "E4V5M6",
-      grbs: grbsM ? grbsM[1] : null,
-      temp: "98.6°F"
-    },
-    followUpAdvice: "Review in ED if warning symptoms recur.",
-    edResident: "Duty Resident",
-    edConsultant: "ED Consultant",
+    diagnosisAtDischarge: dxM ? [dxM[1].trim()] : ["Not documented"],
+    dischargeMedications: null,
+    disposition: "NOT DOCUMENTED — MANUAL ENTRY REQUIRED",
+    conditionAtDischarge: "NOT DOCUMENTED — MANUAL ENTRY REQUIRED",
+    vitalsAtDischarge: null,
+    followUpAdvice: null,
+    edResident: null,
+    edConsultant: null,
     dateTime: new Date().toLocaleDateString('en-GB')
   };
 }
@@ -538,7 +543,7 @@ export async function generateDischargeSummary(
     try {
       console.log('[Discharge] Requesting Claude Sonnet (Primary)...');
       const msg = await anthropic.messages.create({
-        model: 'claude-3-5-sonnet-20241022',
+        model: 'claude-sonnet-4-6',
         max_tokens: 4096,
         temperature: 0.0,
         messages: [{ role: 'user', content: prompt }],
@@ -549,8 +554,8 @@ export async function generateDischargeSummary(
       return { success: true, summary: parsed, phiProtected };
     } catch (err: any) {
       console.warn('[Discharge] Claude Sonnet attempt failed, falling back:', err?.message || err);
-      if (err?.status === 400 || err?.status === 401 || err?.status === 402 || String(err?.message || "").includes("credit balance")) {
-        isAnthropicDisabledInDischarge = true;
+            if (err?.status === 400 || err?.status === 401 || err?.status === 402 || String(err?.message || "").includes("credit balance")) {
+        anthropicDisabledUntilInDischarge = Date.now() + 5 * 60 * 1000; // 5-minute circuit breaker, matches ROUTE-07
       }
       const openaiRes = await runOpenAIFallback();
       if (openaiRes) return openaiRes;

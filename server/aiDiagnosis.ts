@@ -59,7 +59,7 @@ async function callClaudeSonnetForReasoning(
   if (!anthropic) return null;
   try {
     const msg = await anthropic.messages.create({
-      model: "claude-3-5-sonnet-20241022",
+      model: "claude-sonnet-4-6",
       max_tokens: maxTokens,
       temperature: 0.2,
       system: systemPrompt,
@@ -483,7 +483,7 @@ Return JSON format:
   if (anthropic) {
     try {
       const msg = await anthropic.messages.create({
-        model: "claude-3-5-sonnet-20241022",
+        model: "claude-sonnet-4-6",
         max_tokens: 2000,
         temperature: 0.0,
         messages: [{ role: "user", content: prompt }]

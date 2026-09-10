@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { ConfirmModal } from "./shared/ConfirmModal";
 import { Search, Filter, Plus, Calendar, Activity, Eye, Edit, Trash2, Clock, CheckCircle, ChevronLeft, MessageSquare, FileText } from "lucide-react";
 import { ClinicalCase } from "../types";
 
@@ -28,6 +29,8 @@ export default function CasesListView({
   onDeleteAllCases,
 }: CasesListViewProps) {
   const [searchTerm, setSearchTerm] = useState("");
+  const [caseToDelete, setCaseToDelete] = useState<{ id: string; name: string } | null>(null);
+  const [showDeleteAllConfirm, setShowDeleteAllConfirm] = useState(false);
   const [statusFilter, setStatusFilter] = useState<"All" | "Active" | "Triage" | "Discharged">("All");
   const [ageGroupFilter, setAgeGroupFilter] = useState<"All" | "Adult" | "Pediatric">("All");
 
@@ -87,9 +90,7 @@ export default function CasesListView({
           {onDeleteAllCases && (
             <button
               onClick={() => {
-                if (window.confirm("Are you sure you want to delete ALL cases in ErMate? This action cannot be undone.")) {
-                  onDeleteAllCases();
-                }
+                setShowDeleteAllConfirm(true);
               }}
               className="px-4 py-2 bg-red-50 dark:bg-red-950/30 hover:bg-red-100 dark:hover:bg-red-900/40 border border-red-200 dark:border-red-900/50 text-red-600 dark:text-red-400 text-xs font-semibold rounded-lg transition-all flex items-center gap-1 shadow-sm"
               title="Delete All Cases"
@@ -276,10 +277,10 @@ export default function CasesListView({
                       </button>
                     )}
                     <button
-                      onClick={() => {
-                        if (window.confirm(`Are you sure you want to delete the case for "${c.patient.name}"? This action cannot be undone.`)) {
-                          onDeleteCase(c.id);
-                        }
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        e.preventDefault();
+                        setCaseToDelete({ id: c.id, name: c.patient.name });
                       }}
                       className="p-1.5 bg-rose-50 hover:bg-rose-100 text-rose-500 hover:text-rose-700 dark:bg-rose-950/20 dark:hover:bg-rose-950/40 rounded-lg transition-all"
                       title="Archived/Delete"
@@ -293,6 +294,33 @@ export default function CasesListView({
           })}
         </div>
       )}
+      <ConfirmModal
+        isOpen={!!caseToDelete}
+        title="Delete Case"
+        message={
+          <>
+            Are you sure you want to delete the case for <strong className="text-slate-900 dark:text-white">{caseToDelete?.name}</strong>? This action cannot be undone.
+          </>
+        }
+        confirmText="Delete Case"
+        onConfirm={() => {
+          if (caseToDelete && onDeleteCase) onDeleteCase(caseToDelete.id);
+          setCaseToDelete(null);
+        }}
+        onCancel={() => setCaseToDelete(null)}
+      />
+
+      <ConfirmModal
+        isOpen={showDeleteAllConfirm}
+        title="Delete All Cases"
+        message="Are you sure you want to delete ALL cases in ErMate? This action cannot be undone."
+        confirmText="Delete All"
+        onConfirm={() => {
+          if (onDeleteAllCases) onDeleteAllCases();
+          setShowDeleteAllConfirm(false);
+        }}
+        onCancel={() => setShowDeleteAllConfirm(false)}
+      />
     </div>
   );
 }

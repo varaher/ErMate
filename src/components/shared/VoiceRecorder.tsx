@@ -31,11 +31,14 @@ export default function VoiceRecorder({
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [micError, setMicError] = useState<string | null>(null);
 
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
-  const timerRef = useRef<any>(null);
-  const secondsRef = useRef<number>(0);
+ const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+const streamRef = useRef<MediaStream | null>(null);
+const audioChunksRef = useRef<Blob[]>([]);
+const timerRef = useRef<any>(null);
+const secondsRef = useRef<number>(0);
+const wakeLockRef = useRef<any>(null);
+const isSystemPausedRef = useRef(false);
+const totalBytesRef = useRef(0);
 
   useEffect(() => {
     onRecordingStateChange?.(isRecording);
@@ -54,6 +57,50 @@ export default function VoiceRecorder({
     return `${mins.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
   };
 
+const requestWakeLock = async () => {
+  try {
+    if ("wakeLock" in navigator) {
+      wakeLockRef.current = await (navigator as any).wakeLock.request("screen");
+    }
+  } catch (err) {
+    console.warn("[VoiceRecorder] Screen Wake Lock request failed:", err);
+  }
+};
+
+const releaseWakeLock = async () => {
+  try {
+    if (wakeLockRef.current) {
+      await wakeLockRef.current.release();
+      wakeLockRef.current = null;
+    }
+  } catch (err) {
+    console.warn("[VoiceRecorder] Screen Wake Lock release failed:", err);
+  }
+};
+
+const pauseForSystemEvent = () => {
+  const recorder = mediaRecorderRef.current;
+  if (recorder && recorder.state === "recording") {
+    recorder.pause();
+    isSystemPausedRef.current = true;
+    setIsPaused(true);
+    clearInterval(timerRef.current);
+  }
+};
+
+const resumeFromSystemEvent = () => {
+  const recorder = mediaRecorderRef.current;
+  if (recorder && recorder.state === "paused" && isSystemPausedRef.current && document.visibilityState === "visible") {
+    recorder.resume();
+    isSystemPausedRef.current = false;
+    setIsPaused(false);
+    timerRef.current = setInterval(() => {
+      secondsRef.current += 1;
+      setRecordingSeconds(secondsRef.current);
+    }, 1000);
+  }
+};
+
   const startRecording = async () => {
     setMicError(null);
     setIsInitializing(true);
@@ -71,23 +118,8 @@ export default function VoiceRecorder({
       const stream = await Promise.race([streamPromise, timeoutPromise]);
       
       stream.getAudioTracks().forEach((track) => {
-        track.onmute = () => {
-          if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
-            mediaRecorderRef.current.pause();
-            setIsPaused(true);
-            clearInterval(timerRef.current);
-          }
-        };
-        track.onunmute = () => {
-          if (mediaRecorderRef.current && mediaRecorderRef.current.state === "paused") {
-            mediaRecorderRef.current.resume();
-            setIsPaused(false);
-            timerRef.current = setInterval(() => {
-              secondsRef.current += 1;
-              setRecordingSeconds(secondsRef.current);
-            }, 1000);
-          }
-        };
+        track.onmute = () => pauseForSystemEvent();
+        track.onunmute = () => resumeFromSystemEvent();
         track.onended = () => {
           if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
             mediaRecorderRef.current.stop();
@@ -95,11 +127,11 @@ export default function VoiceRecorder({
         };
       });
       
-      streamRef.current = stream;
+          streamRef.current = stream;
       audioChunksRef.current = [];
       secondsRef.current = 0;
+      totalBytesRef.current = 0;
       setRecordingSeconds(0);
-
       const supportedTypes = [
         "audio/webm;codecs=opus",
         "audio/webm",
@@ -116,20 +148,28 @@ export default function VoiceRecorder({
       const recorder = new MediaRecorder(stream, { mimeType, audioBitsPerSecond: 24000 });
       mediaRecorderRef.current = recorder;
 
-      recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) audioChunksRef.current.push(e.data);
+           recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) {
+          audioChunksRef.current.push(e.data);
+          totalBytesRef.current += e.data.size;
+        }
       };
 
-      recorder.onstop = async () => {
+           recorder.onstop = async () => {
         streamRef.current?.getTracks().forEach((t) => t.stop());
         clearInterval(timerRef.current);
+        releaseWakeLock();
 
-        if (secondsRef.current < 1) {
-          const errMsg = "Recording too short — please dictate for at least 1 second.";
+              const MIN_AUDIO_BYTES = 2000;
+        if (secondsRef.current < 1 || totalBytesRef.current < MIN_AUDIO_BYTES) {
+          const errMsg = totalBytesRef.current < MIN_AUDIO_BYTES
+            ? "No audio was captured — this can happen if the screen locked during recording. Please try again and keep the screen on while dictating."
+            : "Recording too short — please dictate for at least 1 second.";
           setMicError(errMsg);
           onError?.(errMsg);
           setIsRecording(false);
           setIsPaused(false);
+          releaseWakeLock();
           return;
         }
 
@@ -151,7 +191,8 @@ export default function VoiceRecorder({
         }
       };
 
-      recorder.start();
+          recorder.start();
+      await requestWakeLock();
       setIsInitializing(false);
       setIsRecording(true);
       setIsPaused(false);
@@ -161,15 +202,17 @@ export default function VoiceRecorder({
         setRecordingSeconds(secondsRef.current);
       }, 1000);
 
-      // Handle visibility change (page backgrounded)
+          // Handle visibility change (page backgrounded / screen locked)
       const handleVisibilityChange = () => {
-        if (document.hidden && mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
-          mediaRecorderRef.current.pause();
-          setIsPaused(true);
-          clearInterval(timerRef.current);
+        if (document.hidden) {
+          pauseForSystemEvent();
+        } else {
+          requestWakeLock(); // browsers auto-release wake lock on hide — re-acquire it
+          resumeFromSystemEvent();
         }
       };
       document.addEventListener("visibilitychange", handleVisibilityChange);
+    
       
       // Store listener for cleanup
       (mediaRecorderRef.current as any)._visibilityListener = handleVisibilityChange;
@@ -185,15 +228,22 @@ export default function VoiceRecorder({
     }
   };
 
-  const togglePause = () => {
+   const togglePause = () => {
     const recorder = mediaRecorderRef.current;
     if (!recorder) return;
     if (isPaused) {
       recorder.resume();
+      isSystemPausedRef.current = false;
       setIsPaused(false);
+      timerRef.current = setInterval(() => {
+        secondsRef.current += 1;
+        setRecordingSeconds(secondsRef.current);
+      }, 1000);
     } else {
       recorder.pause();
+      isSystemPausedRef.current = false;
       setIsPaused(true);
+      clearInterval(timerRef.current);
     }
   };
 
@@ -210,6 +260,7 @@ export default function VoiceRecorder({
     }
     streamRef.current?.getTracks().forEach((t) => t.stop());
     clearInterval(timerRef.current);
+    releaseWakeLock();
     setIsRecording(false);
     setIsPaused(false);
     audioChunksRef.current = [];
@@ -450,10 +501,10 @@ export default function VoiceRecorder({
       </button>
 
       {micError && (
-        <div className="absolute top-full left-0 mt-1 z-50 p-2 bg-rose-600 text-white text-[10px] font-medium rounded-lg shadow-lg whitespace-nowrap flex items-center gap-1">
-          <AlertTriangle size={12} />
-          {micError}
-          <button onClick={() => setMicError(null)} className="ml-1 text-white underline font-bold">
+        <div className="absolute bottom-full right-0 mb-3 z-50 p-2.5 bg-rose-600 text-white text-[11px] font-bold rounded-lg shadow-xl whitespace-normal w-48 text-left flex items-start gap-1.5 border border-rose-500/50">
+          <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+          <div className="flex-1 leading-tight">{micError}</div>
+          <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); setMicError(null); }} className="p-1 -mt-1 -mr-1 text-rose-200 hover:text-white transition-colors cursor-pointer shrink-0">
             ×
           </button>
         </div>

@@ -136,21 +136,27 @@ export default function TeamBuilder({
 
   // Generated Link format based on hospital & team configurations
   const currentOrigin = typeof window !== "undefined" ? window.location.origin : "https://ermate.hospital.in";
-  const [generatedLink, setGeneratedLink] = useState<string>(
-    `${currentOrigin}/join/${slugify(hospitalName)}?team=${slugify(teamName)}&dept=${slugify(department)}&ref=hosp_sub_active`
-  );
+    const [generatedLink, setGeneratedLink] = useState<string>("");
 
   useEffect(() => {
     let active = true;
-    if (hospitalName) {
-      createTeamInvite(hospitalName, auth.currentUser?.uid || "hod", profile?.name || "HOD").then(res => {
+    const savedHospital = (profile?.hospital || "").trim();
+    const uid = auth.currentUser?.uid;
+    if (savedHospital && uid) {
+      createTeamInvite(savedHospital, uid, profile?.name || "", {
+        hospitalAddress: profile?.hospitalAddress,
+        hospitalPhone: profile?.hospitalPhone,
+        state: profile?.state
+      }).then(res => {
         if (active) {
           setGeneratedLink(res.link);
         }
+      }).catch(err => {
+        console.warn("Could not create team invite:", err);
       });
     }
     return () => { active = false; };
-  }, [hospitalName, profile?.name]);
+  }, [profile?.hospital]);
 
   const showNotification = (text: string, type: "success" | "error" = "success") => {
     setNotification({ text, type });

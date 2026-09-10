@@ -31,14 +31,19 @@ const execFileAsync = promisify(execFile);
  *   RUN apt-get update && apt-get install -y ffmpeg
  */
 
+// Minimum plausible size for a real WAV file (44-byte header + at least
+// some PCM data). Below this, treat the output as invalid rather than
+// silently passing near-empty audio downstream.
+const MIN_VALID_WAV_BYTES = 100;
+
 export async function convertAudioToWavOld(
   audioBuffer: Buffer,
   originalFilename: string = "recording.webm"
-): Promise<{ buffer: Buffer; filename: string }> {
+): Promise<{ buffer: Buffer; filename: string; conversionFailed: boolean; reason?: string }> {
   const ext = path.extname(originalFilename).toLowerCase();
 
   if (ext === ".wav") {
-    return { buffer: audioBuffer, filename: originalFilename };
+    return { buffer: audioBuffer, filename: originalFilename, conversionFailed: false };
   }
 
   const tmpDir = os.tmpdir();
@@ -56,14 +61,24 @@ export async function convertAudioToWavOld(
     );
 
     const wavBuffer = fs.readFileSync(outputPath);
+
+    if (wavBuffer.length < MIN_VALID_WAV_BYTES) {
+      throw new Error(`ffmpeg produced an implausibly small WAV (${wavBuffer.length} bytes) — likely corrupt or empty input`);
+    }
+
     console.log(
       `[AudioConvert] Converted ${originalFilename} (${audioBuffer.length} bytes) -> WAV (${wavBuffer.length} bytes)`
     );
-    return { buffer: wavBuffer, filename: originalFilename.replace(/\.[^.]+$/, ".wav") };
-  } catch (error) {
+    return { buffer: wavBuffer, filename: originalFilename.replace(/\.[^.]+$/, ".wav"), conversionFailed: false };
+  } catch (error: any) {
     console.error("[AudioConvert] ffmpeg conversion failed:", error);
-    console.log("[AudioConvert] Returning original audio as fallback");
-    return { buffer: audioBuffer, filename: originalFilename };
+    console.log("[AudioConvert] Returning original audio as fallback — caller MUST check conversionFailed before trusting this output");
+    return {
+      buffer: audioBuffer,
+      filename: originalFilename,
+      conversionFailed: true,
+      reason: error?.message || "ffmpeg conversion failed"
+    };
   } finally {
     try {
       fs.unlinkSync(inputPath);
@@ -77,9 +92,9 @@ export async function convertAudioToWavOld(
 export async function convertAndChunkAudioToWav(
   audioBuffer: Buffer,
   originalFilename: string = "recording.webm"
-): Promise<{ buffer: Buffer; filename: string }[]> {
+): Promise<{ chunks: { buffer: Buffer; filename: string }[]; conversionFailed: boolean; reason?: string }> {
   const ext = path.extname(originalFilename).toLowerCase();
-  
+
   const tmpDir = os.tmpdir();
   const timestamp = Date.now();
   const inputPath = path.join(tmpDir, `voice_input_${timestamp}${ext || ".bin"}`);
@@ -89,14 +104,14 @@ export async function convertAndChunkAudioToWav(
     fs.writeFileSync(inputPath, audioBuffer);
 
     const intermediateWav = path.join(tmpDir, `voice_intermediate_${timestamp}.wav`);
-    
+
     // 1. Convert to 16kHz mono WAV first
     await execFileAsync(
       "ffmpeg",
       ["-y", "-i", inputPath, "-ar", "16000", "-ac", "1", "-sample_fmt", "s16", intermediateWav],
       { timeout: 60000 }
     );
-    
+
     // 2. Perform silence detection to avoid cutting mid-sentence
     let stderr = "";
     try {
@@ -128,10 +143,10 @@ export async function convertAndChunkAudioToWav(
       while (currentTime < duration) {
          const minSearch = currentTime + MIN_CHUNK_DUR;
          const maxSearch = currentTime + MAX_CHUNK_DUR;
-         
+
          // Find silences in the optimal split window
          const validSilences = silenceStarts.filter(t => t >= minSearch && t <= maxSearch);
-         
+
          if (validSilences.length > 0) {
              const splitPoint = validSilences[0]; // Cut at the first silence in the window
              splitTimes.push(splitPoint);
@@ -154,9 +169,9 @@ export async function convertAndChunkAudioToWav(
       await execFileAsync(
         "ffmpeg",
         [
-          "-y", 
-          "-i", intermediateWav, 
-          "-f", "segment", 
+          "-y",
+          "-i", intermediateWav,
+          "-f", "segment",
           "-segment_times", segmentTimes,
           "-c", "copy",
           outputPattern
@@ -168,9 +183,9 @@ export async function convertAndChunkAudioToWav(
       await execFileAsync(
         "ffmpeg",
         [
-          "-y", 
-          "-i", intermediateWav, 
-          "-f", "segment", 
+          "-y",
+          "-i", intermediateWav,
+          "-f", "segment",
           "-segment_time", "15",
           "-c", "copy",
           outputPattern
@@ -178,7 +193,7 @@ export async function convertAndChunkAudioToWav(
         { timeout: 60000 }
       );
     }
-    
+
     try { fs.unlinkSync(intermediateWav); } catch {}
 
     const chunks: { buffer: Buffer; filename: string }[] = [];
@@ -194,15 +209,24 @@ export async function convertAndChunkAudioToWav(
       }
     }
 
+    if (chunks.length === 0) {
+      throw new Error("ffmpeg chunking produced zero output files — treating as failure");
+    }
+
     console.log(
       `[AudioConvert] Converted and chunked ${originalFilename} (${audioBuffer.length} bytes) -> ${chunks.length} chunks`
     );
 
-    return chunks;
+    return { chunks, conversionFailed: false };
 
-  } catch (error) {
+  } catch (error: any) {
     console.error("[AudioConvert] ffmpeg chunking failed:", error);
-    return [{ buffer: audioBuffer, filename: originalFilename }];
+    console.log("[AudioConvert] Returning original audio as a single unconverted chunk — caller MUST check conversionFailed before trusting this output");
+    return {
+      chunks: [{ buffer: audioBuffer, filename: originalFilename }],
+      conversionFailed: true,
+      reason: error?.message || "ffmpeg chunking failed"
+    };
   } finally {
     try {
       fs.unlinkSync(inputPath);

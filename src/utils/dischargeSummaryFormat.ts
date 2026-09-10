@@ -83,7 +83,9 @@ export interface DischargeSummaryData {
   emConsultantName: string;
   dischargeDateTime: string;
 
+  hospitalName?: string;
   hospitalAddressLine?: string;
+  hospitalPhone?: string;
   pediatric?: {
     weight?: string;
     workOfBreathing?: string;
@@ -92,10 +94,26 @@ export interface DischargeSummaryData {
   } | null;
 }
 
-const DEFAULT_HOSPITAL_ADDRESS = "Chunangamvely, Aluva, Ernakulam, Kerala - 683 112";
+// State-neutral statutory wording. Institution-specific or state-specific
+// legal text must never be hardcoded here — it is printed on every
+// discharge summary for every hospital using ErMate.
+export const STATUTORY_FOOTER =
+  "This discharge summary provides clinical information to facilitate continuity of patient care. A treatment/discharge certificate for statutory purposes will be issued on request as per applicable state medico-legal regulations. For a disability certificate, approach the Government-constituted Medical Board.";
+
+const HOSPITAL_NAME_NOT_SET = "[Hospital name not set]";
+const HOSPITAL_ADDRESS_NOT_SET = "Hospital address not set in profile";
+const HOSPITAL_PHONE_NOT_SET = "Hospital contact number not set in profile";
 
 function dispositionBox(current: string, label: string): string {
   return current === label ? "[x] " + label : "[ ] " + label;
+}
+
+function resolveHospitalLines(d: DischargeSummaryData) {
+  return {
+    nameLine: (d.hospitalName && d.hospitalName.trim() ? d.hospitalName.trim() : HOSPITAL_NAME_NOT_SET).toUpperCase(),
+    addressLine: d.hospitalAddressLine && d.hospitalAddressLine.trim() ? d.hospitalAddressLine.trim() : HOSPITAL_ADDRESS_NOT_SET,
+    phoneLine: d.hospitalPhone && d.hospitalPhone.trim() ? "Phone: " + d.hospitalPhone.trim() : HOSPITAL_PHONE_NOT_SET,
+  };
 }
 
 export function formatDischargeSummaryText(d: DischargeSummaryData): string {
@@ -108,9 +126,12 @@ export function formatDischargeSummaryText(d: DischargeSummaryData): string {
       "- Immunization Status: " + (d.pediatric.immunization || "Not recorded") + "\n";
   }
 
-  var hospitalAddressLine = d.hospitalAddressLine || DEFAULT_HOSPITAL_ADDRESS;
+  var hosp = resolveHospitalLines(d);
 
   var lines = [];
+  lines.push("**" + hosp.nameLine + "**");
+  lines.push(hosp.addressLine);
+  lines.push("");
   lines.push("**Discharge Summary**");
   lines.push("");
   lines.push("**PATIENT NAME:** " + d.patientName);
@@ -198,15 +219,13 @@ export function formatDischargeSummaryText(d: DischargeSummaryData): string {
   lines.push("");
   lines.push("**Date: **" + d.dischargeDateTime);
   lines.push("");
-  lines.push("In case of emergency, contact: 0484-2905100");
-  lines.push("");
   lines.push("Hospital Address and Contact Information:");
   lines.push("");
-  lines.push(hospitalAddressLine);
+  lines.push(hosp.nameLine);
+  lines.push(hosp.addressLine);
+  lines.push(hosp.phoneLine);
   lines.push("");
-  lines.push("Phone: 0484-2905000 / 0484-2905100");
-  lines.push("");
-  lines.push("This discharge summary provides clinical information meant to facilitate continuity of patient care. For statutory purposes, a treatment/discharge certificate shall be issued on request (As per the Kerala Medico-legal Code approved by the Government of Kerala in 2011). For a disability certificate, approach a Government-constituted Medical Board.");
+  lines.push(STATUTORY_FOOTER);
 
   return lines.join("\n");
 }
@@ -221,9 +240,11 @@ export function formatDischargeSummaryHtml(d: DischargeSummaryData): string {
       "Immunization Status: " + (d.pediatric.immunization || "Not recorded") + "<br/><br/>";
   }
 
-  var hospitalAddressLine = d.hospitalAddressLine || DEFAULT_HOSPITAL_ADDRESS;
+  var hosp = resolveHospitalLines(d);
 
   var parts = [];
+  parts.push("<strong>" + hosp.nameLine + "</strong><br/>");
+  parts.push(hosp.addressLine + "<br/><br/>");
   parts.push("<strong>Discharge Summary</strong><br/><br/>");
   parts.push("<strong>PATIENT NAME:</strong> " + d.patientName + "<br/>");
   parts.push("<strong>AGE / GENDER:</strong> " + (d.patientAge || "N/A") + " Years / " + d.patientGender + "<br/>");
@@ -277,11 +298,11 @@ export function formatDischargeSummaryHtml(d: DischargeSummaryData): string {
   parts.push("<strong>ED Resident: </strong>" + (d.emResidentName || "Not Recorded") + " | <strong>ED Consultant: </strong>" + (d.emConsultantName || "Not Recorded") + "<br/><br/>");
   parts.push("<strong>Sign and Time: </strong>___________________ | <strong>Sign and Time: </strong>___________________<br/><br/>");
   parts.push("<strong>Date: </strong>" + d.dischargeDateTime + "<br/><br/>");
-  parts.push("In case of emergency, contact: 0484-2905100<br/><br/>");
   parts.push("Hospital Address and Contact Information:<br/>");
-  parts.push(hospitalAddressLine + "<br/>");
-  parts.push("Phone: 0484-2905000 / 0484-2905100<br/><br/>");
-  parts.push("This discharge summary provides clinical information meant to facilitate continuity of patient care. For statutory purposes, a treatment/discharge certificate shall be issued on request (As per the Kerala Medico-legal Code approved by the Government of Kerala in 2011). For a disability certificate, approach a Government-constituted Medical Board.");
+  parts.push(hosp.nameLine + "<br/>");
+  parts.push(hosp.addressLine + "<br/>");
+  parts.push(hosp.phoneLine + "<br/><br/>");
+  parts.push(STATUTORY_FOOTER);
 
   return parts.join("");
 }

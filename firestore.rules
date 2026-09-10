@@ -12,52 +12,6 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    function getMember(deptId) {
-      return get(/databases/$(database)/documents/departments/$(deptId)/members/$(uid())).data;
-    }
-
-    function getRole(deptId) {
-      return getMember(deptId).role;
-    }
-
-    function isHOD(deptId) {
-      return getRole(deptId) == 'hod';
-    }
-
-    function isConsultant(deptId) {
-      return getRole(deptId) == 'consultant';
-    }
-
-    function isResident(deptId) {
-      return getRole(deptId) == 'resident';
-    }
-
-    function isMember(deptId) {
-      return exists(/databases/$(database)/documents/departments/$(deptId)/members/$(uid()));
-    }
-
-    // ── Cases Rules ──────────────────────────────────────────
-
-    match /cases/{caseId} {
-      allow read, create, update, delete: if true;
-
-      match /{allSubcollections=**} {
-        allow read, create, update, delete: if true;
-      }
-    }
-
-    // ── Departments Cases Rules ────────────────────────────────
-
-    match /departments/{deptId}/cases/{caseId} {
-      allow read, create, update, delete: if true;
-
-      match /addenda/{addendumId} {
-        allow read, create, update, delete: if true;
-      }
-    }
-
-    // ── Other Standard Collections (Preserved for App Stability) ──
-
     function isOwner(userId) {
       return request.auth.uid == userId;
     }
@@ -74,7 +28,97 @@ service cloud.firestore {
       return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-@.]+$');
     }
 
-    // Users collection
+    // Admin-tier roles. NOTE: 'Senior Consultant' was REMOVED from this list —
+    // in every screen reviewed (RoleChangeSection, TeamRosterBoard,
+    // ProfileSettingsView) Senior Consultants are treated as non-admin.
+    // Having them here let any Consultant self-promote to HOD.
+    // Confirm with Neeraj before re-adding it (SEC-08, still open).
+    //
+    // IMPORTANT (SEC-24, Sept 1): isAdminRole() checks ONLY the caller's role
+    // string. It does NOT check which hospital the caller belongs to. Do not
+    // use isAdminRole() alone as a cross-hospital bypass — that is exactly
+    // the bug SEC-24 fixes. Use isPlatformAdmin() below for any bypass that
+    // is meant to cross hospital boundaries.
+    function isAdminRole() {
+      return isLoggedIn() &&
+        (
+          get(/databases/$(database)/documents/users/$(uid())).data.role in
+            ['hod', 'owner', 'HOD / Shift Lead', 'HOD / Department Lead']
+          || request.auth.token.email == 'varahgrp@gmail.com'
+        );
+    }
+
+    // NEW (SEC-24, Sept 1): true platform-level superadmin only — does NOT
+    // include ordinary HODs. This is the only identity allowed to bypass
+    // hospital-scoping (sameHospital()) across hospital boundaries.
+    function isPlatformAdmin() {
+      return isLoggedIn() && request.auth.token.email == 'varahgrp@gmail.com';
+    }
+
+    function myHospital() {
+      return get(/databases/$(database)/documents/users/$(uid())).data.hospital;
+    }
+
+    // A user may touch a hospital-scoped document if they are logged in AND
+    // either belong to that hospital, or are the true platform superadmin.
+    //
+    // FIXED (SEC-24, Sept 1): previously bypassed via isAdminRole(), which
+    // let ANY HOD (at any hospital) pass regardless of docHospital. That
+    // silently defeated hospital-scoping for every collection using this
+    // helper (cases, and now team_members/handovers/subcollections below)
+    // for every user holding an HOD/Owner role. Now only isPlatformAdmin()
+    // (varahgrp@gmail.com) bypasses the hospital match. An HOD is still
+    // subject to the same myHospital() == docHospital check as anyone else.
+    function sameHospital(docHospital) {
+      return isLoggedIn() && (myHospital() == docHospital || isPlatformAdmin());
+    }
+
+    // ── Cases Rules ──────────────────────────────────────────
+    // CHANGED: was "allow read, create, update, delete: if true" — fully
+    // public, no login required. Now requires login + hospital match.
+    // sameHospital() behavior corrected under SEC-24 (see helper above) —
+    // this collection is now genuinely hospital-scoped for HODs too, not
+    // just non-admin roles.
+
+    match /cases/{caseId} {
+      allow read, update, delete: if sameHospital(resource.data.hospital);
+      allow create: if isLoggedIn() && sameHospital(incoming().hospital);
+
+      // FIXED (SEC-22, Sept 1): was "allow read, create, update, delete: if
+      // isLoggedIn()" — any logged-in user, from any hospital, could read or
+      // write any subcollection (addenda/attachments/notes) under any case,
+      // bypassing the hospital-scoping on the parent document entirely.
+      // Now inherits the parent case's hospital via a get() lookup and
+      // applies the same sameHospital() check the parent document uses.
+      match /{allSubcollections=**} {
+        allow read, create, update, delete: if
+          sameHospital(get(/databases/$(database)/documents/cases/$(caseId)).data.hospital);
+      }
+    }
+
+    // ── Departments Cases Rules ────────────────────────────────
+
+    match /departments/{deptId}/cases/{caseId} {
+      allow read, update, delete: if isLoggedIn() &&
+        (myHospital() == deptId || isPlatformAdmin());
+      allow create: if isLoggedIn() &&
+        (myHospital() == deptId || isPlatformAdmin());
+
+      match /addenda/{addendumId} {
+        allow read, create, update, delete: if isLoggedIn() &&
+          (myHospital() == deptId || isPlatformAdmin());
+      }
+    }
+
+    // ── Users collection ──────────────────────────────────────
+    // NOTE: isAdminRole() bypasses here are UNCHANGED in this pass — this
+    // means any HOD, at any hospital, can still edit any user's profile
+    // (excluding the self-edit restrictions below). This is the same class
+    // of gap as SEC-24 but touches many more collections (users,
+    // hodClaimRequests, contributions, hospital_subscriptions,
+    // mortalityAudits, team_members-delete). Flagged for a dedicated review,
+    // not fixed here — see note at end of file.
+
     match /users/{userId} {
       allow read: if isLoggedIn();
       allow create: if isLoggedIn() && isOwner(userId)
@@ -82,16 +126,46 @@ service cloud.firestore {
         && incoming().email is string && incoming().email.size() <= 100
         && incoming().role in ['EM Resident', 'Resident', 'resident', 'Doctor', 'Physician', 'Emergency Physician']
         && incoming().hospital is string && incoming().hospital.size() <= 100
-        && (incoming().get('aiCredits', 0) is int)
-        && (incoming().get('streak', 0) is int)
-        && (incoming().get('subscriptionTier', '') is string);
+        // New accounts start with fixed defaults only — no self-chosen credits/tier.
+        && incoming().get('aiCredits', 100) == 100
+        && incoming().get('streak', 1) == 1
+        && incoming().get('subscriptionTier', 'Free Standard') is string;
+      // ── Standalone Discussion Sessions (Sept 8) ─────────────────
+      // New subcollections introduced by scribeChatStorage.ts's discuss-
+      // mode feature: users/{uid}/discussions/{discussionId} (session
+      // metadata + AI summary) and users/{uid}/meta/discussionCounter_*
+      // (per-day sequence counter for the Dis-YYYYMMDD-### id format).
+      // Both are strictly private to the owning doctor — no hospital
+      // scoping needed here since these are personal clinical scratch
+      // sessions, not shared patient records. isOwner(userId) matches
+      // this file's existing pattern for personal-only data.
+      match /discussions/{discussionId} {
+        allow read, create, update, delete: if isLoggedIn() && isOwner(userId);
+
+        match /messages/{messageId} {
+          allow read, create, update, delete: if isLoggedIn() && isOwner(userId);
+        }
+      }
+
+      match /meta/{metaDocId} {
+        allow read, write: if isLoggedIn() && isOwner(userId);
+      }
       allow update: if isLoggedIn()
         && (
-          // HOD, Owner or varahgrp@gmail.com can update any user's profile including role
-          (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['hod', 'owner', 'HOD / Shift Lead', 'HOD / Department Lead', 'Senior Consultant'] || request.auth.token.email == 'varahgrp@gmail.com')
+          // Admins may change anything about any user, including role.
+          isAdminRole()
           ||
-          // User updating their own profile EXCEPT role cannot be changed unless it matches existing role
-          (isOwner(userId) && (!('role' in incoming()) || incoming().role == existing().role))
+          // A user may update their OWN profile, but:
+          //  - cannot change their own role
+          //  - cannot change their own aiCredits or subscriptionTier
+          //    (those are only ever written by the payment webhook /
+          //    Admin SDK, which is not subject to these rules)
+          (
+            isOwner(userId)
+            && (!('role' in incoming()) || incoming().role == existing().role)
+            && (!('aiCredits' in incoming()) || incoming().aiCredits == existing().aiCredits)
+            && (!('subscriptionTier' in incoming()) || incoming().subscriptionTier == existing().subscriptionTier)
+          )
         )
         && incoming().name is string && incoming().name.size() <= 100
         && incoming().email is string && incoming().email.size() <= 100
@@ -102,7 +176,8 @@ service cloud.firestore {
         && (incoming().get('subscriptionTier', '') is string);
     }
 
-    // Role Change Requests collection (ErMate Rule 10 - HOD approval workflow for role elevation)
+    // ── Role Change Requests (ErMate Rule 10) ──────────────────
+
     match /roleChangeRequests/{requestId} {
       allow read: if isLoggedIn();
       allow create: if isLoggedIn()
@@ -110,25 +185,25 @@ service cloud.firestore {
         && incoming().status == 'pending';
       allow update: if isLoggedIn()
         && (
-          incoming().requestedBy == request.auth.uid
-          || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['hod', 'owner', 'HOD / Shift Lead', 'HOD / Department Lead', 'Senior Consultant']
-          || request.auth.token.email == 'varahgrp@gmail.com'
+          // Requester may only cancel/withdraw their own request, not approve it.
+          (incoming().requestedBy == request.auth.uid
+            && incoming().status == 'rejected'
+            && existing().status == 'pending')
+          || isAdminRole()
         );
       allow delete: if false;
     }
 
-    // Role Change Audit Log collection (NABH Compliance)
+    // ── Role Change Audit Log (NABH Compliance) ────────────────
+
     match /roleChangeLog/{logId} {
-      allow read: if isLoggedIn()
-        && (
-          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['hod', 'owner', 'HOD / Shift Lead', 'HOD / Department Lead', 'Senior Consultant']
-          || request.auth.token.email == 'varahgrp@gmail.com'
-        );
+      allow read: if isAdminRole();
       allow create: if isLoggedIn();
       allow update, delete: if false;
     }
 
-    // HOD Claim Requests collection (Manual gate for bootstrapping initial department lead)
+    // ── HOD Claim Requests (bootstrapping gate) ────────────────
+
     match /hodClaimRequests/{claimId} {
       allow create: if isLoggedIn()
         && incoming().claimedByUid == request.auth.uid
@@ -141,39 +216,83 @@ service cloud.firestore {
       allow read: if isLoggedIn()
         && (
           resource.data.claimedByUid == request.auth.uid
-          || request.auth.token.email == 'varahgrp@gmail.com'
-          || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['hod', 'owner', 'HOD / Shift Lead', 'HOD / Department Lead']
+          || isAdminRole()
         );
 
-      allow update: if isLoggedIn()
-        && request.auth.token.email == 'varahgrp@gmail.com';
+      allow update: if request.auth.token.email == 'varahgrp@gmail.com';
     }
 
-    // Handovers collection
+    // ── Handovers ───────────────────────────────────────────────
+    // FIXED (SEC-23, Sept 1): was "allow read, create, update, delete: if
+    // isLoggedIn()" — any logged-in doctor at any hospital could read/write
+    // any other hospital's handovers. Hospital field name confirmed as
+    // "hospital" directly from the live App.tsx query:
+    //   query(collection(db, "handovers"), where("hospital", "==", userHospital))
+    // Same sameHospital() pattern as cases.
+
     match /handovers/{handoverId} {
-      allow read, create, update, delete: if true;
+      allow read, update, delete: if sameHospital(resource.data.hospital);
+      allow create: if isLoggedIn() && sameHospital(incoming().hospital);
     }
 
-    // Quick Paste / Handover Roster Patients collection (Synced across desktop & mobile)
     match /quick_paste_patients/{itemId} {
       allow read: if isLoggedIn();
       allow create, update, delete: if isLoggedIn();
     }
 
+    // FIXED (SEC-23, Sept 1) — STILL UNCONFIRMED, BUT LOW RISK RIGHT NOW:
+    // Unlike "handovers" (confirmed via a live document, Sept 1, field
+    // is "hospital" — matches this rule exactly), neither
+    // handoverPatients nor handover_patients appeared at all in the live
+    // Firestore collection list when checked Sept 1. Collections only show
+    // up once they hold at least one document, so this strongly suggests
+    // these two are currently empty / not actively used. Applying the same
+    // "hospital" field name here as a best guess is low-risk while the
+    // collections are empty — but CONFIRM with the dev whether this
+    // feature is actually wired up, and re-check the real field name
+    // against a live document the first time one gets created, before
+    // trusting this block.
     match /handoverPatients/{patientId} {
-      allow read, create, update, delete: if true;
+      allow read, update, delete: if sameHospital(resource.data.hospital);
+      allow create: if isLoggedIn() && sameHospital(incoming().hospital);
     }
 
     match /handover_patients/{patientId} {
-      allow read, create, update, delete: if true;
+      allow read, update, delete: if sameHospital(resource.data.hospital);
+      allow create: if isLoggedIn() && sameHospital(incoming().hospital);
     }
 
-    // Team members collection
+    // ── Team members ────────────────────────────────────────────
+    // FIXED (SEC-21, Sept 1):
+    //  - read: was "if isLoggedIn()" with zero hospital-scoping — any
+    //    logged-in user could read every hospital's roster. Scoped to
+    //    sameHospital(). This goes slightly beyond the literal SEC-21
+    //    wording (which only named create/update/delete) but is the same
+    //    bug class — flagging for your sign-off rather than silently
+    //    leaving it.
+    //  - create: previously only validated that a "hospital" field existed
+    //    as a string, never that it matched the creator's own hospital.
+    //    Now requires sameHospital(incoming().hospital).
+    //  - update: previously had no hospital check at all. Now requires the
+    //    existing record's hospital to match the caller's (sameHospital on
+    //    existing()), AND blocks changing a member's hospital assignment
+    //    unless done by the platform admin.
+    //  - delete: previously only isAdminRole(), which (pre-SEC-24 fix)
+    //    meant any HOD anywhere could delete any hospital's team member.
+    //    Now requires sameHospital(resource.data.hospital) in addition to
+    //    isAdminRole(), so a normal HOD can only delete within their own
+    //    hospital; only isPlatformAdmin() can act cross-hospital.
+
     match /team_members/{memberId} {
-      allow read: if isLoggedIn();
-      allow delete: if isLoggedIn() && isValidId(memberId);
+      allow read: if sameHospital(resource.data.hospital);
+
+      allow delete: if isLoggedIn() && isValidId(memberId)
+        && sameHospital(resource.data.hospital)
+        && isAdminRole();
+
       allow create: if isLoggedIn()
         && isValidId(memberId)
+        && sameHospital(incoming().hospital)
         && incoming().id is string && incoming().id.size() <= 100
         && incoming().name is string && incoming().name.size() <= 100
         && incoming().email is string && incoming().email.size() <= 100
@@ -181,11 +300,12 @@ service cloud.firestore {
         && incoming().status is string && incoming().status.size() <= 100
         && incoming().shift is string && incoming().shift.size() <= 100
         && incoming().hospital is string && incoming().hospital.size() <= 100;
+
       allow update: if isLoggedIn()
         && isValidId(memberId)
-        && (
-          (!('role' in incoming()) || incoming().role == existing().role || (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['hod', 'owner', 'HOD / Shift Lead', 'HOD / Department Lead'] || request.auth.token.email == 'varahgrp@gmail.com'))
-        )
+        && sameHospital(existing().hospital)
+        && (!('role' in incoming()) || incoming().role == existing().role || isAdminRole())
+        && (incoming().hospital == existing().hospital || isPlatformAdmin())
         && incoming().id is string && incoming().id.size() <= 100
         && incoming().name is string && incoming().name.size() <= 100
         && incoming().email is string && incoming().email.size() <= 100
@@ -195,40 +315,38 @@ service cloud.firestore {
         && incoming().hospital is string && incoming().hospital.size() <= 100;
     }
 
-    // Hospital subscriptions collection
+    // ── Hospital subscriptions ──────────────────────────────────
+    // CHANGED: only platform admin may write. A hospital's paid status
+    // should never be settable by a regular logged-in user client-side —
+    // this must be driven by the Razorpay webhook via Admin SDK instead.
+
     match /hospital_subscriptions/{hospitalId} {
       allow read: if isLoggedIn();
-      allow create, update: if isLoggedIn()
-        && incoming().id is string && incoming().id.size() <= 128
-        && incoming().hospital is string && incoming().hospital.size() <= 100
-        && incoming().subscriptionTier is string && incoming().subscriptionTier.size() <= 100
-        && incoming().active is bool;
+      allow create, update: if isAdminRole();
     }
 
-    // Team Invites collection (Token-based securely generated department invitations)
+    // ── Team Invites ─────────────────────────────────────────────
+
     match /teamInvites/{token} {
       allow read: if true;
-      allow create: if isLoggedIn()
-        && (
-          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['hod', 'owner', 'HOD / Shift Lead', 'HOD / Department Lead', 'Senior Consultant']
-          || request.auth.token.email == 'varahgrp@gmail.com'
-        );
+      allow create: if isLoggedIn() && isAdminRole();
       allow update: if isLoggedIn()
         && incoming().diff(existing()).affectedKeys().hasOnly(['usedCount']);
-      allow delete: if isLoggedIn()
-        && (
-          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['hod', 'owner', 'HOD / Shift Lead', 'HOD / Department Lead', 'Senior Consultant']
-          || request.auth.token.email == 'varahgrp@gmail.com'
-        );
+      allow delete: if isAdminRole();
     }
 
-    // Hospital shifts configuration collection
+    // ── Hospital shifts configuration ───────────────────────────
+    // CHANGED: was any logged-in user editing ANY hospital's shifts.
+    // Now scoped to that user's own hospital, or admin.
+
     match /hospital_shifts/{hospitalId} {
       allow read: if isLoggedIn();
-      allow create, update, delete: if isLoggedIn();
+      allow create, update, delete: if isLoggedIn()
+        && (myHospital() == hospitalId || isPlatformAdmin());
     }
 
-    // Contributions collection
+    // ── Contributions ────────────────────────────────────────────
+
     match /contributions/{contributionId} {
       allow read: if isLoggedIn();
       allow delete: if isLoggedIn() && (
@@ -266,29 +384,63 @@ service cloud.firestore {
         );
     }
 
-    // ── Mortality Audits Rules (Confidential Medico-Legal Records) ──
+    // ── Mortality Audits (Confidential Medico-Legal Records) ────
+    // FIXED: role strings now match what the app actually stores
+    // ('HOD / Department Lead' etc, not lowercase 'hod'/'consultant').
+    // Needs a live test with an actual HOD account to fully confirm (SEC-10).
+    // NOTE: still no hospital-scoping here (same open question as
+    // "users" above) — an HOD at Hospital A can read Hospital B's
+    // mortality audits. Not fixed in this pass; flagged for the same
+    // dedicated review as the other isAdminRole()-only collections.
+
     match /mortalityAudits/{auditId} {
-      // Only HOD and consultants can read
-      allow read: if request.auth != null
+      allow read: if isLoggedIn()
         && (
-          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['hod', 'consultant']
-          || request.auth.token.email == 'varahgrp@gmail.com'
+          get(/databases/$(database)/documents/users/$(uid())).data.role in
+            ['HOD / Shift Lead', 'HOD / Department Lead', 'Senior Consultant']
+          || isAdminRole()
         );
 
-      // Only HOD can write
-      allow write: if request.auth != null
+      allow write: if isLoggedIn()
         && (
-          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'hod'
-          || request.auth.token.email == 'varahgrp@gmail.com'
+          get(/databases/$(database)/documents/users/$(uid())).data.role in
+            ['HOD / Shift Lead', 'HOD / Department Lead']
+          || isAdminRole()
         );
 
-      // Nobody can delete
       allow delete: if false;
     }
 
-    // ── Bound Chat Sessions Collection ──────────────
+    // ── Bound Chat Sessions ──────────────────────────────────────
+    // FIXED (SEC-23, Sept 1) — CONFIRMED via live document inspection
+    // (Sept 1): chatSessions documents do NOT carry a "hospital" field, nor
+    // a simple "caseId". Instead they link via "contextType" (e.g.
+    // "discharge") + "contextRef" (e.g. "discharges/C-5025") to different
+    // kinds of records. Tracing hospital ownership through that dynamic
+    // path in security rules would be fragile, so this uses a simpler and
+    // still-effective interim fix: restrict access to the doctor who
+    // created the session (every document confirmed to carry "createdBy",
+    // the creator's uid), plus the platform admin.
+    //
+    // This is NOT full hospital-scoping — it's ownership-scoping. It closes
+    // the "any doctor anywhere can read any chat" hole today. True hospital
+    // -scoping would require the app to write a "hospital" field onto each
+    // chatSession at creation time (a small code change, not a rules-only
+    // fix) — logged as a new follow-up item, not done in this pass.
+
     match /chatSessions/{sessionId} {
-      allow read, create, update, delete: if true;
+      allow read, update, delete: if isLoggedIn()
+        && (resource.data.createdBy == uid() || isPlatformAdmin());
+      allow create: if isLoggedIn()
+        && (incoming().createdBy == uid() || isPlatformAdmin());
+    }
+
+    // ── Payment intents (created only by the server via Admin SDK) ──
+    // Admin SDK writes bypass these rules entirely, so this just blocks
+    // any client from reading/tampering with pending payment records.
+
+    match /paymentIntents/{orderId} {
+      allow read, write: if false;
     }
   }
 }

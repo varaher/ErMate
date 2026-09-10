@@ -1351,7 +1351,7 @@ function extractLatestVitalsWithTime(
     return `@ ${nowTime} · ${formattedVitals}`;
   }
 
-  return "BP 120/80 · HR 72 · SpO2 98%";
+ return "Not documented";
 }
 
   function checkLineForAbnormalities(line: string): boolean {
@@ -1500,7 +1500,7 @@ function extractLatestVitalsWithTime(
       fullInvText = `INVESTIGATION FINDINGS (Chronological Order):\n${invSectionText}`;
     }
 
-    const planDoneLabsText = completedLabNames.length > 0 ? `✓ Completed Investigations: ${completedLabNames.join(", ")}` : "✓ Investigations reviewed.";
+    const planDoneLabsText = completedLabNames.length > 0 ? `✓ Completed Investigations: ${completedLabNames.join(", ")}` : "";
 
     return { formattedAssessment, alertsList, planDoneLabsText, fullInvText };
   }
@@ -1543,8 +1543,16 @@ function extractLatestVitalsWithTime(
 
       const chronoNotes = c.notes && c.notes.length > 0
         ? [...c.notes].reverse().map(n => `${n.timestamp || 'Initial'} ${n.authorRole ? `Dr. ${n.authorName || 'Lead'}` : ''} · ${n.content}`).join("\n\n")
-        : `${new Date(c.admissionTime || Date.now()).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit' })} ${new Date(c.admissionTime || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} Dr. ${profile.name || 'Duty'} · First assessment\nBP ${c.vitals.bp || "N/A"} · GCS normal · Vitals logged`;
-
+        : (() => {
+            const dateStr = new Date(c.admissionTime || Date.now()).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit' });
+            const timeStr = new Date(c.admissionTime || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            const vitalsParts: string[] = [];
+            if (c.vitals?.bp) vitalsParts.push(`BP ${c.vitals.bp}`);
+            if (c.vitals?.hr) vitalsParts.push(`HR ${c.vitals.hr}`);
+            if (c.vitals?.spo2) vitalsParts.push(`SpO2 ${c.vitals.spo2}%`);
+            const vitalsLine = vitalsParts.length > 0 ? vitalsParts.join(" · ") : "Vitals not documented";
+            return `${dateStr} ${timeStr} Dr. ${profile.name || 'Duty'} · First assessment\n${vitalsLine}`;
+          })();
       // Extract Bystander Counselling info if recorded
       let bystanderNote = "";
       const registryAllNotes = c.notes?.map(n => n.content).join("\n") || "";
@@ -2018,11 +2026,10 @@ function extractLatestVitalsWithTime(
   // Structured SBAR Helper
   const extractSBARStructure = (rawText: string, name: string): QuickPastePatient["structuredSBAR"] => {
     // Simple rule-based clinical heuristic extraction to structure EMR text instantly
-    const situation = rawText.match(/(?:presented with|presenting with|diagnosed with|diagnosis of)\s+([^.\n]+)/i)?.[1] || `Evaluation of clinical symptoms for ${name}.`;
-    const background = rawText.match(/(?:history of|known case of|history|known)\s+([^.\n]+)/i)?.[1] || "No chronic medical conditions listed in EMR snippet.";
-    const assessment = rawText.match(/(?:assessment|ECG shows|USG shows|labs show|findings)\s+([^.\n]+)/i)?.[1] || "Clinical vitals logged; primary workup complete.";
-    const recommendation = rawText.match(/(?:recommendation|plan|transfer|treatment|give|should|waiting for)\s+([^.\n]+)/i)?.[1] || "Continue active monitoring and regular hourly vitals re-checks.";
-
+    const situation = rawText.match(/(?:presented with|presenting with|diagnosed with|diagnosis of)\s+([^.\n]+)/i)?.[1] || `Presenting complaint not extracted for ${name} — review raw notes.`;
+    const background = rawText.match(/(?:history of|known case of|history|known)\s+([^.\n]+)/i)?.[1] || "Past medical history not extracted — review raw notes.";
+    const assessment = rawText.match(/(?:assessment|ECG shows|USG shows|labs show|findings)\s+([^.\n]+)/i)?.[1] || "Assessment not extracted — review raw notes.";
+    const recommendation = rawText.match(/(?:recommendation|plan|transfer|treatment|give|should|waiting for)\s+([^.\n]+)/i)?.[1] || "Recommendation not extracted — review raw notes.";
     return {
       situation: situation.charAt(0).toUpperCase() + situation.slice(1).trim() + ".",
       background: background.charAt(0).toUpperCase() + background.slice(1).trim() + ".",
@@ -2083,7 +2090,7 @@ function extractLatestVitalsWithTime(
         const resolvedTime = parsed.patientLabel?.inERSince || extractedMeta.time;
         const resolvedBed = parsed.patientLabel?.bed || extractedMeta.bed || null;
 
-        const handoverCardData: HandoverPatient = {
+                const handoverCardData: HandoverPatient = {
           patientLabel: {
             name: resolvedName,
             ageSex: resolvedAgeSex,
@@ -2101,6 +2108,7 @@ function extractLatestVitalsWithTime(
           toBeDone: Array.isArray(parsed.toBeDone) ? parsed.toBeDone : [],
           vitalsNow: parsed.vitalsNow || parsed.vitals || null,
           criticalAlerts: Array.isArray(parsed.criticalAlerts) ? parsed.criticalAlerts : [],
+          alertBanner: parsed.alertBanner || undefined,
           bystander: parsed.bystander || null,
           alertRow: parsed.alertRow || (parsed.vitals ? `⚠ ${parsed.vitals}` : "⚠ Active ER evaluation")
         };
@@ -2231,8 +2239,8 @@ function extractLatestVitalsWithTime(
         story: userText ? userText.substring(0, 200) : "Clinical evaluation in progress.",
         pmh: pmhM ? pmhM[1].trim() : null,
         diagnosis: diagM ? diagM[1].trim() : "",
-        done: ["Triage evaluation done"],
-        toBeDone: ["Review workup"],
+               done: [],
+        toBeDone: ["ErMate extraction failed — review raw notes manually before handover"],
         vitalsNow: extractedVitals || null,
         criticalAlerts: [],
         bystander: null,

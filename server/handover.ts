@@ -13,8 +13,8 @@ import { isAbnormal } from './clinicalRanges.ts';
 
 // ── Models ────────────────────────────────────────────────────
 export const MODELS = {
-  CLAUDE_SONNET:  'claude-3-5-sonnet-20241022',
-  CLAUDE_HAIKU:   'claude-3-5-haiku-20241022',
+  CLAUDE_SONNET:  'claude-sonnet-4-6',
+  CLAUDE_HAIKU:   'claude-haiku-4-5-20251001',
   GEMINI_FLASH:   'gemini-2.0-flash',   // whitelisted ONLY for vision/OCR — never call from here
   GEMINI_PRO:     'gemini-1.5-pro',     // ⚠ VERIFY against your current Google AI Studio available-models list before deploying — model IDs change. This must resolve to an actual Pro-tier model, not any string containing "flash".
 };
@@ -842,11 +842,19 @@ export async function extractHandover(
   const tryExtract = async (
     m: string, p: 'claude' | 'gemini'
   ): Promise<string> => {
-       if (p === 'claude' && !isAnthropicCurrentlyDisabled()) {
+    if (p === 'claude') {
+      if (isAnthropicCurrentlyDisabled()) {
+        throw new Error('Anthropic temporarily disabled — skipping to next attempt.');
+      }
       return await callClaude(prompt, m);
     }
-    return callGemini(prompt, m === MODELS.GEMINI_PRO ? MODELS.GEMINI_PRO : MODELS.GEMINI_FLASH);
-  };
+    // Only ever reached for the explicit Gemini Pro attempt below.
+    // Never call Gemini Flash for clinical text extraction/reasoning.
+    if (m !== MODELS.GEMINI_PRO) {
+      throw new Error(`Refused: Gemini Flash is not permitted for clinical text extraction (requested model: ${m})`);
+    }
+    return callGemini(prompt, MODELS.GEMINI_PRO);
+   };
 
   // Fallback chain per Rule 1: Primary Claude -> Secondary Claude -> Gemini Pro (never Gemini Flash)
   const attempts: Array<{ model: string; provider: 'claude' | 'gemini' }> = [

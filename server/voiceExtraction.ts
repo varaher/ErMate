@@ -1,6 +1,7 @@
 import OpenAI from 'openai';
 import Anthropic from '@anthropic-ai/sdk';
 import { deidentifyText } from './deidentify.ts';
+import { buildChecklistPromptSection } from './caseSheetChecklist.ts';
 
 export const VOICE_EXTRACTION_PROMPT = `
 You are a clinical data extraction engine for Indian Emergency Departments.
@@ -129,36 +130,78 @@ vitals:
   - If value is 35.0-38.5 → unit is °C (e.g., 37.0°C).
   - If value is 95.0-104.0 → unit is °F (e.g., 98.6°F).
   - If value is 37 without unit → assume 37.0°C (98.6°F). NEVER write 37.0°F.
+VBG / ABG EXTRACTION:
+  If the doctor dictates blood gas values (pH, PCO2, PO2, HCO3, base excess,
+  lactate, sodium, potassium), extract each component that was actually
+  stated. Say explicitly whether it was called a "VBG" or "ABG" if the
+  doctor names it; otherwise null.
+  NEVER invent or estimate a value not stated.
+  Return null for the whole vbg object if no blood gas values were dictated at all.
+
+   Return as:
+  "vbg": {
+    "type": "VBG" | "ABG" | null,
+    "ph": string | null,
+    "pco2": string | null,
+    "po2": string | null,
+    "hco3": string | null,
+    "be": string | null,
+    "lactate": string | null,
+    "na": string | null,
+    "k": string | null,
+    "cl": string | null
+  }
+  or null if not done. Include "cl" (chloride) whenever stated.
+EXAMINATION FINDINGS — NEVER INVENT:
+  airway, breathing, circulation, disability, exposure, generalExamination,
+  cvsExamination, respiratoryExamination, abdomenExamination, cnsExamination,
+  extremitiesExamination, fastFindings — ALL of these must be null unless
+  the doctor explicitly described that specific system. Do NOT write
+  plausible-sounding normal exam prose for any system not explicitly
+  examined. Silence about a system means null, never "normal".
 
 PRIMARY SURVEY EXTRACTION:
-  Map vitals to the correct ABCDE field:
-  
-  B — Breathing:
-    RR → breathing.rr
-    SpO₂ → breathing.spo2
-    O₂ delivery method → breathing.o2Delivery
-    "Air entry bilaterally equal" → breathing.airEntry
-    
-  C — Circulation:
-    HR → circulation.hr
-    BP → circulation.sbp / circulation.dbp
-    CRT → circulation.crt
-    EFAST findings → circulation.efast.*
-    ECG → circulation.ecg
-    
-  D — Disability:
-    GCS → disability.gcsE / gcsV / gcsM
-    Pupils → disability.pupilSizeR/L + reaction
-    GRBS → disability.grbs
-    
-  E — Exposure:
-    Temperature → exposure.temp
-    Skin findings → exposure.skin
-    Log roll (trauma only) → exposure.logRoll
+  These are FLAT STRING fields in the JSON schema below — "airway",
+  "breathing", "circulation", "disability", "exposure" — NOT nested
+  objects. Numeric vitals (RR, SpO2, HR, BP, GCS, GRBS) ALWAYS go in
+  the separate "vitals" object, never inside these text fields.
 
-  DO NOT put vitals in free text fields.
-  Map each vital to its exact ABCDE location.
+  airway: qualitative status/findings only (e.g. "Patent, no stridor").
+  breathing: qualitative findings only — air entry, added sounds, chest
+    wall movement. NEVER put RR/SpO2 numbers here — those go in vitals.
+  circulation: qualitative findings only — pulses, CRT, JVD, perfusion.
+    NEVER put HR/BP numbers here — those go in vitals.
+  disability: qualitative findings only — pupils, motor response.
+    NEVER put GCS here — that goes in vitals.gcs.
+  exposure: qualitative findings only — visible injuries, deformities,
+    wounds, rashes, temperature findings, trauma/log-roll findings.
+    THIS FIELD MUST CAPTURE ANY DICTATED DEFORMITY, WOUND, OR VISIBLE
+    INJURY — never return null if the doctor described one, even if it
+    was mentioned as part of a broader "secondary survey" statement.
 
+  DO NOT put vitals in these free text fields.
+FAST/EFAST FINDINGS:
+  If the doctor dictates FAST/EFAST results (heart/pericardial, abdomen/
+  hepatorenal/splenorenal/pelvic, lungs, extremities), extract each organ
+  mentioned as positive or negative. NEVER invent a finding not stated.
+  Return null for the whole object if FAST was not mentioned at all.
+
+  Return as:
+  "fastFindings": {
+    "heart": string | null,
+    "abdomen": string | null,
+    "pelvis": string | null
+  } | null
+
+MLC DETAILS:
+  Set "isMlc": true whenever the case involves trauma, assault, RTA/road
+  traffic accident, poisoning, burns, or any legally reportable incident
+  — even if the doctor never says "MLC" explicitly. Extract
+  natureOfIncident, placeOfIncident, dateTimeOfIncident, mechanismOfInjury,
+  broughtBy, and informant from what was dictated. identificationMark
+  stays null unless a doctor explicitly describes a specific mark — never
+  default to any example text. If not trauma/legally-reportable, set
+  "isMlc": false and leave the rest of mlcDetails null.
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 SECTION LABELS — use EXACTLY:
   "Chief Complaint"
@@ -197,21 +240,50 @@ Return ONLY valid JSON. No markdown. No explanation. No preamble.
     "gcs": string | null,
     "grbs": string | null
   },
-  "airway": string | null,
+    "airway": string | null,
   "breathing": string | null,
   "circulation": string | null,
   "disability": string | null,
+  "exposure": string | null,
+  "vbg": {
+    "type": "VBG" | "ABG" | null,
+    "ph": string | null,
+    "pco2": string | null,
+    "po2": string | null,
+    "hco3": string | null,
+    "be": string | null,
+    "lactate": string | null,
+       "na": string | null,
+    "k": string | null,
+    "cl": string | null
+  } | null,
   "pastMedicalHistory": string | null,
   "medications": string[],
   "allergies": string | null,
   "surgicalHistory": string | null,
   "familyHistory": string | null,
   "lmp": string | null,
-  "generalExamination": string | null,
+    "generalExamination": string | null,
   "cvsExamination": string | null,
-  "respiratoryExam": string | null,
+  "respiratoryExamination": string | null,
   "abdomenExamination": string | null,
   "cnsExamination": string | null,
+  "extremitiesExamination": string | null,
+  "fastFindings": {
+    "heart": string | null,
+    "abdomen": string | null,
+    "pelvis": string | null
+  } | null,
+  "mlcDetails": {
+    "isMlc": boolean,
+    "natureOfIncident": string | null,
+    "placeOfIncident": string | null,
+    "dateTimeOfIncident": string | null,
+    "mechanismOfInjury": string | null,
+    "broughtBy": string | null,
+    "informant": string | null,
+    "identificationMark": string | null
+  },
   "investigations": string[],
   "treatment": string[],
   "diagnosis": string | null,
@@ -238,10 +310,10 @@ Return ONLY valid JSON. No markdown. No explanation. No preamble.
     "birthHistory": string | null,
     "immunizationHistory": string | null,
     "developmentalHistory": string | null,
-    "feedingHistory": string | null
+      "feedingHistory": string | null
   }
 }
-`;
+` + buildChecklistPromptSection("adult");
 
 export function sanitizeExtracted(raw: Record<string, any>): Record<string, any> {
   if (!raw || typeof raw !== 'object') return raw;
@@ -308,7 +380,7 @@ function applyExamDefaults(extracted: Record<string, any>): Record<string, any> 
   const EXAM_DEFAULTS: Record<string, string> = {
     generalExamination: 'No pallor, icterus, cyanosis, clubbing, lymphadenopathy, or pedal edema.',
     cvsExamination: 'S1 S2 heard. No murmurs.',
-    respiratoryExam: 'Air entry bilaterally equal. No added sounds.',
+    respiratoryExamination: 'Air entry bilaterally equal. No added sounds.',
     abdomenExamination: 'Soft, non-tender. No organomegaly. Bowel sounds present.',
     cnsExamination: 'Moving all four limbs. No focal neurological deficit.',
   };
@@ -408,7 +480,7 @@ export async function extractFromTranscript(
   if (anthropicClient) {
     try {
       const msg = await anthropicClient.messages.create({
-        model: 'claude-3-5-haiku-20241022',
+        model: 'claude-haiku-4-5-20251001',
         max_tokens: 2048,
         temperature: 0.0,
         system: VOICE_EXTRACTION_PROMPT,
@@ -427,7 +499,7 @@ export async function extractFromTranscript(
       const withDefaults = applyExamDefaults(sanitized);
 
       console.log(`[VoiceExtract] Claude Haiku fallback succeeded`);
-      return { success: true, extracted: withDefaults, engine: 'claude-3-5-haiku-20241022' };
+      return { success: true, extracted: withDefaults, engine: 'claude-haiku-4-5-20251001' };
     } catch (haikuErr: any) {
       console.warn('[VoiceExtract] Claude Haiku fallback unavailable, attempting retry:', haikuErr?.message || haikuErr);
     }
@@ -444,7 +516,7 @@ export async function extractFromTranscript(
     try {
       console.log('[VoiceExtract] Retrying Claude 3.5 Haiku after transient failure...');
       const msg = await anthropicClient.messages.create({
-        model: 'claude-3-5-haiku-20241022',
+        model: 'claude-haiku-4-5-20251001',
         max_tokens: 2048,
         temperature: 0.0,
         system: VOICE_EXTRACTION_PROMPT,
@@ -458,7 +530,7 @@ export async function extractFromTranscript(
       const withDefaults = applyExamDefaults(sanitized);
 
       console.log('[VoiceExtract] Claude Haiku retry succeeded');
-      return { success: true, extracted: withDefaults, engine: 'claude-3-5-haiku-20241022-retry' };
+      return { success: true, extracted: withDefaults, engine: 'claude-haiku-4-5-20251001-retry' };
     } catch (retryErr: any) {
       console.warn('[VoiceExtract] Claude Haiku retry also failed, falling through to manual-entry fallback:', retryErr?.message || retryErr);
     }

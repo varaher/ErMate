@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
+import { ConfirmModal } from "./shared/ConfirmModal";
 import { 
   ArrowLeft, Save, Sparkles, Mic, FileText, CheckCircle, CheckCircle2,
   Trash2, Plus, ShieldAlert, BookOpen, Clock, Heart, Baby,
@@ -159,6 +160,7 @@ export default function CaseSheetView({
   onDiscussCase,
   onDeleteCase
 }: CaseSheetViewProps) {
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [activeTab, setActiveTab] = useState<
     "triage" | "complaints" | "primary-survey" | "history" | "secondary-survey" | "investigations" | "trends" | "treatment" | "notes" | "disposition" | "rounds"
   >("triage");
@@ -203,10 +205,10 @@ export default function CaseSheetView({
   const [showPostSaveModal, setShowPostSaveModal] = useState<boolean>(false);
 
   const [currentCase, setCurrentCase] = useState<ClinicalCase>(initialCase);
-  const displayHospitalName = (currentCase.hospital || profile?.hospital || "Emergency Hospital & Trauma Center").toUpperCase();
+    const displayHospitalName = (currentCase.hospital || profile?.hospital || "").trim().toUpperCase() || "[HOSPITAL NAME NOT SET]";
   const displayHospitalAddress = profile?.hospitalAddress 
     ? `${profile.hospitalAddress}${profile?.state ? `, ${profile.state}` : ''}`
-    : (profile?.state ? `Department of Emergency Medicine, ${profile.state}` : "Department of Emergency Medicine & Trauma Center");
+    : "Hospital address not set in profile";
   const [isEditingDemographics, setIsEditingDemographics] = useState(false);
   const [caseSwitcherOpen, setCaseSwitcherOpen] = useState(false);
   const [saveBanner, setSaveBanner] = useState<{ show: boolean; minutesSaved: number } | null>(null);
@@ -1862,7 +1864,7 @@ function mapVoiceParsedToPediatricDetails(parsed: any, existing: PediatricDetail
 --------------------------------------------------
 **Patient Name:** ${currentCase.patient.name}
 **Age/Sex:** ${currentCase.patient.age || "N/A"} years / ${currentCase.patient.gender}
-**Address:** Chunangamvely, Aluva, Ernakulam, Kerala - 683 112
+**Address:** ${currentCase.patient.address || "Not recorded"}
 **Phone Number:** ${currentCase.patient.phone || "Not Provided"}
 **Date & Time of Arrival:** ${currentCase.patient.dateOpened}
 **Date & Time of Accident:** ${currentCase.patient.mlcDetails?.dateTimeOfIncident || "N/A"}
@@ -1997,7 +1999,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}
 <hr/>
 <strong>Patient Name:</strong> ${currentCase.patient.name}<br/>
 <strong>Age/Sex:</strong> ${currentCase.patient.age || "N/A"} years / ${currentCase.patient.gender}<br/>
-<strong>Address:</strong> Chunangamvely, Aluva, Ernakulam, Kerala - 683 112<br/>
+<strong>Address:</strong> ${currentCase.patient.address || "Not recorded"}<br/>
 <strong>Phone Number:</strong> ${currentCase.patient.phone || "Not Provided"}<br/>
 <strong>Date & Time of Arrival:</strong> ${currentCase.patient.dateOpened}<br/>
 <strong>Date & Time of Accident:</strong> ${currentCase.patient.mlcDetails?.dateTimeOfIncident || "N/A"}<br/>
@@ -2503,7 +2505,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                     </select>
                   </div>
                 </div>
-                <div>
+                                <div>
                   <label className="block text-[10px] text-slate-400 font-mono font-semibold uppercase mb-1">Phone Number</label>
                   <input
                     type="text"
@@ -2513,6 +2515,18 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                       setCurrentCase(prev => ({ ...prev, patient: { ...prev.patient, phone: val } }));
                     }}
                     className="w-full px-2 py-1 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded focus:ring-1 focus:ring-blue-500 font-medium font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] text-slate-400 font-mono font-semibold uppercase mb-1">Address</label>
+                  <input
+                    type="text"
+                    value={currentCase.patient.address || ""}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setCurrentCase(prev => ({ ...prev, patient: { ...prev.patient, address: val } }));
+                    }}
+                    className="w-full px-2 py-1 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded focus:ring-1 focus:ring-blue-500 font-medium"
                   />
                 </div>
                 <div className="grid grid-cols-2 gap-2">
@@ -2865,10 +2879,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                 <button
                   type="button"
                   onClick={() => {
-                    if (window.confirm(`Are you sure you want to delete the case for "${currentCase.patient.name}"? This action cannot be undone.`)) {
-                      onDeleteCase(currentCase.id);
-                      onBack();
-                    }
+                    setShowDeleteConfirm(true);
                   }}
                   className="inline-flex items-center gap-1.5 px-3 py-2 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/20 dark:hover:bg-rose-900/40 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-900/30 text-xs font-bold rounded-xl transition-all cursor-pointer"
                   title="Delete Case"
@@ -6031,10 +6042,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                 <button
                   type="button"
                   onClick={() => {
-                    if (window.confirm(`Are you sure you want to delete the case for "${currentCase.patient.name}"? This action cannot be undone.`)) {
-                      onDeleteCase(currentCase.id);
-                      onBack();
-                    }
+                    setShowDeleteConfirm(true);
                   }}
                   className="px-4 py-2.5 bg-rose-50 dark:bg-rose-950/30 hover:bg-rose-100 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-900/50 text-xs font-bold rounded-xl transition-all flex items-center gap-2 cursor-pointer transform hover:scale-[1.01] active:scale-[0.99]"
                 >
@@ -6367,9 +6375,9 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                   <span className="font-extrabold text-slate-500 uppercase"><strong>Weight:</strong></span>
                   <span className="font-bold text-slate-950"><strong>{pediatricWeight === "" ? getAPLSEstimate(currentCase.patient.age) : pediatricWeight} kg</strong></span>
                 </p>
-                <p className="flex justify-between border-b border-slate-100 pb-0.5">
+                               <p className="flex justify-between border-b border-slate-100 pb-0.5">
                   <span className="font-extrabold text-slate-500 uppercase"><strong>Address:</strong></span>
-                  <span className="font-semibold text-slate-850 text-right text-[9px]"><strong>{currentCase.pediatricDetails?.address || "Chunangamvely, Aluva, Ernakulam, Kerala - 683 112"}</strong></span>
+                  <span className="font-semibold text-slate-850 text-right text-[9px]"><strong>{currentCase.pediatricDetails?.address || currentCase.patient.address || "Not recorded"}</strong></span>
                 </p>
                 <p className="flex justify-between">
                   <span className="font-extrabold text-slate-500 uppercase"><strong>Identification Mark:</strong></span>
@@ -6576,9 +6584,9 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                   <span className="font-extrabold text-slate-500 uppercase"><strong>Age/Sex:</strong></span>
                   <span className="font-bold text-slate-850"><strong>{currentCase.patient.age || "N/A"} Years / {currentCase.patient.gender}</strong></span>
                 </p>
-                <p className="flex justify-between border-b border-slate-100 pb-0.5">
+                                <p className="flex justify-between border-b border-slate-100 pb-0.5">
                   <span className="font-extrabold text-slate-500 uppercase"><strong>Address:</strong></span>
-                  <span className="font-semibold text-slate-850 text-right"><strong>Chunangamvely, Aluva, Ernakulam, Kerala - 683 112</strong></span>
+                  <span className="font-semibold text-slate-850 text-right"><strong>{currentCase.patient.address || "Not recorded"}</strong></span>
                 </p>
                 <p className="flex justify-between">
                   <span className="font-extrabold text-slate-500 uppercase"><strong>Phone Number:</strong></span>
@@ -6961,6 +6969,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                   <h3 className="font-extrabold text-sm text-white">Clinical Case Sheet PDF Preview</h3>
                   <p className="text-[10px] text-slate-400 font-mono">
                     {currentCase.patient.name} · UHID: {currentCase.patient.uhid || "N/A"} · Case ID: {currentCase.id}
+                    <br />Captured: {currentCase.createdAt ? new Date(currentCase.createdAt).toLocaleString("en-GB", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "N/A"}
                   </p>
                 </div>
               </div>
@@ -7152,7 +7161,22 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
           </div>
         </div>
       )}
-
+      <ConfirmModal
+        isOpen={showDeleteConfirm}
+        title="Delete Case"
+        message={
+          <>
+            Are you sure you want to delete the case for <strong className="text-slate-900 dark:text-white">{currentCase.patient.name}</strong>? This action cannot be undone.
+          </>
+        }
+        confirmText="Delete Case"
+        onConfirm={() => {
+          onDeleteCase(currentCase.id);
+          setShowDeleteConfirm(false);
+          onBack();
+        }}
+        onCancel={() => setShowDeleteConfirm(false)}
+      />
     </div>
   );
 }

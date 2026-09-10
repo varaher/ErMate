@@ -42,6 +42,7 @@ export interface PatientDemographics {
   dateOpened: string;
   uhid?: string;
   phone?: string;
+  address?: string;
   isMlc: boolean;
   mlcDetails?: MlcDetails;
   caseType: "Medical" | "Trauma";
@@ -634,6 +635,7 @@ export interface UserProfile {
   state?: string;
   pincode?: string;
   hospitalAddress?: string;
+  hospitalPhone?: string;
   aiCredits: number;
   streak: number;
   subscriptionTier: string;

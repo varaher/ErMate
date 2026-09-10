@@ -29,6 +29,7 @@
     "openai": "^6.49.0",
     "pdfkit": "^0.19.1",
     "pg": "^8.22.0",
+    "razorpay": "^2.9.8",
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
     "react-markdown": "^10.1.0",

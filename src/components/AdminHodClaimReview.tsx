@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { ConfirmModal } from "./shared/ConfirmModal";
 import { collection, query, where, onSnapshot, doc, updateDoc } from "firebase/firestore";
 import { db, auth } from "../firebase";
 import { Crown, Check, X, Building2, Mail, Clock } from "lucide-react";
@@ -25,6 +26,7 @@ export default function AdminHodClaimReview() {
   const [loading, setLoading] = useState(true);
   const [rejectionNote, setRejectionNote] = useState<{ [id: string]: string }>({});
   const [activeRejectingId, setActiveRejectingId] = useState<string | null>(null);
+  const [claimToApprove, setClaimToApprove] = useState<HodClaimRequest | null>(null);
 
   const currentUserEmail = auth.currentUser?.email?.toLowerCase().trim();
   const isAdmin = currentUserEmail === "varahgrp@gmail.com";
@@ -68,8 +70,7 @@ export default function AdminHodClaimReview() {
   }
 
   const handleApprove = async (claim: HodClaimRequest) => {
-    const confirmMsg = `Approve ${claim.claimedByName} (${claim.claimedByEmail}) as HOD for ${claim.hospital}? This will elevate their account role to "HOD / Department Lead".`;
-    if (!window.confirm(confirmMsg)) return;
+    
 
     try {
       const now = new Date().toISOString();
@@ -215,7 +216,7 @@ export default function AdminHodClaimReview() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => handleApprove(c)}
+                    onClick={() => setClaimToApprove(c)}
                     className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl transition-all shadow-md flex items-center gap-1.5"
                   >
                     <Check className="w-3.5 h-3.5" /> Approve as HOD
@@ -226,6 +227,24 @@ export default function AdminHodClaimReview() {
           ))}
         </div>
       )}
+      <ConfirmModal
+        isOpen={!!claimToApprove}
+        title="Approve HOD Role"
+        message={
+          <>
+            Approve <strong>{claimToApprove?.claimedByName}</strong> ({claimToApprove?.claimedByEmail}) as HOD for <strong>{claimToApprove?.hospital}</strong>?
+            <br /><br />
+            This will elevate their account role to "HOD / Department Lead".
+          </>
+        }
+        confirmText="Approve"
+        isDestructive={false}
+        onConfirm={async () => {
+          if (claimToApprove) await handleApprove(claimToApprove);
+          setClaimToApprove(null);
+        }}
+        onCancel={() => setClaimToApprove(null)}
+      />
     </div>
   );
 }

@@ -123,24 +123,24 @@ export function HandoverCard({
   const ab = patient?.alertBanner;
   const isBoarder = Boolean(patient?.patientLabel?.erBoarder || (patient?.patientLabel?.daysInERSinceAdmission && patient.patientLabel.daysInERSinceAdmission > 0));
 
+    const UNDETERMINED_ALERT_TEXT = "⚠ Alert status not determined by ErMate — review full notes before handover";
+  const alertSummaryText = ab?.summary ? ab.summary : (
+    (patient?.criticalAlerts && patient.criticalAlerts.length > 0)
+      ? patient.criticalAlerts.join(' · ')
+      : UNDETERMINED_ALERT_TEXT
+  );
+  const isConfirmedSafe = alertSummaryText === 'No critical alerts flagged';
   return (
     <div
       className="hov-card"
       style={{ borderColor: colors.border }}
     >
       {/* ── 0. ALERT BANNER (Always First, Always Visible) ───────── */}
-      <div className={ab?.summary && ab.summary !== "No critical alerts flagged" ? "hov-alert-banner" : "hov-alert-banner hov-alert-banner-safe"}>
-        <div className="hov-alert-banner-title" style={{ color: ab?.summary && ab.summary !== "No critical alerts flagged" ? '#DC2626' : '#166534' }}>
-          {ab?.summary && ab.summary !== "No critical alerts flagged" ? '⚠ CRITICAL ALERT BANNER' : '✓ ALERT BANNER'}
-        </div>
-        <div className="hov-alert-banner-content min-w-0 break-words flex flex-wrap items-center gap-x-2 gap-y-1" style={{ color: ab?.summary && ab.summary !== "No critical alerts flagged" ? '#991B1B' : '#14532D' }}>
-          <span>
-            {ab?.summary ? ab.summary : (
-              (patient?.criticalAlerts && patient.criticalAlerts.length > 0)
-                ? patient.criticalAlerts.join(' · ')
-                : 'No critical alerts flagged'
-            )}
-          </span>
+       <div className={isConfirmedSafe ? "hov-alert-banner hov-alert-banner-safe" : "hov-alert-banner"}>
+        <div className="hov-alert-banner-title" style={{ color: isConfirmedSafe ? '#166534' : '#DC2626' }}>
+          {isConfirmedSafe ? '✓ ALERT BANNER' : '⚠ CRITICAL ALERT BANNER'} </div>
+         <div className="hov-alert-banner-content min-w-0 break-words flex flex-wrap items-center gap-x-2 gap-y-1" style={{ color: isConfirmedSafe ? '#14532D' : '#991B1B' }}>
+          <span>{alertSummaryText}</span>
           {ab?.criticalAllergies && <span className="font-bold text-red-700">| Allergy: {ab.criticalAllergies}</span>}
           {ab?.codeStatus && <span className="font-bold text-slate-800">| Code: {ab.codeStatus}</span>}
           {ab?.isolationPrecautions && <span className="font-bold text-amber-800">| Isolation: {ab.isolationPrecautions}</span>}

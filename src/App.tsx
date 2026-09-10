@@ -3,7 +3,7 @@ import {
   Activity, Sparkles, BookOpen, User, Clock, ShieldAlert, 
   Settings, HelpCircle, FileWarning,  Trophy, ClipboardList, Zap, Moon, Sun, Users,
   Search, X, TrendingUp, Bell, BellRing, Trash2, Check, Mic, ShieldCheck, RefreshCw,
-  Download, Smartphone, Building2, UserCheck, CheckCircle2, Terminal
+  Download, Smartphone, Building2, UserCheck, CheckCircle2, Terminal, MessageSquare
 } from "lucide-react";
 
 import { 
@@ -174,6 +174,24 @@ export default function App() {
       console.error("Failed to save notifications to localStorage", err);
     }
   }, [notifications]);
+
+  // Confirms an update actually landed after a reload triggered by
+// handleUpdateApp. Relies on APP_VERSION being bumped on every deploy —
+// see the standing deploy rule in AGENTS.md. If APP_VERSION isn't
+// bumped, this will incorrectly report "Update Didn't Apply" even on a
+// successful deploy — that's a signal to check the version bump, not a
+// bug in this check itself.
+useEffect(() => {
+  const pendingVer = sessionStorage.getItem("ermate_update_confirm_pending");
+  if (pendingVer) {
+    sessionStorage.removeItem("ermate_update_confirm_pending");
+    if (pendingVer === APP_VERSION) {
+      triggerNotification("Updated ✓", `ErMate is now running v${APP_VERSION}.`, "success");
+    } else {
+      triggerNotification("Update Didn't Apply", `Still on v${APP_VERSION}. Please try again or refresh manually.`, "warning");
+    }
+  }
+}, []);
 
   const triggerNotification = (title: string, message: string, type: "info" | "success" | "warning" = "info", linkView?: string) => {
     const id = "notif-" + Date.now() + "-" + Math.random().toString(36).substring(2, 6);
@@ -349,6 +367,7 @@ export default function App() {
     localStorage.setItem("ermate_app_known_version", targetVer);
     localStorage.setItem(`ermate_seen_version_${APP_VERSION}`, "true");
     sessionStorage.removeItem("ermate_dismissed_update_version");
+    sessionStorage.setItem("ermate_update_confirm_pending", targetVer);
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.getRegistrations().then((registrations) => {
         for (const registration of registrations) {
@@ -407,6 +426,10 @@ export default function App() {
   };
   const [showVoiceScribeChat, setShowVoiceScribeChat] = useState<boolean>(false);
   const [voiceScribeCaseId, setVoiceScribeCaseId] = useState<string | null>(null);
+  // NEW — entry-choice popup and discussion-mode flag for the merged
+  // ErMate Assistant. See handleVoiceScribeEntryClick / handleStartFreeDiscussion.
+  const [showVoiceScribeEntryChoice, setShowVoiceScribeEntryChoice] = useState<boolean>(false);
+  const [voiceScribeDiscussionMode, setVoiceScribeDiscussionMode] = useState<boolean>(false);
   const [scribeMessages, setScribeMessages] = useState<any[]>([
     {
       id: "msg-1",
@@ -1571,6 +1594,31 @@ export default function App() {
 
   const handleStartVoiceScribe = (caseId?: string) => {
     setVoiceScribeCaseId(caseId || null);
+    setVoiceScribeDiscussionMode(false);
+    setShowVoiceScribeChat(true);
+    setSelectedCaseId(null);
+    setActiveFormMode(null);
+    setShowDischargeSummaryId(null);
+  };
+
+  // NEW — invoked when the doctor taps the Voice Scribe entry point with
+  // no case already selected (i.e. from the Dashboard card). Shows a
+  // small choice instead of immediately starting a new-patient dictation,
+  // per the doctor's explicit request that the discussion-only mode live
+  // inside the existing Voice Scribe entry point.
+  const handleVoiceScribeEntryClick = () => {
+    setShowVoiceScribeEntryChoice(true);
+  };
+
+  const handleStartNewPatientDictation = () => {
+    setShowVoiceScribeEntryChoice(false);
+    handleStartVoiceScribe();
+  };
+
+  const handleStartFreeDiscussion = () => {
+    setShowVoiceScribeEntryChoice(false);
+    setVoiceScribeDiscussionMode(true);
+    setVoiceScribeCaseId(null);
     setShowVoiceScribeChat(true);
     setSelectedCaseId(null);
     setActiveFormMode(null);
@@ -1646,7 +1694,7 @@ export default function App() {
         name: extracted.patientName || existingMatch?.patient.name || "Extracted Voice Patient",
         age: finalAge !== null ? finalAge : existingMatch?.patient.age || null,
         gender: extracted.gender || existingMatch?.patient.gender || "Male",
-        presentingComplaint: extracted.presentingComplaint || existingMatch?.patient.presentingComplaint || "Dictated presentation transcript.",
+      presentingComplaint: extracted.presentingComplaint || existingMatch?.patient.presentingComplaint || "Not documented",
         triageCategory: extracted.triageCategory || existingMatch?.patient.triageCategory || TriageCategory.P2,
         arrivalMode: extracted.arrivalMode || existingMatch?.patient.arrivalMode || ArrivalMode.WalkIn,
         dateOpened: existingMatch?.patient.dateOpened || (new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + " | " + new Date().toLocaleDateString([], { month: 'short', day: 'numeric' })),
@@ -2504,7 +2552,7 @@ export default function App() {
 
             {/* Mobile-only action shortcuts */}
             <div className="flex md:hidden items-center gap-1.5">
-              <HeaderUpdateButton hasUpdate={appUpdateBanner} onApplyUpdate={() => window.location.reload()} />
+         <HeaderUpdateButton hasUpdate={appUpdateBanner} onApplyUpdate={handleUpdateApp} />
               <button
                 onClick={() => setShowUpdatesModal(true)}
                 className="p-1.5 hover:bg-emerald-50 dark:hover:bg-emerald-950/20 rounded-lg text-emerald-600 dark:text-emerald-400 transition-all"
@@ -2825,7 +2873,7 @@ export default function App() {
           <div className="hidden md:flex items-center gap-2">
 
             {/* Header Update Button (renders when update is waiting or banner active) */}
-            <HeaderUpdateButton hasUpdate={appUpdateBanner} onApplyUpdate={() => window.location.reload()} />
+         <HeaderUpdateButton hasUpdate={appUpdateBanner} onApplyUpdate={handleUpdateApp} />
 
             {/* What's New & Announcements Button */}
             <button
@@ -3257,7 +3305,7 @@ export default function App() {
                     setSelectedCaseId(null);
                   }}
                   hasActiveScribeSession={scribeMessages.length > 1}
-                  onDiscussCase={(c) => setDiscussionModalCase(c)}
+                  onDiscussCase={(c) => handleStartVoiceScribe(c.id)}
                   onDeleteCase={handleDeleteCase}
                 />
               );
@@ -3300,17 +3348,20 @@ export default function App() {
             />
           )}
 
-          {/* 5. Voice Scribe Chat View */}
+          {/* 5. Voice Scribe Chat View (now "ErMate Assistant") */}
           {showVoiceScribeChat && !selectedCaseId && !activeFormMode && !showDischargeSummaryId && (
             <VoiceScribeChatView
               caseId={voiceScribeCaseId}
               caseData={cases.find(c => c.id === voiceScribeCaseId) || (selectedCaseId ? cases.find(c => c.id === selectedCaseId) : null)}
+              initialEntryMode={voiceScribeDiscussionMode ? "discussion" : "case"}
               onBack={() => {
                 setShowVoiceScribeChat(false);
                 setVoiceScribeCaseId(null);
+                setVoiceScribeDiscussionMode(false);
               }}
               onOpenCaseSheet={(cId) => {
                 setShowVoiceScribeChat(false);
+                setVoiceScribeDiscussionMode(false);
                 setSelectedCaseId(cId);
               }}
               onSaveExtractedCase={handleSaveExtractedVoiceCase}
@@ -3343,7 +3394,7 @@ export default function App() {
                   profile={profile}
                   cases={cases}
                   pendingContributionsCount={pendingContributionsCount}
-                  onDiscussCase={(c) => setDiscussionModalCase(c)}
+                  onDiscussCase={(c) => handleStartVoiceScribe(c.id)}
                   onStartFullFlow={() => setShowEntryMenu(true)}
                   onStartQuickCase={() => setActiveFormMode("quick")}
                   onSelectCase={handleSelectCase}
@@ -3363,7 +3414,7 @@ export default function App() {
                   onStartDischargeSummary={() => {
                     setShowQuickDischarge(true);
                   }}
-                  onStartVoiceScribe={handleStartVoiceScribe}
+                  onStartVoiceScribe={handleVoiceScribeEntryClick}
                   onOpenPediatricCalculator={() => setShowPediatricCalculator(true)}
                   onOpenPocketMirror={() => setShowPocketMirror(true)}
                   isOnShift={isOnShift}
@@ -3459,7 +3510,7 @@ export default function App() {
                   onStartQuickCase={() => setActiveFormMode("quick")}
                   onNavigateToTab={navigateToTab}
                   onDeleteAllCases={handleDeleteAllCases}
-                  onDiscussCase={(c) => setDiscussionModalCase(c)}
+                  onDiscussCase={(c) => handleStartVoiceScribe(c.id)}
                 />
               )}
 
@@ -3555,6 +3606,64 @@ export default function App() {
             }
           }}
         />
+      )}
+
+      {/* NEW — Voice Scribe entry-choice popup: shown when the doctor taps
+          the Voice Scribe card with no case already selected. Lets them
+          choose between the existing "dictate a new patient" flow and the
+          new no-case "discuss a case" flow, per explicit request that this
+          choice live inside the existing Voice Scribe entry point. */}
+      {showVoiceScribeEntryChoice && (
+        <div
+          className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fade-in"
+          onClick={() => setShowVoiceScribeEntryChoice(false)}
+        >
+          <div
+            className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-sm w-full p-5 shadow-2xl space-y-3"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="text-center space-y-1 mb-2">
+              <h3 className="text-sm font-extrabold text-slate-900 dark:text-white">ErMate Assistant</h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400">What would you like to do?</p>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleStartNewPatientDictation}
+              className="w-full p-4 bg-indigo-50 dark:bg-indigo-950/30 hover:bg-indigo-100 dark:hover:bg-indigo-950/50 border border-indigo-200 dark:border-indigo-800 rounded-xl text-left transition-all flex items-start gap-3"
+            >
+              <div className="p-2 bg-indigo-500/15 text-indigo-600 dark:text-indigo-400 rounded-lg shrink-0">
+                <Mic className="w-4.5 h-4.5" />
+              </div>
+              <div>
+                <span className="block text-xs font-extrabold text-slate-900 dark:text-white">Dictate a New Patient</span>
+                <span className="block text-[10.5px] text-slate-500 dark:text-slate-400 mt-0.5">Speak the case — ErMate extracts and saves it to a case sheet.</span>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleStartFreeDiscussion}
+              className="w-full p-4 bg-purple-50 dark:bg-purple-950/30 hover:bg-purple-100 dark:hover:bg-purple-950/50 border border-purple-200 dark:border-purple-800 rounded-xl text-left transition-all flex items-start gap-3"
+            >
+              <div className="p-2 bg-purple-500/15 text-purple-600 dark:text-purple-400 rounded-lg shrink-0">
+                <MessageSquare className="w-4.5 h-4.5" />
+              </div>
+              <div>
+                <span className="block text-xs font-extrabold text-slate-900 dark:text-white">Discuss a Case</span>
+                <span className="block text-[10.5px] text-slate-500 dark:text-slate-400 mt-0.5">Paste or describe any case to discuss — nothing is saved as a patient record.</span>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setShowVoiceScribeEntryChoice(false)}
+              className="w-full py-2 text-xs font-bold text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-all"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
       )}
 
       {/* Simple Footer details */}
@@ -4156,7 +4265,11 @@ export default function App() {
         ))}
       </div>
 
-      {/* Patient Case Discussion Modal - Context-Bound Chat */}
+      {/* Patient Case Discussion Modal - Context-Bound Chat
+          NOTE: nothing sets discussionModalCase anymore as of this change —
+          the Discuss button now calls handleStartVoiceScribe(c.id) instead.
+          Left in place, not deleted, per the standing rule that dead code
+          gets flagged for an explicit decision rather than silently removed. */}
       {discussionModalCase && (
         <BoundChatModal
           context={{

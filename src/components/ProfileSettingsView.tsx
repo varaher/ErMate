@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { ConfirmModal } from "./shared/ConfirmModal";
 import { 
   CreditCard, Activity, RefreshCw, CheckCircle, CheckCircle2, Zap, ShieldCheck, 
   TrendingUp, Users, Percent, ArrowUpRight, Plus, Trash2, Mail, 
@@ -147,13 +148,14 @@ export default function ProfileSettingsView({
   const [showConfirmPassword, setShowConfirmPassword] = useState<boolean>(false);
   const [passwordStatus, setPasswordStatus] = useState<{ type: "success" | "error"; message: string } | null>(null);
 
-  // Edit Profile fields (to edit user profile on the fly)
+   // Edit Profile fields (to edit user profile on the fly)
   const [editName, setEditName] = useState<string>(profile.name);
   const [editEmail, setEditEmail] = useState<string>(profile.email);
   const [editAge, setEditAge] = useState<number>(profile.age || 34);
   const [editRole, setEditRole] = useState<string>(profile.role || "Senior Consultant");
-  const [editState, setEditState] = useState<string>(profile.state || "Maharashtra");
+  const [editState, setEditState] = useState<string>(profile.state || "");
   const [editHospitalAddress, setEditHospitalAddress] = useState<string>(profile.hospitalAddress || "");
+  const [editHospitalPhone, setEditHospitalPhone] = useState<string>(profile.hospitalPhone || "");
   const [profileSuccess, setProfileSuccess] = useState<string>("");
 
   useEffect(() => {
@@ -161,13 +163,15 @@ export default function ProfileSettingsView({
     setEditEmail(profile.email || "");
     setEditAge(profile.age || 34);
     setEditRole(profile.role || "Senior Consultant");
-    setEditState(profile.state || "Maharashtra");
+    setEditState(profile.state || "");
     setEditHospitalAddress(profile.hospitalAddress || "");
+    setEditHospitalPhone(profile.hospitalPhone || "");
   }, [profile]);
 
   // Delete cases states
   const [deleteConfirmText, setDeleteConfirmText] = useState<string>("");
   const [showDeleteConfirmModal, setShowDeleteConfirmModal] = useState<boolean>(false);
+  const [showLeaveTeamConfirm, setShowLeaveTeamConfirm] = useState(false);
   const [deleteStatus, setDeleteStatus] = useState<string | null>(null);
 
   // Display mode states
@@ -323,29 +327,60 @@ export default function ProfileSettingsView({
   };
 
   const handleRefillCredits = () => {
-    triggerRazorpayCheckout(299, "150 Scribe Credits Refill", 150, "current");
+    startRealCheckout("credits_refill_150");
   };
 
-  const triggerRazorpayCheckout = (amount: number, planName: string, credits: number, tier: string) => {
-    setRazorpayAmount(amount);
-    setRazorpayPlanName(planName);
-    setRazorpayCredits(credits);
-    setRazorpayTier(tier);
-    setRazorpayStep("select");
-    setShowRazorpayModal(true);
-  };
+  const loadRazorpayScript = (): Promise<boolean> => {
+  return new Promise((resolve) => {
+    if ((window as any).Razorpay) return resolve(true);
+    const script = document.createElement("script");
+    script.src = "https://checkout.razorpay.com/v1/checkout.js";
+    script.onload = () => resolve(true);
+    script.onerror = () => resolve(false);
+    document.body.appendChild(script);
+  });
+};
 
-  const handleExecutePayment = () => {
-    setRazorpayStep("processing");
-    setTimeout(() => {
-      onSaveProfile({
-        ...profile,
-        aiCredits: profile.aiCredits + razorpayCredits,
-        subscriptionTier: razorpayTier === "current" ? profile.subscriptionTier : razorpayTier
-      });
-      setRazorpayStep("success");
-    }, 1800);
-  };
+const startRealCheckout = async (planKey: string) => {
+  try {
+    const idToken = await auth.currentUser?.getIdToken();
+    const orderRes = await fetch("/api/payments/create-order", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${idToken}`,
+      },
+      body: JSON.stringify({ planKey }),
+    });
+
+    if (!orderRes.ok) {
+      const err = await orderRes.json().catch(() => ({}));
+      throw new Error(err.error || "Could not start payment.");
+    }
+    const order = await orderRes.json();
+
+    const scriptLoaded = await loadRazorpayScript();
+    if (!scriptLoaded) throw new Error("Could not load Razorpay checkout.");
+
+    const rzp = new (window as any).Razorpay({
+      key: order.keyId,
+      amount: order.amount,
+      currency: order.currency,
+      order_id: order.orderId,
+      name: "ErMate",
+      description: "ErMate Subscription",
+      handler: function () {
+        alert("Payment successful! Your credits will be updated momentarily.");
+      },
+      theme: { color: "#059669" },
+    });
+
+    rzp.open();
+  } catch (err: any) {
+    console.error("Checkout failed:", err);
+    alert(err.message || "Payment could not be started.");
+  }
+};
 
   // Toggle Shift Checked-In State
   const handleToggleShift = () => {
@@ -367,7 +402,7 @@ export default function ProfileSettingsView({
     setTimeout(() => toast.remove(), 4000);
   };
 
-  // Save modified profile fields
+   // Save modified profile fields
   const handleSaveProfileForm = (e: React.FormEvent) => {
     e.preventDefault();
     setProfileSuccess("");
@@ -379,7 +414,8 @@ export default function ProfileSettingsView({
       role: profile.role, // Preserved; role changes require HOD approval workflow (ErMate Rule 10)
       hospital: hospitalName,
       state: editState,
-      hospitalAddress: editHospitalAddress
+      hospitalAddress: editHospitalAddress,
+      hospitalPhone: editHospitalPhone
     });
     setProfileSuccess(`Clinical profile updated successfully!`);
     setTimeout(() => setProfileSuccess(""), 3500);
@@ -417,22 +453,26 @@ export default function ProfileSettingsView({
   const medCases = cases.filter(c => c.patient?.caseType === "Medical").length;
   const traumaCases = cases.filter(c => c.patient?.caseType === "Trauma").length;
 
-  const currentOrigin = typeof window !== "undefined" ? window.location.origin : "https://ermate.hospital";
-  const [preparedInviteLink, setPreparedInviteLink] = useState<string>(
-    `${currentOrigin}/join/${(hospitalName || "general").toLowerCase().replace(/[^a-z0-9]+/g, "-")}-er-invite`
-  );
+    const currentOrigin = typeof window !== "undefined" ? window.location.origin : "https://ermate.hospital";
+  const [preparedInviteLink, setPreparedInviteLink] = useState<string>("");
 
   useEffect(() => {
     let active = true;
-    if (hospitalName) {
-      createTeamInvite(hospitalName, auth.currentUser?.uid || "hod", profile.name || "HOD").then(res => {
+    const savedHospital = (profile.hospital || "").trim();
+    const uid = auth.currentUser?.uid;
+    if (savedHospital && uid) {
+      createTeamInvite(savedHospital, uid, profile.name || "", {
+        hospitalAddress: profile.hospitalAddress,
+        hospitalPhone: profile.hospitalPhone,
+        state: profile.state
+      }).then(res => {
         if (active) {
           setPreparedInviteLink(res.link);
         }
       });
     }
     return () => { active = false; };
-  }, [hospitalName, profile.name]);
+  }, [profile.hospital]);
 
   // Menu items list component rendering
   const renderProfileMenuList = () => {
@@ -1113,9 +1153,7 @@ export default function ProfileSettingsView({
                 <button
                   type="button"
                   onClick={async () => {
-                    if (window.confirm(`Are you sure you want to leave your team affiliation at "${profile.hospital}"?\n\nThis will safely disconnect you from their clinical roster, but all of your local cases, rounds histories, and private clinical memories will remain perfectly safe with you.`)) {
-                      await onLeaveTeam();
-                    }
+                    setShowLeaveTeamConfirm(true);
                   }}
                   className="px-3.5 py-1.5 border border-rose-200 dark:border-rose-900 hover:bg-rose-50 dark:hover:bg-rose-950/20 text-rose-600 dark:text-rose-400 font-black text-xs rounded-xl transition-all cursor-pointer flex items-center gap-1.5 bg-transparent"
                 >
@@ -1521,19 +1559,16 @@ export default function ProfileSettingsView({
       title = "Roster Setup & Workbench";
       content = (
         <div className="space-y-6 text-left">
-          <TeamBuilder
+                <TeamBuilder
             hospitalName={hospitalName}
             onHospitalChange={(name) => {
               setHospitalName(name);
-              onSaveProfile({
-                ...profile,
-                hospital: name
-              });
             }}
             profile={profile}
             onSaveConfig={(teamName, department, teamColor) => {
               onSaveProfile({
                 ...profile,
+                hospital: hospitalName.trim(),
                 teamName,
                 department,
                 teamColor
@@ -2075,7 +2110,7 @@ export default function ProfileSettingsView({
                     setSimError("Device label required.");
                     return;
                   }
-                  if (cleanInput !== cleanCode && cleanInput !== "777888") {
+                                   if (cleanInput !== cleanCode) {
                     setSimError("Invalid PIN code.");
                     return;
                   }
@@ -2262,7 +2297,7 @@ export default function ProfileSettingsView({
                   type="button"
                   onClick={() => {
                     const price = billingPeriod === "monthly" ? 1199 : 9990;
-                    triggerRazorpayCheckout(price, "Individual Pro Plan", 1500, "Individual Pro");
+                    startRealCheckout(billingPeriod === "monthly" ? "individual_pro_monthly" : "individual_pro_annual");
                   }}
                   className="w-full py-3 bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-extrabold text-xs rounded-xl transition-all cursor-pointer shadow-md"
                 >
@@ -2353,7 +2388,7 @@ export default function ProfileSettingsView({
                           ? (residentsPerTeam * 399 + consultantsPerTeam * 599)
                           : (residentsPerTeam * 3390 + consultantsPerTeam * 4990);
                         const docCount = residentsPerTeam + consultantsPerTeam;
-                        triggerRazorpayCheckout(amount, `Roster Team Plan (${docCount} Doctors)`, docCount * 450, "Hospital Team Premium");
+                        startRealCheckout("hospital_team_premium");
                       }}
                       className="py-2.5 px-4 bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-extrabold text-[11px] rounded-xl transition-all cursor-pointer shadow-md"
                     >
@@ -2366,7 +2401,7 @@ export default function ProfileSettingsView({
           )}
         </div>
       );
-    } else if (selectedSubSection === "role") {
+       } else if (selectedSubSection === "role") {
       title = "Clinical Role Customizer";
       content = (
         <form onSubmit={handleSaveProfileForm} className="space-y-4 font-mono text-xs text-left">
@@ -2429,6 +2464,7 @@ export default function ProfileSettingsView({
               onChange={(e) => setEditState(e.target.value)}
               className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-800 dark:text-slate-200 font-bold"
             >
+              <option value="">Select state</option>
               <option value="Maharashtra">Maharashtra</option>
               <option value="Delhi">Delhi NCR</option>
               <option value="Karnataka">Karnataka</option>
@@ -2457,6 +2493,17 @@ export default function ProfileSettingsView({
               value={editHospitalAddress}
               onChange={(e) => setEditHospitalAddress(e.target.value)}
               placeholder="e.g. 12 Medical Enclave, Civil Lines, Central District"
+              className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-800 dark:text-slate-200"
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-[10px] text-slate-450 block font-bold uppercase">Hospital Contact Number (printed on discharge summaries)</label>
+            <input
+              type="tel"
+              value={editHospitalPhone}
+              onChange={(e) => setEditHospitalPhone(e.target.value)}
+              placeholder="e.g. 0484-2905000"
               className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-800 dark:text-slate-200"
             />
           </div>
@@ -4386,7 +4433,7 @@ export default function ProfileSettingsView({
                         />
                         <button
                           type="button"
-                          onClick={handleExecutePayment}
+                          onClick={() => {}}
                           className="w-full mt-2 py-2.5 bg-emerald-500 text-slate-950 font-black rounded-lg"
                         >
                           Verify & Pay ₹{razorpayAmount.toLocaleString("en-IN")}
@@ -4420,7 +4467,7 @@ export default function ProfileSettingsView({
                         </div>
                         <button
                           type="button"
-                          onClick={handleExecutePayment}
+                          onClick={() => {}}
                           className="w-full mt-3 py-2.5 bg-emerald-500 text-slate-950 font-black rounded-lg"
                         >
                           Pay ₹{razorpayAmount.toLocaleString("en-IN")} Safely
@@ -4528,6 +4575,23 @@ export default function ProfileSettingsView({
         )}
 
       </div>
+      <ConfirmModal
+        isOpen={showLeaveTeamConfirm}
+        title="Leave Team Affiliation"
+        message={
+          <>
+            Are you sure you want to leave your team affiliation at <strong className="text-slate-900 dark:text-white">{profile.hospital}</strong>?
+            <br /><br />
+            This will safely disconnect you from their clinical roster, but all of your local cases, rounds histories, and private clinical memories will remain perfectly safe with you.
+          </>
+        }
+        confirmText="Leave Team"
+        onConfirm={async () => {
+          setShowLeaveTeamConfirm(false);
+          await onLeaveTeam();
+        }}
+        onCancel={() => setShowLeaveTeamConfirm(false)}
+      />
     </div>
   );
 }
