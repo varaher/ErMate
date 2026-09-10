@@ -354,7 +354,9 @@ async function performTranscription(file: Express.Multer.File, languageCode: str
   }
 
   const sarvamKey = process.env.SARVAM_API_KEY || process.env.SARVAM_AI_API_KEY;
-  const hasSarvam = !!(sarvamKey && sarvamKey !== "MY_SARVAM_API_KEY" && sarvamKey.trim() !== "");
+  if (!sarvamKey || sarvamKey === "MY_SARVAM_API_KEY" || sarvamKey.trim() === "") {
+    throw new Error("ErMate Voice API key is missing or invalid. Transcription is disabled.");
+  }
 
   // Maximum size 50MB
   if (file.size > 50 * 1024 * 1024) {
@@ -377,9 +379,6 @@ async function performTranscription(file: Express.Multer.File, languageCode: str
   }
 
   try {
-    if (!hasSarvam) {
-      throw new Error("SARVAM_API_KEY missing, forcing fallback.");
-    }
     let finalTranscript = "";
     console.log(`[Transcription] Processing ${chunks.length} chunks via ErMate Voice API`);
     for (let i = 0; i < chunks.length; i++) {
@@ -391,7 +390,7 @@ async function performTranscription(file: Express.Multer.File, languageCode: str
       }
     }
 
-        if (!finalTranscript.trim()) {
+    if (!finalTranscript.trim()) {
       throw new Error("No speech was detected in the recording. Please try dictating again, speaking clearly and close to the microphone.");
     }
     return {
@@ -400,41 +399,10 @@ async function performTranscription(file: Express.Multer.File, languageCode: str
       method: "ermate_voice"
     };
   } catch (err: any) {
-    console.warn(`[Transcription] Sarvam Voice exception/missing key: ${err.message}. Falling back to Gemini 1.5 Flash Audio.`);
-    try {
-      const ai = getAI();
-      const response = await ai.models.generateContent({
-        model: "gemini-1.5-flash",
-        contents: [
-          {
-            role: "user",
-            parts: [
-              {
-                text: "Please transcribe this medical audio recording accurately. Do not add commentary. Output only the transcript exactly as spoken."
-              },
-              {
-                inlineData: {
-                  data: file.buffer.toString("base64"),
-                  mimeType: file.mimetype || "audio/webm"
-                }
-              }
-            ]
-          }
-        ]
-      });
-      const transcript = response.text || "";
-      if (!transcript.trim()) {
-         throw new Error("No speech detected.");
-      }
-      return {
-        success: true,
-        transcript: transcript.trim(),
-        method: "gemini_voice_fallback"
-      };
-    } catch (fallbackErr: any) {
-      console.error(`[Transcription] Gemini fallback also failed: ${fallbackErr.message}`);
-      throw new Error("Voice transcription is temporarily unavailable. Please try dictating again in a moment, or enter the clinical details manually.");
-    }
+    console.error(`[Transcription] Sarvam Voice exception: ${err.message}. No fallback — Sarvam is the sole transcription engine by deliberate design.`);
+    throw new Error(
+      "Voice transcription is temporarily unavailable. Please try dictating again in a moment, or enter the clinical details manually."
+    );
   }
 }
 

@@ -1,7 +1,9 @@
 // ============================================================
+// // ============================================================
 // ErMate — Discharge Summary System
-// Matches Rajagiri Hospital format exactly
+// Matches standard Indian hospital discharge format
 // File: server/dischargeSummary.ts
+// ============================================================
 // ============================================================
 
 import Anthropic from '@anthropic-ai/sdk';

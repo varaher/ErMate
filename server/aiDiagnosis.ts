@@ -147,36 +147,86 @@ export interface MedicalSearchResult {
   sourceType: "pubmed" | "textbook" | "guideline" | "wikem";
 }
 
+const PUBMED_BASE = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils";
+const PUBMED_TIMEOUT_MS = 6000; // literature search is an enrichment, not core reasoning —
+// must not stall the doctor's diagnosis-suggestion request if PubMed is slow/down.
+
+function pubmedApiKeyParam(): string {
+  const key = process.env.PUBMED_API_KEY;
+  return key ? `&api_key=${key}` : "";
+}
+
+async function fetchWithTimeout(url: string, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { signal: controller.signal });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+/**
+ * REAL PubMed literature search via NCBI E-utilities — no API key
+ * required (optional PUBMED_API_KEY env var raises the rate limit
+ * from 3/sec to 10/sec if needed). Returns [] on ANY failure —
+ * network error, empty result set, or parse error — never a
+ * fabricated citation. Downstream code already handles an empty
+ * array correctly (omits the citations section entirely).
+ *
+ * NOTE: snippet is intentionally left as "" — fetching a real
+ * abstract requires a second round-trip (efetch) per result, adding
+ * latency to a synchronous doctor-facing call. Real title/authors/
+ * year/URL from an actual search is already correct; a follow-up
+ * pass can add real abstract snippets if the latency cost is
+ * acceptable for this feature.
+ */
 export async function searchMedicalLiterature(
   chiefComplaint: string,
   age: number,
   history?: string
 ): Promise<MedicalSearchResult[]> {
-  const isPediatric = age < 16;
-  const topic = chiefComplaint || "Emergency Medical Evaluation";
-  
-  return [
-    {
-      id: "ref-1",
-      title: isPediatric ? "Nelson Textbook of Pediatrics - Emergency Protocols" : "Tintinalli's Emergency Medicine: A Comprehensive Study Guide (9th Ed)",
-      source: isPediatric ? "Nelson Pediatrics" : "McGraw-Hill Medical",
-      authors: isPediatric ? "Kliegman RM et al." : "Tintinalli JE et al.",
-      year: "2023",
-      url: "https://accessmedicine.mhmedical.com/book.aspx?bookid=2353",
-      snippet: `Standard evaluation protocols for ${topic}. Emphasizes early stabilization, primary survey (ABCDE), and targeted diagnostic workup.`,
-      sourceType: "textbook"
-    },
-    {
-      id: "ref-2",
-      title: isPediatric ? "PALS Clinical Practice Guidelines for Acute Pediatric Presentation" : "ATLS Advanced Trauma & Acute Care Life Support Guidelines",
-      source: "American Heart Association / ACS",
-      authors: "AHA/ACS Taskforce",
-      year: "2024",
-      url: "https://cadd.org/guidelines",
-      snippet: `Evidence-based clinical guidelines regarding ${topic} management in emergency department settings.`,
-      sourceType: "guideline"
+  const isPediatric = age <= 16;
+  const rawQuery = (chiefComplaint || "").trim();
+  if (!rawQuery) return [];
+
+  const searchTerm = `${rawQuery} AND (emergency medicine OR emergency department)${isPediatric ? " AND (pediatric OR child)" : " AND adult"}`;
+
+  try {
+    const esearchUrl = `${PUBMED_BASE}/esearch.fcgi?db=pubmed&retmode=json&retmax=3&sort=relevance&tool=ErMate&term=${encodeURIComponent(searchTerm)}${pubmedApiKeyParam()}`;
+    const esearchRes = await fetchWithTimeout(esearchUrl, PUBMED_TIMEOUT_MS);
+    if (!esearchRes.ok) throw new Error(`PubMed esearch failed: ${esearchRes.status}`);
+    const esearchData: any = await esearchRes.json();
+    const pmids: string[] = esearchData?.esearchresult?.idlist || [];
+    if (pmids.length === 0) return [];
+
+    const esummaryUrl = `${PUBMED_BASE}/esummary.fcgi?db=pubmed&retmode=json&tool=ErMate&id=${pmids.join(",")}${pubmedApiKeyParam()}`;
+    const esummaryRes = await fetchWithTimeout(esummaryUrl, PUBMED_TIMEOUT_MS);
+    if (!esummaryRes.ok) throw new Error(`PubMed esummary failed: ${esummaryRes.status}`);
+    const esummaryData: any = await esummaryRes.json();
+
+    const results: MedicalSearchResult[] = [];
+    for (const pmid of pmids) {
+      const doc = esummaryData?.result?.[pmid];
+      if (!doc || !doc.title) continue;
+      const firstAuthor = doc.authors?.[0]?.name;
+      const yearMatch = doc.pubdate ? String(doc.pubdate).match(/\d{4}/) : null;
+      results.push({
+        id: `pubmed-${pmid}`,
+        title: String(doc.title).replace(/\.$/, ""),
+        source: doc.fulljournalname || doc.source || "PubMed",
+        authors: firstAuthor ? `${firstAuthor} et al.` : undefined,
+        year: yearMatch ? yearMatch[0] : undefined,
+        url: `https://pubmed.ncbi.nlm.nih.gov/${pmid}/`,
+        snippet: "", // never fabricate summary text — see docblock above
+        sourceType: "pubmed",
+      });
     }
-  ];
+    return results;
+  } catch (err: any) {
+    console.warn("[aiDiagnosis] PubMed literature search failed, returning no sources:", err?.message || err);
+    return [];
+  }
 }
 
 function formatABGData(abgData?: ABGData): string {
@@ -231,8 +281,9 @@ export async function generateDiagnosisSuggestions(caseData: {
   gender: string;
   abgData?: ABGData;
 }): Promise<{ suggestions: DiagnosisSuggestion[]; redFlags: RedFlag[]; sources: SearchSource[] }> {
-  // PALS age cutoff: age < 16
-  const isPediatric = caseData.age < 16;
+    // PALS age cutoff: age <= 16 (matches locked pediatric cutoff used
+  // elsewhere in the app, e.g. voiceExtraction.ts's sanitizeExtracted())
+  const isPediatric = caseData.age <= 16;
   const abgInfo = formatABGData(caseData.abgData);
 
   // DPDP Act 2023 Server-Side De-identification
@@ -260,7 +311,7 @@ RULES:
 1. Provide up to 5 severity-ranked differential diagnoses.
 2. Provide specific red flags requiring immediate action or monitoring.
 3. Reference literature entries as [1], [2] corresponding to provided sources.
-4. Patient protocol: ${isPediatric ? "PEDIATRIC (age < 16, use PALS protocols, weight-based dosing)" : "ADULT (use ATLS protocols)"}.
+4. Patient protocol: ${isPediatric ? "PEDIATRIC (age ≤ 16, use PALS protocols, weight-based dosing)" : "ADULT (use ATLS protocols)"}.
 5. Return ONLY a valid JSON object matching this schema:
 {
   "suggestions": [
@@ -388,10 +439,9 @@ export async function interpretABG(
   if (safeContext?.examination) clinicalContextParts.push(`Examination: ${safeContext.examination}`);
   if (safeContext?.diagnosis) clinicalContextParts.push(`Working Diagnosis: ${safeContext.diagnosis}`);
 
-  const isPediatric = patientContext?.age !== undefined ? (typeof patientContext.age === 'number' ? patientContext.age < 16 : parseInt(patientContext.age as string) < 16) : false;
-
+   const isPediatric = patientContext?.age !== undefined ? (typeof patientContext.age === 'number' ? patientContext.age <= 16 : parseInt(patientContext.age as string) <= 16) : false;
   const systemPrompt = `You are an expert emergency medicine physician providing ABG/VBG interpretation. Be concise, clinically relevant, and actionable. When clinical context is provided, correlate ABG findings with the full clinical picture.
-${isPediatric ? "\nCRITICAL: This is a PEDIATRIC patient (age < 16). Apply PALS protocols and use age-appropriate normal reference ranges for ABG interpretation." : ""}`;
+${isPediatric ? "\nCRITICAL: This is a PEDIATRIC patient (age ≤ 16). Apply PALS protocols and use age-appropriate normal reference ranges for ABG interpretation." : ""}`;
 
   const userPrompt = `Interpret the following ABG/VBG values using a 5-step approach:
 1. Primary Acid-Base Disturbance

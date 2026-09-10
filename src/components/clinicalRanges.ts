@@ -21,6 +21,7 @@ export type ClinicalParam =
   | "lactate"
   | "na"
   | "k"
+  | "cl"
   | "creatinine"
   | "urea"
   | "hb"
@@ -29,7 +30,6 @@ export type ClinicalParam =
   | "crp"
   | "inr"
   | "gcs";
-
 interface Range {
   low?: number;   // below this = abnormal
   high?: number;  // above this = abnormal
@@ -53,9 +53,10 @@ export const CLINICAL_RANGES: Record<ClinicalParam, Range> = {
   hco3:      { low: 22,   high: 26 },                 // mmol/L
   lactate:   { high: 2.0 },                            // mmol/L
 
-  // Electrolytes
+    // Electrolytes
   na:        { low: 135,  high: 145 },                // mmol/L
   k:         { low: 3.5,  high: 5.0 },                // mmol/L
+  cl:        { low: 98,   high: 107 },                // mmol/L (matches adult band used in pediatricClinicalRanges.ts for the oldest age group)
 
   // Renal
   creatinine:{ low: 0.6,  high: 1.3 },                // mg/dL
