@@ -253,8 +253,7 @@ function getFriendlyErrorMessage(err: any): string {
   return rawStr.length > 90 ? "Processing busy — try again shortly" : rawStr;
 }
 
-// Helper for Anthropic Claude API (Claude Haiku / Sonnet) as automatic fallback
-let isAnthropicDisabled = false;
+
 
 // ROUTE-16 FIX (Sept 2026): callClaudeTextAPI() has been removed. It was
 // dead code — no route in this file called it — but its fallback chain
@@ -264,6 +263,13 @@ let isAnthropicDisabled = false;
 // a route to this helper instead of callClaudeSonnetOnly would silently
 // reintroduce the exact violation that has already happened three times
 // per the audit history. Removed outright rather than left unused.
+// P FIX (Sept 2026): removed the module-level isAnthropicDisabled latch.
+// It previously turned a single transient 400/401/402/404 into a
+// PERMANENT, process-wide outage of every Claude Sonnet route until the
+// server was manually restarted — worse than the error it guarded
+// against. The key is now checked fresh on every call; a failure here
+// falls through to the caller's existing honest-failure message only,
+// same as every other route in this file.
 
 async function callClaudeSonnetHandover(prompt: string, systemInstruction: string): Promise<any> {
   return await callClaudeSonnetOnly(prompt, systemInstruction, true);
@@ -271,16 +277,10 @@ async function callClaudeSonnetHandover(prompt: string, systemInstruction: strin
 
 // Dedicated helper for Clinical Reasoning & Q&A
 async function callClaudeSonnetOnly(prompt: string, systemInstruction: string, expectJson: boolean = false): Promise<any> {
-  const safePrompt = deidentifyText(prompt).deidentified;
-
-
-  if (isAnthropicDisabled) {
-    return null;
-  }
+   const safePrompt = deidentifyText(prompt).deidentified;
 
   const anthropicKey = process.env.ANTHROPIC_API_KEY;
   if (!anthropicKey || anthropicKey.trim() === "" || anthropicKey === "MY_ANTHROPIC_API_KEY") {
-    isAnthropicDisabled = true;
     return null;
   }
 
@@ -303,9 +303,9 @@ async function callClaudeSonnetOnly(prompt: string, systemInstruction: string, e
         },
         signal: controller.signal,
         body: JSON.stringify({
-          model: modelName,
+                    model: modelName,
           max_tokens: 4096,
-          temperature: 0.2,
+          temperature: 0.0,
           system: expectJson 
             ? systemInstruction + " IMPORTANT: Return ONLY valid raw JSON with no preamble, markdown code fences, or formatting wrapper."
             : systemInstruction,
@@ -330,12 +330,17 @@ async function callClaudeSonnetOnly(prompt: string, systemInstruction: string, e
         } catch {
           return { replyText: contentText, text: contentText };
         }
-      } else {
+          } else {
         const errText = await response.text();
         console.warn(`[Clinical Reasoning] Claude Sonnet (${modelName}) status ${response.status}: ${errText}`);
-        if ([400, 401, 402, 404].includes(response.status) || errText.includes("credit balance") || errText.includes("invalid_x_api_key")) {
-          console.warn("[Clinical Reasoning] Anthropic API key or credit issue. Disabling Claude.");
-          isAnthropicDisabled = true;
+
+        // 401 (bad key) / 402 (insufficient credit) apply regardless of
+        // which model is called — no point retrying a second model with
+        // the same key. 400/404 can be model-specific (e.g. a deprecated
+        // model name), so let the loop try the next model in that case
+        // instead of giving up on the whole request.
+        if (response.status === 401 || response.status === 402 || errText.includes("credit balance") || errText.includes("invalid_x_api_key")) {
+          console.warn("[Clinical Reasoning] Anthropic API key or credit issue on this request — not retrying with another model.");
           break;
         }
       }

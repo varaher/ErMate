@@ -12,7 +12,7 @@ import {
   generateDifferentials,
 } from '../extraction.ts';
 import { generateDischargeSummary as generateEMRDischargeSummary } from '../dischargeSummary.ts';
-
+import { requireAuth, AuthRequest } from '../../src/middleware/auth';
 const router = Router();
 
 // ── Route 1: Voice dictation → case extraction ────────────────
@@ -139,8 +139,17 @@ router.post(
       }
     }
 
+       // Never substitute a placeholder string for missing content — that risks
+    // fabricating a full clinical extraction from meaningless input.
+    if (!hasText) {
+      return res.status(422).json({
+        success: false,
+        error: 'Image analysis failed and no text was provided. Please retry the photo or paste the case sheet text directly.',
+      });
+    }
+
     // Default to full 5-step handover pipeline
-    const result = await extractHandoverData(rawText || "Uploaded Case Sheet Photo", doctorName, patientName);
+    const result = await extractHandoverData(rawText, doctorName, patientName);
     return res.json(result);
   }
 );

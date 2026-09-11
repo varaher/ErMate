@@ -70,10 +70,10 @@ const PHI_PATTERNS = [
     label: 'Patient Name'
   },
 
-  // 7. Hospital & Facility Names
+   // 7. Hospital & Facility Names
   {
     type: 'hospitals' as const,
-    pattern: /\b(?:[A-Z][a-zA-Object\w]+\s+)*(?:Hospital|Medical\s+Center|Clinic|Institute|Nursing\0|Healthcare|Super\s+Speciality)\b/gi,
+    pattern: /\b(?:[A-Za-z]+\s+)*(?:Hospital|Medical\s+Center|Clinic|Institute|Nursing\s+Home|Healthcare|Super\s+Speciality)\b/gi,
     replacement: '[HOSPITAL]',
     label: 'Hospital Facility'
   }
