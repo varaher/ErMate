@@ -392,11 +392,22 @@ export async function generateMortalityAudit(
     }
   }
 
-  // If both Claude Sonnet and GPT-4o fail or are unavailable:
-  console.error("[MortalityAudit] Both Claude Sonnet and GPT-4o failed or lack API keys.");
+  // TIER 4 FIX (Sept 2026): buildHeuristicMortalityAudit() was fully
+  // written but never actually invoked — every AI-tier failure fell
+  // straight through to a bare error, silently discarding the careful
+  // "never fabricate a judgment call" fallback design below it. Per the
+  // locked pipeline (Claude Sonnet -> GPT-4o -> Gemini Pro -> local
+  // heuristic), this is now genuinely the last tier: it extracts only
+  // what regex can verify and flags everything else for mandatory
+  // manual review, rather than surfacing a dead end. Runs on `cleaned`
+  // (already de-identified) — never the raw, unprotected `rawText` —
+  // so PHI handling stays consistent with every tier above it.
+  console.warn("[MortalityAudit] All AI models (Claude Sonnet, GPT-4o, Gemini Pro) failed or unavailable. Falling back to heuristic extraction — this audit REQUIRES manual clinician review before use.");
+  const heuristicAudit = buildHeuristicMortalityAudit(cleaned);
   return {
-    success: false,
-    error: "Audit generation unavailable. Please try again later.",
+    success: true,
+    audit: heuristicAudit,
+    phiProtected,
   };
 }
 

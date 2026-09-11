@@ -432,8 +432,15 @@ function mapExtractionToCaseSheetFields(
   // extending ClinicalParam is a separate product decision.
   // ══════════════════════════════════════════════════════════════
   if (raw.vbg && typeof raw.vbg === 'object') {
+      // CHLORIDE FIX (Sept 2026): "cl" was missing from this map entirely.
+    // The extraction schema (extraction.ts / voiceExtraction.ts) has
+    // correctly asked for and received chloride from the model since
+    // this session's earlier fix, but this mapping step — which writes
+    // the model's output into the actual case sheet field — was never
+    // updated, so a dictated chloride value was silently dropped here
+    // even though it was successfully extracted upstream.
     const VBG_PARAM_MAP: Record<string, string> = {
-      ph: "ph", pco2: "pco2", hco3: "hco3", lactate: "lactate", na: "na", k: "k",
+      ph: "ph", pco2: "pco2", hco3: "hco3", lactate: "lactate", na: "na", k: "k", cl: "cl",
     };
     const values: { name: string; param: string; value: number | null }[] = [];
     for (const [key, mappedParam] of Object.entries(VBG_PARAM_MAP)) {

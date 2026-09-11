@@ -16,9 +16,11 @@ import { deidentifyText } from "./deidentify.ts";
  * 2. Discharge Course Synthesis:
  *    Claude 3.5 Sonnet PRIMARY → GPT-4o FALLBACK.
  *
- * 3. Temperature Control:
- *    Set temperature: 0.0 on all clinical extractions and calculations.
- *    Set temperature: 0.2 on differential reasoning/synthesis for deterministic safety.
+ *  * 3. Temperature Control:
+ *    Set temperature: 0.0 across all functions in this file — extractions,
+ *    calculations, and clinical reasoning/synthesis alike. Determinism is
+ *    the safer default for medico-legal clinical output; same input must
+ *    always produce the same differential, interpretation, or narrative.
  *
  * 4. DPDP Act 2023 Server-Side De-identification:
  *    All user inputs pass through deidentifyText() BEFORE sending to external AI models.
@@ -61,7 +63,13 @@ async function callClaudeSonnetForReasoning(
     const msg = await anthropic.messages.create({
       model: "claude-sonnet-4-6",
       max_tokens: maxTokens,
-      temperature: 0.2,
+      // FIX (Sept 2026): 0.2 -> 0.0. Per Rule 8, deterministic output is
+      // the safer default for clinical reasoning (diagnosis suggestions,
+      // ABG interpretation, rounds debrief) — same input should produce
+      // the same differential/interpretation every time, not vary run to
+      // run. Matches generateCourseInHospital's temperature in this same
+      // file, which was already 0.0.
+      temperature: 0.0,
       system: systemPrompt,
       messages: [{ role: "user", content: userPrompt }],
     });

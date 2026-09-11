@@ -1783,15 +1783,16 @@ app.post(
   }
 );
 
-function generateHeuristicDiscussionResponse(contextType: string, data: any, userQuery: string): string {
-  const patientName = data?.patientLabel?.name || data?.patient?.name || data?.patientInfo?.name || data?.name || "Patient";
-  const bedNo = data?.patientLabel?.bed || data?.bed || data?.bedNo || "N/A";
-  const dx = data?.diagnosis || data?.provisionalPrimaryDiagnosis || data?.assessment || "Under evaluation";
-  const done = Array.isArray(data?.done) ? data.done.join(" · ") : (data?.done || "Standard monitoring");
-  const toBeDone = Array.isArray(data?.toBeDone) ? data.toBeDone.join(" · ") : (data?.toBeDone || "Continue active care");
-
-  return `**Clinical Discussion Note for ${patientName} (Bed ${bedNo})**\n\n- **Working Diagnosis**: ${dx}\n- **Completed Actions**: ${done}\n- **Pending Plan**: ${toBeDone}\n\n*Clinical Assessment regarding "${userQuery}"*: Patient requires continuous monitoring of vitals, execution of pending orders, and close reassessment. All discussion points have been recorded in the clinical log.`;
-}
+// FINDING O FIX (Sept 2026): generateHeuristicDiscussionResponse() removed
+// entirely. It was dead code after the fix above — nothing in
+// /api/case-discussion calls it anymore, since both failure paths now
+// return an honest {success: false} instead of this heuristic text
+// disguised as a real response. Removed outright (rather than left
+// unused) for the same reason callClaudeTextAPI was removed earlier in
+// this file: an unused function that produces a plausible-looking fake
+// clinical note is a landmine — a future edit could accidentally wire a
+// route back to it and silently reintroduce the exact Rule 1 violation
+// this fix corrected.
 
 app.post("/api/case-discussion", async (req, res) => {
   try {
@@ -2069,22 +2070,31 @@ YOUR CRITICAL GUIDELINES:
       });
     }
 
-    // Fallback to deterministic heuristic discussion generator if Claude fails
-    const heuristicText = generateHeuristicDiscussionResponse(effectiveContextType, rawData, message || "Clinical review");
+       // FINDING O FIX (Sept 2026): this heuristic text was previously
+    // returned as {success: true}, indistinguishable from a real Claude
+    // Sonnet clinical response. Per Rule 1, Clinical Q&A / Case
+    // Discussion has NO fallback model — when Claude is unavailable,
+    // the honest behavior is a clear failure, never a templated
+    // "requires continuous monitoring" note presented as if a clinician
+    // AI generated it. The frontend must show an unavailable message,
+    // not silently render this as a real answer.
+    console.warn("[CaseDiscussion] Claude Sonnet unavailable or returned empty — returning honest failure, no heuristic disguised as success.");
     return res.json({
-      success: true,
-      response: heuristicText,
-      reply: heuristicText,
-      model: "heuristic-clinical-discussion-engine"
+      success: false,
+      response: "Claude Sonnet clinical discussion is temporarily unavailable. Please try again shortly.",
+      reply: "Claude Sonnet clinical discussion is temporarily unavailable. Please try again shortly.",
+      model: "unavailable"
     });
   } catch (error: any) {
+    // FINDING O FIX (Sept 2026): same principle as above — an unhandled
+    // error in this route must surface as an honest failure, not a
+    // heuristic note wrapped in {success: true}.
     console.error("[Clinical Reasoning] Case Discussion Error:", error?.message || error);
-    const fallbackText = generateHeuristicDiscussionResponse(req.body?.contextType || "case", req.body?.contextData || req.body?.caseData || {}, req.body?.message || "Clinical review");
-    return res.json({
-      success: true,
-      response: fallbackText,
-      reply: fallbackText,
-      model: "heuristic-fallback-engine"
+    return res.status(503).json({
+      success: false,
+      response: "Claude Sonnet clinical discussion is temporarily unavailable. Please try again shortly.",
+      reply: "Claude Sonnet clinical discussion is temporarily unavailable. Please try again shortly.",
+      model: "unavailable"
     });
   }
 });

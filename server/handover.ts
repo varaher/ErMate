@@ -406,9 +406,17 @@ async function callClaude(
       .replace(/```json\n?/g, '')
       .replace(/```\n?/g, '')
       .trim();
-  } catch (err: any) {
-    if (err?.status === 400 || err?.status === 401 || err?.status === 402 || String(err?.message || "").includes("credit balance")) {
-            console.warn('[Handover] Anthropic credit balance low or key issue. Routing handover tasks to Gemini.');
+   } catch (err: any) {
+    // FIX (Sept 2026): removed status 400 from the disable trigger, same
+    // correction applied to callClaudeSonnetOnly in server.ts (Finding P)
+    // and extractPatternsFromUnprocessedFeedback in learningService.ts.
+    // A 400 is commonly a malformed request or deprecated model name, not
+    // a billing/auth problem — it shouldn't disable Claude for handover
+    // synthesis sitewide for 5 minutes. Only 401 (bad key) and 402/
+    // credit-balance (insufficient credit) genuinely indicate the key
+    // itself is the problem.
+    if (err?.status === 401 || err?.status === 402 || String(err?.message || "").includes("credit balance")) {
+      console.warn('[Handover] Anthropic credit balance low or key issue. Routing handover tasks to Gemini.');
       anthropicDisabledUntil = Date.now() + ANTHROPIC_DISABLE_COOLDOWN_MS;
     }
     throw err;
@@ -1077,7 +1085,7 @@ const alertBanner = parsed.alertBanner || {
         name,
         ageGender: ageSex,
         triage: status === "critical" ? "P1 (Immediate)" : status === "stable" ? "P3 (Non-Urgent)" : "P2 (Urgent)",
-        vitals: vitalsNow || "Vitals documented in notes",
+              vitals: vitalsNow || "Not documented",
         rawNotes: parsed.rawNotes || reversed,
         structuredSBAR: parsed.structuredSBAR || {
           situation: story ? `${story} (Dx: ${diagnosis})` : `Patient ${name} (${ageSex}). Dx: ${diagnosis}`,

@@ -1,4 +1,4 @@
-import { GoogleGenAI } from "@google/genai";
+
 import Anthropic from "@anthropic-ai/sdk";
 import { deidentifyText } from "./deidentify";
 let anthropicClient: Anthropic | null = null;
@@ -210,7 +210,7 @@ Do NOT wrap output in markdown fences if possible, or return valid JSON inside \
       const msg = await anthropic.messages.create({
         model: "claude-sonnet-4-6",
         max_tokens: 1500,
-        temperature: 0.1,
+        temperature: 0.0,
         messages: [{ role: "user", content: prompt }]
       });
 
@@ -220,8 +220,15 @@ Do NOT wrap output in markdown fences if possible, or return valid JSON inside \
         extractedList = JSON.parse(jsonMatch[0]);
       }
     } catch (err: any) {
-          console.warn("[Learning Pattern Extraction] Claude Sonnet unavailable or credit limit reached, using offline fallback extraction:", err?.message || err);
-      if (err?.status === 400 || err?.status === 401 || err?.status === 402 || String(err?.message || "").includes("credit balance")) {
+      console.warn("[Learning Pattern Extraction] Claude Sonnet unavailable or credit limit reached, using offline fallback extraction:", err?.message || err);
+      // FIX (Sept 2026): removed status 400 from the disable trigger,
+      // matching the same correction applied to callClaudeSonnetOnly in
+      // server.ts (Finding P). A 400 is commonly a malformed request or
+      // deprecated model name, not a billing/auth problem — it shouldn't
+      // silently disable this pipeline's use of Claude for 5 minutes.
+      // Only 401 (bad key) and 402/credit-balance (insufficient credit)
+      // genuinely indicate the key itself is the problem.
+      if (err?.status === 401 || err?.status === 402 || String(err?.message || "").includes("credit balance")) {
         anthropicDisabledUntilInLearning = Date.now() + 5 * 60 * 1000; // 5-minute circuit breaker, matches ROUTE-07/13
       }
     }
