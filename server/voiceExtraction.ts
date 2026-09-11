@@ -374,9 +374,44 @@ export function sanitizeExtracted(raw: Record<string, any>): Record<string, any>
   return result;
 }
 
-function applyExamDefaults(extracted: Record<string, any>): Record<string, any> {
-  const result = { ...extracted };
+// FIX (Sept 2026): this function previously filled EVERY empty exam field
+// with standard "normal" text unconditionally, on every successful
+// extraction — the exact FAB-21/VOICE-03 bug already fixed in the
+// equivalent function in extraction.ts (applyExaminationDefaults), but
+// left unfixed here on the PRIMARY extraction path (GPT-4o-mini / Claude
+// Haiku, Tiers 1-3). A doctor who never mentioned CVS, respiratory,
+// abdomen, or CNS exam at all would get those systems silently marked as
+// examined-and-normal on every successful call. Now gated exactly like
+// extraction.ts: only applies when the doctor explicitly said the
+// primary survey (ABCDE) or systemic/secondary exam was normal.
+// Duplicated here (rather than imported) to avoid a circular dependency
+// with extraction.ts, which already imports from this file.
+function detectNormalcyPhrasesLocal(text: string): { abcdeNormal: boolean; systemicNormal: boolean } {
+  const t = (text || '').toLowerCase();
 
+  const everythingNormal =
+    /\b(everything|all)\s+(is\s+|was\s+)?(normal|unremarkable|wnl|within normal limits)\b/.test(t);
+
+  const abcdeNormal =
+    everythingNormal ||
+    /\b(abcde|primary survey|airway,?\s*breathing,?\s*circulation)\b[^.]{0,60}\b(normal|unremarkable|within normal limits|wnl|nad|no abnormality|nothing significant)\b/.test(t) ||
+    /\b(normal|unremarkable)\s+(abcde|primary survey)\b/.test(t);
+
+  const systemicNormal =
+    everythingNormal ||
+    /\b(systemic exam(ination)?|secondary survey|secondary assessment|general (and )?systemic exam(ination)?)\b[^.]{0,60}\b(normal|unremarkable|within normal limits|wnl|nad|nothing significant|no abnormality)\b/.test(t) ||
+    /\bnothing significant on exam(ination)?\b/.test(t) ||
+    /\b(normal|unremarkable)\s+(systemic|secondary)\s+(exam(ination)?|survey|assessment)\b/.test(t);
+
+  return { abcdeNormal, systemicNormal };
+}
+
+function applyExamDefaults(extracted: Record<string, any>, rawText: string = ''): Record<string, any> {
+  const result = { ...extracted };
+  const { abcdeNormal, systemicNormal } = detectNormalcyPhrasesLocal(rawText);
+
+  // "airway" is the only field gated by abcdeNormal; the rest are
+  // systemic/secondary-exam fields gated by systemicNormal.
   const EXAM_DEFAULTS: Record<string, string> = {
     generalExamination: 'No pallor, icterus, cyanosis, clubbing, lymphadenopathy, or pedal edema.',
     cvsExamination: 'S1 S2 heard. No murmurs.',
@@ -386,17 +421,31 @@ function applyExamDefaults(extracted: Record<string, any>): Record<string, any> 
   };
 
   for (const [field, defaultVal] of Object.entries(EXAM_DEFAULTS)) {
-    if (!result[field] || typeof result[field] !== 'string' || result[field].trim() === '') {
+    const isEmpty = !result[field] || typeof result[field] !== 'string' || result[field].trim() === '';
+    if (!isEmpty) {
+      result[`${field}_isDefault`] = false;
+      continue;
+    }
+    if (systemicNormal) {
       result[field] = defaultVal;
       result[`${field}_isDefault`] = true;
     } else {
+      result[field] = null;
       result[`${field}_isDefault`] = false;
     }
   }
 
-  if (!result.airway) {
-    result.airway = 'Patent';
-    result.airway_isDefault = true;
+  const airwayEmpty = !result.airway || typeof result.airway !== 'string' || result.airway.trim() === '';
+  if (airwayEmpty) {
+    if (abcdeNormal) {
+      result.airway = 'Patent';
+      result.airway_isDefault = true;
+    } else {
+      result.airway = null;
+      result.airway_isDefault = false;
+    }
+  } else {
+    result.airway_isDefault = false;
   }
 
   if (!result.events || typeof result.events !== 'string' || result.events.trim() === '') {
@@ -456,10 +505,10 @@ export async function extractFromTranscript(
         ],
       });
 
-      const raw = response.choices[0]?.message?.content || '{}';
+           const raw = response.choices[0]?.message?.content || '{}';
       const parsed = JSON.parse(raw);
       const sanitized = sanitizeExtracted(parsed);
-      const withDefaults = applyExamDefaults(sanitized);
+      const withDefaults = applyExamDefaults(sanitized, deidentifiedTranscript);
 
       console.log(`[VoiceExtract] OpenAI GPT-4o-mini succeeded · tokens: ${response.usage?.total_tokens}`);
       return { success: true, extracted: withDefaults, engine: 'gpt-4o-mini' };
@@ -494,9 +543,9 @@ export async function extractFromTranscript(
 
       const rawText = (msg.content[0] as any)?.text || '{}';
       const cleanedJSON = rawText.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```$/s, '').trim();
-      const parsed = JSON.parse(cleanedJSON);
+           const parsed = JSON.parse(cleanedJSON);
       const sanitized = sanitizeExtracted(parsed);
-      const withDefaults = applyExamDefaults(sanitized);
+      const withDefaults = applyExamDefaults(sanitized, deidentifiedTranscript);
 
       console.log(`[VoiceExtract] Claude Haiku fallback succeeded`);
       return { success: true, extracted: withDefaults, engine: 'claude-haiku-4-5-20251001' };
@@ -525,9 +574,9 @@ export async function extractFromTranscript(
 
       const rawText = (msg.content[0] as any)?.text || '{}';
       const cleanedJSON = rawText.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```$/s, '').trim();
-      const parsed = JSON.parse(cleanedJSON);
+           const parsed = JSON.parse(cleanedJSON);
       const sanitized = sanitizeExtracted(parsed);
-      const withDefaults = applyExamDefaults(sanitized);
+      const withDefaults = applyExamDefaults(sanitized, deidentifiedTranscript);
 
       console.log('[VoiceExtract] Claude Haiku retry succeeded');
       return { success: true, extracted: withDefaults, engine: 'claude-haiku-4-5-20251001-retry' };

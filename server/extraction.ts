@@ -91,7 +91,15 @@ export function applyExaminationDefaults(
   // Of the EXAM_DEFAULTS keys, only "airway" belongs to the primary
   // survey (ABCDE) trigger; the rest belong to the systemic/secondary
   // exam trigger.
-  const PRIMARY_SURVEY_FIELDS = new Set(["airway"]);
+    const PRIMARY_SURVEY_FIELDS = new Set(["airway"]);
+
+  // SAFETY-CRITICAL, NON-NEGOTIABLE: Psychological Assessment (including
+  // the self-harm/suicidal-ideation question) must NEVER be auto-filled
+  // by any normalcy-phrase mechanism — not even a doctor's generic
+  // "everything is normal" that was never actually about psych. Excluded
+  // from the trigger loop entirely; only ever populated by content the
+  // doctor explicitly dictated about psych status specifically.
+  const NEVER_AUTO_FILL_FIELDS = new Set(["psychologicalAssessment"]);
 
   for (const [field, defaultValue] of Object.entries(EXAM_DEFAULTS)) {
     const isEmpty =
@@ -102,6 +110,12 @@ export function applyExaminationDefaults(
 
     if (!isEmpty) {
       // Doctor mentioned this — keep their value, never overwrite.
+      result[`${field}_isDefault`] = false;
+      continue;
+    }
+
+    if (NEVER_AUTO_FILL_FIELDS.has(field)) {
+      result[field] = null;
       result[`${field}_isDefault`] = false;
       continue;
     }
@@ -1355,8 +1369,10 @@ export function formatClinicalCaseObject(rawExt: Record<string, any>, rawText: s
       events: finalEvents,
       socialHistory: "",
       familyHistory: ext.familyHistory || "",
-      psychiatricFlags: ext.psychologicalAssessment || (systemicNormal ? EXAM_DEFAULTS.psychologicalAssessment : "Not documented")
-    },
+            // SAFETY-CRITICAL: never auto-filled from systemicNormal/"everything
+      // normal" — only from what the doctor explicitly dictated about psych.
+      psychiatricFlags: ext.psychologicalAssessment || "Not documented"
+      },
     primaryAssessment: {
       airway: ext.airway || (abcdeNormal ? EXAM_DEFAULTS.airway : null),
       airwayStatus: (ext.airway || abcdeNormal) ? "Normal" : "Not documented",
@@ -1375,8 +1391,8 @@ export function formatClinicalCaseObject(rawExt: Record<string, any>, rawText: s
       `RS: ${ext.respiratoryExamination || (systemicNormal ? EXAM_DEFAULTS.respiratoryExamination : "Not documented")}`,
       `Abdomen: ${ext.abdomenExamination || (systemicNormal ? EXAM_DEFAULTS.abdomenExamination : "Not documented")}`,
       `CNS: ${ext.cnsExamination || (systemicNormal ? EXAM_DEFAULTS.cnsExamination : "Not documented")}`,
-      `Psych: ${ext.psychologicalAssessment || (systemicNormal ? EXAM_DEFAULTS.psychologicalAssessment : "Not documented")}`
-    ].join("\n"),
+           `Psych: ${ext.psychologicalAssessment || "Not documented"}`
+           ].join("\n"),
     treatments: treatmentsList,
     investigations: investigationItems,
     investigationLabsOrdered: orderedStr,

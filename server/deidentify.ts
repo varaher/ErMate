@@ -41,7 +41,18 @@ const PHI_PATTERNS = [
   // 3. UHID / MRN / Hospital Registration IDs
   {
     type: 'ids' as const,
-    pattern: /\b(?:UHID|MRN|UR|CR|IP(?:[NO\.\s#]*)|OP(?:[NO\.\s#]*)|ER(?:[NO\.\s#]*)|REG(?:[NO\.\s#]*))[:\s#-]*[A-Z0-9\/-]{4,20}\b/gi,
+    // FIX (Sept 2026): added a mandatory-digit lookahead. The bare prefixes
+    // (UR, CR, IP, OP, ER, REG) combined with a case-insensitive, all-letters
+    // suffix class previously matched ordinary clinical words with no digits
+    // at all — "Ipratropium" (IP+ratropium), "Creatinine" (CR+eatinine),
+    // "erythema" (ER+ythema), "Registered"/"Regular" (REG+suffix), "Urgent"
+    // (UR+gent) — and silently replaced them with "[PATIENT-ID]" before the
+    // text ever reached the extraction model, corrupting drug names, lab
+    // names, and clinical descriptors with no visible trace of the error.
+    // A real UHID/MRN/ER number always contains at least one digit;
+    // requiring that here removes the false positives without weakening
+    // genuine ID detection.
+    pattern: /\b(?:UHID|MRN|UR|CR|IP(?:[NO\.\s#]*)|OP(?:[NO\.\s#]*)|ER(?:[NO\.\s#]*)|REG(?:[NO\.\s#]*))[:\s#-]*(?=[A-Z0-9\/-]*\d)[A-Z0-9\/-]{4,20}\b/gi,
     replacement: '[PATIENT-ID]',
     label: 'Hospital UHID/MRN'
   },
