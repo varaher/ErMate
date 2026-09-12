@@ -211,8 +211,8 @@ app.get("/api/health", (req, res) => {
     geminiConfigured: hasKey, 
     sarvamConfigured: hasSarvamKey,
     anthropicConfigured: hasAnthropicKey,
-    pipelineConfig: {
-      transcription: "Sarvam v3 (Primary) / Gemini Audio (Fallback)",
+       pipelineConfig: {
+      transcription: "Sarvam v3 (sole engine, no fallback, by design)",
       voiceExtraction: "GPT-4o-mini (Primary) / Claude Haiku (Fallback) [NOT Gemini]",
       handoverExtractionShort: "Claude Haiku (Primary) / Gemini Flash (Fallback)",
       handoverExtractionLong: "Claude Sonnet (Primary) / Gemini Pro (Fallback)",
@@ -383,8 +383,20 @@ async function performTranscription(file: Express.Multer.File, languageCode: str
     chunks = [{ buffer: file.buffer, filename: file.originalname || "recording.webm" }];
   }
 
+   // REVERTED (Sept 2026): a Gemini 2.0 Flash audio fallback was added here
+  // that sent raw, unredacted patient audio (base64, pre-transcription,
+  // therefore pre-de-identification — de-identifyText() can only run on
+  // text, never on audio) to Google's non-Indian infrastructure whenever
+  // Sarvam failed. This directly violated the locked model matrix
+  // ("Voice Transcription: Sarvam Saaras v3, sole engine, no fallback")
+  // and the DPDP "patient data never leaves India" commitment. Reverted
+  // to the original honest-failure design. The real root cause of the
+  // Sarvam rejection that motivated this fallback was traced to ffmpeg
+  // not being installed in the Cloud Run container (see audioConvert.ts
+  // header) — fix that directly rather than routing patient audio
+  // through a second vendor.
+  let finalTranscript = "";
   try {
-    let finalTranscript = "";
     console.log(`[Transcription] Processing ${chunks.length} chunks via ErMate Voice API`);
     for (let i = 0; i < chunks.length; i++) {
       const chunk = chunks[i];
@@ -394,21 +406,21 @@ async function performTranscription(file: Express.Multer.File, languageCode: str
         finalTranscript += result.transcript.trim() + " ";
       }
     }
-
-    if (!finalTranscript.trim()) {
-      throw new Error("No speech was detected in the recording. Please try dictating again, speaking clearly and close to the microphone.");
-    }
-    return {
-      success: true,
-      transcript: finalTranscript.trim(),
-      method: "ermate_voice"
-    };
   } catch (err: any) {
     console.error(`[Transcription] Sarvam Voice exception: ${err.message}. No fallback — Sarvam is the sole transcription engine by deliberate design.`);
     throw new Error(
-      "Voice transcription is temporarily unavailable. Please try dictating again in a moment, or enter the clinical details manually."
+      `Voice transcription is temporarily unavailable. Error: ${err.message}`
     );
   }
+
+  if (!finalTranscript.trim()) {
+    throw new Error("No speech was detected in the recording. Please try dictating again, speaking clearly and close to the microphone.");
+  }
+  return {
+    success: true,
+    transcript: finalTranscript.trim(),
+    method: "ermate_voice"
+  };
 }
 
 // 4a. Legacy endpoint proxy (Layer 3 compliant)

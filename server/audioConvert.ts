@@ -108,8 +108,8 @@ export async function convertAndChunkAudioToWav(
     // 1. Convert to 16kHz mono WAV first
     await execFileAsync(
       "ffmpeg",
-      ["-y", "-i", inputPath, "-ar", "16000", "-ac", "1", "-sample_fmt", "s16", intermediateWav],
-      { timeout: 60000 }
+      ["-hide_banner", "-loglevel", "error", "-y", "-i", inputPath, "-ar", "16000", "-ac", "1", "-sample_fmt", "s16", intermediateWav],
+      { timeout: 60000, maxBuffer: 10 * 1024 * 1024 }
     );
 
     // 2. Perform silence detection to avoid cutting mid-sentence
@@ -117,8 +117,8 @@ export async function convertAndChunkAudioToWav(
     try {
       const result = await execFileAsync(
         "ffmpeg",
-        ["-i", intermediateWav, "-af", "silencedetect=noise=-30dB:d=0.5", "-f", "null", "-"],
-        { timeout: 60000 }
+        ["-hide_banner", "-i", intermediateWav, "-af", "silencedetect=noise=-30dB:d=0.5", "-f", "null", "-"],
+        { timeout: 60000, maxBuffer: 10 * 1024 * 1024 }
       );
       stderr = result.stderr;
     } catch (err: any) {
@@ -169,6 +169,7 @@ export async function convertAndChunkAudioToWav(
       await execFileAsync(
         "ffmpeg",
         [
+          "-hide_banner", "-loglevel", "error",
           "-y",
           "-i", intermediateWav,
           "-f", "segment",
@@ -176,13 +177,14 @@ export async function convertAndChunkAudioToWav(
           "-c", "copy",
           outputPattern
         ],
-        { timeout: 60000 }
+        { timeout: 60000, maxBuffer: 10 * 1024 * 1024 }
       );
     } else {
       // Fallback: original blind 15-second split if silence detection completely failed
       await execFileAsync(
         "ffmpeg",
         [
+          "-hide_banner", "-loglevel", "error",
           "-y",
           "-i", intermediateWav,
           "-f", "segment",
@@ -190,7 +192,7 @@ export async function convertAndChunkAudioToWav(
           "-c", "copy",
           outputPattern
         ],
-        { timeout: 60000 }
+        { timeout: 60000, maxBuffer: 10 * 1024 * 1024 }
       );
     }
 

@@ -1719,8 +1719,7 @@ useEffect(() => {
       sampleHistory: {
         symptoms: extracted.sampleHistory?.symptoms || (Array.isArray(extracted.symptoms) ? extracted.symptoms.join(", ") : extracted.symptoms) || existingMatch?.sampleHistory.symptoms || "",
         allergies: extracted.sampleHistory?.allergies || extracted.allergies || existingMatch?.sampleHistory.allergies || "",
-        medications: extracted.sampleHistory?.medications || extracted.medications || existingMatch?.sampleHistory.medications || "",
-        pastHistory: extracted.sampleHistory?.pastHistory || extracted.pastMedicalHistory || extracted.pastHistory || existingMatch?.sampleHistory.pastHistory || "",
+       medications: extracted.sampleHistory?.medications || extracted.currentMedications || extracted.medications || existingMatch?.sampleHistory.medications || "",  pastHistory: extracted.sampleHistory?.pastHistory || extracted.pastMedicalHistory || extracted.pastHistory || existingMatch?.sampleHistory.pastHistory || "",
         lastMeal: extracted.sampleHistory?.lastMeal || extracted.lastMeal || existingMatch?.sampleHistory.lastMeal || "",
         events: extracted.sampleHistory?.events || extracted.events || existingMatch?.sampleHistory.events || "",
         socialHistory: extracted.sampleHistory?.socialHistory || extracted.socialHistory || existingMatch?.sampleHistory?.socialHistory || "",
@@ -1745,8 +1744,10 @@ useEffect(() => {
       investigations: extracted.investigations || (extracted.labs ? extracted.labs.map((l: any, i: number) => ({ id: `inv-${Date.now()}-${i}`, testName: l.name || l, result: l.value || "Ordered", orderTime: new Date().toLocaleTimeString(), resultTime: "Pending", isAbnormal: false })) : null) || existingMatch?.investigations || [],
       treatments: extracted.treatments || (extracted.treatmentGiven ? extracted.treatmentGiven.map((t: any, i: number) => ({ id: `trt-${Date.now()}-${i}`, drugName: t.name || t, dose: "Stat", route: "IV", timeGiven: new Date().toLocaleTimeString(), ipsgVerified: true })) : null) || existingMatch?.treatments || [],
       progressNotes: extracted.progressNotes || (extracted.chronologicalNotes ? extracted.chronologicalNotes.map((n: any) => n.entry).join("\n") : null) || existingMatch?.progressNotes || "Case created via ErMate Voice Scribe dictation.",
-      dischargeInfo: null,
-      differentials: existingMatch?.differentials || [],
+     dischargeInfo: null,
+differentials: extracted.differentialDiagnosis
+  ? [{ diagnosis: extracted.differentialDiagnosis, status: "EVALUATING" }]
+  : (existingMatch?.differentials || []),
       isPediatric: extracted.isPediatric !== undefined ? Boolean(extracted.isPediatric) : (finalAge !== null && finalAge <= 16),
       pediatricDetails: extracted.pediatricDetails || existingMatch?.pediatricDetails || undefined,
       status: "Active",
@@ -1781,6 +1782,20 @@ useEffect(() => {
         consultantName: consultantName,
         observationNotes: ""
       },
+      adjuncts: {
+  ...(existingMatch?.adjuncts || {}),
+  ...(extracted.vbgAbg?.values?.length > 0 ? {
+    abgStatus: "done",
+    abgSampleType: extracted.vbgAbg.type === "VBG" ? "Venous (VBG)" : "Arterial (ABG)",
+    abgPh: extracted.vbgAbg.values.find((v: any) => v.param === "ph")?.value ?? existingMatch?.adjuncts?.abgPh,
+    abgPco2: extracted.vbgAbg.values.find((v: any) => v.param === "pco2")?.value ?? existingMatch?.adjuncts?.abgPco2,
+    abgHco3: extracted.vbgAbg.values.find((v: any) => v.param === "hco3")?.value ?? existingMatch?.adjuncts?.abgHco3,
+    abgLactate: extracted.vbgAbg.values.find((v: any) => v.param === "lactate")?.value ?? existingMatch?.adjuncts?.abgLactate,
+    abgNa: extracted.vbgAbg.values.find((v: any) => v.param === "na")?.value ?? existingMatch?.adjuncts?.abgNa,
+    abgK: extracted.vbgAbg.values.find((v: any) => v.param === "k")?.value ?? existingMatch?.adjuncts?.abgK,
+    abgCl: extracted.vbgAbg.values.find((v: any) => v.param === "cl")?.value ?? existingMatch?.adjuncts?.abgCl,
+  } : {}),
+},
       vitalsHistory: existingMatch?.vitalsHistory || [
         {
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),

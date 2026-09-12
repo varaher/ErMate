@@ -1,0 +1,17 @@
+--- server/scribeChatTurn.ts
++++ server/scribeChatTurn.ts
+@@ -242,10 +242,11 @@
+       const ageFromThisTurn = updatedFields.age;
+       const ageAlreadyKnown =
+         (existingCaseSheet as any)?.age ??
+         (existingCaseSheet as any)?.patient?.age;
+-      const hasAge =
+-        (ageFromThisTurn !== undefined && ageFromThisTurn !== null && String(ageFromThisTurn).trim() !== "") ||
+-        (ageAlreadyKnown !== undefined && ageAlreadyKnown !== null && String(ageAlreadyKnown).trim() !== "");
++      const ageFromProp = patientAgeYears;
++      const hasAge =
++        (ageFromThisTurn !== undefined && ageFromThisTurn !== null && String(ageFromThisTurn).trim() !== "") ||
++        (ageAlreadyKnown !== undefined && ageAlreadyKnown !== null && String(ageAlreadyKnown).trim() !== "") ||
++        (ageFromProp !== undefined && ageFromProp !== null && String(ageFromProp).trim() !== "");
+ 
+       if (!hasAge) ageQuestionNeeded = true;

@@ -101,7 +101,7 @@ function resolveChecklistValue(id: string, data: any): any {
     case "pmh": return data.pastMedicalHistory;
     case "allergies": return data.allergies;
     case "medications": return data.currentMedications;
-    case "differentialDiagnosis": return data.differentialDiagnosis;
+         case "differentialDiagnosis": return data.differentialDiagnosis;
     case "treatmentPlan": return data.treatmentGiven;
     case "signsSymptoms": return data.symptoms;
     default: return undefined;
@@ -704,7 +704,7 @@ const fieldsToExtract = rawFieldsToExtract || {};
               </div>
 
                                {msg.mode === "dictation" && msg.sender === "ai" && msg.extractionData !== undefined && (() => {
-                const merged = mergeExtractionUpTo(messages, msg.id);
+                                           const merged = mergeExtractionUpTo(messages, msg.id);
                 const ageKnown = isValueCaptured(merged.age) || isValueCaptured(caseData?.patient?.age);
 
                 if (!ageKnown) {

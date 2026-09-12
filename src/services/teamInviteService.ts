@@ -36,12 +36,9 @@ export async function createTeamInvite(
   const now = new Date();
   const expiresAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString();
 
-  const invite: TeamInvite = {
+  const invite: any = {
     id: token,
     hospital: hospital.trim(),
-    hospitalAddress: facility.hospitalAddress?.trim() || undefined,
-    hospitalPhone: facility.hospitalPhone?.trim() || undefined,
-    state: facility.state?.trim() || undefined,
     createdByUid: hodUid,
     createdByName: hodName,
     createdAt: now.toISOString(),
@@ -50,8 +47,11 @@ export async function createTeamInvite(
     usedCount: 0,
     revoked: false,
   };
+  if (facility.hospitalAddress?.trim()) invite.hospitalAddress = facility.hospitalAddress.trim();
+  if (facility.hospitalPhone?.trim()) invite.hospitalPhone = facility.hospitalPhone.trim();
+  if (facility.state?.trim()) invite.state = facility.state.trim();
 
-  await setDoc(doc(db, "teamInvites", token), invite);
+  await setDoc(doc(db, "teamInvites", token), invite as TeamInvite);
 
   const link = `${origin}/join/${token}`;
   return { token, link };

@@ -1,0 +1,10 @@
+--- server.ts
++++ server.ts
+@@ -433,7 +433,7 @@
+   } catch (err: any) {
+     console.error(`[Transcription] Sarvam Voice exception: ${err.message}. No fallback — Sarvam is the sole transcription engine by deliberate design.`);
+     throw new Error(
+-      "Voice transcription is temporarily unavailable. Please try dictating again in a moment, or enter the clinical details manually."
++      `Voice transcription is temporarily unavailable. Error: ${err.message}. Please try dictating again in a moment.`
+     );
+   }

@@ -246,9 +246,11 @@ export async function processScribeChatTurn(
       const ageAlreadyKnown =
         (existingCaseSheet as any)?.age ??
         (existingCaseSheet as any)?.patient?.age;
+      const ageFromProp = patientAgeYears;
       const hasAge =
         (ageFromThisTurn !== undefined && ageFromThisTurn !== null && String(ageFromThisTurn).trim() !== "") ||
-        (ageAlreadyKnown !== undefined && ageAlreadyKnown !== null && String(ageAlreadyKnown).trim() !== "");
+        (ageAlreadyKnown !== undefined && ageAlreadyKnown !== null && String(ageAlreadyKnown).trim() !== "") ||
+        (ageFromProp !== undefined && ageFromProp !== null && String(ageFromProp).trim() !== "");
       if (!hasAge) ageQuestionNeeded = true;
     } else {
       updatedCaseSheetFields = null;
@@ -471,7 +473,37 @@ function mapExtractionToCaseSheetFields(
   } else if (isValidStr(raw.differentials)) {
     fields.differentialDiagnosis = raw.differentials;
   }
+  // ══════════════════════════════════════════════════════════════
+  // CHECKLIST-WIRING FIX ROUND 2: these fields are correctly extracted
+  // by the model (see extraction.ts schema) but were never read into
+  // the case sheet mapping — same silent-drop pattern as VOICE-04/06.
+  // Real-value-only, no defaults, per the standing isValidStr() rule.
+  // ══════════════════════════════════════════════════════════════
+  if (isValidStr(raw.hpi)) fields.hpi = raw.hpi;
+  if (isValidStr(raw.surgicalHistory)) fields.surgicalHistory = raw.surgicalHistory;
+  if (isValidStr(raw.familyHistory)) fields.familyHistory = raw.familyHistory;
+  if (isValidStr(raw.lmp)) fields.lmp = raw.lmp;
+  if (isValidStr(raw.psychologicalAssessment)) fields.psychologicalAssessment = raw.psychologicalAssessment;
+  if (isValidStr(raw.ecg)) fields.ecg = raw.ecg;
+  if (isValidStr(raw.echo)) fields.echo = raw.echo;
+  if (isValidStr(raw.diagnosis)) fields.diagnosis = raw.diagnosis; // closes VOICE-06
+  if (isValidStr(raw.disposition)) fields.disposition = raw.disposition;
 
+  if (Array.isArray(raw.investigationsOrdered) && raw.investigationsOrdered.length > 0) {
+    fields.investigationsOrdered = raw.investigationsOrdered.filter((i: any) => isValidStr(i));
+  }
+  if (raw.investigationResults && typeof raw.investigationResults === "object" && Object.keys(raw.investigationResults).length > 0) {
+    fields.investigationResults = raw.investigationResults;
+  }
+
+  // EM Resident / EM Consultant: dictation is an explicit OVERRIDE only.
+  // The default-to-logged-in-doctor behavior lives on the frontend
+  // (VoiceScribeChatView.tsx), not here — this function has no access
+  // to the logged-in profile. If the doctor dictates a name (e.g.
+  // naming the supervising consultant, or correcting the resident of
+  // record), that always wins over the default.
+  if (isValidStr(raw.emResident)) fields.emResident = raw.emResident;
+  if (isValidStr(raw.emConsultant)) fields.emConsultant = raw.emConsultant;
   // ══════════════════════════════════════════════════════════════
   // CHECKLIST-WIRING FIX: fastFindings had no mapping — extracted by
   // the model (voiceExtraction.ts) but silently dropped here, same
