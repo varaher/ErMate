@@ -17,8 +17,8 @@ import FormData from "form-data";
 
 const SARVAM_API_BASE = "https://api.sarvam.ai";
 
-function getErMateApiKey(): string | null {
-  return process.env.SARVAM_AI_API_KEY || process.env.SARVAM_API_KEY || null;
+export function getErMateApiKey(): string | null {
+  return process.env.SARVAM_API_KEY || null;
 }
 
 export interface ErMateTranscriptionResult {
@@ -93,7 +93,8 @@ export async function sarvamSpeechToText(
  */
 export async function sarvamSpeechToTextTranslate(
   audioBuffer: Buffer,
-  filename: string
+  filename: string,
+  mode: string = "translate"
 ): Promise<ErMateTranscriptionResult> {
   const apiKey = getErMateApiKey();
   if (!apiKey) {
@@ -106,7 +107,7 @@ export async function sarvamSpeechToTextTranslate(
     contentType: getAudioMimeType(filename),
   });
   formData.append("model", "saaras:v3");
-  formData.append("mode", "translate");
+  formData.append("mode", mode);
 
   const response = await fetch(`${SARVAM_API_BASE}/speech-to-text`, {
     method: "POST",

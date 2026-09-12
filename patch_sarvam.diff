@@ -1,0 +1,18 @@
+--- server/sarvamClient.ts
++++ server/sarvamClient.ts
+@@ -94,7 +94,8 @@
+ export async function sarvamSpeechToTextTranslate(
+   audioBuffer: Buffer,
+-  filename: string
++  filename: string,
++  mode: string = "translate"
+ ): Promise<ErMateTranscriptionResult> {
+   const apiKey = getErMateApiKey();
+   if (!apiKey) {
+@@ -107,7 +108,7 @@
+   });
+   formData.append("model", "saaras:v3");
+-  formData.append("mode", "translate");
++  formData.append("mode", mode);
+ 
+   const response = await fetch(`${SARVAM_API_BASE}/speech-to-text`, {

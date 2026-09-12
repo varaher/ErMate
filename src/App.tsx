@@ -1699,8 +1699,16 @@ useEffect(() => {
         arrivalMode: extracted.arrivalMode || existingMatch?.patient.arrivalMode || ArrivalMode.WalkIn,
         dateOpened: existingMatch?.patient.dateOpened || (new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + " | " + new Date().toLocaleDateString([], { month: 'short', day: 'numeric' })),
         uhid: existingMatch?.patient.uhid || ("UHID-" + Math.floor(100000 + Math.random() * 900000)),
-        caseType: extracted.caseType || existingMatch?.patient.caseType || "Medical",
-        isMlc: false
+             caseType: extracted.caseType || existingMatch?.patient.caseType || "Medical",
+        isMlc: extracted.mlcDetails?.isMlc ?? existingMatch?.patient.isMlc ?? false,
+        mlcDetails: extracted.mlcDetails ? {
+          ...(existingMatch?.patient.mlcDetails || {}),
+          natureOfIncident: extracted.mlcDetails.natureOfIncident || existingMatch?.patient.mlcDetails?.natureOfIncident,
+          placeOfIncident: extracted.mlcDetails.placeOfIncident || existingMatch?.patient.mlcDetails?.placeOfIncident,
+          dateTimeOfIncident: extracted.mlcDetails.dateTimeOfIncident || existingMatch?.patient.mlcDetails?.dateTimeOfIncident,
+          identificationMark: extracted.mlcDetails.identificationMark || existingMatch?.patient.mlcDetails?.identificationMark,
+          informantBroughtBy: [extracted.mlcDetails.broughtBy, extracted.mlcDetails.informant].filter(Boolean).join(" / ") || existingMatch?.patient.mlcDetails?.informantBroughtBy,
+        } : existingMatch?.patient.mlcDetails
       },
       vitals: {
         bp: extracted.vitals?.bp || existingMatch?.vitals.bp || "",
@@ -1782,8 +1790,19 @@ differentials: extracted.differentialDiagnosis
         consultantName: consultantName,
         observationNotes: ""
       },
-      adjuncts: {
+           adjuncts: {
   ...(existingMatch?.adjuncts || {}),
+  ...(extracted.fastFindings ? (() => {
+    const f = extracted.fastFindings;
+    const parts = [
+      f.heart ? `Heart: ${f.heart}` : null,
+      f.abdomen ? `Abdomen: ${f.abdomen}` : null,
+      f.pelvis ? `Pelvis: ${f.pelvis}` : null,
+    ].filter(Boolean);
+    return parts.length > 0 ? {
+      efastNotes: [existingMatch?.adjuncts?.efastNotes, parts.join(", ")].filter(Boolean).join(" | "),
+    } : {};
+  })() : {}),
   ...(extracted.vbgAbg?.values?.length > 0 ? {
     abgStatus: "done",
     abgSampleType: extracted.vbgAbg.type === "VBG" ? "Venous (VBG)" : "Arterial (ABG)",

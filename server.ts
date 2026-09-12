@@ -5,6 +5,8 @@ import PDFDocument from "pdfkit";
 import { GoogleGenAI, Type } from "@google/genai";
 import { createServer as createViteServer } from "vite";
 import multer from "multer";
+import { sarvamBatchTranscribe } from "./server/sarvamBatch.js";
+import { initSarvamRealtimeStream } from "./server/sarvamRealtimeStream.js";
 import { spawn } from "child_process";
 import { detectNormalcyPhrases } from "./server/extraction.ts";
 
@@ -353,7 +355,7 @@ async function callClaudeSonnetOnly(prompt: string, systemInstruction: string, e
 }
 
 // Helper for shared transcription logic (Layer 3)
-async function performTranscription(file: Express.Multer.File, languageCode: string, model: string): Promise<{ success: boolean; transcript: string; method: string }> {
+async function performTranscription(file: Express.Multer.File, languageCode: string, model: string, mode: string = "translate"): Promise<{ success: boolean; transcript: string; method: string }> {
   if (file.size < 500) {
     throw new Error("Audio capture too short. Please dictate for a longer duration.");
   }
@@ -401,7 +403,7 @@ async function performTranscription(file: Express.Multer.File, languageCode: str
     for (let i = 0; i < chunks.length; i++) {
       const chunk = chunks[i];
       console.log(`[Transcription] Querying chunk ${i + 1}/${chunks.length}`);
-      const result = await sarvamSpeechToTextTranslate(chunk.buffer, chunk.filename);
+      const result = await sarvamSpeechToTextTranslate(chunk.buffer, chunk.filename, mode);
       if (result && result.transcript) {
         finalTranscript += result.transcript.trim() + " ";
       }
@@ -445,6 +447,48 @@ app.post("/api/sarvam-asr", upload.single("file"), async (req, res) => {
     });
   }
 });
+
+
+// Requested /api/sarvam/transcribe endpoint
+app.post("/api/sarvam/transcribe", upload.single("file"), async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ success: false, error: "No audio file provided." });
+  }
+  const model = req.body.model || "saaras:v3";
+  const language_code = req.body.language_code || "en-IN";
+  const mode = req.body.mode || "translate";
+  try {
+    const result = await performTranscription(req.file, language_code, model, mode);
+    res.json(result);
+  } catch (error: any) {
+    console.error("ASR Controller Error:", error);
+    res.status(error.message.includes("too short") ? 400 : 500).json({
+      success: false,
+      error: error.message || "An error occurred during speech transcription."
+    });
+  }
+});
+
+
+
+// 4c. True Batch STT Fallback
+app.post("/api/sarvam/batch-transcribe", upload.single("file"), async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ success: false, error: "No audio file provided." });
+  }
+  const mode = req.body.mode || "translate";
+  try {
+    const result = await sarvamBatchTranscribe(req.file.buffer, req.file.originalname || "dictation.webm", mode);
+    res.json(result);
+  } catch (error: any) {
+    console.error("Batch ASR Error:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message || "An error occurred during batch speech transcription."
+    });
+  }
+});
+
 
 // 4b. Upgraded Unified Transcription Endpoint (Layer 3)
 app.post("/api/voice/transcribe", upload.single("file"), async (req, res) => {
@@ -3282,16 +3326,14 @@ async function startServer() {
     }
   });
 
-  const server = app.listen(PORT, "0.0.0.0", () => {
+
+const server = app.listen(PORT, "0.0.0.0", () => {
     console.log(`[ErMate Server] Running on http://0.0.0.0:${PORT}`);
   });
 
   // Set generous connection and request timeouts to support unlimited clinical recordings and long translation/transcription processes
   server.setTimeout(30 * 60 * 1000);
   server.keepAliveTimeout = 30 * 60 * 1000;
-
-
-
+  initSarvamRealtimeStream(server);
 }
-
 startServer();

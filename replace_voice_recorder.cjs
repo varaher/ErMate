@@ -1,4 +1,6 @@
-import React, { useState, useRef, useEffect } from "react";
+const fs = require('fs');
+
+const content = `import React, { useState, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { Mic, Trash2, Pause, Play, Check, AlertTriangle, RefreshCw, WifiOff } from "lucide-react";
 
@@ -51,7 +53,6 @@ export default function VoiceRecorder({
   // WebSocket refs
   const wsRef = useRef<WebSocket | null>(null);
   const isStoppingRef = useRef<boolean>(false);
-  const finalSubmissionSentRef = useRef<boolean>(false);
   const accumulatedRef = useRef<string>("");
 
   useEffect(() => {
@@ -71,7 +72,7 @@ export default function VoiceRecorder({
   const formatTime = (secs: number) => {
     const mins = Math.floor(secs / 60);
     const s = secs % 60;
-    return `${mins.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
+    return \`\${mins.toString().padStart(2, "0")}:\${s.toString().padStart(2, "0")}\`;
   };
 
   const requestWakeLock = async () => {
@@ -121,7 +122,7 @@ export default function VoiceRecorder({
   const initWebSocket = () => {
     return new Promise<WebSocket>((resolve, reject) => {
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-      const wsUrl = `${protocol}//${window.location.host}/api/voice/stream`;
+      const wsUrl = \`\${protocol}//\${window.location.host}/api/voice/stream\`;
       const ws = new WebSocket(wsUrl);
 
       ws.onopen = () => {
@@ -148,13 +149,14 @@ export default function VoiceRecorder({
                setCurrentPartialText("");
              }
              if (msg.language_code) setDetectedLanguage(msg.language_code);
-          } else if (msg.type === "session_end" || msg.type === "closed") {
-             if (isStoppingRef.current) {
-                finalizeTranscription();
-             }
           } else if (msg.type === "error") {
              console.error("[VoiceRecorder] Upstream WS Error:", msg.message);
              if (!isStoppingRef.current) setUseFallbackBatch(true);
+          } else if (msg.type === "closed") {
+             if (isStoppingRef.current) {
+                // Backend finished processing the end of stream
+                finalizeTranscription();
+             }
           }
         } catch(e) {}
       };
@@ -182,7 +184,6 @@ export default function VoiceRecorder({
     setUseFallbackBatch(false);
     setIsReconnecting(false);
     isStoppingRef.current = false;
-    finalSubmissionSentRef.current = false;
 
     try {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -275,6 +276,8 @@ export default function VoiceRecorder({
         setIsRecording(false);
         setIsPaused(false);
         
+        // If we are gracefully stopping WS, it will call finalizeTranscription when closed.
+        // If we are in fallback batch mode, we trigger REST API here.
         if (useFallbackBatch) {
             setIsTranscribing(true);
             if (document.visibilityState === "hidden") {
@@ -288,21 +291,6 @@ export default function VoiceRecorder({
             } else {
               await transcribeAudioBatch(audioBlob, actualMime);
             }
-        } else if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-            setIsTranscribing(true);
-            // Instruct backend to flush FFmpeg and finalize VAD buffer
-            wsRef.current.send(JSON.stringify({ action: "stop_dictation" }));
-            
-            // Fallback timeout in case WS hangs during closure waiting for session.end
-            setTimeout(() => {
-              if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-                 console.warn("[VoiceRecorder] WS finalize timeout. Force closing.");
-                 wsRef.current.close();
-                 finalizeTranscription();
-              }
-            }, 8000);
-        } else {
-            finalizeTranscription();
         }
       };
 
@@ -389,35 +377,27 @@ export default function VoiceRecorder({
       if (listener) document.removeEventListener("visibilitychange", listener);
     }
     
-    // Stop the media recorder FIRST. This triggers recorder.onstop.
-    // Inside onstop, we will handle sending stop_dictation if the WS is open.
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN && !useFallbackBatch) {
+       // Stop audio and instruct backend to finalize the VAD buffer
+       setIsTranscribing(true);
+       wsRef.current.send(JSON.stringify({ action: "stop_dictation" }));
+       
+       // Fallback timeout in case WS hangs during closure
+       setTimeout(() => {
+          if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+             console.warn("[VoiceRecorder] WS finalize timeout. Force closing.");
+             wsRef.current.close();
+             finalizeTranscription();
+          }
+       }, 5000);
+    }
+    
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
-      setIsTranscribing(true);
-      mediaRecorderRef.current.stop();
-    } else {
-      // If it's already inactive for some reason, directly trigger cleanup
-      setIsTranscribing(true);
-      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN && !useFallbackBatch) {
-         wsRef.current.send(JSON.stringify({ action: "stop_dictation" }));
-         setTimeout(() => {
-            if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-               console.warn("[VoiceRecorder] WS finalize timeout. Force closing.");
-               wsRef.current.close();
-               finalizeTranscription();
-            }
-         }, 8000);
-      } else if (useFallbackBatch && audioChunksRef.current.length > 0) {
-         const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
-         transcribeAudioBatch(audioBlob, "audio/webm");
-      } else {
-         finalizeTranscription();
-      }
+      mediaRecorderRef.current.stop(); // will trigger recorder.onstop
     }
   };
 
   const finalizeTranscription = () => {
-    if (finalSubmissionSentRef.current) return;
-    finalSubmissionSentRef.current = true;
     // Collect what we have, append partial if it was abruptly stopped
     let finalStr = accumulatedRef.current;
     if (currentPartialText) {
@@ -455,12 +435,12 @@ export default function VoiceRecorder({
         : mimeType.includes("wav")
         ? "wav"
         : "webm";
-      formData.append("file", audioBlob, `dictation.${ext}`);
+      formData.append("file", audioBlob, \`dictation.\${ext}\`);
       // We pass translation intention to batch backend as well
       formData.append("language_code", "auto"); 
       formData.append("mode", transcriptionMode);
 
-      const res = await fetch("/api/sarvam/batch-transcribe", { method: "POST", body: formData });
+      const res = await fetch("/api/sarvam/transcribe", { method: "POST", body: formData });
 
       if (res.status === 413) {
         throw new Error("Recording too long for batch fallback.");
@@ -469,7 +449,7 @@ export default function VoiceRecorder({
       if (!contentType.includes("application/json")) {
         const errText = await res.text().catch(() => "");
         console.error("Non-JSON response:", errText.substring(0, 500));
-        throw new Error(`Server error (${res.status}): Please try again.`);
+        throw new Error(\`Server error (\${res.status}): Please try again.\`);
       }
 
       const data = await res.json();
@@ -518,10 +498,10 @@ export default function VoiceRecorder({
                 key={i}
                 className="w-[3px] bg-gradient-to-t from-indigo-500 to-emerald-400 rounded-full"
                 style={{
-                  height: isPaused ? "4px" : `${6 + (i % 5) * 4}px`,
+                  height: isPaused ? "4px" : \`\${6 + (i % 5) * 4}px\`,
                   animation: isPaused
                     ? "none"
-                    : `pulse 0.6s ease-in-out ${i * 0.05}s infinite alternate`,
+                    : \`pulse 0.6s ease-in-out \${i * 0.05}s infinite alternate\`,
                 }}
               />
             ))}
@@ -553,11 +533,11 @@ export default function VoiceRecorder({
             <button
               type="button"
               onClick={(e) => { e.preventDefault(); togglePause(); }}
-              className={`flex flex-col items-center gap-1 py-2 rounded-lg border transition-colors cursor-pointer ${
+              className={\`flex flex-col items-center gap-1 py-2 rounded-lg border transition-colors cursor-pointer \${
                 isPaused
                   ? "bg-emerald-950/50 hover:bg-emerald-950/70 text-emerald-400 border-emerald-800/50"
                   : "bg-amber-950/50 hover:bg-amber-950/70 text-amber-400 border-amber-800/50"
-              }`}
+              }\`}
             >
               {isPaused ? <Play size={14} /> : <Pause size={14} />}
               <span className="text-[9px] font-bold uppercase">{isPaused ? "Resume" : "Pause"}</span>
@@ -579,20 +559,20 @@ export default function VoiceRecorder({
 
   if (renderMode === "inline-bubble") {
     return (
-      <div className={`w-full ${className}`}>
+      <div className={\`w-full \${className}\`}>
         {!isRecording && !isTranscribing && !isInitializing && (
           <div className="mb-2 flex items-center justify-center bg-slate-100 dark:bg-slate-800 rounded-lg p-1 border border-slate-200 dark:border-slate-700">
             <button
               type="button"
               onClick={(e) => { e.preventDefault(); setTranscriptionMode("transcribe"); }}
-              className={`flex-1 px-3 py-1.5 text-xs font-bold uppercase rounded-md transition-colors ${transcriptionMode === "transcribe" ? "bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-300 shadow-sm" : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"}`}
+              className={\`flex-1 px-3 py-1.5 text-xs font-bold uppercase rounded-md transition-colors \${transcriptionMode === "transcribe" ? "bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-300 shadow-sm" : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"}\`}
             >
               Standard
             </button>
             <button
               type="button"
               onClick={(e) => { e.preventDefault(); setTranscriptionMode("translate"); }}
-              className={`flex-1 px-3 py-1.5 text-xs font-bold uppercase rounded-md transition-colors ${transcriptionMode === "translate" ? "bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-300 shadow-sm" : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"}`}
+              className={\`flex-1 px-3 py-1.5 text-xs font-bold uppercase rounded-md transition-colors \${transcriptionMode === "translate" ? "bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-300 shadow-sm" : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"}\`}
             >
               Smart
             </button>
@@ -626,7 +606,7 @@ export default function VoiceRecorder({
             <span>Recording...</span>
           </div>
         ) : isInitializing ? (
-          <div className={`w-full py-3 px-4 bg-slate-200 dark:bg-slate-800 text-slate-500 rounded-2xl font-bold text-xs flex items-center justify-center gap-2 shadow-md ${className}`}>
+          <div className={\`w-full py-3 px-4 bg-slate-200 dark:bg-slate-800 text-slate-500 rounded-2xl font-bold text-xs flex items-center justify-center gap-2 shadow-md \${className}\`}>
             <RefreshCw size={16} className="animate-spin" />
             <span>Waiting for microphone...</span>
           </div>
@@ -639,7 +619,7 @@ export default function VoiceRecorder({
               e.stopPropagation();
               startRecording();
             }}
-            className={`w-full py-3 px-4 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 disabled:opacity-50 text-white rounded-2xl font-bold text-xs flex items-center justify-center gap-2 shadow-md transition-all cursor-pointer ${className}`}
+            className={\`w-full py-3 px-4 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 disabled:opacity-50 text-white rounded-2xl font-bold text-xs flex items-center justify-center gap-2 shadow-md transition-all cursor-pointer \${className}\`}
           >
             <Mic size={16} />
             <span>{buttonLabel || "Start Voice Dictation"}</span>
@@ -650,20 +630,20 @@ export default function VoiceRecorder({
   }
 
   return (
-    <div className={`relative inline-flex items-center ${className}`}>
+    <div className={\`relative inline-flex items-center \${className}\`}>
       {!isRecording && !isTranscribing && !isInitializing && (
         <div className="mr-2 flex items-center bg-slate-100 dark:bg-slate-800 rounded-full p-0.5 border border-slate-200 dark:border-slate-700">
           <button
             type="button"
             onClick={(e) => { e.preventDefault(); e.stopPropagation(); setTranscriptionMode("transcribe"); }}
-            className={`px-2 py-1 text-[9px] font-bold uppercase rounded-full transition-colors ${transcriptionMode === "transcribe" ? "bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-300 shadow-sm" : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"}`}
+            className={\`px-2 py-1 text-[9px] font-bold uppercase rounded-full transition-colors \${transcriptionMode === "transcribe" ? "bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-300 shadow-sm" : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"}\`}
           >
             Standard
           </button>
           <button
             type="button"
             onClick={(e) => { e.preventDefault(); e.stopPropagation(); setTranscriptionMode("translate"); }}
-            className={`px-2 py-1 text-[9px] font-bold uppercase rounded-full transition-colors ${transcriptionMode === "translate" ? "bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-300 shadow-sm" : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"}`}
+            className={\`px-2 py-1 text-[9px] font-bold uppercase rounded-full transition-colors \${transcriptionMode === "translate" ? "bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-300 shadow-sm" : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"}\`}
           >
             Smart
           </button>
@@ -678,7 +658,7 @@ export default function VoiceRecorder({
           e.stopPropagation();
           isRecording ? finishRecording() : startRecording();
         }}
-        className={`p-2 rounded-full min-w-10 min-h-10 justify-center transition-all cursor-pointer flex items-center gap-1.5 ${
+        className={\`p-2 rounded-full min-w-10 min-h-10 justify-center transition-all cursor-pointer flex items-center gap-1.5 \${
           isTranscribing
             ? "bg-indigo-100 dark:bg-indigo-950/80 text-indigo-600 dark:text-indigo-400 border border-indigo-300"
             : isInitializing
@@ -686,7 +666,7 @@ export default function VoiceRecorder({
             : isRecording
             ? "bg-rose-600 hover:bg-rose-700 text-white animate-pulse shadow-md"
             : "bg-indigo-50 hover:bg-indigo-100 dark:bg-slate-800 dark:hover:bg-slate-700 text-indigo-600 dark:text-indigo-300 border border-indigo-200 dark:border-slate-700"
-        }`}
+        }\`}
         title={
           isTranscribing
             ? "Transcribing with ErMate..."
@@ -730,3 +710,7 @@ export default function VoiceRecorder({
     </div>
   );
 }
+`;
+
+fs.writeFileSync('src/components/shared/VoiceRecorder.tsx', content);
+console.log('VoiceRecorder.tsx replaced successfully');
