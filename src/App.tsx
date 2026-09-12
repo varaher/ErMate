@@ -280,6 +280,7 @@ useEffect(() => {
   const [remoteVersion, setRemoteVersion] = useState<string>(APP_VERSION);
   const [appUpdateBanner, setAppUpdateBanner] = useState<boolean>(false);
   const [isForceUpdate, setIsForceUpdate] = useState<boolean>(false);
+  const [isUpdatingApp, setIsUpdatingApp] = useState<boolean>(false);
 
   // Auto-dismiss update banner after 10 seconds (unless force update)
   useEffect(() => {
@@ -362,6 +363,9 @@ useEffect(() => {
 
   // Update handlers
   const handleUpdateApp = () => {
+    if (isUpdatingApp) return;
+    setIsUpdatingApp(true);
+    
     const targetVer = remoteVersion || currentVersion || APP_VERSION;
     localStorage.setItem("ermate_last_seen_version", targetVer);
     localStorage.setItem("ermate_app_known_version", targetVer);
@@ -369,15 +373,20 @@ useEffect(() => {
     sessionStorage.removeItem("ermate_dismissed_update_version");
     sessionStorage.setItem("ermate_update_confirm_pending", targetVer);
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.getRegistrations().then((registrations) => {
+      navigator.serviceWorker.getRegistrations().then(async (registrations) => {
+        if (registrations.length === 0) {
+          window.location.reload();
+          return;
+        }
         for (const registration of registrations) {
-          registration.update();
           if (registration.waiting) {
             registration.waiting.postMessage({ type: 'SKIP_WAITING' });
           }
+          await registration.update();
         }
-        window.location.reload();
+        // The reload will happen naturally via 'controllerchange' listener in useAppUpdate.tsx
       }).catch(() => {
+        setIsUpdatingApp(false);
         window.location.reload();
       });
     } else {
@@ -3940,10 +3949,11 @@ differentials: extracted.differentialDiagnosis
                   <button
                     type="button"
                     onClick={handleUpdateApp}
-                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl transition-all shadow-xs flex items-center gap-1.5 cursor-pointer active:scale-95"
+                    disabled={isUpdatingApp}
+                    className={`px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl transition-all shadow-xs flex items-center gap-1.5 cursor-pointer active:scale-95 ${isUpdatingApp ? 'opacity-50 cursor-not-allowed' : ''}`}
                   >
-                    <RefreshCw className="w-3.5 h-3.5" />
-                    <span>Update now</span>
+                    <RefreshCw className={`w-3.5 h-3.5 ${isUpdatingApp ? 'animate-spin' : ''}`} />
+                    <span>{isUpdatingApp ? 'Updating...' : 'Update now'}</span>
                   </button>
                 </>
               ) : (

@@ -230,7 +230,7 @@ export async function processScribeChatTurn(
         role: "assistant",
         timestamp: new Date().toISOString(),
         type: "extraction-confirmation",
-        content: "Saved to Case Sheet.",
+        content: "Case details extracted for review.",
         extractionSummary: {
           fieldsUpdated: Object.keys(updatedFields).filter(k => k !== 'vitals'),
           abnormalFlags: extractAbnormalFlags(cleaned),
@@ -666,7 +666,7 @@ function buildUnifiedReplyProse(
   // Extracted details are rendered natively by the UI card, so we don't duplicate them in the markdown prose.
 
   if (extMsg.type === "extraction-confirmation") {
-    text += "✅ Case sheet extracted and saved.\n\n";
+    text += "Case details extracted for review.\n\n";
   }
   
   if (reasonMsg.type === "clinical-reasoning") {

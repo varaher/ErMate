@@ -265,10 +265,9 @@ export default function VoiceScribeChatView({
               sender: h.role === "user" ? "user" : "ai",
               text: h.content,
               timestamp: new Date(h.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-              // UI-01 FIX: only carry extractionData forward from history if
-              // it has at least one displayable field — otherwise a reload
-              // would resurrect the same empty-card bug from saved history.
-              extractionData: hasDisplayableExtraction(h.unappliedExtraction) ? h.unappliedExtraction : undefined,
+              // UI-01 FIX: preserve ALL extraction data, even if it only has non-displayable fields (like isPediatric)
+              // so that it merges correctly with previous history in mergeExtractionUpTo.
+              extractionData: h.unappliedExtraction !== undefined ? h.unappliedExtraction : undefined,
               dischargeDraft: h.dischargeDraft,
             }))
           );
@@ -464,7 +463,7 @@ export default function VoiceScribeChatView({
 // checklist card can render and honestly show 0/N captured, rather
 // than silently disappearing — the "Copy to Case Sheet" button itself
 // still only appears when hasDisplayableExtraction() is true (see render).
-const fieldsToExtract = rawFieldsToExtract || {};
+const fieldsToExtract = rawFieldsToExtract || undefined;
         const dischargeDraft = data.dischargeDraft;
 
         const aiMsg: Message = {
@@ -703,7 +702,7 @@ const fieldsToExtract = rawFieldsToExtract || {};
                 <Markdown>{msg.text}</Markdown>
               </div>
 
-                               {msg.mode === "dictation" && msg.sender === "ai" && msg.extractionData !== undefined && (() => {
+                               {msg.mode === "dictation" && msg.sender === "ai" && msg.extractionData !== undefined && hasDisplayableExtraction(mergeExtractionUpTo(messages, msg.id)) && (() => {
                                            const merged = mergeExtractionUpTo(messages, msg.id);
                 const ageKnown = isValueCaptured(merged.age) || isValueCaptured(caseData?.patient?.age);
 
