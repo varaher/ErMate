@@ -38,7 +38,7 @@ interface Props {
   onCancel: () => void;
 }
 
-function createQuickDischargeCase(
+export function createQuickDischargeCase(
   extractedFields: Partial<ClinicalCase>,
   createdByEmail: string,
   hospital: string

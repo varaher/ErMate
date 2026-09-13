@@ -1,3 +1,4 @@
+import { getFfmpegPath } from "./ffmpegPath.ts";
 import { WebSocketServer, WebSocket } from "ws";
 import * as http from "http";
 import { spawn } from "child_process";
@@ -91,7 +92,7 @@ export function initSarvamRealtimeStream(server: http.Server) {
           });
 
           // Convert browser WebM to 16kHz Mono 16-bit PCM
-          ffmpeg = spawn("ffmpeg", [
+          ffmpeg = spawn(getFfmpegPath(), [
             "-f", "webm",
             "-i", "pipe:0",
             "-f", "s16le",

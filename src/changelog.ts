@@ -10,6 +10,12 @@ export interface VersionInfo {
 }
 
 export const CHANGELOG: Record<string, string[]> = {
+  "3.0.4": [
+    "Fixed voice dictation crash due to FFmpeg/node-fetch module conflict",
+    "Fixed 'dischargeDraft is not defined' error in Scribe Chat",
+    "Restored functional Rounds Debrief AI functionality",
+    "Forced update of Android PWA to activate responsive composer fixes",
+  ],
   "3.0.0": [
     "Hospital self-learning engine & HOD rule approval center",
     "New structured Emergency Handover Card with real-time alert severity",
@@ -55,5 +61,5 @@ export const CHANGELOG: Record<string, string[]> = {
 };
 
 // Current application version — increment on release
-export const APP_VERSION = "3.0.2";
+export const APP_VERSION = "3.0.4";
 

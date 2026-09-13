@@ -1,7 +1,7 @@
+import { getFfmpegPath } from "./ffmpegPath.ts";
 import fs from "fs";
 import os from "os";
 import path from "path";
-import fetch from "node-fetch";
 import { spawn } from "child_process";
 import { getErMateApiKey } from "./sarvamClient";
 
@@ -34,7 +34,7 @@ export async function sarvamBatchTranscribe(
     
     // Normalize using FFmpeg
     await new Promise<void>((resolve, reject) => {
-        const ffmpeg = spawn("ffmpeg", [
+        const ffmpeg = spawn(getFfmpegPath(), [
             "-y",
             "-i", tmpInputPath,
             "-ac", "1",

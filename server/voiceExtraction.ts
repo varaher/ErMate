@@ -14,8 +14,22 @@ OR in Malayalam/Hindi/Tamil/Telugu/Kannada mixed:
 OR just clinical details without a name:
 "57 year old female, fever since 3 days" (name not mentioned → patientName = null)
 
+NO ASSUMPTIONS - CRITICAL RULE:
+You MUST NOT invent, assume, or infer any patient information.
+If the doctor does not explicitly state "Male", do NOT output "Male (assumed)".
+If the doctor does not explicitly state "Normal examination", do NOT output "Normal".
+If the doctor does not explicitly state an allergy status, do NOT output "NKDA".
+Output ONLY what is literally said.
+
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 FIELD EXTRACTION — EXACT RULES
+NO ASSUMPTIONS - CRITICAL RULE:
+You MUST NOT invent, assume, or infer any patient information.
+If the doctor does not explicitly state "Male", do NOT output "Male (assumed)".
+If the doctor does not explicitly state "Normal examination", do NOT output "Normal".
+If the doctor does not explicitly state an allergy status, do NOT output "NKDA".
+Output ONLY what is literally said.
+
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 patientName:
@@ -55,6 +69,13 @@ chiefComplaint:
   NEVER put age here.
   This is SYMPTOMS ONLY.
 
+NO ASSUMPTIONS - CRITICAL RULE:
+You MUST NOT invent, assume, or infer any patient information.
+If the doctor does not explicitly state "Male", do NOT output "Male (assumed)".
+If the doctor does not explicitly state "Normal examination", do NOT output "Normal".
+If the doctor does not explicitly state an allergy status, do NOT output "NKDA".
+Output ONLY what is literally said.
+
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 FIELD SEPARATION IS CRITICAL:
   patientName    = person's name (proper noun only)
@@ -66,6 +87,13 @@ FIELD SEPARATION IS CRITICAL:
   NEVER merge them.
   NEVER put symptoms in name.
   NEVER put name in complaint.
+NO ASSUMPTIONS - CRITICAL RULE:
+You MUST NOT invent, assume, or infer any patient information.
+If the doctor does not explicitly state "Male", do NOT output "Male (assumed)".
+If the doctor does not explicitly state "Normal examination", do NOT output "Normal".
+If the doctor does not explicitly state an allergy status, do NOT output "NKDA".
+Output ONLY what is literally said.
+
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 symptoms (History of Present Illness):
@@ -202,6 +230,13 @@ MLC DETAILS:
   stays null unless a doctor explicitly describes a specific mark — never
   default to any example text. If not trauma/legally-reportable, set
   "isMlc": false and leave the rest of mlcDetails null.
+NO ASSUMPTIONS - CRITICAL RULE:
+You MUST NOT invent, assume, or infer any patient information.
+If the doctor does not explicitly state "Male", do NOT output "Male (assumed)".
+If the doctor does not explicitly state "Normal examination", do NOT output "Normal".
+If the doctor does not explicitly state an allergy status, do NOT output "NKDA".
+Output ONLY what is literally said.
+
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 SECTION LABELS — use EXACTLY:
   "Chief Complaint"
@@ -210,6 +245,13 @@ SECTION LABELS — use EXACTLY:
   "Past Medical History"
   NOT "Patient History & Presentation"
   NOT "Events Leading Up to Presentation"
+NO ASSUMPTIONS - CRITICAL RULE:
+You MUST NOT invent, assume, or infer any patient information.
+If the doctor does not explicitly state "Male", do NOT output "Male (assumed)".
+If the doctor does not explicitly state "Normal examination", do NOT output "Normal".
+If the doctor does not explicitly state an allergy status, do NOT output "NKDA".
+Output ONLY what is literally said.
+
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 PRIORITY INFERENCE:
@@ -218,8 +260,22 @@ PRIORITY INFERENCE:
   Moderate pain/Stable vitals → P3
   Never P4 for cardiac/neuro
 
+NO ASSUMPTIONS - CRITICAL RULE:
+You MUST NOT invent, assume, or infer any patient information.
+If the doctor does not explicitly state "Male", do NOT output "Male (assumed)".
+If the doctor does not explicitly state "Normal examination", do NOT output "Normal".
+If the doctor does not explicitly state an allergy status, do NOT output "NKDA".
+Output ONLY what is literally said.
+
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Return ONLY valid JSON. No markdown. No explanation. No preamble.
+NO ASSUMPTIONS - CRITICAL RULE:
+You MUST NOT invent, assume, or infer any patient information.
+If the doctor does not explicitly state "Male", do NOT output "Male (assumed)".
+If the doctor does not explicitly state "Normal examination", do NOT output "Normal".
+If the doctor does not explicitly state an allergy status, do NOT output "NKDA".
+Output ONLY what is literally said.
+
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 {

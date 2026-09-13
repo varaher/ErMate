@@ -3408,6 +3408,36 @@ differentials: extracted.differentialDiagnosis
                 setSelectedCaseId(cId);
               }}
               onSaveExtractedCase={handleSaveExtractedVoiceCase}
+              onPrepareDischarge={(extraction, msgId, chatCaseId) => {
+                const targetCaseId = chatCaseId || voiceScribeCaseId;
+                if (!targetCaseId) return;
+                
+                const existingCase = cases.find(c => c.id === targetCaseId);
+
+                if (existingCase) {
+                  // Ensure any new details are persisted to the existing case before opening discharge summary
+                  handleSaveExtractedVoiceCase(extraction, { existingCaseId: targetCaseId, autoNavigate: false });
+                  setShowVoiceScribeChat(false);
+                  setSelectedCaseId(targetCaseId);
+                  setShowDischargeSummaryId(targetCaseId);
+                } else {
+                  // No case saved yet, create the minimal quick discharge case
+                  const minimalCase = createQuickDischargeCase(
+                    extraction,
+                    profile?.email || auth?.currentUser?.email || "doctor@ermate.ai",
+                    profile?.hospital || "General Hospital"
+                  );
+                  // Override generic CASE-XXXX id to preserve the active link with the chat session
+                  minimalCase.id = targetCaseId;
+                  
+                  handleSaveCase(minimalCase);
+                  setQuickDischargeCase(minimalCase);
+                  
+                  setShowVoiceScribeChat(false);
+                  setSelectedCaseId(targetCaseId);
+                  setShowDischargeSummaryId(targetCaseId);
+                }
+              }}
               profile={profile}
               onSaveProfile={handleSaveProfile}
               messages={scribeMessages}

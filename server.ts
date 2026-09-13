@@ -188,8 +188,18 @@ function getAI(): GoogleGenAI {
 
 // API Routes
 
-const APP_VERSION = "3.0.2";
+import { getFfmpegPath } from "./server/ffmpegPath.ts";
+const APP_VERSION = "3.0.4";
 const BUILD_TIMESTAMP = new Date().toISOString();
+
+function checkFfmpeg() {
+  try {
+    getFfmpegPath();
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
 
 // Version & Build Info Endpoint
 app.get("/api/version", (req, res) => {
@@ -197,7 +207,8 @@ app.get("/api/version", (req, res) => {
     version: APP_VERSION,
     buildTime: BUILD_TIMESTAMP,
     updatedAt: BUILD_TIMESTAMP,
-    releaseNotes: "ErMate v3.0.0: Automatic backup server support, friendlier error messages, session clearing between patients, faster case sheet updates."
+    releaseNotes: "ErMate v3.0.3: ffmpeg production fix, responsive chat composer layout.",
+    ffmpegAvailable: checkFfmpeg()
   });
 });
 
@@ -213,6 +224,8 @@ app.get("/api/health", (req, res) => {
     geminiConfigured: hasKey, 
     sarvamConfigured: hasSarvamKey,
     anthropicConfigured: hasAnthropicKey,
+    ffmpegAvailable: checkFfmpeg(),
+    ffmpegSource: "ffmpeg-static",
        pipelineConfig: {
       transcription: "Sarvam v3 (sole engine, no fallback, by design)",
       voiceExtraction: "GPT-4o-mini (Primary) / Claude Haiku (Fallback) [NOT Gemini]",
@@ -1531,8 +1544,11 @@ app.post("/api/scribe-chat", async (req, res) => {
         caseId || "C-default",
         messages || [],
         {
-          callExtractionModel: async ({ model, temperature, deidentifiedInput, patientAgeYears }) => {
+          callExtractionModel: async ({ model, temperature, deidentifiedInput, patientAgeYears, pendingClarification }) => {
             let rawText: any = "";
+            const promptSuffix = pendingClarification 
+              ? `\n\nCRITICAL CONTEXT: The system just asked the user to clarify the patient's ${pendingClarification}. Evaluate the user's input primarily as the answer to this clarification. For example, if pendingClarification is 'age' and the input is '25', you MUST extract age as 25.`
+              : "";
             try {
               if (model === "gpt-4o-mini" && process.env.OPENAI_API_KEY) {
                 const controller = new AbortController();
@@ -1549,7 +1565,7 @@ app.post("/api/scribe-chat", async (req, res) => {
                     temperature: 0.0,
                     response_format: { type: "json_object" },
                     messages: [
-                      { role: "system", content: VOICE_EXTRACTION_PROMPT },
+                      { role: "system", content: VOICE_EXTRACTION_PROMPT + promptSuffix },
                       { role: "user", content: `Transcript:\n"""\n${deidentifiedInput}\n"""` }
                     ]
                   })
@@ -1600,7 +1616,7 @@ INSTRUCTIONS:
 - If this message contains NEW clinical information (new vitals, new symptoms, a new lab result), acknowledge what's new and explain how it changes your prior assessment, if it does.
 - Keep your tone conversational, like a senior colleague responding to a specific question — not like a template being re-filled.
 - Cite sources only when introducing a NEW clinical claim that needs one, not on every single message.
-- You must return valid JSON with the following keys: "summary" (your conversational answer or clinical summary), "differentials" (array of strings, ONLY if asked or relevant), "watchFor" (array of strings, ONLY if relevant), "references" (array of { "source": string, "note": string }, ONLY if relevant).`;
+- You must return valid JSON with the following keys: "summary" (your conversational answer . DO NOT generate a formatted case sheet, DO NOT use headings like "EMERGENCY CASE SHEET", and DO NOT say "finalized case sheet saved"), "differentials" (array of strings, ONLY if asked or relevant), "watchFor" (array of strings, ONLY if relevant), "references" (array of { "source": string, "note": string }, ONLY if relevant).`;
 
               const sysInstruction = "You are an Emergency Medicine Expert Senior Consultant. Return valid JSON only.";
               const sonnetResult = await callClaudeSonnetOnly(prompt, sysInstruction, true);

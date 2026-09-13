@@ -76,6 +76,9 @@ export function subscribeChatHistory(
         clinicalReasoning: data.clinicalReasoning,
         unappliedExtraction: data.unappliedExtraction,
         dischargeDraft: data.dischargeDraft,
+        mode: data.mode,
+        extractionApplied: data.extractionApplied,
+        dischargeIntent: data.dischargeIntent,
       } as any;
     });
     onMessages(messages);
@@ -216,6 +219,9 @@ export function subscribeDiscussionHistory(
         clinicalReasoning: data.clinicalReasoning,
         unappliedExtraction: data.unappliedExtraction,
         dischargeDraft: data.dischargeDraft,
+        mode: data.mode,
+        extractionApplied: data.extractionApplied,
+        dischargeIntent: data.dischargeIntent,
       } as any;
     });
     onMessages(messages);

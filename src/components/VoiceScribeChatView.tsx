@@ -26,6 +26,7 @@ interface Message {
   extractionApplied?: boolean;
   dischargeDraft?: string;
   dischargeApplied?: boolean;
+  dischargeIntent?: boolean;
 }
 
 interface VoiceScribeChatViewProps {
@@ -67,6 +68,83 @@ const LENSES: { id: string; label: string }[] = [
 // This single helper is now the ONLY place that decides "does this
 // field belong on screen", used both to gate whether the card renders
 // and to build the rows inside it, so the two can never disagree again.
+
+function humanizeFieldLabel(key: string): string {
+  return key
+    .replace(/([A-Z])/g, " $1")
+    .replace(/^./, s => s.toUpperCase())
+    .trim();
+}
+
+function formatExtractionEntryValue(key: string, val: any): string {
+  if (key === "vbgAbg" && val && typeof val === "object") {
+    const type = val.type ? `${val.type}: ` : "";
+    const vals = Array.isArray(val.values)
+      ? val.values
+          .map((v: any) =>
+            `${v.name ?? v.param ?? ""} ${v.value ?? ""}`.trim()
+          )
+          .filter(Boolean)
+          .join(", ")
+      : "";
+
+    return `${type}${vals}`.trim() || "—";
+  }
+
+  if (key === "chronologicalNotes" && Array.isArray(val)) {
+    return val
+      .map((n: any) => n?.entry ?? n)
+      .filter(Boolean)
+      .join("; ");
+  }
+
+  if (
+    (key === "secondarySurvey" || key === "fastFindings") &&
+    val &&
+    typeof val === "object"
+  ) {
+    return Object.entries(val)
+      .filter(([, v]) => v !== null && v !== undefined && v !== "")
+      .map(([k, v]) => `${humanizeFieldLabel(k)}: ${String(v)}`)
+      .join(", ");
+  }
+
+  if (key === "mlcDetails" && val && typeof val === "object") {
+    return Object.entries(val)
+      .filter(([k, v]) =>
+        k !== "isMlc" &&
+        v !== null &&
+        v !== undefined &&
+        v !== ""
+      )
+      .map(([k, v]) => `${humanizeFieldLabel(k)}: ${String(v)}`)
+      .join(", ");
+  }
+
+  if (Array.isArray(val)) {
+    return val
+      .map(item => {
+        if (item && typeof item === "object") {
+          return Object.values(item)
+            .filter(v => v !== null && v !== undefined && v !== "")
+            .join(" ");
+        }
+        return String(item);
+      })
+      .filter(Boolean)
+      .join(", ");
+  }
+
+  if (val && typeof val === "object") {
+    return Object.entries(val)
+      .filter(([, v]) => v !== null && v !== undefined && v !== "")
+      .map(([k, v]) => `${humanizeFieldLabel(k)}: ${String(v)}`)
+      .join(", ");
+  }
+
+  return String(val);
+}
+
 function getDisplayableExtractionEntries(data: any): [string, any][] {
   if (!data || typeof data !== "object") return [];
   return Object.entries(data).filter(([key, val]) => {
@@ -268,6 +346,7 @@ export default function VoiceScribeChatView({
               // UI-01 FIX: preserve ALL extraction data, even if it only has non-displayable fields (like isPediatric)
               // so that it merges correctly with previous history in mergeExtractionUpTo.
               extractionData: h.unappliedExtraction !== undefined ? h.unappliedExtraction : undefined,
+              extractionApplied: h.extractionApplied || false,
               dischargeDraft: h.dischargeDraft,
             }))
           );
@@ -423,6 +502,7 @@ export default function VoiceScribeChatView({
         if (!res.ok) throw new Error(data.error || "Request failed");
 
         const replyText = data.response || data.reply || "I've reviewed the case, but couldn't form a clear answer just now.";
+        const dischargeIntent = data.dischargeIntent;
         const aiMsg: Message = {
           id: `ai-${Date.now()}`,
           sender: "ai",
@@ -464,7 +544,7 @@ export default function VoiceScribeChatView({
 // than silently disappearing — the "Copy to Case Sheet" button itself
 // still only appears when hasDisplayableExtraction() is true (see render).
 const fieldsToExtract = rawFieldsToExtract || undefined;
-        const dischargeDraft = data.dischargeDraft;
+        const dischargeIntent = data.dischargeIntent;
 
         const aiMsg: Message = {
           id: `ai-${Date.now()}`,
@@ -474,8 +554,7 @@ const fieldsToExtract = rawFieldsToExtract || undefined;
           mode: "dictation",
           extractionData: fieldsToExtract,
           extractionApplied: false,
-          dischargeDraft: dischargeDraft,
-          dischargeApplied: false,
+          dischargeIntent: dischargeIntent,
         };
 
         setMessages((prev) => [...prev, aiMsg]);
@@ -486,7 +565,9 @@ const fieldsToExtract = rawFieldsToExtract || undefined;
           content: replyText,
           timestamp: new Date().toISOString(),
           unappliedExtraction: fieldsToExtract ? JSON.parse(JSON.stringify(fieldsToExtract)) : undefined,
-          dischargeDraft: dischargeDraft,
+          extractionApplied: false,
+          dischargeIntent: dischargeIntent,
+          mode: "dictation",
         });
       }
     } catch (err: any) {
@@ -702,94 +783,62 @@ const fieldsToExtract = rawFieldsToExtract || undefined;
                 <Markdown>{msg.text}</Markdown>
               </div>
 
-                               {msg.mode === "dictation" && msg.sender === "ai" && msg.extractionData !== undefined && hasDisplayableExtraction(mergeExtractionUpTo(messages, msg.id)) && (() => {
-                                           const merged = mergeExtractionUpTo(messages, msg.id);
-                const ageKnown = isValueCaptured(merged.age) || isValueCaptured(caseData?.patient?.age);
+                               {msg.mode === "dictation" &&
+ msg.sender === "ai" &&
+ msg.extractionData !== undefined &&
+ (() => {
 
-                if (!ageKnown) {
-                  return (
-                    <div className="mt-3 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg px-3 py-2.5 text-xs text-amber-800 dark:text-amber-300">
-                      ⏳ Waiting for the patient's age before showing the captured checklist — reply with the age above.
-                    </div>
-                  );
-                }
+  const merged = mergeExtractionUpTo(messages, msg.id);
+  const entries = getDisplayableExtractionEntries(merged);
 
-                const kind: CaseSheetKind = (merged.isPediatric || caseData?.isPediatric) ? "pediatric" : "adult";
-                const checklist = getChecklistForKind(kind);
-                const rows = checklist.map(item => {
-                  const val = resolveChecklistValue(item.id, merged);
-                  return { ...item, value: val, captured: isValueCaptured(val) };
-                });
-                const bySection = rows.reduce((acc, row) => {
-                  (acc[row.section] = acc[row.section] || []).push(row);
-                  return acc;
-                }, {} as Record<string, typeof rows>);
-                const anyCaptured = rows.some(r => r.captured);
+  if (entries.length === 0) return null;
 
-                return (
-                  <div className="mt-3 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden shadow-sm">
-                    <div className="bg-slate-200 dark:bg-slate-800 px-3 py-2 text-[10px] font-bold text-slate-700 dark:text-slate-300 border-b border-slate-200 dark:border-slate-700 uppercase tracking-wider flex items-center justify-between">
-                      <span>Captured from your update</span>
-                      <span className="font-mono normal-case">{rows.filter(r => r.captured).length}/{rows.length}</span>
-                    </div>
-                    <div className="p-3 text-xs space-y-3 text-slate-600 dark:text-slate-400 max-h-[340px] overflow-y-auto">
-                      {Object.entries(bySection).map(([section, sectionRows]) => (
-                        <div key={section}>
-                          <div className="text-[9px] font-bold uppercase tracking-wider text-slate-400 mb-1">{section}</div>
-                          {sectionRows.map(row => (
-                            <div key={row.id} className="flex items-start gap-1.5 py-0.5">
-                              <span className="shrink-0">{row.captured ? "✅" : "⭕"}</span>
-                              <span>
-                                <strong className="text-slate-800 dark:text-slate-200">{row.label}:</strong>{" "}
-                                {row.captured ? formatChecklistValue(row.value) : <em className="text-slate-400">Not documented</em>}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      ))}
-                    </div>
-                    {anyCaptured && (
-                      <div className="p-2 border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
-                        <button
-                          disabled={msg.extractionApplied}
-                          onClick={() => handleApplyExtraction(msg.id, merged)}
-                          className={`w-full py-1.5 rounded text-xs font-bold transition-all cursor-pointer ${
-                            msg.extractionApplied
-                              ? "bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 opacity-80"
-                              : "bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm"
-                          }`}
-                        >
-                          {msg.extractionApplied ? "✅ Case sheet extracted and saved." : "Copy to Case Sheet"}
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                );
-              })()}
+  return (
+    <div className="mt-3 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden shadow-sm">
 
-              {msg.dischargeDraft && (
-                <div className="mt-3 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden shadow-sm">
-                  <div className="bg-slate-200 dark:bg-slate-800 px-3 py-2 text-[10px] font-bold text-slate-700 dark:text-slate-300 border-b border-slate-200 dark:border-slate-700 uppercase tracking-wider">
-                    Discharge Summary Draft
-                  </div>
-                  <div className="p-3 text-xs space-y-2 text-slate-600 dark:text-slate-400 max-h-[300px] overflow-y-auto whitespace-pre-wrap">
-                    {msg.dischargeDraft}
-                  </div>
-                  <div className="p-2 border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
-                    <button
-                      disabled={msg.dischargeApplied}
-                      onClick={() => handleApplyDischarge(msg.id, msg.dischargeDraft!)}
-                      className={`w-full py-1.5 rounded text-xs font-bold transition-all cursor-pointer ${
-                        msg.dischargeApplied
-                          ? "bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 opacity-80"
-                          : "bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm"
-                      }`}
-                    >
-                      {msg.dischargeApplied ? "✓ Applied to Discharge Summary" : "Copy to Discharge Summary"}
-                    </button>
-                  </div>
-                </div>
-              )}
+      <div className="bg-slate-200 dark:bg-slate-800 px-3 py-2 text-[10px] font-bold text-slate-700 dark:text-slate-300 border-b border-slate-200 dark:border-slate-700 uppercase tracking-wider">
+        CAPTURED FROM YOUR UPDATE
+      </div>
+
+      <div className="p-3 text-xs space-y-2 text-slate-600 dark:text-slate-400 max-h-[340px] overflow-y-auto">
+
+        {entries.map(([key, val]) => (
+          <div key={key}>
+            <strong className="text-slate-800 dark:text-slate-200">
+              {humanizeFieldLabel(key)}:
+            </strong>{" "}
+            {formatExtractionEntryValue(key, val)}
+          </div>
+        ))}
+
+      </div>
+
+      <div className="p-2 border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-col sm:flex-row gap-2">
+        <button
+          disabled={msg.extractionApplied}
+          onClick={() => handleApplyExtraction(msg.id, merged)}
+          className={`flex-1 py-1.5 rounded text-xs font-bold transition-all cursor-pointer ${
+            msg.extractionApplied
+              ? "bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 opacity-80"
+              : "bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm"
+          }`}
+        >
+          {msg.extractionApplied
+            ? "✅ Copied to Case Sheet"
+            : "Prepare Case Sheet"}
+        </button>
+        <button
+          onClick={() => onPrepareDischarge?.(merged, msg.id, activeCaseId!)}
+          className="flex-1 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded text-xs font-bold transition-all cursor-pointer shadow-sm"
+        >
+          Prepare Discharge Summary
+        </button>
+      </div>
+    </div>
+  );
+})()}
+
+              
 
               <span className="text-[9px] opacity-60 block text-right mt-2 font-mono">{msg.timestamp}</span>
             </div>
@@ -836,7 +885,7 @@ const fieldsToExtract = rawFieldsToExtract || undefined;
       )}
 
       {/* Voice Recorder & Input Section */}
-      <div className="border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3 flex flex-col gap-2 relative">
+      <div className="border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3 flex flex-col gap-2 relative" style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}>
         {showLensMenu && (
           <>
             <div className="fixed inset-0 z-40" onClick={() => setShowLensMenu(false)} />
@@ -857,34 +906,38 @@ const fieldsToExtract = rawFieldsToExtract || undefined;
           </>
         )}
 
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setShowLensMenu(v => !v)}
-            className="p-2.5 rounded-full text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all cursor-pointer shrink-0"
-            title="Clinical lenses"
-          >
-            <MoreVertical size={18} />
-          </button>
+        <div className="flex flex-wrap sm:flex-nowrap items-center gap-2">
+          {/* Left Controls */}
+          <div className="flex items-center gap-1 order-2 sm:order-1">
+            <button
+              type="button"
+              onClick={() => setShowLensMenu(v => !v)}
+              className="p-2.5 rounded-full text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all cursor-pointer shrink-0"
+              title="Clinical lenses"
+            >
+              <MoreVertical size={18} />
+            </button>
 
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={isUploadingAttachment}
-            className="p-2.5 rounded-full text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all cursor-pointer shrink-0 disabled:opacity-40"
-            title="Attach an image (PDF/Word not yet supported)"
-          >
-            <Paperclip size={18} />
-          </button>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*,.pdf,.doc,.docx"
-            onChange={handleAttachmentSelected}
-            className="hidden"
-          />
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isUploadingAttachment}
+              className="p-2.5 rounded-full text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all cursor-pointer shrink-0 disabled:opacity-40"
+              title="Attach an image (PDF/Word not yet supported)"
+            >
+              <Paperclip size={18} />
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*,.pdf,.doc,.docx"
+              onChange={handleAttachmentSelected}
+              className="hidden"
+            />
+          </div>
 
-          <div className="flex-1 flex gap-2">
+          {/* Textarea */}
+          <div className="flex-1 flex min-w-0 w-full order-1 sm:order-2 basis-full sm:basis-auto">
             <textarea
               ref={inputTextareaRef}
               value={inputText}
@@ -904,21 +957,25 @@ const fieldsToExtract = rawFieldsToExtract || undefined;
               style={{ maxHeight: "160px" }}
             />
           </div>
-          {inputText.trim() ? (
-            <button
-              onClick={() => sendToChat(inputText)}
-              disabled={isSending}
-              className="p-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white rounded-full cursor-pointer shadow-md transition-all flex items-center justify-center shrink-0 w-10 h-10"
-            >
-              <Send size={16} className="mr-0.5" />
-            </button>
-          ) : (
-            <VoiceRecorder
-              renderMode="compact-button"
-              onTranscript={sendToChat}
-              disabled={isSending}
-            />
-          )}
+
+          {/* Right Controls */}
+          <div className="flex items-center shrink-0 order-3 sm:order-3 ml-auto sm:ml-0">
+            {inputText.trim() ? (
+              <button
+                onClick={() => sendToChat(inputText)}
+                disabled={isSending}
+                className="p-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white rounded-full cursor-pointer shadow-md transition-all flex items-center justify-center shrink-0 w-10 h-10"
+              >
+                <Send size={16} className="mr-0.5" />
+              </button>
+            ) : (
+              <VoiceRecorder
+                renderMode="compact-button"
+                onTranscript={sendToChat}
+                disabled={isSending}
+              />
+            )}
+          </div>
         </div>
       </div>
     </div>

@@ -113,6 +113,38 @@ export interface ScribeTurnResponse {
   dischargeDraft?: string;
   reply?: string;
   ageQuestionNeeded?: boolean;
+  dischargeIntent?: boolean;
+}
+
+
+function deepMergeExtraction(base: any, incoming: any): any {
+  const result = { ...base };
+  for (const [key, val] of Object.entries(incoming)) {
+    if (val === null || val === undefined || val === "") continue;
+    const existing = result[key];
+    if (Array.isArray(val)) {
+      result[key] = Array.isArray(existing) ? [...existing, ...val] : val;
+    } else if (typeof val === "object") {
+      result[key] = (existing && typeof existing === "object" && !Array.isArray(existing))
+        ? deepMergeExtraction(existing, val)
+        : val;
+    } else {
+      result[key] = val;
+    }
+  }
+  return result;
+}
+
+function getMergedPendingExtraction(chatHistory: any[], existingCaseSheet: any): any {
+  let merged = { ...existingCaseSheet };
+  for (const msg of chatHistory) {
+    // Both extractionData and unappliedExtraction are preserved from frontend
+    const ext = msg.extractionData || msg.unappliedExtraction;
+    if (msg.sender === "ai" && ext) {
+      merged = deepMergeExtraction(merged, ext);
+    }
+  }
+  return merged;
 }
 
 // ── Main orchestrator — call this on every chat turn ────────────────
@@ -129,6 +161,7 @@ export async function processScribeChatTurn(
       temperature: number;
       deidentifiedInput: string;
       patientAgeYears: number | null;
+      pendingClarification?: string;
     }) => Promise<RawExtractionFields>;
     callClinicalReasoningModel: (params: {
       model: "claude-3.5-sonnet";
@@ -164,55 +197,45 @@ export async function processScribeChatTurn(
   const deidentifiedInput = phiResult.deidentified;
 
   // Intent Detection: Is this a Discharge Summary request?
-  const isDischargeReq = /(prepare|write|create|generate|draft|make|give|provide).*(discharge summary|discharge note|ds)|(discharge summary|discharge note)/i.test(userInput);
+  const isDischargeReq =
+    /\b(?:prepare|write|create|generate|draft|make|give|provide)\s+(?:a\s+|the\s+)?discharge\s+(?:summary|note)\b/i.test(userInput) ||
+    /^\s*discharge\s+(?:summary|note)\s*$/i.test(userInput) ||
+    /\b(?:prepare|write|create|generate|draft|make|give|provide)\s+ds\b/i.test(userInput) ||
+    /^\s*ds\s*$/i.test(userInput);
 
   if (isDischargeReq) {
-    try {
-      const draftResult = await generateDischargeSummary(existingCaseSheet as any);
-      
-      const dischargeMessage: ScribeChatMessage = {
-        id: "ds-" + Date.now() + "-" + Math.random().toString(36).substring(2, 6),
-        role: "assistant",
-        timestamp: new Date().toISOString(),
-        type: "clinical-reasoning",
-        content: "I have prepared a draft of the discharge summary based on the current case sheet. You can review it and copy it to the Discharge Summary tab.",
-      };
+    const dischargeMessage: ScribeChatMessage = {
+      id: "ds-" + Date.now() + "-" + Math.random().toString(36).substring(2, 6),
+      role: "assistant",
+      timestamp: new Date().toISOString(),
+      type: "clinical-reasoning",
+      content: "I'll open the Discharge Summary view with these details for you now.",
+    };
 
-      const rawSummary = draftResult.summary as Record<string, any> || {};
-      let draftText = "";
-      if (rawSummary.hospitalCourse) draftText += `**Hospital Course:**\n${rawSummary.hospitalCourse}\n\n`;
-      if (rawSummary.dischargeAdvice) draftText += `**Discharge Advice:**\n${rawSummary.dischargeAdvice}\n\n`;
-      if (rawSummary.followUpPlan) draftText += `**Follow-up Plan:**\n${rawSummary.followUpPlan}\n\n`;
-      if (rawSummary.medicationsOnDischarge) draftText += `**Medications on Discharge:**\n${rawSummary.medicationsOnDischarge}`;
-      
-      return {
-        extractionMessage: dischargeMessage,
-        reasoningMessage: dischargeMessage,
-        dischargeDraft: draftText.trim() || JSON.stringify(rawSummary),
-        reply: dischargeMessage.content,
-      };
-    } catch (err: any) {
-      console.error("[scribeChatTurn] Failed to generate discharge summary", err);
-      const errMsg: ScribeChatMessage = {
-        id: "ds-err-" + Date.now(),
-        role: "assistant",
-        timestamp: new Date().toISOString(),
-        type: "error",
-        content: "I couldn't generate the discharge summary at this time. Please try again.",
-      };
-      return {
-        extractionMessage: errMsg,
-        reasoningMessage: errMsg,
-        reply: errMsg.content,
-      };
+    return {
+      extractionMessage: dischargeMessage,
+      reasoningMessage: dischargeMessage,
+      dischargeIntent: true,
+      reply: dischargeMessage.content,
+    };
+  }
+
+  const mergedPendingExtraction = getMergedPendingExtraction(chatHistory, existingCaseSheet);
+  const effectiveAgeYears = patientAgeYears || mergedPendingExtraction.age || mergedPendingExtraction?.patient?.age || null;
+
+  let pendingClarification: string | undefined;
+  const lastAiMessage = [...chatHistory].reverse().find(m => m.sender === "ai" || m.role === "assistant");
+  if (lastAiMessage && lastAiMessage.content && /what is the patient's age/i.test(lastAiMessage.content)) {
+    if (!effectiveAgeYears) {
+      pendingClarification = "age";
     }
   }
 
   // Run extraction and clinical reasoning IN PARALLEL — independent
   // failures, independent models, independent fallback chains.
   const [extractionResult, reasoningResult] = await Promise.allSettled([
-    runExtraction(deidentifiedInput, patientAgeYears, existingCaseSheet, helpers.callExtractionModel),
-    runClinicalReasoning(deidentifiedInput, existingCaseSheet, chatHistory, helpers.callClinicalReasoningModel),
+    runExtraction(deidentifiedInput, effectiveAgeYears, pendingClarification, mergedPendingExtraction, helpers.callExtractionModel),
+    runClinicalReasoning(deidentifiedInput, mergedPendingExtraction, chatHistory, helpers.callClinicalReasoningModel),
   ]);
 
   // ── Handle extraction outcome ──
@@ -230,7 +253,7 @@ export async function processScribeChatTurn(
         role: "assistant",
         timestamp: new Date().toISOString(),
         type: "extraction-confirmation",
-        content: "Case details extracted for review.",
+        content: "✅ Details captured from your update.",
         extractionSummary: {
           fieldsUpdated: Object.keys(updatedFields).filter(k => k !== 'vitals'),
           abnormalFlags: extractAbnormalFlags(cleaned),
@@ -244,8 +267,8 @@ export async function processScribeChatTurn(
       // — ask directly instead of guessing "adult" by default.
       const ageFromThisTurn = updatedFields.age;
       const ageAlreadyKnown =
-        (existingCaseSheet as any)?.age ??
-        (existingCaseSheet as any)?.patient?.age;
+        (mergedPendingExtraction as any)?.age ??
+        (mergedPendingExtraction as any)?.patient?.age;
       const ageFromProp = patientAgeYears;
       const hasAge =
         (ageFromThisTurn !== undefined && ageFromThisTurn !== null && String(ageFromThisTurn).trim() !== "") ||
@@ -321,16 +344,17 @@ export async function processScribeChatTurn(
 async function runExtraction(
   deidentifiedInput: string,
   patientAgeYears: number | null,
+  pendingClarification: string | undefined,
   existingCaseSheet: any,
   callExtractionModel: any
 ): Promise<{ cleaned: ReturnType<typeof cleanExtractionOutput>; updatedFields: Record<string, any> }> {
   let raw: RawExtractionFields;
 
   try {
-    raw = await callExtractionModel({ model: "gpt-4o-mini", temperature: 0.0, deidentifiedInput, patientAgeYears });
+    raw = await callExtractionModel({ model: "gpt-4o-mini", temperature: 0.0, deidentifiedInput, patientAgeYears, pendingClarification });
   } catch (err) {
     console.warn("[scribeChatTurn] GPT-4o-mini extraction failed, falling back to Claude 3.5 Haiku", err);
-    raw = await callExtractionModel({ model: "claude-3.5-haiku", temperature: 0.0, deidentifiedInput, patientAgeYears });
+    raw = await callExtractionModel({ model: "claude-3.5-haiku", temperature: 0.0, deidentifiedInput, patientAgeYears, pendingClarification });
   }
 
   const cleaned = cleanExtractionOutput(raw);
@@ -671,15 +695,6 @@ function buildUnifiedReplyProse(
   
   if (reasonMsg.type === "clinical-reasoning") {
     text += `${reasonMsg.content}\n\n`;
-    if (reasonMsg.clinicalReasoning?.differentials?.length) {
-      text += "### 🎯 Differentials to Consider\n" + reasonMsg.clinicalReasoning.differentials.map(d => `* ${d}`).join("\n") + "\n\n";
-    }
-    if (reasonMsg.clinicalReasoning?.watchFor?.length) {
-      text += "### ⚠️ Watch For (Red Flags)\n" + reasonMsg.clinicalReasoning.watchFor.map(w => `* ${w}`).join("\n") + "\n\n";
-    }
-    if (reasonMsg.clinicalReasoning?.references?.length) {
-      text += "### 📚 Reference Citations\n" + reasonMsg.clinicalReasoning.references.map(r => `* **${r.source}**: ${r.note}`).join("\n");
-    }
   } else if (reasonMsg.type === "error") {
     text += `\n*Note: ${reasonMsg.content}*`;
   }

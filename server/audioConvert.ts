@@ -1,3 +1,4 @@
+import { getFfmpegPath } from "./ffmpegPath.ts";
 import { execFile } from "child_process";
 import { promisify } from "util";
 import * as fs from "fs";
@@ -55,7 +56,7 @@ export async function convertAudioToWavOld(
     fs.writeFileSync(inputPath, audioBuffer);
 
     await execFileAsync(
-      "ffmpeg",
+      getFfmpegPath(),
       ["-y", "-i", inputPath, "-ar", "16000", "-ac", "1", "-sample_fmt", "s16", "-f", "wav", outputPath],
       { timeout: 30000 }
     );
@@ -107,7 +108,7 @@ export async function convertAndChunkAudioToWav(
 
     // 1. Convert to 16kHz mono WAV first
     await execFileAsync(
-      "ffmpeg",
+      getFfmpegPath(),
       ["-hide_banner", "-loglevel", "error", "-y", "-i", inputPath, "-ar", "16000", "-ac", "1", "-sample_fmt", "s16", intermediateWav],
       { timeout: 60000, maxBuffer: 10 * 1024 * 1024 }
     );
@@ -116,7 +117,7 @@ export async function convertAndChunkAudioToWav(
     let stderr = "";
     try {
       const result = await execFileAsync(
-        "ffmpeg",
+        getFfmpegPath(),
         ["-hide_banner", "-i", intermediateWav, "-af", "silencedetect=noise=-30dB:d=0.5", "-f", "null", "-"],
         { timeout: 60000, maxBuffer: 10 * 1024 * 1024 }
       );
@@ -167,7 +168,7 @@ export async function convertAndChunkAudioToWav(
     if (splitTimes.length > 0) {
       const segmentTimes = splitTimes.join(",");
       await execFileAsync(
-        "ffmpeg",
+        getFfmpegPath(),
         [
           "-hide_banner", "-loglevel", "error",
           "-y",
@@ -182,7 +183,7 @@ export async function convertAndChunkAudioToWav(
     } else {
       // Fallback: original blind 15-second split if silence detection completely failed
       await execFileAsync(
-        "ffmpeg",
+        getFfmpegPath(),
         [
           "-hide_banner", "-loglevel", "error",
           "-y",
