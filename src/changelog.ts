@@ -55,5 +55,5 @@ export const CHANGELOG: Record<string, string[]> = {
 };
 
 // Current application version — increment on release
-export const APP_VERSION = "3.0.0";
+export const APP_VERSION = "3.0.2";
 

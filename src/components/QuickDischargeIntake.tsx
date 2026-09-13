@@ -291,8 +291,12 @@ export default function QuickDischargeIntake({
       recorder.start();
       mediaRecorderRef.current = recorder;
       setIsRecordingVoice(true);
-    } catch (err) {
-      setError("Microphone access denied or unavailable.");
+    } catch (err: any) {
+      if (err.name === "NotAllowedError" || err.message === "Permission denied") {
+        setError("Microphone access denied. Please click the site settings icon in your browser address bar to allow microphone access.");
+      } else {
+        setError(err.message || "Microphone access denied or unavailable.");
+      }
       setStatus("error");
     }
   };

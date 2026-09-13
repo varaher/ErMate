@@ -740,9 +740,13 @@ export default function CaseSheetView({
       setIsListening(true);
       isListeningActiveRef.current = true;
       setIsDictating(true);
-    } catch (micErr) {
+    } catch (micErr: any) {
       console.error("Microphone access failed:", micErr);
-      alert("Could not access microphone. Please check browser microphone permissions.");
+      if (micErr.name === "NotAllowedError" || micErr.message === "Permission denied") {
+        alert("Microphone access denied. Please click the site settings icon in your browser address bar to allow microphone access.");
+      } else {
+        alert(micErr.message || "Could not access microphone. Please check browser microphone permissions.");
+      }
       setIsListening(false);
       isListeningActiveRef.current = false;
       setIsDictating(false);

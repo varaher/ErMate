@@ -124,6 +124,13 @@ export default function VoiceRecorder({
       const wsUrl = `${protocol}//${window.location.host}/api/voice/stream`;
       const ws = new WebSocket(wsUrl);
 
+      const connTimeout = setTimeout(() => {
+        if (ws.readyState !== WebSocket.OPEN) {
+           ws.close();
+           reject(new Error("WebSocket connection timeout"));
+        }
+      }, 5000);
+
       ws.onopen = () => {
          // Send configuration to backend
          ws.send(JSON.stringify({ mode: transcriptionMode }));
@@ -134,6 +141,7 @@ export default function VoiceRecorder({
           const msg = JSON.parse(event.data);
           
           if (msg.type === "ready") {
+             clearTimeout(connTimeout);
              resolve(ws);
           } else if (msg.type === "partial") {
              setCurrentPartialText(msg.transcript);
@@ -189,7 +197,10 @@ export default function VoiceRecorder({
         throw new Error("Microphone API is not available in this browser. Are you using HTTPS?");
       }
 
-      // 1. Establish WebSocket FIRST
+      // 1. Get Microphone Access FIRST before opening WebSocket
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      
+      // 2. Establish WebSocket NOW that mic is active
       try {
         wsRef.current = await initWebSocket();
       } catch (wsErr) {
@@ -197,14 +208,6 @@ export default function VoiceRecorder({
         setUseFallbackBatch(true);
       }
 
-      // 2. Get Microphone Access
-      const streamPromise = navigator.mediaDevices.getUserMedia({ audio: true });
-      const timeoutPromise = new Promise<MediaStream>((_, reject) => {
-        setTimeout(() => reject(new Error("Microphone permission prompt timed out. Please check your browser settings.")), 15000);
-      });
-
-      const stream = await Promise.race([streamPromise, timeoutPromise]);
-      
       stream.getAudioTracks().forEach((track) => {
         track.onmute = () => pauseForSystemEvent();
         track.onunmute = () => resumeFromSystemEvent();
@@ -331,7 +334,12 @@ export default function VoiceRecorder({
 
     } catch (err: any) {
       console.error("[VoiceRecorder] Mic access failed:", err);
-      const errMsg = err.message || "Could not access microphone. Check browser permissions and try again.";
+      let errMsg = err.message || "Could not access microphone. Check browser permissions and try again.";
+      if (err.name === "NotAllowedError" || err.message === "Permission denied") {
+         errMsg = "Microphone access denied. Please click the site settings icon in your browser address bar to allow microphone access.";
+      } else if (err.name === "NotFoundError" || err.message?.includes("Requested device not found")) {
+         errMsg = "No microphone found on your device.";
+      }
       setMicError(errMsg);
       onError?.(errMsg);
       setIsInitializing(false);

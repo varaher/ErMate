@@ -188,7 +188,7 @@ function getAI(): GoogleGenAI {
 
 // API Routes
 
-const APP_VERSION = "2.10.0";
+const APP_VERSION = "3.0.2";
 const BUILD_TIMESTAMP = new Date().toISOString();
 
 // Version & Build Info Endpoint
@@ -197,7 +197,7 @@ app.get("/api/version", (req, res) => {
     version: APP_VERSION,
     buildTime: BUILD_TIMESTAMP,
     updatedAt: BUILD_TIMESTAMP,
-    releaseNotes: "ErMate v2.10.0: Upgraded Gemini 3.6 Flash AI engine, structured handover cards, EMR noise-stripping & chronological entry reversal, and real-time critical alert row."
+    releaseNotes: "ErMate v3.0.0: Automatic backup server support, friendlier error messages, session clearing between patients, faster case sheet updates."
   });
 });
 
