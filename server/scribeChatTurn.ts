@@ -225,7 +225,8 @@ export async function processScribeChatTurn(
 
   let pendingClarification: string | undefined;
   const lastAiMessage = [...chatHistory].reverse().find(m => m.sender === "ai" || m.role === "assistant");
-  if (lastAiMessage && lastAiMessage.content && /what is the patient's age/i.test(lastAiMessage.content)) {
+  const lastAiText = lastAiMessage?.content ?? lastAiMessage?.text ?? "";
+  if (lastAiText && /what is the patient's age/i.test(lastAiText)) {
     if (!effectiveAgeYears) {
       pendingClarification = "age";
     }

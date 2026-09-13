@@ -36,6 +36,7 @@ interface VoiceScribeChatViewProps {
   onOpenCaseSheet?: (caseId: string) => void;
   onCaseSheetUpdated?: (fields: any) => void;
   onSaveExtractedCase?: (extracted: any, options?: { autoNavigate?: boolean; existingCaseId?: string }) => Promise<string>;
+  onPrepareDischarge?: (extractedData: any, messageId: string, caseId: string) => void;
   profile?: any;
   onSaveProfile?: (newProfile: any) => Promise<any>;
   messages?: any;
@@ -250,6 +251,7 @@ export default function VoiceScribeChatView({
   onOpenCaseSheet,
   onCaseSheetUpdated,
   onSaveExtractedCase,
+  onPrepareDischarge,
   profile,
   onSaveProfile,
   messages: propMessages,
@@ -348,6 +350,9 @@ export default function VoiceScribeChatView({
               extractionData: h.unappliedExtraction !== undefined ? h.unappliedExtraction : undefined,
               extractionApplied: h.extractionApplied || false,
               dischargeDraft: h.dischargeDraft,
+              dischargeApplied: h.dischargeApplied || false,
+              dischargeIntent: h.dischargeIntent,
+              mode: h.mode || (h.unappliedExtraction !== undefined ? "dictation" : undefined),
             }))
           );
         }
