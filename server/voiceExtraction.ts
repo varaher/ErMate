@@ -97,10 +97,12 @@ Output ONLY what is literally said.
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 symptoms (History of Present Illness):
-  Clinical narrative paragraph.
-  Expand what doctor said into a proper HPI.
+  Genuine patient symptoms/complaints ONLY (e.g. pain, nausea, breathlessness).
+  Clinical narrative paragraph. Expand what doctor said into a proper HPI.
   Use ONLY what was dictated.
   
+  NEVER put vitals, airway, breathing, circulation, GCS, or physical examination findings here.
+  If objective findings are dictated, put them in their respective ABCDE, vitals, or examination fields.
   NEVER generate:
   "Acute symptom onset prior to arrival"
   "Patient presented to ED for evaluation"
@@ -108,13 +110,6 @@ symptoms (History of Present Illness):
   "Progressive discomfort"
   Any text doctor did not say.
   If not dictated → ""
-
-signsAndSymptoms:
-  Physical examination findings ONLY.
-  What the doctor found on physical examination (e.g. "Pallor present, throat congestion, chest clear").
-  NOT the history. NOT the chief complaint.
-  If doctor didn't state physical exam findings → return "" (empty string).
-  NEVER fill with history or complaint text.
 
 events (Preceding Events / Trauma):
   ONLY for:
@@ -222,14 +217,14 @@ FAST/EFAST FINDINGS:
   } | null
 
 MLC DETAILS:
-  Set "isMlc": true whenever the case involves trauma, assault, RTA/road
+  Set "possibleMlc": true whenever the case involves trauma, assault, RTA/road
   traffic accident, poisoning, burns, or any legally reportable incident
   — even if the doctor never says "MLC" explicitly. Extract
   natureOfIncident, placeOfIncident, dateTimeOfIncident, mechanismOfInjury,
   broughtBy, and informant from what was dictated. identificationMark
   stays null unless a doctor explicitly describes a specific mark — never
   default to any example text. If not trauma/legally-reportable, set
-  "isMlc": false and leave the rest of mlcDetails null.
+  "possibleMlc": false and leave the rest of mlcDetails null.
 NO ASSUMPTIONS - CRITICAL RULE:
 You MUST NOT invent, assume, or infer any patient information.
 If the doctor does not explicitly state "Male", do NOT output "Male (assumed)".
@@ -241,7 +236,6 @@ Output ONLY what is literally said.
 SECTION LABELS — use EXACTLY:
   "Chief Complaint"
   "History of Present Illness"
-  "Signs and Symptoms"
   "Past Medical History"
   NOT "Patient History & Presentation"
   NOT "Events Leading Up to Presentation"
@@ -276,6 +270,25 @@ If the doctor does not explicitly state "Normal examination", do NOT output "Nor
 If the doctor does not explicitly state an allergy status, do NOT output "NKDA".
 Output ONLY what is literally said.
 
+EXTRACTION SAFETY RULES:
+SpO2:
+→ vitals.spo2
+ABG pO2:
+→ blood gas po2 only if explicitly dictated
+NEVER derive pO2 from SpO2.
+
+If allergy is not mentioned: do not generate NKDA.
+If BP is not mentioned: do not generate BP.
+If temperature is not mentioned: do not generate temperature.
+If pO2 is not mentioned: do not generate pO2.
+If consultations are not mentioned: do not invent consultations.
+If plan is not mentioned: do not invent a plan.
+
+TREATMENT EXTRACTION:
+You can output legacy strings in the array OR structured objects.
+Use object form for detailed medications: { "drugName": string, "dose": string, "route": string, "instruction": string, "timeGiven": string }
+timeGiven ONLY if an actual clock administration time was dictated. Do not put "stat", "BD", "TDS" into timeGiven (put those in "instruction").
+
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 {
@@ -285,7 +298,6 @@ Output ONLY what is literally said.
   "priority": "P1" | "P2" | "P3" | "P4" | "P5",
   "chiefComplaint": string,
   "symptoms": string,
-  "signsAndSymptoms": string,
   "events": string,
   "vitals": {
     "hr": string | null,
@@ -309,29 +321,34 @@ Output ONLY what is literally said.
     "hco3": string | null,
     "be": string | null,
     "lactate": string | null,
-       "na": string | null,
+    "na": string | null,
     "k": string | null,
-    "cl": string | null
+    "cl": string | null,
+    "hb": string | null,
+    "anionGap": string | null
   } | null,
   "pastMedicalHistory": string | null,
+  "lastMeal": string | null,
   "medications": string[],
   "allergies": string | null,
   "surgicalHistory": string | null,
   "familyHistory": string | null,
   "lmp": string | null,
-    "generalExamination": string | null,
+  "generalExamination": string | null,
+  "cSpineExam": string | null,
   "cvsExamination": string | null,
   "respiratoryExamination": string | null,
   "abdomenExamination": string | null,
   "cnsExamination": string | null,
   "extremitiesExamination": string | null,
+  "echo": string | null,
   "fastFindings": {
     "heart": string | null,
     "abdomen": string | null,
     "pelvis": string | null
   } | null,
   "mlcDetails": {
-    "isMlc": boolean,
+    "possibleMlc": boolean,
     "natureOfIncident": string | null,
     "placeOfIncident": string | null,
     "dateTimeOfIncident": string | null,
@@ -341,7 +358,15 @@ Output ONLY what is literally said.
     "identificationMark": string | null
   },
   "investigations": string[],
-  "treatment": string[],
+  "consultations": string[],
+  "plan": string | null,
+  "treatment": Array<string | {
+    "drugName": string,
+    "dose": string,
+    "route": string,
+    "instruction": string,
+    "timeGiven": string
+  }>,
   "diagnosis": string | null,
   "differentials": string[],
   "disposition": string | null,

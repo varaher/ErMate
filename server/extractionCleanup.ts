@@ -94,19 +94,17 @@ export function stripCarrierPhrases(rawValue: string | null | undefined): string
  * Applies stripCarrierPhrases across an array field (e.g. multiple
  * symptoms or drugs extracted as separate list items).
  */
-export function cleanEntityList(values: (string | null | undefined)[] | null | undefined): string[] {
+export function cleanEntityList(values: any[] | null | undefined): any[] {
   if (!values || !Array.isArray(values)) return [];
   return values
-    .map(stripCarrierPhrases)
-    .filter((v): v is string => v !== null && v.length > 0);
+    .map(v => typeof v === 'string' ? stripCarrierPhrases(v) : v)
+    .filter(v => v !== null && (typeof v !== 'string' || v.length > 0));
 }
 
 // ── Field-shape types matching extraction.ts output ──────────────────
 
 export interface RawExtractionFields {
-  signsSymptoms?: string[] | string | null;
   symptoms?: string[] | string | null;
-  signsAndSymptoms?: string[] | string | null;
   events?: { time?: string | null; description?: string | null }[] | string | null;
   drugs?: string[] | null;
   medications?: string[] | null;
@@ -118,9 +116,9 @@ export interface RawExtractionFields {
 }
 
 export interface CleanedExtractionFields {
-  signsSymptoms: string[];
+  symptoms: string[];
   events: { time: string | null; description: string }[];
-  drugs: string[];
+  drugs: any[];
   plan: string[];
   labs: { name: string; value: string | number | null }[];
 }
@@ -136,19 +134,19 @@ export interface CleanedExtractionFields {
  */
 export function cleanExtractionOutput(raw: RawExtractionFields): CleanedExtractionFields {
   if (!raw || typeof raw !== "object") {
-    return { signsSymptoms: [], events: [], drugs: [], plan: [], labs: [] };
+    return { symptoms: [], events: [], drugs: [], plan: [], labs: [] };
   }
 
-  // Signs & Symptoms — accept either array or single narrative string,
+  // Symptoms — accept either array or single narrative string,
   // normalize to array of short entity fragments
-  const rawSymptoms = raw.signsSymptoms ?? raw.signsAndSymptoms ?? raw.symptoms;
+  const rawSymptoms = raw.symptoms;
   const symptomsArray = Array.isArray(rawSymptoms)
     ? rawSymptoms
     : typeof rawSymptoms === "string" && rawSymptoms.trim()
     ? rawSymptoms.split(/;|\n|,/).map(s => s.trim())
     : [];
 
-  const signsSymptoms = cleanEntityList(symptomsArray);
+  const symptoms = cleanEntityList(symptomsArray);
 
   // Events — keep timestamp, clean description only
   let rawEvents: { time?: string | null; description?: string | null }[] = [];
@@ -171,9 +169,9 @@ export function cleanExtractionOutput(raw: RawExtractionFields): CleanedExtracti
 
   // Drugs / Medications — straightforward entity list
   const rawDrugs: any = raw.drugs ?? raw.medications ?? raw.treatment ?? raw.treatmentInER;
-  let drugsArray: string[] = [];
+  let drugsArray: any[] = [];
   if (Array.isArray(rawDrugs)) {
-    drugsArray = rawDrugs.map(d => String(d));
+    drugsArray = rawDrugs.map(d => typeof d === 'string' ? d : d);
   } else if (typeof rawDrugs === "string" && rawDrugs.trim().length > 0) {
     drugsArray = rawDrugs.split(/;|\n|,/).map(d => d.trim());
   }
@@ -211,5 +209,5 @@ export function cleanExtractionOutput(raw: RawExtractionFields): CleanedExtracti
     }))
     .filter(l => l.name && l.name.length > 0);
 
-  return { signsSymptoms, events, drugs, plan, labs };
+  return { symptoms, events, drugs, plan, labs };
 }

@@ -435,8 +435,7 @@ pmh:
   Past medical and surgical history, verbatim from what was dictated. If the doctor did not mention past history at all, return null. Only return "No past medical history" if the doctor EXPLICITLY said "no past medical history" / "no comorbidities" / "NKCO" or equivalent.
 
 differentials:
-  List 2-4 with brief clinical reasoning each.
-  If input has "Differential Diagnosis:", map those directly.
+  Array of differential diagnoses explicitly dictated by the clinician. Do NOT generate or invent differentials. If the clinician did not state any, return [].
 
 alerts:
   List anything urgent or pending.
@@ -1159,9 +1158,8 @@ export function formatClinicalCaseObject(rawExt: Record<string, any>, rawText: s
   const cleanedEntities = cleanExtractionOutput(ext);
 
   // Apply cleaned entity lists to ext if available
-  if (cleanedEntities.signsSymptoms && cleanedEntities.signsSymptoms.length > 0) {
-    ext.symptoms = cleanedEntities.signsSymptoms.join(", ");
-    ext.signsSymptoms = cleanedEntities.signsSymptoms;
+  if (cleanedEntities.symptoms && cleanedEntities.symptoms.length > 0) {
+    ext.symptoms = cleanedEntities.symptoms.join(", ");
   }
   if (cleanedEntities.drugs && cleanedEntities.drugs.length > 0) {
     ext.medications = cleanedEntities.drugs;

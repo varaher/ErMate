@@ -393,7 +393,7 @@ async function runClinicalReasoning(
 
 function summarizeUpdatedFields(cleaned: ReturnType<typeof cleanExtractionOutput>): string[] {
   const summary: string[] = [];
-  if (cleaned.signsSymptoms.length > 0) summary.push(`Symptoms: ${cleaned.signsSymptoms.join(", ")}`);
+  if (cleaned.symptoms.length > 0) summary.push(`Symptoms: ${cleaned.symptoms.join(", ")}`);
   if (cleaned.events.length > 0) summary.push(`Events: ${cleaned.events.length} logged`);
   if (cleaned.drugs.length > 0) summary.push(`Drugs: ${cleaned.drugs.join(", ")}`);
   if (cleaned.plan.length > 0) summary.push(`Plan: ${cleaned.plan.join(", ")}`);
@@ -467,15 +467,15 @@ function mapExtractionToCaseSheetFields(
     // updated, so a dictated chloride value was silently dropped here
     // even though it was successfully extracted upstream.
     const VBG_PARAM_MAP: Record<string, string> = {
-      ph: "ph", pco2: "pco2", hco3: "hco3", lactate: "lactate", na: "na", k: "k", cl: "cl",
+      ph: "pH", pco2: "pCO2", hco3: "HCO3", lactate: "Lactate", na: "Na", k: "K", cl: "Cl", po2: "PO2", hb: "Hb", be: "Base Excess", anionGap: "Anion Gap"
     };
     const values: { name: string; param: string; value: number | null }[] = [];
-    for (const [key, mappedParam] of Object.entries(VBG_PARAM_MAP)) {
+    for (const [key, name] of Object.entries(VBG_PARAM_MAP)) {
       const v = raw.vbg[key];
       if (v !== null && v !== undefined && v !== "" && String(v).toLowerCase() !== "unknown") {
         const num = parseFloat(String(v));
         if (!isNaN(num)) {
-          values.push({ name: key.toUpperCase(), param: mappedParam, value: num });
+          values.push({ name, param: key, value: num });
         }
       }
     }
@@ -508,11 +508,13 @@ function mapExtractionToCaseSheetFields(
   if (isValidStr(raw.surgicalHistory)) fields.surgicalHistory = raw.surgicalHistory;
   if (isValidStr(raw.familyHistory)) fields.familyHistory = raw.familyHistory;
   if (isValidStr(raw.lmp)) fields.lmp = raw.lmp;
+  if (isValidStr(raw.lastMeal)) fields.lastMeal = raw.lastMeal;
   if (isValidStr(raw.psychologicalAssessment)) fields.psychologicalAssessment = raw.psychologicalAssessment;
   if (isValidStr(raw.ecg)) fields.ecg = raw.ecg;
   if (isValidStr(raw.echo)) fields.echo = raw.echo;
   if (isValidStr(raw.diagnosis)) fields.diagnosis = raw.diagnosis; // closes VOICE-06
   if (isValidStr(raw.disposition)) fields.disposition = raw.disposition;
+  if (Array.isArray(raw.consultations) && raw.consultations.length > 0) fields.consultations = raw.consultations.filter(isValidStr);
 
   if (Array.isArray(raw.investigationsOrdered) && raw.investigationsOrdered.length > 0) {
     fields.investigationsOrdered = raw.investigationsOrdered.filter((i: any) => isValidStr(i));
@@ -554,6 +556,7 @@ function mapExtractionToCaseSheetFields(
   if (raw.mlcDetails && typeof raw.mlcDetails === 'object') {
     const mlc: Record<string, any> = {};
     if (typeof raw.mlcDetails.isMlc === 'boolean') mlc.isMlc = raw.mlcDetails.isMlc;
+    if (typeof raw.mlcDetails.possibleMlc === 'boolean') mlc.possibleMlc = raw.mlcDetails.possibleMlc;
     for (const key of ['natureOfIncident', 'placeOfIncident', 'dateTimeOfIncident', 'mechanismOfInjury', 'broughtBy', 'informant', 'identificationMark']) {
       if (isValidStr(raw.mlcDetails[key])) mlc[key] = raw.mlcDetails[key];
     }
@@ -562,13 +565,10 @@ function mapExtractionToCaseSheetFields(
 
   if (cleaned.drugs.length > 0) fields.treatmentGiven = cleaned.drugs;
   if (cleaned.events.length > 0) {
-    fields.chronologicalNotes = cleaned.events.map(e => ({
-      timestamp: e.time || new Date().toISOString(),
-      entry: e.description,
-    }));
+    fields.events = cleaned.events.map(e => e.description).join("; ");
   }
 
-  if (cleaned.signsSymptoms.length > 0) fields.symptoms = cleaned.signsSymptoms;
+  if (cleaned.symptoms.length > 0) fields.symptoms = cleaned.symptoms;
   if (cleaned.plan.length > 0) fields.plan = cleaned.plan;
   if (cleaned.labs.length > 0) fields.labs = cleaned.labs;
 
@@ -643,6 +643,8 @@ function mapExtractionToCaseSheetFields(
 
   if (isValidStr(raw.cnsExamination)) { secSurvey.cns = raw.cnsExamination; updatedSecSurvey = true; }
   else if (systemicNormal && !isValidStr(secSurvey.cns)) { secSurvey.cns = EXAM_DEFAULTS.cnsExamination; updatedSecSurvey = true; }
+
+  if (isValidStr(raw.cSpineExam)) { secSurvey.cSpineExam = raw.cSpineExam; updatedSecSurvey = true; }
 
   if (updatedSecSurvey) fields.secondarySurvey = secSurvey;
 

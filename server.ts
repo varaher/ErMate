@@ -1600,23 +1600,37 @@ app.post("/api/scribe-chat", async (req, res) => {
                 ? recentHistory.map((m) => `[${(m.role === "user" || m.sender === "user") ? "Doctor" : "ErMate"}]: ${m.content || m.text}`).join("\n")
                 : "(This is the first message in this conversation.)";
 
-              const prompt = `You are continuing an ongoing clinical conversation with an ER doctor about a specific patient. This is NOT a fresh case summary request every time — the doctor is having a real back-and-forth discussion with you.
-
-CASE CONTEXT (the patient's current record — for your reference, do not just repeat this back unless directly relevant to answering the question below):
+              const prompt = `You are continuing an ongoing clinical conversation with an ER doctor about a specific patient.
+CASE CONTEXT:
 ${JSON.stringify(caseContext || {}, null, 2)}
 
 CONVERSATION SO FAR:
 ${historyBlock}
 
-THE DOCTOR'S CURRENT MESSAGE (this is what you must actually answer — do not just re-summarize the case again):
+THE DOCTOR'S CURRENT MESSAGE:
 "${deidentifiedInput}"
 
 INSTRUCTIONS:
-- If this message is a follow-up question (like "should I discharge them?" or "what about X drug interaction?"), answer THAT SPECIFIC QUESTION directly and concisely. Do not repeat the full case summary, differentials, and citations you may have already given earlier in this conversation unless the doctor is explicitly asking for them again.
-- If this message contains NEW clinical information (new vitals, new symptoms, a new lab result), acknowledge what's new and explain how it changes your prior assessment, if it does.
-- Keep your tone conversational, like a senior colleague responding to a specific question — not like a template being re-filled.
-- Cite sources only when introducing a NEW clinical claim that needs one, not on every single message.
-- You must return valid JSON with the following keys: "summary" (your conversational answer . DO NOT generate a formatted case sheet, DO NOT use headings like "EMERGENCY CASE SHEET", and DO NOT say "finalized case sheet saved"), "differentials" (array of strings, ONLY if asked or relevant), "watchFor" (array of strings, ONLY if relevant), "references" (array of { "source": string, "note": string }, ONLY if relevant).`;
+- Format your response strictly using this concise mobile pattern (use only the headings that are genuinely useful):
+  **Key Concerns**
+  - 2-4 short bullets (interpretation, red flags, differentials)
+
+  **Immediate Actions**
+  - 2-4 short bullets (management, recommended investigations)
+
+  **Points to Clarify**
+  - 1-2 short bullets (only if clinical facts like BP, GCS, or pO2 are missing and critical to reasoning)
+
+- DO NOT use giant Markdown headings (e.g. # or ##). Use bold text (**) for headings.
+- DO NOT force every heading if there is nothing useful to say. Target total length of 4-8 concise sentences.
+- DO NOT repeat the whole dictation or recreate a fake case sheet.
+- DO NOT say "case sheet saved" or acknowledge saving (the system handles this separately).
+- DO NOT state "hemodynamically unstable" or "shock" unless there is actual evidence (e.g. low BP) to support it. Tachycardia alone does not define shock.
+- DO NOT invent missing clinical facts (e.g. CT findings, BP, pO2, age). If unknown, they remain unknown.
+- DO NOT give excessive textbook explanations or disclaimers.
+- Distinguish clearly between treatment already given by the doctor and your suggested management.
+- Your response must strictly contain your formatted text in the "summary" key. You may also populate the "differentials", "watchFor", and "references" arrays with structured insights when clinically useful.
+- Return valid JSON with the following keys: "summary" (your mobile-formatted response), "differentials" (relevant differentials when clinically useful), "watchFor" (relevant red flags/concerns when useful), "references" (relevant references when appropriate).`;
 
               const sysInstruction = "You are an Emergency Medicine Expert Senior Consultant. Return valid JSON only.";
               const sonnetResult = await callClaudeSonnetOnly(prompt, sysInstruction, true);

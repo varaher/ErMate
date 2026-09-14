@@ -35,6 +35,7 @@ const AdminPanelView = React.lazy(() => import("./components/AdminPanelView"));
 const DoctorsDirectoryView = React.lazy(() => import("./components/DoctorsDirectoryView"));
 import NewPatientEntryMenu, { type EntryMethod } from "./components/NewPatientEntryMenu";
 import { validateTeamInvite } from "./services/teamInviteService";
+import { createQuickDischargeCase } from "./components/QuickDischargeIntake";
 import ConsentModal from "./components/ConsentModal";
 import { BoundChatModal } from "./components/BoundChatModal";
 import { ROTA_SHIFTS } from "./components/TeamRosterBoard";
@@ -1459,6 +1460,7 @@ useEffect(() => {
       await setDoc(doc(db, "cases", caseToSave.id), sanitizeForFirestore(caseToSave));
       
       // Determine changed fields across all patient sections (Demographics, Vitals, Primary Survey, SAMPLE history, Treatments, Labs, Differentials, Notes, Disposition, Pediatric)
+
       const previousCase = cases.find(c => c.id === updatedCase.id);
       const changedKeys: string[] = [];
       const prevVals: any = {};
@@ -1536,6 +1538,7 @@ useEffect(() => {
     } catch (err: any) {
       console.error("Error saving case or audit trail:", err);
       handleFirestoreError(err, OperationType.WRITE, "cases");
+      throw err;
     }
     setCases(prev => {
       const exists = prev.some(c => c.id === caseToSave.id);
@@ -1700,16 +1703,16 @@ useEffect(() => {
       departmentId: existingMatch?.departmentId || hospitalSlug,
       createdAt: existingMatch?.createdAt || new Date().toISOString(),
       patient: {
-        name: extracted.patientName || existingMatch?.patient.name || "Extracted Voice Patient",
+        name: extracted.patientName || existingMatch?.patient.name || "",
         age: finalAge !== null ? finalAge : existingMatch?.patient.age || null,
-        gender: extracted.gender || existingMatch?.patient.gender || "Male",
+        gender: extracted.gender || existingMatch?.patient.gender || "",
       presentingComplaint: extracted.presentingComplaint || existingMatch?.patient.presentingComplaint || "Not documented",
-        triageCategory: extracted.triageCategory || existingMatch?.patient.triageCategory || TriageCategory.P2,
-        arrivalMode: extracted.arrivalMode || existingMatch?.patient.arrivalMode || ArrivalMode.WalkIn,
+        triageCategory: extracted.triageCategory || existingMatch?.patient.triageCategory || undefined,
+        arrivalMode: extracted.arrivalMode || existingMatch?.patient.arrivalMode || undefined,
         dateOpened: existingMatch?.patient.dateOpened || (new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + " | " + new Date().toLocaleDateString([], { month: 'short', day: 'numeric' })),
         uhid: existingMatch?.patient.uhid || ("UHID-" + Math.floor(100000 + Math.random() * 900000)),
-             caseType: extracted.caseType || existingMatch?.patient.caseType || "Medical",
-        isMlc: extracted.mlcDetails?.isMlc ?? existingMatch?.patient.isMlc ?? false,
+        caseType: extracted.caseType || existingMatch?.patient.caseType || undefined,
+        isMlc: (extracted.mlcDetails && extracted.mlcDetails.mlcConfirmedByClinician && typeof extracted.mlcDetails.isMlc === 'boolean') ? extracted.mlcDetails.isMlc : (existingMatch?.patient.isMlc ?? false),
         mlcDetails: extracted.mlcDetails ? {
           ...(existingMatch?.patient.mlcDetails || {}),
           natureOfIncident: extracted.mlcDetails.natureOfIncident || existingMatch?.patient.mlcDetails?.natureOfIncident,
@@ -1725,13 +1728,13 @@ useEffect(() => {
         spo2: extracted.vitals?.spo2 || existingMatch?.vitals.spo2 || "",
         rr: extracted.vitals?.rr || existingMatch?.vitals.rr || "",
         temp: extracted.vitals?.temp || existingMatch?.vitals.temp || "",
-        gcs: extracted.vitals?.gcs || existingMatch?.vitals.gcs || "15",
-        gcs_e: extracted.vitals?.gcs_e || existingMatch?.vitals.gcs_e || "4",
-        gcs_v: extracted.vitals?.gcs_v || existingMatch?.vitals.gcs_v || "5",
-        gcs_m: extracted.vitals?.gcs_m || existingMatch?.vitals.gcs_m || "6",
+        gcs: extracted.vitals?.gcs || existingMatch?.vitals.gcs || "",
+        gcs_e: extracted.vitals?.gcs_e || existingMatch?.vitals.gcs_e || "",
+        gcs_v: extracted.vitals?.gcs_v || existingMatch?.vitals.gcs_v || "",
+        gcs_m: extracted.vitals?.gcs_m || existingMatch?.vitals.gcs_m || "",
         grbs: extracted.vitals?.grbs || existingMatch?.vitals.grbs || "",
-        avpu: extracted.vitals?.avpu || existingMatch?.vitals.avpu || "Alert",
-        painScore: extracted.vitals?.painScore || existingMatch?.vitals.painScore || "0"
+        avpu: extracted.vitals?.avpu || existingMatch?.vitals.avpu || "",
+        painScore: extracted.vitals?.painScore || existingMatch?.vitals.painScore || ""
       },
       sampleHistory: {
         symptoms: extracted.sampleHistory?.symptoms || (Array.isArray(extracted.symptoms) ? extracted.symptoms.join(", ") : extracted.symptoms) || existingMatch?.sampleHistory.symptoms || "",
@@ -1747,23 +1750,25 @@ useEffect(() => {
         ...(existingMatch?.primaryAssessment || {}),
         ...(extracted.primaryAssessment || {}),
         airway: extracted.primaryAssessment?.airway || extracted.airway || existingMatch?.primaryAssessment.airway || "",
-        airwayStatus: extracted.primaryAssessment?.airwayStatus || extracted.airwayStatus || existingMatch?.primaryAssessment.airwayStatus || "Normal",
+        airwayStatus: extracted.primaryAssessment?.airwayStatus || extracted.airwayStatus || existingMatch?.primaryAssessment.airwayStatus || "",
         breathing: extracted.primaryAssessment?.breathing || extracted.breathing || existingMatch?.primaryAssessment.breathing || "",
-        breathingStatus: extracted.primaryAssessment?.breathingStatus || extracted.breathingStatus || existingMatch?.primaryAssessment.breathingStatus || "Normal",
+        breathingStatus: extracted.primaryAssessment?.breathingStatus || extracted.breathingStatus || existingMatch?.primaryAssessment.breathingStatus || "",
         circulation: extracted.primaryAssessment?.circulation || extracted.circulation || existingMatch?.primaryAssessment.circulation || "",
-        circulationStatus: extracted.primaryAssessment?.circulationStatus || extracted.circulationStatus || existingMatch?.primaryAssessment.circulationStatus || "Normal",
+        circulationStatus: extracted.primaryAssessment?.circulationStatus || extracted.circulationStatus || existingMatch?.primaryAssessment.circulationStatus || "",
         disability: extracted.primaryAssessment?.disability || extracted.disability || existingMatch?.primaryAssessment.disability || "",
-        disabilityStatus: extracted.primaryAssessment?.disabilityStatus || extracted.disabilityStatus || existingMatch?.primaryAssessment.disabilityStatus || "Normal",
+        disabilityStatus: extracted.primaryAssessment?.disabilityStatus || extracted.disabilityStatus || existingMatch?.primaryAssessment.disabilityStatus || "",
         exposure: extracted.primaryAssessment?.exposure || extracted.exposure || existingMatch?.primaryAssessment.exposure || "",
-        exposureStatus: extracted.primaryAssessment?.exposureStatus || extracted.exposureStatus || existingMatch?.primaryAssessment.exposureStatus || "Normal"
+        exposureStatus: extracted.primaryAssessment?.exposureStatus || extracted.exposureStatus || existingMatch?.primaryAssessment.exposureStatus || ""
       },
       secondaryAssessment: extracted.secondaryAssessment || (extracted.secondarySurvey ? Object.entries(extracted.secondarySurvey).map(([k,v]) => `${k.toUpperCase()}: ${v}`).join("\n") : null) || existingMatch?.secondaryAssessment || "",
+      secondarySurvey: extracted.secondarySurvey || existingMatch?.secondarySurvey || undefined,
       investigations: extracted.investigations || (extracted.labs ? extracted.labs.map((l: any, i: number) => ({ id: `inv-${Date.now()}-${i}`, testName: l.name || l, result: l.value || "Ordered", orderTime: new Date().toLocaleTimeString(), resultTime: "Pending", isAbnormal: false })) : null) || existingMatch?.investigations || [],
-      treatments: extracted.treatments || (extracted.treatmentGiven ? extracted.treatmentGiven.map((t: any, i: number) => ({ id: `trt-${Date.now()}-${i}`, drugName: t.name || t, dose: "Stat", route: "IV", timeGiven: new Date().toLocaleTimeString(), ipsgVerified: true })) : null) || existingMatch?.treatments || [],
+      treatments: extracted.treatments || (extracted.treatmentGiven ? extracted.treatmentGiven.map((t: any, i: number) => ({ id: `trt-${Date.now()}-${i}`, drugName: typeof t === 'string' ? t : (t.drugName || t.name || ""), dose: typeof t === 'string' ? "" : (t.dose || ""), route: typeof t === 'string' ? "" : (t.route || ""), instruction: typeof t === 'string' ? "" : (t.instruction || ""), timeGiven: typeof t === 'string' ? "" : (t.timeGiven || ""), ipsgVerified: false })) : null) || existingMatch?.treatments || [],
       progressNotes: extracted.progressNotes || (extracted.chronologicalNotes ? extracted.chronologicalNotes.map((n: any) => n.entry).join("\n") : null) || existingMatch?.progressNotes || "Case created via ErMate Voice Scribe dictation.",
+      dispositionAndPlan: existingMatch?.dispositionAndPlan || { consultsRequested: extracted.consultations || [], managementPlan: extracted.plan || "" },
      dischargeInfo: null,
 differentials: extracted.differentialDiagnosis
-  ? [{ diagnosis: extracted.differentialDiagnosis, status: "EVALUATING" }]
+  ? [{ diagnosis: extracted.differentialDiagnosis, status: "POSSIBLE" as const, reasoning: "", citations: [], nextSteps: [] }]
   : (existingMatch?.differentials || []),
       isPediatric: extracted.isPediatric !== undefined ? Boolean(extracted.isPediatric) : (finalAge !== null && finalAge <= 16),
       pediatricDetails: extracted.pediatricDetails || existingMatch?.pediatricDetails || undefined,
@@ -1801,6 +1806,8 @@ differentials: extracted.differentialDiagnosis
       },
            adjuncts: {
   ...(existingMatch?.adjuncts || {}),
+  echoDone: (extracted.echo ? true : undefined) || existingMatch?.adjuncts?.echoDone,
+  echoFindings: extracted.echo || existingMatch?.adjuncts?.echoFindings || "",
   ...(extracted.fastFindings ? (() => {
     const f = extracted.fastFindings;
     const parts = [
@@ -1822,6 +1829,10 @@ differentials: extracted.differentialDiagnosis
     abgNa: extracted.vbgAbg.values.find((v: any) => v.param === "na")?.value ?? existingMatch?.adjuncts?.abgNa,
     abgK: extracted.vbgAbg.values.find((v: any) => v.param === "k")?.value ?? existingMatch?.adjuncts?.abgK,
     abgCl: extracted.vbgAbg.values.find((v: any) => v.param === "cl")?.value ?? existingMatch?.adjuncts?.abgCl,
+    abgPo2: extracted.vbgAbg.values.find((v: any) => v.param === "po2")?.value ?? existingMatch?.adjuncts?.abgPo2,
+    abgHb: extracted.vbgAbg.values.find((v: any) => v.param === "hb")?.value ?? existingMatch?.adjuncts?.abgHb,
+    abgBe: extracted.vbgAbg.values.find((v: any) => v.param === "be")?.value ?? existingMatch?.adjuncts?.abgBe,
+    abgAnionGap: extracted.vbgAbg.values.find((v: any) => v.param === "anionGap")?.value ?? existingMatch?.adjuncts?.abgAnionGap,
   } : {}),
 },
       vitalsHistory: existingMatch?.vitalsHistory || [
@@ -1849,6 +1860,7 @@ differentials: extracted.differentialDiagnosis
       if (!err?.message?.includes("offline") && !err?.message?.includes("unavailable")) {
         handleFirestoreError(err, OperationType.WRITE, "cases");
       }
+      throw err;
     }
 
     setCases(prev => {
@@ -3408,35 +3420,37 @@ differentials: extracted.differentialDiagnosis
                 setSelectedCaseId(cId);
               }}
               onSaveExtractedCase={handleSaveExtractedVoiceCase}
-              onPrepareDischarge={(extraction, msgId, chatCaseId) => {
+              onPrepareDischarge={async (extraction, msgId, chatCaseId) => {
                 const targetCaseId = chatCaseId || voiceScribeCaseId;
                 if (!targetCaseId) return;
                 
                 const existingCase = cases.find(c => c.id === targetCaseId);
 
-                if (existingCase) {
-                  // Ensure any new details are persisted to the existing case before opening discharge summary
-                  handleSaveExtractedVoiceCase(extraction, { existingCaseId: targetCaseId, autoNavigate: false });
-                  setShowVoiceScribeChat(false);
-                  setSelectedCaseId(targetCaseId);
-                  setShowDischargeSummaryId(targetCaseId);
-                } else {
-                  // No case saved yet, create the minimal quick discharge case
-                  const minimalCase = createQuickDischargeCase(
-                    extraction,
-                    profile?.email || auth?.currentUser?.email || "doctor@ermate.ai",
-                    profile?.hospital || "General Hospital"
-                  );
-                  // Override generic CASE-XXXX id to preserve the active link with the chat session
-                  minimalCase.id = targetCaseId;
-                  
-                  handleSaveCase(minimalCase);
-                  setQuickDischargeCase(minimalCase);
-                  
-                  setShowVoiceScribeChat(false);
-                  setSelectedCaseId(targetCaseId);
-                  setShowDischargeSummaryId(targetCaseId);
+                try {
+                  if (existingCase) {
+                    // Ensure any new details are persisted to the existing case before opening discharge summary
+                    await handleSaveExtractedVoiceCase(extraction, { existingCaseId: targetCaseId, autoNavigate: false });
+                  } else {
+                    // No case saved yet, create the minimal quick discharge case
+                    const minimalCase = createQuickDischargeCase(
+                      extraction,
+                      profile?.email || auth?.currentUser?.email || "doctor@ermate.ai",
+                      profile?.hospital || "General Hospital"
+                    );
+                    // Override generic CASE-XXXX id to preserve the active link with the chat session
+                    minimalCase.id = targetCaseId;
+                    
+                    await handleSaveCase(minimalCase);
+                    setQuickDischargeCase(minimalCase);
+                  }
+                } catch (err) {
+                  console.error("Failed to prepare discharge:", err);
+                  return; // Do not navigate if save fails
                 }
+                
+                setShowVoiceScribeChat(false);
+                setSelectedCaseId(targetCaseId);
+                setShowDischargeSummaryId(targetCaseId);
               }}
               profile={profile}
               onSaveProfile={handleSaveProfile}

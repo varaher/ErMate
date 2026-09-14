@@ -16,14 +16,16 @@ export enum ArrivalMode {
 }
 
 export interface MlcDetails {
-  natureOfIncident: string;
-  dateTimeOfIncident: string;
-  placeOfIncident: string;
-  identificationMark: string;
-  informantBroughtBy: string;
-  policeStation: string;
-  policeIntimationTime: string;
-  ddEntryNo: string;
+  possibleMlc?: boolean;
+  isMlc?: boolean;
+  natureOfIncident?: string;
+  dateTimeOfIncident?: string;
+  placeOfIncident?: string;
+  identificationMark?: string;
+  informantBroughtBy?: string;
+  policeStation?: string;
+  policeIntimationTime?: string;
+  ddEntryNo?: string;
   historyStatedBy?: string;
   allegedCauseOfInjury?: string;
   opinion?: string;
@@ -38,14 +40,14 @@ export interface PatientDemographics {
   gender: string;
   presentingComplaint: string;
   triageCategory: TriageCategory;
-  arrivalMode: ArrivalMode;
+  arrivalMode?: ArrivalMode;
   dateOpened: string;
   uhid?: string;
   phone?: string;
   address?: string;
   isMlc: boolean;
   mlcDetails?: MlcDetails;
-  caseType: "Medical" | "Trauma";
+  caseType?: "Medical" | "Trauma" | "";
 }
 
 export interface PatientVitals {
@@ -161,6 +163,17 @@ export interface PrimarySurvey {
   };
 }
 
+export interface SecondarySurvey {
+  general?: string;
+  cvs?: string;
+  respiratory?: string;
+  abdomen?: string;
+  cns?: string;
+  extremities?: string;
+  cSpineExam?: string;
+  [key: string]: string | undefined;
+}
+
 export interface PrimaryAssessment {
 
   airway: string;
@@ -241,6 +254,7 @@ export interface TreatmentItem {
   drugName: string;
   dose: string;
   route: string;
+  instruction?: string;
   timeGiven: string;
   ipsgVerified?: boolean; // IPSG medication check
 }
@@ -425,6 +439,7 @@ export interface ClinicalCase {
   sampleHistory: SampleHistory;
   primaryAssessment: PrimaryAssessment;
   secondaryAssessment: string;
+  secondarySurvey?: SecondarySurvey;
   investigations: InvestigationItem[];
   treatments: TreatmentItem[];
   progressNotes: string;
@@ -468,12 +483,14 @@ export interface ClinicalCase {
     consultsRequested?: string[];
     pendingInvestigations?: string[];
     followUpAdvice?: string;
+    managementPlan?: string;
   };
   treatment?: {
     medications?: string[];
     infusions?: string[];
     otherNotes?: string;
   };
+  adjuncts?: AdjunctsDevices;
   
   // Handover timeline & status fields
   notes?: Array<{ id?: string; timestamp?: string; authorName?: string; authorRole?: string; content: string }>;
@@ -753,6 +770,10 @@ export interface AdjunctsAtArrival {
   ecg?: string | null;
   vbg?: string | null;
   abg?: string | null;
+  abgPo2?: string | null;
+  abgHb?: string | null;
+  abgBe?: string | null;
+  abgAnionGap?: string | null;
   grbs?: string | null;
   lactate?: string | null;
   troponinPOC?: string | null;
@@ -773,6 +794,17 @@ export interface AdjunctsDevices {
   monitoring?: string | null;
   ngt?: string | null;
   other?: string | null;
+  abgPh?: string | null;
+  abgPco2?: string | null;
+  abgPo2?: string | null;
+  abgHco3?: string | null;
+  abgBe?: string | null;
+  abgLactate?: string | null;
+  abgNa?: string | null;
+  abgK?: string | null;
+  abgCl?: string | null;
+  abgHb?: string | null;
+  abgAnionGap?: string | null;
   [key: string]: string | null | undefined;
 }
 
@@ -835,10 +867,6 @@ export interface HandoverPatient {
   currentMedications?: string[];
   adjuncts?: AdjunctsDevices;
   adjunctsNow?: AdjunctsDevices | null;
-  managementPlan?: {
-    done: string[];
-    pending: string[];
-  };
   done: string[];
   toBeDone: string[];
   erBoardingStatus?: ERBoardingStatus;

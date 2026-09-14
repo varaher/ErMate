@@ -36,7 +36,7 @@ interface VoiceScribeChatViewProps {
   onOpenCaseSheet?: (caseId: string) => void;
   onCaseSheetUpdated?: (fields: any) => void;
   onSaveExtractedCase?: (extracted: any, options?: { autoNavigate?: boolean; existingCaseId?: string }) => Promise<string>;
-  onPrepareDischarge?: (extractedData: any, messageId: string, caseId: string) => void;
+  onPrepareDischarge?: (extractedData: any, messageId: string, caseId: string) => Promise<void> | void;
   profile?: any;
   onSaveProfile?: (newProfile: any) => Promise<any>;
   messages?: any;
@@ -411,10 +411,8 @@ export default function VoiceScribeChatView({
   const handleApplyExtraction = async (msgId: string, extractionData: any) => {
     try {
       if (onSaveExtractedCase) {
-        // autoNavigate: false — deliberate. If this navigates immediately, the
-        // component unmounts before the confirmation banner below can ever
-        // render. Navigation is now a separate, explicit user choice instead.
-        await onSaveExtractedCase(extractionData, { existingCaseId: activeCaseId!, autoNavigate: false });
+        // Navigation occurs automatically upon successful persistence
+        await onSaveExtractedCase(extractionData, { existingCaseId: activeCaseId!, autoNavigate: true });
       } else if (onCaseSheetUpdated) {
         onCaseSheetUpdated(extractionData);
       }
@@ -804,6 +802,47 @@ const fieldsToExtract = rawFieldsToExtract || undefined;
       <div className="bg-slate-200 dark:bg-slate-800 px-3 py-2 text-[10px] font-bold text-slate-700 dark:text-slate-300 border-b border-slate-200 dark:border-slate-700 uppercase tracking-wider">
         CAPTURED FROM YOUR UPDATE
       </div>
+
+      {merged?.mlcDetails?.possibleMlc && !merged?.mlcDetails?.isMlc && (
+        <div className="mx-3 mt-3 p-3 bg-orange-50 dark:bg-orange-900/30 border border-orange-200 dark:border-orange-800 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-2 text-xs text-orange-800 dark:text-orange-300">
+            <span>⚠️</span>
+            <span className="font-semibold">Possible MLC detected</span>
+          </div>
+          <div className="flex gap-2">
+            <button 
+              onClick={() => {
+                const newMessages = [...messages];
+                const targetMsg = newMessages.find(m => m.id === msg.id);
+                if (targetMsg?.extractionData?.mlcDetails) {
+                  targetMsg.extractionData.mlcDetails.isMlc = true;
+                  targetMsg.extractionData.mlcDetails.mlcConfirmedByClinician = true;
+                  targetMsg.extractionData.mlcDetails.possibleMlc = false;
+                  setMessages(newMessages);
+                }
+              }}
+              className="px-2 py-1 bg-orange-600 hover:bg-orange-700 text-white text-[10px] font-bold rounded shadow-sm"
+            >
+              Confirm
+            </button>
+            <button 
+              onClick={() => {
+                const newMessages = [...messages];
+                const targetMsg = newMessages.find(m => m.id === msg.id);
+                if (targetMsg?.extractionData?.mlcDetails) {
+                  targetMsg.extractionData.mlcDetails.isMlc = false;
+                  targetMsg.extractionData.mlcDetails.mlcConfirmedByClinician = true;
+                  targetMsg.extractionData.mlcDetails.possibleMlc = false;
+                  setMessages(newMessages);
+                }
+              }}
+              className="px-2 py-1 bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 text-[10px] font-bold rounded shadow-sm"
+            >
+              Not MLC
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="p-3 text-xs space-y-2 text-slate-600 dark:text-slate-400 max-h-[340px] overflow-y-auto">
 
