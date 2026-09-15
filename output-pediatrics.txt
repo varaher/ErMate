@@ -1,0 +1,505 @@
+=== FEVER CHILD ===
+[VoiceExtract] OpenAI GPT-4o-mini succeeded · tokens: 5759
+RAW:
+ {
+  "patientName": null,
+  "age": "5",
+  "sex": "Female",
+  "priority": "P3",
+  "chiefComplaint": "Fever for the last 3 days associated with cough, running nose, reduced oral intake and two episodes of vomiting since morning",
+  "symptoms": "Fever for the last 3 days associated with cough, running nose, reduced oral intake and two episodes of vomiting since morning",
+  "events": "",
+  "vitals": {
+    "hr": "118",
+    "bp": null,
+    "spo2": "98%",
+    "rr": "26",
+    "temp": "38.8°C",
+    "gcs": null,
+    "gcs_e": null,
+    "gcs_v": null,
+    "gcs_m": null,
+    "grbs": null
+  },
+  "airway": "Patent",
+  "breathing": "Bilateral air entry is equal with no significant added sounds",
+  "circulation": "Peripheral pulses are well felt and capillary refill is less than 2 seconds",
+  "disability": "Conscious, alert and interacting appropriately",
+  "exposure": "Mildly reduced hydration with slightly dry oral mucosa",
+  "vbg": null,
+  "pastMedicalHistory": null,
+  "lastMeal": null,
+  "medications": [],
+  "allergies": null,
+  "surgicalHistory": null,
+  "familyHistory": null,
+  "lmp": null,
+  "generalExamination": null,
+  "cSpineExam": null,
+  "cvsExamination": null,
+  "respiratoryExamination": null,
+  "abdomenExamination": "Abdomen is soft and non-tender",
+  "cnsExamination": "There is no neck stiffness or focal neurological deficit",
+  "extremitiesExamination": null,
+  "echo": null,
+  "fastFindings": null,
+  "mlcDetails": {
+    "possibleMlc": false,
+    "natureOfIncident": null,
+    "placeOfIncident": null,
+    "dateTimeOfIncident": null,
+    "mechanismOfInjury": null,
+    "broughtBy": "Mother",
+    "informant": null,
+    "identificationMark": null
+  },
+  "investigations": [],
+  "consultations": [],
+  "plan": "Hydration, symptomatic treatment, observation and reassessment for any red-flag features",
+  "treatment": [
+    {
+      "drugName": "Antipyretic",
+      "dose": "Weight-appropriate",
+      "route": "Oral or IV",
+      "instruction": "Depending on tolerance",
+      "timeGiven": ""
+    }
+  ],
+  "diagnosis": "Acute febrile illness, likely viral, with mild dehydration",
+  "differentials": [],
+  "disposition": null,
+  "emResident": null,
+  "emConsultant": null,
+  "isPediatric": true,
+  "pediatricDetails": {
+    "weight": null,
+    "broughtBy": "Mother",
+    "informant": null,
+    "patAppearanceTone": null,
+    "patAppearanceInteractivity": null,
+    "patAppearanceConsolability": null,
+    "patAppearanceLookGaze": null,
+    "patAppearanceSpeechCry": null,
+    "airwayCry": null,
+    "airwayStatus": null,
+    "breathingWob": null,
+    "breathingAbnormalPositioning": null,
+    "circulationCrt": null,
+    "circulationSkinColorTemp": null,
+    "birthHistory": null,
+    "immunizationHistory": null,
+    "developmentalHistory": null,
+    "feedingHistory": null
+  },
+  "generalExamination_isDefault": false,
+  "cvsExamination_isDefault": false,
+  "respiratoryExamination_isDefault": false,
+  "abdomenExamination_isDefault": false,
+  "cnsExamination_isDefault": false,
+  "airway_isDefault": false
+}
+CLEANED:
+ {
+  "symptoms": [
+    "Fever for the last 3 days associated with cough",
+    "Running nose",
+    "Reduced oral intake and two episodes of vomiting since morning"
+  ],
+  "events": [],
+  "drugs": [
+    {
+      "drugName": "Antipyretic",
+      "dose": "Weight-appropriate",
+      "route": "Oral or IV",
+      "instruction": "Depending on tolerance",
+      "timeGiven": ""
+    }
+  ],
+  "plan": [
+    "Hydration, symptomatic treatment, observation and reassessment for any red-flag features"
+  ],
+  "labs": []
+}
+MAPPED:
+ {
+  "age": "5",
+  "gender": "Female",
+  "presentingComplaint": "Fever for the last 3 days associated with cough, running nose, reduced oral intake and two episodes of vomiting since morning",
+  "vitals": {
+    "hr": "118",
+    "spo2": "98%",
+    "rr": "26",
+    "temp": "38.8°C"
+  },
+  "diagnosis": "Acute febrile illness, likely viral, with mild dehydration",
+  "mlcDetails": {
+    "possibleMlc": false,
+    "broughtBy": "Mother"
+  },
+  "treatmentGiven": [
+    {
+      "drugName": "Antipyretic",
+      "dose": "Weight-appropriate",
+      "route": "Oral or IV",
+      "instruction": "Depending on tolerance",
+      "timeGiven": ""
+    }
+  ],
+  "symptoms": [
+    "Fever for the last 3 days associated with cough",
+    "Running nose",
+    "Reduced oral intake and two episodes of vomiting since morning"
+  ],
+  "plan": [
+    "Hydration, symptomatic treatment, observation and reassessment for any red-flag features"
+  ],
+  "isPediatric": true,
+  "pediatricDetails": {
+    "broughtBy": "Mother"
+  },
+  "airway": "Patent",
+  "breathing": "Bilateral air entry is equal with no significant added sounds",
+  "circulation": "Peripheral pulses are well felt and capillary refill is less than 2 seconds",
+  "disability": "Conscious, alert and interacting appropriately",
+  "exposure": "Mildly reduced hydration with slightly dry oral mucosa",
+  "secondarySurvey": {
+    "abdomen": "Abdomen is soft and non-tender",
+    "cns": "There is no neck stiffness or focal neurological deficit"
+  }
+}
+
+=== TRAUMA CHILD ===
+[VoiceExtract] DPDP Protection Active: Stripped 1 PHI item(s) prior to model extraction
+[VoiceExtract] OpenAI GPT-4o-mini succeeded · tokens: 6210
+RAW:
+ {
+  "patientName": null,
+  "age": "5",
+  "sex": "Female",
+  "priority": "P1",
+  "chiefComplaint": "Pain all over the body, nausea and amnesia for the event",
+  "symptoms": "Pain all over the body, nausea and amnesia for the event",
+  "events": "Road traffic accident involving a two-wheeler and four-wheeler near Chunungambeli at approximately 8 AM. The child was thrown off the vehicle.",
+  "vitals": {
+    "hr": "120",
+    "bp": null,
+    "spo2": "98%",
+    "rr": "20",
+    "temp": null,
+    "gcs": "15",
+    "gcs_e": "4",
+    "gcs_v": "5",
+    "gcs_m": "6",
+    "grbs": null
+  },
+  "airway": "Patent",
+  "breathing": "Right-sided chest tenderness",
+  "circulation": "Peripheral pulses are palpable",
+  "disability": "Pupils are equal and reacting",
+  "exposure": "Left thigh deformity with no open wound. Abrasions over both forearms, chest, lower abdomen and chin. Tenderness over the left thigh, both arms, chest and lower abdomen.",
+  "vbg": {
+    "type": "ABG",
+    "ph": "7.35",
+    "pco2": "25",
+    "po2": null,
+    "hco3": "20",
+    "be": "-2",
+    "lactate": null,
+    "na": "130",
+    "k": "4",
+    "cl": "110",
+    "hb": "14",
+    "anionGap": "approximately 12"
+  },
+  "pastMedicalHistory": null,
+  "lastMeal": "That morning",
+  "medications": [
+    "Tranexamic acid",
+    "Sompraz",
+    "Emeset",
+    "Analgesia"
+  ],
+  "allergies": null,
+  "surgicalHistory": null,
+  "familyHistory": null,
+  "lmp": null,
+  "generalExamination": null,
+  "cSpineExam": "C-spine tenderness",
+  "cvsExamination": null,
+  "respiratoryExamination": null,
+  "abdomenExamination": null,
+  "cnsExamination": null,
+  "extremitiesExamination": null,
+  "echo": "Good RV and LV function, no pericardial effusion and no IVC collapse",
+  "fastFindings": {
+    "heart": null,
+    "abdomen": "Free fluid in the right hepatorenal region and pelvic/perivesical region",
+    "pelvis": null
+  },
+  "mlcDetails": {
+    "possibleMlc": true,
+    "natureOfIncident": "Road traffic accident",
+    "placeOfIncident": "Near Chunungambeli",
+    "dateTimeOfIncident": null,
+    "mechanismOfInjury": "Thrown off the vehicle",
+    "broughtBy": null,
+    "informant": null,
+    "identificationMark": null
+  },
+  "investigations": [],
+  "consultations": [
+    "Orthopaedics",
+    "Surgery / Pediatric Surgery",
+    "Neurosurgery"
+  ],
+  "plan": "Review investigations and imaging, compare previous reports, proceed with definitive management and OT as indicated.",
+  "treatment": [
+    {
+      "drugName": "Tranexamic acid",
+      "dose": "",
+      "route": "IV",
+      "instruction": "",
+      "timeGiven": ""
+    },
+    {
+      "drugName": "Sompraz",
+      "dose": "",
+      "route": "IV",
+      "instruction": "",
+      "timeGiven": ""
+    },
+    {
+      "drugName": "Emeset",
+      "dose": "",
+      "route": "IV",
+      "instruction": "",
+      "timeGiven": ""
+    },
+    {
+      "drugName": "Analgesia",
+      "dose": "",
+      "route": "IV",
+      "instruction": "As appropriate for the child's weight",
+      "timeGiven": ""
+    }
+  ],
+  "diagnosis": "Blunt abdominal trauma with suspected hemoperitoneum, closed left femur fracture and multiple abrasions following RTA",
+  "differentials": [],
+  "disposition": null,
+  "emResident": null,
+  "emConsultant": null,
+  "isPediatric": true,
+  "pediatricDetails": {
+    "weight": null,
+    "broughtBy": null,
+    "informant": null,
+    "patAppearanceTone": null,
+    "patAppearanceInteractivity": null,
+    "patAppearanceConsolability": null,
+    "patAppearanceLookGaze": null,
+    "patAppearanceSpeechCry": null,
+    "airwayCry": null,
+    "airwayStatus": null,
+    "breathingWob": null,
+    "breathingAbnormalPositioning": null,
+    "circulationCrt": null,
+    "circulationSkinColorTemp": null,
+    "birthHistory": null,
+    "immunizationHistory": null,
+    "developmentalHistory": null,
+    "feedingHistory": null
+  },
+  "generalExamination_isDefault": false,
+  "cvsExamination_isDefault": false,
+  "respiratoryExamination_isDefault": false,
+  "abdomenExamination_isDefault": false,
+  "cnsExamination_isDefault": false,
+  "airway_isDefault": false
+}
+CLEANED:
+ {
+  "symptoms": [
+    "Pain all over the body",
+    "Nausea and amnesia for the event"
+  ],
+  "events": [
+    {
+      "time": null,
+      "description": "Road traffic accident involving a two-wheeler and four-wheeler near Chunungambeli at approximately 8 AM. The child was thrown off the vehicle"
+    }
+  ],
+  "drugs": [
+    {
+      "drugName": "Tranexamic acid",
+      "route": "IV",
+      "timeGiven": ""
+    },
+    {
+      "drugName": "Sompraz",
+      "route": "IV",
+      "timeGiven": ""
+    },
+    {
+      "drugName": "Emeset",
+      "route": "IV",
+      "timeGiven": ""
+    },
+    {
+      "drugName": "Analgesia",
+      "route": "IV",
+      "instruction": "As appropriate for the child's weight",
+      "timeGiven": ""
+    }
+  ],
+  "plan": [
+    "Review investigations and imaging, compare previous reports, proceed with definitive management and OT as indicated"
+  ],
+  "labs": [],
+  "fastFindings": {
+    "heart": null,
+    "abdomen": "Free fluid in the right hepatorenal region and pelvic/perivesical region",
+    "pelvis": null
+  },
+  "lastMeal": "That morning",
+  "cSpineExam": "C-spine tenderness",
+  "echo": "Good RV and LV function, no pericardial effusion and no IVC collapse",
+  "consultations": [
+    "Orthopaedics",
+    "Surgery / Pediatric Surgery",
+    "Neurosurgery"
+  ],
+  "vbg": {
+    "ph": "7.35",
+    "pco2": "25",
+    "hco3": "20",
+    "be": "-2",
+    "na": "130",
+    "k": "4",
+    "cl": "110",
+    "hb": "14",
+    "anionGap": "approximately 12",
+    "type": "ABG"
+  }
+}
+MAPPED:
+ {
+  "age": "5",
+  "gender": "Female",
+  "presentingComplaint": "Pain all over the body, nausea and amnesia for the event",
+  "vitals": {
+    "hr": "120",
+    "spo2": "98%",
+    "rr": "20",
+    "gcs": "15",
+    "gcs_e": "4",
+    "gcs_v": "5",
+    "gcs_m": "6"
+  },
+  "vbgAbg": {
+    "type": "ABG",
+    "values": [
+      {
+        "name": "pH",
+        "param": "ph",
+        "value": 7.35
+      },
+      {
+        "name": "pCO2",
+        "param": "pco2",
+        "value": 25
+      },
+      {
+        "name": "HCO3",
+        "param": "hco3",
+        "value": 20
+      },
+      {
+        "name": "Na",
+        "param": "na",
+        "value": 130
+      },
+      {
+        "name": "K",
+        "param": "k",
+        "value": 4
+      },
+      {
+        "name": "Cl",
+        "param": "cl",
+        "value": 110
+      },
+      {
+        "name": "Hb",
+        "param": "hb",
+        "value": 14
+      },
+      {
+        "name": "Base Excess",
+        "param": "be",
+        "value": -2
+      },
+      {
+        "name": "Anion Gap",
+        "param": "anionGap",
+        "value": "approximately 12"
+      }
+    ]
+  },
+  "lastMeal": "That morning",
+  "echo": "Good RV and LV function, no pericardial effusion and no IVC collapse",
+  "diagnosis": "Blunt abdominal trauma with suspected hemoperitoneum, closed left femur fracture and multiple abrasions following RTA",
+  "consultations": [
+    "Orthopaedics",
+    "Surgery / Pediatric Surgery",
+    "Neurosurgery"
+  ],
+  "fastFindings": {
+    "abdomen": "Free fluid in the right hepatorenal region and pelvic/perivesical region"
+  },
+  "mlcDetails": {
+    "possibleMlc": true,
+    "natureOfIncident": "Road traffic accident",
+    "placeOfIncident": "Near Chunungambeli",
+    "mechanismOfInjury": "Thrown off the vehicle"
+  },
+  "treatmentGiven": [
+    {
+      "drugName": "Tranexamic acid",
+      "route": "IV",
+      "timeGiven": ""
+    },
+    {
+      "drugName": "Sompraz",
+      "route": "IV",
+      "timeGiven": ""
+    },
+    {
+      "drugName": "Emeset",
+      "route": "IV",
+      "timeGiven": ""
+    },
+    {
+      "drugName": "Analgesia",
+      "route": "IV",
+      "instruction": "As appropriate for the child's weight",
+      "timeGiven": ""
+    }
+  ],
+  "events": "Road traffic accident involving a two-wheeler and four-wheeler near Chunungambeli at approximately 8 AM. The child was thrown off the vehicle",
+  "symptoms": [
+    "Pain all over the body",
+    "Nausea and amnesia for the event"
+  ],
+  "plan": [
+    "Review investigations and imaging, compare previous reports, proceed with definitive management and OT as indicated"
+  ],
+  "isPediatric": true,
+  "airway": "Patent",
+  "breathing": "Right-sided chest tenderness",
+  "circulation": "Peripheral pulses are palpable",
+  "disability": "Pupils are equal and reacting",
+  "exposure": "Left thigh deformity with no open wound. Abrasions over both forearms, chest, lower abdomen and chin. Tenderness over the left thigh, both arms, chest and lower abdomen.",
+  "secondarySurvey": {
+    "cSpineExam": "C-spine tenderness"
+  }
+}

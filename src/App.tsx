@@ -1664,10 +1664,20 @@ useEffect(() => {
     const createdByRoleVal = (profile.role || "").toLowerCase().includes("hod") ? "hod" : ((profile.role || "").toLowerCase().includes("consultant") ? "consultant" : "resident");
     const hospitalSlug = (profile.hospital || "general-er").trim().toLowerCase().replace(/[^a-z0-9]/g, "-");
 
+    const existingMatch = cases.find(c => c.id === newCaseId);
+
     // Robust parsing helpers to completely prevent NaN values in Firestore
-    const parsedAge = (extracted.age !== null && extracted.age !== undefined && extracted.age !== "") ? Number(extracted.age) : null;
+    const parsedAge = (extracted.age !== null && extracted.age !== undefined && String(extracted.age).trim() !== "") ? Number(extracted.age) : null;
     const isAgeValid = parsedAge !== null && !isNaN(parsedAge);
     const finalAge = isAgeValid ? parsedAge : null;
+    
+    let resolvedAge = existingMatch?.patient.age || null;
+    let resolvedIsPediatric = existingMatch ? Boolean(existingMatch.isPediatric) : false;
+
+    if (finalAge !== null) {
+      resolvedAge = finalAge;
+      resolvedIsPediatric = finalAge <= 16;
+    }
 
     const safeParseInt = (val: any, fallback: number): number => {
       if (val === undefined || val === null || val === "") return fallback;
@@ -1684,8 +1694,6 @@ useEffect(() => {
     const bpParts = (extracted.vitals?.bp || "120/80").split("/");
     const systolicVal = safeParseInt(bpParts[0], 120);
     const diastolicVal = safeParseInt(bpParts[1], 80);
-
-    const existingMatch = cases.find(c => c.id === newCaseId);
 
     const rawDocName = profile.name || auth.currentUser?.displayName || (profile.email ? profile.email.split("@")[0] : "Doctor");
     const docFormattedName = rawDocName.startsWith("Dr. ") ? rawDocName : "Dr. " + rawDocName;
@@ -1704,7 +1712,7 @@ useEffect(() => {
       createdAt: existingMatch?.createdAt || new Date().toISOString(),
       patient: {
         name: extracted.patientName || existingMatch?.patient.name || "",
-        age: finalAge !== null ? finalAge : existingMatch?.patient.age || null,
+        age: resolvedAge,
         gender: extracted.gender || existingMatch?.patient.gender || "",
       presentingComplaint: extracted.presentingComplaint || existingMatch?.patient.presentingComplaint || "Not documented",
         triageCategory: extracted.triageCategory || existingMatch?.patient.triageCategory || undefined,
@@ -1764,14 +1772,17 @@ useEffect(() => {
       secondarySurvey: extracted.secondarySurvey || existingMatch?.secondarySurvey || undefined,
       investigations: extracted.investigations || (extracted.labs ? extracted.labs.map((l: any, i: number) => ({ id: `inv-${Date.now()}-${i}`, testName: l.name || l, result: l.value || "Ordered", orderTime: new Date().toLocaleTimeString(), resultTime: "Pending", isAbnormal: false })) : null) || existingMatch?.investigations || [],
       treatments: extracted.treatments || (extracted.treatmentGiven ? extracted.treatmentGiven.map((t: any, i: number) => ({ id: `trt-${Date.now()}-${i}`, drugName: typeof t === 'string' ? t : (t.drugName || t.name || ""), dose: typeof t === 'string' ? "" : (t.dose || ""), route: typeof t === 'string' ? "" : (t.route || ""), instruction: typeof t === 'string' ? "" : (t.instruction || ""), timeGiven: typeof t === 'string' ? "" : (t.timeGiven || ""), ipsgVerified: false })) : null) || existingMatch?.treatments || [],
+      treatmentNotes: extracted.treatmentNotes || existingMatch?.treatmentNotes || undefined,
       progressNotes: extracted.progressNotes || (extracted.chronologicalNotes ? extracted.chronologicalNotes.map((n: any) => n.entry).join("\n") : null) || existingMatch?.progressNotes || "Case created via ErMate Voice Scribe dictation.",
       dispositionAndPlan: existingMatch?.dispositionAndPlan || { consultsRequested: extracted.consultations || [], managementPlan: extracted.plan || "" },
      dischargeInfo: null,
 differentials: extracted.differentialDiagnosis
   ? [{ diagnosis: extracted.differentialDiagnosis, status: "POSSIBLE" as const, reasoning: "", citations: [], nextSteps: [] }]
   : (existingMatch?.differentials || []),
-      isPediatric: extracted.isPediatric !== undefined ? Boolean(extracted.isPediatric) : (finalAge !== null && finalAge <= 16),
-      pediatricDetails: extracted.pediatricDetails || existingMatch?.pediatricDetails || undefined,
+      isPediatric: resolvedIsPediatric,
+      pediatricDetails: extracted.pediatricDetails 
+        ? { ...(existingMatch?.pediatricDetails || {}), ...extracted.pediatricDetails } 
+        : existingMatch?.pediatricDetails || undefined,
       status: "Active",
       savedTime: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       timeSpentMin: 1,
@@ -1806,7 +1817,7 @@ differentials: extracted.differentialDiagnosis
       },
            adjuncts: {
   ...(existingMatch?.adjuncts || {}),
-  echoDone: (extracted.echo ? true : undefined) || existingMatch?.adjuncts?.echoDone,
+  echoDone: (extracted.echo ? "true" : undefined) || existingMatch?.adjuncts?.echoDone,
   echoFindings: extracted.echo || existingMatch?.adjuncts?.echoFindings || "",
   ...(extracted.fastFindings ? (() => {
     const f = extracted.fastFindings;
@@ -3445,7 +3456,7 @@ differentials: extracted.differentialDiagnosis
                   }
                 } catch (err) {
                   console.error("Failed to prepare discharge:", err);
-                  return; // Do not navigate if save fails
+                  throw err; // Propagate the error so the UI can show failure
                 }
                 
                 setShowVoiceScribeChat(false);

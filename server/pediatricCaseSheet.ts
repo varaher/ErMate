@@ -177,7 +177,7 @@ export function formatPediatricVital(
  * pediatric schema/extraction path instead of adult.
  */
 export function isPediatricPatient(ageYears: number | null): boolean {
-  return ageYears !== null && ageYears < 16;
+  return ageYears !== null && ageYears <= 16;
 }
 
 // ── Adapter: map pediatric case sheet -> shared CaseSheetData ────────

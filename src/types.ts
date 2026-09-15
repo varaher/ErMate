@@ -442,6 +442,7 @@ export interface ClinicalCase {
   secondarySurvey?: SecondarySurvey;
   investigations: InvestigationItem[];
   treatments: TreatmentItem[];
+  treatmentNotes?: string;
   progressNotes: string;
   dischargeInfo: DischargeInfo | null;
   differentials: DifferentialDiagnosis[];
@@ -522,104 +523,16 @@ export interface ClinicalCase {
 
 export interface PediatricDetails {
   patientWeight?: string;
-  otherSymptoms?: string;
-  adjuvantEfastExtremities?: string;
-  focusedHeent?: string;
-  focusedRespiratory?: string;
-  focusedCardiovascular?: string;
-  focusedAbdomen?: string;
-  focusedBack?: string;
-  focusedExtremities?: string;
-  dispositionProvisionalDiagnosis?: string;
-  dispositionConditionAtShift?: string;
-  dispositionEmResident?: string;
-  dispositionEmConsultant?: string;
-  // Demographic and Registration Details
-  address?: string;
-  dateTimeOfIncident?: string;
-  placeOfIncident?: string;
-  natureOfIncident?: string;
-  mechanismOfInjury?: string;
   broughtBy?: string;
   informant?: string;
-  identificationMark?: string;
-
-  // Presenting Complaints
-  presentingComplaints?: string;
-
+  
   // Primary Assessment - Pediatric Assessment Triangle (PAT)
   patAppearanceTone?: string;          // moves spontaneously, resists examination, sits or stands
   patAppearanceInteractivity?: string; // alert/engaged, interacts well, reaches for objects
   patAppearanceConsolability?: string; // stops crying with holding/comforting
   patAppearanceLookGaze?: string;      // makes eye contact, tracks visually, normal/abnormal
   patAppearanceSpeechCry?: string;     // age appropriate speech
-
-  // Primary Assessment - Airway
-  airwayCry?: "Good" | "Weak" | "No Cry" | "";
-  airwayStatus?: "Patent" | "Threatened" | "Compromised" | "";
-  airwayIntervention?: string;
-
-  // Primary Assessment - Breathing
-  breathingRr?: string;
-  breathingSpo2?: string;
-  breathingWob?: string;            // Increased WOB, flaring, retractions, grunting, wheezing, stridor, etc.
-  breathingAbnormalPositioning?: "YES" | "NO" | ""; // Tripod, sniffing, prefers seated posture
-  breathingAirEntry?: "Normal" | "Abnormal" | "";
-  breathingSubcutaneousEmphysema?: "YES" | "NO" | "";
-  breathingIntervention?: string;
-
-  // Primary Assessment - Circulation
-  circulationCrt?: "Normal" | "Delayed" | ""; // Normal (<2s), Delayed (>2s)
-  circulationHr?: string;
-  circulationBp?: string;
-  circulationSkinColorTemp?: string;     // Pink/Pale/Cyanosed/Mottled
-  circulationDistendedNeckVeins?: "YES" | "NO" | "";
-  circulationIntervention?: string;
-
-  // Primary Assessment - Disability
-  disabilityAvpuGcs?: string;
-  disabilityPupils?: string;
-  disabilityAbnormalResponses?: string; // Pinpoint, dilated, unilaterally dilated
-  disabilityGrbs?: string;
-
-  // Primary Assessment - Exposure
-  exposureTemp?: string;
-  exposureTraumaLogroll?: string;
-  exposureSignsOfTrauma?: string;       // Rashes, Petechiae, Ecchymosis, Bruises, Burns
-  exposureEvidenceInfectionBleeding?: string; // Petechiae or Purpura
-  exposureLongBoneDeformities?: "YES" | "NO" | "";
-  exposureExtremitiesCheck?: string;     // Check for deformities, bruising, tenderness
-  exposureImmobilizeInjuredLimbs?: "YES" | "NO" | "";
-
-  // Primary Assessment - Adjuvant
-  adjuvantEfastHeart?: string;
-  adjuvantEfastAbdomen?: string;
-  adjuvantEfastLungs?: string;
-  adjuvantEfastPelvis?: string;
-
-  // Secondary Assessment - Focused History
-  historySignsSymptoms?: string;
-  historyAllergies?: string;
-  historyMedications?: string;
-  historyPastMedical?: string;
-  historyLastMeal?: string;
-  historyEvents?: string;
-
-  // Secondary Assessment - Focused Physical Examination
-  examHeent?: string;
-  examRespiratory?: string;
-  examCardiovascular?: string;
-  examAbdomen?: string;
-  examBack?: string;
-  examExtremities?: string;
-
-  // Course & Results
-  courseInHospital?: string;
-  treatmentGiven?: string;
-  provisionalDiagnosisDischarge?: string;
-  conditionAtShift?: "Stable" | "Unstable" | "";
-  disposition?: "ICU" | "Room" | "Ward" | "Referral" | "DAMA" | "";
-  differentialDiagnosis?: string;
+  
   // Additional Pediatric History & PAT fields
   immunizationHistory?: string;
   birthHistory?: string;
@@ -628,9 +541,64 @@ export interface PediatricDetails {
   patAppearance?: string;
   patWorkOfBreathing?: string;
   patCirculation?: string;
-  emResident?: string;
-  emConsultant?: string;
+  
+  // Additional ABCDE fields that are specifically pediatrics-focused
+  airwayCry?: "Good" | "Weak" | "No Cry" | "";
+  airwayStatus?: "Patent" | "Threatened" | "Compromised" | "";
+  airwayIntervention?: string;
+  breathingWob?: string;            // Increased WOB, flaring, retractions, grunting, wheezing, stridor, etc.
+  breathingAbnormalPositioning?: "YES" | "NO" | ""; // Tripod, sniffing, prefers seated posture
+  breathingAirEntry?: "Normal" | "Abnormal" | "";
+  breathingSubcutaneousEmphysema?: "YES" | "NO" | "";
+  breathingIntervention?: string;
+  circulationCrt?: "Normal" | "Delayed" | ""; // Normal (<2s), Delayed (>2s)
+  circulationSkinColorTemp?: string;     // Pink/Pale/Cyanosed/Mottled
+  circulationDistendedNeckVeins?: "YES" | "NO" | "";
+  circulationIntervention?: string;
+  disabilityAvpuGcs?: string;
+  disabilityPupils?: string;
+  disabilityAbnormalResponses?: string; // Pinpoint, dilated, unilaterally dilated
+  disabilityGrbs?: string;
+  exposureTemp?: string;
+  exposureTraumaLogroll?: string;
+  exposureSignsOfTrauma?: string;       // Rashes, Petechiae, Ecchymosis, Bruises, Burns
+  exposureEvidenceInfectionBleeding?: string; // Petechiae or Purpura
+  exposureLongBoneDeformities?: "YES" | "NO" | "";
+  exposureExtremitiesCheck?: string;     // Check for deformities, bruising, tenderness
+  exposureImmobilizeInjuredLimbs?: "YES" | "NO" | "";
+  adjuvantEfastHeart?: string;
+  adjuvantEfastAbdomen?: string;
+  adjuvantEfastLungs?: string;
+  adjuvantEfastPelvis?: string;
+  
+  // Edit UI Only (these map to shared later)
+  focusedHeent?: string;
+  focusedRespiratory?: string;
+  focusedCardiovascular?: string;
+  focusedAbdomen?: string;
+  focusedBack?: string;
+  focusedExtremities?: string;
+  examHeent?: string;
+  dispositionProvisionalDiagnosis?: string;
+  dispositionConditionAtShift?: string;
+  dispositionEmResident?: string;
+  dispositionEmConsultant?: string;
+  
+  // Removed history/exam properties as they are replaced by shared ClinicalCase properties
 }
+
+export type LegacyPediatricDetails = PediatricDetails & {
+  historySignsSymptoms?: string;
+  historyEvents?: string;
+  historyAllergies?: string;
+  historyMedications?: string;
+  historyPastMedical?: string;
+  historyLastMeal?: string;
+  treatmentGiven?: string;
+  courseInHospital?: string;
+  differentialDiagnosis?: string;
+  provisionalDiagnosisDischarge?: string;
+};
 
 export interface DirectDischargeSummaryItem {
   id: string;

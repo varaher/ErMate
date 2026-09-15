@@ -1,0 +1,101 @@
+src/components/CaseSheetPrintView.tsx:87:  isPediatric: boolean;
+src/components/CaseSheetPrintView.tsx:332:    isPediatric: !!c.isPediatric || (c.patient.age !== null && c.patient.age < 16),
+src/components/CaseSheetPrintView.tsx:333:    pediatricDetails: (!!c.isPediatric || (c.patient.age !== null && c.patient.age < 16)) && pediatricRaw ? {
+src/components/CaseSheetPrintView.tsx:592:        {data.isPediatric && data.pediatricDetails && (
+src/components/VoiceScribeChatView.tsx:64:// (drops isPediatric, empty strings, empty arrays/objects). Those two
+src/components/VoiceScribeChatView.tsx:65:// checks could disagree: a turn that only extracted e.g. `isPediatric`
+src/components/VoiceScribeChatView.tsx:152:    if (key === "isPediatric") return false;
+src/components/VoiceScribeChatView.tsx:348:              // UI-01 FIX: preserve ALL extraction data, even if it only has non-displayable fields (like isPediatric)
+src/components/QuickDischargeIntake.tsx:54:    isPediatric: age > 0 && age < 16,
+src/components/NewPatientEntryMenu.tsx:19: * built today (isPediatricPatient(), pediatricClinicalRanges.ts) uses
+src/components/NewPatientEntryMenu.tsx:52:    // selection), isPediatric is set now. Otherwise it starts
+src/components/NewPatientEntryMenu.tsx:57:    isPediatric: forcedPediatric ?? false,
+src/components/DashboardView.tsx:385:    const pediatricsSection = c.isPediatric && peds ? `
+src/components/DashboardView.tsx:2181:                              {c.isPediatric ? (
+src/components/CasesListView.tsx:49:      (ageGroupFilter === "Pediatric" && c.isPediatric) ||
+src/components/CasesListView.tsx:50:      (ageGroupFilter === "Adult" && !c.isPediatric);
+src/components/CasesListView.tsx:169:              if (c.isPediatric) {
+src/components/CasesListView.tsx:199:                        {c.isPediatric ? (
+src/components/CaseSheetView.tsx.bak:494:      if (currentCase.isPediatric) {
+src/components/CaseSheetView.tsx.bak:962:    if (currentCase.isPediatric) {
+src/components/CaseSheetView.tsx.bak:1405:          ...(currentCase.patient?.caseType === "Pediatric" || currentCase.patient?.isPediatric || currentCase.isPediatric
+src/components/CaseSheetView.tsx.bak:1429:        if (currentCase.isPediatric) {
+src/components/CaseSheetView.tsx.bak:1640:        isPediatric: currentCase.isPediatric,
+src/components/CaseSheetView.tsx.bak:1669:    const isPeds = currentCase.isPediatric || (ageNum !== null && recomputeIsPediatric(ageNum));
+src/components/CaseSheetView.tsx.bak:1685:      isPediatric: isPeds,
+src/components/CaseSheetView.tsx.bak:1727:    const pediatricText = currentCase.isPediatric
+src/components/CaseSheetView.tsx.bak:1803:- **LMP:** ${currentCase.isPediatric ? "N/A" : "Normal / Not applicable"}
+src/components/CaseSheetView.tsx.bak:1856:    const pediatricHtml = currentCase.isPediatric
+src/components/CaseSheetView.tsx.bak:1946:  <li><strong>LMP:</strong> ${currentCase.isPediatric ? "N/A" : "Normal / Not applicable"}</li>
+src/components/CaseSheetView.tsx.bak:2374:                          if (newIsPeds && !prev.isPediatric) {
+src/components/CaseSheetView.tsx.bak:2377:                          return { ...prev, patient: { ...prev.patient, age: val }, isPediatric: newIsPeds };
+src/components/CaseSheetView.tsx.bak:2462:                {currentCase.isPediatric ? (
+src/components/CaseSheetView.tsx.bak:2647:            {currentCase.isPediatric && (
+src/components/CaseSheetView.tsx.bak:2776:                Standard {currentCase.isPediatric ? "Pediatric PALS" : "Adult ATLS"} ({currentCase.patient.caseType}) normal findings successfully mapped to all fields!
+src/components/CaseSheetView.tsx.bak:2780:              {currentCase.isPediatric ? "Peds Vitals & Survey Active" : "Adult Vitals & Survey Active"}
+src/components/CaseSheetView.tsx.bak:2994:                            return { ...prev, patient: { ...prev.patient, age: val }, isPediatric: newIsPeds };
+src/components/CaseSheetView.tsx.bak:3120:              {currentCase.isPediatric && (
+src/components/CaseSheetView.tsx.bak:3665:              {currentCase.isPediatric && (
+src/components/CaseSheetView.tsx.bak:3785:              {currentCase.isPediatric && (
+src/components/CaseSheetView.tsx.bak:3817:              {currentCase.isPediatric ? (
+src/components/CaseSheetView.tsx.bak:3962:              {currentCase.isPediatric ? (
+src/components/CaseSheetView.tsx.bak:4813:                {currentCase.isPediatric && (
+src/components/CaseSheetView.tsx.bak:4819:              {currentCase.isPediatric && (
+src/components/CaseSheetView.tsx.bak:6014:          {currentCase.isPediatric ? (
+src/components/CaseSheetView.tsx.bak:6285:        {currentCase.isPediatric ? (
+src/components/CaseSheetView.tsx.bak:6634:                <p><strong>LMP:</strong> {currentCase.isPediatric ? "N/A" : "Normal / Not applicable"}</p>
+src/components/TriageForm.tsx:56:  const isPediatric = ageNum !== null && ageNum <= 16;
+src/components/TriageForm.tsx:284:          {isPediatric && (
+src/components/TriageForm.tsx:378:                    (Mode: {isPediatric ? "Pediatric PALS" : "Adult Triage Protocol"})
+src/components/DischargeSummaryView.tsx:312:    pediatric: currentCase.isPediatric && currentCase.pediatricDetails ? {
+src/components/DischargeSummaryView.tsx:1426:  {currentCase.isPediatric && currentCase.pediatricDetails && (
+src/components/CaseSheetView.tsx:497:      if (currentCase.isPediatric) {
+src/components/CaseSheetView.tsx:969:    if (currentCase.isPediatric) {
+src/components/CaseSheetView.tsx:1467:          ...(currentCase.isPediatric
+src/components/CaseSheetView.tsx:1491:        if (currentCase.isPediatric) {
+src/components/CaseSheetView.tsx:1517:        if (updatedCase.isPediatric) {
+src/components/CaseSheetView.tsx:1594:        if (updatedCase.isPediatric) {
+src/components/CaseSheetView.tsx:1742:        isPediatric: currentCase.isPediatric,
+src/components/CaseSheetView.tsx:1771:    const isPeds = currentCase.isPediatric || (ageNum !== null && recomputeIsPediatric(ageNum));
+src/components/CaseSheetView.tsx:1787:      isPediatric: isPeds,
+src/components/CaseSheetView.tsx:1829:    const pediatricText = currentCase.isPediatric
+src/components/CaseSheetView.tsx:1905:- **LMP:** ${currentCase.isPediatric ? "N/A" : "Normal / Not applicable"}
+src/components/CaseSheetView.tsx:1958:    const pediatricHtml = currentCase.isPediatric
+src/components/CaseSheetView.tsx:2048:  <li><strong>LMP:</strong> ${currentCase.isPediatric ? "N/A" : "Normal / Not applicable"}</li>
+src/components/CaseSheetView.tsx:2487:                          if (newIsPeds && !prev.isPediatric) {
+src/components/CaseSheetView.tsx:2490:                          return { ...prev, patient: { ...prev.patient, age: val }, isPediatric: newIsPeds };
+src/components/CaseSheetView.tsx:2630:                {currentCase.isPediatric ? (
+src/components/CaseSheetView.tsx:2815:            {currentCase.isPediatric && (
+src/components/CaseSheetView.tsx:2958:                Standard {currentCase.isPediatric ? "Pediatric PALS" : "Adult ATLS"} ({currentCase.patient.caseType}) normal findings successfully mapped to all fields!
+src/components/CaseSheetView.tsx:2962:              {currentCase.isPediatric ? "Peds Vitals & Survey Active" : "Adult Vitals & Survey Active"}
+src/components/CaseSheetView.tsx:3206:              {currentCase.isPediatric && (
+src/components/CaseSheetView.tsx:3733:              {currentCase.isPediatric && (
+src/components/CaseSheetView.tsx:3853:              {currentCase.isPediatric && (
+src/components/CaseSheetView.tsx:3885:              {currentCase.isPediatric ? (
+src/components/CaseSheetView.tsx:4015:              {currentCase.isPediatric ? (
+src/components/CaseSheetView.tsx:4862:                {currentCase.isPediatric && (
+src/components/CaseSheetView.tsx:4868:              {currentCase.isPediatric && (
+src/components/CaseSheetView.tsx:6075:          {currentCase.isPediatric ? (
+src/components/CaseSheetView.tsx:6346:        {currentCase.isPediatric ? (
+src/components/CaseSheetView.tsx:6695:                <p><strong>LMP:</strong> {currentCase.isPediatric ? "N/A" : "Normal / Not applicable"}</p>
+src/App.tsx:1381:      isPediatric: isPeds,
+src/App.tsx:1773:      isPediatric: extracted.isPediatric !== undefined ? Boolean(extracted.isPediatric) : (finalAge !== null && finalAge <= 16),
+src/db/schema.ts:32:  isPediatric: boolean("is_pediatric").default(false),
+src/types.ts:448:  isPediatric: boolean;
+src/utils/docxGenerator.ts:10:  const isPed = Boolean(c.isPediatric);
+src/utils/docxGenerator.ts:103:  const isPed = Boolean(c.isPediatric);
+src/utils/triageClassifier.ts:39:  const isPediatric = age !== null && age <= 16;
+src/utils/triageClassifier.ts:44:  if (isPediatric) {
+server/scribeChatTurn.ts:581:  if (raw.isPediatric !== undefined && raw.isPediatric !== null) fields.isPediatric = raw.isPediatric;
+server/aiDiagnosis.ts:197:  const isPediatric = age <= 16;
+server/aiDiagnosis.ts:201:  const searchTerm = `${rawQuery} AND (emergency medicine OR emergency department)${isPediatric ? " AND (pediatric OR child)" : " AND adult"}`;
+server/aiDiagnosis.ts:294:  const isPediatric = caseData.age <= 16;
+server/aiDiagnosis.ts:322:4. Patient protocol: ${isPediatric ? "PEDIATRIC (age ≤ 16, use PALS protocols, weight-based dosing)" : "ADULT (use ATLS protocols)"}.
+server/aiDiagnosis.ts:450:   const isPediatric = patientContext?.age !== undefined ? (typeof patientContext.age === 'number' ? patientContext.age <= 16 : parseInt(patientContext.age as string) <= 16) : false;
+server/aiDiagnosis.ts:452:${isPediatric ? "\nCRITICAL: This is a PEDIATRIC patient (age ≤ 16). Apply PALS protocols and use age-appropriate normal reference ranges for ABG interpretation." : ""}`;
+server/pediatricCaseSheet.ts:179:export function isPediatricPatient(ageYears: number | null): boolean {
+server/extraction.ts:378:  "isPediatric":             boolean,
+server/extraction.ts:447:isPediatric:
+server/voiceExtraction.ts:385:  "isPediatric": boolean,
+server/voiceExtraction.ts:459:    result.isPediatric = true;
+server/voiceExtraction.ts:461:  if (result.isPediatric && (!result.pediatricDetails || typeof result.pediatricDetails !== 'object')) {

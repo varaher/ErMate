@@ -114,8 +114,8 @@ export function HandoverCard({
   const severity = getAlertSeverity(patient?.alertRow || '');
   const alertColor = ALERT_COLORS[severity];
 
-  const doneList = patient?.managementPlan?.done || patient?.done || [];
-  const todoList = patient?.managementPlan?.pending || patient?.toBeDone || [];
+  const doneList = (patient as any)?.managementPlan?.done || patient?.done || [];
+  const todoList = (patient as any)?.managementPlan?.pending || patient?.toBeDone || [];
 
   const doneCols = splitColumns(doneList);
   const todoCols = splitColumns(todoList);
@@ -590,7 +590,7 @@ export function HandoverCard({
                 {col.map((item, ii) => (
                   <div key={ii} className="hov-done-item">
                     <span className="hov-tick">✓</span>
-                    <span>{item}</span>
+                    <span>{String(item)}</span>
                   </div>
                 ))}
               </div>
@@ -609,7 +609,7 @@ export function HandoverCard({
                 {col.map((item, ii) => (
                   <div key={ii} className="hov-todo-item">
                     <span className="hov-box">□</span>
-                    <span>{item}</span>
+                    <span>{String(item)}</span>
                   </div>
                 ))}
               </div>

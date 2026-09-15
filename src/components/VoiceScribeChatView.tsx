@@ -36,7 +36,7 @@ interface VoiceScribeChatViewProps {
   onOpenCaseSheet?: (caseId: string) => void;
   onCaseSheetUpdated?: (fields: any) => void;
   onSaveExtractedCase?: (extracted: any, options?: { autoNavigate?: boolean; existingCaseId?: string }) => Promise<string>;
-  onPrepareDischarge?: (extractedData: any, messageId: string, caseId: string) => Promise<void> | void;
+  onPrepareDischarge?: (extractedData: any, messageId: string, caseId: string) => Promise<void>;
   profile?: any;
   onSaveProfile?: (newProfile: any) => Promise<any>;
   messages?: any;
@@ -258,6 +258,7 @@ export default function VoiceScribeChatView({
   onUpdateMessages,
   initialEntryMode = "case",
 }: VoiceScribeChatViewProps) {
+  const processingActionRef = useRef(false);
   // A chat is "case-linked" if either a real caseId was passed in, OR
   // the caller didn't explicitly ask for a standalone discussion — this
   // preserves the original "no caseId = create a new patient case"
@@ -277,6 +278,8 @@ export default function VoiceScribeChatView({
   const [inputText, setInputText] = useState("");
   const [isSending, setIsSending] = useState(false);
   const [saveConfirmation, setSaveConfirmation] = useState<{ type: "case" | "discharge" } | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [processingAction, setProcessingAction] = useState<{messageId: string, type: 'caseSheet' | 'discharge'} | null>(null);
 
   // Mode: dictation is only meaningful when there's a real case to write
   // into. A discussion-only session (no linked patient) has nothing to
@@ -409,6 +412,10 @@ export default function VoiceScribeChatView({
   }, [isDiscussionOnly, discussionId]);
 
   const handleApplyExtraction = async (msgId: string, extractionData: any) => {
+    if (processingActionRef.current || processingAction) return;
+    processingActionRef.current = true;
+    setProcessingAction({ messageId: msgId, type: "caseSheet" });
+    setSaveError(null);
     try {
       if (onSaveExtractedCase) {
         // Navigation occurs automatically upon successful persistence
@@ -416,24 +423,44 @@ export default function VoiceScribeChatView({
       } else if (onCaseSheetUpdated) {
         onCaseSheetUpdated(extractionData);
       }
+      
+      if (activeCaseId && msgId) {
+        await updateChatMessage(activeCaseId, msgId, { extractionApplied: true }).catch(err => {
+            console.warn("Could not save extractionApplied state to Firestore, but case was saved", err);
+        });
+      }
       setMessages(prev => prev.map(m => m.id === msgId ? { ...m, extractionApplied: true } : m));
-      setSaveConfirmation({ type: "case" });
+      // Note: we don't clear processingAction on success because we want the UI locked while navigating
     } catch (e) {
       console.warn("Failed to apply extraction", e);
+      setSaveError("Unable to save the case. Please try again.");
+      setProcessingAction(null);
+      processingActionRef.current = false;
     }
   };
 
-  const handleApplyDischarge = async (msgId: string, dischargeDraft: string) => {
+  const handleApplyDischarge = async (msgId: string, extractionData: any) => {
+    if (processingActionRef.current || processingAction) return;
+    processingActionRef.current = true;
+    setProcessingAction({ messageId: msgId, type: "discharge" });
+    setSaveError(null);
     try {
-      if (onSaveExtractedCase) {
-        await onSaveExtractedCase({ dischargeSummaryDraft: dischargeDraft }, { existingCaseId: activeCaseId!, autoNavigate: false });
-      } else if (onCaseSheetUpdated) {
-        onCaseSheetUpdated({ dischargeSummaryDraft: dischargeDraft });
+      if (onPrepareDischarge && activeCaseId) {
+        await onPrepareDischarge(extractionData, msgId, activeCaseId);
+      }
+      
+      if (activeCaseId && msgId) {
+        await updateChatMessage(activeCaseId, msgId, { dischargeApplied: true }).catch(err => {
+            console.warn("Could not save dischargeApplied state to Firestore, but case was saved", err);
+        });
       }
       setMessages(prev => prev.map(m => m.id === msgId ? { ...m, dischargeApplied: true } : m));
-      setSaveConfirmation({ type: "discharge" });
+      // Note: we don't clear processingAction on success because we want the UI locked while navigating
     } catch (e) {
       console.warn("Failed to apply discharge summary", e);
+      setSaveError("Unable to prepare the discharge summary. Please try again.");
+      setProcessingAction(null);
+      processingActionRef.current = false;
     }
   };
 
@@ -859,23 +886,38 @@ const fieldsToExtract = rawFieldsToExtract || undefined;
 
       <div className="p-2 border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-col sm:flex-row gap-2">
         <button
-          disabled={msg.extractionApplied}
+          disabled={msg.extractionApplied || !!processingAction}
           onClick={() => handleApplyExtraction(msg.id, merged)}
-          className={`flex-1 py-1.5 rounded text-xs font-bold transition-all cursor-pointer ${
+          className={`flex-1 py-1.5 flex items-center justify-center gap-2 rounded text-xs font-bold transition-all cursor-pointer ${
             msg.extractionApplied
               ? "bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 opacity-80"
-              : "bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm"
+              : processingAction?.messageId === msg.id && processingAction?.type === "caseSheet"
+                ? "bg-indigo-400 cursor-not-allowed text-white shadow-sm"
+                : "bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm"
           }`}
         >
           {msg.extractionApplied
-            ? "✅ Copied to Case Sheet"
-            : "Prepare Case Sheet"}
+            ? "Applied to Case Sheet ✓"
+            : processingAction?.messageId === msg.id && processingAction?.type === "caseSheet"
+              ? "Preparing Case Sheet…"
+              : "Prepare Case Sheet"}
         </button>
         <button
-          onClick={() => onPrepareDischarge?.(merged, msg.id, activeCaseId!)}
-          className="flex-1 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded text-xs font-bold transition-all cursor-pointer shadow-sm"
+          disabled={msg.dischargeApplied || !!processingAction}
+          onClick={() => handleApplyDischarge(msg.id, merged)}
+          className={`flex-1 py-1.5 flex items-center justify-center gap-2 rounded text-xs font-bold transition-all cursor-pointer shadow-sm ${
+            msg.dischargeApplied
+              ? "bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 opacity-80"
+              : processingAction?.messageId === msg.id && processingAction?.type === "discharge"
+                ? "bg-purple-400 cursor-not-allowed text-white"
+                : "bg-purple-600 hover:bg-purple-700 text-white"
+          }`}
         >
-          Prepare Discharge Summary
+          {msg.dischargeApplied
+            ? "Discharge Summary Prepared ✓"
+            : processingAction?.messageId === msg.id && processingAction?.type === "discharge"
+              ? "Preparing Discharge Summary…"
+              : "Prepare Discharge Summary"}
         </button>
       </div>
     </div>
@@ -901,30 +943,18 @@ const fieldsToExtract = rawFieldsToExtract || undefined;
         <div ref={messagesEndRef} />
       </div>
 
-      {saveConfirmation && (
-        <div className="border-t border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950 px-4 py-3 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2 text-emerald-800 dark:text-emerald-300 text-xs font-bold">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
-            {saveConfirmation.type === "case" ? "Saved to Case Sheet." : "Discharge draft saved."}
+      {saveError && (
+        <div className="border-t border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-950 px-4 py-3 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 text-red-800 dark:text-red-300 text-xs font-bold">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+            {saveError}
           </div>
-          <div className="flex items-center gap-2 shrink-0">
-            <button
-              onClick={() => setSaveConfirmation(null)}
-              className="px-3 py-1.5 text-emerald-700 dark:text-emerald-400 text-xs font-bold rounded-lg hover:bg-emerald-100 dark:hover:bg-emerald-900/40 transition-all cursor-pointer"
-            >
-              Stay Here
-            </button>
-            <button
-              onClick={() => {
-                setSaveConfirmation(null);
-                if (onOpenCaseSheet && activeCaseId) onOpenCaseSheet(activeCaseId);
-                else onBack();
-              }}
-              className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg shadow-sm transition-all cursor-pointer"
-            >
-              Go to Case Sheet →
-            </button>
-          </div>
+          <button
+            onClick={() => setSaveError(null)}
+            className="px-3 py-1.5 text-red-700 dark:text-red-400 text-xs font-bold rounded-lg hover:bg-red-100 dark:hover:bg-red-900/40 transition-all cursor-pointer"
+          >
+            Dismiss
+          </button>
         </div>
       )}
 

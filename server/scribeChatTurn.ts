@@ -94,6 +94,8 @@ export interface ScribeChatMessage {
   timestamp: string;
   type: "text" | "extraction-confirmation" | "clinical-reasoning" | "error";
   content: string;
+  extractionApplied?: boolean;
+  dischargeApplied?: boolean;
   extractionSummary?: {
     fieldsUpdated: string[];
     abnormalFlags: string[];
@@ -342,7 +344,7 @@ export async function processScribeChatTurn(
 
 // ── Stage A: Extraction (GPT-4o-mini primary / Claude Haiku fallback) ──
 
-async function runExtraction(
+export async function runExtraction(
   deidentifiedInput: string,
   patientAgeYears: number | null,
   pendingClarification: string | undefined,
@@ -358,7 +360,7 @@ async function runExtraction(
     raw = await callExtractionModel({ model: "claude-3.5-haiku", temperature: 0.0, deidentifiedInput, patientAgeYears, pendingClarification });
   }
 
-  const cleaned = cleanExtractionOutput(raw);
+   const cleaned = cleanExtractionOutput(raw);
   // VOICE-03: pass the de-identified input text through so field mapping
   // can detect explicit normalcy phrases — the ONLY trigger allowed for
   // normal-exam defaults. Never applied just because a field is empty.
@@ -409,7 +411,7 @@ function extractAbnormalFlags(cleaned: ReturnType<typeof cleanExtractionOutput>)
 }
 
 
-function mapExtractionToCaseSheetFields(
+export function mapExtractionToCaseSheetFields(
   cleaned: ReturnType<typeof cleanExtractionOutput>,
   raw: any,
   existingCaseSheet: any,
@@ -469,13 +471,19 @@ function mapExtractionToCaseSheetFields(
     const VBG_PARAM_MAP: Record<string, string> = {
       ph: "pH", pco2: "pCO2", hco3: "HCO3", lactate: "Lactate", na: "Na", k: "K", cl: "Cl", po2: "PO2", hb: "Hb", be: "Base Excess", anionGap: "Anion Gap"
     };
-    const values: { name: string; param: string; value: number | null }[] = [];
+        const values: { name: string; param: string; value: number | string | null }[] = [];
     for (const [key, name] of Object.entries(VBG_PARAM_MAP)) {
       const v = raw.vbg[key];
       if (v !== null && v !== undefined && v !== "" && String(v).toLowerCase() !== "unknown") {
-        const num = parseFloat(String(v));
-        if (!isNaN(num)) {
-          values.push({ name, param: key, value: num });
+        if (key === "anionGap") {
+          values.push({ name, param: key, value: String(v) });
+        } else {
+          const num = parseFloat(String(v));
+          if (!isNaN(num)) {
+            values.push({ name, param: key, value: num });
+          } else {
+            values.push({ name, param: key, value: String(v) });
+          }
         }
       }
     }
@@ -563,12 +571,16 @@ function mapExtractionToCaseSheetFields(
     if (Object.keys(mlc).length > 0) fields.mlcDetails = mlc;
   }
 
-  if (cleaned.drugs.length > 0) fields.treatmentGiven = cleaned.drugs;
+  if (cleaned.drugs.length > 0) {
+    fields.treatmentGiven = cleaned.drugs;
+  }
   if (cleaned.events.length > 0) {
     fields.events = cleaned.events.map(e => e.description).join("; ");
   }
 
-  if (cleaned.symptoms.length > 0) fields.symptoms = cleaned.symptoms;
+  if (cleaned.symptoms.length > 0) {
+    fields.symptoms = cleaned.symptoms;
+  }
   if (cleaned.plan.length > 0) fields.plan = cleaned.plan;
   if (cleaned.labs.length > 0) fields.labs = cleaned.labs;
 
@@ -576,9 +588,20 @@ function mapExtractionToCaseSheetFields(
   if (raw.pediatricDetails && Object.keys(raw.pediatricDetails).length > 0) {
     const filteredPed: any = {};
     for (const [k, v] of Object.entries(raw.pediatricDetails)) { 
-      if (isValidStr(v) || typeof v === 'boolean') filteredPed[k] = v;
+      if (isValidStr(v) || typeof v === 'boolean') {
+        filteredPed[k] = v;
+        // Also map to UI aliases
+        if (k === 'breathingWob') {
+          filteredPed['patWorkOfBreathing'] = v;
+        }
+        if (k === 'circulationCrt' || k === 'circulationSkinColorTemp') {
+          filteredPed['patCirculation'] = [filteredPed['patCirculation'], v].filter(Boolean).join(", ");
+        }
+      }
     }
-    if (Object.keys(filteredPed).length > 0) fields.pediatricDetails = filteredPed;
+    if (Object.keys(filteredPed).length > 0) {
+      fields.pediatricDetails = { ...(fields.pediatricDetails || {}), ...filteredPed };
+    }
   }
 
   // ══════════════════════════════════════════════════════════════
@@ -606,6 +629,42 @@ function mapExtractionToCaseSheetFields(
   // qualitative pupil/motor descriptive text is gated by the normalcy phrase.
   if (isValidStr(raw.disability)) fields.disability = raw.disability;
   else if (abcdeNormal && !isValidStr(existingCaseSheet?.disability) && !isValidStr(existingCaseSheet?.primaryDisability)) fields.disability = `Pupils equal & reactive. ${EXAM_DEFAULTS.cnsExamination}`;
+
+  if (isValidStr(raw.cSpineExam) && isValidStr(raw.exposure)) {
+    const cSpineFrag = raw.cSpineExam;
+    const isGeneric = !/(c-spine|c spine|cervical|neck)/i.test(cSpineFrag);
+
+    let e = raw.exposure;
+    if (isGeneric) {
+      const expCSpineRegex = /(c-spine|c spine|cervical spine|cervical midline|neck)\s*([a-z]+)?/gi;
+      let m;
+      let foundMatch = false;
+      while ((m = expCSpineRegex.exec(e)) !== null) {
+        if (m[0].toLowerCase().includes(cSpineFrag.toLowerCase())) {
+          e = e.replace(m[0], "");
+          foundMatch = true;
+        }
+      }
+      if (foundMatch) {
+        e = e.replace(/,\s*,/g, ",").replace(/^,\s*/, "").replace(/,\s*$/, "").trim();
+        raw.exposure = e.length > 0 ? e : null;
+      }
+    } else {
+      if (e.includes(cSpineFrag)) {
+        e = e.replace(cSpineFrag, "");
+        e = e.replace(/,\s*,/g, ",").replace(/^,\s*/, "").replace(/,\s*$/, "").trim();
+        raw.exposure = e.length > 0 ? e : null;
+      } else {
+        const cSpineLower = cSpineFrag.toLowerCase().replace(/\.$/, "");
+        if (e.toLowerCase().includes(cSpineLower)) {
+          const regex = new RegExp(cSpineLower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), "i");
+          e = e.replace(regex, "");
+          e = e.replace(/,\s*,/g, ",").replace(/^,\s*/, "").replace(/,\s*$/, "").trim();
+          raw.exposure = e.length > 0 ? e : null;
+        }
+      }
+    }
+  }
 
   if (isValidStr(raw.exposure)) fields.exposure = raw.exposure;
   else if (abcdeNormal && !isValidStr(existingCaseSheet?.exposure) && !isValidStr(existingCaseSheet?.primaryExposure)) fields.exposure = "No obvious external injuries, rash, or deformities. Normothermic.";

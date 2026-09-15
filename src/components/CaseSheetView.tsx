@@ -13,7 +13,7 @@ import {
   ClinicalCase, PatientVitals, SampleHistory, PrimaryAssessment, PrimarySurvey, getInitialPrimarySurvey,
   TreatmentItem, InvestigationItem, DifferentialDiagnosis, TriageCategory, ArrivalMode,
   IpsgChecklist, VulnerableAssessment, ConsentTimeOut, DispositionDetails, MlcDetails, VitalsRecord,
-  UserProfile, PediatricDetails, DischargeInfo
+  UserProfile, PediatricDetails, LegacyPediatricDetails, DischargeInfo
 } from "../types";
 import { 
   PediatricAirwaySection,
@@ -1322,18 +1322,10 @@ function mapVoiceParsedToSurvey(
     exposure: { ...existingSurvey.exposure, temp: vitals.temp || existingSurvey.exposure.temp },
   };
 }
-mapVoiceParsedToPediatricDetails
-function mapVoiceParsedToPediatricDetails(parsed: any, existing: PediatricDetails | undefined, vitals: PatientVitals) {
+function mapVoiceParsedToPediatricDetails(parsed: any, existing: PediatricDetails | undefined) {
   const pd = parsed.pediatricDetails || {};
   return {
     ...(existing || {}),
-    breathingRr: vitals.rr || existing?.breathingRr || "",
-    breathingSpo2: vitals.spo2 || existing?.breathingSpo2 || "",
-    circulationHr: vitals.hr || existing?.circulationHr || "",
-    circulationBp: vitals.bp || existing?.circulationBp || "",
-    disabilityAvpuGcs: vitals.avpu || existing?.disabilityAvpuGcs || "",
-    disabilityGrbs: vitals.grbs || existing?.disabilityGrbs || "",
-    exposureTemp: vitals.temp || existing?.exposureTemp || "",
     airwayCry: pd.airwayCry || existing?.airwayCry || "",
     airwayStatus: pd.airwayStatus || existing?.airwayStatus || "",
     breathingWob: pd.breathingWob || existing?.breathingWob || "",
@@ -1476,30 +1468,11 @@ function mapVoiceParsedToPediatricDetails(parsed: any, existing: PediatricDetail
                   patAppearance: parsed.pediatricDetails?.patAppearance || currentCase.pediatricDetails?.patAppearance,
                   patWorkOfBreathing: parsed.pediatricDetails?.patWorkOfBreathing || currentCase.pediatricDetails?.patWorkOfBreathing,
                   patCirculation: parsed.pediatricDetails?.patCirculation || currentCase.pediatricDetails?.patCirculation,
-                  historySignsSymptoms: parsed.sampleHistory?.symptoms || parsed.symptoms || currentCase.pediatricDetails?.historySignsSymptoms || "",
-                  historyAllergies: parsed.sampleHistory?.allergies || parsed.allergies || currentCase.pediatricDetails?.historyAllergies || "",
-                  historyMedications: parsed.sampleHistory?.medications || (Array.isArray(parsed.medications) ? parsed.medications.join(", ") : parsed.medications) || currentCase.pediatricDetails?.historyMedications || "",
-                  historyPastMedical: parsed.sampleHistory?.pastHistory || parsed.pastMedicalHistory || currentCase.pediatricDetails?.historyPastMedical || "",
-                  historyLastMeal: parsed.sampleHistory?.lastMeal || currentCase.pediatricDetails?.historyLastMeal || "",
-                  historyEvents: parsed.sampleHistory?.events || parsed.events || currentCase.pediatricDetails?.historyEvents || "",
-                  presentingComplaints: parsed.presentingComplaint || parsed.chiefComplaint || currentCase.pediatricDetails?.presentingComplaints || ""
                 },
               }
             : {}),
         };
 
-        if (currentCase.isPediatric) {
-          updatedCase.pediatricDetails = {
-            ...(currentCase.pediatricDetails || {}),
-            historySignsSymptoms: parsed.sampleHistory?.symptoms || currentCase.pediatricDetails?.historySignsSymptoms || "",
-            historyAllergies: parsed.sampleHistory?.allergies || currentCase.pediatricDetails?.historyAllergies || "",
-            historyMedications: parsed.sampleHistory?.medications || currentCase.pediatricDetails?.historyMedications || "",
-            historyPastMedical: parsed.sampleHistory?.pastHistory || currentCase.pediatricDetails?.historyPastMedical || "",
-            historyLastMeal: parsed.sampleHistory?.lastMeal || currentCase.pediatricDetails?.historyLastMeal || "",
-            historyEvents: parsed.sampleHistory?.events || currentCase.pediatricDetails?.historyEvents || "",
-            presentingComplaints: parsed.presentingComplaint || currentCase.pediatricDetails?.presentingComplaints || ""
-          };
-        }
         // Sync structured survey + pediatric ABCDE fields so the
         // interactive Primary Survey tab reflects dictation, not
         // just the flat narrative strings used by print/export.
@@ -1517,8 +1490,7 @@ function mapVoiceParsedToPediatricDetails(parsed: any, existing: PediatricDetail
         if (updatedCase.isPediatric) {
           updatedCase.pediatricDetails = mapVoiceParsedToPediatricDetails(
             parsed,
-            updatedCase.pediatricDetails,
-            updatedCase.vitals
+            updatedCase.pediatricDetails
           );
         }
         // Recalculate triage category based on updated clinical information
@@ -1594,8 +1566,7 @@ function mapVoiceParsedToPediatricDetails(parsed: any, existing: PediatricDetail
         if (updatedCase.isPediatric) {
           updatedCase.pediatricDetails = mapVoiceParsedToPediatricDetails(
             parsed,
-            updatedCase.pediatricDetails,
-            updatedCase.vitals
+            updatedCase.pediatricDetails
           );
         }
         setCurrentCase(updatedCase);
@@ -1895,12 +1866,12 @@ ${pediatricText}
 - **Bedside Echo / EFAST:** ${currentCase.primaryAssessment.survey?.circulation?.efast ? 'Pericardial: ' + currentCase.primaryAssessment.survey.circulation.efast.pericardial + ', RUQ: ' + currentCase.primaryAssessment.survey.circulation.efast.ruq + ', LUQ: ' + currentCase.primaryAssessment.survey.circulation.efast.luq + ', Suprapubic: ' + currentCase.primaryAssessment.survey.circulation.efast.suprapubic : "Not done."}
 
 **History (SAMPLE):**
-- **S - Signs & Symptoms:** ${currentCase.sampleHistory.symptoms || "None"}
-- **A - Allergies:** ${currentCase.sampleHistory.allergies || "NKDA (No Known Drug Allergies)"}
-- **M - Medications:** ${currentCase.sampleHistory.medications || "None"}
-- **P - Past History:** ${currentCase.sampleHistory.pastHistory || "None"}
-- **L - Last Meal:** ${currentCase.sampleHistory.lastMeal || "N/A"}
-- **E - Events:** ${currentCase.sampleHistory.events || "None"}
+- **S - Signs & Symptoms:** ${currentCase.sampleHistory.symptoms || (currentCase.pediatricDetails as LegacyPediatricDetails)?.historySignsSymptoms || "None"}
+- **A - Allergies:** ${currentCase.sampleHistory.allergies || (currentCase.pediatricDetails as LegacyPediatricDetails)?.historyAllergies || "NKDA (No Known Drug Allergies)"}
+- **M - Medications:** ${currentCase.sampleHistory.medications || (currentCase.pediatricDetails as LegacyPediatricDetails)?.historyMedications || "None"}
+- **P - Past History:** ${currentCase.sampleHistory.pastHistory || (currentCase.pediatricDetails as LegacyPediatricDetails)?.historyPastMedical || "None"}
+- **L - Last Meal:** ${currentCase.sampleHistory.lastMeal || (currentCase.pediatricDetails as LegacyPediatricDetails)?.historyLastMeal || "N/A"}
+- **E - Events:** ${currentCase.sampleHistory.events || (currentCase.pediatricDetails as LegacyPediatricDetails)?.historyEvents || "None"}
 - **Family / Gynae History:** ${currentCase.sampleHistory.familyHistory || "Unremarkable"}
 - **LMP:** ${currentCase.isPediatric ? "N/A" : "Normal / Not applicable"}
 
@@ -2038,12 +2009,12 @@ ${pediatricHtml}
 <br/>
 <strong>History (SAMPLE):</strong><br/>
 <ul>
-  <li><strong>S - Signs & Symptoms:</strong> ${currentCase.sampleHistory.symptoms || "None"}</li>
-  <li><strong>A - Allergies:</strong> ${currentCase.sampleHistory.allergies || "NKDA (No Known Drug Allergies)"}</li>
-  <li><strong>M - Medications:</strong> ${currentCase.sampleHistory.medications || "None"}</li>
-  <li><strong>P - Past History:</strong> ${currentCase.sampleHistory.pastHistory || "None"}</li>
-  <li><strong>L - Last Meal:</strong> ${currentCase.sampleHistory.lastMeal || "N/A"}</li>
-  <li><strong>E - Events:</strong> ${currentCase.sampleHistory.events || "None"}</li>
+  <li><strong>S - Signs & Symptoms:</strong> ${currentCase.sampleHistory.symptoms || (currentCase.pediatricDetails as LegacyPediatricDetails)?.historySignsSymptoms || "None"}</li>
+  <li><strong>A - Allergies:</strong> ${currentCase.sampleHistory.allergies || (currentCase.pediatricDetails as LegacyPediatricDetails)?.historyAllergies || "NKDA (No Known Drug Allergies)"}</li>
+  <li><strong>M - Medications:</strong> ${currentCase.sampleHistory.medications || (currentCase.pediatricDetails as LegacyPediatricDetails)?.historyMedications || "None"}</li>
+  <li><strong>P - Past History:</strong> ${currentCase.sampleHistory.pastHistory || (currentCase.pediatricDetails as LegacyPediatricDetails)?.historyPastMedical || "None"}</li>
+  <li><strong>L - Last Meal:</strong> ${currentCase.sampleHistory.lastMeal || (currentCase.pediatricDetails as LegacyPediatricDetails)?.historyLastMeal || "N/A"}</li>
+  <li><strong>E - Events:</strong> ${currentCase.sampleHistory.events || (currentCase.pediatricDetails as LegacyPediatricDetails)?.historyEvents || "None"}</li>
   <li><strong>Family / Gynae History:</strong> ${currentCase.sampleHistory.familyHistory || "Unremarkable"}</li>
   <li><strong>LMP:</strong> ${currentCase.isPediatric ? "N/A" : "Normal / Not applicable"}</li>
 </ul>
@@ -3887,23 +3858,23 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                   <PediatricAirwaySection
                     state={{
                       cry: currentCase.pediatricDetails?.airwayCry || "",
-                      airwayStatus: currentCase.pediatricDetails?.airwayStatus || "",
+                      airwayStatus: currentCase.primaryAssessment?.airway || currentCase.pediatricDetails?.airwayStatus || "",
                       intervention: currentCase.pediatricDetails?.airwayIntervention || ""
                     }}
                     onChange={s => setCurrentCase(prev => ({
                       ...prev,
+                      primaryAssessment: { airwayStatus: "Normal" as const, breathing: "", breathingStatus: "Normal" as const, circulation: "", circulationStatus: "Normal" as const, disability: "", disabilityStatus: "Normal" as const, exposure: "", exposureStatus: "Normal" as const, ...(prev.primaryAssessment || {}), airway: s.airwayStatus as any } as any,
                       pediatricDetails: {
                         ...(prev.pediatricDetails || {}),
                         airwayCry: s.cry as any,
-                        airwayStatus: s.airwayStatus as any,
                         airwayIntervention: s.intervention
                       }
                     }))}
                   />
                   <PediatricBreathingSection
                     state={{
-                      rr: currentCase.pediatricDetails?.breathingRr || "",
-                      spo2: currentCase.pediatricDetails?.breathingSpo2 || "",
+                      rr: currentCase.vitals?.rr || "",
+                      spo2: currentCase.vitals?.spo2 || "",
                       wobFindings: currentCase.pediatricDetails?.breathingWob ? currentCase.pediatricDetails.breathingWob.split(",").filter(Boolean) : [],
                       abnormalPositioning: currentCase.pediatricDetails?.breathingAbnormalPositioning ? [currentCase.pediatricDetails.breathingAbnormalPositioning] : [],
                       airEntry: currentCase.pediatricDetails?.breathingAirEntry || "",
@@ -3912,10 +3883,9 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                     }}
                     onChange={s => setCurrentCase(prev => ({
                       ...prev,
+                      vitals: { bp: "", hr: "", temp: "", gcs: "", gcs_e: "", gcs_v: "", gcs_m: "", grbs: "", avpu: "", painScore: "", ...(prev.vitals || {}), rr: s.rr, spo2: s.spo2 } as any,
                       pediatricDetails: {
                         ...(prev.pediatricDetails || {}),
-                        breathingRr: s.rr,
-                        breathingSpo2: s.spo2,
                         breathingWob: s.wobFindings.join(","),
                         breathingAbnormalPositioning: s.abnormalPositioning[0] as any || "",
                         breathingAirEntry: s.airEntry as any,
@@ -3927,19 +3897,18 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                   <PediatricCirculationSection
                     state={{
                       crt: currentCase.pediatricDetails?.circulationCrt || "",
-                      hr: currentCase.pediatricDetails?.circulationHr || "",
-                      bp: currentCase.pediatricDetails?.circulationBp || "",
+                      hr: currentCase.vitals?.hr || "",
+                      bp: currentCase.vitals?.bp || "",
                       skinColorTemp: currentCase.pediatricDetails?.circulationSkinColorTemp || "",
                       distendedNeckVeins: currentCase.pediatricDetails?.circulationDistendedNeckVeins || "",
                       intervention: currentCase.pediatricDetails?.circulationIntervention || ""
                     }}
                     onChange={s => setCurrentCase(prev => ({
                       ...prev,
+                      vitals: { spo2: "", rr: "", temp: "", gcs: "", gcs_e: "", gcs_v: "", gcs_m: "", grbs: "", avpu: "", painScore: "", ...(prev.vitals || {}), hr: s.hr, bp: s.bp } as any,
                       pediatricDetails: {
                         ...(prev.pediatricDetails || {}),
                         circulationCrt: s.crt as any,
-                        circulationHr: s.hr,
-                        circulationBp: s.bp,
                         circulationSkinColorTemp: s.skinColorTemp,
                         circulationDistendedNeckVeins: s.distendedNeckVeins as any,
                         circulationIntervention: s.intervention
@@ -3948,26 +3917,26 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                   />
                   <PediatricDisabilitySection
                     state={{
-                      avpuGcs: currentCase.pediatricDetails?.disabilityAvpuGcs || "",
+                      avpuGcs: currentCase.vitals?.gcs || currentCase.primaryAssessment?.disability || currentCase.pediatricDetails?.disabilityAvpuGcs || "",
                       pupils: currentCase.pediatricDetails?.disabilityPupils || "",
                       abnormalResponses: currentCase.pediatricDetails?.disabilityAbnormalResponses || "",
-                      grbs: currentCase.pediatricDetails?.disabilityGrbs || ""
+                      grbs: currentCase.vitals?.grbs || currentCase.pediatricDetails?.disabilityGrbs || ""
                     }}
                     onChange={s => setCurrentCase(prev => ({
                       ...prev,
+                      vitals: { bp: "", hr: "", spo2: "", rr: "", temp: "", gcs_e: "", gcs_v: "", gcs_m: "", avpu: "", painScore: "", ...(prev.vitals || {}), gcs: s.avpuGcs, grbs: s.grbs } as any,
+                      primaryAssessment: { airway: "", airwayStatus: "Normal" as const, breathing: "", breathingStatus: "Normal" as const, circulation: "", circulationStatus: "Normal" as const, disabilityStatus: "Normal" as const, exposure: "", exposureStatus: "Normal" as const, ...(prev.primaryAssessment || {}), disability: s.avpuGcs } as any,
                       pediatricDetails: {
                         ...(prev.pediatricDetails || {}),
-                        disabilityAvpuGcs: s.avpuGcs,
                         disabilityPupils: s.pupils,
                         disabilityAbnormalResponses: s.abnormalResponses,
-                        disabilityGrbs: s.grbs
                       }
                     }))}
                   />
                   <PediatricExposureSection
                     state={{
-                      temperature: currentCase.pediatricDetails?.exposureTemp || "",
-                      traumaLogroll: currentCase.pediatricDetails?.exposureTraumaLogroll || "",
+                      temperature: currentCase.vitals?.temp || currentCase.pediatricDetails?.exposureTemp || "",
+                      traumaLogroll: currentCase.primaryAssessment?.exposure || currentCase.pediatricDetails?.exposureTraumaLogroll || "",
                       signsOfTrauma: currentCase.pediatricDetails?.exposureSignsOfTrauma ? currentCase.pediatricDetails.exposureSignsOfTrauma.split(",").filter(Boolean) : [],
                       infectionBleedingEvidence: currentCase.pediatricDetails?.exposureEvidenceInfectionBleeding || "",
                       longBoneDeformities: currentCase.pediatricDetails?.exposureLongBoneDeformities || "",
@@ -3976,10 +3945,10 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                     }}
                     onChange={s => setCurrentCase(prev => ({
                       ...prev,
+                      vitals: { bp: "", hr: "", spo2: "", rr: "", gcs: "", gcs_e: "", gcs_v: "", gcs_m: "", grbs: "", avpu: "", painScore: "", ...(prev.vitals || {}), temp: s.temperature } as any,
+                      primaryAssessment: { airway: "", airwayStatus: "Normal" as const, breathing: "", breathingStatus: "Normal" as const, circulation: "", circulationStatus: "Normal" as const, disability: "", disabilityStatus: "Normal" as const, exposureStatus: "Normal" as const, ...(prev.primaryAssessment || {}), exposure: s.traumaLogroll } as any,
                       pediatricDetails: {
                         ...(prev.pediatricDetails || {}),
-                        exposureTemp: s.temperature,
-                        exposureTraumaLogroll: s.traumaLogroll,
                         exposureSignsOfTrauma: s.signsOfTrauma.join(","),
                         exposureEvidenceInfectionBleeding: s.infectionBleedingEvidence,
                         exposureLongBoneDeformities: s.longBoneDeformities as any,
@@ -6381,11 +6350,11 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                 </p>
                                <p className="flex justify-between border-b border-slate-100 pb-0.5">
                   <span className="font-extrabold text-slate-500 uppercase"><strong>Address:</strong></span>
-                  <span className="font-semibold text-slate-850 text-right text-[9px]"><strong>{currentCase.pediatricDetails?.address || currentCase.patient.address || "Not recorded"}</strong></span>
+                  <span className="font-semibold text-slate-850 text-right text-[9px]"><strong>{currentCase.patient.address || "Not recorded"}</strong></span>
                 </p>
                 <p className="flex justify-between">
                   <span className="font-extrabold text-slate-500 uppercase"><strong>Identification Mark:</strong></span>
-                  <span className="font-bold text-slate-950"><strong>{currentCase.pediatricDetails?.identificationMark || "None"}</strong></span>
+                  <span className="font-bold text-slate-950"><strong>{currentCase.patient.mlcDetails?.identificationMark || "None"}</strong></span>
                 </p>
               </div>
               <div className="space-y-1 border-l pl-4">
@@ -6395,15 +6364,15 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                 </p>
                 <p className="flex justify-between border-b border-slate-100 pb-0.5">
                   <span className="font-extrabold text-slate-500 uppercase"><strong>Date & Time of Incident:</strong></span>
-                  <span className="font-semibold text-slate-850 font-mono"><strong>{currentCase.pediatricDetails?.dateTimeOfIncident || "N/A"}</strong></span>
+                  <span className="font-semibold text-slate-850 font-mono"><strong>{currentCase.patient.mlcDetails?.dateTimeOfIncident || "N/A"}</strong></span>
                 </p>
                 <p className="flex justify-between border-b border-slate-100 pb-0.5">
                   <span className="font-extrabold text-slate-500 uppercase"><strong>Place of Incident:</strong></span>
-                  <span className="font-semibold text-slate-850"><strong>{currentCase.pediatricDetails?.placeOfIncident || "N/A"}</strong></span>
+                  <span className="font-semibold text-slate-850"><strong>{currentCase.patient.mlcDetails?.placeOfIncident || "N/A"}</strong></span>
                 </p>
                 <p className="flex justify-between border-b border-slate-100 pb-0.5">
                   <span className="font-extrabold text-slate-500 uppercase"><strong>Nature / Mechanism:</strong></span>
-                  <span className="font-semibold text-slate-850"><strong>{currentCase.pediatricDetails?.natureOfIncident || "N/A"} / {currentCase.pediatricDetails?.mechanismOfInjury || "N/A"}</strong></span>
+                  <span className="font-semibold text-slate-850"><strong>{currentCase.patient.mlcDetails?.natureOfIncident || "N/A"} / {currentCase.patient.mlcDetails?.allegedCauseOfInjury || "N/A"}</strong></span>
                 </p>
                 <p className="flex justify-between">
                   <span className="font-extrabold text-slate-500 uppercase"><strong>Brought By / Informant:</strong></span>
@@ -6418,7 +6387,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                 <strong>Presenting Complaints</strong>
               </span>
               <p className="p-2 bg-slate-50 rounded whitespace-pre-wrap text-[10px]">
-                {currentCase.pediatricDetails?.presentingComplaints || currentCase.patient.presentingComplaint || "None reported"}
+                {currentCase.patient.presentingComplaint || "None reported"}
               </p>
             </div>
 
@@ -6508,25 +6477,25 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                 <strong>Secondary Assessment (Focused Pediatric History & Examination)</strong>
               </span>
               <div className="border border-slate-300 rounded-xl p-3 bg-slate-50/20 space-y-2 text-[10px]">
-                <p><strong>Signs & Symptoms:</strong> {currentCase.pediatricDetails?.historySignsSymptoms || currentCase.sampleHistory?.symptoms || "None"}</p>
-                <p><strong>Allergies:</strong> {currentCase.pediatricDetails?.historyAllergies || currentCase.sampleHistory?.allergies || "NKDA (No Known Drug Allergies)"}</p>
-                <p><strong>Medications:</strong> {currentCase.pediatricDetails?.historyMedications || currentCase.sampleHistory?.medications || "None"}</p>
-                <p><strong>Past Medical History:</strong> {currentCase.pediatricDetails?.historyPastMedical || currentCase.sampleHistory?.pastHistory || "Unremarkable developmental history"}</p>
-                <p><strong>Last Meal:</strong> {currentCase.pediatricDetails?.historyLastMeal || currentCase.sampleHistory?.lastMeal || "Light oral fluids"}</p>
-                {((currentCase.pediatricDetails?.historyEvents &&
-                   currentCase.pediatricDetails.historyEvents.trim() &&
-                   !["none", "n/a", "nil", "refer to complaints"].includes(currentCase.pediatricDetails.historyEvents.trim().toLowerCase())) ||
-                  (currentCase.sampleHistory?.events &&
+                <p><strong>Signs & Symptoms:</strong> {currentCase.sampleHistory?.symptoms || (currentCase.pediatricDetails as LegacyPediatricDetails)?.historySignsSymptoms || "None"}</p>
+                <p><strong>Allergies:</strong> {currentCase.sampleHistory?.allergies || (currentCase.pediatricDetails as LegacyPediatricDetails)?.historyAllergies || "NKDA (No Known Drug Allergies)"}</p>
+                <p><strong>Medications:</strong> {currentCase.sampleHistory?.medications || (currentCase.pediatricDetails as LegacyPediatricDetails)?.historyMedications || "None"}</p>
+                <p><strong>Past Medical History:</strong> {currentCase.sampleHistory?.pastHistory || (currentCase.pediatricDetails as LegacyPediatricDetails)?.historyPastMedical || "Unremarkable developmental history"}</p>
+                <p><strong>Last Meal:</strong> {currentCase.sampleHistory?.lastMeal || (currentCase.pediatricDetails as LegacyPediatricDetails)?.historyLastMeal || "Light oral fluids"}</p>
+                {((currentCase.sampleHistory?.events &&
                    currentCase.sampleHistory.events.trim() &&
-                   !["none", "n/a", "nil", "refer to complaints"].includes(currentCase.sampleHistory.events.trim().toLowerCase()))) && (
-                  <p><strong>Preceding Events / Trauma:</strong> {currentCase.pediatricDetails?.historyEvents || currentCase.sampleHistory?.events}</p>
+                   !["none", "n/a", "nil", "refer to complaints"].includes(currentCase.sampleHistory.events.trim().toLowerCase())) || 
+                   ((currentCase.pediatricDetails as LegacyPediatricDetails)?.historyEvents && 
+                   (currentCase.pediatricDetails as LegacyPediatricDetails)?.historyEvents?.trim() && 
+                   !["none", "n/a", "nil", "refer to complaints"].includes((currentCase.pediatricDetails as LegacyPediatricDetails)?.historyEvents?.trim()?.toLowerCase() || ""))) && (
+                  <p><strong>Preceding Events / Trauma:</strong> {currentCase.sampleHistory?.events || (currentCase.pediatricDetails as LegacyPediatricDetails)?.historyEvents}</p>
                 )}
-                <p className="border-t pt-1.5 mt-1"><strong>HEENT:</strong> {currentCase.pediatricDetails?.examHeent || "Normocephalic, pupils equal and reactive"}</p>
-                <p><strong>Respiratory:</strong> {currentCase.pediatricDetails?.examRespiratory || "Lungs clear, symmetrical breath sounds"}</p>
-                <p><strong>Cardiovascular:</strong> {currentCase.pediatricDetails?.examCardiovascular || "S1 S2 heard clearly, normal rhythm"}</p>
-                <p><strong>Abdomen:</strong> {currentCase.pediatricDetails?.examAbdomen || "Soft, non-tender, non-distended"}</p>
-                <p><strong>Back / Spine:</strong> {currentCase.pediatricDetails?.examBack || "No spinal tenderness"}</p>
-                <p><strong>Extremities:</strong> {currentCase.pediatricDetails?.examExtremities || "Full range of motion, no deformities"}</p>
+                <p className="border-t pt-1.5 mt-1"><strong>HEENT:</strong> {currentCase.secondarySurvey?.general || "Normocephalic, pupils equal and reactive"}</p>
+                <p><strong>Respiratory:</strong> {currentCase.secondarySurvey?.respiratory || "Lungs clear, symmetrical breath sounds"}</p>
+                <p><strong>Cardiovascular:</strong> {currentCase.secondarySurvey?.cvs || "S1 S2 heard clearly, normal rhythm"}</p>
+                <p><strong>Abdomen:</strong> {currentCase.secondarySurvey?.abdomen || "Soft, non-tender, non-distended"}</p>
+                <p><strong>Back / Spine:</strong> {currentCase.secondarySurvey?.cSpineExam || "No spinal tenderness"}</p>
+                <p><strong>Extremities:</strong> {currentCase.secondarySurvey?.extremities || "Full range of motion, no deformities"}</p>
               </div>
             </div>
 
@@ -6536,23 +6505,23 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                 <strong>Course, Treatment, & Provisional Diagnosis</strong>
               </span>
               <div className="border border-slate-300 rounded-xl p-3 bg-slate-50/20 space-y-1.5 text-[10px]">
-                <p><strong>Hospital Clinical Course:</strong> {currentCase.pediatricDetails?.courseInHospital || "Evaluated and monitored in ED"}</p>
-                <p><strong>Treatment Given in Hospital:</strong> {currentCase.pediatricDetails?.treatmentGiven || "Observation and reassuring counseling"}</p>
-                <p><strong>Provisional Diagnosis at Discharge/Shift:</strong> <strong>{currentCase.pediatricDetails?.provisionalDiagnosisDischarge || "Clinically stable child"}</strong></p>
-                <p><strong>Differential Diagnosis:</strong> {currentCase.pediatricDetails?.differentialDiagnosis || "None"}</p>
+                <p><strong>Hospital Clinical Course:</strong> {currentCase.progressNotes || "Evaluated and monitored in ED"}</p>
+                <p><strong>Treatment Given in Hospital:</strong> {currentCase.treatmentNotes || currentCase.treatment?.otherNotes || currentCase.treatments?.map(t => t.drugName).join(", ") || "Observation and reassuring counseling"}</p>
+                <p><strong>Provisional Diagnosis at Discharge/Shift:</strong> <strong>{currentCase.provisionalPrimaryDiagnosis || currentCase.differentials?.[0]?.diagnosis || "Clinically stable child"}</strong></p>
+                <p><strong>Differential Diagnosis:</strong> {currentCase.differentials?.map(d => d.diagnosis).join(", ") || "None"}</p>
               </div>
             </div>
 
             {/* Disposition & Clinicians  */}
             <div className="grid grid-cols-3 gap-4 border border-slate-300 p-3 rounded-xl bg-slate-50/40 text-[10px] mt-4">
               <div>
-                <strong>Disposition / Condition:</strong> {currentCase.pediatricDetails?.disposition || "Ward"} / {currentCase.pediatricDetails?.conditionAtShift || "Stable"}
+                <strong>Disposition / Condition:</strong> {currentCase.dispositionAndPlan?.dispositionStatus || currentCase.status || "Ward"} / {currentCase.patient.caseType === "Trauma" ? "Trauma Evaluation" : "Stable"}
               </div>
               <div>
-                <strong>EM Resident:</strong> {currentCase.pediatricDetails?.emResident || "Not Recorded"}
+                <strong>EM Resident:</strong> {currentCase.doctorName || "Not Recorded"}
               </div>
               <div>
-                <strong>EM Consultant:</strong> {currentCase.pediatricDetails?.emConsultant || currentCase.consultantName || "Duty Consultant"}
+                <strong>EM Consultant:</strong> {currentCase.consultantName || "Duty Consultant"}
               </div>
             </div>
           </div>
@@ -6685,10 +6654,11 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                 <strong>Secondary Survey</strong>
               </span>
               <div className="border border-slate-300 rounded-xl p-3 bg-slate-50/20 space-y-1 text-[10px]">
-                <p><strong>Signs and Symptoms:</strong> {currentCase.sampleHistory.symptoms || "None"}</p>
-                <p><strong>Past medical history:</strong> {currentCase.sampleHistory.pastHistory || "None"}</p>
-                {currentCase.sampleHistory.events && currentCase.sampleHistory.events.trim() && !["none", "n/a", "nil"].includes(currentCase.sampleHistory.events.trim().toLowerCase()) && (
-                  <p><strong>Preceding Events / Trauma:</strong> {currentCase.sampleHistory.events}</p>
+                <p><strong>Signs and Symptoms:</strong> {currentCase.sampleHistory.symptoms || (currentCase.pediatricDetails as LegacyPediatricDetails)?.historySignsSymptoms || "None"}</p>
+                <p><strong>Past medical history:</strong> {currentCase.sampleHistory.pastHistory || (currentCase.pediatricDetails as LegacyPediatricDetails)?.historyPastMedical || "None"}</p>
+                {((currentCase.sampleHistory.events && currentCase.sampleHistory.events.trim() && !["none", "n/a", "nil"].includes(currentCase.sampleHistory.events.trim().toLowerCase())) || 
+                  ((currentCase.pediatricDetails as LegacyPediatricDetails)?.historyEvents && (currentCase.pediatricDetails as LegacyPediatricDetails)?.historyEvents?.trim() && !["none", "n/a", "nil"].includes((currentCase.pediatricDetails as LegacyPediatricDetails)?.historyEvents?.trim()?.toLowerCase() || ""))) && (
+                  <p><strong>Preceding Events / Trauma:</strong> {currentCase.sampleHistory.events || (currentCase.pediatricDetails as LegacyPediatricDetails)?.historyEvents}</p>
                 )}
                 <p><strong>Surgical history:</strong> None reported.</p>
                 <p><strong>Family / Gynae History:</strong> {currentCase.sampleHistory.familyHistory || "Unremarkable"}</p>
@@ -7105,11 +7075,11 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                     SAMPLE History & Clinical Evolution
                   </h4>
                   <div className="grid grid-cols-2 gap-2 text-[10px] bg-slate-50 p-2.5 rounded border border-slate-200">
-                    <p><strong>Symptoms:</strong> {currentCase.sampleHistory.symptoms || "As presenting complaint"}</p>
-                    <p><strong>Allergies:</strong> {currentCase.sampleHistory.allergies || "NKDA"}</p>
-                    <p><strong>Medications:</strong> {currentCase.sampleHistory.medications || "Nil regular"}</p>
-                    <p><strong>Past Medical History:</strong> {currentCase.sampleHistory.pastHistory || "None reported"}</p>
-                    <p className="col-span-2"><strong>Events & Course:</strong> {currentCase.sampleHistory.events || currentCase.progressNotes || "Stabilized in Emergency Ward."}</p>
+                    <p><strong>Symptoms:</strong> {currentCase.sampleHistory.symptoms || (currentCase.pediatricDetails as LegacyPediatricDetails)?.historySignsSymptoms || "As presenting complaint"}</p>
+                    <p><strong>Allergies:</strong> {currentCase.sampleHistory.allergies || (currentCase.pediatricDetails as LegacyPediatricDetails)?.historyAllergies || "NKDA"}</p>
+                    <p><strong>Medications:</strong> {currentCase.sampleHistory.medications || (currentCase.pediatricDetails as LegacyPediatricDetails)?.historyMedications || "Nil regular"}</p>
+                    <p><strong>Past Medical History:</strong> {currentCase.sampleHistory.pastHistory || (currentCase.pediatricDetails as LegacyPediatricDetails)?.historyPastMedical || "None reported"}</p>
+                    <p className="col-span-2"><strong>Events & Course:</strong> {currentCase.sampleHistory.events || (currentCase.pediatricDetails as LegacyPediatricDetails)?.historyEvents || currentCase.progressNotes || "Stabilized in Emergency Ward."}</p>
                   </div>
                 </div>
 

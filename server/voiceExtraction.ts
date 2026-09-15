@@ -80,7 +80,7 @@ Output ONLY what is literally said.
 FIELD SEPARATION IS CRITICAL:
   patientName    = person's name (proper noun only)
   age            = number (years)
-  sex            = Male/Female
+  sex            = Male/Female (Extract strictly from: male, female, boy, girl, male child, female child, man, woman. Do NOT infer from name or ambiguous pronouns alone).
   chiefComplaint = main symptoms / duration
   
   These are FOUR DIFFERENT fields.
@@ -202,6 +202,13 @@ PRIMARY SURVEY EXTRACTION:
     INJURY — never return null if the doctor described one, even if it
     was mentioned as part of a broader "secondary survey" statement.
 
+  CERVICAL SPINE / NECK:
+    Any dictated cervical-spine or neck examination finding including tenderness,
+    non-tenderness, step deformity, midline tenderness, restriction, or similar
+    exam findings must be placed in cSpineExam.
+    Do NOT place cervical-spine findings in exposure.
+    Do NOT duplicate the same C-spine fact into exposure.
+
   DO NOT put vitals in these free text fields.
 FAST/EFAST FINDINGS:
   If the doctor dictates FAST/EFAST results (heart/pericardial, abdomen/
@@ -306,6 +313,9 @@ timeGiven ONLY if an actual clock administration time was dictated. Do not put "
     "rr": string | null,
     "temp": string | null,
     "gcs": string | null,
+    "gcs_e": string | null,
+    "gcs_v": string | null,
+    "gcs_m": string | null,
     "grbs": string | null
   },
     "airway": string | null,

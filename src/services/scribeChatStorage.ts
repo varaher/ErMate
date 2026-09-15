@@ -78,6 +78,7 @@ export function subscribeChatHistory(
         dischargeDraft: data.dischargeDraft,
         mode: data.mode,
         extractionApplied: data.extractionApplied,
+        dischargeApplied: data.dischargeApplied,
         dischargeIntent: data.dischargeIntent,
       } as any;
     });
@@ -221,6 +222,7 @@ export function subscribeDiscussionHistory(
         dischargeDraft: data.dischargeDraft,
         mode: data.mode,
         extractionApplied: data.extractionApplied,
+        dischargeApplied: data.dischargeApplied,
         dischargeIntent: data.dischargeIntent,
       } as any;
     });

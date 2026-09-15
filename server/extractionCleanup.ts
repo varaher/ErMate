@@ -106,8 +106,8 @@ export function cleanEntityList(values: any[] | null | undefined): any[] {
 export interface RawExtractionFields {
   symptoms?: string[] | string | null;
   events?: { time?: string | null; description?: string | null }[] | string | null;
-  drugs?: string[] | null;
-  medications?: string[] | null;
+  drugs?: string[] | string | null;
+  medications?: string[] | string | null;
   plan?: string[] | string | null;
   treatment?: string[] | string | null;
   labs?: { name: string; value: string | number | null }[] | Record<string, any> | null;
@@ -121,6 +121,30 @@ export interface CleanedExtractionFields {
   drugs: any[];
   plan: string[];
   labs: { name: string; value: string | number | null }[];
+  fastFindings?: {
+    heart?: string | null;
+    abdomen?: string | null;
+    pelvis?: string | null;
+  };
+  extremitiesExamination?: string | null;
+  lastMeal?: string | null;
+  cSpineExam?: string | null;
+  echo?: string | null;
+  consultations?: string[];
+  vbg?: {
+    ph?: string | null;
+    pco2?: string | null;
+    po2?: string | null;
+    hco3?: string | null;
+    be?: string | null;
+    lactate?: string | null;
+    na?: string | null;
+    k?: string | null;
+    cl?: string | null;
+    hb?: string | null;
+    anionGap?: string | null;
+    type?: string | null;
+  };
 }
 
 /**
@@ -168,14 +192,52 @@ export function cleanExtractionOutput(raw: RawExtractionFields): CleanedExtracti
     .filter(e => e.description.length > 0);
 
   // Drugs / Medications — straightforward entity list
-  const rawDrugs: any = raw.drugs ?? raw.medications ?? raw.treatment ?? raw.treatmentInER;
   let drugsArray: any[] = [];
-  if (Array.isArray(rawDrugs)) {
-    drugsArray = rawDrugs.map(d => typeof d === 'string' ? d : d);
-  } else if (typeof rawDrugs === "string" && rawDrugs.trim().length > 0) {
-    drugsArray = rawDrugs.split(/;|\n|,/).map(d => d.trim());
+  if (Array.isArray(raw.treatment) && raw.treatment.length > 0) {
+    drugsArray = raw.treatment;
+  } else if (Array.isArray(raw.treatmentInER) && raw.treatmentInER.length > 0) {
+    drugsArray = raw.treatmentInER;
+  } else if (Array.isArray(raw.drugs) && raw.drugs.length > 0) {
+    drugsArray = raw.drugs;
+  } else if (Array.isArray(raw.medications) && raw.medications.length > 0) {
+    drugsArray = raw.medications;
+  } else if (typeof raw.treatment === "string" && raw.treatment.trim().length > 0) {
+    drugsArray = raw.treatment.split(/;|\n|,/).map((d: string) => d.trim());
+  } else if (typeof raw.treatmentInER === "string" && raw.treatmentInER.trim().length > 0) {
+    drugsArray = raw.treatmentInER.split(/;|\n|,/).map((d: string) => d.trim());
+  } else if (typeof raw.drugs === "string" && raw.drugs.trim().length > 0) {
+    drugsArray = raw.drugs.split(/;|\n|,/).map((d: string) => d.trim());
+  } else if (typeof raw.medications === "string" && raw.medications.trim().length > 0) {
+    drugsArray = raw.medications.split(/;|\n|,/).map((d: string) => d.trim());
   }
-  const drugs = cleanEntityList(drugsArray);
+  
+  const drugs = drugsArray.map(d => {
+    if (typeof d === "string") return d.trim();
+    if (typeof d === "object" && d !== null) {
+      const obj: any = {};
+      if (d.drugName) obj.drugName = String(d.drugName).trim();
+      else if (d.name) obj.drugName = String(d.name).trim();
+
+      if (d.dose) obj.dose = String(d.dose).trim();
+      if (d.route) obj.route = String(d.route).trim();
+      if (d.instruction) obj.instruction = String(d.instruction).trim();
+      
+      if (d.timeGiven) {
+        const t = String(d.timeGiven).trim().toLowerCase();
+        if (t === "stat" || t === "bd" || t === "tds" || t === "od" || t === "sos") {
+          if (!obj.instruction) obj.instruction = String(d.timeGiven).trim();
+          obj.timeGiven = "";
+        } else {
+          obj.timeGiven = String(d.timeGiven).trim();
+        }
+      } else {
+        obj.timeGiven = "";
+      }
+      
+      if (Object.keys(obj).length > 1 || obj.drugName) return obj;
+    }
+    return null;
+  }).filter(Boolean);
 
   // Plan / Treatment — accept array or single string, normalize
   const rawPlan: any = raw.plan ?? raw.disposition ?? raw.dispositionAndPlan;
@@ -209,5 +271,48 @@ export function cleanExtractionOutput(raw: RawExtractionFields): CleanedExtracti
     }))
     .filter(l => l.name && l.name.length > 0);
 
-  return { symptoms, events, drugs, plan, labs };
+  const result: CleanedExtractionFields = { symptoms, events, drugs, plan, labs };
+
+  // Preserve safe dictation fields strictly without guessing
+  if (raw.fastFindings && typeof raw.fastFindings === 'object') {
+    const fast: any = {};
+    if (raw.fastFindings.heart !== undefined) fast.heart = raw.fastFindings.heart;
+    if (raw.fastFindings.abdomen !== undefined) fast.abdomen = raw.fastFindings.abdomen;
+    if (raw.fastFindings.pelvis !== undefined) fast.pelvis = raw.fastFindings.pelvis;
+    if (Object.keys(fast).length > 0) result.fastFindings = fast;
+  }
+
+  if (typeof raw.extremitiesExamination === 'string' && raw.extremitiesExamination.trim()) {
+    result.extremitiesExamination = raw.extremitiesExamination.trim();
+  }
+  
+  if (typeof raw.lastMeal === 'string' && raw.lastMeal.trim()) {
+    result.lastMeal = raw.lastMeal.trim();
+  }
+  
+  if (typeof raw.cSpineExam === 'string' && raw.cSpineExam.trim()) {
+    result.cSpineExam = raw.cSpineExam.trim();
+  }
+  
+  if (typeof raw.echo === 'string' && raw.echo.trim()) {
+    result.echo = raw.echo.trim();
+  }
+  
+  if (Array.isArray(raw.consultations)) {
+    const validConsults = raw.consultations.filter(c => typeof c === 'string' && c.trim().length > 0);
+    if (validConsults.length > 0) result.consultations = validConsults;
+  }
+
+  if (raw.vbg && typeof raw.vbg === 'object') {
+    const v: any = {};
+    const validKeys = ['ph', 'pco2', 'po2', 'hco3', 'be', 'lactate', 'na', 'k', 'cl', 'hb', 'anionGap', 'type'];
+    for (const k of validKeys) {
+      if (raw.vbg[k] !== undefined && raw.vbg[k] !== null) {
+        v[k] = raw.vbg[k];
+      }
+    }
+    if (Object.keys(v).length > 0) result.vbg = v;
+  }
+
+  return result;
 }

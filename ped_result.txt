@@ -1,0 +1,295 @@
+◇ injected env (0) from .env // tip: ⌘ suppress logs { quiet: true }
+
+================ ACTUAL LIVE LLM TEST — STANDALONE SERVER HARNESS ================
+[VoiceExtract] DPDP Protection Active: Stripped 2 PHI item(s) prior to model extraction
+[VoiceExtract] OpenAI GPT-4o-mini succeeded · tokens: 6222
+
+[1] COMPLETE RAW MODEL JSON:
+{
+  "patientName": null,
+  "age": "5",
+  "sex": "Unknown",
+  "priority": "P1",
+  "chiefComplaint": "Pain all over body, nausea, event amnesia",
+  "symptoms": "Pain all over body, nausea, event amnesia",
+  "events": "RTA, two-wheeler versus four-wheeler, near Chunungambeli at around 8 AM. Child was travelling on the two-wheeler. The two-wheeler was hit by a four-wheeler. Child was thrown from vehicle.",
+  "vitals": {
+    "hr": "120/min",
+    "bp": null,
+    "spo2": "98%",
+    "rr": "20/min",
+    "temp": null,
+    "gcs": "15",
+    "gcs_e": "4",
+    "gcs_v": "5",
+    "gcs_m": "6",
+    "grbs": null
+  },
+  "airway": "Patent",
+  "breathing": "Right-sided chest tenderness",
+  "circulation": "Peripheral pulses palpable",
+  "disability": "Pupils equal and reacting",
+  "exposure": "Left thigh deformity, no open wound, abrasions both forearms, abrasions chest, abrasions lower abdomen, abrasion chin, tenderness left thigh, tenderness both arms, chest tenderness, lower abdominal tenderness",
+  "vbg": {
+    "type": "ABG",
+    "ph": "7.35",
+    "pco2": "25",
+    "po2": null,
+    "hco3": "20",
+    "be": "-2",
+    "lactate": null,
+    "na": "130",
+    "k": "4",
+    "cl": "110",
+    "hb": "14",
+    "anionGap": "approximately 12"
+  },
+  "pastMedicalHistory": "No significant past medical history.",
+  "lastMeal": "Had food on the morning of incident.",
+  "medications": [],
+  "allergies": null,
+  "surgicalHistory": null,
+  "familyHistory": null,
+  "lmp": null,
+  "generalExamination": null,
+  "cSpineExam": "Tenderness",
+  "cvsExamination": null,
+  "respiratoryExamination": null,
+  "abdomenExamination": null,
+  "cnsExamination": null,
+  "extremitiesExamination": null,
+  "echo": "Good RV function, good LV function, no pericardial effusion, no IVC collapse",
+  "fastFindings": {
+    "heart": null,
+    "abdomen": "Free fluid in right hepatorenal angle",
+    "pelvis": "Free fluid around urinary bladder / pelvis"
+  },
+  "mlcDetails": {
+    "possibleMlc": true,
+    "natureOfIncident": "RTA",
+    "placeOfIncident": "Chunungambeli",
+    "dateTimeOfIncident": null,
+    "mechanismOfInjury": "Two-wheeler versus four-wheeler",
+    "broughtBy": null,
+    "informant": null,
+    "identificationMark": null
+  },
+  "investigations": [],
+  "consultations": [
+    "Orthopaedics",
+    "Surgery / Pediatric Surgery",
+    "Neurosurgery"
+  ],
+  "plan": "Review investigations and imaging, compare with previous reports, definitive management, OT as indicated",
+  "treatment": [
+    {
+      "drugName": "tranexamic acid",
+      "dose": null,
+      "route": null,
+      "instruction": null,
+      "timeGiven": null
+    },
+    {
+      "drugName": "Sompraz",
+      "dose": null,
+      "route": null,
+      "instruction": null,
+      "timeGiven": null
+    },
+    {
+      "drugName": "Emeset",
+      "dose": null,
+      "route": null,
+      "instruction": null,
+      "timeGiven": null
+    },
+    {
+      "drugName": "analgesia appropriate for child's weight",
+      "dose": null,
+      "route": null,
+      "instruction": null,
+      "timeGiven": null
+    }
+  ],
+  "diagnosis": "Blunt abdominal trauma with suspected hemoperitoneum, closed left femur fracture, multiple abrasions following RTA",
+  "differentials": [],
+  "disposition": null,
+  "emResident": null,
+  "emConsultant": null,
+  "isPediatric": true,
+  "pediatricDetails": {
+    "weight": null,
+    "broughtBy": null,
+    "informant": null,
+    "patAppearanceTone": null,
+    "patAppearanceInteractivity": null,
+    "patAppearanceConsolability": null,
+    "patAppearanceLookGaze": null,
+    "patAppearanceSpeechCry": null,
+    "airwayCry": null,
+    "airwayStatus": null,
+    "breathingWob": null,
+    "breathingAbnormalPositioning": null,
+    "circulationCrt": null,
+    "circulationSkinColorTemp": null,
+    "birthHistory": null,
+    "immunizationHistory": null,
+    "developmentalHistory": null,
+    "feedingHistory": null
+  },
+  "generalExamination_isDefault": false,
+  "cvsExamination_isDefault": false,
+  "respiratoryExamination_isDefault": false,
+  "abdomenExamination_isDefault": false,
+  "cnsExamination_isDefault": false,
+  "airway_isDefault": false
+}
+
+[2] COMPLETE CLEANED EXTRACTION:
+{
+  "symptoms": [
+    "Pain all over body",
+    "Nausea",
+    "Event amnesia"
+  ],
+  "events": [
+    {
+      "time": null,
+      "description": "RTA, two-wheeler versus four-wheeler, near Chunungambeli at around 8 AM. Child was travelling on the two-wheeler. The two-wheeler was hit by a four-wheeler. Child was thrown from vehicle"
+    }
+  ],
+  "drugs": [],
+  "plan": [
+    "Review investigations and imaging, compare with previous reports, definitive management, OT as indicated"
+  ],
+  "labs": [],
+  "fastFindings": {
+    "heart": null,
+    "abdomen": "Free fluid in right hepatorenal angle",
+    "pelvis": "Free fluid around urinary bladder / pelvis"
+  },
+  "lastMeal": "Had food on the morning of incident.",
+  "cSpineExam": "Tenderness",
+  "echo": "Good RV function, good LV function, no pericardial effusion, no IVC collapse",
+  "consultations": [
+    "Orthopaedics",
+    "Surgery / Pediatric Surgery",
+    "Neurosurgery"
+  ],
+  "vbg": {
+    "ph": "7.35",
+    "pco2": "25",
+    "hco3": "20",
+    "be": "-2",
+    "na": "130",
+    "k": "4",
+    "cl": "110",
+    "hb": "14",
+    "anionGap": "approximately 12",
+    "type": "ABG"
+  }
+}
+
+RUNNING runExtraction...
+
+[3] COMPLETE UNAPPLIED EXTRACTION:
+{
+  "age": "5",
+  "presentingComplaint": "Pain all over body, nausea, event amnesia",
+  "vitals": {
+    "hr": "120/min",
+    "spo2": "98%",
+    "rr": "20/min",
+    "gcs": "15",
+    "gcs_e": "4",
+    "gcs_v": "5",
+    "gcs_m": "6"
+  },
+  "vbgAbg": {
+    "type": "ABG",
+    "values": [
+      {
+        "name": "pH",
+        "param": "ph",
+        "value": 7.35
+      },
+      {
+        "name": "pCO2",
+        "param": "pco2",
+        "value": 25
+      },
+      {
+        "name": "HCO3",
+        "param": "hco3",
+        "value": 20
+      },
+      {
+        "name": "Na",
+        "param": "na",
+        "value": 130
+      },
+      {
+        "name": "K",
+        "param": "k",
+        "value": 4
+      },
+      {
+        "name": "Cl",
+        "param": "cl",
+        "value": 110
+      },
+      {
+        "name": "Hb",
+        "param": "hb",
+        "value": 14
+      },
+      {
+        "name": "Base Excess",
+        "param": "be",
+        "value": -2
+      },
+      {
+        "name": "Anion Gap",
+        "param": "anionGap",
+        "value": "approximately 12"
+      }
+    ]
+  },
+  "lastMeal": "Had food on the morning of incident.",
+  "echo": "Good RV function, good LV function, no pericardial effusion, no IVC collapse",
+  "diagnosis": "Blunt abdominal trauma with suspected hemoperitoneum, closed left femur fracture, multiple abrasions following RTA",
+  "consultations": [
+    "Orthopaedics",
+    "Surgery / Pediatric Surgery",
+    "Neurosurgery"
+  ],
+  "fastFindings": {
+    "abdomen": "Free fluid in right hepatorenal angle",
+    "pelvis": "Free fluid around urinary bladder / pelvis"
+  },
+  "mlcDetails": {
+    "possibleMlc": true,
+    "natureOfIncident": "RTA",
+    "placeOfIncident": "Chunungambeli",
+    "mechanismOfInjury": "Two-wheeler versus four-wheeler"
+  },
+  "events": "RTA, two-wheeler versus four-wheeler, near Chunungambeli at around 8 AM. Child was travelling on the two-wheeler. The two-wheeler was hit by a four-wheeler. Child was thrown from vehicle",
+  "symptoms": [
+    "Pain all over body",
+    "Nausea",
+    "Event amnesia"
+  ],
+  "plan": [
+    "Review investigations and imaging, compare with previous reports, definitive management, OT as indicated"
+  ],
+  "isPediatric": true,
+  "airway": "Patent",
+  "breathing": "Right-sided chest tenderness",
+  "circulation": "Peripheral pulses palpable",
+  "disability": "Pupils equal and reacting",
+  "exposure": "Left thigh deformity, no open wound, abrasions both forearms, abrasions chest, abrasions lower abdomen, abrasion chin,  left thigh, tenderness both arms, chest tenderness, lower abdominal tenderness",
+  "secondarySurvey": {
+    "cSpineExam": "Tenderness"
+  },
+  "pastMedicalHistory": "No significant past medical history."
+}

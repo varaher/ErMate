@@ -177,7 +177,7 @@ ANTI-HALLUCINATION RULES — READ FIRST
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 NEVER INVENT THESE — return null if not stated:
-  patientName, age, sex (use "Unknown")
+  patientName, age, sex (Extract strictly from: male, female, boy, girl, male child, female child, man, woman. Do NOT infer from name or ambiguous pronouns alone).
   HR, BP, SpO2, RR, Temp, GCS, GRBS
   Specific diagnosis
   Specific drug names and doses
@@ -318,6 +318,9 @@ No markdown. No explanation. No preamble.
     "rr":                    string | null,
     "temp":                  string | null,
     "gcs":                   string | null,
+    "gcs_e":                 string | null,
+    "gcs_v":                 string | null,
+    "gcs_m":                 string | null,
     "grbs":                  string | null,
     "pain":                  string | null
   },

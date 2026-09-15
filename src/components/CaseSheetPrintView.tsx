@@ -1,7 +1,7 @@
 import React from "react";
 import { formatFlagged, isCulturePositive, type ClinicalParam } from "./clinicalRanges";
 import { ArrowLeft, Edit3, Printer, FileText } from "lucide-react";
-import { ClinicalCase } from "../types";
+import { ClinicalCase, LegacyPediatricDetails } from "../types";
 
 interface VitalReading {
   label: string;
@@ -64,7 +64,13 @@ export interface CaseSheetData {
   bedsideEcho: { performed: boolean; findings: string };
   efast: { performed: boolean; findings: string };
 
+  symptoms: string[];
+  allergies: string[];
+  currentMedications: string[];
   pastHistory: string[];
+  lastMeal: string | null;
+  events: string | null;
+  treatment: { otherNotes?: string } | null;
   primarySurvey: PrimarySurveyData;
   secondarySurvey: SecondarySurveyData;
   psychologicalAssessment: PsychologicalAssessmentData | null;
@@ -308,7 +314,13 @@ export function convertClinicalCaseToCaseSheetData(c: ClinicalCase, defaultHospi
     bedsideEcho: { performed: !!adj.echoDone, findings: adj.echoFindings || "" },
     efast: { performed: !!adj.efastDone || !!(adj.efastInterpretation && adj.efastInterpretation !== "Not done"), findings: adj.efastInterpretation || adj.efastFindings || adj.efastNotes || "" },
 
+    symptoms: c.sampleHistory?.symptoms ? [c.sampleHistory.symptoms] : [],
+    allergies: c.sampleHistory?.allergies ? [c.sampleHistory.allergies] : [],
+    currentMedications: c.sampleHistory?.medications ? [c.sampleHistory.medications] : [],
+    lastMeal: c.sampleHistory?.lastMeal || null,
+    events: c.sampleHistory?.events || null,
     pastHistory: pastHx,
+    treatment: { otherNotes: c.treatmentNotes || c.treatment?.otherNotes || undefined },
     primarySurvey,
     secondarySurvey,
     psychologicalAssessment,
@@ -405,7 +417,7 @@ function PrimarySurveySection({ data }: { data: PrimarySurveyData }) {
   );
 }
 
-function SecondarySurveySection({ data }: { data: SecondarySurveyData }) {
+function SecondarySurveySection({ data, title = "Secondary Survey / Systemic Examination" }: { data: SecondarySurveyData, title?: string }) {
   const items = [
     { label: "General", value: data.general },
     { label: "CVS", value: data.cvs },
@@ -417,7 +429,7 @@ function SecondarySurveySection({ data }: { data: SecondarySurveyData }) {
 
   return (
     <Section>
-      <SectionHeading>Secondary Survey / Systemic Examination</SectionHeading>
+      <SectionHeading>{title}</SectionHeading>
       {items.length > 0 ? (
         <ul className="text-sm list-disc pl-5 space-y-0.5">
           {items.map((item, i) => (
@@ -556,109 +568,204 @@ export default function CaseSheetPrintView({ data: propData, clinicalCase, onBac
           <div className="text-sm font-medium">{data.presentingComplaint || <EmptyLine />}</div>
         </Section>
 
-        <Section>
-          <SectionHeading>Initial Assessment (Vitals & Adjuncts)</SectionHeading>
-          <div className="grid grid-cols-2 sm:grid-cols-7 gap-2 text-sm mb-3 bg-slate-50 print:bg-transparent p-2 print:p-0 rounded-lg border border-slate-200 print:border-none">
-            {data.initialVitals.map((v, i) => (
-              <div key={i} className="text-center sm:text-left">
-                <span className="font-bold text-xs uppercase text-slate-500 print:text-black block">{v.label}</span>
-                <span className="font-mono text-sm font-semibold">{v.displayValue ? v.displayValue : formatFlagged(v.param, v.value)} {v.unit && v.value !== null && !v.displayValue ? v.unit : ""}</span>
+        {data.isPediatric ? (
+          <>
+            {data.pediatricDetails && (
+              <Section>
+                <SectionHeading>Pediatric Assessment (PAT)</SectionHeading>
+                <div className="text-sm space-y-1">
+                  <div><span className="font-bold">Weight:</span> {data.pediatricDetails.weight ? `${data.pediatricDetails.weight} kg` : "Not recorded"}</div>
+                  <div>
+                    <span className="font-bold">PAT — Appearance (TICLS):</span> 
+                    Tone: {data.pediatricDetails.patAppearanceTone || "—"}, 
+                    Interactivity: {data.pediatricDetails.patAppearanceInteractivity || "—"}, 
+                    Consolability: {data.pediatricDetails.patAppearanceConsolability || "—"}, 
+                    Look/Gaze: {data.pediatricDetails.patAppearanceLookGaze || "—"}, 
+                    Speech/Cry: {data.pediatricDetails.patAppearanceSpeechCry || "—"}
+                  </div>
+                  <div><span className="font-bold">Work of Breathing:</span> {data.pediatricDetails.patWorkOfBreathing || "—"} | <span className="font-bold">Circulation:</span> {data.pediatricDetails.patCirculation || "—"}</div>
+                  {data.pediatricDetails.birthHistory && <div><span className="font-bold">Birth History:</span> {data.pediatricDetails.birthHistory}</div>}
+                  {data.pediatricDetails.feedingHistory && <div><span className="font-bold">Feeding History:</span> {data.pediatricDetails.feedingHistory}</div>}
+                  {data.pediatricDetails.developmentalHistory && <div><span className="font-bold">Developmental History:</span> {data.pediatricDetails.developmentalHistory}</div>}
+                  <div><span className="font-bold">Immunization History:</span> {data.pediatricDetails.immunizationHistory || "Not recorded"}</div>
+                  {data.pediatricDetails.broughtBy && <div><span className="font-bold">Brought By:</span> {data.pediatricDetails.broughtBy}</div>}
+                  {data.pediatricDetails.informant && <div><span className="font-bold">Informant:</span> {data.pediatricDetails.informant}</div>}
+                </div>
+              </Section>
+            )}
+
+            <PrimarySurveySection data={data.primarySurvey} />
+
+            <Section>
+              <SectionHeading>Adjuncts to Primary Assessment</SectionHeading>
+              <div className="grid grid-cols-2 sm:grid-cols-7 gap-2 text-sm mb-3 bg-slate-50 print:bg-transparent p-2 print:p-0 rounded-lg border border-slate-200 print:border-none">
+                {data.initialVitals.map((v, i) => (
+                  <div key={i} className="text-center sm:text-left">
+                    <span className="font-bold text-xs uppercase text-slate-500 print:text-black block">{v.label}</span>
+                    <span className="font-mono text-sm font-semibold">{v.displayValue ? v.displayValue : formatFlagged(v.param, v.value)} {v.unit && v.value !== null && !v.displayValue ? v.unit : ""}</span>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
-          <div className="text-sm space-y-1 mt-2">
-            <div>
-              <span className="font-bold">VBG/ABG:</span>{" "}
-              {data.vbgAbg.performed && data.vbgAbg.values.length > 0
-                ? data.vbgAbg.values.map(v => `${v.name} ${formatFlagged(v.param, v.value)}`).join(" · ")
-                : "Not documented"}
-            </div>
-            <div><span className="font-bold">ECG:</span> {data.ecg.performed && data.ecg.findings ? data.ecg.findings : "Not documented"}</div>
-            <div><span className="font-bold">Bedside Echo:</span> {data.bedsideEcho.performed && data.bedsideEcho.findings ? data.bedsideEcho.findings : "Not documented"}</div>
-            <div><span className="font-bold">EFAST:</span> {data.efast?.performed && data.efast.findings ? data.efast.findings : "Not documented"}</div>
-          </div>
-        </Section>
-
-        <Section>
-          <SectionHeading>Past Medical History</SectionHeading>
-          {data.pastHistory.length > 0 ? <p className="text-sm">{data.pastHistory.join(" · ")}</p> : <EmptyLine />}
-        </Section>
-
-        <PrimarySurveySection data={data.primarySurvey} />
-        <SecondarySurveySection data={data.secondarySurvey} />
-        <PsychologicalAssessmentSection data={data.psychologicalAssessment} />
-
-        {/* NEW — Pediatrics, conditional */}
-        {data.isPediatric && data.pediatricDetails && (
-          <Section>
-            <SectionHeading>Pediatric Assessment</SectionHeading>
-            <div className="text-sm space-y-1">
-              <div><span className="font-bold">Weight:</span> {data.pediatricDetails.weight ? `${data.pediatricDetails.weight} kg` : "Not recorded"}</div>
-              <div>
-                <span className="font-bold">PAT — Appearance (TICLS):</span> 
-                Tone: {data.pediatricDetails.patAppearanceTone || "—"}, 
-                Interactivity: {data.pediatricDetails.patAppearanceInteractivity || "—"}, 
-                Consolability: {data.pediatricDetails.patAppearanceConsolability || "—"}, 
-                Look/Gaze: {data.pediatricDetails.patAppearanceLookGaze || "—"}, 
-                Speech/Cry: {data.pediatricDetails.patAppearanceSpeechCry || "—"}
+              <div className="text-sm space-y-1 mt-2">
+                <div>
+                  <span className="font-bold">VBG/ABG:</span>{" "}
+                  {data.vbgAbg.performed && data.vbgAbg.values.length > 0
+                    ? data.vbgAbg.values.map(v => `${v.name} ${formatFlagged(v.param, v.value)}`).join(" · ")
+                    : "Not documented"}
+                </div>
+                <div><span className="font-bold">ECG:</span> {data.ecg.performed && data.ecg.findings ? data.ecg.findings : "Not documented"}</div>
+                <div><span className="font-bold">Bedside Echo:</span> {data.bedsideEcho.performed && data.bedsideEcho.findings ? data.bedsideEcho.findings : "Not documented"}</div>
+                <div><span className="font-bold">EFAST:</span> {data.efast?.performed && data.efast.findings ? data.efast.findings : "Not documented"}</div>
               </div>
-              <div><span className="font-bold">Work of Breathing:</span> {data.pediatricDetails.patWorkOfBreathing || "—"} | <span className="font-bold">Circulation:</span> {data.pediatricDetails.patCirculation || "—"}</div>
-              {data.pediatricDetails.birthHistory && <div><span className="font-bold">Birth History:</span> {data.pediatricDetails.birthHistory}</div>}
-              {data.pediatricDetails.feedingHistory && <div><span className="font-bold">Feeding History:</span> {data.pediatricDetails.feedingHistory}</div>}
-              {data.pediatricDetails.developmentalHistory && <div><span className="font-bold">Developmental History:</span> {data.pediatricDetails.developmentalHistory}</div>}
-              <div><span className="font-bold">Immunization History:</span> {data.pediatricDetails.immunizationHistory || "Not recorded"}</div>
-              {data.pediatricDetails.broughtBy && <div><span className="font-bold">Brought By:</span> {data.pediatricDetails.broughtBy}</div>}
-              {data.pediatricDetails.informant && <div><span className="font-bold">Informant:</span> {data.pediatricDetails.informant}</div>}
-            </div>
-          </Section>
+            </Section>
+
+            <Section>
+              <SectionHeading>Secondary Assessment / SAMPLE History</SectionHeading>
+              <div className="text-sm space-y-1">
+                <div><span className="font-bold">Signs & Symptoms:</span> {data.symptoms.length > 0 ? data.symptoms.join(", ") : ((data.pediatricDetails as LegacyPediatricDetails)?.historySignsSymptoms || "None documented")}</div>
+                <div><span className="font-bold">Allergies:</span> {data.allergies.length > 0 ? data.allergies.join(", ") : ((data.pediatricDetails as LegacyPediatricDetails)?.historyAllergies || "None documented")}</div>
+                <div><span className="font-bold">Medications:</span> {data.currentMedications.length > 0 ? data.currentMedications.join(", ") : ((data.pediatricDetails as LegacyPediatricDetails)?.historyMedications || "None documented")}</div>
+                <div><span className="font-bold">Past Medical History:</span> {data.pastHistory.length > 0 ? data.pastHistory.join(" · ") : ((data.pediatricDetails as LegacyPediatricDetails)?.historyPastMedical || "Not significant")}</div>
+                <div><span className="font-bold">Last Meal:</span> {data.lastMeal || (data.pediatricDetails as LegacyPediatricDetails)?.historyLastMeal || "Not documented"}</div>
+                <div><span className="font-bold">Events:</span> {data.events || (data.pediatricDetails as LegacyPediatricDetails)?.historyEvents || "Not documented"}</div>
+              </div>
+            </Section>
+
+            <SecondarySurveySection data={data.secondarySurvey} title="Focused Physical Examination" />
+
+            <Section>
+              <SectionHeading>Investigations & Lab Results</SectionHeading>
+              {data.labs.length > 0 ? (
+                <div className="space-y-2">
+                  {data.labs.map((panel, i) => (
+                    <div key={i}>
+                      <p className="text-xs font-bold uppercase tracking-wide text-slate-600 print:text-black mb-1">{panel.panelName}</p>
+                      <p className="text-sm font-mono leading-relaxed">
+                        {panel.values.map(v => `${v.name}: ${v.param ? formatFlagged(v.param, v.value) : (v.value ?? "Pending")}${v.unit && v.value !== null ? ` ${v.unit}` : ""}`).join("  |  ")}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              ) : <EmptyLine />}
+            </Section>
+
+            <Section>
+              <SectionHeading>Treatment Given & Emergency Orders</SectionHeading>
+              {data.treatmentGiven.length > 0 ? (
+                <ul className="text-sm list-disc pl-5 space-y-0.5 font-mono">{data.treatmentGiven.map((t, i) => <li key={i}>{t}</li>)}</ul>
+              ) : (data.treatment?.otherNotes || (data.pediatricDetails as LegacyPediatricDetails)?.treatmentGiven) ? (
+                <div className="text-sm font-mono">{data.treatment?.otherNotes || (data.pediatricDetails as LegacyPediatricDetails)?.treatmentGiven}</div>
+              ) : <EmptyLine />}
+            </Section>
+
+            <Section>
+              <SectionHeading>Provisional Diagnosis</SectionHeading>
+              <div className="text-sm font-bold text-indigo-950 print:text-black">{data.provisionalDiagnosis || (data.pediatricDetails as LegacyPediatricDetails)?.provisionalDiagnosisDischarge || <EmptyLine />}</div>
+            </Section>
+
+            <Section>
+              <SectionHeading>Differential Diagnosis</SectionHeading>
+              {data.differentials.length > 0 ? (
+                <ul className="text-sm list-disc pl-5 mt-1 space-y-0.5">
+                  {data.differentials.map((d, i) => <li key={i}>{d.diagnosis} ({d.status})</li>)}
+                </ul>
+              ) : (data.pediatricDetails as LegacyPediatricDetails)?.differentialDiagnosis ? (
+                <div className="text-sm">{((data.pediatricDetails as LegacyPediatricDetails)?.differentialDiagnosis)}</div>
+              ) : <EmptyLine />}
+            </Section>
+
+            <Section>
+              <SectionHeading>Condition at Time of Shift / Disposition</SectionHeading>
+              <div className="text-sm space-y-1">
+                <div><span className="font-bold">Status:</span> {data.disposition.status || "Not yet determined"}</div>
+                {data.disposition.destinationUnit && <div><span className="font-bold">Destination:</span> {data.disposition.destinationUnit}</div>}
+                {data.disposition.durationInEr && <div><span className="font-bold">Duration in ER:</span> {data.disposition.durationInEr}</div>}
+                {data.disposition.consultsRequested.length > 0 && <div><span className="font-bold">Consults Requested:</span> {data.disposition.consultsRequested.join(", ")}</div>}
+                {data.disposition.followUpAdvice && <div><span className="font-bold">Follow-Up Advice:</span> {data.disposition.followUpAdvice}</div>}
+              </div>
+            </Section>
+          </>
+        ) : (
+          <>
+            <Section>
+              <SectionHeading>Initial Assessment (Vitals & Adjuncts)</SectionHeading>
+              <div className="grid grid-cols-2 sm:grid-cols-7 gap-2 text-sm mb-3 bg-slate-50 print:bg-transparent p-2 print:p-0 rounded-lg border border-slate-200 print:border-none">
+                {data.initialVitals.map((v, i) => (
+                  <div key={i} className="text-center sm:text-left">
+                    <span className="font-bold text-xs uppercase text-slate-500 print:text-black block">{v.label}</span>
+                    <span className="font-mono text-sm font-semibold">{v.displayValue ? v.displayValue : formatFlagged(v.param, v.value)} {v.unit && v.value !== null && !v.displayValue ? v.unit : ""}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="text-sm space-y-1 mt-2">
+                <div>
+                  <span className="font-bold">VBG/ABG:</span>{" "}
+                  {data.vbgAbg.performed && data.vbgAbg.values.length > 0
+                    ? data.vbgAbg.values.map(v => `${v.name} ${formatFlagged(v.param, v.value)}`).join(" · ")
+                    : "Not documented"}
+                </div>
+                <div><span className="font-bold">ECG:</span> {data.ecg.performed && data.ecg.findings ? data.ecg.findings : "Not documented"}</div>
+                <div><span className="font-bold">Bedside Echo:</span> {data.bedsideEcho.performed && data.bedsideEcho.findings ? data.bedsideEcho.findings : "Not documented"}</div>
+                <div><span className="font-bold">EFAST:</span> {data.efast?.performed && data.efast.findings ? data.efast.findings : "Not documented"}</div>
+              </div>
+            </Section>
+
+            <Section>
+              <SectionHeading>Past Medical History</SectionHeading>
+              {data.pastHistory.length > 0 ? <p className="text-sm">{data.pastHistory.join(" · ")}</p> : <EmptyLine />}
+            </Section>
+
+            <PrimarySurveySection data={data.primarySurvey} />
+
+            <SecondarySurveySection data={data.secondarySurvey} />
+            <PsychologicalAssessmentSection data={data.psychologicalAssessment} />
+            
+            <Section>
+              <SectionHeading>Provisional & Differential Diagnosis</SectionHeading>
+              <div className="text-sm font-bold text-indigo-950 print:text-black">{data.provisionalDiagnosis || <EmptyLine />}</div>
+              {data.differentials.length > 0 && (
+                <ul className="text-sm list-disc pl-5 mt-1 space-y-0.5">
+                  {data.differentials.map((d, i) => <li key={i}>{d.diagnosis} ({d.status})</li>)}
+                </ul>
+              )}
+            </Section>
+
+            <Section>
+              <SectionHeading>Investigations & Lab Results</SectionHeading>
+              {data.labs.length > 0 ? (
+                <div className="space-y-2">
+                  {data.labs.map((panel, i) => (
+                    <div key={i}>
+                      <p className="text-xs font-bold uppercase tracking-wide text-slate-600 print:text-black mb-1">{panel.panelName}</p>
+                      <p className="text-sm font-mono leading-relaxed">
+                        {panel.values.map(v => `${v.name}: ${v.param ? formatFlagged(v.param, v.value) : (v.value ?? "Pending")}${v.unit && v.value !== null ? ` ${v.unit}` : ""}`).join("  |  ")}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              ) : <EmptyLine />}
+            </Section>
+
+            <Section>
+              <SectionHeading>Treatment Given & Emergency Orders</SectionHeading>
+              {data.treatmentGiven.length > 0 ? (
+                <ul className="text-sm list-disc pl-5 space-y-0.5 font-mono">{data.treatmentGiven.map((t, i) => <li key={i}>{t}</li>)}</ul>
+              ) : <EmptyLine />}
+            </Section>
+
+            <Section>
+              <SectionHeading>Disposition & Outcome</SectionHeading>
+              <div className="text-sm space-y-1">
+                <div><span className="font-bold">Status:</span> {data.disposition.status || "Not yet determined"}</div>
+                {data.disposition.destinationUnit && <div><span className="font-bold">Destination:</span> {data.disposition.destinationUnit}</div>}
+                {data.disposition.durationInEr && <div><span className="font-bold">Duration in ER:</span> {data.disposition.durationInEr}</div>}
+                {data.disposition.consultsRequested.length > 0 && <div><span className="font-bold">Consults Requested:</span> {data.disposition.consultsRequested.join(", ")}</div>}
+                {data.disposition.followUpAdvice && <div><span className="font-bold">Follow-Up Advice:</span> {data.disposition.followUpAdvice}</div>}
+              </div>
+            </Section>
+          </>
         )}
 
-        <Section>
-          <SectionHeading>Provisional & Differential Diagnosis</SectionHeading>
-          <div className="text-sm font-bold text-indigo-950 print:text-black">{data.provisionalDiagnosis || <EmptyLine />}</div>
-          {data.differentials.length > 0 && (
-            <ul className="text-sm list-disc pl-5 mt-1 space-y-0.5">
-              {data.differentials.map((d, i) => <li key={i}>{d.diagnosis} ({d.status})</li>)}
-            </ul>
-          )}
-        </Section>
-
-        <Section>
-          <SectionHeading>Investigations & Lab Results</SectionHeading>
-          {data.labs.length > 0 ? (
-            <div className="space-y-2">
-              {data.labs.map((panel, i) => (
-                <div key={i}>
-                  <p className="text-xs font-bold uppercase tracking-wide text-slate-600 print:text-black mb-1">{panel.panelName}</p>
-                  <p className="text-sm font-mono leading-relaxed">
-                    {panel.values.map(v => `${v.name}: ${v.param ? formatFlagged(v.param, v.value) : (v.value ?? "Pending")}${v.unit && v.value !== null ? ` ${v.unit}` : ""}`).join("  |  ")}
-                  </p>
-                </div>
-              ))}
-            </div>
-          ) : <EmptyLine />}
-        </Section>
-
-        <Section>
-          <SectionHeading>Treatment Given & Emergency Orders</SectionHeading>
-          {data.treatmentGiven.length > 0 ? (
-            <ul className="text-sm list-disc pl-5 space-y-0.5 font-mono">{data.treatmentGiven.map((t, i) => <li key={i}>{t}</li>)}</ul>
-          ) : <EmptyLine />}
-        </Section>
-
-        {/* NEW — Disposition, previously completely absent */}
-        <Section>
-          <SectionHeading>Disposition & Outcome</SectionHeading>
-          <div className="text-sm space-y-1">
-            <div><span className="font-bold">Status:</span> {data.disposition.status || "Not yet determined"}</div>
-            {data.disposition.destinationUnit && <div><span className="font-bold">Destination:</span> {data.disposition.destinationUnit}</div>}
-            {data.disposition.durationInEr && <div><span className="font-bold">Duration in ER:</span> {data.disposition.durationInEr}</div>}
-            {data.disposition.consultsRequested.length > 0 && <div><span className="font-bold">Consults Requested:</span> {data.disposition.consultsRequested.join(", ")}</div>}
-            {data.disposition.followUpAdvice && <div><span className="font-bold">Follow-Up Advice:</span> {data.disposition.followUpAdvice}</div>}
-          </div>
-        </Section>
-
-        {/* NEW — Notes/Addendum */}
         {(data.notes.progressNotes || data.notes.addendum) && (
           <Section>
             <SectionHeading>Clinical Notes & Addendum</SectionHeading>
@@ -667,13 +774,29 @@ export default function CaseSheetPrintView({ data: propData, clinicalCase, onBac
           </Section>
         )}
 
-        <div className="pt-8 mt-4 flex items-end justify-between text-sm">
-          <div>
-            <div className="border-t border-black pt-1.5 w-56 text-center font-bold">
-              {data.signatureBlock.clinicianName || "Not recorded"}
+        <div className="pt-8 mt-4 flex flex-wrap items-end justify-between text-sm gap-y-4">
+          {data.isPediatric ? (
+            <>
+              <div>
+                <div className="border-t border-black pt-1.5 w-48 text-center font-bold">
+                  {data.signatureBlock.clinicianName || "Not recorded"}
+                </div>
+                <p className="text-xs text-center text-slate-500 print:text-black">EM Resident</p>
+              </div>
+              <div>
+                <div className="border-t border-black pt-1.5 w-48 text-center font-bold"></div>
+                <p className="text-xs text-center text-slate-500 print:text-black">EM Consultant</p>
+              </div>
+            </>
+          ) : (
+            <div>
+              <div className="border-t border-black pt-1.5 w-56 text-center font-bold">
+                {data.signatureBlock.clinicianName || "Not recorded"}
+              </div>
+              <p className="text-xs text-center text-slate-500 print:text-black">Treating ER Physician</p>
             </div>
-            <p className="text-xs text-center text-slate-500 print:text-black">Treating ER Physician</p>
-          </div>
+          )}
+          
           <div className="text-xs text-right font-mono text-slate-500 print:text-black">
             <div>Date/Time: {data.signatureBlock.timestamp || "Not recorded"}</div>
             <div className="text-[10px] italic">Electronically Signed Record</div>
