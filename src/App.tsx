@@ -3372,7 +3372,6 @@ differentials: extracted.differentialDiagnosis
                   }}
                   hasActiveScribeSession={scribeMessages.length > 1}
                   onDiscussCase={(c) => handleStartVoiceScribe(c.id)}
-                  onDeleteCase={handleDeleteCase}
                 />
               );
             })()
@@ -3392,7 +3391,6 @@ differentials: extracted.differentialDiagnosis
                   }}
                   onSaveDischarge={handleSaveDischarge}
                   profile={profile}
-                  onDeleteCase={handleDeleteCase}
                 />
               );
             })()
@@ -3500,7 +3498,6 @@ differentials: extracted.differentialDiagnosis
                   onNavigateToDischarge={handleNavigateToDischarge}
                   onNavigateToTab={navigateToTab}
                   onDeleteAllCases={handleDeleteAllCases}
-                  onDeleteCase={handleDeleteCase}
                   onStartHandoverChat={() => {
                     setHandoverSubTab("quickpaste");
                     setActiveTab("handover");
@@ -3603,10 +3600,10 @@ differentials: extracted.differentialDiagnosis
                   onSelectCase={handleSelectCase}
                   onViewSheet={handleViewPrintSheet}
                   onNavigateToDischarge={handleNavigateToDischarge}
-                  onDeleteCase={handleDeleteCase}
                   onStartFullFlow={() => setShowEntryMenu(true)}
                   onStartQuickCase={() => setActiveFormMode("quick")}
                   onNavigateToTab={navigateToTab}
+                  onDeleteCase={handleDeleteCase}
                   onDeleteAllCases={handleDeleteAllCases}
                   onDiscussCase={(c) => handleStartVoiceScribe(c.id)}
                 />

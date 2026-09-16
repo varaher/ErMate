@@ -1,0 +1,1144 @@
+--- src/components/CaseSheetView.tsx.backup	2026-09-15 23:48:20.123094840 +0000
++++ src/components/CaseSheetView.tsx	2026-09-15 23:58:14.871266764 +0000
+@@ -1,6 +1,6 @@
+ import React, { useState, useEffect, useRef } from "react";
+ import { 
+-  ArrowLeft, Save, Sparkles, Mic, FileText, CheckCircle, CheckCircle2,
++  ArrowLeft, MoreVertical, ArrowRight, Save, Sparkles, Mic, FileText, CheckCircle, CheckCircle2,
+   Trash2, Plus, ShieldAlert, BookOpen, Clock, Heart, Baby,
+   Eye, RefreshCw, Printer, AlertTriangle, ClipboardCheck, 
+   User, Check, Shield, FileCheck, Users, LogOut, ChevronRight,
+@@ -2113,835 +2113,122 @@
+ 
+   return (
+     <div className="w-full pb-28 sm:pb-36">
+-      {/* Persistent "Not Yet Triaged" Warning Chip  */}
+-      {isTriageCategoryPending(currentCase.patient.triageCategory) && (
+-        <div className="max-w-7xl mx-auto mb-4 bg-amber-500/15 dark:bg-amber-950/80 border-2 border-amber-500/80 rounded-2xl p-3 shadow-md flex flex-wrap items-center justify-between gap-3 animate-pulse no-print">
+-          <div className="flex items-center gap-2.5">
+-            <AlertTriangle className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0" />
+-            <div>
+-              <span className="text-xs font-black text-amber-900 dark:text-amber-200 uppercase tracking-wider block">
+-                ⚠️ NOT YET TRIAGED
+-              </span>
+-              <span className="text-[11px] text-amber-800 dark:text-amber-300 font-medium">
+-                Patient triage category is currently pending. Select a priority level to complete triage:
+-              </span>
+-            </div>
+-          </div>
+-          <div className="flex items-center gap-1.5 shrink-0">
+-            {[
+-              { label: "P1 (Resuscitative)", cat: "P1 (Resuscitative)" },
+-              { label: "P2 (Emergent)", cat: "P2 (Emergent)" },
+-              { label: "P3 (Urgent)", cat: "P3 (Urgent)" },
+-              { label: "P4 (Non-Urgent)", cat: "P4 (Non-Urgent)" }
+-            ].map((item) => (
+-              <button
+-                key={item.cat}
+-                type="button"
+-                onClick={() => {
+-                  setCurrentCase(prev => ({
+-                    ...prev,
+-                    patient: { ...prev.patient, triageCategory: item.cat as any }
+-                  }));
+-                }}
+-                className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-[10px] font-extrabold transition-all cursor-pointer shadow-xs"
+-              >
+-                Set {item.label.split(" ")[0]}
+-              </button>
+-            ))}
+-          </div>
+-        </div>
+-      )}
+-
+-      {/* Interactive UI Screen  */}
+-      <div className="flex flex-col xl:flex-row gap-6 max-w-7xl mx-auto no-print" id="case-sheet-container">
+-      
+-      {/* Left Column: Demographics & Abnormal Vitals Monitor  */}
+-      <div className="w-full xl:w-80 space-y-4 shrink-0">
++      {/* COMPACT MOBILE HEADER & NAV RAIL */}
++      <div className="flex flex-col gap-4 max-w-7xl mx-auto no-print" id="case-sheet-container">
+         
+-        {/* Back and Status  */}
+-        <div className="flex items-center justify-between no-print">
+-          <div className="flex items-center gap-3">
+-            <button
+-              onClick={onBack}
+-              className="flex items-center gap-1.5 text-xs font-bold text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 transition-all uppercase"
+-            >
+-              <ArrowLeft className="w-4 h-4" />
+-              Cases List
+-            </button>
+-            {onReturnToScribe && (
+-              <button
+-                onClick={onReturnToScribe}
+-                className="flex items-center gap-1 px-2 py-1 bg-purple-50 hover:bg-purple-100 text-purple-700 dark:bg-purple-950/25 dark:text-purple-300 text-[10px] font-bold rounded border border-purple-100 dark:border-purple-900 transition-all uppercase shrink-0"
+-              >
+-                <Mic className="w-3 h-3 text-purple-500 animate-pulse" />
+-                Resume Dictation
+-              </button>
+-            )}
+-          </div>
+-          <span className="text-[10px] px-2.5 py-0.5 rounded-full border bg-blue-50 text-blue-700 dark:bg-blue-950/30 dark:text-blue-300 font-mono font-bold animate-pulse-slow">
+-            {currentCase.status}
+-          </span>
+-        </div>
+-
+-        {/* ER CASE QUICK-SWITCHER WIDGET  */}
+-        <div className="bg-slate-100/50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-3.5 space-y-2 relative no-print shadow-xs">
+-          <div className="flex items-center justify-between">
+-            <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider font-mono">
+-              ER Active Queue
+-            </span>
+-            {(() => {
+-              const otherCases = (allCases || []).filter(c => c.id !== currentCase.id);
+-              const pendingCount = otherCases.filter(c => getCasePendingStatus(c).isPending).length;
+-              if (pendingCount > 0) {
+-                return (
+-                  <span className="bg-amber-500/10 text-amber-600 dark:text-amber-400 text-[9px] font-bold px-1.5 py-0.5 rounded-full border border-amber-500/25 animate-pulse-slow">
+-                    {pendingCount} Pending Case{pendingCount > 1 ? "s" : ""}
+-                  </span>
+-                );
+-              }
+-              return null;
+-            })()}
+-          </div>
+-
+-          <div className="relative">
+-            <button
+-              onClick={() => setCaseSwitcherOpen(!caseSwitcherOpen)}
+-              className="w-full flex items-center justify-between gap-2 px-3 py-2 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 hover:border-slate-350 dark:hover:border-slate-700 rounded-lg text-xs font-bold text-slate-700 dark:text-slate-300 transition-all text-left shadow-xs"
+-            >
+-              <div className="flex items-center gap-1.5 truncate">
+-                <Users className="w-3.5 h-3.5 text-purple-500 shrink-0 animate-pulse" />
+-                <span className="truncate">Quick Switch Patient...</span>
+-              </div>
+-              <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-all shrink-0 ${caseSwitcherOpen ? "rotate-180" : ""}`} />
++        <div className="sticky top-0 z-40 bg-white/95 dark:bg-slate-950/95 backdrop-blur-md pt-3 pb-0 border-b border-slate-200 dark:border-slate-800 flex flex-col gap-3 shadow-xs">
++          {/* Header Row 1 */}
++          <div className="px-4 flex items-center justify-between text-[11px] font-bold text-slate-500 dark:text-slate-400">
++            <button onClick={onBack} className="flex items-center gap-1 hover:text-slate-800 dark:hover:text-slate-200 transition-colors uppercase">
++              <ArrowLeft className="w-3.5 h-3.5" />
++              Cases
+             </button>
+-
+-            {caseSwitcherOpen && (
+-              <>
+-                <div 
+-                  className="fixed inset-0 z-40" 
+-                  onClick={() => setCaseSwitcherOpen(false)}
+-                />
+-                <div className="absolute left-0 right-0 mt-1 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xl z-50 overflow-hidden max-h-72 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800 animate-slide-down">
+-                  
+-                  {/* Action: Register / Attend New Patient  */}
+-                  {onStartNewTriage && (
+-                    <button
+-                      onClick={() => {
+-                        setCaseSwitcherOpen(false);
+-                        // Save current progress
+-                        onSaveCase(currentCase);
+-                        // Trigger new triage
+-                        onStartNewTriage();
+-                      }}
+-                      className="w-full text-left px-3 py-2.5 hover:bg-emerald-50/50 dark:hover:bg-emerald-950/20 text-emerald-600 dark:text-emerald-400 text-xs font-bold transition-all flex items-center gap-2"
+-                    >
+-                      <Plus className="w-4 h-4 bg-emerald-100 dark:bg-emerald-950 p-0.5 rounded-full" />
+-                      <span>+ Register & Attend New Case</span>
+-                    </button>
+-                  )}
+-
+-                  {/* List of other cases  */}
+-                  {(() => {
+-                    const otherCases = (allCases || []).filter(c => c.id !== currentCase.id);
+-                    if (otherCases.length === 0) {
+-                      return (
+-                        <div className="p-3 text-center text-[11px] text-slate-400 font-medium">
+-                          No other active cases in ER
+-                        </div>
+-                      );
+-                    }
+-                    return otherCases.map((oc) => {
+-                      const oStatus = getCasePendingStatus(oc);
+-                      return (
+-                        <button
+-                          key={oc.id}
+-                          onClick={() => {
+-                            setCaseSwitcherOpen(false);
+-                            // 1. Save current progress
+-                            onSaveCase(currentCase);
+-                            // 2. Select the other case
+-                            if (onSelectCase) {
+-                              onSelectCase(oc.id);
+-                            }
+-                          }}
+-                          className="w-full text-left p-3 hover:bg-slate-50 dark:hover:bg-slate-900 transition-all block space-y-1.5"
+-                        >
+-                          <div className="flex items-center justify-between gap-2">
+-                            <span className="font-bold text-xs text-slate-800 dark:text-slate-200 truncate">
+-                              {oc.patient.name}
+-                            </span>
+-                            <span className="text-[9px] font-bold px-1.5 py-0.2 rounded font-mono bg-slate-100 dark:bg-slate-800 text-slate-500">
+-                              {oc.id}
+-                            </span>
+-                          </div>
+-
+-                          <div className="flex items-center justify-between text-[10px] text-slate-400">
+-                            <span>{oc.patient.gender} • {oc.patient.age}y</span>
+-                            <span className={`font-mono font-bold text-[9px] ${
+-                              String(oc.patient.triageCategory || "").includes("P1") 
+-                                ? "text-rose-500" 
+-                                : String(oc.patient.triageCategory || "").includes("P2")
+-                                ? "text-amber-500"
+-                                : "text-emerald-500"
+-                            }`}>
+-                              {String(oc.patient.triageCategory || "P2").split(" ")[0]}
+-                            </span>
+-                          </div>
+-
+-                          {/* Pending Sections Details  */}
+-                          {oStatus.isPending ? (
+-                            <div className="bg-amber-50/50 dark:bg-amber-950/20 border border-amber-100/50 dark:border-amber-900/30 rounded p-1.5 text-[9.5px] text-amber-700 dark:text-amber-400 font-medium space-y-0.5">
+-                              <div className="flex items-center justify-between font-bold">
+-                                <span>⚠️ {oStatus.pendingCount} section{oStatus.pendingCount > 1 ? "s" : ""} pending</span>
+-                                <span className="text-[8px] uppercase tracking-wide">Incomplete</span>
+-                              </div>
+-                              <p className="text-[8.5px] text-slate-500 dark:text-slate-400 truncate font-mono">
+-                                {oStatus.pendingSections.join(", ")}
+-                              </p>
+-                            </div>
+-                          ) : (
+-                            <div className="bg-emerald-50/50 dark:bg-emerald-950/20 border border-emerald-100/50 dark:border-emerald-900/30 rounded p-1.5 text-[9.5px] text-emerald-700 dark:text-emerald-400 font-bold flex items-center gap-1">
+-                              <CheckCircle className="w-3 h-3 text-emerald-500" />
+-                              <span>All sections complete</span>
+-                            </div>
+-                          )}
+-                        </button>
+-                      );
+-                    });
+-                  })()}
+-                </div>
+-              </>
+-            )}
+-          </div>
+-        </div>
+-
+-        {/* MLC WARNING CARD (From user screenshot: Yellow Medico-Legal Warning Header)  */}
+-        {currentCase.patient.isMlc && (
+-          <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-900 rounded-xl p-4 space-y-2 text-xs">
+-            <div className="flex items-center gap-1.5 text-amber-800 dark:text-amber-400 font-extrabold uppercase tracking-wide">
+-              <ShieldAlert className="w-4.5 h-4.5 text-amber-600 animate-pulse shrink-0" />
+-              <span>MEDICO-LEGAL CASE (MLC)</span>
+-            </div>
+-            <div className="text-[11px] text-slate-600 dark:text-slate-400 space-y-1 font-mono">
+-              <p><strong className="text-amber-800 dark:text-amber-500">Nature:</strong> {currentCase.patient.mlcDetails?.natureOfIncident || "Not Specified"}</p>
+-              <p><strong className="text-amber-800 dark:text-amber-500">Intimated Station:</strong> {currentCase.patient.mlcDetails?.policeStation || "Not Specified"}</p>
+-              <p><strong className="text-amber-800 dark:text-amber-500">Station GD Entry:</strong> {currentCase.patient.mlcDetails?.ddEntryNo || "Not Specified"}</p>
+-              <p><strong className="text-amber-800 dark:text-amber-500">Brought By:</strong> {currentCase.patient.mlcDetails?.informantBroughtBy || "Self"}</p>
++            <div className="flex items-center gap-3">
++              <span>{currentCase.patient.caseType || "Medical"} · {!isTriageCategoryPending(currentCase.patient.triageCategory) ? currentCase.patient.triageCategory?.split(" ")[0] || "P2" : "P2"}</span>
+             </div>
+           </div>
+-        )}
+ 
+-        {/* Patient Profile Brief Card  */}
+-        <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl p-5 shadow-sm space-y-3">
+-          {isEditingDemographics ? (
+-            <div className="space-y-3 text-xs">
+-              <div className="flex justify-between items-center border-b pb-1.5 mb-1.5 border-slate-100 dark:border-slate-900">
+-                <span className="font-bold text-slate-700 dark:text-slate-300">Edit Demographics</span>
+-                <button
+-                  type="button"
+-                  onClick={() => {
+-                    setIsEditingDemographics(false);
+-                    onSaveCase(currentCase);
+-                  }}
+-                  className="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-2 py-1 rounded text-[11px] transition-colors"
+-                >
+-                  Save Changes
+-                </button>
+-              </div>
+-              <div className="space-y-2">
+-                <div>
+-                  <label className="block text-[10px] text-slate-400 font-mono font-semibold uppercase mb-1">Patient Name</label>
+-                  <input
+-                    type="text"
+-                    value={currentCase.patient.name}
+-                    onChange={(e) => {
+-                      const val = e.target.value;
+-                      setCurrentCase(prev => ({ ...prev, patient: { ...prev.patient, name: val } }));
+-                    }}
+-                    className="w-full px-2 py-1 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded focus:ring-1 focus:ring-blue-500 font-medium"
+-                  />
+-                </div>
+-                <div className="grid grid-cols-2 gap-2">
+-                  <div>
+-                    <label className="block text-[10px] text-slate-400 font-mono font-semibold uppercase mb-1">Age (Years)</label>
+-                    <input
+-                      type="number"
+-                      value={currentCase.patient.age || ""}
+-                      onChange={(e) => {
+-                        const val = e.target.value ? parseInt(e.target.value) : 0;
+-                        const newIsPeds = recomputeIsPediatric(val);
+-                        setCurrentCase(prev => {
+-                          if (newIsPeds && !prev.isPediatric) {
+-                            // removed
+-                          }
+-                          return { ...prev, patient: { ...prev.patient, age: val }, isPediatric: newIsPeds };
+-                        });
+-                      }}
+-                      className="w-full px-2 py-1 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded focus:ring-1 focus:ring-blue-500 font-medium font-mono"
+-                    />
+-                  </div>
+-                  <div>
+-                    <label className="block text-[10px] text-slate-400 font-mono font-semibold uppercase mb-1">Gender</label>
+-                    <select
+-                      value={currentCase.patient.gender}
+-                      onChange={(e) => {
+-                        const val = e.target.value as any;
+-                        setCurrentCase(prev => ({ ...prev, patient: { ...prev.patient, gender: val } }));
+-                      }}
+-                      className="w-full px-2 py-1 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded focus:ring-1 focus:ring-blue-500 font-medium"
+-                    >
+-                      <option value="Male">Male</option>
+-                      <option value="Female">Female</option>
+-                      <option value="Other">Other</option>
+-                    </select>
+-                  </div>
+-                </div>
+-                <div>
+-                  <label className="block text-[10px] text-slate-400 font-mono font-semibold uppercase mb-1">Phone Number</label>
+-                  <input
+-                    type="text"
+-                    value={currentCase.patient.phone || ""}
+-                    onChange={(e) => {
+-                      const val = e.target.value;
+-                      setCurrentCase(prev => ({ ...prev, patient: { ...prev.patient, phone: val } }));
+-                    }}
+-                    className="w-full px-2 py-1 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded focus:ring-1 focus:ring-blue-500 font-medium font-mono"
+-                  />
+-                </div>
+-                <div>
+-                  <label className="block text-[10px] text-slate-400 font-mono font-semibold uppercase mb-1">Presenting Complaint</label>
+-                  <textarea
+-                    rows={2}
+-                    value={currentCase.patient.presentingComplaint || ""}
+-                    onChange={(e) => {
+-                      const val = e.target.value;
+-                      setCurrentCase(prev => ({ ...prev, patient: { ...prev.patient, presentingComplaint: val } }));
+-                    }}
+-                    className="w-full px-2 py-1 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded focus:ring-1 focus:ring-blue-500 font-medium"
+-                  />
+-                </div>
++          {/* Header Row 2 */}
++          <div className="px-4 flex items-end justify-between gap-4">
++            <div className="flex-1 min-w-0">
++              <div className="text-lg font-black text-slate-900 dark:text-white truncate">
++                {currentCase.patient.name} <span className="font-normal text-slate-400">· {currentCase.patient.age || "N/A"}y/{currentCase.patient.gender?.charAt(0) || "U"}</span>
+               </div>
++              {currentCase.patient.uhid && (
++                <div className="text-[10px] font-mono text-slate-500 truncate">UHID {currentCase.patient.uhid}</div>
++              )}
+             </div>
+-          ) : (
+-            <>
+-              <div className="flex items-start justify-between">
+-                <div>
+-                  <div className="flex items-center gap-2">
+-                    <h2 className="text-base font-bold font-display text-slate-800 dark:text-white leading-tight">
+-                      {currentCase.patient.name}
+-                    </h2>
+-                    <button
+-                      type="button"
+-                      onClick={() => setIsEditingDemographics(true)}
+-                      className="p-1 text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
+-                      title="Edit Demographic Details"
+-                    >
+-                      <Edit3 className="w-3.5 h-3.5" />
+-                    </button>
+-                  </div>
+-                  {currentCase.patient.uhid && (
+-                    <p className="text-[10px] text-blue-600 dark:text-blue-400 font-mono font-bold mt-0.5">
+-                      UHID: {currentCase.patient.uhid}
+-                    </p>
+-                  )}
+-                  <div className="flex flex-wrap gap-1.5 mt-1.5">
+-                    <span className="text-[10px] bg-slate-50 border dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-500 px-1.5 py-0.5 rounded font-mono">
+-                      {currentCase.patient.age || "N/A"} years
+-                    </span>
+-                    <span className="text-[10px] bg-slate-50 border dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-500 px-1.5 py-0.5 rounded font-mono">
+-                      {currentCase.patient.gender}
+-                    </span>
+-                  </div>
+-                </div>
+-                
+-                {isTriageCategoryPending(currentCase.patient.triageCategory) && (
+-                  <span className="text-[9px] font-extrabold bg-amber-500 text-white px-2 py-0.5 rounded uppercase tracking-wider animate-pulse shadow-sm">
+-                    ⚠ Not Yet Triaged
+-                  </span>
+-                )}
+-                {currentCase.isPediatric ? (
+-                  <span className="text-[9px] font-extrabold bg-sky-50 text-sky-700 dark:bg-sky-950/30 dark:text-sky-300 border border-sky-200 px-2 py-0.5 rounded uppercase">
+-                    Pediatric PALS
+-                  </span>
+-                ) : (
+-                  <span className="text-[9px] font-extrabold bg-blue-50 text-blue-700 dark:bg-blue-950/30 dark:text-blue-300 border border-blue-200 px-2 py-0.5 rounded uppercase">
+-                    Adult ATLS
+-                  </span>
+-                )}
+-              </div>
+-
+-              <div className="text-xs text-slate-500 space-y-1 pt-2 border-t border-slate-100 dark:border-slate-900 font-mono">
+-                <div>
+-                  <span className="font-semibold text-slate-400">Complaint:</span> {currentCase.patient.presentingComplaint}
+-                </div>
+-                <div className="flex justify-between">
+-                  <span>Case Type:</span>
+-                  <span className="font-semibold text-blue-600 dark:text-blue-400">{currentCase.patient.caseType}</span>
+-                </div>
+-                <div className="flex justify-between">
+-                  <span>Triage Category:</span>
+-                  <span className="font-semibold text-slate-700 dark:text-slate-300">{currentCase.patient.triageCategory?.toString().split(" ")[0]}</span>
+-                </div>
+-                <div className="flex justify-between">
+-                  <span>Arrival Mode:</span>
+-                  <span>{currentCase.patient.arrivalMode}</span>
+-                </div>
+-                {currentCase.patient.phone && (
+-                  <div className="flex justify-between text-[10px]">
+-                    <span>Phone:</span>
+-                    <span>{currentCase.patient.phone}</span>
+-                  </div>
+-                )}
+-              </div>
+-            </>
+-          )}
+-        </div>
+-
+-        {/* Dynamic Vitals Panel with Abnormal Threshold Alerts & Pain scale (5th vital sign)  */}
+-        <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl p-5 shadow-sm space-y-3">
+-          <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center justify-between gap-1.5 border-b border-slate-100 dark:border-slate-900 pb-2">
+-            <span className="flex items-center gap-1.5">
+-              <Heart className="w-3.5 h-3.5 text-rose-500" />
+-              Vitals Monitor
+-            </span>
+-            <button
+-              type="button"
+-              onClick={() => setActiveTab("trends")}
+-              className="text-[9px] bg-blue-50 text-blue-600 hover:bg-blue-100 dark:bg-slate-900 dark:text-blue-400 font-bold px-2 py-0.5 rounded transition-all flex items-center gap-1"
+-            >
+-              <TrendingUp className="w-3.5 h-3.5" />
+-              Trend Charts
+-            </button>
+-          </h3>
+-
+-          <div className="space-y-2.5">
+-          {/* Vitals Reference Box  */}
+-          <div className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-3 mb-3">
+-            {currentCase.patient.age === 0 || currentCase.patient.age === null ? (
+-              <div className="text-xs text-slate-600 dark:text-slate-400">
+-                <span className="font-bold text-slate-800 dark:text-slate-200 block mb-1">General — confirm age for precise range</span>
+-                Universal Adult Reference: HR 60-100, RR 12-20, BP 120/80
+-              </div>
+-            ) : currentCase.patient.age < 16 ? (
+-              <div className="text-xs text-sky-700 dark:text-sky-300">
+-                <span className="font-bold text-sky-800 dark:text-sky-200 block mb-1">Pediatric PALS Reference (Age {currentCase.patient.age})</span>
+-                {getPalsNormalParameters(currentCase.patient.age).comment}
+-                <div className="text-[10px] mt-1 opacity-70">Note: PALS defines pediatric age up to 18, but ErMate cuts at 16 for adult routing.</div>
+-              </div>
+-            ) : (
+-              <div className="text-xs text-slate-600 dark:text-slate-400">
+-                <span className="font-bold text-slate-800 dark:text-slate-200 block mb-1">Universal Adult Reference</span>
+-                Universal Adult Reference: HR 60-100, RR 12-20, BP 120/80
+-              </div>
+-            )}
+-          </div>
+-            {[
+-              { field: "bp", label: "BP (mmHg)", placeholder: "120/80" },
+-              { field: "hr", label: "Heart Rate (bpm)", placeholder: "80" },
+-              { field: "spo2", label: "SpO2 (%)", placeholder: "98" },
+-              { field: "rr", label: "Resp Rate (/min)", placeholder: "16" },
+-              { field: "temp", label: "Temp (°F)", placeholder: "98.6" },
+-              { field: "grbs", label: "GRBS (mg/dL)", placeholder: "100" },
+-            ].map((vit) => {
+-              const val = currentCase.vitals[vit.field as keyof PatientVitals] || "";
+-              const abnormal = isVitalsAbnormal(vit.field as keyof PatientVitals, val);
++            
++            <div className="flex items-center gap-1.5 shrink-0 pb-1">
++              {onReturnToScribe ? (
++                <button onClick={onReturnToScribe} className={`flex items-center gap-1.5 px-3 py-1.5 ${hasActiveScribeSession ? 'bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900' : 'bg-purple-600 text-white'} text-[10px] font-bold rounded-lg transition-colors`}>
++                  <Mic className={`w-3 h-3 ${hasActiveScribeSession ? 'animate-pulse text-purple-400' : ''}`} />
++                  {hasActiveScribeSession ? "Resume Scribe" : "Open Scribe"}
++                </button>
++              ) : null}
+               
+-              return (
+-                <div key={vit.field} className="flex items-center justify-between gap-2">
+-                  <span className="text-xs text-slate-500 font-medium">{vit.label}</span>
+-                  <input
+-                    type="text"
+-                    placeholder={vit.placeholder}
+-                    value={val}
+-                    onChange={(e) => updateVitals(vit.field as keyof PatientVitals, e.target.value)}
+-                    className={`w-28 px-2 py-1 text-right text-xs font-mono rounded border transition-all ${
+-                      abnormal
+-                        ? "bg-rose-50 border-rose-300 text-rose-700 font-bold dark:bg-rose-950/20 dark:border-rose-900 dark:text-rose-400"
+-                        : "bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-100 focus:ring-1 focus:ring-blue-500"
+-                    }`}
+-                  />
+-                </div>
+-              );
+-            })}
+-
+-            {/* GCS Interactive Subscale Widget  */}
+-            <div className="border-t border-slate-100 dark:border-slate-900 pt-2 space-y-1">
+-              <div className="flex justify-between items-center text-xs">
+-                <span className="text-slate-500 font-medium">GCS Score:</span>
+-                <span className="font-mono font-bold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/40 px-2 py-0.5 rounded text-[11px]">
+-                  {calculatedGcs}/15
+-                </span>
+-              </div>
+-              <div className="grid grid-cols-3 gap-1 pt-1">
+-                <div>
+-                  <span className="block text-[8px] font-extrabold text-slate-400 text-center uppercase">Eye (E)</span>
+-                  <select
+-                    value={currentCase.vitals.gcs_e || "4"}
+-                    onChange={(e) => updateVitals("gcs_e", e.target.value)}
+-                    className="w-full text-center px-1.5 py-0.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded text-[10px] font-mono"
+-                  >
+-                    <option value="4">E4</option>
+-                    <option value="3">E3</option>
+-                    <option value="2">E2</option>
+-                    <option value="1">E1</option>
+-                  </select>
+-                </div>
+-                <div>
+-                  <span className="block text-[8px] font-extrabold text-slate-400 text-center uppercase">Verbal (V)</span>
+-                  <select
+-                    value={currentCase.vitals.gcs_v || "5"}
+-                    onChange={(e) => updateVitals("gcs_v", e.target.value)}
+-                    className="w-full text-center px-1.5 py-0.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded text-[10px] font-mono"
+-                  >
+-                    <option value="5">V5</option>
+-                    <option value="4">V4</option>
+-                    <option value="3">V3</option>
+-                    <option value="2">V2</option>
+-                    <option value="1">V1</option>
+-                  </select>
+-                </div>
+-                <div>
+-                  <span className="block text-[8px] font-extrabold text-slate-400 text-center uppercase">Motor (M)</span>
+-                  <select
+-                    value={currentCase.vitals.gcs_m || "6"}
+-                    onChange={(e) => updateVitals("gcs_m", e.target.value)}
+-                    className="w-full text-center px-1.5 py-0.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded text-[10px] font-mono"
+-                  >
+-                    <option value="6">M6</option>
+-                    <option value="5">M5</option>
+-                    <option value="4">M4</option>
+-                    <option value="3">M3</option>
+-                    <option value="2">M2</option>
+-                    <option value="1">M1</option>
+-                  </select>
+-                </div>
+-              </div>
+-            </div>
+-
+-            {/* Pain score (5th vital sign - JCI Mandate)  */}
+-            <div className="border-t border-slate-100 dark:border-slate-900 pt-2 space-y-1.5">
+-              <div className="flex justify-between items-center text-xs">
+-                <span className="text-slate-500 font-medium">Pain Score:</span>
+-                <span className="font-mono font-bold text-rose-500 dark:text-rose-400">
+-                  {currentCase.vitals.painScore || "0"}/10
+-                </span>
+-              </div>
+-              <div className="pt-1">
+-                <input
+-                  type="range"
+-                  min="0"
+-                  max="10"
+-                  step="1"
+-                  value={currentCase.vitals.painScore || "0"}
+-                  onChange={(e) => updateVitals("painScore", e.target.value)}
+-                  className="w-full h-1.5 bg-slate-100 dark:bg-slate-800 rounded-lg appearance-none cursor-pointer accent-rose-600"
+-                />
+-                <div className="flex justify-between text-[9px] text-slate-400 font-mono mt-0.5">
+-                  <span>0 - None</span>
+-                  <span>5 - Mod</span>
+-                  <span>10 - Sev</span>
++              <details className="relative group">
++                <summary className="p-1.5 text-slate-500 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg cursor-pointer list-none transition-colors [&::-webkit-details-marker]:hidden">
++                  <MoreVertical className="w-4.5 h-4.5" />
++                </summary>
++                <div className="absolute right-0 mt-1 w-48 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xl z-50 py-1.5 text-xs">
++                  <div className="px-3 py-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Export</div>
++                  <button className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 flex items-center gap-2">
++                    <Copy className="w-3.5 h-3.5" /> Copy to EMR
++                  </button>
++                  <button onClick={() => onViewPrintSheet?.(currentCase.id)} className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 flex items-center gap-2">
++                    <Printer className="w-3.5 h-3.5" /> View PDF
++                  </button>
++                  <button className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 flex items-center gap-2">
++                    <Download className="w-3.5 h-3.5" /> Download
++                  </button>
++                  <div className="h-px bg-slate-100 dark:bg-slate-800 my-1.5" />
++                  <div className="px-3 py-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Case Actions</div>
++                  <button onClick={() => { handleSave(); onBack(); }} className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 flex items-center gap-2">
++                    <Save className="w-3.5 h-3.5" /> Finish & Return
++                  </button>
+                 </div>
+-              </div>
++              </details>
+             </div>
+-
+-            {currentCase.isPediatric && (
+-              <div className="flex items-center justify-between gap-2 border-t border-dashed border-slate-100 dark:border-slate-800 pt-2.5">
+-                <span className="text-xs font-bold text-sky-600 dark:text-sky-400 flex items-center gap-1">
+-                  PALS Est. Weight
+-                </span>
+-                <div className="flex items-center gap-1">
+-                  <input
+-                    type="number"
+-                    min="1"
+-                    max="150"
+-                    value={pediatricWeight}
+-                    placeholder={`Est: ${getAPLSEstimate(currentCase.patient.age)}`}
+-                    onChange={(e) => setPediatricWeight(e.target.value === "" ? "" : Math.max(1, parseInt(e.target.value) || 1))}
+-                    className="w-20 px-2 py-1 text-right text-xs font-mono font-bold rounded border bg-sky-50 border-sky-200 text-sky-700 dark:bg-sky-950/20 dark:border-sky-900 dark:text-sky-300 focus:ring-1 focus:ring-sky-500"
+-                  />
+-                  <span className="text-[10px] text-slate-400 font-mono">kg</span>
+-                </div>
+-              </div>
+-            )}
+           </div>
+-        </div>
+ 
+-      </div>
+-
+-      {/* Right Column: Case Sheets Tabbed Flow  */}
+-      <div className="flex-1 flex flex-col space-y-4">
+-        
+-        {/* Top Action Toolbar: Primary Actions  */}
+-        <div className="bg-white dark:bg-slate-950 p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm no-print">
+-          <div className="flex flex-wrap items-center justify-between gap-2.5">
+-            <div className="flex flex-wrap items-center gap-2">
+-              <span className="text-[10px] font-black text-purple-600 dark:text-purple-400 uppercase tracking-wider font-mono">Primary Actions:</span>
+-              <button
+-                type="button"
+-                onClick={() => {
+-                  document.getElementById('quick-voice-scribe-section')?.scrollIntoView({ behavior: 'smooth' });
+-                  const textarea = document.getElementById('scribe-textarea');
+-                  if (textarea) textarea.focus();
+-                }}
+-                className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-purple-600 hover:bg-purple-700 text-white text-xs font-extrabold rounded-xl transition-all shadow-xs cursor-pointer"
+-                title="Navigate directly to the real-time Voice Scribe Dictation Desk"
+-              >
+-                <Mic className="w-3.5 h-3.5 text-amber-300 animate-pulse" />
+-                Direct Voice Scribe
+-              </button>
+-
+-              {onDiscussCase && (
+-                <button
+-                  type="button"
+-                  onClick={() => onDiscussCase(currentCase)}
+-                  className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-extrabold rounded-xl transition-all shadow-xs cursor-pointer"
+-                  title="Discuss this active case with AI Clinical Assistant"
+-                >
+-                  <MessageSquare className="w-3.5 h-3.5 text-blue-200" />
+-                  Discuss Case
+-                </button>
+-              )}
+-
+-              <button
+-                type="button"
+-                onClick={() => setShowScanModal(true)}
+-                className="inline-flex items-center gap-1.5 px-3 py-2 bg-slate-100 dark:bg-slate-900 hover:bg-slate-200 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-800 text-xs font-bold rounded-xl transition-all"
+-              >
+-                <FileText className="w-3.5 h-3.5 text-purple-500" />
+-                Scan Document
+-              </button>
+-            </div>
+-
+-            {/* Case Type Toggle  */}
+-            <div className="flex bg-slate-100 dark:bg-slate-900 rounded-lg p-0.5 border border-slate-200 dark:border-slate-800 items-center">
+-              <span className="text-[10px] font-bold text-slate-400 px-2 uppercase">TYPE:</span>
+-              <button
+-                type="button"
+-                onClick={() => {
+-                  setCurrentCase(prev => ({
+-                    ...prev,
+-                    patient: { ...prev.patient, caseType: "Medical" }
+-                  }));
+-                  setIsNormalToggled(false);
+-                }}
+-                className={`text-[10px] px-2.5 py-1 rounded-md font-bold transition-all ${
+-                  currentCase.patient.caseType === "Medical"
+-                    ? "bg-blue-600 text-white shadow-xs"
+-                    : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
+-                }`}
+-              >
+-                Medical
+-              </button>
+-              <button
+-                type="button"
+-                onClick={() => {
+-                  setCurrentCase(prev => ({
+-                    ...prev,
+-                    patient: { ...prev.patient, caseType: "Trauma" }
+-                  }));
+-                  setIsNormalToggled(false);
+-                }}
+-                className={`text-[10px] px-2.5 py-1 rounded-md font-bold transition-all ${
+-                  currentCase.patient.caseType === "Trauma"
+-                    ? "bg-rose-600 text-white shadow-xs"
+-                    : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
+-                }`}
+-              >
+-                Trauma
+-              </button>
+-            </div>
+-          </div>
+-        </div>
+-
+-        {/* Save Confirmed Banner  */}
+-        {saveBanner?.show && (
+-          <div className="bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900 text-emerald-700 dark:text-emerald-300 p-4 rounded-xl flex items-center justify-between no-print">
+-            <div className="flex items-center gap-2 text-sm font-semibold">
+-              <CheckCircle className="w-5 h-5 text-emerald-500" />
+-              Case records updated and successfully committed to database!
+-            </div>
+-            <div className="text-xs bg-emerald-100 dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-200 px-3 py-1 rounded-full font-mono font-bold flex items-center gap-1">
+-              <Clock className="w-3.5 h-3.5" />
+-              Saved ~{saveBanner.minutesSaved} minutes!
+-            </div>
+-          </div>
+-        )}
+-
+-        {/* Normal Findings Applied Banner  */}
+-        {normalMarkedBanner && (
+-          <div className="bg-sky-50 dark:bg-sky-950/30 border border-sky-200 dark:border-sky-900 text-sky-700 dark:text-sky-300 p-4 rounded-xl flex items-center justify-between animate-fade-in no-print">
+-            <div className="flex items-center gap-2 text-xs font-semibold">
+-              <CheckCircle className="w-4.5 h-4.5 text-sky-500 shrink-0" />
+-              <span>
+-                Standard {currentCase.isPediatric ? "Pediatric PALS" : "Adult ATLS"} ({currentCase.patient.caseType}) normal findings successfully mapped to all fields!
++          {/* Triage Pending Strip */}
++          {isTriageCategoryPending(currentCase.patient.triageCategory) && (
++            <div className="mx-4 flex items-center justify-between gap-3 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/50 rounded-lg px-3 py-2 animate-pulse-slow">
++              <span className="text-[11px] font-bold text-amber-800 dark:text-amber-500 uppercase flex items-center gap-1.5 shrink-0">
++                <AlertTriangle className="w-3.5 h-3.5" />
++                Triage pending
+               </span>
+-            </div>
+-            <div className="text-[10px] bg-sky-100 dark:bg-sky-900/60 text-sky-800 dark:text-sky-200 px-2.5 py-1 rounded-full font-mono font-bold">
+-              {currentCase.isPediatric ? "Peds Vitals & Survey Active" : "Adult Vitals & Survey Active"}
+-            </div>
+-          </div>
+-        )}
+-
+-        {/* Success Banner after Voice dictation parses  */}
+-        {dictationSuccess && (
+-          <div className="bg-purple-50 dark:bg-purple-950/30 border border-purple-200 dark:border-purple-900 text-purple-700 dark:text-purple-300 p-4 rounded-xl flex items-center justify-between animate-fade-in no-print">
+-            <div className="flex items-center gap-2.5 text-xs font-semibold">
+-              <Sparkles className="w-4.5 h-4.5 text-purple-600 animate-pulse shrink-0" />
+-              <span>
+-                <strong>Clinical Scribe Complete:</strong> Dictated findings were parsed, translated, and automatically mapped to patient demographics, vitals, and SAMPLE clinical history!
+-              </span>
+-            </div>
+-            <div className="text-[10px] bg-purple-100 dark:bg-purple-900/60 text-purple-800 dark:text-purple-200 px-2.5 py-1 rounded-full font-mono font-bold shrink-0">
+-              Auto-Filled Case Sheet ⚡
+-            </div>
+-          </div>
+-        )}
+-
+-        {/* Quick Direct Voice Scribe Desk  */}
+-        <div 
+-          id="quick-voice-scribe-section" 
+-          className="bg-gradient-to-r from-purple-50/60 to-indigo-50/60 dark:from-purple-950/10 dark:to-indigo-950/10 border border-purple-200 dark:border-purple-900/40 rounded-xl p-5 shadow-xs space-y-4 no-print"
+-        >
+-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+-            <div className="flex items-center gap-2.5">
+-              <div className="bg-purple-600 text-white p-2 rounded-lg shadow-sm">
+-                <Mic className="w-4 h-4 animate-pulse-slow" />
+-              </div>
+-              <div>
+-                <h3 className="text-xs font-bold uppercase tracking-wider text-purple-700 dark:text-purple-400 flex items-center gap-1.5 font-display">
+-                  ErMate Direct Voice Scribe
+-                  <span className="bg-purple-100 dark:bg-purple-900/50 text-purple-800 dark:text-purple-300 text-[8px] font-extrabold uppercase px-1.5 py-0.5 rounded font-mono">
+-                    AI Multilingual
+-                  </span>
+-                </h3>
+-                <p className="text-[11px] text-slate-500 dark:text-slate-400">
+-                  Directly dictate patient presentation, symptoms, or vitals.
+-                </p>
+-              </div>
+-            </div>
+-
+-            {/* Language Selector  */}
+-            <div className="flex items-center gap-2 self-start sm:self-auto bg-white dark:bg-slate-900 border border-purple-200 dark:border-purple-900 px-2.5 py-1 rounded-lg">
+-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider font-mono">Input:</span>
+-              <select
+-                value={dictationLang}
+-                onChange={(e) => {
+-                  setDictationLang(e.target.value);
+-                  if (isListening) stopRecording();
+-                }}
+-                className="bg-transparent text-xs font-bold text-slate-700 dark:text-slate-200 focus:outline-none cursor-pointer"
+-              >
+-                <option value="en-IN">English (India)</option>
+-                <option value="hi-IN">Hindi (हिन्दी)</option>
+-                <option value="ta-IN">Tamil (தமிழ்)</option>
+-                <option value="te-IN">Telugu (తెలుగు)</option>
+-                <option value="kn-IN">Kannada (ಕನ್ನಡ)</option>
+-                <option value="ml-IN">Malayalam (മലയാളം)</option>
+-                <option value="bn-IN">Bengali (বাংলা)</option>
+-                <option value="mr-IN">Marathi (మరాठी)</option>
+-                <option value="gu-IN">Gujarati (ગુજરાતી)</option>
+-              </select>
+-            </div>
+-          </div>
+-
+-          <div className="space-y-3">
+-            {/* Dictation Box  */}
+-            <div className="relative">
+-              <textarea
+-                id="scribe-textarea"
+-                rows={4}
+-                value={smartDictationText}
+-                onChange={(e) => setSmartDictationText(e.target.value)}
+-                placeholder='Speak or type here... (e.g. "Patient is a 52-year-old male with radiating chest pain and heavy sweating. History of high BP. Vitals: BP is 130/80, heart rate is 88.")'
+-                className="w-full pr-14 pl-4 py-3 bg-white dark:bg-slate-900 border border-purple-100 dark:border-purple-900/60 rounded-xl text-xs font-mono placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-purple-500 text-slate-800 dark:text-slate-100 shadow-inner"
+-              />
+-              
+-              {/* Standardized ErMate Voice Recorder inside the dictation box  */}
+-              <div className="absolute right-3.5 bottom-3.5">
+-                <VoiceRecorder
+-                  renderMode="compact-button"
+-                  onTranscript={(text) => {
+-                    setSmartDictationText(prev => prev ? (prev.trim() + " " + text.trim()) : text.trim());
+-                  }}
+-                />
+-              </div>
+-            </div>
+-
+-            {/* Bottom action row  */}
+-            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-1">
+-              <div className="flex-1">
+-                <span className="text-[10px] text-slate-400 font-medium">
+-                  ⚡ Use multilingual voice dictation to auto-fill the whole case sheet instantly via ErMate Saaras v3.
+-                </span>
+-              </div>
+-
+-              <div className="flex gap-2 shrink-0">
+-                <button
+-                  type="button"
+-                  onClick={() => {
+-                    setSmartDictationText("");
+-                    if (isListening) stopRecording();
+-                  }}
+-                  className="px-4 py-2 border border-purple-200 dark:border-purple-900 text-purple-700 dark:text-purple-300 hover:bg-purple-50 dark:hover:bg-purple-950/20 rounded-xl text-xs font-bold text-center transition-all cursor-pointer bg-white dark:bg-slate-900"
+-                >
+-                  Clear Notes
+-                </button>
+-                <button
+-                  type="button"
+-                  disabled={aiLoading || !smartDictationText.trim()}
+-                  onClick={async () => {
+-                    if (isListening) stopRecording();
+-                    await handleVoiceSubmit();
+-                  }}
+-                  className="px-5 py-2 bg-purple-600 hover:bg-purple-700 disabled:bg-purple-300 dark:disabled:bg-purple-950/40 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all shadow-sm cursor-pointer"
+-                >
+-                  {aiLoading ? (
+-                    <>
+-                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+-                      Capturing...
+-                    </>
+-                  ) : (
+-                    <>
+-                      <Sparkles className="w-3.5 h-3.5" />
+-                      Capture & Auto-Fill
+-                    </>
+-                  )}
+-                </button>
++              <div className="flex items-center gap-1.5 shrink-0 overflow-x-auto no-scrollbar">
++                {[
++                  { label: "P1", cat: "P1 (Resuscitative)" },
++                  { label: "P2", cat: "P2 (Emergent)" },
++                  { label: "P3", cat: "P3 (Urgent)" },
++                  { label: "P4", cat: "P4 (Non-Urgent)" }
++                ].map((item) => (
++                  <button
++                    key={item.cat}
++                    onClick={() => {
++                      setCurrentCase(prev => ({
++                        ...prev,
++                        patient: { ...prev.patient, triageCategory: item.cat as any }
++                      }));
++                    }}
++                    className="px-2 py-0.5 bg-amber-600 hover:bg-amber-700 text-white rounded font-bold text-[10px] shadow-sm whitespace-nowrap"
++                  >
++                    {item.label}
++                  </button>
++                ))}
+               </div>
+             </div>
+-          </div>
+-        </div>
++          )}
+ 
+-        {/* Fixed Bottom Clinical Section Navigation Bar (Prominent & Responsive)  */}
+-        <div className="fixed bottom-0 left-0 right-0 z-50 bg-white/98 dark:bg-slate-950/98 backdrop-blur-md border-t-2 border-slate-300 dark:border-slate-800 shadow-[0_-8px_30px_rgba(0,0,0,0.15)] px-2 py-2.5 sm:px-4 sm:py-3.5 no-print">
+-          <div className="max-w-7xl mx-auto w-full flex items-center gap-2 sm:gap-2.5 overflow-x-auto scrollbar-thin scrollbar-thumb-slate-300 dark:scrollbar-thumb-slate-700 py-1 px-1">
++          {/* Horizontal Nav Rail */}
++          <div className="flex items-center gap-2 px-4 overflow-x-auto no-scrollbar pb-2">
+             {[
+-              { id: "complaints", label: "Chief Complaints", icon: ClipboardCheck },
+-              { id: "primary-survey", label: "Primary Survey", icon: Activity },
+-              { id: "history", label: "History (SAMPLE)", icon: Clock },
+-              { id: "secondary-survey", label: "Secondary Survey", icon: Eye },
+-              { id: "investigations", label: "Investigations", icon: FileCheck },
+-              { id: "treatment", label: "Treatment", icon: Heart },
+-              { id: "notes", label: "Notes", icon: FileText },
+-              { id: "disposition", label: "Disposition", icon: LogOut },
+-              { id: "trends", label: "Vitals Trends", icon: TrendingUp },
+-              { id: "rounds", label: "Rounds & Debrief", icon: BookOpen },
++              { id: "complaints", label: "Complaints" },
++              { id: "primary-survey", label: "Primary" },
++              { id: "history", label: "SAMPLE" },
++              { id: "secondary-survey", label: "Secondary" },
++              { id: "investigations", label: "Investigations" },
++              { id: "treatment", label: "Treatment" },
++              { id: "notes", label: "Notes" },
++              { id: "disposition", label: "Disposition" },
++              { id: "trends", label: "Trends" },
++              { id: "rounds", label: "Rounds" },
+             ].map((tab) => {
+-              const Icon = tab.icon;
+               const isActive = activeTab === tab.id;
+               return (
+                 <button
+                   key={tab.id}
+-                  type="button"
+                   onClick={() => setActiveTab(tab.id as any)}
+-                  className={`text-xs sm:text-sm font-extrabold px-4 py-2.5 sm:px-5 sm:py-3 rounded-xl transition-all shrink-0 flex items-center gap-2 whitespace-nowrap cursor-pointer touch-manipulation min-h-[42px] sm:min-h-[46px] ${
+-                    isActive
+-                      ? "bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-700 text-white shadow-md ring-2 ring-blue-400/50 scale-[1.02]"
+-                      : "bg-slate-100 dark:bg-slate-900 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-800 border border-slate-200/80 dark:border-slate-800"
++                  className={`text-[11px] font-bold px-3 py-1.5 rounded-full transition-colors shrink-0 whitespace-nowrap ${
++                    isActive 
++                      ? "bg-blue-600 text-white" 
++                      : "bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800"
+                   }`}
+                 >
+-                  <Icon className={`w-4 h-4 sm:w-4.5 sm:h-4.5 shrink-0 ${isActive ? "text-white" : "text-blue-600 dark:text-blue-400"}`} />
+-                  <span className="tracking-tight">{tab.label}</span>
++                  {tab.label}
+                 </button>
+               );
+             })}
+@@ -2949,12 +2236,12 @@
+         </div>
+ 
+         {/* Tab content area  */}
+-        <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl p-5 md:p-6 shadow-sm min-h-[350px]">
++        <div className="p-2 sm:p-4 space-y-4">
++
+           
+           {/* Chief Complaints & Editable Demographics  */}
+           {activeTab === "complaints" && (
+             <div className="space-y-6 animate-fade-in">
+-              <div className="flex justify-end mb-2"><SaveSectionButton onSave={handleSave} /></div>
+ <div className="border-b pb-2.5 flex items-center justify-between">
+                 <div>
+                   <h3 className="text-sm font-bold text-slate-800 dark:text-white uppercase tracking-wide">
+@@ -2962,7 +2249,7 @@
+                   </h3>
+                   <p className="text-[10px] text-slate-400">Review and edit primary patient demographics and presenting complaints.</p>
+                 </div>
+-                <SaveSectionButton onSave={handleSave} />
++                
+               </div>
+ 
+               <div className="bg-slate-50 dark:bg-slate-900/50 p-5 border border-slate-200 dark:border-slate-850 rounded-xl space-y-4">
+@@ -3115,7 +2402,6 @@
+           {/* Patient Demographics & Disposition Tab (Accreditation Level)  */}
+           {activeTab === "disposition" && (
+             <div className="space-y-6">
+-              <div className="flex justify-end mb-2"><SaveSectionButton onSave={handleSave} /></div>
+ 
+               {currentCase.isPediatric && (
+                 <PediatricDispositionSection
+@@ -3396,7 +2682,6 @@
+           {/* Vitals Trends Tab  */}
+           {activeTab === "trends" && (
+             <div className="space-y-6 animate-fade-in">
+-              <div className="flex justify-end mb-2"><SaveSectionButton onSave={handleSave} /></div>
+ <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 border-b pb-3">
+                 <div>
+                   <h3 className="text-sm font-bold text-slate-800 dark:text-white uppercase tracking-wide flex items-center gap-2">
+@@ -3660,7 +2945,6 @@
+           {/* SAMPLE History Tab  */}
+           {activeTab === "history" && (
+             <div className="space-y-4">
+-              <div className="flex justify-end mb-2"><SaveSectionButton onSave={handleSave} /></div>
+ 
+               {currentCase.isPediatric && (
+                 <div className="bg-sky-50 dark:bg-sky-950/20 border border-sky-100 dark:border-sky-900 rounded-xl p-4 mb-4">
+@@ -3780,7 +3064,6 @@
+           {/* Primary Assessment ABCDE Tab  */}
+           {activeTab === "primary-survey" && (
+             <div className="space-y-4">
+-              <div className="flex justify-end mb-2"><SaveSectionButton onSave={handleSave} /></div>
+ 
+               {currentCase.isPediatric && (
+                 <div className="bg-sky-50 dark:bg-sky-950/20 border border-sky-100 dark:border-sky-900 rounded-xl p-4 space-y-4 mb-4">
+@@ -3958,7 +3241,6 @@
+           {/* Secondary Assessment head-to-toe Exam Tab  */}
+           {activeTab === "secondary-survey" && (
+             <div className="space-y-4">
+-              <div className="flex justify-end mb-2"><SaveSectionButton onSave={handleSave} /></div>
+               {currentCase.isPediatric ? (
+                 <div className="space-y-4">
+                   <PediatricFocusedPhysicalExam
+@@ -4090,9 +3372,7 @@
+                           onClick={() => {
+                             setCurrentCase(prev => ({
+                               ...prev,
+-                              secondaryAssessment: (prev.secondaryAssessment || "") + "
+-
+-" + preset.text
++                              secondaryAssessment: (prev.secondaryAssessment || "") + "\n\n" + preset.text
+                             }));
+                           }}
+                           className="px-2.5 py-1.5 bg-slate-200 hover:bg-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded transition-colors"
+@@ -4111,9 +3391,7 @@
+                            const gen = "General: Patient is conscious, cooperative, comfortably seated. No pallor, icterus, cyanosis, clubbing, lymphadenopathy, or pedal edema.";
+                            setCurrentCase(prev => ({
+                               ...prev,
+-                              secondaryAssessment: [gen, cns, cvs, rs, pa, ext].join("
+-
+-")
++                              secondaryAssessment: [gen, cns, cvs, rs, pa, ext].join("\n\n")
+                            }));
+                         }}
+                         className="px-3 py-1.5 bg-emerald-100 hover:bg-emerald-200 dark:bg-emerald-900/30 dark:hover:bg-emerald-800/50 text-emerald-700 dark:text-emerald-400 font-medium rounded transition-colors"
+@@ -4130,7 +3408,6 @@
+           {/* JCI/NABH Accreditation & Patient Safety Tab  */}
+           {activeTab === "disposition" && (
+             <div className="space-y-6">
+-              <div className="flex justify-end mb-2"><SaveSectionButton onSave={handleSave} /></div>
+ <div className="border-b pb-2.5 flex items-center justify-between">
+                 <div>
+                   <h3 className="text-sm font-bold text-slate-800 dark:text-white uppercase tracking-wide">
+@@ -4481,7 +3758,6 @@
+           {/* Investigations (Labs & Imaging) Tab  */}
+           {activeTab === "investigations" && (
+             <div className="space-y-6 pt-4 border-t border-slate-100 dark:border-slate-800">
+-              <div className="flex justify-end mb-2"><SaveSectionButton onSave={handleSave} /></div>
+ <div className="border-b pb-2 flex items-center justify-between">
+                 <h3 className="text-sm font-bold text-slate-800 dark:text-white uppercase tracking-wide">Lab & Imaging Investigations Log</h3>
+                 <span className="text-[10px] bg-emerald-50 text-emerald-700 border border-emerald-100 px-2 py-0.5 rounded font-mono font-bold">OCR Sync Ready</span>
+@@ -4792,7 +4068,6 @@
+                               onClick={() => handleDeleteInvestigation(item.id)}
+                               className="text-slate-400 hover:text-rose-600 p-1 rounded transition-all"
+                             >
+-                              <Trash2 className="w-4 h-4" />
+                             </button>
+                           </td>
+                         </tr>
+@@ -4807,7 +4082,6 @@
+           {/* Treatment Logs & Resuscitation Dosages Tab with IPSG Drug Double-Checks  */}
+           {activeTab === "treatment" && (
+             <div className="space-y-6">
+-              <div className="flex justify-end mb-2"><SaveSectionButton onSave={handleSave} /></div>
+ <div className="border-b pb-2 flex items-center justify-between">
+                 <h3 className="text-sm font-bold text-slate-800 dark:text-white uppercase tracking-wide font-display">Medications & Procedures Handover Log</h3>
+                 {currentCase.isPediatric && (
+@@ -5022,7 +4296,6 @@
+                               onClick={() => handleDeleteTreatment(item.id)}
+                               className="text-slate-400 hover:text-rose-600 p-1 rounded transition-all"
+                             >
+-                              <Trash2 className="w-4 h-4" />
+                             </button>
+                           </td>
+                         </tr>
+@@ -5134,7 +4407,6 @@
+                                 onClick={() => handleDeleteInfusion(inf.id)}
+                                 className="text-slate-400 hover:text-rose-600 p-1"
+                               >
+-                                <Trash2 className="w-3.5 h-3.5" />
+                               </button>
+                             </td>
+                           </tr>
+@@ -5291,7 +4563,6 @@
+           {/* Progress Notes Tab  */}
+           {activeTab === "notes" && (
+             <div className="space-y-4">
+-              <div className="flex justify-end mb-2"><SaveSectionButton onSave={handleSave} /></div>
+ <h3 className="text-sm font-bold text-slate-800 dark:text-white border-b pb-2 uppercase tracking-wide">Continuous Progress Notes Log</h3>
+               
+               <div className="space-y-2">
+@@ -5315,7 +4586,6 @@
+           {/* AI Clinical Decision Support Tab  */}
+           {activeTab === "treatment" && (
+             <div className="space-y-6 mt-8 pt-8 border-t-2 border-dashed border-slate-200 dark:border-slate-800">
+-              <div className="flex justify-end mb-2"><SaveSectionButton onSave={handleSave} /></div>
+ <div className="border-b pb-3 flex flex-wrap items-center justify-between gap-4">
+                 <div>
+                   <h3 className="text-sm font-bold text-slate-800 dark:text-white uppercase tracking-wide">ErMate Differential & CDS Support</h3>
+@@ -5772,7 +5042,6 @@
+                               }}
+                               className="w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-semibold text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/20 flex items-center gap-2 transition-colors cursor-pointer"
+                             >
+-                              <Trash2 className="w-4 h-4 text-rose-500" />
+                               <span>Clear Conversation</span>
+                             </button>
+                           </div>
+@@ -6038,8 +5307,9 @@
+           )}
+         </div>
+ 
+-      </div>
++      
+ 
++ 
+       {/* 1. Voice Dictation Modal Simulation  */}
+       {showDictationModal && (
+         <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fade-in no-print">
+@@ -6276,6 +5546,37 @@
+         </div>
+       )}
+ 
++      
++      {/* Sticky Mobile Footer  */}
++      <div className="sticky bottom-0 z-40 bg-white/95 dark:bg-slate-950/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 p-3 sm:p-4 mt-auto flex items-center justify-between shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] no-print">
++        <button onClick={handleSave} className="px-4 py-2 sm:px-5 sm:py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] sm:text-xs rounded-xl shadow-sm flex items-center gap-2 transition-colors active:scale-[0.98]">
++          <Save className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> Save Changes
++        </button>
++        {(() => {
++          const order = ["complaints", "primary-survey", "history", "secondary-survey", "investigations", "treatment", "notes", "disposition", "trends", "rounds"];
++          const curr = order.indexOf(activeTab);
++          const nextId = (curr !== -1 && curr < order.length - 1) ? order[curr + 1] : null;
++          const labels: Record<string, string> = {
++  "complaints": "Complaints",
++  "primary-survey": "Primary",
++  "history": "SAMPLE",
++  "secondary-survey": "Secondary",
++  "investigations": "Investigations",
++  "treatment": "Treatment",
++  "notes": "Notes",
++  "disposition": "Disposition",
++  "trends": "Trends",
++  "rounds": "Rounds"
++};
++          if (!nextId) return null;
++          return (
++            <button onClick={() => setActiveTab(nextId as any)} className="px-4 py-2 sm:px-5 sm:py-2.5 bg-slate-100 dark:bg-slate-900 hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-800 dark:text-slate-200 font-bold text-[11px] sm:text-xs rounded-xl flex items-center gap-2 transition-colors active:scale-[0.98]">
++              Next: {labels[nextId]} <ArrowRight className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
++            </button>
++          );
++        })()}
++      </div>
++
+       {/* Interactive UI Screen Close  */}
+       </div>
+ 

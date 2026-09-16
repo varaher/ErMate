@@ -69,7 +69,7 @@ Plan is to review investigations and imaging, compare previous reports, proceed 
 
     try {
         console.log("=== FEVER CHILD ===");
-        const rawFever = await extractFromTranscript(feverText, { isPediatric: true });
+        const rawFever = await extractFromTranscript(feverText);
         const feverExtracted = rawFever.extracted;
         console.log("RAW:\n", JSON.stringify(feverExtracted, null, 2));
         
@@ -80,7 +80,7 @@ Plan is to review investigations and imaging, compare previous reports, proceed 
         console.log("MAPPED:\n", JSON.stringify(mappedFever, null, 2));
         
         console.log("\n=== TRAUMA CHILD ===");
-        const rawTrauma = await extractFromTranscript(traumaText, { isPediatric: true });
+        const rawTrauma = await extractFromTranscript(traumaText);
         const traumaExtracted = rawTrauma.extracted;
         console.log("RAW:\n", JSON.stringify(traumaExtracted, null, 2));
         

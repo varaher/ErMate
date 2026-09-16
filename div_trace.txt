@@ -1,0 +1,195 @@
+5586: delta=1 depth=1 | <div className="hidden print:block p-8 md:p-10 font-sans leading-relaxed text-[11px] text-slate-900 bg-white space-y-5 select-text max-w-full print:p-0">
+5590: delta=1 depth=2 | <div className="space-y-4">
+5592: delta=1 depth=3 | <div className="border-b-4 border-double border-slate-800 pb-3 text-center space-y-1">
+5599: delta=1 depth=4 | <div className="text-[9px] text-slate-500 font-mono flex flex-wrap justify-center gap-x-4 gap-y-1">
+5603: delta=-1 depth=3 | </div>
+5607: delta=-1 depth=2 | </div>
+5610: delta=1 depth=3 | <div className="grid grid-cols-2 gap-y-2 gap-x-4 border border-slate-300 p-3 rounded-xl bg-slate-50/40 text-[10px]">
+5611: delta=1 depth=4 | <div className="space-y-1">
+5632: delta=-1 depth=3 | </div>
+5633: delta=1 depth=4 | <div className="space-y-1 border-l pl-4">
+5654: delta=-1 depth=3 | </div>
+5655: delta=-1 depth=2 | </div>
+5658: delta=1 depth=3 | <div className="space-y-1 text-[10px]">
+5665: delta=-1 depth=2 | </div>
+5668: delta=1 depth=3 | <div className="space-y-1.5 text-[10px]">
+5672: delta=1 depth=4 | <div className="border border-slate-300 rounded-xl p-3 bg-slate-50/20 space-y-2 text-[10px]">
+5673: delta=1 depth=5 | <div>
+5675: delta=1 depth=6 | <div className="grid grid-cols-2 gap-2">
+5681: delta=-1 depth=5 | </div>
+5682: delta=-1 depth=4 | </div>
+5683: delta=1 depth=5 | <div>
+5686: delta=-1 depth=4 | </div>
+5687: delta=1 depth=5 | <div>
+5690: delta=-1 depth=4 | </div>
+5691: delta=-1 depth=3 | </div>
+5692: delta=-1 depth=2 | </div>
+5695: delta=1 depth=3 | <div className="space-y-1.5 text-[10px]">
+5699: delta=1 depth=4 | <div className="border border-slate-300 rounded-xl p-3 bg-slate-50/20 space-y-1.5 text-[10px]">
+5744: delta=-1 depth=3 | </div>
+5745: delta=-1 depth=2 | </div>
+5748: delta=1 depth=3 | <div className="space-y-1.5 text-[10px]">
+5752: delta=1 depth=4 | <div className="border border-slate-300 rounded-xl p-3 bg-slate-50/20 space-y-2 text-[10px]">
+5772: delta=-1 depth=3 | </div>
+5773: delta=-1 depth=2 | </div>
+5776: delta=1 depth=3 | <div className="space-y-1.5 text-[10px]">
+5780: delta=1 depth=4 | <div className="border border-slate-300 rounded-xl p-3 bg-slate-50/20 space-y-1.5 text-[10px]">
+5785: delta=-1 depth=3 | </div>
+5786: delta=-1 depth=2 | </div>
+5789: delta=1 depth=3 | <div className="grid grid-cols-3 gap-4 border border-slate-300 p-3 rounded-xl bg-slate-50/40 text-[10px] mt-4">
+5790: delta=1 depth=4 | <div>
+5792: delta=-1 depth=3 | </div>
+5793: delta=1 depth=4 | <div>
+5795: delta=-1 depth=3 | </div>
+5796: delta=1 depth=4 | <div>
+5798: delta=-1 depth=3 | </div>
+5799: delta=-1 depth=2 | </div>
+5800: delta=-1 depth=1 | </div>
+5805: delta=1 depth=2 | <div className="border-b-4 border-double border-slate-800 pb-3 text-center space-y-1">
+5812: delta=1 depth=3 | <div className="text-[9px] text-slate-500 font-mono flex flex-wrap justify-center gap-x-4 gap-y-1">
+5816: delta=-1 depth=2 | </div>
+5820: delta=-1 depth=1 | </div>
+5823: delta=1 depth=2 | <div className="grid grid-cols-2 gap-y-2 gap-x-4 border border-slate-300 p-3.5 rounded-xl bg-slate-50/40 text-[10px]">
+5824: delta=1 depth=3 | <div className="space-y-1">
+5841: delta=-1 depth=2 | </div>
+5842: delta=1 depth=3 | <div className="space-y-1 border-l pl-4">
+5875: delta=-1 depth=2 | </div>
+5876: delta=-1 depth=1 | </div>
+5879: delta=1 depth=2 | <div className="space-y-1">
+5886: delta=-1 depth=1 | </div>
+5889: delta=1 depth=2 | <div className="space-y-1.5">
+5893: delta=1 depth=3 | <div className="border border-slate-300 rounded-xl p-3 bg-slate-50/20 space-y-1.5 text-[10px]">
+5899: delta=-1 depth=2 | </div>
+5900: delta=-1 depth=1 | </div>
+5903: delta=1 depth=2 | <div className="space-y-1.5">
+5907: delta=1 depth=3 | <div className="border border-slate-300 rounded-xl p-3 bg-slate-50/20 space-y-1 text-[10px]">
+5911: delta=-1 depth=2 | </div>
+5912: delta=-1 depth=1 | </div>
+5915: delta=1 depth=2 | <div className="space-y-1">
+5922: delta=-1 depth=1 | </div>
+5925: delta=1 depth=2 | <div className="space-y-1.5">
+5929: delta=1 depth=3 | <div className="border border-slate-300 rounded-xl p-3 bg-slate-50/20 space-y-1 text-[10px]">
+5939: delta=-1 depth=2 | </div>
+5940: delta=-1 depth=1 | </div>
+5947: delta=1 depth=2 | <div className="grid grid-cols-2 gap-4">
+5948: delta=1 depth=3 | <div className="space-y-1.5">
+5955: delta=-1 depth=2 | </div>
+5956: delta=1 depth=3 | <div className="space-y-1.5">
+5963: delta=-1 depth=2 | </div>
+5964: delta=-1 depth=1 | </div>
+5967: delta=1 depth=2 | <div className="space-y-1.5">
+5971: delta=1 depth=3 | <div className="border border-slate-300 rounded-xl p-3 bg-slate-50/20 space-y-1.5 text-[10px]">
+5976: delta=-1 depth=2 | </div>
+5977: delta=-1 depth=1 | </div>
+5983: delta=1 depth=2 | <div className="space-y-1.5">
+5987: delta=1 depth=3 | <div className="border border-slate-300 rounded-xl p-3 bg-slate-50/20 space-y-1 text-[10px]">
+5995: delta=-1 depth=2 | </div>
+5996: delta=-1 depth=1 | </div>
+5999: delta=1 depth=2 | <div className="space-y-1.5">
+6003: delta=1 depth=3 | <div className="grid grid-cols-2 gap-4 text-[9px] font-mono">
+6004: delta=1 depth=4 | <div className="border border-slate-200 p-2 rounded bg-slate-50/50">
+6010: delta=-1 depth=3 | </div>
+6011: delta=1 depth=4 | <div className="border border-slate-200 p-2 rounded bg-slate-50/50">
+6017: delta=-1 depth=3 | </div>
+6018: delta=-1 depth=2 | </div>
+6019: delta=-1 depth=1 | </div>
+6022: delta=1 depth=2 | <div className="grid grid-cols-2 gap-4 text-[10px]">
+6023: delta=1 depth=3 | <div className="space-y-1">
+6027: delta=1 depth=4 | <div className="p-2 border rounded whitespace-pre-wrap font-mono">
+6030: delta=-1 depth=3 | </div>
+6031: delta=-1 depth=2 | </div>
+6032: delta=1 depth=3 | <div className="space-y-1">
+6036: delta=1 depth=4 | <div className="p-2 border rounded font-mono">
+6050: delta=-1 depth=3 | </div>
+6051: delta=-1 depth=2 | </div>
+6052: delta=-1 depth=1 | </div>
+6055: delta=1 depth=2 | <div className="space-y-1">
+6062: delta=-1 depth=1 | </div>
+6065: delta=1 depth=2 | <div className="grid grid-cols-3 gap-4 border border-slate-300 p-3.5 rounded-xl bg-slate-50/40 text-[10px] mt-4">
+6066: delta=1 depth=3 | <div>
+6069: delta=-1 depth=2 | </div>
+6070: delta=1 depth=3 | <div>
+6072: delta=-1 depth=2 | </div>
+6073: delta=1 depth=3 | <div>
+6075: delta=-1 depth=2 | </div>
+6076: delta=-1 depth=1 | </div>
+6080: delta=-1 depth=0 | </div>
+6084: delta=1 depth=1 | <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-fade-in no-print">
+6085: delta=1 depth=2 | <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-3xl w-full max-w-xl p-6 shadow-2xl space-y-6">
+6088: delta=1 depth=3 | <div className="text-center space-y-2">
+6089: delta=1 depth=4 | <div className="w-12 h-12 bg-emerald-100 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 rounded-full flex items-center justify-center mx-auto shadow-sm">
+6091: delta=-1 depth=3 | </div>
+6098: delta=-1 depth=2 | </div>
+6101: delta=1 depth=3 | <div className="bg-slate-50 dark:bg-slate-900/40 border border-slate-150 dark:border-slate-850 rounded-2xl p-4 space-y-4">
+6102: delta=1 depth=4 | <div className="flex items-center justify-between">
+6103: delta=1 depth=5 | <div className="flex items-center gap-1.5">
+6108: delta=-1 depth=4 | </div>
+6110: delta=-1 depth=3 | </div>
+6113: delta=1 depth=4 | <div className="grid grid-cols-3 gap-3">
+6130: delta=1 depth=5 | <div className="w-7 h-7 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-500 rounded-lg flex items-center justify-center">
+6132: delta=-1 depth=4 | </div>
+6133: delta=1 depth=5 | <div>
+6136: delta=-1 depth=4 | </div>
+6140: delta=-1 depth=3 | </div>
+6141: delta=-1 depth=2 | </div>
+6144: delta=1 depth=3 | <div className="bg-gradient-to-br from-indigo-50 to-blue-50/40 dark:from-indigo-950/15 dark:to-blue-950/5 border border-indigo-150 dark:border-indigo-900/30 p-4 rounded-2xl flex items-center justify-between gap-4">
+6145: delta=1 depth=4 | <div className="space-y-1">
+6152: delta=-1 depth=3 | </div>
+6174: delta=-1 depth=2 | </div>
+6177: delta=1 depth=3 | <div className="flex justify-end gap-3 pt-2">
+6198: delta=-1 depth=2 | </div>
+6200: delta=-1 depth=1 | </div>
+6201: delta=-1 depth=0 | </div>
+6206: delta=1 depth=1 | <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 md:p-6 animate-fade-in no-print">
+6207: delta=1 depth=2 | <div className="bg-white dark:bg-slate-900 w-full max-w-4xl h-[92vh] rounded-2xl shadow-2xl overflow-hidden flex flex-col border border-slate-200 dark:border-slate-800">
+6209: delta=1 depth=3 | <div className="px-5 py-3.5 bg-slate-900 text-white flex items-center justify-between shrink-0 border-b border-slate-800">
+6210: delta=1 depth=4 | <div className="flex items-center gap-2.5">
+6211: delta=1 depth=5 | <div className="p-2 bg-indigo-600/30 border border-indigo-500/40 rounded-xl text-indigo-400">
+6213: delta=-1 depth=4 | </div>
+6214: delta=1 depth=5 | <div>
+6219: delta=-1 depth=4 | </div>
+6220: delta=-1 depth=3 | </div>
+6221: delta=1 depth=4 | <div className="flex items-center gap-2">
+6248: delta=-1 depth=3 | </div>
+6249: delta=-1 depth=2 | </div>
+6252: delta=1 depth=3 | <div className="flex-1 overflow-y-auto p-4 md:p-8 bg-slate-100 dark:bg-slate-950 flex justify-center">
+6253: delta=1 depth=4 | <div className="bg-white text-slate-900 p-6 md:p-10 rounded-xl shadow-lg border border-slate-200 w-full max-w-3xl font-sans text-[11px] leading-relaxed space-y-5 select-text">
+6255: delta=1 depth=5 | <div className="border-b-4 border-double border-slate-800 pb-3 text-center space-y-1">
+6262: delta=1 depth=6 | <div className="text-[9px] text-slate-500 font-mono flex flex-wrap justify-center gap-x-4 gap-y-1">
+6266: delta=-1 depth=5 | </div>
+6270: delta=-1 depth=4 | </div>
+6273: delta=1 depth=5 | <div className="grid grid-cols-2 gap-y-2 gap-x-4 border border-slate-300 p-3 rounded-xl bg-slate-50/40 text-[10px]">
+6274: delta=1 depth=6 | <div className="space-y-1">
+6291: delta=-1 depth=5 | </div>
+6292: delta=1 depth=6 | <div className="space-y-1 border-l pl-4">
+6309: delta=-1 depth=5 | </div>
+6310: delta=-1 depth=4 | </div>
+6313: delta=1 depth=5 | <div className="space-y-2">
+6320: delta=1 depth=6 | <div className="grid grid-cols-5 gap-2 p-2 bg-slate-100/60 rounded text-center text-[10px] font-mono">
+6326: delta=-1 depth=5 | </div>
+6327: delta=-1 depth=4 | </div>
+6330: delta=1 depth=5 | <div className="space-y-1">
+6334: delta=1 depth=6 | <div className="space-y-1 text-[10px] bg-slate-50 p-2.5 rounded border border-slate-200">
+6340: delta=-1 depth=5 | </div>
+6341: delta=-1 depth=4 | </div>
+6344: delta=1 depth=5 | <div className="space-y-1">
+6348: delta=1 depth=6 | <div className="grid grid-cols-2 gap-2 text-[10px] bg-slate-50 p-2.5 rounded border border-slate-200">
+6354: delta=-1 depth=5 | </div>
+6355: delta=-1 depth=4 | </div>
+6359: delta=1 depth=5 | <div className="space-y-1">
+6383: delta=-1 depth=4 | </div>
+6387: delta=1 depth=5 | <div className="space-y-2 pt-2 border-t border-slate-300">
+6388: delta=1 depth=6 | <div className="flex justify-between text-[10px]">
+6391: delta=-1 depth=5 | </div>
+6392: delta=1 depth=6 | <div className="grid grid-cols-2 gap-4 pt-6 text-[10px] text-center border-t border-slate-200">
+6393: delta=1 depth=7 | <div>
+6396: delta=-1 depth=6 | </div>
+6397: delta=1 depth=7 | <div>
+6400: delta=-1 depth=6 | </div>
+6401: delta=-1 depth=5 | </div>
+6402: delta=-1 depth=4 | </div>
+6404: delta=-1 depth=3 | </div>
+6405: delta=-1 depth=2 | </div>
+6406: delta=-1 depth=1 | </div>
+6407: delta=-1 depth=0 | </div>
+6410: delta=-1 depth=-1 | </div>

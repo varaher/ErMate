@@ -1209,7 +1209,7 @@ Extremities: No deformity. No peripheral oedema. Peripheral pulses present.`,
         circulation: { ...initialSurvey.circulation, bleeding: "Nil", ivAccess: "18G", hr: "80", sbp: "120", dbp: "80" },
         disability: { ...initialSurvey.disability, focalDeficit: "None", grbs: "100" },
         exposure: { ...initialSurvey.exposure, skin: "Normal", temp: "37.0" },
-        adjuncts: (prevSurvey as Partial<PrimarySurvey>).adjuncts || {}
+        adjuncts: prevSurvey.adjuncts || {}
       };
       return {
         ...prev,
