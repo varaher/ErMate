@@ -57,7 +57,7 @@ function createNewCase(
     isPediatric: forcedPediatric ?? false,
     patient: {
       name: "",
-      age: 0,
+      age: null,
       gender: "",
       uhid: generateUHID(),
       triageCategory: "" as any, // intentionally empty, not a fabricated default — see triage-skip note below
@@ -102,8 +102,8 @@ function createNewCase(
  * the single source of truth so the age cutoff can never drift
  * between different parts of the app.
  */
-export function recomputeIsPediatric(ageYears: number): boolean {
-  return ageYears > 0 && ageYears < PEDIATRIC_AGE_CUTOFF;
+export function recomputeIsPediatric(ageYears: number | null): boolean {
+  return ageYears !== null && ageYears <= PEDIATRIC_AGE_CUTOFF;
 }
 
 /**

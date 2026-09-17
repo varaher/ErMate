@@ -5,7 +5,7 @@ import {
   Trash2, Plus, ShieldAlert, BookOpen, Clock, Heart, Baby,
   Eye, RefreshCw, Printer, AlertTriangle, ClipboardCheck, 
   User, Check, Shield, FileCheck, Users, LogOut, ChevronRight,
-  Copy, Download, ChevronDown, TrendingUp, PlusCircle, Activity, Droplets, Edit3,
+  Copy, Download, ChevronDown, TrendingUp, PlusCircle, Activity, Edit3,
   Brain, Send, Award, MoreHorizontal, Pill, MessageSquare, HelpCircle, Info, Lightbulb, X, Skull,
   BookmarkCheck
 } from "lucide-react";
@@ -143,25 +143,6 @@ export function SaveSectionButton({ onSave }: { onSave: () => void }) {
 
 import { recomputeIsPediatric } from "./NewPatientEntryMenu";
 
-
-const hasMeaningfulValue = (value: any): boolean => {
-  if (value === undefined || value === null) return false;
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-    if (!trimmed) return false;
-    const lower = trimmed.toLowerCase();
-    if (["none documented", "not assessed", "not documented", "n/a", "none"].includes(lower)) return false;
-    return true;
-  }
-  if (Array.isArray(value)) {
-    return value.some(hasMeaningfulValue);
-  }
-  if (typeof value === "object") {
-    return Object.values(value).some(hasMeaningfulValue);
-  }
-  return true;
-};
-
 export default function CaseSheetView({ 
   initialCase, 
   allCases,
@@ -177,46 +158,9 @@ export default function CaseSheetView({
   hasActiveScribeSession,
   onDiscussCase
 }: CaseSheetViewProps) {
-    const tabHasData = (tabId: string): boolean => {
-    if (!currentCase) return false;
-    switch (tabId) {
-      case "complaints":
-        return hasMeaningfulValue(currentCase.patient?.presentingComplaint) || hasMeaningfulValue(currentCase.sampleHistory?.symptoms);
-      case "primary-survey":
-        return hasMeaningfulValue(currentCase.primaryAssessment) || hasMeaningfulValue(currentCase.vitals) || hasMeaningfulValue((currentCase as any).adjuncts) || hasMeaningfulValue((currentCase as any).adjunctsNow) || hasMeaningfulValue((currentCase as any).adjunctsAtArrival);
-      case "history":
-        return hasMeaningfulValue(currentCase.sampleHistory) || hasMeaningfulValue(currentCase.psychologicalAssessment);
-      case "secondary-survey":
-        return hasMeaningfulValue(currentCase.secondaryAssessment) || hasMeaningfulValue(currentCase.secondarySurvey);
-      case "investigations":
-        return hasMeaningfulValue(currentCase.investigations) || hasMeaningfulValue(currentCase.investigationsOrdered) || hasMeaningfulValue(currentCase.investigationResults) || hasMeaningfulValue(currentCase.investigationLabsOrdered) || hasMeaningfulValue(currentCase.investigationImaging) || hasMeaningfulValue(currentCase.investigationResultsSummary);
-      case "treatment":
-        return hasMeaningfulValue(currentCase.treatments) || hasMeaningfulValue(currentCase.treatmentNotes) || hasMeaningfulValue(currentCase.medications) || hasMeaningfulValue(currentCase.infusions) || hasMeaningfulValue(currentCase.proceduresChecked) || hasMeaningfulValue(currentCase.otherMedications) || hasMeaningfulValue(currentCase.otherProcedures);
-      case "notes":
-        return hasMeaningfulValue(currentCase.progressNotes) || hasMeaningfulValue(currentCase.addendumNotes);
-      case "disposition":
-        return hasMeaningfulValue(currentCase.dischargeInfo) || hasMeaningfulValue(currentCase.dispositionDetails) || hasMeaningfulValue(currentCase.ipsgChecklist) || hasMeaningfulValue(currentCase.vulnerableAssessment) || hasMeaningfulValue(currentCase.consentTimeOut) || hasMeaningfulValue(currentCase.dispositionAndPlan);
-      case "trends":
-        return hasMeaningfulValue(currentCase.vitalsHistory);
-      case "rounds":
-        return hasMeaningfulValue(currentCase.differentials) || hasMeaningfulValue(currentCase.provisionalDifferentialDiagnoses) || hasMeaningfulValue(currentCase.provisionalPrimaryDiagnosis) || hasMeaningfulValue(currentCase.consultantReview);
-      default:
-        return false;
-    }
-  };
-
   const [activeTab, setActiveTab] = useState<
     "complaints" | "primary-survey" | "history" | "secondary-survey" | "investigations" | "trends" | "treatment" | "notes" | "disposition" | "rounds"
   >("complaints");
-  const navContainerRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (navContainerRef.current) {
-      const activeEl = navContainerRef.current.querySelector(`[data-tab-id="${activeTab}"]`);
-      if (activeEl) {
-        activeEl.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
-      }
-    }
-  }, [activeTab]);
 
   // Clinical Rounds & 7-Lens Debrief States
   const [roundsLens, setRoundsLens] = useState<
@@ -256,8 +200,6 @@ export default function CaseSheetView({
   const [roundsSavedToMemory, setRoundsSavedToMemory] = useState<boolean>(false);
   const [roundsReflections, setRoundsReflections] = useState<string>("");
   const [showPostSaveModal, setShowPostSaveModal] = useState<boolean>(false);
-  const [showSafetyModal, setShowSafetyModal] = useState<boolean>(false);
-
 
   const [currentCase, setCurrentCase] = useState<ClinicalCase>(initialCase);
   const displayHospitalName = (currentCase.hospital || profile?.hospital || "Emergency Hospital & Trauma Center").toUpperCase();
@@ -1415,12 +1357,6 @@ Extremities: No deformity. No peripheral oedema. Peripheral pulses present.`,
   };
 
   // Commit to backend (Save)
-  
-  const hasSafetyData = 
-    Object.values(currentCase.ipsgChecklist || {}).some(v => v === true || v === "Low" || v === "Medium" || v === "High") ||
-    Object.values(currentCase.vulnerableAssessment || {}).some(v => v === true || (typeof v === "string" && v !== "")) ||
-    Object.values(currentCase.consentTimeOut || {}).some(v => v === true);
-
   const handleSave = async () => {
     // Audit & sanitize clinical fields before saving
     const ageNum = currentCase.patient.age;
@@ -1910,34 +1846,20 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                   <MoreVertical className="w-4.5 h-4.5" />
                 </summary>
                 <div className="absolute right-0 mt-1 w-48 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xl z-50 py-1.5 text-xs">
-                  <button onClick={() => onNavigateToDischarge(currentCase.id)} className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 flex items-center gap-2 font-bold text-indigo-600 dark:text-indigo-400">
-                    <FileText className="w-3.5 h-3.5" /> Discharge Summary
-                  </button>
-                  <div className="h-px bg-slate-100 dark:bg-slate-800 my-1.5" />
                   <div className="px-3 py-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Export</div>
-                  <button onClick={handleCopyCaseSheet} className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 flex items-center gap-2">
+                  <button className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 flex items-center gap-2">
                     <Copy className="w-3.5 h-3.5" /> Copy to EMR
                   </button>
-                  <button onClick={() => onViewPrintSheet ? onViewPrintSheet(currentCase.id) : setShowPdfModal(true)} className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 flex items-center gap-2">
+                  <button onClick={() => onViewPrintSheet?.(currentCase.id)} className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 flex items-center gap-2">
                     <Printer className="w-3.5 h-3.5" /> View PDF
                   </button>
-                  <button onClick={handleDownloadCaseSheet} className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 flex items-center gap-2">
+                  <button className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 flex items-center gap-2">
                     <Download className="w-3.5 h-3.5" /> Download
-                  </button>
-                  <button onClick={() => triggerPrintWithTip()} className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 flex items-center gap-2">
-                    <Printer className="w-3.5 h-3.5" /> Print
-                  </button>
-                  <div className="h-px bg-slate-100 dark:bg-slate-800 my-1.5" />
-                  <button onClick={() => setShowSafetyModal(true)} className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 flex items-center justify-between font-medium">
-                    <div className="flex items-center gap-2">
-                      <Shield className="w-3.5 h-3.5" /> Safety & Accreditation <span className="text-[9px] text-slate-400 font-normal ml-1">(Optional)</span>
-                    </div>
-                    {hasSafetyData && <div className="w-2 h-2 rounded-full bg-emerald-500" title="Data entered"></div>}
                   </button>
                   <div className="h-px bg-slate-100 dark:bg-slate-800 my-1.5" />
                   <div className="px-3 py-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Case Actions</div>
-                  <button onClick={async () => { await handleSave(); onBack(); }} className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 flex items-center gap-2">
-                    <Save className="w-3.5 h-3.5" /> Finish & Return to Cases
+                  <button onClick={() => { handleSave(); onBack(); }} className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 flex items-center gap-2">
+                    <Save className="w-3.5 h-3.5" /> Finish & Return
                   </button>
                 </div>
               </details>
@@ -1976,7 +1898,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
           )}
 
           {/* Horizontal Nav Rail */}
-          <div ref={navContainerRef} className="flex items-center gap-1.5 px-4 overflow-x-auto no-scrollbar pb-2 pt-1 border-t border-slate-100 dark:border-slate-800/50">
+          <div className="flex items-center gap-2 px-4 overflow-x-auto no-scrollbar pb-2">
             {[
               { id: "complaints", label: "Complaints" },
               { id: "primary-survey", label: "Primary" },
@@ -1990,22 +1912,17 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
               { id: "rounds", label: "Rounds" },
             ].map((tab) => {
               const isActive = activeTab === tab.id;
-              const hasData = tabHasData(tab.id);
               return (
                 <button
                   key={tab.id}
-                  data-tab-id={tab.id}
                   onClick={() => setActiveTab(tab.id as any)}
-                  className={`text-[11px] font-bold px-4 py-2 rounded-full transition-colors shrink-0 whitespace-nowrap flex items-center gap-1.5 ${
+                  className={`text-[11px] font-bold px-3 py-1.5 rounded-full transition-colors shrink-0 whitespace-nowrap ${
                     isActive 
-                      ? "bg-blue-600 text-white shadow-sm ring-2 ring-blue-600/20" 
-                      : (hasData ? "bg-transparent text-emerald-700 dark:text-emerald-400 border border-emerald-100/50 dark:border-emerald-500/20" : "bg-transparent text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800")
+                      ? "bg-blue-600 text-white" 
+                      : "bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800"
                   }`}
                 >
-                  <span>{tab.label}</span>
-                  {hasData && (
-                    <span className={`w-1.5 h-1.5 rounded-full ${isActive ? 'bg-white' : 'bg-emerald-500 dark:bg-emerald-400'}`} />
-                  )}
+                  {tab.label}
                 </button>
               );
             })}
@@ -2018,7 +1935,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
           
           {/* Chief Complaints & Editable Demographics  */}
           {activeTab === "complaints" && (
-            <div className="space-y-4 animate-fade-in">
+            <div className="space-y-6 animate-fade-in">
 <div className="border-b pb-2.5 flex items-center justify-between">
                 <div>
                   <h3 className="text-sm font-bold text-slate-800 dark:text-white uppercase tracking-wide">
@@ -2029,7 +1946,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                 
               </div>
 
-              <div className="bg-slate-50 dark:bg-slate-900/50 p-4 border border-slate-200 dark:border-slate-850 rounded-xl space-y-4">
+              <div className="bg-slate-50 dark:bg-slate-900/50 p-5 border border-slate-200 dark:border-slate-850 rounded-xl space-y-4">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
                   <div>
                     <label className="block text-[11px] text-slate-500 font-semibold mb-1">Patient Name</label>
@@ -2165,7 +2082,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
           
           {/* Patient Demographics & Disposition Tab (Accreditation Level)  */}
           {activeTab === "disposition" && (
-            <div className="space-y-4">
+            <div className="space-y-6">
 
               {currentCase.isPediatric && (
                 <PediatricDispositionSection
@@ -2340,10 +2257,110 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                     </div>
                   )}
 
-                  
+                  <div className="bg-blue-50/60 dark:bg-slate-900/60 border border-blue-200/80 dark:border-slate-800 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div>
+                      <h4 className="text-xs font-extrabold text-slate-800 dark:text-white uppercase tracking-wide flex items-center gap-1.5">
+                        <Save className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                        Save Case Sheet to Dashboard
+                      </h4>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                        Commits all demographics, vitals, primary survey, SAMPLE history, treatments, investigations, and disposition notes to your case dashboard.
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        type="button"
+                        onClick={handleSaveFromDisposition}
+                        className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-extrabold rounded-lg shadow-sm transition-all flex items-center justify-center gap-2 cursor-pointer"
+                      >
+                        <CheckCircle2 className="w-4 h-4" /> Save Case Sheet to Dashboard
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-3 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => onNavigateToDischarge(currentCase.id)}
+                      className="px-5 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white text-xs font-bold rounded-lg shadow-sm transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <FileText className="w-4 h-4" /> Generate Discharge Summary
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowPdfModal(true)}
+                      className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-lg shadow-sm transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <Eye className="w-4 h-4" /> View Case Sheet PDF
+                    </button>
+                  </div>
                 </div>
 
+                {/* OPEN CASES - TAP TO SWITCH  */}
+                {allCases && allCases.length > 0 && (
+                  <div className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 space-y-3 no-print mt-6">
+                    <h4 className="text-[10px] font-extrabold text-slate-500 uppercase tracking-widest font-mono">
+                      Open Cases - Tap to Switch
+                    </h4>
+                    <div className="flex gap-3 overflow-x-auto pb-2 scrollbar-thin">
+                      {allCases.map((c) => {
+                        const isActive = c.id === currentCase.id;
+                        let filledFields = 0;
+                        if (c.sampleHistory.symptoms) filledFields++;
+                        if (c.sampleHistory.allergies) filledFields++;
+                        if (c.sampleHistory.medications) filledFields++;
+                        if (c.progressNotes) filledFields++;
+                        if (c.treatments.length > 0) filledFields++;
+                        if (c.investigations.length > 0) filledFields++;
+                        const progressPct = Math.round((filledFields / 6) * 100);
+                        
+                        return (
+                          <div
+                            key={c.id}
+                            onClick={() => onSelectCase && onSelectCase(c.id)}
+                            className={`min-w-[180px] p-3 rounded-xl border cursor-pointer transition-all flex flex-col justify-between ${
+                              isActive
+                                ? "bg-blue-600 border-blue-600 text-white shadow-md"
+                                : "bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-850 hover:border-slate-350 dark:hover:border-slate-750 text-slate-700 dark:text-slate-300"
+                            }`}
+                          >
+                            <div>
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="font-bold text-xs truncate max-w-[100px]">
+                                  {c.patient.name}
+                                </span>
+                                <span className={`text-[8px] font-bold px-1 py-0.2 rounded font-mono ${
+                                  isActive 
+                                    ? "bg-blue-500 text-white" 
+                                    : "bg-slate-100 dark:bg-slate-900 text-slate-500"
+                                }`}>
+                                  {c.id}
+                                </span>
                               </div>
+                              <span className={`text-[10px] block mt-1 ${isActive ? "text-blue-100" : "text-slate-400"}`}>
+                                {c.patient.age || "N/A"} y/o • {c.patient.gender} • {c.patient.caseType}
+                              </span>
+                            </div>
+
+                            <div className="mt-3.5 space-y-1">
+                              <div className="flex justify-between text-[9px] font-mono font-bold">
+                                <span>Progress</span>
+                                <span>{progressPct > 0 ? `${progressPct}%` : "Just started"}</span>
+                              </div>
+                              <div className="w-full h-1 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
+                                <div 
+                                  className={`h-full rounded-full ${isActive ? "bg-white" : "bg-blue-500"}`} 
+                                  style={{ width: `${Math.max(10, progressPct)}%` }}
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           )}
 
@@ -2351,7 +2368,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
 
           {/* Vitals Trends Tab  */}
           {activeTab === "trends" && (
-            <div className="space-y-4 animate-fade-in">
+            <div className="space-y-6 animate-fade-in">
 <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 border-b pb-3">
                 <div>
                   <h3 className="text-sm font-bold text-slate-800 dark:text-white uppercase tracking-wide flex items-center gap-2">
@@ -2379,7 +2396,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
               </div>
 
               {/* Vitals Charts Bento Grid  */}
-              <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
                 
                 {/* Chart 1: Heart Rate  */}
                 <div className="bg-slate-50 dark:bg-slate-900/40 border border-slate-100 dark:border-slate-850 rounded-xl p-4 space-y-2">
@@ -2467,10 +2484,10 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
               </div>
 
               {/* Log Vitals form and log history block  */}
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 pt-2">
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 pt-2">
                 
                 {/* Form to log new entries  */}
-                <div className="lg:col-span-1 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl p-4 space-y-4">
+                <div className="lg:col-span-1 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl p-5 space-y-4">
                   <h4 className="text-xs font-bold text-slate-800 dark:text-white uppercase tracking-wider flex items-center gap-1.5 border-b pb-2">
                     <PlusCircle className="w-4 h-4 text-blue-500" />
                     Log Periodic Vitals Reading
@@ -2557,7 +2574,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                 </div>
 
                 {/* Vitals Log Timeline / Table  */}
-                <div className="lg:col-span-2 bg-slate-50 dark:bg-slate-900/40 border border-slate-100 dark:border-slate-850 rounded-xl p-4 space-y-3">
+                <div className="lg:col-span-2 bg-slate-50 dark:bg-slate-900/40 border border-slate-100 dark:border-slate-850 rounded-xl p-5 space-y-3">
                   <div className="flex items-center justify-between border-b pb-2">
                     <h4 className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
                       <Clock className="w-4 h-4 text-slate-400" />
@@ -2652,7 +2669,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                 <span className="text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-500 font-mono px-2 py-0.5 rounded">ATLS / PALS Guideline Standard</span>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {[
                   { field: "symptoms", label: "S - Signs & Symptoms" },
                   { field: "allergies", label: "A - Allergies (drug/food)" },
@@ -3009,14 +3026,13 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                     onMarkNormal={markSecondarySurveyNormal}
                   />
                   {/* Normal Exam Presets (from user adult normal template)  */}
-                  <details className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3.5 text-xs group">
-                    <summary className="font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wide cursor-pointer list-none flex items-center justify-between [&::-webkit-details-marker]:hidden">
-                      Normal Presets ▾
-                    </summary>
-                    <div className="pt-2 space-y-2">
-                      <p className="text-[10px] text-slate-500">
-                        Click a preset to instantly append normal findings:
-                      </p>
+                  <div className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3.5 space-y-2 text-xs">
+                    <span className="font-bold text-slate-700 dark:text-slate-300 block uppercase tracking-wide">
+                      Quick Normal Presets (Adult Normal & Trauma Case Sheet Format)
+                    </span>
+                    <p className="text-[10px] text-slate-500">
+                      Click a preset to instantly append standard JCI/NABH-compliant normal findings to the clinical review of systems:
+                    </p>
                     <div className="flex flex-wrap gap-2">
                       {[
                         {
@@ -3078,34 +3094,378 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                       </button>
                     </div>
                   </div>
-                  </details>
                 </>
               )}
             </div>
           )}
 
-          
+          {/* JCI/NABH Accreditation & Patient Safety Tab  */}
+          {activeTab === "disposition" && (
+            <div className="space-y-6">
+<div className="border-b pb-2.5 flex items-center justify-between">
+                <div>
+                  <h3 className="text-sm font-bold text-slate-800 dark:text-white uppercase tracking-wide">
+                    JCI & NABH Accreditation Audit Form
+                  </h3>
+                  <p className="text-[10px] text-slate-400">Mandated safety metrics and checklist audits.</p>
+                </div>
+                <span className="text-[10px] bg-blue-100 text-blue-700 px-3 py-1 rounded-full font-bold uppercase flex items-center gap-1 font-mono">
+                  <Shield className="w-3.5 h-3.5" /> JCI IPSG Compliant
+                </span>
+              </div>
+
+              {/* IPSG Checklist Block  */}
+              <div className="bg-slate-50 dark:bg-slate-900 p-4 border border-slate-200 dark:border-slate-850 rounded-xl space-y-3">
+                <div className="flex items-center gap-1.5 border-b pb-2 border-slate-100 dark:border-slate-800">
+                  <ClipboardCheck className="w-4.5 h-4.5 text-blue-600" />
+                  <h4 className="font-extrabold text-xs text-slate-700 dark:text-slate-300 uppercase tracking-wide">
+                    International Patient Safety Goals (IPSG) Checklist
+                  </h4>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                  {/* IPSG Checkboxes  */}
+                  <div className="space-y-3">
+                    <label className="flex items-start gap-2.5 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={currentCase.ipsgChecklist?.ipsg1IdentifiersVerified || false}
+                        onChange={(e) => updateIpsg("ipsg1IdentifiersVerified", e.target.checked)}
+                        className="mt-0.5 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                      />
+                      <div>
+                        <span className="font-bold block text-slate-700 dark:text-slate-200">IPSG 1: Identify Patient Correctly</span>
+                        <span className="text-[10px] text-slate-400">Dual identifiers (Name + UHID barcode/tag) verified prior to any care.</span>
+                      </div>
+                    </label>
+
+                    <label className="flex items-start gap-2.5 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={currentCase.ipsgChecklist?.ipsg2ReadBackPerformed || false}
+                        onChange={(e) => updateIpsg("ipsg2ReadBackPerformed", e.target.checked)}
+                        className="mt-0.5 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                      />
+                      <div>
+                        <span className="font-bold block text-slate-700 dark:text-slate-200">IPSG 2: Improve Effective Communication</span>
+                        <span className="text-[10px] text-slate-400">Verbal/Telephone order Read-Back procedure completed and documented.</span>
+                      </div>
+                    </label>
+
+                    <label className="flex items-start gap-2.5 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={currentCase.ipsgChecklist?.ipsg3HighAlertDoubleChecked || false}
+                        onChange={(e) => updateIpsg("ipsg3HighAlertDoubleChecked", e.target.checked)}
+                        className="mt-0.5 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                      />
+                      <div>
+                        <span className="font-bold block text-slate-700 dark:text-slate-200">IPSG 3: Safety of High-Alert Medications</span>
+                        <span className="text-[10px] text-slate-400">Concentrated electrolytes, insulin, heparin double-checked by second nurse.</span>
+                      </div>
+                    </label>
+                  </div>
+
+                  <div className="space-y-3">
+                    <label className="flex items-start gap-2.5 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={currentCase.ipsgChecklist?.ipsg5HandHygieneComplied || false}
+                        onChange={(e) => updateIpsg("ipsg5HandHygieneComplied", e.target.checked)}
+                        className="mt-0.5 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                      />
+                      <div>
+                        <span className="font-bold block text-slate-700 dark:text-slate-200">IPSG 5: Reduce Risk of Healthcare Infections</span>
+                        <span className="text-[10px] text-slate-400">Hand Hygiene (WHO 5-Moments) complied with before and after contact.</span>
+                      </div>
+                    </label>
+
+                    <div>
+                      <span className="font-bold block text-slate-700 dark:text-slate-200 mb-1">IPSG 6: Reduce Risk of Falls</span>
+                      <div className="flex items-center gap-1 bg-white dark:bg-slate-950 p-1.5 rounded-lg border">
+                        <span className="text-[10px] text-slate-400 pr-2">Fall Risk Score:</span>
+                        {["Low", "Medium", "High"].map((r) => (
+                          <button
+                            key={r}
+                            type="button"
+                            onClick={() => updateIpsg("ipsg6FallRiskAssessed", r as any)}
+                            className={`text-[10px] px-2.5 py-1 rounded font-bold transition-all ${
+                              currentCase.ipsgChecklist?.ipsg6FallRiskAssessed === r
+                                ? r === "High"
+                                  ? "bg-rose-600 text-white"
+                                  : r === "Medium"
+                                  ? "bg-amber-500 text-white"
+                                  : "bg-emerald-600 text-white"
+                                : "bg-slate-50 dark:bg-slate-900 text-slate-400"
+                            }`}
+                          >
+                            {r}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Vulnerable Patient Assessment & Abuse Screen  */}
+              <div className="bg-slate-50 dark:bg-slate-900 p-4 border border-slate-200 dark:border-slate-850 rounded-xl space-y-4">
+                <div className="flex items-center gap-1.5 border-b pb-2 border-slate-100 dark:border-slate-800 justify-between flex-wrap">
+                  <div className="flex items-center gap-1.5">
+                    <Users className="w-4.5 h-4.5 text-indigo-600" />
+                    <h4 className="font-extrabold text-xs text-slate-700 dark:text-slate-300 uppercase tracking-wide">
+                      Vulnerable Patient Screening Panel
+                    </h4>
+                  </div>
+                  {currentCase.patient.age !== null && (currentCase.patient.age > 65 || currentCase.patient.age < 12) && (
+                    <span className="text-[10px] bg-rose-50 dark:bg-rose-950/20 text-rose-600 dark:text-rose-400 font-bold px-2 py-0.5 rounded border border-rose-100 dark:border-rose-900 animate-pulse-slow">
+                      ⚠ Age Vulnerability Flagged ({currentCase.patient.age} y/o)
+                    </span>
+                  )}
+                </div>
+
+                {currentCase.patient.age !== null && (currentCase.patient.age > 65 || currentCase.patient.age < 12) && (
+                  <div className="text-[10px] bg-indigo-50/50 dark:bg-indigo-950/20 border border-indigo-100 dark:border-indigo-900/60 text-indigo-700 dark:text-indigo-300 p-2.5 rounded-lg">
+                    <span className="font-bold">Standard Directive:</span> Patients aged &gt; 65 years or &lt; 12 years are automatically categorized as clinical vulnerable groups. Complete all 7 indicators below.
+                  </div>
+                )}
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                  <div className="space-y-3">
+                    <label className="flex items-center justify-between bg-white dark:bg-slate-950 p-2 rounded-lg border border-slate-200 dark:border-slate-800">
+                      <span className="font-bold text-slate-700 dark:text-slate-200">Is Vulnerable Group Patient?</span>
+                      <button
+                        type="button"
+                        onClick={() => updateVulnerable("isVulnerable", !currentCase.vulnerableAssessment?.isVulnerable)}
+                        className={`text-[10px] px-2.5 py-1 rounded font-extrabold transition-all ${
+                          currentCase.vulnerableAssessment?.isVulnerable || (currentCase.patient.age !== null && (currentCase.patient.age > 65 || currentCase.patient.age < 12))
+                            ? "bg-indigo-600 text-white"
+                            : "bg-slate-100 text-slate-400 dark:bg-slate-800"
+                        }`}
+                      >
+                        {currentCase.vulnerableAssessment?.isVulnerable || (currentCase.patient.age !== null && (currentCase.patient.age > 65 || currentCase.patient.age < 12)) ? "YES" : "NO"}
+                      </button>
+                    </label>
+
+                    {(currentCase.vulnerableAssessment?.isVulnerable || (currentCase.patient.age !== null && (currentCase.patient.age > 65 || currentCase.patient.age < 12))) && (
+                      <div>
+                        <label className="block text-[10px] font-bold text-indigo-700 dark:text-indigo-400 uppercase mb-1">Vulnerable Group Type</label>
+                        <select
+                          value={currentCase.vulnerableAssessment?.vulnerableType || (currentCase.patient.age !== null && currentCase.patient.age < 12 ? "Pediatric" : currentCase.patient.age !== null && currentCase.patient.age > 65 ? "Geriatric" : "Pediatric")}
+                          onChange={(e) => updateVulnerable("vulnerableType", e.target.value)}
+                          className="w-full px-2 py-1 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded text-xs"
+                        >
+                          <option value="Pediatric">Pediatric (Under 12)</option>
+                          <option value="Geriatric">Geriatric (Over 65)</option>
+                          <option value="Pregnant">Pregnant / Peripartum</option>
+                          <option value="Physically Challenged">Physically/Mentally Challenged</option>
+                          <option value="Unconscious">Unconscious / Unattended</option>
+                        </select>
+                      </div>
+                    )}
+
+                    <div>
+                      <span className="font-bold block text-slate-700 dark:text-slate-200 mb-1">Functional Assessment Grade</span>
+                      <select
+                        value={currentCase.vulnerableAssessment?.functionalAssessmentScore || "Independent"}
+                        onChange={(e) => updateVulnerable("functionalAssessmentScore", e.target.value)}
+                        className="w-full px-2 py-1 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded text-xs"
+                      >
+                        <option value="Independent">Independent (Fully ambulatory)</option>
+                        <option value="Assisted">Assisted (Needs helper for ADLs)</option>
+                        <option value="Dependent">Dependent (Requires complete care)</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="space-y-3 pt-1">
+                    <label className="flex items-start gap-2.5 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={currentCase.vulnerableAssessment?.nutritionalScreenPassed || false}
+                        onChange={(e) => updateVulnerable("nutritionalScreenPassed", e.target.checked)}
+                        className="mt-0.5 rounded text-indigo-600 focus:ring-indigo-500"
+                      />
+                      <div>
+                        <span className="font-bold block text-slate-700 dark:text-slate-200">Nutritional Screening Passed</span>
+                        <span className="text-[10px] text-slate-400">Nutritional compromise screened: no active cachexia or severe feeding difficulty.</span>
+                      </div>
+                    </label>
+
+                    <label className="flex items-start gap-2.5 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={currentCase.vulnerableAssessment?.abuseScreenNegative || false}
+                        onChange={(e) => updateVulnerable("abuseScreenNegative", e.target.checked)}
+                        className="mt-0.5 rounded text-indigo-600 focus:ring-indigo-500"
+                      />
+                      <div>
+                        <span className="font-bold block text-slate-700 dark:text-slate-200">Abuse & Neglect Screening Negative</span>
+                        <span className="text-[10px] text-slate-400">No signs of non-accidental trauma, neglect, or clinical abuse.</span>
+                      </div>
+                    </label>
+                  </div>
+                </div>
+
+                {/* 7 JCI/NABH Mandatory Indicators Grid  */}
+                <div className="border border-slate-200 dark:border-slate-800 rounded-xl p-4 bg-white dark:bg-slate-950 space-y-3">
+                  <p className="text-[11px] font-bold text-slate-700 dark:text-slate-300 flex items-center justify-between">
+                    <span>MANDATORY DETAILED SCREENING QUESTIONS (Word Document Format)</span>
+                    <span className="text-[9px] text-slate-400 font-normal">If any is YES, perform detailed assessment</span>
+                  </p>
+                  
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 text-xs">
+                    <label className="flex items-start gap-2.5 cursor-pointer bg-slate-50 dark:bg-slate-900/40 p-2.5 rounded-lg border border-slate-100 dark:border-slate-850">
+                      <input
+                        type="checkbox"
+                        checked={currentCase.vulnerableAssessment?.victimOfAbuse || false}
+                        onChange={(e) => updateVulnerable("victimOfAbuse", e.target.checked)}
+                        className="mt-0.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                      />
+                      <div>
+                        <span className="font-bold block text-slate-700 dark:text-slate-200">1. Abuse, Violence or Assault?</span>
+                        <span className="text-[10px] text-slate-400 leading-tight">Victim of family violence, elder abuse, child abuse, neglect, rape, physical abuse, assault.</span>
+                      </div>
+                    </label>
+
+                    <label className="flex items-start gap-2.5 cursor-pointer bg-slate-50 dark:bg-slate-900/40 p-2.5 rounded-lg border border-slate-100 dark:border-slate-850">
+                      <input
+                        type="checkbox"
+                        checked={currentCase.vulnerableAssessment?.severePainDistress || false}
+                        onChange={(e) => updateVulnerable("severePainDistress", e.target.checked)}
+                        className="mt-0.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                      />
+                      <div>
+                        <span className="font-bold block text-slate-700 dark:text-slate-200">2. Severe Pain or Distress?</span>
+                        <span className="text-[10px] text-slate-400 leading-tight">Presenting with extreme visceral/trauma pain or severe psychological distress.</span>
+                      </div>
+                    </label>
+
+                    <label className="flex items-start gap-2.5 cursor-pointer bg-slate-50 dark:bg-slate-900/40 p-2.5 rounded-lg border border-slate-100 dark:border-slate-850">
+                      <input
+                        type="checkbox"
+                        checked={currentCase.vulnerableAssessment?.isAlertOriented === false}
+                        onChange={(e) => updateVulnerable("isAlertOriented", !e.target.checked)}
+                        className="mt-0.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                      />
+                      <div>
+                        <span className="font-bold block text-slate-700 dark:text-slate-200">3. Impaired Mental Alertness?</span>
+                        <span className="text-[10px] text-slate-400 leading-tight">Patient is disoriented to time, place, or person; cannot provide reliable history.</span>
+                      </div>
+                    </label>
+
+                    <label className="flex items-start gap-2.5 cursor-pointer bg-slate-50 dark:bg-slate-900/40 p-2.5 rounded-lg border border-slate-100 dark:border-slate-850">
+                      <input
+                        type="checkbox"
+                        checked={currentCase.vulnerableAssessment?.suicidalIdeationRisk || false}
+                        onChange={(e) => updateVulnerable("suicidalIdeationRisk", e.target.checked)}
+                        className="mt-0.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                      />
+                      <div>
+                        <span className="font-bold block text-slate-700 dark:text-slate-200">4. Suicidal Ideation / Psychiatric Risk?</span>
+                        <span className="text-[10px] text-slate-400 leading-tight">Active suicidal thoughts, self-harm markers, or critical psychiatric flags.</span>
+                      </div>
+                    </label>
+
+                    <label className="flex items-start gap-2.5 cursor-pointer bg-slate-50 dark:bg-slate-900/40 p-2.5 rounded-lg border border-slate-100 dark:border-slate-850">
+                      <input
+                        type="checkbox"
+                        checked={currentCase.vulnerableAssessment?.confusionAgitation || false}
+                        onChange={(e) => updateVulnerable("confusionAgitation", e.target.checked)}
+                        className="mt-0.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                      />
+                      <div>
+                        <span className="font-bold block text-slate-700 dark:text-slate-200">5. Active Confusion or Agitation?</span>
+                        <span className="text-[10px] text-slate-400 leading-tight">Exhibiting clinical delirium, severe restless agitation, or combativeness.</span>
+                      </div>
+                    </label>
+
+                    <label className="flex items-start gap-2.5 cursor-pointer bg-slate-50 dark:bg-slate-900/40 p-2.5 rounded-lg border border-slate-100 dark:border-slate-850">
+                      <input
+                        type="checkbox"
+                        checked={currentCase.vulnerableAssessment?.needsMobilityAssistance || false}
+                        onChange={(e) => updateVulnerable("needsMobilityAssistance", e.target.checked)}
+                        className="mt-0.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                      />
+                      <div>
+                        <span className="font-bold block text-slate-700 dark:text-slate-200">6. Needs Assistance with ADLs/Mobility?</span>
+                        <span className="text-[10px] text-slate-400 leading-tight">Patient requires help with transfer, standing, or basic activities of daily living.</span>
+                      </div>
+                    </label>
+
+                    <label className="flex items-start gap-2.5 cursor-pointer bg-slate-50 dark:bg-slate-900/40 p-2.5 rounded-lg border border-slate-100 dark:border-slate-850 col-span-1 md:col-span-2">
+                      <input
+                        type="checkbox"
+                        checked={currentCase.vulnerableAssessment?.recentFall || false}
+                        onChange={(e) => updateVulnerable("recentFall", e.target.checked)}
+                        className="mt-0.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                      />
+                      <div>
+                        <span className="font-bold block text-slate-700 dark:text-slate-200">7. Recent Fall Incidents?</span>
+                        <span className="text-[10px] text-slate-400 leading-tight">Has experienced a fall recently or presents with extreme postural instability/gait imbalance.</span>
+                      </div>
+                    </label>
+                  </div>
+                </div>
+              </div>
+
+              {/* Procedure Consent & Time-Out (IPSG 4 Surgery / Procedure Checklist)  */}
+              <div className="bg-slate-50 dark:bg-slate-900 p-4 border border-slate-200 dark:border-slate-850 rounded-xl space-y-3">
+                <div className="flex items-center gap-1.5 border-b pb-2 border-slate-100 dark:border-slate-800">
+                  <FileCheck className="w-4.5 h-4.5 text-emerald-600" />
+                  <h4 className="font-extrabold text-xs text-slate-700 dark:text-slate-300 uppercase tracking-wide">
+                    IPSG 4: Informed Consent & Surgical/Procedure Time-Out
+                  </h4>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                  <label className="flex items-start gap-2.5 cursor-pointer bg-white dark:bg-slate-950 p-2.5 rounded-lg border border-slate-100">
+                    <input
+                      type="checkbox"
+                      checked={currentCase.consentTimeOut?.procedureConsentObtained || false}
+                      onChange={(e) => updateConsentTimeOut("procedureConsentObtained", e.target.checked)}
+                      className="mt-0.5 rounded text-emerald-600 focus:ring-emerald-500"
+                    />
+                    <div>
+                      <span className="font-bold block text-slate-700 dark:text-slate-200">Written Informed Consent Verified</span>
+                      <span className="text-[10px] text-slate-400">Verified written or emergency bedside clinical consent form is signed.</span>
+                    </div>
+                  </label>
+
+                  <label className="flex items-start gap-2.5 cursor-pointer bg-white dark:bg-slate-950 p-2.5 rounded-lg border border-slate-100">
+                    <input
+                      type="checkbox"
+                      checked={currentCase.consentTimeOut?.procedureTimeOutPerformed || false}
+                      onChange={(e) => updateConsentTimeOut("procedureTimeOutPerformed", e.target.checked)}
+                      className="mt-0.5 rounded text-emerald-600 focus:ring-emerald-500"
+                    />
+                    <div>
+                      <span className="font-bold block text-slate-700 dark:text-slate-200">Procedure "Time-Out" Completed</span>
+                      <span className="text-[10px] text-slate-400">Verbal confirmation of patient, side, site, and procedure immediately before start.</span>
+                    </div>
+                  </label>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Investigations (Labs & Imaging) Tab  */}
           {activeTab === "investigations" && (
-            <div className="space-y-4 pt-4 border-t border-slate-100 dark:border-slate-800">
-              <div className="border-b pb-2 flex items-center justify-between">
-                <h3 className="text-sm font-bold text-slate-800 dark:text-white uppercase tracking-wide">Investigations & Results</h3>
+            <div className="space-y-6 pt-4 border-t border-slate-100 dark:border-slate-800">
+<div className="border-b pb-2 flex items-center justify-between">
+                <h3 className="text-sm font-bold text-slate-800 dark:text-white uppercase tracking-wide">Lab & Imaging Investigations Log</h3>
                 <span className="text-[10px] bg-emerald-50 text-emerald-700 border border-emerald-100 px-2 py-0.5 rounded font-mono font-bold">OCR Sync Ready</span>
               </div>
 
-              {/* === ORDERED SECTION === */}
-              <div className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3 space-y-3">
-                <h4 className="font-extrabold text-xs text-slate-800 dark:text-slate-200 uppercase tracking-wide flex items-center gap-2 mb-2">
-                  <ClipboardCheck className="w-4 h-4 text-blue-600" />
-                  Orders
-                </h4>
-                
-                <details className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 text-xs group">
-                  <summary className="font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wide cursor-pointer list-none flex items-center justify-between [&::-webkit-details-marker]:hidden">
-                    <span>Quick Order Sets ▾</span>
-                  </summary>
-                  <div className="pt-2 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-2">
+              {/* Quick Investigation Panels (from user template screenshots)  */}
+              <div className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 space-y-3">
+                <div className="flex items-center gap-1.5 border-b pb-2 border-slate-150 dark:border-slate-800">
+                  <ClipboardCheck className="w-4.5 h-4.5 text-blue-600" />
+                  <span className="font-extrabold text-xs text-slate-700 dark:text-slate-300 uppercase tracking-wide">
+                    Standard JCI/NABH Investigation Panels (Auto-Order Sets)
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
                   {[
                     {
                       name: "ADULT SEIZURE PANEL",
@@ -3132,154 +3492,111 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                       key={panel.name}
                       type="button"
                       onClick={() => handleOrderPanel(panel.name)}
-                      className="p-2 text-left rounded-lg border border-slate-200 dark:border-slate-850 bg-gradient-to-br transition-all hover:scale-[1.01] hover:shadow-xs flex flex-col justify-between h-full group"
+                      className="p-3 text-left rounded-xl border border-slate-200 dark:border-slate-850 bg-gradient-to-br transition-all hover:scale-[1.01] hover:shadow-xs flex flex-col justify-between h-full group"
                     >
                       <div>
-                        <span className="font-bold text-[10px] block uppercase tracking-wider text-slate-800 dark:text-slate-200">{panel.name}</span>
-                        <p className="text-[9px] text-slate-500 dark:text-slate-400 font-mono mt-0.5 leading-tight">{panel.desc}</p>
+                        <span className="font-extrabold text-[10px] block uppercase tracking-wider text-slate-800 dark:text-slate-200">{panel.name}</span>
+                        <p className="text-[9px] text-slate-500 dark:text-slate-400 font-mono mt-1 leading-normal">{panel.desc}</p>
                       </div>
-                      <span className="text-[8px] font-bold uppercase mt-1 bg-blue-50 dark:bg-slate-850 text-blue-600 dark:text-blue-400 px-1.5 py-0.5 rounded self-start border border-blue-200 dark:border-blue-900 group-hover:bg-blue-600 group-hover:text-white group-hover:border-blue-600 transition-all">
-                        + Auto-Order
+                      <span className="text-[8px] font-bold uppercase mt-2 bg-blue-50 dark:bg-slate-850 text-blue-600 dark:text-blue-400 px-1.5 py-0.5 rounded self-start border border-blue-200 dark:border-blue-900 group-hover:bg-blue-600 group-hover:text-white group-hover:border-blue-600 transition-all">
+                        + Auto-Order Panel
                       </span>
                     </button>
                   ))}
-                  </div>
-                </details>
-
-                {currentCase.investigationsOrdered && currentCase.investigationsOrdered.length > 0 && (
-                  <div className="pt-2">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-[10px] font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wide">Ordered Checklist</span>
-                      <span className="text-[9px] font-mono font-bold bg-white dark:bg-slate-950 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-800">{currentCase.investigationsOrdered.length} items</span>
-                    </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                      {currentCase.investigationsOrdered.map((inv, idx) => (
-                        <div key={idx} className="flex items-center justify-between bg-white dark:bg-slate-950 p-2 rounded-lg border border-slate-200 dark:border-slate-800 text-xs">
-                          <div className="flex items-center gap-1.5">
-                            <input
-                              type="checkbox"
-                              checked={inv.status === "COMPLETED"}
-                              onChange={() => {
-                                const updated = [...(currentCase.investigationsOrdered || [])];
-                                updated[idx] = {
-                                  ...updated[idx],
-                                  status: updated[idx].status === "COMPLETED" ? "ORDERED" : "COMPLETED"
-                                };
-                                setCurrentCase(prev => ({ ...prev, investigationsOrdered: updated }));
-                              }}
-                              className="rounded text-blue-600 focus:ring-blue-500 w-3 h-3"
-                            />
-                            <span className={`font-semibold text-[11px] ${inv.status === "COMPLETED" ? "line-through text-slate-400" : "text-slate-800 dark:text-slate-200"}`}>
-                              {inv.name}
-                            </span>
-                          </div>
-                          <span className={`text-[9px] px-1 py-0.5 rounded font-mono font-bold uppercase ${
-                            inv.status === "COMPLETED" ? "bg-emerald-50 text-emerald-600" : "bg-amber-50 text-amber-600"
-                          }`}>
-                            {inv.status || "ORDERED"}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-2">
-                  <div className="space-y-1">
-                    <label className="block text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wide">
-                      Labs Ordered (Notes)
-                    </label>
-                    <textarea
-                      rows={2}
-                      placeholder="e.g. CBC, Troponin..."
-                      value={currentCase.investigationLabsOrdered || ""}
-                      onChange={(e) => setCurrentCase(prev => ({ ...prev, investigationLabsOrdered: e.target.value }))}
-                      className="w-full px-3 py-1.5 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-xs focus:ring-1 focus:ring-blue-500"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="block text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wide">
-                      Imaging / Radiology (Notes)
-                    </label>
-                    <textarea
-                      rows={2}
-                      placeholder="e.g. CXR, FAST..."
-                      value={currentCase.investigationImaging || ""}
-                      onChange={(e) => setCurrentCase(prev => ({ ...prev, investigationImaging: e.target.value }))}
-                      className="w-full px-3 py-1.5 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-xs focus:ring-1 focus:ring-blue-500"
-                    />
-                  </div>
-                </div>
-
-                <div className="bg-white dark:bg-slate-950 p-2.5 rounded-lg border border-slate-200 dark:border-slate-800 grid grid-cols-1 sm:grid-cols-3 gap-2 items-end">
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Add Investigation</label>
-                    <input
-                      type="text"
-                      placeholder="e.g. Troponin T"
-                      value={newTest}
-                      onChange={(e) => setNewTest(e.target.value)}
-                      className="w-full px-2 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-md text-xs focus:ring-1 focus:ring-blue-500"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Result (Optional)</label>
-                    <input
-                      type="text"
-                      placeholder="e.g. Pending, Negative"
-                      value={newResult}
-                      onChange={(e) => setNewResult(e.target.value)}
-                      className="w-full px-2 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-md text-xs focus:ring-1 focus:ring-blue-500"
-                    />
-                  </div>
-                  <button
-                    type="button"
-                    onClick={handleAddInvestigation}
-                    className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-md text-xs font-bold transition-all flex items-center justify-center gap-1"
-                  >
-                    <Plus className="w-3.5 h-3.5" /> Add
-                  </button>
                 </div>
               </div>
 
-              {/* === RESULTS SECTION === */}
-              <div className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3 space-y-3">
-                <h4 className="font-extrabold text-xs text-slate-800 dark:text-slate-200 uppercase tracking-wide flex items-center gap-2 mb-2">
-                  <Activity className="w-4 h-4 text-purple-600" />
-                  Results
-                </h4>
-                
-                {currentCase.investigationResults && currentCase.investigationResults.length > 0 && (
+              {/* Investigations Ordered Checklist (Extracted from Voice Scribe)  */}
+              {currentCase.investigationsOrdered && currentCase.investigationsOrdered.length > 0 && (
+                <div className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 space-y-3">
+                  <div className="flex items-center justify-between border-b pb-2 border-slate-200 dark:border-slate-800">
+                    <h4 className="font-extrabold text-xs text-slate-800 dark:text-slate-200 uppercase tracking-wide flex items-center gap-2">
+                      <FileCheck className="w-4 h-4 text-blue-600" />
+                      Investigations Ordered (Checklist)
+                    </h4>
+                    <span className="text-[10px] font-mono text-slate-500 font-bold bg-white dark:bg-slate-950 px-2 py-0.5 rounded border">
+                      {currentCase.investigationsOrdered.length} Ordered
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5">
+                    {currentCase.investigationsOrdered.map((inv, idx) => (
+                      <div key={idx} className="flex items-center justify-between bg-white dark:bg-slate-950 p-2.5 rounded-lg border border-slate-200 dark:border-slate-800 text-xs">
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={inv.status === "COMPLETED"}
+                            onChange={() => {
+                              const updated = [...(currentCase.investigationsOrdered || [])];
+                              updated[idx] = {
+                                ...updated[idx],
+                                status: updated[idx].status === "COMPLETED" ? "ORDERED" : "COMPLETED"
+                              };
+                              setCurrentCase(prev => ({ ...prev, investigationsOrdered: updated }));
+                            }}
+                            className="rounded text-blue-600 focus:ring-blue-500 w-3.5 h-3.5"
+                          />
+                          <span className={`font-semibold ${inv.status === "COMPLETED" ? "line-through text-slate-400" : "text-slate-800 dark:text-slate-200"}`}>
+                            {inv.name}
+                          </span>
+                        </div>
+                        <span className={`text-[9px] px-1.5 py-0.5 rounded font-mono font-bold uppercase ${
+                          inv.status === "COMPLETED" ? "bg-emerald-50 text-emerald-600" : "bg-amber-50 text-amber-600"
+                        }`}>
+                          {inv.status || "ORDERED"}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Investigation Results Table (Structured with Abnormal Flags)  */}
+              {currentCase.investigationResults && currentCase.investigationResults.length > 0 && (
+                <div className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 space-y-3">
+                  <div className="flex items-center justify-between border-b pb-2 border-slate-200 dark:border-slate-800">
+                    <h4 className="font-extrabold text-xs text-slate-800 dark:text-slate-200 uppercase tracking-wide flex items-center gap-2">
+                      <Activity className="w-4 h-4 text-purple-600" />
+                      Extracted Blood & Lab Results Table
+                    </h4>
+                    <span className="text-[10px] font-mono text-slate-500 font-bold bg-white dark:bg-slate-950 px-2 py-0.5 rounded border">
+                      {currentCase.investigationResults.filter(r => r.isAbnormal || r.flag === "HIGH" || r.flag === "LOW" || r.flag === "ABNORMAL").length} Abnormal(s) Flagged
+                    </span>
+                  </div>
+
                   <div className="overflow-x-auto border rounded-lg border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950">
                     <table className="w-full text-left border-collapse text-xs">
                       <thead>
-                        <tr className="bg-slate-100 dark:bg-slate-900 text-slate-500 border-b border-slate-200 dark:border-slate-800 font-mono uppercase text-[9px]">
-                          <th className="p-2">Parameter (Extracted)</th>
-                          <th className="p-2">Value</th>
-                          <th className="p-2">Ref</th>
-                          <th className="p-2 text-right">Flag</th>
+                        <tr className="bg-slate-100 dark:bg-slate-900 text-slate-500 border-b border-slate-200 dark:border-slate-800 font-mono uppercase text-[10px]">
+                          <th className="p-2.5">Test Parameter</th>
+                          <th className="p-2.5">Result / Value</th>
+                          <th className="p-2.5">Unit</th>
+                          <th className="p-2.5">Reference Range</th>
+                          <th className="p-2.5 text-right">Flag / Status</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-slate-150 dark:divide-slate-850 font-mono text-[10px]">
+                      <tbody className="divide-y divide-slate-150 dark:divide-slate-850 font-mono">
                         {currentCase.investigationResults.map((res, idx) => {
                           const isAbnormal = res.isAbnormal || res.flag === "HIGH" || res.flag === "LOW" || res.flag === "ABNORMAL";
                           const arrow = res.flag === "HIGH" ? "↑" : res.flag === "LOW" ? "↓" : isAbnormal ? "⚠" : "";
+                          
                           return (
                             <tr key={idx} className={`hover:bg-slate-50/50 dark:hover:bg-slate-900/10 ${isAbnormal ? "bg-rose-50/40 dark:bg-rose-950/10" : ""}`}>
-                              <td className="p-2 font-bold text-slate-800 dark:text-slate-200">{res.name}</td>
-                              <td className="p-2 font-bold">
-                                <span className={isAbnormal ? "text-rose-600 dark:text-rose-400 flex items-center gap-1 font-black" : "text-slate-700 dark:text-slate-300"}>
-                                  {res.value} {arrow && <span className="font-black">{arrow}</span>}
+                              <td className="p-2.5 font-bold text-slate-800 dark:text-slate-200">{res.name}</td>
+                              <td className="p-2.5 font-bold">
+                                <span className={isAbnormal ? "text-rose-600 dark:text-rose-400 flex items-center gap-1 font-black text-xs" : "text-slate-700 dark:text-slate-300"}>
+                                  {res.value} {arrow && <span className="text-xs font-black">{arrow}</span>}
                                 </span>
                               </td>
-                              <td className="p-2 text-slate-400">{res.referenceRange || "—"}</td>
-                              <td className="p-2 text-right">
+                              <td className="p-2.5 text-slate-500">{res.unit || "—"}</td>
+                              <td className="p-2.5 text-slate-400">{res.referenceRange || "Standard"}</td>
+                              <td className="p-2.5 text-right">
                                 {isAbnormal ? (
-                                  <span className="bg-rose-100 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300 px-1 py-0.5 rounded font-extrabold border border-rose-200 dark:border-rose-900">
+                                  <span className="bg-rose-100 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300 px-2 py-0.5 rounded text-[10px] font-extrabold border border-rose-200 dark:border-rose-900">
                                     {res.flag || "ABNORMAL"} {arrow}
                                   </span>
                                 ) : (
-                                  <span className="bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400 px-1 py-0.5 rounded font-bold border border-emerald-200 dark:border-emerald-900">
+                                  <span className="bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400 px-2 py-0.5 rounded text-[10px] font-bold border border-emerald-200 dark:border-emerald-900">
                                     NORMAL
                                   </span>
                                 )}
@@ -3290,97 +3607,170 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                       </tbody>
                     </table>
                   </div>
-                )}
+                </div>
+              )}
 
-                {currentCase.investigations && currentCase.investigations.length > 0 && (
-                  <div className="overflow-x-auto border rounded-lg border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950">
-                    <table className="w-full text-left border-collapse text-xs">
-                      <thead>
-                        <tr className="bg-slate-100 dark:bg-slate-900 text-slate-500 border-b border-slate-200 dark:border-slate-800 font-mono uppercase text-[9px]">
-                          <th className="p-2">Manual Order Name</th>
-                          <th className="p-2">Result / Findings</th>
-                          <th className="p-2 text-right">Action</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-150 dark:divide-slate-850">
-                        {currentCase.investigations.map((item) => (
-                          <tr key={item.id} className="hover:bg-slate-50 dark:hover:bg-slate-900/50">
-                            <td className="p-2 font-semibold text-slate-800 dark:text-slate-200">{item.testName}</td>
-                            <td className="p-2 text-slate-600 dark:text-slate-300">{item.result || <span className="text-slate-400 italic">Pending...</span>}</td>
-                            <td className="p-2 text-right">
-                              <button
-                                type="button"
-                                onClick={() => handleDeleteInvestigation(item.id)}
-                                className="text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30 p-1 rounded-md transition-colors"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+              {/* Lab/Imaging Text fields  */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
+                <div className="space-y-1">
+                  <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">
+                    Labs Ordered
+                  </label>
+                  <div className="flex gap-1.5">
+                    <textarea
+                      rows={2}
+                      placeholder="e.g. CBC, Troponin, ABG, Renal panel..."
+                      value={currentCase.investigationLabsOrdered || ""}
+                      onChange={(e) => setCurrentCase(prev => ({ ...prev, investigationLabsOrdered: e.target.value }))}
+                      className="flex-1 px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-xs text-slate-900 dark:text-slate-100"
+                    />
                   </div>
-                )}
-                
-                {(!currentCase.investigationResults || currentCase.investigationResults.length === 0) && (!currentCase.investigations || currentCase.investigations.length === 0) && (
-                  <div className="text-center p-3 text-slate-400 text-[11px] bg-white dark:bg-slate-950 rounded-lg border border-slate-200 dark:border-slate-800">
-                    No results logged yet.
-                  </div>
-                )}
+                </div>
 
-                <div>
-                  <label className="block text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1">
+                <div className="space-y-1">
+                  <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">
+                    Imaging/Radiology
+                  </label>
+                  <div className="flex gap-1.5">
+                    <textarea
+                      rows={2}
+                      placeholder="e.g. Chest X-Ray, Bedside US, Head CT..."
+                      value={currentCase.investigationImaging || ""}
+                      onChange={(e) => setCurrentCase(prev => ({ ...prev, investigationImaging: e.target.value }))}
+                      className="flex-1 px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-xs text-slate-900 dark:text-slate-100"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">
                     Results/Findings Summary
                   </label>
-                  <textarea
-                    rows={2}
-                    placeholder="e.g. Troponin positive, X-ray clear..."
-                    value={currentCase.investigationResultsSummary || ""}
-                    onChange={(e) => setCurrentCase(prev => ({ ...prev, investigationResultsSummary: e.target.value }))}
-                    className="w-full px-3 py-1.5 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-xs focus:ring-1 focus:ring-blue-500"
-                  />
+                  <div className="flex gap-1.5">
+                    <textarea
+                      rows={2}
+                      placeholder="e.g. Troponin positive, X-ray clear..."
+                      value={currentCase.investigationResultsSummary || ""}
+                      onChange={(e) => setCurrentCase(prev => ({ ...prev, investigationResultsSummary: e.target.value }))}
+                      className="flex-1 px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-xs text-slate-900 dark:text-slate-100"
+                    />
+                  </div>
                 </div>
               </div>
 
-              {/* === DIAGNOSIS SECTION === */}
-              <div className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3 space-y-3">
-                <h4 className="font-extrabold text-xs text-slate-800 dark:text-slate-200 uppercase tracking-wide flex items-center gap-2 mb-2">
-                  <FileText className="w-4 h-4 text-emerald-600" />
-                  Diagnosis / Interpretation
-                </h4>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <div className="space-y-1">
-                    <label className="block text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wide">
-                      Provisional Primary Diagnosis
-                    </label>
+              {/* Provisional Diagnoses  */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs border-t pt-4 border-slate-150 dark:border-slate-850">
+                <div className="space-y-1">
+                  <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">
+                    Provisional Primary Diagnosis
+                  </label>
+                  <div className="flex gap-1.5">
                     <textarea
                       rows={2}
                       placeholder="Primary diagnostic impression..."
                       value={currentCase.provisionalPrimaryDiagnosis || ""}
                       onChange={(e) => setCurrentCase(prev => ({ ...prev, provisionalPrimaryDiagnosis: e.target.value }))}
-                      className="w-full px-3 py-1.5 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-xs focus:ring-1 focus:ring-blue-500"
+                      className="flex-1 px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-xs text-slate-900 dark:text-slate-100"
                     />
                   </div>
-                  <div className="space-y-1">
-                    <label className="block text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wide">
-                      Provisional Differential Diagnoses
-                    </label>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">
+                    Provisional Differential Diagnoses
+                  </label>
+                  <div className="flex gap-1.5">
                     <textarea
                       rows={2}
                       placeholder="Alternative differentials considered..."
                       value={currentCase.provisionalDifferentialDiagnoses || ""}
                       onChange={(e) => setCurrentCase(prev => ({ ...prev, provisionalDifferentialDiagnoses: e.target.value }))}
-                      className="w-full px-3 py-1.5 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-xs focus:ring-1 focus:ring-blue-500"
+                      className="flex-1 px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-xs text-slate-900 dark:text-slate-100"
                     />
                   </div>
                 </div>
               </div>
+
+              {/* Add form  */}
+              <div className="bg-slate-50 dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-500 uppercase mb-1">Test/Order Name</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Troponin T, Chest X-ray"
+                    value={newTest}
+                    onChange={(e) => setNewTest(e.target.value)}
+                    className="w-full px-3 py-1.5 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-500 uppercase mb-1">Findings/Result</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Negative, Infiltrate in RLL, or Pending"
+                    value={newResult}
+                    onChange={(e) => setNewResult(e.target.value)}
+                    className="w-full px-3 py-1.5 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-xs"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={handleAddInvestigation}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5"
+                >
+                  <Plus className="w-3.5 h-3.5" /> Log Order
+                </button>
+              </div>
+
+              {/* Table list  */}
+              <div className="overflow-x-auto border rounded-xl border-slate-200 dark:border-slate-800">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead>
+                    <tr className="bg-slate-50 dark:bg-slate-900 text-slate-500 border-b border-slate-200 dark:border-slate-800 font-mono uppercase text-[10px]">
+                      <th className="p-3">Order Name</th>
+                      <th className="p-3">Result / Findings</th>
+                      <th className="p-3">Time Ordered</th>
+                      <th className="p-3 text-right">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-150 dark:divide-slate-850">
+                    {currentCase.investigations.length === 0 ? (
+                      <tr>
+                        <td colSpan={4} className="p-4 text-center text-slate-400 font-medium">No diagnostic investigations logged for this case.</td>
+                      </tr>
+                    ) : (
+                      currentCase.investigations.map((item) => (
+                        <tr key={item.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-900/10">
+                          <td className="p-3 font-semibold text-slate-700 dark:text-slate-300">{item.testName}</td>
+                          <td className="p-3">
+                            <span className={`px-2 py-0.5 rounded text-[11px] font-medium ${
+                              item.result === "Pending" 
+                                ? "bg-amber-50 text-amber-600 dark:bg-amber-950/20" 
+                                : "bg-blue-50 text-blue-700 dark:bg-blue-950/20"
+                            }`}>
+                              {item.result}
+                            </span>
+                          </td>
+                          <td className="p-3 text-slate-400 font-mono">{item.orderTime}</td>
+                          <td className="p-3 text-right">
+                            <button
+                              onClick={() => handleDeleteInvestigation(item.id)}
+                              className="text-slate-400 hover:text-rose-600 p-1 rounded transition-all"
+                            >
+                            </button>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
+
           {/* Treatment Logs & Resuscitation Dosages Tab with IPSG Drug Double-Checks  */}
           {activeTab === "treatment" && (
-            <div className="space-y-4">
+            <div className="space-y-6">
 <div className="border-b pb-2 flex items-center justify-between">
                 <h3 className="text-sm font-bold text-slate-800 dark:text-white uppercase tracking-wide font-display">Medications & Procedures Handover Log</h3>
                 {currentCase.isPediatric && (
@@ -3423,57 +3813,56 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                 </div>
               )}
 
-              {/* === MEDICATIONS SECTION === */}
-              <div className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3 space-y-3">
+              {/* Extracted & Prescribed Medications Section (from Voice Scribe AI Extraction)  */}
+              <div className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 space-y-3">
                 <div className="flex items-center justify-between border-b pb-2 border-slate-200 dark:border-slate-800">
                   <div className="flex items-center gap-2">
                     <Pill className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
                     <h4 className="font-extrabold text-xs text-slate-800 dark:text-slate-200 uppercase tracking-wide">
-                      Medications
+                      Extracted & Prescribed Medications
                     </h4>
                   </div>
-                  <span className="text-[10px] bg-emerald-100 dark:bg-emerald-950/50 text-emerald-800 dark:text-emerald-300 px-2 py-0.5 rounded font-bold font-mono">
-                    {((currentCase.medications && currentCase.medications.length) || (currentCase.sampleHistory.medications ? 1 : 0))} Extracted
+                  <span className="text-[10px] bg-emerald-100 dark:bg-emerald-950/50 text-emerald-800 dark:text-emerald-300 px-2.5 py-0.5 rounded-full font-bold font-mono">
+                    {((currentCase.medications && currentCase.medications.length) || (currentCase.sampleHistory.medications ? 1 : 0))} Active Item(s)
                   </span>
                 </div>
-                
-                {/* Extracted from Voice */}
+
                 {currentCase.medications && currentCase.medications.length > 0 ? (
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
                     {currentCase.medications.map((med, idx) => {
                       const medStr = typeof med === "string" 
                         ? med 
                         : `${med.drugName} ${med.dose || ""} ${med.route || ""} ${med.frequency || ""}`.trim();
                       const doseOnly = typeof med === "object" ? med.dose || "Stat" : "Stat";
                       const routeOnly = typeof med === "object" ? med.route || "IV" : "IV";
-                      
+
                       return (
-                        <div key={idx} className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 flex flex-col gap-2">
-                          <div className="flex justify-between items-start">
-                            <div>
-                              <span className="text-xs font-bold text-slate-800 dark:text-slate-100 block">{typeof med === "object" ? med.drugName : medStr}</span>
-                              {typeof med === "object" && <span className="text-[10px] text-slate-500 font-mono mt-0.5 block">{med.dose || "Stat"} • {med.route || "IV"} • {med.frequency || "Once"}</span>}
-                            </div>
-                            <span className="w-4 h-4 rounded-full bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 flex items-center justify-center font-mono font-bold text-[9px] shrink-0 border border-emerald-200 dark:border-emerald-800">
+                        <div key={idx} className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg p-3 flex items-center justify-between shadow-xs">
+                          <div className="flex items-center gap-2.5">
+                            <span className="w-6 h-6 rounded-full bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 flex items-center justify-center font-mono font-bold text-xs shrink-0 border border-emerald-200 dark:border-emerald-800">
                               {idx + 1}
                             </span>
+                            <div>
+                              <span className="text-xs font-bold text-slate-800 dark:text-slate-100 block">{medStr}</span>
+                              <span className="text-[10px] text-slate-400 font-mono">Dose, Route, & Frequency mapped</span>
+                            </div>
                           </div>
                           <button
                             type="button"
                             onClick={() => {
                               const newTr: TreatmentItem = {
                                 id: `t-extracted-${Date.now()}-${idx}`,
-                                drugName: typeof med === "object" ? med.drugName : medStr,
+                                drugName: medStr,
                                 dose: doseOnly,
                                 route: routeOnly,
                                 timeGiven: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
                                 ipsgVerified: true
                               };
-                              if (!currentCase.treatments.some(t => t.drugName.toLowerCase() === (typeof med === "object" ? med.drugName.toLowerCase() : medStr.toLowerCase()))) {
+                              if (!currentCase.treatments.some(t => t.drugName.toLowerCase() === medStr.toLowerCase())) {
                                 setCurrentCase(prev => ({ ...prev, treatments: [...prev.treatments, newTr] }));
                               }
                             }}
-                            className="text-[9px] font-bold text-blue-600 hover:text-blue-700 bg-blue-50 dark:bg-blue-950/30 px-2 py-1 rounded border border-blue-200 dark:border-blue-800 w-full text-center transition-colors cursor-pointer mt-auto"
+                            className="text-[10px] font-bold text-blue-600 hover:text-blue-700 bg-blue-50 dark:bg-blue-950/30 px-2 py-1 rounded border border-blue-200 dark:border-blue-800 shrink-0 cursor-pointer"
                           >
                             + Log to Flowsheet
                           </button>
@@ -3482,254 +3871,250 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                     })}
                   </div>
                 ) : (
-                  <div className="text-[10px] text-slate-500 dark:text-slate-400 italic py-1 bg-white dark:bg-slate-950 rounded-lg p-2 border border-slate-200 dark:border-slate-800 text-center">
+                  <div className="text-xs text-slate-500 dark:text-slate-400 italic py-1">
                     {currentCase.sampleHistory.medications ? (
                       <span className="font-medium text-slate-700 dark:text-slate-300">
-                        Outpatient: {currentCase.sampleHistory.medications}
+                        Outpatient History: {currentCase.sampleHistory.medications}
                       </span>
                     ) : (
-                      "No medications extracted from voice. Add manually below."
+                      "No medications extracted yet. Dictate drug orders in Voice Scribe (e.g. 'Give Ecosprin 325mg, Heparin 5000 IU') to auto-populate here."
                     )}
                   </div>
                 )}
-                
-                {/* Add Manual Form */}
-                <div className="bg-white dark:bg-slate-950 p-2.5 rounded-lg border border-slate-200 dark:border-slate-800 grid grid-cols-1 md:grid-cols-4 gap-2 items-end mt-2">
-                  <div className="md:col-span-1.5">
-                    <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-0.5">Drug</label>
-                    <input
-                      type="text"
-                      placeholder="e.g. Adrenaline"
-                      value={newDrug}
-                      onChange={(e) => setNewDrug(e.target.value)}
-                      className="w-full px-2 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-md text-xs focus:ring-1 focus:ring-blue-500"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-0.5">Dose</label>
-                    <input
-                      type="text"
-                      placeholder="e.g. 0.5mg"
-                      value={newDose}
-                      onChange={(e) => setNewDose(e.target.value)}
-                      className="w-full px-2 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-md text-xs focus:ring-1 focus:ring-blue-500"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-0.5">Route</label>
-                    <select
-                      value={newRoute}
-                      onChange={(e) => setNewRoute(e.target.value)}
-                      className="w-full px-2 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-md text-[11px] focus:ring-1 focus:ring-blue-500"
-                    >
-                      <option value="IV">IV</option>
-                      <option value="IM">IM</option>
-                      <option value="IO">IO</option>
-                      <option value="PO">PO</option>
-                      <option value="PR">PR</option>
-                      <option value="SC">SC</option>
-                      <option value="Procedure">Procedure Log</option>
-                    </select>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={handleAddTreatment}
-                    className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-md text-xs font-bold transition-all flex items-center justify-center gap-1 h-[28px]"
-                  >
-                    <Plus className="w-3.5 h-3.5" /> Log
-                  </button>
-                </div>
+              </div>
 
-                {/* Treatment Table */}
-                {currentCase.treatments && currentCase.treatments.length > 0 && (
-                  <div className="overflow-x-auto border rounded-lg border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 mt-2">
-                    <table className="w-full text-left border-collapse text-xs">
-                      <thead>
-                        <tr className="bg-slate-100 dark:bg-slate-900 text-slate-500 border-b border-slate-200 dark:border-slate-800 font-mono uppercase text-[9px]">
-                          <th className="p-2">Drug / Intervention</th>
-                          <th className="p-2">Dose / Route</th>
-                          <th className="p-2">IPSG Check</th>
-                          <th className="p-2 text-right">Action</th>
+              {/* Add form  */}
+              <div className="bg-slate-50 dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-500 uppercase mb-1">Medication / Procedure</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Adrenaline, Intubation"
+                    value={newDrug}
+                    onChange={(e) => setNewDrug(e.target.value)}
+                    className="w-full px-3 py-1.5 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-500 uppercase mb-1">Dose / Setting</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. 0.5mg, size 7.5 ETT"
+                    value={newDose}
+                    onChange={(e) => setNewDose(e.target.value)}
+                    className="w-full px-3 py-1.5 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-500 uppercase mb-1">Route of Admin</label>
+                  <select
+                    value={newRoute}
+                    onChange={(e) => setNewRoute(e.target.value)}
+                    className="w-full px-3 py-1.5 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-xs"
+                  >
+                    <option value="IV">IV (Intravenous)</option>
+                    <option value="IM">IM (Intramuscular)</option>
+                    <option value="IO">IO (Intraosseous)</option>
+                    <option value="PO">PO (Oral)</option>
+                    <option value="PR">PR (Rectal)</option>
+                    <option value="SC">SC (Subcutaneous)</option>
+                    <option value="Procedure">Procedure Log</option>
+                  </select>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleAddTreatment}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5"
+                >
+                  <Plus className="w-3.5 h-3.5" /> Log Treatment
+                </button>
+              </div>
+
+              {/* Table list with IPSG High-alert Verification Tags (JCI standard)  */}
+              <div className="overflow-x-auto border rounded-xl border-slate-200 dark:border-slate-800">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead>
+                    <tr className="bg-slate-50 dark:bg-slate-900 text-slate-500 border-b border-slate-200 dark:border-slate-800 font-mono uppercase text-[10px]">
+                      <th className="p-3">Treatment / Intervention</th>
+                      <th className="p-3">Dose</th>
+                      <th className="p-3">Route</th>
+                      <th className="p-3">IPSG Double Check</th>
+                      <th className="p-3">Time Logged</th>
+                      <th className="p-3 text-right">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-150 dark:divide-slate-850">
+                    {currentCase.treatments.length === 0 ? (
+                      <tr>
+                        <td colSpan={6} className="p-4 text-center text-slate-400 font-medium">No medications or therapeutic procedures logged for this case.</td>
+                      </tr>
+                    ) : (
+                      deduplicateMeds(currentCase.treatments).map((item) => (
+                        <tr key={item.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-900/10">
+                          <td className="p-3 font-semibold text-slate-700 dark:text-slate-300">{item.drugName}</td>
+                          <td className="p-3 font-mono">{item.dose}</td>
+                          <td className="p-3">
+                            <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-slate-100 dark:bg-slate-800 font-mono">
+                              {validateMedRoute(item.drugName, item.route)}
+                            </span>
+                          </td>
+                          <td className="p-3">
+                            <button
+                              type="button"
+                              onClick={() => toggleIpsgMedicationCheck(item.id)}
+                              className={`text-[10px] px-2 py-0.5 rounded font-extrabold flex items-center gap-1.5 transition-all ${
+                                item.ipsgVerified
+                                  ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                                  : "bg-rose-50 text-rose-700 border border-rose-200 animate-pulse"
+                              }`}
+                            >
+                              {item.ipsgVerified ? (
+                                <>
+                                  <CheckCircle className="w-3 h-3 text-emerald-600" /> Double Verified
+                                </>
+                              ) : (
+                                <>
+                                  <AlertTriangle className="w-3 h-3 text-rose-500" /> Pending Verification
+                                </>
+                              )}
+                            </button>
+                          </td>
+                          <td className="p-3 text-slate-400 font-mono">{item.timeGiven}</td>
+                          <td className="p-3 text-right">
+                            <button
+                              onClick={() => handleDeleteTreatment(item.id)}
+                              className="text-slate-400 hover:text-rose-600 p-1 rounded transition-all"
+                            >
+                            </button>
+                          </td>
                         </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-150 dark:divide-slate-850">
-                        {deduplicateMeds(currentCase.treatments).map((item) => (
-                          <tr key={item.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-900/10">
-                            <td className="p-2 font-semibold text-slate-700 dark:text-slate-300">
-                              {item.drugName}
-                              <span className="block text-[9px] text-slate-400 font-mono mt-0.5">{item.timeGiven}</span>
-                            </td>
-                            <td className="p-2">
-                              <span className="font-mono text-slate-700 dark:text-slate-200">{item.dose}</span>
-                              <span className="mx-1 text-slate-300">•</span>
-                              <span className="font-bold text-[10px] text-slate-500">{validateMedRoute(item.drugName, item.route)}</span>
-                            </td>
-                            <td className="p-2">
-                              <button
-                                type="button"
-                                onClick={() => toggleIpsgMedicationCheck(item.id)}
-                                className={`text-[9px] px-1.5 py-0.5 rounded font-bold flex items-center gap-1 transition-all ${
-                                  item.ipsgVerified
-                                    ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                                    : "bg-rose-50 text-rose-700 border border-rose-200 animate-pulse"
-                                }`}
-                              >
-                                {item.ipsgVerified ? (
-                                  <><CheckCircle className="w-2.5 h-2.5" /> Verified</>
-                                ) : (
-                                  <><AlertTriangle className="w-2.5 h-2.5" /> Pending</>
-                                )}
-                              </button>
-                            </td>
-                            <td className="p-2 text-right">
-                              <button
-                                onClick={() => handleDeleteTreatment(item.id)}
-                                className="text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-900/30 p-1 rounded transition-colors"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-                
-                <div className="pt-1">
-                  <label className="block text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1">
-                    Other / Outpatient Medications Notes
-                  </label>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Other Medications  */}
+              <div className="space-y-1 mt-4">
+                <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">
+                  Other / Outpatient Medications Notes
+                </label>
+                <div className="flex gap-1.5">
                   <textarea
                     rows={2}
                     placeholder="Provide any additional notes or outpatient prescriptions..."
                     value={currentCase.otherMedications || ""}
                     onChange={(e) => setCurrentCase(prev => ({ ...prev, otherMedications: e.target.value }))}
-                    className="w-full px-3 py-1.5 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-xs focus:ring-1 focus:ring-blue-500"
+                    className="flex-1 px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-xs text-slate-900 dark:text-slate-100"
                   />
                 </div>
               </div>
 
-              {/* === INFUSIONS SECTION === */}
-              <div className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3 space-y-3">
-                <div className="flex items-center justify-between border-b pb-2 border-slate-200 dark:border-slate-800">
-                  <h4 className="font-extrabold text-xs text-slate-800 dark:text-slate-200 uppercase tracking-wide flex items-center gap-2">
-                    <Droplets className="w-4 h-4 text-cyan-600 dark:text-cyan-400" />
-                    Infusions & IV Fluids Log
-                  </h4>
-                  {currentCase.infusions && currentCase.infusions.length > 0 && (
-                    <span className="text-[10px] bg-cyan-100 dark:bg-cyan-950/50 text-cyan-800 dark:text-cyan-300 px-2 py-0.5 rounded font-bold font-mono border border-cyan-200 dark:border-cyan-800">
-                      {currentCase.infusions.length} Running
-                    </span>
-                  )}
-                </div>
-                
-                <div className="bg-white dark:bg-slate-950 p-2.5 rounded-lg border border-slate-200 dark:border-slate-800 grid grid-cols-1 md:grid-cols-5 gap-2 items-end">
-                  <div className="md:col-span-2">
-                    <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-0.5">Fluid / Drug Name</label>
+              {/* Infusions & IV Fluids Log  */}
+              <div className="pt-4 border-t border-slate-150 dark:border-slate-850 space-y-4">
+                <h4 className="text-xs font-bold text-slate-800 dark:text-white uppercase tracking-wide">
+                  Infusions & IV Fluids Log
+                </h4>
+                <div className="bg-slate-50 dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 grid grid-cols-1 md:grid-cols-5 gap-3 items-end">
+                  <div className="md:col-span-1.5">
+                    <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-1">Fluid / Drug Name</label>
                     <input
                       type="text"
                       placeholder="e.g. Normal Saline, RL, Dopamine"
                       value={newInfusionFluid}
                       onChange={(e) => setNewInfusionFluid(e.target.value)}
-                      className="w-full px-2 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-md text-xs focus:ring-1 focus:ring-cyan-500"
+                      className="w-full px-3 py-1.5 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-xs text-slate-900 dark:text-slate-100"
                     />
                   </div>
                   <div>
-                    <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-0.5">Dose</label>
+                    <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-1">Dose</label>
                     <input
                       type="text"
                       placeholder="e.g. 500 mL, 5 mcg/kg"
                       value={newInfusionDose}
                       onChange={(e) => setNewInfusionDose(e.target.value)}
-                      className="w-full px-2 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-md text-xs focus:ring-1 focus:ring-cyan-500"
+                      className="w-full px-3 py-1.5 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-xs text-slate-900 dark:text-slate-100"
                     />
                   </div>
                   <div>
-                    <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-0.5">Dilution / Rate</label>
-                    <div className="flex gap-1">
-                      <input
-                        type="text"
-                        placeholder="In 50ml NS"
-                        value={newInfusionDilution}
-                        onChange={(e) => setNewInfusionDilution(e.target.value)}
-                        className="w-1/2 px-2 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-md text-xs focus:ring-1 focus:ring-cyan-500"
-                      />
-                      <input
-                        type="text"
-                        placeholder="100 mL/hr"
-                        value={newInfusionRate}
-                        onChange={(e) => setNewInfusionRate(e.target.value)}
-                        className="w-1/2 px-2 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-md text-xs focus:ring-1 focus:ring-cyan-500"
-                      />
-                    </div>
+                    <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-1">Dilution</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. In 50ml NS, Neat"
+                      value={newInfusionDilution}
+                      onChange={(e) => setNewInfusionDilution(e.target.value)}
+                      className="w-full px-3 py-1.5 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-xs text-slate-900 dark:text-slate-100"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-1">Rate</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. 100 mL/hr, 5 mL/hr"
+                      value={newInfusionRate}
+                      onChange={(e) => setNewInfusionRate(e.target.value)}
+                      className="w-full px-3 py-1.5 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-xs text-slate-900 dark:text-slate-100"
+                    />
                   </div>
                   <button
                     type="button"
                     onClick={handleAddInfusion}
-                    className="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-700 text-white rounded-md text-xs font-bold transition-all flex items-center justify-center gap-1 h-[28px]"
+                    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1"
                   >
-                    <Plus className="w-3.5 h-3.5" /> Log
+                    <Plus className="w-3.5 h-3.5" /> Log Infusion
                   </button>
                 </div>
-                
-                {currentCase.infusions && currentCase.infusions.length > 0 && (
-                  <div className="overflow-x-auto border rounded-lg border-slate-200 dark:border-slate-800 text-xs bg-white dark:bg-slate-950">
-                    <table className="w-full text-left border-collapse">
-                      <thead>
-                        <tr className="bg-slate-100 dark:bg-slate-900 text-slate-500 border-b border-slate-200 dark:border-slate-800 font-mono uppercase text-[9px]">
-                          <th className="p-2">Fluid / Drug</th>
-                          <th className="p-2">Dose / Dilution</th>
-                          <th className="p-2">Rate</th>
-                          <th className="p-2 text-right">Action</th>
+
+                {/* Infusion List Table  */}
+                <div className="overflow-x-auto border rounded-xl border-slate-200 dark:border-slate-800 text-xs">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="bg-slate-50 dark:bg-slate-900 text-slate-500 border-b border-slate-200 dark:border-slate-800 font-mono uppercase text-[9px]">
+                        <th className="p-2.5">Fluid / Drug</th>
+                        <th className="p-2.5">Dose</th>
+                        <th className="p-2.5">Dilution</th>
+                        <th className="p-2.5">Rate</th>
+                        <th className="p-2.5 text-right">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-150 dark:divide-slate-850">
+                      {(!currentCase.infusions || currentCase.infusions.length === 0) ? (
+                        <tr>
+                          <td colSpan={5} className="p-3 text-center text-slate-400 font-mono text-[11px] bg-white dark:bg-slate-950">No active IV fluids or drug infusions logged.</td>
                         </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-150 dark:divide-slate-850">
-                        {currentCase.infusions.map((inf) => (
-                          <tr key={inf.id} className="hover:bg-slate-50 dark:hover:bg-slate-900/50">
-                            <td className="p-2 font-bold text-slate-700 dark:text-slate-200">{inf.fluidName}</td>
-                            <td className="p-2">
-                              <span className="font-mono">{inf.dose}</span>
-                              <span className="mx-1 text-slate-300">•</span>
-                              <span className="text-slate-500">{inf.dilution}</span>
-                            </td>
-                            <td className="p-2 font-mono text-emerald-600 font-bold">{inf.rate}</td>
-                            <td className="p-2 text-right">
+                      ) : (
+                        currentCase.infusions.map((inf) => (
+                          <tr key={inf.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-900/10">
+                            <td className="p-2.5 font-bold text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-950">{inf.fluidName}</td>
+                            <td className="p-2.5 font-mono bg-white dark:bg-slate-950">{inf.dose}</td>
+                            <td className="p-2.5 text-slate-500 bg-white dark:bg-slate-950">{inf.dilution}</td>
+                            <td className="p-2.5 font-mono text-emerald-600 font-bold bg-white dark:bg-slate-950">{inf.rate}</td>
+                            <td className="p-2.5 text-right bg-white dark:bg-slate-950">
                               <button
                                 type="button"
                                 onClick={() => handleDeleteInfusion(inf.id)}
-                                className="text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-900/30 p-1 rounded-md transition-colors"
+                                className="text-slate-400 hover:text-rose-600 p-1"
                               >
-                                <Trash2 className="w-3.5 h-3.5" />
                               </button>
                             </td>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
               </div>
 
-              {/* === PROCEDURES SECTION === */}
-              <div className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3 space-y-3">
-                <div className="flex items-center justify-between border-b pb-2 border-slate-200 dark:border-slate-800">
-                  <h4 className="font-extrabold text-xs text-slate-800 dark:text-slate-200 uppercase tracking-wide flex items-center gap-2">
-                    <Activity className="w-4 h-4 text-amber-600 dark:text-amber-400" />
-                    Procedures Performed
-                  </h4>
-                  {currentCase.proceduresChecked && currentCase.proceduresChecked.length > 0 && (
-                    <span className="text-[10px] bg-amber-100 dark:bg-amber-950/50 text-amber-800 dark:text-amber-300 px-2 py-0.5 rounded font-bold font-mono border border-amber-200 dark:border-amber-800">
-                      {currentCase.proceduresChecked.length} Checked
-                    </span>
-                  )}
-                </div>
-                
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-[10px]">
-                  {/* GU & GI Section  */}
-                  <div className="bg-white dark:bg-slate-950 p-2 rounded-lg border border-slate-200 dark:border-slate-800 space-y-1.5">
-                    <span className="font-bold text-indigo-600 dark:text-indigo-400 uppercase tracking-wider block border-b pb-0.5 border-indigo-100 dark:border-indigo-900 mb-1">GU / GI</span>
-                    <label className="flex items-center gap-1.5 cursor-pointer font-semibold text-slate-700 dark:text-slate-300">
+              {/* Procedures Checkboxes  */}
+              <div className="pt-4 border-t border-slate-150 dark:border-slate-850 space-y-3 text-xs">
+                <h4 className="text-xs font-bold text-slate-800 dark:text-white uppercase tracking-wide">
+                  Procedures Checked / Performed
+                </h4>
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 bg-slate-50 dark:bg-slate-900 p-4 border border-slate-200 dark:border-slate-850 rounded-xl">
+                  {/* GU Section  */}
+                  <div className="space-y-2">
+                    <span className="font-bold text-[10px] text-indigo-600 dark:text-indigo-400 uppercase tracking-wider block border-b pb-1 border-indigo-100 dark:border-indigo-900">GU</span>
+                    <label className="flex items-center gap-2 cursor-pointer text-[11px] font-semibold">
                       <input
                         type="checkbox"
                         checked={currentCase.proceduresChecked?.includes("foleys") || false}
@@ -3738,109 +4123,130 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                           const updated = e.target.checked ? [...list, "foleys"] : list.filter(x => x !== "foleys");
                           setCurrentCase(prev => ({ ...prev, proceduresChecked: updated }));
                         }}
-                        className="rounded text-indigo-600 focus:ring-indigo-500 w-3 h-3"
-                      /> Foley's Catheter
-                    </label>
-                    <label className="flex items-center gap-1.5 cursor-pointer font-semibold text-slate-700 dark:text-slate-300">
-                      <input
-                        type="checkbox"
-                        checked={currentCase.proceduresChecked?.includes("ng_tube") || false}
-                        onChange={(e) => {
-                          const list = currentCase.proceduresChecked || [];
-                          const updated = e.target.checked ? [...list, "ng_tube"] : list.filter(x => x !== "ng_tube");
-                          setCurrentCase(prev => ({ ...prev, proceduresChecked: updated }));
-                        }}
-                        className="rounded text-indigo-600 focus:ring-indigo-500 w-3 h-3"
-                      /> NG Tube
-                    </label>
-                    <label className="flex items-center gap-1.5 cursor-pointer font-semibold text-slate-700 dark:text-slate-300">
-                      <input
-                        type="checkbox"
-                        checked={currentCase.proceduresChecked?.includes("gastric_lavage") || false}
-                        onChange={(e) => {
-                          const list = currentCase.proceduresChecked || [];
-                          const updated = e.target.checked ? [...list, "gastric_lavage"] : list.filter(x => x !== "gastric_lavage");
-                          setCurrentCase(prev => ({ ...prev, proceduresChecked: updated }));
-                        }}
-                        className="rounded text-indigo-600 focus:ring-indigo-500 w-3 h-3"
-                      /> Gastric Lavage
+                        className="rounded text-indigo-600 focus:ring-indigo-500"
+                      />
+                      Foley's Catheterization
                     </label>
                   </div>
-                  
+
+                  {/* GI Section  */}
+                  <div className="space-y-2">
+                    <span className="font-bold text-[10px] text-blue-600 dark:text-blue-400 uppercase tracking-wider block border-b pb-1 border-blue-100 dark:border-blue-900">GI</span>
+                    <div className="flex flex-col gap-1.5">
+                      <label className="flex items-center gap-2 cursor-pointer text-[11px] font-semibold">
+                        <input
+                          type="checkbox"
+                          checked={currentCase.proceduresChecked?.includes("ng_tube") || false}
+                          onChange={(e) => {
+                            const list = currentCase.proceduresChecked || [];
+                            const updated = e.target.checked ? [...list, "ng_tube"] : list.filter(x => x !== "ng_tube");
+                            setCurrentCase(prev => ({ ...prev, proceduresChecked: updated }));
+                          }}
+                          className="rounded text-blue-600 focus:ring-blue-500"
+                        />
+                        NG Tube Insertion
+                      </label>
+                      <label className="flex items-center gap-2 cursor-pointer text-[11px] font-semibold">
+                        <input
+                          type="checkbox"
+                          checked={currentCase.proceduresChecked?.includes("gastric_lavage") || false}
+                          onChange={(e) => {
+                            const list = currentCase.proceduresChecked || [];
+                            const updated = e.target.checked ? [...list, "gastric_lavage"] : list.filter(x => x !== "gastric_lavage");
+                            setCurrentCase(prev => ({ ...prev, proceduresChecked: updated }));
+                          }}
+                          className="rounded text-blue-600 focus:ring-blue-500"
+                        />
+                        Gastric Lavage
+                      </label>
+                    </div>
+                  </div>
+
                   {/* Wound Section  */}
-                  <div className="bg-white dark:bg-slate-950 p-2 rounded-lg border border-slate-200 dark:border-slate-800 space-y-1.5">
-                    <span className="font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider block border-b pb-0.5 border-emerald-100 dark:border-emerald-900 mb-1">Wound</span>
-                    <label className="flex items-center gap-1.5 cursor-pointer font-semibold text-slate-700 dark:text-slate-300">
-                      <input
-                        type="checkbox"
-                        checked={currentCase.proceduresChecked?.includes("suturing") || false}
-                        onChange={(e) => {
-                          const list = currentCase.proceduresChecked || [];
-                          const updated = e.target.checked ? [...list, "suturing"] : list.filter(x => x !== "suturing");
-                          setCurrentCase(prev => ({ ...prev, proceduresChecked: updated }));
-                        }}
-                        className="rounded text-emerald-600 focus:ring-emerald-500 w-3 h-3"
-                      /> Suturing/Closure
-                    </label>
-                    <label className="flex items-center gap-1.5 cursor-pointer font-semibold text-slate-700 dark:text-slate-300">
-                      <input
-                        type="checkbox"
-                        checked={currentCase.proceduresChecked?.includes("irrigation") || false}
-                        onChange={(e) => {
-                          const list = currentCase.proceduresChecked || [];
-                          const updated = e.target.checked ? [...list, "irrigation"] : list.filter(x => x !== "irrigation");
-                          setCurrentCase(prev => ({ ...prev, proceduresChecked: updated }));
-                        }}
-                        className="rounded text-emerald-600 focus:ring-emerald-500 w-3 h-3"
-                      /> Irrigation
-                    </label>
+                  <div className="space-y-2">
+                    <span className="font-bold text-[10px] text-emerald-600 dark:text-emerald-400 uppercase tracking-wider block border-b pb-1 border-emerald-100 dark:border-emerald-900">Wound</span>
+                    <div className="flex flex-col gap-1.5">
+                      <label className="flex items-center gap-2 cursor-pointer text-[11px] font-semibold">
+                        <input
+                          type="checkbox"
+                          checked={currentCase.proceduresChecked?.includes("suturing") || false}
+                          onChange={(e) => {
+                            const list = currentCase.proceduresChecked || [];
+                            const updated = e.target.checked ? [...list, "suturing"] : list.filter(x => x !== "suturing");
+                            setCurrentCase(prev => ({ ...prev, proceduresChecked: updated }));
+                          }}
+                          className="rounded text-emerald-600 focus:ring-emerald-500"
+                        />
+                        Wound Suturing / Closure
+                      </label>
+                      <label className="flex items-center gap-2 cursor-pointer text-[11px] font-semibold">
+                        <input
+                          type="checkbox"
+                          checked={currentCase.proceduresChecked?.includes("irrigation") || false}
+                          onChange={(e) => {
+                            const list = currentCase.proceduresChecked || [];
+                            const updated = e.target.checked ? [...list, "irrigation"] : list.filter(x => x !== "irrigation");
+                            setCurrentCase(prev => ({ ...prev, proceduresChecked: updated }));
+                          }}
+                          className="rounded text-emerald-600 focus:ring-emerald-500"
+                        />
+                        Wound Irrigation
+                      </label>
+                    </div>
                   </div>
-                  
+
                   {/* Ortho Section  */}
-                  <div className="bg-white dark:bg-slate-950 p-2 rounded-lg border border-slate-200 dark:border-slate-800 space-y-1.5 md:col-span-2 lg:col-span-1">
-                    <span className="font-bold text-amber-600 dark:text-amber-400 uppercase tracking-wider block border-b pb-0.5 border-amber-100 dark:border-amber-900 mb-1">Ortho</span>
-                    <label className="flex items-center gap-1.5 cursor-pointer font-semibold text-slate-700 dark:text-slate-300">
-                      <input
-                        type="checkbox"
-                        checked={currentCase.proceduresChecked?.includes("splinting") || false}
-                        onChange={(e) => {
-                          const list = currentCase.proceduresChecked || [];
-                          const updated = e.target.checked ? [...list, "splinting"] : list.filter(x => x !== "splinting");
-                          setCurrentCase(prev => ({ ...prev, proceduresChecked: updated }));
-                        }}
-                        className="rounded text-amber-600 focus:ring-amber-500 w-3 h-3"
-                      /> Splinting
-                    </label>
-                    <label className="flex items-center gap-1.5 cursor-pointer font-semibold text-slate-700 dark:text-slate-300">
-                      <input
-                        type="checkbox"
-                        checked={currentCase.proceduresChecked?.includes("reduction") || false}
-                        onChange={(e) => {
-                          const list = currentCase.proceduresChecked || [];
-                          const updated = e.target.checked ? [...list, "reduction"] : list.filter(x => x !== "reduction");
-                          setCurrentCase(prev => ({ ...prev, proceduresChecked: updated }));
-                        }}
-                        className="rounded text-amber-600 focus:ring-amber-500 w-3 h-3"
-                      /> Joint Reduction
-                    </label>
+                  <div className="space-y-2">
+                    <span className="font-bold text-[10px] text-amber-600 dark:text-amber-400 uppercase tracking-wider block border-b pb-1 border-amber-100 dark:border-amber-900">Ortho</span>
+                    <div className="flex flex-col gap-1.5">
+                      <label className="flex items-center gap-2 cursor-pointer text-[11px] font-semibold">
+                        <input
+                          type="checkbox"
+                          checked={currentCase.proceduresChecked?.includes("splinting") || false}
+                          onChange={(e) => {
+                            const list = currentCase.proceduresChecked || [];
+                            const updated = e.target.checked ? [...list, "splinting"] : list.filter(x => x !== "splinting");
+                            setCurrentCase(prev => ({ ...prev, proceduresChecked: updated }));
+                          }}
+                          className="rounded text-amber-600 focus:ring-amber-500"
+                        />
+                        Fracture Splinting
+                      </label>
+                      <label className="flex items-center gap-2 cursor-pointer text-[11px] font-semibold">
+                        <input
+                          type="checkbox"
+                          checked={currentCase.proceduresChecked?.includes("reduction") || false}
+                          onChange={(e) => {
+                            const list = currentCase.proceduresChecked || [];
+                            const updated = e.target.checked ? [...list, "reduction"] : list.filter(x => x !== "reduction");
+                            setCurrentCase(prev => ({ ...prev, proceduresChecked: updated }));
+                          }}
+                          className="rounded text-amber-600 focus:ring-amber-500"
+                        />
+                        Joint Reduction
+                      </label>
+                    </div>
                   </div>
                 </div>
-                
-                <div className="pt-1">
-                  <label className="block text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1">
+
+                <div className="space-y-1 pt-2">
+                  <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">
                     Other / Custom Procedures Notes
                   </label>
-                  <textarea
-                    rows={2}
-                    placeholder="e.g. Bedside FAST scan, reduction of minor subluxation..."
-                    value={currentCase.otherProcedures || ""}
-                    onChange={(e) => setCurrentCase(prev => ({ ...prev, otherProcedures: e.target.value }))}
-                    className="w-full px-3 py-1.5 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-xs focus:ring-1 focus:ring-blue-500"
-                  />
+                  <div className="flex gap-1.5">
+                    <textarea
+                      rows={2}
+                      placeholder="e.g. Bedside FAST scan, reduction of minor subluxation..."
+                      value={currentCase.otherProcedures || ""}
+                      onChange={(e) => setCurrentCase(prev => ({ ...prev, otherProcedures: e.target.value }))}
+                      className="flex-1 px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-xs text-slate-900 dark:text-slate-100"
+                    />
+                  </div>
                 </div>
               </div>
             </div>
           )}
+
           {/* Progress Notes Tab  */}
           {activeTab === "notes" && (
             <div className="space-y-4">
@@ -3865,7 +4271,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
 
           {/* AI Clinical Decision Support Tab  */}
           {activeTab === "treatment" && (
-            <div className="space-y-4 mt-8 pt-8 border-t-2 border-dashed border-slate-200 dark:border-slate-800">
+            <div className="space-y-6 mt-8 pt-8 border-t-2 border-dashed border-slate-200 dark:border-slate-800">
 <div className="border-b pb-3 flex flex-wrap items-center justify-between gap-4">
                 <div>
                   <h3 className="text-sm font-bold text-slate-800 dark:text-white uppercase tracking-wide">ErMate Differential & CDS Support</h3>
@@ -3901,7 +4307,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
 
               {/* Results  */}
               {currentCase.differentials.length === 0 ? (
-                <div className="p-4 text-center border-2 border-dashed border-slate-200 dark:border-slate-800 rounded-xl">
+                <div className="p-8 text-center border-2 border-dashed border-slate-200 dark:border-slate-800 rounded-xl">
                   <Sparkles className="w-10 h-10 mx-auto text-slate-300 dark:text-slate-700 mb-3" />
                   <p className="text-slate-600 dark:text-slate-400 font-medium">No differential list generated yet</p>
                   <p className="text-xs text-slate-400 mt-1">Tap 'Generate Differential' above to let the ErMate engine audit patient vitals and SAMPLE history.</p>
@@ -3958,7 +4364,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
 
           {/* Clinical Rounds & Case Debrief Tab  */}
           {activeTab === "rounds" && (
-            <div className="space-y-4 animate-fade-in text-xs">
+            <div className="space-y-6 animate-fade-in text-xs">
               
               {/* Header block  */}
               <div className="border-b pb-3.5 flex flex-col md:flex-row md:items-center justify-between gap-3">
@@ -3979,7 +4385,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
               </div>
 
               {/* How To Use & Purpose Guide Box  */}
-              <div className="bg-indigo-50/70 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-850 rounded-2xl p-4 md:p-4 text-xs text-indigo-950 dark:text-indigo-100 space-y-3 transition-all">
+              <div className="bg-indigo-50/70 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-850 rounded-2xl p-4 md:p-5 text-xs text-indigo-950 dark:text-indigo-100 space-y-3 transition-all">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <div className="p-1.5 bg-indigo-600 text-white rounded-lg shadow-xs">
@@ -4069,13 +4475,13 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
               </div>
 
               {/* Main Content Layout  */}
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 
                 {/* Left Side: Clinical Debrief & Rounds Chat (2 Columns)  */}
-                <div className="lg:col-span-2 space-y-4">
+                <div className="lg:col-span-2 space-y-6">
                   
                   {/* Analysis Content Panel  */}
-                  <div className="bg-slate-50 dark:bg-slate-900/40 border border-slate-150 dark:border-slate-850 rounded-2xl p-4 space-y-4 shadow-xs">
+                  <div className="bg-slate-50 dark:bg-slate-900/40 border border-slate-150 dark:border-slate-850 rounded-2xl p-5 space-y-4 shadow-xs">
                     
                     {roundsLoading ? (
                       <div className="py-16 text-center space-y-3">
@@ -4178,7 +4584,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                   </div>
 
                   {/* Interactive Rounds Mentor Chat (Unlimited)  */}
-                  <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-850 rounded-2xl p-4 space-y-4">
+                  <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-850 rounded-2xl p-5 space-y-4">
                     <div className="flex items-center justify-between border-b pb-2.5">
                       <div className="flex items-center gap-2">
                         <Users className="w-4.5 h-4.5 text-indigo-500" />
@@ -4373,7 +4779,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                 </div>
 
                 {/* Right Side: High-Yield Summary & Private Clinical Memory Portfolio  */}
-                <div className="space-y-4">
+                <div className="space-y-6">
                   
                   {/* High-Yield Key Takeaway Box  */}
                   {roundsKeyTakeaway && (
@@ -4391,7 +4797,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                   )}
 
                   {/* HIPAA Private Clinical Memory Sync  */}
-                  <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-850 rounded-2xl p-4 space-y-4">
+                  <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-850 rounded-2xl p-5 space-y-4">
                     <div className="flex items-center gap-1.5 border-b pb-2">
                       <BookOpen className="w-4 h-4 text-indigo-500" />
                       <h4 className="font-bold text-slate-800 dark:text-white uppercase tracking-wide text-[11px]">
@@ -4467,10 +4873,133 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
 
         </div>
 
-        {/* 2. Document Scanning Modal Simulation  */}
+        {/* Export + Finalize Actions Toolbar (End of Workflow)  */}
+        <div className="bg-white dark:bg-slate-950 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm space-y-3.5 no-print mb-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            {/* Group 3: Export Actions  */}
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[10px] font-black text-amber-600 dark:text-amber-400 uppercase tracking-wider font-mono">Export Actions:</span>
+              <button
+                type="button"
+                onClick={handleCopyCaseSheet}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-xl transition-all border ${
+                  copiedCaseText
+                    ? "bg-emerald-600 border-emerald-600 text-white"
+                    : "bg-amber-50 dark:bg-amber-950/20 hover:bg-amber-100 text-amber-800 dark:text-amber-300 border-amber-200 dark:border-amber-900/50"
+                }`}
+                title="Copy Case Sheet to Clipboard to paste directly into hospital EMR"
+              >
+                {copiedCaseText ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                {copiedCaseText ? "Copied to EMR!" : "Copy to EMR"}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => onViewPrintSheet ? onViewPrintSheet(currentCase.id) : setShowPdfModal(true)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 dark:bg-indigo-950/30 hover:bg-indigo-100 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 text-xs font-bold rounded-xl transition-all"
+                title="Preview Case Sheet as official printable PDF document"
+              >
+                <Eye className="w-3.5 h-3.5 text-indigo-600" />
+                View PDF
+              </button>
+
+              <button
+                type="button"
+                onClick={handleDownloadCaseSheet}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-100 dark:bg-slate-900 hover:bg-slate-200 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-800 text-xs font-bold rounded-xl transition-all"
+                title="Download Case Sheet as plain text file"
+              >
+                <Download className="w-3.5 h-3.5" />
+                Download
+              </button>
+
+              <button
+                type="button"
+                onClick={() => triggerPrintWithTip()}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-100 dark:bg-slate-900 hover:bg-slate-200 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-800 text-xs font-bold rounded-xl transition-all"
+              >
+                <Printer className="w-3.5 h-3.5" />
+                Print
+              </button>
+            </div>
+
+            {/* Group 4: Finalize Actions  */}
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="text-[10px] font-black text-emerald-600 dark:text-emerald-400 uppercase tracking-wider font-mono">Finalize:</span>
+              <button
+                type="button"
+                onClick={() => onNavigateToDischarge(currentCase.id)}
+                className="px-3.5 py-2 bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 text-xs font-bold rounded-xl transition-all"
+              >
+                Discharge Flow
+              </button>
+              {dischargeSyncStatus === "syncing" && (
+                <span className="text-[10px] text-purple-700 bg-purple-50 dark:bg-purple-950/40 border border-purple-200/50 px-2.5 py-1 rounded-full font-mono font-bold animate-pulse flex items-center gap-1">
+                  <RefreshCw className="w-3 h-3 animate-spin text-purple-600" />
+                  Syncing Discharge...
+                </span>
+              )}
+
+              <button
+                type="button"
+                onClick={handleSave}
+                className="px-4 py-2.5 bg-emerald-50 dark:bg-emerald-950/30 hover:bg-emerald-100 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 text-xs font-bold rounded-xl transition-all flex items-center gap-2 cursor-pointer transform hover:scale-[1.01] active:scale-[0.99]"
+              >
+                <Save className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                <span>Save Draft</span>
+              </button>
+              <button
+                type="button"
+                onClick={async () => { await handleSave(); onBack(); }}
+                className="px-6 py-2.5 bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 hover:from-emerald-700 hover:to-teal-800 text-white text-xs font-black rounded-xl shadow-md hover:shadow-lg transition-all flex items-center gap-2 cursor-pointer transform hover:scale-[1.01] active:scale-[0.99] border border-emerald-500/50"
+              >
+                <Save className="w-4 h-4 text-emerald-200" />
+                <span>Save & Go to Dashboard</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Clinical Reference Widget  */}
+        <div className="bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl p-4 text-xs space-y-2.5 no-print">
+          <div className="flex items-center gap-1.5 font-bold text-slate-700 dark:text-slate-300">
+            <BookOpen className="w-3.5 h-3.5" />
+            Clinical Resuscitation Card
+          </div>
+          {currentCase.isPediatric ? (
+            <div className="space-y-2 font-mono text-[10px] text-slate-500">
+              <div className="border-b border-slate-200/50 pb-1">
+                <strong className="text-sky-600 dark:text-sky-400">PALS Resuscitation Dose:</strong> Adrenaline 1:10,000 is <span className="font-bold text-slate-800 dark:text-slate-200">0.01 mg/kg (0.1 mL/kg) IV/IO</span>.
+                <div className="mt-1 bg-sky-50/50 dark:bg-sky-950/10 p-1 rounded border border-sky-100/50 dark:border-sky-900/30 text-[9px] text-sky-700 dark:text-sky-300 font-semibold">
+                  Calculated Dose ({pediatricWeight === "" ? getAPLSEstimate(currentCase.patient.age) : pediatricWeight} kg): <span className="font-bold font-mono">{(0.01 * (pediatricWeight === "" ? (getAPLSEstimate(currentCase.patient.age) as number) : pediatricWeight)).toFixed(2)} mg ({(0.1 * (pediatricWeight === "" ? (getAPLSEstimate(currentCase.patient.age) as number) : pediatricWeight)).toFixed(1)} mL)</span>
+                </div>
+              </div>
+              <div>
+                <strong className="text-sky-600 dark:text-sky-400">Defibrillation Energy:</strong> First shock: <span className="font-bold">2 J/kg</span>. Second: <span className="font-bold">4 J/kg</span>.
+                <div className="mt-1 bg-sky-50/50 dark:bg-sky-950/10 p-1 rounded border border-sky-100/50 dark:border-sky-900/30 text-[9px] text-sky-700 dark:text-sky-300 font-semibold">
+                  Energy ({pediatricWeight === "" ? getAPLSEstimate(currentCase.patient.age) : pediatricWeight} kg): <span className="font-bold font-mono">{2 * (pediatricWeight === "" ? (getAPLSEstimate(currentCase.patient.age) as number) : pediatricWeight)} J / {4 * (pediatricWeight === "" ? (getAPLSEstimate(currentCase.patient.age) as number) : pediatricWeight)} J</span>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-2 font-mono text-[10px] text-slate-500">
+              <p className="border-b border-slate-200/50 pb-1">
+                <strong className="text-rose-600 dark:text-rose-400">ATLS ABCDE Check:</strong> A (Airway + Collar), B (Breathing), C (Circulation/Hemorrhage), D (Disability), E (Exposure).
+              </p>
+              <p>
+                <strong className="text-rose-600 dark:text-rose-400">Anaphylaxis Protocol:</strong> Adrenaline 1:1000 is <span className="font-bold text-slate-800 dark:text-slate-200">0.5 mg IM</span> given in the lateral thigh.
+              </p>
+            </div>
+          )}
+        </div>
+
+      
+
+ 
+      {/* 2. Document Scanning Modal Simulation  */}
       {showScanModal && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fade-in no-print">
-          <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl w-full max-w-lg p-4 md:p-4 shadow-2xl space-y-4">
+          <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl w-full max-w-lg p-5 md:p-6 shadow-2xl space-y-4">
             <div className="flex items-center justify-between border-b pb-3">
               <h3 className="text-base font-bold font-display text-slate-800 dark:text-white flex items-center gap-2">
                 <FileText className="w-5 h-5 text-blue-600" />
@@ -4538,33 +5067,40 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
 
       
       {/* Sticky Mobile Footer  */}
-      <div className="sticky bottom-0 z-40 bg-white/95 dark:bg-slate-950/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 px-4 py-2 mt-auto flex items-center justify-between no-print shadow-[0_-4px_10px_-1px_rgba(0,0,0,0.02)]">
+      <div className="sticky bottom-0 z-40 bg-white/95 dark:bg-slate-950/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 p-3 sm:p-4 mt-auto flex items-center justify-between shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] no-print">
+        <button onClick={handleSave} className="px-4 py-2 sm:px-5 sm:py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] sm:text-xs rounded-xl shadow-sm flex items-center gap-2 transition-colors active:scale-[0.98]">
+          <Save className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> Save Changes
+        </button>
         {(() => {
           const order = ["complaints", "primary-survey", "history", "secondary-survey", "investigations", "treatment", "notes", "disposition", "trends", "rounds"];
           const curr = order.indexOf(activeTab);
           const nextId = (curr !== -1 && curr < order.length - 1) ? order[curr + 1] : null;
-          const labels: Record<string, string> = {  "complaints": "Complaints",  "primary-survey": "Primary",  "history": "SAMPLE",  "secondary-survey": "Secondary",  "investigations": "Investigations",  "treatment": "Treatment",  "notes": "Notes",  "disposition": "Disposition",  "trends": "Trends",  "rounds": "Rounds"};
-          
+          const labels: Record<string, string> = {
+  "complaints": "Complaints",
+  "primary-survey": "Primary",
+  "history": "SAMPLE",
+  "secondary-survey": "Secondary",
+  "investigations": "Investigations",
+  "treatment": "Treatment",
+  "notes": "Notes",
+  "disposition": "Disposition",
+  "trends": "Trends",
+  "rounds": "Rounds"
+};
+          if (!nextId) return null;
           return (
-            <div className="flex-1 flex justify-start">
-              {nextId && (
-                <button onClick={() => setActiveTab(nextId as any)} className="px-4 py-2.5 bg-transparent hover:bg-slate-100 dark:hover:bg-slate-900 text-slate-600 dark:text-slate-400 font-semibold text-[11px] rounded-lg flex items-center gap-1.5 transition-colors active:scale-[0.98]">
-                  Next: {labels[nextId]} <ArrowRight className="w-3.5 h-3.5" />
-                </button>
-              )}
-            </div>
+            <button onClick={() => setActiveTab(nextId as any)} className="px-4 py-2 sm:px-5 sm:py-2.5 bg-slate-100 dark:bg-slate-900 hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-800 dark:text-slate-200 font-bold text-[11px] sm:text-xs rounded-xl flex items-center gap-2 transition-colors active:scale-[0.98]">
+              Next: {labels[nextId]} <ArrowRight className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+            </button>
           );
         })()}
-        
-        <button onClick={handleSave} className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] sm:text-xs rounded-lg shadow-sm flex items-center gap-2 transition-colors active:scale-[0.98] shrink-0 ml-2">
-          <Save className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> Save Changes
-        </button>
       </div>
+
       {/* Interactive UI Screen Close  */}
       </div>
 
       {/* Printable Document - Hidden on screen, shown only when printing  */}
-      <div className="hidden print:block p-4 md:p-10 font-sans leading-relaxed text-[11px] text-slate-900 bg-white space-y-5 select-text max-w-full print:p-0">
+      <div className="hidden print:block p-8 md:p-10 font-sans leading-relaxed text-[11px] text-slate-900 bg-white space-y-5 select-text max-w-full print:p-0">
         
         {currentCase.isPediatric ? (
           // BEAUTIFUL PEDIATRIC PRINT RECORD
@@ -5061,7 +5597,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
       {/* 3. Post-Save Clinical Debrief Nudge Modal  */}
       {showPostSaveModal && (
         <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-fade-in no-print">
-          <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-3xl w-full max-w-xl p-4 shadow-2xl space-y-4">
+          <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-3xl w-full max-w-xl p-6 shadow-2xl space-y-6">
             
             {/* Success Banner  */}
             <div className="text-center space-y-2">
@@ -5182,7 +5718,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
 
       {/* View Case Sheet PDF Modal Preview Overlay  */}
       {showPdfModal && (
-        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 md:p-4 animate-fade-in no-print">
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 md:p-6 animate-fade-in no-print">
           <div className="bg-white dark:bg-slate-900 w-full max-w-4xl h-[92vh] rounded-2xl shadow-2xl overflow-hidden flex flex-col border border-slate-200 dark:border-slate-800">
             {/* Modal Top Control Header  */}
             <div className="px-5 py-3.5 bg-slate-900 text-white flex items-center justify-between shrink-0 border-b border-slate-800">
@@ -5228,8 +5764,8 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
             </div>
 
             {/* Modal Document Container  */}
-            <div className="flex-1 overflow-y-auto p-4 md:p-4 bg-slate-100 dark:bg-slate-950 flex justify-center">
-              <div className="bg-white text-slate-900 p-4 md:p-10 rounded-xl shadow-lg border border-slate-200 w-full max-w-3xl font-sans text-[11px] leading-relaxed space-y-5 select-text">
+            <div className="flex-1 overflow-y-auto p-4 md:p-8 bg-slate-100 dark:bg-slate-950 flex justify-center">
+              <div className="bg-white text-slate-900 p-6 md:p-10 rounded-xl shadow-lg border border-slate-200 w-full max-w-3xl font-sans text-[11px] leading-relaxed space-y-5 select-text">
                 {/* Header section matching clinical template layout  */}
                 <div className="border-b-4 border-double border-slate-800 pb-3 text-center space-y-1">
                   <h2 className="text-sm md:text-base font-extrabold tracking-wide uppercase font-serif text-slate-950">
@@ -5386,390 +5922,6 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
         </div>
       )}
 
-    
-      {showSafetyModal && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="bg-white dark:bg-slate-900 rounded-2xl w-full max-w-3xl max-h-[90vh] overflow-hidden flex flex-col shadow-2xl border border-slate-200 dark:border-slate-800">
-            <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-slate-50/50 dark:bg-slate-900/50">
-              <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-full bg-indigo-100 dark:bg-indigo-900/50 flex items-center justify-center text-indigo-600 dark:text-indigo-400">
-                  <Shield className="w-4 h-4" />
-                </div>
-                <div>
-                  <h3 className="font-bold text-slate-800 dark:text-white">Safety & Accreditation</h3>
-                  <p className="text-[10px] text-slate-500">Optional documentation — complete when applicable</p>
-                </div>
-              </div>
-              <button onClick={() => setShowSafetyModal(false)} className="p-2 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-full transition-colors text-slate-500">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            
-            <div className="p-4 sm:p-6 overflow-y-auto flex-1 space-y-6">
-              <div className="border-b pb-2.5 flex items-center justify-between">
-                <div>
-                  <h3 className="text-sm font-bold text-slate-800 dark:text-white uppercase tracking-wide">
-                    JCI & NABH Accreditation Audit Form
-                  </h3>
-                  <p className="text-[10px] text-slate-400">Mandated safety metrics and checklist audits.</p>
-                </div>
-                <span className="text-[10px] bg-blue-100 text-blue-700 px-3 py-1 rounded-full font-bold uppercase flex items-center gap-1 font-mono">
-                  <Shield className="w-3.5 h-3.5" /> JCI IPSG Compliant
-                </span>
-              </div>
-
-              {/* IPSG Checklist Block  */}
-              <div className="bg-slate-50 dark:bg-slate-900 p-4 border border-slate-200 dark:border-slate-850 rounded-xl space-y-3">
-                <div className="flex items-center gap-1.5 border-b pb-2 border-slate-100 dark:border-slate-800">
-                  <ClipboardCheck className="w-4.5 h-4.5 text-blue-600" />
-                  <h4 className="font-extrabold text-xs text-slate-700 dark:text-slate-300 uppercase tracking-wide">
-                    International Patient Safety Goals (IPSG) Checklist
-                  </h4>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
-                  {/* IPSG Checkboxes  */}
-                  <div className="space-y-3">
-                    <label className="flex items-start gap-2.5 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={currentCase.ipsgChecklist?.ipsg1IdentifiersVerified || false}
-                        onChange={(e) => updateIpsg("ipsg1IdentifiersVerified", e.target.checked)}
-                        className="mt-0.5 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
-                      />
-                      <div>
-                        <span className="font-bold block text-slate-700 dark:text-slate-200">IPSG 1: Identify Patient Correctly</span>
-                        <span className="text-[10px] text-slate-400">Dual identifiers (Name + UHID barcode/tag) verified prior to any care.</span>
-                      </div>
-                    </label>
-
-                    <label className="flex items-start gap-2.5 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={currentCase.ipsgChecklist?.ipsg2ReadBackPerformed || false}
-                        onChange={(e) => updateIpsg("ipsg2ReadBackPerformed", e.target.checked)}
-                        className="mt-0.5 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
-                      />
-                      <div>
-                        <span className="font-bold block text-slate-700 dark:text-slate-200">IPSG 2: Improve Effective Communication</span>
-                        <span className="text-[10px] text-slate-400">Verbal/Telephone order Read-Back procedure completed and documented.</span>
-                      </div>
-                    </label>
-
-                    <label className="flex items-start gap-2.5 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={currentCase.ipsgChecklist?.ipsg3HighAlertDoubleChecked || false}
-                        onChange={(e) => updateIpsg("ipsg3HighAlertDoubleChecked", e.target.checked)}
-                        className="mt-0.5 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
-                      />
-                      <div>
-                        <span className="font-bold block text-slate-700 dark:text-slate-200">IPSG 3: Safety of High-Alert Medications</span>
-                        <span className="text-[10px] text-slate-400">Concentrated electrolytes, insulin, heparin double-checked by second nurse.</span>
-                      </div>
-                    </label>
-                  </div>
-
-                  <div className="space-y-3">
-                    <label className="flex items-start gap-2.5 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={currentCase.ipsgChecklist?.ipsg5HandHygieneComplied || false}
-                        onChange={(e) => updateIpsg("ipsg5HandHygieneComplied", e.target.checked)}
-                        className="mt-0.5 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
-                      />
-                      <div>
-                        <span className="font-bold block text-slate-700 dark:text-slate-200">IPSG 5: Reduce Risk of Healthcare Infections</span>
-                        <span className="text-[10px] text-slate-400">Hand Hygiene (WHO 5-Moments) complied with before and after contact.</span>
-                      </div>
-                    </label>
-
-                    <div>
-                      <span className="font-bold block text-slate-700 dark:text-slate-200 mb-1">IPSG 6: Reduce Risk of Falls</span>
-                      <div className="flex items-center gap-1 bg-white dark:bg-slate-950 p-1.5 rounded-lg border">
-                        <span className="text-[10px] text-slate-400 pr-2">Fall Risk Score:</span>
-                        {["Low", "Medium", "High"].map((r) => (
-                          <button
-                            key={r}
-                            type="button"
-                            onClick={() => updateIpsg("ipsg6FallRiskAssessed", r as any)}
-                            className={`text-[10px] px-2.5 py-1 rounded font-bold transition-all ${
-                              currentCase.ipsgChecklist?.ipsg6FallRiskAssessed === r
-                                ? r === "High"
-                                  ? "bg-rose-600 text-white"
-                                  : r === "Medium"
-                                  ? "bg-amber-500 text-white"
-                                  : "bg-emerald-600 text-white"
-                                : "bg-slate-50 dark:bg-slate-900 text-slate-400"
-                            }`}
-                          >
-                            {r}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Vulnerable Patient Assessment & Abuse Screen  */}
-              <div className="bg-slate-50 dark:bg-slate-900 p-4 border border-slate-200 dark:border-slate-850 rounded-xl space-y-4">
-                <div className="flex items-center gap-1.5 border-b pb-2 border-slate-100 dark:border-slate-800 justify-between flex-wrap">
-                  <div className="flex items-center gap-1.5">
-                    <Users className="w-4.5 h-4.5 text-indigo-600" />
-                    <h4 className="font-extrabold text-xs text-slate-700 dark:text-slate-300 uppercase tracking-wide">
-                      Vulnerable Patient Screening Panel
-                    </h4>
-                  </div>
-                  {currentCase.patient.age !== null && (currentCase.patient.age > 65 || currentCase.patient.age < 12) && (
-                    <span className="text-[10px] bg-rose-50 dark:bg-rose-950/20 text-rose-600 dark:text-rose-400 font-bold px-2 py-0.5 rounded border border-rose-100 dark:border-rose-900 animate-pulse-slow">
-                      ⚠ Age Vulnerability Flagged ({currentCase.patient.age} y/o)
-                    </span>
-                  )}
-                </div>
-
-                {currentCase.patient.age !== null && (currentCase.patient.age > 65 || currentCase.patient.age < 12) && (
-                  <div className="text-[10px] bg-indigo-50/50 dark:bg-indigo-950/20 border border-indigo-100 dark:border-indigo-900/60 text-indigo-700 dark:text-indigo-300 p-2.5 rounded-lg">
-                    <span className="font-bold">Standard Directive:</span> Patients aged &gt; 65 years or &lt; 12 years are automatically categorized as clinical vulnerable groups. Complete all 7 indicators below.
-                  </div>
-                )}
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
-                  <div className="space-y-3">
-                    <label className="flex items-center justify-between bg-white dark:bg-slate-950 p-2 rounded-lg border border-slate-200 dark:border-slate-800">
-                      <span className="font-bold text-slate-700 dark:text-slate-200">Is Vulnerable Group Patient?</span>
-                      <button
-                        type="button"
-                        onClick={() => updateVulnerable("isVulnerable", !currentCase.vulnerableAssessment?.isVulnerable)}
-                        className={`text-[10px] px-2.5 py-1 rounded font-extrabold transition-all ${
-                          currentCase.vulnerableAssessment?.isVulnerable || (currentCase.patient.age !== null && (currentCase.patient.age > 65 || currentCase.patient.age < 12))
-                            ? "bg-indigo-600 text-white"
-                            : "bg-slate-100 text-slate-400 dark:bg-slate-800"
-                        }`}
-                      >
-                        {currentCase.vulnerableAssessment?.isVulnerable || (currentCase.patient.age !== null && (currentCase.patient.age > 65 || currentCase.patient.age < 12)) ? "YES" : "NO"}
-                      </button>
-                    </label>
-
-                    {(currentCase.vulnerableAssessment?.isVulnerable || (currentCase.patient.age !== null && (currentCase.patient.age > 65 || currentCase.patient.age < 12))) && (
-                      <div>
-                        <label className="block text-[10px] font-bold text-indigo-700 dark:text-indigo-400 uppercase mb-1">Vulnerable Group Type</label>
-                        <select
-                          value={currentCase.vulnerableAssessment?.vulnerableType || (currentCase.patient.age !== null && currentCase.patient.age < 12 ? "Pediatric" : currentCase.patient.age !== null && currentCase.patient.age > 65 ? "Geriatric" : "Pediatric")}
-                          onChange={(e) => updateVulnerable("vulnerableType", e.target.value)}
-                          className="w-full px-2 py-1 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded text-xs"
-                        >
-                          <option value="Pediatric">Pediatric (Under 12)</option>
-                          <option value="Geriatric">Geriatric (Over 65)</option>
-                          <option value="Pregnant">Pregnant / Peripartum</option>
-                          <option value="Physically Challenged">Physically/Mentally Challenged</option>
-                          <option value="Unconscious">Unconscious / Unattended</option>
-                        </select>
-                      </div>
-                    )}
-
-                    <div>
-                      <span className="font-bold block text-slate-700 dark:text-slate-200 mb-1">Functional Assessment Grade</span>
-                      <select
-                        value={currentCase.vulnerableAssessment?.functionalAssessmentScore || "Independent"}
-                        onChange={(e) => updateVulnerable("functionalAssessmentScore", e.target.value)}
-                        className="w-full px-2 py-1 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded text-xs"
-                      >
-                        <option value="Independent">Independent (Fully ambulatory)</option>
-                        <option value="Assisted">Assisted (Needs helper for ADLs)</option>
-                        <option value="Dependent">Dependent (Requires complete care)</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  <div className="space-y-3 pt-1">
-                    <label className="flex items-start gap-2.5 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={currentCase.vulnerableAssessment?.nutritionalScreenPassed || false}
-                        onChange={(e) => updateVulnerable("nutritionalScreenPassed", e.target.checked)}
-                        className="mt-0.5 rounded text-indigo-600 focus:ring-indigo-500"
-                      />
-                      <div>
-                        <span className="font-bold block text-slate-700 dark:text-slate-200">Nutritional Screening Passed</span>
-                        <span className="text-[10px] text-slate-400">Nutritional compromise screened: no active cachexia or severe feeding difficulty.</span>
-                      </div>
-                    </label>
-
-                    <label className="flex items-start gap-2.5 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={currentCase.vulnerableAssessment?.abuseScreenNegative || false}
-                        onChange={(e) => updateVulnerable("abuseScreenNegative", e.target.checked)}
-                        className="mt-0.5 rounded text-indigo-600 focus:ring-indigo-500"
-                      />
-                      <div>
-                        <span className="font-bold block text-slate-700 dark:text-slate-200">Abuse & Neglect Screening Negative</span>
-                        <span className="text-[10px] text-slate-400">No signs of non-accidental trauma, neglect, or clinical abuse.</span>
-                      </div>
-                    </label>
-                  </div>
-                </div>
-
-                {/* 7 JCI/NABH Mandatory Indicators Grid  */}
-                <div className="border border-slate-200 dark:border-slate-800 rounded-xl p-4 bg-white dark:bg-slate-950 space-y-3">
-                  <p className="text-[11px] font-bold text-slate-700 dark:text-slate-300 flex items-center justify-between">
-                    <span>MANDATORY DETAILED SCREENING QUESTIONS (Word Document Format)</span>
-                    <span className="text-[9px] text-slate-400 font-normal">If any is YES, perform detailed assessment</span>
-                  </p>
-                  
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 text-xs">
-                    <label className="flex items-start gap-2.5 cursor-pointer bg-slate-50 dark:bg-slate-900/40 p-2.5 rounded-lg border border-slate-100 dark:border-slate-850">
-                      <input
-                        type="checkbox"
-                        checked={currentCase.vulnerableAssessment?.victimOfAbuse || false}
-                        onChange={(e) => updateVulnerable("victimOfAbuse", e.target.checked)}
-                        className="mt-0.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                      />
-                      <div>
-                        <span className="font-bold block text-slate-700 dark:text-slate-200">1. Abuse, Violence or Assault?</span>
-                        <span className="text-[10px] text-slate-400 leading-tight">Victim of family violence, elder abuse, child abuse, neglect, rape, physical abuse, assault.</span>
-                      </div>
-                    </label>
-
-                    <label className="flex items-start gap-2.5 cursor-pointer bg-slate-50 dark:bg-slate-900/40 p-2.5 rounded-lg border border-slate-100 dark:border-slate-850">
-                      <input
-                        type="checkbox"
-                        checked={currentCase.vulnerableAssessment?.severePainDistress || false}
-                        onChange={(e) => updateVulnerable("severePainDistress", e.target.checked)}
-                        className="mt-0.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                      />
-                      <div>
-                        <span className="font-bold block text-slate-700 dark:text-slate-200">2. Severe Pain or Distress?</span>
-                        <span className="text-[10px] text-slate-400 leading-tight">Presenting with extreme visceral/trauma pain or severe psychological distress.</span>
-                      </div>
-                    </label>
-
-                    <label className="flex items-start gap-2.5 cursor-pointer bg-slate-50 dark:bg-slate-900/40 p-2.5 rounded-lg border border-slate-100 dark:border-slate-850">
-                      <input
-                        type="checkbox"
-                        checked={currentCase.vulnerableAssessment?.isAlertOriented === false}
-                        onChange={(e) => updateVulnerable("isAlertOriented", !e.target.checked)}
-                        className="mt-0.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                      />
-                      <div>
-                        <span className="font-bold block text-slate-700 dark:text-slate-200">3. Impaired Mental Alertness?</span>
-                        <span className="text-[10px] text-slate-400 leading-tight">Patient is disoriented to time, place, or person; cannot provide reliable history.</span>
-                      </div>
-                    </label>
-
-                    <label className="flex items-start gap-2.5 cursor-pointer bg-slate-50 dark:bg-slate-900/40 p-2.5 rounded-lg border border-slate-100 dark:border-slate-850">
-                      <input
-                        type="checkbox"
-                        checked={currentCase.vulnerableAssessment?.suicidalIdeationRisk || false}
-                        onChange={(e) => updateVulnerable("suicidalIdeationRisk", e.target.checked)}
-                        className="mt-0.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                      />
-                      <div>
-                        <span className="font-bold block text-slate-700 dark:text-slate-200">4. Suicidal Ideation / Psychiatric Risk?</span>
-                        <span className="text-[10px] text-slate-400 leading-tight">Active suicidal thoughts, self-harm markers, or critical psychiatric flags.</span>
-                      </div>
-                    </label>
-
-                    <label className="flex items-start gap-2.5 cursor-pointer bg-slate-50 dark:bg-slate-900/40 p-2.5 rounded-lg border border-slate-100 dark:border-slate-850">
-                      <input
-                        type="checkbox"
-                        checked={currentCase.vulnerableAssessment?.confusionAgitation || false}
-                        onChange={(e) => updateVulnerable("confusionAgitation", e.target.checked)}
-                        className="mt-0.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                      />
-                      <div>
-                        <span className="font-bold block text-slate-700 dark:text-slate-200">5. Active Confusion or Agitation?</span>
-                        <span className="text-[10px] text-slate-400 leading-tight">Exhibiting clinical delirium, severe restless agitation, or combativeness.</span>
-                      </div>
-                    </label>
-
-                    <label className="flex items-start gap-2.5 cursor-pointer bg-slate-50 dark:bg-slate-900/40 p-2.5 rounded-lg border border-slate-100 dark:border-slate-850">
-                      <input
-                        type="checkbox"
-                        checked={currentCase.vulnerableAssessment?.needsMobilityAssistance || false}
-                        onChange={(e) => updateVulnerable("needsMobilityAssistance", e.target.checked)}
-                        className="mt-0.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                      />
-                      <div>
-                        <span className="font-bold block text-slate-700 dark:text-slate-200">6. Needs Assistance with ADLs/Mobility?</span>
-                        <span className="text-[10px] text-slate-400 leading-tight">Patient requires help with transfer, standing, or basic activities of daily living.</span>
-                      </div>
-                    </label>
-
-                    <label className="flex items-start gap-2.5 cursor-pointer bg-slate-50 dark:bg-slate-900/40 p-2.5 rounded-lg border border-slate-100 dark:border-slate-850 col-span-1 md:col-span-2">
-                      <input
-                        type="checkbox"
-                        checked={currentCase.vulnerableAssessment?.recentFall || false}
-                        onChange={(e) => updateVulnerable("recentFall", e.target.checked)}
-                        className="mt-0.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                      />
-                      <div>
-                        <span className="font-bold block text-slate-700 dark:text-slate-200">7. Recent Fall Incidents?</span>
-                        <span className="text-[10px] text-slate-400 leading-tight">Has experienced a fall recently or presents with extreme postural instability/gait imbalance.</span>
-                      </div>
-                    </label>
-                  </div>
-                </div>
-              </div>
-
-              {/* Procedure Consent & Time-Out (IPSG 4 Surgery / Procedure Checklist)  */}
-              <div className="bg-slate-50 dark:bg-slate-900 p-4 border border-slate-200 dark:border-slate-850 rounded-xl space-y-3">
-                <div className="flex items-center gap-1.5 border-b pb-2 border-slate-100 dark:border-slate-800">
-                  <FileCheck className="w-4.5 h-4.5 text-emerald-600" />
-                  <h4 className="font-extrabold text-xs text-slate-700 dark:text-slate-300 uppercase tracking-wide">
-                    IPSG 4: Informed Consent & Surgical/Procedure Time-Out
-                  </h4>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
-                  <label className="flex items-start gap-2.5 cursor-pointer bg-white dark:bg-slate-950 p-2.5 rounded-lg border border-slate-100">
-                    <input
-                      type="checkbox"
-                      checked={currentCase.consentTimeOut?.procedureConsentObtained || false}
-                      onChange={(e) => updateConsentTimeOut("procedureConsentObtained", e.target.checked)}
-                      className="mt-0.5 rounded text-emerald-600 focus:ring-emerald-500"
-                    />
-                    <div>
-                      <span className="font-bold block text-slate-700 dark:text-slate-200">Written Informed Consent Verified</span>
-                      <span className="text-[10px] text-slate-400">Verified written or emergency bedside clinical consent form is signed.</span>
-                    </div>
-                  </label>
-
-                  <label className="flex items-start gap-2.5 cursor-pointer bg-white dark:bg-slate-950 p-2.5 rounded-lg border border-slate-100">
-                    <input
-                      type="checkbox"
-                      checked={currentCase.consentTimeOut?.procedureTimeOutPerformed || false}
-                      onChange={(e) => updateConsentTimeOut("procedureTimeOutPerformed", e.target.checked)}
-                      className="mt-0.5 rounded text-emerald-600 focus:ring-emerald-500"
-                    />
-                    <div>
-                      <span className="font-bold block text-slate-700 dark:text-slate-200">Procedure "Time-Out" Completed</span>
-                      <span className="text-[10px] text-slate-400">Verbal confirmation of patient, side, site, and procedure immediately before start.</span>
-                    </div>
-                  </label>
-                </div>
-              </div>
-            </div>
-
-            <div className="p-4 border-t border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50 flex justify-end gap-3">
-              <button 
-                onClick={() => setShowSafetyModal(false)} 
-                className="px-4 py-2 font-bold text-xs bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300"
-              >
-                Close
-              </button>
-              <button 
-                onClick={async () => { await handleSave(); setShowSafetyModal(false); }}
-                className="px-6 py-2 font-bold text-xs bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg shadow-sm"
-              >
-                Save Changes
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-</div>
+    </div>
   );
 }

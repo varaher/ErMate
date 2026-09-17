@@ -891,6 +891,17 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
           </div>
           
           <div className="flex gap-2 shrink-0 w-full md:w-auto">
+                        <button
+              onClick={() => onOpenPediatricCalculator()}
+              className={`hidden md:flex flex-1 md:flex-none px-3 py-1.5 border font-bold rounded-xl text-[10px] md:text-[11px] transition-all items-center justify-center gap-1.5 cursor-pointer ${
+                isDarkMode 
+                  ? "bg-slate-800/80 hover:bg-slate-700 border-slate-700 text-slate-200" 
+                  : "bg-white/15 hover:bg-white/25 border-white/20 text-white"
+              }`}
+            >
+              <Calculator className="w-3.5 h-3.5 text-slate-150" />
+              Pediatric Dosing
+            </button>
             <button
               onClick={() => { if (!isOnShift) setShowShiftCheckIn(true); else onStartHandoverChat(); }}
               className="flex-1 md:flex-none px-3 py-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white text-[10px] md:text-[11px] font-bold rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer"
@@ -898,23 +909,7 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
               <Users className="w-3.5 h-3.5 text-purple-100" />
               Handover
             </button>
-            <button
-              onClick={() => {
-                if (onStartDischargeSummary) {
-                  if (!isOnShift) setShowShiftCheckIn(true); else onStartDischargeSummary();
-                } else {
-                  onNavigateToTab("handover");
-                }
-              }}
-              className={`flex-1 md:flex-none px-3 py-1.5 border font-bold rounded-xl text-[10px] md:text-[11px] transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
-                isDarkMode 
-                  ? "bg-slate-800/80 hover:bg-slate-700 border-slate-700 text-slate-200" 
-                  : "bg-white/15 hover:bg-white/25 border-white/20 text-white"
-              }`}
-            >
-              <FileText className="w-3.5 h-3.5 text-slate-150" />
-              Discharge Summary
-            </button>
+
           </div>
         </div>
       </div>
@@ -1045,42 +1040,8 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
           Clinical Tools & Active Workflows
         </h2>
 
-        {/* Mobile Minimalist Action Pad (Visible on Mobile only) */}
+                {/* Mobile Minimalist Action Pad (Visible on Mobile only) */}
         <div className="grid grid-cols-2 gap-3 md:hidden">
-          {/* Card 1: New Patient Intake */}
-          <button 
-            onClick={() => { if (!isOnShift) setShowShiftCheckIn(true); else onStartFullFlow(); }}
-            className="flex flex-col justify-between p-3 bg-emerald-500/10 dark:bg-emerald-950/20 border border-emerald-500/20 rounded-xl text-left hover:bg-emerald-500/15 transition-all shadow-xs h-[88px] w-full"
-          >
-            <div className="w-7 h-7 bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 rounded-lg flex items-center justify-center">
-              <PlusCircle className="w-4.5 h-4.5" />
-            </div>
-            <div>
-              <span className="block font-black text-xs text-slate-800 dark:text-emerald-300">New Patient</span>
-              <span className="block text-[8px] text-slate-400 font-medium">AI triage intake</span>
-            </div>
-          </button>
-
-          {/* Card 2: Discharge Summary Generator (Mobile) */}
-          <button 
-            onClick={() => {
-              if (onStartDischargeSummary) {
-                if (!isOnShift) setShowShiftCheckIn(true); else onStartDischargeSummary();
-              } else {
-                onNavigateToTab("handover");
-              }
-            }}
-            className="flex flex-col justify-between p-3 bg-purple-500/10 dark:bg-purple-950/20 border border-purple-500/20 rounded-xl text-left hover:bg-purple-500/15 transition-all shadow-xs h-[88px] w-full"
-          >
-            <div className="w-7 h-7 bg-purple-500/20 text-purple-600 dark:text-purple-400 rounded-lg flex items-center justify-center">
-              <FileText className="w-4.5 h-4.5 text-purple-500" />
-            </div>
-            <div>
-              <span className="block font-black text-xs text-slate-800 dark:text-purple-300 truncate">Discharge Summary</span>
-              <span className="block text-[8px] text-slate-400 font-medium truncate">EMR case dump processor</span>
-            </div>
-          </button>
-
           {/* Card 3: Voice Scribe Desk */}
           <button 
             onClick={() => { if (!isOnShift) setShowShiftCheckIn(true); else onStartVoiceScribe(); }}
@@ -1095,6 +1056,20 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
             </div>
           </button>
 
+          {/* Card 1: New Patient Intake */}
+          <button 
+            onClick={() => { if (!isOnShift) setShowShiftCheckIn(true); else onStartFullFlow(); }}
+            className="flex flex-col justify-between p-3 bg-emerald-500/10 dark:bg-emerald-950/20 border border-emerald-500/20 rounded-xl text-left hover:bg-emerald-500/15 transition-all shadow-xs h-[88px] w-full"
+          >
+            <div className="w-7 h-7 bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 rounded-lg flex items-center justify-center">
+              <PlusCircle className="w-4.5 h-4.5" />
+            </div>
+            <div>
+              <span className="block font-black text-xs text-slate-800 dark:text-emerald-300">New Patient</span>
+              <span className="block text-[8px] text-slate-400 font-medium">AI triage intake</span>
+            </div>
+          </button>
+
           {/* Card 4: Shift Handover */}
           <button 
             onClick={() => { if (!isOnShift) setShowShiftCheckIn(true); else onStartHandoverChat(); }}
@@ -1106,6 +1081,20 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
             <div>
               <span className="block font-black text-xs text-slate-800 dark:text-indigo-300">Shift Handover</span>
               <span className="block text-[8px] text-slate-400 font-medium">AI SBAR builder</span>
+            </div>
+          </button>
+
+          {/* Card 2: Pediatric Dosing (Mobile) */}
+          <button 
+            onClick={() => onOpenPediatricCalculator()}
+            className="flex flex-col justify-between p-3 bg-sky-500/10 dark:bg-sky-950/20 border border-sky-500/20 rounded-xl text-left hover:bg-sky-500/15 transition-all shadow-xs h-[88px] w-full"
+          >
+            <div className="w-7 h-7 bg-sky-500/20 text-sky-600 dark:text-sky-400 rounded-lg flex items-center justify-center">
+              <Calculator className="w-4.5 h-4.5 text-sky-500" />
+            </div>
+            <div>
+              <span className="block font-black text-xs text-slate-800 dark:text-sky-300 truncate">Pediatric Dosing</span>
+              <span className="block text-[8px] text-slate-400 font-medium leading-tight mt-0.5">Weight-based reference</span>
             </div>
           </button>
 
@@ -1142,85 +1131,10 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
             </div>
             <span className="text-[8px] font-mono text-red-500 font-bold bg-red-500/10 px-1.5 py-0.5 rounded uppercase font-black">CRITICAL</span>
           </button>
-
-          {/* Card 7: Pediatric Drug Calculator (Mobile) */}
-          <button 
-            onClick={() => onOpenPediatricCalculator()}
-            className="col-span-2 flex items-center justify-between p-3 bg-sky-500/10 dark:bg-sky-950/20 border border-sky-500/20 rounded-xl text-left hover:bg-sky-500/15 transition-all shadow-xs h-[64px] w-full"
-          >
-            <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 bg-sky-500/20 text-sky-600 dark:text-sky-400 rounded-lg flex items-center justify-center">
-                <Calculator className="w-4 h-4 text-sky-500" />
-              </div>
-              <div>
-                <span className="block font-black text-xs text-slate-800 dark:text-sky-300">Peds Dosing</span>
-                <span className="block text-[8px] text-slate-400 font-medium">Weight calculations & dosing reference</span>
-              </div>
-            </div>
-            <span className="text-[8px] font-mono text-sky-500 font-bold bg-sky-500/10 px-1.5 py-0.5 rounded uppercase font-black">CALCULATOR</span>
-          </button>
         </div>
 
         {/* Desktop Detailed Grid (Visible on Desktop only) */}
         <div className="hidden md:grid md:grid-cols-2 lg:grid-cols-3 gap-5">
-          
-          {/* Card 1: New Patient Intake */}
-          <div 
-            onClick={() => { if (!isOnShift) setShowShiftCheckIn(true); else onStartFullFlow(); }}
-            className="group relative bg-emerald-500/10 dark:bg-emerald-950/20 border border-emerald-500/25 dark:border-emerald-500/10 rounded-2xl p-5 hover:border-emerald-500 dark:hover:border-emerald-500 cursor-pointer shadow-xs hover:shadow-md transition-all duration-200 flex flex-col justify-between h-48"
-          >
-            <div className="absolute right-4 top-4 p-2 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 rounded-xl group-hover:scale-110 transition-transform">
-              <PlusCircle className="w-5.5 h-5.5" />
-            </div>
-            
-            <div className="space-y-1.5 max-w-[85%]">
-              <h3 className="text-sm font-extrabold text-slate-900 dark:text-white flex items-center gap-1.5">
-                New Patient
-              </h3>
-              <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
-                Speak your case — ErMate fills the case sheet. Dynamic triage scaling, voice dictation, and medical codes.
-              </p>
-            </div>
-
-            <div className="mt-4 flex items-center justify-between text-xs font-bold text-emerald-600 dark:text-emerald-400 border-t border-emerald-500/10 pt-3">
-              <span>Start Intake Scribe</span>
-              <ChevronRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
-            </div>
-          </div>
-
-          {/* Card 2: Discharge Summary Generator (Desktop) */}
-          <div 
-            onClick={() => {
-              if (onStartDischargeSummary) {
-                if (!isOnShift) setShowShiftCheckIn(true); else onStartDischargeSummary();
-              } else {
-                onNavigateToTab("handover");
-              }
-            }}
-            className="group relative bg-purple-500/10 dark:bg-purple-950/20 border border-purple-500/25 dark:border-purple-500/10 rounded-2xl p-5 hover:border-purple-500 dark:hover:border-purple-500 cursor-pointer shadow-xs hover:shadow-md transition-all duration-200 flex flex-col justify-between h-48"
-          >
-            <div className="absolute right-4 top-4 p-2 bg-purple-500/10 text-purple-600 dark:text-purple-400 rounded-xl group-hover:scale-110 transition-transform">
-              <FileText className="w-5.5 h-5.5" />
-            </div>
-            
-            <div className="space-y-1.5 max-w-[85%]">
-              <div className="flex items-center gap-1.5">
-                <h3 className="text-sm font-extrabold text-slate-900 dark:text-white">
-                  Discharge Summary Generator
-                </h3>
-                <span className="text-[8px] font-mono text-purple-500 font-bold bg-purple-500/10 px-1.5 py-0.5 rounded uppercase">AI FORMATTER</span>
-              </div>
-              <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
-                Paste raw EMR notes or case sheet dumps to generate standardized, medico-legal discharge summaries for any hospital.
-              </p>
-            </div>
-
-            <div className="mt-4 flex items-center justify-between text-xs font-bold text-purple-600 dark:text-purple-400 border-t border-purple-500/10 pt-3">
-              <span>Open Generator</span>
-              <ChevronRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
-            </div>
-          </div>
-
           {/* Card 3: Voice Scribe Desk */}
           <div 
             onClick={() => { if (!isOnShift) setShowShiftCheckIn(true); else onStartVoiceScribe(); }}
@@ -1241,6 +1155,30 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
 
             <div className="mt-4 flex items-center justify-between text-xs font-bold text-purple-600 dark:text-purple-400 border-t border-slate-100 dark:border-slate-800/60 pt-3">
               <span>Open Assistant</span>
+              <ChevronRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+            </div>
+          </div>
+
+          {/* Card 1: New Patient Intake */}
+          <div 
+            onClick={() => { if (!isOnShift) setShowShiftCheckIn(true); else onStartFullFlow(); }}
+            className="group relative bg-emerald-500/10 dark:bg-emerald-950/20 border border-emerald-500/25 dark:border-emerald-500/10 rounded-2xl p-5 hover:border-emerald-500 dark:hover:border-emerald-500 cursor-pointer shadow-xs hover:shadow-md transition-all duration-200 flex flex-col justify-between h-48"
+          >
+            <div className="absolute right-4 top-4 p-2 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 rounded-xl group-hover:scale-110 transition-transform">
+              <PlusCircle className="w-5.5 h-5.5" />
+            </div>
+            
+            <div className="space-y-1.5 max-w-[85%]">
+              <h3 className="text-sm font-extrabold text-slate-900 dark:text-white flex items-center gap-1.5">
+                New Patient
+              </h3>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
+                Speak your case — ErMate fills the case sheet. Dynamic triage scaling, voice dictation, and medical codes.
+              </p>
+            </div>
+
+            <div className="mt-4 flex items-center justify-between text-xs font-bold text-emerald-600 dark:text-emerald-400 border-t border-emerald-500/10 pt-3">
+              <span>Start Intake Scribe</span>
               <ChevronRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
             </div>
           </div>
@@ -1322,31 +1260,6 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
               <ChevronRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
             </div>
           </div>
-
-          {/* Card 8: Pediatric Drug Calculator (Desktop) */}
-          <div 
-            onClick={() => onOpenPediatricCalculator()}
-            className="group relative bg-sky-500/10 dark:bg-sky-950/20 border border-sky-500/25 dark:border-sky-500/10 rounded-2xl p-5 hover:border-sky-500 dark:hover:border-sky-500 cursor-pointer shadow-xs hover:shadow-md transition-all duration-200 flex flex-col justify-between h-48"
-          >
-            <div className="absolute right-4 top-4 p-2 bg-sky-500/10 text-sky-600 dark:text-sky-400 rounded-xl group-hover:scale-110 transition-transform">
-              <Calculator className="w-5.5 h-5.5" />
-            </div>
-            
-            <div className="space-y-1.5 max-w-[85%]">
-              <h3 className="text-sm font-extrabold text-slate-900 dark:text-white flex items-center gap-1.5">
-                Pediatric Drug Calculator
-              </h3>
-              <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
-                Weight-based dosing reference. Enter weight for immediate calculations across 24 drug categories.
-              </p>
-            </div>
-
-            <div className="mt-4 flex items-center justify-between text-xs font-bold text-sky-600 dark:text-sky-400 border-t border-sky-500/10 pt-3">
-              <span>Open Calculator</span>
-              <ChevronRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
-            </div>
-          </div>
-
         </div>
       </div>
 

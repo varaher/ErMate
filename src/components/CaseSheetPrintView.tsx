@@ -108,6 +108,14 @@ export interface CaseSheetData {
     informant: string | null;
   } | null;
   notes: { progressNotes: string | null; addendum: string | null };
+
+  safetyAndAccreditation: {
+    ipsg: string[];
+    vulnerability: string[];
+    fallRisk: string | null;
+    consentTimeOut: string[];
+  } | null;
+
   isMlc: boolean;
 
   signatureBlock: {
@@ -277,6 +285,39 @@ export function convertClinicalCaseToCaseSheetData(c: ClinicalCase, defaultHospi
 
   const pediatricRaw = c.pediatricDetails as any;
 
+
+  // Safety & Accreditation extraction
+  const ipsgList: string[] = [];
+  if (c.ipsgChecklist?.ipsg1IdentifiersVerified) ipsgList.push("Patient identifiers verified");
+  if (c.ipsgChecklist?.ipsg2ReadBackPerformed) ipsgList.push("Verbal order read-back performed");
+  if (c.ipsgChecklist?.ipsg3HighAlertDoubleChecked) ipsgList.push("High-alert meds double-checked");
+  if (c.ipsgChecklist?.ipsg4TimeOutPerformed) ipsgList.push("Time-Out performed");
+  if (c.ipsgChecklist?.ipsg5HandHygieneComplied) ipsgList.push("Hand hygiene complied");
+
+  const fallRisk = c.ipsgChecklist?.ipsg6FallRiskAssessed || null;
+
+  const vulnList: string[] = [];
+  if (c.vulnerableAssessment?.severePainDistress) vulnList.push("Severe pain/distress identified");
+  if (c.vulnerableAssessment?.isAlertOriented === false) vulnList.push("Impaired mental alertness");
+  if (c.vulnerableAssessment?.suicidalIdeationRisk) vulnList.push("Psychiatric/suicidal risk");
+  if (c.vulnerableAssessment?.confusionAgitation) vulnList.push("Active confusion or agitation");
+  if (c.vulnerableAssessment?.needsMobilityAssistance) vulnList.push("Mobility assistance required");
+  if (c.vulnerableAssessment?.recentFall) vulnList.push("Recent fall incidents");
+
+  const consentList: string[] = [];
+  if (c.consentTimeOut?.procedureConsentObtained) consentList.push("Written informed consent verified");
+  if (c.consentTimeOut?.procedureTimeOutPerformed) consentList.push("Procedure time-out completed");
+
+  let safetyAndAccreditation = null;
+  if (ipsgList.length > 0 || vulnList.length > 0 || consentList.length > 0 || fallRisk) {
+    safetyAndAccreditation = {
+      ipsg: ipsgList,
+      vulnerability: vulnList,
+      fallRisk: fallRisk,
+      consentTimeOut: consentList
+    };
+  }
+
   return {
     caseId: c.id,
     hospitalName: c.hospital || defaultHospital || undefined, // no hardcoded hospital name fallback either
@@ -341,8 +382,8 @@ export function convertClinicalCaseToCaseSheetData(c: ClinicalCase, defaultHospi
       followUpAdvice: c.dispositionAndPlan?.followUpAdvice || null,
     },
 
-    isPediatric: !!c.isPediatric || (c.patient.age !== null && c.patient.age < 16),
-    pediatricDetails: (!!c.isPediatric || (c.patient.age !== null && c.patient.age < 16)) && pediatricRaw ? {
+    isPediatric: !!c.isPediatric || (c.patient.age !== null && c.patient.age <= 16),
+    pediatricDetails: (!!c.isPediatric || (c.patient.age !== null && c.patient.age <= 16)) && pediatricRaw ? {
       weight: pediatricRaw.patientWeight || pediatricRaw.weight || null,
       patAppearanceTone: pediatricRaw.patAppearanceTone || null,
       patAppearanceInteractivity: pediatricRaw.patAppearanceInteractivity || null,
@@ -359,6 +400,7 @@ export function convertClinicalCaseToCaseSheetData(c: ClinicalCase, defaultHospi
       informant: pediatricRaw.informant || null,
     } : null,
 
+    safetyAndAccreditation,
     notes: {
       progressNotes: c.progressNotes || null,
       addendum: c.addendumNotes || null,
@@ -481,6 +523,46 @@ function PsychologicalAssessmentSection({ data }: { data: PsychologicalAssessmen
       {data.notes && (
         <p className="text-sm mt-2"><span className="font-semibold">Notes:</span> {data.notes}</p>
       )}
+    </Section>
+  );
+}
+
+
+function SafetyAndAccreditationSection({ data }: { data: CaseSheetData["safetyAndAccreditation"] }) {
+  if (!data) return null;
+
+  return (
+    <Section>
+      <SectionHeading>Safety & Accreditation</SectionHeading>
+      <div className="space-y-3">
+        {(data.ipsg.length > 0 || data.fallRisk) && (
+          <div>
+            <p className="text-xs font-bold uppercase tracking-wide text-slate-600 print:text-black mb-1">Patient Safety Goals</p>
+            <ul className="text-sm list-disc pl-5 space-y-0.5">
+              {data.ipsg.map((item, i) => <li key={i}>{item}</li>)}
+              {data.fallRisk && <li>Fall risk: <span className="font-semibold">{data.fallRisk}</span></li>}
+            </ul>
+          </div>
+        )}
+        
+        {data.vulnerability.length > 0 && (
+          <div>
+            <p className="text-xs font-bold uppercase tracking-wide text-slate-600 print:text-black mb-1">Vulnerability Screening</p>
+            <ul className="text-sm list-disc pl-5 space-y-0.5">
+              {data.vulnerability.map((item, i) => <li key={i}>{item}</li>)}
+            </ul>
+          </div>
+        )}
+
+        {data.consentTimeOut.length > 0 && (
+          <div>
+            <p className="text-xs font-bold uppercase tracking-wide text-slate-600 print:text-black mb-1">Consent / Time-Out</p>
+            <ul className="text-sm list-disc pl-5 space-y-0.5">
+              {data.consentTimeOut.map((item, i) => <li key={i}>{item}</li>)}
+            </ul>
+          </div>
+        )}
+      </div>
     </Section>
   );
 }
@@ -752,6 +834,8 @@ export default function CaseSheetPrintView({ data: propData, clinicalCase, onBac
                 <ul className="text-sm list-disc pl-5 space-y-0.5 font-mono">{data.treatmentGiven.map((t, i) => <li key={i}>{t}</li>)}</ul>
               ) : <EmptyLine />}
             </Section>
+
+            <SafetyAndAccreditationSection data={data.safetyAndAccreditation} />
 
             <Section>
               <SectionHeading>Disposition & Outcome</SectionHeading>

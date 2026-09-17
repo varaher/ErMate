@@ -7,7 +7,9 @@ export function PrimarySurveyAdjuncts({ data, onChange, openSections, toggleSect
       {/* ── ABG / VBG ─────────────────────────────────────────── */}
       <AccordionItem
         title="ABG / VBG"
-        iconLetter="?"
+        summary={[data.adjuncts?.abg?.interpretation, data.adjuncts?.abg?.finalDiagnosis]
+          .filter(Boolean).join(" · ")}
+        iconLetter={<Activity className="w-4 h-4" />}
         iconBgClass="bg-emerald-600"
         iconTextClass="text-emerald-600"
         isOpen={openSections.abg}
@@ -136,7 +138,9 @@ export function PrimarySurveyAdjuncts({ data, onChange, openSections, toggleSect
       {/* ── ECG ─────────────────────────────────────────── */}
       <AccordionItem
         title="ECG"
-        iconLetter="?"
+        summary={[data.adjuncts?.ecgStatus]
+          .filter(Boolean).join(" · ")}
+        iconLetter={<Heart className="w-4 h-4" />}
         iconBgClass="bg-emerald-600"
         iconTextClass="text-emerald-600"
         isOpen={openSections.ecg}
@@ -164,7 +168,9 @@ export function PrimarySurveyAdjuncts({ data, onChange, openSections, toggleSect
       {/* ── EFAST ─────────────────────────────────────────── */}
       <AccordionItem
         title="EFAST"
-        iconLetter="?"
+        summary={[data.adjuncts?.efastStatus]
+          .filter(Boolean).join(" · ")}
+        iconLetter={<Activity className="w-4 h-4" />}
         iconBgClass="bg-emerald-600"
         iconTextClass="text-emerald-600"
         isOpen={openSections.efast}
@@ -190,7 +196,9 @@ export function PrimarySurveyAdjuncts({ data, onChange, openSections, toggleSect
       {/* ── Bedside Echo ─────────────────────────────────────────── */}
       <AccordionItem
         title="Bedside Echo"
-        iconLetter="?"
+        summary={[data.adjuncts?.echoStatus]
+          .filter(Boolean).join(" · ")}
+        iconLetter={<Heart className="w-4 h-4" />}
         iconBgClass="bg-emerald-600"
         iconTextClass="text-emerald-600"
         isOpen={openSections.bedsideEcho}
@@ -415,6 +423,7 @@ export function DropdownSelect({
 
 export function AccordionItem({
   title,
+  summary,
   iconLetter,
   iconBgClass,
   iconTextClass,
@@ -423,6 +432,7 @@ export function AccordionItem({
   children
 }: {
   title: string;
+  summary?: string;
   iconLetter: string | React.ReactNode;
   iconBgClass: string;
   iconTextClass: string;
@@ -431,24 +441,31 @@ export function AccordionItem({
   children: React.ReactNode;
 }) {
   return (
-    <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden shadow-xs mb-3">
+    <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden mb-2">
       <button
         type="button"
         onClick={onToggle}
-        className="w-full flex items-center justify-between p-4 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
+        className="w-full flex items-center justify-between p-3 md:p-4 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
       >
-        <div className="flex items-center gap-4">
-          <span className={`w-8 h-8 rounded-full text-white font-black text-sm flex items-center justify-center ${iconBgClass}`}>
+        <div className="flex items-center gap-3 md:gap-4 overflow-hidden">
+          <span className={`w-7 h-7 md:w-8 md:h-8 rounded-full text-white font-black text-xs md:text-sm flex items-center justify-center shrink-0 ${iconBgClass}`}>
             {iconLetter}
           </span>
-          <span className={`font-bold text-base uppercase tracking-wide ${iconTextClass}`}>
-            {title}
-          </span>
+          <div className="flex flex-col md:flex-row md:items-center text-left gap-0.5 md:gap-3 truncate">
+            <span className={`font-bold text-sm md:text-base uppercase tracking-wide shrink-0 ${iconTextClass}`}>
+              {title}
+            </span>
+            {!isOpen && summary && (
+              <span className="text-[11px] md:text-xs text-slate-500 dark:text-slate-400 font-medium truncate">
+                {summary}
+              </span>
+            )}
+          </div>
         </div>
-        <ChevronDown className={`w-5 h-5 text-slate-400 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+        <ChevronDown className={`w-4 h-4 md:w-5 md:h-5 text-slate-400 transition-transform shrink-0 ml-2 ${isOpen ? 'rotate-180' : ''}`} />
       </button>
       {isOpen && (
-        <div className="p-4 pt-0 border-t border-slate-100 dark:border-slate-800 mt-2">
+        <div className="p-3 md:p-4 pt-0 border-t border-slate-100 dark:border-slate-800 mt-1">
           {children}
         </div>
       )}
@@ -510,13 +527,15 @@ export function PrimarySurveySection({
       {/* ── A — AIRWAY ─────────────────────────────────────────────── */}
       <AccordionItem
         title="A - AIRWAY"
-        iconLetter="?"
+        summary={[data.airway?.status ? data.airway.status.charAt(0).toUpperCase() + data.airway.status.slice(1) : ""]
+          .filter(Boolean).join(" · ")}
+        iconLetter="A"
         iconBgClass="bg-red-500"
         iconTextClass="text-red-500"
         isOpen={openSections.airway}
         onToggle={() => toggleSection('airway')}
       >
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 md:gap-3">
           <QuickSelect
             label="Airway Status"
             options={["Patent", "Maintained", "Compromised", "Protected"]}
@@ -547,13 +566,16 @@ export function PrimarySurveySection({
       {/* ── B — BREATHING ──────────────────────────────────────────── */}
       <AccordionItem
         title="B - BREATHING"
-        iconLetter="?"
+        summary={[(data.breathing?.rr || vitals?.rr) ? `RR ${data.breathing?.rr || vitals?.rr}` : "", 
+          (data.breathing?.spo2 || vitals?.spo2) ? `SpO₂ ${data.breathing?.spo2 || vitals?.spo2}%` : ""]
+          .filter(Boolean).join(" · ")}
+        iconLetter="B"
         iconBgClass="bg-orange-500"
         iconTextClass="text-orange-500"
         isOpen={openSections.breathing}
         onToggle={() => toggleSection('breathing')}
       >
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 md:gap-3 mb-2 md:mb-3">
           <VitalInput
             label="RR"
             unit="/min"
@@ -577,14 +599,14 @@ export function PrimarySurveySection({
               onUpdateVitals?.("spo2", v);
             }}
           />
-          <TextInput
+          <div className="col-span-2 sm:col-span-1"><TextInput
             label="O₂ Delivery"
             placeholder="Room air / 2L NC / Mask / NRM / NIV / Intubated"
             value={data.breathing?.o2Delivery}
             onChange={(v) => onChange("breathing.o2Delivery", v)}
-          />
+          /></div>
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 md:gap-3">
           <QuickSelect
             label="Work of Breathing"
             options={["Normal", "Increased"]}
@@ -619,13 +641,16 @@ export function PrimarySurveySection({
       {/* ── C — CIRCULATION ────────────────────────────────────────── */}
       <AccordionItem
         title="C - CIRCULATION"
-        iconLetter="?"
+        summary={[(data.circulation?.hr || vitals?.hr) ? `HR ${data.circulation?.hr || vitals?.hr}` : "", 
+          ((data.circulation?.sbp && data.circulation?.dbp) || vitals?.bp) ? `BP ${vitals?.bp || `${data.circulation?.sbp}/${data.circulation?.dbp}`}` : ""]
+          .filter(Boolean).join(" · ")}
+        iconLetter="C"
         iconBgClass="bg-amber-500"
         iconTextClass="text-amber-500"
         isOpen={openSections.circulation}
         onToggle={() => toggleSection('circulation')}
       >
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 md:gap-3 mb-2 md:mb-3">
           <VitalInput
             label="HR"
             unit="/min"
@@ -637,12 +662,6 @@ export function PrimarySurveySection({
               onChange("circulation.hr", v);
               onUpdateVitals?.("hr", v);
             }}
-          />
-          <QuickSelect
-            label="Rhythm"
-            options={["Regular", "Irregular"]}
-            value={data.circulation?.rhythm === "irregular" ? "Irregular" : "Regular"}
-            onChange={(v) => onChange("circulation.rhythm", v.toLowerCase())}
           />
           <VitalInput
             label="BP"
@@ -663,8 +682,14 @@ export function PrimarySurveySection({
               onUpdateVitals?.("bp", v);
             }}
           />
+          <div className="col-span-2 sm:col-span-1"><QuickSelect
+            label="Rhythm"
+            options={["Regular", "Irregular"]}
+            value={data.circulation?.rhythm === "irregular" ? "Irregular" : "Regular"}
+            onChange={(v) => onChange("circulation.rhythm", v.toLowerCase())}
+          /></div>
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 md:gap-3 mb-2 md:mb-3">
           <QuickSelect
             label="CRT"
             options={["< 2 sec", "> 2 sec"]}
@@ -722,7 +747,7 @@ export function PrimarySurveySection({
               Score: {data.disability?.gcsTotal || "15"}/15
             </span>
           </div>
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-3 gap-2 md:gap-3">
             <VitalInput
               label="Eye (E1-E4)"
               max={4}
@@ -758,7 +783,7 @@ export function PrimarySurveySection({
             />
           </div>
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 mb-3">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 md:gap-3 mb-2 md:mb-3">
           <VitalInput
             label="Pupil Size R"
             unit="mm"
@@ -788,7 +813,7 @@ export function PrimarySurveySection({
             onChange={(v) => onChange("disability.pupilsEqual", v === "Equal")}
           />
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 gap-2 md:gap-3">
           <VitalInput
             label="GRBS"
             unit="mg/dL"
@@ -801,12 +826,12 @@ export function PrimarySurveySection({
               onUpdateVitals?.("grbs", v);
             }}
           />
-          <QuickSelect
+          <div className="col-span-2 sm:col-span-1"><QuickSelect
             label="Seizure Activity"
             options={["None", "Active", "Post-ictal"]}
             value={data.disability?.seizure === "none" ? "None" : data.disability?.seizure === "active" ? "Active" : data.disability?.seizure === "postictal" ? "Post-ictal" : data.disability?.seizure}
             onChange={(v) => onChange("disability.seizure", v.toLowerCase().replace("-", ""))}
-          />
+          /></div>
           <TextInput
             label="Focal Deficit"
             placeholder="Nil / Right hemiplegia / Aphasia"
@@ -819,13 +844,15 @@ export function PrimarySurveySection({
       {/* ── E — EXPOSURE ─────────────────────────────────────────── */}
       <AccordionItem
         title="E - EXPOSURE"
-        iconLetter="?"
+        summary={[(data.exposure?.temp || vitals?.temp) ? `Temp ${data.exposure?.temp || vitals?.temp}°C` : ""]
+          .filter(Boolean).join(" · ")}
+        iconLetter="E"
         iconBgClass="bg-blue-500"
         iconTextClass="text-blue-500"
         isOpen={openSections.exposure}
         onToggle={() => toggleSection('exposure')}
       >
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+        <div className="grid grid-cols-2 sm:grid-cols-2 gap-2 md:gap-3 mb-2 md:mb-3">
           <VitalInput
             label="Temperature"
             unit="°C / °F"
@@ -838,12 +865,12 @@ export function PrimarySurveySection({
               onUpdateVitals?.("temp", v);
             }}
           />
-          <QuickSelect
+          <div className="col-span-2 sm:col-span-1"><QuickSelect
             label="Hypothermia Prevention"
             options={["Warm blankets applied", "Warmer on", "Not required"]}
             value={data.exposure?.hypothermiaPrevention ? "Warm blankets applied" : "Not required"}
             onChange={(v) => onChange("exposure.hypothermiaPrevention", v !== "Not required")}
-          />
+          /></div>
         </div>
         <div className="mb-3">
           <TextInput

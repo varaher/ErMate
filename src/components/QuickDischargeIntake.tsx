@@ -44,17 +44,17 @@ export function createQuickDischargeCase(
   hospital: string
 ): ClinicalCase {
   const now = new Date().toISOString();
-  const age = extractedFields.patient?.age ?? 0;
+  const age = extractedFields.patient?.age ?? null;
 
   return {
     id: `CASE-${Date.now()}`,
     status: "Active",
     savedTime: now,
     timeSpentMin: 0,
-    isPediatric: age > 0 && age < 16,
+    isPediatric: age !== null && age <= 16,
     patient: {
       name: "Unassigned Patient",
-      age: 0,
+      age: null,
       gender: "Male",
       uhid: generateUHID(),
       presentingComplaint: "Quick discharge intake",
@@ -169,7 +169,7 @@ export default function QuickDischargeIntake({
       const extractedCaseData: Partial<ClinicalCase> = {
         patient: {
           name: ext.patientName || "Unassigned Patient",
-          age: typeof ext.age === "number" ? ext.age : parseInt(ext.age, 10) || 0,
+          age: typeof ext.age === "number" ? ext.age : parseInt(ext.age, 10) || null,
           gender: ext.gender || "Male",
           uhid: generateUHID(),
           presentingComplaint: ext.presentingComplaint || ext.chiefComplaint || "Quick discharge intake",
@@ -366,7 +366,7 @@ export default function QuickDischargeIntake({
         const extractedCaseData: Partial<ClinicalCase> = {
           patient: {
             name: ocr.patientName || "Unassigned Patient",
-            age: typeof ocr.age === "number" ? ocr.age : parseInt(ocr.age, 10) || 0,
+            age: typeof ocr.age === "number" ? ocr.age : parseInt(ocr.age, 10) || null,
             gender: ocr.gender || "Male",
             uhid: generateUHID(),
             presentingComplaint: ocr.presentingComplaint || "Quick discharge intake",
