@@ -432,6 +432,10 @@ export interface VitalsRecord {
 }
 
 export interface ClinicalCase {
+  workspaceType?: "individual" | "hospital";
+  ownerUid?: string | null;
+  createdByUid?: string;
+  hospitalId?: string | null;
   id: string;
   bedNo?: string;
   patient: PatientDemographics;
@@ -616,6 +620,7 @@ export interface UserProfile {
   email: string;
   role: string;
   hospital: string;
+  workplaceName?: string;
   place?: string;
   state?: string;
   pincode?: string;
@@ -868,3 +873,23 @@ export interface QuickPastePatient {
 }
 
 
+
+export interface LogbookEntry {
+  entryId: string;
+  ownerUid: string;
+  sourceCaseId?: string;
+  sourceType: "individual" | "hospital";
+  hospitalIdAtTime?: string | null;
+  hospitalNameAtTime?: string | null;
+  roleAtTime?: string | null;
+  dateSeen?: string;
+  ageGroup?: string;
+  gender?: string;
+  triageCategory?: string;
+  caseCategory?: string;
+  proceduresPerformed?: string[];
+  skills?: string[];
+  learningPoints?: string;
+  createdAt: string;
+  updatedAt: string;
+}

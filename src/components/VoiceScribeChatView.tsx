@@ -430,6 +430,22 @@ export default function VoiceScribeChatView({
         });
       }
       setMessages(prev => prev.map(m => m.id === msgId ? { ...m, extractionApplied: true } : m));
+      
+      const confirmationId = `${msgId}-case-sheet-prepared`;
+      const confirmationMsg: Message = {
+        id: confirmationId,
+        sender: "ai",
+        text: "✅ Case Sheet prepared successfully.",
+        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        mode: "dictation",
+      };
+      
+      setMessages(prev => {
+        if (prev.some(m => m.id === confirmationId)) return prev;
+        return [...prev, confirmationMsg];
+      });
+      persistMessage(confirmationMsg);
+
       // Note: we don't clear processingAction on success because we want the UI locked while navigating
     } catch (e) {
       console.warn("Failed to apply extraction", e);
@@ -455,6 +471,22 @@ export default function VoiceScribeChatView({
         });
       }
       setMessages(prev => prev.map(m => m.id === msgId ? { ...m, dischargeApplied: true } : m));
+      
+      const confirmationId = `${msgId}-discharge-prepared`;
+      const confirmationMsg: Message = {
+        id: confirmationId,
+        sender: "ai",
+        text: "✅ Discharge Summary prepared successfully.",
+        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        mode: "dictation",
+      };
+      
+      setMessages(prev => {
+        if (prev.some(m => m.id === confirmationId)) return prev;
+        return [...prev, confirmationMsg];
+      });
+      persistMessage(confirmationMsg);
+
       // Note: we don't clear processingAction on success because we want the UI locked while navigating
     } catch (e) {
       console.warn("Failed to apply discharge summary", e);

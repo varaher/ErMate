@@ -25,7 +25,7 @@ export default function SignUpView({
 }: SignUpViewProps) {
   const [name, setName] = useState("");
   const [age, setAge] = useState<string>("");
-  const [hospital, setHospital] = useState(initialHospital);
+  const [workplaceName, setWorkplaceName] = useState(initialHospital);
   const [stateName, setStateName] = useState("Maharashtra");
   const [hospitalAddress, setHospitalAddress] = useState("");
   const [email, setEmail] = useState("");
@@ -36,7 +36,7 @@ export default function SignUpView({
   // Sync state if initial props change
   React.useEffect(() => {
     if (initialHospital) {
-      setHospital(initialHospital);
+      setWorkplaceName(initialHospital);
     }
   }, [initialHospital]);
   
@@ -61,7 +61,7 @@ export default function SignUpView({
       return;
     }
 
-    if (!hospital.trim()) {
+    if (!workplaceName.trim()) {
       setError("Please specify your current active hospital name.");
       return;
     }
@@ -125,46 +125,50 @@ export default function SignUpView({
         }
 
         const formattedName = name.trim().startsWith("Dr.") ? name.trim() : `Dr. ${name.trim()}`;
+        const activeInviteToken = inviteToken || (typeof sessionStorage !== "undefined" ? sessionStorage.getItem("ermate_pending_invite_token") : "");
+
         const newProfile: UserProfile = {
           name: formattedName,
           email: email.trim().toLowerCase(),
           role: "EM Resident", // Hardcoded - all public signups register as EM Resident
-          hospital: hospital.trim(),
+          workplaceName: workplaceName.trim(), // User-editable display name
+          hospital: "", // Secure field, always blank on independent signup. Handled by backend if invited.
           state: stateName.trim(),
           hospitalAddress: hospitalAddress.trim(),
           aiCredits: credits,
           streak: 1, // new user streak starts at 1
-          subscriptionTier: acceptOffer && initialHospital ? "Hospital Team Premium (Department Covered)" : subTier,
+          subscriptionTier: activeInviteToken ? "Free Standard" : subTier,
           age: parsedAge
         };
 
         // Write user profile to firestore
         await setDoc(doc(db, "users", user.uid), newProfile);
 
-        // If registered via team invite token, increment usage
-        const activeInviteToken = inviteToken || (typeof sessionStorage !== "undefined" ? sessionStorage.getItem("ermate_pending_invite_token") : "");
+        // Accept team invite securely via backend
         if (activeInviteToken) {
-          await incrementInviteUsage(activeInviteToken);
-          if (typeof sessionStorage !== "undefined") {
-            sessionStorage.removeItem("ermate_pending_invite_token");
+          const idToken = await user.getIdToken();
+          const res = await fetch("/api/team/accept-invite", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${idToken}`
+            },
+            body: JSON.stringify({ token: activeInviteToken })
+          });
+          
+          if (!res.ok) {
+            console.error("Failed to accept invite on backend", await res.text());
+          } else {
+            if (typeof sessionStorage !== "undefined") {
+              sessionStorage.removeItem("ermate_pending_invite_token");
+            }
+            // Update local state to reflect what backend did
+            newProfile.workplaceName = workplaceName.trim();
+            newProfile.subscriptionTier = "Hospital Team Premium (Department Covered)";
           }
-        }
-
-        // Auto-add or update team member registration
-        if (acceptOffer && hospital.trim()) {
-          const emailClean = email.trim().toLowerCase();
-          const memberId = `mem-${emailClean.replace(/[^a-zA-Z0-9]/g, "-")}`;
-          const memberDocRef = doc(db, "team_members", memberId);
-          await setDoc(memberDocRef, {
-            id: memberId,
-            name: formattedName,
-            email: emailClean,
-            role: "EM Resident",
-            status: "Active (Joined)",
-            shift: "off",
-            hospital: hospital.trim(),
-            updatedAt: new Date().toISOString()
-          }, { merge: true });
+        } else if (acceptOffer && workplaceName.trim() && !activeInviteToken) {
+          // Individual signing up manually claiming a team without invite (should be rare)
+          // Do nothing special. team_members should not be written by client.
         }
 
         // Success callback
@@ -333,8 +337,8 @@ export default function SignUpView({
                     <input
                       id="signup-hospital"
                       type="text"
-                      value={hospital}
-                      onChange={(e) => setHospital(e.target.value)}
+                      value={workplaceName}
+                      onChange={(e) => setWorkplaceName(e.target.value)}
                       placeholder="e.g. City General Hospital"
                       className={`${isEmerald ? 'bg-slate-50 border-slate-200 text-slate-800 focus:ring-emerald-500' : 'bg-slate-900 border-slate-800 text-slate-200 focus:ring-blue-500'} block w-full pl-9 pr-3 py-2 text-xs rounded-lg font-sans font-semibold focus:outline-none focus:ring-1`}
                       required

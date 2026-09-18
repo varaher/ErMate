@@ -1,3 +1,4 @@
+import { resolveWorkspaceForUser } from "./utils/workspaceResolver";
 import React, { useState, useEffect, useRef, Suspense } from "react";
 import { 
   Activity, Sparkles, BookOpen, User, Clock, ShieldAlert, 
@@ -1316,6 +1317,10 @@ useEffect(() => {
   const handleTriageSubmit = async (demographics: PatientDemographics, vitals: PatientVitals) => {
     const isPeds = demographics.age !== null && demographics.age <= 16;
     
+    // Phase 2: Resolve workspace ownership securely
+    if (!auth.currentUser) throw new Error("Not authenticated");
+    const workspace = await resolveWorkspaceForUser(auth.currentUser.uid);
+    
     // Calculate shift and creation context fields dynamically
     const todayDateStr = new Date().toISOString().split('T')[0];
     const todayDateCompact = todayDateStr.replace(/-/g, '');
@@ -1337,7 +1342,11 @@ useEffect(() => {
 
     const newCase: ClinicalCase = {
       id: "C-" + Math.floor(1000 + Math.random() * 9000),
+      workspaceType: workspace.workspaceType,
+      ownerUid: workspace.ownerUid,
+      hospitalId: workspace.hospitalId,
       createdBy: createdByUid,
+      createdByUid: auth.currentUser?.uid || createdByUid,
       createdByName: (profile.name || "").startsWith("Dr. ") ? profile.name : "Dr. " + (profile.name || "Doctor"),
       createdByRole: createdByRoleVal,
       shiftId: computedShiftId,
@@ -1440,16 +1449,47 @@ useEffect(() => {
 
   // Save changes inside Case Sheet View
   const handleSaveCase = async (updatedCase: ClinicalCase) => {
+    const previousCase = cases.find(c => c.id === updatedCase.id);
+    
+    // Phase 2: If this is a brand new case (like from Quick Discharge), resolve workspace securely.
+    // If it's an existing case, preserve its existing ownership metadata.
+    let workspaceMetadata = {
+      workspaceType: updatedCase.workspaceType,
+      ownerUid: updatedCase.ownerUid,
+      hospitalId: updatedCase.hospitalId
+    };
+
+    if (!previousCase && !updatedCase.workspaceType) {
+      if (!auth.currentUser) throw new Error("Not authenticated");
+      const workspace = await resolveWorkspaceForUser(auth.currentUser.uid);
+      workspaceMetadata = {
+        workspaceType: workspace.workspaceType,
+        ownerUid: workspace.ownerUid,
+        hospitalId: workspace.hospitalId
+      };
+    } else if (previousCase) {
+      workspaceMetadata = {
+        workspaceType: previousCase.workspaceType || updatedCase.workspaceType,
+        ownerUid: previousCase.ownerUid || updatedCase.ownerUid || null,
+        hospitalId: previousCase.hospitalId || updatedCase.hospitalId || null
+      };
+    }
+
     const editRole = (profile.role || "").toLowerCase().includes("hod") ? "hod" : ((profile.role || "").toLowerCase().includes("consultant") ? "consultant" : "resident");
     const editUid = auth.currentUser?.uid || "uid_priya";
     const editName = (profile.name || "").startsWith("Dr. ") ? profile.name : "Dr. " + (profile.name || "Doctor");
 
     const caseToSave: ClinicalCase = {
+
       ...updatedCase,
+      workspaceType: workspaceMetadata.workspaceType,
+      ownerUid: workspaceMetadata.ownerUid,
+      hospitalId: workspaceMetadata.hospitalId,
       hospital: updatedCase.hospital || profile.hospital,
       doctorEmail: updatedCase.doctorEmail || profile.email,
       doctorName: updatedCase.doctorName || profile.name || "Emergency Doctor",
       createdBy: (updatedCase as any).createdBy || auth.currentUser?.uid,
+      createdByUid: previousCase ? previousCase.createdByUid : (auth.currentUser?.uid || undefined),
       lastEditedBy: editUid,
       lastEditedByName: editName,
       lastEditedByRole: editRole,
@@ -1519,6 +1559,7 @@ useEffect(() => {
         }
       }
 
+      
       // Add audit log to addenda subcollection
       const addendumId = "add-" + Math.floor(100000 + Math.random() * 900000);
       const addendumRef = doc(db, "cases", caseToSave.id, "addenda", addendumId);
@@ -1535,6 +1576,25 @@ useEffect(() => {
         addedBy: editUid // for rules create constraint
       };
       await setDoc(addendumRef, auditLog);
+
+      // Phase 3A: Trusted Logbook Snapshot Service
+      // Sync logbook for UID attribution
+      try {
+        const idToken = await auth.currentUser?.getIdToken();
+        if (idToken) {
+          await fetch("/api/logbook/sync-case", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${idToken}`
+            },
+            body: JSON.stringify({ caseId: caseToSave.id })
+          }).catch(err => console.warn("Logbook sync failed silently", err));
+        }
+      } catch (syncErr) {
+        console.warn("Logbook sync encountered error", syncErr);
+      }
+
     } catch (err: any) {
       console.error("Error saving case or audit trail:", err);
       handleFirestoreError(err, OperationType.WRITE, "cases");
@@ -1644,6 +1704,18 @@ useEffect(() => {
     const shouldNavigate = options?.autoNavigate !== false;
     const existingId = options?.existingCaseId;
     const newCaseId = existingId || ("C-" + Math.floor(1000 + Math.random() * 9000));
+    const existingMatch = cases.find(c => c.id === newCaseId);
+    
+    let workspaceMetadata: any = {};
+    if (!existingMatch) {
+      if (!auth.currentUser) throw new Error("Not authenticated");
+      const workspace = await resolveWorkspaceForUser(auth.currentUser.uid);
+      workspaceMetadata = {
+        workspaceType: workspace.workspaceType,
+        ownerUid: workspace.ownerUid,
+        hospitalId: workspace.hospitalId,
+      };
+    }
     
     // Calculate shift and creation context fields dynamically
     const todayDateStr = new Date().toISOString().split('T')[0];
@@ -1664,7 +1736,6 @@ useEffect(() => {
     const createdByRoleVal = (profile.role || "").toLowerCase().includes("hod") ? "hod" : ((profile.role || "").toLowerCase().includes("consultant") ? "consultant" : "resident");
     const hospitalSlug = (profile.hospital || "general-er").trim().toLowerCase().replace(/[^a-z0-9]/g, "-");
 
-    const existingMatch = cases.find(c => c.id === newCaseId);
 
     // Robust parsing helpers to completely prevent NaN values in Firestore
     const parsedAge = (extracted.age !== null && extracted.age !== undefined && String(extracted.age).trim() !== "") ? Number(extracted.age) : null;
@@ -1700,7 +1771,11 @@ useEffect(() => {
 
     const newCase: ClinicalCase = {
       id: newCaseId,
+      workspaceType: existingMatch?.workspaceType || workspaceMetadata.workspaceType,
+      ownerUid: existingMatch?.ownerUid || workspaceMetadata.ownerUid || null,
+      hospitalId: existingMatch?.hospitalId || workspaceMetadata.hospitalId || null,
       createdBy: existingMatch?.createdBy || createdByUid,
+      createdByUid: existingMatch ? existingMatch.createdByUid : auth.currentUser?.uid,
       createdByName: existingMatch?.createdByName || docFormattedName,
       createdByRole: existingMatch?.createdByRole || createdByRoleVal,
       shiftId: existingMatch?.shiftId || computedShiftId,
@@ -1895,6 +1970,7 @@ differentials: extracted.differentialDiagnosis
       setShowVoiceScribeChat(false);
       setActiveFormMode(null);
       setShowDischargeSummaryId(null);
+      triggerNotification("Case Sheet Ready", "Case Sheet prepared successfully.", "success");
     } else {
       triggerNotification("Case Sheet Extracted", `Case sheet extracted and saved. Voice case (${newCase.patient.name}) updated in Emergency Dashboard.`, "info");
     }
@@ -1921,60 +1997,64 @@ differentials: extracted.differentialDiagnosis
   const handleConfirmLeaveAndJoin = async () => {
     if (!auth.currentUser || !initialHospital) return;
     try {
-      const emailClean = (profile.email || "").trim().toLowerCase();
-      const memberId = `mem-${emailClean.replace(/[^a-zA-Z0-9]/g, "-")}`;
+      const idToken = await auth.currentUser.getIdToken();
+      const res = await fetch("/api/team/leave", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${idToken}`
+        }
+      });
       
-      // Delete old membership
-      await deleteDoc(doc(db, "team_members", memberId));
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to leave previous hospital team");
+      }
       
       setShowAffiliationConflictModal(false);
       setShowRoleSelectionModal(true);
-    } catch (err) {
+    } catch (err: any) {
       console.error("Error leaving old hospital:", err);
-      alert("Failed to leave previous hospital team. Please try again.");
+      alert(err.message || "Failed to leave previous hospital team. Please try again.");
     }
   };
 
   const handleRoleSelectionSubmit = async () => {
     if (!auth.currentUser || !initialHospital) return;
     try {
-      const emailClean = (profile.email || "").trim().toLowerCase();
-      const memberId = `mem-${emailClean.replace(/[^a-zA-Z0-9]/g, "-")}`;
-      const memberDocRef = doc(db, "team_members", memberId);
+      const activeInviteToken = typeof sessionStorage !== "undefined" ? sessionStorage.getItem("ermate_pending_invite_token") : "";
       
-      // Create new pending membership in new department
-      await setDoc(memberDocRef, {
-        id: memberId,
-        name: profile.name,
-        email: emailClean,
-        role: pendingJoinRole,
-        status: "Pending Approval",
-        shift: "off",
-        hospital: initialHospital,
-        invitedAt: new Date().toISOString()
-      }, { merge: true });
-
-      // Update user's profile hospital and subscription tier
-      const profileDocRef = doc(db, "users", auth.currentUser.uid);
-      await updateDoc(profileDocRef, {
-        hospital: initialHospital,
-        subscriptionTier: "Hospital Team Premium (Department Covered)"
-      });
-
-      setShowRoleSelectionModal(false);
-      sessionStorage.removeItem("ermate_pending_invite_hospital");
-      setInitialHospital("");
-      
-      triggerNotification(
-        "Request Sent ✓",
-        `Your request to join ${initialHospital} as an ${pendingJoinRole} has been sent to the HOD.`,
-        "success"
-      );
-    } catch (err) {
-      console.error("Error submitting role selection:", err);
-      alert("Failed to submit request. Please try again.");
+      if (activeInviteToken) {
+        const idToken = await auth.currentUser.getIdToken();
+        const res = await fetch("/api/team/accept-invite", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${idToken}`
+          },
+          body: JSON.stringify({ token: activeInviteToken })
+        });
+        
+        if (!res.ok) {
+          const errorData = await res.json().catch(() => ({}));
+          throw new Error(errorData.error || "Failed to accept invite");
+        }
+        
+        if (typeof sessionStorage !== "undefined") {
+          sessionStorage.removeItem("ermate_pending_invite_token");
+        }
+        
+        setProfile(prev => ({ ...prev, hospital: initialHospital, subscriptionTier: "Hospital Team Premium (Department Covered)" }));
+        setShowRoleSelectionModal(false);
+        triggerNotification("Joined Department", `Successfully joined ${initialHospital}.`, "success");
+      } else {
+        throw new Error("You must have a valid invitation link to join a department.");
+      }
+    } catch (err: any) {
+      console.error("Error updating hospital affiliation:", err);
+      alert(err.message || "Failed to update affiliation. Please try again.");
     }
-  };
+  }
 
   const handleApproveTeamMember = async (memberId: string) => {
     try {
@@ -2078,120 +2158,59 @@ differentials: extracted.differentialDiagnosis
 
   // Roster Management Handlers
   const handleAddTeamMember = async (name: string, email: string, role: string, shift: string) => {
-    const cleanEmail = email.trim().toLowerCase();
-    const memberId = `mem-${cleanEmail.replace(/[^a-zA-Z0-9]/g, "-")}`;
-    const newMember: TeamMember = {
-      id: memberId,
-      name: name || "",
-      email: cleanEmail,
-      role: role || "",
-      status: "Pending Invite",
-      shift: shift || "",
-      hospital: profile.hospital || ""
-    };
-
     try {
-      // 1. Check if email is already in the roster of a different hospital to prevent misuse
-      const rosterRef = collection(db, "team_members");
-      const rosterQuery = query(rosterRef, where("email", "==", cleanEmail));
-      const rosterSnapshot = await getDocs(rosterQuery);
-
-      if (!rosterSnapshot.empty) {
-        const existingRosterDoc = rosterSnapshot.docs[0].data() as TeamMember;
-        if (existingRosterDoc.hospital && existingRosterDoc.hospital.toLowerCase().trim() !== (profile.hospital || "").toLowerCase().trim()) {
-          throw new Error(`This email is already registered on the team roster for "${existingRosterDoc.hospital}". A clinician can only belong to one hospital team.`);
-        }
+      if (!auth.currentUser) throw new Error("Not authenticated");
+      const idToken = await auth.currentUser.getIdToken();
+      
+      const res = await fetch("/api/team/create-invite", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${idToken}`
+        },
+        body: JSON.stringify({ invitedEmail: email, role, maxUses: 1 })
+      });
+      
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || "Failed to generate invite");
       }
-
-      // 2. Check if user is already registered in ErMate by email query
-      const usersRef = collection(db, "users");
-      const q = query(usersRef, where("email", "==", cleanEmail));
-      const querySnapshot = await getDocs(q);
-
-      if (!querySnapshot.empty) {
-        // User has already registered! Incorporate automatically
-        const userDocSnap = querySnapshot.docs[0];
-        const userUid = userDocSnap.id;
-        const userData = userDocSnap.data() as UserProfile & {
-          nextBillingTier?: string;
-          subscriptionTransitionPending?: boolean;
-          subscriptionTransitionMessage?: string;
-          teamAddedNotification?: {
-            title: string;
-            message: string;
-            timestamp: string;
-            acknowledged: boolean;
-          };
-        };
-
-        if (userData.hospital && userData.hospital.toLowerCase().trim() !== (profile.hospital || "").toLowerCase().trim()) {
-          throw new Error(`This user is already registered and affiliated with another hospital ("${userData.hospital}"). A user can only belong to one hospital team.`);
-        }
-
-        const currentTier = userData.subscriptionTier || "Free Plan";
-        const isIndividualPlan = currentTier.toLowerCase().includes("pro") || currentTier.toLowerCase().includes("individual");
-
-        let updatedTier = currentTier;
-        let nextBillingTier = userData.nextBillingTier || "";
-        let subscriptionTransitionPending = userData.subscriptionTransitionPending || false;
-        let subscriptionTransitionMessage = userData.subscriptionTransitionMessage || "";
-
-        if (isIndividualPlan) {
-          // If individual plan, transition from next following month
-          nextBillingTier = "Hospital Team Premium (Department Covered)";
-          subscriptionTransitionPending = true;
-          subscriptionTransitionMessage = "From next month, your individual plan transitions to your hospital's shared Department Plan (no further individual charges).";
-        } else {
-          // If free plan, upgrade immediately
-          updatedTier = "Hospital Team Premium (Department Covered)";
-        }
-
-        const teamAddedNotification = {
-          title: "Added to Team!",
-          message: `You have been added to the team at ${profile.hospital} by your HOD. Your clinical workspace and roster are now synced!`,
-          timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) + " | " + new Date().toLocaleDateString([], { month: "short", day: "numeric" }),
-          acknowledged: false
-        };
-
-        // Update the registered user profile
-        await setDoc(doc(db, "users", userUid), {
-          ...userData,
-          hospital: profile.hospital,
-          subscriptionTier: updatedTier,
-          nextBillingTier,
-          subscriptionTransitionPending,
-          subscriptionTransitionMessage,
-          teamAddedNotification
-        });
-
-        // Set roster status to Active (Joined)
-        newMember.status = "Active (Joined)";
-        await setDoc(doc(db, "team_members", memberId), sanitizeForFirestore(newMember));
-
-        triggerNotification("User Auto-Synced", `${name} is already registered! They have been incorporated into the team and subscription updated successfully.`, "success");
-      } else {
-        // User doesn't have an account registration yet, add as pending invite
-        await setDoc(doc(db, "team_members", memberId), sanitizeForFirestore(newMember));
-        triggerNotification("Roster Updated", `Added ${name} to the team roster. Pending registration.`, "info");
+      
+      const data = await res.json();
+      const origin = typeof window !== "undefined" ? window.location.origin : "https://ermate.hospital";
+      const link = `${origin}/join/${data.token}`;
+      
+      triggerNotification("Invite Generated", `Secure invite link created for ${email}. Please share this link: ${link}`, "success");
+      // Could auto-copy to clipboard here
+      if (navigator.clipboard) {
+        navigator.clipboard.writeText(link).catch(() => {});
       }
     } catch (err: any) {
-      console.error("Error adding team member to Firestore:", err);
-      // If it's our own custom validation error, don't pass it to standard Firestore handler
-      if (err.message && (err.message.includes("registered") || err.message.includes("belong to one"))) {
-        throw err;
-      }
-      handleFirestoreError(err, OperationType.WRITE, "team_members");
-      throw err;
+      console.error("Error creating invite:", err);
+      alert(err.message || "Failed to create invite.");
     }
-  };
+  }
 
   const handleRemoveTeamMember = async (id: string) => {
     try {
-      await deleteDoc(doc(db, "team_members", id));
+      if (!auth.currentUser) throw new Error("Not authenticated");
+      const idToken = await auth.currentUser.getIdToken();
+      const res = await fetch("/api/team/remove-member", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${idToken}`
+        },
+        body: JSON.stringify({ memberId: id })
+      });
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to remove member");
+      }
       triggerNotification("Roster Updated", "Removed clinician from the team roster.", "info");
     } catch (err: any) {
-      console.error("Error removing team member from Firestore:", err);
-      handleFirestoreError(err, OperationType.DELETE, "team_members");
+      console.error("Error removing team member:", err);
+      alert(err.message || "Could not remove member.");
       throw err;
     }
   };
@@ -3460,6 +3479,7 @@ differentials: extracted.differentialDiagnosis
                 setShowVoiceScribeChat(false);
                 setSelectedCaseId(targetCaseId);
                 setShowDischargeSummaryId(targetCaseId);
+                triggerNotification("Discharge Summary Ready", "Discharge Summary prepared successfully.", "success");
               }}
               profile={profile}
               onSaveProfile={handleSaveProfile}
