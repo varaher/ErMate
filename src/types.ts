@@ -257,6 +257,7 @@ export interface TreatmentItem {
   instruction?: string;
   timeGiven: string;
   ipsgVerified?: boolean; // IPSG medication check
+  provenance?: "scribe" | "manual";
 }
 
 export interface InvestigationItem {

@@ -7,7 +7,7 @@ import {
   User, Check, Shield, FileCheck, Users, LogOut, ChevronRight,
   Copy, Download, ChevronDown, TrendingUp, PlusCircle, Activity, Droplets, Edit3,
   Brain, Send, Award, MoreHorizontal, Pill, MessageSquare, HelpCircle, Info, Lightbulb, X, Skull,
-  BookmarkCheck
+  BookmarkCheck, Undo2
 } from "lucide-react";
 import { 
   ClinicalCase, PatientVitals, SampleHistory, PrimaryAssessment, PrimarySurvey, getInitialPrimarySurvey,
@@ -116,7 +116,7 @@ interface CaseSheetViewProps {
   onSelectCase?: (caseId: string) => void;
   onViewPrintSheet?: (caseId: string) => void;
   onBack: () => void;
-  onSaveCase: (updatedCase: ClinicalCase) => void;
+  onSaveCase: (updatedCase: ClinicalCase) => Promise<void> | void;
   onNavigateToDischarge: (caseId: string) => void;
   onStartNewTriage?: () => void;
   profile?: UserProfile;
@@ -124,6 +124,32 @@ interface CaseSheetViewProps {
   onReturnToScribe?: () => void;
   hasActiveScribeSession?: boolean;
   onDiscussCase?: (patientCase: ClinicalCase) => void;
+}
+
+export function extractTreatmentSnapshot(c: ClinicalCase): string {
+  if (!c) return "";
+  return JSON.stringify({
+    treatments: deduplicateMeds(c.treatments || []).map(t => ({
+      id: t.id,
+      drugName: (t.drugName || "").trim().toLowerCase(),
+      dose: (t.dose || "").trim(),
+      route: (validateMedRoute(t.drugName, t.route) || t.route || "").trim(),
+      instruction: (t.instruction || "").trim(),
+      timeGiven: (t.timeGiven || "").trim(),
+      ipsgVerified: !!t.ipsgVerified,
+      provenance: t.provenance || "manual"
+    })),
+    infusions: (c.infusions || []).map(inf => ({
+      id: inf.id,
+      fluidName: (inf.fluidName || "").trim().toLowerCase(),
+      dose: (inf.dose || "").trim(),
+      dilution: (inf.dilution || "").trim(),
+      rate: (inf.rate || "").trim()
+    })),
+    proceduresChecked: [...(c.proceduresChecked || [])].sort(),
+    otherMedications: (c.otherMedications || "").trim(),
+    otherProcedures: (c.otherProcedures || "").trim()
+  });
 }
 
 
@@ -260,6 +286,104 @@ export default function CaseSheetView({
 
 
   const [currentCase, setCurrentCase] = useState<ClinicalCase>(initialCase);
+  const [savedTreatmentSnapshot, setSavedTreatmentSnapshot] = useState<string>(() => extractTreatmentSnapshot(initialCase));
+  const [treatmentSaveStatus, setTreatmentSaveStatus] = useState<"saved" | "unsaved" | "saving" | "error">("saved");
+  const [tabSaveStatus, setTabSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [lastSavedTab, setLastSavedTab] = useState<string | null>(null);
+  const [softenSavedBadge, setSoftenSavedBadge] = useState<boolean>(false);
+  const [isSavingCase, setIsSavingCase] = useState<boolean>(false);
+  const [pendingRemovedTreatments, setPendingRemovedTreatments] = useState<TreatmentItem[]>([]);
+  const [pendingRemovedInfusions, setPendingRemovedInfusions] = useState<any[]>([]);
+
+  // Unified save feedback badge for active tab
+  const renderTabSaveBadge = (tabName: "Treatment" | "Investigations" | "Disposition") => {
+    const isThisTab = activeTab.toLowerCase().includes(tabName.toLowerCase());
+    const isSaving = isSavingCase && isThisTab;
+    const isError = (treatmentSaveStatus === "error" || tabSaveStatus === "error") && (isThisTab || lastSavedTab === activeTab);
+    const isSaved = (treatmentSaveStatus === "saved" || tabSaveStatus === "saved") && (lastSavedTab === activeTab || isThisTab);
+
+    if (isSaving) {
+      return (
+        <span className="text-[11px] font-bold text-amber-600 dark:text-amber-400 flex items-center gap-1.5 bg-amber-50 dark:bg-amber-950/30 px-2.5 py-1 rounded-md border border-amber-200 dark:border-amber-800 animate-pulse">
+          <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Saving...
+        </span>
+      );
+    }
+
+    if (isError) {
+      return (
+        <span className="text-[11px] font-bold text-rose-600 dark:text-rose-400 flex items-center gap-1.5 bg-rose-50 dark:bg-rose-950/30 px-2.5 py-1 rounded-md border border-rose-200 dark:border-rose-800">
+          <AlertTriangle className="w-3.5 h-3.5" /> {tabName} not saved — Retry
+        </span>
+      );
+    }
+
+    if (tabName === "Treatment" && isTreatmentDirty) {
+      return (
+        <span className="text-[11px] font-bold text-amber-600 dark:text-amber-400 flex items-center gap-1.5 bg-amber-50 dark:bg-amber-950/30 px-2.5 py-1 rounded-md border border-amber-200 dark:border-amber-800">
+          <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" /> Unsaved treatment changes
+        </span>
+      );
+    }
+
+    if (isSaved) {
+      return (
+        <span className={`text-[11px] font-bold flex items-center gap-1.5 px-2.5 py-1 rounded-md border transition-all duration-500 ${
+          softenSavedBadge 
+            ? "text-emerald-700/60 dark:text-emerald-400/50 bg-emerald-50/40 dark:bg-emerald-950/15 border-emerald-200/40 dark:border-emerald-900/30" 
+            : "text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800 shadow-xs"
+        }`}>
+          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" /> ✓ {tabName} saved
+        </span>
+      );
+    }
+
+    return (
+      <span className="text-[11px] font-bold text-emerald-700/60 dark:text-emerald-400/50 flex items-center gap-1.5 bg-emerald-50/40 dark:bg-emerald-950/15 px-2.5 py-1 rounded-md border border-emerald-200/40 dark:border-emerald-900/30">
+        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500/70" /> {tabName} saved
+      </span>
+    );
+  };
+
+  // Derived Treatment dirty state comparing against last successfully saved snapshot
+  const currentTreatmentSnapshot = extractTreatmentSnapshot(currentCase);
+  const isTreatmentDirty = currentTreatmentSnapshot !== savedTreatmentSnapshot;
+
+  const isItemSaved = (item: TreatmentItem) => {
+    if (!savedTreatmentSnapshot) return true;
+    try {
+      const saved = JSON.parse(savedTreatmentSnapshot);
+      const found = saved.treatments?.find((t: any) => t.id === item.id);
+      if (!found) return false;
+      return (
+        (found.drugName || "") === (item.drugName || "").trim().toLowerCase() &&
+        (found.dose || "") === (item.dose || "").trim() &&
+        (found.route || "") === (validateMedRoute(item.drugName, item.route) || item.route || "").trim() &&
+        (found.instruction || "") === (item.instruction || "").trim() &&
+        (found.timeGiven || "") === (item.timeGiven || "").trim() &&
+        !!found.ipsgVerified === !!item.ipsgVerified
+      );
+    } catch {
+      return false;
+    }
+  };
+
+  const isInfusionSaved = (inf: any) => {
+    if (!savedTreatmentSnapshot) return true;
+    try {
+      const saved = JSON.parse(savedTreatmentSnapshot);
+      const found = saved.infusions?.find((i: any) => i.id === inf.id);
+      if (!found) return false;
+      return (
+        (found.fluidName || "") === (inf.fluidName || "").trim().toLowerCase() &&
+        (found.dose || "") === (inf.dose || "").trim() &&
+        (found.dilution || "") === (inf.dilution || "").trim() &&
+        (found.rate || "") === (inf.rate || "").trim()
+      );
+    } catch {
+      return false;
+    }
+  };
   const displayHospitalName = (currentCase.hospital || profile?.hospital || "Emergency Hospital & Trauma Center").toUpperCase();
   const displayHospitalAddress = profile?.hospitalAddress 
     ? `${profile.hospitalAddress}${profile?.state ? `, ${profile.state}` : ''}`
@@ -450,6 +574,10 @@ export default function CaseSheetView({
 
   useEffect(() => {
     setCurrentCase(initialCase);
+    setSavedTreatmentSnapshot(extractTreatmentSnapshot(initialCase));
+    setPendingRemovedTreatments([]);
+    setPendingRemovedInfusions([]);
+    setTreatmentSaveStatus("saved");
     setIsNormalToggled(false);
     setActiveTab("complaints");
     setPediatricWeight("");
@@ -811,10 +939,10 @@ export default function CaseSheetView({
     if (!newInfusionFluid.trim()) return;
     const item = {
       id: "inf-" + Date.now(),
-      fluidName: newInfusionFluid,
-      dose: newInfusionDose || "N/A",
-      dilution: newInfusionDilution || "N/A",
-      rate: newInfusionRate || "N/A"
+      fluidName: newInfusionFluid.trim(),
+      dose: newInfusionDose.trim() || "Stat",
+      dilution: newInfusionDilution.trim() || "",
+      rate: newInfusionRate.trim() || ""
     };
     setCurrentCase(prev => ({
       ...prev,
@@ -826,11 +954,34 @@ export default function CaseSheetView({
     setNewInfusionRate("");
   };
 
-  const handleDeleteInfusion = (id: string) => {
+  const handleRemoveInfusion = (inf: any) => {
     setCurrentCase(prev => ({
       ...prev,
-      infusions: (prev.infusions || []).filter(item => item.id !== id)
+      infusions: (prev.infusions || []).filter(item => item.id !== inf.id)
     }));
+    setPendingRemovedInfusions(prev => [...prev, inf]);
+  };
+
+  const handleUndoRemoveInfusion = () => {
+    if (pendingRemovedInfusions.length === 0) return;
+    const restored = pendingRemovedInfusions[pendingRemovedInfusions.length - 1];
+    setCurrentCase(prev => ({
+      ...prev,
+      infusions: [...(prev.infusions || []), restored]
+    }));
+    setPendingRemovedInfusions(prev => prev.filter(i => i.id !== restored.id));
+  };
+
+  const handleDeleteInfusion = (id: string) => {
+    const inf = (currentCase.infusions || []).find(item => item.id === id);
+    if (inf) {
+      handleRemoveInfusion(inf);
+    } else {
+      setCurrentCase(prev => ({
+        ...prev,
+        infusions: (prev.infusions || []).filter(item => item.id !== id)
+      }));
+    }
   };
 
   const updateVitals = (field: keyof PatientVitals, value: string) => {
@@ -908,11 +1059,12 @@ export default function CaseSheetView({
     if (!newDrug.trim()) return;
     const newItem: TreatmentItem = {
       id: "t-" + Date.now(),
-      drugName: newDrug,
-      dose: newDose || "N/A",
+      drugName: newDrug.trim(),
+      dose: newDose.trim() || "Stat",
       route: newRoute,
       timeGiven: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      ipsgVerified: true
+      ipsgVerified: true,
+      provenance: "manual"
     };
     setCurrentCase(prev => ({
       ...prev,
@@ -922,11 +1074,34 @@ export default function CaseSheetView({
     setNewDose("");
   };
 
-  const handleDeleteTreatment = (id: string) => {
+  const handleRemoveTreatment = (item: TreatmentItem) => {
     setCurrentCase(prev => ({
       ...prev,
-      treatments: prev.treatments.filter(item => item.id !== id)
+      treatments: prev.treatments.filter(t => t.id !== item.id)
     }));
+    setPendingRemovedTreatments(prev => [...prev, item]);
+  };
+
+  const handleUndoRemoveTreatment = () => {
+    if (pendingRemovedTreatments.length === 0) return;
+    const restored = pendingRemovedTreatments[pendingRemovedTreatments.length - 1];
+    setCurrentCase(prev => ({
+      ...prev,
+      treatments: [...prev.treatments, restored]
+    }));
+    setPendingRemovedTreatments(prev => prev.filter(t => t.id !== restored.id));
+  };
+
+  const handleDeleteTreatment = (id: string) => {
+    const item = currentCase.treatments.find(t => t.id === id);
+    if (item) {
+      handleRemoveTreatment(item);
+    } else {
+      setCurrentCase(prev => ({
+        ...prev,
+        treatments: prev.treatments.filter(t => t.id !== id)
+      }));
+    }
   };
 
   // Add Investigation Log
@@ -1446,20 +1621,48 @@ Extremities: No deformity. No peripheral oedema. Peripheral pulses present.`,
       doctorName: formattedDocName
     };
 
-    setCurrentCase(caseToSave);
-    onSaveCase(caseToSave);
-    const saved = Math.max(2, 18 - caseToSave.timeSpentMin);
-    setSaveBanner({ show: true, minutesSaved: saved });
-    setTimeout(() => {
-      setSaveBanner(null);
-    }, 5000);
-    
-    // Auto-update discharge summary in background
-    await syncDischargeSummary(caseToSave);
+    try {
+      setIsSavingCase(true);
+      setTreatmentSaveStatus("saving");
+      setTabSaveStatus("saving");
+      setSoftenSavedBadge(false);
+      const activeTabAtSave = activeTab;
 
-    // Auto-populate first principles learning for the saved modal and trigger the Post-Save Debrief Nudge
-    fetchRoundsDebrief("first-principles");
-    /* setShowPostSaveModal(true) removed */;
+      setCurrentCase(caseToSave);
+      await onSaveCase(caseToSave);
+
+      // Persistence confirmed: commit saved snapshot and clear pending removed items
+      setSavedTreatmentSnapshot(extractTreatmentSnapshot(caseToSave));
+      setPendingRemovedTreatments([]);
+      setPendingRemovedInfusions([]);
+      setTreatmentSaveStatus("saved");
+      setTabSaveStatus("saved");
+      setLastSavedTab(activeTabAtSave);
+
+      // Soften success badge after 2.8s
+      setTimeout(() => {
+        setSoftenSavedBadge(true);
+      }, 2800);
+
+      const saved = Math.max(2, 18 - caseToSave.timeSpentMin);
+      setSaveBanner({ show: true, minutesSaved: saved });
+      setTimeout(() => {
+        setSaveBanner(null);
+      }, 5000);
+      
+      // Auto-update discharge summary in background
+      await syncDischargeSummary(caseToSave);
+
+      // Auto-populate first principles learning for the saved modal and trigger the Post-Save Debrief Nudge
+      fetchRoundsDebrief("first-principles");
+      /* setShowPostSaveModal(true) removed */;
+    } catch (err) {
+      console.error("Failed to save Case Sheet:", err);
+      setTreatmentSaveStatus("error");
+      setTabSaveStatus("error");
+    } finally {
+      setIsSavingCase(false);
+    }
   };
 
   const handleSaveFromDisposition = async () => {
@@ -2166,6 +2369,13 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
           {/* Patient Demographics & Disposition Tab (Accreditation Level)  */}
           {activeTab === "disposition" && (
             <div className="space-y-4">
+              <div className="border-b pb-2 flex items-center justify-between gap-2 flex-wrap">
+                <div>
+                  <h3 className="text-sm font-bold text-slate-800 dark:text-white uppercase tracking-wide">Patient Disposition & Handover</h3>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">Hospital admission, ICU transfer, or discharge summary protocols</p>
+                </div>
+                {renderTabSaveBadge("Disposition")}
+              </div>
 
               {currentCase.isPediatric && (
                 <PediatricDispositionSection
@@ -3089,9 +3299,12 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
           {/* Investigations (Labs & Imaging) Tab  */}
           {activeTab === "investigations" && (
             <div className="space-y-4 pt-4 border-t border-slate-100 dark:border-slate-800">
-              <div className="border-b pb-2 flex items-center justify-between">
-                <h3 className="text-sm font-bold text-slate-800 dark:text-white uppercase tracking-wide">Investigations & Results</h3>
-                <span className="text-[10px] bg-emerald-50 text-emerald-700 border border-emerald-100 px-2 py-0.5 rounded font-mono font-bold">OCR Sync Ready</span>
+              <div className="border-b pb-2 flex items-center justify-between gap-2 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm font-bold text-slate-800 dark:text-white uppercase tracking-wide">Investigations & Results</h3>
+                  <span className="text-[10px] bg-emerald-50 text-emerald-700 border border-emerald-100 px-2 py-0.5 rounded font-mono font-bold">OCR Sync Ready</span>
+                </div>
+                {renderTabSaveBadge("Investigations")}
               </div>
 
               {/* === ORDERED SECTION === */}
@@ -3375,18 +3588,149 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                     />
                   </div>
                 </div>
+
+                {/* ErMate Differential & CDS Support (Integrated into Assessment & Diagnosis) */}
+                <div className="pt-3 border-t border-slate-200 dark:border-slate-800 space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <h5 className="text-xs font-bold text-slate-800 dark:text-white uppercase tracking-wide flex items-center gap-1.5">
+                        <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                        ErMate Differential & Clinical Decision Support
+                      </h5>
+                      <p className="text-[10px] text-slate-500 dark:text-slate-400">Evaluate diagnostic differentials and citations using secure LLM models.</p>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={aiLoading}
+                      onClick={runClinicalDecisionSupport}
+                      className="px-3 py-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 disabled:from-slate-300 disabled:to-slate-400 disabled:cursor-not-allowed text-white text-[11px] font-bold rounded-lg shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      {aiLoading ? (
+                        <>
+                          <RefreshCw className="w-3 h-3 animate-spin" />
+                          Analyzing Records...
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className="w-3 h-3 text-amber-300" />
+                          Generate Differential
+                        </>
+                      )}
+                    </button>
+                  </div>
+
+                  {/* Disclaimer Alert */}
+                  <div className="bg-amber-50/50 border border-amber-200 dark:bg-amber-950/20 dark:border-amber-900/60 p-3 rounded-lg text-[11px] text-amber-800 dark:text-amber-300 leading-relaxed flex items-start gap-2">
+                    <ShieldAlert className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+                    <div>
+                      <span className="font-bold">Clinical Disclaimer:</span> ErMate recommendations are intended as a decision support aid only. All diagnostic decisions, medical prescriptions, and interventions must remain under the direct supervision and approval of licensed clinical physicians.
+                    </div>
+                  </div>
+
+                  {/* Results */}
+                  {currentCase.differentials && currentCase.differentials.length > 0 ? (
+                    <div className="space-y-3">
+                      {currentCase.differentials.map((diff, index) => (
+                        <div 
+                          key={index}
+                          className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 p-3 rounded-lg space-y-2"
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200/50 dark:border-slate-800 pb-1.5">
+                            <div className="flex items-center gap-2">
+                              <span className={`text-[9px] px-2 py-0.5 rounded-full font-bold font-mono ${
+                                diff.status === "CONSISTENT"
+                                  ? "bg-rose-50 border border-rose-200 text-rose-700 dark:bg-rose-950/20 dark:text-rose-300"
+                                  : diff.status === "POSSIBLE"
+                                  ? "bg-amber-50 border border-amber-200 text-amber-700 dark:bg-amber-950/20 dark:text-amber-300"
+                                  : "bg-slate-100 border border-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                              }`}>
+                                {diff.status}
+                              </span>
+                              <h5 className="text-xs font-bold text-slate-800 dark:text-white">{diff.diagnosis}</h5>
+                            </div>
+                          </div>
+
+                          <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed font-mono">
+                            {diff.reasoning}
+                          </p>
+
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-2 pt-1 text-[10px] font-mono">
+                            <div className="space-y-1 bg-slate-50 dark:bg-slate-900 p-2 rounded border border-slate-200/50 dark:border-slate-800">
+                              <span className="font-semibold text-slate-400 text-[9px] uppercase tracking-wide">Next steps / Suggested Orders</span>
+                              <ul className="list-disc pl-4 space-y-0.5 text-slate-600 dark:text-slate-400">
+                                {diff.nextSteps.map((step, idx) => <li key={idx}>{step}</li>)}
+                              </ul>
+                            </div>
+
+                            <div className="space-y-1 bg-slate-50 dark:bg-slate-900 p-2 rounded border border-slate-200/50 dark:border-slate-800">
+                              <span className="font-semibold text-slate-400 text-[9px] uppercase tracking-wide">Guideline References / Citations</span>
+                              <ul className="list-disc pl-4 space-y-0.5 text-slate-600 dark:text-slate-400">
+                                {diff.citations.map((cite, idx) => <li key={idx}>{cite}</li>)}
+                              </ul>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
               </div>
             </div>
           )}
           {/* Treatment Logs & Resuscitation Dosages Tab with IPSG Drug Double-Checks  */}
           {activeTab === "treatment" && (
             <div className="space-y-4">
-<div className="border-b pb-2 flex items-center justify-between">
-                <h3 className="text-sm font-bold text-slate-800 dark:text-white uppercase tracking-wide font-display">Medications & Procedures Handover Log</h3>
-                {currentCase.isPediatric && (
-                  <span className="text-[10px] bg-sky-50 text-sky-700 border border-sky-100 px-2 py-0.5 rounded font-mono font-bold">PALS Calcs Active</span>
-                )}
+              <div className="border-b pb-2 flex items-center justify-between gap-2 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm font-bold text-slate-800 dark:text-white uppercase tracking-wide font-display">Medications & Procedures Handover Log</h3>
+                  {currentCase.isPediatric && (
+                    <span className="text-[10px] bg-sky-50 text-sky-700 border border-sky-100 px-2 py-0.5 rounded font-mono font-bold">PALS Calcs Active</span>
+                  )}
+                </div>
+                
+                {/* Real-time Save/Unsaved Treatment State Indicator */}
+                <div className="flex items-center gap-2">
+                  {renderTabSaveBadge("Treatment")}
+                </div>
               </div>
+
+              {/* Pending Removal Confirmation Banner */}
+              {(pendingRemovedTreatments.length > 0 || pendingRemovedInfusions.length > 0) && (
+                <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/60 p-2.5 rounded-lg flex items-center justify-between gap-2 text-xs text-amber-800 dark:text-amber-300 animate-fade-in">
+                  <div className="flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                    <span>
+                      {pendingRemovedTreatments.length > 0 && pendingRemovedInfusions.length > 0
+                        ? `${pendingRemovedTreatments[pendingRemovedTreatments.length - 1].drugName} and infusion removed`
+                        : pendingRemovedTreatments.length > 0
+                        ? `"${pendingRemovedTreatments[pendingRemovedTreatments.length - 1].drugName}" removed`
+                        : `"${pendingRemovedInfusions[pendingRemovedInfusions.length - 1].fluidName}" removed`}
+                      {" — "}
+                      <span className="font-bold">press Save Changes to confirm</span>
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {pendingRemovedTreatments.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={handleUndoRemoveTreatment}
+                        className="px-2.5 py-1 bg-amber-100 dark:bg-amber-900/50 hover:bg-amber-200 text-amber-900 dark:text-amber-200 text-[11px] font-bold rounded flex items-center gap-1 transition-colors cursor-pointer"
+                      >
+                        <Undo2 className="w-3 h-3" /> Undo
+                      </button>
+                    )}
+                    {pendingRemovedInfusions.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={handleUndoRemoveInfusion}
+                        className="px-2.5 py-1 bg-amber-100 dark:bg-amber-900/50 hover:bg-amber-200 text-amber-900 dark:text-amber-200 text-[11px] font-bold rounded flex items-center gap-1 transition-colors cursor-pointer"
+                      >
+                        <Undo2 className="w-3 h-3" /> Undo Fluid
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
 
               {/* Drug calculators if Pediatric  */}
               {currentCase.isPediatric && (
@@ -3429,69 +3773,15 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                   <div className="flex items-center gap-2">
                     <Pill className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
                     <h4 className="font-extrabold text-xs text-slate-800 dark:text-slate-200 uppercase tracking-wide">
-                      Medications
+                      Medication & Resuscitation Orders
                     </h4>
                   </div>
-                  <span className="text-[10px] bg-emerald-100 dark:bg-emerald-950/50 text-emerald-800 dark:text-emerald-300 px-2 py-0.5 rounded font-bold font-mono">
-                    {((currentCase.medications && currentCase.medications.length) || (currentCase.sampleHistory.medications ? 1 : 0))} Extracted
-                  </span>
+                  {currentCase.treatments && currentCase.treatments.length > 0 && (
+                    <span className="text-[10px] bg-emerald-100 dark:bg-emerald-950/50 text-emerald-800 dark:text-emerald-300 px-2 py-0.5 rounded font-bold font-mono border border-emerald-200 dark:border-emerald-800">
+                      {currentCase.treatments.length} Logged
+                    </span>
+                  )}
                 </div>
-                
-                {/* Extracted from Voice */}
-                {currentCase.medications && currentCase.medications.length > 0 ? (
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-                    {currentCase.medications.map((med, idx) => {
-                      const medStr = typeof med === "string" 
-                        ? med 
-                        : `${med.drugName} ${med.dose || ""} ${med.route || ""} ${med.frequency || ""}`.trim();
-                      const doseOnly = typeof med === "object" ? med.dose || "Stat" : "Stat";
-                      const routeOnly = typeof med === "object" ? med.route || "IV" : "IV";
-                      
-                      return (
-                        <div key={idx} className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 flex flex-col gap-2">
-                          <div className="flex justify-between items-start">
-                            <div>
-                              <span className="text-xs font-bold text-slate-800 dark:text-slate-100 block">{typeof med === "object" ? med.drugName : medStr}</span>
-                              {typeof med === "object" && <span className="text-[10px] text-slate-500 font-mono mt-0.5 block">{med.dose || "Stat"} • {med.route || "IV"} • {med.frequency || "Once"}</span>}
-                            </div>
-                            <span className="w-4 h-4 rounded-full bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 flex items-center justify-center font-mono font-bold text-[9px] shrink-0 border border-emerald-200 dark:border-emerald-800">
-                              {idx + 1}
-                            </span>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const newTr: TreatmentItem = {
-                                id: `t-extracted-${Date.now()}-${idx}`,
-                                drugName: typeof med === "object" ? med.drugName : medStr,
-                                dose: doseOnly,
-                                route: routeOnly,
-                                timeGiven: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                                ipsgVerified: true
-                              };
-                              if (!currentCase.treatments.some(t => t.drugName.toLowerCase() === (typeof med === "object" ? med.drugName.toLowerCase() : medStr.toLowerCase()))) {
-                                setCurrentCase(prev => ({ ...prev, treatments: [...prev.treatments, newTr] }));
-                              }
-                            }}
-                            className="text-[9px] font-bold text-blue-600 hover:text-blue-700 bg-blue-50 dark:bg-blue-950/30 px-2 py-1 rounded border border-blue-200 dark:border-blue-800 w-full text-center transition-colors cursor-pointer mt-auto"
-                          >
-                            + Log to Flowsheet
-                          </button>
-                        </div>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <div className="text-[10px] text-slate-500 dark:text-slate-400 italic py-1 bg-white dark:bg-slate-950 rounded-lg p-2 border border-slate-200 dark:border-slate-800 text-center">
-                    {currentCase.sampleHistory.medications ? (
-                      <span className="font-medium text-slate-700 dark:text-slate-300">
-                        Outpatient: {currentCase.sampleHistory.medications}
-                      </span>
-                    ) : (
-                      "No medications extracted from voice. Add manually below."
-                    )}
-                  </div>
-                )}
                 
                 {/* Add Manual Form */}
                 <div className="bg-white dark:bg-slate-950 p-2.5 rounded-lg border border-slate-200 dark:border-slate-800 grid grid-cols-1 md:grid-cols-4 gap-2 items-end mt-2">
@@ -3547,6 +3837,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                       <thead>
                         <tr className="bg-slate-100 dark:bg-slate-900 text-slate-500 border-b border-slate-200 dark:border-slate-800 font-mono uppercase text-[9px]">
                           <th className="p-2">Drug / Intervention</th>
+                          <th className="p-2">Origin & Status</th>
                           <th className="p-2">Dose / Route</th>
                           <th className="p-2">IPSG Check</th>
                           <th className="p-2 text-right">Action</th>
@@ -3558,6 +3849,28 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                             <td className="p-2 font-semibold text-slate-700 dark:text-slate-300">
                               {item.drugName}
                               <span className="block text-[9px] text-slate-400 font-mono mt-0.5">{item.timeGiven}</span>
+                            </td>
+                            <td className="p-2">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                {item.provenance === "scribe" ? (
+                                  <span className="text-[9px] font-medium bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300 px-1.5 py-0.5 rounded border border-blue-200 dark:border-blue-800">
+                                    From Scribe
+                                  </span>
+                                ) : (
+                                  <span className="text-[9px] font-medium bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300 px-1.5 py-0.5 rounded">
+                                    Manual
+                                  </span>
+                                )}
+                                {isItemSaved(item) ? (
+                                  <span className="text-[9px] font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-0.5">
+                                    <CheckCircle2 className="w-2.5 h-2.5" /> Saved
+                                  </span>
+                                ) : (
+                                  <span className="text-[9px] font-bold text-amber-600 dark:text-amber-400 flex items-center gap-0.5">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-amber-500" /> Unsaved
+                                  </span>
+                                )}
+                              </div>
                             </td>
                             <td className="p-2">
                               <span className="font-mono text-slate-700 dark:text-slate-200">{item.dose}</span>
@@ -3583,10 +3896,11 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                             </td>
                             <td className="p-2 text-right">
                               <button
-                                onClick={() => handleDeleteTreatment(item.id)}
-                                className="text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-900/30 p-1 rounded transition-colors"
+                                type="button"
+                                onClick={() => handleRemoveTreatment(item)}
+                                className="text-xs font-semibold text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/40 px-2 py-1 rounded transition-colors cursor-pointer"
                               >
-                                <Trash2 className="w-3.5 h-3.5" />
+                                Remove
                               </button>
                             </td>
                           </tr>
@@ -3679,6 +3993,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                       <thead>
                         <tr className="bg-slate-100 dark:bg-slate-900 text-slate-500 border-b border-slate-200 dark:border-slate-800 font-mono uppercase text-[9px]">
                           <th className="p-2">Fluid / Drug</th>
+                          <th className="p-2">Status</th>
                           <th className="p-2">Dose / Dilution</th>
                           <th className="p-2">Rate</th>
                           <th className="p-2 text-right">Action</th>
@@ -3689,6 +4004,17 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                           <tr key={inf.id} className="hover:bg-slate-50 dark:hover:bg-slate-900/50">
                             <td className="p-2 font-bold text-slate-700 dark:text-slate-200">{inf.fluidName}</td>
                             <td className="p-2">
+                              {isInfusionSaved(inf) ? (
+                                <span className="text-[9px] font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-0.5">
+                                  <CheckCircle2 className="w-2.5 h-2.5" /> Saved
+                                </span>
+                              ) : (
+                                <span className="text-[9px] font-bold text-amber-600 dark:text-amber-400 flex items-center gap-0.5">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500" /> Unsaved
+                                </span>
+                              )}
+                            </td>
+                            <td className="p-2">
                               <span className="font-mono">{inf.dose}</span>
                               <span className="mx-1 text-slate-300">•</span>
                               <span className="text-slate-500">{inf.dilution}</span>
@@ -3697,10 +4023,10 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                             <td className="p-2 text-right">
                               <button
                                 type="button"
-                                onClick={() => handleDeleteInfusion(inf.id)}
-                                className="text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-900/30 p-1 rounded-md transition-colors"
+                                onClick={() => handleRemoveInfusion(inf)}
+                                className="text-xs font-semibold text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/40 px-2 py-1 rounded-md transition-colors cursor-pointer"
                               >
-                                <Trash2 className="w-3.5 h-3.5" />
+                                Remove
                               </button>
                             </td>
                           </tr>
@@ -3863,98 +4189,6 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
             </div>
           )}
 
-          {/* AI Clinical Decision Support Tab  */}
-          {activeTab === "treatment" && (
-            <div className="space-y-4 mt-8 pt-8 border-t-2 border-dashed border-slate-200 dark:border-slate-800">
-<div className="border-b pb-3 flex flex-wrap items-center justify-between gap-4">
-                <div>
-                  <h3 className="text-sm font-bold text-slate-800 dark:text-white uppercase tracking-wide">ErMate Differential & CDS Support</h3>
-                  <p className="text-xs text-slate-400 mt-0.5">Evaluate diagnostic differentials and citations using secure LLM models.</p>
-                </div>
-                <button
-                  type="button"
-                  disabled={aiLoading}
-                  onClick={runClinicalDecisionSupport}
-                  className="px-4 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 disabled:from-slate-300 disabled:to-slate-400 disabled:cursor-not-allowed text-white text-xs font-bold rounded-lg shadow-sm transition-all flex items-center justify-center gap-1.5"
-                >
-                  {aiLoading ? (
-                    <>
-                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                      Analyzing Records...
-                    </>
-                  ) : (
-                    <>
-                      <Sparkles className="w-3.5 h-3.5 text-amber-300" />
-                      Generate Differential
-                    </>
-                  )}
-                </button>
-              </div>
-
-              {/* Disclaimer Alert  */}
-              <div className="bg-amber-50/50 border border-amber-200 dark:bg-amber-950/20 dark:border-amber-900/60 p-4 rounded-xl text-xs text-amber-800 dark:text-amber-300 leading-relaxed flex items-start gap-2">
-                <ShieldAlert className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
-                <div>
-                  <span className="font-bold">Clinical Disclaimer:</span> ErMate recommendations are intended as a decision support aid only. All diagnostic decisions, medical prescriptions, and interventions must remain under the direct supervision and approval of licensed clinical physicians.
-                </div>
-              </div>
-
-              {/* Results  */}
-              {currentCase.differentials.length === 0 ? (
-                <div className="p-4 text-center border-2 border-dashed border-slate-200 dark:border-slate-800 rounded-xl">
-                  <Sparkles className="w-10 h-10 mx-auto text-slate-300 dark:text-slate-700 mb-3" />
-                  <p className="text-slate-600 dark:text-slate-400 font-medium">No differential list generated yet</p>
-                  <p className="text-xs text-slate-400 mt-1">Tap 'Generate Differential' above to let the ErMate engine audit patient vitals and SAMPLE history.</p>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  {currentCase.differentials.map((diff, index) => (
-                    <div 
-                      key={index}
-                      className="bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-800 p-4 rounded-xl space-y-3"
-                    >
-                      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200/50 dark:border-slate-800 pb-2">
-                        <div className="flex items-center gap-2">
-                          <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold font-mono ${
-                            diff.status === "CONSISTENT"
-                              ? "bg-rose-50 border border-rose-200 text-rose-700 dark:bg-rose-950/20 dark:text-rose-300"
-                              : diff.status === "POSSIBLE"
-                              ? "bg-amber-50 border border-amber-200 text-amber-700 dark:bg-amber-950/20 dark:text-amber-300"
-                              : "bg-slate-100 border border-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300"
-                          }`}>
-                            {diff.status}
-                          </span>
-                          <h4 className="text-sm font-bold text-slate-800 dark:text-white">{diff.diagnosis}</h4>
-                        </div>
-                      </div>
-
-                      <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed font-mono">
-                        {diff.reasoning}
-                      </p>
-
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 text-[11px] font-mono">
-                        {/* Next Steps  */}
-                        <div className="space-y-1 bg-white dark:bg-slate-950 p-3 rounded-lg border border-slate-200/50 dark:border-slate-850">
-                          <span className="font-semibold text-slate-400 text-[10px] uppercase tracking-wide">Next steps / Suggested Orders</span>
-                          <ul className="list-disc pl-4 space-y-0.5 text-slate-600 dark:text-slate-400 mt-1">
-                            {diff.nextSteps.map((step, idx) => <li key={idx}>{step}</li>)}
-                          </ul>
-                        </div>
-
-                        {/* Citations  */}
-                        <div className="space-y-1 bg-white dark:bg-slate-950 p-3 rounded-lg border border-slate-200/50 dark:border-slate-850">
-                          <span className="font-semibold text-slate-400 text-[10px] uppercase tracking-wide">Guideline References / Citations</span>
-                          <ul className="list-disc pl-4 space-y-0.5 text-slate-600 dark:text-slate-400 mt-1">
-                            {diff.citations.map((cite, idx) => <li key={idx}>{cite}</li>)}
-                          </ul>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
 
           {/* Clinical Rounds & Case Debrief Tab  */}
           {activeTab === "rounds" && (

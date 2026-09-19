@@ -4,7 +4,8 @@ import {
   Activity, Sparkles, BookOpen, User, Clock, ShieldAlert, 
   Settings, HelpCircle, FileWarning,  Trophy, ClipboardList, Zap, Moon, Sun, Users,
   Search, X, TrendingUp, Bell, BellRing, Trash2, Check, Mic, ShieldCheck, RefreshCw,
-  Download, Smartphone, Building2, UserCheck, CheckCircle2, Terminal, MessageSquare
+  Download, Smartphone, Building2, UserCheck, CheckCircle2, Terminal, MessageSquare,
+  MoreHorizontal, Wrench, Award
 } from "lucide-react";
 
 import { 
@@ -13,6 +14,7 @@ import {
 } from "./types";
 import { saveHandoverPatient } from "./utils/handoverUtils";
 import { triggerPrintWithTip } from "./utils/printWithTip";
+import { getNormalizedRole } from "./utils/roleUtils";
 
 import DashboardView from "./components/DashboardView";
 const CasesListView = React.lazy(() => import("./components/CasesListView"));
@@ -34,6 +36,8 @@ const PocketMirrorView = React.lazy(() => import("./components/PocketMirrorView"
 const QuickDischargeIntake = React.lazy(() => import("./components/QuickDischargeIntake"));
 const AdminPanelView = React.lazy(() => import("./components/AdminPanelView"));
 const DoctorsDirectoryView = React.lazy(() => import("./components/DoctorsDirectoryView"));
+const ToolsView = React.lazy(() => import("./components/ToolsView"));
+const MoreView = React.lazy(() => import("./components/MoreView"));
 import NewPatientEntryMenu, { type EntryMethod } from "./components/NewPatientEntryMenu";
 import { validateTeamInvite } from "./services/teamInviteService";
 import { createQuickDischargeCase } from "./components/QuickDischargeIntake";
@@ -428,7 +432,9 @@ useEffect(() => {
   }, [isLoggedIn]);
 
   // Navigation
-  const [activeTab, setActiveTab] = useState<"dashboard" | "analytics" | "admin" | "handover" | "cases" | "learn" | "profile" | "emdrugs" | "directory" | "mlc">("dashboard");
+  const [activeTab, setActiveTab] = useState<
+    "dashboard" | "analytics" | "admin" | "handover" | "cases" | "learn" | "profile" | "emdrugs" | "directory" | "mlc" | "tools" | "more" | "team" | "logbook"
+  >("dashboard");
   const [discussionModalCase, setDiscussionModalCase] = useState<ClinicalCase | null>(null);
 
   const handleSaveDiscussionHistory = (caseId: string, messages: any[]) => {
@@ -626,6 +632,16 @@ useEffect(() => {
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
   const [shifts, setShifts] = useState<any[]>([]);
   const [hospitalSubscription, setHospitalSubscription] = useState<{ active: boolean; subscriptionTier: string } | null>(null);
+
+  // Normalized clinical role for role-based navigation and permissions
+  const userNormalizedRole = React.useMemo(() => {
+    return getNormalizedRole({
+      email: profile?.email,
+      role: profile?.role,
+      hospital: profile?.hospital,
+      membershipRole: teamMembers.find(m => m.email.toLowerCase().trim() === (profile?.email || "").toLowerCase().trim())?.role
+    });
+  }, [profile?.email, profile?.role, profile?.hospital, teamMembers]);
 
   // Auth state listener with real-time onSnapshot for UserProfile and team invite sync
   useEffect(() => {
@@ -1439,6 +1455,8 @@ useEffect(() => {
     } catch (err: any) {
       console.error("Error saving triaged case:", err);
       handleFirestoreError(err, OperationType.WRITE, "cases");
+      triggerNotification("Save Failed", "Unable to save this case. Please try again.", "warning");
+      return;
     }
 
     setCases(prev => [newCase, ...prev.filter(c => c.id !== newCase.id)]);
@@ -1846,7 +1864,7 @@ useEffect(() => {
       secondaryAssessment: extracted.secondaryAssessment || (extracted.secondarySurvey ? Object.entries(extracted.secondarySurvey).map(([k,v]) => `${k.toUpperCase()}: ${v}`).join("\n") : null) || existingMatch?.secondaryAssessment || "",
       secondarySurvey: extracted.secondarySurvey || existingMatch?.secondarySurvey || undefined,
       investigations: extracted.investigations || (extracted.labs ? extracted.labs.map((l: any, i: number) => ({ id: `inv-${Date.now()}-${i}`, testName: l.name || l, result: l.value || "Ordered", orderTime: new Date().toLocaleTimeString(), resultTime: "Pending", isAbnormal: false })) : null) || existingMatch?.investigations || [],
-      treatments: extracted.treatments || (extracted.treatmentGiven ? extracted.treatmentGiven.map((t: any, i: number) => ({ id: `trt-${Date.now()}-${i}`, drugName: typeof t === 'string' ? t : (t.drugName || t.name || ""), dose: typeof t === 'string' ? "" : (t.dose || ""), route: typeof t === 'string' ? "" : (t.route || ""), instruction: typeof t === 'string' ? "" : (t.instruction || ""), timeGiven: typeof t === 'string' ? "" : (t.timeGiven || ""), ipsgVerified: false })) : null) || existingMatch?.treatments || [],
+      treatments: (extracted.treatments ? extracted.treatments.map((t: any) => ({ ...t, provenance: t.provenance || "scribe" })) : null) || (extracted.treatmentGiven ? extracted.treatmentGiven.map((t: any, i: number) => ({ id: `trt-${Date.now()}-${i}`, drugName: typeof t === 'string' ? t : (t.drugName || t.name || ""), dose: typeof t === 'string' ? "" : (t.dose || ""), route: typeof t === 'string' ? "" : (t.route || ""), instruction: typeof t === 'string' ? "" : (t.instruction || ""), timeGiven: typeof t === 'string' ? "" : (t.timeGiven || ""), ipsgVerified: false, provenance: "scribe" as const })) : null) || existingMatch?.treatments || [],
       treatmentNotes: extracted.treatmentNotes || existingMatch?.treatmentNotes || undefined,
       progressNotes: extracted.progressNotes || (extracted.chronologicalNotes ? extracted.chronologicalNotes.map((n: any) => n.entry).join("\n") : null) || existingMatch?.progressNotes || "Case created via ErMate Voice Scribe dictation.",
       dispositionAndPlan: existingMatch?.dispositionAndPlan || { consultsRequested: extracted.consultations || [], managementPlan: extracted.plan || "" },
@@ -1939,13 +1957,18 @@ differentials: extracted.differentialDiagnosis
       const cleanCase = sanitizeForFirestore(newCase);
       await setDoc(doc(db, "cases", newCase.id), cleanCase, { merge: true });
       if (newCase.departmentId) {
-        await setDoc(doc(db, "departments", newCase.departmentId, "cases", newCase.id), cleanCase, { merge: true });
+        try {
+          await setDoc(doc(db, "departments", newCase.departmentId, "cases", newCase.id), cleanCase, { merge: true });
+        } catch (deptErr) {
+          console.warn("Secondary department index write failed (primary case was persisted):", deptErr);
+        }
       }
     } catch (err: any) {
       console.error("Error saving extracted voice case:", err);
       if (!err?.message?.includes("offline") && !err?.message?.includes("unavailable")) {
         handleFirestoreError(err, OperationType.WRITE, "cases");
       }
+      triggerNotification("Save Failed", "Unable to save this case. Please try again.", "warning");
       throw err;
     }
 
@@ -3164,29 +3187,73 @@ differentials: extracted.differentialDiagnosis
         <div className="max-w-7xl mx-auto flex gap-1">
           {(() => {
             const isAdminUser = profile?.email?.toLowerCase().trim() === "varahgrp@gmail.com" || auth.currentUser?.email?.toLowerCase().trim() === "varahgrp@gmail.com";
-            return [
-              { id: "dashboard", label: "Dashboard", icon: Activity, activeClass: "bg-emerald-600 text-white shadow-sm shadow-emerald-600/15" },
-              { id: "analytics", label: "Analytics", icon: TrendingUp, activeClass: "bg-indigo-600 text-white shadow-sm shadow-indigo-600/15" },
-              ...(isAdminUser ? [{ id: "admin", label: "Admin & Cost Panel", icon: ShieldCheck, activeClass: "bg-slate-50 dark:bg-slate-900 text-white shadow-sm shadow-slate-900/15" }] : []),
-              { id: "handover", label: "Handover", icon: Users, activeClass: "bg-blue-600 text-white shadow-sm shadow-blue-600/15" },
-              { id: "directory", label: "Directory", icon: Building2, activeClass: "bg-amber-600 text-white shadow-sm shadow-amber-600/15" },
-              { id: "cases", label: "Cases Registry", icon: ClipboardList, activeClass: "bg-teal-600 text-white shadow-sm shadow-teal-600/15" },
-              { id: "mlc", label: "MLC", icon: FileWarning, activeClass: "bg-orange-600 text-white shadow-sm shadow-orange-600/15" },
-              { id: "emdrugs", label: "EM Drugs", icon: ShieldAlert, activeClass: "bg-red-600 text-white shadow-sm shadow-red-600/15" },
-              { id: "learn", label: "Learn & Reference", icon: BookOpen, activeClass: "bg-purple-600 text-white shadow-sm shadow-purple-600/15" },
-              { id: "profile", label: "Team & Subscriptions", icon: Settings, activeClass: "bg-fuchsia-600 text-white shadow-sm shadow-fuchsia-600/15" },
-            ];
+            
+            // Dynamic role-based navigation tabs
+            const getRoleNavTabs = () => {
+              switch (userNormalizedRole) {
+                case "resident":
+                  return [
+                    { id: "dashboard", label: "Dashboard", mobileLabel: "Dashboard", icon: Activity, activeClass: "bg-emerald-600 text-white shadow-sm shadow-emerald-600/15" },
+                    { id: "handover", label: "Handover", mobileLabel: "Handover", icon: Users, activeClass: "bg-blue-600 text-white shadow-sm shadow-blue-600/15" },
+                    { id: "logbook", label: "My Log Book", mobileLabel: "Log Book", icon: Award, activeClass: "bg-amber-600 text-white shadow-sm shadow-amber-600/15" },
+                    { id: "learn", label: "Learn", mobileLabel: "Learn", icon: BookOpen, activeClass: "bg-purple-600 text-white shadow-sm shadow-purple-600/15" },
+                    { id: "tools", label: "Tools", mobileLabel: "Tools", icon: Wrench, activeClass: "bg-teal-600 text-white shadow-sm shadow-teal-600/15" },
+                    { id: "more", label: "More", mobileLabel: "More", icon: MoreHorizontal, activeClass: "bg-slate-700 text-white shadow-sm shadow-slate-700/15" },
+                  ];
+                case "consultant":
+                  return [
+                    { id: "dashboard", label: "Dashboard", mobileLabel: "Dashboard", icon: Activity, activeClass: "bg-emerald-600 text-white shadow-sm shadow-emerald-600/15" },
+                    { id: "cases", label: "Cases", mobileLabel: "Cases", icon: ClipboardList, activeClass: "bg-teal-600 text-white shadow-sm shadow-teal-600/15" },
+                    { id: "handover", label: "Handover", mobileLabel: "Handover", icon: Users, activeClass: "bg-blue-600 text-white shadow-sm shadow-blue-600/15" },
+                    { id: "logbook", label: "My Log Book", mobileLabel: "Log Book", icon: Award, activeClass: "bg-amber-600 text-white shadow-sm shadow-amber-600/15" },
+                    { id: "learn", label: "Learn", mobileLabel: "Learn", icon: BookOpen, activeClass: "bg-purple-600 text-white shadow-sm shadow-purple-600/15" },
+                    { id: "tools", label: "Tools", mobileLabel: "Tools", icon: Wrench, activeClass: "bg-teal-600 text-white shadow-sm shadow-teal-600/15" },
+                    { id: "more", label: "More", mobileLabel: "More", icon: MoreHorizontal, activeClass: "bg-slate-700 text-white shadow-sm shadow-slate-700/15" },
+                  ];
+                case "hod":
+                  return [
+                    { id: "dashboard", label: "Dashboard", mobileLabel: "Dashboard", icon: Activity, activeClass: "bg-emerald-600 text-white shadow-sm shadow-emerald-600/15" },
+                    { id: "cases", label: "Cases", mobileLabel: "Cases", icon: ClipboardList, activeClass: "bg-teal-600 text-white shadow-sm shadow-teal-600/15" },
+                    { id: "handover", label: "Handover", mobileLabel: "Handover", icon: Users, activeClass: "bg-blue-600 text-white shadow-sm shadow-blue-600/15" },
+                    { id: "team", label: "Department Team", mobileLabel: "Team", icon: Building2, activeClass: "bg-indigo-600 text-white shadow-sm shadow-indigo-600/15" },
+                    { id: "analytics", label: "Analytics", mobileLabel: "Analytics", icon: TrendingUp, activeClass: "bg-rose-600 text-white shadow-sm shadow-rose-600/15" },
+                    { id: "logbook", label: "My Log Book", mobileLabel: "Log Book", icon: Award, activeClass: "bg-amber-600 text-white shadow-sm shadow-amber-600/15" },
+                    { id: "learn", label: "Learn", mobileLabel: "Learn", icon: BookOpen, activeClass: "bg-purple-600 text-white shadow-sm shadow-purple-600/15" },
+                    { id: "more", label: "More", mobileLabel: "More", icon: MoreHorizontal, activeClass: "bg-slate-700 text-white shadow-sm shadow-slate-700/15" },
+                  ];
+                case "independent":
+                default:
+                  return [
+                    { id: "dashboard", label: "Dashboard", mobileLabel: "Dashboard", icon: Activity, activeClass: "bg-emerald-600 text-white shadow-sm shadow-emerald-600/15" },
+                    { id: "cases", label: "My Cases", mobileLabel: "My Cases", icon: ClipboardList, activeClass: "bg-teal-600 text-white shadow-sm shadow-teal-600/15" },
+                    { id: "logbook", label: "My Log Book", mobileLabel: "Log Book", icon: Award, activeClass: "bg-amber-600 text-white shadow-sm shadow-amber-600/15" },
+                    { id: "learn", label: "Learn", mobileLabel: "Learn", icon: BookOpen, activeClass: "bg-purple-600 text-white shadow-sm shadow-purple-600/15" },
+                    { id: "tools", label: "Tools", mobileLabel: "Tools", icon: Wrench, activeClass: "bg-teal-600 text-white shadow-sm shadow-teal-600/15" },
+                    { id: "more", label: "More", mobileLabel: "More", icon: MoreHorizontal, activeClass: "bg-slate-700 text-white shadow-sm shadow-slate-700/15" },
+                  ];
+              }
+            };
+
+            const baseTabs = getRoleNavTabs();
+            return isAdminUser 
+              ? [...baseTabs, { id: "admin", label: "Admin Panel", mobileLabel: "Admin", icon: ShieldCheck, activeClass: "bg-slate-900 text-white shadow-sm shadow-slate-900/15" }]
+              : baseTabs;
           })().map((tab) => {
             const Icon = tab.icon;
-            const active = activeTab === tab.id && !selectedCaseId && !viewCaseSheetPrintId && !activeFormMode && !showDischargeSummaryId && !showVoiceScribeChat && !showPediatricCalculator && !showPocketMirror;
+            const isAnyModalActive = Boolean(selectedCaseId || viewCaseSheetPrintId || activeFormMode || showDischargeSummaryId || showVoiceScribeChat || showPediatricCalculator || showPocketMirror || showQuickDischarge);
+            const active = !isAnyModalActive && (
+              activeTab === tab.id ||
+              (tab.id === "tools" && ["tools", "emdrugs"].includes(activeTab)) ||
+              (tab.id === "more" && ["more", "profile", "directory", "mlc"].includes(activeTab))
+            );
             return (
               <button
                 key={tab.id}
                 onClick={() => navigateToTab(tab.id)}
-                className={`text-xs px-4 py-2.5 font-bold rounded-lg transition-all flex items-center gap-2 shrink-0 ${
+                className={`text-xs px-4 py-2.5 font-bold rounded-lg transition-all flex items-center gap-2 shrink-0 cursor-pointer ${
                   active
                     ? tab.activeClass
-                    : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-50 dark:bg-slate-900"
+                    : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-900"
                 }`}
               >
                 <Icon className="w-4 h-4" />
@@ -3199,31 +3266,80 @@ differentials: extracted.differentialDiagnosis
 
       {/* Mobile-Optimized Bottom Navigation Bar */}
       <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white/95 dark:bg-slate-950/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800/80 pb-safe z-40 no-print shadow-lg">
-        <div className="flex justify-around items-center h-16 max-w-lg mx-auto px-2">
-          {[
-            { id: "dashboard" as const, label: "Home", icon: Activity },
-            { id: "cases" as const, label: "Cases", icon: ClipboardList },
-            { id: "handover" as const, label: "Handover", icon: Users },
-            { id: "learn" as const, label: "Learn", icon: BookOpen },
-            { id: "profile" as const, label: "Team & Set", icon: Settings },
-          ].map((tab) => {
+        <div className="flex justify-around items-center h-16 max-w-lg mx-auto px-1 overflow-x-auto scrollbar-none">
+          {(() => {
+            const isAdminUser = profile?.email?.toLowerCase().trim() === "varahgrp@gmail.com" || auth.currentUser?.email?.toLowerCase().trim() === "varahgrp@gmail.com";
+            const getRoleNavTabs = () => {
+              switch (userNormalizedRole) {
+                case "resident":
+                  return [
+                    { id: "dashboard", label: "Dashboard", mobileLabel: "Dashboard", icon: Activity },
+                    { id: "handover", label: "Handover", mobileLabel: "Handover", icon: Users },
+                    { id: "logbook", label: "My Log Book", mobileLabel: "Log Book", icon: Award },
+                    { id: "learn", label: "Learn", mobileLabel: "Learn", icon: BookOpen },
+                    { id: "tools", label: "Tools", mobileLabel: "Tools", icon: Wrench },
+                    { id: "more", label: "More", mobileLabel: "More", icon: MoreHorizontal },
+                  ];
+                case "consultant":
+                  return [
+                    { id: "dashboard", label: "Dashboard", mobileLabel: "Dashboard", icon: Activity },
+                    { id: "cases", label: "Cases", mobileLabel: "Cases", icon: ClipboardList },
+                    { id: "handover", label: "Handover", mobileLabel: "Handover", icon: Users },
+                    { id: "logbook", label: "My Log Book", mobileLabel: "Log Book", icon: Award },
+                    { id: "learn", label: "Learn", mobileLabel: "Learn", icon: BookOpen },
+                    { id: "tools", label: "Tools", mobileLabel: "Tools", icon: Wrench },
+                    { id: "more", label: "More", mobileLabel: "More", icon: MoreHorizontal },
+                  ];
+                case "hod":
+                  return [
+                    { id: "dashboard", label: "Dashboard", mobileLabel: "Dashboard", icon: Activity },
+                    { id: "cases", label: "Cases", mobileLabel: "Cases", icon: ClipboardList },
+                    { id: "handover", label: "Handover", mobileLabel: "Handover", icon: Users },
+                    { id: "team", label: "Department Team", mobileLabel: "Team", icon: Building2 },
+                    { id: "analytics", label: "Analytics", mobileLabel: "Analytics", icon: TrendingUp },
+                    { id: "logbook", label: "My Log Book", mobileLabel: "Log Book", icon: Award },
+                    { id: "learn", label: "Learn", mobileLabel: "Learn", icon: BookOpen },
+                    { id: "more", label: "More", mobileLabel: "More", icon: MoreHorizontal },
+                  ];
+                case "independent":
+                default:
+                  return [
+                    { id: "dashboard", label: "Dashboard", mobileLabel: "Dashboard", icon: Activity },
+                    { id: "cases", label: "My Cases", mobileLabel: "My Cases", icon: ClipboardList },
+                    { id: "logbook", label: "My Log Book", mobileLabel: "Log Book", icon: Award },
+                    { id: "learn", label: "Learn", mobileLabel: "Learn", icon: BookOpen },
+                    { id: "tools", label: "Tools", mobileLabel: "Tools", icon: Wrench },
+                    { id: "more", label: "More", mobileLabel: "More", icon: MoreHorizontal },
+                  ];
+              }
+            };
+            const baseTabs = getRoleNavTabs();
+            return isAdminUser 
+              ? [...baseTabs, { id: "admin", label: "Admin Panel", mobileLabel: "Admin", icon: ShieldCheck }]
+              : baseTabs;
+          })().map((tab) => {
             const Icon = tab.icon;
-            const active = activeTab === tab.id && !selectedCaseId && !viewCaseSheetPrintId && !activeFormMode && !showDischargeSummaryId && !showVoiceScribeChat && !showPediatricCalculator && !showPocketMirror;
+            const isAnyModalActive = Boolean(selectedCaseId || viewCaseSheetPrintId || activeFormMode || showDischargeSummaryId || showVoiceScribeChat || showPediatricCalculator || showPocketMirror || showQuickDischarge);
+            const active = !isAnyModalActive && (
+              activeTab === tab.id ||
+              (tab.id === "tools" && ["tools", "emdrugs"].includes(activeTab)) ||
+              (tab.id === "more" && ["more", "profile", "directory", "mlc"].includes(activeTab))
+            );
             return (
               <button
                 key={tab.id}
                 onClick={() => navigateToTab(tab.id)}
-                className={`flex flex-col items-center justify-center flex-1 h-full py-2.5 transition-all relative select-none ${
+                className={`flex flex-col items-center justify-center flex-1 min-w-[48px] h-full py-2 transition-all relative select-none cursor-pointer ${
                   active 
                     ? "text-indigo-600 dark:text-indigo-400 font-extrabold" 
                     : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-400"
                 }`}
               >
                 {active && (
-                  <span className="absolute top-1 w-1 h-1 rounded-full bg-indigo-600 dark:bg-indigo-400" />
+                  <span className="absolute top-1 w-1.5 h-1.5 rounded-full bg-indigo-600 dark:bg-indigo-400" />
                 )}
-                <Icon className={`w-5 h-5 ${active ? "scale-105" : ""} transition-transform`} />
-                <span className="text-[10px] mt-1 font-sans">{tab.label}</span>
+                <Icon className={`w-4.5 h-4.5 ${active ? "scale-105" : ""} transition-transform`} />
+                <span className="text-[9.5px] mt-1 font-sans truncate max-w-[56px] text-center leading-tight">{tab.mobileLabel}</span>
               </button>
             );
           })}
@@ -3421,11 +3537,16 @@ differentials: extracted.differentialDiagnosis
               currentUserEmail={profile?.email || auth.currentUser?.email || "doctor@ermate.ai"}
               currentUserName={profile?.name || "Emergency Physician"}
               hospitalName={profile?.hospital || "General Hospital"}
-              onCaseReady={(minimalCase) => {
-                setShowQuickDischarge(false);
-                handleSaveCase(minimalCase);
-                setQuickDischargeCase(minimalCase);
-                setShowDischargeSummaryId(minimalCase.id);
+              onCaseReady={async (minimalCase) => {
+                try {
+                  await handleSaveCase(minimalCase);
+                  setShowQuickDischarge(false);
+                  setQuickDischargeCase(minimalCase);
+                  setShowDischargeSummaryId(minimalCase.id);
+                } catch (err) {
+                  console.error("Failed to persist quick discharge case:", err);
+                  triggerNotification("Save Failed", "Unable to save this case. Please try again.", "warning");
+                }
               }}
               onCancel={() => setShowQuickDischarge(false)}
             />
@@ -3626,6 +3747,7 @@ differentials: extracted.differentialDiagnosis
                   onDeleteCase={handleDeleteCase}
                   onDeleteAllCases={handleDeleteAllCases}
                   onDiscussCase={(c) => handleStartVoiceScribe(c.id)}
+                  isIndependent={userNormalizedRole === "independent"}
                 />
               )}
 
@@ -3643,7 +3765,86 @@ differentials: extracted.differentialDiagnosis
                 />
               )}
 
+              {activeTab === "tools" && (
+                <ToolsView
+                  onNavigateToTab={navigateToTab}
+                  isDarkMode={isDarkMode}
+                />
+              )}
+
+              {activeTab === "more" && (
+                <MoreView
+                  profile={profile}
+                  normalizedRole={userNormalizedRole}
+                  onNavigateToTab={navigateToTab}
+                  isDarkMode={isDarkMode}
+                  onOpenUpdatesModal={() => setShowUpdatesModal(true)}
+                />
+              )}
+
               {activeTab === "learn" && <LearnView onNavigateToTab={navigateToTab} isDarkMode={isDarkMode} />}
+
+              {activeTab === "team" && (
+                <ProfileSettingsView
+                  initialSubSection="team"
+                  profile={profile}
+                  cases={cases}
+                  onSaveProfile={handleSaveProfile}
+                  onSignOut={handleSignOut}
+                  rotaAssignments={rotaAssignments}
+                  setRotaAssignments={setRotaAssignments}
+                  isDarkMode={isDarkMode}
+                  setIsDarkMode={setIsDarkMode}
+                  onDeleteAllCases={handleDeleteAllCases}
+                  isOnShift={isOnShift}
+                  setIsOnShift={setIsOnShift}
+                  handovers={handovers}
+                  setHandovers={customSetHandovers}
+                  onNavigateToTab={navigateToTab}
+                  teamMembers={teamMembers}
+                  onAddMember={handleAddTeamMember}
+                  onRemoveMember={handleRemoveTeamMember}
+                  onUpdateShift={handleUpdateTeamMemberShift}
+                  onApproveMember={handleApproveTeamMember}
+                  onDeclineMember={handleDeclineTeamMember}
+                  onUpdateRole={handleUpdateTeamMemberRole}
+                  onLeaveTeam={handleLeaveTeam}
+                  hospitalSubscription={hospitalSubscription}
+                  shifts={shifts}
+                  onUpdateShifts={handleUpdateHospitalShifts}
+                />
+              )}
+
+              {activeTab === "logbook" && (
+                <ProfileSettingsView
+                  initialSubSection="logbook"
+                  profile={profile}
+                  cases={cases}
+                  onSaveProfile={handleSaveProfile}
+                  onSignOut={handleSignOut}
+                  rotaAssignments={rotaAssignments}
+                  setRotaAssignments={setRotaAssignments}
+                  isDarkMode={isDarkMode}
+                  setIsDarkMode={setIsDarkMode}
+                  onDeleteAllCases={handleDeleteAllCases}
+                  isOnShift={isOnShift}
+                  setIsOnShift={setIsOnShift}
+                  handovers={handovers}
+                  setHandovers={customSetHandovers}
+                  onNavigateToTab={navigateToTab}
+                  teamMembers={teamMembers}
+                  onAddMember={handleAddTeamMember}
+                  onRemoveMember={handleRemoveTeamMember}
+                  onUpdateShift={handleUpdateTeamMemberShift}
+                  onApproveMember={handleApproveTeamMember}
+                  onDeclineMember={handleDeclineTeamMember}
+                  onUpdateRole={handleUpdateTeamMemberRole}
+                  onLeaveTeam={handleLeaveTeam}
+                  hospitalSubscription={hospitalSubscription}
+                  shifts={shifts}
+                  onUpdateShifts={handleUpdateHospitalShifts}
+                />
+              )}
 
               {activeTab === "profile" && (
                 <ProfileSettingsView
@@ -3693,31 +3894,35 @@ differentials: extracted.differentialDiagnosis
           onSelect={async (method: EntryMethod, newCase: ClinicalCase) => {
             setShowEntryMenu(false);
             
-            // Optimistically add to cases so it's instantly available for CaseSheetView to render without refetch race conditions
+            if (method === "triage") {
+              setActiveFormMode("full");
+              return;
+            }
+
             const caseToSave = {
               ...newCase,
               hospital: newCase.hospital || profile.hospital,
               doctorEmail: newCase.doctorEmail || profile.email,
               doctorName: newCase.doctorName || profile.name || "Emergency Doctor",
             };
-            setCases(prev => [caseToSave, ...prev.filter(c => c.id !== newCase.id)]);
-            
-            // Do NOT await, let it save in background so UI navigates instantly!
-            handleSaveCase(newCase).catch(console.error);
 
-            switch (method) {
-              case "triage":
-                setActiveFormMode("full");
-                break;
-              case "speak":
-                handleStartVoiceScribe(newCase.id);
-                break;
-              case "type":
-              case "adult-direct":
-              case "pediatric-direct":
-                setPendingNewCase(caseToSave);
-                setSelectedCaseId(newCase.id);
-                break;
+            try {
+              await handleSaveCase(caseToSave);
+
+              switch (method) {
+                case "speak":
+                  handleStartVoiceScribe(caseToSave.id);
+                  break;
+                case "type":
+                case "adult-direct":
+                case "pediatric-direct":
+                  setPendingNewCase(caseToSave);
+                  setSelectedCaseId(caseToSave.id);
+                  break;
+              }
+            } catch (err) {
+              console.error("Failed to persist new case:", err);
+              triggerNotification("Save Failed", "Unable to save this case. Please try again.", "warning");
             }
           }}
         />

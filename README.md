@@ -37,6 +37,7 @@ ErMate implements **Local On-The-Fly PHI De-identification** hosted on Indian Cl
 ### 3. Voice & Text Case Sheet Extraction
 - Supports real-time clinical dictation and OCR case sheet capture.
 - Standardizes voice notes into structured EHR fields (Vitals, GCS, Airway status, Disposition, Treatment Plan).
+- **Canonical Flowsheet & Treatment State Engine**: Unified acute medication and resuscitation flowsheet with explicit Scribe vs. Manual origin tracking, real-time dirty state indicators, and two-step non-destructive item removal with undo.
 
 ### 4. Mortality & Morbidity Audit Suite
 - Generates thorough M&M audit reviews formatted according to hospital quality standards.
@@ -60,6 +61,21 @@ ErMate enforces strict per-route AI model assignments and dedicated fallback cas
 
 ---
 
+## 🧭 Role-Based Navigation Architecture
+
+ErMate employs a dynamic role-based navigation hierarchy computed from `getNormalizedRole()` across desktop and mobile bottom navigation:
+
+- **Resident**: Dashboard · Handover · My Log Book · Learn · Tools · More
+- **Consultant**: Dashboard · Cases · Handover · My Log Book · Learn · Tools · More
+- **HOD**: Dashboard · Cases · Handover · Department Team · Analytics · My Log Book · Learn · More
+- **Independent**: Dashboard · My Cases · My Log Book · Learn · Tools · More
+- **Platform Admin**: Retains dedicated Admin Control Center access alongside Learn.
+
+> **Continuous Learning Hub**: `Learn` is universally visible across all clinician roles as the central education hub containing interactive ER Simulations, Clinical Reference Q&A, Residency Trivia, Clinical Memory Log, and Google Classroom.
+> **Department Governance**: Hospital roster management is strictly consolidated in `Department Team`, with Profile Settings dedicated to personal credentials, workplace settings, preferences, and account security.
+
+---
+
 ## 🏗️ Technical Architecture
 
 - **Frontend**: React 18, Vite, Tailwind CSS, Lucide Icons, Motion (Framer Motion).
@@ -77,6 +93,9 @@ ErMate enforces strict per-route AI model assignments and dedicated fallback cas
 | Path | Purpose |
 | :--- | :--- |
 | `/server/deidentify.ts` | On-the-fly local PHI stripping engine & date-to-relative-timeline converter |
+| `/firestore.rules` | Phase-3 Transitional Firestore Security Rules (UID/membership & legacy coexistence; hardened Phase 3A.1 Log Book rules) |
+| `/test_phase3_rules.cjs` | 39-scenario emulator test suite validating Phase-3 authorization matrix |
+| `/src/lib/firebase-admin.ts` | Named Firestore database Admin singleton (`ai-studio-ermate-c85078ba-126c-43fd-b799-a4aa8b82bf03`) |
 | `/server/clinicalRanges.ts` | Deterministic adult ED reference ranges & zero-hallucination abnormal flagger |
 | `/server/alertCompiler.ts` | Rule-based post-synthesis critical alert compiler (Section 0) |
 | `/server/crossConsultParser.ts` | Regex-first cross-consultation extractor & duration-conditioned section renderer |
@@ -84,6 +103,9 @@ ErMate enforces strict per-route AI model assignments and dedicated fallback cas
 | `/server/dischargeSummary.ts` | Auto-Discharge summary synthesizer |
 | `/server/extraction.ts` | Voice dictation & clinical case parser |
 | `/server/mortalityAudit.ts` | M&M Audit generator & DOCX builder |
+| `/src/utils/roleUtils.ts` | Role normalization & dynamic navigation permissions helper (`getNormalizedRole`) |
+| `/src/components/ToolsView.tsx` | Consolidated acute clinical tools hub (Drug Guide, Peds Calculator, Pocket Mirror) |
+| `/src/components/MoreView.tsx` | Secondary utilities hub (Directory, MLC, Governance, Settings, Admin) |
 | `/src/components/CaseSheetPrintView.tsx` | Official read-only, print-formatted Case Sheet document view |
 | `/src/components/HandoverView.tsx` | Interactive Handover UI & PHI Protection Toast |
 | `/src/components/ProfileSettingsView.tsx` | Settings, Privacy Policy & DPDP Shield Architecture Overview |

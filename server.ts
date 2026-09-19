@@ -33,6 +33,7 @@ import { VOICE_EXTRACTION_PROMPT, extractFromTranscript } from "./server/voiceEx
 
 import extractionRouter from "./server/routes/extraction.routes.ts";
 import logbookRouter from "./server/routes/logbook.routes.js";
+import teamRouter from "./server/routes/team.routes.js";
 
 import { generateMortalityAudit, generateMortalityAuditDocx } from "./server/mortalityAudit.ts";
 import { requireHOD } from "./middleware/requireHOD.ts";
@@ -68,6 +69,7 @@ app.use(express.json({ limit: "10mb" }));
 app.use("/api/payments", paymentsRouter);
 app.use(extractionRouter);
 app.use("/api/logbook", logbookRouter);
+app.use("/api/team", teamRouter);
 
 const upload = multer({ storage: multer.memoryStorage() });
 

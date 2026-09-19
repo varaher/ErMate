@@ -14,6 +14,7 @@ interface CasesListViewProps {
   onNavigateToTab?: (tabId: string) => void;
   onDiscussCase?: (patientCase: ClinicalCase) => void;
   onDeleteAllCases?: () => void;
+  isIndependent?: boolean;
 }
 
 export default function CasesListView({
@@ -27,30 +28,61 @@ export default function CasesListView({
   onNavigateToTab,
   onDiscussCase,
   onDeleteAllCases,
+  isIndependent = false,
 }: CasesListViewProps) {
   const [searchTerm, setSearchTerm] = useState("");
   const [caseToDelete, setCaseToDelete] = useState<{ id: string; name: string } | null>(null);
   const [showDeleteAllConfirm, setShowDeleteAllConfirm] = useState(false);
-  const [statusFilter, setStatusFilter] = useState<"All" | "Active" | "Triage" | "Discharged">("All");
+  const [statusFilter, setStatusFilter] = useState<"All" | "Active" | "Triage" | "Admitted" | "Discharged" | "Transferred" | "MLC">("All");
+  const [triageFilter, setTriageFilter] = useState<"All" | "P1" | "P2" | "P3">("All");
   const [ageGroupFilter, setAgeGroupFilter] = useState<"All" | "Adult" | "Pediatric">("All");
 
   const filteredCases = cases.filter((c) => {
     const matchesSearch = 
       c.patient.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
       c.patient.presentingComplaint.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (c.provisionalPrimaryDiagnosis || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (c.doctorName || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
       c.id.toLowerCase().includes(searchTerm.toLowerCase());
 
-    const matchesStatus = 
-      statusFilter === "All" || 
-      c.status === statusFilter;
+    let matchesStatus = true;
+    const dispType = c.dispositionDetails?.dispositionType || c.dispositionAndPlan?.dispositionStatus;
+    if (statusFilter === "Active") {
+      matchesStatus = c.status === "Active" || !c.status;
+    } else if (statusFilter === "Triage") {
+      matchesStatus = c.status === "Triage";
+    } else if (statusFilter === "Discharged") {
+      matchesStatus = c.status === "Discharged" || dispType === "Discharge";
+    } else if (statusFilter === "Admitted") {
+      matchesStatus = dispType === "Admit" || dispType === "ICU" || (c.status as string) === "Admitted";
+    } else if (statusFilter === "Transferred") {
+      matchesStatus = dispType === "Refer" || (c.status as string) === "Transferred";
+    } else if (statusFilter === "MLC") {
+      matchesStatus = Boolean(c.patient.isMlc || c.patient.mlcDetails?.isMlc || (c as any).isMLC);
+    }
+
+    const matchesTriage = 
+      triageFilter === "All" ||
+      (triageFilter === "P1" && String(c.patient.triageCategory || "").includes("P1")) ||
+      (triageFilter === "P2" && String(c.patient.triageCategory || "").includes("P2")) ||
+      (triageFilter === "P3" && String(c.patient.triageCategory || "").includes("P3"));
 
     const matchesAgeGroup = 
       ageGroupFilter === "All" ||
       (ageGroupFilter === "Pediatric" && c.isPediatric) ||
       (ageGroupFilter === "Adult" && !c.isPediatric);
 
-    return matchesSearch && matchesStatus && matchesAgeGroup;
+    return matchesSearch && matchesStatus && matchesTriage && matchesAgeGroup;
   });
+
+  const resetFilters = () => {
+    setSearchTerm("");
+    setStatusFilter("All");
+    setTriageFilter("All");
+    setAgeGroupFilter("All");
+  };
+
+  const isFiltered = searchTerm !== "" || statusFilter !== "All" || triageFilter !== "All" || ageGroupFilter !== "All";
 
   return (
     <div className="space-y-6 animate-fade-in" id="cases-list-container">
@@ -65,13 +97,20 @@ export default function CasesListView({
       )}
 
       {/* Header Panel */}
-      <div className="flex flex-wrap items-center justify-between gap-4 border-b pb-4">
+      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-800 pb-4">
         <div>
-          <h1 className="text-xl md:text-2xl font-bold font-display text-slate-900 dark:text-white">
-            Active Cases Registry
-          </h1>
-          <p className="text-xs text-slate-400">
-            Search, manage, and audit clinical documentation records and emergency triage status.
+          <div className="flex items-center gap-2">
+            <h1 className="text-xl md:text-2xl font-bold font-display text-slate-900 dark:text-white">
+              {isIndependent ? "My Cases" : "Case Registry & History"}
+            </h1>
+            <span className="text-[10px] font-mono bg-blue-50 dark:bg-blue-950 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800 px-2 py-0.5 rounded-full font-bold">
+              {filteredCases.length} of {cases.length} Records
+            </span>
+          </div>
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 max-w-2xl">
+            {isIndependent
+              ? "Searchable registry of your emergency patient records, clinical history, and discharge summaries. For live real-time management and active triage, use Dashboard."
+              : "Searchable registry of authorized emergency patient records, clinical history, and discharge summaries. For live real-time bed management and active triage, use Dashboard."}
           </p>
         </div>
         <div className="flex flex-wrap gap-2.5">
@@ -102,51 +141,91 @@ export default function CasesListView({
       </div>
 
       {/* Filter and Search controls */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-        {/* Search Input */}
-        <div className="relative">
-          <Search className="absolute left-3 top-2.5 w-4.5 h-4.5 text-slate-400" />
-          <input
-            type="text"
-            placeholder="Search by name, ID or chief complaint..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full pl-9 pr-4 py-2 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-xs text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
-          />
+      <div className="space-y-3">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+          {/* Search Input */}
+          <div className="relative md:col-span-2">
+            <Search className="absolute left-3 top-2.5 w-4.5 h-4.5 text-slate-400" />
+            <input
+              type="text"
+              placeholder="Search by patient name, UHID/ID, complaint, diagnosis, or doctor..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full pl-9 pr-8 py-2 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-xs text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            />
+            {searchTerm && (
+              <button
+                type="button"
+                onClick={() => setSearchTerm("")}
+                className="absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-xs"
+              >
+                ✕
+              </button>
+            )}
+          </div>
+
+          {/* Triage Filter */}
+          <div className="flex gap-1 bg-slate-50 dark:bg-slate-950 p-1 rounded-lg border border-slate-200 dark:border-slate-800 overflow-x-auto">
+            {(["All", "P1", "P2", "P3"] as const).map((filter) => (
+              <button
+                key={filter}
+                onClick={() => setTriageFilter(filter)}
+                className={`text-[11px] px-2.5 py-1 font-bold rounded-md transition-all shrink-0 ${
+                  triageFilter === filter
+                    ? "bg-white dark:bg-slate-900 text-blue-700 dark:text-blue-400 shadow-xs"
+                    : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-300"
+                }`}
+              >
+                {filter === "All" ? "All Triage" : filter}
+              </button>
+            ))}
+          </div>
+
+          {/* Age Group Filter */}
+          <div className="flex gap-1 bg-slate-50 dark:bg-slate-950 p-1 rounded-lg border border-slate-200 dark:border-slate-800 overflow-x-auto">
+            {(["All", "Adult", "Pediatric"] as const).map((filter) => (
+              <button
+                key={filter}
+                onClick={() => setAgeGroupFilter(filter)}
+                className={`text-[11px] px-3 py-1 font-bold rounded-md transition-all shrink-0 ${
+                  ageGroupFilter === filter
+                    ? "bg-white dark:bg-slate-900 text-blue-700 dark:text-blue-400 shadow-xs"
+                    : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-300"
+                }`}
+              >
+                {filter}
+              </button>
+            ))}
+          </div>
         </div>
 
         {/* Status Filter buttons */}
-        <div className="flex gap-1 bg-slate-50 dark:bg-slate-950 p-1 rounded-lg border border-slate-200 dark:border-slate-800 overflow-x-auto">
-          {(["All", "Active", "Triage", "Discharged"] as const).map((filter) => (
-            <button
-              key={filter}
-              onClick={() => setStatusFilter(filter)}
-              className={`text-[11px] px-3 py-1 font-bold rounded-md transition-all shrink-0 ${
-                statusFilter === filter
-                  ? "bg-white dark:bg-slate-900 text-blue-700 dark:text-blue-400 shadow-xs"
-                  : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-300"
-              }`}
-            >
-              {filter}
-            </button>
-          ))}
-        </div>
+        <div className="flex items-center justify-between gap-2 overflow-x-auto pb-1">
+          <div className="flex gap-1 bg-slate-50 dark:bg-slate-950 p-1 rounded-lg border border-slate-200 dark:border-slate-800">
+            {(["All", "Active", "Triage", "Admitted", "Discharged", "Transferred", "MLC"] as const).map((filter) => (
+              <button
+                key={filter}
+                onClick={() => setStatusFilter(filter)}
+                className={`text-[11px] px-3 py-1 font-bold rounded-md transition-all shrink-0 ${
+                  statusFilter === filter
+                    ? "bg-white dark:bg-slate-900 text-blue-700 dark:text-blue-400 shadow-xs"
+                    : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-300"
+                }`}
+              >
+                {filter === "All" ? "All Statuses" : filter}
+              </button>
+            ))}
+          </div>
 
-        {/* Age Group Filter */}
-        <div className="flex gap-1 bg-slate-50 dark:bg-slate-950 p-1 rounded-lg border border-slate-200 dark:border-slate-800 overflow-x-auto">
-          {(["All", "Adult", "Pediatric"] as const).map((filter) => (
+          {isFiltered && (
             <button
-              key={filter}
-              onClick={() => setAgeGroupFilter(filter)}
-              className={`text-[11px] px-3 py-1 font-bold rounded-md transition-all shrink-0 ${
-                ageGroupFilter === filter
-                  ? "bg-white dark:bg-slate-900 text-blue-700 dark:text-blue-400 shadow-xs"
-                  : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-300"
-              }`}
+              type="button"
+              onClick={resetFilters}
+              className="text-[11px] font-bold text-blue-600 dark:text-blue-400 hover:underline px-2 py-1 shrink-0 cursor-pointer"
             >
-              {filter}
+              Reset Filters
             </button>
-          ))}
+          )}
         </div>
       </div>
 
@@ -156,8 +235,17 @@ export default function CasesListView({
           <Activity className="w-12 h-12 mx-auto text-slate-300 dark:text-slate-700 mb-4 animate-pulse-slow" />
           <h3 className="text-base font-bold text-slate-700 dark:text-slate-300">No cases matched your filter criteria</h3>
           <p className="text-xs text-slate-400 mt-1 max-w-md mx-auto">
-            Try adjusting your search query, status filters, or age filters to show existing entries.
+            {searchTerm ? `No results for "${searchTerm}".` : "No records match the selected status or triage criteria."} Try adjusting or resetting your filters.
           </p>
+          {isFiltered && (
+            <button
+              type="button"
+              onClick={resetFilters}
+              className="mt-4 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-lg transition-all"
+            >
+              Reset All Filters
+            </button>
+          )}
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">

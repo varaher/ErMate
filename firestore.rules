@@ -44,7 +44,7 @@ service cloud.firestore {
         (
           get(/databases/$(database)/documents/users/$(uid())).data.role in
             ['hod', 'owner', 'HOD / Shift Lead', 'HOD / Department Lead']
-          || request.auth.token.email == 'varahgrp@gmail.com'
+          || (('email' in request.auth.token) && request.auth.token.email == 'varahgrp@gmail.com')
         );
     }
 
@@ -52,7 +52,7 @@ service cloud.firestore {
     // include ordinary HODs. This is the only identity allowed to bypass
     // hospital-scoping (sameHospital()) across hospital boundaries.
     function isPlatformAdmin() {
-      return isLoggedIn() && request.auth.token.email == 'varahgrp@gmail.com';
+      return isLoggedIn() && ('email' in request.auth.token) && request.auth.token.email == 'varahgrp@gmail.com';
     }
 
     function myHospital() {
@@ -73,26 +73,137 @@ service cloud.firestore {
       return isLoggedIn() && (myHospital() == docHospital || isPlatformAdmin());
     }
 
+    // ── Phase-3 Membership & Ownership Helpers ─────────────────
+
+    function memberDoc(userId) {
+      return get(/databases/$(database)/documents/team_members/$(userId));
+    }
+
+    // Normalizes membership hospital identifier (prefers hospitalId, falls back to hospital)
+    function getMembershipHospital(memberData) {
+      return (memberData.get('hospitalId', null) is string && memberData.get('hospitalId', '') != '')
+        ? memberData.get('hospitalId', '')
+        : (
+            (memberData.get('hospital', null) is string && memberData.get('hospital', '') != '')
+              ? memberData.get('hospital', '')
+              : ''
+          );
+    }
+
+    function hasActiveHospitalMembership(userId, hospId) {
+      return isLoggedIn()
+        && userId != null
+        && hospId is string
+        && hospId.size() > 0
+        && exists(/databases/$(database)/documents/team_members/$(userId))
+        && memberDoc(userId).data.get('status', '') == 'active'
+        && getMembershipHospital(memberDoc(userId).data) == hospId;
+    }
+
+    function userHasActiveHospitalMembership(userId) {
+      return isLoggedIn()
+        && userId != null
+        && exists(/databases/$(database)/documents/team_members/$(userId))
+        && memberDoc(userId).data.get('status', '') == 'active'
+        && getMembershipHospital(memberDoc(userId).data) != '';
+    }
+
+    function isValidHospitalCaseCreate(data) {
+      return data.get('workspaceType', '') == 'hospital'
+        && data.get('createdByUid', '') == uid()
+        && data.get('ownerUid', null) == null
+        && data.get('hospitalId', '') is string
+        && data.get('hospitalId', '').size() > 0
+        && hasActiveHospitalMembership(uid(), data.get('hospitalId', ''));
+    }
+
+    function isValidIndividualCaseCreate(data) {
+      return data.get('workspaceType', '') == 'individual'
+        && data.get('createdByUid', '') == uid()
+        && data.get('ownerUid', '') == uid()
+        && data.get('hospitalId', null) == null
+        && !userHasActiveHospitalMembership(uid());
+    }
+
+    function canAccessCase(caseData) {
+      return isLoggedIn() && (
+        isPlatformAdmin()
+        || (
+          caseData.get('workspaceType', '') == 'hospital'
+          && hasActiveHospitalMembership(uid(), caseData.get('hospitalId', ''))
+        )
+        || (
+          caseData.get('workspaceType', '') == 'individual'
+          && caseData.get('ownerUid', '') == uid()
+        )
+        || (
+          !('workspaceType' in caseData)
+          && sameHospital(caseData.get('hospital', ''))
+        )
+      );
+    }
+
     // ── Cases Rules ──────────────────────────────────────────
-    // CHANGED: was "allow read, create, update, delete: if true" — fully
-    // public, no login required. Now requires login + hospital match.
-    // sameHospital() behavior corrected under SEC-24 (see helper above) —
-    // this collection is now genuinely hospital-scoped for HODs too, not
-    // just non-admin roles.
+    // Phase-3 transitional cutover rules:
+    // - All new cases must be ownership-aware (hospital or individual).
+    // - Existing legacy cases remain readable/updatable via sameHospital fallback.
+    // - Subcollections inherit authorization strictly from parent case.
+    // - Ordinary clinicians cannot hard delete ownership-aware cases.
 
     match /cases/{caseId} {
-      allow read, update, delete: if sameHospital(resource.data.hospital);
-      allow create: if isLoggedIn() && sameHospital(incoming().hospital);
+      allow read: if canAccessCase(resource.data);
 
-      // FIXED (SEC-22, Sept 1): was "allow read, create, update, delete: if
-      // isLoggedIn()" — any logged-in user, from any hospital, could read or
-      // write any subcollection (addenda/attachments/notes) under any case,
-      // bypassing the hospital-scoping on the parent document entirely.
-      // Now inherits the parent case's hospital via a get() lookup and
-      // applies the same sameHospital() check the parent document uses.
-      match /{allSubcollections=**} {
+      allow create: if isLoggedIn() && (
+        isPlatformAdmin()
+        || isValidHospitalCaseCreate(incoming())
+        || isValidIndividualCaseCreate(incoming())
+      );
+
+      allow update: if isLoggedIn() && (
+        isPlatformAdmin()
+        ||
+        (
+          // Ownership-aware case update: immutable metadata & active membership / owner check
+          'workspaceType' in existing()
+          && incoming().workspaceType == existing().workspaceType
+          && incoming().createdByUid == existing().createdByUid
+          && incoming().get('hospitalId', null) == existing().get('hospitalId', null)
+          && incoming().get('ownerUid', null) == existing().get('ownerUid', null)
+          && (
+            (
+              existing().workspaceType == 'hospital'
+              && hasActiveHospitalMembership(uid(), existing().hospitalId)
+            )
+            ||
+            (
+              existing().workspaceType == 'individual'
+              && existing().ownerUid == uid()
+            )
+          )
+        )
+        ||
+        (
+          // Legacy case update: preserves clinical updates, strictly denies Phase-3 injection
+          !('workspaceType' in existing())
+          && sameHospital(existing().hospital)
+          && !('workspaceType' in incoming())
+          && !('ownerUid' in incoming())
+          && !('hospitalId' in incoming())
+          && !('createdByUid' in incoming())
+        )
+      );
+
+      allow delete: if isLoggedIn() && (
+        isPlatformAdmin()
+        || (
+          !('workspaceType' in existing())
+          && sameHospital(existing().hospital)
+        )
+      );
+
+      match /{subcollection}/{subDoc=**} {
         allow read, create, update, delete: if
-          sameHospital(get(/databases/$(database)/documents/cases/$(caseId)).data.hospital);
+          canAccessCase(get(/databases/$(database)/documents/cases/$(caseId)).data);
       }
     }
 
@@ -149,6 +260,20 @@ service cloud.firestore {
 
       match /meta/{metaDocId} {
         allow read, write: if isLoggedIn() && isOwner(userId);
+      }
+
+      // ── Log Book Entries ─────────────────────────────────────────
+      // Strictly private to the owning doctor — HOD/team cannot read.
+      // Client CREATE denied — created only via backend trusted sync.
+      // Client UPDATE: owner only, restricted strictly to learningPoints, skills, updatedAt.
+      match /logbook/{entryId} {
+        allow read, delete: if isLoggedIn() && isOwner(userId);
+        allow create: if false;
+        allow update: if isLoggedIn() && isOwner(userId)
+          && incoming().diff(existing()).affectedKeys().hasOnly(['learningPoints', 'skills', 'updatedAt'])
+          && (!('learningPoints' in incoming()) || incoming().learningPoints is string)
+          && (!('skills' in incoming()) || incoming().skills is list)
+          && (!('updatedAt' in incoming()) || incoming().updatedAt is string);
       }
       allow update: if isLoggedIn()
         && (
@@ -284,7 +409,11 @@ service cloud.firestore {
     //    hospital; only isPlatformAdmin() can act cross-hospital.
 
     match /team_members/{memberId} {
-      allow read: if sameHospital(resource.data.hospital);
+      allow read: if isLoggedIn()
+        && (
+          memberId == uid()
+          || sameHospital(resource.data.hospital)
+        );
 
       allow delete: if isLoggedIn() && isValidId(memberId)
         && sameHospital(resource.data.hospital)

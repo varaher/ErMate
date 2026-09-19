@@ -163,6 +163,10 @@ export default function TeamRosterBoard({
   // Handle adding a new member
   const handleAddSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isUserHOD) {
+      setErrorMsg("Only Department Leads / HODs can onboard team clinicians.");
+      return;
+    }
     if (!newName.trim() || !newEmail.trim()) {
       setErrorMsg("Please fill in both name and email.");
       return;
@@ -199,6 +203,10 @@ export default function TeamRosterBoard({
 
   const handleCreateNewShift = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
+    if (!isUserHOD) {
+      setShiftActionMsg("Only Department Leads / HODs can configure shifts.");
+      return;
+    }
     if (!addShiftName.trim()) {
       setShiftActionMsg("Please enter a shift title (e.g. S3 Shift or ICU Night).");
       return;
@@ -239,6 +247,10 @@ export default function TeamRosterBoard({
   };
 
   const handleDeleteShift = async (shiftId: string) => {
+    if (!isUserHOD) {
+      setShiftActionMsg("Only Department Leads / HODs can delete shifts.");
+      return;
+    }
     if (editedShifts.length <= 1) {
       alert("At least one shift slot must remain in the roster.");
       return;
@@ -254,6 +266,10 @@ export default function TeamRosterBoard({
   };
 
   const handleSaveShifts = async () => {
+    if (!isUserHOD) {
+      setShiftActionMsg("Only Department Leads / HODs can save shift schedules.");
+      return;
+    }
     if (onUpdateShifts) {
       try {
         await onUpdateShifts(editedShifts);

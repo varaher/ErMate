@@ -776,6 +776,8 @@ const fieldsToExtract = rawFieldsToExtract || undefined;
                   }
                 } catch (e) {
                   console.warn("[VoiceScribeChatView] Failed to initialize case:", e);
+                  setSaveError("Unable to save this case. Please try again.");
+                  return;
                 }
               }
               onOpenCaseSheet(activeCaseId!);

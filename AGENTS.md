@@ -45,6 +45,91 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-09-19] — Log Book De-Identification Closure, Search Scoping & MoreView Independent Role Hardening
+- **My Log Book Privacy Closure (`src/components/ProfileSettingsView.tsx`)**:
+  - Removed all mentions of `"UHID"` from the portfolio search input placeholder (`"Search Category, Procedure, Skills, Learning..."`).
+  - Restricted portfolio search fields strictly to de-identified parameters: `caseCategory`, `proceduresPerformed`, `skills`, and `learningPoints`.
+  - Confirmed and verified that UHID is never stored in `users/{uid}/logbook/{entryId}` documents, never mapped into `unifiedLogs`, and never rendered in the UI cards or list.
+- **MoreView Role Scope Hardening (`src/components/MoreView.tsx`)**:
+  - Excluded `Department Team & Roster` and `Clinical Analytics & KPIs` cards for Independent clinicians (`normalizedRole !== "independent"`), ensuring independent doctors without hospital affiliation are never presented with hospital-wide team or analytics entry points.
+  - Retained read-only Department Team and appropriate Analytics access for hospital-affiliated Consultants and Residents, while HODs retain primary navigation placement.
+- **Team Roster Board HOD Action Permissions (`src/components/TeamRosterBoard.tsx`)**:
+  - Hardened action handlers (`handleAddSubmit`, `handleCreateNewShift`, `handleDeleteShift`, `handleSaveShifts`) with explicit `isUserHOD` guards.
+  - Verified that non-HOD users (Consultants, Residents) can view shifts and team members in read-only mode, but cannot onboard members, alter or delete shifts, or perform administrative management.
+
+### [2026-09-19] — Universal Learn Navigation, MoreView Deduplication & Profile-Team Routing Freeze
+- **Universal Learn Navigation (`src/App.tsx`)**: Promoted `Learn` to a primary navigation destination across all clinician roles (Resident, Consultant, HOD, Independent, and Platform Admin) on both desktop and mobile bottom navigation. Educational modules (Interactive ER Simulations, Clinical Reference Q&A, Residency Trivia, Clinical Memory Log, and Google Classroom) are centralized in the Learn hub.
+- **Role-Differentiated Primary Navigation Hierarchy**:
+  - **Resident**: Dashboard, Handover, My Log Book, Learn, Tools, More.
+  - **Consultant**: Dashboard, Cases, Handover, My Log Book, Learn, Tools, More.
+  - **HOD**: Dashboard, Cases, Handover, Department Team, Analytics, My Log Book, Learn, More.
+  - **Independent**: Dashboard, My Cases, My Log Book, Learn, Tools, More.
+  - **Platform Admin**: Retains dedicated Admin Control Center access alongside Learn.
+- **MoreView Destination Deduplication (`src/components/MoreView.tsx`)**:
+  - Removed duplicate equal-weight `Department Team & Roster` and `Clinical Analytics & KPIs` cards for HOD users (already present in primary navigation). These remain accessible in More for non-HOD roles.
+  - Removed redundant equal-weight `Learn` card from More (since Learn is now universal in primary navigation).
+  - Converted Platform Admin entry into a clean subordinate link at the bottom of MoreView to avoid duplicate equal-weight cards.
+- **Profile vs Department Team Roster Routing (`src/components/ProfileSettingsView.tsx`)**:
+  - Normalized `initialSubSection` to handle `"team"`, `"roster"`, `"logbook"`, and `"log-book"` aliases seamlessly.
+  - Roster and team management links within Profile Settings route directly to the single canonical `Department Team` tab via `handleOpenTeamRoster()`, keeping Profile focused on personal credentials, workplace settings, preferences, and account security.
+- **My Log Book Portfolio Integrity**: Verified individual clinician portfolio functionality across all roles, including procedure counts, triage breakdown, search filters, and CSV export.
+
+### [2026-09-19] — Role-Based Navigation Refinement, Tools Hub & More Menu Consolidation
+- **Role-Differentiated Primary Navigation (`src/App.tsx`, `src/utils/roleUtils.ts`)**: Replaced hardcoded navigation array with dynamic role-based tab hierarchy computed via `userNormalizedRole` (`getNormalizedRole()`):
+  - **Resident**: Dashboard, Handover, My Log Book, Learn, Tools, More.
+  - **Consultant**: Dashboard, Cases, Handover, My Log Book, Tools, More.
+  - **HOD**: Dashboard, Cases, Handover, Department Team, Analytics, My Log Book, More.
+  - **Independent**: Dashboard, My Cases, My Log Book, Tools, More.
+  - **Platform Admin (`varahgrp@gmail.com`)**: Retains dedicated Admin Control Panel access in both primary nav and More menu.
+- **Clinical Utility Hub (`src/components/ToolsView.tsx`)**: Consolidated clinical utilities into a unified Tools destination with embedded fast switchers for EM Resuscitation & Drug Guide (`ErGuideView`), Pediatric Dosing Calculator (`PediatricDrugCalculatorView`), and Pocket Mirror / Airway Exam (`PocketMirrorView`).
+- **Secondary Features Consolidation (`src/components/MoreView.tsx`)**: Grouped lower-frequency modules into a clean grid: Clinician Directory, MLC Certificates, Profile & Department Settings, Learn & Simulations (for non-residents), Department Team & Analytics (for non-HODs), and Admin Control Panel.
+- **Independent Case Registry Naming (`src/components/CasesListView.tsx`)**: Conditioned registry branding with `isIndependent` prop to render "My Cases" for independent doctors and "Cases Registry" for hospital-affiliated clinicians.
+- **Synchronized Responsive Navigation**: Mirrored identical role-based hierarchy across desktop navigation bar, mobile bottom tab bar, and PWA viewport with consistent active state management and quick actions.
+
+### [2026-09-19] — Navigation Simplification, Role-Based Access & Unified Save Feedback Engine
+- **Role-Based Primary Navigation Architecture (`src/utils/roleUtils.ts`, `src/App.tsx`)**: Created centralized `getNormalizedRole()` utility supporting `"HOD" | "Consultant" | "Resident" | "Independent"`. Primary navigation dynamically displays tabs based on role:
+  - **HOD**: Dashboard, Department Team (promoted to primary tab), Cases, My Log Book, Simulations.
+  - **Consultant**: Dashboard, Cases, My Log Book, Simulations.
+  - **Resident**: Dashboard, Cases, My Log Book, Simulations.
+  - **Independent**: Dashboard, Cases, My Log Book.
+  - Quick Triage modal, AI Voice Scribe, and New Patient Intake remain omnipresent in top app bar.
+- **Direct Navigation & Deep-Linking (`src/components/ProfileSettingsView.tsx`)**: Refactored `ProfileSettingsView` with `initialSubSection` prop and intelligent Back-to-Dashboard navigation. Direct access to Log Book and Department Roster tabs seamlessly deep-links into the respective sub-views with clear "Clinical Governance" indicators.
+- **Searchable Case Registry (`src/components/CasesListView.tsx`)**: Clarified the Cases tab as a searchable historical registry distinct from the live operational Dashboard. Added multi-attribute filtering (Triage P1/P2/P3, Status Active/Triage/Admitted/Discharged/Transferred/MLC, and Age Group Adult/Pediatric) with instant "Reset Filters" and clean empty-state feedback.
+- **Unified Save Feedback Engine (`src/components/CaseSheetView.tsx`)**: Implemented low-friction, synchronized save status badges across acute tabs (Treatment, Investigations, and Disposition):
+  - State: `Saving...` with spinner during write.
+  - Success: `✓ [Tab] saved` with 2.8s auto-soften transition.
+  - Failure: High-contrast `[Tab] not saved — Retry` alert banner.
+  - Unsaved Dirty State: Pulsing indicator on Treatment flowsheet when pending changes exist.
+- **Public Directory DPDP Review Flag (`src/components/DoctorsDirectoryView.tsx`)**: Flagged doctor email visibility in public clinician directory with DPDP Act compliance review marker.
+
+### [2026-09-19] — Treatment Tab UX Cleanup & Real-Time Save State Engine
+- **Treatment Persistence Architecture Preserved**: Kept the existing universal Case Sheet `Save Changes` architecture and Scribe persistence sequence intact (Scribe extraction persists to Firestore upon Prepare Case Sheet prior to navigation; manual modifications remain local state until explicit save).
+- **Provenance & State Tracking (`src/types.ts`, `src/components/CaseSheetView.tsx`, `src/App.tsx`)**: Added `provenance?: 'scribe' | 'manual'` to `TreatmentItem`. Voice-extracted cases automatically tag treatments with `provenance: 'scribe'`, while manually logged medications and infusions default to `provenance: 'manual'`.
+- **Real-Time Save State & Dirty Indicator**: Implemented snapshot-derived dirty detection (`extractTreatmentSnapshot`) and real-time state badge in the Treatment Tab header (`Treatment saved`, `Unsaved treatment changes`, `Saving treatment...`, or `Treatment not saved — Retry`). Individual treatment and infusion table rows display dedicated `Saved` / `Unsaved` badges and origin indicators (`From Scribe` / `Manual`).
+- **Removed Obsolete Extraction Ghost Area**: Completely removed confusing `currentCase.medications` voice extraction block with redundant "+ Log to Flowsheet" buttons, establishing a single canonical Medication & Resuscitation Flowsheet.
+- **Two-Step Removal UX with Undo**: Replaced destructive trash icons with a dedicated "Remove" button that triggers a non-destructive pending state with an interactive inline banner (`"[Drug]" removed — press Save Changes to confirm`) and an `Undo` button.
+- **Feature Relocation**: Cleanly relocated the AI Differential & CDS Support block into the Diagnosis & Assessment section of the Investigations tab, keeping the acute Treatment tab strictly focused on medications, infusions, and emergency resuscitation procedures.
+
+### [2026-09-19] — Log Book Update Rule Hardening (Phase 3A.1) & 39-Test Suite Verification
+- **Log Book Field-Level Update Hardening (`firestore.rules`)**: Restricted client `update` on `/users/{userId}/logbook/{entryId}` strictly to owner doctor (`isOwner(userId)`), enforcing field-level restriction via `incoming().diff(existing()).affectedKeys().hasOnly(['learningPoints', 'skills', 'updatedAt'])`. Completely denies client tampering or modification of trusted immutable fields (`ownerUid`, `sourceCaseId`, `sourceType`, `hospitalIdAtTime`, `hospitalNameAtTime`, `roleAtTime`, `dateSeen`, `ageGroup`, `gender`, `triageCategory`, `caseCategory`, `proceduresPerformed`, `procedureName`, `createdAt`). Client `create` remains strictly forbidden (`allow create: if false`), preserving trusted backend Admin SDK creation.
+- **39-Scenario Emulator Test Suite (`test_phase3_rules.cjs`)**: Expanded test suite with test case `G4b` verifying immutable field tampering is rejected with `PERMISSION_DENIED`. Re-tested against active local Firestore emulator (port 8085) with 100% pass rate (39/39 passed, 0 failed). Zero deployments performed.
+
+### [2026-09-19] — Phase-3 Transitional Firestore Rules Implementation & 38-Test Suite Verification
+- **Phase-3 Cutover Rules Implementation (`firestore.rules`)**: Implemented transitional cutover Firestore security rules enabling Phase-3 UID and team membership ownership (`workspaceType == 'hospital' | 'individual'`) alongside strict fallback preservation for legacy cases (`!('workspaceType' in doc)`):
+  - **Hospital Cases (`workspaceType == 'hospital'`)**: Requires `createdByUid == request.auth.uid`, `ownerUid == null`, and verified active membership in `team_members/{uid}` matching `hospitalId` (normalizing both `hospitalId` and legacy `hospital` fields). Update preserves immutable metadata (`createdByUid`, `workspaceType`, `ownerUid`, `hospitalId`).
+  - **Individual Cases (`workspaceType == 'individual'`)**: Requires `createdByUid == request.auth.uid`, `ownerUid == request.auth.uid`, `hospitalId == null`, and zero active hospital memberships. Strictly personal — only the owner UID may read or update.
+  - **Legacy Cases Fallback**: Preserves `sameHospital` fallback for existing pre-Phase-3 cases without `workspaceType`. Strictly forbids client injection of Phase-3 metadata (`workspaceType`, `ownerUid`, `hospitalId`, `createdByUid`) during updates.
+  - **Subcollections Inheritance**: All case subcollections (`/{subcollection}/{subDoc=**}`) strictly inherit authorization from the parent case via `canAccessCase(parent)`.
+  - **Doctor Log Book (`users/{userId}/logbook/{entryId}`)**: Strictly personal to the doctor (`isOwner(userId)`). Direct client creation denied (`allow create: if false`).
+  - **Team Members Self-Read (`team_members/{memberId}`)**: Clinicians can directly read their own team membership document (`memberId == uid()`) in addition to hospital-scoped reads.
+- **38-Scenario Emulator Test Suite (`test_phase3_rules.cjs`)**: Executed comprehensive 38-test matrix across groups A-G on local Firestore emulator (port 8085) with 100% pass rate (38/38 passed, 0 failed). Verified zero deployments, zero data mutations, and clean compilation.
+
+### [2026-09-19] — Firebase Admin Named Database Alignment & Team Routes Mounting
+- **Named Database Configuration (`src/lib/firebase-admin.ts`)**: Updated the shared Firebase Admin Firestore singleton `db` to explicitly target the verified named production database `ai-studio-ermate-c85078ba-126c-43fd-b799-a4aa8b82bf03` (with project ID `ermate-e8f01`) via `getFirestore(app, FIRESTORE_DATABASE_ID)`. Added defensive guards throwing a fatal initialization error if `FIRESTORE_DATABASE_ID` is missing or defaults to `"(default)"`, preventing silent fallback.
+- **Backend Route Alignment Audit**: Verified that all backend routes importing the shared Admin `db` (`server/routes/team.routes.ts`, `server/routes/logbook.routes.ts`, `server/routes/payments.ts`) are 100% aligned to the shared named database instance.
+- **Team Router Mounting (`server.ts`)**: Mounted `teamRouter` at `/api/team` in `server.ts` to ensure invite creation, invite acceptance, member removal, and team departure endpoints route through the verified named database.
+- **Client & Admin SDK Database Equality Proof**: Executed runtime verification demonstrating exact equality between Client Firestore database ID (`ai-studio-ermate-c85078ba-126c-43fd-b799-a4aa8b82bf03`) and Admin Firestore database ID (`ai-studio-ermate-c85078ba-126c-43fd-b799-a4aa8b82bf03`).
+
 ### [2026-08-17] — Background Transcription Network Guard & Incoming Call Hardening
 - **Phone Call Mic Interruption Fix (`track.onended`)**: Added `track.onended` listeners to the `MediaRecorder` audio tracks in `src/components/shared/VoiceRecorder.tsx`, `CaseSheetView.tsx`, and `QuickDischargeIntake.tsx`. This ensures that when mobile operating systems (iOS/Android) terminate the microphone stream due to an incoming phone call, the app cleanly stops the recording and gracefully preserves the audio blob instead of locking up.
 - **Background Network OS Throttling Guard**: Refactored the transcription trigger across all voice intake mechanisms to check `document.visibilityState === "hidden"`. If a dictation ends while the app is in the background (e.g., user answered the phone), the `/api/voice/transcribe` fetch request is automatically suspended and cached in memory. It resumes seamlessly the moment the user brings the app back to the foreground, eliminating "Network request failed" errors caused by mobile OS background throttling.

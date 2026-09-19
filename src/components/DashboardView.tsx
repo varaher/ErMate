@@ -1051,8 +1051,8 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
               <Mic className="w-4.5 h-4.5" />
             </div>
             <div>
-              <span className="block font-black text-xs text-slate-800 dark:text-purple-300">Assistant</span>
-              <span className="block text-[8px] text-slate-400 font-medium leading-tight mt-0.5">Scribe in native language or discuss any complex case</span>
+              <span className="block font-black text-xs text-slate-800 dark:text-purple-300">Voice Scribe</span>
+              <span className="block text-[8px] text-slate-400 font-medium leading-tight mt-0.5">Dictate in native language or discuss any complex case</span>
             </div>
           </button>
 
@@ -1146,15 +1146,15 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
             
             <div className="space-y-1.5 max-w-[85%]">
               <h3 className="text-sm font-extrabold text-slate-900 dark:text-white flex items-center gap-1.5">
-                Assistant
+                Voice Scribe
               </h3>
               <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
-                Scribe in native language or discuss any complex case.
+                Dictate in native language or discuss any complex case.
               </p>
             </div>
 
             <div className="mt-4 flex items-center justify-between text-xs font-bold text-purple-600 dark:text-purple-400 border-t border-slate-100 dark:border-slate-800/60 pt-3">
-              <span>Open Assistant</span>
+              <span>Open Voice Scribe</span>
               <ChevronRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
             </div>
           </div>

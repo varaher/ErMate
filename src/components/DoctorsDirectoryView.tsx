@@ -339,6 +339,7 @@ export default function DoctorsDirectoryView({ currentProfile, onNavigateToTab }
                             </span>
                           )}
                         </div>
+                        {/* PRIVACY REVIEW FLAG: Email visibility in public clinician directory flagged for DPDP Act compliance review (consider masking or requiring explicit directory opt-in) */}
                         <p className="text-[10px] text-slate-500 font-mono">{doc.email}</p>
                       </td>
                       <td className="py-3.5 px-4 font-bold text-slate-800 dark:text-slate-200">

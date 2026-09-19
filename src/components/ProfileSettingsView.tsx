@@ -49,6 +49,7 @@ interface ProfileSettingsViewProps {
   hospitalSubscription?: { active: boolean; subscriptionTier: string } | null;
   shifts?: any[];
   onUpdateShifts?: (newShifts: any[]) => Promise<void> | void;
+  initialSubSection?: string | null;
 }
 
 export default function ProfileSettingsView({
@@ -77,9 +78,31 @@ export default function ProfileSettingsView({
   hospitalSubscription = null,
   shifts = [],
   onUpdateShifts,
+  initialSubSection = null,
 }: ProfileSettingsViewProps) {
-  // Mobile navigation subview selector
-  const [selectedSubSection, setSelectedSubSection] = useState<string | null>(null);
+  const normalizeSubSection = (sub: string | null | undefined): string | null => {
+    if (!sub) return null;
+    if (sub === "team" || sub === "roster") return "roster";
+    if (sub === "logbook" || sub === "log-book") return "log-book";
+    return sub;
+  };
+
+  // Navigation subview selector
+  const [selectedSubSection, setSelectedSubSection] = useState<string | null>(normalizeSubSection(initialSubSection));
+
+  useEffect(() => {
+    if (initialSubSection !== undefined) {
+      setSelectedSubSection(normalizeSubSection(initialSubSection));
+    }
+  }, [initialSubSection]);
+
+  const handleOpenTeamRoster = () => {
+    if (onNavigateToTab) {
+      onNavigateToTab("team");
+    } else {
+      setSelectedSubSection("roster");
+    }
+  };
 
   // Original state managers
   const [inputMode, setInputMode] = useState<"quick-select" | "bulk-add" | "single-add">("quick-select");
@@ -651,7 +674,7 @@ const startRealCheckout = async (planKey: string) => {
                 </div>
 
                 <div 
-                  onClick={() => setSelectedSubSection("roster")}
+                  onClick={handleOpenTeamRoster}
                   className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-all"
                 >
                   <div className="flex items-center gap-3">
@@ -667,7 +690,7 @@ const startRealCheckout = async (planKey: string) => {
                 </div>
 
                 <div 
-                  onClick={() => setSelectedSubSection("roster")}
+                  onClick={handleOpenTeamRoster}
                   className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-all"
                 >
                   <div className="flex items-center gap-3">
@@ -1056,7 +1079,7 @@ const startRealCheckout = async (planKey: string) => {
             {isHOD && (
               <button
                 type="button"
-                onClick={() => setSelectedSubSection("roster")}
+                onClick={handleOpenTeamRoster}
                 className="text-[10px] font-black font-mono uppercase text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-0.5 cursor-pointer bg-transparent border-none"
               >
                 Manage / Invite <ChevronRight className="w-3 h-3" />
@@ -1188,6 +1211,22 @@ const startRealCheckout = async (planKey: string) => {
           <h4 className="text-[10px] font-black tracking-widest text-slate-400 dark:text-slate-500 uppercase font-mono pl-1">ACCOUNT & CONTROL</h4>
           <div className="bg-white dark:bg-[#182333] border border-slate-200 dark:border-slate-200 dark:border-slate-800/80 rounded-2xl overflow-hidden divide-y divide-slate-100 dark:divide-slate-800/50 shadow-md">
             
+            <div 
+              onClick={() => onNavigateToTab ? onNavigateToTab("directory") : setSelectedSubSection("directory")}
+              className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-all"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-8.5 h-8.5 rounded-xl bg-amber-500/10 text-amber-500 flex items-center justify-center">
+                  <Building2 className="w-4.5 h-4.5" />
+                </div>
+                <div className="text-left">
+                  <strong className="text-sm font-bold block">Clinician Network</strong>
+                  <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">National clinician directory & hospital facilities</span>
+                </div>
+              </div>
+              <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
+            </div>
+
             <div 
               onClick={() => setSelectedSubSection("role")}
               className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-all"
@@ -1674,6 +1713,8 @@ const startRealCheckout = async (planKey: string) => {
           triageCategory: entry.triageCategory || null,
           caseCategory: entry.caseCategory || null,
           procedures: entry.proceduresPerformed || [],
+          skills: entry.skills || [],
+          learningPoints: entry.learningPoints || null,
           hospitalNameAtTime: entry.hospitalNameAtTime || null,
           sourceCaseId: entry.sourceCaseId || null
         });
@@ -1712,10 +1753,14 @@ const startRealCheckout = async (planKey: string) => {
         const searchLower = logBookSearch.toLowerCase().trim();
         const caseProcs = (c.procedures || []).join(" ").toLowerCase();
         const caseCat = (c.caseCategory || "").toLowerCase();
+        const caseSkills = ((c as any).skills || []).join(" ").toLowerCase();
+        const caseLearning = ((c as any).learningPoints || "").toLowerCase();
         
         const matchesSearch = !searchLower ||
           caseCat.includes(searchLower) ||
-          caseProcs.includes(searchLower);
+          caseProcs.includes(searchLower) ||
+          caseSkills.includes(searchLower) ||
+          caseLearning.includes(searchLower);
         
         return matchesTriage && matchesSearch;
       });
@@ -1774,6 +1819,24 @@ const startRealCheckout = async (planKey: string) => {
       content = (
         <div className="space-y-4 font-mono text-left text-xs text-slate-800 dark:text-slate-100">
           
+          {/* Clinical Governance Rule Badge */}
+          <div className="bg-indigo-50/70 dark:bg-indigo-950/30 border border-indigo-200/60 dark:border-indigo-800/50 p-3 rounded-2xl space-y-1">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <ShieldCheck className="w-4 h-4 text-indigo-600 dark:text-indigo-400 shrink-0" />
+                <span className="text-[11px] font-extrabold text-indigo-900 dark:text-indigo-200 uppercase tracking-wide">
+                  Personal Doctor Portfolio (UID-Owned)
+                </span>
+              </div>
+              <span className="text-[9px] bg-indigo-150 dark:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300 font-bold px-2 py-0.5 rounded-full font-mono">
+                Permanent Record
+              </span>
+            </div>
+            <p className="text-[10px] text-indigo-800/80 dark:text-indigo-300/80 leading-relaxed font-sans">
+              Personal case & procedure portfolio owned by your clinician UID. Kept strictly distinct from department ER shift boards and hospital handovers.
+            </p>
+          </div>
+
           {/* Real vs Demo Banner Alert */}
           {!hasRealLogs && (
             <div className="bg-amber-500/10 border border-amber-500/20 p-3 rounded-xl space-y-1">
@@ -1832,7 +1895,7 @@ const startRealCheckout = async (planKey: string) => {
             <div className="relative flex-1">
               <input
                 type="text"
-                placeholder="Search UHID, Diagnosis, Procedure..."
+                placeholder="Search Category, Procedure, Skills, Learning..."
                 value={logBookSearch}
                 onChange={(e) => setLogBookSearch(e.target.value)}
                 className="w-full bg-slate-100 dark:bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-200 dark:border-slate-800 rounded-xl pl-8.5 pr-3 py-1.8 text-[11px] focus:outline-hidden focus:border-indigo-500 text-slate-800 dark:text-slate-800 dark:text-slate-200"
@@ -1986,10 +2049,16 @@ const startRealCheckout = async (planKey: string) => {
           <div className="flex items-center gap-2">
             <button 
               type="button"
-              onClick={() => setSelectedSubSection(null)} 
+              onClick={() => {
+                if (initialSubSection && onNavigateToTab) {
+                  onNavigateToTab("dashboard");
+                } else {
+                  setSelectedSubSection(null);
+                }
+              }} 
               className="p-1.5 bg-slate-100 dark:bg-slate-800/80 hover:bg-slate-200 dark:hover:bg-slate-700/80 text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white rounded-xl transition-all flex items-center gap-1 text-[11px] font-bold cursor-pointer"
             >
-              <ChevronLeft className="w-4 h-4" /> Back
+              <ChevronLeft className="w-4 h-4" /> {initialSubSection ? "Back to Dashboard" : "Back"}
             </button>
             <h3 className="text-sm font-black text-slate-800 dark:text-white tracking-tight uppercase font-mono">{title}</h3>
           </div>
