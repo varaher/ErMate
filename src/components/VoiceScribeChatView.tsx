@@ -13,6 +13,7 @@ import {
 import VoiceRecorder from "./shared/VoiceRecorder";
 import Markdown from "react-markdown";
 import { getChecklistForKind, type CaseSheetKind } from "../../server/caseSheetChecklist";
+import { ScribeReasoningRenderer } from "./ScribeReasoningRenderer";
 
 type ChatMode = "dictation" | "discuss";
 
@@ -27,6 +28,11 @@ interface Message {
   dischargeDraft?: string;
   dischargeApplied?: boolean;
   dischargeIntent?: boolean;
+  clinicalReasoning?: {
+    differentials?: string[];
+    watchFor?: string[];
+    references?: string[];
+  };
 }
 
 interface VoiceScribeChatViewProps {
@@ -37,6 +43,7 @@ interface VoiceScribeChatViewProps {
   onCaseSheetUpdated?: (fields: any) => void;
   onSaveExtractedCase?: (extracted: any, options?: { autoNavigate?: boolean; existingCaseId?: string }) => Promise<string>;
   onPrepareDischarge?: (extractedData: any, messageId: string, caseId: string) => Promise<void>;
+  onPreviewCaseSheet?: (extracted: any, options?: { existingCaseId?: string | null; msgId?: string }) => void | Promise<void>;
   profile?: any;
   onSaveProfile?: (newProfile: any) => Promise<any>;
   messages?: any;
@@ -71,6 +78,10 @@ const LENSES: { id: string; label: string }[] = [
 // and to build the rows inside it, so the two can never disagree again.
 
 function humanizeFieldLabel(key: string): string {
+  if (key === "investigationImaging" || key === "imaging") return "Imaging";
+  if (key === "investigationLabsOrdered") return "Labs Ordered";
+  if (key === "treatmentGiven") return "Treatments";
+  if (key === "otherProcedures" || key === "proceduresChecked") return "Procedures";
   return key
     .replace(/([A-Z])/g, " $1")
     .replace(/^./, s => s.toUpperCase())
@@ -178,11 +189,13 @@ function resolveChecklistValue(id: string, data: any): any {
     case "abdomenExam": return data.secondarySurvey?.abdomen;
     case "cnsExam": return data.secondarySurvey?.cns;
     case "pmh": return data.pastMedicalHistory;
-    case "allergies": return data.allergies;
-    case "medications": return data.currentMedications;
-         case "differentialDiagnosis": return data.differentialDiagnosis;
-    case "treatmentPlan": return data.treatmentGiven;
+    case "allergies": return data.sampleHistory?.allergies ?? data.allergies;
+    case "medications": return data.sampleHistory?.medications ?? (Array.isArray(data.currentMedications) ? data.currentMedications.join(", ") : data.currentMedications);
+    case "differentialDiagnosis": return data.differentialDiagnosis;
+    case "treatmentPlan": return data.treatmentGiven ?? data.treatments ?? data.plan;
     case "signsSymptoms": return data.symptoms;
+    case "lastMeal": return data.sampleHistory?.lastMeal ?? data.lastMeal;
+    case "events": return data.sampleHistory?.events ?? data.events;
     default: return undefined;
   }
 }
@@ -252,6 +265,7 @@ export default function VoiceScribeChatView({
   onCaseSheetUpdated,
   onSaveExtractedCase,
   onPrepareDischarge,
+  onPreviewCaseSheet,
   profile,
   onSaveProfile,
   messages: propMessages,
@@ -356,6 +370,7 @@ export default function VoiceScribeChatView({
               dischargeApplied: h.dischargeApplied || false,
               dischargeIntent: h.dischargeIntent,
               mode: h.mode || (h.unappliedExtraction !== undefined ? "dictation" : undefined),
+              clinicalReasoning: h.clinicalReasoning,
             }))
           );
         }
@@ -410,6 +425,15 @@ export default function VoiceScribeChatView({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isDiscussionOnly, discussionId]);
+
+  const handlePreviewExtraction = (msgId: string, extractionData: any) => {
+    setSaveError(null);
+    if (onPreviewCaseSheet) {
+      onPreviewCaseSheet(extractionData, { existingCaseId: activeCaseId || null, msgId });
+    } else if (onOpenCaseSheet && activeCaseId) {
+      onOpenCaseSheet(activeCaseId);
+    }
+  };
 
   const handleApplyExtraction = async (msgId: string, extractionData: any) => {
     if (processingActionRef.current || processingAction) return;
@@ -607,6 +631,7 @@ export default function VoiceScribeChatView({
 // still only appears when hasDisplayableExtraction() is true (see render).
 const fieldsToExtract = rawFieldsToExtract || undefined;
         const dischargeIntent = data.dischargeIntent;
+        const clinicalReasoning = data.reasoningMessage?.clinicalReasoning || data.clinicalReasoning;
 
         const aiMsg: Message = {
           id: `ai-${Date.now()}`,
@@ -617,6 +642,7 @@ const fieldsToExtract = rawFieldsToExtract || undefined;
           extractionData: fieldsToExtract,
           extractionApplied: false,
           dischargeIntent: dischargeIntent,
+          clinicalReasoning: clinicalReasoning,
         };
 
         setMessages((prev) => [...prev, aiMsg]);
@@ -630,6 +656,7 @@ const fieldsToExtract = rawFieldsToExtract || undefined;
           extractionApplied: false,
           dischargeIntent: dischargeIntent,
           mode: "dictation",
+          clinicalReasoning: clinicalReasoning,
         });
       }
     } catch (err: any) {
@@ -738,10 +765,38 @@ const fieldsToExtract = rawFieldsToExtract || undefined;
         {onOpenCaseSheet && !isDiscussionOnly && (
           <button
             onClick={async () => {
+              const unappliedMessages = messages.filter(m => m.extractionData && !m.extractionApplied);
+              if (unappliedMessages.length > 0 && onPreviewCaseSheet) {
+                const mergedExtraction = unappliedMessages.reduce((acc, m) => {
+                  const data = m.extractionData;
+                  for (const key in data) {
+                    if (data[key] === null || data[key] === undefined || data[key] === "") continue;
+
+                    if (typeof data[key] === 'object' && !Array.isArray(data[key])) {
+                      acc[key] = { ...(acc[key] || {}), ...data[key] };
+                    } else if (Array.isArray(data[key])) {
+                      acc[key] = [...(acc[key] || []), ...data[key]];
+                    } else if (typeof data[key] === 'string' && acc[key] && typeof acc[key] === 'string') {
+                      if (key.match(/complaint|history|notes|symptoms|allergies|medications/i)) {
+                        if (!acc[key].includes(data[key])) {
+                          acc[key] = acc[key] + " \n" + data[key];
+                        }
+                      } else {
+                        acc[key] = data[key];
+                      }
+                    } else {
+                      acc[key] = data[key];
+                    }
+                  }
+                  return acc;
+                }, {});
+
+                const latestMsg = unappliedMessages[unappliedMessages.length - 1];
+                onPreviewCaseSheet(mergedExtraction, { existingCaseId: activeCaseId || null, msgId: latestMsg?.id });
+                return;
+              }
               if (onSaveExtractedCase) {
                 try {
-                  const unappliedMessages = messages.filter(m => m.extractionData && !m.extractionApplied);
-
                   if (unappliedMessages.length > 0) {
                     const mergedExtraction = unappliedMessages.reduce((acc, m) => {
                       const data = m.extractionData;
@@ -843,9 +898,16 @@ const fieldsToExtract = rawFieldsToExtract || undefined;
                   <Sparkles size={10} /> Discuss
                 </div>
               )}
-              <div className="prose prose-sm dark:prose-invert max-w-none prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-li:my-0.5">
-                <Markdown>{msg.text}</Markdown>
-              </div>
+              {msg.sender === "user" ? (
+                <div className="prose prose-sm prose-invert max-w-none prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-li:my-0.5">
+                  <Markdown>{msg.text}</Markdown>
+                </div>
+              ) : (
+                <ScribeReasoningRenderer
+                  text={msg.text}
+                  clinicalReasoning={msg.clinicalReasoning}
+                />
+              )}
 
                                {msg.mode === "dictation" &&
  msg.sender === "ai" &&
@@ -919,23 +981,25 @@ const fieldsToExtract = rawFieldsToExtract || undefined;
       </div>
 
       <div className="p-2 border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-col sm:flex-row gap-2">
-        <button
-          disabled={msg.extractionApplied || !!processingAction}
-          onClick={() => handleApplyExtraction(msg.id, merged)}
-          className={`flex-1 py-1.5 flex items-center justify-center gap-2 rounded text-xs font-bold transition-all cursor-pointer ${
-            msg.extractionApplied
-              ? "bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 opacity-80"
-              : processingAction?.messageId === msg.id && processingAction?.type === "caseSheet"
-                ? "bg-indigo-400 cursor-not-allowed text-white shadow-sm"
-                : "bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm"
-          }`}
-        >
-          {msg.extractionApplied
-            ? "Applied to Case Sheet ✓"
-            : processingAction?.messageId === msg.id && processingAction?.type === "caseSheet"
-              ? "Preparing Case Sheet…"
-              : "Prepare Case Sheet"}
-        </button>
+        {msg.extractionApplied === true ? (
+          <button
+            onClick={() => {
+              if (onOpenCaseSheet && activeCaseId) {
+                onOpenCaseSheet(activeCaseId);
+              }
+            }}
+            className="flex-1 py-1.5 flex items-center justify-center gap-2 rounded text-xs font-bold transition-all cursor-pointer bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm"
+          >
+            <span>View Case Sheet</span>
+          </button>
+        ) : (
+          <button
+            onClick={() => handlePreviewExtraction(msg.id, merged)}
+            className="flex-1 py-1.5 flex items-center justify-center gap-2 rounded text-xs font-bold transition-all cursor-pointer bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm"
+          >
+            <span>Preview Case Sheet</span>
+          </button>
+        )}
         <button
           disabled={msg.dischargeApplied || !!processingAction}
           onClick={() => handleApplyDischarge(msg.id, merged)}

@@ -25,8 +25,7 @@ import {
   PediatricFocusedPhysicalExam,
   PediatricGeneralExamSection,
   PediatricQuickNormalPresets,
-  PEDIATRIC_NORMAL_PRESETS,
-  PediatricDispositionSection
+  PEDIATRIC_NORMAL_PRESETS
 } from "./PediatricABCDESections";
 import { PrimarySurveySection } from "./PrimarySurveySection";
 import { PediatricAssessmentTriangle } from "./PediatricCaseSheetFields";
@@ -43,10 +42,21 @@ import { isTriageCategoryPending } from "./NewPatientEntryMenu";
 export function parseSecondaryAssessment(text: string) {
   if (!text) return { General: "", CVS: "", RS: "", PA: "", CNS: "", Extremities: "" };
   const fields = { General: "", CVS: "", RS: "", PA: "", CNS: "", Extremities: "" };
-  
+
+  const normalizeKey = (k: string): keyof typeof fields | null => {
+    const lower = k.trim().toLowerCase();
+    if (lower === "rs" || lower === "respiratory" || lower === "chest") return "RS";
+    if (lower === "pa" || lower === "abdomen") return "PA";
+    if (lower === "cvs") return "CVS";
+    if (lower === "cns") return "CNS";
+    if (lower === "general") return "General";
+    if (lower === "extremities") return "Extremities";
+    return null;
+  };
+
   // Find the first occurrence of a section header
-  const firstHeaderMatch = text.match(/(General|CVS|RS|PA|CNS|Extremities)\s*:/i);
-  
+  const firstHeaderMatch = text.match(/(General|CVS|RS|Respiratory|Chest|PA|Abdomen|CNS|Extremities)\s*:/i);
+
   if (firstHeaderMatch) {
     const preamble = text.substring(0, firstHeaderMatch.index).trim();
     if (preamble) {
@@ -57,18 +67,18 @@ export function parseSecondaryAssessment(text: string) {
     fields.General = text.trim();
   }
 
-  const regex = /(General|CVS|RS|PA|CNS|Extremities)\s*:\s*(.*?)(?=(General|CVS|RS|PA|CNS|Extremities)\s*:|$)/igs;
+  const regex = /(General|CVS|RS|Respiratory|Chest|PA|Abdomen|CNS|Extremities)\s*:\s*(.*?)(?=(General|CVS|RS|Respiratory|Chest|PA|Abdomen|CNS|Extremities)\s*:|$)/igs;
   let match;
   while ((match = regex.exec(text)) !== null) {
-    const key = Object.keys(fields).find(k => k.toLowerCase() === match[1].toLowerCase());
-    if (key) { 
+    const key = normalizeKey(match[1]);
+    if (key) {
       // Append if already has something (e.g., from preamble)
-      fields[key as keyof typeof fields] = fields[key as keyof typeof fields] 
-        ? fields[key as keyof typeof fields] + "\n" + match[2].trim()
+      fields[key] = fields[key]
+        ? fields[key] + "\n" + match[2].trim()
         : match[2].trim();
     }
   }
-  
+
   return fields;
 }
 
@@ -82,6 +92,126 @@ function mergeUnique(existing: string[] | undefined, incoming: string[] | undefi
     }
   }
   return combined;
+}
+
+const PEDIATRIC_HISTORY_OPTIONS = {
+  broughtBy: [
+    "Mother",
+    "Father",
+    "Both Parents",
+    "Grandparent",
+    "Relative",
+    "Guardian",
+    "Ambulance / EMS",
+    "Other / Details"
+  ],
+  informant: [
+    "Mother",
+    "Father",
+    "Both Parents",
+    "Caregiver",
+    "Patient",
+    "EMS",
+    "Other / Details"
+  ],
+  immunizationHistory: [
+    "Up to date for age",
+    "Partially immunized",
+    "Not immunized",
+    "Unknown",
+    "Other / Details"
+  ],
+  birthHistory: [
+    "Term",
+    "Preterm",
+    "Post-term",
+    "Unknown",
+    "Other / Details"
+  ],
+  feedingHistory: [
+    "Age appropriate",
+    "Breastfeeding",
+    "Formula feeding",
+    "Mixed feeding",
+    "Reduced intake",
+    "Other / Details"
+  ],
+  developmentalHistory: [
+    "Age appropriate",
+    "Developmental delay",
+    "Regression",
+    "Unknown",
+    "Other / Details"
+  ]
+};
+
+function PediatricSelectWithDetails({
+  label,
+  value,
+  options,
+  placeholder,
+  onChange
+}: {
+  label?: string;
+  value: string;
+  options: string[];
+  placeholder?: string;
+  onChange: (val: string) => void;
+}) {
+  const [isOtherSelected, setIsOtherSelected] = useState(false);
+  const currentVal = value || "";
+  const isPredefined = options.slice(0, -1).includes(currentVal);
+  const isOther = !isPredefined && (isOtherSelected || (currentVal !== "" && currentVal !== "Other / Details"));
+  const selectedDropdownValue = isOther
+    ? "Other / Details"
+    : isPredefined
+      ? currentVal
+      : "";
+
+  useEffect(() => {
+    if (isPredefined) {
+      setIsOtherSelected(false);
+    }
+  }, [isPredefined]);
+
+  return (
+    <div className="space-y-1.5 flex-1">
+      {label && <label className="block font-semibold text-slate-500 uppercase text-[11px]">{label}</label>}
+      <select
+        value={selectedDropdownValue}
+        onChange={(e) => {
+          const chosen = e.target.value;
+          if (chosen === "Other / Details") {
+            setIsOtherSelected(true);
+            if (isPredefined || currentVal === "Other / Details") {
+              onChange("");
+            }
+          } else {
+            setIsOtherSelected(false);
+            onChange(chosen);
+          }
+        }}
+        className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded text-xs text-slate-800 dark:text-slate-200"
+      >
+        <option value="">{placeholder || "-- Select --"}</option>
+        {options.map((opt) => (
+          <option key={opt} value={opt}>
+            {opt}
+          </option>
+        ))}
+      </select>
+      {isOther && (
+        <input
+          type="text"
+          value={currentVal === "Other / Details" ? "" : currentVal}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="Specify details..."
+          className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded text-xs text-slate-800 dark:text-slate-200 mt-1 focus:ring-1 focus:ring-blue-500"
+          autoFocus={!currentVal || currentVal === "Other / Details"}
+        />
+      )}
+    </div>
+  );
 }
 
 export function MarkTabNormalButton({
@@ -124,6 +254,8 @@ interface CaseSheetViewProps {
   onReturnToScribe?: () => void;
   hasActiveScribeSession?: boolean;
   onDiscussCase?: (patientCase: ClinicalCase) => void;
+  isPreview?: boolean;
+  onApplyPreview?: (reviewedCase: ClinicalCase) => Promise<void>;
 }
 
 export function extractTreatmentSnapshot(c: ClinicalCase): string {
@@ -201,7 +333,9 @@ export default function CaseSheetView({
   onSaveProfile,
   onReturnToScribe,
   hasActiveScribeSession,
-  onDiscussCase
+  onDiscussCase,
+  isPreview = false,
+  onApplyPreview,
 }: CaseSheetViewProps) {
     const tabHasData = (tabId: string): boolean => {
     if (!currentCase) return false;
@@ -221,7 +355,15 @@ export default function CaseSheetView({
       case "notes":
         return hasMeaningfulValue(currentCase.progressNotes) || hasMeaningfulValue(currentCase.addendumNotes);
       case "disposition":
-        return hasMeaningfulValue(currentCase.dischargeInfo) || hasMeaningfulValue(currentCase.dispositionDetails) || hasMeaningfulValue(currentCase.ipsgChecklist) || hasMeaningfulValue(currentCase.vulnerableAssessment) || hasMeaningfulValue(currentCase.consentTimeOut) || hasMeaningfulValue(currentCase.dispositionAndPlan);
+        return (
+          hasMeaningfulValue(currentCase.dischargeInfo) ||
+          hasMeaningfulValue(currentCase.dispositionDetails) ||
+          hasMeaningfulValue(currentCase.dispositionAndPlan?.managementPlan) ||
+          hasMeaningfulValue((currentCase.dispositionAndPlan as any)?.dispositionType) ||
+          hasMeaningfulValue(currentCase.dispositionAndPlan?.dispositionStatus) ||
+          hasMeaningfulValue((currentCase as any).disposition) ||
+          hasMeaningfulValue(currentCase.vulnerableAssessment)
+        );
       case "trends":
         return hasMeaningfulValue(currentCase.vitalsHistory);
       case "rounds":
@@ -560,7 +702,9 @@ export default function CaseSheetView({
     };
     
     setCurrentCase(updatedCase);
-    onSaveCase(updatedCase);
+    if (!isPreview) {
+      onSaveCase(updatedCase);
+    }
   };
 
   const [pediatricWeight, setPediatricWeight] = useState<number | "">("");
@@ -903,7 +1047,9 @@ export default function CaseSheetView({
         };
         
         setCurrentCase(finalizedCase);
-        onSaveCase(finalizedCase);
+        if (!isPreview) {
+          onSaveCase(finalizedCase);
+        }
         setDischargeSyncStatus("synced");
         return finalizedCase;
       } else {
@@ -1424,7 +1570,9 @@ Extremities: No deformity. No peripheral oedema. Peripheral pulses present.`,
         };
 
         setCurrentCase(updatedCase);
-        onSaveCase(updatedCase);
+        if (!isPreview) {
+          onSaveCase(updatedCase);
+        }
         setShowScanModal(false);
         setOcrText("");
       }
@@ -1513,7 +1661,7 @@ Extremities: No deformity. No peripheral oedema. Peripheral pulses present.`,
             timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
           }));
 
-          if (onSaveCase) {
+          if (onSaveCase && !isPreview) {
             onSaveCase({ ...currentCase, discussionMessages: convertedMsgs });
           }
         } catch (e) {
@@ -1540,7 +1688,7 @@ Extremities: No deformity. No peripheral oedema. Peripheral pulses present.`,
         timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
       }));
 
-      if (onSaveCase) {
+      if (onSaveCase && !isPreview) {
         onSaveCase({ ...currentCase, discussionMessages: convertedMsgs });
       }
       setRoundsDraftToast(true);
@@ -1596,7 +1744,50 @@ Extremities: No deformity. No peripheral oedema. Peripheral pulses present.`,
     Object.values(currentCase.vulnerableAssessment || {}).some(v => v === true || (typeof v === "string" && v !== "")) ||
     Object.values(currentCase.consentTimeOut || {}).some(v => v === true);
 
+  const [isApplyingPreview, setIsApplyingPreview] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+
+  const handleApplyPreviewAction = async () => {
+    if (!onApplyPreview || isApplyingPreview || !currentCase) return;
+    setIsApplyingPreview(true);
+    setPreviewError(null);
+
+    const isPeds = (currentCase.patient?.age !== null && currentCase.patient?.age !== undefined)
+      ? currentCase.patient.age < 18
+      : false;
+
+    const formattedVitals = {
+      ...currentCase.vitals,
+      temp: currentCase.vitals.temp ? formatTemperature(currentCase.vitals.temp) : currentCase.vitals.temp
+    };
+    const formattedTreatments = deduplicateMeds(currentCase.treatments).map(t => ({
+      ...t,
+      route: validateMedRoute(t.drugName, t.route)
+    }));
+    const formattedDocName = formatDoctorName(currentCase.doctorName);
+
+    const caseToApply: ClinicalCase = {
+      ...currentCase,
+      isPediatric: isPeds,
+      vitals: formattedVitals,
+      treatments: formattedTreatments,
+      doctorName: formattedDocName
+    };
+
+    try {
+      await onApplyPreview(caseToApply);
+    } catch (err: any) {
+      console.error("Failed to apply preview case:", err);
+      setPreviewError(err?.message || "Failed to apply case sheet. Please try again.");
+      setIsApplyingPreview(false);
+    }
+  };
+
   const handleSave = async () => {
+    if (isPreview) {
+      console.warn("Direct save disabled in preview mode");
+      return;
+    }
     // Audit & sanitize clinical fields before saving
     const ageNum = currentCase.patient.age;
     const isPeds = currentCase.isPediatric || (ageNum !== null && recomputeIsPediatric(ageNum));
@@ -2080,12 +2271,18 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
         <div className="sticky top-0 z-40 bg-white/95 dark:bg-slate-950/95 backdrop-blur-md pt-3 pb-0 border-b border-slate-200 dark:border-slate-800 flex flex-col gap-3 shadow-xs">
           {/* Header Row 1 */}
           <div className="px-4 flex items-center justify-between text-[11px] font-bold text-slate-500 dark:text-slate-400">
-            <button onClick={onBack} className="flex items-center gap-1 hover:text-slate-800 dark:hover:text-slate-200 transition-colors uppercase">
+            <button onClick={isPreview ? (onReturnToScribe || onBack) : onBack} className="flex items-center gap-1 hover:text-slate-800 dark:hover:text-slate-200 transition-colors uppercase cursor-pointer">
               <ArrowLeft className="w-3.5 h-3.5" />
-              Cases
+              {isPreview ? "Back to Scribe" : "Cases"}
             </button>
             <div className="flex items-center gap-3">
-              <span>{currentCase.patient.caseType || "Medical"} · {!isTriageCategoryPending(currentCase.patient.triageCategory) ? currentCase.patient.triageCategory?.split(" ")[0] || "P2" : "P2"}</span>
+              {isPreview ? (
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-amber-100 text-amber-800 dark:bg-amber-950/80 dark:text-amber-300 border border-amber-300 dark:border-amber-700">
+                  Preview — changes are not saved
+                </span>
+              ) : (
+                <span>{currentCase.patient.caseType || "Medical"} · {!isTriageCategoryPending(currentCase.patient.triageCategory) ? currentCase.patient.triageCategory?.split(" ")[0] || "P2" : "P2"}</span>
+              )}
             </div>
           </div>
 
@@ -2101,51 +2298,133 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
             </div>
             
             <div className="flex items-center gap-1.5 shrink-0 pb-1">
-              {onReturnToScribe ? (
-                <button onClick={onReturnToScribe} className={`flex items-center gap-1.5 px-3 py-1.5 ${hasActiveScribeSession ? 'bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900' : 'bg-purple-600 text-white'} text-[10px] font-bold rounded-lg transition-colors`}>
-                  <Mic className={`w-3 h-3 ${hasActiveScribeSession ? 'animate-pulse text-purple-400' : ''}`} />
-                  {hasActiveScribeSession ? "Resume Scribe" : "Open Scribe"}
-                </button>
-              ) : null}
-              
-              <details className="relative group">
-                <summary className="p-1.5 text-slate-500 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg cursor-pointer list-none transition-colors [&::-webkit-details-marker]:hidden">
-                  <MoreVertical className="w-4.5 h-4.5" />
-                </summary>
-                <div className="absolute right-0 mt-1 w-48 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xl z-50 py-1.5 text-xs">
-                  <button onClick={() => onNavigateToDischarge(currentCase.id)} className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 flex items-center gap-2 font-bold text-indigo-600 dark:text-indigo-400">
-                    <FileText className="w-3.5 h-3.5" /> Discharge Summary
-                  </button>
-                  <div className="h-px bg-slate-100 dark:bg-slate-800 my-1.5" />
-                  <div className="px-3 py-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Export</div>
-                  <button onClick={handleCopyCaseSheet} className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 flex items-center gap-2">
-                    <Copy className="w-3.5 h-3.5" /> Copy to EMR
-                  </button>
-                  <button onClick={() => onViewPrintSheet ? onViewPrintSheet(currentCase.id) : setShowPdfModal(true)} className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 flex items-center gap-2">
-                    <Printer className="w-3.5 h-3.5" /> View PDF
-                  </button>
-                  <button onClick={handleDownloadCaseSheet} className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 flex items-center gap-2">
-                    <Download className="w-3.5 h-3.5" /> Download
-                  </button>
-                  <button onClick={() => triggerPrintWithTip()} className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 flex items-center gap-2">
-                    <Printer className="w-3.5 h-3.5" /> Print
-                  </button>
-                  <div className="h-px bg-slate-100 dark:bg-slate-800 my-1.5" />
-                  <button onClick={() => setShowSafetyModal(true)} className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 flex items-center justify-between font-medium">
-                    <div className="flex items-center gap-2">
-                      <Shield className="w-3.5 h-3.5" /> Safety & Accreditation <span className="text-[9px] text-slate-400 font-normal ml-1">(Optional)</span>
-                    </div>
-                    {hasSafetyData && <div className="w-2 h-2 rounded-full bg-emerald-500" title="Data entered"></div>}
-                  </button>
-                  <div className="h-px bg-slate-100 dark:bg-slate-800 my-1.5" />
-                  <div className="px-3 py-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Case Actions</div>
-                  <button onClick={async () => { await handleSave(); onBack(); }} className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 flex items-center gap-2">
-                    <Save className="w-3.5 h-3.5" /> Finish & Return to Cases
-                  </button>
+              {isPreview ? (
+                <div className="flex items-center gap-2">
+                  {onReturnToScribe && (
+                    <button
+                      type="button"
+                      onClick={onReturnToScribe}
+                      className="px-3 py-1.5 bg-slate-100 dark:bg-slate-900 hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 font-bold text-xs rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer border border-slate-200 dark:border-slate-800"
+                    >
+                      <ArrowLeft className="w-3.5 h-3.5" /> Back to Scribe
+                    </button>
+                  )}
+                  {onApplyPreview && (
+                    <button
+                      type="button"
+                      disabled={isApplyingPreview}
+                      onClick={handleApplyPreviewAction}
+                      className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-400 text-white font-bold text-xs rounded-lg shadow-sm flex items-center gap-1.5 transition-colors cursor-pointer"
+                    >
+                      {isApplyingPreview ? (
+                        <>
+                          <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                          <span>Applying…</span>
+                        </>
+                      ) : (
+                        <>
+                          <CheckCircle className="w-3.5 h-3.5" /> Apply to Case Sheet
+                        </>
+                      )}
+                    </button>
+                  )}
                 </div>
-              </details>
+              ) : (
+                <>
+                  {onReturnToScribe ? (
+                    <button onClick={onReturnToScribe} className={`flex items-center gap-1.5 px-3 py-1.5 ${hasActiveScribeSession ? 'bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900' : 'bg-purple-600 text-white'} text-[10px] font-bold rounded-lg transition-colors`}>
+                      <Mic className={`w-3 h-3 ${hasActiveScribeSession ? 'animate-pulse text-purple-400' : ''}`} />
+                      {hasActiveScribeSession ? "Resume Scribe" : "Open Scribe"}
+                    </button>
+                  ) : null}
+                  
+                  <details className="relative group">
+                    <summary className="p-1.5 text-slate-500 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg cursor-pointer list-none transition-colors [&::-webkit-details-marker]:hidden">
+                      <MoreVertical className="w-4.5 h-4.5" />
+                    </summary>
+                    <div className="absolute right-0 mt-1 w-48 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xl z-50 py-1.5 text-xs">
+                      <button onClick={() => onNavigateToDischarge(currentCase.id)} className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 flex items-center gap-2 font-bold text-indigo-600 dark:text-indigo-400">
+                        <FileText className="w-3.5 h-3.5" /> Discharge Summary
+                      </button>
+                      <div className="h-px bg-slate-100 dark:bg-slate-800 my-1.5" />
+                      <div className="px-3 py-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Export</div>
+                      <button onClick={handleCopyCaseSheet} className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 flex items-center gap-2">
+                        <Copy className="w-3.5 h-3.5" /> Copy to EMR
+                      </button>
+                      <button onClick={() => onViewPrintSheet ? onViewPrintSheet(currentCase.id) : setShowPdfModal(true)} className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 flex items-center gap-2">
+                        <Printer className="w-3.5 h-3.5" /> View PDF
+                      </button>
+                      <button onClick={handleDownloadCaseSheet} className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 flex items-center gap-2">
+                        <Download className="w-3.5 h-3.5" /> Download
+                      </button>
+                      <button onClick={() => triggerPrintWithTip()} className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 flex items-center gap-2">
+                        <Printer className="w-3.5 h-3.5" /> Print
+                      </button>
+                      <div className="h-px bg-slate-100 dark:bg-slate-800 my-1.5" />
+                      <button onClick={() => setShowSafetyModal(true)} className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 flex items-center justify-between font-medium">
+                        <div className="flex items-center gap-2">
+                          <Shield className="w-3.5 h-3.5" /> Safety & Accreditation <span className="text-[9px] text-slate-400 font-normal ml-1">(Optional)</span>
+                        </div>
+                        {hasSafetyData && <div className="w-2 h-2 rounded-full bg-emerald-500" title="Data entered"></div>}
+                      </button>
+                      <div className="h-px bg-slate-100 dark:bg-slate-800 my-1.5" />
+                      <div className="px-3 py-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Case Actions</div>
+                      <button onClick={async () => { await handleSave(); onBack(); }} className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 flex items-center gap-2">
+                        <Save className="w-3.5 h-3.5" /> Finish & Return to Cases
+                      </button>
+                    </div>
+                  </details>
+                </>
+              )}
             </div>
           </div>
+
+          {/* Preview Sticky Banner */}
+          {isPreview && (
+            <div className="mx-4 mb-2 p-2.5 bg-amber-500/10 dark:bg-amber-500/15 border border-amber-300 dark:border-amber-700/60 rounded-xl flex items-center justify-between gap-3 text-amber-900 dark:text-amber-200">
+              <div className="flex items-center gap-2">
+                <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-amber-500 text-white text-[11px] font-black">!</span>
+                <div>
+                  <span className="text-xs font-black uppercase tracking-wider font-mono">
+                    Preview — changes are not saved
+                  </span>
+                  {previewError && (
+                    <p className="text-[11px] font-bold text-red-600 dark:text-red-400 mt-0.5">{previewError}</p>
+                  )}
+                </div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                {onReturnToScribe && (
+                  <button
+                    type="button"
+                    onClick={onReturnToScribe}
+                    className="px-3 py-1 bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-700 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1 shadow-xs"
+                  >
+                    <ArrowLeft className="w-3.5 h-3.5" /> Back to Scribe
+                  </button>
+                )}
+                {onApplyPreview && (
+                  <button
+                    type="button"
+                    disabled={isApplyingPreview}
+                    onClick={handleApplyPreviewAction}
+                    className="px-3.5 py-1 bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-400 text-white rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shadow-xs"
+                  >
+                    {isApplyingPreview ? (
+                      <>
+                        <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        <span>Applying…</span>
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle className="w-3.5 h-3.5" /> Apply to Case Sheet
+                      </>
+                    )}
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Triage Pending Strip */}
           {isTriageCategoryPending(currentCase.patient.triageCategory) && (
@@ -2377,39 +2656,6 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                 {renderTabSaveBadge("Disposition")}
               </div>
 
-              {currentCase.isPediatric && (
-                <PediatricDispositionSection
-                  state={{
-                    provisionalDiagnosis: currentCase.pediatricDetails?.dispositionProvisionalDiagnosis || "",
-                    conditionAtShift: currentCase.pediatricDetails?.dispositionConditionAtShift || "",
-                    dispositionType: currentCase.dispositionDetails?.dispositionType || "Ward",
-                    differentialDiagnosis: currentCase.differentials ? currentCase.differentials.map((d: any) => d.diagnosis).join(", ") : "",
-                    emResident: currentCase.pediatricDetails?.dispositionEmResident || currentCase.doctorName || "",
-                    emConsultant: currentCase.pediatricDetails?.dispositionEmConsultant || ""
-                  }}
-                  onChange={s => setCurrentCase(prev => ({
-                    ...prev,
-                    pediatricDetails: {
-                      ...(prev.pediatricDetails || {}),
-                      dispositionProvisionalDiagnosis: s.provisionalDiagnosis,
-                      dispositionConditionAtShift: s.conditionAtShift,
-                      dispositionEmResident: s.emResident,
-                      dispositionEmConsultant: s.emConsultant
-                    },
-                    dispositionDetails: {
-                      ...(prev.dispositionDetails || {
-                        dispositionType: "Discharge",
-                        durationInEr: "",
-                        observationNotes: "",
-                        residentName: "",
-                        consultantName: ""
-                      }),
-                      dispositionType: s.dispositionType as any
-                    }
-                  }))}
-                />
-              )}
-
               <div>
                 <h3 className="text-sm font-bold text-slate-800 dark:text-white border-b pb-2 flex items-center gap-1.5">
                   <User className="w-4 h-4 text-blue-500" />
@@ -2550,7 +2796,43 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                     </div>
                   )}
 
-                  
+                  <div className="bg-blue-50/60 dark:bg-slate-900/60 border border-blue-200/80 dark:border-slate-800 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div>
+                      <h4 className="text-xs font-extrabold text-slate-800 dark:text-white uppercase tracking-wide flex items-center gap-1.5">
+                        <Save className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                        Save Case Sheet to Dashboard
+                      </h4>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                        Commits all demographics, vitals, primary survey, SAMPLE history, treatments, investigations, and disposition notes to your case dashboard.
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        type="button"
+                        onClick={handleSaveFromDisposition}
+                        className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-extrabold rounded-lg shadow-sm transition-all flex items-center justify-center gap-2 cursor-pointer"
+                      >
+                        <CheckCircle2 className="w-4 h-4" /> Save Case Sheet to Dashboard
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-3 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => onNavigateToDischarge(currentCase.id)}
+                      className="px-5 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white text-xs font-bold rounded-lg shadow-sm transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <FileText className="w-4 h-4" /> Generate Discharge Summary
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowPdfModal(true)}
+                      className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-lg shadow-sm transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <Eye className="w-4 h-4" /> View Case Sheet PDF
+                    </button>
+                  </div>
                 </div>
 
                               </div>
@@ -2832,24 +3114,54 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
                     <div className="space-y-1">
                       <label className="font-semibold text-slate-500 uppercase">Brought By / Informant</label>
-                      <div className="flex gap-2">
-                        <input type="text" placeholder="Brought by..." value={(currentCase.pediatricDetails || {}).broughtBy || ""} onChange={(e) => updatePediatricDetails("broughtBy", e.target.value)} className="flex-1 px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded" />
-                        <input type="text" placeholder="Informant..." value={(currentCase.pediatricDetails || {}).informant || ""} onChange={(e) => updatePediatricDetails("informant", e.target.value)} className="flex-1 px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded" />
+                      <div className="flex flex-col sm:flex-row gap-2">
+                        <PediatricSelectWithDetails
+                          value={(currentCase.pediatricDetails || {}).broughtBy || ""}
+                          options={PEDIATRIC_HISTORY_OPTIONS.broughtBy}
+                          placeholder="-- Brought By --"
+                          onChange={(val) => updatePediatricDetails("broughtBy", val)}
+                        />
+                        <PediatricSelectWithDetails
+                          value={(currentCase.pediatricDetails || {}).informant || ""}
+                          options={PEDIATRIC_HISTORY_OPTIONS.informant}
+                          placeholder="-- Informant --"
+                          onChange={(val) => updatePediatricDetails("informant", val)}
+                        />
                       </div>
                     </div>
                     <div className="space-y-1">
                       <label className="font-semibold text-slate-500 uppercase">Immunization History</label>
-                      <input type="text" placeholder="Up to date?" value={(currentCase.pediatricDetails || {}).immunizationHistory || ""} onChange={(e) => updatePediatricDetails("immunizationHistory", e.target.value)} className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded" />
+                      <PediatricSelectWithDetails
+                        value={(currentCase.pediatricDetails || {}).immunizationHistory || ""}
+                        options={PEDIATRIC_HISTORY_OPTIONS.immunizationHistory}
+                        placeholder="-- Immunization Status --"
+                        onChange={(val) => updatePediatricDetails("immunizationHistory", val)}
+                      />
                     </div>
                     <div className="space-y-1">
                       <label className="font-semibold text-slate-500 uppercase">Birth History</label>
-                      <input type="text" placeholder="Term/Preterm, NICU stay..." value={(currentCase.pediatricDetails || {}).birthHistory || ""} onChange={(e) => updatePediatricDetails("birthHistory", e.target.value)} className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded" />
+                      <PediatricSelectWithDetails
+                        value={(currentCase.pediatricDetails || {}).birthHistory || ""}
+                        options={PEDIATRIC_HISTORY_OPTIONS.birthHistory}
+                        placeholder="-- Birth History --"
+                        onChange={(val) => updatePediatricDetails("birthHistory", val)}
+                      />
                     </div>
                     <div className="space-y-1">
                       <label className="font-semibold text-slate-500 uppercase">Feeding & Development</label>
-                      <div className="flex gap-2">
-                        <input type="text" placeholder="Feeding..." value={(currentCase.pediatricDetails || {}).feedingHistory || ""} onChange={(e) => updatePediatricDetails("feedingHistory", e.target.value)} className="flex-1 px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded" />
-                        <input type="text" placeholder="Developmental milestones..." value={(currentCase.pediatricDetails || {}).developmentalHistory || ""} onChange={(e) => updatePediatricDetails("developmentalHistory", e.target.value)} className="flex-1 px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded" />
+                      <div className="flex flex-col sm:flex-row gap-2">
+                        <PediatricSelectWithDetails
+                          value={(currentCase.pediatricDetails || {}).feedingHistory || ""}
+                          options={PEDIATRIC_HISTORY_OPTIONS.feedingHistory}
+                          placeholder="-- Feeding History --"
+                          onChange={(val) => updatePediatricDetails("feedingHistory", val)}
+                        />
+                        <PediatricSelectWithDetails
+                          value={(currentCase.pediatricDetails || {}).developmentalHistory || ""}
+                          options={PEDIATRIC_HISTORY_OPTIONS.developmentalHistory}
+                          placeholder="-- Developmental History --"
+                          onChange={(val) => updatePediatricDetails("developmentalHistory", val)}
+                        />
                       </div>
                     </div>
                   </div>
@@ -4773,26 +5085,67 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
       
       {/* Sticky Mobile Footer  */}
       <div className="sticky bottom-0 z-40 bg-white/95 dark:bg-slate-950/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 px-4 py-2 mt-auto flex items-center justify-between no-print shadow-[0_-4px_10px_-1px_rgba(0,0,0,0.02)]">
-        {(() => {
-          const order = ["complaints", "primary-survey", "history", "secondary-survey", "investigations", "treatment", "notes", "disposition", "trends", "rounds"];
-          const curr = order.indexOf(activeTab);
-          const nextId = (curr !== -1 && curr < order.length - 1) ? order[curr + 1] : null;
-          const labels: Record<string, string> = {  "complaints": "Complaints",  "primary-survey": "Primary",  "history": "SAMPLE",  "secondary-survey": "Secondary",  "investigations": "Investigations",  "treatment": "Treatment",  "notes": "Notes",  "disposition": "Disposition",  "trends": "Trends",  "rounds": "Rounds"};
-          
-          return (
-            <div className="flex-1 flex justify-start">
-              {nextId && (
-                <button onClick={() => setActiveTab(nextId as any)} className="px-4 py-2.5 bg-transparent hover:bg-slate-100 dark:hover:bg-slate-900 text-slate-600 dark:text-slate-400 font-semibold text-[11px] rounded-lg flex items-center gap-1.5 transition-colors active:scale-[0.98]">
-                  Next: {labels[nextId]} <ArrowRight className="w-3.5 h-3.5" />
+        {isPreview ? (
+          <div className="w-full flex items-center justify-between gap-3">
+            <div className="text-[11px] font-mono text-amber-700 dark:text-amber-400 font-bold flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+              <span>Preview — changes are not saved</span>
+            </div>
+            <div className="flex items-center gap-2">
+              {onReturnToScribe && (
+                <button
+                  type="button"
+                  onClick={onReturnToScribe}
+                  className="px-4 py-2 bg-slate-100 dark:bg-slate-900 hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 font-bold text-xs rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer"
+                >
+                  <ArrowLeft className="w-3.5 h-3.5" /> Back to Scribe
+                </button>
+              )}
+              {onApplyPreview && (
+                <button
+                  type="button"
+                  disabled={isApplyingPreview}
+                  onClick={handleApplyPreviewAction}
+                  className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-400 text-white font-bold text-xs rounded-lg shadow-sm flex items-center gap-2 transition-colors cursor-pointer"
+                >
+                  {isApplyingPreview ? (
+                    <>
+                      <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      <span>Applying…</span>
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle className="w-3.5 h-3.5" /> Apply to Case Sheet
+                    </>
+                  )}
                 </button>
               )}
             </div>
-          );
-        })()}
-        
-        <button onClick={handleSave} className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] sm:text-xs rounded-lg shadow-sm flex items-center gap-2 transition-colors active:scale-[0.98] shrink-0 ml-2">
-          <Save className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> Save Changes
-        </button>
+          </div>
+        ) : (
+          <>
+            {(() => {
+              const order = ["complaints", "primary-survey", "history", "secondary-survey", "investigations", "treatment", "notes", "disposition", "trends", "rounds"];
+              const curr = order.indexOf(activeTab);
+              const nextId = (curr !== -1 && curr < order.length - 1) ? order[curr + 1] : null;
+              const labels: Record<string, string> = {  "complaints": "Complaints",  "primary-survey": "Primary",  "history": "SAMPLE",  "secondary-survey": "Secondary",  "investigations": "Investigations",  "treatment": "Treatment",  "notes": "Notes",  "disposition": "Disposition",  "trends": "Trends",  "rounds": "Rounds"};
+              
+              return (
+                <div className="flex-1 flex justify-start">
+                  {nextId && (
+                    <button onClick={() => setActiveTab(nextId as any)} className="px-4 py-2.5 bg-transparent hover:bg-slate-100 dark:hover:bg-slate-900 text-slate-600 dark:text-slate-400 font-semibold text-[11px] rounded-lg flex items-center gap-1.5 transition-colors active:scale-[0.98]">
+                      Next: {labels[nextId]} <ArrowRight className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+              );
+            })()}
+            
+            <button onClick={handleSave} className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] sm:text-xs rounded-lg shadow-sm flex items-center gap-2 transition-colors active:scale-[0.98] shrink-0 ml-2">
+              <Save className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> Save Changes
+            </button>
+          </>
+        )}
       </div>
       {/* Interactive UI Screen Close  */}
       </div>
@@ -4993,21 +5346,21 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
               <div className="border border-slate-300 rounded-xl p-3 bg-slate-50/20 space-y-1.5 text-[10px]">
                 <p><strong>Hospital Clinical Course:</strong> {currentCase.progressNotes || "Evaluated and monitored in ED"}</p>
                 <p><strong>Treatment Given in Hospital:</strong> {currentCase.treatmentNotes || "Observation and reassuring counseling"}</p>
-                <p><strong>Provisional Diagnosis at Discharge/Shift:</strong> <strong>{currentCase.pediatricDetails?.dispositionProvisionalDiagnosis || "Clinically stable child"}</strong></p>
-                <p><strong>Differential Diagnosis:</strong> {currentCase.differentials?.map(d => d.diagnosis).join(", ") || "None"}</p>
+                <p><strong>Provisional Diagnosis at Discharge/Shift:</strong> <strong>{currentCase.provisionalPrimaryDiagnosis || currentCase.pediatricDetails?.dispositionProvisionalDiagnosis || "Clinically stable child"}</strong></p>
+                <p><strong>Differential Diagnosis:</strong> {currentCase.differentials?.map(d => d.diagnosis).join(", ") || (currentCase.provisionalDifferentialDiagnoses ? currentCase.provisionalDifferentialDiagnoses : "None")}</p>
               </div>
             </div>
 
             {/* Disposition & Clinicians  */}
             <div className="grid grid-cols-3 gap-4 border border-slate-300 p-3 rounded-xl bg-slate-50/40 text-[10px] mt-4">
               <div>
-                <strong>Disposition / Condition:</strong> {currentCase.dispositionDetails?.dispositionType || "Ward"} / {currentCase.pediatricDetails?.dispositionConditionAtShift || "Stable"}
+                <strong>Disposition / Condition:</strong> {currentCase.dispositionDetails?.dispositionType || "Ward"} / {currentCase.conditionAtShift || currentCase.pediatricDetails?.dispositionConditionAtShift || "Stable"}
               </div>
               <div>
-                <strong>EM Resident:</strong> {currentCase.pediatricDetails?.dispositionEmResident || currentCase.doctorName || "Dr. Thomas"}
+                <strong>EM Resident:</strong> {currentCase.dispositionDetails?.residentName || currentCase.pediatricDetails?.dispositionEmResident || currentCase.doctorName || "Dr. Thomas"}
               </div>
               <div>
-                <strong>EM Consultant:</strong> {currentCase.pediatricDetails?.dispositionEmConsultant || currentCase.dispositionDetails?.consultantName || "Duty Consultant"}
+                <strong>EM Consultant:</strong> {currentCase.dispositionDetails?.consultantName || currentCase.pediatricDetails?.dispositionEmConsultant || "Duty Consultant"}
               </div>
             </div>
           </div>

@@ -501,6 +501,59 @@ export function PrimarySurveySection({
     setOpenSections(prev => ({ ...prev, [section]: !prev[section] }));
   };
 
+  // ── Cardinal Vitals: case.vitals is primary source of truth with backward compatibility fallback ──
+  // RR: vitals.rr (primary) -> data.breathing?.rr (legacy fallback)
+  const displayRR = (vitals?.rr !== undefined && vitals.rr !== null && vitals.rr.trim() !== "")
+    ? vitals.rr
+    : (data.breathing?.rr !== undefined && data.breathing?.rr !== null && String(data.breathing.rr).trim() !== "" ? String(data.breathing.rr) : "");
+
+  // SpO2: vitals.spo2 (primary) -> data.breathing?.spo2 (legacy fallback)
+  const displaySpO2 = (vitals?.spo2 !== undefined && vitals.spo2 !== null && vitals.spo2.trim() !== "")
+    ? vitals.spo2
+    : (data.breathing?.spo2 !== undefined && data.breathing?.spo2 !== null && String(data.breathing.spo2).trim() !== "" ? String(data.breathing.spo2) : "");
+
+  // HR: vitals.hr (primary) -> data.circulation?.hr (legacy fallback)
+  const displayHR = (vitals?.hr !== undefined && vitals.hr !== null && vitals.hr.trim() !== "")
+    ? vitals.hr
+    : (data.circulation?.hr !== undefined && data.circulation?.hr !== null && String(data.circulation.hr).trim() !== "" ? String(data.circulation.hr) : "");
+
+  // BP: vitals.bp (primary) -> data.circulation?.sbp/dbp (legacy fallback)
+  const legacyBP = (data.circulation?.sbp && data.circulation?.dbp)
+    ? `${data.circulation.sbp}/${data.circulation.dbp}`
+    : (data.circulation?.sbp !== undefined && data.circulation?.sbp !== null && String(data.circulation.sbp).trim() !== "" ? String(data.circulation.sbp) : "");
+  const displayBP = (vitals?.bp !== undefined && vitals.bp !== null && vitals.bp.trim() !== "")
+    ? vitals.bp
+    : legacyBP;
+
+  // GCS E/V/M: vitals.gcs_e / gcs_v / gcs_m (primary) -> data.disability?.gcsE / gcsV / gcsM (legacy fallback)
+  const displayGcsE = (vitals?.gcs_e !== undefined && vitals.gcs_e !== null && vitals.gcs_e.trim() !== "")
+    ? vitals.gcs_e
+    : (data.disability?.gcsE || "");
+
+  const displayGcsV = (vitals?.gcs_v !== undefined && vitals.gcs_v !== null && vitals.gcs_v.trim() !== "")
+    ? vitals.gcs_v
+    : (data.disability?.gcsV || "");
+
+  const displayGcsM = (vitals?.gcs_m !== undefined && vitals.gcs_m !== null && vitals.gcs_m.trim() !== "")
+    ? vitals.gcs_m
+    : (data.disability?.gcsM || "");
+
+  const computedGcsSum = (() => {
+    const e = parseInt(displayGcsE) || 0;
+    const v = parseInt(displayGcsV) || 0;
+    const m = parseInt(displayGcsM) || 0;
+    const sum = e + v + m;
+    return sum > 0 ? String(sum) : null;
+  })();
+  const displayGcsTotal = (vitals?.gcs !== undefined && vitals.gcs !== null && vitals.gcs.trim() !== "")
+    ? vitals.gcs
+    : (data.disability?.gcsTotal || computedGcsSum || "15");
+
+  // Temperature: vitals.temp (primary) -> data.exposure?.temp (legacy fallback)
+  const displayTemp = (vitals?.temp !== undefined && vitals.temp !== null && vitals.temp.trim() !== "")
+    ? vitals.temp
+    : (data.exposure?.temp !== undefined && data.exposure?.temp !== null && String(data.exposure.temp).trim() !== "" ? String(data.exposure.temp) : "");
+
   return (
     <div className="space-y-4">
       {/* Header Banner - Full Width Green Banner */}
@@ -566,8 +619,8 @@ export function PrimarySurveySection({
       {/* ── B — BREATHING ──────────────────────────────────────────── */}
       <AccordionItem
         title="B - BREATHING"
-        summary={[(data.breathing?.rr || vitals?.rr) ? `RR ${data.breathing?.rr || vitals?.rr}` : "", 
-          (data.breathing?.spo2 || vitals?.spo2) ? `SpO₂ ${data.breathing?.spo2 || vitals?.spo2}%` : ""]
+        summary={[displayRR ? `RR ${displayRR}` : "", 
+          displaySpO2 ? `SpO₂ ${displaySpO2}%` : ""]
           .filter(Boolean).join(" · ")}
         iconLetter="B"
         iconBgClass="bg-orange-500"
@@ -582,9 +635,8 @@ export function PrimarySurveySection({
             normal="12-20"
             flagHigh={25}
             flagLow={10}
-            value={data.breathing?.rr || vitals?.rr || ""}
+            value={displayRR}
             onChange={(v) => {
-              onChange("breathing.rr", v);
               onUpdateVitals?.("rr", v);
             }}
           />
@@ -593,9 +645,8 @@ export function PrimarySurveySection({
             unit="%"
             normal="95-100"
             flagLow={94}
-            value={data.breathing?.spo2 || vitals?.spo2 || ""}
+            value={displaySpO2}
             onChange={(v) => {
-              onChange("breathing.spo2", v);
               onUpdateVitals?.("spo2", v);
             }}
           />
@@ -641,8 +692,8 @@ export function PrimarySurveySection({
       {/* ── C — CIRCULATION ────────────────────────────────────────── */}
       <AccordionItem
         title="C - CIRCULATION"
-        summary={[(data.circulation?.hr || vitals?.hr) ? `HR ${data.circulation?.hr || vitals?.hr}` : "", 
-          ((data.circulation?.sbp && data.circulation?.dbp) || vitals?.bp) ? `BP ${vitals?.bp || `${data.circulation?.sbp}/${data.circulation?.dbp}`}` : ""]
+        summary={[displayHR ? `HR ${displayHR}` : "", 
+          displayBP ? `BP ${displayBP}` : ""]
           .filter(Boolean).join(" · ")}
         iconLetter="C"
         iconBgClass="bg-amber-500"
@@ -657,9 +708,8 @@ export function PrimarySurveySection({
             normal="60-100"
             flagHigh={100}
             flagLow={50}
-            value={data.circulation?.hr || vitals?.hr || ""}
+            value={displayHR}
             onChange={(v) => {
-              onChange("circulation.hr", v);
               onUpdateVitals?.("hr", v);
             }}
           />
@@ -670,15 +720,8 @@ export function PrimarySurveySection({
             normal="120/80"
             flagHighSBP={160}
             flagLowSBP={90}
-            value={
-              data.circulation?.sbp && data.circulation?.dbp
-                ? `${data.circulation.sbp}/${data.circulation.dbp}`
-                : data.circulation?.sbp || vitals?.bp || ""
-            }
+            value={displayBP}
             onChange={(v) => {
-              const parts = v.split("/");
-              onChange("circulation.sbp", parts[0] || "");
-              onChange("circulation.dbp", parts[1] || "");
               onUpdateVitals?.("bp", v);
             }}
           />
@@ -732,7 +775,8 @@ export function PrimarySurveySection({
       {/* ── D — DISABILITY ─────────────────────────────────────────── */}
       <AccordionItem
         title="D - DISABILITY (Neuro)"
-        iconLetter="?"
+        summary={displayGcsTotal ? `GCS ${displayGcsTotal}/15` : ""}
+        iconLetter="D"
         iconBgClass="bg-emerald-500"
         iconTextClass="text-emerald-500"
         isOpen={openSections.disability}
@@ -744,7 +788,7 @@ export function PrimarySurveySection({
               Glasgow Coma Scale (GCS)
             </span>
             <span className="text-xs font-mono font-black text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/60 px-2.5 py-0.5 rounded-lg border border-indigo-200 dark:border-indigo-800">
-              Score: {data.disability?.gcsTotal || "15"}/15
+              Score: {displayGcsTotal}/15
             </span>
           </div>
           <div className="grid grid-cols-3 gap-2 md:gap-3">
@@ -752,33 +796,42 @@ export function PrimarySurveySection({
               label="Eye (E1-E4)"
               max={4}
               min={1}
-              value={data.disability?.gcsE}
+              value={displayGcsE}
               onChange={(v) => {
-                onChange("disability.gcsE", v);
-                const total = (parseInt(v) || 0) + (parseInt(data.disability?.gcsV || "0") || 0) + (parseInt(data.disability?.gcsM || "0") || 0);
-                onChange("disability.gcsTotal", total > 0 ? String(total) : null);
+                onUpdateVitals?.("gcs_e", v);
+                const e = parseInt(v) || 0;
+                const ver = parseInt(displayGcsV) || 0;
+                const m = parseInt(displayGcsM) || 0;
+                const total = e + ver + m;
+                if (total > 0) onUpdateVitals?.("gcs", String(total));
               }}
             />
             <VitalInput
               label="Verbal (V1-V5)"
               max={5}
               min={1}
-              value={data.disability?.gcsV}
+              value={displayGcsV}
               onChange={(v) => {
-                onChange("disability.gcsV", v);
-                const total = (parseInt(data.disability?.gcsE || "0") || 0) + (parseInt(v) || 0) + (parseInt(data.disability?.gcsM || "0") || 0);
-                onChange("disability.gcsTotal", total > 0 ? String(total) : null);
+                onUpdateVitals?.("gcs_v", v);
+                const e = parseInt(displayGcsE) || 0;
+                const ver = parseInt(v) || 0;
+                const m = parseInt(displayGcsM) || 0;
+                const total = e + ver + m;
+                if (total > 0) onUpdateVitals?.("gcs", String(total));
               }}
             />
             <VitalInput
               label="Motor (M1-M6)"
               max={6}
               min={1}
-              value={data.disability?.gcsM}
+              value={displayGcsM}
               onChange={(v) => {
-                onChange("disability.gcsM", v);
-                const total = (parseInt(data.disability?.gcsE || "0") || 0) + (parseInt(data.disability?.gcsV || "0") || 0) + (parseInt(v) || 0);
-                onChange("disability.gcsTotal", total > 0 ? String(total) : null);
+                onUpdateVitals?.("gcs_m", v);
+                const e = parseInt(displayGcsE) || 0;
+                const ver = parseInt(displayGcsV) || 0;
+                const m = parseInt(v) || 0;
+                const total = e + ver + m;
+                if (total > 0) onUpdateVitals?.("gcs", String(total));
               }}
             />
           </div>
@@ -844,7 +897,7 @@ export function PrimarySurveySection({
       {/* ── E — EXPOSURE ─────────────────────────────────────────── */}
       <AccordionItem
         title="E - EXPOSURE"
-        summary={[(data.exposure?.temp || vitals?.temp) ? `Temp ${data.exposure?.temp || vitals?.temp}°C` : ""]
+        summary={[displayTemp ? `Temp ${displayTemp}°C` : ""]
           .filter(Boolean).join(" · ")}
         iconLetter="E"
         iconBgClass="bg-blue-500"
@@ -859,9 +912,8 @@ export function PrimarySurveySection({
             normal="37.0°C / 98.6°F"
             flagHigh={38.0}
             flagLow={35.5}
-            value={data.exposure?.temp || vitals?.temp || ""}
+            value={displayTemp}
             onChange={(v) => {
-              onChange("exposure.temp", v);
               onUpdateVitals?.("temp", v);
             }}
           />

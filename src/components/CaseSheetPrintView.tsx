@@ -22,6 +22,16 @@ export interface PrimarySurveyData {
   circulation: string | null;
   disability: string | null;
   exposure: string | null;
+  vitalsContext?: {
+    rr?: string | number | null;
+    spo2?: string | number | null;
+    hr?: string | number | null;
+    bp?: string | null;
+    gcs?: string | number | null;
+    gcsComponents?: string | null;
+    grbs?: string | number | null;
+    temp?: string | number | null;
+  };
 }
 
 export interface SecondarySurveyData {
@@ -47,6 +57,8 @@ export interface PsychologicalAssessmentData {
 export interface CaseSheetData {
   caseId: string;
   hospitalName?: string;
+  triageCategory?: string | null;
+  caseType?: string | null;
   patient: {
     name: string | null;
     age: number | null;
@@ -59,7 +71,7 @@ export interface CaseSheetData {
   presentingComplaint: string;
 
   initialVitals: VitalReading[];
-  vbgAbg: { type: "VBG" | "ABG" | null; performed: boolean; values: { name: string; param: ClinicalParam; value: number | null }[] };
+  vbgAbg: { type: "VBG" | "ABG" | null; performed: boolean; values: { name: string; param: ClinicalParam; value: number | null }[]; notes?: string };
   ecg: { performed: boolean; findings: string };
   bedsideEcho: { performed: boolean; findings: string };
   efast: { performed: boolean; findings: string };
@@ -75,18 +87,35 @@ export interface CaseSheetData {
   secondarySurvey: SecondarySurveyData;
   psychologicalAssessment: PsychologicalAssessmentData | null;
   provisionalDiagnosis: string;
+  provisionalDifferentialDiagnoses?: string | null;
   differentials: { diagnosis: string; status: string }[];
 
   labs: LabPanel[];
   cultureResults?: { name: string; result: string }[];
+  investigationImaging?: string | null;
+  investigationLabsOrdered?: string | null;
+  investigationResultsSummary?: string | null;
 
   treatmentGiven: string[];
+  treatmentNotes?: string | null;
 
-  // NEW — previously missing entirely
+  procedures: {
+    proceduresChecked: string[];
+    otherProcedures: string | null;
+  };
+
+  consultation: {
+    consultsRequested: string[];
+    consultantReview: { reviewedBy: string; reviewText: string; timestamp: string } | null;
+  };
+
+  // Disposition & Outcome
   disposition: {
     status: string | null;
     destinationUnit: string | null;
     durationInEr: string | null;
+    conditionAtShift: string | null;
+    managementPlan: string | null;
     consultsRequested: string[];
     followUpAdvice: string | null;
   };
@@ -120,6 +149,7 @@ export interface CaseSheetData {
 
   signatureBlock: {
     clinicianName: string | null; // null means "not recorded" — never a fallback name
+    consultantName: string | null; // EM Consultant name
     timestamp: string | null;
   };
 }
@@ -164,18 +194,97 @@ export function convertClinicalCaseToCaseSheetData(c: ClinicalCase, defaultHospi
   const vitals = c.vitals || ({} as any);
   const sysBp = vitals.bp ? parseVal(vitals.bp.split("/")[0]) : null;
 
+  // SAMPLE History: separate cleanly, do not merge into past medical history
+  // Canonical sampleHistory fields always take priority; fall back to legacy fields for read-only display
   const pastHx: string[] = [];
-  if (c.sampleHistory?.pastHistory) pastHx.push(c.sampleHistory.pastHistory);
-  if (c.sampleHistory?.allergies) pastHx.push(`Allergies: ${c.sampleHistory.allergies}`);
-  if (c.sampleHistory?.medications) pastHx.push(`Regular Meds: ${c.sampleHistory.medications}`);
+  if (c.sampleHistory?.pastHistory && typeof c.sampleHistory.pastHistory === "string" && c.sampleHistory.pastHistory.trim()) {
+    pastHx.push(c.sampleHistory.pastHistory.trim());
+  } else if ((c as any).pastMedicalHistory && typeof (c as any).pastMedicalHistory === "string" && (c as any).pastMedicalHistory.trim()) {
+    pastHx.push((c as any).pastMedicalHistory.trim());
+  } else if ((c as any).pastHistory && typeof (c as any).pastHistory === "string" && (c as any).pastHistory.trim()) {
+    pastHx.push((c as any).pastHistory.trim());
+  }
+
+  let meds: string[] = [];
+  if (c.sampleHistory?.medications && typeof c.sampleHistory.medications === "string" && c.sampleHistory.medications.trim()) {
+    meds = [c.sampleHistory.medications.trim()];
+  } else if ((c as any).currentMedications) {
+    const rawM = (c as any).currentMedications;
+    if (typeof rawM === "string" && rawM.trim()) {
+      meds = [rawM.trim()];
+    } else if (Array.isArray(rawM) && rawM.length > 0) {
+      const parsed = rawM.map((m: any) => typeof m === "string" ? m : (m?.drugName || m?.name || "")).filter(Boolean);
+      if (parsed.length > 0) meds = [parsed.join(", ")];
+    }
+  }
+
+  const resolvedEvents = (c.sampleHistory?.events && typeof c.sampleHistory.events === "string" && c.sampleHistory.events.trim())
+    ? c.sampleHistory.events.trim()
+    : ((c as any).events && typeof (c as any).events === "string" && (c as any).events.trim())
+      ? (c as any).events.trim()
+      : null;
+
+  const resolvedSymptoms: string[] = [];
+  if (c.sampleHistory?.symptoms && typeof c.sampleHistory.symptoms === "string" && c.sampleHistory.symptoms.trim()) {
+    resolvedSymptoms.push(c.sampleHistory.symptoms.trim());
+  } else if (c.patient?.presentingComplaint && c.patient.presentingComplaint !== "Not documented") {
+    resolvedSymptoms.push(c.patient.presentingComplaint);
+  } else if ((c as any).symptoms) {
+    const s = (c as any).symptoms;
+    if (typeof s === "string" && s.trim()) resolvedSymptoms.push(s.trim());
+    else if (Array.isArray(s) && s.length > 0) resolvedSymptoms.push(s.join(", "));
+  }
+
+  const resolvedAllergies: string[] = [];
+  if (c.sampleHistory?.allergies && typeof c.sampleHistory.allergies === "string" && c.sampleHistory.allergies.trim()) {
+    resolvedAllergies.push(c.sampleHistory.allergies.trim());
+  } else if ((c as any).allergies) {
+    const a = (c as any).allergies;
+    if (typeof a === "string" && a.trim()) resolvedAllergies.push(a.trim());
+    else if (Array.isArray(a) && a.length > 0) resolvedAllergies.push(a.join(", "));
+  }
+
+  const resolvedLastMeal = (c.sampleHistory?.lastMeal && typeof c.sampleHistory.lastMeal === "string" && c.sampleHistory.lastMeal.trim())
+    ? c.sampleHistory.lastMeal.trim()
+    : ((c as any).lastMeal && typeof (c as any).lastMeal === "string" && (c as any).lastMeal.trim())
+      ? (c as any).lastMeal.trim()
+      : null;
 
   const surveyObj = c.primaryAssessment?.survey;
   const primarySurvey: PrimarySurveyData = {
-    airway: c.primaryAssessment?.airway || (surveyObj?.airway ? `Status: ${surveyObj.airway.status}${surveyObj.airway.intervention ? `, Intervention: ${surveyObj.airway.intervention}` : ""}` : null),
-    breathing: c.primaryAssessment?.breathing || (surveyObj?.breathing ? `Work: ${surveyObj.breathing.workOfBreathing || "Normal"}, Air Entry: ${surveyObj.breathing.airEntry || "Equal"}, Sounds: ${surveyObj.breathing.addedSounds || "Clear"}` : null),
-    circulation: c.primaryAssessment?.circulation || (surveyObj?.circulation ? `Rhythm: ${surveyObj.circulation.rhythm || "Regular"}, CRT: ${surveyObj.circulation.crt || "<2s"}, Skin: ${surveyObj.circulation.skinPerfusion || "Warm"}` : null),
-    disability: c.primaryAssessment?.disability || (surveyObj?.disability ? `GCS: ${surveyObj.disability.gcsTotal || "15"}, Pupils: ${surveyObj.disability.pupilReaction || "Reactive"}` : null),
-    exposure: c.primaryAssessment?.exposure || (surveyObj?.exposure ? `Skin: ${surveyObj.exposure.skin || "Clear"}` : null),
+    airway: c.primaryAssessment?.airway || (surveyObj?.airway ? (
+      surveyObj.airway.status ? `Status: ${surveyObj.airway.status}${surveyObj.airway.intervention ? `, Intervention: ${surveyObj.airway.intervention}` : ""}` : null
+    ) : null),
+    breathing: c.primaryAssessment?.breathing || (surveyObj?.breathing ? [
+      surveyObj.breathing.workOfBreathing ? `Work: ${surveyObj.breathing.workOfBreathing}` : "",
+      surveyObj.breathing.airEntry ? `Air Entry: ${surveyObj.breathing.airEntry}` : "",
+      surveyObj.breathing.addedSounds ? `Sounds: ${surveyObj.breathing.addedSounds}` : "",
+    ].filter(Boolean).join(", ") || null : null),
+    circulation: c.primaryAssessment?.circulation || (surveyObj?.circulation ? [
+      surveyObj.circulation.rhythm ? `Rhythm: ${surveyObj.circulation.rhythm}` : "",
+      surveyObj.circulation.crt ? `CRT: ${surveyObj.circulation.crt}` : "",
+      surveyObj.circulation.skinPerfusion ? `Skin: ${surveyObj.circulation.skinPerfusion}` : "",
+      surveyObj.circulation.peripheralPulses ? `Pulses: ${surveyObj.circulation.peripheralPulses}` : "",
+    ].filter(Boolean).join(", ") || null : null),
+    disability: c.primaryAssessment?.disability || (surveyObj?.disability ? [
+      surveyObj.disability.gcsTotal ? `GCS: ${surveyObj.disability.gcsTotal}` : "",
+      surveyObj.disability.pupilReaction ? `Pupils: ${surveyObj.disability.pupilReaction}` : "",
+      surveyObj.disability.focalDeficit ? `Focal Deficit: ${surveyObj.disability.focalDeficit}` : "",
+    ].filter(Boolean).join(", ") || null : null),
+    exposure: c.primaryAssessment?.exposure || (surveyObj?.exposure ? [
+      surveyObj.exposure.skin ? `Skin: ${surveyObj.exposure.skin}` : "",
+      surveyObj.exposure.logRoll ? `Log Roll: ${surveyObj.exposure.logRoll}` : "",
+    ].filter(Boolean).join(", ") || null : null),
+    vitalsContext: {
+      rr: vitals.rr || (surveyObj?.breathing as any)?.rr || null,
+      spo2: vitals.spo2 || (surveyObj?.breathing as any)?.spo2 || null,
+      hr: vitals.hr || (surveyObj?.circulation as any)?.hr || null,
+      bp: vitals.bp || (surveyObj?.circulation as any)?.bp || null,
+      gcs: vitals.gcs || (surveyObj?.disability?.gcsTotal ? String(surveyObj.disability.gcsTotal) : null),
+      gcsComponents: (vitals.gcs_e || vitals.gcs_v || vitals.gcs_m) ? `E${vitals.gcs_e || "?"}V${vitals.gcs_v || "?"}M${vitals.gcs_m || "?"}` : null,
+      grbs: vitals.grbs || null,
+      temp: vitals.temp || (surveyObj?.exposure as any)?.temp || null,
+    }
   };
 
   const secInfo = c.dischargeInfo;
@@ -183,29 +292,51 @@ export function convertClinicalCaseToCaseSheetData(c: ClinicalCase, defaultHospi
   
   let parsedGeneral = secInfo?.secondaryPicle || sec.general || null;
   let parsedCvs = secInfo?.secondaryCvs || sec.cvs || null;
-  let parsedRs = secInfo?.secondaryChest || sec.respiratory || null;
-  let parsedPa = secInfo?.secondaryPa || sec.abdomen || null;
+  let parsedRs = secInfo?.secondaryChest || sec.respiratory || sec.rs || null;
+  let parsedPa = secInfo?.secondaryPa || sec.abdomen || sec.pa || null;
   let parsedCns = secInfo?.secondaryCns || sec.cns || null;
   let parsedExtremities = sec.extremities || null;
 
-  if (!parsedGeneral && c.secondaryAssessment && typeof c.secondaryAssessment === "string") {
+  if (c.secondaryAssessment && typeof c.secondaryAssessment === "string" && c.secondaryAssessment.trim()) {
     const text = c.secondaryAssessment;
-    const regex = /(General|CVS|RS|Respiratory|Chest \/ RS|Respiratory System|Abdomen|PA|Per Abdomen \(PA\)|PA \/ Abdomen|Per Abdomen|CNS|Psych|Extremities|Local Examination|Head-to-Toe Trauma Exam)\s*:\s*(.*?)(?=(General|CVS|RS|Respiratory|Chest \/ RS|Respiratory System|Abdomen|PA|Per Abdomen \(PA\)|PA \/ Abdomen|Per Abdomen|CNS|Psych|Extremities|Local Examination|Head-to-Toe Trauma Exam)\s*:|$)/igs;
+    const normalizeSecKey = (k: string): "General" | "CVS" | "RS" | "PA" | "CNS" | "Extremities" | null => {
+      const lower = k.trim().toLowerCase();
+      if (lower === "rs" || lower === "respiratory" || lower === "chest" || lower.includes("respiratory") || lower.includes("chest / rs") || lower.includes("chest")) return "RS";
+      if (lower === "pa" || lower === "abdomen" || lower.includes("abdomen") || lower.includes("per abdomen")) return "PA";
+      if (lower === "cvs") return "CVS";
+      if (lower === "cns") return "CNS";
+      if (lower === "general") return "General";
+      if (lower === "extremities" || lower.includes("extremities") || lower.includes("local") || lower.includes("trauma")) return "Extremities";
+      return null;
+    };
+
+    const firstHeaderMatch = text.match(/(General|CVS|RS|Respiratory|Chest \/ RS|Respiratory System|Chest|Abdomen|PA|Per Abdomen \(PA\)|PA \/ Abdomen|Per Abdomen|CNS|Psych|Extremities|Local Examination|Head-to-Toe Trauma Exam)\s*:\s*/i);
+    const narrativeBuckets: Record<string, string> = {};
+    if (firstHeaderMatch && firstHeaderMatch.index !== undefined && firstHeaderMatch.index > 0) {
+      const preamble = text.substring(0, firstHeaderMatch.index).trim();
+      if (preamble) narrativeBuckets.General = preamble;
+    }
+
+    const regex = /(General|CVS|RS|Respiratory|Chest \/ RS|Respiratory System|Chest|Abdomen|PA|Per Abdomen \(PA\)|PA \/ Abdomen|Per Abdomen|CNS|Psych|Extremities|Local Examination|Head-to-Toe Trauma Exam)\s*:\s*(.*?)(?=(General|CVS|RS|Respiratory|Chest \/ RS|Respiratory System|Chest|Abdomen|PA|Per Abdomen \(PA\)|PA \/ Abdomen|Per Abdomen|CNS|Psych|Extremities|Local Examination|Head-to-Toe Trauma Exam)\s*:\s*|$)/igs;
     let match;
     let foundAny = false;
     while ((match = regex.exec(text)) !== null) {
       foundAny = true;
-      const key = match[1].toLowerCase();
+      const bucket = normalizeSecKey(match[1]);
       const val = match[2].trim();
-      if (key.includes('general')) parsedGeneral = val;
-      else if (key.includes('cvs')) parsedCvs = val;
-      else if (key.includes('rs') || key.includes('respiratory')) parsedRs = val;
-      else if (key.includes('abdomen') || key.includes('pa')) parsedPa = val;
-      else if (key.includes('cns')) parsedCns = val;
-      else if (key.includes('extremities') || key.includes('local') || key.includes('trauma')) parsedExtremities = val;
+      if (bucket && val) {
+        narrativeBuckets[bucket] = narrativeBuckets[bucket] ? `${narrativeBuckets[bucket]}\n${val}` : val;
+      }
     }
-    if (!foundAny) {
-      parsedGeneral = text;
+    if (!foundAny && !parsedGeneral) {
+      parsedGeneral = text.trim();
+    } else {
+      if (!parsedGeneral && narrativeBuckets.General) parsedGeneral = narrativeBuckets.General;
+      if (!parsedCvs && narrativeBuckets.CVS) parsedCvs = narrativeBuckets.CVS;
+      if (!parsedRs && narrativeBuckets.RS) parsedRs = narrativeBuckets.RS;
+      if (!parsedPa && narrativeBuckets.PA) parsedPa = narrativeBuckets.PA;
+      if (!parsedCns && narrativeBuckets.CNS) parsedCns = narrativeBuckets.CNS;
+      if (!parsedExtremities && narrativeBuckets.Extremities) parsedExtremities = narrativeBuckets.Extremities;
     }
   }
 
@@ -237,16 +368,38 @@ export function convertClinicalCaseToCaseSheetData(c: ClinicalCase, defaultHospi
   const treatmentList: string[] = [];
   if (Array.isArray(c.treatments) && c.treatments.length > 0) {
     c.treatments.forEach(t => {
-      treatmentList.push(`${t.drugName || "Medication"} ${t.dose || ""} ${t.route || ""}`.trim());
+      const parts: string[] = [];
+      if (t.drugName) parts.push(t.drugName);
+      if (t.dose) parts.push(t.dose);
+      if (t.route) parts.push(t.route);
+      if ((t as any).frequency) parts.push(`Freq: ${(t as any).frequency}`);
+      if (t.timeGiven) parts.push(`Given: ${t.timeGiven}`);
+      if (t.instruction) parts.push(`(${t.instruction})`);
+      treatmentList.push(parts.join(" · ") || "Medication");
     });
   } else if (Array.isArray(c.medications)) {
     c.medications.forEach(m => {
-      if (typeof m === "string") treatmentList.push(m);
-      else if (m && typeof m === "object") treatmentList.push(`${m.drugName || ""} ${m.dose || ""} ${m.route || ""}`.trim());
+      if (typeof m === "string") {
+        treatmentList.push(m);
+      } else if (m && typeof m === "object") {
+        const parts: string[] = [];
+        if (m.drugName) parts.push(m.drugName);
+        if (m.dose) parts.push(m.dose);
+        if (m.route) parts.push(m.route);
+        if (m.frequency) parts.push(`Freq: ${m.frequency}`);
+        treatmentList.push(parts.join(" · ") || "Medication");
+      }
     });
   }
   if (Array.isArray(c.infusions)) {
-    c.infusions.forEach(f => treatmentList.push(`${f.fluidName} ${f.dose}, diluted ${f.dilution}, rate ${f.rate}`));
+    c.infusions.forEach(f => {
+      const parts: string[] = [];
+      if (f.fluidName) parts.push(f.fluidName);
+      if (f.dose) parts.push(`Dose: ${f.dose}`);
+      if (f.dilution) parts.push(`Dilution: ${f.dilution}`);
+      if (f.rate) parts.push(`Rate: ${f.rate}`);
+      treatmentList.push(parts.join(" · "));
+    });
   }
 
   const labValues: LabPanel["values"] = [];
@@ -269,17 +422,50 @@ export function convertClinicalCaseToCaseSheetData(c: ClinicalCase, defaultHospi
     });
   }
 
-  // ── VBG/ABG — real data only, NEVER hardcoded fallback values ──
+  // ── Adjuncts to Primary Assessment (Canonical first, legacy fallback) ──
   const adj = (c as any).adjuncts || {};
-  const vbgPerformed = adj.abgStatus === "done";
+  const surveyAdj = surveyObj?.adjuncts;
+  const surveyCirc = surveyObj?.circulation;
+
+  // ECG
+  const ecgFindings = surveyCirc?.ecg || surveyAdj?.ecgStatus || adj.ecgFindings || adj.ecgRhythm || "";
+  const ecgDone = !!(surveyCirc?.ecg && surveyCirc.ecg !== "Not done") || !!(surveyAdj?.ecgStatus && surveyAdj.ecgStatus !== "Not done") || !!adj.ecgDone;
+
+  // Echo
+  const echoFindings = (surveyCirc as any)?.echo || surveyAdj?.echoStatus || adj.echoFindings || "";
+  const echoDone = !!((surveyCirc as any)?.echo && (surveyCirc as any).echo !== "Not done") || !!(surveyAdj?.echoStatus && surveyAdj.echoStatus !== "Not done") || !!adj.echoDone;
+
+  // eFAST
+  let efastFindings = "";
+  if (surveyCirc?.efast && typeof surveyCirc.efast === "object") {
+    const ef = surveyCirc.efast;
+    const pos = Object.entries(ef).filter(([_, v]) => v && v !== "not_done" && v !== "negative" && v !== "no_blines");
+    if (pos.length > 0) {
+      efastFindings = `Positive (${pos.map(([k, v]) => `${k}: ${v}`).join(", ")})`;
+    } else {
+      const anyDone = Object.values(ef).some(v => v && v !== "not_done");
+      if (anyDone) efastFindings = "Negative";
+    }
+  }
+  if (!efastFindings) {
+    efastFindings = surveyAdj?.efastStatus || adj.efastInterpretation || adj.efastFindings || adj.efastNotes || "";
+  }
+  const efastDone = (efastFindings && efastFindings !== "Not done" && efastFindings !== "not_done") || !!adj.efastDone;
+
+  // ABG / VBG
+  const abgObj = surveyAdj?.abg;
+  const vbgPerformed = !!(abgObj && (abgObj.interpretation || abgObj.ph || abgObj.finalDiagnosis)) || adj.abgStatus === "done";
+  const abgType: "VBG" | "ABG" | null = (abgObj?.sampleType?.includes("VBG") || abgObj?.sampleType?.includes("Venous")) ? "VBG" : "ABG";
+  const abgNotes = abgObj?.finalDiagnosis || abgObj?.interpretation || abgObj?.clinicalInterpretation || "";
+  
   const vbgValues = vbgPerformed
     ? [
-        { name: "pH", param: "ph" as ClinicalParam, value: parseVal(adj.abgPh) },
-        { name: "pCO2", param: "pco2" as ClinicalParam, value: parseVal(adj.abgPco2) },
-        { name: "HCO3", param: "hco3" as ClinicalParam, value: parseVal(adj.abgHco3) },
-        { name: "Lactate", param: "lactate" as ClinicalParam, value: parseVal(adj.abgLactate) },
-        { name: "Na", param: "na" as ClinicalParam, value: parseVal(adj.abgNa) },
-        { name: "K", param: "k" as ClinicalParam, value: parseVal(adj.abgK) },
+        { name: "pH", param: "ph" as ClinicalParam, value: parseVal(abgObj?.ph || adj.abgPh) },
+        { name: "pCO2", param: "pco2" as ClinicalParam, value: parseVal(abgObj?.pco2 || adj.abgPco2) },
+        { name: "HCO3", param: "hco3" as ClinicalParam, value: parseVal(abgObj?.hco3 || adj.abgHco3) },
+        { name: "Lactate", param: "lactate" as ClinicalParam, value: parseVal(abgObj?.lactate || adj.abgLactate) },
+        { name: "Na", param: "na" as ClinicalParam, value: parseVal(abgObj?.na || adj.abgNa) },
+        { name: "K", param: "k" as ClinicalParam, value: parseVal(abgObj?.k || adj.abgK) },
       ].filter(v => v.value !== null)
     : [];
 
@@ -321,6 +507,8 @@ export function convertClinicalCaseToCaseSheetData(c: ClinicalCase, defaultHospi
   return {
     caseId: c.id,
     hospitalName: c.hospital || defaultHospital || undefined, // no hardcoded hospital name fallback either
+    triageCategory: c.patient?.triageCategory || (c as any).triageCategory || null,
+    caseType: c.patient?.caseType || (c as any).caseType || null,
     patient: {
       name: c.patient?.name || null,
       age: c.patient?.age ? parseVal(c.patient.age) : null,
@@ -347,38 +535,139 @@ export function convertClinicalCaseToCaseSheetData(c: ClinicalCase, defaultHospi
       { label: "GCS", param: "gcs" as ClinicalParam, value: parseVal(vitals.gcs), displayValue: vitals.gcs || (vitals.gcs_e || vitals.gcs_v || vitals.gcs_m ? `${vitals.gcs_e || "?"}/${vitals.gcs_v || "?"}/${vitals.gcs_m || "?"}` : "15/15") }
     ],
 
-    vbgAbg: { type: vbgPerformed ? "VBG" : null, performed: vbgPerformed, values: vbgValues },
+    vbgAbg: { type: abgType, performed: vbgPerformed, values: vbgValues, notes: abgNotes || undefined },
 
     // NEVER default to a fabricated "normal" finding — only real data
     // or an explicit "Not documented" state.
-    ecg: { performed: !!adj.ecgDone, findings: adj.ecgFindings || adj.ecgRhythm || "" },
-    bedsideEcho: { performed: !!adj.echoDone, findings: adj.echoFindings || "" },
-    efast: { performed: !!adj.efastDone || !!(adj.efastInterpretation && adj.efastInterpretation !== "Not done"), findings: adj.efastInterpretation || adj.efastFindings || adj.efastNotes || "" },
+    ecg: { performed: ecgDone, findings: ecgFindings },
+    bedsideEcho: { performed: echoDone, findings: echoFindings },
+    efast: { performed: efastDone, findings: efastFindings },
 
-    symptoms: c.sampleHistory?.symptoms ? [c.sampleHistory.symptoms] : [],
-    allergies: c.sampleHistory?.allergies ? [c.sampleHistory.allergies] : [],
-    currentMedications: c.sampleHistory?.medications ? [c.sampleHistory.medications] : [],
-    lastMeal: c.sampleHistory?.lastMeal || null,
-    events: c.sampleHistory?.events || null,
+    symptoms: resolvedSymptoms,
+    allergies: resolvedAllergies,
+    currentMedications: meds,
+    lastMeal: resolvedLastMeal,
+    events: resolvedEvents,
     pastHistory: pastHx,
     treatment: { otherNotes: c.treatmentNotes || c.treatment?.otherNotes || undefined },
     primarySurvey,
     secondarySurvey,
     psychologicalAssessment,
-    provisionalDiagnosis: c.provisionalPrimaryDiagnosis || (c.differentials?.[0]?.diagnosis) || "",
+    provisionalDiagnosis: (() => {
+      // Canonical provisionalPrimaryDiagnosis first
+      if (c.provisionalPrimaryDiagnosis && typeof c.provisionalPrimaryDiagnosis === "string" && c.provisionalPrimaryDiagnosis.trim()) {
+        return c.provisionalPrimaryDiagnosis.trim();
+      }
+      // Historical diagnosis fields fallback for old saved cases (no assistant reasoning or differentials)
+      if ((c as any).provisionalDiagnosis && typeof (c as any).provisionalDiagnosis === "string" && (c as any).provisionalDiagnosis.trim()) {
+        return (c as any).provisionalDiagnosis.trim();
+      }
+      if (c.dischargeInfo?.primaryDiagnosis && typeof c.dischargeInfo.primaryDiagnosis === "string" && c.dischargeInfo.primaryDiagnosis.trim()) {
+        return c.dischargeInfo.primaryDiagnosis.trim();
+      }
+      if ((c as any).primaryDiagnosis && typeof (c as any).primaryDiagnosis === "string" && (c as any).primaryDiagnosis.trim()) {
+        return (c as any).primaryDiagnosis.trim();
+      }
+      if ((c.pediatricDetails as any)?.provisionalDiagnosisDischarge && typeof (c.pediatricDetails as any).provisionalDiagnosisDischarge === "string" && (c.pediatricDetails as any).provisionalDiagnosisDischarge.trim()) {
+        return (c.pediatricDetails as any).provisionalDiagnosisDischarge.trim();
+      }
+      if ((c.pediatricDetails as any)?.dispositionProvisionalDiagnosis && typeof (c.pediatricDetails as any).dispositionProvisionalDiagnosis === "string" && (c.pediatricDetails as any).dispositionProvisionalDiagnosis.trim()) {
+        return (c.pediatricDetails as any).dispositionProvisionalDiagnosis.trim();
+      }
+      if ((c as any).dispositionProvisionalDiagnosis && typeof (c as any).dispositionProvisionalDiagnosis === "string" && (c as any).dispositionProvisionalDiagnosis.trim()) {
+        return (c as any).dispositionProvisionalDiagnosis.trim();
+      }
+      if ((c as any).diagnosis && typeof (c as any).diagnosis === "string" && (c as any).diagnosis.trim()) {
+        return (c as any).diagnosis.trim();
+      }
+      return "";
+    })(),
+    provisionalDifferentialDiagnoses: c.provisionalDifferentialDiagnoses || null,
     differentials: (c.differentials || []).map(d => ({ diagnosis: d.diagnosis, status: d.status })),
 
     labs: labValues.length > 0 ? [{ panelName: "INVESTIGATIONS & LAB RESULTS", values: labValues }] : [],
     cultureResults: [],
+    investigationImaging: (() => {
+      if (c.investigationImaging && typeof c.investigationImaging === "string" && c.investigationImaging.trim()) {
+        return c.investigationImaging.trim();
+      }
+      // Read-only fallback if investigationsOrdered contains imaging
+      if ((c as any).investigationsOrdered) {
+        const rawOrdered = (c as any).investigationsOrdered;
+        const isImaging = (name: string, cat?: string) => {
+          if (cat && /imaging|radiology|x-?ray|ct|mri|usg|scan|ultrasound/i.test(cat)) return true;
+          return /\b(x-?ray|cxr|ct|mri|usg|ultrasound|pocus|2d echo|echo|radiograph|scan)\b/i.test(name.toLowerCase());
+        };
+        const imagingNames: string[] = [];
+        if (Array.isArray(rawOrdered)) {
+          rawOrdered.forEach((item: any) => {
+            const name = (typeof item === "string" ? item : (item?.name || "")).trim();
+            const cat = typeof item === "object" ? item?.category : undefined;
+            if (name && isImaging(name, cat)) imagingNames.push(name);
+          });
+        } else if (typeof rawOrdered === "string" && rawOrdered.trim()) {
+          rawOrdered.split(/[,;\n]+/).map(p => p.trim()).forEach(p => {
+            if (p && isImaging(p)) imagingNames.push(p);
+          });
+        }
+        if (imagingNames.length > 0) return imagingNames.join(", ");
+      }
+      return null;
+    })(),
+    investigationLabsOrdered: (() => {
+      if (c.investigationLabsOrdered && typeof c.investigationLabsOrdered === "string" && c.investigationLabsOrdered.trim()) {
+        return c.investigationLabsOrdered.trim();
+      }
+      // Read-only fallback if existing investigationsOrdered contains actual named lab investigations
+      if ((c as any).investigationsOrdered) {
+        const rawOrdered = (c as any).investigationsOrdered;
+        const isImaging = (name: string, cat?: string) => {
+          if (cat && /imaging|radiology|x-?ray|ct|mri|usg|scan|ultrasound/i.test(cat)) return true;
+          return /\b(x-?ray|cxr|ct|mri|usg|ultrasound|pocus|2d echo|echo|radiograph|scan)\b/i.test(name.toLowerCase());
+        };
+        const labNames: string[] = [];
+        if (Array.isArray(rawOrdered)) {
+          rawOrdered.forEach((item: any) => {
+            const name = (typeof item === "string" ? item : (item?.name || "")).trim();
+            const cat = typeof item === "object" ? item?.category : undefined;
+            if (name && !isImaging(name, cat)) labNames.push(name);
+          });
+        } else if (typeof rawOrdered === "string" && rawOrdered.trim()) {
+          rawOrdered.split(/[,;\n]+/).map(p => p.trim()).forEach(p => {
+            if (p && !isImaging(p)) labNames.push(p);
+          });
+        }
+        if (labNames.length > 0) return labNames.join(", ");
+      }
+      return null;
+    })(),
+    investigationResultsSummary: c.investigationResultsSummary || null,
 
     treatmentGiven: treatmentList,
+    treatmentNotes: c.treatmentNotes || c.treatment?.otherNotes || null,
 
-    // NEW — Disposition, previously completely absent from the print view
+    procedures: {
+      proceduresChecked: Array.isArray(c.proceduresChecked) ? c.proceduresChecked : [],
+      otherProcedures: c.otherProcedures || null,
+    },
+
+    consultation: {
+      consultsRequested: Array.isArray(c.dispositionAndPlan?.consultsRequested) ? c.dispositionAndPlan.consultsRequested : [],
+      consultantReview: c.consultantReview && (c.consultantReview.reviewedBy || c.consultantReview.reviewText) ? {
+        reviewedBy: c.consultantReview.reviewedBy || "",
+        reviewText: c.consultantReview.reviewText || "",
+        timestamp: c.consultantReview.timestamp || "",
+      } : null,
+    },
+
+    // Disposition & Outcome
     disposition: {
       status: c.dispositionDetails?.dispositionType || c.dispositionAndPlan?.dispositionStatus || null,
       destinationUnit: c.dispositionAndPlan?.destinationUnit || null,
       durationInEr: c.dispositionDetails?.durationInEr || null,
-      consultsRequested: c.dispositionAndPlan?.consultsRequested || [],
+      conditionAtShift: c.conditionAtShift || (c.dispositionDetails as any)?.conditionAtShift || (c.pediatricDetails as any)?.dispositionConditionAtShift || null,
+      managementPlan: c.dispositionAndPlan?.managementPlan || null,
+      consultsRequested: Array.isArray(c.dispositionAndPlan?.consultsRequested) ? c.dispositionAndPlan.consultsRequested : [],
       followUpAdvice: c.dispositionAndPlan?.followUpAdvice || null,
     },
 
@@ -402,13 +691,19 @@ export function convertClinicalCaseToCaseSheetData(c: ClinicalCase, defaultHospi
 
     safetyAndAccreditation,
     notes: {
-      progressNotes: c.progressNotes || null,
+      progressNotes: (() => {
+        const raw = c.progressNotes;
+        if (!raw || typeof raw !== "string") return null;
+        if (raw.trim() === "Case created via ErMate Voice Scribe dictation.") return null;
+        return raw;
+      })(),
       addendum: c.addendumNotes || null,
     },
     isMlc: !!(c.patient as any)?.isMlc,
 
     signatureBlock: {
-      clinicianName: c.doctorName || null, // no fallback name — ever
+      clinicianName: (c as any).emResident || c.doctorName || c.dispositionDetails?.residentName || (c.pediatricDetails as any)?.dispositionEmResident || null, // treating ER doctor / resident
+      consultantName: (c as any).emConsultant || c.consultantName || c.dispositionDetails?.consultantName || c.consultantReview?.reviewedBy || (c.pediatricDetails as any)?.dispositionEmConsultant || null, // consultant
       timestamp: c.lastEditedAt || null
     }
   };
@@ -437,24 +732,148 @@ function EmptyLine({ text = "Not documented" }: { text?: string }) {
 }
 
 function PrimarySurveySection({ data }: { data: PrimarySurveyData }) {
-  const items = [
-    { label: "Airway", value: data.airway },
-    { label: "Breathing", value: data.breathing },
-    { label: "Circulation", value: data.circulation },
-    { label: "Disability", value: data.disability },
-    { label: "Exposure", value: data.exposure },
-  ].filter(item => item.value);
+  const v = data.vitalsContext;
+
+  const airwayFindings = data.airway;
+  const breathingFindings = data.breathing;
+  const circulationFindings = data.circulation;
+  const disabilityFindings = data.disability;
+  const exposureFindings = data.exposure;
+
+  const hasAnyData = airwayFindings || breathingFindings || circulationFindings || disabilityFindings || exposureFindings ||
+    v?.rr || v?.spo2 || v?.hr || v?.bp || v?.gcs || v?.grbs || v?.temp;
+
+  if (!hasAnyData) {
+    return (
+      <Section>
+        <SectionHeading>Primary Survey (ABCDE)</SectionHeading>
+        <EmptyLine />
+      </Section>
+    );
+  }
 
   return (
     <Section>
       <SectionHeading>Primary Survey (ABCDE)</SectionHeading>
-      {items.length > 0 ? (
-        <ul className="text-sm list-disc pl-5 space-y-0.5">
-          {items.map((item, i) => (
-            <li key={i}><span className="font-semibold">{item.label}:</span> {item.value}</li>
-          ))}
-        </ul>
-      ) : <EmptyLine />}
+      <div className="space-y-2 text-sm">
+        {/* A - Airway */}
+        <div className="border-b border-slate-100 pb-1.5 last:border-b-0">
+          <span className="font-bold text-slate-900">A — Airway: </span>
+          <span>{airwayFindings || "Not documented"}</span>
+        </div>
+
+        {/* B - Breathing */}
+        <div className="border-b border-slate-100 pb-1.5 last:border-b-0">
+          <span className="font-bold text-slate-900">B — Breathing: </span>
+          <span>{breathingFindings || "Not documented"}</span>
+          {(v?.rr || v?.spo2) && (
+            <div className="inline-flex items-center gap-3 ml-2 font-mono text-xs bg-slate-100 print:bg-transparent px-2 py-0.5 rounded border border-slate-200 print:border-none">
+              {v.rr && <span><strong className="font-sans text-[11px] text-slate-600">RR:</strong> {v.rr} /min</span>}
+              {v.spo2 && <span><strong className="font-sans text-[11px] text-slate-600">SpO2:</strong> {v.spo2}%</span>}
+            </div>
+          )}
+        </div>
+
+        {/* C - Circulation */}
+        <div className="border-b border-slate-100 pb-1.5 last:border-b-0">
+          <span className="font-bold text-slate-900">C — Circulation: </span>
+          <span>{circulationFindings || "Not documented"}</span>
+          {(v?.hr || v?.bp) && (
+            <div className="inline-flex items-center gap-3 ml-2 font-mono text-xs bg-slate-100 print:bg-transparent px-2 py-0.5 rounded border border-slate-200 print:border-none">
+              {v.hr && <span><strong className="font-sans text-[11px] text-slate-600">HR:</strong> {v.hr} bpm</span>}
+              {v.bp && <span><strong className="font-sans text-[11px] text-slate-600">BP:</strong> {v.bp} mmHg</span>}
+            </div>
+          )}
+        </div>
+
+        {/* D - Disability */}
+        <div className="border-b border-slate-100 pb-1.5 last:border-b-0">
+          <span className="font-bold text-slate-900">D — Disability: </span>
+          <span>{disabilityFindings || "Not documented"}</span>
+          {(v?.gcs || v?.gcsComponents || v?.grbs) && (
+            <div className="inline-flex items-center gap-3 ml-2 font-mono text-xs bg-slate-100 print:bg-transparent px-2 py-0.5 rounded border border-slate-200 print:border-none">
+              {v.gcs && <span><strong className="font-sans text-[11px] text-slate-600">GCS:</strong> {v.gcs}/15 {v.gcsComponents ? `(${v.gcsComponents})` : ""}</span>}
+              {v.grbs && <span><strong className="font-sans text-[11px] text-slate-600">GRBS:</strong> {v.grbs} mg/dL</span>}
+            </div>
+          )}
+        </div>
+
+        {/* E - Exposure */}
+        <div className="pb-0.5">
+          <span className="font-bold text-slate-900">E — Exposure: </span>
+          <span>{exposureFindings || "Not documented"}</span>
+          {v?.temp && (
+            <div className="inline-flex items-center gap-2 ml-2 font-mono text-xs bg-slate-100 print:bg-transparent px-2 py-0.5 rounded border border-slate-200 print:border-none">
+              <span><strong className="font-sans text-[11px] text-slate-600">Temp:</strong> {v.temp}°C</span>
+            </div>
+          )}
+        </div>
+      </div>
+    </Section>
+  );
+}
+
+function AdjunctsSection({
+  ecg,
+  bedsideEcho,
+  efast,
+  vbgAbg,
+}: {
+  ecg: CaseSheetData["ecg"];
+  bedsideEcho: CaseSheetData["bedsideEcho"];
+  efast: CaseSheetData["efast"];
+  vbgAbg: CaseSheetData["vbgAbg"];
+}) {
+  const hasAdjuncts =
+    ecg.performed ||
+    bedsideEcho.performed ||
+    efast.performed ||
+    vbgAbg.performed ||
+    ecg.findings ||
+    bedsideEcho.findings ||
+    efast.findings ||
+    (vbgAbg.values && vbgAbg.values.length > 0) ||
+    vbgAbg.notes;
+
+  if (!hasAdjuncts) {
+    return (
+      <Section>
+        <SectionHeading>Adjuncts to Primary Assessment</SectionHeading>
+        <EmptyLine text="No bedside adjuncts performed / documented" />
+      </Section>
+    );
+  }
+
+  return (
+    <Section>
+      <SectionHeading>Adjuncts to Primary Assessment</SectionHeading>
+      <div className="text-sm space-y-1.5">
+        <div>
+          <span className="font-semibold text-slate-900">ECG: </span>
+          <span>{ecg.performed && ecg.findings ? ecg.findings : ecg.findings || "Not done"}</span>
+        </div>
+        <div>
+          <span className="font-semibold text-slate-900">Bedside Echo / POCUS: </span>
+          <span>{bedsideEcho.performed && bedsideEcho.findings ? bedsideEcho.findings : bedsideEcho.findings || "Not done"}</span>
+        </div>
+        <div>
+          <span className="font-semibold text-slate-900">eFAST: </span>
+          <span>{efast.performed && efast.findings ? efast.findings : efast.findings || "Not done"}</span>
+        </div>
+        <div>
+          <span className="font-semibold text-slate-900">{vbgAbg.type || "ABG/VBG"}: </span>
+          {vbgAbg.performed && vbgAbg.values.length > 0 ? (
+            <span className="font-mono text-xs">
+              {vbgAbg.values.map(v => `${v.name} ${formatFlagged(v.param, v.value)}`).join(" · ")}
+              {vbgAbg.notes ? ` (${vbgAbg.notes})` : ""}
+            </span>
+          ) : vbgAbg.notes ? (
+            <span>{vbgAbg.notes}</span>
+          ) : (
+            <span>Not documented</span>
+          )}
+        </div>
+      </div>
     </Section>
   );
 }
@@ -642,6 +1061,12 @@ export default function CaseSheetPrintView({ data: propData, clinicalCase, onBac
             <div><span className="font-bold">Bed / Location:</span> {data.patient.bed || "—"}</div>
             <div><span className="font-bold">Arrival:</span> {data.arrival.date || "—"} {data.arrival.time || ""}</div>
             <div><span className="font-bold">Treating Clinician:</span> {data.clinician || "Not recorded"}</div>
+            {data.triageCategory && (
+              <div><span className="font-bold">Triage Category:</span> <span className="font-semibold uppercase">{data.triageCategory}</span></div>
+            )}
+            {data.caseType && (
+              <div><span className="font-bold">Case Type:</span> <span className="capitalize">{data.caseType}</span></div>
+            )}
           </div>
         </Section>
 
@@ -678,67 +1103,100 @@ export default function CaseSheetPrintView({ data: propData, clinicalCase, onBac
 
             <PrimarySurveySection data={data.primarySurvey} />
 
-            <Section>
-              <SectionHeading>Adjuncts to Primary Assessment</SectionHeading>
-              <div className="grid grid-cols-2 sm:grid-cols-7 gap-2 text-sm mb-3 bg-slate-50 print:bg-transparent p-2 print:p-0 rounded-lg border border-slate-200 print:border-none">
-                {data.initialVitals.map((v, i) => (
-                  <div key={i} className="text-center sm:text-left">
-                    <span className="font-bold text-xs uppercase text-slate-500 print:text-black block">{v.label}</span>
-                    <span className="font-mono text-sm font-semibold">{v.displayValue ? v.displayValue : formatFlagged(v.param, v.value)} {v.unit && v.value !== null && !v.displayValue ? v.unit : ""}</span>
-                  </div>
-                ))}
-              </div>
-              <div className="text-sm space-y-1 mt-2">
-                <div>
-                  <span className="font-bold">VBG/ABG:</span>{" "}
-                  {data.vbgAbg.performed && data.vbgAbg.values.length > 0
-                    ? data.vbgAbg.values.map(v => `${v.name} ${formatFlagged(v.param, v.value)}`).join(" · ")
-                    : "Not documented"}
-                </div>
-                <div><span className="font-bold">ECG:</span> {data.ecg.performed && data.ecg.findings ? data.ecg.findings : "Not documented"}</div>
-                <div><span className="font-bold">Bedside Echo:</span> {data.bedsideEcho.performed && data.bedsideEcho.findings ? data.bedsideEcho.findings : "Not documented"}</div>
-                <div><span className="font-bold">EFAST:</span> {data.efast?.performed && data.efast.findings ? data.efast.findings : "Not documented"}</div>
-              </div>
-            </Section>
+            <AdjunctsSection
+              ecg={data.ecg}
+              bedsideEcho={data.bedsideEcho}
+              efast={data.efast}
+              vbgAbg={data.vbgAbg}
+            />
 
             <Section>
               <SectionHeading>Secondary Assessment / SAMPLE History</SectionHeading>
-              <div className="text-sm space-y-1">
-                <div><span className="font-bold">Signs & Symptoms:</span> {data.symptoms.length > 0 ? data.symptoms.join(", ") : ((data.pediatricDetails as LegacyPediatricDetails)?.historySignsSymptoms || "None documented")}</div>
-                <div><span className="font-bold">Allergies:</span> {data.allergies.length > 0 ? data.allergies.join(", ") : ((data.pediatricDetails as LegacyPediatricDetails)?.historyAllergies || "None documented")}</div>
-                <div><span className="font-bold">Medications:</span> {data.currentMedications.length > 0 ? data.currentMedications.join(", ") : ((data.pediatricDetails as LegacyPediatricDetails)?.historyMedications || "None documented")}</div>
-                <div><span className="font-bold">Past Medical History:</span> {data.pastHistory.length > 0 ? data.pastHistory.join(" · ") : ((data.pediatricDetails as LegacyPediatricDetails)?.historyPastMedical || "Not significant")}</div>
-                <div><span className="font-bold">Last Meal:</span> {data.lastMeal || (data.pediatricDetails as LegacyPediatricDetails)?.historyLastMeal || "Not documented"}</div>
-                <div><span className="font-bold">Events:</span> {data.events || (data.pediatricDetails as LegacyPediatricDetails)?.historyEvents || "Not documented"}</div>
+              <div className="text-sm space-y-1.5">
+                <div><span className="font-semibold text-slate-900">S — Signs & Symptoms:</span> {data.symptoms.length > 0 ? data.symptoms.join(", ") : ((data.pediatricDetails as LegacyPediatricDetails)?.historySignsSymptoms || "None documented")}</div>
+                <div><span className="font-semibold text-slate-900">A — Allergies:</span> {data.allergies.length > 0 ? data.allergies.join(", ") : ((data.pediatricDetails as LegacyPediatricDetails)?.historyAllergies || "None documented")}</div>
+                <div><span className="font-semibold text-slate-900">M — Medications:</span> {data.currentMedications.length > 0 ? data.currentMedications.join(", ") : ((data.pediatricDetails as LegacyPediatricDetails)?.historyMedications || "None documented")}</div>
+                <div><span className="font-semibold text-slate-900">P — Past Medical History:</span> {data.pastHistory.length > 0 ? data.pastHistory.join(" · ") : ((data.pediatricDetails as LegacyPediatricDetails)?.historyPastMedical || "Not significant")}</div>
+                <div><span className="font-semibold text-slate-900">L — Last Meal:</span> {data.lastMeal || (data.pediatricDetails as LegacyPediatricDetails)?.historyLastMeal || "Not documented"}</div>
+                <div><span className="font-semibold text-slate-900">E — Events Preceding:</span> {data.events || (data.pediatricDetails as LegacyPediatricDetails)?.historyEvents || "Not documented"}</div>
               </div>
             </Section>
 
             <SecondarySurveySection data={data.secondarySurvey} title="Focused Physical Examination" />
 
             <Section>
-              <SectionHeading>Investigations & Lab Results</SectionHeading>
-              {data.labs.length > 0 ? (
-                <div className="space-y-2">
-                  {data.labs.map((panel, i) => (
-                    <div key={i}>
-                      <p className="text-xs font-bold uppercase tracking-wide text-slate-600 print:text-black mb-1">{panel.panelName}</p>
-                      <p className="text-sm font-mono leading-relaxed">
-                        {panel.values.map(v => `${v.name}: ${v.param ? formatFlagged(v.param, v.value) : (v.value ?? "Pending")}${v.unit && v.value !== null ? ` ${v.unit}` : ""}`).join("  |  ")}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              ) : <EmptyLine />}
+              <SectionHeading>Investigations & Diagnostic Studies</SectionHeading>
+              <div className="space-y-3">
+                {data.investigationLabsOrdered && (
+                  <div>
+                    <p className="text-xs font-bold uppercase tracking-wide text-slate-600 print:text-black mb-0.5">Laboratory Investigations Ordered</p>
+                    <p className="text-sm whitespace-pre-line text-slate-900 print:text-black">{data.investigationLabsOrdered}</p>
+                  </div>
+                )}
+
+                {data.labs.length > 0 && (
+                  <div>
+                    {data.labs.map((panel, i) => (
+                      <div key={i} className="mb-2">
+                        <p className="text-xs font-bold uppercase tracking-wide text-slate-600 print:text-black mb-1">{panel.panelName}</p>
+                        <p className="text-sm font-mono leading-relaxed">
+                          {panel.values.map(v => `${v.name}: ${v.param ? formatFlagged(v.param, v.value) : (v.value ?? "Pending")}${v.unit && v.value !== null ? ` ${v.unit}` : ""}`).join("  |  ")}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {data.investigationImaging && (
+                  <div>
+                    <p className="text-xs font-bold uppercase tracking-wide text-slate-600 print:text-black mb-0.5">Diagnostic Imaging (X-Ray / CT / MRI / USG)</p>
+                    <p className="text-sm whitespace-pre-line text-slate-900 print:text-black">{data.investigationImaging}</p>
+                  </div>
+                )}
+
+                {data.investigationResultsSummary && (
+                  <div>
+                    <p className="text-xs font-bold uppercase tracking-wide text-slate-600 print:text-black mb-0.5">Investigation Results Summary</p>
+                    <p className="text-sm whitespace-pre-line text-slate-900 print:text-black">{data.investigationResultsSummary}</p>
+                  </div>
+                )}
+
+                {!data.investigationLabsOrdered && data.labs.length === 0 && !data.investigationImaging && !data.investigationResultsSummary && (
+                  <EmptyLine />
+                )}
+              </div>
             </Section>
 
             <Section>
               <SectionHeading>Treatment Given & Emergency Orders</SectionHeading>
-              {data.treatmentGiven.length > 0 ? (
-                <ul className="text-sm list-disc pl-5 space-y-0.5 font-mono">{data.treatmentGiven.map((t, i) => <li key={i}>{t}</li>)}</ul>
-              ) : (data.treatment?.otherNotes || (data.pediatricDetails as LegacyPediatricDetails)?.treatmentGiven) ? (
-                <div className="text-sm font-mono">{data.treatment?.otherNotes || (data.pediatricDetails as LegacyPediatricDetails)?.treatmentGiven}</div>
-              ) : <EmptyLine />}
+              {data.treatmentGiven.length > 0 && (
+                <ul className="text-sm list-disc pl-5 space-y-0.5 font-mono mb-2">
+                  {data.treatmentGiven.map((t, i) => <li key={i}>{t}</li>)}
+                </ul>
+              )}
+              {data.treatmentNotes ? (
+                <div>
+                  {data.treatmentGiven.length > 0 && <p className="text-xs font-bold uppercase tracking-wide text-slate-600 print:text-black mb-0.5">Treatment Notes & Orders</p>}
+                  <p className="text-sm whitespace-pre-line font-mono">{data.treatmentNotes}</p>
+                </div>
+              ) : !data.treatmentGiven.length && (data.pediatricDetails as LegacyPediatricDetails)?.treatmentGiven ? (
+                <div className="text-sm font-mono">{(data.pediatricDetails as LegacyPediatricDetails)?.treatmentGiven}</div>
+              ) : !data.treatmentGiven.length && <EmptyLine />}
             </Section>
+
+            {(data.procedures.proceduresChecked.length > 0 || data.procedures.otherProcedures) && (
+              <Section>
+                <SectionHeading>Procedures & Interventions</SectionHeading>
+                <div className="text-sm space-y-1">
+                  {data.procedures.proceduresChecked.length > 0 && (
+                    <div><span className="font-bold">Procedures Performed:</span> {data.procedures.proceduresChecked.join(", ")}</div>
+                  )}
+                  {data.procedures.otherProcedures && (
+                    <div><span className="font-bold">Procedure Details:</span> {data.procedures.otherProcedures}</div>
+                  )}
+                </div>
+              </Section>
+            )}
 
             <Section>
               <SectionHeading>Provisional Diagnosis</SectionHeading>
@@ -751,10 +1209,37 @@ export default function CaseSheetPrintView({ data: propData, clinicalCase, onBac
                 <ul className="text-sm list-disc pl-5 mt-1 space-y-0.5">
                   {data.differentials.map((d, i) => <li key={i}>{d.diagnosis} ({d.status})</li>)}
                 </ul>
+              ) : data.provisionalDifferentialDiagnoses ? (
+                <div className="text-sm whitespace-pre-line">{data.provisionalDifferentialDiagnoses}</div>
               ) : (data.pediatricDetails as LegacyPediatricDetails)?.differentialDiagnosis ? (
                 <div className="text-sm">{((data.pediatricDetails as LegacyPediatricDetails)?.differentialDiagnosis)}</div>
               ) : <EmptyLine />}
+              {data.differentials.length > 0 && data.provisionalDifferentialDiagnoses && (
+                <div className="text-sm whitespace-pre-line mt-2 text-slate-700 print:text-black">
+                  <span className="font-semibold">Notes / Differential Details:</span> {data.provisionalDifferentialDiagnoses}
+                </div>
+              )}
             </Section>
+
+            {(data.consultation.consultsRequested.length > 0 || data.consultation.consultantReview) && (
+              <Section>
+                <SectionHeading>Specialist Consultation & Review</SectionHeading>
+                <div className="text-sm space-y-1.5">
+                  {data.consultation.consultsRequested.length > 0 && (
+                    <div><span className="font-bold">Consults Requested:</span> {data.consultation.consultsRequested.join(", ")}</div>
+                  )}
+                  {data.consultation.consultantReview && (
+                    <div className="bg-slate-50 print:bg-transparent p-2 rounded border border-slate-200 print:border-none">
+                      <div className="font-bold text-xs uppercase tracking-wide text-slate-700 print:text-black">
+                        Consultant Review{data.consultation.consultantReview.reviewedBy ? ` — ${data.consultation.consultantReview.reviewedBy}` : ""}
+                        {data.consultation.consultantReview.timestamp ? ` (${data.consultation.consultantReview.timestamp})` : ""}
+                      </div>
+                      <p className="text-sm mt-0.5 whitespace-pre-line">{data.consultation.consultantReview.reviewText}</p>
+                    </div>
+                  )}
+                </div>
+              </Section>
+            )}
 
             <Section>
               <SectionHeading>Condition at Time of Shift / Disposition</SectionHeading>
@@ -762,6 +1247,8 @@ export default function CaseSheetPrintView({ data: propData, clinicalCase, onBac
                 <div><span className="font-bold">Status:</span> {data.disposition.status || "Not yet determined"}</div>
                 {data.disposition.destinationUnit && <div><span className="font-bold">Destination:</span> {data.disposition.destinationUnit}</div>}
                 {data.disposition.durationInEr && <div><span className="font-bold">Duration in ER:</span> {data.disposition.durationInEr}</div>}
+                {data.disposition.conditionAtShift && <div><span className="font-bold">Condition at Shift:</span> {data.disposition.conditionAtShift}</div>}
+                {data.disposition.managementPlan && <div><span className="font-bold">Management Plan:</span> {data.disposition.managementPlan}</div>}
                 {data.disposition.consultsRequested.length > 0 && <div><span className="font-bold">Consults Requested:</span> {data.disposition.consultsRequested.join(", ")}</div>}
                 {data.disposition.followUpAdvice && <div><span className="font-bold">Follow-Up Advice:</span> {data.disposition.followUpAdvice}</div>}
               </div>
@@ -769,35 +1256,26 @@ export default function CaseSheetPrintView({ data: propData, clinicalCase, onBac
           </>
         ) : (
           <>
-            <Section>
-              <SectionHeading>Initial Assessment (Vitals & Adjuncts)</SectionHeading>
-              <div className="grid grid-cols-2 sm:grid-cols-7 gap-2 text-sm mb-3 bg-slate-50 print:bg-transparent p-2 print:p-0 rounded-lg border border-slate-200 print:border-none">
-                {data.initialVitals.map((v, i) => (
-                  <div key={i} className="text-center sm:text-left">
-                    <span className="font-bold text-xs uppercase text-slate-500 print:text-black block">{v.label}</span>
-                    <span className="font-mono text-sm font-semibold">{v.displayValue ? v.displayValue : formatFlagged(v.param, v.value)} {v.unit && v.value !== null && !v.displayValue ? v.unit : ""}</span>
-                  </div>
-                ))}
-              </div>
-              <div className="text-sm space-y-1 mt-2">
-                <div>
-                  <span className="font-bold">VBG/ABG:</span>{" "}
-                  {data.vbgAbg.performed && data.vbgAbg.values.length > 0
-                    ? data.vbgAbg.values.map(v => `${v.name} ${formatFlagged(v.param, v.value)}`).join(" · ")
-                    : "Not documented"}
-                </div>
-                <div><span className="font-bold">ECG:</span> {data.ecg.performed && data.ecg.findings ? data.ecg.findings : "Not documented"}</div>
-                <div><span className="font-bold">Bedside Echo:</span> {data.bedsideEcho.performed && data.bedsideEcho.findings ? data.bedsideEcho.findings : "Not documented"}</div>
-                <div><span className="font-bold">EFAST:</span> {data.efast?.performed && data.efast.findings ? data.efast.findings : "Not documented"}</div>
-              </div>
-            </Section>
-
-            <Section>
-              <SectionHeading>Past Medical History</SectionHeading>
-              {data.pastHistory.length > 0 ? <p className="text-sm">{data.pastHistory.join(" · ")}</p> : <EmptyLine />}
-            </Section>
-
             <PrimarySurveySection data={data.primarySurvey} />
+
+            <AdjunctsSection
+              ecg={data.ecg}
+              bedsideEcho={data.bedsideEcho}
+              efast={data.efast}
+              vbgAbg={data.vbgAbg}
+            />
+
+            <Section>
+              <SectionHeading>SAMPLE History</SectionHeading>
+              <div className="text-sm space-y-1.5">
+                <div><span className="font-semibold text-slate-900">S — Signs & Symptoms:</span> {data.symptoms.length > 0 ? data.symptoms.join(", ") : "None documented"}</div>
+                <div><span className="font-semibold text-slate-900">A — Allergies:</span> {data.allergies.length > 0 ? data.allergies.join(", ") : "None documented"}</div>
+                <div><span className="font-semibold text-slate-900">M — Current Medications:</span> {data.currentMedications.length > 0 ? data.currentMedications.join(", ") : "None documented"}</div>
+                <div><span className="font-semibold text-slate-900">P — Past Medical History:</span> {data.pastHistory.length > 0 ? data.pastHistory.join(" · ") : "Not significant"}</div>
+                <div><span className="font-semibold text-slate-900">L — Last Meal:</span> {data.lastMeal || "Not documented"}</div>
+                <div><span className="font-semibold text-slate-900">E — Events Preceding:</span> {data.events || "Not documented"}</div>
+              </div>
+            </Section>
 
             <SecondarySurveySection data={data.secondarySurvey} />
             <PsychologicalAssessmentSection data={data.psychologicalAssessment} />
@@ -810,30 +1288,105 @@ export default function CaseSheetPrintView({ data: propData, clinicalCase, onBac
                   {data.differentials.map((d, i) => <li key={i}>{d.diagnosis} ({d.status})</li>)}
                 </ul>
               )}
+              {data.provisionalDifferentialDiagnoses && (
+                <div className="text-sm whitespace-pre-line mt-2 text-slate-700 print:text-black">
+                  {data.differentials.length > 0 && <span className="font-semibold">Notes / Differential Details: </span>}
+                  {data.provisionalDifferentialDiagnoses}
+                </div>
+              )}
             </Section>
 
             <Section>
-              <SectionHeading>Investigations & Lab Results</SectionHeading>
-              {data.labs.length > 0 ? (
-                <div className="space-y-2">
-                  {data.labs.map((panel, i) => (
-                    <div key={i}>
-                      <p className="text-xs font-bold uppercase tracking-wide text-slate-600 print:text-black mb-1">{panel.panelName}</p>
-                      <p className="text-sm font-mono leading-relaxed">
-                        {panel.values.map(v => `${v.name}: ${v.param ? formatFlagged(v.param, v.value) : (v.value ?? "Pending")}${v.unit && v.value !== null ? ` ${v.unit}` : ""}`).join("  |  ")}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              ) : <EmptyLine />}
+              <SectionHeading>Investigations & Diagnostic Studies</SectionHeading>
+              <div className="space-y-3">
+                {data.investigationLabsOrdered && (
+                  <div>
+                    <p className="text-xs font-bold uppercase tracking-wide text-slate-600 print:text-black mb-0.5">Laboratory Investigations Ordered</p>
+                    <p className="text-sm whitespace-pre-line text-slate-900 print:text-black">{data.investigationLabsOrdered}</p>
+                  </div>
+                )}
+
+                {data.labs.length > 0 && (
+                  <div>
+                    {data.labs.map((panel, i) => (
+                      <div key={i} className="mb-2">
+                        <p className="text-xs font-bold uppercase tracking-wide text-slate-600 print:text-black mb-1">{panel.panelName}</p>
+                        <p className="text-sm font-mono leading-relaxed">
+                          {panel.values.map(v => `${v.name}: ${v.param ? formatFlagged(v.param, v.value) : (v.value ?? "Pending")}${v.unit && v.value !== null ? ` ${v.unit}` : ""}`).join("  |  ")}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {data.investigationImaging && (
+                  <div>
+                    <p className="text-xs font-bold uppercase tracking-wide text-slate-600 print:text-black mb-0.5">Diagnostic Imaging (X-Ray / CT / MRI / USG)</p>
+                    <p className="text-sm whitespace-pre-line text-slate-900 print:text-black">{data.investigationImaging}</p>
+                  </div>
+                )}
+
+                {data.investigationResultsSummary && (
+                  <div>
+                    <p className="text-xs font-bold uppercase tracking-wide text-slate-600 print:text-black mb-0.5">Investigation Results Summary</p>
+                    <p className="text-sm whitespace-pre-line text-slate-900 print:text-black">{data.investigationResultsSummary}</p>
+                  </div>
+                )}
+
+                {!data.investigationLabsOrdered && data.labs.length === 0 && !data.investigationImaging && !data.investigationResultsSummary && (
+                  <EmptyLine />
+                )}
+              </div>
             </Section>
 
             <Section>
               <SectionHeading>Treatment Given & Emergency Orders</SectionHeading>
-              {data.treatmentGiven.length > 0 ? (
-                <ul className="text-sm list-disc pl-5 space-y-0.5 font-mono">{data.treatmentGiven.map((t, i) => <li key={i}>{t}</li>)}</ul>
-              ) : <EmptyLine />}
+              {data.treatmentGiven.length > 0 && (
+                <ul className="text-sm list-disc pl-5 space-y-0.5 font-mono mb-2">
+                  {data.treatmentGiven.map((t, i) => <li key={i}>{t}</li>)}
+                </ul>
+              )}
+              {data.treatmentNotes ? (
+                <div>
+                  {data.treatmentGiven.length > 0 && <p className="text-xs font-bold uppercase tracking-wide text-slate-600 print:text-black mb-0.5">Treatment Notes & Orders</p>}
+                  <p className="text-sm whitespace-pre-line font-mono">{data.treatmentNotes}</p>
+                </div>
+              ) : !data.treatmentGiven.length && <EmptyLine />}
             </Section>
+
+            {(data.procedures.proceduresChecked.length > 0 || data.procedures.otherProcedures) && (
+              <Section>
+                <SectionHeading>Procedures & Interventions</SectionHeading>
+                <div className="text-sm space-y-1">
+                  {data.procedures.proceduresChecked.length > 0 && (
+                    <div><span className="font-bold">Procedures Performed:</span> {data.procedures.proceduresChecked.join(", ")}</div>
+                  )}
+                  {data.procedures.otherProcedures && (
+                    <div><span className="font-bold">Procedure Details:</span> {data.procedures.otherProcedures}</div>
+                  )}
+                </div>
+              </Section>
+            )}
+
+            {(data.consultation.consultsRequested.length > 0 || data.consultation.consultantReview) && (
+              <Section>
+                <SectionHeading>Specialist Consultation & Review</SectionHeading>
+                <div className="text-sm space-y-1.5">
+                  {data.consultation.consultsRequested.length > 0 && (
+                    <div><span className="font-bold">Consults Requested:</span> {data.consultation.consultsRequested.join(", ")}</div>
+                  )}
+                  {data.consultation.consultantReview && (
+                    <div className="bg-slate-50 print:bg-transparent p-2 rounded border border-slate-200 print:border-none">
+                      <div className="font-bold text-xs uppercase tracking-wide text-slate-700 print:text-black">
+                        Consultant Review{data.consultation.consultantReview.reviewedBy ? ` — ${data.consultation.consultantReview.reviewedBy}` : ""}
+                        {data.consultation.consultantReview.timestamp ? ` (${data.consultation.consultantReview.timestamp})` : ""}
+                      </div>
+                      <p className="text-sm mt-0.5 whitespace-pre-line">{data.consultation.consultantReview.reviewText}</p>
+                    </div>
+                  )}
+                </div>
+              </Section>
+            )}
 
             <SafetyAndAccreditationSection data={data.safetyAndAccreditation} />
 
@@ -843,6 +1396,8 @@ export default function CaseSheetPrintView({ data: propData, clinicalCase, onBac
                 <div><span className="font-bold">Status:</span> {data.disposition.status || "Not yet determined"}</div>
                 {data.disposition.destinationUnit && <div><span className="font-bold">Destination:</span> {data.disposition.destinationUnit}</div>}
                 {data.disposition.durationInEr && <div><span className="font-bold">Duration in ER:</span> {data.disposition.durationInEr}</div>}
+                {data.disposition.conditionAtShift && <div><span className="font-bold">Condition at Shift:</span> {data.disposition.conditionAtShift}</div>}
+                {data.disposition.managementPlan && <div><span className="font-bold">Management Plan:</span> {data.disposition.managementPlan}</div>}
                 {data.disposition.consultsRequested.length > 0 && <div><span className="font-bold">Consults Requested:</span> {data.disposition.consultsRequested.join(", ")}</div>}
                 {data.disposition.followUpAdvice && <div><span className="font-bold">Follow-Up Advice:</span> {data.disposition.followUpAdvice}</div>}
               </div>
@@ -850,36 +1405,35 @@ export default function CaseSheetPrintView({ data: propData, clinicalCase, onBac
           </>
         )}
 
-        {(data.notes.progressNotes || data.notes.addendum) && (
+        {((data.notes.progressNotes && data.notes.progressNotes.trim() !== "Case created via ErMate Voice Scribe dictation.") || data.notes.addendum) && (
           <Section>
             <SectionHeading>Clinical Notes & Addendum</SectionHeading>
-            {data.notes.progressNotes && <p className="text-sm whitespace-pre-line">{data.notes.progressNotes}</p>}
+            {data.notes.progressNotes && data.notes.progressNotes.trim() !== "Case created via ErMate Voice Scribe dictation." && (
+              <p className="text-sm whitespace-pre-line">{data.notes.progressNotes}</p>
+            )}
             {data.notes.addendum && <p className="text-sm whitespace-pre-line mt-1"><span className="font-bold">Addendum:</span> {data.notes.addendum}</p>}
           </Section>
         )}
 
         <div className="pt-8 mt-4 flex flex-wrap items-end justify-between text-sm gap-y-4">
-          {data.isPediatric ? (
-            <>
-              <div>
-                <div className="border-t border-black pt-1.5 w-48 text-center font-bold">
-                  {data.signatureBlock.clinicianName || "Not recorded"}
-                </div>
-                <p className="text-xs text-center text-slate-500 print:text-black">EM Resident</p>
-              </div>
-              <div>
-                <div className="border-t border-black pt-1.5 w-48 text-center font-bold"></div>
-                <p className="text-xs text-center text-slate-500 print:text-black">EM Consultant</p>
-              </div>
-            </>
-          ) : (
+          <div className="flex flex-wrap items-end gap-6">
             <div>
-              <div className="border-t border-black pt-1.5 w-56 text-center font-bold">
+              <div className="border-t border-black pt-1.5 w-52 text-center font-bold">
                 {data.signatureBlock.clinicianName || "Not recorded"}
               </div>
-              <p className="text-xs text-center text-slate-500 print:text-black">Treating ER Physician</p>
+              <p className="text-xs text-center text-slate-500 print:text-black">
+                {data.isPediatric ? "EM Resident" : "Treating ER Physician"}
+              </p>
             </div>
-          )}
+            {data.signatureBlock.consultantName && (
+              <div>
+                <div className="border-t border-black pt-1.5 w-52 text-center font-bold">
+                  {data.signatureBlock.consultantName}
+                </div>
+                <p className="text-xs text-center text-slate-500 print:text-black">EM Consultant</p>
+              </div>
+            )}
+          </div>
           
           <div className="text-xs text-right font-mono text-slate-500 print:text-black">
             <div>Date/Time: {data.signatureBlock.timestamp || "Not recorded"}</div>

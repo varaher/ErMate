@@ -45,6 +45,185 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-09-20] — Pediatric "Other / Details" Dropdown UI State Fix (`src/components/CaseSheetView.tsx`)
+- **Local UI State for "Other / Details" Mode**:
+  - Implemented `isOtherSelected` local state within `PediatricSelectWithDetails`.
+  - When selecting `"Other / Details"` from a blank or predefined field, the dropdown immediately maintains its visible selection on `"Other / Details"` and reveals the free-text Details `<input>` with autofocus.
+  - Eliminated premature revert bug caused by `onChange("")` resetting `isOther` to false.
+- **Clinical Data Integrity**:
+  - Prevented literal string `"Other / Details"` from persisting as clinical data. If the user selects Other but has not typed anything yet, empty string (`""`) remains without saving placeholder text.
+  - Custom typed details are persisted directly via `onChange`.
+  - Stored legacy custom values (e.g. `"Grandmother"`) continue displaying visibly as `"Other / Details"` with full preserved custom text in the Details input.
+  - Selecting a standard predefined option cleanly exits Other mode (`setIsOtherSelected(false)`), hides the input, and saves the chosen standard string.
+
+
+### [2026-09-20] — View Case Sheet Runtime Fallback Fix (`src/App.tsx`, `src/components/CaseSheetPrintView.tsx`)
+- **Removal of Automatic Scribe Boilerplate**:
+  - Removed the default `"Case created via ErMate Voice Scribe dictation."` string in `src/App.tsx` (`buildExtractedCaseDraft()`). If no genuine progress or chronological notes exist, `progressNotes` defaults cleanly to `""` or `null`.
+  - Added display-level sanitization in `src/components/CaseSheetPrintView.tsx` (`convertClinicalCaseToCaseSheetData` and Clinical Notes JSX): if `progressNotes.trim()` equals the legacy boilerplate string, it is treated as null for display so the artificial boilerplate sentence never appears on historical cases while preserving genuine clinical notes.
+- **SAMPLE History Read Fallbacks**:
+  - Implemented read-only fallbacks in `src/components/CaseSheetPrintView.tsx` for `pastMedicalHistory`, `currentMedications`, and `events`, ensuring canonical `sampleHistory` always takes precedence without writing back to legacy fields.
+- **Ordered Investigations Fallback with Separation**:
+  - Added read-only fallback in `convertClinicalCaseToCaseSheetData` formatting named investigations from `investigationsOrdered` into `investigationLabsOrdered` when canonical fields are empty.
+  - Separated diagnostic imaging from laboratory investigations, maintaining strict separation of Labs, Imaging, and Results without inventing tests.
+- **Provisional Diagnosis Fallback**:
+  - Replaced differential suggestion fallback with canonical `provisionalPrimaryDiagnosis` and historical diagnosis fields (`provisionalDiagnosis`, `dischargeInfo.primaryDiagnosis`, `primaryDiagnosis`, `dispositionProvisionalDiagnosis`, `diagnosis`). ErMate differential suggestions are no longer used as factual primary diagnosis.
+- **Primary Survey Normal Finding Fabrication Guard**:
+  - Removed default normal fallback strings (`"Normal work of breathing"`, `"Normal perfusion"`, `"Alert, pupils equal and reactive"`, `"Skin warm, no rash/edema"`, `"Patent"`) from `PrimarySurveySection` in `src/components/CaseSheetPrintView.tsx`.
+  - Unexamined or absent findings now consistently display `"Not documented"`.
+- **Pediatric & MLC Semantic Separation**:
+  - Maintained complete separation between `pediatricDetails` and `mlcDetails` (`broughtBy`, `informant`).
+
+### [2026-09-20] — Pediatric Scribe Semantic Mapping Fix (`server/scribeChatTurn.ts`, `server/extractionCleanup.ts`, `server/voiceExtraction.ts`)
+- **Primary Survey Exposure Semantic Boundary Enforcement**:
+  - Implemented `normalizeExposureAndSecondarySurvey()` in `server/scribeChatTurn.ts`.
+  - Re-routes abdominal findings (e.g. "Abdomen soft and non-tender") from `raw.exposure` strictly to Secondary Survey Abdomen (`secSurvey.abdomen` / PA).
+  - Re-routes neurological findings (e.g. "No neck stiffness or focal neurological deficit") strictly to Secondary Survey CNS (`secSurvey.cns`).
+  - Re-routes hydration and general exam findings (e.g. "Mild dehydration with dry oral mucosa") strictly to Secondary Survey General (`secSurvey.general`).
+  - Re-routes documented temperature findings (e.g. "38.8 C") directly to `fields.vitals.temp`.
+  - Re-routed findings are stripped cleanly from Exposure, eliminating duplicate text across Primary Survey and Secondary Survey.
+  - Added history negative guard preventing isolated history denials (e.g. "no rash") from being converted into an artificial Exposure examination finding.
+- **Hydration vs. Antipyretic Separation & No-Invention Enforcement**:
+  - Unspecified/conditional hydration statements ("Oral or IV fluids depending on tolerance") are preserved in `treatmentNotes` and `managementPlan` / `plan` rather than creating an incorrect medication object.
+  - Generic antipyretic statements ("weight-appropriate antipyretic treatment") are preserved as generic TreatmentItem without hallucinating Paracetamol, Ibuprofen, drug doses, routes, fever thresholds, or SOS frequencies.
+- **Investigation & Lab No-Invention Rule**:
+  - Integrated `isGenericInvestigationPhrase` guard in `server/extractionCleanup.ts` and `server/scribeChatTurn.ts`.
+  - Generic statements like "Appropriate investigations were planned based on clinical assessment and duration of fever" are preserved in `managementPlan` / `plan` and strictly prevented from creating spurious CBC, CRP, or urine test objects.
+- **Preceding Events / Mechanism Filtering**:
+  - Added `isExplicitPrecipitatingEvent()` in `server/scribeChatTurn.ts` to ensure only true precipitating trauma/triggers (RTA, falls, injuries, bites, poisonings, collapse) enter `events` and `sampleHistory.events`.
+  - Routine medical symptom durations (e.g. "fever for 3 days") are rejected from `events`.
+
+### [2026-09-20] — Pediatric Disposition Parity Fix (`src/components/CaseSheetView.tsx`)
+- **Canonical Disposition Tab Workflow Parity**:
+  - Removed duplicate stacked `PediatricDispositionSection` from the Disposition tab in `CaseSheetView.tsx`.
+  - Both pediatric and adult cases now utilize the same canonical NABH Clinical Disposition & Logs panel (Disposition Mode/Type, Duration in ER, Resident attribution, Consultant attribution, ER Observation Notes & Disposition Plan, and Condition at Time of Shift).
+  - Preserved the disposition save pipeline (`handleSaveFromDisposition`, `dispositionSaveMessage`, "Save Case Sheet to Dashboard", and floating bar save actions) persisting cleanly to the same `caseId` without schema changes.
+- **Diagnosis & Differentials Decoupling**:
+  - Eliminated duplicate `dispositionProvisionalDiagnosis` and `differentialDiagnosis` inputs from the Disposition tab, preserving single source of truth for diagnoses in the canonical assessment and diagnosis tabs (`provisionalPrimaryDiagnosis` and `differentials`).
+  - Aligned the printable fallback preview in `CaseSheetView.tsx` to read `provisionalPrimaryDiagnosis` with defensive fallback to legacy fields.
+- **Zero Schema or Persistence Alteration**:
+  - Maintained complete backward compatibility; no Firestore schema changes or database migrations required.
+
+### [2026-09-20] — Saved "View Case Sheet" Final Data Alignment (Adult & Pediatric Parity) (`src/components/CaseSheetPrintView.tsx`)
+- **Patient Header Case Metadata**:
+  - Rendered `triageCategory` (e.g. P1/P2/P3) and `caseType` (e.g. Medical, Trauma) directly from stored `patient` / case properties without creating new schema fields.
+- **Investigations & Diagnostic Studies Separation**:
+  - Decoupled Diagnostic Imaging (`investigationImaging` — X-rays, CT, MRI, USG) from laboratory investigations ordered (`investigationLabsOrdered`) and laboratory test panels (`labs` / `investigationResults`).
+  - Added dedicated rendering for `investigationResultsSummary` across both Adult and Pediatric views, preventing imaging studies from collapsing into lab result grids.
+- **Full Treatment Details & Orders**:
+  - Expanded `treatmentList` item rendering to format drug name, dose, route, frequency, time given, and instructions for all `TreatmentItem` entries.
+  - Formatted continuous infusions including fluid name, dose, dilution, and rate.
+  - Rendered `treatmentNotes` consistently in both views, ensuring physician notes and orders remain visible even when medication items are present.
+- **Procedures & Interventions**:
+  - Rendered acute emergency procedures from `proceduresChecked` and free-text procedure notes from `otherProcedures`.
+- **Specialist Consultation & Review**:
+  - Rendered `consultsRequested` and detailed `consultantReview` (reviewing consultant name, review narrative, and timestamp).
+- **Disposition & Care Plan**:
+  - Aligned disposition section to render disposition status, destination unit, ER duration, `conditionAtShift`, `managementPlan`, and `followUpAdvice`.
+- **Clinician Attribution & Signature Block**:
+  - Dynamically rendered treating ER physician/resident and EM consultant from stored case fields (`doctorName`, `emResident`, `emConsultant`, `consultantName`, `dispositionDetails`, `consultantReview`).
+  - Eliminated hardcoded empty consultant lines when no consultant review is documented.
+- **Provisional & Differential Diagnoses**:
+  - Preserved provisional primary diagnosis and structured differential diagnoses (`diagnosis` and `status`), along with `provisionalDifferentialDiagnoses` narrative notes.
+
+### [2026-09-20] — Saved "View Case Sheet" Data Alignment & Structured ClinicalCase Mapping (`src/components/CaseSheetPrintView.tsx`)
+- **Contextual Primary Survey Vitals Single Source of Truth**:
+  - Removed duplicate standalone vitals grid from the saved/printed View Case Sheet.
+  - Vitals are rendered contextually within each primary survey domain (Airway: airway findings; Breathing: findings + RR & SpO2; Circulation: findings + HR & BP; Disability: findings + GCS score, components & GRBS; Exposure: findings + Temperature).
+  - Reads vitals directly from `c.vitals` with fallback to survey values, without creating duplicate state.
+- **Canonical Adjuncts Prioritization**:
+  - Implemented `AdjunctsSection` positioned immediately after Primary Survey (ABCDE).
+  - Reads canonical survey fields first (`survey.circulation.ecg`, `survey.circulation.echo`, `survey.circulation.efast`, and `survey.adjuncts.abg`) with defensive fallback to legacy `c.adjuncts`.
+  - Distinguishes arterial (ABG) vs venous (VBG) blood gas interpretations and formats blood gas parameters (pH, pCO2, HCO3, Lactate, electrolytes).
+- **SAMPLE History Decoupling**:
+  - Decoupled Signs & Symptoms, Allergies, Current Medications, Last Meal, and Events Preceding from Past Medical History across both adult and pediatric layouts.
+  - Past Medical History renders strictly as `P — Past Medical History` or dedicated history items without swallowing other SAMPLE components.
+- **Secondary Survey Multi-System Isolation**:
+  - Isolated General, CVS, Respiratory (RS), Abdomen (PA), CNS, and Extremities.
+  - Supported aliases (RS, Respiratory, Chest / RS; PA, Abdomen, Per Abdomen) and header-boundary parsing to prevent cross-system narrative bleeding.
+
+### [2026-09-20] — Clinical Examination Completeness Logic Refinement (`src/utils/caseHelper.ts`)
+- **Domain-Specific Primary Survey Completeness**:
+  - Refactored `getCasePendingStatus()` in `src/utils/caseHelper.ts` to evaluate each ABCDE domain (Airway, Breathing, Circulation, Disability, Exposure) independently.
+  - Vitals (HR, BP, RR, SpO2, GCS, Temp) and Adjuncts (ECG, ABG, eFAST, Echo/POCUS) no longer independently satisfy Primary Survey completeness.
+  - Requires clinical assessment findings in each domain (via structured `primaryAssessment.survey` or legacy narrative fields).
+- **Comprehensive Secondary Survey Verification**:
+  - Enforced multi-system check across General, CVS, Respiratory (RS), Abdomen (PA), CNS, and Extremities.
+  - Supports structured `secondarySurvey` and parsed aliases in `secondaryAssessment`.
+  - Single secondary fields no longer mark the entire Secondary Survey complete.
+
+### [2026-09-20] — Clinical Examination Completion Predicate Alignment (`src/utils/caseHelper.ts`)
+- **Canonical Examination Completion Predicate**:
+  - Replaced legacy string checks on `c.primaryAssessment` (`airway`, `breathing`, `circulation`, `disability`, `exposure`) in `getCasePendingStatus()` with canonical checks matching `CaseSheetView` data structures.
+  - Primary Survey evaluates as documented when meaningful data exists in `primaryAssessment.survey`, existing narrative fields, `vitals`, or adjuncts.
+  - Secondary Examination evaluates as documented when meaningful data exists in `secondaryAssessment` or `secondarySurvey`.
+  - Reused `hasMeaningfulValue` evaluation logic to prevent conflicting predicates between Dashboard and CaseSheetView.
+  - Eliminated false "Clinical Examination incomplete" warning on active cases with completed surveys without altering schemas or Firestore data.
+
+### [2026-09-20] — Disposition Tab Indicator Clinical Completion Logic (`src/components/CaseSheetView.tsx`)
+- **Clinical Disposition Status Indicator Decoupling**:
+  - Removed default compliance checklists (`ipsgChecklist`, `consentTimeOut`) from `tabHasData("disposition")` evaluation, preventing default checked items or safety timeout objects from falsely marking the Disposition tab as completed.
+  - Aligned disposition completion indicator strictly to meaningful clinical disposition data: `dischargeInfo`, `dispositionDetails`, `dispositionAndPlan.managementPlan`, `dispositionAndPlan.dispositionType`, `disposition`, and `vulnerableAssessment`.
+  - Preserved the IPSG checklist component, consent/timeout controls, and underlying Firestore/schema models intact.
+
+### [2026-09-20] — View Case Sheet CTA State & Scribe Chat Message Document Persistence
+- **Deterministic Chat Message Document IDs (`src/services/scribeChatStorage.ts`)**:
+  - Refactored `appendChatMessage` to store new chat messages deterministically at `cases/{caseId}/scribeChatMessages/{message.id}` using `setDoc` with `{ merge: true }`, ensuring document IDs match application message IDs.
+  - Implemented legacy message fallback in `updateChatMessage`: if `messageId` is not found as a direct document ID (legacy messages created with random `addDoc` IDs), executes a fallback query `where("id", "==", messageId)` with `limit(1)` and updates that specific document.
+- **Contextual CTA State Architecture (`src/components/VoiceScribeChatView.tsx`)**:
+  - Decoupled CTA rendering strictly to `msg.extractionApplied === true` instead of inferring from existing clinical data fields.
+  - When `msg.extractionApplied` is false, renders `"Preview Case Sheet"` routing through the in-memory review flow.
+  - When `msg.extractionApplied` is true, renders an active, clickable `"View Case Sheet"` button calling `onOpenCaseSheet(activeCaseId)`.
+  - Cleared preview mode flags in `App.tsx` (`setIsPreviewMode(false)`, `setPreviewCase(null)`, `setPendingPreviewContext(null)`) on `onOpenCaseSheet` invocation, opening the existing case in standard mode without running extraction, creating duplicate cases, or triggering database writes.
+- **Apply Sequence Safety**:
+  - Preserved existing safe ordering: 1. case writes to Firestore, 2. `extractionApplied: true` updates in Firestore, 3. local message state updates, 4. confirmation displayed. If case write fails, `extractionApplied` remains false.
+
+### [2026-09-20] — Internal Clinician Attribution Preservation & Defensive Placeholder Guard
+- **Role-Attributed Internal Clinician Protection (`server/deidentify.ts`, `server/scribeChatTurn.ts`)**:
+  - Implemented `protectInternalClinicians(rawText)` in `server/deidentify.ts` targeting explicitly role-attributed internal treating-team clinicians (e.g., `"EM Resident Dr Joshua"`, `"EM Consultant Dr Christo"`).
+  - Replaces internal clinician names with reversible local placeholders (`__ERMATE_EM_RESIDENT_0__`, `__ERMATE_EM_CONSULTANT_0__`) before general PHI de-identification, preventing treating-team attribution from being collapsed into `[DOCTOR]`.
+  - External referral doctors, prior doctors, and unrelated physicians (e.g. `"Referral from Dr Thomas"`, `"Previously seen by Dr Mathew"`) remain strictly subject to standard `[DOCTOR]` PHI de-identification.
+  - Added `isRedactedOrPlaceholderClinician(val)` defensive guard to reject literal placeholders (`[DOCTOR]`, `[NAME]`, `[PERSON]`, `na`, `unknown`) from overwriting clinician attribution fields.
+  - In `server/scribeChatTurn.ts` (`mapExtractionToCaseSheetFields`), restored protected clinician names strictly into `fields.emResident` and `fields.emConsultant`.
+  - Added clinical narrative sanitization ensuring clinician names are never restored into free clinical narrative and residual internal placeholders are converted to `[DOCTOR]`.
+  - Clinical reasoning (Claude 3.5 Sonnet) receives text with internal placeholders replaced by `[DOCTOR]`.
+  - Verified against 6 test scenarios (A through F) with 100% pass rate.
+
+### [2026-09-20] — Preview Case Sheet Flow (Zero Firestore Writes Prior to Review)
+- **In-Memory Case Sheet Preview Architecture (`App.tsx`, `CaseSheetView.tsx`, `VoiceScribeChatView.tsx`)**:
+  - Implemented non-destructive preview flow allowing clinicians to inspect and edit mapped Case Sheet data prior to any Firestore persistence.
+  - Added pure `buildExtractedCaseDraft(existingMatch, extracted, context)` helper in `App.tsx` performing zero database writes or side effects.
+  - Replaced immediate persistence from "Prepare Case Sheet" in `VoiceScribeChatView` with "Preview Case Sheet", routing through `onPreviewCaseSheet` and setting `previewCase`, `isPreviewMode`, and `pendingPreviewContext`.
+  - Added sticky amber banner in `CaseSheetView.tsx` ("Preview — changes are not saved") with direct "Apply to Case Sheet" action and cancel/back navigation.
+  - Added zero-write guards to prevent background or manual Firestore writes while in preview mode (`handleSaveCase`, `handleSaveProfile`).
+  - Clicking "Apply to Case Sheet" writes the reviewed draft to Firestore using the canonical authenticated persistence path, synchronizes chat message status (`extractionApplied: true`), appends confirmation message, and cleans up preview state cleanly.
+
+### [2026-09-20] — Primary Survey ABCDE Vitals Alignment & Single Source of Truth (ABCDE VITALS FIX)
+- **Cardinal Vitals UI Single Source of Truth (`PrimarySurveySection.tsx`)**:
+  - Aligned cardinal vitals in the ABCDE primary survey to read directly from `case.vitals` (`rr`, `spo2`, `hr`, `bp`, `gcs_e`, `gcs_v`, `gcs_m`, `gcs`, `temp`).
+  - Implemented backward compatibility fallback for legacy cases: if a vital is absent in `case.vitals`, displays the legacy value from `primaryAssessment.survey` without writing it back automatically.
+  - Eliminated duplicate UI writes: new user edits inside the Primary Survey update `case.vitals` exclusively via `onUpdateVitals`, while non-vital clinical assessment findings (rhythm, CRT, pulses, skin perfusion, chest wall, air entry, pupils, log roll) remain in `primaryAssessment.survey`.
+  - Maintained all schemas, Firestore models, and component interfaces without modification.
+
+### [2026-09-20] — Scribe Field-Mapping & Normalization Pipeline Fix (SCRIBE MAPPING FIX 1)
+- **Secondary Survey Exam Aliases (`CaseSheetView.tsx`, `SecondarySurveySection.tsx`, `App.tsx`)**:
+  - Normalized respiratory aliases (`RESPIRATORY` → `RS`) and abdominal aliases (`ABDOMEN` → `PA`) in `parseSecondaryAssessment()` and component state parsers.
+  - Eliminated secondary survey examination dropouts and text mismatches between CVS and RS without duplicating state.
+- **SAMPLE History Mapping (`scribeChatTurn.ts`, `App.tsx`, `VoiceScribeChatView.tsx`)**:
+  - Normalized outpatient and current medications from array of strings or comma-separated string cleanly into `sampleHistory.medications`.
+  - Mapped `lastMeal` into `sampleHistory.lastMeal` with valid string guard.
+  - Derived explicit trauma/event timelines strictly from explicit preceding clinical text (`raw.hpi`, `raw.presentingComplaint`, `rawInputText`) into `sampleHistory.events` without inferring or fabricating details when not stated.
+- **Investigation & Lab Categorization Separation (`extractionCleanup.ts`, `scribeChatTurn.ts`, `App.tsx`)**:
+  - Separated diagnostic imaging studies (X-rays, CTs, MRI, USG, bedside echo/FAST) from laboratory investigations.
+  - Routed imaging into `investigationImaging` / `imaging` and blood/urine laboratory tests strictly into `investigations` / `investigationLabsOrdered`, preventing X-rays from rendering in lab test tables.
+- **Acute Treatments & Procedures Mapping (`extractionCleanup.ts`, `scribeChatTurn.ts`, `App.tsx`)**:
+  - Extracted acute emergency medications (IV fluids, analgesics, antiemetics, antibiotics) from narrative management plans into `treatments` (`TreatmentItem[]` with `provenance: 'scribe'`).
+  - Extracted acute procedures (catheterization, NG tube, suturing, reductions, splints) into `proceduresChecked` / `otherProcedures`.
+  - Preserved narrative clinical disposition in `dispositionAndPlan.managementPlan`.
+- **Scribe Chat Turn Summary Synchronization (`VoiceScribeChatView.tsx`, `scribeChatTurn.ts`)**:
+  - Updated `summarizeUpdatedFields` to report treatments, procedures, and imaging in "Captured From Your Update".
+  - Refined `humanizeFieldLabel` and `resolveChecklistValue` in `VoiceScribeChatView.tsx` to handle imaging, labs ordered, treatments, procedures, last meal, and events accurately.
+
 ### [2026-09-19] — Log Book De-Identification Closure, Search Scoping & MoreView Independent Role Hardening
 - **My Log Book Privacy Closure (`src/components/ProfileSettingsView.tsx`)**:
   - Removed all mentions of `"UHID"` from the portfolio search input placeholder (`"Search Category, Procedure, Skills, Learning..."`).

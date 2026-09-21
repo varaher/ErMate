@@ -35,16 +35,33 @@ export function SecondarySurveySection({
       return;
     }
 
-    const newFields = { ...fields };
-    const regex = /(General|CVS|RS|PA|CNS|Extremities)\s*:\s*(.*?)(?=(General|CVS|RS|PA|CNS|Extremities)\s*:|$)/igs;
+    const newFields = {
+      General: "",
+      CVS: "",
+      RS: "",
+      PA: "",
+      CNS: "",
+      Extremities: ""
+    };
+
+    const normalizeKey = (k: string): keyof typeof newFields | null => {
+      const lower = k.trim().toLowerCase();
+      if (lower === "rs" || lower === "respiratory" || lower === "chest") return "RS";
+      if (lower === "pa" || lower === "abdomen") return "PA";
+      if (lower === "cvs") return "CVS";
+      if (lower === "cns") return "CNS";
+      if (lower === "general") return "General";
+      if (lower === "extremities") return "Extremities";
+      return null;
+    };
+
+    const regex = /(General|CVS|RS|Respiratory|Chest|PA|Abdomen|CNS|Extremities)\s*:\s*(.*?)(?=(General|CVS|RS|Respiratory|Chest|PA|Abdomen|CNS|Extremities)\s*:|$)/igs;
     let match;
     let foundAny = false;
     while ((match = regex.exec(secondaryAssessment)) !== null) {
-      const key = match[1] as string;
-      // Map aliases if needed, but the regex already matches the keys
-      const mappedKey = Object.keys(newFields).find(k => k.toLowerCase() === key.toLowerCase()) as keyof typeof fields;
-      if (mappedKey) {
-        newFields[mappedKey] = match[2].trim();
+      const key = normalizeKey(match[1]);
+      if (key) {
+        newFields[key] = newFields[key] ? newFields[key] + "\n" + match[2].trim() : match[2].trim();
         foundAny = true;
       }
     }

@@ -60,8 +60,13 @@
  * by baked-in docx example text).
  */
 
-import { deidentifyText } from "./deidentify";
-import { cleanExtractionOutput, type RawExtractionFields } from "./extractionCleanup";
+import {
+  deidentifyText,
+  protectInternalClinicians,
+  isRedactedOrPlaceholderClinician,
+  type ProtectedCliniciansResult,
+} from "./deidentify";
+import { cleanExtractionOutput, isGenericInvestigationPhrase, type RawExtractionFields } from "./extractionCleanup";
 import type { CaseSheetData } from "./caseSheetTypes";
 import { generateDischargeSummary } from "./dischargeSummary";
 import { detectNormalcyPhrases, EXAM_DEFAULTS, processSampleMedicationsAndPmh } from "./extraction";
@@ -143,7 +148,14 @@ function getMergedPendingExtraction(chatHistory: any[], existingCaseSheet: any):
     // Both extractionData and unappliedExtraction are preserved from frontend
     const ext = msg.extractionData || msg.unappliedExtraction;
     if (msg.sender === "ai" && ext) {
-      merged = deepMergeExtraction(merged, ext);
+      // Defensive guard: never copy diagnoses or differentials from assistant clinical reasoning
+      // or suggestions into merged extraction.
+      const safeExt = { ...ext };
+      delete safeExt.clinicalReasoning;
+      delete safeExt.reasoningMessage;
+      delete safeExt.differentials;
+      delete safeExt.clinicalReasoningDifferentials;
+      merged = deepMergeExtraction(merged, safeExt);
     }
   }
   return merged;
@@ -194,8 +206,10 @@ export async function processScribeChatTurn(
     };
   }
 
-  // PHI de-identification runs ONCE, output shared by both calls (Rule 4)
-  const phiResult = deidentifyText(userInput);
+  // Protect role-attributed internal clinician names (EM Resident / EM Consultant)
+  // using local reversible placeholders BEFORE general PHI de-identification runs
+  const clinicianProtection = protectInternalClinicians(userInput);
+  const phiResult = deidentifyText(clinicianProtection.protectedText);
   const deidentifiedInput = phiResult.deidentified;
 
   // Intent Detection: Is this a Discharge Summary request?
@@ -237,8 +251,20 @@ export async function processScribeChatTurn(
   // Run extraction and clinical reasoning IN PARALLEL — independent
   // failures, independent models, independent fallback chains.
   const [extractionResult, reasoningResult] = await Promise.allSettled([
-    runExtraction(deidentifiedInput, effectiveAgeYears, pendingClarification, mergedPendingExtraction, helpers.callExtractionModel),
-    runClinicalReasoning(deidentifiedInput, mergedPendingExtraction, chatHistory, helpers.callClinicalReasoningModel),
+    runExtraction(
+      deidentifiedInput,
+      effectiveAgeYears,
+      pendingClarification,
+      mergedPendingExtraction,
+      helpers.callExtractionModel,
+      clinicianProtection
+    ),
+    runClinicalReasoning(
+      deidentifiedInput.replace(/__ERMATE_EM_(?:RESIDENT|CONSULTANT)_\d+__/g, "[DOCTOR]"),
+      mergedPendingExtraction,
+      chatHistory,
+      helpers.callClinicalReasoningModel
+    ),
   ]);
 
   // ── Handle extraction outcome ──
@@ -342,6 +368,11 @@ export async function processScribeChatTurn(
   };
 }
 
+const isValidStr = (s: any): boolean =>
+  typeof s === "string" &&
+  s.trim().length > 0 &&
+  !["unknown", "not specified", "not documented", "n/a", "none"].includes(s.trim().toLowerCase());
+
 // ── Stage A: Extraction (GPT-4o-mini primary / Claude Haiku fallback) ──
 
 export async function runExtraction(
@@ -349,7 +380,8 @@ export async function runExtraction(
   patientAgeYears: number | null,
   pendingClarification: string | undefined,
   existingCaseSheet: any,
-  callExtractionModel: any
+  callExtractionModel: any,
+  clinicianProtection?: ProtectedCliniciansResult
 ): Promise<{ cleaned: ReturnType<typeof cleanExtractionOutput>; updatedFields: Record<string, any> }> {
   let raw: RawExtractionFields;
 
@@ -360,11 +392,31 @@ export async function runExtraction(
     raw = await callExtractionModel({ model: "claude-3.5-haiku", temperature: 0.0, deidentifiedInput, patientAgeYears, pendingClarification });
   }
 
-   const cleaned = cleanExtractionOutput(raw);
+  // Defensive guard: Ensure raw.differentials is accepted ONLY from the extraction branch
+  // and strictly contains diagnoses explicitly stated by the clinician in deidentifiedInput.
+  // Do NOT copy any diagnoses from reasoningMessage, clinical reasoning output, or assistant suggestions.
+  if (raw) {
+    const candidateDiffs = Array.isArray(raw.differentials)
+      ? raw.differentials
+      : isValidStr(raw.differentials)
+      ? [String(raw.differentials).trim()]
+      : [];
+    raw.differentials = candidateDiffs.filter(
+      (d: any) => isValidStr(d) && isClinicianStatedDifferential(String(d), deidentifiedInput)
+    );
+  }
+
+  const cleaned = cleanExtractionOutput(raw);
   // VOICE-03: pass the de-identified input text through so field mapping
   // can detect explicit normalcy phrases — the ONLY trigger allowed for
   // normal-exam defaults. Never applied just because a field is empty.
-  const updatedFields = mapExtractionToCaseSheetFields(cleaned, raw, existingCaseSheet, deidentifiedInput);
+  const updatedFields = mapExtractionToCaseSheetFields(
+    cleaned,
+    raw,
+    existingCaseSheet,
+    deidentifiedInput,
+    clinicianProtection
+  );
 
   return { cleaned, updatedFields };
 }
@@ -397,9 +449,11 @@ function summarizeUpdatedFields(cleaned: ReturnType<typeof cleanExtractionOutput
   const summary: string[] = [];
   if (cleaned.symptoms.length > 0) summary.push(`Symptoms: ${cleaned.symptoms.join(", ")}`);
   if (cleaned.events.length > 0) summary.push(`Events: ${cleaned.events.length} logged`);
-  if (cleaned.drugs.length > 0) summary.push(`Drugs: ${cleaned.drugs.join(", ")}`);
-  if (cleaned.plan.length > 0) summary.push(`Plan: ${cleaned.plan.join(", ")}`);
+  if (cleaned.drugs.length > 0) summary.push(`Treatments: ${cleaned.drugs.map((d: any) => typeof d === 'string' ? d : d.drugName).join(", ")}`);
+  if (cleaned.procedures && cleaned.procedures.length > 0) summary.push(`Procedures: ${cleaned.procedures.join(", ")}`);
   if (cleaned.labs.length > 0) summary.push(`Labs: ${cleaned.labs.map(l => l.name).join(", ")}`);
+  if (cleaned.imaging && cleaned.imaging.length > 0) summary.push(`Imaging: ${cleaned.imaging.map(i => i.name).join(", ")}`);
+  if (cleaned.plan.length > 0) summary.push(`Plan: ${cleaned.plan.join(", ")}`);
   return summary;
 }
 
@@ -411,11 +465,242 @@ function extractAbnormalFlags(cleaned: ReturnType<typeof cleanExtractionOutput>)
 }
 
 
+export function isExplicitPrecipitatingEvent(text: string): boolean {
+  if (!text || typeof text !== "string") return false;
+  const t = text.trim().toLowerCase();
+  if (["unknown", "not specified", "not documented", "n/a", "none", "nil", "no", "no event", "no trauma"].includes(t)) {
+    return false;
+  }
+  // Medical symptom duration or generic presentation is NOT an explicit precipitating event
+  if (/^(?:fever|cough|cold|vomiting|loose stools?|diarrhoea|diarrhea|illness|febrile|symptoms?)\b/i.test(t)) {
+    return false;
+  }
+  if (/\b(?:acute symptom onset|presented to (?:ed|er|hospital)|evaluation of fever|history of fever)\b/i.test(t)) {
+    return false;
+  }
+  // Must match explicit precipitating trigger
+  const hasTrigger = /\b(rta\b|road traffic accident|motor vehicle|accident|fall|fell|trauma|assault|hit\s+by|injury|injuries|fracture|burn|drowning|bite|sting|poison|ingestion|overdose|collapse|syncope|unconscious|electrocution|struck|wound|post-op|surgery)\b/i.test(t);
+  return hasTrigger;
+}
+
+export function deriveExplicitEvents(raw: any, rawInputText: string): string | null {
+  // 1. Explicit events array or string from model
+  if (typeof raw.events === 'string' && raw.events.trim()) {
+    const ev = raw.events.trim();
+    if (isExplicitPrecipitatingEvent(ev)) {
+      return ev;
+    }
+  }
+  if (Array.isArray(raw.events) && raw.events.length > 0) {
+    const descs = raw.events
+      .map((e: any) => typeof e === 'string' ? e.trim() : (e?.description || ""))
+      .filter((d: string) => isExplicitPrecipitatingEvent(d));
+    if (descs.length > 0) return descs.join("; ");
+  }
+
+  // 2. Explicit mechanism from mlcDetails
+  if (raw.mlcDetails && typeof raw.mlcDetails.mechanismOfInjury === 'string' && raw.mlcDetails.mechanismOfInjury.trim()) {
+    const mech = raw.mlcDetails.mechanismOfInjury.trim();
+    if (isExplicitPrecipitatingEvent(mech)) {
+      if (/^rta\b/i.test(mech)) {
+        return mech.replace(/^rta\b/i, "Road traffic accident involving");
+      }
+      return mech;
+    }
+  }
+
+  // 3. Derive strictly from explicit preceding history or dictation text:
+  // - explicit trauma/accident description
+  // - explicit collapse/fall
+  const candidateTexts = [
+    raw.hpi,
+    raw.presentingComplaint,
+    raw.chiefComplaint,
+    rawInputText
+  ].filter(t => typeof t === 'string' && t.trim().length > 0) as string[];
+
+  for (const text of candidateTexts) {
+    // RTA / Traffic accident
+    const rtaMatch = text.match(/\b(?:alleged\s+history\s+of\s+)?(rta\b[^\.\n;,]*|road\s+traffic\s+accident[^\.\n;,]*|motor\s+vehicle\s+accident[^\.\n;,]*|two-wheeler\s+vs\s+four-wheeler[^\.\n;,]*|hit\s+by[^\.\n;,]*|bike\s+skid[^\.\n;,]*)/i);
+    if (rtaMatch) {
+      let matched = rtaMatch[1].trim();
+      if (/^rta\s+/i.test(matched)) {
+        matched = matched.replace(/^rta\s+/i, "Road traffic accident involving ");
+      } else if (/^rta$/i.test(matched)) {
+        matched = "Road traffic accident";
+      } else if (/^two-wheeler\s+vs/i.test(matched)) {
+        matched = "Road traffic accident involving " + matched;
+      }
+      return matched;
+    }
+
+    // Fall / Collapse
+    const fallMatch = text.match(/\b(?:alleged\s+history\s+of\s+)?(fall\s+from\s+[^\.\n;,]+|slip\s+and\s+fall[^\.\n;,]*|fall\s+at\s+[^\.\n;,]+|fall\s+in\s+[^\.\n;,]+|sudden\s+collapse[^\.\n;,]*|loss\s+of\s+consciousness[^\.\n;,]*)/i);
+    if (fallMatch) {
+      return fallMatch[1].trim();
+    }
+
+    // Assault / Trauma
+    const traumaMatch = text.match(/\b(physical\s+assault[^\.\n;,]*|assaulted\s+by\s+[^\.\n;,]+|blunt\s+trauma[^\.\n;,]*|stab\s+injury[^\.\n;,]*|burn\s+injury[^\.\n;,]*)/i);
+    if (traumaMatch) {
+      return traumaMatch[1].trim();
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Normalizes Primary Survey Exposure findings vs Secondary Survey findings:
+ * 1. Re-routes Abdominal findings (e.g. "Abdomen soft and non-tender") to Secondary Survey Abdomen/PA.
+ * 2. Re-routes Neurological findings (e.g. "No neck stiffness or focal neurological deficit") to Secondary Survey CNS.
+ * 3. Re-routes Hydration / General findings (e.g. "Mild dehydration with dry oral mucosa") to Secondary Survey General.
+ * 4. Re-routes Temperature (e.g. "38.8 C") to fields.vitals.temp.
+ * 5. Guards against converting history negatives (e.g. "no rash") into an Exposure exam finding.
+ * 6. Strips re-routed findings from Exposure, preventing duplicate text between Primary Survey and Secondary Survey.
+ */
+export function normalizeExposureAndSecondarySurvey(
+  raw: any,
+  fields: Record<string, any>,
+  secSurvey: Record<string, any>,
+  rawInputText: string
+): { updatedSecSurvey: boolean } {
+  let updatedSecSurvey = false;
+  let exp = typeof raw.exposure === "string" ? raw.exposure.trim() : "";
+  if (!exp) return { updatedSecSurvey: false };
+
+  // 1. Temperature extraction from exposure
+  const tempMatch = exp.match(/(?:temp(?:erature)?\s*[:=]?\s*)?(\b\d{2}(?:\.\d)?\s*(?:°?[cC]|°?[fF])\b)/i);
+  if (tempMatch) {
+    const extractedTemp = tempMatch[1].trim();
+    fields.vitals = fields.vitals || {};
+    if (!fields.vitals.temp) {
+      fields.vitals.temp = extractedTemp;
+    }
+    exp = exp.replace(tempMatch[0], "").trim();
+  }
+
+  // 2. Abdomen extraction from exposure
+  const abdRegex = /\b(?:abdomen\s+(?:is\s+)?soft(?:,\s*|\s+and\s+)non-tender|abdomen\s+soft|soft(?:,\s*|\s+and\s+)non-tender\s+abdomen|soft,?\s+non-tender|soft\s+and\s+non-tender|per\s+abdomen\s+[^\.\n;,]+)\b/gi;
+  const abdMatch = exp.match(abdRegex);
+  if (abdMatch) {
+    const extractedAbd = abdMatch[0].trim();
+    if (!secSurvey.abdomen) {
+      secSurvey.abdomen = /soft/i.test(extractedAbd) ? "Soft, non-tender" : extractedAbd;
+      updatedSecSurvey = true;
+    }
+    exp = exp.replace(abdRegex, "").trim();
+  }
+
+  // 3. CNS extraction from exposure
+  const cnsRegex = /\b(?:no\s+neck\s+stiffness(?:,\s*|\s+and\s+|\s+or\s+)?(?:no\s+)?focal\s+neurological\s+deficit|no\s+neck\s+stiffness|no\s+focal\s+(?:neurological\s+)?deficit|neck\s+supple|no\s+meningeal\s+signs)\b/gi;
+  const cnsMatch = exp.match(cnsRegex);
+  if (cnsMatch) {
+    const extractedCns = cnsMatch.join(", ").trim();
+    if (!secSurvey.cns) {
+      secSurvey.cns = extractedCns.includes("stiffness") && extractedCns.includes("deficit")
+        ? "No neck stiffness, no focal neurological deficit"
+        : extractedCns;
+      updatedSecSurvey = true;
+    }
+    exp = exp.replace(cnsRegex, "").trim();
+  }
+
+  // 4. Hydration / General extraction from exposure
+  const hydrationRegex = /\b(?:(?:mild|moderate|severe)?\s*dehydration(?:,\s*|\s+with\s+)?(?:slightly\s+)?dry\s+oral\s+mucosa|(?:slightly\s+)?dry\s+oral\s+mucosa|(?:mild|moderate|severe)\s+dehydration|sunken\s+eyes|decreased\s+skin\s+turgor)\b/gi;
+  const hydMatch = exp.match(hydrationRegex);
+  if (hydMatch) {
+    const extractedHyd = hydMatch.join(", ").trim();
+    if (!secSurvey.general) {
+      secSurvey.general = /mild\s+dehydration/i.test(extractedHyd) && /dry\s+oral\s+mucosa/i.test(extractedHyd)
+        ? "Mild dehydration, slightly dry oral mucosa"
+        : extractedHyd;
+      updatedSecSurvey = true;
+    }
+    exp = exp.replace(hydrationRegex, "").trim();
+  }
+
+  // 5. History negative guard: "no rash"
+  // If "no rash" was only stated in the context of history or symptoms in rawInputText,
+  // and the clinician did not explicitly dictate skin/exposure exam:
+  if (/^no\s+rash(?:es)?[\.\s]*$/i.test(exp)) {
+    const isHistoryNegativeOnly = /\b(?:history|fever|symptoms?)[^\.\n;]*no\s+rash\b/i.test(rawInputText) &&
+      !/\b(?:skin|exposure|examined|examination)\s+shows?\s+no\s+rash\b/i.test(rawInputText);
+    if (isHistoryNegativeOnly) {
+      exp = "";
+    }
+  }
+
+  // Clean residual exposure punctuation and spacing
+  exp = exp
+    .replace(/^[,\.\s;]+/, "")
+    .replace(/[,\.\s;]+$/, "")
+    .replace(/,\s*,/g, ",")
+    .replace(/\.\s*\./g, ".")
+    .trim();
+
+  // If only non-substantive words remain (e.g. "and", "with", "no"), clear it
+  if (/^(?:and|with|no|nil|none)[\.\s]*$/i.test(exp)) {
+    exp = "";
+  }
+
+  raw.exposure = exp.length > 0 ? exp : null;
+
+  return { updatedSecSurvey };
+}
+
+/**
+ * Defensive guard for clinician-stated differentials:
+ * Ensures only diagnoses explicitly stated by the clinician in their input can enter ClinicalCase.
+ * Rejects unstated, inferred, suggested, assistant-generated, or clinical reasoning differentials.
+ */
+export function isClinicianStatedDifferential(candidate: string, rawInputText: string): boolean {
+  if (!candidate || typeof candidate !== "string" || !rawInputText || typeof rawInputText !== "string") {
+    return false;
+  }
+  const cleanCand = candidate.trim().toLowerCase();
+  const cleanInput = rawInputText.trim().toLowerCase();
+  if (!cleanCand || !cleanInput) return false;
+
+  // Direct phrase match
+  if (cleanInput.includes(cleanCand)) return true;
+
+  // Words that are purely clinical descriptors, syntax, or qualifiers rather than disease entities
+  const stopWords = new Set([
+    "with", "from", "that", "this", "have", "been", "were", "what", "when", "where",
+    "left", "right", "bilateral", "acute", "chronic", "mild", "severe", "moderate",
+    "pain", "type", "rule", "suspect", "possible", "probable", "likely", "diff",
+    "differential", "diagnosis", "impression", "versus", "vs", "status", "post", "patient",
+    "presents", "presented", "history", "underlying", "secondary", "primary"
+  ]);
+
+  // Extract substantive condition/disease tokens (length >= 3)
+  const candTokens = cleanCand
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter(t => t.length >= 3 && !stopWords.has(t));
+
+  if (candTokens.length > 0) {
+    // Check if any substantive disease token is present in the clinician's input
+    if (candTokens.some(token => cleanInput.includes(token))) {
+      return true;
+    }
+    // Check if acronym of the candidate appears in the clinician's input (e.g. ACS, DKA, PE, UTI)
+    const acronym = candTokens.map(t => t[0]).join("");
+    if (acronym.length >= 2 && new RegExp(`\\b${acronym}\\b`, "i").test(cleanInput)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 export function mapExtractionToCaseSheetFields(
   cleaned: ReturnType<typeof cleanExtractionOutput>,
   raw: any,
   existingCaseSheet: any,
-  rawInputText: string
+  rawInputText: string,
+  clinicianProtection?: ProtectedCliniciansResult
 ): Record<string, any> {
   const fields: Record<string, any> = {};
   const isValidStr = (s: any) => typeof s === 'string' && s.trim().length > 0 && !["unknown", "not specified", "not documented", "n/a", "none"].includes(s.trim().toLowerCase());
@@ -496,15 +781,23 @@ export function mapExtractionToCaseSheetFields(
   }
 
   // ══════════════════════════════════════════════════════════════
-  // VOICE-04 FIX: same silent drop for differentials — the model
-  // returns raw.differentials per the extraction schema, but it was
-  // never read into the case sheet mapping at all.
+  // VOICE-04 & LEAKAGE GUARD: differentials are accepted ONLY from
+  // the extraction branch, and only when explicitly stated by the clinician.
+  // Never copy any diagnoses from reasoningMessage, clinical reasoning output,
+  // assistant suggestions, or previous assistant-generated differentials.
   // ══════════════════════════════════════════════════════════════
-  if (Array.isArray(raw.differentials) && raw.differentials.length > 0) {
-    const cleanedDiffs = raw.differentials.filter((d: any) => isValidStr(d));
-    if (cleanedDiffs.length > 0) fields.differentialDiagnosis = cleanedDiffs.join("; ");
-  } else if (isValidStr(raw.differentials)) {
-    fields.differentialDiagnosis = raw.differentials;
+  const rawDiffs = Array.isArray(raw.differentials)
+    ? raw.differentials
+    : isValidStr(raw.differentials)
+    ? [String(raw.differentials).trim()]
+    : [];
+
+  const verifiedDiffs = rawDiffs.filter(
+    (d: any) => isValidStr(d) && isClinicianStatedDifferential(String(d), rawInputText)
+  );
+
+  if (verifiedDiffs.length > 0) {
+    fields.differentialDiagnosis = verifiedDiffs.join("; ");
   }
   // ══════════════════════════════════════════════════════════════
   // CHECKLIST-WIRING FIX ROUND 2: these fields are correctly extracted
@@ -516,7 +809,20 @@ export function mapExtractionToCaseSheetFields(
   if (isValidStr(raw.surgicalHistory)) fields.surgicalHistory = raw.surgicalHistory;
   if (isValidStr(raw.familyHistory)) fields.familyHistory = raw.familyHistory;
   if (isValidStr(raw.lmp)) fields.lmp = raw.lmp;
-  if (isValidStr(raw.lastMeal)) fields.lastMeal = raw.lastMeal;
+
+  // Last Meal: map to sampleHistory.lastMeal and fields.lastMeal. If not stated / empty: leave blank. Do not infer.
+  if (isValidStr(raw.lastMeal)) {
+    fields.lastMeal = raw.lastMeal;
+  } else if (isValidStr(cleaned.lastMeal)) {
+    fields.lastMeal = cleaned.lastMeal;
+  }
+  if (fields.lastMeal) {
+    fields.sampleHistory = {
+      ...(fields.sampleHistory || existingCaseSheet?.sampleHistory || {}),
+      lastMeal: fields.lastMeal
+    };
+  }
+
   if (isValidStr(raw.psychologicalAssessment)) fields.psychologicalAssessment = raw.psychologicalAssessment;
   if (isValidStr(raw.ecg)) fields.ecg = raw.ecg;
   if (isValidStr(raw.echo)) fields.echo = raw.echo;
@@ -531,14 +837,64 @@ export function mapExtractionToCaseSheetFields(
     fields.investigationResults = raw.investigationResults;
   }
 
-  // EM Resident / EM Consultant: dictation is an explicit OVERRIDE only.
-  // The default-to-logged-in-doctor behavior lives on the frontend
-  // (VoiceScribeChatView.tsx), not here — this function has no access
-  // to the logged-in profile. If the doctor dictates a name (e.g.
-  // naming the supervising consultant, or correcting the resident of
-  // record), that always wins over the default.
-  if (isValidStr(raw.emResident)) fields.emResident = raw.emResident;
-  if (isValidStr(raw.emConsultant)) fields.emConsultant = raw.emConsultant;
+  // ══════════════════════════════════════════════════════════════
+  // CLINICIAN ATTRIBUTION & DEFENSIVE PLACEHOLDER GUARD
+  // Restore explicitly role-attributed internal clinician names
+  // (EM Resident / EM Consultant) while blocking redacted placeholders
+  // like [DOCTOR], [NAME], [PERSON] from ever overwriting attribution.
+  // ══════════════════════════════════════════════════════════════
+
+  // Resolve candidate EM Resident
+  let candidateResident: string | null = null;
+  if (typeof raw.emResident === "string" && raw.emResident.trim().length > 0) {
+    let resolved = raw.emResident.trim();
+    if (clinicianProtection?.placeholders) {
+      for (const [ph, name] of Object.entries(clinicianProtection.placeholders)) {
+        if (resolved.includes(ph)) {
+          resolved = resolved.replace(ph, name);
+        }
+      }
+    }
+    candidateResident = resolved;
+  }
+  if ((!candidateResident || isRedactedOrPlaceholderClinician(candidateResident)) && clinicianProtection?.clinicians?.emResident) {
+    candidateResident = clinicianProtection.clinicians.emResident;
+  }
+  if ((!candidateResident || isRedactedOrPlaceholderClinician(candidateResident)) && !clinicianProtection) {
+    const inlineProtection = protectInternalClinicians(rawInputText);
+    if (inlineProtection.clinicians.emResident) {
+      candidateResident = inlineProtection.clinicians.emResident;
+    }
+  }
+  if (candidateResident && !isRedactedOrPlaceholderClinician(candidateResident)) {
+    fields.emResident = candidateResident;
+  }
+
+  // Resolve candidate EM Consultant
+  let candidateConsultant: string | null = null;
+  if (typeof raw.emConsultant === "string" && raw.emConsultant.trim().length > 0) {
+    let resolved = raw.emConsultant.trim();
+    if (clinicianProtection?.placeholders) {
+      for (const [ph, name] of Object.entries(clinicianProtection.placeholders)) {
+        if (resolved.includes(ph)) {
+          resolved = resolved.replace(ph, name);
+        }
+      }
+    }
+    candidateConsultant = resolved;
+  }
+  if ((!candidateConsultant || isRedactedOrPlaceholderClinician(candidateConsultant)) && clinicianProtection?.clinicians?.emConsultant) {
+    candidateConsultant = clinicianProtection.clinicians.emConsultant;
+  }
+  if ((!candidateConsultant || isRedactedOrPlaceholderClinician(candidateConsultant)) && !clinicianProtection) {
+    const inlineProtection = protectInternalClinicians(rawInputText);
+    if (inlineProtection.clinicians.emConsultant) {
+      candidateConsultant = inlineProtection.clinicians.emConsultant;
+    }
+  }
+  if (candidateConsultant && !isRedactedOrPlaceholderClinician(candidateConsultant)) {
+    fields.emConsultant = candidateConsultant;
+  }
   // ══════════════════════════════════════════════════════════════
   // CHECKLIST-WIRING FIX: fastFindings had no mapping — extracted by
   // the model (voiceExtraction.ts) but silently dropped here, same
@@ -571,18 +927,152 @@ export function mapExtractionToCaseSheetFields(
     if (Object.keys(mlc).length > 0) fields.mlcDetails = mlc;
   }
 
-  if (cleaned.drugs.length > 0) {
-    fields.treatmentGiven = cleaned.drugs;
-  }
-  if (cleaned.events.length > 0) {
-    fields.events = cleaned.events.map(e => e.description).join("; ");
+  // Treatments
+  if (cleaned.drugs && cleaned.drugs.length > 0) {
+    const validTreatments: any[] = [];
+    for (const d of cleaned.drugs) {
+      const drugStr = typeof d === "string" ? d : (d.drugName || d.name || "");
+      const isFluidConcept = /\b(?:oral\s+or\s+iv\s+)?fluids?(?:\s+were\s+given)?(?:\s+depending\s+on\s+tolerance)?\b/i.test(drugStr) ||
+        /\b(?:hydration|fluids?)\s+(?:as|depending|tolerated)\b/i.test(drugStr);
+
+      if (isFluidConcept && !/\b(?:normal\s+saline|0\.9%|ringer|rl\b|ns\b|d5|isolyte)\b/i.test(drugStr)) {
+        // Hydration statement: preserve in treatmentNotes and managementPlan, do NOT create an incorrect medication object
+        const hydrationStmt = "Oral or IV fluids depending on tolerance";
+        if (!fields.treatmentNotes) {
+          fields.treatmentNotes = hydrationStmt;
+        } else if (!fields.treatmentNotes.includes("fluids")) {
+          fields.treatmentNotes = `${fields.treatmentNotes}; ${hydrationStmt}`;
+        }
+        if (!fields.managementPlan) {
+          fields.managementPlan = hydrationStmt;
+        } else if (!fields.managementPlan.includes("fluids")) {
+          fields.managementPlan = `${fields.managementPlan}; ${hydrationStmt}`;
+        }
+        continue;
+      }
+
+      // Antipyretic concept
+      if (/\bantipyretic\b/i.test(drugStr)) {
+        const specificDrugMatch = rawInputText.match(/\b(paracetamol|pcm|calpol|dolo|crocin|acetaminophen|ibuprofen|brufen|combiflam)\b/i);
+        if (specificDrugMatch) {
+          validTreatments.push(typeof d === "object" ? d : {
+            drugName: specificDrugMatch[0],
+            dose: typeof d === "object" ? d.dose : "",
+            route: typeof d === "object" ? d.route : "",
+            instruction: typeof d === "object" ? d.instruction : "",
+            timeGiven: typeof d === "object" ? d.timeGiven : ""
+          });
+        } else {
+          // Generic antipyretic MUST remain generic. DO NOT invent Paracetamol, Ibuprofen, dose, route, fever threshold, or SOS frequency.
+          validTreatments.push({
+            drugName: "Weight-appropriate antipyretic",
+            dose: "",
+            route: "",
+            instruction: "",
+            timeGiven: ""
+          });
+        }
+        continue;
+      }
+
+      validTreatments.push(d);
+    }
+    if (validTreatments.length > 0) {
+      fields.treatmentGiven = validTreatments;
+    }
   }
 
-  if (cleaned.symptoms.length > 0) {
+  // Procedures
+  if (cleaned.procedures && cleaned.procedures.length > 0) {
+    fields.procedures = cleaned.procedures;
+    fields.otherProcedures = cleaned.procedures.join(", ");
+    const procChecks: string[] = [];
+    for (const p of cleaned.procedures) {
+      const plower = p.toLowerCase();
+      if (plower.includes("catheter") || plower.includes("foley")) procChecks.push("foleys");
+      if (plower.includes("ng tube") || plower.includes("ryle")) procChecks.push("ng_tube");
+      if (plower.includes("lavage")) procChecks.push("gastric_lavage");
+      if (plower.includes("sutur") || plower.includes("stitch")) procChecks.push("suturing");
+      if (plower.includes("irrigat")) procChecks.push("irrigation");
+      if (plower.includes("splint")) procChecks.push("splinting");
+      if (plower.includes("reduct")) procChecks.push("reduction");
+    }
+    if (procChecks.length > 0) fields.proceduresChecked = procChecks;
+  }
+
+  // Events: wire Events derivation into active Scribe mapping (derive from explicit history only)
+  const derivedEvent = deriveExplicitEvents(raw, rawInputText);
+  if (derivedEvent && isExplicitPrecipitatingEvent(derivedEvent)) {
+    fields.events = derivedEvent;
+    fields.sampleHistory = {
+      ...(fields.sampleHistory || existingCaseSheet?.sampleHistory || {}),
+      events: derivedEvent
+    };
+  } else if (cleaned.events && cleaned.events.length > 0) {
+    const validEvents = cleaned.events
+      .map(e => e.description)
+      .filter(desc => isExplicitPrecipitatingEvent(desc));
+    if (validEvents.length > 0) {
+      const evText = validEvents.join("; ");
+      fields.events = evText;
+      fields.sampleHistory = {
+        ...(fields.sampleHistory || existingCaseSheet?.sampleHistory || {}),
+        events: evText
+      };
+    }
+  }
+
+  if (cleaned.symptoms && cleaned.symptoms.length > 0) {
     fields.symptoms = cleaned.symptoms;
   }
-  if (cleaned.plan.length > 0) fields.plan = cleaned.plan;
-  if (cleaned.labs.length > 0) fields.labs = cleaned.labs;
+  if (cleaned.plan && cleaned.plan.length > 0) {
+    fields.plan = cleaned.plan;
+    fields.managementPlan = cleaned.plan.join("; ");
+    fields.dispositionAndPlan = {
+      ...(existingCaseSheet?.dispositionAndPlan || {}),
+      consultsRequested: fields.consultations || existingCaseSheet?.dispositionAndPlan?.consultsRequested || [],
+      managementPlan: fields.managementPlan
+    };
+  }
+  
+  // Investigations — strictly enforce no-invention rule
+  // If the dictation contains only generic phrases like "Appropriate investigations were planned based on clinical assessment and duration of fever",
+  // no actual test was named, so do NOT create CBC, CRP, urine routine, culture, X-ray, or any other test.
+  const isGeneric = (name: string) => isGenericInvestigationPhrase(name);
+
+  if (cleaned.labs && cleaned.labs.length > 0) {
+    const validLabs = cleaned.labs.filter(l => !isGeneric(l.name));
+    if (validLabs.length > 0) {
+      fields.labs = validLabs;
+      fields.investigationLabsOrdered = validLabs.map(l => l.value ? `${l.name}: ${l.value}` : l.name).join(", ");
+    } else {
+      fields.labs = [];
+      fields.investigationLabsOrdered = "";
+    }
+  } else {
+    fields.labs = [];
+    fields.investigationLabsOrdered = "";
+  }
+  fields.investigations = (fields.labs || []).map((l: any, i: number) => ({
+    id: `inv-${Date.now()}-${i}`,
+    testName: l.name,
+    result: l.value || "Ordered",
+    isAbnormal: false
+  }));
+
+  if (cleaned.imaging && cleaned.imaging.length > 0) {
+    const validImg = cleaned.imaging.filter(i => !isGeneric(i.name));
+    if (validImg.length > 0) {
+      fields.imaging = validImg;
+      fields.investigationImaging = validImg.map(i => i.value ? `${i.name}: ${i.value}` : i.name).join(", ");
+    } else {
+      fields.imaging = [];
+      fields.investigationImaging = "";
+    }
+  } else {
+    fields.imaging = [];
+    fields.investigationImaging = "";
+  }
 
   if (raw.isPediatric !== undefined && raw.isPediatric !== null) fields.isPediatric = raw.isPediatric;
   if (raw.pediatricDetails && Object.keys(raw.pediatricDetails).length > 0) {
@@ -630,6 +1120,15 @@ export function mapExtractionToCaseSheetFields(
   if (isValidStr(raw.disability)) fields.disability = raw.disability;
   else if (abcdeNormal && !isValidStr(existingCaseSheet?.disability) && !isValidStr(existingCaseSheet?.primaryDisability)) fields.disability = `Pupils equal & reactive. ${EXAM_DEFAULTS.cnsExamination}`;
 
+  // Secondary Survey / General Exam initialization
+  const secSurvey = { ...(existingCaseSheet?.secondarySurvey || {}) };
+  let updatedSecSurvey = false;
+
+  // Semantic separation: ensure abdominal, neurological, hydration, and temperature findings
+  // bundled in exposure are cleanly re-routed to Secondary Survey and Vitals, and stripped from Exposure.
+  const normExp = normalizeExposureAndSecondarySurvey(raw, fields, secSurvey, rawInputText);
+  if (normExp.updatedSecSurvey) updatedSecSurvey = true;
+
   if (isValidStr(raw.cSpineExam) && isValidStr(raw.exposure)) {
     const cSpineFrag = raw.cSpineExam;
     const isGeneric = !/(c-spine|c spine|cervical|neck)/i.test(cSpineFrag);
@@ -669,10 +1168,6 @@ export function mapExtractionToCaseSheetFields(
   if (isValidStr(raw.exposure)) fields.exposure = raw.exposure;
   else if (abcdeNormal && !isValidStr(existingCaseSheet?.exposure) && !isValidStr(existingCaseSheet?.primaryExposure)) fields.exposure = "No obvious external injuries, rash, or deformities. Normothermic.";
 
-  // Secondary Survey / General Exam
-  const secSurvey = existingCaseSheet?.secondarySurvey || {};
-  let updatedSecSurvey = false;
-
   // ══════════════════════════════════════════════════════════════
   // CHECKLIST-WIRING FIX: extremitiesExamination had no mapping at
   // all — the schema field added in voiceExtraction.ts had nowhere
@@ -694,10 +1189,20 @@ export function mapExtractionToCaseSheetFields(
   if (isValidStr(raw.cvsExamination)) { secSurvey.cvs = raw.cvsExamination; updatedSecSurvey = true; }
   else if (systemicNormal && !isValidStr(secSurvey.cvs)) { secSurvey.cvs = EXAM_DEFAULTS.cvsExamination; updatedSecSurvey = true; }
 
-  if (isValidStr(raw.respiratoryExamination)) { secSurvey.respiratory = raw.respiratoryExamination; updatedSecSurvey = true; }
+  const respVal = isValidStr(raw.respiratoryExamination) ? raw.respiratoryExamination
+    : isValidStr(raw.rsExamination) ? raw.rsExamination
+    : isValidStr(raw.rs) ? raw.rs
+    : isValidStr(raw.respiratory) ? raw.respiratory
+    : null;
+  if (respVal) { secSurvey.respiratory = respVal; updatedSecSurvey = true; }
   else if (systemicNormal && !isValidStr(secSurvey.respiratory)) { secSurvey.respiratory = EXAM_DEFAULTS.respiratoryExamination; updatedSecSurvey = true; }
 
-  if (isValidStr(raw.abdomenExamination)) { secSurvey.abdomen = raw.abdomenExamination; updatedSecSurvey = true; }
+  const abdVal = isValidStr(raw.abdomenExamination) ? raw.abdomenExamination
+    : isValidStr(raw.paExamination) ? raw.paExamination
+    : isValidStr(raw.pa) ? raw.pa
+    : isValidStr(raw.abdomen) ? raw.abdomen
+    : null;
+  if (abdVal) { secSurvey.abdomen = abdVal; updatedSecSurvey = true; }
   else if (systemicNormal && !isValidStr(secSurvey.abdomen)) { secSurvey.abdomen = EXAM_DEFAULTS.abdomenExamination; updatedSecSurvey = true; }
 
   if (isValidStr(raw.cnsExamination)) { secSurvey.cns = raw.cnsExamination; updatedSecSurvey = true; }
@@ -715,7 +1220,13 @@ export function mapExtractionToCaseSheetFields(
   // extraction.ts's processSampleMedicationsAndPmh, so behavior is
   // identical across both extraction pipelines.
   // ══════════════════════════════════════════════════════════════
-  if (isValidStr(raw.allergies)) fields.allergies = raw.allergies;
+  if (isValidStr(raw.allergies)) {
+    fields.allergies = raw.allergies;
+    fields.sampleHistory = {
+      ...(fields.sampleHistory || existingCaseSheet?.sampleHistory || {}),
+      allergies: raw.allergies
+    };
+  }
 
   const medPmh = processSampleMedicationsAndPmh(
     raw.pmh ?? raw.pastMedicalHistory ?? null,
@@ -733,13 +1244,49 @@ export function mapExtractionToCaseSheetFields(
   }
   // Otherwise: not mentioned, not denied — leave untouched, no fabrication.
 
-  if (isValidStr(raw.outpatientMedications)) {
-    fields.currentMedications = Array.isArray(raw.outpatientMedications) ? raw.outpatientMedications : [raw.outpatientMedications];
+  // SAMPLE Medications (outpatient regular medications)
+  // - string[] → join with ", "
+  // - string → preserve as-is
+  // - null / undefined → ""
+  // Populate sampleHistory.medications & fields.currentMedications. Do NOT route into acute ER treatments.
+  let mappedMeds = "";
+  const rawMeds = raw.outpatientMedications ?? raw.currentMedications ?? (raw.sampleHistory && raw.sampleHistory.medications);
+  if (Array.isArray(rawMeds)) {
+    mappedMeds = rawMeds.map((m: any) => typeof m === 'string' ? m.trim() : (m?.drugName || m?.name || "")).filter(Boolean).join(", ");
+  } else if (typeof rawMeds === 'string') {
+    mappedMeds = rawMeds.trim();
+  }
+
+  if (mappedMeds && !["unknown", "not specified", "not documented", "n/a", "none"].includes(mappedMeds.toLowerCase())) {
+    fields.currentMedications = mappedMeds.includes(",") ? mappedMeds.split(",").map(m => m.trim()) : [mappedMeds];
+    fields.sampleHistory = {
+      ...(fields.sampleHistory || existingCaseSheet?.sampleHistory || {}),
+      medications: mappedMeds
+    };
   } else if (medPmh.medications === "Nil regular medications") {
     fields.currentMedications = [];
+    fields.sampleHistory = {
+      ...(fields.sampleHistory || existingCaseSheet?.sampleHistory || {}),
+      medications: "Nil regular medications"
+    };
   }
   // Otherwise: leave untouched. Empty currentMedications no longer
   // gets silently populated just because other content was dictated.
+
+  // Ensure clinician names are never restored into free clinical narrative:
+  // sanitize any residual internal placeholders in narrative strings or string arrays to [DOCTOR].
+  for (const [key, val] of Object.entries(fields)) {
+    if (key === "emResident" || key === "emConsultant") continue;
+    if (typeof val === "string") {
+      fields[key] = val.replace(/__ERMATE_EM_(?:RESIDENT|CONSULTANT)_\d+__/g, "[DOCTOR]");
+    } else if (Array.isArray(val)) {
+      fields[key] = val.map((item: any) =>
+        typeof item === "string"
+          ? item.replace(/__ERMATE_EM_(?:RESIDENT|CONSULTANT)_\d+__/g, "[DOCTOR]")
+          : item
+      );
+    }
+  }
 
   return fields;
 }

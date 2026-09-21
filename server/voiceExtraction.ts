@@ -111,13 +111,17 @@ symptoms (History of Present Illness):
   Any text doctor did not say.
   If not dictated → ""
 
-events (Preceding Events / Trauma):
-  ONLY for:
-  Road traffic accidents, falls from height, assault/injuries, burns, drowning, poisoning, specific mechanism of injury.
+events (Preceding Events / Precipitating Event):
+  ONLY for explicit precipitating events:
+  Road traffic accidents, falls, physical trauma/injuries, assault, burns, drowning,
+  snake bite, animal bite, insect sting, poisoning, ingestion, overdose, exertional onset,
+  or recent surgical procedure when clearly stated.
   
-  If NOT a trauma case → return ""
-  NEVER generate generic text here.
-  Medical cases (fever, chest pain, breathlessness, abdominal pain) → events = ""
+  For medical cases (e.g. fever, pediatric fever, cough, cold, viral illness, non-traumatic chest/abdominal pain)
+  with NO explicit precipitating event:
+  events MUST BE "" (empty string) or null.
+  NEVER invent an Event.
+  Do NOT put fever duration, symptoms, or presentation details into events.
 
 pastMedicalHistory:
   Conditions mentioned by doctor (e.g. "Diabetes, Hypertension").
@@ -196,11 +200,27 @@ PRIMARY SURVEY EXTRACTION:
     NEVER put HR/BP numbers here — those go in vitals.
   disability: qualitative findings only — pupils, motor response.
     NEVER put GCS here — that goes in vitals.gcs.
-  exposure: qualitative findings only — visible injuries, deformities,
-    wounds, rashes, temperature findings, trauma/log-roll findings.
+  exposure: qualitative findings ONLY for the Primary Survey Exposure domain:
+    - visible injury, wound, deformity
+    - skin examination finding (explicit rash observed, mottling, lesions, burns)
+    - trauma exposure finding, log-roll finding
+    - temperature status where appropriate.
     THIS FIELD MUST CAPTURE ANY DICTATED DEFORMITY, WOUND, OR VISIBLE
-    INJURY — never return null if the doctor described one, even if it
-    was mentioned as part of a broader "secondary survey" statement.
+    INJURY — never return null if the doctor described one.
+
+    CRITICAL EXPOSURE BOUNDARIES — DO NOT BUNDLE OTHER SYSTEMS INTO EXPOSURE:
+    - Abdominal findings (e.g. "Abdomen soft and non-tender", distension, bowel sounds)
+      MUST go to abdomenExamination. NEVER put abdominal findings in exposure.
+    - Neurological findings including neck stiffness, focal deficit, neurological deficit,
+      cranial nerves, or motor/sensory MUST go to cnsExamination. NEVER put neurological findings in exposure.
+    - Hydration and general findings including dry oral mucosa, dehydration, sunken eyes,
+      skin turgor, pallor, icterus, cyanosis, clubbing, or edema MUST go to generalExamination.
+      NEVER bundle hydration or general findings into exposure.
+    - Temperature numbers (e.g. 38.8 C, 101.8 F) ALWAYS go to vitals.temp.
+    - History statement: "No rash", "no vomiting", or other negatives mentioned as part of
+      history or presenting complaints must remain in symptoms/HPI as a HISTORY negative.
+      Do NOT convert history "no rash" into an examination finding automatically unless the
+      clinician explicitly states a skin examination / exposure finding.
 
   CERVICAL SPINE / NECK:
     Any dictated cervical-spine or neck examination finding including tenderness,
@@ -291,10 +311,38 @@ If pO2 is not mentioned: do not generate pO2.
 If consultations are not mentioned: do not invent consultations.
 If plan is not mentioned: do not invent a plan.
 
+"differentials":
+Only include diagnoses explicitly stated by the clinician.
+Do NOT generate, infer, suggest, or complete differentials.
+If none were stated, return [].
+
 TREATMENT EXTRACTION:
 You can output legacy strings in the array OR structured objects.
 Use object form for detailed medications: { "drugName": string, "dose": string, "route": string, "instruction": string, "timeGiven": string }
 timeGiven ONLY if an actual clock administration time was dictated. Do not put "stat", "BD", "TDS" into timeGiven (put those in "instruction").
+
+CRITICAL TREATMENT SEMANTICS & NO-INVENTION RULES:
+- SEPARATE MULTIPLE CLINICAL CONCEPTS:
+  If the clinician dictates both hydration/fluids and antipyretics (e.g. "Oral or IV fluids were given depending on tolerance, along with weight-appropriate antipyretic treatment"):
+  treat them as TWO separate clinical concepts:
+  A. Hydration / fluids: "Oral or IV fluids depending on tolerance"
+  B. Antipyretic: "Weight-appropriate antipyretic"
+- DO NOT INVENT SPECIFIC DRUGS OR DOSES:
+  * DO NOT invent "Paracetamol", "Ibuprofen", or any specific drug when the doctor only dictated "antipyretic" or "weight-appropriate antipyretic". The generic antipyretic MUST remain generic if no specific drug was named!
+  * DO NOT invent drug doses (e.g. do not invent 15 mg/kg, 250 mg). Leave dose "" if not dictated.
+  * DO NOT invent fever thresholds (e.g. do not invent "> 100°F").
+  * DO NOT invent frequencies or SOS instructions unless explicitly dictated.
+  * DO NOT invent routes (e.g. do not invent Oral or IV) unless explicitly dictated.
+- FLUIDS / HYDRATION:
+  * If unspecified or conditional fluids (e.g. "Oral or IV fluids depending on tolerance") are dictated without a specific formulated product / fixed rate, preserve the hydration statement in treatmentNotes and/or plan rather than creating an incorrect medication object.
+
+INVESTIGATIONS EXTRACTION — STRICT NO-INVENTION RULE:
+- ONLY include specific named laboratory or diagnostic tests explicitly dictated by the clinician (e.g., "CBC", "CRP", "Chest X-ray", "Urine routine").
+- DO NOT invent, infer, or assume investigations.
+- If the clinician dictates general statements like "Appropriate investigations were planned based on clinical assessment and duration of fever", "investigations planned based on assessment", or "routine bloods advised" without naming specific tests:
+  * DO NOT create CBC, CRP, urine routine, culture, X-ray, or any other investigation.
+  * Return "investigations": [] (empty array).
+  * Put the general statement in "plan".
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 

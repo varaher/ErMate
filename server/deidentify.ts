@@ -223,3 +223,111 @@ export function deidentifyText(rawText: string): DeidentifyResult {
     details
   };
 }
+
+// ============================================================
+// Internal Clinician Attribution Preservation & Guards
+// ============================================================
+
+export interface InternalClinicianAttribution {
+  emResident?: string;
+  emConsultant?: string;
+}
+
+export interface ProtectedCliniciansResult {
+  protectedText: string;
+  clinicians: InternalClinicianAttribution;
+  placeholders: Record<string, string>;
+}
+
+const CLINICAL_ROLE_STOPWORDS = new Set([
+  "patient", "pt", "presents", "presented", "evaluating", "evaluated", "saw", "seen",
+  "reports", "reported", "complaining", "complained", "complains", "noted", "admitted",
+  "referred", "ordered", "vitals", "history", "examination", "assessment", "plan",
+  "airway", "breathing", "circulation", "disability", "exposure", "male", "female",
+  "years", "yo", "old", "with", "for", "and", "but", "on", "at", "in", "to", "he", "she",
+  "em", "er", "ed", "resident", "consultant"
+]);
+
+/**
+ * Protects explicitly role-attributed INTERNAL treating-team clinician names
+ * (e.g. "EM Resident Dr Joshua", "Emergency Medicine Consultant Dr Christo")
+ * before general de-identification by temporarily replacing the clinician name
+ * with local reversible placeholders (e.g. __ERMATE_EM_RESIDENT_0__).
+ *
+ * External referral doctor names and other unrelated doctor names are NOT protected
+ * and remain subject to standard [DOCTOR] de-identification.
+ */
+export function protectInternalClinicians(rawText: string): ProtectedCliniciansResult {
+  if (!rawText || typeof rawText !== "string") {
+    return { protectedText: rawText || "", clinicians: {}, placeholders: {} };
+  }
+
+  const clinicians: InternalClinicianAttribution = {};
+  const placeholders: Record<string, string> = {};
+  let protectedText = rawText;
+
+  // Regex matches only internal treating-team roles: EM / ER / ED / Emergency Medicine / Emergency Department
+  const roleRegex = /\b((?:(?:Treating\s+)?(?:Emergency\s+Medicine|Emergency\s+Department|EM|ER|ED)\s+)(Resident|Consultant))\s*[:=-]?\s*(\b(?:Dr\.?|Doctor|Prof\.?)\s+[A-Za-z]+(?:\s+[A-Za-z]+)?|\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\b/gi;
+
+  let residentIdx = 0;
+  let consultantIdx = 0;
+
+  protectedText = protectedText.replace(roleRegex, (fullMatch, fullRole, roleType, nameGroup) => {
+    const isResident = /resident/i.test(roleType);
+    const isConsultant = /consultant/i.test(roleType);
+
+    const cleanName = nameGroup.trim();
+    const hasDr = /^(?:dr\.?|doctor|prof\.?)\s+/i.test(cleanName);
+    const withoutDr = cleanName.replace(/^(?:dr\.?|doctor|prof\.?)\s+/i, "").trim();
+    const nameWords = withoutDr.split(/\s+/).filter(Boolean);
+
+    if (nameWords.length === 0) return fullMatch;
+    if (CLINICAL_ROLE_STOPWORDS.has(nameWords[0].toLowerCase())) return fullMatch;
+
+    const validNameWords: string[] = [nameWords[0]];
+    for (let i = 1; i < nameWords.length; i++) {
+      if (CLINICAL_ROLE_STOPWORDS.has(nameWords[i].toLowerCase())) break;
+      validNameWords.push(nameWords[i]);
+    }
+
+    const capRest = validNameWords.map(w => w[0].toUpperCase() + w.slice(1).toLowerCase()).join(" ");
+    const formattedName = hasDr ? `Dr ${capRest}` : capRest;
+    const matchedSubstring = (hasDr ? cleanName.match(/^(?:dr\.?|doctor|prof\.?)\s+/i)![0] : "") + validNameWords.join(" ");
+
+    if (isResident && !clinicians.emResident) {
+      const ph = `__ERMATE_EM_RESIDENT_${residentIdx++}__`;
+      clinicians.emResident = formattedName;
+      placeholders[ph] = formattedName;
+      return fullMatch.replace(matchedSubstring, ph);
+    } else if (isConsultant && !clinicians.emConsultant) {
+      const ph = `__ERMATE_EM_CONSULTANT_${consultantIdx++}__`;
+      clinicians.emConsultant = formattedName;
+      placeholders[ph] = formattedName;
+      return fullMatch.replace(matchedSubstring, ph);
+    }
+
+    return fullMatch;
+  });
+
+  return { protectedText, clinicians, placeholders };
+}
+
+/**
+ * Defensive guard checking whether a clinician attribution string is an
+ * invalid, redacted, or placeholder value (e.g. [DOCTOR], [NAME], [PERSON]).
+ */
+export function isRedactedOrPlaceholderClinician(val: any): boolean {
+  if (!val || typeof val !== "string") return true;
+  const trimmed = val.trim();
+  if (!trimmed) return true;
+  if (/^\[.*\]$/.test(trimmed)) return true;
+  if (/^__ERMATE_[A-Z0-9_]+__$/i.test(trimmed)) return true;
+  const lower = trimmed.toLowerCase();
+  const invalidTokens = [
+    "doctor", "physician", "resident", "consultant",
+    "dr", "dr.", "unknown", "n/a", "na", "none", "null",
+    "undefined", "not specified", "not documented", "unnamed"
+  ];
+  if (invalidTokens.includes(lower)) return true;
+  return false;
+}

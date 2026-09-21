@@ -1605,7 +1605,7 @@ app.post("/api/scribe-chat", async (req, res) => {
                 ? recentHistory.map((m) => `[${(m.role === "user" || m.sender === "user") ? "Doctor" : "ErMate"}]: ${m.content || m.text}`).join("\n")
                 : "(This is the first message in this conversation.)";
 
-              const prompt = `You are continuing an ongoing clinical conversation with an ER doctor about a specific patient.
+              const prompt = `You are a collaborative Emergency Medicine Clinical Decision Support assistant discussing a patient with an ER doctor.
 CASE CONTEXT:
 ${JSON.stringify(caseContext || {}, null, 2)}
 
@@ -1615,29 +1615,52 @@ ${historyBlock}
 THE DOCTOR'S CURRENT MESSAGE:
 "${deidentifiedInput}"
 
-INSTRUCTIONS:
-- Format your response strictly using this concise mobile pattern (use only the headings that are genuinely useful):
-  **Key Concerns**
-  - 2-4 short bullets (interpretation, red flags, differentials)
+CLINICAL STANCE & REASONING OBJECTIVES:
+- Support clinician reasoning collaboratively rather than issuing authoritarian directives.
+- Distinguish POSSIBLE diagnoses from CONFIRMED indications.
+- Identify genuine red flags when present, but specify what clinical findings would increase or decrease concern.
+- Ask discriminating questions when key differentiating information is missing.
+- Use conditional recommendations where appropriate (e.g., "If [finding] is present, [action] is indicated; in the absence of [features], [alternative] is more likely").
+- Avoid unsupported certainty. Do NOT suppress genuine emergencies when clear red flags are actually documented.
 
-  **Immediate Actions**
-  - 2-4 short bullets (management, recommended investigations)
+WORDING RULES:
+- Avoid categorical or authoritarian language such as "mandatory", "must be ruled out", "definitively indicated", "STAT MRI required", or "emergency consultation required", UNLESS the case explicitly contains findings that justify that level of urgency.
+- Prefer calibrated, conditional wording such as:
+  * "Consider..."
+  * "Clarify whether..."
+  * "If [finding] is present, urgent evaluation would be indicated."
+  * "In the absence of [findings], this diagnosis is less strongly supported."
 
-  **Points to Clarify**
-  - 1-2 short bullets (only if clinical facts like BP, GCS, or pO2 are missing and critical to reasoning)
+RESPONSE STRUCTURE:
+Format your response in the "summary" key using this concise mobile pattern. Use ONLY headings that have genuine clinical relevance. DO NOT show empty sections.
 
+**Key Considerations & Differentials**
+- 2-3 short bullets: potential diagnoses, plausible etiologies, or pertinent red flags under consideration.
+
+**Discriminating Questions & Next Steps**
+- 2-3 short bullets: focused history/examination/bedside checks, and conditional investigations or management.
+
+**Clarifications Needed**
+- 1-2 short bullets: ONLY when critical information is genuinely missing and needed to calibrate urgency. Omit this section entirely if not needed.
+
+FORMATTING & CONSTRAINTS:
 - DO NOT use giant Markdown headings (e.g. # or ##). Use bold text (**) for headings.
-- DO NOT force every heading if there is nothing useful to say. Target total length of 4-8 concise sentences.
+- Keep the response concise and mobile-friendly (target total length of 4-8 concise sentences across bullets).
 - DO NOT repeat the whole dictation or recreate a fake case sheet.
-- DO NOT say "case sheet saved" or acknowledge saving (the system handles this separately).
-- DO NOT state "hemodynamically unstable" or "shock" unless there is actual evidence (e.g. low BP) to support it. Tachycardia alone does not define shock.
-- DO NOT invent missing clinical facts (e.g. CT findings, BP, pO2, age). If unknown, they remain unknown.
-- DO NOT give excessive textbook explanations or disclaimers.
-- Distinguish clearly between treatment already given by the doctor and your suggested management.
-- Your response must strictly contain your formatted text in the "summary" key. You may also populate the "differentials", "watchFor", and "references" arrays with structured insights when clinically useful.
-- Return valid JSON with the following keys: "summary" (your mobile-formatted response), "differentials" (relevant differentials when clinically useful), "watchFor" (relevant red flags/concerns when useful), "references" (relevant references when appropriate).`;
+- DO NOT say "case sheet saved" or acknowledge saving (handled by the system).
+- DO NOT state "hemodynamically unstable" or "shock" unless there is actual objective evidence (e.g. hypotension) to support it.
+- DO NOT invent missing clinical facts. If unknown, they remain unknown.
+- Distinguish clearly between treatment already given by the doctor and your suggested conditional management.
+- All reasoning output is advisory only.
 
-              const sysInstruction = "You are an Emergency Medicine Expert Senior Consultant. Return valid JSON only.";
+JSON OUTPUT:
+Return valid JSON with:
+- "summary": your mobile-formatted response following the structure above.
+- "differentials": array of short string names of relevant differentials when clinically useful.
+- "watchFor": array of relevant red flags/concerns when useful.
+- "references": array of relevant references when appropriate.`;
+
+              const sysInstruction = "You are an Emergency Medicine Clinical Decision Support assistant. Support clinician reasoning collaboratively with calibrated, conditional, and evidence-grounded insights. Return valid JSON only.";
               const sonnetResult = await callClaudeSonnetOnly(prompt, sysInstruction, true);
 
               if (sonnetResult && typeof sonnetResult === "object") {

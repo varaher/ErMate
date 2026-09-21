@@ -119,8 +119,10 @@ export interface CleanedExtractionFields {
   symptoms: string[];
   events: { time: string | null; description: string }[];
   drugs: any[];
+  procedures?: string[];
   plan: string[];
   labs: { name: string; value: string | number | null }[];
+  imaging?: { name: string; value: string | number | null }[];
   fastFindings?: {
     heart?: string | null;
     abdomen?: string | null;
@@ -145,6 +147,98 @@ export interface CleanedExtractionFields {
     anionGap?: string | null;
     type?: string | null;
   };
+}
+
+export function isImagingInvestigation(name: string): boolean {
+  if (!name || typeof name !== "string") return false;
+  const n = name.trim().toLowerCase();
+  return /\b(x-ray|xray|cxr|axr|pxr|radiograph|radiography|ct|cect|hrct|ncct|mri|mra|mrv|usg|ultrasound|sonography|sonogram|fast|efast|echo|echocardiogram|echocardiography|pet-ct|pet ct)\b/i.test(n);
+}
+
+export function isTentativeOrPlannedIntervention(text: string): boolean {
+  if (!text || typeof text !== "string") return false;
+  const t = text.trim().toLowerCase();
+
+  // Planning keywords: plan, planned, plan for, plans for, planning
+  if (/\b(plan\b|planned\b|planning\b|plan\s+for\b|plans\s+for\b)/i.test(t)) return true;
+
+  // Tentative / consideration keywords: consider, considering, consideration, suggested, tentative
+  if (/\b(consider\b|considering\b|consideration\b|suggested\b|tentative\b)/i.test(t)) return true;
+
+  // Potential administration / performance: may give, may administer, may perform, may catheterize, etc.
+  if (/\bmay\s+(?:give|administer|perform|catheterize|insert|apply|start|use)\b/i.test(t)) return true;
+
+  // Conditional clauses: if required, if needed, if indicated, if necessary, if retention, if hypotensive, etc.
+  if (/\bif\s+(?:required|needed|indicated|necessary|persists|worsens|fails|hypotensive|hypotension|retention|pain|fever|oliguria)\b/i.test(t)) return true;
+  if (/\bif\s+[a-z0-9\s]{1,30}?\b(?:persists|worsens|develops|recurs|fails)\b/i.test(t)) return true;
+
+  // As needed / PRN / standby
+  if (/\b(prn\b|as\s+needed\b|sos\b|when\s+needed\b|on\s+demand\b)/i.test(t)) return true;
+
+  // Prospective / not yet done phrasing
+  if (/\bto\s+be\s+(?:given|done|started|administered|inserted|applied|performed|taken|considered)\b/i.test(t)) return true;
+
+  // Prospective procedure orders: for catheterization, for procedure, etc.
+  if (/\bfor\s+(?:catheterization|procedure|suturing|reduction|splinting|intubation)\b/i.test(t)) return true;
+
+  // Standby / readiness
+  if (/\b(standby|keep\s+ready|ready\s+for|awaiting|pending)\b/i.test(t)) return true;
+
+  return false;
+}
+
+export function isProcedureIntervention(text: string): boolean {
+  if (!text || typeof text !== "string") return false;
+  // Safety rule: Tentative or planned procedures must NOT be treated as completed
+  if (isTentativeOrPlannedIntervention(text)) return false;
+
+  const t = text.trim().toLowerCase();
+
+  // Must match explicit procedure terminology
+  const hasProcedureKeyword = /\b(catheterization|catheter|foley|foleys|ng\s+tube|ryles?\s+tube|sutur(?:ing|ed|e)?|irrigat(?:ion|ed)?|splint(?:ing|ed)?|reduction|dressing|intubat(?:ion|ed)|chest\s+tube|icd|cannulat(?:ion|ed))\b/i.test(t);
+  if (!hasProcedureKeyword) return false;
+
+  // Completion must be explicitly documented
+  const hasExplicitCompletion = /\b(done|inserted|placed|sutured|applied|performed|completed|reduced|irrigated|intubated|cannulated|dressing\s+done)\b/i.test(t);
+  return hasExplicitCompletion;
+}
+
+export function isAcuteMedicationIntervention(text: string): boolean {
+  if (!text || typeof text !== "string") return false;
+  // Safety rule: Tentative or planned medications must NOT be treated as completed
+  if (isTentativeOrPlannedIntervention(text)) return false;
+
+  const t = text.trim().toLowerCase();
+
+  // Exclude non-treatment clinical management advice
+  if (/\b(keep npo|nil per oral|consult|review|opinion|admit|transfer|shift to|repeat|monitor|discharge|follow up|advice|prognosis)\b/i.test(t)) {
+    return false;
+  }
+
+  // Must match known acute medication or fluid
+  const hasDrugKeyword = /\b(pantoprazole|ondansetron|fluid|fluids|saline|ringers?|ns\b|rl\b|paracetamol|pcm\b|ceftriaxone|tramadol|fentanyl|morphine|midazolam|propofol|adrenaline|epinephrine|hydrocortisone|deriphyllin|lasix|furosemide|antibiotic|analgesic|antacid|antipyretic)\b/i.test(t);
+  if (!hasDrugKeyword) return false;
+
+  // Administration must be explicit (e.g. given, administered, started, infused, bolus given)
+  // Do NOT infer administration merely because dose/route is present.
+  const hasExplicitAdministration = /\b(given|administered|started|infused|bolus\s+given|injected|pushed)\b/i.test(t);
+  return hasExplicitAdministration;
+}
+
+export function isGenericInvestigationPhrase(text: string): boolean {
+  if (!text || typeof text !== "string") return false;
+  const t = text.trim().toLowerCase();
+  // Detect phrases like "Appropriate investigations were planned based on clinical assessment and duration of fever"
+  // or "routine investigations planned", "investigations planned based on assessment", "appropriate labs planned"
+  if (/\b(appropriate|routine|necessary|indicated|standard|baseline)\s+(investigations?|labs?|blood\s*work|workup|tests?)\b/i.test(t)) {
+    return true;
+  }
+  if (/\b(investigations?|labs?|blood\s*work|workup|tests?)\s+(were\s+)?(planned|advised|deferred|recommended|considered)\s+based\s+on\b/i.test(t)) {
+    return true;
+  }
+  if (/^appropriate\s+investigations\b/i.test(t)) return true;
+  if (/^investigations\s+planned\b/i.test(t)) return true;
+  return false;
 }
 
 /**
@@ -191,29 +285,102 @@ export function cleanExtractionOutput(raw: RawExtractionFields): CleanedExtracti
     }))
     .filter(e => e.description.length > 0);
 
-  // Drugs / Medications — straightforward entity list
+  // Acute Procedures list
+  let rawProcedures: any[] = [];
+  if (Array.isArray(raw.procedures) && raw.procedures.length > 0) {
+    rawProcedures = raw.procedures;
+  } else if (typeof raw.procedures === "string" && raw.procedures.trim().length > 0) {
+    rawProcedures = raw.procedures.split(/;|\n/).map((p: string) => p.trim());
+  }
+  rawProcedures = rawProcedures.filter(p => typeof p === "string" ? !isTentativeOrPlannedIntervention(p) : true);
+
+  // Acute Drugs / Medications — straightforward entity list (ER acute treatments only)
+  // NEVER include outpatient/SAMPLE medications here.
   let drugsArray: any[] = [];
   if (Array.isArray(raw.treatment) && raw.treatment.length > 0) {
     drugsArray = raw.treatment;
   } else if (Array.isArray(raw.treatmentInER) && raw.treatmentInER.length > 0) {
     drugsArray = raw.treatmentInER;
+  } else if (Array.isArray(raw.acuteTreatment) && raw.acuteTreatment.length > 0) {
+    drugsArray = raw.acuteTreatment;
   } else if (Array.isArray(raw.drugs) && raw.drugs.length > 0) {
     drugsArray = raw.drugs;
-  } else if (Array.isArray(raw.medications) && raw.medications.length > 0) {
-    drugsArray = raw.medications;
   } else if (typeof raw.treatment === "string" && raw.treatment.trim().length > 0) {
     drugsArray = raw.treatment.split(/;|\n|,/).map((d: string) => d.trim());
   } else if (typeof raw.treatmentInER === "string" && raw.treatmentInER.trim().length > 0) {
     drugsArray = raw.treatmentInER.split(/;|\n|,/).map((d: string) => d.trim());
+  } else if (typeof raw.acuteTreatment === "string" && raw.acuteTreatment.trim().length > 0) {
+    drugsArray = raw.acuteTreatment.split(/;|\n|,/).map((d: string) => d.trim());
   } else if (typeof raw.drugs === "string" && raw.drugs.trim().length > 0) {
     drugsArray = raw.drugs.split(/;|\n|,/).map((d: string) => d.trim());
-  } else if (typeof raw.medications === "string" && raw.medications.trim().length > 0) {
-    drugsArray = raw.medications.split(/;|\n|,/).map((d: string) => d.trim());
   }
-  
-  const drugs = drugsArray.map(d => {
-    if (typeof d === "string") return d.trim();
+
+  // Plan / Disposition — accept array or single string, normalize
+  const rawPlan: any = raw.plan ?? raw.disposition ?? raw.dispositionAndPlan;
+  let planArray: string[] = [];
+  if (Array.isArray(rawPlan)) {
+    planArray = rawPlan.map(p => typeof p === "string" ? p : JSON.stringify(p));
+  } else if (typeof rawPlan === "string" && rawPlan.trim().length > 0) {
+    planArray = rawPlan.split(/;|\n/).map(p => p.trim());
+  } else if (rawPlan && typeof rawPlan === "object") {
+    if (rawPlan.dispositionStatus) planArray.push(`Disposition: ${rawPlan.dispositionStatus}`);
+    if (rawPlan.followUpAdvice) planArray.push(`Advice: ${rawPlan.followUpAdvice}`);
+  }
+
+  // Scan planArray for acute interventions (procedures, acute medications, imaging, labs)
+  // so they are not left buried solely under Plan, while preserving true narrative plan.
+  const narrativePlanItems: string[] = [];
+  const planInterventionDrugs: string[] = [];
+  const planInterventionProcedures: string[] = [];
+  const planInterventionImaging: string[] = [];
+  const planInterventionLabs: string[] = [];
+
+  for (const item of planArray) {
+    const trimmed = item.trim();
+    if (!trimmed) continue;
+    if (isProcedureIntervention(trimmed)) {
+      planInterventionProcedures.push(trimmed);
+    } else if (isAcuteMedicationIntervention(trimmed)) {
+      planInterventionDrugs.push(trimmed);
+    } else if (isImagingInvestigation(trimmed)) {
+      planInterventionImaging.push(trimmed);
+    } else if (/\b(cbc|rft|lft|abg|vbg|troponin|cardiac enzymes|serum electrolytes|blood sugar|rbs|urine routine)\b/i.test(trimmed) && /\b(sent|ordered|drawn|done|check)\b/i.test(trimmed)) {
+      planInterventionLabs.push(trimmed.replace(/\b(sent|ordered|drawn|done|check)\b/gi, "").trim());
+    } else {
+      narrativePlanItems.push(trimmed);
+    }
+  }
+
+  if (planInterventionProcedures.length > 0) {
+    rawProcedures = [...rawProcedures, ...planInterventionProcedures];
+  }
+  if (planInterventionDrugs.length > 0) {
+    drugsArray = [...drugsArray, ...planInterventionDrugs];
+  }
+
+  // Split compound treatments if present (e.g. fluids along with antipyretic)
+  const expandedDrugsArray: any[] = [];
+  for (const drug of drugsArray) {
+    const str = typeof drug === "string" ? drug : (drug.drugName || drug.name || "");
+    if (/\b(?:oral\s+or\s+iv\s+)?fluids?.*(?:\band\b|\balong\s+with\b|\bwith\b).*antipyretic/i.test(str)) {
+      const fluidPart = str.replace(/(?:\band\b|\balong\s+with\b|\bwith\b).*antipyretic.*$/i, "").trim().replace(/\s+were\s+given\b/i, "");
+      const antipyreticPart = str.replace(/^.*?(?:\band\b|\balong\s+with\b|\bwith\b)\s*/i, "").trim().replace(/\s+treatment\b/i, "");
+      if (fluidPart) expandedDrugsArray.push(fluidPart);
+      if (antipyreticPart) expandedDrugsArray.push(antipyreticPart);
+    } else {
+      expandedDrugsArray.push(drug);
+    }
+  }
+
+  const procedures = cleanEntityList(rawProcedures);
+
+  const drugs = expandedDrugsArray.map(d => {
+    if (typeof d === "string") {
+      if (isTentativeOrPlannedIntervention(d)) return null;
+      return d.trim();
+    }
     if (typeof d === "object" && d !== null) {
+      if (isTentativeOrPlannedIntervention(d.drugName || d.name || "")) return null;
       const obj: any = {};
       if (d.drugName) obj.drugName = String(d.drugName).trim();
       else if (d.name) obj.drugName = String(d.name).trim();
@@ -239,20 +406,7 @@ export function cleanExtractionOutput(raw: RawExtractionFields): CleanedExtracti
     return null;
   }).filter(Boolean);
 
-  // Plan / Treatment — accept array or single string, normalize
-  const rawPlan: any = raw.plan ?? raw.disposition ?? raw.dispositionAndPlan;
-  let planArray: string[] = [];
-  if (Array.isArray(rawPlan)) {
-    planArray = rawPlan.map(p => typeof p === "string" ? p : JSON.stringify(p));
-  } else if (typeof rawPlan === "string" && rawPlan.trim().length > 0) {
-    planArray = rawPlan.split(/;|\n/).map(p => p.trim());
-  } else if (rawPlan && typeof rawPlan === "object") {
-    if (rawPlan.dispositionStatus) planArray.push(`Disposition: ${rawPlan.dispositionStatus}`);
-    if (rawPlan.followUpAdvice) planArray.push(`Advice: ${rawPlan.followUpAdvice}`);
-  }
-  const plan = cleanEntityList(planArray);
-
-  // Labs — clean name only; value is numeric/lab-native, left untouched
+  // Labs & Imaging — strictly separate laboratory investigations from imaging
   let rawLabs: { name: string; value: string | number | null }[] = [];
   const labsField = raw.labs ?? raw.investigationResults ?? raw.investigations ?? raw.investigationFindings?.labs;
   if (Array.isArray(labsField)) {
@@ -264,14 +418,66 @@ export function cleanExtractionOutput(raw: RawExtractionFields): CleanedExtracti
     }));
   }
 
-  const labs = rawLabs
-    .map(l => ({
-      name: stripCarrierPhrases(l.name) || l.name,
-      value: l.value ?? null,
-    }))
-    .filter(l => l.name && l.name.length > 0);
+  // Also include raw.imaging if present
+  let rawImaging: { name: string; value: string | number | null }[] = [];
+  const imagingField = raw.imaging ?? raw.investigationImaging ?? raw.radiology;
+  if (Array.isArray(imagingField)) {
+    rawImaging = imagingField.map(i => typeof i === 'string' ? { name: i, value: null } : i);
+  } else if (typeof imagingField === 'string' && imagingField.trim().length > 0) {
+    rawImaging = imagingField.split(/;|\n|,/).map(i => ({ name: i.trim(), value: null }));
+  }
 
-  const result: CleanedExtractionFields = { symptoms, events, drugs, plan, labs };
+  for (const labText of planInterventionLabs) {
+    const splitLabs = labText.split(/;|,/).map(s => s.trim()).filter(Boolean);
+    for (const sub of splitLabs) {
+      rawLabs.push({ name: sub, value: null });
+    }
+  }
+
+  for (const imgText of planInterventionImaging) {
+    const cleanImg = imgText.replace(/\b(ordered|done|taken|sent)\b/gi, "").trim();
+    if (cleanImg) rawImaging.push({ name: cleanImg, value: null });
+  }
+
+  const cleanedLabs: { name: string; value: string | number | null }[] = [];
+  const cleanedImaging: { name: string; value: string | number | null }[] = [];
+
+  for (const item of rawLabs) {
+    const cleanedName = stripCarrierPhrases(item.name) || item.name;
+    if (!cleanedName || cleanedName.trim().length === 0) continue;
+    if (isGenericInvestigationPhrase(cleanedName)) {
+      narrativePlanItems.push(cleanedName.trim());
+      continue;
+    }
+    const entry = { name: cleanedName.trim(), value: item.value ?? null };
+    if (isImagingInvestigation(entry.name)) {
+      cleanedImaging.push(entry);
+    } else {
+      cleanedLabs.push(entry);
+    }
+  }
+
+  for (const item of rawImaging) {
+    const cleanedName = stripCarrierPhrases(item.name) || item.name;
+    if (!cleanedName || cleanedName.trim().length === 0) continue;
+    if (isGenericInvestigationPhrase(cleanedName)) {
+      narrativePlanItems.push(cleanedName.trim());
+      continue;
+    }
+    cleanedImaging.push({ name: cleanedName.trim(), value: item.value ?? null });
+  }
+
+  const plan = cleanEntityList(narrativePlanItems);
+
+  // Deduplicate investigations by name
+  const labs = cleanedLabs.filter((item, index, self) =>
+    index === self.findIndex(t => t.name.toLowerCase() === item.name.toLowerCase())
+  );
+  const imaging = cleanedImaging.filter((item, index, self) =>
+    index === self.findIndex(t => t.name.toLowerCase() === item.name.toLowerCase())
+  );
+
+  const result: CleanedExtractionFields = { symptoms, events, drugs, procedures, plan, labs, imaging };
 
   // Preserve safe dictation fields strictly without guessing
   if (raw.fastFindings && typeof raw.fastFindings === 'object') {

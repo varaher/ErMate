@@ -34,6 +34,12 @@ import {
   doc,
   runTransaction,
   type Unsubscribe,
+  setDoc,
+  updateDoc,
+  getDoc,
+  getDocs,
+  where,
+  limit,
 } from "firebase/firestore";
 import { db, auth } from "../firebase";
 import type { ScribeChatMessage } from "../../server/scribeChatTurn";
@@ -97,14 +103,20 @@ export function subscribeChatHistory(
 export async function appendChatMessage(caseId: string, message: ScribeChatMessage): Promise<void> {
   if (!caseId) return;
   try {
-    const messagesRef = collection(db, "cases", caseId, "scribeChatMessages");
-    // Firestore addDoc throws on undefined values. Strip them out.
     const cleanMessage = JSON.parse(JSON.stringify(message));
-
-    await addDoc(messagesRef, {
-      ...cleanMessage,
-      serverTimestamp: serverTimestamp(),
-    });
+    if (message.id) {
+      const messageDocRef = doc(db, "cases", caseId, "scribeChatMessages", message.id);
+      await setDoc(messageDocRef, {
+        ...cleanMessage,
+        serverTimestamp: serverTimestamp(),
+      }, { merge: true });
+    } else {
+      const messagesRef = collection(db, "cases", caseId, "scribeChatMessages");
+      await addDoc(messagesRef, {
+        ...cleanMessage,
+        serverTimestamp: serverTimestamp(),
+      });
+    }
   } catch (err) {
     console.warn(`[appendChatMessage] Error writing chat message for case ${caseId}:`, err);
   }
@@ -120,12 +132,29 @@ export function generateNewCaseId(): string {
   return "C-" + Math.floor(1000 + Math.random() * 9000);
 }
 
-import { updateDoc, getDoc, setDoc } from "firebase/firestore";
 export async function updateChatMessage(caseId: string, messageId: string, updates: Partial<ScribeChatMessage>): Promise<void> {
   if (!caseId || !messageId) return;
   try {
     const messageRef = doc(db, "cases", caseId, "scribeChatMessages", messageId);
-    await updateDoc(messageRef, updates);
+    const snap = await getDoc(messageRef);
+    if (snap.exists()) {
+      await updateDoc(messageRef, updates);
+      return;
+    }
+
+    // LEGACY MESSAGE COMPATIBILITY:
+    // If messageId was not stored as the Firestore document ID (e.g. legacy addDoc with auto-ID),
+    // fallback to locating the existing message whose stored id == messageId and update that doc.
+    const messagesRef = collection(db, "cases", caseId, "scribeChatMessages");
+    const q = query(messagesRef, where("id", "==", messageId), limit(1));
+    const querySnap = await getDocs(q);
+    if (!querySnap.empty) {
+      const legacyDoc = querySnap.docs[0];
+      await updateDoc(legacyDoc.ref, updates);
+      return;
+    }
+
+    console.warn(`[updateChatMessage] Message ${messageId} not found in case ${caseId}`);
   } catch (err) {
     console.warn(`[updateChatMessage] Error updating message ${messageId} for case ${caseId}:`, err);
   }

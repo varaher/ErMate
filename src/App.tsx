@@ -48,6 +48,7 @@ import { MlcCertificatesView } from "./components/MlcCertificatesView";
 import PWABadge from "./components/PWABadge";
 import { APP_VERSION, CHANGELOG } from "./changelog";
 import { HeaderUpdateButton } from "./hooks/useAppUpdate";
+import { updateChatMessage, appendChatMessage } from "./services/scribeChatStorage";
 
 import { auth, db, handleFirestoreError, OperationType } from "./firebase";
 import { sanitizeForFirestore } from "./utils/firestoreSanitizer";
@@ -459,6 +460,11 @@ useEffect(() => {
   const [showPocketMirror, setShowPocketMirror] = useState<boolean>(false);
   const [showQuickDischarge, setShowQuickDischarge] = useState<boolean>(false);
   const [quickDischargeCase, setQuickDischargeCase] = useState<ClinicalCase | null>(null);
+  
+  // Preview Case Sheet State (in-memory review before Firestore write)
+  const [previewCase, setPreviewCase] = useState<ClinicalCase | null>(null);
+  const [isPreviewMode, setIsPreviewMode] = useState<boolean>(false);
+  const [pendingPreviewContext, setPendingPreviewContext] = useState<{ msgId?: string; caseId: string } | null>(null);
   
   // Theme state
   const [isDarkMode, setIsDarkMode] = useState<boolean>(() => {
@@ -1715,45 +1721,45 @@ useEffect(() => {
     setShowDischargeSummaryId(null);
   };
 
-  const handleSaveExtractedVoiceCase = async (
-    extracted: any, 
-    options?: { autoNavigate?: boolean; existingCaseId?: string | null }
-  ): Promise<string> => {
-    const shouldNavigate = options?.autoNavigate !== false;
-    const existingId = options?.existingCaseId;
-    const newCaseId = existingId || ("C-" + Math.floor(1000 + Math.random() * 9000));
-    const existingMatch = cases.find(c => c.id === newCaseId);
-    
-    let workspaceMetadata: any = {};
-    if (!existingMatch) {
-      if (!auth.currentUser) throw new Error("Not authenticated");
-      const workspace = await resolveWorkspaceForUser(auth.currentUser.uid);
-      workspaceMetadata = {
-        workspaceType: workspace.workspaceType,
-        ownerUid: workspace.ownerUid,
-        hospitalId: workspace.hospitalId,
-      };
+  /**
+   * Pure in-memory helper to merge extracted clinical data into a ClinicalCase draft.
+   * Performs ZERO Firestore writes or external mutations.
+   */
+  const buildExtractedCaseDraft = (
+    existingMatch: ClinicalCase | null,
+    extracted: any,
+    context?: {
+      caseId?: string;
+      workspaceMetadata?: any;
+      profile?: any;
+      currentUser?: any;
+      teamMembers?: any[];
     }
-    
+  ): ClinicalCase => {
+    const newCaseId = context?.caseId || existingMatch?.id || ("C-" + Math.floor(1000 + Math.random() * 9000));
+    const workspaceMetadata = context?.workspaceMetadata || {};
+    const prof = context?.profile || profile || {};
+    const user = context?.currentUser || auth.currentUser;
+    const members = context?.teamMembers || teamMembers || [];
+
     // Calculate shift and creation context fields dynamically
     const todayDateStr = new Date().toISOString().split('T')[0];
     const todayDateCompact = todayDateStr.replace(/-/g, '');
-    const currentUserMember = teamMembers.find(
-      m => (m.email || "").toLowerCase().trim() === (profile.email || "").toLowerCase().trim()
+    const currentUserMember = members.find(
+      (m: any) => (m.email || "").toLowerCase().trim() === (prof.email || "").toLowerCase().trim()
     );
     const activeUserShiftId = currentUserMember?.shift || "morning";
     const activeShiftName = activeUserShiftId.charAt(0).toUpperCase() + activeUserShiftId.slice(1);
     const computedShiftId = `shift_${activeUserShiftId}_${todayDateCompact}`;
     
-    const consultantOnShift = teamMembers.find(
-      m => ((m.role || "").toLowerCase().includes("consultant") || (m.role || "").toLowerCase().includes("hod") || (m.role || "").toLowerCase().includes("lead")) && m.shift === activeUserShiftId
+    const consultantOnShift = members.find(
+      (m: any) => ((m.role || "").toLowerCase().includes("consultant") || (m.role || "").toLowerCase().includes("hod") || (m.role || "").toLowerCase().includes("lead")) && m.shift === activeUserShiftId
     );
     const consultantId = consultantOnShift ? consultantOnShift.id : "uid_nirmal";
     const consultantName = consultantOnShift ? consultantOnShift.name || "Dr. Nirmal" : "Dr. Nirmal";
-    const createdByUid = auth.currentUser?.uid || "uid_priya";
-    const createdByRoleVal = (profile.role || "").toLowerCase().includes("hod") ? "hod" : ((profile.role || "").toLowerCase().includes("consultant") ? "consultant" : "resident");
-    const hospitalSlug = (profile.hospital || "general-er").trim().toLowerCase().replace(/[^a-z0-9]/g, "-");
-
+    const createdByUid = user?.uid || "uid_priya";
+    const createdByRoleVal = (prof.role || "").toLowerCase().includes("hod") ? "hod" : ((prof.role || "").toLowerCase().includes("consultant") ? "consultant" : "resident");
+    const hospitalSlug = (prof.hospital || "general-er").trim().toLowerCase().replace(/[^a-z0-9]/g, "-");
 
     // Robust parsing helpers to completely prevent NaN values in Firestore
     const parsedAge = (extracted.age !== null && extracted.age !== undefined && String(extracted.age).trim() !== "") ? Number(extracted.age) : null;
@@ -1784,7 +1790,7 @@ useEffect(() => {
     const systolicVal = safeParseInt(bpParts[0], 120);
     const diastolicVal = safeParseInt(bpParts[1], 80);
 
-    const rawDocName = profile.name || auth.currentUser?.displayName || (profile.email ? profile.email.split("@")[0] : "Doctor");
+    const rawDocName = prof.name || user?.displayName || (prof.email ? prof.email.split("@")[0] : "Doctor");
     const docFormattedName = rawDocName.startsWith("Dr. ") ? rawDocName : "Dr. " + rawDocName;
 
     const newCase: ClinicalCase = {
@@ -1793,7 +1799,7 @@ useEffect(() => {
       ownerUid: existingMatch?.ownerUid || workspaceMetadata.ownerUid || null,
       hospitalId: existingMatch?.hospitalId || workspaceMetadata.hospitalId || null,
       createdBy: existingMatch?.createdBy || createdByUid,
-      createdByUid: existingMatch ? existingMatch.createdByUid : auth.currentUser?.uid,
+      createdByUid: existingMatch ? existingMatch.createdByUid : user?.uid,
       createdByName: existingMatch?.createdByName || docFormattedName,
       createdByRole: existingMatch?.createdByRole || createdByRoleVal,
       shiftId: existingMatch?.shiftId || computedShiftId,
@@ -1807,7 +1813,7 @@ useEffect(() => {
         name: extracted.patientName || existingMatch?.patient.name || "",
         age: resolvedAge,
         gender: extracted.gender || existingMatch?.patient.gender || "",
-      presentingComplaint: extracted.presentingComplaint || existingMatch?.patient.presentingComplaint || "Not documented",
+        presentingComplaint: extracted.presentingComplaint || existingMatch?.patient.presentingComplaint || "Not documented",
         triageCategory: extracted.triageCategory || existingMatch?.patient.triageCategory || undefined,
         arrivalMode: extracted.arrivalMode || existingMatch?.patient.arrivalMode || undefined,
         dateOpened: existingMatch?.patient.dateOpened || (new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + " | " + new Date().toLocaleDateString([], { month: 'short', day: 'numeric' })),
@@ -1840,7 +1846,13 @@ useEffect(() => {
       sampleHistory: {
         symptoms: extracted.sampleHistory?.symptoms || (Array.isArray(extracted.symptoms) ? extracted.symptoms.join(", ") : extracted.symptoms) || existingMatch?.sampleHistory.symptoms || "",
         allergies: extracted.sampleHistory?.allergies || extracted.allergies || existingMatch?.sampleHistory.allergies || "",
-       medications: extracted.sampleHistory?.medications || extracted.currentMedications || extracted.medications || existingMatch?.sampleHistory.medications || "",  pastHistory: extracted.sampleHistory?.pastHistory || extracted.pastMedicalHistory || extracted.pastHistory || existingMatch?.sampleHistory.pastHistory || "",
+        medications: (() => {
+          const rawM = extracted.sampleHistory?.medications ?? extracted.currentMedications ?? extracted.medications ?? existingMatch?.sampleHistory.medications;
+          if (Array.isArray(rawM)) return rawM.map((m: any) => typeof m === 'string' ? m : (m?.drugName || m?.name || "")).filter(Boolean).join(", ");
+          if (typeof rawM === 'string') return rawM;
+          return "";
+        })(),
+        pastHistory: extracted.sampleHistory?.pastHistory || extracted.pastMedicalHistory || extracted.pastHistory || existingMatch?.sampleHistory.pastHistory || "",
         lastMeal: extracted.sampleHistory?.lastMeal || extracted.lastMeal || existingMatch?.sampleHistory.lastMeal || "",
         events: extracted.sampleHistory?.events || extracted.events || existingMatch?.sampleHistory.events || "",
         socialHistory: extracted.sampleHistory?.socialHistory || extracted.socialHistory || existingMatch?.sampleHistory?.socialHistory || "",
@@ -1861,17 +1873,28 @@ useEffect(() => {
         exposure: extracted.primaryAssessment?.exposure || extracted.exposure || existingMatch?.primaryAssessment.exposure || "",
         exposureStatus: extracted.primaryAssessment?.exposureStatus || extracted.exposureStatus || existingMatch?.primaryAssessment.exposureStatus || ""
       },
-      secondaryAssessment: extracted.secondaryAssessment || (extracted.secondarySurvey ? Object.entries(extracted.secondarySurvey).map(([k,v]) => `${k.toUpperCase()}: ${v}`).join("\n") : null) || existingMatch?.secondaryAssessment || "",
+      secondaryAssessment: extracted.secondaryAssessment || (extracted.secondarySurvey ? Object.entries(extracted.secondarySurvey).map(([k,v]) => {
+        const kUp = k.toUpperCase();
+        const normK = kUp === "RESPIRATORY" ? "RS" : kUp === "ABDOMEN" ? "PA" : kUp;
+        return `${normK}: ${v}`;
+      }).join("\n") : null) || existingMatch?.secondaryAssessment || "",
       secondarySurvey: extracted.secondarySurvey || existingMatch?.secondarySurvey || undefined,
       investigations: extracted.investigations || (extracted.labs ? extracted.labs.map((l: any, i: number) => ({ id: `inv-${Date.now()}-${i}`, testName: l.name || l, result: l.value || "Ordered", orderTime: new Date().toLocaleTimeString(), resultTime: "Pending", isAbnormal: false })) : null) || existingMatch?.investigations || [],
+      investigationImaging: extracted.investigationImaging || (extracted.imaging ? (Array.isArray(extracted.imaging) ? extracted.imaging.map((i: any) => typeof i === 'string' ? i : (i.value ? `${i.name}: ${i.value}` : i.name)).join(", ") : extracted.imaging) : "") || existingMatch?.investigationImaging || "",
+      investigationLabsOrdered: extracted.investigationLabsOrdered || (extracted.labs ? (Array.isArray(extracted.labs) ? extracted.labs.map((l: any) => typeof l === 'string' ? l : (l.value ? `${l.name}: ${l.value}` : l.name)).join(", ") : extracted.labs) : "") || existingMatch?.investigationLabsOrdered || "",
       treatments: (extracted.treatments ? extracted.treatments.map((t: any) => ({ ...t, provenance: t.provenance || "scribe" })) : null) || (extracted.treatmentGiven ? extracted.treatmentGiven.map((t: any, i: number) => ({ id: `trt-${Date.now()}-${i}`, drugName: typeof t === 'string' ? t : (t.drugName || t.name || ""), dose: typeof t === 'string' ? "" : (t.dose || ""), route: typeof t === 'string' ? "" : (t.route || ""), instruction: typeof t === 'string' ? "" : (t.instruction || ""), timeGiven: typeof t === 'string' ? "" : (t.timeGiven || ""), ipsgVerified: false, provenance: "scribe" as const })) : null) || existingMatch?.treatments || [],
       treatmentNotes: extracted.treatmentNotes || existingMatch?.treatmentNotes || undefined,
-      progressNotes: extracted.progressNotes || (extracted.chronologicalNotes ? extracted.chronologicalNotes.map((n: any) => n.entry).join("\n") : null) || existingMatch?.progressNotes || "Case created via ErMate Voice Scribe dictation.",
-      dispositionAndPlan: existingMatch?.dispositionAndPlan || { consultsRequested: extracted.consultations || [], managementPlan: extracted.plan || "" },
-     dischargeInfo: null,
-differentials: extracted.differentialDiagnosis
-  ? [{ diagnosis: extracted.differentialDiagnosis, status: "POSSIBLE" as const, reasoning: "", citations: [], nextSteps: [] }]
-  : (existingMatch?.differentials || []),
+      proceduresChecked: extracted.proceduresChecked || existingMatch?.proceduresChecked || undefined,
+      otherProcedures: extracted.otherProcedures || (Array.isArray(extracted.procedures) ? extracted.procedures.join(", ") : extracted.procedures) || existingMatch?.otherProcedures || undefined,
+      progressNotes: (() => {
+        const direct = extracted.progressNotes || (extracted.chronologicalNotes ? extracted.chronologicalNotes.map((n: any) => n.entry).join("\n") : null) || existingMatch?.progressNotes || "";
+        return direct.trim() === "Case created via ErMate Voice Scribe dictation." ? "" : direct;
+      })(),
+      dispositionAndPlan: existingMatch?.dispositionAndPlan || { consultsRequested: extracted.consultations || [], managementPlan: extracted.managementPlan || (Array.isArray(extracted.plan) ? extracted.plan.join("; ") : (extracted.plan || "")) },
+      dischargeInfo: null,
+      differentials: extracted.differentialDiagnosis
+        ? [{ diagnosis: extracted.differentialDiagnosis, status: "POSSIBLE" as const, reasoning: "", citations: [], nextSteps: [] }]
+        : (existingMatch?.differentials || []),
       isPediatric: resolvedIsPediatric,
       pediatricDetails: extracted.pediatricDetails 
         ? { ...(existingMatch?.pediatricDetails || {}), ...extracted.pediatricDetails } 
@@ -1879,9 +1902,9 @@ differentials: extracted.differentialDiagnosis
       status: "Active",
       savedTime: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       timeSpentMin: 1,
-      doctorEmail: profile.email || auth.currentUser?.email || "",
+      doctorEmail: prof.email || user?.email || "",
       doctorName: docFormattedName,
-      hospital: profile.hospital,
+      hospital: prof.hospital,
       ipsgChecklist: existingMatch?.ipsgChecklist || {
         ipsg1IdentifiersVerified: true,
         ipsg2ReadBackPerformed: false,
@@ -1908,37 +1931,37 @@ differentials: extracted.differentialDiagnosis
         consultantName: consultantName,
         observationNotes: ""
       },
-           adjuncts: {
-  ...(existingMatch?.adjuncts || {}),
-  echoDone: (extracted.echo ? "true" : undefined) || existingMatch?.adjuncts?.echoDone,
-  echoFindings: extracted.echo || existingMatch?.adjuncts?.echoFindings || "",
-  ...(extracted.fastFindings ? (() => {
-    const f = extracted.fastFindings;
-    const parts = [
-      f.heart ? `Heart: ${f.heart}` : null,
-      f.abdomen ? `Abdomen: ${f.abdomen}` : null,
-      f.pelvis ? `Pelvis: ${f.pelvis}` : null,
-    ].filter(Boolean);
-    return parts.length > 0 ? {
-      efastNotes: [existingMatch?.adjuncts?.efastNotes, parts.join(", ")].filter(Boolean).join(" | "),
-    } : {};
-  })() : {}),
-  ...(extracted.vbgAbg?.values?.length > 0 ? {
-    abgStatus: "done",
-    abgSampleType: extracted.vbgAbg.type === "VBG" ? "Venous (VBG)" : "Arterial (ABG)",
-    abgPh: extracted.vbgAbg.values.find((v: any) => v.param === "ph")?.value ?? existingMatch?.adjuncts?.abgPh,
-    abgPco2: extracted.vbgAbg.values.find((v: any) => v.param === "pco2")?.value ?? existingMatch?.adjuncts?.abgPco2,
-    abgHco3: extracted.vbgAbg.values.find((v: any) => v.param === "hco3")?.value ?? existingMatch?.adjuncts?.abgHco3,
-    abgLactate: extracted.vbgAbg.values.find((v: any) => v.param === "lactate")?.value ?? existingMatch?.adjuncts?.abgLactate,
-    abgNa: extracted.vbgAbg.values.find((v: any) => v.param === "na")?.value ?? existingMatch?.adjuncts?.abgNa,
-    abgK: extracted.vbgAbg.values.find((v: any) => v.param === "k")?.value ?? existingMatch?.adjuncts?.abgK,
-    abgCl: extracted.vbgAbg.values.find((v: any) => v.param === "cl")?.value ?? existingMatch?.adjuncts?.abgCl,
-    abgPo2: extracted.vbgAbg.values.find((v: any) => v.param === "po2")?.value ?? existingMatch?.adjuncts?.abgPo2,
-    abgHb: extracted.vbgAbg.values.find((v: any) => v.param === "hb")?.value ?? existingMatch?.adjuncts?.abgHb,
-    abgBe: extracted.vbgAbg.values.find((v: any) => v.param === "be")?.value ?? existingMatch?.adjuncts?.abgBe,
-    abgAnionGap: extracted.vbgAbg.values.find((v: any) => v.param === "anionGap")?.value ?? existingMatch?.adjuncts?.abgAnionGap,
-  } : {}),
-},
+      adjuncts: {
+        ...(existingMatch?.adjuncts || {}),
+        echoDone: (extracted.echo ? "true" : undefined) || existingMatch?.adjuncts?.echoDone,
+        echoFindings: extracted.echo || existingMatch?.adjuncts?.echoFindings || "",
+        ...(extracted.fastFindings ? (() => {
+          const f = extracted.fastFindings;
+          const parts = [
+            f.heart ? `Heart: ${f.heart}` : null,
+            f.abdomen ? `Abdomen: ${f.abdomen}` : null,
+            f.pelvis ? `Pelvis: ${f.pelvis}` : null,
+          ].filter(Boolean);
+          return parts.length > 0 ? {
+            efastNotes: [existingMatch?.adjuncts?.efastNotes, parts.join(", ")].filter(Boolean).join(" | "),
+          } : {};
+        })() : {}),
+        ...(extracted.vbgAbg?.values?.length > 0 ? {
+          abgStatus: "done",
+          abgSampleType: extracted.vbgAbg.type === "VBG" ? "Venous (VBG)" : "Arterial (ABG)",
+          abgPh: extracted.vbgAbg.values.find((v: any) => v.param === "ph")?.value ?? existingMatch?.adjuncts?.abgPh,
+          abgPco2: extracted.vbgAbg.values.find((v: any) => v.param === "pco2")?.value ?? existingMatch?.adjuncts?.abgPco2,
+          abgHco3: extracted.vbgAbg.values.find((v: any) => v.param === "hco3")?.value ?? existingMatch?.adjuncts?.abgHco3,
+          abgLactate: extracted.vbgAbg.values.find((v: any) => v.param === "lactate")?.value ?? existingMatch?.adjuncts?.abgLactate,
+          abgNa: extracted.vbgAbg.values.find((v: any) => v.param === "na")?.value ?? existingMatch?.adjuncts?.abgNa,
+          abgK: extracted.vbgAbg.values.find((v: any) => v.param === "k")?.value ?? existingMatch?.adjuncts?.abgK,
+          abgCl: extracted.vbgAbg.values.find((v: any) => v.param === "cl")?.value ?? existingMatch?.adjuncts?.abgCl,
+          abgPo2: extracted.vbgAbg.values.find((v: any) => v.param === "po2")?.value ?? existingMatch?.adjuncts?.abgPo2,
+          abgHb: extracted.vbgAbg.values.find((v: any) => v.param === "hb")?.value ?? existingMatch?.adjuncts?.abgHb,
+          abgBe: extracted.vbgAbg.values.find((v: any) => v.param === "be")?.value ?? existingMatch?.adjuncts?.abgBe,
+          abgAnionGap: extracted.vbgAbg.values.find((v: any) => v.param === "anionGap")?.value ?? existingMatch?.adjuncts?.abgAnionGap,
+        } : {}),
+      },
       vitalsHistory: existingMatch?.vitalsHistory || [
         {
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
@@ -1952,6 +1975,37 @@ differentials: extracted.differentialDiagnosis
         }
       ]
     };
+
+    return newCase;
+  };
+
+  const handleSaveExtractedVoiceCase = async (
+    extracted: any, 
+    options?: { autoNavigate?: boolean; existingCaseId?: string | null }
+  ): Promise<string> => {
+    const shouldNavigate = options?.autoNavigate !== false;
+    const existingId = options?.existingCaseId;
+    const newCaseId = existingId || ("C-" + Math.floor(1000 + Math.random() * 9000));
+    const existingMatch = cases.find(c => c.id === newCaseId);
+    
+    let workspaceMetadata: any = {};
+    if (!existingMatch) {
+      if (!auth.currentUser) throw new Error("Not authenticated");
+      const workspace = await resolveWorkspaceForUser(auth.currentUser.uid);
+      workspaceMetadata = {
+        workspaceType: workspace.workspaceType,
+        ownerUid: workspace.ownerUid,
+        hospitalId: workspace.hospitalId,
+      };
+    }
+
+    const newCase = buildExtractedCaseDraft(existingMatch || null, extracted, {
+      caseId: newCaseId,
+      workspaceMetadata,
+      profile,
+      currentUser: auth.currentUser,
+      teamMembers,
+    });
 
     try {
       const cleanCase = sanitizeForFirestore(newCase);
@@ -2000,6 +2054,168 @@ differentials: extracted.differentialDiagnosis
 
     checkConsentOnCaseSaved();
     return newCaseId;
+  };
+
+  /**
+   * Preview Case Sheet handler:
+   * Merges extracted clinical data into an in-memory draft with ZERO Firestore writes.
+   * Directs clinician into CaseSheetView in preview mode.
+   */
+  const handlePreviewCaseSheet = async (
+    extracted: any, 
+    options?: { existingCaseId?: string | null; msgId?: string }
+  ) => {
+    const existingId = options?.existingCaseId || voiceScribeCaseId || ("C-" + Math.floor(1000 + Math.random() * 9000));
+    const existingMatch = cases.find(c => c.id === existingId) || null;
+
+    let workspaceMetadata: any = {};
+    if (!existingMatch && auth.currentUser) {
+      try {
+        const workspace = await resolveWorkspaceForUser(auth.currentUser.uid);
+        workspaceMetadata = {
+          workspaceType: workspace.workspaceType,
+          ownerUid: workspace.ownerUid,
+          hospitalId: workspace.hospitalId,
+        };
+      } catch (e) {
+        console.warn("Could not resolve workspace for preview:", e);
+      }
+    } else if (existingMatch) {
+      workspaceMetadata = {
+        workspaceType: existingMatch.workspaceType,
+        ownerUid: existingMatch.ownerUid,
+        hospitalId: existingMatch.hospitalId,
+      };
+    }
+
+    const draftCase = buildExtractedCaseDraft(existingMatch, extracted, {
+      caseId: existingId,
+      workspaceMetadata,
+      profile,
+      currentUser: auth.currentUser,
+      teamMembers,
+    });
+
+    if (options?.msgId) {
+      setPendingPreviewContext({ msgId: options.msgId, caseId: existingId });
+    } else {
+      setPendingPreviewContext(null);
+    }
+
+    setPreviewCase(draftCase);
+    setIsPreviewMode(true);
+    setSelectedCaseId(existingId);
+    setShowVoiceScribeChat(false);
+  };
+
+  /**
+   * Apply Preview Case Sheet handler:
+   * Clinician reviewed the preview (and optionally made in-memory modifications).
+   * Persists reviewed draft using the canonical authenticated Firestore path.
+   * Updates scribe chat status only upon successful persistence.
+   */
+  const handleApplyPreviewCase = async (reviewedCase: ClinicalCase): Promise<void> => {
+    if (!auth.currentUser) {
+      triggerNotification("Authentication Required", "Please sign in to save this case.", "warning");
+      throw new Error("Not authenticated");
+    }
+
+    try {
+      const cleanCase = sanitizeForFirestore(reviewedCase);
+      await setDoc(doc(db, "cases", reviewedCase.id), cleanCase, { merge: true });
+      if (reviewedCase.departmentId) {
+        try {
+          await setDoc(doc(db, "departments", reviewedCase.departmentId, "cases", reviewedCase.id), cleanCase, { merge: true });
+        } catch (deptErr) {
+          console.warn("Secondary department index write failed (primary case was persisted):", deptErr);
+        }
+      }
+    } catch (err: any) {
+      console.error("Error saving preview case:", err);
+      if (!err?.message?.includes("offline") && !err?.message?.includes("unavailable")) {
+        handleFirestoreError(err, OperationType.WRITE, "cases");
+      }
+      triggerNotification("Save Failed", "Unable to save this case. Please try again.", "warning");
+      throw err;
+    }
+
+    // Update in-memory cases list
+    setCases(prev => {
+      const idx = prev.findIndex(c => c.id === reviewedCase.id);
+      if (idx >= 0) {
+        const copy = [...prev];
+        copy[idx] = reviewedCase;
+        return copy;
+      }
+      return [reviewedCase, ...prev];
+    });
+
+    // Update scribe chat message if we have pending context
+    const targetMsgId = pendingPreviewContext?.msgId;
+    if (targetMsgId && reviewedCase.id) {
+      try {
+        await updateChatMessage(reviewedCase.id, targetMsgId, { extractionApplied: true });
+        const confId = `${targetMsgId}-case-sheet-prepared`;
+        const confirmationMsg = {
+          id: confId,
+          role: "assistant" as const,
+          type: "text" as const,
+          content: "✅ Case Sheet prepared successfully.",
+          timestamp: new Date().toISOString(),
+        };
+        await appendChatMessage(reviewedCase.id, confirmationMsg);
+
+        // Also update local scribeMessages state
+        setScribeMessages(prev => {
+          const updated = prev.map(m => m.id === targetMsgId ? { ...m, extractionApplied: true } : m);
+          const confId = `${targetMsgId}-case-sheet-prepared`;
+          if (!updated.some(m => m.id === confId)) {
+            updated.push({
+              id: confId,
+              sender: "ai",
+              text: "✅ Case Sheet prepared successfully.",
+              timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+              mode: "dictation",
+            });
+          }
+          return updated;
+        });
+      } catch (chatErr) {
+        console.warn("Could not update chat message status post-save:", chatErr);
+      }
+    }
+
+    setSavedBanner({
+      visible: true,
+      patientName: reviewedCase.patient.name,
+      caseId: reviewedCase.id
+    });
+
+    // Background logbook sync
+    if (auth.currentUser) {
+      auth.currentUser.getIdToken().then(token => {
+        fetch("/api/logbook/sync-case", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`
+          },
+          body: JSON.stringify({
+            caseData: reviewedCase,
+            sourceType: "active_case"
+          })
+        }).catch(err => console.warn("Background logbook sync error:", err));
+      }).catch(err => console.warn("Failed to get token for logbook sync:", err));
+    }
+
+    triggerNotification("Case Sheet Ready", "Case Sheet prepared successfully.", "success");
+    checkConsentOnCaseSaved();
+
+    // Reset preview states and transition to standard case sheet view
+    setIsPreviewMode(false);
+    setPreviewCase(null);
+    setPendingPreviewContext(null);
+    setSelectedCaseId(reviewedCase.id);
   };
 
   // Accepting Joining Offers (e.g., from share links)
@@ -3481,7 +3697,9 @@ differentials: extracted.differentialDiagnosis
           {/* 2. Full Case Sheet View (Editable Form) */}
           {selectedCaseId && !activeFormMode && !showDischargeSummaryId && (
             (() => {
-              const matched = cases.find(c => c.id === selectedCaseId) || (pendingNewCase?.id === selectedCaseId ? pendingNewCase : null);
+              const matched = (isPreviewMode && previewCase && previewCase.id === selectedCaseId)
+                ? previewCase
+                : (cases.find(c => c.id === selectedCaseId) || (pendingNewCase?.id === selectedCaseId ? pendingNewCase : null));
               if (!matched) return <p>Case not found</p>;
               return (
                 <CaseSheetView
@@ -3490,23 +3708,43 @@ differentials: extracted.differentialDiagnosis
                   onSelectCase={handleSelectCase}
                   onViewPrintSheet={handleViewPrintSheet}
                   onBack={() => {
+                    if (isPreviewMode) {
+                      setIsPreviewMode(false);
+                      setPreviewCase(null);
+                      setPendingPreviewContext(null);
+                      setSelectedCaseId(null);
+                      setShowVoiceScribeChat(true);
+                      return;
+                    }
                     setPendingNewCase(null);
                     setSelectedCaseId(null);
                   }}
                   onSaveCase={handleSaveCase}
                   onNavigateToDischarge={handleNavigateToDischarge}
                   onStartNewTriage={() => {
+                    if (isPreviewMode) {
+                      setIsPreviewMode(false);
+                      setPreviewCase(null);
+                      setPendingPreviewContext(null);
+                    }
                     setActiveFormMode("quick");
                     setSelectedCaseId(null);
                   }}
                   profile={profile}
                   onSaveProfile={handleSaveProfile}
                   onReturnToScribe={() => {
+                    if (isPreviewMode) {
+                      setIsPreviewMode(false);
+                      setPreviewCase(null);
+                      setPendingPreviewContext(null);
+                    }
                     setShowVoiceScribeChat(true);
                     setSelectedCaseId(null);
                   }}
                   hasActiveScribeSession={scribeMessages.length > 1}
                   onDiscussCase={(c) => handleStartVoiceScribe(c.id)}
+                  isPreview={isPreviewMode}
+                  onApplyPreview={handleApplyPreviewCase}
                 />
               );
             })()
@@ -3566,8 +3804,12 @@ differentials: extracted.differentialDiagnosis
               onOpenCaseSheet={(cId) => {
                 setShowVoiceScribeChat(false);
                 setVoiceScribeDiscussionMode(false);
+                setIsPreviewMode(false);
+                setPreviewCase(null);
+                setPendingPreviewContext(null);
                 setSelectedCaseId(cId);
               }}
+              onPreviewCaseSheet={handlePreviewCaseSheet}
               onSaveExtractedCase={handleSaveExtractedVoiceCase}
               onPrepareDischarge={async (extraction, msgId, chatCaseId) => {
                 const targetCaseId = chatCaseId || voiceScribeCaseId;

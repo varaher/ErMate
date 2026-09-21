@@ -15,8 +15,9 @@ ErMate implements **Local On-The-Fly PHI De-identification** hosted on Indian Cl
    - **Identifiers Removed**: Patient names, hospital UHIDs, MRNs, Aadhaar numbers, phone numbers, consultant names, and hospital facility labels are automatically detected and masked (`[PATIENT]`, `[PATIENT-ID]`, `[PHONE]`, `[AADHAAR]`).
    - **Universal Coverage**: Applied across all extraction routes—including Voice Dictation (`server/voiceExtraction.ts`), Case Extractions, Handover Parsing, Discharge Summaries, and Clinical Chats.
    - **Relative Clinical Timeline Conversion**: Absolute calendar dates (e.g., `25/07/2026`, `27/07/2026`) are converted into relative clinical timeline anchors (`[Day 1]`, `[Day 3]`). This preserves vital disease progression context while stripping calendar-based PHI.
-2. **Local Doctor Re-Injection**:
+2. **Local Doctor Re-Injection & Clinician Attribution Preservation**:
    - The AI model never sees doctor identities. The treating physician name (`Dr. Name`) is securely attached locally post-extraction via the logged-in user profile (`currentUser.displayName`).
+   - For explicitly role-attributed internal emergency clinicians (e.g., `"EM Resident Dr Joshua"`, `"EM Consultant Dr Christo"`), names are protected with reversible placeholders before de-identification and restored strictly into `emResident` and `emConsultant` attribution fields, with defensive guards preventing `[DOCTOR]` placeholders from overwriting valid data. Free clinical narratives remain 100% de-identified. External referral doctors continue through standard `[DOCTOR]` de-identification.
 3. **PHI Shield Metadata & Transparency**:
    - All extraction API responses return `phiProtected` metadata details (count, categories stripped), which are rendered transparently to the treating doctor via UI banners.
 
@@ -37,7 +38,10 @@ ErMate implements **Local On-The-Fly PHI De-identification** hosted on Indian Cl
 ### 3. Voice & Text Case Sheet Extraction
 - Supports real-time clinical dictation and OCR case sheet capture.
 - Standardizes voice notes into structured EHR fields (Vitals, GCS, Airway status, Disposition, Treatment Plan).
+- **Strict Clinical Semantic Boundaries**: Deterministic semantic normalization prevents Primary Survey Exposure from capturing abdominal, neurological, or hydration findings; automatically re-routes systemic findings to Secondary Survey (PA, CNS, General) and vitals (`c.vitals.temp`), separates conditional hydration statements from acute medication orders, and strictly enforces zero-invention guards for unstated lab tests or drug attributes.
+- **In-Memory Preview Flow**: Clinicians can preview and review the complete extracted Case Sheet with zero database writes before applying changes to the live EHR record.
 - **Canonical Flowsheet & Treatment State Engine**: Unified acute medication and resuscitation flowsheet with explicit Scribe vs. Manual origin tracking, real-time dirty state indicators, and two-step non-destructive item removal with undo.
+- **NABH-Ready Saved Case Sheet View**: High-fidelity adult and pediatric case sheet document view with contextual primary survey vitals, decoupled SAMPLE history, multi-system secondary survey, separated diagnostic imaging vs. laboratory investigations, complete medication orders with infusions and treatment notes, emergency procedures, specialist consultation reviews, dynamic clinician signature blocks, unified adult-pediatric disposition workflows, robust legacy read-fallbacks without data fabrication, and automatic removal of Scribe boilerplate text.
 
 ### 4. Mortality & Morbidity Audit Suite
 - Generates thorough M&M audit reviews formatted according to hospital quality standards.
