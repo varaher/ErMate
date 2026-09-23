@@ -1,12 +1,20 @@
 import React, { useState, useEffect } from "react";
 import { ConfirmModal } from "./shared/ConfirmModal";
 import { ArrowLeft, Sparkles, CheckCircle, Save, RefreshCw, AlertCircle, Printer, ShieldAlert, FileText, Check, AlertTriangle, ListFilter, Copy, Download, ChevronDown, FileCheck, MessageSquare, Trash2 } from "lucide-react";
-import { ClinicalCase, DischargeInfo, UserProfile } from "../types";
+import { ClinicalCase, DischargeInfo, DischargeSummaryStatus, UserProfile } from "../types";
 import VoiceRecorder from "./shared/VoiceRecorder";
 import { triggerPrintWithTip } from "../utils/printWithTip";
 import { BoundChatModal } from "./BoundChatModal";
 import { captureFeedbackCorrection } from "../services/learningClient";
 import { formatDischargeSummaryText, formatDischargeSummaryHtml, DischargeSummaryData, STATUTORY_FOOTER } from "../utils/dischargeSummaryFormat";
+import {
+  deriveInitialCourseInHospital,
+  formatInvestigationsText,
+  formatDischargeMedicationsText,
+  mergeCourseInHospital,
+  mergeInvestigations,
+  mergeDischargeMedications
+} from "../utils/dischargeSyncEngine";
 
 interface DischargeSummaryViewProps {
   currentCase: ClinicalCase;
@@ -42,7 +50,10 @@ export default function DischargeSummaryView({
     currentCase.dischargeInfo?.dischargeDateTime || new Date().toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })
   );
   const [dispositionStatus, setDispositionStatus] = useState<string>(
-    currentCase.dischargeInfo?.dispositionStatus || currentCase.dispositionDetails?.dispositionType || "Discharge"
+    currentCase.dischargeInfo?.dispositionStatus || 
+    (currentCase.dispositionDetails?.dispositionType ? (
+      currentCase.dispositionDetails.dispositionType === "Discharge" ? "Normal Discharge" : currentCase.dispositionDetails.dispositionType
+    ) : "")
   );
   const [isMlc, setIsMlc] = useState(
     currentCase.dischargeInfo?.isMlc || (currentCase.patient.isMlc ? "Yes" : "No")
@@ -207,10 +218,10 @@ export default function DischargeSummaryView({
   };
 
   const [courseInHospital, setCourseInHospital] = useState(
-    _safeCourseInHospital(currentCase.dischargeInfo?.courseInHospital) || currentCase.progressNotes || ""
+    _safeCourseInHospital(currentCase.dischargeInfo?.courseInHospital) || deriveInitialCourseInHospital(currentCase)
   );
   const [investigationsResults, setInvestigationsResults] = useState(
-    currentCase.dischargeInfo?.investigationsResults || (currentCase.investigations && currentCase.investigations.length > 0 ? currentCase.investigations.map(i => `${i.testName}: ${i.result || "Done"}`).join("\n") : "")
+    currentCase.dischargeInfo?.investigationsResults || formatInvestigationsText(currentCase)
   );
   const [primaryDiagnosis, setPrimaryDiagnosis] = useState(
     currentCase.dischargeInfo?.primaryDiagnosis || currentCase.provisionalPrimaryDiagnosis || (currentCase.differentials?.[0]?.diagnosis) || currentCase.patient.presentingComplaint || ""
@@ -227,7 +238,15 @@ export default function DischargeSummaryView({
   };
 
   const [dischargeMedications, setDischargeMedications] = useState(
-    _safeStringFromMixed(currentCase.dischargeInfo?.dischargeMedications) || (currentCase.treatments && currentCase.treatments.length > 0 ? currentCase.treatments.map((t, idx) => `${idx + 1}. ${t.drugName} ${t.dose || ""} (${t.route || ""}) - ${t.timeGiven || "Given in ER"}`).join("\n") : "")
+    _safeStringFromMixed(currentCase.dischargeInfo?.dischargeMedications) || formatDischargeMedicationsText(currentCase)
+  );
+
+  // --- Discharge Summary Status Lifecycle State ---
+  const [summaryStatus, setSummaryStatus] = useState<DischargeSummaryStatus>(
+    currentCase.dischargeInfo?.summaryStatus || (currentCase.dischargeInfo?.primaryDiagnosis ? "PREPARED" : "DRAFT")
+  );
+  const [isManuallyEdited, setIsManuallyEdited] = useState<boolean>(
+    currentCase.dischargeInfo?.summaryStatus === "MANUALLY_EDITED"
   );
 
   // --- Discharge Vitals & Follow-Up ---
@@ -445,8 +464,60 @@ export default function DischargeSummaryView({
     }
   };
 
-  const handleSave = () => {
-  
+  const handleRefreshSummaryFromCase = () => {
+    // 1. Intelligent non-destructive merge of investigations
+    const updatedInvestigations = mergeInvestigations(investigationsResults, currentCase);
+    setInvestigationsResults(updatedInvestigations);
+
+    // 2. Intelligent non-destructive merge of discharge medications
+    const updatedMedications = mergeDischargeMedications(dischargeMedications, currentCase);
+    setDischargeMedications(updatedMedications);
+
+    // 3. Intelligent non-destructive merge of clinical course & hospital notes
+    const updatedCourse = mergeCourseInHospital(courseInHospital, currentCase);
+    setCourseInHospital(updatedCourse);
+
+    // 4. Diagnoses (fill if blank or update if empty)
+    if (currentCase.provisionalPrimaryDiagnosis && !primaryDiagnosis.trim()) {
+      setPrimaryDiagnosis(currentCase.provisionalPrimaryDiagnosis);
+    }
+    if (currentCase.sampleHistory?.pastHistory && !secondaryDiagnosis.trim()) {
+      setSecondaryDiagnosis(currentCase.sampleHistory.pastHistory);
+    }
+
+    // 5. History & examination findings synchronization (fill if blank or empty)
+    if (currentCase.sampleHistory?.pastHistory && !pastMedicalHistory.trim()) {
+      setPastMedicalHistory(currentCase.sampleHistory.pastHistory);
+    }
+    if (currentCase.sampleHistory?.allergies && (!allergies || allergies.length === 0)) {
+      setAllergies(currentCase.sampleHistory.allergies);
+    }
+    if (currentCase.secondarySurvey?.general && !secondaryPicle.trim()) {
+      setSecondaryPicle(currentCase.secondarySurvey.general);
+    }
+    if (currentCase.secondarySurvey?.cvs && !secondaryCvs.trim()) setSecondaryCvs(currentCase.secondarySurvey.cvs);
+    if (currentCase.secondarySurvey?.respiratory && !secondaryChest.trim()) setSecondaryChest(currentCase.secondarySurvey.respiratory);
+    if (currentCase.secondarySurvey?.abdomen && !secondaryPa.trim()) setSecondaryPa(currentCase.secondarySurvey.abdomen);
+    if (currentCase.secondarySurvey?.cns && !secondaryCns.trim()) setSecondaryCns(currentCase.secondarySurvey.cns);
+    if (currentCase.secondarySurvey?.extremities && !secondaryExtremities.trim()) setSecondaryExtremities(currentCase.secondarySurvey.extremities);
+    
+    // 6. Adjuncts / eFAST findings
+    if (currentCase.adjuncts?.efastNotes) {
+      if (!primaryBreathingEfast.trim()) setPrimaryBreathingEfast(currentCase.adjuncts.efastNotes);
+      if (!primaryCirculationFast.trim()) setPrimaryCirculationFast(currentCase.adjuncts.efastNotes);
+    }
+
+    // 7. Clear the out-of-date alert banner
+    if (currentCase.dischargeInfo) {
+      currentCase.dischargeInfo.caseUpdatedAfterPreparation = false;
+    }
+  };
+
+  const handleSave = (statusToSave?: DischargeSummaryStatus) => {
+    // Determine the lifecycle status
+    const effectiveStatus: DischargeSummaryStatus = statusToSave || (isManuallyEdited ? "MANUALLY_EDITED" : (summaryStatus === "FINALIZED" ? "FINALIZED" : "PREPARED"));
+    setSummaryStatus(effectiveStatus);
+
     if (aiDrafted && currentCase?.dischargeInfo) {
       const caseAny = currentCase as any;
       if (currentCase.dischargeInfo.primaryDiagnosis !== primaryDiagnosis) {
@@ -457,6 +528,7 @@ export default function DischargeSummaryView({
       }
     }
 
+    const nowIso = new Date().toISOString();
     const info: DischargeInfo = {
       primaryDiagnosis,
       secondaryDiagnosis,
@@ -471,6 +543,12 @@ export default function DischargeSummaryView({
       emConsultantName,
       uhid,
       broughtBy,
+
+      // Lifecycle status tracking
+      summaryStatus: effectiveStatus,
+      preparedAt: currentCase.dischargeInfo?.preparedAt || nowIso,
+      finalizedAt: effectiveStatus === "FINALIZED" ? (currentCase.dischargeInfo?.finalizedAt || nowIso) : currentCase.dischargeInfo?.finalizedAt,
+      caseUpdatedAfterPreparation: false,
 
       // Extra fields mapped to type
       isMlc,
@@ -558,10 +636,24 @@ export default function DischargeSummaryView({
             <ArrowLeft className="w-5 h-5 text-slate-600 dark:text-slate-400" />
           </button>
           <div>
-            <h1 className="text-xl md:text-2xl font-bold font-display text-slate-900 dark:text-white flex items-center gap-2">
-              <FileText className="w-5 h-5 text-blue-600 animate-pulse" />
-              Discharge Card Scribe
-            </h1>
+            <div className="flex items-center gap-2">
+              <h1 className="text-xl md:text-2xl font-bold font-display text-slate-900 dark:text-white flex items-center gap-2">
+                <FileText className="w-5 h-5 text-blue-600 animate-pulse" />
+                Discharge Card Scribe
+              </h1>
+              {/* Status Badge */}
+              <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider ${
+                summaryStatus === "FINALIZED"
+                  ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800"
+                  : summaryStatus === "MANUALLY_EDITED"
+                  ? "bg-purple-100 text-purple-800 dark:bg-purple-950/40 dark:text-purple-300 border border-purple-300 dark:border-purple-800"
+                  : summaryStatus === "PREPARED"
+                  ? "bg-blue-100 text-blue-800 dark:bg-blue-950/40 dark:text-blue-300 border border-blue-300 dark:border-blue-800"
+                  : "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 border border-slate-300 dark:border-slate-700"
+              }`}>
+                {summaryStatus === "MANUALLY_EDITED" ? "Edited" : summaryStatus}
+              </span>
+            </div>
             <p className="text-xs text-slate-400">
               Generate, audit and print JCI/NABH-compliant emergency discharge summary cards.
             </p>
@@ -670,11 +762,20 @@ export default function DischargeSummaryView({
             Print Case Card
           </button>
           <button
-            onClick={handleSave}
+            onClick={() => handleSave(isManuallyEdited ? "MANUALLY_EDITED" : "PREPARED")}
+            className="px-3 py-2 bg-slate-200 hover:bg-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 shadow-xs"
+            id="save-draft-btn-discharge"
+            title="Save draft and preserve edits"
+          >
+            <Save className="w-3.5 h-3.5" />
+            Save Draft
+          </button>
+          <button
+            onClick={() => handleSave("FINALIZED")}
             className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 shadow-xs"
             id="save-btn-discharge"
           >
-            <Save className="w-4 h-4" />
+            <CheckCircle className="w-4 h-4" />
             Finalize & Save Summary
           </button>
         </div>
@@ -702,6 +803,33 @@ export default function DischargeSummaryView({
           >
             ✕
           </button>
+        </div>
+      )}
+
+      {/* Case Updated After Preparation Banner */}
+      {currentCase.dischargeInfo?.caseUpdatedAfterPreparation && (
+        <div className="bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800/80 p-4 rounded-xl flex flex-wrap items-center justify-between gap-3 text-amber-900 dark:text-amber-200 text-xs font-semibold no-print shadow-xs">
+          <div className="flex items-center gap-2.5">
+            <AlertCircle className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0" />
+            <div>
+              <p className="font-bold text-sm">
+                Case updated after discharge summary {summaryStatus === "FINALIZED" ? "finalization" : "preparation"}
+              </p>
+              <p className="text-amber-700 dark:text-amber-300 text-[11px]">
+                New clinical entries, medications, or investigations were added to the Case Sheet. Click below to review and merge new findings into this summary.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleRefreshSummaryFromCase}
+              className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-lg transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              <span>Review Updates / Refresh Summary</span>
+            </button>
+          </div>
         </div>
       )}
 
@@ -950,13 +1078,21 @@ export default function DischargeSummaryView({
                     <label className="font-bold text-slate-500 uppercase text-[9px]">Disposition Decision</label>
                     <select
                       value={dispositionStatus}
-                      onChange={(e) => setDispositionStatus(e.target.value)}
+                      onChange={(e) => {
+                        if (summaryStatus !== "FINALIZED") setSummaryStatus("MANUALLY_EDITED");
+                        setIsManuallyEdited(true);
+                        setDispositionStatus(e.target.value);
+                      }}
                       className="w-full px-2.5 py-1.5 bg-slate-50 dark:bg-slate-900 border rounded-lg font-bold"
                     >
+                      <option value="">Pending / Not Documented</option>
                       <option value="Normal Discharge">Normal Discharge</option>
                       <option value="Discharge at Request">Discharge at Request</option>
                       <option value="Discharge Against Medical Advice">Discharge Against Medical Advice (DAMA)</option>
                       <option value="Referred">Referred (External Clinic)</option>
+                      {dispositionStatus && !["", "Normal Discharge", "Discharge at Request", "Discharge Against Medical Advice", "Referred"].includes(dispositionStatus) && (
+                        <option value={dispositionStatus}>{dispositionStatus}</option>
+                      )}
                     </select>
                   </div>
                 </div>
@@ -1288,7 +1424,11 @@ export default function DischargeSummaryView({
                   <textarea
                     rows={3}
                     value={courseInHospital}
-                    onChange={(e) => setCourseInHospital(e.target.value)}
+                    onChange={(e) => {
+                      setCourseInHospital(e.target.value);
+                      setIsManuallyEdited(true);
+                      if (summaryStatus !== "FINALIZED") setSummaryStatus("MANUALLY_EDITED");
+                    }}
                     className="w-full px-2.5 py-1.5 bg-slate-50 dark:bg-slate-900 border rounded-lg font-mono text-[11px]"
                   />
                 </div>
@@ -1298,7 +1438,11 @@ export default function DischargeSummaryView({
                   <textarea
                     rows={3}
                     value={investigationsResults}
-                    onChange={(e) => setInvestigationsResults(e.target.value)}
+                    onChange={(e) => {
+                      setInvestigationsResults(e.target.value);
+                      setIsManuallyEdited(true);
+                      if (summaryStatus !== "FINALIZED") setSummaryStatus("MANUALLY_EDITED");
+                    }}
                     className="w-full px-2.5 py-1.5 bg-slate-50 dark:bg-slate-900 border rounded-lg font-mono text-[11px]"
                   />
                 </div>
@@ -1309,7 +1453,11 @@ export default function DischargeSummaryView({
                     <input
                       type="text"
                       value={primaryDiagnosis}
-                      onChange={(e) => setPrimaryDiagnosis(e.target.value)}
+                      onChange={(e) => {
+                        setPrimaryDiagnosis(e.target.value);
+                        setIsManuallyEdited(true);
+                        if (summaryStatus !== "FINALIZED") setSummaryStatus("MANUALLY_EDITED");
+                      }}
                       className="w-full px-2.5 py-1.5 bg-slate-50 dark:bg-slate-900 border rounded-lg font-bold text-blue-600 dark:text-blue-400"
                     />
                   </div>
@@ -1318,7 +1466,11 @@ export default function DischargeSummaryView({
                     <input
                       type="text"
                       value={secondaryDiagnosis}
-                      onChange={(e) => setSecondaryDiagnosis(e.target.value)}
+                      onChange={(e) => {
+                        setSecondaryDiagnosis(e.target.value);
+                        setIsManuallyEdited(true);
+                        if (summaryStatus !== "FINALIZED") setSummaryStatus("MANUALLY_EDITED");
+                      }}
                       className="w-full px-2.5 py-1.5 bg-slate-50 dark:bg-slate-900 border rounded-lg"
                       placeholder="Hypertension, DM2, etc."
                     />
@@ -1330,7 +1482,11 @@ export default function DischargeSummaryView({
                   <textarea
                     rows={4}
                     value={dischargeMedications}
-                    onChange={(e) => setDischargeMedications(e.target.value)}
+                    onChange={(e) => {
+                      setDischargeMedications(e.target.value);
+                      setIsManuallyEdited(true);
+                      if (summaryStatus !== "FINALIZED") setSummaryStatus("MANUALLY_EDITED");
+                    }}
                     className="w-full px-2.5 py-1.5 bg-slate-50 dark:bg-slate-900 border border-emerald-200 rounded-lg font-mono font-bold text-emerald-700 dark:text-emerald-400"
                     placeholder="1. Tab. Drug Name 10mg OD x 5 days"
                   />
@@ -1463,10 +1619,19 @@ export default function DischargeSummaryView({
   <div>{dischargeMedications}</div>
 
   <div className="font-bold mt-4">Disposition:</div>
-  <div>[{dispositionStatus === "Normal Discharge" ? "x" : " "}] Normal Discharge</div>
-  <div>[{dispositionStatus === "Discharge at Request" ? "x" : " "}] Discharge at Request</div>
-  <div>[{dispositionStatus === "Discharge Against Medical Advice" ? "x" : " "}] Discharge Against Medical Advice</div>
-  <div>[{dispositionStatus === "Referred" ? "x" : " "}] Referred</div>
+  {(!dispositionStatus || dispositionStatus === "Pending / Not Documented") ? (
+    <div className="text-slate-500 italic">Pending / Not Documented</div>
+  ) : (
+    <>
+      <div>[{dispositionStatus === "Normal Discharge" ? "x" : " "}] Normal Discharge</div>
+      <div>[{dispositionStatus === "Discharge at Request" ? "x" : " "}] Discharge at Request</div>
+      <div>[{dispositionStatus === "Discharge Against Medical Advice" ? "x" : " "}] Discharge Against Medical Advice</div>
+      <div>[{dispositionStatus === "Referred" ? "x" : " "}] Referred</div>
+      {!["Normal Discharge", "Discharge at Request", "Discharge Against Medical Advice", "Referred"].includes(dispositionStatus) && (
+        <div>[x] {dispositionStatus}</div>
+      )}
+    </>
+  )}
 
   <div className="font-bold mt-4">Condition at time of discharge:(STABLE/UNSTABLE)</div>
   <div>{dischargeCondition}</div>

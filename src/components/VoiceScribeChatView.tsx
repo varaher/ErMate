@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
-import { Send, ArrowLeft, MoreVertical, Paperclip, Sparkles, MessageSquare, Mic as MicIcon } from "lucide-react";
+import { Send, ArrowLeft, MoreVertical, Paperclip, Sparkles, MessageSquare, Mic as MicIcon, Activity } from "lucide-react";
+import { doc, getDoc, setDoc } from "firebase/firestore";
+import { db } from "../firebase";
 import {
   subscribeChatHistory,
   appendChatMessage,
@@ -9,11 +11,17 @@ import {
   subscribeDiscussionHistory,
   appendDiscussionMessage,
   saveDiscussionSummary,
+  getChatHistory,
+  getDiscussionHistory,
 } from "../services/scribeChatStorage";
 import VoiceRecorder from "./shared/VoiceRecorder";
 import Markdown from "react-markdown";
 import { getChecklistForKind, type CaseSheetKind } from "../../server/caseSheetChecklist";
 import { ScribeReasoningRenderer } from "./ScribeReasoningRenderer";
+import { isEstablishedCaseSheet } from "../utils/establishedCaseCheck";
+import { PROCEDURE_DEFINITIONS, ProcedureDefinition } from "../data/procedureDefinitions";
+import { ProcedureNote } from "../types/procedureNotes";
+import { ProcedureNoteFormModal } from "./ProcedureNoteFormModal";
 
 type ChatMode = "dictation" | "discuss";
 
@@ -52,6 +60,8 @@ interface VoiceScribeChatViewProps {
   // App.tsx keeps working unchanged. Only pass "discussion" from a new,
   // not-yet-built entry point that wants a standalone, non-patient chat.
   initialEntryMode?: "case" | "discussion";
+  refreshTrigger?: number;
+  onBusyChange?: (isBusy: boolean) => void;
 }
 
 const LENSES: { id: string; label: string }[] = [
@@ -79,9 +89,23 @@ const LENSES: { id: string; label: string }[] = [
 
 function humanizeFieldLabel(key: string): string {
   if (key === "investigationImaging" || key === "imaging") return "Imaging";
-  if (key === "investigationLabsOrdered") return "Labs Ordered";
-  if (key === "treatmentGiven") return "Treatments";
+  if (key === "investigationLabsOrdered" || key === "labs") return "Labs Ordered";
+  if (key === "treatmentGiven" || key === "treatments") return "Treatments";
   if (key === "otherProcedures" || key === "proceduresChecked") return "Procedures";
+  if (key === "fastFindings" || key === "efastNotes") return "eFAST / POCUS";
+  if (key === "pastMedicalHistory" || key === "pmh" || key === "pastHistory") return "Past Medical History";
+  if (key === "currentMedications" || key === "medications") return "Medications";
+  if (key === "psychologicalAssessment" || key === "psychiatricFlags") return "Psychological Assessment";
+  if (key === "clinicianUpdateText") return "Clinician Update Text";
+  if (key === "events") return "Events";
+  if (key === "lastMeal") return "Last Meal";
+  if (key === "secondarySurvey") return "Secondary Survey";
+  if (key === "bladder") return "Pelvis / Bladder";
+  if (key === "pelvis") return "Pelvis";
+  if (key === "abdomen") return "Abdomen";
+  if (key === "heart") return "Heart / Subxiphoid";
+  if (key === "lungs") return "Lungs / Pleura";
+  if (key === "sampleHistory") return "SAMPLE History";
   return key
     .replace(/([A-Z])/g, " $1")
     .replace(/^./, s => s.toUpperCase())
@@ -119,6 +143,13 @@ function formatExtractionEntryValue(key: string, val: any): string {
       .filter(([, v]) => v !== null && v !== undefined && v !== "")
       .map(([k, v]) => `${humanizeFieldLabel(k)}: ${String(v)}`)
       .join(", ");
+  }
+
+  if (key === "sampleHistory" && val && typeof val === "object") {
+    return Object.entries(val)
+      .filter(([, v]) => v !== null && v !== undefined && v !== "")
+      .map(([k, v]) => `${humanizeFieldLabel(k)}: ${String(v)}`)
+      .join("; ");
   }
 
   if (key === "mlcDetails" && val && typeof val === "object") {
@@ -159,8 +190,27 @@ function formatExtractionEntryValue(key: string, val: any): string {
 
 function getDisplayableExtractionEntries(data: any): [string, any][] {
   if (!data || typeof data !== "object") return [];
-  return Object.entries(data).filter(([key, val]) => {
-    if (key === "isPediatric") return false;
+
+  // Normalize and unpack sampleHistory if present so all fields show consistently
+  const normalizedData = { ...data };
+  if (normalizedData.sampleHistory && typeof normalizedData.sampleHistory === "object") {
+    const sh = normalizedData.sampleHistory;
+    if (sh.allergies && !normalizedData.allergies) normalizedData.allergies = sh.allergies;
+    if (sh.pastHistory && !normalizedData.pastMedicalHistory) normalizedData.pastMedicalHistory = sh.pastHistory;
+    if (sh.medications && !normalizedData.currentMedications) normalizedData.currentMedications = sh.medications;
+    if (sh.psychiatricFlags && !normalizedData.psychologicalAssessment) normalizedData.psychologicalAssessment = sh.psychiatricFlags;
+    if (sh.events && !normalizedData.events) normalizedData.events = sh.events;
+    if (sh.lastMeal && !normalizedData.lastMeal) normalizedData.lastMeal = sh.lastMeal;
+    if (sh.symptoms && !normalizedData.symptoms) normalizedData.symptoms = sh.symptoms;
+    delete normalizedData.sampleHistory;
+  }
+
+  delete normalizedData.isPediatric;
+  delete normalizedData.controlledPatches;
+  delete normalizedData.userConfirmationSummary;
+  delete normalizedData.intent;
+
+  return Object.entries(normalizedData).filter(([key, val]) => {
     if (val === null || val === undefined || val === "") return false;
     if (Array.isArray(val) && val.length === 0) return false;
     if (typeof val === "object" && !Array.isArray(val) && Object.keys(val).length === 0) return false;
@@ -171,6 +221,48 @@ function getDisplayableExtractionEntries(data: any): [string, any][] {
 function hasDisplayableExtraction(data: any): boolean {
   return getDisplayableExtractionEntries(data).length > 0;
 }
+
+export function detectProcedureFromExtraction(data: any): ProcedureDefinition | null {
+  if (!data) return null;
+  const procTexts: string[] = [];
+  if (Array.isArray(data.procedures)) {
+    procTexts.push(...data.procedures.map(String));
+  }
+  if (typeof data.otherProcedures === "string") {
+    procTexts.push(data.otherProcedures);
+  }
+  if (Array.isArray(data.proceduresChecked)) {
+    procTexts.push(...data.proceduresChecked.map(String));
+  }
+
+  const combined = procTexts.join(" ").toLowerCase();
+  if (!combined.trim()) return null;
+
+  if (combined.includes("foley") || combined.includes("catheter") || combined.includes("urinary catheter")) {
+    return PROCEDURE_DEFINITIONS.find(p => p.type === "foley_catheter") || null;
+  }
+  if (combined.includes("ryle") || combined.includes("ng tube") || combined.includes("nasogastric")) {
+    return PROCEDURE_DEFINITIONS.find(p => p.type === "ryles_tube") || null;
+  }
+  if (combined.includes("intubat") || combined.includes("rsi") || combined.includes("endotracheal")) {
+    return PROCEDURE_DEFINITIONS.find(p => p.type === "rsi_intubation") || null;
+  }
+  if (combined.includes("central line") || combined.includes("cvc") || combined.includes("central venous") || combined.includes("ijv") || combined.includes("subclavian")) {
+    return PROCEDURE_DEFINITIONS.find(p => p.type === "central_line") || null;
+  }
+  if (combined.includes("arterial line") || combined.includes("art line") || combined.includes("radial artery") || combined.includes("a-line")) {
+    return PROCEDURE_DEFINITIONS.find(p => p.type === "arterial_line") || null;
+  }
+  if (combined.includes("short arm") || (combined.includes("slab") && (combined.includes("arm") || combined.includes("wrist") || combined.includes("colles") || combined.includes("radius")))) {
+    return PROCEDURE_DEFINITIONS.find(p => p.type === "short_arm_slab") || null;
+  }
+  if (combined.includes("reduction") || combined.includes("manipulat")) {
+    return PROCEDURE_DEFINITIONS.find(p => p.type === "closed_reduction") || null;
+  }
+
+  return null;
+}
+
 function resolveChecklistValue(id: string, data: any): any {
   if (!data) return undefined;
   switch (id) {
@@ -227,17 +319,50 @@ function formatChecklistValue(val: any): string {
 // populated across two separate turns — e.g. HR/SpO2 in the initial
 // dictation, then BP mentioned alongside an age-question reply. This
 // combines nested objects key-by-key instead of replacing them wholesale.
-function deepMergeExtraction(base: any, incoming: any): any {
+export function deepMergeExtraction(base: any, incoming: any): any {
+  if (!base || typeof base !== "object") return incoming ? { ...incoming } : {};
+  if (!incoming || typeof incoming !== "object") return { ...base };
+
   const result = { ...base };
   for (const [key, val] of Object.entries(incoming)) {
     if (val === null || val === undefined || val === "") continue;
     const existing = result[key];
-    if (Array.isArray(val)) {
-      result[key] = Array.isArray(existing) ? [...existing, ...val] : val;
+    if (key === "clinicianUpdates" && Array.isArray(val)) {
+      const existingArr = Array.isArray(existing) ? existing : [];
+      const combined = [...existingArr];
+      for (const item of val) {
+        if (!combined.some(c => c && c.text === item.text)) {
+          combined.push(item);
+        }
+      }
+      result[key] = combined;
+    } else if (Array.isArray(val)) {
+      if (Array.isArray(existing)) {
+        const combined = [...existing];
+        for (const item of val) {
+          if (item && typeof item === "object") {
+            const isDup = combined.some(c => {
+              if (!c || typeof c !== "object") return false;
+              if (c.id && item.id && c.id === item.id) return true;
+              if (c.name && item.name && c.name.toLowerCase() === item.name.toLowerCase()) return true;
+              if (c.diagnosis && item.diagnosis && c.diagnosis.toLowerCase() === item.diagnosis.toLowerCase()) return true;
+              if (c.medication && item.medication && c.medication.toLowerCase() === item.medication.toLowerCase()) return true;
+              if (c.drugName && item.drugName && c.drugName.toLowerCase() === item.drugName.toLowerCase()) return true;
+              return false;
+            });
+            if (!isDup) combined.push(item);
+          } else if (!combined.includes(item)) {
+            combined.push(item);
+          }
+        }
+        result[key] = combined;
+      } else {
+        result[key] = [...val];
+      }
     } else if (typeof val === "object") {
       result[key] = (existing && typeof existing === "object" && !Array.isArray(existing))
         ? deepMergeExtraction(existing, val)
-        : val;
+        : { ...val };
     } else {
       result[key] = val;
     }
@@ -245,17 +370,28 @@ function deepMergeExtraction(base: any, incoming: any): any {
   return result;
 }
 
-function mergeExtractionUpTo(messages: Message[], targetId: string): any {
+/**
+ * Canonical deep-merge helper for UNAPPLIED Scribe extraction turns.
+ * Merges ONLY currently unapplied extraction turns (!msg.extractionApplied).
+ * If targetId is provided, merges unapplied turns up to and including targetId.
+ * Preserves nested objects (vitals, sampleHistory, secondarySurvey, fastFindings, mlcDetails, vbgAbg)
+ * without shallow-replacing them.
+ */
+export function getMergedUnappliedExtraction(messages: Message[], targetId?: string): any {
   let merged: any = {};
   for (const msg of messages) {
-    if (msg.extractionData) {
+    if (msg.extractionData && !msg.extractionApplied) {
       merged = deepMergeExtraction(merged, msg.extractionData);
     }
-    if (msg.id === targetId) {
+    if (targetId && msg.id === targetId) {
       break;
     }
   }
   return merged;
+}
+
+export function mergeExtractionUpTo(messages: Message[], targetId: string): any {
+  return getMergedUnappliedExtraction(messages, targetId);
 }
 export default function VoiceScribeChatView({
   caseId: propCaseId,
@@ -271,6 +407,8 @@ export default function VoiceScribeChatView({
   messages: propMessages,
   onUpdateMessages,
   initialEntryMode = "case",
+  refreshTrigger,
+  onBusyChange,
 }: VoiceScribeChatViewProps) {
   const processingActionRef = useRef(false);
   // A chat is "case-linked" if either a real caseId was passed in, OR
@@ -294,6 +432,35 @@ export default function VoiceScribeChatView({
   const [saveConfirmation, setSaveConfirmation] = useState<{ type: "case" | "discharge" } | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [processingAction, setProcessingAction] = useState<{messageId: string, type: 'caseSheet' | 'discharge'} | null>(null);
+  const [procedureModalState, setProcedureModalState] = useState<{
+    isOpen: boolean;
+    procDef: ProcedureDefinition;
+    initialPrefill?: any;
+    messageId?: string;
+  } | null>(null);
+
+  const handleSaveDetectedProcedure = async (newNote: ProcedureNote) => {
+    if (!activeCaseId) return;
+    try {
+      const caseRef = doc(db, "cases", activeCaseId);
+      const caseSnap = await getDoc(caseRef);
+      const existingData = caseSnap.exists() ? caseSnap.data() : null;
+      const existingProcs: ProcedureNote[] = Array.isArray(existingData?.procedureNotes)
+        ? existingData.procedureNotes
+        : Array.isArray(caseData?.procedureNotes)
+          ? caseData.procedureNotes
+          : [];
+      const updatedProcs = [...existingProcs.filter((p: ProcedureNote) => p.id !== newNote.id), newNote];
+      await setDoc(caseRef, { procedureNotes: updatedProcs }, { merge: true });
+      if (onCaseSheetUpdated) {
+        onCaseSheetUpdated({ procedureNotes: updatedProcs });
+      }
+      setProcedureModalState(null);
+    } catch (err) {
+      console.error("Failed to save procedure note from Scribe:", err);
+      setSaveError("Failed to save procedure note.");
+    }
+  };
 
   // Mode: dictation is only meaningful when there's a real case to write
   // into. A discussion-only session (no linked patient) has nothing to
@@ -305,10 +472,17 @@ export default function VoiceScribeChatView({
   // (existing behavior, unchanged). For discussion-only chats, this
   // starts null and is lazily filled in with a Dis-YYYYMMDD-### id
   // once generated (async, since it involves a Firestore transaction).
-  const [activeCaseId] = useState<string | null>(() => {
+  const [activeCaseId, setActiveCaseId] = useState<string | null>(() => {
     if (isDiscussionOnly) return null;
-    return propCaseId || generateNewCaseId();
+    return propCaseId || caseData?.id || generateNewCaseId();
   });
+
+  useEffect(() => {
+    const target = propCaseId || caseData?.id;
+    if (target && target !== activeCaseId) {
+      setActiveCaseId(target);
+    }
+  }, [propCaseId, caseData?.id]);
   const [discussionId, setDiscussionId] = useState<string | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -378,6 +552,62 @@ export default function VoiceScribeChatView({
       return () => unsubscribe();
     }
   }, [isDiscussionOnly, discussionId, activeCaseId]);
+
+  // Report busy state to parent for refresh button safety
+  useEffect(() => {
+    onBusyChange?.(isSending);
+  }, [isSending, onBusyChange]);
+
+  // Handle explicit manual refresh trigger from Global Refresh button
+  useEffect(() => {
+    if (!refreshTrigger) return;
+    let isMounted = true;
+
+    async function loadFreshChat() {
+      try {
+        if (isDiscussionOnly && discussionId) {
+          const history = await getDiscussionHistory(discussionId);
+          if (isMounted && history && history.length > 0) {
+            setMessages(
+              history.map((h: any) => ({
+                id: h.id,
+                sender: h.role === "user" ? "user" : "ai",
+                text: h.content,
+                timestamp: new Date(h.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+                mode: "discuss",
+              }))
+            );
+          }
+        } else if (activeCaseId) {
+          const history = await getChatHistory(activeCaseId);
+          if (isMounted && history && history.length > 0) {
+            setMessages(
+              history.map((h: any) => ({
+                id: h.id,
+                sender: h.role === "user" ? "user" : "ai",
+                text: h.content,
+                timestamp: new Date(h.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+                extractionData: h.unappliedExtraction !== undefined ? h.unappliedExtraction : undefined,
+                extractionApplied: h.extractionApplied || false,
+                dischargeDraft: h.dischargeDraft,
+                dischargeApplied: h.dischargeApplied || false,
+                dischargeIntent: h.dischargeIntent,
+                mode: h.mode || (h.unappliedExtraction !== undefined ? "dictation" : undefined),
+                clinicalReasoning: h.clinicalReasoning,
+              }))
+            );
+          }
+        }
+      } catch (err) {
+        console.warn("[VoiceScribeChatView] Failed to manually refresh chat history:", err);
+      }
+    }
+
+    loadFreshChat();
+    return () => {
+      isMounted = false;
+    };
+  }, [refreshTrigger, isDiscussionOnly, discussionId, activeCaseId]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -614,7 +844,7 @@ export default function VoiceScribeChatView({
             userInput: trimmed,
             caseId: activeCaseId,
             caseData: caseData || {},
-            patientAgeYears: caseData?.patient?.age || null,
+            patientAgeYears: caseData?.patient?.age ?? null,
             caseContext: caseData || {},
             messages: messages,
           }),
@@ -625,11 +855,25 @@ export default function VoiceScribeChatView({
 
         const replyText = data.reply || data.aiReply || data.summary || "Processed case details.";
         const rawFieldsToExtract = data.unappliedExtraction || data.updatedCaseSheetFields || data.extractedFields;
-// Always keep the extraction object (even if empty) so the full
-// checklist card can render and honestly show 0/N captured, rather
-// than silently disappearing — the "Copy to Case Sheet" button itself
-// still only appears when hasDisplayableExtraction() is true (see render).
-const fieldsToExtract = rawFieldsToExtract || undefined;
+        // Always keep the extraction object (even if empty) so the full
+        // checklist card can render and honestly show 0/N captured, rather
+        // than silently disappearing — the "Copy to Case Sheet" button itself
+        // still only appears when hasDisplayableExtraction() is true (see render).
+        const fieldsToExtract = rawFieldsToExtract ? { ...rawFieldsToExtract } : {};
+        const isEstablishedCase = isEstablishedCaseSheet(caseData, messages);
+        if (isEstablishedCase) {
+          if (!fieldsToExtract.clinicianUpdateText && trimmed && !/^(?:hi|hello|hey|good\s+morning|good\s+evening|good\s+afternoon)[\s!.]*$/i.test(trimmed)) {
+            fieldsToExtract.clinicianUpdateText = trimmed;
+          }
+          if (!fieldsToExtract.clinicianUpdates && trimmed && !/^(?:hi|hello|hey|good\s+morning|good\s+evening|good\s+afternoon)[\s!.]*$/i.test(trimmed)) {
+            fieldsToExtract.clinicianUpdates = [
+              { text: trimmed, timestamp: userMsg.timestamp }
+            ];
+          }
+        } else {
+          delete fieldsToExtract.clinicianUpdateText;
+          delete fieldsToExtract.clinicianUpdates;
+        }
         const dischargeIntent = data.dischargeIntent;
         const clinicalReasoning = data.reasoningMessage?.clinicalReasoning || data.clinicalReasoning;
 
@@ -767,30 +1011,7 @@ const fieldsToExtract = rawFieldsToExtract || undefined;
             onClick={async () => {
               const unappliedMessages = messages.filter(m => m.extractionData && !m.extractionApplied);
               if (unappliedMessages.length > 0 && onPreviewCaseSheet) {
-                const mergedExtraction = unappliedMessages.reduce((acc, m) => {
-                  const data = m.extractionData;
-                  for (const key in data) {
-                    if (data[key] === null || data[key] === undefined || data[key] === "") continue;
-
-                    if (typeof data[key] === 'object' && !Array.isArray(data[key])) {
-                      acc[key] = { ...(acc[key] || {}), ...data[key] };
-                    } else if (Array.isArray(data[key])) {
-                      acc[key] = [...(acc[key] || []), ...data[key]];
-                    } else if (typeof data[key] === 'string' && acc[key] && typeof acc[key] === 'string') {
-                      if (key.match(/complaint|history|notes|symptoms|allergies|medications/i)) {
-                        if (!acc[key].includes(data[key])) {
-                          acc[key] = acc[key] + " \n" + data[key];
-                        }
-                      } else {
-                        acc[key] = data[key];
-                      }
-                    } else {
-                      acc[key] = data[key];
-                    }
-                  }
-                  return acc;
-                }, {});
-
+                const mergedExtraction = getMergedUnappliedExtraction(messages);
                 const latestMsg = unappliedMessages[unappliedMessages.length - 1];
                 onPreviewCaseSheet(mergedExtraction, { existingCaseId: activeCaseId || null, msgId: latestMsg?.id });
                 return;
@@ -798,30 +1019,7 @@ const fieldsToExtract = rawFieldsToExtract || undefined;
               if (onSaveExtractedCase) {
                 try {
                   if (unappliedMessages.length > 0) {
-                    const mergedExtraction = unappliedMessages.reduce((acc, m) => {
-                      const data = m.extractionData;
-                      for (const key in data) {
-                        if (data[key] === null || data[key] === undefined || data[key] === "") continue;
-
-                        if (typeof data[key] === 'object' && !Array.isArray(data[key])) {
-                          acc[key] = { ...(acc[key] || {}), ...data[key] };
-                        } else if (Array.isArray(data[key])) {
-                          acc[key] = [...(acc[key] || []), ...data[key]];
-                        } else if (typeof data[key] === 'string' && acc[key] && typeof acc[key] === 'string') {
-                          if (key.match(/complaint|history|notes|symptoms|allergies|medications/i)) {
-                            if (!acc[key].includes(data[key])) {
-                              acc[key] = acc[key] + " \n" + data[key];
-                            }
-                          } else {
-                            acc[key] = data[key];
-                          }
-                        } else {
-                          acc[key] = data[key];
-                        }
-                      }
-                      return acc;
-                    }, {});
-
+                    const mergedExtraction = getMergedUnappliedExtraction(messages);
                     await onSaveExtractedCase(mergedExtraction, { existingCaseId: activeCaseId!, autoNavigate: true });
                     setMessages(prev => prev.map(m => m.extractionData ? { ...m, extractionApplied: true } : m));
                   } else {
@@ -966,6 +1164,41 @@ const fieldsToExtract = rawFieldsToExtract || undefined;
           </div>
         </div>
       )}
+
+      {(() => {
+        const detectedProc = detectProcedureFromExtraction(merged);
+        if (!detectedProc) return null;
+        return (
+          <div className="mx-3 mt-3 p-2.5 bg-sky-50 dark:bg-sky-950/40 border border-sky-200 dark:border-sky-800/60 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+            <div className="flex items-center gap-2 text-xs text-sky-800 dark:text-sky-300">
+              <Activity className="w-4 h-4 text-sky-600 dark:text-sky-400 shrink-0" />
+              <div>
+                <span className="font-semibold block">Procedure Detected: {detectedProc.name}</span>
+                <span className="text-[11px] text-sky-600 dark:text-sky-400">Structured guided form ready for clinician confirmation</span>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setProcedureModalState({
+                  isOpen: true,
+                  procDef: detectedProc,
+                  initialPrefill: {
+                    metadata: {
+                      indication: detectedProc.defaultIndication || ""
+                    }
+                  },
+                  messageId: msg.id
+                });
+              }}
+              className="px-3 py-1.5 bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold rounded-md shadow-sm transition-all cursor-pointer flex items-center justify-center gap-1.5 shrink-0"
+            >
+              <Activity className="w-3.5 h-3.5" />
+              <span>Fill Procedure Note</span>
+            </button>
+          </div>
+        );
+      })()}
 
       <div className="p-3 text-xs space-y-2 text-slate-600 dark:text-slate-400 max-h-[340px] overflow-y-auto">
 
@@ -1150,6 +1383,18 @@ const fieldsToExtract = rawFieldsToExtract || undefined;
           </div>
         </div>
       </div>
+
+      {procedureModalState?.isOpen && procedureModalState.procDef && (
+        <ProcedureNoteFormModal
+          isOpen={procedureModalState.isOpen}
+          onClose={() => setProcedureModalState(null)}
+          caseId={activeCaseId || "NEW-CASE"}
+          defaultDoctorName={profile?.doctorName || profile?.displayName || ""}
+          procDef={procedureModalState.procDef}
+          initialPrefill={procedureModalState.initialPrefill}
+          onSave={handleSaveDetectedProcedure}
+        />
+      )}
     </div>
   );
 }

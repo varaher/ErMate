@@ -1,7 +1,9 @@
-import React from "react";
+import React, { useState } from "react";
 import { formatFlagged, isCulturePositive, type ClinicalParam } from "./clinicalRanges";
-import { ArrowLeft, Edit3, Printer, FileText } from "lucide-react";
-import { ClinicalCase, LegacyPediatricDetails } from "../types";
+import { ArrowLeft, Edit3, Printer, FileText, AlertTriangle, CheckCircle, RefreshCw } from "lucide-react";
+import { ClinicalCase, LegacyPediatricDetails, ProcedureNote, IpsgChecklist } from "../types";
+import { deduplicateConsultations } from "../utils/consultationNormalization";
+import { displayGcs, displayTemperature, displaySpo2, displayGrbs, displayDocumentedBoolean } from "../utils/clinicalFormatter";
 
 interface VitalReading {
   label: string;
@@ -44,14 +46,14 @@ export interface SecondarySurveyData {
 }
 
 export interface PsychologicalAssessmentData {
-  suicidalIdeation: boolean;
-  selfHarmHistory: boolean;
-  intentToHarmOthers: boolean;
-  substanceAbuse: boolean;
-  psychiatricHistory: boolean;
-  currentlyOnPsychiatricTreatment: boolean;
-  hasSupportSystem: boolean;
-  notes: string | null;
+  suicidalIdeation?: boolean | null;
+  selfHarmHistory?: boolean | null;
+  intentToHarmOthers?: boolean | null;
+  substanceAbuse?: boolean | null;
+  psychiatricHistory?: boolean | null;
+  currentlyOnPsychiatricTreatment?: boolean | null;
+  hasSupportSystem?: boolean | null;
+  notes?: string | null;
 }
 
 export interface CaseSheetData {
@@ -102,6 +104,7 @@ export interface CaseSheetData {
   procedures: {
     proceduresChecked: string[];
     otherProcedures: string | null;
+    procedureNotes?: ProcedureNote[];
   };
 
   consultation: {
@@ -139,6 +142,8 @@ export interface CaseSheetData {
   notes: { progressNotes: string | null; addendum: string | null };
 
   safetyAndAccreditation: {
+    hasAnyIpsg?: boolean;
+    ipsgChecklist?: IpsgChecklist | null;
     ipsg: string[];
     vulnerability: string[];
     fallRisk: string | null;
@@ -160,6 +165,9 @@ interface Props {
   onBack?: () => void;
   onEdit?: () => void;
   onPrint?: () => void;
+  isPreview?: boolean;
+  onApplyPreview?: (reviewedCase: ClinicalCase) => Promise<void> | void;
+  onViewCaseSheet?: (caseId: string) => void;
 }
 
 // ── Known lab-name → ClinicalParam mapping for abnormal flagging ─────
@@ -281,7 +289,7 @@ export function convertClinicalCaseToCaseSheetData(c: ClinicalCase, defaultHospi
       hr: vitals.hr || (surveyObj?.circulation as any)?.hr || null,
       bp: vitals.bp || (surveyObj?.circulation as any)?.bp || null,
       gcs: vitals.gcs || (surveyObj?.disability?.gcsTotal ? String(surveyObj.disability.gcsTotal) : null),
-      gcsComponents: (vitals.gcs_e || vitals.gcs_v || vitals.gcs_m) ? `E${vitals.gcs_e || "?"}V${vitals.gcs_v || "?"}M${vitals.gcs_m || "?"}` : null,
+      gcsComponents: (vitals.gcs_e || vitals.gcs_v || vitals.gcs_m) ? displayGcs(vitals) : null,
       grbs: vitals.grbs || null,
       temp: vitals.temp || (surveyObj?.exposure as any)?.temp || null,
     }
@@ -301,29 +309,26 @@ export function convertClinicalCaseToCaseSheetData(c: ClinicalCase, defaultHospi
     const text = c.secondaryAssessment;
     const normalizeSecKey = (k: string): "General" | "CVS" | "RS" | "PA" | "CNS" | "Extremities" | null => {
       const lower = k.trim().toLowerCase();
-      if (lower === "rs" || lower === "respiratory" || lower === "chest" || lower.includes("respiratory") || lower.includes("chest / rs") || lower.includes("chest")) return "RS";
-      if (lower === "pa" || lower === "abdomen" || lower.includes("abdomen") || lower.includes("per abdomen")) return "PA";
-      if (lower === "cvs") return "CVS";
-      if (lower === "cns") return "CNS";
-      if (lower === "general") return "General";
-      if (lower === "extremities" || lower.includes("extremities") || lower.includes("local") || lower.includes("trauma")) return "Extremities";
+      if (lower.startsWith("rs") || lower.includes("respiratory") || lower.includes("chest") || lower.includes("lung")) return "RS";
+      if (lower.startsWith("pa") || lower.includes("abdomen") || lower.includes("abdominal")) return "PA";
+      if (lower.includes("cvs") || lower.includes("cardiovascular") || lower.includes("heart")) return "CVS";
+      if (lower.includes("cns") || lower.includes("neurological") || lower.includes("neuro")) return "CNS";
+      if (lower.includes("general")) return "General";
+      if (lower.includes("extremit") || lower.includes("local") || lower.includes("trauma") || lower.includes("musculoskeletal") || lower.includes("msk")) return "Extremities";
       return null;
     };
 
-    const firstHeaderMatch = text.match(/(General|CVS|RS|Respiratory|Chest \/ RS|Respiratory System|Chest|Abdomen|PA|Per Abdomen \(PA\)|PA \/ Abdomen|Per Abdomen|CNS|Psych|Extremities|Local Examination|Head-to-Toe Trauma Exam)\s*:\s*/i);
-    const narrativeBuckets: Record<string, string> = {};
-    if (firstHeaderMatch && firstHeaderMatch.index !== undefined && firstHeaderMatch.index > 0) {
-      const preamble = text.substring(0, firstHeaderMatch.index).trim();
-      if (preamble) narrativeBuckets.General = preamble;
-    }
+    const headerPattern = "(?:general(?:\\s+examination|\\s+exam)?|cvs(?:\\s+examination|\\s+exam)?|cardiovascular(?:\\s+examination|\\s+exam)?|respiratory(?:\\s+system|\\s+examination|\\s+exam)?|rs(?:\\s+examination|\\s+exam)?|chest(?:\\s+examination|\\s+exam)?|per\\s+abdomen(?:\\s+examination|\\s+exam)?|pa(?:\\s+examination|\\s+exam)?|abdomen(?:\\s+examination|\\s+exam)?|abdominal(?:\\s+examination|\\s+exam)?|cns(?:\\s+examination|\\s+exam)?|neurological(?:\\s+examination|\\s+exam)?|extremities(?:\\s+examination|\\s+exam)?|extremity(?:\\s+examination|\\s+exam)?|musculoskeletal(?:\\s+examination|\\s+exam)?|msk)";
 
-    const regex = /(General|CVS|RS|Respiratory|Chest \/ RS|Respiratory System|Chest|Abdomen|PA|Per Abdomen \(PA\)|PA \/ Abdomen|Per Abdomen|CNS|Psych|Extremities|Local Examination|Head-to-Toe Trauma Exam)\s*:\s*(.*?)(?=(General|CVS|RS|Respiratory|Chest \/ RS|Respiratory System|Chest|Abdomen|PA|Per Abdomen \(PA\)|PA \/ Abdomen|Per Abdomen|CNS|Psych|Extremities|Local Examination|Head-to-Toe Trauma Exam)\s*:\s*|$)/igs;
+    const narrativeBuckets: Record<string, string> = {};
+    const regex = new RegExp(`(?:^|[\\n;,]|\\.\\s+|:\\s*|[-*•]\\s*|\\s+)(${headerPattern})\\s*[:\\-]\\s*([\\s\\S]*?)(?=(?:[\\n;,]|\\.\\s+|:\\s*|[-*•]\\s*|\\s+)(?:${headerPattern})\\s*[:\\-]|$)`, "gi");
     let match;
     let foundAny = false;
     while ((match = regex.exec(text)) !== null) {
       foundAny = true;
       const bucket = normalizeSecKey(match[1]);
-      const val = match[2].trim();
+      let val = (match[2] || "").trim();
+      val = val.replace(/^[,\.\s;:\-]+/, "").replace(/[,\.\s;:\-]+$/, "").trim();
       if (bucket && val) {
         narrativeBuckets[bucket] = narrativeBuckets[bucket] ? `${narrativeBuckets[bucket]}\n${val}` : val;
       }
@@ -352,16 +357,9 @@ export function convertClinicalCaseToCaseSheetData(c: ClinicalCase, defaultHospi
   let psychologicalAssessment: PsychologicalAssessmentData | null = null;
   if (c.psychologicalAssessment) {
     psychologicalAssessment = c.psychologicalAssessment;
-  } else if (c.vulnerableAssessment || c.sampleHistory?.psychiatricFlags) {
+  } else if (c.sampleHistory?.psychiatricFlags) {
     psychologicalAssessment = {
-      suicidalIdeation: !!c.vulnerableAssessment?.suicidalIdeationRisk,
-      selfHarmHistory: !!c.vulnerableAssessment?.suicidalIdeationRisk,
-      intentToHarmOthers: false,
-      substanceAbuse: false,
-      psychiatricHistory: false,
-      currentlyOnPsychiatricTreatment: false,
-      hasSupportSystem: true,
-      notes: c.sampleHistory?.psychiatricFlags || null,
+      notes: c.sampleHistory.psychiatricFlags,
     };
   }
 
@@ -428,29 +426,57 @@ export function convertClinicalCaseToCaseSheetData(c: ClinicalCase, defaultHospi
   const surveyCirc = surveyObj?.circulation;
 
   // ECG
-  const ecgFindings = surveyCirc?.ecg || surveyAdj?.ecgStatus || adj.ecgFindings || adj.ecgRhythm || "";
-  const ecgDone = !!(surveyCirc?.ecg && surveyCirc.ecg !== "Not done") || !!(surveyAdj?.ecgStatus && surveyAdj.ecgStatus !== "Not done") || !!adj.ecgDone;
+  const ecgDropdown = surveyAdj?.ecgStatus && surveyAdj.ecgStatus !== "Not done" ? surveyAdj.ecgStatus : "";
+  const rawEcgNotes = surveyAdj?.ecgNotes || adj.ecgNotes || surveyCirc?.ecg || adj.ecgFindings || adj.ecgRhythm || "";
+  const ecgFindings = (() => {
+    if (ecgDropdown && rawEcgNotes) {
+      return rawEcgNotes.toLowerCase().includes(ecgDropdown.toLowerCase()) ? rawEcgNotes : `${ecgDropdown} — ${rawEcgNotes}`;
+    }
+    return ecgDropdown || rawEcgNotes || "";
+  })();
+  const ecgDone = !!(surveyCirc?.ecg && surveyCirc.ecg !== "Not done") || !!(surveyAdj?.ecgStatus && surveyAdj.ecgStatus !== "Not done") || !!adj.ecgDone || !!rawEcgNotes;
 
   // Echo
-  const echoFindings = (surveyCirc as any)?.echo || surveyAdj?.echoStatus || adj.echoFindings || "";
-  const echoDone = !!((surveyCirc as any)?.echo && (surveyCirc as any).echo !== "Not done") || !!(surveyAdj?.echoStatus && surveyAdj.echoStatus !== "Not done") || !!adj.echoDone;
+  const echoDropdown = surveyAdj?.echoStatus && surveyAdj.echoStatus !== "Not done" ? surveyAdj.echoStatus : "";
+  const rawEchoNotes = surveyAdj?.echoNotes || surveyAdj?.echoFindings || adj.echoNotes || adj.echoFindings || (surveyCirc as any)?.echo || "";
+  const echoFindings = (() => {
+    if (echoDropdown && rawEchoNotes) {
+      return rawEchoNotes.toLowerCase().includes(echoDropdown.toLowerCase()) ? rawEchoNotes : `${echoDropdown} — ${rawEchoNotes}`;
+    }
+    return echoDropdown || rawEchoNotes || "";
+  })();
+  const echoDone = !!((surveyCirc as any)?.echo && (surveyCirc as any).echo !== "Not done") || !!(surveyAdj?.echoStatus && surveyAdj.echoStatus !== "Not done") || !!adj.echoDone || !!rawEchoNotes;
 
   // eFAST
   let efastFindings = "";
-  if (surveyCirc?.efast && typeof surveyCirc.efast === "object") {
-    const ef = surveyCirc.efast;
-    const pos = Object.entries(ef).filter(([_, v]) => v && v !== "not_done" && v !== "negative" && v !== "no_blines");
-    if (pos.length > 0) {
-      efastFindings = `Positive (${pos.map(([k, v]) => `${k}: ${v}`).join(", ")})`;
-    } else {
-      const anyDone = Object.values(ef).some(v => v && v !== "not_done");
-      if (anyDone) efastFindings = "Negative";
+  const fastFindingsObj = (c as any).fastFindings;
+  const combinedEfast: Record<string, any> = {
+    ...(surveyCirc?.efast && typeof surveyCirc.efast === "object" ? surveyCirc.efast : {}),
+    ...(fastFindingsObj && typeof fastFindingsObj === "object" ? fastFindingsObj : {})
+  };
+
+  const pos = Object.entries(combinedEfast).filter(([_, v]) => {
+    if (!v) return false;
+    const str = String(v).toLowerCase();
+    return str !== "not_done" && str !== "negative" && str !== "no_blines" && (str.includes("pos") || str === "done" || str.includes("fluid"));
+  });
+
+  if (pos.length > 0) {
+    efastFindings = `Positive (${pos.map(([k, v]) => `${k}: ${v}`).join(", ")})`;
+  } else if (Object.keys(combinedEfast).length > 0) {
+    const anyDone = Object.values(combinedEfast).some(v => v && v !== "not_done");
+    if (anyDone) efastFindings = "Negative";
+  }
+
+  const explicitNotes = surveyAdj?.efastNotes || adj.efastNotes || adj.efastInterpretation || adj.efastFindings || (surveyAdj?.efastStatus && surveyAdj.efastStatus !== "Not done" ? surveyAdj.efastStatus : "") || "";
+  if (explicitNotes) {
+    if (!efastFindings || efastFindings === "Negative") {
+      efastFindings = explicitNotes;
+    } else if (!efastFindings.toLowerCase().includes(explicitNotes.toLowerCase())) {
+      efastFindings = `${efastFindings} · ${explicitNotes}`;
     }
   }
-  if (!efastFindings) {
-    efastFindings = surveyAdj?.efastStatus || adj.efastInterpretation || adj.efastFindings || adj.efastNotes || "";
-  }
-  const efastDone = (efastFindings && efastFindings !== "Not done" && efastFindings !== "not_done") || !!adj.efastDone;
+  const efastDone = Boolean((efastFindings && efastFindings !== "Not done" && efastFindings !== "not_done") || adj.efastDone || (surveyAdj?.efastStatus && surveyAdj.efastStatus !== "Not done"));
 
   // ABG / VBG
   const abgObj = surveyAdj?.abg;
@@ -473,14 +499,26 @@ export function convertClinicalCaseToCaseSheetData(c: ClinicalCase, defaultHospi
 
 
   // Safety & Accreditation extraction
+  const ipsg = c.ipsgChecklist;
   const ipsgList: string[] = [];
-  if (c.ipsgChecklist?.ipsg1IdentifiersVerified) ipsgList.push("Patient identifiers verified");
-  if (c.ipsgChecklist?.ipsg2ReadBackPerformed) ipsgList.push("Verbal order read-back performed");
-  if (c.ipsgChecklist?.ipsg3HighAlertDoubleChecked) ipsgList.push("High-alert meds double-checked");
-  if (c.ipsgChecklist?.ipsg4TimeOutPerformed) ipsgList.push("Time-Out performed");
-  if (c.ipsgChecklist?.ipsg5HandHygieneComplied) ipsgList.push("Hand hygiene complied");
+  if (ipsg?.ipsg1IdentifiersVerified === true) ipsgList.push("Patient identifiers verified");
+  if (ipsg?.ipsg2ReadBackPerformed === true) ipsgList.push("Verbal order read-back performed");
+  if (ipsg?.ipsg3HighAlertDoubleChecked === true) ipsgList.push("High-alert meds double-checked");
+  if (ipsg?.ipsg4TimeOutPerformed === true) ipsgList.push("Time-Out performed");
+  if (ipsg?.ipsg5HandHygieneComplied === true) ipsgList.push("Hand hygiene complied");
 
-  const fallRisk = c.ipsgChecklist?.ipsg6FallRiskAssessed || null;
+  const fallRisk = ipsg?.ipsg6FallRiskAssessed || null;
+
+  const hasAnyIpsg = Boolean(
+    ipsg && (
+      (ipsg.ipsg1IdentifiersVerified !== undefined && ipsg.ipsg1IdentifiersVerified !== null && (ipsg.ipsg1IdentifiersVerified as any) !== "") ||
+      (ipsg.ipsg2ReadBackPerformed !== undefined && ipsg.ipsg2ReadBackPerformed !== null && (ipsg.ipsg2ReadBackPerformed as any) !== "") ||
+      (ipsg.ipsg3HighAlertDoubleChecked !== undefined && ipsg.ipsg3HighAlertDoubleChecked !== null && (ipsg.ipsg3HighAlertDoubleChecked as any) !== "") ||
+      (ipsg.ipsg4TimeOutPerformed !== undefined && ipsg.ipsg4TimeOutPerformed !== null && (ipsg.ipsg4TimeOutPerformed as any) !== "") ||
+      (ipsg.ipsg5HandHygieneComplied !== undefined && ipsg.ipsg5HandHygieneComplied !== null && (ipsg.ipsg5HandHygieneComplied as any) !== "") ||
+      (ipsg.ipsg6FallRiskAssessed !== undefined && ipsg.ipsg6FallRiskAssessed !== null && String(ipsg.ipsg6FallRiskAssessed).trim() !== "")
+    )
+  );
 
   const vulnList: string[] = [];
   if (c.vulnerableAssessment?.severePainDistress) vulnList.push("Severe pain/distress identified");
@@ -494,15 +532,14 @@ export function convertClinicalCaseToCaseSheetData(c: ClinicalCase, defaultHospi
   if (c.consentTimeOut?.procedureConsentObtained) consentList.push("Written informed consent verified");
   if (c.consentTimeOut?.procedureTimeOutPerformed) consentList.push("Procedure time-out completed");
 
-  let safetyAndAccreditation = null;
-  if (ipsgList.length > 0 || vulnList.length > 0 || consentList.length > 0 || fallRisk) {
-    safetyAndAccreditation = {
-      ipsg: ipsgList,
-      vulnerability: vulnList,
-      fallRisk: fallRisk,
-      consentTimeOut: consentList
-    };
-  }
+  const safetyAndAccreditation = {
+    hasAnyIpsg,
+    ipsgChecklist: ipsg || null,
+    ipsg: ipsgList,
+    vulnerability: vulnList,
+    fallRisk: fallRisk,
+    consentTimeOut: consentList
+  };
 
   return {
     caseId: c.id,
@@ -529,10 +566,10 @@ export function convertClinicalCaseToCaseSheetData(c: ClinicalCase, defaultHospi
       { label: "HR", param: "hr", value: parseVal(vitals.hr), unit: "bpm" },
       { label: "BP", param: "sbp", value: sysBp, unit: "mmHg" },
       { label: "RR", param: "rr", value: parseVal(vitals.rr), unit: "/min" },
-      { label: "SpO2", param: "spo2", value: parseVal(vitals.spo2), unit: "%" },
-      { label: "Temp", param: "temp", value: parseVal(vitals.temp), unit: "°C" },
-      { label: "GRBS", param: "grbs", value: parseVal(vitals.grbs), unit: "mg/dL" },
-      { label: "GCS", param: "gcs" as ClinicalParam, value: parseVal(vitals.gcs), displayValue: vitals.gcs || (vitals.gcs_e || vitals.gcs_v || vitals.gcs_m ? `${vitals.gcs_e || "?"}/${vitals.gcs_v || "?"}/${vitals.gcs_m || "?"}` : "15/15") }
+      { label: "SpO2", param: "spo2", value: parseVal(vitals.spo2), displayValue: displaySpo2(vitals.spo2) },
+      { label: "Temp", param: "temp", value: parseVal(vitals.temp), displayValue: displayTemperature(vitals.temp) },
+      { label: "GRBS", param: "grbs", value: parseVal(vitals.grbs), displayValue: displayGrbs(vitals.grbs) },
+      { label: "GCS", param: "gcs" as ClinicalParam, value: parseVal(vitals.gcs), displayValue: displayGcs(vitals) }
     ],
 
     vbgAbg: { type: abgType, performed: vbgPerformed, values: vbgValues, notes: abgNotes || undefined },
@@ -649,10 +686,14 @@ export function convertClinicalCaseToCaseSheetData(c: ClinicalCase, defaultHospi
     procedures: {
       proceduresChecked: Array.isArray(c.proceduresChecked) ? c.proceduresChecked : [],
       otherProcedures: c.otherProcedures || null,
+      procedureNotes: Array.isArray(c.procedureNotes) ? c.procedureNotes : [],
     },
 
     consultation: {
-      consultsRequested: Array.isArray(c.dispositionAndPlan?.consultsRequested) ? c.dispositionAndPlan.consultsRequested : [],
+      consultsRequested: deduplicateConsultations([
+        ...(Array.isArray(c.dispositionAndPlan?.consultsRequested) ? c.dispositionAndPlan.consultsRequested : []),
+        ...(Array.isArray((c as any).consultsRequested) ? (c as any).consultsRequested : [])
+      ]),
       consultantReview: c.consultantReview && (c.consultantReview.reviewedBy || c.consultantReview.reviewText) ? {
         reviewedBy: c.consultantReview.reviewedBy || "",
         reviewText: c.consultantReview.reviewText || "",
@@ -666,8 +707,11 @@ export function convertClinicalCaseToCaseSheetData(c: ClinicalCase, defaultHospi
       destinationUnit: c.dispositionAndPlan?.destinationUnit || null,
       durationInEr: c.dispositionDetails?.durationInEr || null,
       conditionAtShift: c.conditionAtShift || (c.dispositionDetails as any)?.conditionAtShift || (c.pediatricDetails as any)?.dispositionConditionAtShift || null,
-      managementPlan: c.dispositionAndPlan?.managementPlan || null,
-      consultsRequested: Array.isArray(c.dispositionAndPlan?.consultsRequested) ? c.dispositionAndPlan.consultsRequested : [],
+      managementPlan: c.dispositionAndPlan?.managementPlan || (c as any).managementPlan || (c as any).plan || null,
+      consultsRequested: deduplicateConsultations([
+        ...(Array.isArray(c.dispositionAndPlan?.consultsRequested) ? c.dispositionAndPlan.consultsRequested : []),
+        ...(Array.isArray((c as any).consultsRequested) ? (c as any).consultsRequested : [])
+      ]),
       followUpAdvice: c.dispositionAndPlan?.followUpAdvice || null,
     },
 
@@ -804,7 +848,7 @@ function PrimarySurveySection({ data }: { data: PrimarySurveyData }) {
           <span>{exposureFindings || "Not documented"}</span>
           {v?.temp && (
             <div className="inline-flex items-center gap-2 ml-2 font-mono text-xs bg-slate-100 print:bg-transparent px-2 py-0.5 rounded border border-slate-200 print:border-none">
-              <span><strong className="font-sans text-[11px] text-slate-600">Temp:</strong> {v.temp}°C</span>
+              <span><strong className="font-sans text-[11px] text-slate-600">Temp:</strong> {displayTemperature(v.temp)}</span>
             </div>
           )}
         </div>
@@ -836,12 +880,7 @@ function AdjunctsSection({
     vbgAbg.notes;
 
   if (!hasAdjuncts) {
-    return (
-      <Section>
-        <SectionHeading>Adjuncts to Primary Assessment</SectionHeading>
-        <EmptyLine text="No bedside adjuncts performed / documented" />
-      </Section>
-    );
+    return null;
   }
 
   return (
@@ -850,15 +889,15 @@ function AdjunctsSection({
       <div className="text-sm space-y-1.5">
         <div>
           <span className="font-semibold text-slate-900">ECG: </span>
-          <span>{ecg.performed && ecg.findings ? ecg.findings : ecg.findings || "Not done"}</span>
+          <span>{ecg.findings || (ecg.performed ? "Done" : "Not documented")}</span>
         </div>
         <div>
           <span className="font-semibold text-slate-900">Bedside Echo / POCUS: </span>
-          <span>{bedsideEcho.performed && bedsideEcho.findings ? bedsideEcho.findings : bedsideEcho.findings || "Not done"}</span>
+          <span>{bedsideEcho.findings || (bedsideEcho.performed ? "Done" : "Not documented")}</span>
         </div>
         <div>
           <span className="font-semibold text-slate-900">eFAST: </span>
-          <span>{efast.performed && efast.findings ? efast.findings : efast.findings || "Not done"}</span>
+          <span>{efast.findings || (efast.performed ? "Done" : "Not documented")}</span>
         </div>
         <div>
           <span className="font-semibold text-slate-900">{vbgAbg.type || "ABG/VBG"}: </span>
@@ -870,7 +909,7 @@ function AdjunctsSection({
           ) : vbgAbg.notes ? (
             <span>{vbgAbg.notes}</span>
           ) : (
-            <span>Not documented</span>
+            <span>{vbgAbg.performed ? "Done" : "Not documented"}</span>
           )}
         </div>
       </div>
@@ -907,12 +946,12 @@ function PsychologicalAssessmentSection({ data }: { data: PsychologicalAssessmen
     return (
       <Section>
         <SectionHeading>Psychological Assessment</SectionHeading>
-        <EmptyLine />
+        <p className="text-sm text-slate-500 italic">Not documented</p>
       </Section>
     );
   }
 
-  const fields: { label: string; value: boolean; isRiskFlag: boolean }[] = [
+  const fields: { label: string; value: boolean | null | undefined; isRiskFlag: boolean }[] = [
     { label: "Suicidal Ideation", value: data.suicidalIdeation, isRiskFlag: true },
     { label: "Self-Harm History", value: data.selfHarmHistory, isRiskFlag: true },
     { label: "Intent to Harm Others", value: data.intentToHarmOthers, isRiskFlag: true },
@@ -921,6 +960,18 @@ function PsychologicalAssessmentSection({ data }: { data: PsychologicalAssessmen
     { label: "Currently on Psychiatric Treatment", value: data.currentlyOnPsychiatricTreatment, isRiskFlag: false },
     { label: "Has Support System", value: data.hasSupportSystem, isRiskFlag: false },
   ];
+
+  const hasAnyStructured = fields.some(f => f.value !== undefined && f.value !== null && (f.value as any) !== "");
+  const hasNotes = Boolean(data.notes && data.notes.trim());
+
+  if (!hasAnyStructured && !hasNotes) {
+    return (
+      <Section>
+        <SectionHeading>Psychological Assessment</SectionHeading>
+        <p className="text-sm text-slate-500 italic">Not documented</p>
+      </Section>
+    );
+  }
 
   const hasActiveRiskFlag = fields.some(f => f.isRiskFlag && f.value === true);
 
@@ -932,14 +983,16 @@ function PsychologicalAssessmentSection({ data }: { data: PsychologicalAssessmen
           ⚠ Active Risk Flag(s) — Review Immediately
         </p>
       )}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-1 text-sm">
-        {fields.map((f, i) => (
-          <div key={i} className={f.isRiskFlag && f.value ? "font-bold text-red-700 print:text-black" : ""}>
-            <span className="font-semibold">{f.label}:</span> {f.value ? "Yes" : "No"}
-          </div>
-        ))}
-      </div>
-      {data.notes && (
+      {hasAnyStructured && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-1 text-sm">
+          {fields.map((f, i) => (
+            <div key={i} className={f.isRiskFlag && f.value === true ? "font-bold text-red-700 print:text-black" : ""}>
+              <span className="font-semibold">{f.label}:</span> {displayDocumentedBoolean(f.value)}
+            </div>
+          ))}
+        </div>
+      )}
+      {hasNotes && (
         <p className="text-sm mt-2"><span className="font-semibold">Notes:</span> {data.notes}</p>
       )}
     </Section>
@@ -948,36 +1001,45 @@ function PsychologicalAssessmentSection({ data }: { data: PsychologicalAssessmen
 
 
 function SafetyAndAccreditationSection({ data }: { data: CaseSheetData["safetyAndAccreditation"] }) {
-  if (!data) return null;
+  const hasIpsg = Boolean(data?.hasAnyIpsg);
+  const ipsg = data?.ipsgChecklist;
+  const vulnList = data?.vulnerability || [];
+  const consentList = data?.consentTimeOut || [];
 
   return (
     <Section>
       <SectionHeading>Safety & Accreditation</SectionHeading>
       <div className="space-y-3">
-        {(data.ipsg.length > 0 || data.fallRisk) && (
-          <div>
-            <p className="text-xs font-bold uppercase tracking-wide text-slate-600 print:text-black mb-1">Patient Safety Goals</p>
+        <div>
+          <p className="text-xs font-bold uppercase tracking-wide text-slate-600 print:text-black mb-1">Patient Safety Goals</p>
+          {hasIpsg && ipsg ? (
             <ul className="text-sm list-disc pl-5 space-y-0.5">
-              {data.ipsg.map((item, i) => <li key={i}>{item}</li>)}
-              {data.fallRisk && <li>Fall risk: <span className="font-semibold">{data.fallRisk}</span></li>}
+              <li>Identifiers Verified: <span className="font-semibold">{displayDocumentedBoolean(ipsg.ipsg1IdentifiersVerified)}</span></li>
+              <li>Verbal Order Read-Back: <span className="font-semibold">{displayDocumentedBoolean(ipsg.ipsg2ReadBackPerformed)}</span></li>
+              <li>High-Alert Meds Double-Checked: <span className="font-semibold">{displayDocumentedBoolean(ipsg.ipsg3HighAlertDoubleChecked)}</span></li>
+              <li>Time-Out Performed: <span className="font-semibold">{displayDocumentedBoolean(ipsg.ipsg4TimeOutPerformed)}</span></li>
+              <li>Hand Hygiene Complied: <span className="font-semibold">{displayDocumentedBoolean(ipsg.ipsg5HandHygieneComplied)}</span></li>
+              <li>Fall Risk: <span className="font-semibold">{ipsg.ipsg6FallRiskAssessed || "Not documented"}</span></li>
             </ul>
-          </div>
-        )}
-        
-        {data.vulnerability.length > 0 && (
+          ) : (
+            <p className="text-sm text-slate-500 italic">Not documented</p>
+          )}
+        </div>
+
+        {vulnList.length > 0 && (
           <div>
             <p className="text-xs font-bold uppercase tracking-wide text-slate-600 print:text-black mb-1">Vulnerability Screening</p>
             <ul className="text-sm list-disc pl-5 space-y-0.5">
-              {data.vulnerability.map((item, i) => <li key={i}>{item}</li>)}
+              {vulnList.map((item, i) => <li key={i}>{item}</li>)}
             </ul>
           </div>
         )}
 
-        {data.consentTimeOut.length > 0 && (
+        {consentList.length > 0 && (
           <div>
             <p className="text-xs font-bold uppercase tracking-wide text-slate-600 print:text-black mb-1">Consent / Time-Out</p>
             <ul className="text-sm list-disc pl-5 space-y-0.5">
-              {data.consentTimeOut.map((item, i) => <li key={i}>{item}</li>)}
+              {consentList.map((item, i) => <li key={i}>{item}</li>)}
             </ul>
           </div>
         )}
@@ -986,7 +1048,20 @@ function SafetyAndAccreditationSection({ data }: { data: CaseSheetData["safetyAn
   );
 }
 
-export default function CaseSheetPrintView({ data: propData, clinicalCase, onBack, onEdit, onPrint }: Props) {
+export default function CaseSheetPrintView({
+  data: propData,
+  clinicalCase,
+  onBack,
+  onEdit,
+  onPrint,
+  isPreview = false,
+  onApplyPreview,
+  onViewCaseSheet,
+}: Props) {
+  const [isApplying, setIsApplying] = useState(false);
+  const [applySuccess, setApplySuccess] = useState(false);
+  const [applyError, setApplyError] = useState<string | null>(null);
+
   const data = propData || (clinicalCase ? convertClinicalCaseToCaseSheetData(clinicalCase) : null);
 
   if (!data) {
@@ -1009,35 +1084,183 @@ export default function CaseSheetPrintView({ data: propData, clinicalCase, onBac
     else window.print();
   };
 
+  const hasInvestigations = Boolean(
+    data.investigationLabsOrdered ||
+    data.labs.length > 0 ||
+    data.investigationImaging ||
+    data.investigationResultsSummary
+  );
+
+  const hasTreatments = Boolean(
+    data.treatmentGiven.length > 0 ||
+    data.treatmentNotes ||
+    (data.isPediatric && (data.pediatricDetails as LegacyPediatricDetails)?.treatmentGiven)
+  );
+
+  const hasPedProvisionalDiagnosis = Boolean(
+    data.provisionalDiagnosis ||
+    (data.pediatricDetails as LegacyPediatricDetails)?.provisionalDiagnosisDischarge
+  );
+
+  const hasPedDifferentials = Boolean(
+    data.differentials.length > 0 ||
+    data.provisionalDifferentialDiagnoses ||
+    (data.pediatricDetails as LegacyPediatricDetails)?.differentialDiagnosis
+  );
+
+  const hasAdultDiagnosis = Boolean(
+    data.provisionalDiagnosis ||
+    data.differentials.length > 0 ||
+    data.provisionalDifferentialDiagnoses
+  );
+
   return (
     <div className="min-h-screen bg-slate-100 dark:bg-slate-900 print:bg-white text-slate-900 dark:text-slate-100 font-sans">
-      {/* Toolbar — unchanged from original */}
-      <div className="no-print sticky top-0 z-20 bg-white dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 px-2 sm:px-4 py-2 sm:py-3 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 shadow-sm">
-        <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto justify-between sm:justify-start">
-          <div className="flex items-center gap-2">
-            {onBack && (
-              <button onClick={onBack} className="flex items-center gap-1.5 px-2.5 py-1.5 sm:px-3 sm:py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-lg text-xs font-bold transition-all">
-                <ArrowLeft className="w-3.5 h-3.5" /><span className="hidden sm:inline">Back</span>
-              </button>
+      {/* Sticky Header with Banner & Toolbar for Preview / Print */}
+      <div className="no-print sticky top-0 z-30 shadow-sm">
+        {isPreview && (
+          <div
+            id="case-sheet-preview-banner"
+            className={`px-4 py-2.5 text-center flex items-center justify-center gap-2 text-white font-bold text-xs sm:text-sm tracking-wide ${
+              applySuccess ? "bg-emerald-600" : "bg-amber-500"
+            }`}
+          >
+            {applySuccess ? (
+              <>
+                <CheckCircle className="w-4 h-4 shrink-0" />
+                <span>✓ Case Sheet prepared successfully.</span>
+              </>
+            ) : (
+              <>
+                <AlertTriangle className="w-4 h-4 shrink-0" />
+                <span>Preview — changes are not saved yet</span>
+              </>
             )}
-            <div className="flex items-center gap-1.5 sm:gap-2">
-              <FileText className="w-4 h-4 text-indigo-600 dark:text-indigo-400 hidden sm:block" />
-              <span className="text-xs sm:text-sm font-extrabold text-slate-800 dark:text-slate-100">Printable Case Sheet</span>
-              <span className="text-[10px] bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 px-1.5 py-0.5 rounded font-mono font-bold">ID: {data.caseId}</span>
-              {data.isMlc && <span className="text-[10px] bg-red-100 text-red-700 px-1.5 py-0.5 rounded font-mono font-bold">MLC</span>}
+          </div>
+        )}
+
+        <div className="bg-white dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 px-2 sm:px-4 py-2 sm:py-3 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto justify-between sm:justify-start">
+            <div className="flex items-center gap-2">
+              {onBack && (
+                <button
+                  onClick={onBack}
+                  id="preview-back-button"
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 sm:px-3 sm:py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-lg text-xs font-bold transition-all cursor-pointer"
+                >
+                  <ArrowLeft className="w-3.5 h-3.5" />
+                  <span>{isPreview ? "Back to Scribe" : "Back"}</span>
+                </button>
+              )}
+              <div className="flex items-center gap-1.5 sm:gap-2">
+                <FileText className="w-4 h-4 text-indigo-600 dark:text-indigo-400 hidden sm:block" />
+                <span className="text-xs sm:text-sm font-extrabold text-slate-800 dark:text-slate-100">
+                  {isPreview ? "Case Sheet Preview" : "Printable Case Sheet"}
+                </span>
+                <span className="text-[10px] bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 px-1.5 py-0.5 rounded font-mono font-bold">
+                  ID: {data.caseId}
+                </span>
+                {data.isPediatric && (
+                  <span className="text-[10px] bg-sky-100 text-sky-800 dark:bg-sky-950/60 dark:text-sky-300 px-1.5 py-0.5 rounded font-bold">
+                    Pediatric
+                  </span>
+                )}
+                {data.isMlc && (
+                  <span className="text-[10px] bg-red-100 text-red-700 px-1.5 py-0.5 rounded font-mono font-bold">
+                    MLC
+                  </span>
+                )}
+              </div>
             </div>
           </div>
+          <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+            {isPreview ? (
+              <>
+                {applySuccess ? (
+                  <button
+                    onClick={() => {
+                      if (onViewCaseSheet) {
+                        onViewCaseSheet(data.caseId);
+                      } else if (onEdit) {
+                        onEdit();
+                      }
+                    }}
+                    id="preview-view-casesheet-button"
+                    className="flex-1 sm:flex-none justify-center flex items-center gap-1.5 px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-all shadow-sm cursor-pointer"
+                  >
+                    <Edit3 className="w-3.5 h-3.5" />
+                    <span>View Case Sheet</span>
+                  </button>
+                ) : (
+                  <button
+                    disabled={isApplying}
+                    onClick={async () => {
+                      if (!clinicalCase || !onApplyPreview) return;
+                      try {
+                        setIsApplying(true);
+                        setApplyError(null);
+                        await onApplyPreview(clinicalCase);
+                        setApplySuccess(true);
+                      } catch (err: any) {
+                        console.error("Apply preview error:", err);
+                        setApplyError(err?.message || "Failed to apply changes.");
+                      } finally {
+                        setIsApplying(false);
+                      }
+                    }}
+                    id="preview-apply-button"
+                    className="flex-1 sm:flex-none justify-center flex items-center gap-1.5 px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-lg text-xs font-bold transition-all shadow-sm cursor-pointer"
+                  >
+                    {isApplying ? (
+                      <>
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        <span>Applying...</span>
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle className="w-3.5 h-3.5" />
+                        <span>Apply to Case Sheet</span>
+                      </>
+                    )}
+                  </button>
+                )}
+                <button
+                  onClick={handlePrint}
+                  className="flex-1 sm:flex-none justify-center flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold rounded-lg transition-all cursor-pointer"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Print / PDF</span>
+                </button>
+              </>
+            ) : (
+              <>
+                {onEdit && (
+                  <button
+                    onClick={onEdit}
+                    className="flex-1 sm:flex-none justify-center flex items-center gap-1.5 px-3 py-1.5 sm:px-3.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-lg text-xs font-bold transition-all cursor-pointer"
+                  >
+                    <Edit3 className="w-3.5 h-3.5 text-slate-500" />
+                    <span>Edit<span className="hidden sm:inline"> Case Sheet</span></span>
+                  </button>
+                )}
+                <button
+                  onClick={handlePrint}
+                  className="flex-1 sm:flex-none justify-center flex items-center gap-1.5 px-3 py-1.5 sm:px-4 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white text-xs font-bold rounded-lg shadow-sm transition-all cursor-pointer"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Print / Download PDF</span>
+                  <span className="sm:hidden">Print / PDF</span>
+                </button>
+              </>
+            )}
+          </div>
         </div>
-        <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
-          {onEdit && (
-            <button onClick={onEdit} className="flex-1 sm:flex-none justify-center flex items-center gap-1.5 px-3 py-1.5 sm:px-3.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-lg text-xs font-bold transition-all">
-              <Edit3 className="w-3.5 h-3.5 text-slate-500" /><span>Edit<span className="hidden sm:inline"> Case Sheet</span></span>
-            </button>
-          )}
-          <button onClick={handlePrint} className="flex-1 sm:flex-none justify-center flex items-center gap-1.5 px-3 py-1.5 sm:px-4 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white text-xs font-bold rounded-lg shadow-sm transition-all">
-            <Printer className="w-3.5 h-3.5" /><span className="hidden sm:inline">Print / Download PDF</span><span className="sm:hidden">Print / PDF</span>
-          </button>
-        </div>
+
+        {applyError && (
+          <div className="bg-red-50 dark:bg-red-950/60 border-t border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 text-xs font-bold px-4 py-2 text-center">
+            {applyError}
+          </div>
+        )}
       </div>
 
       <div className="case-sheet-print max-w-3xl mx-auto bg-white shadow-md print:shadow-none px-8 py-8 my-6 print:my-0 text-slate-900 border border-slate-200 print:border-none rounded-xl print:rounded-none">
@@ -1123,71 +1346,87 @@ export default function CaseSheetPrintView({ data: propData, clinicalCase, onBac
             </Section>
 
             <SecondarySurveySection data={data.secondarySurvey} title="Focused Physical Examination" />
+            <PsychologicalAssessmentSection data={data.psychologicalAssessment} />
 
-            <Section>
-              <SectionHeading>Investigations & Diagnostic Studies</SectionHeading>
-              <div className="space-y-3">
-                {data.investigationLabsOrdered && (
-                  <div>
-                    <p className="text-xs font-bold uppercase tracking-wide text-slate-600 print:text-black mb-0.5">Laboratory Investigations Ordered</p>
-                    <p className="text-sm whitespace-pre-line text-slate-900 print:text-black">{data.investigationLabsOrdered}</p>
-                  </div>
-                )}
+            {hasInvestigations && (
+              <Section>
+                <SectionHeading>Investigations & Diagnostic Studies</SectionHeading>
+                <div className="space-y-3">
+                  {data.investigationLabsOrdered && (
+                    <div>
+                      <p className="text-xs font-bold uppercase tracking-wide text-slate-600 print:text-black mb-0.5">Laboratory Investigations Ordered</p>
+                      <p className="text-sm whitespace-pre-line text-slate-900 print:text-black">{data.investigationLabsOrdered}</p>
+                    </div>
+                  )}
 
-                {data.labs.length > 0 && (
-                  <div>
-                    {data.labs.map((panel, i) => (
-                      <div key={i} className="mb-2">
-                        <p className="text-xs font-bold uppercase tracking-wide text-slate-600 print:text-black mb-1">{panel.panelName}</p>
-                        <p className="text-sm font-mono leading-relaxed">
-                          {panel.values.map(v => `${v.name}: ${v.param ? formatFlagged(v.param, v.value) : (v.value ?? "Pending")}${v.unit && v.value !== null ? ` ${v.unit}` : ""}`).join("  |  ")}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                )}
+                  {data.labs.length > 0 && (
+                    <div>
+                      {data.labs.map((panel, i) => (
+                        <div key={i} className="mb-2">
+                          <p className="text-xs font-bold uppercase tracking-wide text-slate-600 print:text-black mb-1">{panel.panelName}</p>
+                          <p className="text-sm font-mono leading-relaxed">
+                            {panel.values.map(v => `${v.name}: ${v.param ? formatFlagged(v.param, v.value) : (v.value ?? "Pending")}${v.unit && v.value !== null ? ` ${v.unit}` : ""}`).join("  |  ")}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
 
-                {data.investigationImaging && (
-                  <div>
-                    <p className="text-xs font-bold uppercase tracking-wide text-slate-600 print:text-black mb-0.5">Diagnostic Imaging (X-Ray / CT / MRI / USG)</p>
-                    <p className="text-sm whitespace-pre-line text-slate-900 print:text-black">{data.investigationImaging}</p>
-                  </div>
-                )}
+                  {data.investigationImaging && (
+                    <div>
+                      <p className="text-xs font-bold uppercase tracking-wide text-slate-600 print:text-black mb-0.5">Diagnostic Imaging (X-Ray / CT / MRI / USG)</p>
+                      <p className="text-sm whitespace-pre-line text-slate-900 print:text-black">{data.investigationImaging}</p>
+                    </div>
+                  )}
 
-                {data.investigationResultsSummary && (
-                  <div>
-                    <p className="text-xs font-bold uppercase tracking-wide text-slate-600 print:text-black mb-0.5">Investigation Results Summary</p>
-                    <p className="text-sm whitespace-pre-line text-slate-900 print:text-black">{data.investigationResultsSummary}</p>
-                  </div>
-                )}
-
-                {!data.investigationLabsOrdered && data.labs.length === 0 && !data.investigationImaging && !data.investigationResultsSummary && (
-                  <EmptyLine />
-                )}
-              </div>
-            </Section>
-
-            <Section>
-              <SectionHeading>Treatment Given & Emergency Orders</SectionHeading>
-              {data.treatmentGiven.length > 0 && (
-                <ul className="text-sm list-disc pl-5 space-y-0.5 font-mono mb-2">
-                  {data.treatmentGiven.map((t, i) => <li key={i}>{t}</li>)}
-                </ul>
-              )}
-              {data.treatmentNotes ? (
-                <div>
-                  {data.treatmentGiven.length > 0 && <p className="text-xs font-bold uppercase tracking-wide text-slate-600 print:text-black mb-0.5">Treatment Notes & Orders</p>}
-                  <p className="text-sm whitespace-pre-line font-mono">{data.treatmentNotes}</p>
+                  {data.investigationResultsSummary && (
+                    <div>
+                      <p className="text-xs font-bold uppercase tracking-wide text-slate-600 print:text-black mb-0.5">Investigation Results Summary</p>
+                      <p className="text-sm whitespace-pre-line text-slate-900 print:text-black">{data.investigationResultsSummary}</p>
+                    </div>
+                  )}
                 </div>
-              ) : !data.treatmentGiven.length && (data.pediatricDetails as LegacyPediatricDetails)?.treatmentGiven ? (
-                <div className="text-sm font-mono">{(data.pediatricDetails as LegacyPediatricDetails)?.treatmentGiven}</div>
-              ) : !data.treatmentGiven.length && <EmptyLine />}
-            </Section>
+              </Section>
+            )}
 
-            {(data.procedures.proceduresChecked.length > 0 || data.procedures.otherProcedures) && (
+            {hasTreatments && (
+              <Section>
+                <SectionHeading>Treatment Given & Emergency Orders</SectionHeading>
+                {data.treatmentGiven.length > 0 && (
+                  <ul className="text-sm list-disc pl-5 space-y-0.5 font-mono mb-2">
+                    {data.treatmentGiven.map((t, i) => <li key={i}>{t}</li>)}
+                  </ul>
+                )}
+                {data.treatmentNotes ? (
+                  <div>
+                    {data.treatmentGiven.length > 0 && <p className="text-xs font-bold uppercase tracking-wide text-slate-600 print:text-black mb-0.5">Treatment Notes & Orders</p>}
+                    <p className="text-sm whitespace-pre-line font-mono">{data.treatmentNotes}</p>
+                  </div>
+                ) : !data.treatmentGiven.length && (data.pediatricDetails as LegacyPediatricDetails)?.treatmentGiven ? (
+                  <div className="text-sm font-mono">{(data.pediatricDetails as LegacyPediatricDetails)?.treatmentGiven}</div>
+                ) : null}
+              </Section>
+            )}
+
+            {((data.procedures.procedureNotes && data.procedures.procedureNotes.length > 0) || data.procedures.proceduresChecked.length > 0 || data.procedures.otherProcedures) && (
               <Section>
                 <SectionHeading>Procedures & Interventions</SectionHeading>
-                <div className="text-sm space-y-1">
+                <div className="text-sm space-y-2">
+                  {data.procedures.procedureNotes && data.procedures.procedureNotes.length > 0 && (
+                    <div className="space-y-3">
+                      {data.procedures.procedureNotes.map((note) => (
+                        <div key={note.id} className="p-2.5 rounded border border-slate-200 print:border-slate-400 bg-slate-50/50 print:bg-transparent space-y-1">
+                          <div className="flex justify-between items-center text-xs font-bold text-slate-800 print:text-black border-b pb-1 border-slate-200 print:border-slate-300">
+                            <span className="uppercase tracking-wider">{note.procedureName}</span>
+                            <span className="font-mono font-normal text-[11px]">{[note.metadata.date, note.metadata.time].filter(Boolean).join(" ")}</span>
+                          </div>
+                          <div className="text-xs font-mono whitespace-pre-line leading-relaxed text-slate-900 print:text-black">
+                            {note.generatedNarrative}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                   {data.procedures.proceduresChecked.length > 0 && (
                     <div><span className="font-bold">Procedures Performed:</span> {data.procedures.proceduresChecked.join(", ")}</div>
                   )}
@@ -1198,28 +1437,32 @@ export default function CaseSheetPrintView({ data: propData, clinicalCase, onBac
               </Section>
             )}
 
-            <Section>
-              <SectionHeading>Provisional Diagnosis</SectionHeading>
-              <div className="text-sm font-bold text-indigo-950 print:text-black">{data.provisionalDiagnosis || (data.pediatricDetails as LegacyPediatricDetails)?.provisionalDiagnosisDischarge || <EmptyLine />}</div>
-            </Section>
+            {hasPedProvisionalDiagnosis && (
+              <Section>
+                <SectionHeading>Provisional Diagnosis</SectionHeading>
+                <div className="text-sm font-bold text-indigo-950 print:text-black">{data.provisionalDiagnosis || (data.pediatricDetails as LegacyPediatricDetails)?.provisionalDiagnosisDischarge}</div>
+              </Section>
+            )}
 
-            <Section>
-              <SectionHeading>Differential Diagnosis</SectionHeading>
-              {data.differentials.length > 0 ? (
-                <ul className="text-sm list-disc pl-5 mt-1 space-y-0.5">
-                  {data.differentials.map((d, i) => <li key={i}>{d.diagnosis} ({d.status})</li>)}
-                </ul>
-              ) : data.provisionalDifferentialDiagnoses ? (
-                <div className="text-sm whitespace-pre-line">{data.provisionalDifferentialDiagnoses}</div>
-              ) : (data.pediatricDetails as LegacyPediatricDetails)?.differentialDiagnosis ? (
-                <div className="text-sm">{((data.pediatricDetails as LegacyPediatricDetails)?.differentialDiagnosis)}</div>
-              ) : <EmptyLine />}
-              {data.differentials.length > 0 && data.provisionalDifferentialDiagnoses && (
-                <div className="text-sm whitespace-pre-line mt-2 text-slate-700 print:text-black">
-                  <span className="font-semibold">Notes / Differential Details:</span> {data.provisionalDifferentialDiagnoses}
-                </div>
-              )}
-            </Section>
+            {hasPedDifferentials && (
+              <Section>
+                <SectionHeading>Differential Diagnosis</SectionHeading>
+                {data.differentials.length > 0 ? (
+                  <ul className="text-sm list-disc pl-5 mt-1 space-y-0.5">
+                    {data.differentials.map((d, i) => <li key={i}>{d.diagnosis} ({d.status})</li>)}
+                  </ul>
+                ) : data.provisionalDifferentialDiagnoses ? (
+                  <div className="text-sm whitespace-pre-line">{data.provisionalDifferentialDiagnoses}</div>
+                ) : (data.pediatricDetails as LegacyPediatricDetails)?.differentialDiagnosis ? (
+                  <div className="text-sm">{((data.pediatricDetails as LegacyPediatricDetails)?.differentialDiagnosis)}</div>
+                ) : null}
+                {data.differentials.length > 0 && data.provisionalDifferentialDiagnoses && (
+                  <div className="text-sm whitespace-pre-line mt-2 text-slate-700 print:text-black">
+                    <span className="font-semibold">Notes / Differential Details:</span> {data.provisionalDifferentialDiagnoses}
+                  </div>
+                )}
+              </Section>
+            )}
 
             {(data.consultation.consultsRequested.length > 0 || data.consultation.consultantReview) && (
               <Section>
@@ -1240,6 +1483,8 @@ export default function CaseSheetPrintView({ data: propData, clinicalCase, onBac
                 </div>
               </Section>
             )}
+
+            <SafetyAndAccreditationSection data={data.safetyAndAccreditation} />
 
             <Section>
               <SectionHeading>Condition at Time of Shift / Disposition</SectionHeading>
@@ -1280,84 +1525,101 @@ export default function CaseSheetPrintView({ data: propData, clinicalCase, onBac
             <SecondarySurveySection data={data.secondarySurvey} />
             <PsychologicalAssessmentSection data={data.psychologicalAssessment} />
             
-            <Section>
-              <SectionHeading>Provisional & Differential Diagnosis</SectionHeading>
-              <div className="text-sm font-bold text-indigo-950 print:text-black">{data.provisionalDiagnosis || <EmptyLine />}</div>
-              {data.differentials.length > 0 && (
-                <ul className="text-sm list-disc pl-5 mt-1 space-y-0.5">
-                  {data.differentials.map((d, i) => <li key={i}>{d.diagnosis} ({d.status})</li>)}
-                </ul>
-              )}
-              {data.provisionalDifferentialDiagnoses && (
-                <div className="text-sm whitespace-pre-line mt-2 text-slate-700 print:text-black">
-                  {data.differentials.length > 0 && <span className="font-semibold">Notes / Differential Details: </span>}
-                  {data.provisionalDifferentialDiagnoses}
+            {hasAdultDiagnosis && (
+              <Section>
+                <SectionHeading>Provisional & Differential Diagnosis</SectionHeading>
+                {data.provisionalDiagnosis && <div className="text-sm font-bold text-indigo-950 print:text-black mb-1">{data.provisionalDiagnosis}</div>}
+                {data.differentials.length > 0 && (
+                  <ul className="text-sm list-disc pl-5 mt-1 space-y-0.5">
+                    {data.differentials.map((d, i) => <li key={i}>{d.diagnosis} ({d.status})</li>)}
+                  </ul>
+                )}
+                {data.provisionalDifferentialDiagnoses && (
+                  <div className="text-sm whitespace-pre-line mt-2 text-slate-700 print:text-black">
+                    {data.differentials.length > 0 && <span className="font-semibold">Notes / Differential Details: </span>}
+                    {data.provisionalDifferentialDiagnoses}
+                  </div>
+                )}
+              </Section>
+            )}
+
+            {hasInvestigations && (
+              <Section>
+                <SectionHeading>Investigations & Diagnostic Studies</SectionHeading>
+                <div className="space-y-3">
+                  {data.investigationLabsOrdered && (
+                    <div>
+                      <p className="text-xs font-bold uppercase tracking-wide text-slate-600 print:text-black mb-0.5">Laboratory Investigations Ordered</p>
+                      <p className="text-sm whitespace-pre-line text-slate-900 print:text-black">{data.investigationLabsOrdered}</p>
+                    </div>
+                  )}
+
+                  {data.labs.length > 0 && (
+                    <div>
+                      {data.labs.map((panel, i) => (
+                        <div key={i} className="mb-2">
+                          <p className="text-xs font-bold uppercase tracking-wide text-slate-600 print:text-black mb-1">{panel.panelName}</p>
+                          <p className="text-sm font-mono leading-relaxed">
+                            {panel.values.map(v => `${v.name}: ${v.param ? formatFlagged(v.param, v.value) : (v.value ?? "Pending")}${v.unit && v.value !== null ? ` ${v.unit}` : ""}`).join("  |  ")}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {data.investigationImaging && (
+                    <div>
+                      <p className="text-xs font-bold uppercase tracking-wide text-slate-600 print:text-black mb-0.5">Diagnostic Imaging (X-Ray / CT / MRI / USG)</p>
+                      <p className="text-sm whitespace-pre-line text-slate-900 print:text-black">{data.investigationImaging}</p>
+                    </div>
+                  )}
+
+                  {data.investigationResultsSummary && (
+                    <div>
+                      <p className="text-xs font-bold uppercase tracking-wide text-slate-600 print:text-black mb-0.5">Investigation Results Summary</p>
+                      <p className="text-sm whitespace-pre-line text-slate-900 print:text-black">{data.investigationResultsSummary}</p>
+                    </div>
+                  )}
                 </div>
-              )}
-            </Section>
+              </Section>
+            )}
 
-            <Section>
-              <SectionHeading>Investigations & Diagnostic Studies</SectionHeading>
-              <div className="space-y-3">
-                {data.investigationLabsOrdered && (
+            {hasTreatments && (
+              <Section>
+                <SectionHeading>Treatment Given & Emergency Orders</SectionHeading>
+                {data.treatmentGiven.length > 0 && (
+                  <ul className="text-sm list-disc pl-5 space-y-0.5 font-mono mb-2">
+                    {data.treatmentGiven.map((t, i) => <li key={i}>{t}</li>)}
+                  </ul>
+                )}
+                {data.treatmentNotes && (
                   <div>
-                    <p className="text-xs font-bold uppercase tracking-wide text-slate-600 print:text-black mb-0.5">Laboratory Investigations Ordered</p>
-                    <p className="text-sm whitespace-pre-line text-slate-900 print:text-black">{data.investigationLabsOrdered}</p>
+                    {data.treatmentGiven.length > 0 && <p className="text-xs font-bold uppercase tracking-wide text-slate-600 print:text-black mb-0.5">Treatment Notes & Orders</p>}
+                    <p className="text-sm whitespace-pre-line font-mono">{data.treatmentNotes}</p>
                   </div>
                 )}
+              </Section>
+            )}
 
-                {data.labs.length > 0 && (
-                  <div>
-                    {data.labs.map((panel, i) => (
-                      <div key={i} className="mb-2">
-                        <p className="text-xs font-bold uppercase tracking-wide text-slate-600 print:text-black mb-1">{panel.panelName}</p>
-                        <p className="text-sm font-mono leading-relaxed">
-                          {panel.values.map(v => `${v.name}: ${v.param ? formatFlagged(v.param, v.value) : (v.value ?? "Pending")}${v.unit && v.value !== null ? ` ${v.unit}` : ""}`).join("  |  ")}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {data.investigationImaging && (
-                  <div>
-                    <p className="text-xs font-bold uppercase tracking-wide text-slate-600 print:text-black mb-0.5">Diagnostic Imaging (X-Ray / CT / MRI / USG)</p>
-                    <p className="text-sm whitespace-pre-line text-slate-900 print:text-black">{data.investigationImaging}</p>
-                  </div>
-                )}
-
-                {data.investigationResultsSummary && (
-                  <div>
-                    <p className="text-xs font-bold uppercase tracking-wide text-slate-600 print:text-black mb-0.5">Investigation Results Summary</p>
-                    <p className="text-sm whitespace-pre-line text-slate-900 print:text-black">{data.investigationResultsSummary}</p>
-                  </div>
-                )}
-
-                {!data.investigationLabsOrdered && data.labs.length === 0 && !data.investigationImaging && !data.investigationResultsSummary && (
-                  <EmptyLine />
-                )}
-              </div>
-            </Section>
-
-            <Section>
-              <SectionHeading>Treatment Given & Emergency Orders</SectionHeading>
-              {data.treatmentGiven.length > 0 && (
-                <ul className="text-sm list-disc pl-5 space-y-0.5 font-mono mb-2">
-                  {data.treatmentGiven.map((t, i) => <li key={i}>{t}</li>)}
-                </ul>
-              )}
-              {data.treatmentNotes ? (
-                <div>
-                  {data.treatmentGiven.length > 0 && <p className="text-xs font-bold uppercase tracking-wide text-slate-600 print:text-black mb-0.5">Treatment Notes & Orders</p>}
-                  <p className="text-sm whitespace-pre-line font-mono">{data.treatmentNotes}</p>
-                </div>
-              ) : !data.treatmentGiven.length && <EmptyLine />}
-            </Section>
-
-            {(data.procedures.proceduresChecked.length > 0 || data.procedures.otherProcedures) && (
+            {((data.procedures.procedureNotes && data.procedures.procedureNotes.length > 0) || data.procedures.proceduresChecked.length > 0 || data.procedures.otherProcedures) && (
               <Section>
                 <SectionHeading>Procedures & Interventions</SectionHeading>
-                <div className="text-sm space-y-1">
+                <div className="text-sm space-y-2">
+                  {data.procedures.procedureNotes && data.procedures.procedureNotes.length > 0 && (
+                    <div className="space-y-3">
+                      {data.procedures.procedureNotes.map((note) => (
+                        <div key={note.id} className="p-2.5 rounded border border-slate-200 print:border-slate-400 bg-slate-50/50 print:bg-transparent space-y-1">
+                          <div className="flex justify-between items-center text-xs font-bold text-slate-800 print:text-black border-b pb-1 border-slate-200 print:border-slate-300">
+                            <span className="uppercase tracking-wider">{note.procedureName}</span>
+                            <span className="font-mono font-normal text-[11px]">{[note.metadata.date, note.metadata.time].filter(Boolean).join(" ")}</span>
+                          </div>
+                          <div className="text-xs font-mono whitespace-pre-line leading-relaxed text-slate-900 print:text-black">
+                            {note.generatedNarrative}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                   {data.procedures.proceduresChecked.length > 0 && (
                     <div><span className="font-bold">Procedures Performed:</span> {data.procedures.proceduresChecked.join(", ")}</div>
                   )}

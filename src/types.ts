@@ -158,8 +158,12 @@ export interface PrimarySurvey {
       clinicalInterpretation?: string;
     };
     ecgStatus?: string;
+    ecgNotes?: string;
     efastStatus?: string;
+    efastNotes?: string;
     echoStatus?: string;
+    echoNotes?: string;
+    echoFindings?: string;
   };
 }
 
@@ -278,23 +282,23 @@ export interface DifferentialDiagnosis {
 }
 
 export interface IpsgChecklist {
-  ipsg1IdentifiersVerified: boolean;
-  ipsg2ReadBackPerformed: boolean;
-  ipsg3HighAlertDoubleChecked: boolean;
-  ipsg4TimeOutPerformed: boolean;
-  ipsg5HandHygieneComplied: boolean;
-  ipsg6FallRiskAssessed: "Low" | "Medium" | "High";
+  ipsg1IdentifiersVerified?: boolean | null;
+  ipsg2ReadBackPerformed?: boolean | null;
+  ipsg3HighAlertDoubleChecked?: boolean | null;
+  ipsg4TimeOutPerformed?: boolean | null;
+  ipsg5HandHygieneComplied?: boolean | null;
+  ipsg6FallRiskAssessed?: "Low" | "Medium" | "High" | "" | null;
 }
 
 export interface PsychologicalAssessment {
-  suicidalIdeation: boolean;
-  selfHarmHistory: boolean;
-  intentToHarmOthers: boolean;
-  substanceAbuse: boolean;
-  psychiatricHistory: boolean;
-  currentlyOnPsychiatricTreatment: boolean;
-  hasSupportSystem: boolean;
-  notes: string | null;
+  suicidalIdeation?: boolean | null;
+  selfHarmHistory?: boolean | null;
+  intentToHarmOthers?: boolean | null;
+  substanceAbuse?: boolean | null;
+  psychiatricHistory?: boolean | null;
+  currentlyOnPsychiatricTreatment?: boolean | null;
+  hasSupportSystem?: boolean | null;
+  notes?: string | null;
 }
 
 export interface VulnerableAssessment {
@@ -335,7 +339,12 @@ export interface DispositionDetails {
   };
 }
 
+export type DischargeSummaryStatus = "DRAFT" | "PREPARED" | "MANUALLY_EDITED" | "FINALIZED";
+
 export interface DischargeInfo {
+  summaryStatus?: DischargeSummaryStatus;
+  preparedAt?: string;
+  finalizedAt?: string;
   primaryDiagnosis: string;
   secondaryDiagnosis: string;
   conditionAtDischarge: string;
@@ -350,6 +359,7 @@ export interface DischargeInfo {
   emConsultantName?: string;
   uhid?: string;
   broughtBy?: string;
+  caseUpdatedAfterPreparation?: boolean;
   
   // MLC & Allergy
   isMlc?: string;
@@ -423,13 +433,13 @@ export interface DischargeInfo {
 
 export interface VitalsRecord {
   timestamp: string;
-  bp: string;
-  systolic: number;
-  diastolic: number;
-  hr: number;
-  spo2: number;
-  rr: number;
-  temp: number;
+  bp?: string;
+  systolic?: number | null;
+  diastolic?: number | null;
+  hr?: number | null;
+  spo2?: number | null;
+  rr?: number | null;
+  temp?: number | null;
 }
 
 export interface ClinicalCase {
@@ -475,6 +485,7 @@ export interface ClinicalCase {
   provisionalDifferentialDiagnoses?: string;
   otherMedications?: string;
   otherProcedures?: string;
+  procedureNotes?: import("./types/procedureNotes").ProcedureNote[];
   addendumNotes?: string;
   conditionAtShift?: "Stable" | "Unstable";
   infusions?: Array<{ id: string; fluidName: string; dose: string; dilution: string; rate: string }>;
@@ -779,6 +790,17 @@ export interface AdjunctsDevices {
   abgCl?: string | null;
   abgHb?: string | null;
   abgAnionGap?: string | null;
+  ecgStatus?: string | null;
+  ecgNotes?: string | null;
+  ecgFindings?: string | null;
+  efastStatus?: string | null;
+  efastNotes?: string | null;
+  echoStatus?: string | null;
+  echoNotes?: string | null;
+  echoFindings?: string | null;
+  echoDone?: string | null;
+  efastDone?: string | null;
+  ecgDone?: string | null;
   [key: string]: string | null | undefined;
 }
 
@@ -894,3 +916,6 @@ export interface LogbookEntry {
   createdAt: string;
   updatedAt: string;
 }
+
+export * from "./types/procedureNotes";
+

@@ -3,13 +3,51 @@ import VoiceRecorder from "./shared/VoiceRecorder";
 import { CheckCircle, Activity, Heart, Brain, Stethoscope, User, Footprints } from "lucide-react";
 import { AccordionItem } from "./PrimarySurveySection";
 
+export function parseSecondaryAssessmentToSurvey(text: string): Record<string, string> {
+  const result: Record<string, string> = {};
+  if (!text || typeof text !== "string") return result;
+
+  const normalizeKey = (k: string): string | null => {
+    const lower = k.trim().toLowerCase();
+    if (lower.startsWith("rs") || lower.includes("respiratory") || lower.includes("chest") || lower.includes("lung")) return "respiratory";
+    if (lower.startsWith("pa") || lower.includes("abdomen") || lower.includes("abdominal")) return "abdomen";
+    if (lower.includes("cvs") || lower.includes("cardiovascular") || lower.includes("heart")) return "cvs";
+    if (lower.includes("cns") || lower.includes("neurological") || lower.includes("neuro")) return "cns";
+    if (lower.includes("general")) return "general";
+    if (lower.includes("extremit") || lower.includes("local") || lower.includes("trauma") || lower.includes("musculoskeletal") || lower.includes("msk")) return "extremities";
+    return null;
+  };
+
+  const headerPattern = "(?:general(?:\\s+examination|\\s+exam)?|cvs(?:\\s+examination|\\s+exam)?|cardiovascular(?:\\s+examination|\\s+exam)?|respiratory(?:\\s+system|\\s+examination|\\s+exam)?|rs(?:\\s+examination|\\s+exam)?|chest(?:\\s+examination|\\s+exam)?|per\\s+abdomen(?:\\s+examination|\\s+exam)?|pa(?:\\s+examination|\\s+exam)?|abdomen(?:\\s+examination|\\s+exam)?|abdominal(?:\\s+examination|\\s+exam)?|cns(?:\\s+examination|\\s+exam)?|neurological(?:\\s+examination|\\s+exam)?|extremities(?:\\s+examination|\\s+exam)?|extremity(?:\\s+examination|\\s+exam)?|musculoskeletal(?:\\s+examination|\\s+exam)?|msk)";
+
+  const regex = new RegExp(`(?:^|[\\n;,]|\\.\\s+|:\\s*|[-*•]\\s*|\\s+)(${headerPattern})\\s*[:\\-]\\s*([\\s\\S]*?)(?=(?:[\\n;,]|\\.\\s+|:\\s*|[-*•]\\s*|\\s+)(?:${headerPattern})\\s*[:\\-]|$)`, "gi");
+
+  let match;
+  let foundAny = false;
+  while ((match = regex.exec(text)) !== null) {
+    const key = normalizeKey(match[1]);
+    let val = (match[2] || "").trim();
+    val = val.replace(/^[,\.\s;:\-]+/, "").replace(/[,\.\s;:\-]+$/, "").trim();
+    if (key && val) {
+      result[key] = result[key] ? `${result[key]}\n${val}` : val;
+      foundAny = true;
+    }
+  }
+  if (!foundAny && text.trim()) {
+    result.general = text.trim();
+  }
+  return result;
+}
+
 export function SecondarySurveySection({
   secondaryAssessment,
+  secondarySurvey,
   onChange,
   onMarkNormal
 }: {
   secondaryAssessment: string;
-  onChange: (value: string) => void;
+  secondarySurvey?: Record<string, string>;
+  onChange: (value: string, updatedSurvey?: Record<string, string>) => void;
   onMarkNormal: () => void;
 }) {
   const [fields, setFields] = useState({
@@ -21,20 +59,8 @@ export function SecondarySurveySection({
     Extremities: ""
   });
 
-  // Parse initial value once when component mounts or when string completely changes externally
+  // Parse initial value once when component mounts or when string / survey changes externally
   useEffect(() => {
-    if (!secondaryAssessment) {
-      setFields({
-        General: "",
-        CVS: "",
-        RS: "",
-        PA: "",
-        CNS: "",
-        Extremities: ""
-      });
-      return;
-    }
-
     const newFields = {
       General: "",
       CVS: "",
@@ -44,35 +70,29 @@ export function SecondarySurveySection({
       Extremities: ""
     };
 
-    const normalizeKey = (k: string): keyof typeof newFields | null => {
-      const lower = k.trim().toLowerCase();
-      if (lower === "rs" || lower === "respiratory" || lower === "chest") return "RS";
-      if (lower === "pa" || lower === "abdomen") return "PA";
-      if (lower === "cvs") return "CVS";
-      if (lower === "cns") return "CNS";
-      if (lower === "general") return "General";
-      if (lower === "extremities") return "Extremities";
-      return null;
-    };
-
-    const regex = /(General|CVS|RS|Respiratory|Chest|PA|Abdomen|CNS|Extremities)\s*:\s*(.*?)(?=(General|CVS|RS|Respiratory|Chest|PA|Abdomen|CNS|Extremities)\s*:|$)/igs;
-    let match;
-    let foundAny = false;
-    while ((match = regex.exec(secondaryAssessment)) !== null) {
-      const key = normalizeKey(match[1]);
-      if (key) {
-        newFields[key] = newFields[key] ? newFields[key] + "\n" + match[2].trim() : match[2].trim();
-        foundAny = true;
-      }
+    // 1. Populate from secondarySurvey if available
+    if (secondarySurvey && typeof secondarySurvey === "object") {
+      if (secondarySurvey.general) newFields.General = secondarySurvey.general;
+      if (secondarySurvey.cvs) newFields.CVS = secondarySurvey.cvs;
+      if (secondarySurvey.respiratory) newFields.RS = secondarySurvey.respiratory;
+      if (secondarySurvey.abdomen) newFields.PA = secondarySurvey.abdomen;
+      if (secondarySurvey.cns) newFields.CNS = secondarySurvey.cns;
+      if (secondarySurvey.extremities) newFields.Extremities = secondarySurvey.extremities;
     }
-    
-    // If it couldn't parse it into fields, maybe dump it into General
-    if (!foundAny && secondaryAssessment.trim() !== "") {
-       newFields.General = secondaryAssessment.trim();
+
+    // 2. Parse secondaryAssessment and merge/populate missing fields
+    if (secondaryAssessment && typeof secondaryAssessment === "string") {
+      const parsed = parseSecondaryAssessmentToSurvey(secondaryAssessment);
+      if (parsed.general && !newFields.General) newFields.General = parsed.general;
+      if (parsed.cvs && !newFields.CVS) newFields.CVS = parsed.cvs;
+      if (parsed.respiratory && !newFields.RS) newFields.RS = parsed.respiratory;
+      if (parsed.abdomen && !newFields.PA) newFields.PA = parsed.abdomen;
+      if (parsed.cns && !newFields.CNS) newFields.CNS = parsed.cns;
+      if (parsed.extremities && !newFields.Extremities) newFields.Extremities = parsed.extremities;
     }
 
     setFields(newFields);
-  }, [secondaryAssessment]); // We want it to re-parse if the entire case is loaded
+  }, [secondaryAssessment, secondarySurvey]);
 
   const handleFieldChange = (key: keyof typeof fields, value: string) => {
     const updated = { ...fields, [key]: value };
@@ -80,13 +100,25 @@ export function SecondarySurveySection({
     
     // Reconstruct the string
     const parts = [];
-    for (const [k, v] of Object.entries(updated) as [string, string][]) {
-      if (v.trim()) {
-        parts.push(`${k}: ${v.trim()}`);
-      }
-    }
-    onChange(parts.join("\n"));
+    if (updated.General.trim()) parts.push(`General: ${updated.General.trim()}`);
+    if (updated.CVS.trim()) parts.push(`CVS: ${updated.CVS.trim()}`);
+    if (updated.RS.trim()) parts.push(`RS: ${updated.RS.trim()}`);
+    if (updated.PA.trim()) parts.push(`PA: ${updated.PA.trim()}`);
+    if (updated.CNS.trim()) parts.push(`CNS: ${updated.CNS.trim()}`);
+    if (updated.Extremities.trim()) parts.push(`Extremities: ${updated.Extremities.trim()}`);
+
+    const updatedSurvey: Record<string, string> = {
+      ...(secondarySurvey || {}),
+      general: updated.General.trim(),
+      cvs: updated.CVS.trim(),
+      respiratory: updated.RS.trim(),
+      abdomen: updated.PA.trim(),
+      cns: updated.CNS.trim(),
+      extremities: updated.Extremities.trim()
+    };
+    onChange(parts.join("\n"), updatedSurvey);
   };
+
 
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({
     General: false,

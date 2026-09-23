@@ -138,7 +138,7 @@ export function PrimarySurveyAdjuncts({ data, onChange, openSections, toggleSect
       {/* ── ECG ─────────────────────────────────────────── */}
       <AccordionItem
         title="ECG"
-        summary={[data.adjuncts?.ecgStatus]
+        summary={[data.adjuncts?.ecgStatus, data.adjuncts?.ecgNotes]
           .filter(Boolean).join(" · ")}
         iconLetter={<Heart className="w-4 h-4" />}
         iconBgClass="bg-emerald-600"
@@ -146,29 +146,49 @@ export function PrimarySurveyAdjuncts({ data, onChange, openSections, toggleSect
         isOpen={openSections.ecg}
         onToggle={() => toggleSection('ecg')}
       >
-        <DropdownSelect
-          label="ECG Interpretation"
-          options={[
-            "Not done",
-            "Normal sinus rhythm",
-            "Sinus tachycardia",
-            "Sinus bradycardia",
-            "Atrial fibrillation",
-            "Atrial flutter",
-            "SVT",
-            "VT",
-            "VF",
-            "STEMI"
-          ]}
-          value={data.adjuncts?.ecgStatus}
-          onChange={(v) => onChange("adjuncts.ecgStatus", v)}
-        />
+        <div className="space-y-3">
+          <DropdownSelect
+            label="ECG Interpretation"
+            options={[
+              "Not done",
+              "Normal sinus rhythm",
+              "Sinus tachycardia",
+              "Sinus bradycardia",
+              "Atrial fibrillation",
+              "Atrial flutter",
+              "SVT",
+              "VT",
+              "VF",
+              "STEMI"
+            ]}
+            value={data.adjuncts?.ecgStatus}
+            onChange={(v) => onChange("adjuncts.ecgStatus", v)}
+          />
+          <div>
+            <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wide block mb-1">
+              ECG Findings
+            </label>
+            <div className="flex gap-2">
+              <textarea
+                placeholder="Dictated or manual ECG rhythm, ST-T changes, intervals, lead abnormalities..."
+                value={data.adjuncts?.ecgNotes || ""}
+                onChange={(e) => onChange("adjuncts.ecgNotes", e.target.value)}
+                className="flex-1 w-full px-3 py-2 rounded-lg text-sm bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                rows={2}
+              />
+              <VoiceRecorder
+                renderMode="compact-button"
+                onTranscript={(txt) => onChange("adjuncts.ecgNotes", (data.adjuncts?.ecgNotes ? data.adjuncts?.ecgNotes + " " : "") + txt)}
+              />
+            </div>
+          </div>
+        </div>
       </AccordionItem>
 
       {/* ── EFAST ─────────────────────────────────────────── */}
       <AccordionItem
         title="EFAST"
-        summary={[data.adjuncts?.efastStatus]
+        summary={[data.adjuncts?.efastStatus, data.adjuncts?.efastNotes]
           .filter(Boolean).join(" · ")}
         iconLetter={<Activity className="w-4 h-4" />}
         iconBgClass="bg-emerald-600"
@@ -176,27 +196,47 @@ export function PrimarySurveyAdjuncts({ data, onChange, openSections, toggleSect
         isOpen={openSections.efast}
         onToggle={() => toggleSection('efast')}
       >
-        <DropdownSelect
-          label="EFAST Result"
-          options={[
-            "Not done",
-            "Negative",
-            "Positive - RUQ",
-            "Positive - LUQ",
-            "Positive - Pelvis",
-            "Positive - Pericardial",
-            "Positive - Pneumothorax",
-            "Positive - Multiple"
-          ]}
-          value={data.adjuncts?.efastStatus}
-          onChange={(v) => onChange("adjuncts.efastStatus", v)}
-        />
+        <div className="space-y-3">
+          <DropdownSelect
+            label="EFAST Result"
+            options={[
+              "Not done",
+              "Negative",
+              "Positive - RUQ",
+              "Positive - LUQ",
+              "Positive - Pelvis",
+              "Positive - Pericardial",
+              "Positive - Pneumothorax",
+              "Positive - Multiple"
+            ]}
+            value={data.adjuncts?.efastStatus}
+            onChange={(v) => onChange("adjuncts.efastStatus", v)}
+          />
+          <div>
+            <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wide block mb-1">
+              EFAST Findings
+            </label>
+            <div className="flex gap-2">
+              <textarea
+                placeholder="Free fluid in Morrison's pouch, splenorenal, pelvis, pleural sliding, pericardial effusion..."
+                value={data.adjuncts?.efastNotes || ""}
+                onChange={(e) => onChange("adjuncts.efastNotes", e.target.value)}
+                className="flex-1 w-full px-3 py-2 rounded-lg text-sm bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                rows={2}
+              />
+              <VoiceRecorder
+                renderMode="compact-button"
+                onTranscript={(txt) => onChange("adjuncts.efastNotes", (data.adjuncts?.efastNotes ? data.adjuncts?.efastNotes + " " : "") + txt)}
+              />
+            </div>
+          </div>
+        </div>
       </AccordionItem>
 
       {/* ── Bedside Echo ─────────────────────────────────────────── */}
       <AccordionItem
         title="Bedside Echo"
-        summary={[data.adjuncts?.echoStatus]
+        summary={[data.adjuncts?.echoStatus, data.adjuncts?.echoNotes || data.adjuncts?.echoFindings]
           .filter(Boolean).join(" · ")}
         iconLetter={<Heart className="w-4 h-4" />}
         iconBgClass="bg-emerald-600"
@@ -204,20 +244,48 @@ export function PrimarySurveyAdjuncts({ data, onChange, openSections, toggleSect
         isOpen={openSections.bedsideEcho}
         onToggle={() => toggleSection('bedsideEcho')}
       >
-        <DropdownSelect
-          label="Bedside Echo Result"
-          options={[
-            "Not done",
-            "Normal",
-            "Reduced EF",
-            "RV strain",
-            "Pericardial effusion",
-            "Tamponade physiology",
-            "Hypovolemia (IVC collapse)"
-          ]}
-          value={data.adjuncts?.echoStatus}
-          onChange={(v) => onChange("adjuncts.echoStatus", v)}
-        />
+        <div className="space-y-3">
+          <DropdownSelect
+            label="Bedside Echo Result"
+            options={[
+              "Not done",
+              "Normal",
+              "Reduced EF",
+              "RV strain",
+              "Pericardial effusion",
+              "Tamponade physiology",
+              "Hypovolemia (IVC collapse)"
+            ]}
+            value={data.adjuncts?.echoStatus}
+            onChange={(v) => onChange("adjuncts.echoStatus", v)}
+          />
+          <div>
+            <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wide block mb-1">
+              Bedside Echo Findings
+            </label>
+            <div className="flex gap-2">
+              <textarea
+                placeholder="LV systolic function, RWMA, RV size/function, pericardial effusion, IVC collapsibility..."
+                value={data.adjuncts?.echoNotes || data.adjuncts?.echoFindings || ""}
+                onChange={(e) => {
+                  onChange("adjuncts.echoNotes", e.target.value);
+                  onChange("adjuncts.echoFindings", e.target.value);
+                }}
+                className="flex-1 w-full px-3 py-2 rounded-lg text-sm bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                rows={2}
+              />
+              <VoiceRecorder
+                renderMode="compact-button"
+                onTranscript={(txt) => {
+                  const current = data.adjuncts?.echoNotes || data.adjuncts?.echoFindings || "";
+                  const updated = (current ? current + " " : "") + txt;
+                  onChange("adjuncts.echoNotes", updated);
+                  onChange("adjuncts.echoFindings", updated);
+                }}
+              />
+            </div>
+          </div>
+        </div>
       </AccordionItem>
 
     
@@ -230,6 +298,9 @@ import VoiceRecorder from "./shared/VoiceRecorder";
 import React, { useState } from "react";
 import { PrimarySurvey, PatientVitals } from "../types";
 import { Activity, ShieldAlert, CheckCircle, Heart, AlertTriangle, ChevronDown, Camera, Image as ImageIcon } from "lucide-react";
+import { PediatricVitalReference } from "./PediatricVitalReference";
+import { isPediatricPatient, interpretPediatricVital } from "../utils/pediatricRanges";
+import { displayTemperature } from "../utils/clinicalFormatter";
 
 interface PrimarySurveySectionProps {
   data: PrimarySurvey;
@@ -239,6 +310,7 @@ interface PrimarySurveySectionProps {
   onInterpretABG?: () => void;
   vitals?: PatientVitals;
   onUpdateVitals?: (field: keyof PatientVitals, value: string) => void;
+  patientAge?: number | null;
 }
 
 // ── Helper UI Sub-components ──────────────────────────────────────
@@ -298,6 +370,8 @@ export function VitalInput({
   flagLowSBP,
   max,
   min,
+  ageYears,
+  param,
 }: {
   label: string;
   unit?: string;
@@ -311,16 +385,28 @@ export function VitalInput({
   flagLowSBP?: number;
   max?: number;
   min?: number;
+  ageYears?: number | null;
+  param?: "hr" | "rr" | "spo2" | "sbp" | "temp";
 }) {
+  const isPediatric = isPediatricPatient(ageYears);
+  const pedInterpretation = isPediatric && param ? interpretPediatricVital(param, value, ageYears) : null;
+
   const numVal = value ? parseFloat(value) : NaN;
   let isAbnormal = false;
-  if (!isNaN(numVal)) {
-    if (flagHigh !== undefined && numVal > flagHigh) isAbnormal = true;
-    if (flagLow !== undefined && numVal < flagLow) isAbnormal = true;
-  }
-  if (flagHighSBP !== undefined && flagLowSBP !== undefined && value && value.includes("/")) {
-    const sbp = parseFloat(value.split("/")[0]);
-    if (!isNaN(sbp) && (sbp > flagHighSBP || sbp < flagLowSBP)) isAbnormal = true;
+
+  if (pedInterpretation && pedInterpretation.isPediatric) {
+    if (pedInterpretation.status === "High" || pedInterpretation.status === "Low") {
+      isAbnormal = true;
+    }
+  } else {
+    if (!isNaN(numVal)) {
+      if (flagHigh !== undefined && numVal > flagHigh) isAbnormal = true;
+      if (flagLow !== undefined && numVal < flagLow) isAbnormal = true;
+    }
+    if (flagHighSBP !== undefined && flagLowSBP !== undefined && value && value.includes("/")) {
+      const sbp = parseFloat(value.split("/")[0]);
+      if (!isNaN(sbp) && (sbp > flagHighSBP || sbp < flagLowSBP)) isAbnormal = true;
+    }
   }
 
   return (
@@ -329,11 +415,11 @@ export function VitalInput({
         <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wide">
           {label} {unit ? <span className="text-[10px] text-slate-400 font-normal">({unit})</span> : null}
         </label>
-        {normal && <span className="text-[9px] text-slate-400 font-mono">Ref: {normal}</span>}
+        {!isPediatric && normal && <span className="text-[9px] text-slate-400 font-mono">Ref: {normal}</span>}
       </div>
       <input
         type="text"
-        placeholder={placeholder || `e.g. ${normal || ""}`}
+        placeholder={placeholder || (!isPediatric ? `e.g. ${normal || ""}` : "")}
         value={value || ""}
         onChange={(e) => {
           let val = e.target.value;
@@ -347,6 +433,9 @@ export function VitalInput({
             : "bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 border-slate-200 dark:border-slate-800 focus:ring-indigo-500"
         }`}
       />
+      {isPediatric && param && (
+        <PediatricVitalReference param={param} value={value} ageYears={ageYears} />
+      )}
     </div>
   );
 }
@@ -483,6 +572,7 @@ export function PrimarySurveySection({
   onInterpretABG,
   vitals,
   onUpdateVitals,
+  patientAge,
 }: PrimarySurveySectionProps) {
   const isTrauma = caseType?.toLowerCase() === "trauma";
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({
@@ -636,6 +726,8 @@ export function PrimarySurveySection({
             flagHigh={25}
             flagLow={10}
             value={displayRR}
+            ageYears={patientAge}
+            param="rr"
             onChange={(v) => {
               onUpdateVitals?.("rr", v);
             }}
@@ -646,6 +738,8 @@ export function PrimarySurveySection({
             normal="95-100"
             flagLow={94}
             value={displaySpO2}
+            ageYears={patientAge}
+            param="spo2"
             onChange={(v) => {
               onUpdateVitals?.("spo2", v);
             }}
@@ -709,6 +803,8 @@ export function PrimarySurveySection({
             flagHigh={100}
             flagLow={50}
             value={displayHR}
+            ageYears={patientAge}
+            param="hr"
             onChange={(v) => {
               onUpdateVitals?.("hr", v);
             }}
@@ -721,6 +817,8 @@ export function PrimarySurveySection({
             flagHighSBP={160}
             flagLowSBP={90}
             value={displayBP}
+            ageYears={patientAge}
+            param="sbp"
             onChange={(v) => {
               onUpdateVitals?.("bp", v);
             }}
@@ -897,7 +995,7 @@ export function PrimarySurveySection({
       {/* ── E — EXPOSURE ─────────────────────────────────────────── */}
       <AccordionItem
         title="E - EXPOSURE"
-        summary={[displayTemp ? `Temp ${displayTemp}°C` : ""]
+        summary={[displayTemp ? `Temp ${displayTemperature(displayTemp)}` : ""]
           .filter(Boolean).join(" · ")}
         iconLetter="E"
         iconBgClass="bg-blue-500"
@@ -913,6 +1011,8 @@ export function PrimarySurveySection({
             flagHigh={38.0}
             flagLow={35.5}
             value={displayTemp}
+            ageYears={patientAge}
+            param="temp"
             onChange={(v) => {
               onUpdateVitals?.("temp", v);
             }}

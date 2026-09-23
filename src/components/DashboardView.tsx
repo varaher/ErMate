@@ -17,6 +17,7 @@ import GoogleCalendarModal from "./GoogleCalendarModal";
 import GoogleClassroomModal from "./GoogleClassroomModal";
 import MortalityAuditModal from "./MortalityAuditModal";
 import { ConfirmModal } from "./shared/ConfirmModal";
+import { displayGcs, displayTemperature, displaySpo2, displayGrbs } from "../utils/clinicalFormatter";
 
 interface DashboardViewProps {
   profile: UserProfile;
@@ -314,27 +315,35 @@ ADJUNCTS TO PRIMARY:
     const secondarySection = structuredSecondary || (typeof c.secondaryAssessment === "string" ? c.secondaryAssessment : "General exam within normal limits.");
 
     // ── Psychological Assessment ──
-    const psych = (c as any).psychologicalAssessment || (c.vulnerableAssessment || c.sampleHistory?.psychiatricFlags ? {
-      suicidalIdeation: !!c.vulnerableAssessment?.suicidalIdeationRisk,
-      selfHarmHistory: !!c.vulnerableAssessment?.suicidalIdeationRisk,
-      intentToHarmOthers: false,
-      substanceAbuse: false,
-      psychiatricHistory: false,
-      currentlyOnPsychiatricTreatment: false,
-      hasSupportSystem: true,
-      notes: c.sampleHistory?.psychiatricFlags || null,
+    const psych = (c as any).psychologicalAssessment || (c.sampleHistory?.psychiatricFlags ? {
+      notes: c.sampleHistory.psychiatricFlags,
     } : null);
+
+    const formatPsychBool = (val: any, isRisk = false) => {
+      if (val === true) return isRisk ? "YES ⚠️" : "Yes";
+      if (val === false) return "No";
+      return "Not documented";
+    };
+
+    const hasStructuredPsych = psych && (
+      psych.suicidalIdeation !== undefined ||
+      psych.selfHarmHistory !== undefined ||
+      psych.intentToHarmOthers !== undefined ||
+      psych.substanceAbuse !== undefined ||
+      psych.psychiatricHistory !== undefined ||
+      psych.currentlyOnPsychiatricTreatment !== undefined ||
+      psych.hasSupportSystem !== undefined
+    );
 
     const psychSection = psych ? `
 PSYCHOLOGICAL ASSESSMENT:
-- Suicidal Ideation: ${psych.suicidalIdeation ? "YES ⚠️" : "No"}
-- Self-Harm History: ${psych.selfHarmHistory ? "YES ⚠️" : "No"}
-- Intent to Harm Others: ${psych.intentToHarmOthers ? "YES ⚠️" : "No"}
-- Substance Abuse: ${psych.substanceAbuse ? "Yes" : "No"}
-- Psychiatric History: ${psych.psychiatricHistory ? "Yes" : "No"}
-- Currently on Psychiatric Treatment: ${psych.currentlyOnPsychiatricTreatment ? "Yes" : "No"}
-- Has Support System: ${psych.hasSupportSystem ? "Yes" : "No"}
-${psych.notes ? `- Notes: ${psych.notes}` : ""}` : "";
+${hasStructuredPsych ? `- Suicidal Ideation: ${formatPsychBool(psych.suicidalIdeation, true)}
+- Self-Harm History: ${formatPsychBool(psych.selfHarmHistory, true)}
+- Intent to Harm Others: ${formatPsychBool(psych.intentToHarmOthers, true)}
+- Substance Abuse: ${formatPsychBool(psych.substanceAbuse)}
+- Psychiatric History: ${formatPsychBool(psych.psychiatricHistory)}
+- Currently on Psychiatric Treatment: ${formatPsychBool(psych.currentlyOnPsychiatricTreatment)}
+- Has Support System: ${formatPsychBool(psych.hasSupportSystem)}` : ""}${psych.notes ? `\n- Notes: ${psych.notes}` : ""}`.trim() : "";
 
     // ── Investigations — includes abnormal flags ──
     const legacyInvestigations = c.investigations?.map(i => `- ${i.testName}: ${i.result || "Pending"}`).join("\n") || "";
@@ -406,7 +415,7 @@ ${ipsg ? `- IPSG Checklist: Identifiers: ${ipsg.ipsg1IdentifiersVerified ? "Veri
 ${vuln ? `- Vulnerable Assessment: Vulnerable: ${vuln.isVulnerable ? `Yes (${vuln.vulnerableType})` : "No"}, Functional: ${vuln.functionalAssessmentScore}` : ""}
 ${consent ? `- Consent/Time-Out: Consent Obtained: ${consent.procedureConsentObtained ? "Yes" : "No"}, Time-Out Performed: ${consent.procedureTimeOutPerformed ? "Yes" : "No"}` : ""}` : "";
 
-    const gcsVal = c.vitals?.gcs || (c.vitals?.gcs_e || c.vitals?.gcs_v || c.vitals?.gcs_m ? `${c.vitals?.gcs_e || "?"}/${c.vitals?.gcs_v || "?"}/${c.vitals?.gcs_m || "?"}` : "15/15");
+    const gcsVal = displayGcs(c.vitals);
 
     return `==================================================
 EMERGENCY DEPARTMENT EMR CASE SHEET
@@ -426,10 +435,10 @@ PATIENT DEMOGRAPHICS:
 - Case Type: ${c.patient?.caseType || "Medical"}${mlcFlag}
 
 INITIAL PRESENTATION VITALS:
-- BP: ${c.vitals?.bp || "N/A"} mmHg | HR: ${c.vitals?.hr || "N/A"} bpm
-- SpO2: ${c.vitals?.spo2 || "N/A"}% | RR: ${c.vitals?.rr || "N/A"} /min
-- Temp: ${c.vitals?.temp || "N/A"} °F | GCS: ${gcsVal}
-- GRBS: ${c.vitals?.grbs || "N/A"} mg/dL | Pain Score: ${c.vitals?.painScore || "0"}/10
+- BP: ${c.vitals?.bp ? `${c.vitals.bp} mmHg` : "Not documented"} | HR: ${c.vitals?.hr ? `${c.vitals.hr} bpm` : "Not documented"}
+- SpO2: ${displaySpo2(c.vitals?.spo2)} | RR: ${c.vitals?.rr ? `${c.vitals.rr} /min` : "Not documented"}
+- Temp: ${displayTemperature(c.vitals?.temp)} | GCS: ${gcsVal}
+- GRBS: ${displayGrbs(c.vitals?.grbs)} | Pain Score: ${c.vitals?.painScore !== undefined && c.vitals?.painScore !== null && c.vitals?.painScore !== "" ? `${c.vitals.painScore}/10` : "Not documented"}
 
 SAMPLE HISTORY:
 - Symptoms: ${c.sampleHistory?.symptoms || "N/A"}

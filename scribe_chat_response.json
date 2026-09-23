@@ -1,0 +1,200 @@
+{
+  "success": true,
+  "pipelineVersion": "scribe-2026-09-22-fulldictation-gate",
+  "extractionMessage": {
+    "id": "ext-1790143529185-ve0a",
+    "role": "assistant",
+    "timestamp": "2026-09-23T06:05:29.185Z",
+    "type": "extraction-confirmation",
+    "content": "\u2705 Details captured from your update.",
+    "extractionSummary": {
+      "fieldsUpdated": [
+        "presentingComplaint",
+        "vbgAbg",
+        "differentialDiagnosis",
+        "surgicalHistory",
+        "lmp",
+        "emConsultant",
+        "mlcDetails",
+        "events",
+        "sampleHistory",
+        "symptoms",
+        "labs",
+        "investigationLabsOrdered",
+        "investigations",
+        "imaging",
+        "investigationImaging",
+        "isPediatric",
+        "airway",
+        "breathing",
+        "circulation",
+        "disability",
+        "exposure",
+        "secondarySurvey",
+        "secondaryAssessment",
+        "pastMedicalHistory",
+        "psychologicalAssessment"
+      ],
+      "abnormalFlags": []
+    }
+  },
+  "reasoningMessage": {
+    "id": "reason-1790143529186-sgnf",
+    "role": "assistant",
+    "timestamp": "2026-09-23T06:05:29.186Z",
+    "type": "clinical-reasoning",
+    "content": "**Key Considerations & Differentials**\n- Acute ischemic stroke is the leading consideration given sudden-onset left hemiplegia (UL 0/5, LL 0/5) with facial involvement in a hypertensive patient \u2014 Code 7 activation is appropriate.\n- Hemorrhagic stroke remains on the differential until CT brain is reviewed; BP of 160/90 mmHg in this context warrants attention pending imaging.\n- Incidental left renal cyst noted on FAST; unlikely to be causally related but worth documenting for follow-up.\n\n**Discriminating Questions & Next Steps**\n- Clarify exact symptom onset time precisely \u2014 if last known well is within 4.5 hours and CT excludes hemorrhage, thrombolysis eligibility assessment would be the next critical step.\n- If CT angiogram confirms large vessel occlusion (LVO), mechanical thrombectomy window (up to 24 hours in selected patients) should be evaluated with neurology/neurointerventional team.\n- Consider baseline NIHSS scoring now to document deficit severity and track progression; also confirm no contraindications to thrombolysis (recent surgery \u2014 note RIF scar, anticoagulant use, prior stroke history).\n\n**Clarifications Needed**\n- Exact last known well time is critical \u2014 was the patient ambulatory and normal before 1 p.m., or was onset time uncertain (wake-up stroke scenario)?\n- Confirm whether the RIF surgical scar represents a recent procedure (potential thrombolysis contraindication) or remote surgery.",
+    "clinicalReasoning": {
+      "differentials": [
+        "Acute ischemic stroke (cardioembolic or large vessel)",
+        "Hemorrhagic stroke (intracerebral hemorrhage)",
+        "Hypertensive emergency with neurological deficit",
+        "Todd's paralysis (post-ictal) \u2014 less supported without witnessed seizure",
+        "Hyperosmolar state / metabolic encephalopathy \u2014 less likely given focal deficit"
+      ],
+      "references": [
+        "AHA/ASA 2019 Guidelines for Early Management of Acute Ischemic Stroke (Stroke. 2019;50:e344\u2013e418)",
+        "DAWN and DEFUSE-3 trials \u2014 extended thrombectomy window up to 24h in selected LVO patients",
+        "NINDS tPA Stroke Trial \u2014 IV alteplase within 3h; ECASS III extended to 4.5h with criteria"
+      ],
+      "watchFor": [
+        "BP escalation or sudden drop post-imaging \u2014 may alter thrombolysis eligibility",
+        "Deteriorating GCS or new cranial nerve findings suggesting herniation",
+        "CT showing hemorrhagic transformation or midline shift",
+        "LVO on CTA \u2014 triggers urgent thrombectomy pathway",
+        "Symptom onset-to-door time exceeding thrombolysis window"
+      ]
+    }
+  },
+  "unappliedExtraction": {
+    "presentingComplaint": "Found lying on the floor with left weakness over the left upper limb and lower limb weakness with face.",
+    "vitals": {
+      "hr": "80",
+      "bp": "160/90",
+      "spo2": "98%",
+      "rr": "18",
+      "temp": "98",
+      "gcs_e": "4",
+      "grbs": "122"
+    },
+    "vbgAbg": {
+      "type": "VBG",
+      "values": [
+        {
+          "name": "pH",
+          "param": "ph",
+          "value": 7.425
+        },
+        {
+          "name": "pCO2",
+          "param": "pco2",
+          "value": 38
+        },
+        {
+          "name": "HCO3",
+          "param": "hco3",
+          "value": 24.5
+        },
+        {
+          "name": "Na",
+          "param": "na",
+          "value": 135
+        },
+        {
+          "name": "K",
+          "param": "k",
+          "value": 3.6
+        },
+        {
+          "name": "Hb",
+          "param": "hb",
+          "value": 15
+        }
+      ]
+    },
+    "differentialDiagnosis": "IC brain CVA",
+    "surgicalHistory": "Nil.",
+    "lmp": "Not applicable.",
+    "emConsultant": "Shashi",
+    "mlcDetails": {
+      "possibleMlc": false,
+      "broughtBy": "Patma.",
+      "informant": "Himself.",
+      "identificationMark": "There is a surgical mark over the right lower abdomen."
+    },
+    "events": "Found lying on the floor around 1 p.m. on [Day 1].",
+    "sampleHistory": {
+      "events": "Found lying on the floor around 1 p.m. on [Day 1].",
+      "symptoms": "Found lying on the home around 10-1 p.m, And the patient found to have left weakness over the left upper limb, Lower limb weakness with face",
+      "pastHistory": "Hypertension.",
+      "psychiatricFlags": "no features of depression, anxiety, psychosis, agitation, suicidal ideation, substance use."
+    },
+    "symptoms": [
+      "Found lying on the home around 10-1 p.m",
+      "And the patient found to have left weakness over the left upper limb",
+      "Lower limb weakness with face"
+    ],
+    "labs": [
+      {
+        "name": "ER advanced",
+        "value": null
+      },
+      {
+        "name": "PT-INR",
+        "value": null
+      }
+    ],
+    "investigationLabsOrdered": "ER advanced, PT-INR",
+    "investigations": [
+      {
+        "id": "inv-1790143521097-0",
+        "testName": "ER advanced",
+        "result": "Ordered",
+        "isAbnormal": false
+      },
+      {
+        "id": "inv-1790143521097-1",
+        "testName": "PT-INR",
+        "result": "Ordered",
+        "isAbnormal": false
+      }
+    ],
+    "imaging": [
+      {
+        "name": "CT brain with angiogram",
+        "value": null
+      },
+      {
+        "name": "Continuous monitoring in ER, symptomatic management with ingestion, this patient ER observation, CT brain with angiogram",
+        "value": null
+      }
+    ],
+    "investigationImaging": "CT brain with angiogram, Continuous monitoring in ER, symptomatic management with ingestion, this patient ER observation, CT brain with angiogram",
+    "isPediatric": false,
+    "airway": "Patent",
+    "breathing": "Normal, air entry bilateral equal.",
+    "circulation": "CRT less than 2 seconds, peripheral pulses present.",
+    "disability": "GCS E4, pupils bilaterally equal and reactive to light. GCS eye response E4; total GCS not fully documented.",
+    "exposure": "Temperature 98 degree, pyrexia",
+    "secondarySurvey": {
+      "general": "no pallor, icterus, cyanosis, clubbing, lymphadenopathy, or edema.",
+      "cvs": "S1 S2 normal",
+      "respiratory": "normal expansion",
+      "abdomen": "soft and non-distended",
+      "cns": "conscious, oriented, no focal neurological deficit. Left upper limb zero by 1, left lower limb zero by 5, and right upper limb 5 by 5, right lower limb 5 by 5.",
+      "extremities": "normal."
+    },
+    "secondaryAssessment": "General: no pallor, icterus, cyanosis, clubbing, lymphadenopathy, or edema.\nCVS: S1 S2 normal\nRS: normal expansion\nPA: soft and non-distended\nCNS: conscious, oriented, no focal neurological deficit. Left upper limb zero by 1, left lower limb zero by 5, and right upper limb 5 by 5, right lower limb 5 by 5.\nExtremities: normal.",
+    "pastMedicalHistory": "Hypertension.",
+    "psychologicalAssessment": "no features of depression, anxiety, psychosis, agitation, suicidal ideation, substance use."
+  },
+  "reply": "Case details extracted for review.\n\n**Key Considerations & Differentials**\n- Acute ischemic stroke is the leading consideration given sudden-onset left hemiplegia (UL 0/5, LL 0/5) with facial involvement in a hypertensive patient \u2014 Code 7 activation is appropriate.\n- Hemorrhagic stroke remains on the differential until CT brain is reviewed; BP of 160/90 mmHg in this context warrants attention pending imaging.\n- Incidental left renal cyst noted on FAST; unlikely to be causally related but worth documenting for follow-up.\n\n**Discriminating Questions & Next Steps**\n- Clarify exact symptom onset time precisely \u2014 if last known well is within 4.5 hours and CT excludes hemorrhage, thrombolysis eligibility assessment would be the next critical step.\n- If CT angiogram confirms large vessel occlusion (LVO), mechanical thrombectomy window (up to 24 hours in selected patients) should be evaluated with neurology/neurointerventional team.\n- Consider baseline NIHSS scoring now to document deficit severity and track progression; also confirm no contraindications to thrombolysis (recent surgery \u2014 note RIF scar, anticoagulant use, prior stroke history).\n\n**Clarifications Needed**\n- Exact last known well time is critical \u2014 was the patient ambulatory and normal before 1 p.m., or was onset time uncertain (wake-up stroke scenario)?\n- Confirm whether the RIF surgical scar represents a recent procedure (potential thrombolysis contraindication) or remote surgery.",
+  "ageQuestionNeeded": false,
+  "runtimeDebug": {
+    "build": "SCRIBE-RUNTIME-2026-09-23-B",
+    "inputWords": 421,
+    "intent": "DOCUMENT_FACT",
+    "patchCount": 0,
+    "patchPaths": []
+  }
+}

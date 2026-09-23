@@ -95,6 +95,56 @@ export function subscribeChatHistory(
 }
 
 /**
+ * Checks if a case has any persisted scribe chat history in Firestore.
+ */
+export async function hasCaseScribeHistory(caseId: string): Promise<boolean> {
+  if (!caseId) return false;
+  try {
+    const messagesRef = collection(db, "cases", caseId, "scribeChatMessages");
+    const q = query(messagesRef, limit(1));
+    const snapshot = await getDocs(q);
+    return !snapshot.empty;
+  } catch (err) {
+    console.warn(`[hasCaseScribeHistory] Error checking history for case ${caseId}:`, err);
+    return false;
+  }
+}
+
+/**
+ * One-shot retrieval of a case's chat history for manual refresh.
+ */
+export async function getChatHistory(caseId: string): Promise<ScribeChatMessage[]> {
+  if (!caseId) return [];
+  try {
+    const messagesRef = collection(db, "cases", caseId, "scribeChatMessages");
+    const q = query(messagesRef, orderBy("timestamp", "asc"));
+    const snapshot = await getDocs(q);
+    return snapshot.docs.map(doc => {
+      const data = doc.data();
+      return {
+        id: data.id || doc.id,
+        docId: doc.id,
+        role: data.role || "assistant",
+        timestamp: data.timestamp || new Date().toISOString(),
+        type: data.type || "text",
+        content: data.content || "",
+        extractionSummary: data.extractionSummary,
+        clinicalReasoning: data.clinicalReasoning,
+        unappliedExtraction: data.unappliedExtraction,
+        dischargeDraft: data.dischargeDraft,
+        mode: data.mode,
+        extractionApplied: data.extractionApplied,
+        dischargeApplied: data.dischargeApplied,
+        dischargeIntent: data.dischargeIntent,
+      } as any;
+    });
+  } catch (err) {
+    console.warn(`[getChatHistory] Error fetching chat history for case ${caseId}:`, err);
+    return [];
+  }
+}
+
+/**
  * Persists a single message to the case's chat history. Call this
  * for every user turn AND every assistant response (extraction
  * confirmation + clinical reasoning), so the full thread survives
@@ -259,6 +309,41 @@ export function subscribeDiscussionHistory(
   }, error => {
     console.warn(`[subscribeDiscussionHistory] Listener fallback for discussion ${discussionId}:`, error);
   });
+}
+
+/**
+ * One-shot retrieval of a standalone discussion session's chat history for manual refresh.
+ */
+export async function getDiscussionHistory(discussionId: string): Promise<ScribeChatMessage[]> {
+  const uid = auth.currentUser?.uid;
+  if (!discussionId || !uid) return [];
+  try {
+    const messagesRef = collection(db, "users", uid, "discussions", discussionId, "messages");
+    const q = query(messagesRef, orderBy("timestamp", "asc"));
+    const snapshot = await getDocs(q);
+    return snapshot.docs.map(docSnap => {
+      const data = docSnap.data();
+      return {
+        id: data.id || docSnap.id,
+        docId: docSnap.id,
+        role: data.role || "assistant",
+        timestamp: data.timestamp || new Date().toISOString(),
+        type: data.type || "text",
+        content: data.content || "",
+        extractionSummary: data.extractionSummary,
+        clinicalReasoning: data.clinicalReasoning,
+        unappliedExtraction: data.unappliedExtraction,
+        dischargeDraft: data.dischargeDraft,
+        mode: data.mode,
+        extractionApplied: data.extractionApplied,
+        dischargeApplied: data.dischargeApplied,
+        dischargeIntent: data.dischargeIntent,
+      } as any;
+    });
+  } catch (err) {
+    console.warn(`[getDiscussionHistory] Error fetching discussion history for ${discussionId}:`, err);
+    return [];
+  }
 }
 
 /**

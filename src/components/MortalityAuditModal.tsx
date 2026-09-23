@@ -7,6 +7,7 @@ import {
 import { UserProfile, ClinicalCase } from "../types";
 import { BoundChatModal } from "./BoundChatModal";
 import VoiceRecorder from "./shared/VoiceRecorder";
+import { displayGcs } from "../utils/clinicalFormatter";
 
 interface MortalityAuditModalProps {
   isOpen: boolean;
@@ -44,6 +45,9 @@ export default function MortalityAuditModal({
           : "PT"
       );
 
+      const gcsDisplay = foundCase.vitals ? displayGcs(foundCase.vitals) : "Not documented";
+      const disabilityDisplay = foundCase.primaryAssessment?.disability || (gcsDisplay !== "Not documented" ? gcsDisplay : "Not documented");
+
       const constructedEmr = `
 PATIENT DETAILS:
 Name: ${foundCase.patient?.name || "Unidentified"}
@@ -67,7 +71,7 @@ PRIMARY ASSESSMENT:
 Airway: ${foundCase.primaryAssessment?.airway || "Patent"}
 Breathing: ${foundCase.primaryAssessment?.breathing || "Spontaneous"}
 Circulation: ${foundCase.primaryAssessment?.circulation || "Stable"}
-Disability (GCS): ${foundCase.primaryAssessment?.disability || "15/15"}
+Disability (GCS): ${disabilityDisplay}
 Exposure: ${foundCase.primaryAssessment?.exposure || "Normal"}
 
 INVESTIGATIONS & TREATMENTS PERFORMED:

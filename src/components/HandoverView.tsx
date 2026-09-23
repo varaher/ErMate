@@ -2,20 +2,20 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import { 
   Users, ClipboardCopy, FileText, Printer, Plus, Trash2, Edit2, Pencil,
   CheckCircle, HelpCircle, Download, Check, RefreshCw, Layers, LayoutList,
-  AlertTriangle, ShieldAlert, ChevronLeft, X, Camera, UploadCloud, Sparkles, Send,
+  AlertTriangle, ChevronLeft, X, Camera, UploadCloud, Sparkles, Send,
   MoreHorizontal, BookmarkCheck, MessageSquare
 } from "lucide-react";
 import VoiceRecorder from "./shared/VoiceRecorder";
 import { sanitizeDoctorError } from "../utils/sanitizeError";
-import { sanitizeForFirestore } from "../utils/firestoreSanitizer";
 import { triggerPrintWithTip } from "../utils/printWithTip";
 import { ClinicalCase, UserProfile, HandoverRecord, QuickPastePatient, InvestigationItem, HandoverPatient, DirectDischargeSummaryItem } from "../types";
 import { HandoverCard } from "./HandoverCard";
 import { BoundChatModal } from "./BoundChatModal";
 import { ChatContext } from "../hooks/useBoundChat";
 import { db, auth } from "../firebase";
-import { doc, setDoc, deleteDoc, getDoc, updateDoc, onSnapshot, arrayRemove, deleteField } from "firebase/firestore";
+import { doc, setDoc, getDoc, updateDoc, onSnapshot, arrayRemove, deleteField } from "firebase/firestore";
 import { captureFeedbackCorrection } from "../services/learningClient";
+import { displayGcs, displayTemperature, displaySpo2, displayGrbs } from "../utils/clinicalFormatter";
 
 interface HandoverViewProps {
   profile: UserProfile;
@@ -497,21 +497,17 @@ export default function HandoverView({
     localStorage.setItem("ermate_quick_paste_list", JSON.stringify(quickPasteList));
   }, [quickPasteList]);
 
-  // Post-Print Cleanup and Warning state
+  // Post-Print Handover Completion State
   const [showPostPrintCleanPrompt, setShowPostPrintCleanPrompt] = useState(false);
   const [postPrintDataType, setPostPrintDataType] = useState<"registry" | "quickpaste">("registry");
   const [idsToCleanup, setIdsToCleanup] = useState<string[]>([]);
-  const [hasUnclearedShiftWarning, setHasUnclearedShiftWarning] = useState(() => {
-    return localStorage.getItem("ermate_uncleared_shift_warning") === "true";
-  });
   const [actionSuccessMsg, setActionSuccessMsg] = useState<string | null>(null);
-  const [cleanupActionInProgress, setCleanupActionInProgress] = useState(false);
   const [isAiCompilingSheet, setIsAiCompilingSheet] = useState(false);
 
-  // Sync shift warning state to localStorage
+  // Clean up any legacy shift warning flags
   useEffect(() => {
-    localStorage.setItem("ermate_uncleared_shift_warning", hasUnclearedShiftWarning ? "true" : "false");
-  }, [hasUnclearedShiftWarning]);
+    localStorage.removeItem("ermate_uncleared_shift_warning");
+  }, []);
 
   // ── Direct EMR Discharge Summary States & Logic ──
   const [directDischargeList, setDirectDischargeList] = useState<DirectDischargeSummaryItem[]>(() => {
@@ -734,9 +730,9 @@ export default function HandoverView({
           </tr>
           <tr>
             <td class="bg-light">Disability:</td>
-            <td>GCS: ${dis.gcs || "15/15"}</td>
+            <td>GCS: ${displayGcs(dis)}</td>
             <td class="bg-light">Pupils / GRBS:</td>
-            <td>Pupils: ${dis.pupils || "Equal & reactive"}, GRBS: ${dis.grbs || "N/A"}</td>
+            <td>Pupils: ${dis.pupils || "Not documented"}, GRBS: ${displayGrbs(dis.grbs)}</td>
           </tr>
           <tr>
             <td class="bg-light">Exposure:</td>
@@ -1102,50 +1098,12 @@ export default function HandoverView({
     }
   }, [profile?.hospital]);
 
-  // Bulk Cleanup Handler to resolve shift handover conflicts
-  const handleBulkCleanup = async (action: "discharge" | "delete" | "clear_quickpaste") => {
-    setCleanupActionInProgress(true);
-    try {
-      if (action === "clear_quickpaste") {
-        setQuickPasteList([]);
-        localStorage.removeItem("ermate_quick_paste_list");
-        setActionSuccessMsg("Local Quick-Paste patient logs cleared successfully!");
-        setHasUnclearedShiftWarning(false);
-      } else if (action === "discharge") {
-        // Bulk update statuses of selected cases in Firestore to "Discharged"
-        for (const id of idsToCleanup) {
-          const targetCase = cases.find(c => c.id === id);
-          if (targetCase) {
-            const updated = {
-              ...targetCase,
-              status: "Discharged" as const,
-              hospital: targetCase.hospital || profile.hospital
-            };
-            await setDoc(doc(db, "cases", id), sanitizeForFirestore(updated));
-          }
-        }
-        setActionSuccessMsg(`Successfully discharged & archived ${idsToCleanup.length} cases from the active board!`);
-        // Deselect them
-        setSelectedRegistryIds(prev => prev.filter(id => !idsToCleanup.includes(id)));
-        setHasUnclearedShiftWarning(false);
-      } else if (action === "delete") {
-        // Bulk delete from Firestore
-        for (const id of idsToCleanup) {
-          await deleteDoc(doc(db, "cases", id));
-        }
-        setActionSuccessMsg(`Successfully deleted ${idsToCleanup.length} patient case logs completely!`);
-        // Deselect them
-        setSelectedRegistryIds(prev => prev.filter(id => !idsToCleanup.includes(id)));
-        setHasUnclearedShiftWarning(false);
-      }
-    } catch (err) {
-      console.error("Error performing handover cleanup:", err);
-      alert("Error performing cleanup operation. Please try again.");
-    } finally {
-      setCleanupActionInProgress(false);
-      setShowPostPrintCleanPrompt(false);
-      setTimeout(() => setActionSuccessMsg(null), 6000);
-    }
+  // Quick-Paste Local Scratchpad Clear Handler
+  const handleClearQuickPaste = () => {
+    setQuickPasteList([]);
+    localStorage.removeItem("ermate_quick_paste_list");
+    setActionSuccessMsg("Local Quick-Paste patient logs cleared successfully!");
+    setTimeout(() => setActionSuccessMsg(null), 4000);
   };
 
 function extractPatientNameAndTimestamp(rawText: string): {
@@ -3709,61 +3667,6 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
         </div>
       )}
 
-      {/* SHIFT OVERLAP WARNING BANNER */}
-      {hasUnclearedShiftWarning && (
-        <div className="bg-amber-50 border border-amber-250 dark:bg-amber-950/20 dark:border-amber-900 rounded-xl p-4 space-y-2 text-amber-800 dark:text-amber-300 animate-fade-in no-print">
-          <div className="flex items-start gap-2.5">
-            <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
-            <div className="space-y-1">
-              <div className="text-xs font-black">⚠️ Shift Handover Clean Slate Warning</div>
-              <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed font-medium">
-                You recently compiled and printed/exported a handover document, but the cases remain active on the primary board. Leaving patients on the active list causes selection confusion and data overlap for the incoming team shift.
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-3 pl-7 pt-1">
-            {postPrintDataType === "registry" ? (
-              <>
-                <button
-                  disabled={cleanupActionInProgress}
-                  onClick={() => {
-                    handleBulkCleanup("discharge");
-                  }}
-                  className="px-3 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded text-[10.5px] font-bold transition-all shadow-xs"
-                >
-                  Discharge & Archive Active Cases
-                </button>
-                <button
-                  disabled={cleanupActionInProgress}
-                  onClick={() => {
-                    handleBulkCleanup("delete");
-                  }}
-                  className="px-3 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded text-[10.5px] font-bold transition-all shadow-xs"
-                >
-                  Delete Selected Case Logs
-                </button>
-              </>
-            ) : (
-              <button
-                disabled={cleanupActionInProgress}
-                onClick={() => {
-                  handleBulkCleanup("clear_quickpaste");
-                }}
-                className="px-3 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded text-[10.5px] font-bold transition-all shadow-xs"
-              >
-                Clear Free Quick-Paste List
-              </button>
-            )}
-            <button
-              onClick={() => setHasUnclearedShiftWarning(false)}
-              className="text-[10px] text-slate-400 hover:text-slate-600 font-bold uppercase underline"
-            >
-              Dismiss warning
-            </button>
-          </div>
-        </div>
-      )}
-
       {/* Navigation Sub-Tabs Toggle */}
       <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-1.5 bg-slate-100 dark:bg-slate-900 p-1.5 rounded-xl border border-slate-200/60 dark:border-slate-800/80 w-full sm:w-fit no-print">
         <button
@@ -4898,45 +4801,44 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
         </div>
       )}
 
-      {/* POST-PRINT SHIFT CLEANUP ADVISOR MODAL */}
+      {/* HANDOVER COMPLETION CONFIRMATION MODAL */}
       {showPostPrintCleanPrompt && (
         <div className="fixed inset-0 bg-slate-950/80 z-55 flex items-center justify-center p-4 no-print">
           <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4 relative">
             <button 
               onClick={() => {
                 setShowPostPrintCleanPrompt(false);
-                setHasUnclearedShiftWarning(true);
               }}
-              className="absolute right-4 top-4 p-1 hover:bg-slate-100 dark:hover:bg-slate-850 rounded text-slate-400 hover:text-slate-600"
+              className="absolute right-4 top-4 p-1 hover:bg-slate-100 dark:hover:bg-slate-850 rounded text-slate-400 hover:text-slate-600 cursor-pointer"
             >
               <X className="w-5 h-5" />
             </button>
 
-            <div className="flex items-center gap-2.5 text-amber-600 dark:text-amber-400 border-b pb-3">
-              <ShieldAlert className="w-6 h-6 animate-pulse" />
-              <h3 className="text-base font-black font-display tracking-tight">Shift Transition: Safe Board Cleanup</h3>
+            <div className="flex items-center gap-2.5 text-emerald-600 dark:text-emerald-400 border-b border-slate-200 dark:border-slate-800 pb-3">
+              <CheckCircle className="w-6 h-6 shrink-0" />
+              <h3 className="text-base font-black font-display tracking-tight text-slate-900 dark:text-white">Handover Prepared Successfully</h3>
             </div>
 
             <div className="space-y-3">
               <p className="text-xs text-slate-700 dark:text-slate-300 leading-relaxed font-medium">
-                Handover document compilation completed! Leaving compiled patient records active on the ER board creates selection fatigue and potential data overlapping for the next team.
+                Handover document prepared successfully. Active patients remain on the ER board until their actual clinical disposition.
               </p>
               
               <div className="bg-slate-50 dark:bg-slate-900/40 border rounded-xl p-3.5 space-y-2">
                 <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block font-mono">
-                  Compiled Patients Pending Disposal ({idsToCleanup.length})
+                  Handed-Over Patients ({idsToCleanup.length})
                 </span>
-                <div className="max-h-[120px] overflow-y-auto space-y-1.5 pr-2">
+                <div className="max-h-[140px] overflow-y-auto space-y-1.5 pr-2">
                   {postPrintDataType === "registry" ? (
                     cases.filter(c => idsToCleanup.includes(c.id)).map((c, i) => (
-                      <div key={`${c.id}-${i}`} className="text-[11px] font-mono flex justify-between text-slate-600 dark:text-slate-400 bg-white dark:bg-slate-950 p-1.5 rounded border border-slate-100">
+                      <div key={`${c.id}-${i}`} className="text-[11px] font-mono flex justify-between text-slate-600 dark:text-slate-400 bg-white dark:bg-slate-950 p-1.5 rounded border border-slate-100 dark:border-slate-800">
                         <span className="font-bold">{i + 1}. {c.patient.name}</span>
                         <span>{c.patient.age}y / {c.patient.gender} • {c.patient.triageCategory}</span>
                       </div>
                     ))
                   ) : (
                     quickPasteList.map((p, i) => (
-                      <div key={`${p.id}-${i}`} className="text-[11px] font-mono flex justify-between text-slate-600 dark:text-slate-400 bg-white dark:bg-slate-950 p-1.5 rounded border border-slate-100">
+                      <div key={`${p.id}-${i}`} className="text-[11px] font-mono flex justify-between text-slate-600 dark:text-slate-400 bg-white dark:bg-slate-950 p-1.5 rounded border border-slate-100 dark:border-slate-800">
                         <span className="font-bold">{i + 1}. {p.name}</span>
                         <span>{p.triage}</span>
                       </div>
@@ -4950,41 +4852,16 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
             </div>
 
             <div className="flex flex-col gap-2 pt-2">
-              {postPrintDataType === "registry" ? (
-                <>
-                  <button
-                    disabled={cleanupActionInProgress || idsToCleanup.length === 0}
-                    onClick={() => handleBulkCleanup("discharge")}
-                    className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-bold rounded-xl transition-all shadow-sm flex items-center justify-center gap-1.5 cursor-pointer"
-                  >
-                    {cleanupActionInProgress ? (
-                      <RefreshCw className="w-4 h-4 animate-spin" />
-                    ) : (
-                      <CheckCircle className="w-4 h-4" />
-                    )}
-                    Discharge & Archive Cases (Clean active board)
-                  </button>
-                  <button
-                    disabled={cleanupActionInProgress || idsToCleanup.length === 0}
-                    onClick={() => handleBulkCleanup("delete")}
-                    className="w-full py-2.5 bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white text-xs font-bold rounded-xl transition-all shadow-sm flex items-center justify-center gap-1.5 cursor-pointer"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                    Delete Case Logs Completely
-                  </button>
-                </>
-              ) : (
+              {postPrintDataType === "quickpaste" && quickPasteList.length > 0 && (
                 <button
-                  disabled={cleanupActionInProgress || quickPasteList.length === 0}
-                  onClick={() => handleBulkCleanup("clear_quickpaste")}
-                  className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-bold rounded-xl transition-all shadow-sm flex items-center justify-center gap-1.5 cursor-pointer"
+                  type="button"
+                  onClick={() => {
+                    handleClearQuickPaste();
+                    setShowPostPrintCleanPrompt(false);
+                  }}
+                  className="w-full py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-900 dark:hover:bg-slate-850 text-slate-600 dark:text-slate-400 text-xs font-bold rounded-xl transition-all flex items-center justify-center cursor-pointer"
                 >
-                  {cleanupActionInProgress ? (
-                    <RefreshCw className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <Trash2 className="w-4 h-4" />
-                  )}
-                  Clear Patient List (Empty Local Memory)
+                  Clear Quick-Paste Scratchpad
                 </button>
               )}
 
@@ -4992,11 +4869,14 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
                 type="button"
                 onClick={() => {
                   setShowPostPrintCleanPrompt(false);
-                  setHasUnclearedShiftWarning(true);
+                  // Deselect the checkboxes after export without altering patient statuses
+                  setSelectedRegistryIds([]);
+                  setActionSuccessMsg("Handover prepared successfully. Active patients remain on the ER board until their actual disposition.");
+                  setTimeout(() => setActionSuccessMsg(null), 5000);
                 }}
-                className="w-full py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-900 dark:hover:bg-slate-850 text-slate-600 dark:text-slate-400 text-xs font-bold rounded-xl transition-all flex items-center justify-center cursor-pointer"
+                className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition-all shadow-sm flex items-center justify-center gap-1.5 cursor-pointer"
               >
-                Keep Active (Will cleanup manually later)
+                Done
               </button>
             </div>
           </div>

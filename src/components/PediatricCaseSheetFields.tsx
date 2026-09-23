@@ -120,14 +120,19 @@ export interface PediatricVitalsState {
 export function PediatricVitalsSection({
   ageYears, state, onChange,
 }: { ageYears: number; state: PediatricVitalsState; onChange: (s: PediatricVitalsState) => void }) {
-  const ageMonths = ageYears * 12;
-  const band = getAgeBand(ageMonths);
+  // If age is 0 and no specific months provided, do not arbitrarily classify as neonate
+  const band = ageYears === 0 ? null : getAgeBand(ageYears * 12);
   const estimatedWeight = estimateWeightKg(ageYears);
 
   const ref = band?.ranges;
 
   return (
     <div className="space-y-4">
+      {ageYears === 0 && (
+        <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/50 rounded-xl p-3 text-xs text-amber-700 dark:text-amber-400">
+          Age in months required for pediatric reference range
+        </div>
+      )}
       {band && ref && (
         <div className="bg-slate-100 dark:bg-slate-800 rounded-2xl p-4 space-y-2">
           <p className="text-slate-800 dark:text-white font-bold flex items-center gap-2">📊 Normal Vitals Reference (Pediatric)</p>

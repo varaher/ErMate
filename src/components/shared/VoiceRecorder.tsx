@@ -2,6 +2,22 @@ import React, { useState, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { Mic, Trash2, Pause, Play, Check, AlertTriangle, RefreshCw, WifiOff } from "lucide-react";
 
+// Global active recording state tracking across any VoiceRecorder instances
+let globalActiveRecorders = 0;
+const globalRecordingListeners = new Set<(active: boolean) => void>();
+
+export function isGlobalVoiceRecordingActive(): boolean {
+  return globalActiveRecorders > 0;
+}
+
+export function subscribeGlobalVoiceRecording(listener: (active: boolean) => void): () => void {
+  globalRecordingListeners.add(listener);
+  listener(globalActiveRecorders > 0);
+  return () => {
+    globalRecordingListeners.delete(listener);
+  };
+}
+
 export interface VoiceRecorderProps {
   onTranscript: (transcript: string) => void;
   onError?: (error: string) => void;
@@ -57,6 +73,20 @@ export default function VoiceRecorder({
   useEffect(() => {
     onRecordingStateChange?.(isRecording);
   }, [isRecording, onRecordingStateChange]);
+
+  useEffect(() => {
+    const isBusy = isRecording || isTranscribing;
+    if (isBusy) {
+      globalActiveRecorders++;
+      globalRecordingListeners.forEach(fn => fn(true));
+    }
+    return () => {
+      if (isBusy) {
+        globalActiveRecorders = Math.max(0, globalActiveRecorders - 1);
+        globalRecordingListeners.forEach(fn => fn(globalActiveRecorders > 0));
+      }
+    };
+  }, [isRecording, isTranscribing]);
 
   useEffect(() => {
     return () => {

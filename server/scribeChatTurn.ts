@@ -58,6 +58,13 @@
  * (it's frequently the one named exception in an otherwise-normal
  * secondary survey) or for identificationMark (previously contaminated
  * by baked-in docx example text).
+ *
+ * PATCH-OVERWRITE FIX (Sept 2026): deterministic task patches from
+ * clinicalTaskApplier.ts were merged AFTER extraction and overwrote
+ * clean extracted values (secondary survey, psych, eFAST). Patches now
+ * only fill fields extraction left empty in this turn. Also fixed:
+ * the "adjuncts.efastNotes" patch path was split into an organ key
+ * ("efastNotes"), producing a duplicated "eFAST / POCUS" row.
  */
 
 import {
@@ -70,6 +77,21 @@ import { cleanExtractionOutput, isGenericInvestigationPhrase, type RawExtraction
 import type { CaseSheetData } from "./caseSheetTypes";
 import { generateDischargeSummary } from "./dischargeSummary";
 import { detectNormalcyPhrases, EXAM_DEFAULTS, processSampleMedicationsAndPmh } from "./extraction";
+import { isNormalOnlySectionValue } from "./clinicalLanguageNormalizer";
+import {
+  resolveNaturalLanguageClinicalTask,
+  classifyClinicalTaskIntent,
+  applyClinicalPatchesToCase,
+  type ClinicalPatch,
+  type ClinicalTaskResolution
+} from "./clinicalTaskApplier";
+import { deduplicateConsultations } from "./consultationNormalization";
+import { isEstablishedCaseSheet } from "./establishedCaseCheck";
+import { assertCanonicalExtractionShape } from "./voiceExtraction";
+
+console.log(
+  "[scribeChatTurn] module loaded: SCRIBE-RUNTIME-2026-09-23-B"
+);
 
 // ── Conversational-only detection ────────────────────────────────────
 const GREETING_ONLY_REGEX = /^(hi+|hello+|hey+|yo|good morning|good afternoon|good evening|thanks|thank you|thanks a lot|thank you so much|ok|okay|cool|great|got it|sounds good|bye|goodbye)[.!\s]*$/i;
@@ -113,7 +135,7 @@ export interface ScribeChatMessage {
 }
 
 export interface ScribeTurnResponse {
-  extractionMessage: ScribeChatMessage;
+  extractionMessage: ScribeChatMessage | null;
   reasoningMessage: ScribeChatMessage;
   updatedCaseSheetFields?: Partial<CaseSheetData> & Record<string, any>;
   unappliedExtraction?: Partial<CaseSheetData> & Record<string, any>;
@@ -121,8 +143,16 @@ export interface ScribeTurnResponse {
   reply?: string;
   ageQuestionNeeded?: boolean;
   dischargeIntent?: boolean;
+  intent?: string;
+  patches?: any[];
+  runtimeDebug?: {
+    build: string;
+    inputWords: number;
+    intent: string;
+    patchCount: number;
+    patchPaths: string[];
+  };
 }
-
 
 function deepMergeExtraction(base: any, incoming: any): any {
   const result = { ...base };
@@ -238,6 +268,67 @@ export async function processScribeChatTurn(
 
   const mergedPendingExtraction = getMergedPendingExtraction(chatHistory, existingCaseSheet);
   const effectiveAgeYears = patientAgeYears || mergedPendingExtraction.age || mergedPendingExtraction?.patient?.age || null;
+  const isPediatric = effectiveAgeYears !== null && Number(effectiveAgeYears) <= 16;
+
+  // Resolve natural language clinical task intent and deterministic patches
+  const taskResolution = resolveNaturalLanguageClinicalTask(userInput, mergedPendingExtraction, isPediatric);
+
+  // 1. QUESTION Intent: Pure clinical reference / decision support — do NOT modify case sheet
+  if (taskResolution.intent === "QUESTION") {
+    let reasoningMessage: ScribeChatMessage;
+    try {
+      const reasoning = await runClinicalReasoning(
+        deidentifiedInput.replace(/__ERMATE_EM_(?:RESIDENT|CONSULTANT)_\d+__/g, "[DOCTOR]"),
+        mergedPendingExtraction,
+        chatHistory,
+        helpers.callClinicalReasoningModel
+      );
+      reasoningMessage = {
+        id: "reason-" + Date.now() + "-" + Math.random().toString(36).substring(2, 6),
+        role: "assistant",
+        timestamp: new Date().toISOString(),
+        type: "clinical-reasoning",
+        content: reasoning.summary,
+        clinicalReasoning: {
+          differentials: reasoning.differentials,
+          references: reasoning.references,
+          watchFor: reasoning.watchFor,
+        },
+      };
+    } catch (err) {
+      reasoningMessage = {
+        id: "reason-err-" + Date.now(),
+        role: "assistant",
+        timestamp: new Date().toISOString(),
+        type: "error",
+        content: "Clinical reference is temporarily unavailable.",
+      };
+    }
+
+    return {
+      extractionMessage: null,
+      reasoningMessage,
+      unappliedExtraction: null,
+      reply: reasoningMessage.content,
+      intent: "QUESTION"
+    };
+  }
+
+  // 2. Ambiguity in clinical command
+  if (taskResolution.ambiguityQuestion) {
+    return {
+      extractionMessage: null,
+      reasoningMessage: {
+        id: "clarify-" + Date.now(),
+        role: "assistant",
+        timestamp: new Date().toISOString(),
+        type: "text",
+        content: taskResolution.ambiguityQuestion,
+      },
+      unappliedExtraction: null,
+      reply: taskResolution.ambiguityQuestion,
+    };
+  }
 
   let pendingClarification: string | undefined;
   const lastAiMessage = [...chatHistory].reverse().find(m => m.sender === "ai" || m.role === "assistant");
@@ -268,15 +359,14 @@ export async function processScribeChatTurn(
   ]);
 
   // ── Handle extraction outcome ──
-  let extractionMessage: ScribeChatMessage;
+  let extractionMessage: ScribeChatMessage | null = null;
   let updatedCaseSheetFields: Partial<CaseSheetData> & Record<string, any> = {};
   let ageQuestionNeeded = false;
-
 
   if (extractionResult.status === "fulfilled") {
     const { cleaned, updatedFields } = extractionResult.value;
     if (Object.keys(updatedFields).length > 0) {
-      updatedCaseSheetFields = updatedFields;
+      updatedCaseSheetFields = { ...updatedFields };
       extractionMessage = {
         id: "ext-" + Date.now() + "-" + Math.random().toString(36).substring(2, 6),
         role: "assistant",
@@ -289,11 +379,6 @@ export async function processScribeChatTurn(
         },
       };
 
-      // AGE-COMPULSORY FIX (Sept 2026): age determines adult vs
-      // pediatric checklist/case-sheet shape, so it can't be optional.
-      // If this turn extracted real clinical content but no age is
-      // known anywhere — not this turn, not already saved on the case
-      // — ask directly instead of guessing "adult" by default.
       const ageFromThisTurn = updatedFields.age;
       const ageAlreadyKnown =
         (mergedPendingExtraction as any)?.age ??
@@ -304,7 +389,147 @@ export async function processScribeChatTurn(
         (ageAlreadyKnown !== undefined && ageAlreadyKnown !== null && String(ageAlreadyKnown).trim() !== "") ||
         (ageFromProp !== undefined && ageFromProp !== null && String(ageFromProp).trim() !== "");
       if (!hasAge) ageQuestionNeeded = true;
-    } else {
+    }
+  } else {
+    console.error(`[scribeChatTurn] Extraction failed for case ${caseId}`, extractionResult.reason);
+  }
+
+  // Merge deterministic task patches into updatedCaseSheetFields.
+  // PATCH-OVERWRITE FIX: extraction from THIS turn always wins. A patch only
+  // fills a field that extraction left empty — it never overwrites it.
+  if (taskResolution.patches && taskResolution.patches.length > 0) {
+    if (!updatedCaseSheetFields) updatedCaseSheetFields = {};
+    for (const patch of taskResolution.patches) {
+      if (patch.path.startsWith("adjuncts.efastNotes") || patch.path.startsWith("fastFindings")) {
+        if (patch.path.startsWith("fastFindings.")) {
+          // Real organ key only — never treat "adjuncts.efastNotes" as an organ
+          const organ = patch.path.split(".")[1];
+          if (!updatedCaseSheetFields.fastFindings) updatedCaseSheetFields.fastFindings = {};
+          if (!isValidStr(updatedCaseSheetFields.fastFindings[organ])) {
+            updatedCaseSheetFields.fastFindings[organ] = patch.value;
+          }
+        } else if (patch.path === "fastFindings" && patch.value && typeof patch.value === "object") {
+          // Extraction values win over deterministic patch values
+          updatedCaseSheetFields.fastFindings = {
+            ...patch.value,
+            ...(updatedCaseSheetFields.fastFindings || {}),
+          };
+        } else if (typeof patch.value === "string" && !isValidStr(updatedCaseSheetFields.efastNotes)) {
+          updatedCaseSheetFields.efastNotes = patch.value;
+        }
+      } else if (patch.path.startsWith("sampleHistory.")) {
+        const sub = patch.path.split(".")[1];
+        if (
+          sub === "psychiatricFlags" &&
+          (isValidStr(updatedCaseSheetFields.psychologicalAssessment) ||
+            isValidStr(updatedCaseSheetFields.sampleHistory?.psychiatricFlags))
+        ) {
+          // Extraction already captured the explicitly dictated psych assessment
+          continue;
+        }
+        if (!updatedCaseSheetFields.sampleHistory) updatedCaseSheetFields.sampleHistory = {};
+        updatedCaseSheetFields.sampleHistory[sub] = patch.value;
+        if (sub === "pastHistory") updatedCaseSheetFields.pastMedicalHistory = patch.value;
+        if (sub === "allergies") updatedCaseSheetFields.allergies = patch.value;
+        if (sub === "events") updatedCaseSheetFields.events = patch.value;
+        if (sub === "medications") {
+          updatedCaseSheetFields.currentMedications = Array.isArray(patch.value) ? patch.value : [patch.value];
+        }
+        if (sub === "psychiatricFlags") updatedCaseSheetFields.psychologicalAssessment = patch.value;
+      } else if (patch.path === "events") {
+        if (!updatedCaseSheetFields.sampleHistory) updatedCaseSheetFields.sampleHistory = {};
+        updatedCaseSheetFields.sampleHistory.events = patch.value;
+        updatedCaseSheetFields.events = patch.value;
+      } else if (patch.path.startsWith("secondarySurvey.")) {
+        const system = patch.path.split(".")[1];
+        if (!updatedCaseSheetFields.secondarySurvey) updatedCaseSheetFields.secondarySurvey = {};
+        if (!isValidStr(updatedCaseSheetFields.secondarySurvey[system])) {
+          updatedCaseSheetFields.secondarySurvey[system] = patch.value;
+        }
+        const sec = updatedCaseSheetFields.secondarySurvey;
+        const secParts: string[] = [];
+        if (sec.general) secParts.push(`General: ${sec.general}`);
+        if (sec.cvs) secParts.push(`CVS: ${sec.cvs}`);
+        if (sec.respiratory) secParts.push(`RS: ${sec.respiratory}`);
+        if (sec.abdomen) secParts.push(`PA: ${sec.abdomen}`);
+        if (sec.cns) secParts.push(`CNS: ${sec.cns}`);
+        if (sec.extremities) secParts.push(`Extremities: ${sec.extremities}`);
+        if (secParts.length > 0) {
+          updatedCaseSheetFields.secondaryAssessment = secParts.join("\n");
+        }
+      } else if (patch.path === "secondaryAssessment") {
+        updatedCaseSheetFields.secondaryAssessment = patch.value;
+      } else if (patch.path === "pastMedicalHistory") {
+        updatedCaseSheetFields.pastMedicalHistory = patch.value;
+        if (!updatedCaseSheetFields.sampleHistory) updatedCaseSheetFields.sampleHistory = {};
+        updatedCaseSheetFields.sampleHistory.pastHistory = patch.value;
+      } else if (patch.path === "currentMedications") {
+        updatedCaseSheetFields.currentMedications = Array.isArray(patch.value) ? patch.value : [patch.value];
+        if (!updatedCaseSheetFields.sampleHistory) updatedCaseSheetFields.sampleHistory = {};
+        updatedCaseSheetFields.sampleHistory.medications = Array.isArray(patch.value) ? patch.value.join(", ") : patch.value;
+      } else if (patch.path === "psychologicalAssessment") {
+        if (!isValidStr(updatedCaseSheetFields.psychologicalAssessment)) {
+          updatedCaseSheetFields.psychologicalAssessment = patch.value;
+          if (!updatedCaseSheetFields.sampleHistory) updatedCaseSheetFields.sampleHistory = {};
+          updatedCaseSheetFields.sampleHistory.psychiatricFlags = patch.value;
+        }
+      } else if (patch.path === "treatmentGiven") {
+        const arr = Array.isArray(updatedCaseSheetFields.treatmentGiven) ? [...updatedCaseSheetFields.treatmentGiven] : [];
+        if (!arr.some((t: any) => (t.drugName || t.name) === (patch.value.drugName || patch.value.name))) {
+          arr.push(patch.value);
+        }
+        updatedCaseSheetFields.treatmentGiven = arr;
+      } else if (patch.path === "investigationLabsOrdered") {
+        const arr = Array.isArray(updatedCaseSheetFields.investigationLabsOrdered) ? [...updatedCaseSheetFields.investigationLabsOrdered] : [];
+        if (!arr.includes(patch.value)) arr.push(patch.value);
+        updatedCaseSheetFields.investigationLabsOrdered = arr;
+      } else if (patch.path === "investigationImaging") {
+        const arr = Array.isArray(updatedCaseSheetFields.investigationImaging) ? [...updatedCaseSheetFields.investigationImaging] : [];
+        if (!arr.includes(patch.value)) arr.push(patch.value);
+        updatedCaseSheetFields.investigationImaging = arr;
+      } else if (patch.path === "otherProcedures") {
+        const existing = updatedCaseSheetFields.otherProcedures || "";
+        updatedCaseSheetFields.otherProcedures = existing ? `${existing}; ${patch.value}` : String(patch.value);
+      } else if (patch.path === "consultsRequested" || patch.path === "dispositionAndPlan.consultsRequested") {
+        const arr = Array.isArray(updatedCaseSheetFields.consultsRequested) ? [...updatedCaseSheetFields.consultsRequested] : [];
+        if (!arr.includes(patch.value)) arr.push(patch.value);
+        updatedCaseSheetFields.consultsRequested = arr;
+        if (!updatedCaseSheetFields.dispositionAndPlan) updatedCaseSheetFields.dispositionAndPlan = {};
+        updatedCaseSheetFields.dispositionAndPlan.consultsRequested = arr;
+      } else if (patch.path === "disposition") {
+        updatedCaseSheetFields.disposition = patch.value;
+      } else if (patch.path === "managementPlan") {
+        const existing = updatedCaseSheetFields.managementPlan || "";
+        updatedCaseSheetFields.managementPlan = existing ? `${existing}; ${patch.value}` : String(patch.value);
+      }
+    }
+
+    // Include userConfirmationSummary
+    if (taskResolution.userConfirmationSummary) {
+      if (!extractionMessage) {
+        extractionMessage = {
+          id: "ext-" + Date.now(),
+          role: "assistant",
+          timestamp: new Date().toISOString(),
+          type: "extraction-confirmation",
+          content: taskResolution.userConfirmationSummary,
+          extractionSummary: {
+            fieldsUpdated: Object.keys(updatedCaseSheetFields).filter(k => k !== 'vitals'),
+            abnormalFlags: [],
+          },
+        };
+      } else {
+        extractionMessage.content = taskResolution.userConfirmationSummary;
+        extractionMessage.extractionSummary = {
+          fieldsUpdated: Object.keys(updatedCaseSheetFields).filter(k => k !== 'vitals'),
+          abnormalFlags: extractionMessage.extractionSummary?.abnormalFlags || [],
+        };
+      }
+    }
+  }
+
+  if (!extractionMessage) {
+    if (Object.keys(updatedCaseSheetFields).length === 0) {
       updatedCaseSheetFields = null;
       extractionMessage = {
         id: "ext-err-" + Date.now(),
@@ -314,15 +539,6 @@ export async function processScribeChatTurn(
         content: "Could not extract structured data from this entry. You can add it manually to the Case Sheet.",
       };
     }
-  } else {
-    extractionMessage = {
-      id: "ext-err-" + Date.now(),
-      role: "assistant",
-      timestamp: new Date().toISOString(),
-      type: "error",
-      content: "Could not extract structured data from this entry. You can add it manually to the Case Sheet.",
-    };
-    console.error(`[scribeChatTurn] Extraction failed for case ${caseId}`, extractionResult.reason);
   }
 
   // ── Handle clinical reasoning outcome ──
@@ -354,17 +570,24 @@ export async function processScribeChatTurn(
     console.error(`[scribeChatTurn] Clinical reasoning failed for case ${caseId}`, reasoningResult.reason);
   }
 
-   let replyText = buildUnifiedReplyProse(extractionMessage, reasoningMessage);
+  let replyText = buildUnifiedReplyProse(extractionMessage, reasoningMessage);
   if (ageQuestionNeeded) {
     replyText += "\n\n❓ **What is the patient's age?** I need this to apply the correct adult or pediatric assessment checklist.";
   }
 
-   return {
+  return {
     extractionMessage,
     reasoningMessage,
     unappliedExtraction: updatedCaseSheetFields,
     reply: replyText,
-    ageQuestionNeeded
+    ageQuestionNeeded,
+    runtimeDebug: {
+      build: "SCRIBE-RUNTIME-2026-09-23-B",
+      inputWords: userInput.trim().split(/\s+/).filter(Boolean).length,
+      intent: taskResolution.intent,
+      patchCount: taskResolution.patches?.length ?? 0,
+      patchPaths: (taskResolution.patches || []).map((p: any) => p.path)
+    }
   };
 }
 
@@ -387,10 +610,59 @@ export async function runExtraction(
 
   try {
     raw = await callExtractionModel({ model: "gpt-4o-mini", temperature: 0.0, deidentifiedInput, patientAgeYears, pendingClarification });
+    assertCanonicalExtractionShape(raw);
   } catch (err) {
-    console.warn("[scribeChatTurn] GPT-4o-mini extraction failed, falling back to Claude 3.5 Haiku", err);
+    console.warn("[scribeChatTurn] GPT-4o-mini extraction failed or non-canonical shape, falling back to Claude 3.5 Haiku", err);
     raw = await callExtractionModel({ model: "claude-3.5-haiku", temperature: 0.0, deidentifiedInput, patientAgeYears, pendingClarification });
+    assertCanonicalExtractionShape(raw);
   }
+
+  console.log(
+    "[SCRIBE-RAW-CORE-TRACE]",
+    JSON.stringify({
+      chiefComplaint: (raw as any)?.chiefComplaint ?? null,
+      presentingComplaint: (raw as any)?.presentingComplaint ?? null,
+      symptoms: (raw as any)?.symptoms ?? null,
+      hpi: (raw as any)?.hpi ?? null,
+
+      allergies: (raw as any)?.allergies ?? null,
+      pmh: (raw as any)?.pmh ?? null,
+      pastMedicalHistory: (raw as any)?.pastMedicalHistory ?? null,
+      outpatientMedications: (raw as any)?.outpatientMedications ?? null,
+      lastMeal: (raw as any)?.lastMeal ?? null,
+      events: (raw as any)?.events ?? null,
+
+      vitals: (raw as any)?.vitals ?? null,
+
+      airway: (raw as any)?.airway ?? null,
+      breathing: (raw as any)?.breathing ?? null,
+      circulation: (raw as any)?.circulation ?? null,
+      disability: (raw as any)?.disability ?? null,
+      exposure: (raw as any)?.exposure ?? null,
+
+      priority: (raw as any)?.priority ?? null,
+      ecg: (raw as any)?.ecg ?? null,
+      vbg: (raw as any)?.vbg ?? null,
+      echo: (raw as any)?.echo ?? null,
+      fastFindings: (raw as any)?.fastFindings ?? null,
+
+      generalExamination: (raw as any)?.generalExamination ?? null,
+      cvsExamination: (raw as any)?.cvsExamination ?? null,
+      respiratoryExamination: (raw as any)?.respiratoryExamination ?? null,
+      abdomenExamination: (raw as any)?.abdomenExamination ?? null,
+      cnsExamination: (raw as any)?.cnsExamination ?? null,
+      extremitiesExamination: (raw as any)?.extremitiesExamination ?? null,
+
+      psychologicalAssessment: (raw as any)?.psychologicalAssessment ?? null,
+      investigationsOrdered: (raw as any)?.investigationsOrdered ?? null,
+      treatment: (raw as any)?.treatment ?? null,
+      plan: (raw as any)?.plan ?? null,
+      differentials: (raw as any)?.differentials ?? null,
+      diagnosis: (raw as any)?.diagnosis ?? null,
+
+      mlcDetails: (raw as any)?.mlcDetails ?? null
+    })
+  );
 
   // Defensive guard: Ensure raw.differentials is accepted ONLY from the extraction branch
   // and strictly contains diagnoses explicitly stated by the clinician in deidentifiedInput.
@@ -406,7 +678,50 @@ export async function runExtraction(
     );
   }
 
+  console.log(
+    "[TRACE-RAW-BEFORE-CLEAN]",
+    JSON.stringify({
+      keys: Object.keys(raw || {}),
+      vitals: (raw as any)?.vitals ?? null,
+      chiefComplaint: (raw as any)?.chiefComplaint ?? null,
+      pastMedicalHistory: (raw as any)?.pastMedicalHistory ?? null,
+      airway: (raw as any)?.airway ?? null,
+      breathing: (raw as any)?.breathing ?? null,
+      circulation: (raw as any)?.circulation ?? null,
+      disability: (raw as any)?.disability ?? null,
+      exposure: (raw as any)?.exposure ?? null,
+      vbg: (raw as any)?.vbg ?? null,
+      plan: (raw as any)?.plan ?? null,
+      differentials: (raw as any)?.differentials ?? null,
+      mlcDetails: (raw as any)?.mlcDetails ?? null
+    })
+  );
+
   const cleaned = cleanExtractionOutput(raw);
+
+  console.log(
+    "[TRACE-RAW-AFTER-CLEAN]",
+    JSON.stringify({
+      keys: Object.keys(raw || {}),
+      vitals: (raw as any)?.vitals ?? null,
+      chiefComplaint: (raw as any)?.chiefComplaint ?? null,
+      pastMedicalHistory: (raw as any)?.pastMedicalHistory ?? null,
+      airway: (raw as any)?.airway ?? null,
+      breathing: (raw as any)?.breathing ?? null,
+      circulation: (raw as any)?.circulation ?? null,
+      disability: (raw as any)?.disability ?? null,
+      exposure: (raw as any)?.exposure ?? null,
+      vbg: (raw as any)?.vbg ?? null,
+      plan: (raw as any)?.plan ?? null,
+      differentials: (raw as any)?.differentials ?? null,
+      mlcDetails: (raw as any)?.mlcDetails ?? null
+    })
+  );
+
+  console.log(
+    "[SCRIBE-CLEANED-CORE-TRACE]",
+    JSON.stringify(cleaned)
+  );
   // VOICE-03: pass the de-identified input text through so field mapping
   // can detect explicit normalcy phrases — the ONLY trigger allowed for
   // normal-exam defaults. Never applied just because a field is empty.
@@ -464,7 +779,6 @@ function extractAbnormalFlags(cleaned: ReturnType<typeof cleanExtractionOutput>)
     .filter(Boolean);
 }
 
-
 export function isExplicitPrecipitatingEvent(text: string): boolean {
   if (!text || typeof text !== "string") return false;
   const t = text.trim().toLowerCase();
@@ -479,75 +793,159 @@ export function isExplicitPrecipitatingEvent(text: string): boolean {
     return false;
   }
   // Must match explicit precipitating trigger
-  const hasTrigger = /\b(rta\b|road traffic accident|motor vehicle|accident|fall|fell|trauma|assault|hit\s+by|injury|injuries|fracture|burn|drowning|bite|sting|poison|ingestion|overdose|collapse|syncope|unconscious|electrocution|struck|wound|post-op|surgery)\b/i.test(t);
+  const hasTrigger = /\b(rta\b|road traffic accident|motor vehicle|accident|fall|fell|trauma|assault|hit\s+by|injury|injuries|fracture|burn|drowning|bite|sting|poison|ingestion|overdose|collapse|syncope|unconscious|found\s+(?:lying|collapsed|unconscious)|electrocution|struck|wound|post-op|surgery)\b/i.test(t);
   return hasTrigger;
 }
 
-export function deriveExplicitEvents(raw: any, rawInputText: string): string | null {
-  // 1. Explicit events array or string from model
-  if (typeof raw.events === 'string' && raw.events.trim()) {
-    const ev = raw.events.trim();
+export function deriveExplicitEvents(raw: any, rawInputText?: string): string | null {
+  const actualRaw = (raw && typeof raw === 'object') ? raw : {};
+  const actualInputText = typeof raw === 'string' ? raw : (rawInputText || "");
+
+  const normalizeEventText = (ev: string): string => {
+    let t = ev.trim();
+    if (/^rta[\s:\-]+/i.test(t)) {
+      t = t.replace(/^rta[\s:\-]+/i, "Road traffic accident involving ");
+    } else if (/^rta$/i.test(t)) {
+      t = "Road traffic accident";
+    } else if (/^two-wheeler\s+vs/i.test(t)) {
+      t = "Road traffic accident involving " + t;
+    }
+    return t.charAt(0).toUpperCase() + t.slice(1);
+  };
+
+  // 1. Explicit events string or array from model / sampleHistory
+  if (typeof actualRaw.events === 'string' && actualRaw.events.trim()) {
+    const ev = actualRaw.events.trim();
     if (isExplicitPrecipitatingEvent(ev)) {
-      return ev;
+      return normalizeEventText(ev);
     }
   }
-  if (Array.isArray(raw.events) && raw.events.length > 0) {
-    const descs = raw.events
+  if (actualRaw.sampleHistory && typeof actualRaw.sampleHistory === 'object' && typeof actualRaw.sampleHistory.events === 'string' && actualRaw.sampleHistory.events.trim()) {
+    const ev = actualRaw.sampleHistory.events.trim();
+    if (isExplicitPrecipitatingEvent(ev)) {
+      return normalizeEventText(ev);
+    }
+  }
+  if (Array.isArray(actualRaw.events) && actualRaw.events.length > 0) {
+    const descs = actualRaw.events
       .map((e: any) => typeof e === 'string' ? e.trim() : (e?.description || ""))
       .filter((d: string) => isExplicitPrecipitatingEvent(d));
-    if (descs.length > 0) return descs.join("; ");
+    if (descs.length > 0) return normalizeEventText(descs.join("; "));
   }
 
   // 2. Explicit mechanism from mlcDetails
-  if (raw.mlcDetails && typeof raw.mlcDetails.mechanismOfInjury === 'string' && raw.mlcDetails.mechanismOfInjury.trim()) {
-    const mech = raw.mlcDetails.mechanismOfInjury.trim();
+  if (actualRaw.mlcDetails && typeof actualRaw.mlcDetails.mechanismOfInjury === 'string' && actualRaw.mlcDetails.mechanismOfInjury.trim()) {
+    const mech = actualRaw.mlcDetails.mechanismOfInjury.trim();
     if (isExplicitPrecipitatingEvent(mech)) {
-      if (/^rta\b/i.test(mech)) {
-        return mech.replace(/^rta\b/i, "Road traffic accident involving");
-      }
-      return mech;
+      return normalizeEventText(mech);
     }
   }
 
-  // 3. Derive strictly from explicit preceding history or dictation text:
-  // - explicit trauma/accident description
-  // - explicit collapse/fall
+  // 3. "Found lying / found collapsed / found unconscious" is a valid explicit pre-arrival event.
+  // Prefer the first occurrence in the original clinician transcript so a later HPI paraphrase
+  // cannot overwrite the incident description. Append place/time only when those values were
+  // explicitly extracted from the same dictation.
+  const foundEventMatch = actualInputText.match(
+    /\b(found\s+(?:lying|collapsed|unconscious)[^,\n;]*)/i
+  );
+
+  if (foundEventMatch) {
+    let eventText = normalizeEventText(foundEventMatch[1].trim());
+
+    const incidentPlace = actualRaw?.mlcDetails?.placeOfIncident;
+    if (typeof incidentPlace === "string" && incidentPlace.trim()) {
+      const cleanPlace = incidentPlace.trim().replace(/^(?:at|in)\s+/i, "");
+      if (cleanPlace && !eventText.toLowerCase().includes(cleanPlace.toLowerCase())) {
+        eventText += ` at ${cleanPlace}`;
+      }
+    }
+
+    const incidentTime = actualRaw?.mlcDetails?.dateTimeOfIncident;
+    if (typeof incidentTime === "string" && incidentTime.trim()) {
+      const cleanTime = incidentTime.trim();
+      if (cleanTime && !eventText.toLowerCase().includes(cleanTime.toLowerCase())) {
+        eventText += ` (${cleanTime})`;
+      }
+    }
+
+    return eventText;
+  }
+
+  // 4. Derive strictly from explicit preceding history or dictation text:
   const candidateTexts = [
-    raw.hpi,
-    raw.presentingComplaint,
-    raw.chiefComplaint,
-    rawInputText
+    actualRaw.hpi,
+    actualRaw.presentingComplaint,
+    actualRaw.chiefComplaint,
+    actualInputText
   ].filter(t => typeof t === 'string' && t.trim().length > 0) as string[];
 
   for (const text of candidateTexts) {
-    // RTA / Traffic accident
-    const rtaMatch = text.match(/\b(?:alleged\s+history\s+of\s+)?(rta\b[^\.\n;,]*|road\s+traffic\s+accident[^\.\n;,]*|motor\s+vehicle\s+accident[^\.\n;,]*|two-wheeler\s+vs\s+four-wheeler[^\.\n;,]*|hit\s+by[^\.\n;,]*|bike\s+skid[^\.\n;,]*)/i);
+    // Bites and Stings (e.g. "Snake bite while working in field")
+    const biteMatch = text.match(/\b(?:alleged\s+history\s+of\s+|history\s+of\s+)?(snake\s+bite[^\.\n;,]*|scorpion\s+sting[^\.\n;,]*|dog\s+bite[^\.\n;,]*|animal\s+bite[^\.\n;,]*|insect\s+bite[^\.\n;,]*|monkey\s+bite[^\.\n;,]*)/i);
+    if (biteMatch) {
+      let matched = biteMatch[1].trim();
+      return normalizeEventText(matched);
+    }
+
+    // RTA / Traffic accident (e.g. "RTA two-wheeler vs four-wheeler")
+    const rtaMatch = text.match(/\b(?:alleged\s+history\s+of\s+|history\s+of\s+)?(rta\b[^\.\n;,]*|road\s+traffic\s+accident[^\.\n;,]*|motor\s+vehicle\s+accident[^\.\n;,]*|two-wheeler\s+vs\s+four-wheeler[^\.\n;,]*|hit\s+by[^\.\n;,]*|bike\s+skid[^\.\n;,]*)/i);
     if (rtaMatch) {
       let matched = rtaMatch[1].trim();
-      if (/^rta\s+/i.test(matched)) {
-        matched = matched.replace(/^rta\s+/i, "Road traffic accident involving ");
-      } else if (/^rta$/i.test(matched)) {
-        matched = "Road traffic accident";
-      } else if (/^two-wheeler\s+vs/i.test(matched)) {
-        matched = "Road traffic accident involving " + matched;
-      }
-      return matched;
+      return normalizeEventText(matched);
+    }
+
+    // Poisoning / Ingestion / Chemical / Overdose
+    const poisonMatch = text.match(/\b(?:alleged\s+history\s+of\s+|history\s+of\s+)?(organophosphate\s+poisoning[^\.\n;,]*|consumption\s+of\s+[^\.\n;,]+|accidental\s+ingestion\s+of\s+[^\.\n;,]+|overdose\s+of\s+[^\.\n;,]+|drug\s+overdose[^\.\n;,]*|chemical\s+ingestion[^\.\n;,]*|rat\s+poison[^\.\n;,]*|kerosene\s+ingestion[^\.\n;,]*|acid\s+ingestion[^\.\n;,]*)/i);
+    if (poisonMatch) {
+      let matched = poisonMatch[1].trim();
+      return normalizeEventText(matched);
     }
 
     // Fall / Collapse
-    const fallMatch = text.match(/\b(?:alleged\s+history\s+of\s+)?(fall\s+from\s+[^\.\n;,]+|slip\s+and\s+fall[^\.\n;,]*|fall\s+at\s+[^\.\n;,]+|fall\s+in\s+[^\.\n;,]+|sudden\s+collapse[^\.\n;,]*|loss\s+of\s+consciousness[^\.\n;,]*)/i);
+    const fallMatch = text.match(/\b(?:alleged\s+history\s+of\s+|history\s+of\s+)?(fall\s+from\s+[^\.\n;,]+|slip\s+and\s+fall[^\.\n;,]*|fall\s+at\s+[^\.\n;,]+|fall\s+in\s+[^\.\n;,]+|sudden\s+collapse[^\.\n;,]*|loss\s+of\s+consciousness[^\.\n;,]*)/i);
     if (fallMatch) {
-      return fallMatch[1].trim();
+      return normalizeEventText(fallMatch[1].trim());
     }
 
-    // Assault / Trauma
-    const traumaMatch = text.match(/\b(physical\s+assault[^\.\n;,]*|assaulted\s+by\s+[^\.\n;,]+|blunt\s+trauma[^\.\n;,]*|stab\s+injury[^\.\n;,]*|burn\s+injury[^\.\n;,]*)/i);
+    // Assault / Trauma / Burn / Electrocution / Drowning
+    const traumaMatch = text.match(/\b(physical\s+assault[^\.\n;,]*|assaulted\s+by\s+[^\.\n;,]+|blunt\s+trauma[^\.\n;,]*|stab\s+injury[^\.\n;,]*|burn\s+injury[^\.\n;,]*|electrocution[^\.\n;,]*|electric\s+shock[^\.\n;,]*|near\s+drowning[^\.\n;,]*|drowning[^\.\n;,]*)/i);
     if (traumaMatch) {
-      return traumaMatch[1].trim();
+      return normalizeEventText(traumaMatch[1].trim());
     }
   }
 
   return null;
+}
+
+export function extractExplicitSecondarySurveySections(text: string): Record<string, string> {
+  const sections: Record<string, string> = {};
+  if (!text || typeof text !== "string") return sections;
+
+  const normalizeKey = (k: string): string | null => {
+    const lower = k.trim().toLowerCase();
+    if (lower.startsWith("rs") || lower.includes("respiratory") || lower.includes("chest") || lower.includes("lung")) return "respiratory";
+    if (lower.startsWith("pa") || lower.includes("abdomen") || lower.includes("abdominal")) return "abdomen";
+    if (lower.includes("cvs") || lower.includes("cardiovascular") || lower.includes("heart")) return "cvs";
+    if (lower.includes("cns") || lower.includes("neurological") || lower.includes("neuro")) return "cns";
+    if (lower.includes("general")) return "general";
+    if (lower.includes("extremit") || lower.includes("local") || lower.includes("trauma") || lower.includes("musculoskeletal") || lower.includes("msk")) return "extremities";
+    return null;
+  };
+
+  const headerPattern = "(?:general(?:\\s+examination|\\s+exam)?|cvs(?:\\s+examination|\\s+exam)?|cardiovascular(?:\\s+examination|\\s+exam)?|respiratory(?:\\s+system|\\s+examination|\\s+exam)?|rs(?:\\s+examination|\\s+exam)?|chest(?:\\s+examination|\\s+exam)?|per\\s+abdomen(?:\\s+examination|\\s+exam)?|pa(?:\\s+examination|\\s+exam)?|abdomen(?:\\s+examination|\\s+exam)?|abdominal(?:\\s+examination|\\s+exam)?|cns(?:\\s+examination|\\s+exam)?|neurological(?:\\s+examination|\\s+exam)?|extremities(?:\\s+examination|\\s+exam)?|extremity(?:\\s+examination|\\s+exam)?|musculoskeletal(?:\\s+examination|\\s+exam)?|msk)";
+
+  const regex = new RegExp(`(?:^|[\\n;,]|\\.\\s+|:\\s*|[-*•]\\s*|\\s+)(${headerPattern})\\s*[:\\-]\\s*([\\s\\S]*?)(?=(?:[\\n;,]|\\.\\s+|:\\s*|[-*•]\\s*|\\s+)(?:${headerPattern})\\s*[:\\-]|$)`, "gi");
+
+  let match;
+  while ((match = regex.exec(text)) !== null) {
+    const key = normalizeKey(match[1]);
+    let val = (match[2] || "").trim();
+    val = val.replace(/^[,\.\s;:\-]+/, "").replace(/[,\.\s;:\-]+$/, "").trim();
+    if (key && val) {
+      sections[key] = sections[key] ? `${sections[key]}\n${val}` : val;
+    }
+  }
+  return sections;
 }
 
 /**
@@ -695,6 +1093,165 @@ export function isClinicianStatedDifferential(candidate: string, rawInputText: s
   return false;
 }
 
+function transcriptHasExplicitGcsComponent(text: string, component: "e" | "v" | "m"): boolean {
+  if (!text) return false;
+  switch (component) {
+    case "e":
+      return /\be\s*[:=-]?\s*([1-4])(?=\D|$)/i.test(text) || /e([1-4])(?=[vm\D]|$)/i.test(text) || /\beye(?:s)?\s*(?:opening|response)?\s*[:=-]?\s*([1-4])\b/i.test(text);
+    case "v":
+      return /\bv\s*[:=-]?\s*([1-5])(?=\D|$)/i.test(text) || /v([1-5])(?=[em\D]|$)/i.test(text) || /\bverbal\s*(?:response)?\s*[:=-]?\s*([1-5])\b/i.test(text);
+    case "m":
+      return /\bm\s*[:=-]?\s*([1-6])(?=\D|$)/i.test(text) || /m([1-6])(?=[ev\D]|$)/i.test(text) || /\bmotor\s*(?:response)?\s*[:=-]?\s*([1-6])\b/i.test(text);
+  }
+}
+
+function isGcsComponentAllowed(k: string, rawInputText: string): boolean {
+  const key = k.toLowerCase();
+  if (key === "gcs") {
+    return transcriptHasExplicitTotalGcs(rawInputText);
+  }
+  if (key === "gcs_e") {
+    return transcriptHasExplicitGcsComponent(rawInputText, "e");
+  }
+  if (key === "gcs_v") {
+    return transcriptHasExplicitGcsComponent(rawInputText, "v");
+  }
+  if (key === "gcs_m") {
+    return transcriptHasExplicitGcsComponent(rawInputText, "m");
+  }
+  return true;
+}
+
+function transcriptHasExplicitTotalGcs(text: string): boolean {
+  if (!text) return false;
+
+  // ErMate documentation policy: Total GCS is retained ONLY when an explicit total was dictated.
+  // Must be tied syntactically to GCS / Glasgow / total wording.
+  // Numbers belonging to limb power (e.g. 5/5, 0/5), BP (160/90), RR (18), age (14yo),
+  // glucose, or component-only strings (E3V4M5) must NEVER validate a GCS total.
+  return /\b(?:total\s+gcs|gcs\s+total|gcs\s+score|glasgow\s+(?:coma\s+)?(?:scale|score)|gcs)\s*(?:is|of|[:=-])?\s*(?:total\s*)?(?:[3-9]|1[0-5])\b/i.test(text) ||
+    /\b(?:gcs\s+)?total\s+(?:[3-9]|1[0-5])\s*(?:out\s+of|\/)\s*15\b/i.test(text);
+}
+
+function transcriptGcsEyeOnly(text: string): string | null {
+  if (!text) return null;
+
+  const match = text.match(/\bgcs\s*[:=-]?\s*e\s*([1-4])\b/i);
+  return match ? `E${match[1]}` : null;
+}
+
+function normalizeClinicalText(value: string): string {
+  return value
+    .replace(/\s+/g, " ")
+    .replace(/^[,;:\s]+|[,;:\s]+$/g, "")
+    .replace(/^then\s+/i, "")
+    .trim();
+}
+
+type SecondarySection =
+  | "general"
+  | "cvs"
+  | "respiratory"
+  | "abdomen"
+  | "cns"
+  | "extremities";
+
+function getExaminationWindow(text: string): string {
+  if (!text) return "";
+
+  const generalIndex = text.search(/\bgeneral\s+examination\b/i);
+
+  if (generalIndex >= 0) {
+    return text.slice(generalIndex);
+  }
+
+  const systemicIndex = text.search(/\bsystemic\s+examination\b/i);
+
+  if (systemicIndex >= 0) {
+    return text.slice(systemicIndex);
+  }
+
+  return text;
+}
+
+function extractExplicitSecondarySection(
+  rawInputText: string,
+  section: SecondarySection
+): string | null {
+  const text = getExaminationWindow(rawInputText);
+
+  if (!text) return null;
+
+  const patterns: Record<SecondarySection, RegExp> = {
+    general:
+      /\bgeneral\s+examination\s*[:,-]?\s*([\s\S]*?)(?=\bsystemic\s+examination\b|\bcvs\b|\bcardiovascular\b)/i,
+
+    cvs:
+      /\b(?:cvs|cardiovascular(?:\s+examination)?)\s*[:,-]?\s*([\s\S]*?)(?=\b(?:chest|respiratory|rs|abdomen|per\s+abdomen|p\/a|cns|neurological|extremities|psychological\s+assessment|investigations)\b)/i,
+
+    respiratory:
+      /\b(?:chest|respiratory(?:\s+examination)?|rs)\s*[:,-]?\s*([\s\S]*?)(?=\b(?:abdomen|per\s+abdomen|p\/a|cns|neurological|extremities|psychological\s+assessment|investigations)\b)/i,
+
+    abdomen:
+      /\b(?:abdomen(?:\s+examination)?|per\s+abdomen|p\/a)\s*[:,-]?\s*([\s\S]*?)(?=\b(?:then\s+)?(?:cns|neurological|extremities|psychological\s+assessment|investigations)\b)/i,
+
+    cns:
+      /\b(?:cns|neurological(?:\s+examination)?)\s*[:,-]?\s*([\s\S]*?)(?=\b(?:then\s+)?(?:extremities|psychological\s+assessment|investigations)\b)/i,
+
+    extremities:
+      /\bextremities(?:\s+examination)?\s*[:,-]?\s*([\s\S]*?)(?=\b(?:psychological\s+assessment|investigations|treatment\s+plan|differential\s+diagnosis)\b|$)/i,
+  };
+
+  const match = text.match(patterns[section]);
+
+  if (!match?.[1]) return null;
+
+  const cleaned = normalizeClinicalText(match[1]);
+
+  return cleaned.length > 0 ? cleaned : null;
+}
+
+function isContaminatedExamValue(value: any): boolean {
+  if (typeof value !== "string") return false;
+
+  const text = value.trim();
+
+  if (text.length > 350) return true;
+
+  return /\b(presenting\s+complaint|primary\s+assessment|informant|identification\s+mark|brought\s+by|date\s+and\s+time\s+of\s+incident|adjuvant\s+primary|vbg|abg|grbs|treatment\s+plan|differential\s+diagnosis)\b/i.test(
+    text
+  );
+}
+
+/**
+ * Psychological assessment must come from explicit clinician speech only.
+ * This intentionally does NOT trust a model-generated generic "Normal" unless
+ * the clinician explicitly dictated that within the psychological section.
+ */
+function extractExplicitPsychologicalAssessment(text: string): string | null {
+  if (!text || typeof text !== "string") return null;
+
+  const labelled = text.match(
+    /\bpsychological\s+assessment\s*[:,-]?\s*([\s\S]*?)(?=\b(?:investigations?|treatment\s+plan|differential\s+diagnosis|disposition|doctor\s+[A-Za-z]|em\s+consultant)\b|$)/i
+  );
+
+  if (labelled?.[1]) {
+    const cleaned = normalizeClinicalText(labelled[1]);
+    if (cleaned) return cleaned;
+  }
+
+  // Narrow fallback for individually dictated psychiatric negatives outside a labelled section.
+  const explicitNegatives = text.match(
+    /\bno\s+(?:features?\s+of\s+)?(?:depression|anxiety|psychosis|agitation|suicidal\s+ideation|substance\s+(?:use|abuse)|self[-\s]?harm(?:\s+history)?|intent\s+to\s+harm\s+others|psychiatric\s+history)\b/gi
+  );
+
+  if (explicitNegatives && explicitNegatives.length > 0) {
+    return Array.from(new Set(explicitNegatives.map(v => normalizeClinicalText(v)))).join(", ");
+  }
+
+  return null;
+}
+
 export function mapExtractionToCaseSheetFields(
   cleaned: ReturnType<typeof cleanExtractionOutput>,
   raw: any,
@@ -702,17 +1259,45 @@ export function mapExtractionToCaseSheetFields(
   rawInputText: string,
   clinicianProtection?: ProtectedCliniciansResult
 ): Record<string, any> {
+  console.log(
+    "[TRACE-MAPPER-ENTRY]",
+    JSON.stringify({
+      keys: Object.keys(raw || {}),
+      vitals: raw?.vitals ?? null,
+      chiefComplaint: raw?.chiefComplaint ?? null,
+      pastMedicalHistory: raw?.pastMedicalHistory ?? null,
+      airway: raw?.airway ?? null,
+      breathing: raw?.breathing ?? null,
+      circulation: raw?.circulation ?? null,
+      disability: raw?.disability ?? null,
+      exposure: raw?.exposure ?? null,
+      vbg: raw?.vbg ?? null,
+      plan: raw?.plan ?? null,
+      differentials: raw?.differentials ?? null,
+      mlcDetails: raw?.mlcDetails ?? null
+    })
+  );
+
   const fields: Record<string, any> = {};
   const isValidStr = (s: any) => typeof s === 'string' && s.trim().length > 0 && !["unknown", "not specified", "not documented", "n/a", "none"].includes(s.trim().toLowerCase());
 
   if (isValidStr(raw.patientName)) fields.patientName = raw.patientName;
   if (raw.age !== undefined && raw.age !== null && raw.age !== "") fields.age = raw.age;
-  
+
   if (isValidStr(raw.sex)) fields.gender = raw.sex;
   else if (isValidStr(raw.gender)) fields.gender = raw.gender;
 
-  if (isValidStr(raw.chiefComplaint)) fields.presentingComplaint = raw.chiefComplaint;
-  else if (isValidStr(raw.presentingComplaint)) fields.presentingComplaint = raw.presentingComplaint;
+  if (isValidStr(raw.chiefComplaint)) {
+    fields.presentingComplaint = raw.chiefComplaint;
+  } else if (isValidStr(raw.presentingComplaint)) {
+    fields.presentingComplaint = raw.presentingComplaint;
+  } else if (cleaned.symptoms && cleaned.symptoms.length > 0) {
+    // Safe fallback: only clinician-stated symptoms already accepted by cleanup.
+    fields.presentingComplaint = cleaned.symptoms.join(", ");
+  } else if (isValidStr(raw.hpi)) {
+    // Final fallback is explicit HPI text from the clinician extraction; never invent a complaint.
+    fields.presentingComplaint = raw.hpi;
+  }
 
   // ══════════════════════════════════════════════════════════════
   // VOICE-02/FAB-18 FIX: vitals are ONLY ever the real dictated value.
@@ -726,6 +1311,13 @@ export function mapExtractionToCaseSheetFields(
     let hasRealVitals = false;
     for (const [k, v] of Object.entries(raw.vitals)) {
       if (v !== null && v !== undefined && v !== "" && String(v).toLowerCase() !== "unknown" && String(v).toLowerCase() !== "n/a") {
+        // SAFETY: deterministic GCS guard.
+        // Never accept an inferred total GCS or unstated subcomponents.
+        // Example: transcript says only "GCS E4" -> gcs, gcs_v, gcs_m are dropped, only gcs_e survives.
+        if (!isGcsComponentAllowed(k, rawInputText)) {
+          continue;
+        }
+
         filteredVitals[k] = v;
         hasRealVitals = true;
       }
@@ -746,7 +1338,7 @@ export function mapExtractionToCaseSheetFields(
   // extending ClinicalParam is a separate product decision.
   // ══════════════════════════════════════════════════════════════
   if (raw.vbg && typeof raw.vbg === 'object') {
-      // CHLORIDE FIX (Sept 2026): "cl" was missing from this map entirely.
+    // CHLORIDE FIX (Sept 2026): "cl" was missing from this map entirely.
     // The extraction schema (extraction.ts / voiceExtraction.ts) has
     // correctly asked for and received chloride from the model since
     // this session's earlier fix, but this mapping step — which writes
@@ -756,7 +1348,7 @@ export function mapExtractionToCaseSheetFields(
     const VBG_PARAM_MAP: Record<string, string> = {
       ph: "pH", pco2: "pCO2", hco3: "HCO3", lactate: "Lactate", na: "Na", k: "K", cl: "Cl", po2: "PO2", hb: "Hb", be: "Base Excess", anionGap: "Anion Gap"
     };
-        const values: { name: string; param: string; value: number | string | null }[] = [];
+    const values: { name: string; param: string; value: number | string | null }[] = [];
     for (const [key, name] of Object.entries(VBG_PARAM_MAP)) {
       const v = raw.vbg[key];
       if (v !== null && v !== undefined && v !== "" && String(v).toLowerCase() !== "unknown") {
@@ -799,6 +1391,7 @@ export function mapExtractionToCaseSheetFields(
   if (verifiedDiffs.length > 0) {
     fields.differentialDiagnosis = verifiedDiffs.join("; ");
   }
+
   // ══════════════════════════════════════════════════════════════
   // CHECKLIST-WIRING FIX ROUND 2: these fields are correctly extracted
   // by the model (see extraction.ts schema) but were never read into
@@ -823,12 +1416,13 @@ export function mapExtractionToCaseSheetFields(
     };
   }
 
-  if (isValidStr(raw.psychologicalAssessment)) fields.psychologicalAssessment = raw.psychologicalAssessment;
   if (isValidStr(raw.ecg)) fields.ecg = raw.ecg;
   if (isValidStr(raw.echo)) fields.echo = raw.echo;
   if (isValidStr(raw.diagnosis)) fields.diagnosis = raw.diagnosis; // closes VOICE-06
   if (isValidStr(raw.disposition)) fields.disposition = raw.disposition;
-  if (Array.isArray(raw.consultations) && raw.consultations.length > 0) fields.consultations = raw.consultations.filter(isValidStr);
+  if (Array.isArray(raw.consultations) && raw.consultations.length > 0) {
+    fields.consultations = deduplicateConsultations(raw.consultations.filter(isValidStr));
+  }
 
   if (Array.isArray(raw.investigationsOrdered) && raw.investigationsOrdered.length > 0) {
     fields.investigationsOrdered = raw.investigationsOrdered.filter((i: any) => isValidStr(i));
@@ -895,6 +1489,7 @@ export function mapExtractionToCaseSheetFields(
   if (candidateConsultant && !isRedactedOrPlaceholderClinician(candidateConsultant)) {
     fields.emConsultant = candidateConsultant;
   }
+
   // ══════════════════════════════════════════════════════════════
   // CHECKLIST-WIRING FIX: fastFindings had no mapping — extracted by
   // the model (voiceExtraction.ts) but silently dropped here, same
@@ -903,10 +1498,21 @@ export function mapExtractionToCaseSheetFields(
   // ══════════════════════════════════════════════════════════════
   if (raw.fastFindings && typeof raw.fastFindings === 'object') {
     const fast: Record<string, string> = {};
-    for (const organ of ['heart', 'abdomen', 'pelvis']) {
+    for (const organ of ['heart', 'abdomen', 'pelvis', 'bladder', 'suprapubic', 'lungs']) {
       if (isValidStr(raw.fastFindings[organ])) fast[organ] = raw.fastFindings[organ];
     }
-    if (Object.keys(fast).length > 0) fields.fastFindings = fast;
+    if (Object.keys(fast).length > 0) {
+      fields.fastFindings = fast;
+      const parts: string[] = [];
+      if (fast.heart) parts.push(`Heart: ${fast.heart}`);
+      if (fast.abdomen) parts.push(`Abdomen: ${fast.abdomen}`);
+      if (fast.pelvis || fast.bladder || fast.suprapubic) {
+        const pStr = [fast.pelvis, fast.bladder, fast.suprapubic].filter(Boolean).join(" / ");
+        parts.push(`Pelvis/Bladder: ${pStr}`);
+      }
+      if (fast.lungs) parts.push(`Lungs: ${fast.lungs}`);
+      fields.efastNotes = parts.join(" | ");
+    }
   }
 
   // ══════════════════════════════════════════════════════════════
@@ -982,22 +1588,10 @@ export function mapExtractionToCaseSheetFields(
     }
   }
 
-  // Procedures
+  // Procedures: keep for detection & template prefill ONLY.
+  // Do NOT write into legacy completed procedure fields (otherProcedures, proceduresChecked).
   if (cleaned.procedures && cleaned.procedures.length > 0) {
     fields.procedures = cleaned.procedures;
-    fields.otherProcedures = cleaned.procedures.join(", ");
-    const procChecks: string[] = [];
-    for (const p of cleaned.procedures) {
-      const plower = p.toLowerCase();
-      if (plower.includes("catheter") || plower.includes("foley")) procChecks.push("foleys");
-      if (plower.includes("ng tube") || plower.includes("ryle")) procChecks.push("ng_tube");
-      if (plower.includes("lavage")) procChecks.push("gastric_lavage");
-      if (plower.includes("sutur") || plower.includes("stitch")) procChecks.push("suturing");
-      if (plower.includes("irrigat")) procChecks.push("irrigation");
-      if (plower.includes("splint")) procChecks.push("splinting");
-      if (plower.includes("reduct")) procChecks.push("reduction");
-    }
-    if (procChecks.length > 0) fields.proceduresChecked = procChecks;
   }
 
   // Events: wire Events derivation into active Scribe mapping (derive from explicit history only)
@@ -1024,6 +1618,10 @@ export function mapExtractionToCaseSheetFields(
 
   if (cleaned.symptoms && cleaned.symptoms.length > 0) {
     fields.symptoms = cleaned.symptoms;
+    fields.sampleHistory = {
+      ...(fields.sampleHistory || existingCaseSheet?.sampleHistory || {}),
+      symptoms: cleaned.symptoms.join(", ")
+    };
   }
   if (cleaned.plan && cleaned.plan.length > 0) {
     fields.plan = cleaned.plan;
@@ -1034,7 +1632,7 @@ export function mapExtractionToCaseSheetFields(
       managementPlan: fields.managementPlan
     };
   }
-  
+
   // Investigations — strictly enforce no-invention rule
   // If the dictation contains only generic phrases like "Appropriate investigations were planned based on clinical assessment and duration of fever",
   // no actual test was named, so do NOT create CBC, CRP, urine routine, culture, X-ray, or any other test.
@@ -1077,7 +1675,7 @@ export function mapExtractionToCaseSheetFields(
   if (raw.isPediatric !== undefined && raw.isPediatric !== null) fields.isPediatric = raw.isPediatric;
   if (raw.pediatricDetails && Object.keys(raw.pediatricDetails).length > 0) {
     const filteredPed: any = {};
-    for (const [k, v] of Object.entries(raw.pediatricDetails)) { 
+    for (const [k, v] of Object.entries(raw.pediatricDetails)) {
       if (isValidStr(v) || typeof v === 'boolean') {
         filteredPed[k] = v;
         // Also map to UI aliases
@@ -1120,97 +1718,209 @@ export function mapExtractionToCaseSheetFields(
   if (isValidStr(raw.disability)) fields.disability = raw.disability;
   else if (abcdeNormal && !isValidStr(existingCaseSheet?.disability) && !isValidStr(existingCaseSheet?.primaryDisability)) fields.disability = `Pupils equal & reactive. ${EXAM_DEFAULTS.cnsExamination}`;
 
-  // Secondary Survey / General Exam initialization
-  const secSurvey = { ...(existingCaseSheet?.secondarySurvey || {}) };
-  let updatedSecSurvey = false;
+  const eyeOnlyGcs = transcriptGcsEyeOnly(rawInputText);
 
-  // Semantic separation: ensure abdominal, neurological, hydration, and temperature findings
-  // bundled in exposure are cleanly re-routed to Secondary Survey and Vitals, and stripped from Exposure.
-  const normExp = normalizeExposureAndSecondarySurvey(raw, fields, secSurvey, rawInputText);
-  if (normExp.updatedSecSurvey) updatedSecSurvey = true;
+  if (eyeOnlyGcs && !transcriptHasExplicitTotalGcs(rawInputText)) {
+    const eyeStatement =
+      `GCS eye response ${eyeOnlyGcs}; total GCS not fully documented.`;
 
-  if (isValidStr(raw.cSpineExam) && isValidStr(raw.exposure)) {
-    const cSpineFrag = raw.cSpineExam;
-    const isGeneric = !/(c-spine|c spine|cervical|neck)/i.test(cSpineFrag);
-
-    let e = raw.exposure;
-    if (isGeneric) {
-      const expCSpineRegex = /(c-spine|c spine|cervical spine|cervical midline|neck)\s*([a-z]+)?/gi;
-      let m;
-      let foundMatch = false;
-      while ((m = expCSpineRegex.exec(e)) !== null) {
-        if (m[0].toLowerCase().includes(cSpineFrag.toLowerCase())) {
-          e = e.replace(m[0], "");
-          foundMatch = true;
-        }
-      }
-      if (foundMatch) {
-        e = e.replace(/,\s*,/g, ",").replace(/^,\s*/, "").replace(/,\s*$/, "").trim();
-        raw.exposure = e.length > 0 ? e : null;
+    if (isValidStr(fields.disability)) {
+      if (!fields.disability.toLowerCase().includes("total gcs not fully documented")) {
+        fields.disability =
+          `${fields.disability}. ${eyeStatement}`.replace(/\.\s*\./g, ".");
       }
     } else {
-      if (e.includes(cSpineFrag)) {
-        e = e.replace(cSpineFrag, "");
-        e = e.replace(/,\s*,/g, ",").replace(/^,\s*/, "").replace(/,\s*$/, "").trim();
-        raw.exposure = e.length > 0 ? e : null;
-      } else {
-        const cSpineLower = cSpineFrag.toLowerCase().replace(/\.$/, "");
-        if (e.toLowerCase().includes(cSpineLower)) {
-          const regex = new RegExp(cSpineLower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), "i");
-          e = e.replace(regex, "");
-          e = e.replace(/,\s*,/g, ",").replace(/^,\s*/, "").replace(/,\s*$/, "").trim();
-          raw.exposure = e.length > 0 ? e : null;
-        }
-      }
+      fields.disability = eyeStatement;
     }
   }
 
-  if (isValidStr(raw.exposure)) fields.exposure = raw.exposure;
-  else if (abcdeNormal && !isValidStr(existingCaseSheet?.exposure) && !isValidStr(existingCaseSheet?.primaryExposure)) fields.exposure = "No obvious external injuries, rash, or deformities. Normothermic.";
+  // Secondary Survey / General Exam
+  const secSurvey = {
+    ...(existingCaseSheet?.secondarySurvey || {})
+  };
 
-  // ══════════════════════════════════════════════════════════════
-  // CHECKLIST-WIRING FIX: extremitiesExamination had no mapping at
-  // all — the schema field added in voiceExtraction.ts had nowhere
-  // to land. Real dictated value only. Deliberately NO normal-default
-  // fallback here (unlike CVS/resp/abdomen/CNS) — extremities is
-  // frequently the ONE named exception inside an otherwise-normal
-  // secondary survey ("everything normal except extremities"), so
-  // auto-filling it with boilerplate text would risk overwriting
-  // exactly the finding the doctor was calling out as abnormal.
-  // ══════════════════════════════════════════════════════════════
-  if (isValidStr(raw.extremitiesExamination)) {
+  let updatedSecSurvey = false;
+
+  const explicitGeneral =
+    extractExplicitSecondarySection(rawInputText, "general");
+
+  const explicitCvs =
+    extractExplicitSecondarySection(rawInputText, "cvs");
+
+  const explicitRespiratory =
+    extractExplicitSecondarySection(rawInputText, "respiratory");
+
+  const explicitAbdomen =
+    extractExplicitSecondarySection(rawInputText, "abdomen");
+
+  const explicitCns =
+    extractExplicitSecondarySection(rawInputText, "cns");
+
+  const explicitExtremities =
+    extractExplicitSecondarySection(rawInputText, "extremities");
+
+  console.log(
+    "[SCRIBE-SECONDARY-TRACE]",
+    JSON.stringify({
+      general: explicitGeneral,
+      cvs: explicitCvs,
+      respiratory: explicitRespiratory,
+      abdomen: explicitAbdomen,
+      cns: explicitCns,
+      extremities: explicitExtremities,
+
+      rawGeneral: raw.generalExamination ?? null,
+      rawCvs: raw.cvsExamination ?? null,
+      rawRespiratory: raw.respiratoryExamination ?? null,
+      rawAbdomen: raw.abdomenExamination ?? null,
+      rawCns: raw.cnsExamination ?? null,
+      rawExtremities: raw.extremitiesExamination ?? null
+    })
+  );
+
+  // GENERAL
+  if (explicitGeneral) {
+    secSurvey.general = explicitGeneral;
+    updatedSecSurvey = true;
+  } else if (
+    isValidStr(raw.generalExamination) &&
+    !isContaminatedExamValue(raw.generalExamination)
+  ) {
+    secSurvey.general = raw.generalExamination;
+    updatedSecSurvey = true;
+  } else if (
+    systemicNormal &&
+    !isValidStr(secSurvey.general)
+  ) {
+    secSurvey.general = EXAM_DEFAULTS.generalExamination;
+    updatedSecSurvey = true;
+  }
+
+  // CVS
+  if (explicitCvs) {
+    secSurvey.cvs = explicitCvs;
+    updatedSecSurvey = true;
+  } else if (
+    isValidStr(raw.cvsExamination) &&
+    !isContaminatedExamValue(raw.cvsExamination)
+  ) {
+    secSurvey.cvs = raw.cvsExamination;
+    updatedSecSurvey = true;
+  } else if (
+    systemicNormal &&
+    !isValidStr(secSurvey.cvs)
+  ) {
+    secSurvey.cvs = EXAM_DEFAULTS.cvsExamination;
+    updatedSecSurvey = true;
+  }
+
+  // RESPIRATORY
+  if (explicitRespiratory) {
+    secSurvey.respiratory = explicitRespiratory;
+    updatedSecSurvey = true;
+  } else if (
+    isValidStr(raw.respiratoryExamination) &&
+    !isContaminatedExamValue(raw.respiratoryExamination)
+  ) {
+    secSurvey.respiratory = raw.respiratoryExamination;
+    updatedSecSurvey = true;
+  } else if (
+    systemicNormal &&
+    !isValidStr(secSurvey.respiratory)
+  ) {
+    secSurvey.respiratory = EXAM_DEFAULTS.respiratoryExamination;
+    updatedSecSurvey = true;
+  }
+
+  // ABDOMEN
+  if (explicitAbdomen) {
+    secSurvey.abdomen = explicitAbdomen;
+    updatedSecSurvey = true;
+  } else if (
+    isValidStr(raw.abdomenExamination) &&
+    !isContaminatedExamValue(raw.abdomenExamination)
+  ) {
+    secSurvey.abdomen = raw.abdomenExamination;
+    updatedSecSurvey = true;
+  } else if (
+    systemicNormal &&
+    !isValidStr(secSurvey.abdomen)
+  ) {
+    secSurvey.abdomen = EXAM_DEFAULTS.abdomenExamination;
+    updatedSecSurvey = true;
+  }
+
+  // CNS
+  if (explicitCns) {
+    secSurvey.cns = explicitCns;
+    updatedSecSurvey = true;
+  } else if (
+    isValidStr(raw.cnsExamination) &&
+    !isContaminatedExamValue(raw.cnsExamination)
+  ) {
+    secSurvey.cns = raw.cnsExamination;
+    updatedSecSurvey = true;
+  } else if (
+    systemicNormal &&
+    !isValidStr(secSurvey.cns)
+  ) {
+    secSurvey.cns = EXAM_DEFAULTS.cnsExamination;
+    updatedSecSurvey = true;
+  }
+
+  // EXTREMITIES
+  if (explicitExtremities) {
+    secSurvey.extremities = explicitExtremities;
+    updatedSecSurvey = true;
+  } else if (
+    isValidStr(raw.extremitiesExamination) &&
+    !isContaminatedExamValue(raw.extremitiesExamination)
+  ) {
     secSurvey.extremities = raw.extremitiesExamination;
     updatedSecSurvey = true;
   }
 
-  if (isValidStr(raw.generalExamination)) { secSurvey.general = raw.generalExamination; updatedSecSurvey = true; }
-  else if (systemicNormal && !isValidStr(existingCaseSheet?.generalExamination) && !isValidStr(secSurvey.general)) { secSurvey.general = EXAM_DEFAULTS.generalExamination; updatedSecSurvey = true; }
+  // Normalize any model-routed Exposure text before committing it. This helper can
+  // move abdomen/CNS/general findings out of Exposure without inventing anything.
+  const exposureNormalization = normalizeExposureAndSecondarySurvey(
+    raw,
+    fields,
+    secSurvey,
+    rawInputText
+  );
 
-  if (isValidStr(raw.cvsExamination)) { secSurvey.cvs = raw.cvsExamination; updatedSecSurvey = true; }
-  else if (systemicNormal && !isValidStr(secSurvey.cvs)) { secSurvey.cvs = EXAM_DEFAULTS.cvsExamination; updatedSecSurvey = true; }
+  if (exposureNormalization.updatedSecSurvey) {
+    updatedSecSurvey = true;
+  }
 
-  const respVal = isValidStr(raw.respiratoryExamination) ? raw.respiratoryExamination
-    : isValidStr(raw.rsExamination) ? raw.rsExamination
-    : isValidStr(raw.rs) ? raw.rs
-    : isValidStr(raw.respiratory) ? raw.respiratory
-    : null;
-  if (respVal) { secSurvey.respiratory = respVal; updatedSecSurvey = true; }
-  else if (systemicNormal && !isValidStr(secSurvey.respiratory)) { secSurvey.respiratory = EXAM_DEFAULTS.respiratoryExamination; updatedSecSurvey = true; }
+  if (isValidStr(raw.exposure)) {
+    fields.exposure = raw.exposure;
+  } else if (
+    abcdeNormal &&
+    !isValidStr(existingCaseSheet?.exposure) &&
+    !isValidStr(existingCaseSheet?.primaryExposure)
+  ) {
+    fields.exposure = "No obvious external injuries, rash, or deformities. Normothermic.";
+  }
 
-  const abdVal = isValidStr(raw.abdomenExamination) ? raw.abdomenExamination
-    : isValidStr(raw.paExamination) ? raw.paExamination
-    : isValidStr(raw.pa) ? raw.pa
-    : isValidStr(raw.abdomen) ? raw.abdomen
-    : null;
-  if (abdVal) { secSurvey.abdomen = abdVal; updatedSecSurvey = true; }
-  else if (systemicNormal && !isValidStr(secSurvey.abdomen)) { secSurvey.abdomen = EXAM_DEFAULTS.abdomenExamination; updatedSecSurvey = true; }
+  if (updatedSecSurvey) {
+    fields.secondarySurvey = secSurvey;
+    console.log(
+      "[SCRIBE-SECONDARY-FINAL]",
+      JSON.stringify(fields.secondarySurvey)
+    );
+  }
 
-  if (isValidStr(raw.cnsExamination)) { secSurvey.cns = raw.cnsExamination; updatedSecSurvey = true; }
-  else if (systemicNormal && !isValidStr(secSurvey.cns)) { secSurvey.cns = EXAM_DEFAULTS.cnsExamination; updatedSecSurvey = true; }
-
-  if (isValidStr(raw.cSpineExam)) { secSurvey.cSpineExam = raw.cSpineExam; updatedSecSurvey = true; }
-
-  if (updatedSecSurvey) fields.secondarySurvey = secSurvey;
+  const secParts: string[] = [];
+  if (secSurvey.general) secParts.push(`General: ${secSurvey.general}`);
+  if (secSurvey.cvs) secParts.push(`CVS: ${secSurvey.cvs}`);
+  if (secSurvey.respiratory) secParts.push(`RS: ${secSurvey.respiratory}`);
+  if (secSurvey.abdomen) secParts.push(`PA: ${secSurvey.abdomen}`);
+  if (secSurvey.cns) secParts.push(`CNS: ${secSurvey.cns}`);
+  if (secSurvey.extremities) secParts.push(`Extremities: ${secSurvey.extremities}`);
+  if (secParts.length > 0) {
+    fields.secondaryAssessment = secParts.join("\n");
+  }
 
   // ══════════════════════════════════════════════════════════════
   // VOICE-03/FAB-20 FIX: Allergies never silently default to "NKDA"
@@ -1237,12 +1947,15 @@ export function mapExtractionToCaseSheetFields(
 
   if (isValidStr(raw.pmh)) fields.pastMedicalHistory = raw.pmh;
   else if (isValidStr(raw.pastMedicalHistory)) fields.pastMedicalHistory = raw.pastMedicalHistory;
-  else if (medPmh.pastHistory === "No past medical history") {
-    // Doctor explicitly denied a history this turn even though no
-    // structured pmh field was populated by the extraction model.
+  else if (medPmh.pastHistory === "No past medical history" || medPmh.pastHistory === "Nil") {
     fields.pastMedicalHistory = medPmh.pastHistory;
   }
-  // Otherwise: not mentioned, not denied — leave untouched, no fabrication.
+  if (fields.pastMedicalHistory) {
+    fields.sampleHistory = {
+      ...(fields.sampleHistory || existingCaseSheet?.sampleHistory || {}),
+      pastHistory: fields.pastMedicalHistory
+    };
+  }
 
   // SAMPLE Medications (outpatient regular medications)
   // - string[] → join with ", "
@@ -1263,15 +1976,44 @@ export function mapExtractionToCaseSheetFields(
       ...(fields.sampleHistory || existingCaseSheet?.sampleHistory || {}),
       medications: mappedMeds
     };
-  } else if (medPmh.medications === "Nil regular medications") {
-    fields.currentMedications = [];
+  } else if (medPmh.medications === "Nil regular medications" || medPmh.medications === "Nil") {
+    fields.currentMedications = ["Nil regular medications"];
     fields.sampleHistory = {
       ...(fields.sampleHistory || existingCaseSheet?.sampleHistory || {}),
       medications: "Nil regular medications"
     };
   }
-  // Otherwise: leave untouched. Empty currentMedications no longer
-  // gets silently populated just because other content was dictated.
+
+  // Psychological Assessment / Psychiatric Flags
+  // Explicit clinician speech only — never accept a model-generated generic "Normal".
+  const explicitPsychologicalAssessment = extractExplicitPsychologicalAssessment(rawInputText);
+
+  if (explicitPsychologicalAssessment) {
+    fields.psychologicalAssessment = explicitPsychologicalAssessment;
+    fields.sampleHistory = {
+      ...(fields.sampleHistory || existingCaseSheet?.sampleHistory || {}),
+      psychiatricFlags: explicitPsychologicalAssessment
+    };
+  }
+
+  console.log(
+    "[SCRIBE-EXPLICIT-TRACE]",
+    JSON.stringify({
+      psychologicalAssessment:
+        fields.psychologicalAssessment ?? null,
+
+      events:
+        fields.sampleHistory?.events ??
+        fields.events ??
+        null,
+
+      presentingComplaint:
+        fields.presentingComplaint ?? null,
+
+      vitals:
+        fields.vitals ?? null
+    })
+  );
 
   // Ensure clinician names are never restored into free clinical narrative:
   // sanitize any residual internal placeholders in narrative strings or string arrays to [DOCTOR].
@@ -1288,26 +2030,53 @@ export function mapExtractionToCaseSheetFields(
     }
   }
 
+  // Map clinician factual progress updates & chronological notes
+  if (isValidStr(raw.progressNotes)) {
+    fields.progressNotes = raw.progressNotes;
+  }
+  if (Array.isArray(raw.chronologicalNotes) && raw.chronologicalNotes.length > 0) {
+    fields.chronologicalNotes = raw.chronologicalNotes;
+  }
+
+  // Factual updates are captured as clinicianUpdates ONLY when updating an established case sheet.
+  // During initial intake (when there is no established case sheet), the initial transcript goes
+  // strictly into the structured case sheet fields, NEVER into progressNotes / clinicianUpdates.
+  const hasExistingCase = isEstablishedCaseSheet(existingCaseSheet, Array.isArray(raw?.messages) ? raw.messages : undefined);
+
+  if (hasExistingCase && typeof rawInputText === "string" && rawInputText.trim().length > 0) {
+    const trimmedInput = rawInputText.trim();
+    if (!/^(?:hi|hello|hey|good\s+morning|good\s+evening|good\s+afternoon)[\s!.]*$/i.test(trimmedInput)) {
+      fields.clinicianUpdateText = trimmedInput;
+      fields.clinicianUpdates = [
+        {
+          text: trimmedInput,
+          timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+        }
+      ];
+    }
+  }
+
   return fields;
 }
+
 function buildUnifiedReplyProse(
-  extMsg: ScribeChatMessage,
+  extMsg: ScribeChatMessage | null,
   reasonMsg: ScribeChatMessage
 ): string {
   let text = "";
 
   // Extracted details are rendered natively by the UI card, so we don't duplicate them in the markdown prose.
 
-  if (extMsg.type === "extraction-confirmation") {
+  if (extMsg && extMsg.type === "extraction-confirmation") {
     text += "Case details extracted for review.\n\n";
   }
-  
+
   if (reasonMsg.type === "clinical-reasoning") {
     text += `${reasonMsg.content}\n\n`;
   } else if (reasonMsg.type === "error") {
     text += `\n*Note: ${reasonMsg.content}*`;
   }
-  
+
   if (extMsg && extMsg.type === "error") {
     text += `\n\n*Note: ${extMsg.content}*`;
   }

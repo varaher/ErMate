@@ -1,6 +1,7 @@
 import React from "react";
 import { CollapsibleSection, ChipGroup } from "./ManualEntryPrimitives";
 import VoiceRecorder from "./shared/VoiceRecorder";
+import { PediatricVitalReference } from "./PediatricVitalReference";
 
 /**
  * PediatricABCDESections.tsx
@@ -84,8 +85,8 @@ export interface PediatricBreathingState {
 }
 
 export function PediatricBreathingSection({
-  state, onChange,
-}: { state: PediatricBreathingState; onChange: (s: PediatricBreathingState) => void }) {
+  state, onChange, patientAge,
+}: { state: PediatricBreathingState; onChange: (s: PediatricBreathingState) => void; patientAge?: number | null }) {
   return (
     <CollapsibleSection icon={<span>B</span>} iconBgColor="bg-orange-500" title="Breathing" titleColor="text-orange-400" defaultOpen>
       <div className="space-y-4">
@@ -93,12 +94,14 @@ export function PediatricBreathingSection({
           <div>
             <label className="text-slate-800 dark:text-white text-sm font-semibold block mb-1.5">Respiratory Rate (RR)</label>
             <input value={state.rr} onChange={(e) => onChange({ ...state, rr: e.target.value })}
-              className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2.5 text-slate-800 dark:text-white text-sm" placeholder="/min" />
+              className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2.5 text-slate-800 dark:text-white text-sm font-medium" placeholder="/min" />
+            <PediatricVitalReference param="rr" value={state.rr} ageYears={patientAge} />
           </div>
           <div>
             <label className="text-slate-800 dark:text-white text-sm font-semibold block mb-1.5">SpO2</label>
             <input value={state.spo2} onChange={(e) => onChange({ ...state, spo2: e.target.value })}
-              className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2.5 text-slate-800 dark:text-white text-sm" placeholder="%" />
+              className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2.5 text-slate-800 dark:text-white text-sm font-medium" placeholder="%" />
+            <PediatricVitalReference param="spo2" value={state.spo2} ageYears={patientAge} />
           </div>
         </div>
 
@@ -164,8 +167,8 @@ export interface PediatricCirculationState {
 }
 
 export function PediatricCirculationSection({
-  state, onChange,
-}: { state: PediatricCirculationState; onChange: (s: PediatricCirculationState) => void }) {
+  state, onChange, patientAge,
+}: { state: PediatricCirculationState; onChange: (s: PediatricCirculationState) => void; patientAge?: number | null }) {
   return (
     <CollapsibleSection icon={<span>C</span>} iconBgColor="bg-rose-600" title="Circulation of Skin" titleColor="text-rose-400" defaultOpen>
       <div className="space-y-4">
@@ -182,12 +185,14 @@ export function PediatricCirculationSection({
           <div>
             <label className="text-slate-800 dark:text-white text-sm font-semibold block mb-1.5">Heart Rate (HR)</label>
             <input value={state.hr} onChange={(e) => onChange({ ...state, hr: e.target.value })}
-              className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2.5 text-slate-800 dark:text-white text-sm" placeholder="bpm" />
+              className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2.5 text-slate-800 dark:text-white text-sm font-medium" placeholder="bpm" />
+            <PediatricVitalReference param="hr" value={state.hr} ageYears={patientAge} />
           </div>
           <div>
             <label className="text-slate-800 dark:text-white text-sm font-semibold block mb-1.5">Blood Pressure (BP)</label>
             <input value={state.bp} onChange={(e) => onChange({ ...state, bp: e.target.value })}
-              className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2.5 text-slate-800 dark:text-white text-sm" placeholder="mmHg" />
+              className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2.5 text-slate-800 dark:text-white text-sm font-medium" placeholder="mmHg" />
+            <PediatricVitalReference param="sbp" value={state.bp} ageYears={patientAge} />
           </div>
         </div>
         <div>
@@ -293,8 +298,8 @@ export interface PediatricExposureState {
 }
 
 export function PediatricExposureSection({
-  state, onChange,
-}: { state: PediatricExposureState; onChange: (s: PediatricExposureState) => void }) {
+  state, onChange, patientAge,
+}: { state: PediatricExposureState; onChange: (s: PediatricExposureState) => void; patientAge?: number | null }) {
   return (
     <>
       <CollapsibleSection icon={<span>E</span>} iconBgColor="bg-blue-500" title="Exposure" titleColor="text-blue-400" defaultOpen>
@@ -303,7 +308,8 @@ export function PediatricExposureSection({
             <label className="text-slate-800 dark:text-white text-sm font-semibold block mb-1.5">Temperature</label>
             <input value={state.temperature} onChange={(e) => onChange({ ...state, temperature: e.target.value })}
               placeholder="Check for fever or hypothermia"
-              className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2.5 text-slate-800 dark:text-white text-sm" />
+              className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2.5 text-slate-800 dark:text-white text-sm font-medium" />
+            <PediatricVitalReference param="temp" value={state.temperature} ageYears={patientAge} />
           </div>
           <div>
             <label className="text-slate-800 dark:text-white text-sm font-semibold block mb-1.5">Trauma (Logroll)</label>

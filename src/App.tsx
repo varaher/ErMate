@@ -10,7 +10,8 @@ import {
 
 import { 
   ClinicalCase, UserProfile, PatientDemographics, PatientVitals, 
-  DischargeInfo, TriageCategory, ArrivalMode, HandoverRecord, TeamMember, QuickPastePatient, HandoverPatient
+  DischargeInfo, TriageCategory, ArrivalMode, HandoverRecord, TeamMember, QuickPastePatient, HandoverPatient,
+  VitalsRecord, PrimarySurvey, getInitialPrimarySurvey
 } from "./types";
 import { saveHandoverPatient } from "./utils/handoverUtils";
 import { triggerPrintWithTip } from "./utils/printWithTip";
@@ -38,17 +39,21 @@ const AdminPanelView = React.lazy(() => import("./components/AdminPanelView"));
 const DoctorsDirectoryView = React.lazy(() => import("./components/DoctorsDirectoryView"));
 const ToolsView = React.lazy(() => import("./components/ToolsView"));
 const MoreView = React.lazy(() => import("./components/MoreView"));
-import NewPatientEntryMenu, { type EntryMethod } from "./components/NewPatientEntryMenu";
+import NewPatientEntryMenu, { type EntryMethod, isTriageCategoryPending } from "./components/NewPatientEntryMenu";
 import { validateTeamInvite } from "./services/teamInviteService";
 import { createQuickDischargeCase } from "./components/QuickDischargeIntake";
 import ConsentModal from "./components/ConsentModal";
 import { BoundChatModal } from "./components/BoundChatModal";
 import { ROTA_SHIFTS } from "./components/TeamRosterBoard";
 import { MlcCertificatesView } from "./components/MlcCertificatesView";
+import { parseSecondaryAssessmentToSurvey } from "./components/SecondarySurveySection";
 import PWABadge from "./components/PWABadge";
 import { APP_VERSION, CHANGELOG } from "./changelog";
 import { HeaderUpdateButton } from "./hooks/useAppUpdate";
+import { GlobalRefreshButton } from "./components/shared/GlobalRefreshButton";
 import { updateChatMessage, appendChatMessage } from "./services/scribeChatStorage";
+import { deduplicateConsultations } from "./utils/consultationNormalization";
+import { isEstablishedCaseSheet } from "./utils/establishedCaseCheck";
 
 import { auth, db, handleFirestoreError, OperationType } from "./firebase";
 import { sanitizeForFirestore } from "./utils/firestoreSanitizer";
@@ -466,6 +471,13 @@ useEffect(() => {
   const [isPreviewMode, setIsPreviewMode] = useState<boolean>(false);
   const [pendingPreviewContext, setPendingPreviewContext] = useState<{ msgId?: string; caseId: string } | null>(null);
   
+  // Manual Data Refresh & Dirty Tracking State
+  const [isCaseSheetDirty, setIsCaseSheetDirty] = useState<boolean>(false);
+  const [isScribeBusy, setIsScribeBusy] = useState<boolean>(false);
+  const [caseRefreshTimestamp, setCaseRefreshTimestamp] = useState<number>(0);
+  const [scribeRefreshTrigger, setScribeRefreshTrigger] = useState<number>(0);
+  const caseSheetActionsRef = useRef<{ save: () => Promise<void>; discard: () => void } | null>(null);
+
   // Theme state
   const [isDarkMode, setIsDarkMode] = useState<boolean>(() => {
     return localStorage.getItem("ermate_theme") === "dark";
@@ -1417,12 +1429,12 @@ useEffect(() => {
       doctorName: "Dr. " + profile.name,
       hospital: profile.hospital,
       ipsgChecklist: {
-        ipsg1IdentifiersVerified: true,
-        ipsg2ReadBackPerformed: false,
-        ipsg3HighAlertDoubleChecked: false,
-        ipsg4TimeOutPerformed: false,
-        ipsg5HandHygieneComplied: true,
-        ipsg6FallRiskAssessed: "Low"
+        ipsg1IdentifiersVerified: null,
+        ipsg2ReadBackPerformed: null,
+        ipsg3HighAlertDoubleChecked: null,
+        ipsg4TimeOutPerformed: null,
+        ipsg5HandHygieneComplied: null,
+        ipsg6FallRiskAssessed: null
       },
       vulnerableAssessment: {
         isVulnerable: isPeds,
@@ -1436,12 +1448,11 @@ useEffect(() => {
         procedureTimeOutPerformed: false
       },
       dispositionDetails: {
-        dispositionType: "Discharge",
         durationInEr: "",
         residentName: "Dr. " + profile.name,
         consultantName: "Dr. " + profile.name,
         observationNotes: ""
-      },
+      } as any,
       vitalsHistory: [
         {
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
@@ -1457,7 +1468,7 @@ useEffect(() => {
     };
 
     try {
-      await setDoc(doc(db, "cases", newCase.id), sanitizeForFirestore(newCase));
+      await setDoc(doc(db, "cases", newCase.id), sanitizeForFirestore(newCase), { merge: true });
     } catch (err: any) {
       console.error("Error saving triaged case:", err);
       handleFirestoreError(err, OperationType.WRITE, "cases");
@@ -1505,7 +1516,40 @@ useEffect(() => {
 
     const caseToSave: ClinicalCase = {
 
+      ...(previousCase || {}),
       ...updatedCase,
+      patient: {
+        ...(previousCase?.patient || {}),
+        ...updatedCase.patient,
+        triageCategory: (updatedCase.patient?.triageCategory && !isTriageCategoryPending(updatedCase.patient.triageCategory))
+          ? updatedCase.patient.triageCategory
+          : (previousCase?.patient?.triageCategory || updatedCase.patient?.triageCategory || undefined),
+      },
+      vitals: {
+        ...(previousCase?.vitals || {}),
+        ...updatedCase.vitals,
+      },
+      sampleHistory: {
+        ...(previousCase?.sampleHistory || {}),
+        ...updatedCase.sampleHistory,
+      },
+      primaryAssessment: {
+        ...(previousCase?.primaryAssessment || {}),
+        ...updatedCase.primaryAssessment,
+      },
+      adjuncts: {
+        ...(previousCase?.adjuncts || {}),
+        ...updatedCase.adjuncts,
+      },
+      dischargeInfo: (() => {
+        const di = updatedCase.dischargeInfo !== undefined ? updatedCase.dischargeInfo : previousCase?.dischargeInfo;
+        if (!di) return null;
+        // If discharge summary is prepared or finalized, mark as updated after preparation so clinician can review
+        return {
+          ...di,
+          caseUpdatedAfterPreparation: true
+        };
+      })(),
       workspaceType: workspaceMetadata.workspaceType,
       ownerUid: workspaceMetadata.ownerUid,
       hospitalId: workspaceMetadata.hospitalId,
@@ -1521,7 +1565,7 @@ useEffect(() => {
     };
 
     try {
-      await setDoc(doc(db, "cases", caseToSave.id), sanitizeForFirestore(caseToSave));
+      await setDoc(doc(db, "cases", caseToSave.id), sanitizeForFirestore(caseToSave), { merge: true });
       
       // Determine changed fields across all patient sections (Demographics, Vitals, Primary Survey, SAMPLE history, Treatments, Labs, Differentials, Notes, Disposition, Pediatric)
 
@@ -1641,10 +1685,11 @@ useEffect(() => {
       const editUid = auth.currentUser?.uid || "uid_priya";
       const editName = (profile.name || "").startsWith("Dr. ") ? profile.name : "Dr. " + (profile.name || "Doctor");
 
+      // Preserve patient operational status - Discharge Summary finalization must not alter ClinicalCase.status
       const updated: ClinicalCase = {
         ...targetCase,
         dischargeInfo,
-        status: "Discharged" as const,
+        status: targetCase.status,
         hospital: targetCase.hospital || profile.hospital,
         lastEditedBy: editUid,
         lastEditedByName: editName,
@@ -1652,7 +1697,7 @@ useEffect(() => {
         lastEditedAt: new Date().toISOString()
       };
       try {
-        await setDoc(doc(db, "cases", updated.id), sanitizeForFirestore(updated));
+        await setDoc(doc(db, "cases", updated.id), sanitizeForFirestore(updated), { merge: true });
 
         // Add audit log to addenda subcollection
         const addendumId = "add-" + Math.floor(100000 + Math.random() * 900000);
@@ -1663,9 +1708,9 @@ useEffect(() => {
           editedBy: editUid,
           editedByName: editName,
           editedByRole: editRole,
-          fieldsChanged: ["dischargeInfo", "status"],
-          previousValues: { status: targetCase.status },
-          newValues: { status: "Discharged" },
+          fieldsChanged: ["dischargeInfo"],
+          previousValues: { summaryStatus: targetCase.dischargeInfo?.summaryStatus || "DRAFT" },
+          newValues: { summaryStatus: dischargeInfo.summaryStatus },
           addedAt: new Date().toISOString(),
           addedBy: editUid // for rules create constraint
         };
@@ -1786,14 +1831,11 @@ useEffect(() => {
       return isNaN(parsed) ? fallback : parsed;
     };
 
-    const bpParts = (extracted.vitals?.bp || "120/80").split("/");
-    const systolicVal = safeParseInt(bpParts[0], 120);
-    const diastolicVal = safeParseInt(bpParts[1], 80);
-
     const rawDocName = prof.name || user?.displayName || (prof.email ? prof.email.split("@")[0] : "Doctor");
     const docFormattedName = rawDocName.startsWith("Dr. ") ? rawDocName : "Dr. " + rawDocName;
 
     const newCase: ClinicalCase = {
+      ...(existingMatch || {}),
       id: newCaseId,
       workspaceType: existingMatch?.workspaceType || workspaceMetadata.workspaceType,
       ownerUid: existingMatch?.ownerUid || workspaceMetadata.ownerUid || null,
@@ -1806,15 +1848,18 @@ useEffect(() => {
       shiftDate: existingMatch?.shiftDate || todayDateStr,
       shiftName: existingMatch?.shiftName || activeShiftName,
       consultantId: existingMatch?.consultantId || consultantId,
-      consultantName: existingMatch?.consultantName || consultantName,
+      consultantName: extracted.emConsultant || existingMatch?.consultantName || consultantName,
       departmentId: existingMatch?.departmentId || hospitalSlug,
       createdAt: existingMatch?.createdAt || new Date().toISOString(),
       patient: {
+        ...(existingMatch?.patient || {}),
         name: extracted.patientName || existingMatch?.patient.name || "",
         age: resolvedAge,
         gender: extracted.gender || existingMatch?.patient.gender || "",
         presentingComplaint: extracted.presentingComplaint || existingMatch?.patient.presentingComplaint || "Not documented",
-        triageCategory: extracted.triageCategory || existingMatch?.patient.triageCategory || undefined,
+        triageCategory: (extracted.triageCategory && !isTriageCategoryPending(extracted.triageCategory))
+          ? extracted.triageCategory
+          : (existingMatch?.patient.triageCategory || extracted.triageCategory || undefined),
         arrivalMode: extracted.arrivalMode || existingMatch?.patient.arrivalMode || undefined,
         dateOpened: existingMatch?.patient.dateOpened || (new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + " | " + new Date().toLocaleDateString([], { month: 'short', day: 'numeric' })),
         uhid: existingMatch?.patient.uhid || ("UHID-" + Math.floor(100000 + Math.random() * 900000)),
@@ -1830,6 +1875,7 @@ useEffect(() => {
         } : existingMatch?.patient.mlcDetails
       },
       vitals: {
+        ...(existingMatch?.vitals || {}),
         bp: extracted.vitals?.bp || existingMatch?.vitals.bp || "",
         hr: extracted.vitals?.hr || existingMatch?.vitals.hr || "",
         spo2: extracted.vitals?.spo2 || existingMatch?.vitals.spo2 || "",
@@ -1844,6 +1890,7 @@ useEffect(() => {
         painScore: extracted.vitals?.painScore || existingMatch?.vitals.painScore || ""
       },
       sampleHistory: {
+        ...(existingMatch?.sampleHistory || {}),
         symptoms: extracted.sampleHistory?.symptoms || (Array.isArray(extracted.symptoms) ? extracted.symptoms.join(", ") : extracted.symptoms) || existingMatch?.sampleHistory.symptoms || "",
         allergies: extracted.sampleHistory?.allergies || extracted.allergies || existingMatch?.sampleHistory.allergies || "",
         medications: (() => {
@@ -1859,42 +1906,313 @@ useEffect(() => {
         familyHistory: extracted.sampleHistory?.familyHistory || extracted.familyHistory || existingMatch?.sampleHistory?.familyHistory || "",
         psychiatricFlags: extracted.sampleHistory?.psychiatricFlags || extracted.psychiatricFlags || existingMatch?.sampleHistory?.psychiatricFlags || ""
       },
-      primaryAssessment: {
-        ...(existingMatch?.primaryAssessment || {}),
-        ...(extracted.primaryAssessment || {}),
-        airway: extracted.primaryAssessment?.airway || extracted.airway || existingMatch?.primaryAssessment.airway || "",
-        airwayStatus: extracted.primaryAssessment?.airwayStatus || extracted.airwayStatus || existingMatch?.primaryAssessment.airwayStatus || "",
-        breathing: extracted.primaryAssessment?.breathing || extracted.breathing || existingMatch?.primaryAssessment.breathing || "",
-        breathingStatus: extracted.primaryAssessment?.breathingStatus || extracted.breathingStatus || existingMatch?.primaryAssessment.breathingStatus || "",
-        circulation: extracted.primaryAssessment?.circulation || extracted.circulation || existingMatch?.primaryAssessment.circulation || "",
-        circulationStatus: extracted.primaryAssessment?.circulationStatus || extracted.circulationStatus || existingMatch?.primaryAssessment.circulationStatus || "",
-        disability: extracted.primaryAssessment?.disability || extracted.disability || existingMatch?.primaryAssessment.disability || "",
-        disabilityStatus: extracted.primaryAssessment?.disabilityStatus || extracted.disabilityStatus || existingMatch?.primaryAssessment.disabilityStatus || "",
-        exposure: extracted.primaryAssessment?.exposure || extracted.exposure || existingMatch?.primaryAssessment.exposure || "",
-        exposureStatus: extracted.primaryAssessment?.exposureStatus || extracted.exposureStatus || existingMatch?.primaryAssessment.exposureStatus || ""
-      },
-      secondaryAssessment: extracted.secondaryAssessment || (extracted.secondarySurvey ? Object.entries(extracted.secondarySurvey).map(([k,v]) => {
-        const kUp = k.toUpperCase();
-        const normK = kUp === "RESPIRATORY" ? "RS" : kUp === "ABDOMEN" ? "PA" : kUp;
-        return `${normK}: ${v}`;
-      }).join("\n") : null) || existingMatch?.secondaryAssessment || "",
-      secondarySurvey: extracted.secondarySurvey || existingMatch?.secondarySurvey || undefined,
-      investigations: extracted.investigations || (extracted.labs ? extracted.labs.map((l: any, i: number) => ({ id: `inv-${Date.now()}-${i}`, testName: l.name || l, result: l.value || "Ordered", orderTime: new Date().toLocaleTimeString(), resultTime: "Pending", isAbnormal: false })) : null) || existingMatch?.investigations || [],
-      investigationImaging: extracted.investigationImaging || (extracted.imaging ? (Array.isArray(extracted.imaging) ? extracted.imaging.map((i: any) => typeof i === 'string' ? i : (i.value ? `${i.name}: ${i.value}` : i.name)).join(", ") : extracted.imaging) : "") || existingMatch?.investigationImaging || "",
-      investigationLabsOrdered: extracted.investigationLabsOrdered || (extracted.labs ? (Array.isArray(extracted.labs) ? extracted.labs.map((l: any) => typeof l === 'string' ? l : (l.value ? `${l.name}: ${l.value}` : l.name)).join(", ") : extracted.labs) : "") || existingMatch?.investigationLabsOrdered || "",
-      treatments: (extracted.treatments ? extracted.treatments.map((t: any) => ({ ...t, provenance: t.provenance || "scribe" })) : null) || (extracted.treatmentGiven ? extracted.treatmentGiven.map((t: any, i: number) => ({ id: `trt-${Date.now()}-${i}`, drugName: typeof t === 'string' ? t : (t.drugName || t.name || ""), dose: typeof t === 'string' ? "" : (t.dose || ""), route: typeof t === 'string' ? "" : (t.route || ""), instruction: typeof t === 'string' ? "" : (t.instruction || ""), timeGiven: typeof t === 'string' ? "" : (t.timeGiven || ""), ipsgVerified: false, provenance: "scribe" as const })) : null) || existingMatch?.treatments || [],
-      treatmentNotes: extracted.treatmentNotes || existingMatch?.treatmentNotes || undefined,
-      proceduresChecked: extracted.proceduresChecked || existingMatch?.proceduresChecked || undefined,
-      otherProcedures: extracted.otherProcedures || (Array.isArray(extracted.procedures) ? extracted.procedures.join(", ") : extracted.procedures) || existingMatch?.otherProcedures || undefined,
-      progressNotes: (() => {
-        const direct = extracted.progressNotes || (extracted.chronologicalNotes ? extracted.chronologicalNotes.map((n: any) => n.entry).join("\n") : null) || existingMatch?.progressNotes || "";
-        return direct.trim() === "Case created via ErMate Voice Scribe dictation." ? "" : direct;
+      primaryAssessment: (() => {
+        const existingPA: any = existingMatch?.primaryAssessment || {};
+        const extractedPA: any = extracted.primaryAssessment || {};
+        const existingSurvey: PrimarySurvey = existingPA.survey || getInitialPrimarySurvey(extracted.caseType || existingMatch?.patient?.caseType);
+        
+        // Resolve ABG / VBG
+        const rawVbgValues: any[] = extracted.vbgAbg?.values || [];
+        const findVal = (p: string) => {
+          const item = rawVbgValues.find((v: any) => v.param === p);
+          return item !== undefined && item.value !== null && item.value !== undefined ? String(item.value) : undefined;
+        };
+
+        const existingAbg = existingSurvey.adjuncts?.abg || {};
+        const newPh = findVal("ph") ?? (extracted.abgPh ? String(extracted.abgPh) : undefined);
+        const newPco2 = findVal("pco2") ?? (extracted.abgPco2 ? String(extracted.abgPco2) : undefined);
+        const newPo2 = findVal("po2") ?? (extracted.abgPo2 ? String(extracted.abgPo2) : undefined);
+        const newHco3 = findVal("hco3") ?? (extracted.abgHco3 ? String(extracted.abgHco3) : undefined);
+        const newBe = findVal("be") ?? (extracted.abgBe ? String(extracted.abgBe) : undefined);
+        const newLactate = findVal("lactate") ?? (extracted.abgLactate ? String(extracted.abgLactate) : undefined);
+        const newNa = findVal("na") ?? (extracted.abgNa ? String(extracted.abgNa) : undefined);
+        const newK = findVal("k") ?? (extracted.abgK ? String(extracted.abgK) : undefined);
+        const newCl = findVal("cl") ?? (extracted.abgCl ? String(extracted.abgCl) : undefined);
+        const newHb = findVal("hb") ?? (extracted.abgHb ? String(extracted.abgHb) : undefined);
+        const newAnionGap = findVal("anionGap") ?? (extracted.abgAnionGap ? String(extracted.abgAnionGap) : undefined);
+
+        const mergedAbg = {
+          ...existingAbg,
+          sampleType: extracted.vbgAbg?.type ? (extracted.vbgAbg.type === "VBG" ? "Venous (VBG)" : "Arterial (ABG)") : (existingAbg.sampleType || "Arterial (ABG)"),
+          ph: newPh ?? existingAbg.ph,
+          pco2: newPco2 ?? existingAbg.pco2,
+          po2: newPo2 ?? existingAbg.po2,
+          hco3: newHco3 ?? existingAbg.hco3,
+          be: newBe ?? existingAbg.be,
+          lactate: newLactate ?? existingAbg.lactate,
+          na: newNa ?? existingAbg.na,
+          k: newK ?? existingAbg.k,
+          cl: newCl ?? existingAbg.cl,
+          hb: newHb ?? existingAbg.hb,
+          ag: newAnionGap ?? existingAbg.ag ?? (existingAbg as any).anionGap,
+          finalDiagnosis: extracted.abgDiagnosis || existingAbg.finalDiagnosis,
+          clinicalInterpretation: extracted.abgInterpretation || existingAbg.clinicalInterpretation,
+        };
+
+        // Resolve ECG
+        const existingEcgNotes = existingSurvey.adjuncts?.ecgNotes || existingMatch?.adjuncts?.ecgNotes || existingMatch?.adjuncts?.ecgFindings || "";
+        const incomingEcg = extracted.ecg || extracted.ecgNotes || extracted.ecgFindings || "";
+        const mergedEcgNotes = (() => {
+          if (!incomingEcg) return existingEcgNotes;
+          if (!existingEcgNotes) return incomingEcg;
+          if (existingEcgNotes.toLowerCase().includes(incomingEcg.toLowerCase())) return existingEcgNotes;
+          return `${existingEcgNotes} | ${incomingEcg}`;
+        })();
+
+        // Resolve EFAST
+        const existingEfastNotes = existingSurvey.adjuncts?.efastNotes || existingMatch?.adjuncts?.efastNotes || "";
+        const incomingEfastParts = extracted.fastFindings ? [
+          extracted.fastFindings.heart ? `Heart: ${extracted.fastFindings.heart}` : null,
+          extracted.fastFindings.abdomen ? `Abdomen: ${extracted.fastFindings.abdomen}` : null,
+          extracted.fastFindings.pelvis ? `Pelvis: ${extracted.fastFindings.pelvis}` : null,
+          extracted.fastFindings.bladder ? `Bladder: ${extracted.fastFindings.bladder}` : null,
+          extracted.fastFindings.suprapubic ? `Suprapubic: ${extracted.fastFindings.suprapubic}` : null,
+          extracted.fastFindings.lungs ? `Lungs: ${extracted.fastFindings.lungs}` : null,
+        ].filter(Boolean) : [];
+        const incomingEfast = incomingEfastParts.length > 0 ? incomingEfastParts.join(", ") : (extracted.efastNotes || "");
+        const mergedEfastNotes = (() => {
+          if (!incomingEfast) return existingEfastNotes;
+          if (!existingEfastNotes) return incomingEfast;
+          if (existingEfastNotes.toLowerCase().includes(incomingEfast.toLowerCase())) return existingEfastNotes;
+          return `${existingEfastNotes} | ${incomingEfast}`;
+        })();
+
+        // Resolve Echo
+        const existingEchoNotes = existingSurvey.adjuncts?.echoNotes || existingSurvey.adjuncts?.echoFindings || existingMatch?.adjuncts?.echoNotes || existingMatch?.adjuncts?.echoFindings || "";
+        const incomingEcho = extracted.echo || extracted.echoNotes || extracted.echoFindings || "";
+        const mergedEchoNotes = (() => {
+          if (!incomingEcho) return existingEchoNotes;
+          if (!existingEchoNotes) return incomingEcho;
+          if (existingEchoNotes.toLowerCase().includes(incomingEcho.toLowerCase())) return existingEchoNotes;
+          return `${existingEchoNotes} | ${incomingEcho}`;
+        })();
+
+        // Build updated survey
+        const updatedSurvey: PrimarySurvey = {
+          ...existingSurvey,
+          ...(extractedPA.survey || {}),
+          adjuncts: {
+            ...(existingSurvey.adjuncts || {}),
+            abg: mergedAbg,
+            // Preserve manual dropdowns (ecgStatus, efastStatus, echoStatus) - NEVER overwrite!
+            ecgStatus: existingSurvey.adjuncts?.ecgStatus,
+            ecgNotes: mergedEcgNotes,
+            efastStatus: existingSurvey.adjuncts?.efastStatus,
+            efastNotes: mergedEfastNotes,
+            echoStatus: existingSurvey.adjuncts?.echoStatus,
+            echoNotes: mergedEchoNotes,
+            echoFindings: mergedEchoNotes,
+          }
+        };
+
+        return {
+          ...existingPA,
+          ...extractedPA,
+          survey: updatedSurvey,
+          airway: extractedPA.airway || extracted.airway || existingPA.airway || "",
+          airwayStatus: extractedPA.airwayStatus || extracted.airwayStatus || existingPA.airwayStatus || "",
+          breathing: extractedPA.breathing || extracted.breathing || existingPA.breathing || "",
+          breathingStatus: extractedPA.breathingStatus || extracted.breathingStatus || existingPA.breathingStatus || "",
+          circulation: extractedPA.circulation || extracted.circulation || existingPA.circulation || "",
+          circulationStatus: extractedPA.circulationStatus || extracted.circulationStatus || existingPA.circulationStatus || "",
+          disability: extractedPA.disability || extracted.disability || existingPA.disability || "",
+          disabilityStatus: extractedPA.disabilityStatus || extracted.disabilityStatus || existingPA.disabilityStatus || "",
+          exposure: extractedPA.exposure || extracted.exposure || existingPA.exposure || "",
+          exposureStatus: extractedPA.exposureStatus || extracted.exposureStatus || existingPA.exposureStatus || ""
+        };
       })(),
-      dispositionAndPlan: existingMatch?.dispositionAndPlan || { consultsRequested: extracted.consultations || [], managementPlan: extracted.managementPlan || (Array.isArray(extracted.plan) ? extracted.plan.join("; ") : (extracted.plan || "")) },
-      dischargeInfo: null,
-      differentials: extracted.differentialDiagnosis
-        ? [{ diagnosis: extracted.differentialDiagnosis, status: "POSSIBLE" as const, reasoning: "", citations: [], nextSteps: [] }]
-        : (existingMatch?.differentials || []),
+      secondarySurvey: (() => {
+        const baseSurvey: Record<string, string> = { ...(existingMatch?.secondarySurvey || {}) };
+        if (extracted.secondarySurvey && typeof extracted.secondarySurvey === 'object') {
+          for (const [k, v] of Object.entries(extracted.secondarySurvey)) {
+            if (v && typeof v === 'string' && v.trim()) {
+              baseSurvey[k.toLowerCase()] = v.trim();
+            }
+          }
+        }
+        if (extracted.secondaryAssessment && typeof extracted.secondaryAssessment === 'string') {
+          const parsed = parseSecondaryAssessmentToSurvey(extracted.secondaryAssessment);
+          for (const [k, v] of Object.entries(parsed)) {
+            if (v && typeof v === 'string' && v.trim()) {
+              baseSurvey[k.toLowerCase()] = v.trim();
+            }
+          }
+        }
+        return Object.keys(baseSurvey).length > 0 ? baseSurvey : undefined;
+      })(),
+      secondaryAssessment: (() => {
+        const baseSurvey: Record<string, string> = { ...(existingMatch?.secondarySurvey || {}) };
+        if (extracted.secondarySurvey && typeof extracted.secondarySurvey === 'object') {
+          for (const [k, v] of Object.entries(extracted.secondarySurvey)) {
+            if (v && typeof v === 'string' && v.trim()) {
+              baseSurvey[k.toLowerCase()] = v.trim();
+            }
+          }
+        }
+        if (extracted.secondaryAssessment && typeof extracted.secondaryAssessment === 'string') {
+          const parsed = parseSecondaryAssessmentToSurvey(extracted.secondaryAssessment);
+          for (const [k, v] of Object.entries(parsed)) {
+            if (v && typeof v === 'string' && v.trim()) {
+              baseSurvey[k.toLowerCase()] = v.trim();
+            }
+          }
+        } else if (existingMatch?.secondaryAssessment) {
+          const parsed = parseSecondaryAssessmentToSurvey(existingMatch.secondaryAssessment);
+          for (const [k, v] of Object.entries(parsed)) {
+            if (v && typeof v === 'string' && v.trim() && !baseSurvey[k.toLowerCase()]) {
+              baseSurvey[k.toLowerCase()] = v.trim();
+            }
+          }
+        }
+        const parts: string[] = [];
+        if (baseSurvey.general) parts.push(`General: ${baseSurvey.general}`);
+        if (baseSurvey.cvs) parts.push(`CVS: ${baseSurvey.cvs}`);
+        if (baseSurvey.respiratory) parts.push(`RS: ${baseSurvey.respiratory}`);
+        if (baseSurvey.abdomen) parts.push(`PA: ${baseSurvey.abdomen}`);
+        if (baseSurvey.cns) parts.push(`CNS: ${baseSurvey.cns}`);
+        if (baseSurvey.extremities) parts.push(`Extremities: ${baseSurvey.extremities}`);
+        if (parts.length > 0) return parts.join("\n");
+        return extracted.secondaryAssessment || existingMatch?.secondaryAssessment || "";
+      })(),
+      investigations: (() => {
+        const existingInv = existingMatch?.investigations || [];
+        const newInv = extracted.investigations || (extracted.labs ? extracted.labs.map((l: any, i: number) => ({ id: `inv-${Date.now()}-${i}`, testName: l.name || l, result: l.value || "Ordered", orderTime: new Date().toLocaleTimeString(), resultTime: "Pending", isAbnormal: false })) : []);
+        if (!newInv || newInv.length === 0) return existingInv;
+        const merged = [...existingInv];
+        for (const item of newInv) {
+          const exists = merged.some(m => m.testName.toLowerCase() === (item.testName || "").toLowerCase());
+          if (!exists) {
+            merged.push(item);
+          }
+        }
+        return merged;
+      })(),
+      investigationImaging: (() => {
+        const existingImg = existingMatch?.investigationImaging || "";
+        const newImg = extracted.investigationImaging || (extracted.imaging ? (Array.isArray(extracted.imaging) ? extracted.imaging.map((i: any) => typeof i === 'string' ? i : (i.value ? `${i.name}: ${i.value}` : i.name)).join(", ") : extracted.imaging) : "");
+        if (!newImg) return existingImg;
+        if (!existingImg) return newImg;
+        if (existingImg.includes(newImg)) return existingImg;
+        return `${existingImg}, ${newImg}`;
+      })(),
+      investigationLabsOrdered: (() => {
+        const existingLabs = existingMatch?.investigationLabsOrdered || "";
+        const newLabs = extracted.investigationLabsOrdered || (extracted.labs ? (Array.isArray(extracted.labs) ? extracted.labs.map((l: any) => typeof l === 'string' ? l : (l.value ? `${l.name}: ${l.value}` : l.name)).join(", ") : extracted.labs) : "");
+        if (!newLabs) return existingLabs;
+        if (!existingLabs) return newLabs;
+        if (existingLabs.includes(newLabs)) return existingLabs;
+        return `${existingLabs}, ${newLabs}`;
+      })(),
+      treatments: (() => {
+        const existingTrt = existingMatch?.treatments || [];
+        const newTrt = (extracted.treatments ? extracted.treatments.map((t: any) => ({ ...t, provenance: t.provenance || "scribe" })) : null) || (extracted.treatmentGiven ? extracted.treatmentGiven.map((t: any, i: number) => ({ id: `trt-${Date.now()}-${i}`, drugName: typeof t === 'string' ? t : (t.drugName || t.name || ""), dose: typeof t === 'string' ? "" : (t.dose || ""), route: typeof t === 'string' ? "" : (t.route || ""), instruction: typeof t === 'string' ? "" : (t.instruction || ""), timeGiven: typeof t === 'string' ? "" : (t.timeGiven || ""), ipsgVerified: false, provenance: "scribe" as const })) : []);
+        if (!newTrt || newTrt.length === 0) return existingTrt;
+        const merged = [...existingTrt];
+        for (const item of newTrt) {
+          const exists = merged.some(m => m.drugName.toLowerCase() === (item.drugName || "").toLowerCase() && (!item.dose || m.dose === item.dose));
+          if (!exists) {
+            merged.push(item);
+          }
+        }
+        return merged;
+      })(),
+      treatmentNotes: extracted.treatmentNotes || existingMatch?.treatmentNotes || undefined,
+      proceduresChecked: existingMatch?.proceduresChecked || undefined,
+      otherProcedures: existingMatch?.otherProcedures || undefined,
+      procedureNotes: Array.isArray(existingMatch?.procedureNotes) ? existingMatch.procedureNotes : [],
+      provisionalPrimaryDiagnosis: extracted.diagnosis || existingMatch?.provisionalPrimaryDiagnosis || undefined,
+      progressNotes: (() => {
+        const existingNotes = (existingMatch?.progressNotes || "").trim();
+        const cleanExisting = (existingNotes === "Case created via ErMate Voice Scribe dictation.") ? "" : existingNotes;
+
+        // If there is NO existing established case sheet / no existingMatch:
+        // Initial Scribe dictation maps strictly into structured initial Case Sheet.
+        // It must NOT enter progressNotes / Clinical Notes / Addendum.
+        if (!existingMatch || !isEstablishedCaseSheet(existingMatch)) {
+          return cleanExisting;
+        }
+
+        // Collect new updates to append
+        const updatesToAppend: string[] = [];
+
+        // 1. Check extracted.clinicianUpdates
+        if (Array.isArray(extracted.clinicianUpdates) && extracted.clinicianUpdates.length > 0) {
+          for (const item of extracted.clinicianUpdates) {
+            const text = (typeof item === 'string' ? item : item?.text || "").trim();
+            if (!text) continue;
+            if (/^(?:hi|hello|hey|good\s+morning|good\s+evening|good\s+afternoon)[\s!.]*$/i.test(text)) continue;
+            if (cleanExisting.includes(text) || updatesToAppend.some(u => u.includes(text))) continue;
+            const time = (typeof item === 'object' && item.timestamp) ? item.timestamp : new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            updatesToAppend.push(`[${time}] — ${text}`);
+          }
+        } else if (extracted.clinicianUpdateText && typeof extracted.clinicianUpdateText === "string") {
+          const text = extracted.clinicianUpdateText.trim();
+          if (text && !cleanExisting.includes(text) && !/^(?:hi|hello|hey|good\s+morning|good\s+evening|good\s+afternoon)[\s!.]*$/i.test(text)) {
+            const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            updatesToAppend.push(`[${time}] — ${text}`);
+          }
+        }
+
+        // 2. Check extracted.chronologicalNotes
+        if (Array.isArray(extracted.chronologicalNotes) && extracted.chronologicalNotes.length > 0) {
+          for (const note of extracted.chronologicalNotes) {
+            const entry = (typeof note === 'string' ? note : (note?.entry || note?.text || "")).trim();
+            if (!entry) continue;
+            if (cleanExisting.includes(entry) || updatesToAppend.some(u => u.includes(entry))) continue;
+            const time = (typeof note === 'object' && note.timestamp) ? note.timestamp : new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            updatesToAppend.push(`[${time}] — ${entry}`);
+          }
+        }
+
+        // 3. Check direct extracted.progressNotes
+        if (extracted.progressNotes && typeof extracted.progressNotes === "string") {
+          const directNote = extracted.progressNotes.trim();
+          if (directNote && directNote !== "Case created via ErMate Voice Scribe dictation." && !cleanExisting.includes(directNote) && !updatesToAppend.some(u => u.includes(directNote))) {
+            const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            updatesToAppend.push(`[${time}] — ${directNote}`);
+          }
+        }
+
+        if (updatesToAppend.length > 0) {
+          return cleanExisting ? `${cleanExisting}\n\n${updatesToAppend.join("\n")}` : updatesToAppend.join("\n");
+        }
+
+        return cleanExisting;
+      })(),
+      dispositionAndPlan: {
+        ...(existingMatch?.dispositionAndPlan || {}),
+        consultsRequested: deduplicateConsultations([
+          ...(existingMatch?.dispositionAndPlan?.consultsRequested || []),
+          ...((existingMatch as any)?.consultsRequested || []),
+          ...(extracted.consultations || []),
+          ...(extracted.consultsRequested || []),
+          ...(extracted.dispositionAndPlan?.consultsRequested || [])
+        ]),
+        managementPlan: (() => {
+          const existingPlan = existingMatch?.dispositionAndPlan?.managementPlan || "";
+          const newPlan = extracted.managementPlan || (Array.isArray(extracted.plan) ? extracted.plan.join("; ") : (extracted.plan || ""));
+          if (!newPlan) return existingPlan;
+          if (!existingPlan) return newPlan;
+          if (existingPlan.includes(newPlan)) return existingPlan;
+          return `${existingPlan}; ${newPlan}`;
+        })(),
+        followUpAdvice: extracted.followUpAdvice || existingMatch?.dispositionAndPlan?.followUpAdvice || undefined,
+        dispositionStatus: extracted.dispositionType || existingMatch?.dispositionAndPlan?.dispositionStatus || undefined,
+      },
+      conditionAtShift: (extracted.conditionAtShift || existingMatch?.conditionAtShift || undefined) as any,
+      dischargeInfo: existingMatch?.dischargeInfo ? {
+        ...existingMatch.dischargeInfo,
+        caseUpdatedAfterPreparation: true
+      } : null,
+      differentials: (() => {
+        const existingDiffs = existingMatch?.differentials || [];
+        if (!extracted.differentialDiagnosis) return existingDiffs;
+        const newDiff = { diagnosis: extracted.differentialDiagnosis, status: "POSSIBLE" as const, reasoning: "", citations: [], nextSteps: [] };
+        if (existingDiffs.some(d => d.diagnosis.toLowerCase() === newDiff.diagnosis.toLowerCase())) {
+          return existingDiffs;
+        }
+        return [...existingDiffs, newDiff];
+      })(),
       isPediatric: resolvedIsPediatric,
       pediatricDetails: extracted.pediatricDetails 
         ? { ...(existingMatch?.pediatricDetails || {}), ...extracted.pediatricDetails } 
@@ -1906,12 +2224,12 @@ useEffect(() => {
       doctorName: docFormattedName,
       hospital: prof.hospital,
       ipsgChecklist: existingMatch?.ipsgChecklist || {
-        ipsg1IdentifiersVerified: true,
-        ipsg2ReadBackPerformed: false,
-        ipsg3HighAlertDoubleChecked: false,
-        ipsg4TimeOutPerformed: false,
-        ipsg5HandHygieneComplied: true,
-        ipsg6FallRiskAssessed: "Low"
+        ipsg1IdentifiersVerified: null,
+        ipsg2ReadBackPerformed: null,
+        ipsg3HighAlertDoubleChecked: null,
+        ipsg4TimeOutPerformed: null,
+        ipsg5HandHygieneComplied: null,
+        ipsg6FallRiskAssessed: null
       },
       vulnerableAssessment: existingMatch?.vulnerableAssessment || {
         isVulnerable: finalAge !== null && (finalAge < 16 || finalAge > 65),
@@ -1924,28 +2242,74 @@ useEffect(() => {
         procedureConsentObtained: false,
         procedureTimeOutPerformed: false
       },
-      dispositionDetails: existingMatch?.dispositionDetails || {
-        dispositionType: "Discharge",
-        durationInEr: "",
-        residentName: docFormattedName,
-        consultantName: consultantName,
-        observationNotes: ""
-      },
+      dispositionDetails: (() => {
+        const existingDisp = existingMatch?.dispositionDetails;
+        const incomingObs = (typeof extracted.disposition === "string" ? extracted.disposition.trim() : "");
+        const existingObs = (existingDisp?.observationNotes || "").trim();
+        const mergedObs = (() => {
+          if (!incomingObs) return existingObs;
+          if (!existingObs) return incomingObs;
+          if (existingObs.toLowerCase().includes(incomingObs.toLowerCase())) return existingObs;
+          return `${existingObs} | ${incomingObs}`;
+        })();
+
+        const resolvedResident = extracted.emResident || existingDisp?.residentName || docFormattedName;
+        const resolvedConsultant = extracted.emConsultant || existingDisp?.consultantName || consultantName;
+
+        return {
+          ...(existingDisp || {}),
+          ...(extracted.dispositionType ? { dispositionType: extracted.dispositionType } : {}),
+          durationInEr: existingDisp?.durationInEr || "",
+          residentName: resolvedResident,
+          consultantName: resolvedConsultant,
+          observationNotes: mergedObs
+        } as any;
+      })(),
       adjuncts: {
         ...(existingMatch?.adjuncts || {}),
+        ecgDone: (extracted.ecg ? "true" : undefined) || existingMatch?.adjuncts?.ecgDone,
+        ecgNotes: (() => {
+          const existingEcgNotes = existingMatch?.adjuncts?.ecgNotes || existingMatch?.adjuncts?.ecgFindings || "";
+          const incomingEcg = extracted.ecg || extracted.ecgNotes || extracted.ecgFindings || "";
+          if (!incomingEcg) return existingEcgNotes;
+          if (!existingEcgNotes) return incomingEcg;
+          if (existingEcgNotes.toLowerCase().includes(incomingEcg.toLowerCase())) return existingEcgNotes;
+          return `${existingEcgNotes} | ${incomingEcg}`;
+        })(),
         echoDone: (extracted.echo ? "true" : undefined) || existingMatch?.adjuncts?.echoDone,
-        echoFindings: extracted.echo || existingMatch?.adjuncts?.echoFindings || "",
+        echoFindings: (() => {
+          const existingEchoNotes = existingMatch?.adjuncts?.echoNotes || existingMatch?.adjuncts?.echoFindings || "";
+          const incomingEcho = extracted.echo || extracted.echoNotes || extracted.echoFindings || "";
+          if (!incomingEcho) return existingEchoNotes;
+          if (!existingEchoNotes) return incomingEcho;
+          if (existingEchoNotes.toLowerCase().includes(incomingEcho.toLowerCase())) return existingEchoNotes;
+          return `${existingEchoNotes} | ${incomingEcho}`;
+        })(),
+        echoNotes: (() => {
+          const existingEchoNotes = existingMatch?.adjuncts?.echoNotes || existingMatch?.adjuncts?.echoFindings || "";
+          const incomingEcho = extracted.echo || extracted.echoNotes || extracted.echoFindings || "";
+          if (!incomingEcho) return existingEchoNotes;
+          if (!existingEchoNotes) return incomingEcho;
+          if (existingEchoNotes.toLowerCase().includes(incomingEcho.toLowerCase())) return existingEchoNotes;
+          return `${existingEchoNotes} | ${incomingEcho}`;
+        })(),
         ...(extracted.fastFindings ? (() => {
           const f = extracted.fastFindings;
           const parts = [
             f.heart ? `Heart: ${f.heart}` : null,
             f.abdomen ? `Abdomen: ${f.abdomen}` : null,
             f.pelvis ? `Pelvis: ${f.pelvis}` : null,
+            f.bladder ? `Bladder: ${f.bladder}` : null,
+            f.suprapubic ? `Suprapubic: ${f.suprapubic}` : null,
+            f.lungs ? `Lungs: ${f.lungs}` : null,
           ].filter(Boolean);
-          return parts.length > 0 ? {
-            efastNotes: [existingMatch?.adjuncts?.efastNotes, parts.join(", ")].filter(Boolean).join(" | "),
+          const notes = parts.length > 0 ? parts.join(", ") : (extracted.efastNotes || "");
+          return notes ? {
+            efastNotes: [existingMatch?.adjuncts?.efastNotes, notes].filter(Boolean).join(" | "),
           } : {};
-        })() : {}),
+        })() : (extracted.efastNotes ? {
+          efastNotes: [existingMatch?.adjuncts?.efastNotes, extracted.efastNotes].filter(Boolean).join(" | "),
+        } : {})),
         ...(extracted.vbgAbg?.values?.length > 0 ? {
           abgStatus: "done",
           abgSampleType: extracted.vbgAbg.type === "VBG" ? "Venous (VBG)" : "Arterial (ABG)",
@@ -1962,18 +2326,40 @@ useEffect(() => {
           abgAnionGap: extracted.vbgAbg.values.find((v: any) => v.param === "anionGap")?.value ?? existingMatch?.adjuncts?.abgAnionGap,
         } : {}),
       },
-      vitalsHistory: existingMatch?.vitalsHistory || [
-        {
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          bp: extracted.vitals?.bp || "120/80",
-          systolic: systolicVal,
-          diastolic: diastolicVal,
-          hr: safeParseInt(extracted.vitals?.hr, 80),
-          spo2: safeParseInt(extracted.vitals?.spo2, 98),
-          rr: safeParseInt(extracted.vitals?.rr, 16),
-          temp: safeParseFloat(extracted.vitals?.temp, 98.6)
+      vitalsHistory: (() => {
+        const existingHist = existingMatch?.vitalsHistory || [];
+        const hasNewVitals = Boolean(
+          extracted.vitals &&
+          (extracted.vitals.bp || extracted.vitals.hr || extracted.vitals.spo2 || extracted.vitals.rr || extracted.vitals.temp)
+        );
+        // LOCKED RULE: If no new vitals are dictated, do not create a new vitalsHistory entry.
+        // Return existing history as-is (empty array if none exists).
+        if (!hasNewVitals) {
+          return existingHist;
         }
-      ]
+
+        const rawBp = extracted.vitals?.bp ? String(extracted.vitals.bp).trim() : "";
+        const bpParts = rawBp ? rawBp.split("/") : [];
+        const sysVal = bpParts[0] && !isNaN(parseInt(bpParts[0], 10)) ? parseInt(bpParts[0], 10) : null;
+        const diaVal = bpParts[1] && !isNaN(parseInt(bpParts[1], 10)) ? parseInt(bpParts[1], 10) : null;
+        const hrVal = extracted.vitals?.hr && !isNaN(parseInt(extracted.vitals.hr, 10)) ? parseInt(extracted.vitals.hr, 10) : null;
+        const spo2Val = extracted.vitals?.spo2 && !isNaN(parseInt(extracted.vitals.spo2, 10)) ? parseInt(extracted.vitals.spo2, 10) : null;
+        const rrVal = extracted.vitals?.rr && !isNaN(parseInt(extracted.vitals.rr, 10)) ? parseInt(extracted.vitals.rr, 10) : null;
+        const tempVal = extracted.vitals?.temp && !isNaN(parseFloat(extracted.vitals.temp)) ? parseFloat(extracted.vitals.temp) : null;
+
+        const newRecord: VitalsRecord = {
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          bp: rawBp,
+          systolic: sysVal,
+          diastolic: diaVal,
+          hr: hrVal,
+          spo2: spo2Val,
+          rr: rrVal,
+          temp: tempVal
+        };
+
+        return existingHist.length > 0 ? [...existingHist, newRecord] : [newRecord];
+      })(),
     };
 
     return newCase;
@@ -1986,7 +2372,17 @@ useEffect(() => {
     const shouldNavigate = options?.autoNavigate !== false;
     const existingId = options?.existingCaseId;
     const newCaseId = existingId || ("C-" + Math.floor(1000 + Math.random() * 9000));
-    const existingMatch = cases.find(c => c.id === newCaseId);
+    let existingMatch = cases.find(c => c.id === newCaseId) || null;
+    if (!existingMatch && existingId) {
+      try {
+        const snap = await getDoc(doc(db, "cases", existingId));
+        if (snap.exists()) {
+          existingMatch = snap.data() as ClinicalCase;
+        }
+      } catch (e) {
+        console.warn("Could not load existing case for voice extraction:", e);
+      }
+    }
     
     let workspaceMetadata: any = {};
     if (!existingMatch) {
@@ -2066,7 +2462,17 @@ useEffect(() => {
     options?: { existingCaseId?: string | null; msgId?: string }
   ) => {
     const existingId = options?.existingCaseId || voiceScribeCaseId || ("C-" + Math.floor(1000 + Math.random() * 9000));
-    const existingMatch = cases.find(c => c.id === existingId) || null;
+    let existingMatch = cases.find(c => c.id === existingId) || null;
+    if (!existingMatch && existingId) {
+      try {
+        const snap = await getDoc(doc(db, "cases", existingId));
+        if (snap.exists()) {
+          existingMatch = snap.data() as ClinicalCase;
+        }
+      } catch (e) {
+        console.warn("Could not load existing case for preview:", e);
+      }
+    }
 
     let workspaceMetadata: any = {};
     if (!existingMatch && auth.currentUser) {
@@ -2120,12 +2526,21 @@ useEffect(() => {
       throw new Error("Not authenticated");
     }
 
+    // Ensure caseUpdatedAfterPreparation is maintained if the case already had a prepared or drafted dischargeInfo
+    const caseToPersist: ClinicalCase = {
+      ...reviewedCase,
+      dischargeInfo: reviewedCase.dischargeInfo ? {
+        ...reviewedCase.dischargeInfo,
+        caseUpdatedAfterPreparation: true
+      } : null
+    };
+
     try {
-      const cleanCase = sanitizeForFirestore(reviewedCase);
-      await setDoc(doc(db, "cases", reviewedCase.id), cleanCase, { merge: true });
-      if (reviewedCase.departmentId) {
+      const cleanCase = sanitizeForFirestore(caseToPersist);
+      await setDoc(doc(db, "cases", caseToPersist.id), cleanCase, { merge: true });
+      if (caseToPersist.departmentId) {
         try {
-          await setDoc(doc(db, "departments", reviewedCase.departmentId, "cases", reviewedCase.id), cleanCase, { merge: true });
+          await setDoc(doc(db, "departments", caseToPersist.departmentId, "cases", caseToPersist.id), cleanCase, { merge: true });
         } catch (deptErr) {
           console.warn("Secondary department index write failed (primary case was persisted):", deptErr);
         }
@@ -2141,13 +2556,13 @@ useEffect(() => {
 
     // Update in-memory cases list
     setCases(prev => {
-      const idx = prev.findIndex(c => c.id === reviewedCase.id);
+      const idx = prev.findIndex(c => c.id === caseToPersist.id);
       if (idx >= 0) {
         const copy = [...prev];
-        copy[idx] = reviewedCase;
+        copy[idx] = caseToPersist;
         return copy;
       }
-      return [reviewedCase, ...prev];
+      return [caseToPersist, ...prev];
     });
 
     // Update scribe chat message if we have pending context
@@ -2160,7 +2575,7 @@ useEffect(() => {
           id: confId,
           role: "assistant" as const,
           type: "text" as const,
-          content: "✅ Case Sheet prepared successfully.",
+          content: "✓ Case Sheet prepared successfully.",
           timestamp: new Date().toISOString(),
         };
         await appendChatMessage(reviewedCase.id, confirmationMsg);
@@ -2173,7 +2588,7 @@ useEffect(() => {
             updated.push({
               id: confId,
               sender: "ai",
-              text: "✅ Case Sheet prepared successfully.",
+              text: "✓ Case Sheet prepared successfully.",
               timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
               mode: "dictation",
             });
@@ -2817,6 +3232,137 @@ useEffect(() => {
     );
   }
 
+  // Manual View-Specific Data Refresh handler
+  const handleManualRefresh = async () => {
+    // 1. Voice Scribe Chat / ErMate Assistant View
+    if (showVoiceScribeChat) {
+      setScribeRefreshTrigger(Date.now());
+      return;
+    }
+
+    // 2. Editable Case Sheet View
+    if (selectedCaseId && !activeFormMode && !showDischargeSummaryId) {
+      try {
+        const caseDocRef = doc(db, "cases", selectedCaseId);
+        const snap = await getDoc(caseDocRef);
+        if (snap.exists()) {
+          const freshCase = snap.data() as ClinicalCase;
+          setCases(prev => prev.map(c => c.id === selectedCaseId ? freshCase : c));
+        }
+        setCaseRefreshTimestamp(Date.now());
+      } catch (err) {
+        console.error("Failed to refresh active case:", err);
+        throw err;
+      }
+      return;
+    }
+
+    // 3. Read-Only Printable Case Sheet View
+    if (viewCaseSheetPrintId) {
+      try {
+        const caseDocRef = doc(db, "cases", viewCaseSheetPrintId);
+        const snap = await getDoc(caseDocRef);
+        if (snap.exists()) {
+          const freshCase = snap.data() as ClinicalCase;
+          setCases(prev => prev.map(c => c.id === viewCaseSheetPrintId ? freshCase : c));
+        }
+      } catch (err) {
+        console.error("Failed to refresh print case view:", err);
+        throw err;
+      }
+      return;
+    }
+
+    // 4. Discharge Summary View
+    if (showDischargeSummaryId) {
+      try {
+        const caseDocRef = doc(db, "cases", showDischargeSummaryId);
+        const snap = await getDoc(caseDocRef);
+        if (snap.exists()) {
+          const freshCase = snap.data() as ClinicalCase;
+          setCases(prev => prev.map(c => c.id === showDischargeSummaryId ? freshCase : c));
+        }
+      } catch (err) {
+        console.error("Failed to refresh discharge case:", err);
+        throw err;
+      }
+      return;
+    }
+
+    // 5. Shift Handover View
+    if (activeTab === "handover") {
+      try {
+        const userHospital = profile?.hospital || "";
+        const userHospitalLower = userHospital.trim().toLowerCase();
+        const handoversQuery = userHospital
+          ? query(collection(db, "handovers"), where("hospital", "==", userHospital))
+          : (profile?.email ? query(collection(db, "handovers"), where("senderEmail", "==", profile.email)) : collection(db, "handovers"));
+        const snapshot = await getDocs(handoversQuery);
+        const loadedHandovers: HandoverRecord[] = [];
+        snapshot.forEach((d) => {
+          loadedHandovers.push(d.data() as HandoverRecord);
+        });
+        const filtered = loadedHandovers.filter(h => {
+          const hHosp = (h.hospital || "").trim().toLowerCase();
+          const curEmail = (profile?.email || auth.currentUser?.email || "").trim().toLowerCase();
+          const sEmail = (h.senderEmail || "").trim().toLowerCase();
+          return (userHospitalLower && hHosp === userHospitalLower) || (curEmail && sEmail === curEmail);
+        });
+        setHandovers(filtered.sort((a, b) => b.id.localeCompare(a.id)));
+      } catch (err) {
+        console.error("Failed to refresh handovers:", err);
+        throw err;
+      }
+      return;
+    }
+
+    // 6. Default: All other views (Dashboard, Cases, Logbook, Analytics, Tools, Team, etc.)
+    try {
+      const userHospital = profile?.hospital || "";
+      const userHospitalLower = userHospital.trim().toLowerCase();
+      const casesQuery = userHospital
+        ? query(collection(db, "cases"), where("hospital", "==", userHospital))
+        : (profile?.email ? query(collection(db, "cases"), where("doctorEmail", "==", profile.email)) : collection(db, "cases"));
+      const snapshot = await getDocs(casesQuery);
+      const loadedCases: ClinicalCase[] = [];
+      snapshot.forEach((d) => {
+        loadedCases.push(d.data() as ClinicalCase);
+      });
+      const filteredCases = loadedCases.filter(c => {
+        if (!c || !c.id) return false;
+        const currentEmail = (profile?.email || auth.currentUser?.email || "").trim().toLowerCase();
+        const currentUid = auth.currentUser?.uid;
+        const isMyCase = Boolean(
+          (currentUid && (c.lastEditedBy === currentUid || (c as any).createdByUid === currentUid)) ||
+          (currentEmail && c.doctorEmail && c.doctorEmail.trim().toLowerCase() === currentEmail)
+        );
+        if (isMyCase) return true;
+        const caseHospitalLower = (c.hospital || "").trim().toLowerCase();
+        return userHospitalLower ? caseHospitalLower === userHospitalLower : true;
+      });
+
+      const uniqueMap = new Map<string, ClinicalCase>();
+      filteredCases.forEach(c => {
+        if (c && c.id && !uniqueMap.has(c.id)) {
+          uniqueMap.set(c.id, c);
+        }
+      });
+      setCases(Array.from(uniqueMap.values()));
+
+      // If on profile tab, also refresh user profile doc
+      if (activeTab === "profile" && auth.currentUser) {
+        const userDocRef = doc(db, "users", auth.currentUser.uid);
+        const userSnap = await getDoc(userDocRef);
+        if (userSnap.exists()) {
+          setProfile(userSnap.data() as UserProfile);
+        }
+      }
+    } catch (err) {
+      console.error("Failed to refresh cases data:", err);
+      throw err;
+    }
+  };
+
   // Compute global search matches
   const searchTerm = searchQuery.trim().toLowerCase();
   const matchedCases = searchTerm
@@ -2877,6 +3423,21 @@ useEffect(() => {
             {/* Mobile-only action shortcuts */}
             <div className="flex md:hidden items-center gap-1.5">
          <HeaderUpdateButton hasUpdate={appUpdateBanner} onApplyUpdate={handleUpdateApp} />
+              <GlobalRefreshButton
+                onRefresh={handleManualRefresh}
+                isDirty={isCaseSheetDirty && Boolean(selectedCaseId && !activeFormMode && !showDischargeSummaryId)}
+                isVoiceBusy={isScribeBusy}
+                onSaveAndRefresh={async () => {
+                  if (caseSheetActionsRef.current?.save) {
+                    await caseSheetActionsRef.current.save();
+                  }
+                }}
+                onDiscardAndRefresh={() => {
+                  if (caseSheetActionsRef.current?.discard) {
+                    caseSheetActionsRef.current.discard();
+                  }
+                }}
+              />
               <button
                 onClick={() => setShowUpdatesModal(true)}
                 className="p-1.5 hover:bg-emerald-50 dark:hover:bg-emerald-950/20 rounded-lg text-emerald-600 dark:text-emerald-400 transition-all"
@@ -3198,6 +3759,23 @@ useEffect(() => {
 
             {/* Header Update Button (renders when update is waiting or banner active) */}
          <HeaderUpdateButton hasUpdate={appUpdateBanner} onApplyUpdate={handleUpdateApp} />
+
+            {/* Global Refresh Button */}
+            <GlobalRefreshButton
+              onRefresh={handleManualRefresh}
+              isDirty={isCaseSheetDirty && Boolean(selectedCaseId && !activeFormMode && !showDischargeSummaryId)}
+              isVoiceBusy={isScribeBusy}
+              onSaveAndRefresh={async () => {
+                if (caseSheetActionsRef.current?.save) {
+                  await caseSheetActionsRef.current.save();
+                }
+              }}
+              onDiscardAndRefresh={() => {
+                if (caseSheetActionsRef.current?.discard) {
+                  caseSheetActionsRef.current.discard();
+                }
+              }}
+            />
 
             {/* What's New & Announcements Button */}
             <button
@@ -3732,19 +4310,28 @@ useEffect(() => {
                   }}
                   profile={profile}
                   onSaveProfile={handleSaveProfile}
-                  onReturnToScribe={() => {
+                  onReturnToScribe={(caseId?: string) => {
                     if (isPreviewMode) {
                       setIsPreviewMode(false);
                       setPreviewCase(null);
                       setPendingPreviewContext(null);
                     }
+                    const targetCaseId = caseId || selectedCaseId;
+                    if (targetCaseId) {
+                      setVoiceScribeCaseId(targetCaseId);
+                    }
                     setShowVoiceScribeChat(true);
                     setSelectedCaseId(null);
                   }}
-                  hasActiveScribeSession={scribeMessages.length > 1}
+                  hasActiveScribeSession={Boolean((selectedCaseId && voiceScribeCaseId === selectedCaseId) || scribeMessages.length > 1)}
                   onDiscussCase={(c) => handleStartVoiceScribe(c.id)}
                   isPreview={isPreviewMode}
                   onApplyPreview={handleApplyPreviewCase}
+                  onDirtyChange={setIsCaseSheetDirty}
+                  caseRefreshTimestamp={caseRefreshTimestamp}
+                  onRegisterActions={(actions) => {
+                    caseSheetActionsRef.current = actions;
+                  }}
                 />
               );
             })()
@@ -3796,6 +4383,8 @@ useEffect(() => {
               caseId={voiceScribeCaseId}
               caseData={cases.find(c => c.id === voiceScribeCaseId) || (selectedCaseId ? cases.find(c => c.id === selectedCaseId) : null)}
               initialEntryMode={voiceScribeDiscussionMode ? "discussion" : "case"}
+              refreshTrigger={scribeRefreshTrigger}
+              onBusyChange={setIsScribeBusy}
               onBack={() => {
                 setShowVoiceScribeChat(false);
                 setVoiceScribeCaseId(null);

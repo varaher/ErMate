@@ -6,56 +6,71 @@
 
 import { TreatmentItem } from '../types';
 
+const isBlank = (v: any) =>
+  v === undefined || v === null || String(v).trim() === "" ||
+  ["n/a", "na", "null", "undefined", "not documented"].includes(String(v).trim().toLowerCase());
+
+/** Dictated unit only. Never infer or convert. */
+export function displayTemperature(raw: any): string {
+  if (isBlank(raw)) return "Not documented";
+  const s = String(raw).trim();
+  const unit = s.match(/(°\s*[cf]\b|\b(?:celsius|fahrenheit)\b|\b[cf]$)/i);
+  if (unit) return s;
+  return `${s} (unit not stated)`;
+}
+
+/** Only what was documented. Never calculates or defaults a total. */
+export function displayGcs(v: { gcs?: any; gcs_e?: any; gcs_v?: any; gcs_m?: any; gcsE?: any; gcsV?: any; gcsM?: any } | string | number | null | undefined): string {
+  if (!v) return "Not documented";
+  if (typeof v === "number" || typeof v === "string") {
+    const s = String(v).trim();
+    if (isBlank(s)) return "Not documented";
+    return s.includes("/15") ? s : `${s}/15`;
+  }
+  const eVal = v.gcs_e ?? v.gcsE;
+  const vVal = v.gcs_v ?? v.gcsV;
+  const mVal = v.gcs_m ?? v.gcsM;
+  const parts = [
+    !isBlank(eVal) ? `E${String(eVal).replace(/^e/i, "")}` : null,
+    !isBlank(vVal) ? `V${String(vVal).replace(/^v/i, "")}` : null,
+    !isBlank(mVal) ? `M${String(mVal).replace(/^m/i, "")}` : null,
+  ].filter(Boolean) as string[];
+  const missing = ["E", "V", "M"].filter(c => !parts.some(p => p.startsWith(c)));
+  const comp = parts.length
+    ? `${parts.join(" ")}${missing.length ? ` (${missing.join(", ")} not documented)` : ""}`
+    : "";
+  if (!isBlank(v.gcs)) {
+    const total = String(v.gcs).replace(/\s*\/\s*15$/, "");
+    return comp ? `${total}/15 — ${comp}` : `${total}/15`;
+  }
+  return comp ? `Total not documented — ${comp}` : "Not documented";
+}
+
+export function displaySpo2(raw: any): string {
+  if (isBlank(raw)) return "Not documented";
+  return `${String(raw).replace(/%/g, "").trim()}%`;
+}
+
+export function displayGrbs(raw: any): string {
+  if (isBlank(raw)) return "Not documented";
+  const s = String(raw).trim();
+  return /mg\s*\/?\s*dl|mmol/i.test(s)
+    ? s
+    : `${s} (unit not stated)`;
+}
+
+export function displayDocumentedBoolean(value: any): string {
+  if (value === true) return "Yes";
+  if (value === false) return "No";
+  return "Not documented";
+}
+
 /**
- * Intelligently formats temperature.
- * - If value is between 34.0 and 43.0, it is Celsius (e.g. 37.0°C -> 37.0°C (98.6°F)).
- * - If value is between 90.0 and 110.0, it is Fahrenheit (e.g. 98.6°F -> 98.6°F (37.0°C)).
- * - Replaces any mislabeled "37.0°F" with "37.0°C (98.6°F)".
+ * Standardizes temperature display by calling displayTemperature.
+ * Removed legacy fabricated default 37.0°C (98.6°F) and unit inference/conversion.
  */
 export function formatTemperature(rawTemp: string | number | undefined | null): string {
-  if (rawTemp === undefined || rawTemp === null || rawTemp === '' || rawTemp === 'N/A') {
-    return '37.0°C (98.6°F)';
-  }
-
-  const str = String(rawTemp).trim();
-
-  // If already formatted with both units properly
-  if (str.includes('°C') && str.includes('°F')) {
-    return str;
-  }
-
-  // Handle explicit text descriptions like "afebrile" or "normal"
-  if (/afebrile|normal/i.test(str)) {
-    return '37.0°C (98.6°F - Afebrile)';
-  }
-
-  // Extract floating point value
-  const numMatch = str.match(/(\d+(?:\.\d+)?)/);
-  if (!numMatch) {
-    return str;
-  }
-
-  const num = parseFloat(numMatch[1]);
-
-  // If numeric value is in Celsius range (34°C - 44°C)
-  if (num >= 34.0 && num <= 44.0) {
-    const c = num.toFixed(1);
-    const f = ((num * 9) / 5 + 32).toFixed(1);
-    if (num === 37.0 || num === 37) {
-      return `37.0°C (${f}°F - Afebrile)`;
-    }
-    return `${c}°C (${f}°F)`;
-  }
-
-  // If numeric value is in Fahrenheit range (90°F - 110°F)
-  if (num >= 90.0 && num <= 110.0) {
-    const f = num.toFixed(1);
-    const c = (((num - 32) * 5) / 9).toFixed(1);
-    return `${f}°F (${c}°C)`;
-  }
-
-  // Fallback for edge cases
-  return `${str}°C`;
+  return displayTemperature(rawTemp);
 }
 
 /**
@@ -192,20 +207,21 @@ export function formatDoctorName(rawName?: string | null): string {
 
 /**
  * Formats Primary Survey Disability assessment to ensure GCS, Pupils, and GRBS are explicitly shown.
+ * Removed fabricated defaults (GCS 15/15, 2mm equal/reactive pupils, 110 mg/dL GRBS).
  */
 export function formatDisabilityAssessment(
   disabilityRaw?: string | null,
   gcsVal?: string | null,
   grbsVal?: string | null
 ): string {
-  const gcsText = gcsVal ? `GCS ${gcsVal}/15` : 'GCS 15/15 (E4V5M6 - Alert & Oriented)';
-  const pupilsText = 'Pupils: 2mm Equal & Reactive to Light';
-  const grbsText = grbsVal ? `GRBS: ${grbsVal} mg/dL` : 'GRBS: 110 mg/dL (Normal)';
+  const gcsText = `GCS: ${displayGcs({ gcs: gcsVal })}`;
+  const pupilsText = 'Pupils: Not documented';
+  const grbsText = `GRBS: ${displayGrbs(grbsVal)}`;
 
   const existing = (disabilityRaw || '').trim();
 
   if (!existing || existing === 'Normal' || existing.includes('Moving all four limbs')) {
-    return `${gcsText}, ${pupilsText}, ${grbsText}, Motor: Moving all four limbs.`;
+    return `${gcsText}, ${pupilsText}, ${grbsText}`;
   }
 
   // Prepend GCS if not present in existing text

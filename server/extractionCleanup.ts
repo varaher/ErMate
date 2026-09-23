@@ -128,6 +128,11 @@ export interface CleanedExtractionFields {
     abdomen?: string | null;
     pelvis?: string | null;
   };
+  generalExamination?: string | null;
+  cvsExamination?: string | null;
+  respiratoryExamination?: string | null;
+  abdomenExamination?: string | null;
+  cnsExamination?: string | null;
   extremitiesExamination?: string | null;
   lastMeal?: string | null;
   cSpineExam?: string | null;
@@ -488,6 +493,21 @@ export function cleanExtractionOutput(raw: RawExtractionFields): CleanedExtracti
     if (Object.keys(fast).length > 0) result.fastFindings = fast;
   }
 
+  if (typeof raw.generalExamination === 'string' && raw.generalExamination.trim()) {
+    result.generalExamination = raw.generalExamination.trim();
+  }
+  if (typeof raw.cvsExamination === 'string' && raw.cvsExamination.trim()) {
+    result.cvsExamination = raw.cvsExamination.trim();
+  }
+  if (typeof raw.respiratoryExamination === 'string' && raw.respiratoryExamination.trim()) {
+    result.respiratoryExamination = raw.respiratoryExamination.trim();
+  }
+  if (typeof raw.abdomenExamination === 'string' && raw.abdomenExamination.trim()) {
+    result.abdomenExamination = raw.abdomenExamination.trim();
+  }
+  if (typeof raw.cnsExamination === 'string' && raw.cnsExamination.trim()) {
+    result.cnsExamination = raw.cnsExamination.trim();
+  }
   if (typeof raw.extremitiesExamination === 'string' && raw.extremitiesExamination.trim()) {
     result.extremitiesExamination = raw.extremitiesExamination.trim();
   }
