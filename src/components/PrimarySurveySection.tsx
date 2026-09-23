@@ -629,15 +629,20 @@ export function PrimarySurveySection({
     : (data.disability?.gcsM || "");
 
   const computedGcsSum = (() => {
-    const e = parseInt(displayGcsE) || 0;
-    const v = parseInt(displayGcsV) || 0;
-    const m = parseInt(displayGcsM) || 0;
-    const sum = e + v + m;
-    return sum > 0 ? String(sum) : null;
+    const hasAll = Boolean(
+      displayGcsE && displayGcsE.trim() !== "" &&
+      displayGcsV && displayGcsV.trim() !== "" &&
+      displayGcsM && displayGcsM.trim() !== ""
+    );
+    if (!hasAll) return null;
+    const e = parseInt(displayGcsE, 10);
+    const v = parseInt(displayGcsV, 10);
+    const m = parseInt(displayGcsM, 10);
+    return Number.isFinite(e) && Number.isFinite(v) && Number.isFinite(m) ? String(e + v + m) : null;
   })();
   const displayGcsTotal = (vitals?.gcs !== undefined && vitals.gcs !== null && vitals.gcs.trim() !== "")
     ? vitals.gcs
-    : (data.disability?.gcsTotal || computedGcsSum || "15");
+    : (data.disability?.gcsTotal || computedGcsSum || "");
 
   // Temperature: vitals.temp (primary) -> data.exposure?.temp (legacy fallback)
   const displayTemp = (vitals?.temp !== undefined && vitals.temp !== null && vitals.temp.trim() !== "")
@@ -886,7 +891,7 @@ export function PrimarySurveySection({
               Glasgow Coma Scale (GCS)
             </span>
             <span className="text-xs font-mono font-black text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/60 px-2.5 py-0.5 rounded-lg border border-indigo-200 dark:border-indigo-800">
-              Score: {displayGcsTotal}/15
+              Score: {displayGcsTotal ? `${displayGcsTotal}/15` : "Not documented"}
             </span>
           </div>
           <div className="grid grid-cols-3 gap-2 md:gap-3">
@@ -897,11 +902,17 @@ export function PrimarySurveySection({
               value={displayGcsE}
               onChange={(v) => {
                 onUpdateVitals?.("gcs_e", v);
-                const e = parseInt(v) || 0;
-                const ver = parseInt(displayGcsV) || 0;
-                const m = parseInt(displayGcsM) || 0;
-                const total = e + ver + m;
-                if (total > 0) onUpdateVitals?.("gcs", String(total));
+                const hasAll = v.trim() !== "" && displayGcsV.trim() !== "" && displayGcsM.trim() !== "";
+                if (hasAll) {
+                  const e = parseInt(v, 10);
+                  const ver = parseInt(displayGcsV, 10);
+                  const m = parseInt(displayGcsM, 10);
+                  if (Number.isFinite(e) && Number.isFinite(ver) && Number.isFinite(m)) {
+                    onUpdateVitals?.("gcs", String(e + ver + m));
+                  }
+                } else {
+                  onUpdateVitals?.("gcs", "");
+                }
               }}
             />
             <VitalInput
@@ -911,11 +922,17 @@ export function PrimarySurveySection({
               value={displayGcsV}
               onChange={(v) => {
                 onUpdateVitals?.("gcs_v", v);
-                const e = parseInt(displayGcsE) || 0;
-                const ver = parseInt(v) || 0;
-                const m = parseInt(displayGcsM) || 0;
-                const total = e + ver + m;
-                if (total > 0) onUpdateVitals?.("gcs", String(total));
+                const hasAll = displayGcsE.trim() !== "" && v.trim() !== "" && displayGcsM.trim() !== "";
+                if (hasAll) {
+                  const e = parseInt(displayGcsE, 10);
+                  const ver = parseInt(v, 10);
+                  const m = parseInt(displayGcsM, 10);
+                  if (Number.isFinite(e) && Number.isFinite(ver) && Number.isFinite(m)) {
+                    onUpdateVitals?.("gcs", String(e + ver + m));
+                  }
+                } else {
+                  onUpdateVitals?.("gcs", "");
+                }
               }}
             />
             <VitalInput
@@ -925,11 +942,17 @@ export function PrimarySurveySection({
               value={displayGcsM}
               onChange={(v) => {
                 onUpdateVitals?.("gcs_m", v);
-                const e = parseInt(displayGcsE) || 0;
-                const ver = parseInt(displayGcsV) || 0;
-                const m = parseInt(v) || 0;
-                const total = e + ver + m;
-                if (total > 0) onUpdateVitals?.("gcs", String(total));
+                const hasAll = displayGcsE.trim() !== "" && displayGcsV.trim() !== "" && v.trim() !== "";
+                if (hasAll) {
+                  const e = parseInt(displayGcsE, 10);
+                  const ver = parseInt(displayGcsV, 10);
+                  const m = parseInt(v, 10);
+                  if (Number.isFinite(e) && Number.isFinite(ver) && Number.isFinite(m)) {
+                    onUpdateVitals?.("gcs", String(e + ver + m));
+                  }
+                } else {
+                  onUpdateVitals?.("gcs", "");
+                }
               }}
             />
           </div>

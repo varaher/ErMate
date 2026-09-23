@@ -1374,6 +1374,24 @@ useEffect(() => {
     const createdByRoleVal = (profile.role || "").toLowerCase().includes("hod") ? "hod" : ((profile.role || "").toLowerCase().includes("consultant") ? "consultant" : "resident");
     const hospitalSlug = (profile.hospital || "general-er").trim().toLowerCase().replace(/[^a-z0-9]/g, "-");
 
+    const parseNullableInt = (value: string | undefined | null): number | null => {
+      const parsed = parseInt(value ?? "", 10);
+      return Number.isFinite(parsed) ? parsed : null;
+    };
+
+    const parseNullableFloat = (value: string | undefined | null): number | null => {
+      const parsed = parseFloat(value ?? "");
+      return Number.isFinite(parsed) ? parsed : null;
+    };
+
+    const hasInitialVitals = [
+      vitals.bp,
+      vitals.hr,
+      vitals.spo2,
+      vitals.rr,
+      vitals.temp,
+    ].some(value => typeof value === "string" && value.trim() !== "");
+
     const newCase: ClinicalCase = {
       id: "C-" + Math.floor(1000 + Math.random() * 9000),
       workspaceType: workspace.workspaceType,
@@ -1453,18 +1471,20 @@ useEffect(() => {
         consultantName: "Dr. " + profile.name,
         observationNotes: ""
       } as any,
-      vitalsHistory: [
-        {
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          bp: vitals.bp || "120/80",
-          systolic: parseInt(vitals.bp?.split("/")[0]) || 120,
-          diastolic: parseInt(vitals.bp?.split("/")[1]) || 80,
-          hr: parseInt(vitals.hr) || 80,
-          spo2: parseInt(vitals.spo2) || 98,
-          rr: parseInt(vitals.rr) || 16,
-          temp: parseFloat(vitals.temp) || 98.6
-        }
-      ]
+      vitalsHistory: hasInitialVitals
+        ? [
+            {
+              timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+              bp: vitals.bp || "",
+              systolic: parseNullableInt(vitals.bp?.split("/")[0]),
+              diastolic: parseNullableInt(vitals.bp?.split("/")[1]),
+              hr: parseNullableInt(vitals.hr),
+              spo2: parseNullableInt(vitals.spo2),
+              rr: parseNullableInt(vitals.rr),
+              temp: parseNullableFloat(vitals.temp)
+            }
+          ]
+        : []
     };
 
     try {

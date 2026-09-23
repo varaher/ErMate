@@ -145,7 +145,16 @@ export default function DischargeSummaryView({
   );
 
   const [primaryDisabilityAvpuGcs, setPrimaryDisabilityAvpuGcs] = useState(
-    currentCase.dischargeInfo?.primaryDisabilityAvpuGcs || (currentCase.vitals.avpu || currentCase.vitals.gcs ? `${currentCase.vitals.avpu || "Alert"} / GCS ${currentCase.vitals.gcs || "15"}` : "")
+    currentCase.dischargeInfo?.primaryDisabilityAvpuGcs || (() => {
+      const neuroParts: string[] = [];
+      if (currentCase.vitals.avpu) {
+        neuroParts.push(currentCase.vitals.avpu);
+      }
+      if (currentCase.vitals.gcs) {
+        neuroParts.push(`GCS ${currentCase.vitals.gcs}`);
+      }
+      return neuroParts.join(" / ");
+    })()
   );
   const [primaryDisabilityPupils, setPrimaryDisabilityPupils] = useState(
     currentCase.dischargeInfo?.primaryDisabilityPupils || ""

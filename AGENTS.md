@@ -45,6 +45,42 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-09-23] — Removal of Remaining Vital/GCS/Exam Fabrications (Batch 1d Finish)
+- **Elimination of Stored GCS 15 in Quick Discharge (`src/components/QuickDischargeIntake.tsx`)**:
+  - Replaced fallback `String(ext.vitals?.gcs || "15")` and `String(ocr.gcs || "15")` with honest conditional extraction `ext.vitals?.gcs ? String(ext.vitals.gcs) : ""` and `ocr.gcs ? String(ocr.gcs) : ""`.
+- **Elimination of Invented "Alert / GCS 15" in Discharge Summary (`src/components/DischargeSummaryView.tsx`)**:
+  - Refactored `primaryDisabilityAvpuGcs` to build only from explicitly recorded values (AVPU only -> AVPU; GCS only -> GCS; both -> AVPU / GCS; neither -> `""`), never inventing "Alert" or "GCS 15".
+- **Elimination of Fabricated Physical Exam Fallbacks (`src/components/CaseSheetView.tsx`)**:
+  - Replaced synthesized normal examination strings for CVS (`S1, S2: Normal, Pulse: Regular 75 bpm...`), RS/Chest, Abdomen (PA), CNS, General, and Extremities across all three export/render blocks (Markdown, HTML, Preview Modal) with strictly `"Not documented"`.
+- **Primary Survey GCS Display Truth (`src/components/PrimarySurveySection.tsx`)**:
+  - Enforced that `computedGcsSum` requires all three explicit components (E, V, M) to compute a total, otherwise returning `null`.
+  - Removed `"15"` fallback from `displayGcsTotal`; renders `"Not documented"` when GCS is unrecorded.
+- **Pain Score UX Enhancements (`src/components/TriageForm.tsx`)**:
+  - Added dedicated `[ No pain (0) ]` button to record an explicit `0/10` and `Clear` button to reset to unassessed (`""`), eliminating ambiguous thumb positioning.
+- **Triage Classifier Reason String Normalization (`src/utils/triageClassifier.ts`)**:
+  - Updated standard default and febrile illness reasons to neutral clinical descriptions without altering underlying triage thresholds.
+
+### [2026-09-23] — Pain Score Unset State & Safe Null-Guarded Triage Classifier (Batch 1c Extension)
+- **Truthful Pain Score State in Triage Intake (`src/components/TriageForm.tsx`)**:
+  - Initialized `painScore` to empty string (`""`) instead of fabricated `"0"`.
+  - Slider displays `"Not entered"` while untouched (`painScore === ""`) and does not assert `0/10` unless explicitly selected.
+- **Strict Null-Guarded Emergency Triage Classifier (`src/utils/triageClassifier.ts`)**:
+  - Implemented `parseNullableInt` and `parseNullableFloat` treating missing or non-numeric vitals strictly as `null`.
+  - Removed default fallback of GCS to `15` and pain score to `0`; missing GCS and pain score are strictly `null`.
+  - Guarded all numeric comparisons (`gcs !== null && gcs < 8`, `pain !== null && pain >= 9`, etc.) across adult and pediatric protocols so unentered vitals never trigger false acute priority or participate in rules.
+
+### [2026-09-23] — Elimination of Stored Fabricated Vitals & GCS in Intake (Batch 1c)
+- **Elimination of TriageForm Fabricated Vital Defaults (`src/components/TriageForm.tsx`)**:
+  - Removed normal fallback vital strings (`bp || "120/80"`, `hr || "75"`, `spo2 || "98"`, `rr || "16"`). Unentered vitals now strictly default to empty strings (`""`).
+  - GCS subscales initialized to empty strings (`gcsE = ""`, `gcsV = ""`, `gcsM = ""`) instead of normal baseline ("4", "5", "6").
+  - GCS total calculation requires complete entry of all three components (`hasCompleteGcs = gcsE !== "" && gcsV !== "" && gcsM !== ""`); returns `""` when incomplete or untouched.
+  - Added `<option value="">Select</option>` as the first option to Eye, Verbal, and Motor dropdowns with "Not entered" composite display indicator.
+  - Eliminated heuristic AVPU deduction from GCS (`calculatedGcs === 15 ? "Alert" : ...`); AVPU is now strictly set to `""` since no independent clinician selector exists in the triage form.
+- **Safe New-Case Vitals History Initialization (`src/App.tsx`)**:
+  - Removed normal fallback vitals (120/80, 80, 98, 16, 98.6) in `vitalsHistory` creation inside `handleSaveNewCase`.
+  - Implemented `hasInitialVitals` check: if no vitals are entered on registration, `vitalsHistory` initializes as `[]` rather than an empty/defaulted time-point.
+  - For partial vitals, missing values are stored strictly as `null` via `parseNullableInt` and `parseNullableFloat` without synthetic normal values.
+
 ### [2026-09-23] — Elimination of Fabricated Psychological & IPSG Defaults (Batch 2)
 - **Elimination of Fabricated Psychological Defaults (`src/components/CaseSheetPrintView.tsx`, `src/components/DashboardView.tsx`)**:
   - Removed fabricated psychological object fallback (`intentToHarmOthers: false`, `substanceAbuse: false`, `hasSupportSystem: true`, etc.) when structured assessment is missing.

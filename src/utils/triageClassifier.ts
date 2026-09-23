@@ -10,6 +10,18 @@ export interface TriageReason {
   reason: string;
 }
 
+const parseNullableInt = (value: string | undefined | null): number | null => {
+  if (!value || !value.trim()) return null;
+  const n = parseInt(value, 10);
+  return Number.isFinite(n) ? n : null;
+};
+
+const parseNullableFloat = (value: string | undefined | null): number | null => {
+  if (!value || !value.trim()) return null;
+  const n = parseFloat(value);
+  return Number.isFinite(n) ? n : null;
+};
+
 /**
  * Automatically classifies a patient's emergency triage priority (P1 to P5)
  * based on clinical rules from Pediatric & Adult Emergency Triage protocols.
@@ -22,13 +34,13 @@ export function classifyEmergencyTriage(
   const comp = (complaint || "").toLowerCase();
   
   // Parse numeric vitals
-  const hr = vitals.hr ? parseInt(vitals.hr) : null;
-  const spo2 = vitals.spo2 ? parseInt(vitals.spo2) : null;
-  const rr = vitals.rr ? parseInt(vitals.rr) : null;
-  const tempC = vitals.temp ? parseFloat(vitals.temp) : null;
-  const gcs = vitals.gcs ? parseInt(vitals.gcs) : 15;
-  const grbs = vitals.grbs ? parseInt(vitals.grbs) : null;
-  const pain = vitals.painScore ? parseInt(vitals.painScore) : 0;
+  const hr = parseNullableInt(vitals.hr);
+  const spo2 = parseNullableInt(vitals.spo2);
+  const rr = parseNullableInt(vitals.rr);
+  const tempC = parseNullableFloat(vitals.temp);
+  const gcs = parseNullableInt(vitals.gcs);
+  const grbs = parseNullableInt(vitals.grbs);
+  const pain = parseNullableInt(vitals.painScore);
 
   // Convert temp from F to C if needed, or assume >95 as Fahrenheit
   let tempF = tempC;
@@ -43,7 +55,7 @@ export function classifyEmergencyTriage(
   // -------------------------------------------------------------
   if (isPediatric) {
     // 1. PRIORITY I (IMMEDIATE)
-    if (gcs < 8) {
+    if (gcs !== null && gcs < 8) {
       return { category: TriageCategory.P1, reason: "Pediatric P1: GCS < 8 is critical" };
     }
     if (
@@ -97,7 +109,7 @@ export function classifyEmergencyTriage(
     }
 
     // 2. PRIORITY II (VERY URGENT)
-    if (gcs >= 9 && gcs <= 12) {
+    if (gcs !== null && gcs >= 9 && gcs <= 12) {
       return { category: TriageCategory.P1, reason: "Pediatric P1/P2: GCS 9-12 indicating severe neurological distress" };
     }
     if (grbs !== null && grbs < 54) {
@@ -154,7 +166,7 @@ export function classifyEmergencyTriage(
     }
 
     // Default to P3 for pediatric otherwise
-    return { category: TriageCategory.P3, reason: "Pediatric P3: Standard non-critical pediatric case" };
+    return { category: TriageCategory.P3, reason: "Pediatric P3: No high-risk features identified from entered data — clinician to confirm" };
   }
 
   // -------------------------------------------------------------
@@ -162,7 +174,7 @@ export function classifyEmergencyTriage(
   // -------------------------------------------------------------
   
   // 1. PRIORITY I (IMMEDIATE)
-  if (gcs < 8) {
+  if (gcs !== null && gcs < 8) {
     return { category: TriageCategory.P1, reason: "Adult P1: GCS < 8 indicating severe neurological crisis" };
   }
   if (
@@ -215,10 +227,10 @@ export function classifyEmergencyTriage(
   ) {
     return { category: TriageCategory.P1, reason: "Adult P1: Hyperacute Stroke protocol within window period" };
   }
-  if (gcs >= 9 && gcs <= 13) {
+  if (gcs !== null && gcs >= 9 && gcs <= 13) {
     return { category: TriageCategory.P2, reason: "Adult P2: Altered level of consciousness (GCS 9-13)" };
   }
-  if (pain >= 9) {
+  if (pain !== null && pain >= 9) {
     return { category: TriageCategory.P2, reason: "Adult P2: Intolerable pain scale (NRS 9-10)" };
   }
   if (comp.includes("sepsis") || comp.includes("meningococcal") || comp.includes("rigors")) {
@@ -256,7 +268,7 @@ export function classifyEmergencyTriage(
 
   // 4. PRIORITY IV (STANDARD)
   if (comp.includes("fever") || comp.includes("sore throat") || comp.includes("throat pain")) {
-    return { category: TriageCategory.P3, reason: "Adult P3: Febrile illness with localizing ENT symptoms" };
+    return { category: TriageCategory.P3, reason: "Adult P3: Febrile illness" };
   }
   if (comp.includes("diarrhea") || comp.includes("vomiting")) {
     return { category: TriageCategory.P3, reason: "Adult P3: Gastroenteritis without signs of severe dehydration" };
@@ -269,5 +281,5 @@ export function classifyEmergencyTriage(
   }
 
   // Default to non-urgent standard P3
-  return { category: TriageCategory.P3, reason: "Adult P3: Standard non-critical ER case" };
+  return { category: TriageCategory.P3, reason: "Adult P3: No high-risk features identified from entered data — clinician to confirm" };
 }

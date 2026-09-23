@@ -42,12 +42,12 @@ export default function TriageForm({ onBack, onSubmit, initialMode }: TriageForm
   const [rr, setRr] = useState("");
   const [temp, setTemp] = useState("");
   const [grbs, setGrbs] = useState("");
-  const [painScore, setPainScore] = useState("0");
+  const [painScore, setPainScore] = useState("");
 
   // GCS Subscales
-  const [gcsE, setGcsE] = useState("4");
-  const [gcsV, setGcsV] = useState("5");
-  const [gcsM, setGcsM] = useState("6");
+  const [gcsE, setGcsE] = useState("");
+  const [gcsV, setGcsV] = useState("");
+  const [gcsM, setGcsM] = useState("");
 
   const [autoTriageEnabled, setAutoTriageEnabled] = useState(true);
 
@@ -56,7 +56,10 @@ export default function TriageForm({ onBack, onSubmit, initialMode }: TriageForm
   const isPediatric = ageNum !== null && ageNum <= 16;
 
   // Calculate composite GCS
-  const calculatedGcs = (parseInt(gcsE) || 4) + (parseInt(gcsV) || 5) + (parseInt(gcsM) || 6);
+  const hasCompleteGcs = gcsE !== "" && gcsV !== "" && gcsM !== "";
+  const calculatedGcs = hasCompleteGcs
+    ? String(Number(gcsE) + Number(gcsV) + Number(gcsM))
+    : "";
 
   // Live auto triage evaluation
   const currentVitalsObj: PatientVitals = {
@@ -65,12 +68,12 @@ export default function TriageForm({ onBack, onSubmit, initialMode }: TriageForm
     spo2: spo2 || "",
     rr: rr || "",
     temp: temp || "",
-    gcs: String(calculatedGcs),
+    gcs: calculatedGcs,
     gcs_e: gcsE,
     gcs_v: gcsV,
     gcs_m: gcsM,
     grbs: grbs || "",
-    avpu: calculatedGcs === 15 ? "Alert" : calculatedGcs >= 8 ? "Voice" : "Pain",
+    avpu: "",
     painScore: painScore
   };
 
@@ -116,17 +119,17 @@ export default function TriageForm({ onBack, onSubmit, initialMode }: TriageForm
     };
 
     const vitals: PatientVitals = {
-      bp: bp || (initialMode === "quick" ? "" : "120/80"),
-      hr: hr || (initialMode === "quick" ? "" : "75"),
-      spo2: spo2 || (initialMode === "quick" ? "" : "98"),
-      rr: rr || (initialMode === "quick" ? "" : "16"),
-      temp: temp || (initialMode === "quick" ? "" : "98.6"),
-      gcs: String(calculatedGcs),
+      bp: bp || "",
+      hr: hr || "",
+      spo2: spo2 || "",
+      rr: rr || "",
+      temp: temp || "",
+      gcs: calculatedGcs,
       gcs_e: gcsE,
       gcs_v: gcsV,
       gcs_m: gcsM,
       grbs: grbs || "",
-      avpu: calculatedGcs === 15 ? "Alert" : calculatedGcs >= 8 ? "Voice" : "Pain",
+      avpu: "",
       painScore: painScore
     };
 
@@ -629,7 +632,7 @@ export default function TriageForm({ onBack, onSubmit, initialMode }: TriageForm
               {/* GCS Subscale Selectors (JCI/NABH Neurological assessment) */}
               <div>
                 <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">
-                  Glasgow Coma Scale (Current Composite: <strong className="text-blue-600 dark:text-blue-400 font-mono">{calculatedGcs}/15</strong>)
+                  Glasgow Coma Scale (Current Composite: <strong className="text-blue-600 dark:text-blue-400 font-mono">{calculatedGcs ? `${calculatedGcs}/15` : "Not entered"}</strong>)
                 </label>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                   <div>
@@ -639,6 +642,7 @@ export default function TriageForm({ onBack, onSubmit, initialMode }: TriageForm
                       onChange={(e) => setGcsE(e.target.value)}
                       className="w-full px-2.5 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-xs"
                     >
+                      <option value="">Select</option>
                       <option value="4">4 - Spontaneous</option>
                       <option value="3">3 - To Speech</option>
                       <option value="2">2 - To Pain</option>
@@ -652,6 +656,7 @@ export default function TriageForm({ onBack, onSubmit, initialMode }: TriageForm
                       onChange={(e) => setGcsV(e.target.value)}
                       className="w-full px-2.5 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-xs"
                     >
+                      <option value="">Select</option>
                       <option value="5">5 - Oriented</option>
                       <option value="4">4 - Confused</option>
                       <option value="3">3 - Inappropriate</option>
@@ -666,6 +671,7 @@ export default function TriageForm({ onBack, onSubmit, initialMode }: TriageForm
                       onChange={(e) => setGcsM(e.target.value)}
                       className="w-full px-2.5 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-xs"
                     >
+                      <option value="">Select</option>
                       <option value="6">6 - Obeys commands</option>
                       <option value="5">5 - Localizes pain</option>
                       <option value="4">4 - Withdraws (flexion)</option>
@@ -695,16 +701,43 @@ export default function TriageForm({ onBack, onSubmit, initialMode }: TriageForm
 
                 {/* Pain Score slider (NABH Mandated 5th Vital sign) */}
                 <div>
-                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1">
-                    Pain Scale: <strong className="text-rose-500 font-mono">{painScore}/10</strong>
-                  </label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wide">
+                      Pain Scale: <strong className="text-rose-500 font-mono">{painScore !== "" ? `${painScore}/10` : "Not entered"}</strong>
+                    </label>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setPainScore("0")}
+                        className={`px-2 py-0.5 text-[10px] font-semibold rounded border transition-colors ${
+                          painScore === "0"
+                            ? "bg-rose-50 dark:bg-rose-950/50 text-rose-600 dark:text-rose-400 border-rose-300 dark:border-rose-800"
+                            : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-700 hover:bg-slate-200 dark:hover:bg-slate-700"
+                        }`}
+                      >
+                        No pain (0)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setPainScore("")}
+                        disabled={painScore === ""}
+                        className={`px-2 py-0.5 text-[10px] font-semibold rounded border transition-colors ${
+                          painScore === ""
+                            ? "opacity-40 cursor-not-allowed border-slate-200 dark:border-slate-800 text-slate-400"
+                            : "border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
+                        }`}
+                      >
+                        Clear
+                      </button>
+                    </div>
+                  </div>
                   <div className="pt-2">
                     <input
                       type="range"
                       min="0"
                       max="10"
                       step="1"
-                      value={painScore}
+                      value={painScore === "" ? "0" : painScore}
                       onChange={(e) => setPainScore(e.target.value)}
                       className="w-full h-1.5 bg-slate-200 dark:bg-slate-800 rounded-lg appearance-none cursor-pointer accent-rose-600"
                     />

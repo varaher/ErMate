@@ -2149,13 +2149,13 @@ ${pediatricText}
 **Secondary Survey (Systemic & General Examination):**
 ${(() => {
   const sec = parseSecondaryAssessment(currentCase.secondaryAssessment || "");
-  return `- **General Examination:** ${sec.General || "Pallor: Absent, Icterus: Absent, Clubbing: Absent, Lymphadenopathy: None, Thyroid: Normal, Varicose Veins: None."}
+  return `- **General Examination:** ${sec.General || "Not documented"}
 - **Systemic Examination (CVS, CHEST, Abdomen, CNS):**
-  - **CVS:** ${sec.CVS || `S1, S2: Normal, Pulse: Regular ${currentCase.vitals.hr || "75"} bpm, Apex Beat: Normal, localized in the 5th intercostal space, midclavicular line. Precordial Heave: Absent, Added Sounds: None, Murmurs: None`}
-  - **CHEST / RS:** ${sec.RS || `Expansion: Equal bilaterally, Percussion: Resonant bilaterally, Breath Sounds: Vesicular, equal bilaterally, Vocal Resonance: Normal, Added Sounds: None.`}
-  - **Abdomen (PA):** ${sec.PA || `Umbilical: Central, no abnormalities, Organomegaly: None, Percussion: Normal tympany, no dullness. Bowel Sounds: Normal, active in all quadrants, External Genitalia: Normal, no abnormalities. Hernial Orifices: No bulging, Per Rectal: No tenderness, normal tone, Per Vaginal: Normal findings.`}
-  - **CNS:** ${sec.CNS || `Higher Mental Functions: Normal, alert and oriented, Cranial Nerves: Intact (I-XII), Sensory System: Normal, intact to light touch, pain, and temperature, Motor System: Normal muscle tone, strength 5/5 in all limbs, Reflex: Normal deep tendon reflexes (2+), no pathological reflexes, Romberg Sign: Negative, Cerebellar Signs: No dysmetria, normal finger-nose test, Signs of Meningeal Irritation: None, Gait: Normal, steady, no ataxia, Carotid Bruit: None.`}
-- **Extremities and Back:** ${sec.Extremities || `No visible abnormalities at the time of examination.`}`;
+  - **CVS:** ${sec.CVS || "Not documented"}
+  - **CHEST / RS:** ${sec.RS || "Not documented"}
+  - **Abdomen (PA):** ${sec.PA || "Not documented"}
+  - **CNS:** ${sec.CNS || "Not documented"}
+- **Extremities and Back:** ${sec.Extremities || "Not documented"}`;
 })()}
 - **Psychological Assessment:**
   - **Suicidal Ideation:** ${currentCase.psychologicalAssessment?.suicidalIdeation ? "YES ⚠️" : "No."}
@@ -2349,16 +2349,16 @@ ${(() => {
   const sec = parseSecondaryAssessment(currentCase.secondaryAssessment || "");
   return `<strong>General Examination:</strong>
 <ul>
-  <li>${sec.General || "Pallor: Absent, Icterus: Absent, Clubbing: Absent, Lymphadenopathy: None, Thyroid: Normal, Varicose Veins: None."}</li>
+  <li>${sec.General || "Not documented"}</li>
 </ul>
 <strong>Systemic Examination:</strong>
 <ul>
-  <li><strong>CVS:</strong> ${sec.CVS || `S1, S2: Normal, Pulse: Regular ${currentCase.vitals.hr || "75"} bpm, Apex Beat: Normal, localized in the 5th intercostal space, midclavicular line. Precordial Heave: Absent, Added Sounds: None, Murmurs: None`}</li>
-  <li><strong>CHEST / RS:</strong> ${sec.RS || `Expansion: Equal bilaterally, Percussion: Resonant bilaterally, Breath Sounds: Vesicular, equal bilaterally, Vocal Resonance: Normal, Added Sounds: None.`}</li>
-  <li><strong>Abdomen (PA):</strong> ${sec.PA || `Umbilical: Central, no abnormalities, Organomegaly: None, Percussion: Normal tympany, no dullness. Bowel Sounds: Normal, active in all quadrants, External Genitalia: Normal, no abnormalities. Hernial Orifices: No bulging, Per Rectal: No tenderness, normal tone, Per Vaginal: Normal findings.`}</li>
-  <li><strong>CNS:</strong> ${sec.CNS || `Higher Mental Functions: Normal, alert and oriented, Cranial Nerves: Intact (I-XII), Sensory System: Normal, intact to light touch, pain, and temperature, Motor System: Normal muscle tone, strength 5/5 in all limbs, Reflex: Normal deep tendon reflexes (2+), no pathological reflexes, Romberg Sign: Negative, Cerebellar Signs: No dysmetria, normal finger-nose test, Signs of Meningeal Irritation: None, Gait: Normal, steady, no ataxia, Carotid Bruit: None.`}</li>
+  <li><strong>CVS:</strong> ${sec.CVS || "Not documented"}</li>
+  <li><strong>CHEST / RS:</strong> ${sec.RS || "Not documented"}</li>
+  <li><strong>Abdomen (PA):</strong> ${sec.PA || "Not documented"}</li>
+  <li><strong>CNS:</strong> ${sec.CNS || "Not documented"}</li>
 </ul>
-<strong>Extremities and Back:</strong> ${sec.Extremities || "No visible abnormalities at the time of examination."}<br/>`;
+<strong>Extremities and Back:</strong> ${sec.Extremities || "Not documented"}<br/>`;
 })()}
 <br/>
 <strong>Psychological Assessment:</strong>
@@ -5963,7 +5963,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                         <strong>General Examination</strong>
                       </span>
                       <p className="p-2 bg-slate-50 rounded text-[10px] leading-relaxed">
-                        {sec.General || "Pallor: Absent, Icterus: Absent, Clubbing: Absent, Lymphadenopathy: None, Thyroid: Normal, Varicose Veins: None. (P/I/C/C/L/E)"}
+                        {sec.General || "Not documented"}
                       </p>
                     </div>
                     <div className="space-y-1.5">
@@ -5971,7 +5971,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                         <strong>Extremities and Back</strong>
                       </span>
                       <p className="p-2 bg-slate-50 rounded text-[10px] leading-relaxed">
-                        {sec.Extremities || "No visible abnormalities at the time of examination."}
+                        {sec.Extremities || "Not documented"}
                       </p>
                     </div>
                   </div>
@@ -5982,10 +5982,10 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                       <strong>Systemic Examination</strong>
                     </span>
                     <div className="border border-slate-300 rounded-xl p-3 bg-slate-50/20 space-y-1.5 text-[10px]">
-                      <p><strong>CVS:</strong> {sec.CVS || `- S1, S2: Normal, Pulse: Regular ${currentCase.vitals.hr || "75"} bpm, Apex Beat: Normal, localized in the 5th intercostal space, midclavicular line. Precordial Heave: Absent, Added Sounds: None, Murmurs: None`}</p>
-                      <p><strong>CHEST / RS:</strong> {sec.RS || `- Expansion: Equal bilaterally, Percussion: Resonant bilaterally, Breath Sounds: Vesicular, equal bilaterally, Vocal Resonance: Normal, Added Sounds: None.`}</p>
-                      <p><strong>Abdomen (PA):</strong> {sec.PA || `- Umbilical: Central, no abnormalities, Organomegaly: None, Percussion: Normal tympany, no dullness. Bowel Sounds: Normal, active in all quadrants, External Genitalia: Normal, no abnormalities. Hernial Orifices: No bulging, Per Rectal: No tenderness, normal tone, Per Vaginal: Normal findings.`}</p>
-                      <p><strong>CNS:</strong> {sec.CNS || `- Higher Mental Functions: Normal, alert and oriented, Cranial Nerves: Intact (I-XII), Sensory System: Normal, intact to light touch, pain, and temperature, Motor System: Normal muscle tone, strength 5/5 in all limbs, Reflex: Normal deep tendon reflexes (2+), no pathological reflexes, Romberg Sign: Negative, Cerebellar Signs: No dysmetria, normal finger-nose test, Signs of Meningeal Irritation: None, Gait: Normal, steady, no ataxia, Carotid Bruit: None.`}</p>
+                      <p><strong>CVS:</strong> {sec.CVS || "Not documented"}</p>
+                      <p><strong>CHEST / RS:</strong> {sec.RS || "Not documented"}</p>
+                      <p><strong>Abdomen (PA):</strong> {sec.PA || "Not documented"}</p>
+                      <p><strong>CNS:</strong> {sec.CNS || "Not documented"}</p>
                     </div>
                   </div>
                 </>
