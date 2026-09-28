@@ -32,6 +32,10 @@ function assertDoesNotContain(haystack: unknown, needle: string, message: string
 async function runPoisoningBenchmark() {
   const preview = await interpretMatePreview({ transcript: poisoningNarrative });
   const mapped = preview.mappedFields;
+  console.log(
+  "\n[MATE POISONING MAPPED]\n",
+  JSON.stringify(mapped, null, 2)
+);
 
   assert.equal(preview.executionMode, "PREVIEW");
   assert.equal(preview.isPediatric, false, "28-year-old must route to adult case sheet");
