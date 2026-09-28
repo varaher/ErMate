@@ -28,66 +28,45 @@ service cloud.firestore {
       return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-@.]+$');
     }
 
-    // Admin-tier roles. NOTE: 'Senior Consultant' was REMOVED from this list —
-    // in every screen reviewed (RoleChangeSection, TeamRosterBoard,
-    // ProfileSettingsView) Senior Consultants are treated as non-admin.
-    // Having them here let any Consultant self-promote to HOD.
-    // Confirm with Neeraj before re-adding it (SEC-08, still open).
-    //
-    // IMPORTANT (SEC-24, Sept 1): isAdminRole() checks ONLY the caller's role
-    // string. It does NOT check which hospital the caller belongs to. Do not
-    // use isAdminRole() alone as a cross-hospital bypass — that is exactly
-    // the bug SEC-24 fixes. Use isPlatformAdmin() below for any bypass that
-    // is meant to cross hospital boundaries.
-    function isAdminRole() {
-      return isLoggedIn() &&
-        (
-          get(/databases/$(database)/documents/users/$(uid())).data.role in
-            ['hod', 'owner', 'HOD / Shift Lead', 'HOD / Department Lead']
-          || (('email' in request.auth.token) && request.auth.token.email == 'varahgrp@gmail.com')
-        );
-    }
-
-    // NEW (SEC-24, Sept 1): true platform-level superadmin only — does NOT
-    // include ordinary HODs. This is the only identity allowed to bypass
-    // hospital-scoping (sameHospital()) across hospital boundaries.
+    // True platform-level superadmin only. The ONLY identity allowed to cross
+    // hospital boundaries.
     function isPlatformAdmin() {
       return isLoggedIn() && ('email' in request.auth.token) && request.auth.token.email == 'varahgrp@gmail.com';
     }
 
-    function myHospital() {
-      return get(/databases/$(database)/documents/users/$(uid())).data.hospital;
+    // Deprecated. Kept only so older rule references cannot silently grant
+    // HOD power: it now means platform admin, nothing else. Hospital-level
+    // admin authority is isHospitalAdminFor() on a verified team_members/{uid}.
+    function isAdminRole() {
+      return isPlatformAdmin();
     }
 
-    // A user may touch a hospital-scoped document if they are logged in AND
-    // either belong to that hospital, or are the true platform superadmin.
-    //
-    // FIXED (SEC-24, Sept 1): previously bypassed via isAdminRole(), which
-    // let ANY HOD (at any hospital) pass regardless of docHospital. That
-    // silently defeated hospital-scoping for every collection using this
-    // helper (cases, and now team_members/handovers/subcollections below)
-    // for every user holding an HOD/Owner role. Now only isPlatformAdmin()
-    // (varahgrp@gmail.com) bypasses the hospital match. An HOD is still
-    // subject to the same myHospital() == docHospital check as anyone else.
+    // ROOT-OF-TRUST: hospital scoping comes ONLY from the verified
+    // team_members/{uid} record, never from the user-editable users.hospital.
     function sameHospital(docHospital) {
-      return isLoggedIn() && (myHospital() == docHospital || isPlatformAdmin());
+      return isLoggedIn() && (canAccessLegacyHospital(docHospital) || isPlatformAdmin());
     }
 
-    // ── Phase-3 Membership & Ownership Helpers ─────────────────
-
-    function memberDoc(userId) {
-      return get(/databases/$(database)/documents/team_members/$(userId));
+    function isExactAdminRole(roleStr) {
+      return roleStr is string && roleStr.trim().lower() in [
+        'hod',
+        'hod / department lead',
+        'hod / shift lead'
+      ];
     }
 
-    // Normalizes membership hospital identifier (prefers hospitalId, falls back to hospital)
-    function getMembershipHospital(memberData) {
-      return (memberData.get('hospitalId', null) is string && memberData.get('hospitalId', '') != '')
-        ? memberData.get('hospitalId', '')
-        : (
-            (memberData.get('hospital', null) is string && memberData.get('hospital', '') != '')
-              ? memberData.get('hospital', '')
-              : ''
-          );
+    // ── Membership helpers (team_members/{uid} is the root of trust) ──
+
+    function checkActiveMember(m, hospId) {
+      return m.get('status', '') in ['active', 'Active (Joined)']
+        && m.get('membershipVerified', false) == true
+        && (
+          m.get('hospitalId', '') == hospId
+          || (
+            m.get('hospitalId', null) == null
+            && m.get('hospital', '') == hospId
+          )
+        );
     }
 
     function hasActiveHospitalMembership(userId, hospId) {
@@ -96,16 +75,75 @@ service cloud.firestore {
         && hospId is string
         && hospId.size() > 0
         && exists(/databases/$(database)/documents/team_members/$(userId))
-        && memberDoc(userId).data.get('status', '') == 'active'
-        && getMembershipHospital(memberDoc(userId).data) == hospId;
+        && checkActiveMember(get(/databases/$(database)/documents/team_members/$(userId)).data, hospId);
+    }
+
+    function checkAnyActiveMember(m) {
+      return m.get('status', '') in ['active', 'Active (Joined)']
+        && m.get('membershipVerified', false) == true
+        && (
+          (m.get('hospitalId', null) is string && m.get('hospitalId', '') != '')
+          || (m.get('hospital', null) is string && m.get('hospital', '') != '')
+        );
     }
 
     function userHasActiveHospitalMembership(userId) {
       return isLoggedIn()
         && userId != null
         && exists(/databases/$(database)/documents/team_members/$(userId))
-        && memberDoc(userId).data.get('status', '') == 'active'
-        && getMembershipHospital(memberDoc(userId).data) != '';
+        && checkAnyActiveMember(get(/databases/$(database)/documents/team_members/$(userId)).data);
+    }
+
+    function checkLegacyMember(m, hospitalValue) {
+      return m.get('status', '') in ['active', 'Active (Joined)']
+        && m.get('membershipVerified', false) == true
+        && (
+          m.get('hospitalId', '') == hospitalValue
+          || m.get('hospitalName', '') == hospitalValue
+          || m.get('hospital', '') == hospitalValue
+          || (
+            m.get('legacyHospitalNames', null) is list
+            && hospitalValue in m.get('legacyHospitalNames', [])
+          )
+        );
+    }
+
+    function canAccessLegacyHospital(hospitalValue) {
+      return isLoggedIn() && (
+        isPlatformAdmin()
+        || (
+          hospitalValue is string && hospitalValue.size() > 0
+          && exists(/databases/$(database)/documents/team_members/$(uid()))
+          && checkLegacyMember(get(/databases/$(database)/documents/team_members/$(uid())).data, hospitalValue)
+        )
+      );
+    }
+
+    function checkAdminMember(m, hospId) {
+      return m.get('status', '') in ['active', 'Active (Joined)']
+        && m.get('membershipVerified', false) == true
+        && isExactAdminRole(m.get('role', ''))
+        && (
+          m.get('hospitalId', '') == hospId
+          || m.get('hospital', '') == hospId
+          || m.get('hospitalName', '') == hospId
+          || (
+            m.get('legacyHospitalNames', null) is list
+            && hospId in m.get('legacyHospitalNames', [])
+          )
+        );
+    }
+
+    function isHospitalAdminFor(hospId) {
+      return isLoggedIn() && (
+        isPlatformAdmin()
+        || (
+          hospId is string
+          && hospId.size() > 0
+          && exists(/databases/$(database)/documents/team_members/$(uid()))
+          && checkAdminMember(get(/databases/$(database)/documents/team_members/$(uid())).data, hospId)
+        )
+      );
     }
 
     function isValidHospitalCaseCreate(data) {
@@ -138,17 +176,90 @@ service cloud.firestore {
         )
         || (
           !('workspaceType' in caseData)
-          && sameHospital(caseData.get('hospital', ''))
+          && canAccessLegacyHospital(caseData.get('hospital', ''))
         )
       );
     }
 
-    // ── Cases Rules ──────────────────────────────────────────
-    // Phase-3 transitional cutover rules:
-    // - All new cases must be ownership-aware (hospital or individual).
-    // - Existing legacy cases remain readable/updatable via sameHospital fallback.
-    // - Subcollections inherit authorization strictly from parent case.
-    // - Ordinary clinicians cannot hard delete ownership-aware cases.
+    function isValidHospitalSessionCreate(data) {
+      return data.get('workspaceType', '') == 'hospital'
+        && data.get('ownerUid', '') == uid()
+        && data.get('hospitalId', '') is string
+        && data.get('hospitalId', '').size() > 0
+        && data.get('linkedCaseId', null) == null
+        && hasActiveHospitalMembership(uid(), data.get('hospitalId', ''));
+    }
+
+    function isValidIndividualSessionCreate(data) {
+      return data.get('workspaceType', '') == 'individual'
+        && data.get('ownerUid', '') == uid()
+        && data.get('hospitalId', null) == null
+        && data.get('linkedCaseId', null) == null
+        && !userHasActiveHospitalMembership(uid());
+    }
+
+    function canAccessSession(sessionData) {
+      return isLoggedIn() && (
+        isPlatformAdmin()
+        || (
+          sessionData.get('linkedCaseId', null) != null
+          && exists(/databases/$(database)/documents/cases/$(sessionData.linkedCaseId))
+          && canAccessCase(get(/databases/$(database)/documents/cases/$(sessionData.linkedCaseId)).data)
+        )
+        || (
+          sessionData.get('linkedCaseId', null) == null
+          && sessionData.get('ownerUid', '') == uid()
+          && (
+            (
+              sessionData.get('workspaceType', '') == 'hospital'
+              && hasActiveHospitalMembership(uid(), sessionData.get('hospitalId', ''))
+            )
+            || (
+              sessionData.get('workspaceType', '') == 'individual'
+            )
+          )
+        )
+      );
+    }
+
+    // Enforces the Scribe session -> ClinicalCase workspace invariant.
+    // Hospital sessions may link only to the same hospital (modern case) or
+    // an accessible legacy case of that same verified hospital membership.
+    // Individual sessions may link only to the owner's individual case.
+    function canLinkSessionToCase(sessionData, caseData) {
+      return isLoggedIn() && (
+        isPlatformAdmin()
+        || (
+          sessionData.get('workspaceType', '') == 'hospital'
+          && sessionData.get('hospitalId', '') is string
+          && sessionData.get('hospitalId', '') != ''
+          && hasActiveHospitalMembership(uid(), sessionData.get('hospitalId', ''))
+          && (
+            (
+              caseData.get('workspaceType', '') == 'hospital'
+              && caseData.get('hospitalId', '') == sessionData.get('hospitalId', '')
+            )
+            || (
+              !('workspaceType' in caseData)
+              && canAccessLegacyHospital(caseData.get('hospital', ''))
+            )
+          )
+        )
+        || (
+          sessionData.get('workspaceType', '') == 'individual'
+          && sessionData.get('ownerUid', '') == uid()
+          && caseData.get('workspaceType', '') == 'individual'
+          && caseData.get('ownerUid', '') == sessionData.get('ownerUid', '')
+        )
+      );
+    }
+
+    // ── Cases ─────────────────────────────────────────────────
+    // - New cases must be ownership-aware (hospital or individual).
+    // - Legacy cases (no workspaceType) remain accessible via verified
+    //   membership matching case.hospital (hospitalName / legacyHospitalNames).
+    // - A case's hospital can never be changed by a client.
+    // - Only the platform admin can hard-delete.
 
     match /cases/{caseId} {
       allow read: if canAccessCase(resource.data);
@@ -163,7 +274,6 @@ service cloud.firestore {
         isPlatformAdmin()
         ||
         (
-          // Ownership-aware case update: immutable metadata & active membership / owner check
           'workspaceType' in existing()
           && incoming().workspaceType == existing().workspaceType
           && incoming().createdByUid == existing().createdByUid
@@ -183,23 +293,19 @@ service cloud.firestore {
         )
         ||
         (
-          // Legacy case update: preserves clinical updates, strictly denies Phase-3 injection
+          // Legacy case: clinical updates allowed; no Phase-3 field injection;
+          // hospital label frozen.
           !('workspaceType' in existing())
-          && sameHospital(existing().hospital)
+          && canAccessLegacyHospital(existing().get('hospital', ''))
           && !('workspaceType' in incoming())
           && !('ownerUid' in incoming())
           && !('hospitalId' in incoming())
           && !('createdByUid' in incoming())
+          && incoming().get('hospital', '') == existing().get('hospital', '')
         )
       );
 
-      allow delete: if isLoggedIn() && (
-        isPlatformAdmin()
-        || (
-          !('workspaceType' in existing())
-          && sameHospital(existing().hospital)
-        )
-      );
+      allow delete: if isPlatformAdmin();
 
       match /{subcollection}/{subDoc=**} {
         allow read, create, update, delete: if
@@ -207,49 +313,114 @@ service cloud.firestore {
       }
     }
 
-    // ── Departments Cases Rules ────────────────────────────────
+    // ── Scribe Sessions ───────────────────────────────────────
 
-    match /departments/{deptId}/cases/{caseId} {
-      allow read, update, delete: if isLoggedIn() &&
-        (myHospital() == deptId || isPlatformAdmin());
-      allow create: if isLoggedIn() &&
-        (myHospital() == deptId || isPlatformAdmin());
+    match /scribeSessions/{sessionId} {
+      allow read: if canAccessSession(resource.data);
 
-      match /addenda/{addendumId} {
-        allow read, create, update, delete: if isLoggedIn() &&
-          (myHospital() == deptId || isPlatformAdmin());
+      allow create: if isLoggedIn() && (
+        isPlatformAdmin()
+        || isValidHospitalSessionCreate(incoming())
+        || isValidIndividualSessionCreate(incoming())
+      );
+
+      allow update: if isLoggedIn() && (
+        isPlatformAdmin()
+        || (
+          incoming().ownerUid == existing().ownerUid
+          && incoming().workspaceType == existing().workspaceType
+          && incoming().get('hospitalId', null) == existing().get('hospitalId', null)
+          && incoming().get('createdAt', null) == existing().get('createdAt', null)
+          && (
+            incoming().get('linkedCaseId', null) == existing().get('linkedCaseId', null)
+            || (
+              existing().get('linkedCaseId', null) == null
+              && incoming().get('linkedCaseId', null) != null
+              && exists(/databases/$(database)/documents/cases/$(incoming().linkedCaseId))
+              && canLinkSessionToCase(
+                existing(),
+                get(/databases/$(database)/documents/cases/$(incoming().linkedCaseId)).data
+              )
+            )
+          )
+          && canAccessSession(resource.data)
+        )
+      );
+
+      allow delete: if isPlatformAdmin();
+
+      match /messages/{messageId} {
+        allow read, write: if
+          exists(/databases/$(database)/documents/scribeSessions/$(sessionId))
+          && canAccessSession(get(/databases/$(database)/documents/scribeSessions/$(sessionId)).data);
       }
     }
 
-    // ── Users collection ──────────────────────────────────────
-    // NOTE: isAdminRole() bypasses here are UNCHANGED in this pass — this
-    // means any HOD, at any hospital, can still edit any user's profile
-    // (excluding the self-edit restrictions below). This is the same class
-    // of gap as SEC-24 but touches many more collections (users,
-    // hodClaimRequests, contributions, hospital_subscriptions,
-    // mortalityAudits, team_members-delete). Flagged for a dedicated review,
-    // not fixed here — see note at end of file.
+    // ── Department case copies ────────────────────────────────
+    // deptId must match the member's hospitalId / hospitalName / hospital or
+    // one of legacyHospitalNames (department slugs must be added to
+    // legacyHospitalNames during migration if these copies are still read).
+
+    match /departments/{deptId}/cases/{caseId} {
+      allow read: if isLoggedIn() &&
+        (canAccessLegacyHospital(deptId) || isPlatformAdmin());
+      allow create: if isLoggedIn() &&
+        (canAccessLegacyHospital(deptId) || isPlatformAdmin());
+      allow update: if isLoggedIn()
+        && (canAccessLegacyHospital(deptId) || isPlatformAdmin())
+        && incoming().get('hospital', '') == existing().get('hospital', '')
+        && incoming().get('departmentId', '') == existing().get('departmentId', '');
+      allow delete: if isPlatformAdmin();
+
+      match /addenda/{addendumId} {
+        allow read, create, update, delete: if isLoggedIn() &&
+          (canAccessLegacyHospital(deptId) || isPlatformAdmin());
+      }
+    }
+
+    // ── Users ─────────────────────────────────────────────────
+    // - users.hospital is DISPLAY-ONLY and carries no authority. Clients may
+    //   not set it at sign-up nor change it later; only the backend (Admin SDK,
+    //   on invite accept / approval / leave) writes it.
+    // - hospitalLabel is a free-text display field the doctor may edit.
+    // - role, aiCredits, subscriptionTier: never self-editable.
+    // - Only the platform admin may edit another user's profile.
 
     match /users/{userId} {
       allow read: if isLoggedIn();
+
       allow create: if isLoggedIn() && isOwner(userId)
         && incoming().name is string && incoming().name.size() <= 100
         && incoming().email is string && incoming().email.size() <= 100
         && incoming().role in ['EM Resident', 'Resident', 'resident', 'Doctor', 'Physician', 'Emergency Physician']
-        && incoming().hospital is string && incoming().hospital.size() <= 100
-        // New accounts start with fixed defaults only — no self-chosen credits/tier.
+        && (!('hospital' in incoming()) || incoming().hospital == '')
+        && (!('hospitalLabel' in incoming()) || (incoming().hospitalLabel is string && incoming().hospitalLabel.size() <= 100))
         && incoming().get('aiCredits', 100) == 100
         && incoming().get('streak', 1) == 1
         && incoming().get('subscriptionTier', 'Free Standard') is string;
-      // ── Standalone Discussion Sessions (Sept 8) ─────────────────
-      // New subcollections introduced by scribeChatStorage.ts's discuss-
-      // mode feature: users/{uid}/discussions/{discussionId} (session
-      // metadata + AI summary) and users/{uid}/meta/discussionCounter_*
-      // (per-day sequence counter for the Dis-YYYYMMDD-### id format).
-      // Both are strictly private to the owning doctor — no hospital
-      // scoping needed here since these are personal clinical scratch
-      // sessions, not shared patient records. isOwner(userId) matches
-      // this file's existing pattern for personal-only data.
+
+      allow update: if isLoggedIn()
+        && (
+          isPlatformAdmin()
+          ||
+          (
+            isOwner(userId)
+            && (!('role' in incoming()) || incoming().role == existing().get('role', null))
+            && (!('aiCredits' in incoming()) || incoming().aiCredits == existing().get('aiCredits', null))
+            && (!('subscriptionTier' in incoming()) || incoming().subscriptionTier == existing().get('subscriptionTier', null))
+            && incoming().get('hospital', '') == existing().get('hospital', '')
+          )
+        )
+        && incoming().name is string && incoming().name.size() <= 100
+        && incoming().email is string && incoming().email.size() <= 100
+        && incoming().role is string && incoming().role.size() <= 100
+        && (!('hospital' in incoming()) || (incoming().hospital is string && incoming().hospital.size() <= 100))
+        && (!('hospitalLabel' in incoming()) || (incoming().hospitalLabel is string && incoming().hospitalLabel.size() <= 100))
+        && (incoming().get('aiCredits', 0) is int)
+        && (incoming().get('streak', 0) is int)
+        && (incoming().get('subscriptionTier', '') is string);
+
+      // Personal discussion sessions — private to the owning doctor.
       match /discussions/{discussionId} {
         allow read, create, update, delete: if isLoggedIn() && isOwner(userId);
 
@@ -262,10 +433,8 @@ service cloud.firestore {
         allow read, write: if isLoggedIn() && isOwner(userId);
       }
 
-      // ── Log Book Entries ─────────────────────────────────────────
-      // Strictly private to the owning doctor — HOD/team cannot read.
-      // Client CREATE denied — created only via backend trusted sync.
-      // Client UPDATE: owner only, restricted strictly to learningPoints, skills, updatedAt.
+      // My Log Book — private to the owning doctor. Created only by the
+      // backend; the owner may edit only learningPoints / skills / updatedAt.
       match /logbook/{entryId} {
         allow read, delete: if isLoggedIn() && isOwner(userId);
         allow create: if false;
@@ -275,59 +444,39 @@ service cloud.firestore {
           && (!('skills' in incoming()) || incoming().skills is list)
           && (!('updatedAt' in incoming()) || incoming().updatedAt is string);
       }
-      allow update: if isLoggedIn()
-        && (
-          // Admins may change anything about any user, including role.
-          isAdminRole()
-          ||
-          // A user may update their OWN profile, but:
-          //  - cannot change their own role
-          //  - cannot change their own aiCredits or subscriptionTier
-          //    (those are only ever written by the payment webhook /
-          //    Admin SDK, which is not subject to these rules)
-          (
-            isOwner(userId)
-            && (!('role' in incoming()) || incoming().role == existing().role)
-            && (!('aiCredits' in incoming()) || incoming().aiCredits == existing().aiCredits)
-            && (!('subscriptionTier' in incoming()) || incoming().subscriptionTier == existing().subscriptionTier)
-          )
-        )
-        && incoming().name is string && incoming().name.size() <= 100
-        && incoming().email is string && incoming().email.size() <= 100
-        && incoming().role is string && incoming().role.size() <= 100
-        && incoming().hospital is string && incoming().hospital.size() <= 100
-        && (incoming().get('aiCredits', 0) is int)
-        && (incoming().get('streak', 0) is int)
-        && (incoming().get('subscriptionTier', '') is string);
     }
 
-    // ── Role Change Requests (ErMate Rule 10) ──────────────────
+    // ── Role Change Requests ──────────────────────────────────
 
     match /roleChangeRequests/{requestId} {
-      allow read: if isLoggedIn();
+      allow read: if isLoggedIn()
+        && (resource.data.get('requestedBy', '') == uid() || isPlatformAdmin());
       allow create: if isLoggedIn()
         && incoming().requestedBy == request.auth.uid
         && incoming().status == 'pending';
       allow update: if isLoggedIn()
         && (
-          // Requester may only cancel/withdraw their own request, not approve it.
-          (incoming().requestedBy == request.auth.uid
-            && incoming().status == 'rejected'
-            && existing().status == 'pending')
-          || isAdminRole()
+          (
+            existing().get('requestedBy', '') == uid()
+            && incoming().get('requestedBy', '') == existing().get('requestedBy', '')
+            && existing().get('status', '') == 'pending'
+            && incoming().get('status', '') == 'rejected'
+            && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
+          )
+          || isPlatformAdmin()
         );
       allow delete: if false;
     }
 
-    // ── Role Change Audit Log (NABH Compliance) ────────────────
+    // ── Role Change Audit Log (NABH) — append-only, admin/backend only ──
 
     match /roleChangeLog/{logId} {
-      allow read: if isAdminRole();
-      allow create: if isLoggedIn();
+      allow read: if isPlatformAdmin();
+      allow create: if isPlatformAdmin();
       allow update, delete: if false;
     }
 
-    // ── HOD Claim Requests (bootstrapping gate) ────────────────
+    // ── HOD Claim Requests (bootstrapping gate) ───────────────
 
     match /hodClaimRequests/{claimId} {
       allow create: if isLoggedIn()
@@ -341,148 +490,188 @@ service cloud.firestore {
       allow read: if isLoggedIn()
         && (
           resource.data.claimedByUid == request.auth.uid
-          || isAdminRole()
+          || isPlatformAdmin()
         );
 
-      allow update: if request.auth.token.email == 'varahgrp@gmail.com';
+      allow update: if isPlatformAdmin();
     }
 
-    // ── Handovers ───────────────────────────────────────────────
-    // FIXED (SEC-23, Sept 1): was "allow read, create, update, delete: if
-    // isLoggedIn()" — any logged-in doctor at any hospital could read/write
-    // any other hospital's handovers. Hospital field name confirmed as
-    // "hospital" directly from the live App.tsx query:
-    //   query(collection(db, "handovers"), where("hospital", "==", userHospital))
-    // Same sameHospital() pattern as cases.
+    // ── Handovers ─────────────────────────────────────────────
+    // Scoped by verified membership; the hospital label is frozen on update.
 
     match /handovers/{handoverId} {
-      allow read, update, delete: if sameHospital(resource.data.hospital);
-      allow create: if isLoggedIn() && sameHospital(incoming().hospital);
+      allow read, delete: if sameHospital(resource.data.get('hospital', ''));
+      allow update: if sameHospital(resource.data.get('hospital', ''))
+        && incoming().get('hospital', '') == existing().get('hospital', '');
+      allow create: if isLoggedIn() && sameHospital(incoming().get('hospital', ''));
     }
 
-    match /quick_paste_patients/{itemId} {
-      allow read: if isLoggedIn();
-      allow create, update, delete: if isLoggedIn();
-    }
-
-    // FIXED (SEC-23, Sept 1) — STILL UNCONFIRMED, BUT LOW RISK RIGHT NOW:
-    // Unlike "handovers" (confirmed via a live document, Sept 1, field
-    // is "hospital" — matches this rule exactly), neither
-    // handoverPatients nor handover_patients appeared at all in the live
-    // Firestore collection list when checked Sept 1. Collections only show
-    // up once they hold at least one document, so this strongly suggests
-    // these two are currently empty / not actively used. Applying the same
-    // "hospital" field name here as a best guess is low-risk while the
-    // collections are empty — but CONFIRM with the dev whether this
-    // feature is actually wired up, and re-check the real field name
-    // against a live document the first time one gets created, before
-    // trusting this block.
     match /handoverPatients/{patientId} {
-      allow read, update, delete: if sameHospital(resource.data.hospital);
-      allow create: if isLoggedIn() && sameHospital(incoming().hospital);
+      allow read, delete: if sameHospital(resource.data.get('hospital', ''));
+      allow update: if sameHospital(resource.data.get('hospital', ''))
+        && incoming().get('hospital', '') == existing().get('hospital', '');
+      allow create: if isLoggedIn() && sameHospital(incoming().get('hospital', ''));
     }
 
     match /handover_patients/{patientId} {
-      allow read, update, delete: if sameHospital(resource.data.hospital);
-      allow create: if isLoggedIn() && sameHospital(incoming().hospital);
+      allow read, delete: if sameHospital(resource.data.get('hospital', ''));
+      allow update: if sameHospital(resource.data.get('hospital', ''))
+        && incoming().get('hospital', '') == existing().get('hospital', '');
+      allow create: if isLoggedIn() && sameHospital(incoming().get('hospital', ''));
     }
 
-    // ── Team members ────────────────────────────────────────────
-    // FIXED (SEC-21, Sept 1):
-    //  - read: was "if isLoggedIn()" with zero hospital-scoping — any
-    //    logged-in user could read every hospital's roster. Scoped to
-    //    sameHospital(). This goes slightly beyond the literal SEC-21
-    //    wording (which only named create/update/delete) but is the same
-    //    bug class — flagging for your sign-off rather than silently
-    //    leaving it.
-    //  - create: previously only validated that a "hospital" field existed
-    //    as a string, never that it matched the creator's own hospital.
-    //    Now requires sameHospital(incoming().hospital).
-    //  - update: previously had no hospital check at all. Now requires the
-    //    existing record's hospital to match the caller's (sameHospital on
-    //    existing()), AND blocks changing a member's hospital assignment
-    //    unless done by the platform admin.
-    //  - delete: previously only isAdminRole(), which (pre-SEC-24 fix)
-    //    meant any HOD anywhere could delete any hospital's team member.
-    //    Now requires sameHospital(resource.data.hospital) in addition to
-    //    isAdminRole(), so a normal HOD can only delete within their own
-    //    hospital; only isPlatformAdmin() can act cross-hospital.
+    // ── Quick Paste ───────────────────────────────────────────
+    // Hospital records are restricted to verified members of that hospital.
+    // Creator identity is bound to the authenticated user at CREATE and is
+    // immutable afterward. Independent items remain creator-only.
+
+    match /quick_paste_patients/{itemId} {
+      allow read: if isLoggedIn()
+        && (
+          isPlatformAdmin()
+          || (
+            resource.data.get('hospital', '') != ''
+            && canAccessLegacyHospital(resource.data.get('hospital', ''))
+          )
+          || (
+            resource.data.get('hospital', '') == ''
+            && ('email' in request.auth.token)
+            && request.auth.token.email != null
+            && resource.data.get('createdByEmail', '') != ''
+            && resource.data.get('createdByEmail', '').lower() == request.auth.token.email.lower()
+          )
+        );
+
+      allow create: if isLoggedIn()
+        && (
+          isPlatformAdmin()
+          || (
+            incoming().get('hospital', '') != ''
+            && canAccessLegacyHospital(incoming().get('hospital', ''))
+            && incoming().get('createdByUid', '') == uid()
+            && ('email' in request.auth.token)
+            && request.auth.token.email != null
+            && incoming().get('createdByEmail', '') != ''
+            && incoming().get('createdByEmail', '').lower() == request.auth.token.email.lower()
+          )
+          || (
+            incoming().get('hospital', '') == ''
+            && ('email' in request.auth.token)
+            && request.auth.token.email != null
+            && incoming().get('createdByEmail', '') != ''
+            && incoming().get('createdByEmail', '').lower() == request.auth.token.email.lower()
+            && (
+              !('createdByUid' in incoming())
+              || incoming().get('createdByUid', '') == uid()
+            )
+          )
+        );
+
+      allow update: if isLoggedIn()
+        && (
+          isPlatformAdmin()
+          || (
+            (
+              (
+                resource.data.get('hospital', '') != ''
+                && canAccessLegacyHospital(resource.data.get('hospital', ''))
+              )
+              || (
+                resource.data.get('hospital', '') == ''
+                && ('email' in request.auth.token)
+                && request.auth.token.email != null
+                && resource.data.get('createdByEmail', '') != ''
+                && resource.data.get('createdByEmail', '').lower() == request.auth.token.email.lower()
+              )
+            )
+            && incoming().get('hospital', '') == existing().get('hospital', '')
+            && incoming().get('createdByEmail', '') == existing().get('createdByEmail', '')
+            && incoming().get('createdByUid', '') == existing().get('createdByUid', '')
+          )
+        );
+
+      allow delete: if isLoggedIn()
+        && (
+          isPlatformAdmin()
+          || (
+            resource.data.get('hospital', '') != ''
+            && canAccessLegacyHospital(resource.data.get('hospital', ''))
+          )
+          || (
+            resource.data.get('hospital', '') == ''
+            && ('email' in request.auth.token)
+            && request.auth.token.email != null
+            && resource.data.get('createdByEmail', '') != ''
+            && resource.data.get('createdByEmail', '').lower() == request.auth.token.email.lower()
+          )
+        );
+    }
+
+    // ── Team members ──────────────────────────────────────────
+    // - create / delete: backend (Admin SDK) or platform admin only.
+    // - update: own shift, or an exact verified HOD of the same hospital
+    //   changing a colleague's shift. Only ['shift','updatedAt'] may change.
 
     match /team_members/{memberId} {
       allow read: if isLoggedIn()
         && (
           memberId == uid()
-          || sameHospital(resource.data.hospital)
+          || isPlatformAdmin()
+          || hasActiveHospitalMembership(uid(), resource.data.get('hospitalId', resource.data.get('hospital', '')))
+          || (
+            resource.data.get('hospitalId', null) == null
+            && canAccessLegacyHospital(resource.data.get('hospital', ''))
+          )
         );
 
-      allow delete: if isLoggedIn() && isValidId(memberId)
-        && sameHospital(resource.data.hospital)
-        && isAdminRole();
+      allow create, delete: if isPlatformAdmin();
 
-      allow create: if isLoggedIn()
-        && isValidId(memberId)
-        && sameHospital(incoming().hospital)
-        && incoming().id is string && incoming().id.size() <= 100
-        && incoming().name is string && incoming().name.size() <= 100
-        && incoming().email is string && incoming().email.size() <= 100
-        && incoming().role is string && incoming().role.size() <= 100
-        && incoming().status is string && incoming().status.size() <= 100
-        && incoming().shift is string && incoming().shift.size() <= 100
-        && incoming().hospital is string && incoming().hospital.size() <= 100;
-
-      allow update: if isLoggedIn()
-        && isValidId(memberId)
-        && sameHospital(existing().hospital)
-        && (!('role' in incoming()) || incoming().role == existing().role || isAdminRole())
-        && (incoming().hospital == existing().hospital || isPlatformAdmin())
-        && incoming().id is string && incoming().id.size() <= 100
-        && incoming().name is string && incoming().name.size() <= 100
-        && incoming().email is string && incoming().email.size() <= 100
-        && incoming().role is string && incoming().role.size() <= 100
-        && incoming().status is string && incoming().status.size() <= 100
-        && incoming().shift is string && incoming().shift.size() <= 100
-        && incoming().hospital is string && incoming().hospital.size() <= 100;
+      allow update: if isPlatformAdmin()
+        || (
+          isLoggedIn()
+          && isValidId(memberId)
+          && userHasActiveHospitalMembership(uid())
+          && incoming().diff(existing()).affectedKeys().hasOnly(['shift', 'updatedAt'])
+          && incoming().shift is string && incoming().shift.size() <= 50
+          && (!('updatedAt' in incoming()) || incoming().updatedAt is string)
+          && (
+            memberId == uid()
+            || isHospitalAdminFor(existing().get('hospitalId', existing().get('hospital', '')))
+          )
+        );
     }
 
-    // ── Hospital subscriptions ──────────────────────────────────
-    // CHANGED: only platform admin may write. A hospital's paid status
-    // should never be settable by a regular logged-in user client-side —
-    // this must be driven by the Razorpay webhook via Admin SDK instead.
+    // ── Hospital subscriptions — written only by payment webhook / admin ──
 
     match /hospital_subscriptions/{hospitalId} {
       allow read: if isLoggedIn();
-      allow create, update: if isAdminRole();
+      allow create, update, delete: if isPlatformAdmin();
     }
 
-    // ── Team Invites ─────────────────────────────────────────────
+    // ── Team Invites — backend only (preview/create/accept via API) ──
 
     match /teamInvites/{token} {
-      allow read: if true;
-      allow create: if isLoggedIn() && isAdminRole();
-      allow update: if isLoggedIn()
-        && incoming().diff(existing()).affectedKeys().hasOnly(['usedCount']);
-      allow delete: if isAdminRole();
+      allow read, write: if isPlatformAdmin();
     }
 
-    // ── Hospital shifts configuration ───────────────────────────
-    // CHANGED: was any logged-in user editing ANY hospital's shifts.
-    // Now scoped to that user's own hospital, or admin.
+    // ── Hospital shift configuration — readable by all, editable by HOD ──
 
     match /hospital_shifts/{hospitalId} {
       allow read: if isLoggedIn();
-      allow create, update, delete: if isLoggedIn()
-        && (myHospital() == hospitalId || isPlatformAdmin());
+      allow create, update, delete: if isLoggedIn() && isHospitalAdminFor(hospitalId);
     }
 
-    // ── Contributions ────────────────────────────────────────────
+    // ── Contributions (educational content, non-clinical) ─────
 
     match /contributions/{contributionId} {
       allow read: if isLoggedIn();
       allow delete: if isLoggedIn() && (
-        resource.data.submitterEmail == null ||
-        !('email' in request.auth.token) ||
-        request.auth.token.email == null ||
-        resource.data.submitterEmail.lower() == request.auth.token.email.lower()
+        isPlatformAdmin()
+        || (
+          ('email' in request.auth.token)
+          && resource.data.get('submitterEmail', '') != ''
+          && resource.data.submitterEmail.lower() == request.auth.token.email.lower()
+        )
       );
       allow create: if isLoggedIn()
         && isValidId(contributionId)
@@ -493,69 +682,87 @@ service cloud.firestore {
         && incoming().breakdown is string && incoming().breakdown.size() <= 2000
         && incoming().status == 'pending'
         && incoming().submittedBy is string && incoming().submittedBy.size() <= 100
-        && (
-          !('email' in request.auth.token) ||
-          request.auth.token.email == null ||
-          incoming().submitterEmail.lower() == request.auth.token.email.lower()
-        );
+        && ('email' in request.auth.token)
+        && incoming().submitterEmail.lower() == request.auth.token.email.lower();
       allow update: if isLoggedIn()
         && isValidId(contributionId)
         && (
-          (incoming().status == 'approved' && incoming().diff(existing()).affectedKeys().hasOnly(['status'])) ||
           (
-            (
-              resource.data.submitterEmail == null ||
-              !('email' in request.auth.token) ||
-              request.auth.token.email == null ||
-              resource.data.submitterEmail.lower() == request.auth.token.email.lower()
-            ) && incoming().diff(existing()).affectedKeys().hasOnly(['title', 'mnemonic', 'category', 'breakdown', 'explanation'])
+            isPlatformAdmin()
+            && incoming().status == 'approved'
+            && incoming().diff(existing()).affectedKeys().hasOnly(['status'])
+          )
+          ||
+          (
+            ('email' in request.auth.token)
+            && resource.data.get('submitterEmail', '') != ''
+            && resource.data.submitterEmail.lower() == request.auth.token.email.lower()
+            && incoming().diff(existing()).affectedKeys().hasOnly(['title', 'mnemonic', 'category', 'breakdown', 'explanation'])
           )
         );
     }
 
-    // ── Mortality Audits (Confidential Medico-Legal Records) ────
-    // FIXED: role strings now match what the app actually stores
-    // ('HOD / Department Lead' etc, not lowercase 'hod'/'consultant').
-    // Needs a live test with an actual HOD account to fully confirm (SEC-10).
-    // NOTE: still no hospital-scoping here (same open question as
-    // "users" above) — an HOD at Hospital A can read Hospital B's
-    // mortality audits. Not fixed in this pass; flagged for the same
-    // dedicated review as the other isAdminRole()-only collections.
+    // ── Mortality Audits (confidential, medico-legal) ─────────
+    // Readable/writable only by a verified exact HOD of the audit's own
+    // hospital. The hospital of an audit can never be changed. Untenanted
+    // audits: platform admin only. Delete: platform admin only.
 
     match /mortalityAudits/{auditId} {
       allow read: if isLoggedIn()
         && (
-          get(/databases/$(database)/documents/users/$(uid())).data.role in
-            ['HOD / Shift Lead', 'HOD / Department Lead', 'Senior Consultant']
-          || isAdminRole()
+          isPlatformAdmin()
+          || (
+            resource.data.get('hospitalId', '') is string
+            && resource.data.get('hospitalId', '') != ''
+            && isHospitalAdminFor(resource.data.hospitalId)
+          )
+          || (
+            resource.data.get('hospitalId', null) == null
+            && resource.data.get('hospital', '') != ''
+            && isHospitalAdminFor(resource.data.hospital)
+          )
         );
 
-      allow write: if isLoggedIn()
+      allow create: if isLoggedIn()
         && (
-          get(/databases/$(database)/documents/users/$(uid())).data.role in
-            ['HOD / Shift Lead', 'HOD / Department Lead']
-          || isAdminRole()
+          isPlatformAdmin()
+          || (
+            incoming().get('hospitalId', '') is string
+            && incoming().get('hospitalId', '') != ''
+            && isHospitalAdminFor(incoming().hospitalId)
+          )
+          || (
+            incoming().get('hospitalId', null) == null
+            && incoming().get('hospital', '') != ''
+            && isHospitalAdminFor(incoming().hospital)
+          )
         );
 
-      allow delete: if false;
+      allow update: if isLoggedIn()
+        && (
+          isPlatformAdmin()
+          || (
+            incoming().get('hospitalId', null) == existing().get('hospitalId', null)
+            && incoming().get('hospital', null) == existing().get('hospital', null)
+            && (
+              (
+                existing().get('hospitalId', '') is string
+                && existing().get('hospitalId', '') != ''
+                && isHospitalAdminFor(existing().hospitalId)
+              )
+              || (
+                existing().get('hospitalId', null) == null
+                && existing().get('hospital', '') != ''
+                && isHospitalAdminFor(existing().hospital)
+              )
+            )
+          )
+        );
+
+      allow delete: if isPlatformAdmin();
     }
 
-    // ── Bound Chat Sessions ──────────────────────────────────────
-    // FIXED (SEC-23, Sept 1) — CONFIRMED via live document inspection
-    // (Sept 1): chatSessions documents do NOT carry a "hospital" field, nor
-    // a simple "caseId". Instead they link via "contextType" (e.g.
-    // "discharge") + "contextRef" (e.g. "discharges/C-5025") to different
-    // kinds of records. Tracing hospital ownership through that dynamic
-    // path in security rules would be fragile, so this uses a simpler and
-    // still-effective interim fix: restrict access to the doctor who
-    // created the session (every document confirmed to carry "createdBy",
-    // the creator's uid), plus the platform admin.
-    //
-    // This is NOT full hospital-scoping — it's ownership-scoping. It closes
-    // the "any doctor anywhere can read any chat" hole today. True hospital
-    // -scoping would require the app to write a "hospital" field onto each
-    // chatSession at creation time (a small code change, not a rules-only
-    // fix) — logged as a new follow-up item, not done in this pass.
+    // ── Bound Chat Sessions — creator-only ────────────────────
 
     match /chatSessions/{sessionId} {
       allow read, update, delete: if isLoggedIn()
@@ -564,9 +771,7 @@ service cloud.firestore {
         && (incoming().createdBy == uid() || isPlatformAdmin());
     }
 
-    // ── Payment intents (created only by the server via Admin SDK) ──
-    // Admin SDK writes bypass these rules entirely, so this just blocks
-    // any client from reading/tampering with pending payment records.
+    // ── Payment intents — server only ─────────────────────────
 
     match /paymentIntents/{orderId} {
       allow read, write: if false;

@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useRef } from "react";
-import { Send, ArrowLeft, MoreVertical, Paperclip, Sparkles, MessageSquare, Mic as MicIcon, Activity } from "lucide-react";
+import { Send, ArrowLeft, MoreVertical, Paperclip, Sparkles, MessageSquare, Mic as MicIcon, Activity, AlertTriangle, Plus } from "lucide-react";
 import { doc, getDoc, setDoc } from "firebase/firestore";
-import { db } from "../firebase";
+import { db, auth } from "../firebase";
 import {
-  subscribeChatHistory,
+  subscribeSessionAndLegacyHistory,
   appendChatMessage,
-  generateNewCaseId,
   updateChatMessage,
+  createScribeSession,
+  resolveSessionForExistingCase,
   generateNewDiscussionId,
   subscribeDiscussionHistory,
   appendDiscussionMessage,
@@ -14,6 +15,7 @@ import {
   getChatHistory,
   getDiscussionHistory,
 } from "../services/scribeChatStorage";
+import { resolveWorkspaceForUser } from "../utils/workspaceResolver";
 import VoiceRecorder from "./shared/VoiceRecorder";
 import Markdown from "react-markdown";
 import { getChecklistForKind, type CaseSheetKind } from "../../server/caseSheetChecklist";
@@ -46,6 +48,9 @@ interface Message {
 interface VoiceScribeChatViewProps {
   caseId?: string | null;
   caseData?: any;
+  sessionId?: string | null;
+  onSessionIdChange?: (sessionId: string | null) => void;
+  onNewChat?: () => void;
   onBack: () => void;
   onOpenCaseSheet?: (caseId: string) => void;
   onCaseSheetUpdated?: (fields: any) => void;
@@ -396,6 +401,9 @@ export function mergeExtractionUpTo(messages: Message[], targetId: string): any 
 export default function VoiceScribeChatView({
   caseId: propCaseId,
   caseData,
+  sessionId: propSessionId,
+  onSessionIdChange,
+  onNewChat,
   onBack,
   onOpenCaseSheet,
   onCaseSheetUpdated,
@@ -412,9 +420,7 @@ export default function VoiceScribeChatView({
 }: VoiceScribeChatViewProps) {
   const processingActionRef = useRef(false);
   // A chat is "case-linked" if either a real caseId was passed in, OR
-  // the caller didn't explicitly ask for a standalone discussion — this
-  // preserves the original "no caseId = create a new patient case"
-  // behavior for every existing call site.
+  // the caller didn't explicitly ask for a standalone discussion.
   const isDiscussionOnly = initialEntryMode === "discussion" && !propCaseId;
 
   const [messages, setMessages] = useState<Message[]>([
@@ -439,6 +445,74 @@ export default function VoiceScribeChatView({
     messageId?: string;
   } | null>(null);
 
+  // Active case ID: starts null for new unlinked dictation chats, or populated if a case already exists
+  const [activeCaseId, setActiveCaseId] = useState<string | null>(() => {
+    if (isDiscussionOnly) return null;
+    return propCaseId || caseData?.id || null;
+  });
+
+  useEffect(() => {
+    const target = propCaseId || caseData?.id;
+    if (target !== activeCaseId) {
+      setActiveCaseId(target || null);
+    }
+  }, [propCaseId, caseData?.id]);
+
+  // Scribe session state: ensures continuity across remounts and refresh
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(propSessionId || null);
+  const [sessionAttachError, setSessionAttachError] = useState<string | null>(null);
+  const [historyLoadError, setHistoryLoadError] = useState<string | null>(null);
+  const [failedMessages, setFailedMessages] = useState<Map<string, { message: any; error: string }>>(new Map());
+  const pendingMessageQueueRef = useRef<any[]>([]);
+
+  const STANDARD_WELCOME_MESSAGE = {
+    id: "welcome",
+    sender: "ai" as const,
+    text: "ErMate is ready.\n\n🎙️ Dictate the case in your native language and save it to the case sheet.\n💬 Or ask a clinical question — about this patient or any case.",
+    timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+  };
+
+  // On EVERY activeSessionId change:
+  // 1. Synchronously reset UI state to standard welcome-only state
+  // 2. Clear any extraction/draft state derived from the previous session
+  useEffect(() => {
+    if (isDiscussionOnly) return;
+    setMessages([STANDARD_WELCOME_MESSAGE]);
+    setHistoryLoadError(null);
+    setProcedureModalState(null);
+    setProcessingAction(null);
+    setSaveConfirmation(null);
+  }, [activeSessionId, isDiscussionOnly]);
+
+  // Flush messages written before session was ready
+  useEffect(() => {
+    if (!activeSessionId || sessionAttachError) return;
+    if (pendingMessageQueueRef.current.length === 0) return;
+
+    const queue = [...pendingMessageQueueRef.current];
+    pendingMessageQueueRef.current = [];
+
+    const flushQueue = async () => {
+      for (const msg of queue) {
+        try {
+          await appendChatMessage(activeSessionId, msg, { isSession: true });
+          setFailedMessages(prev => {
+            if (!prev.has(msg.id)) return prev;
+            const next = new Map(prev);
+            next.delete(msg.id);
+            return next;
+          });
+        } catch (err: any) {
+          console.error("[VoiceScribeChatView] Failed to flush queued message:", err);
+          const reason = err?.message || "Storage write error";
+          setFailedMessages(prev => new Map(prev).set(msg.id, { message: msg, error: reason }));
+        }
+      }
+    };
+
+    flushQueue();
+  }, [activeSessionId, sessionAttachError]);
+
   const handleSaveDetectedProcedure = async (newNote: ProcedureNote) => {
     if (!activeCaseId) return;
     try {
@@ -462,27 +536,8 @@ export default function VoiceScribeChatView({
     }
   };
 
-  // Mode: dictation is only meaningful when there's a real case to write
-  // into. A discussion-only session (no linked patient) has nothing to
-  // dictate into, so it's locked to "discuss" from the start.
   const [currentMode, setCurrentMode] = useState<ChatMode>(isDiscussionOnly ? "discuss" : "dictation");
   const [showLensMenu, setShowLensMenu] = useState(false);
-
-  // activeCaseId: for case-linked chats this is the real C-#### id
-  // (existing behavior, unchanged). For discussion-only chats, this
-  // starts null and is lazily filled in with a Dis-YYYYMMDD-### id
-  // once generated (async, since it involves a Firestore transaction).
-  const [activeCaseId, setActiveCaseId] = useState<string | null>(() => {
-    if (isDiscussionOnly) return null;
-    return propCaseId || caseData?.id || generateNewCaseId();
-  });
-
-  useEffect(() => {
-    const target = propCaseId || caseData?.id;
-    if (target && target !== activeCaseId) {
-      setActiveCaseId(target);
-    }
-  }, [propCaseId, caseData?.id]);
   const [discussionId, setDiscussionId] = useState<string | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -502,16 +557,105 @@ export default function VoiceScribeChatView({
   useEffect(() => {
     if (!isDiscussionOnly) return;
     let cancelled = false;
-    generateNewDiscussionId().then(id => {
+    const uid = auth.currentUser?.uid || "";
+    generateNewDiscussionId(uid).then(id => {
       if (!cancelled) setDiscussionId(id);
     });
     return () => { cancelled = true; };
   }, [isDiscussionOnly]);
 
-  // Subscribe to whichever history source applies.
+  // Session initialization / recovery effect
+  useEffect(() => {
+    let isMounted = true;
+    if (isDiscussionOnly) return;
+
+    async function initSession() {
+      const user = auth.currentUser;
+      if (!user) return;
+
+      // Case A: Scribe opened on an EXISTING case
+      const existingCaseItem = caseData || (propCaseId ? { id: propCaseId } : null);
+      if (existingCaseItem?.id) {
+        try {
+          const workspace = await resolveWorkspaceForUser(user.uid);
+          const res = await resolveSessionForExistingCase(existingCaseItem, user, workspace);
+          if (isMounted) {
+            setActiveSessionId(res.sessionId);
+            onSessionIdChange?.(res.sessionId);
+            setSessionAttachError(null);
+            if (res.warning) {
+              console.warn(res.warning);
+            }
+          }
+        } catch (err: any) {
+          console.error("[VoiceScribeChatView] Session resolve error for existing case:", err);
+          if (isMounted) {
+            setSessionAttachError(err?.message || "Unable to attach Scribe history to this case.");
+          }
+        }
+        return;
+      }
+
+      // Case B: Unlinked Scribe session (pre-case dictation)
+      let candidateId = propSessionId || activeSessionId;
+      if (!candidateId && user.uid) {
+        candidateId = localStorage.getItem(`ermate:scribeSession:${user.uid}`);
+      }
+
+      if (candidateId) {
+        try {
+          const snap = await getDoc(doc(db, "scribeSessions", candidateId));
+          if (snap.exists() && isMounted) {
+            const sData = snap.data();
+            // ACTIVE DRAFT SESSION RULE: only reuse if genuinely unlinked
+            if (sData?.linkedCaseId == null) {
+              setActiveSessionId(candidateId);
+              onSessionIdChange?.(candidateId);
+              setSessionAttachError(null);
+              return;
+            } else {
+              // Stale key pointing to already-linked session; remove from draft key
+              localStorage.removeItem(`ermate:scribeSession:${user.uid}`);
+            }
+          }
+        } catch (e) {
+          console.warn("[VoiceScribeChatView] Candidate session verification check failed:", e);
+        }
+      }
+
+      // Case C: Create a fresh unlinked session doc BEFORE the first message write
+      try {
+        const workspace = await resolveWorkspaceForUser(user.uid);
+        const newSessionId = await createScribeSession({
+          ownerUid: user.uid,
+          workspaceType: workspace.workspaceType,
+          hospitalId: workspace.hospitalId,
+          mode: "case",
+        });
+        if (isMounted) {
+          setActiveSessionId(newSessionId);
+          onSessionIdChange?.(newSessionId);
+          setSessionAttachError(null);
+          localStorage.setItem(`ermate:scribeSession:${user.uid}`, newSessionId);
+        }
+      } catch (err: any) {
+        console.error("[VoiceScribeChatView] Failed to create scribeSession doc:", err);
+        if (isMounted) {
+          setSessionAttachError(`Unable to initialize Scribe session: ${err?.message || "Storage error"}`);
+        }
+      }
+    }
+
+    initSession();
+    return () => {
+      isMounted = false;
+    };
+  }, [propCaseId, caseData?.id, propSessionId]);
+
+  // Subscribe to real-time chat history
   useEffect(() => {
     if (isDiscussionOnly) {
-      if (!discussionId) return; // wait for the id to be generated first
+      if (!discussionId) return;
       const unsubscribe = subscribeDiscussionHistory(discussionId, (history) => {
         if (history && history.length > 0) {
           setMessages(
@@ -527,31 +671,41 @@ export default function VoiceScribeChatView({
       });
       return () => unsubscribe();
     } else {
-      if (!activeCaseId) return;
-      const unsubscribe = subscribeChatHistory(activeCaseId, (history) => {
-        if (history && history.length > 0) {
-          setMessages(
-            history.map((h: any) => ({
-              id: h.id,
-              sender: h.role === "user" ? "user" : "ai",
-              text: h.content,
-              timestamp: new Date(h.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-              // UI-01 FIX: preserve ALL extraction data, even if it only has non-displayable fields (like isPediatric)
-              // so that it merges correctly with previous history in mergeExtractionUpTo.
-              extractionData: h.unappliedExtraction !== undefined ? h.unappliedExtraction : undefined,
-              extractionApplied: h.extractionApplied || false,
-              dischargeDraft: h.dischargeDraft,
-              dischargeApplied: h.dischargeApplied || false,
-              dischargeIntent: h.dischargeIntent,
-              mode: h.mode || (h.unappliedExtraction !== undefined ? "dictation" : undefined),
-              clinicalReasoning: h.clinicalReasoning,
-            }))
-          );
+      if (!activeSessionId) return;
+      const legacyCaseId = propCaseId || caseData?.id || null;
+      const unsubscribe = subscribeSessionAndLegacyHistory(
+        activeSessionId,
+        legacyCaseId,
+        (history) => {
+          setHistoryLoadError(null);
+          if (history && history.length > 0) {
+            setMessages(
+              history.map((h: any) => ({
+                id: h.id,
+                sender: h.role === "user" ? "user" : "ai",
+                text: h.content,
+                timestamp: new Date(h.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+                extractionData: h.unappliedExtraction !== undefined ? h.unappliedExtraction : undefined,
+                extractionApplied: h.extractionApplied || false,
+                dischargeDraft: h.dischargeDraft,
+                dischargeApplied: h.dischargeApplied || false,
+                dischargeIntent: h.dischargeIntent,
+                mode: h.mode || (h.unappliedExtraction !== undefined ? "dictation" : undefined),
+                clinicalReasoning: h.clinicalReasoning,
+              }))
+            );
+          } else {
+            setMessages([STANDARD_WELCOME_MESSAGE]);
+          }
+        },
+        (err) => {
+          console.error("[VoiceScribeChatView] Session history subscription error:", err);
+          setHistoryLoadError("Unable to load Scribe history");
         }
-      });
+      );
       return () => unsubscribe();
     }
-  }, [isDiscussionOnly, discussionId, activeCaseId]);
+  }, [isDiscussionOnly, discussionId, activeSessionId, propCaseId, caseData?.id]);
 
   // Report busy state to parent for refresh button safety
   useEffect(() => {
@@ -578,8 +732,9 @@ export default function VoiceScribeChatView({
               }))
             );
           }
-        } else if (activeCaseId) {
-          const history = await getChatHistory(activeCaseId);
+        } else if (activeSessionId) {
+          const legacyCaseId = propCaseId || caseData?.id || null;
+          const history = await getChatHistory(activeSessionId, legacyCaseId);
           if (isMounted && history && history.length > 0) {
             setMessages(
               history.map((h: any) => ({
@@ -607,7 +762,7 @@ export default function VoiceScribeChatView({
     return () => {
       isMounted = false;
     };
-  }, [refreshTrigger, isDiscussionOnly, discussionId, activeCaseId]);
+  }, [refreshTrigger, isDiscussionOnly, discussionId, activeSessionId, propCaseId, caseData?.id]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -673,13 +828,13 @@ export default function VoiceScribeChatView({
     try {
       if (onSaveExtractedCase) {
         // Navigation occurs automatically upon successful persistence
-        await onSaveExtractedCase(extractionData, { existingCaseId: activeCaseId!, autoNavigate: true });
+        await onSaveExtractedCase(extractionData, { existingCaseId: activeCaseId || undefined, autoNavigate: true });
       } else if (onCaseSheetUpdated) {
         onCaseSheetUpdated(extractionData);
       }
       
-      if (activeCaseId && msgId) {
-        await updateChatMessage(activeCaseId, msgId, { extractionApplied: true }).catch(err => {
+      if (activeSessionId && msgId) {
+        await updateChatMessage(activeSessionId, msgId, { extractionApplied: true }, { isSession: true }).catch(err => {
             console.warn("Could not save extractionApplied state to Firestore, but case was saved", err);
         });
       }
@@ -719,8 +874,8 @@ export default function VoiceScribeChatView({
         await onPrepareDischarge(extractionData, msgId, activeCaseId);
       }
       
-      if (activeCaseId && msgId) {
-        await updateChatMessage(activeCaseId, msgId, { dischargeApplied: true }).catch(err => {
+      if (activeSessionId && msgId) {
+        await updateChatMessage(activeSessionId, msgId, { dischargeApplied: true }, { isSession: true }).catch(err => {
             console.warn("Could not save dischargeApplied state to Firestore, but case was saved", err);
         });
       }
@@ -750,21 +905,96 @@ export default function VoiceScribeChatView({
     }
   };
 
-  const persistMessage = (message: any) => {
+  const persistMessage = async (message: any) => {
     if (isDiscussionOnly) {
-      if (discussionId) appendDiscussionMessage(discussionId, message).catch(err =>
-        console.error("[VoiceScribeChatView] Failed to save discussion message:", err)
-      );
-    } else if (activeCaseId) {
-      appendChatMessage(activeCaseId, message).catch(err => {
-        console.error("[VoiceScribeChatView] Failed to save chat message:", err);
-        setMessages(prev => [...prev, {
-          id: `err-save-${Date.now()}`,
-          sender: "ai",
-          text: "⚠️ Failed to save this message to the database. It may disappear on refresh.",
-          timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-        }]);
+      if (discussionId) {
+        try {
+          await appendDiscussionMessage(discussionId, message);
+        } catch (err: any) {
+          console.error("[VoiceScribeChatView] Failed to save discussion message:", err);
+        }
+      }
+      return;
+    }
+
+    if (sessionAttachError) {
+      console.warn("Cannot persist message while session attach failed:", sessionAttachError);
+      setFailedMessages(prev => new Map(prev).set(message.id, { message, error: sessionAttachError }));
+      return;
+    }
+
+    if (!activeSessionId) {
+      console.log("[VoiceScribeChatView] Session ID not yet established, queueing message:", message.id);
+      pendingMessageQueueRef.current.push(message);
+      return;
+    }
+
+    try {
+      await appendChatMessage(activeSessionId, message, { isSession: true });
+      setFailedMessages(prev => {
+        if (!prev.has(message.id)) return prev;
+        const next = new Map(prev);
+        next.delete(message.id);
+        return next;
       });
+    } catch (err: any) {
+      console.error("[VoiceScribeChatView] Failed to save chat message:", err);
+      const reason = err?.message || "Storage write error";
+      setFailedMessages(prev => new Map(prev).set(message.id, { message, error: reason }));
+    }
+  };
+
+  const handleRetryFailedMessage = async (msgId: string) => {
+    const item = failedMessages.get(msgId);
+    if (!item || !activeSessionId) return;
+    try {
+      await appendChatMessage(activeSessionId, item.message, { isSession: true });
+      setFailedMessages(prev => {
+        const next = new Map(prev);
+        next.delete(msgId);
+        return next;
+      });
+    } catch (err: any) {
+      console.error("Retry failed for message", msgId, err);
+      setFailedMessages(prev => new Map(prev).set(msgId, { message: item.message, error: err?.message || "Retry failed" }));
+    }
+  };
+
+  const handleRetryAllFailed = async () => {
+    for (const [msgId] of Array.from(failedMessages.entries())) {
+      await handleRetryFailedMessage(msgId);
+    }
+  };
+
+  const handleStartNewChat = async () => {
+    const user = auth.currentUser;
+    if (!user) return;
+    try {
+      const workspace = await resolveWorkspaceForUser(user.uid);
+      const newSessionId = await createScribeSession({
+        ownerUid: user.uid,
+        workspaceType: workspace.workspaceType,
+        hospitalId: workspace.hospitalId,
+        mode: isDiscussionOnly ? "discussion" : "case",
+      });
+      setActiveSessionId(newSessionId);
+      onSessionIdChange?.(newSessionId);
+      localStorage.setItem(`ermate:scribeSession:${user.uid}`, newSessionId);
+      setActiveCaseId(null);
+      setMessages([
+        {
+          id: "welcome",
+          sender: "ai",
+          text: "ErMate is ready.\n\n🎙️ Dictate the case in your native language and save it to the case sheet.\n💬 Or ask a clinical question — about this patient or any case.",
+          timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        },
+      ]);
+      setFailedMessages(new Map());
+      setSessionAttachError(null);
+      onNewChat?.();
+    } catch (err: any) {
+      console.error("Failed to start new chat session:", err);
+      setSaveError(`Failed to start new chat: ${err?.message || "Error"}`);
     }
   };
 
@@ -1006,40 +1236,72 @@ export default function VoiceScribeChatView({
           </div>
         </div>
 
-        {onOpenCaseSheet && !isDiscussionOnly && (
-          <button
-            onClick={async () => {
-              const unappliedMessages = messages.filter(m => m.extractionData && !m.extractionApplied);
-              if (unappliedMessages.length > 0 && onPreviewCaseSheet) {
-                const mergedExtraction = getMergedUnappliedExtraction(messages);
-                const latestMsg = unappliedMessages[unappliedMessages.length - 1];
-                onPreviewCaseSheet(mergedExtraction, { existingCaseId: activeCaseId || null, msgId: latestMsg?.id });
-                return;
-              }
-              if (onSaveExtractedCase) {
-                try {
-                  if (unappliedMessages.length > 0) {
-                    const mergedExtraction = getMergedUnappliedExtraction(messages);
-                    await onSaveExtractedCase(mergedExtraction, { existingCaseId: activeCaseId!, autoNavigate: true });
-                    setMessages(prev => prev.map(m => m.extractionData ? { ...m, extractionApplied: true } : m));
-                  } else {
-                    if (messages.filter(m => m.extractionData).length === 0) {
-                      await onSaveExtractedCase({}, { existingCaseId: activeCaseId!, autoNavigate: true });
-                    }
-                  }
-                } catch (e) {
-                  console.warn("[VoiceScribeChatView] Failed to initialize case:", e);
-                  setSaveError("Unable to save this case. Please try again.");
+        <div className="flex items-center gap-2">
+          {(failedMessages.size > 0 || sessionAttachError || historyLoadError) && (
+            <div className="px-2.5 py-1 bg-amber-50 dark:bg-amber-950/60 border border-amber-300 dark:border-amber-700/60 text-amber-800 dark:text-amber-300 rounded-lg text-xs font-semibold flex items-center gap-1.5 shadow-sm">
+              <AlertTriangle size={14} className="text-amber-600 dark:text-amber-400 shrink-0" />
+              <span>{historyLoadError || `Chat not saved (${failedMessages.size || 1})`}</span>
+              {failedMessages.size > 0 && !historyLoadError && (
+                <button
+                  type="button"
+                  onClick={handleRetryAllFailed}
+                  className="ml-1 px-1.5 py-0.5 bg-amber-200 dark:bg-amber-800/60 hover:bg-amber-300 rounded text-[10px] font-bold cursor-pointer"
+                >
+                  Retry
+                </button>
+              )}
+            </div>
+          )}
+
+          {!isDiscussionOnly && (
+            <button
+              type="button"
+              onClick={handleStartNewChat}
+              className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-lg text-xs font-semibold flex items-center gap-1 transition-all cursor-pointer"
+              title="Start a new Scribe session"
+            >
+              <Plus size={14} />
+              <span>New Chat</span>
+            </button>
+          )}
+
+          {onOpenCaseSheet && !isDiscussionOnly && (
+            <button
+              onClick={async () => {
+                const unappliedMessages = messages.filter(m => m.extractionData && !m.extractionApplied);
+                if (unappliedMessages.length > 0 && onPreviewCaseSheet) {
+                  const mergedExtraction = getMergedUnappliedExtraction(messages);
+                  const latestMsg = unappliedMessages[unappliedMessages.length - 1];
+                  onPreviewCaseSheet(mergedExtraction, { existingCaseId: activeCaseId || null, msgId: latestMsg?.id });
                   return;
                 }
-              }
-              onOpenCaseSheet(activeCaseId!);
-            }}
-            className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
-          >
-            <span>📄 Open Case Sheet</span>
-          </button>
-        )}
+                if (onSaveExtractedCase) {
+                  try {
+                    if (unappliedMessages.length > 0) {
+                      const mergedExtraction = getMergedUnappliedExtraction(messages);
+                      await onSaveExtractedCase(mergedExtraction, { existingCaseId: activeCaseId || undefined, autoNavigate: true });
+                      setMessages(prev => prev.map(m => m.extractionData ? { ...m, extractionApplied: true } : m));
+                    } else {
+                      if (messages.filter(m => m.extractionData).length === 0) {
+                        await onSaveExtractedCase({}, { existingCaseId: activeCaseId || undefined, autoNavigate: true });
+                      }
+                    }
+                  } catch (e) {
+                    console.warn("[VoiceScribeChatView] Failed to initialize case:", e);
+                    setSaveError("Unable to save this case. Please try again.");
+                    return;
+                  }
+                }
+                if (activeCaseId) {
+                  onOpenCaseSheet(activeCaseId);
+                }
+              }}
+              className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
+            >
+              <span>📄 Open Case Sheet</span>
+            </button>
+          )}
+        </div>
       </div>
 
       {!isDiscussionOnly && (
@@ -1082,6 +1344,12 @@ export default function VoiceScribeChatView({
 
       {/* Chat Thread */}
       <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-slate-50/50 dark:bg-transparent min-w-0">
+        {historyLoadError && (
+          <div className="p-3 bg-rose-500/10 border border-rose-500/30 text-rose-700 dark:text-rose-300 rounded-xl text-xs font-semibold flex items-center gap-2">
+            <AlertTriangle size={15} className="text-rose-500 shrink-0" />
+            <span>⚠️ {historyLoadError}</span>
+          </div>
+        )}
         {messages.map((msg) => (
           <div key={msg.id} className={`flex w-full ${msg.sender === "user" ? "justify-end" : "justify-start"}`}>
             <div
@@ -1257,7 +1525,26 @@ export default function VoiceScribeChatView({
 
               
 
-              <span className="text-[9px] opacity-60 block text-right mt-2 font-mono">{msg.timestamp}</span>
+              {failedMessages.has(msg.id) && (
+                <div className="mt-2 p-2 bg-amber-500/10 border border-amber-500/30 rounded-lg flex items-center justify-between text-xs text-amber-700 dark:text-amber-300">
+                  <span className="flex items-center gap-1.5">
+                    <AlertTriangle size={13} className="text-amber-500 shrink-0" />
+                    <span>⚠️ Not saved — {failedMessages.get(msg.id)?.error || "Storage write error"}</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => handleRetryFailedMessage(msg.id)}
+                    className="px-2 py-0.5 bg-amber-100 dark:bg-amber-900/40 hover:bg-amber-200 dark:hover:bg-amber-900/60 border border-amber-300 dark:border-amber-700 rounded text-amber-800 dark:text-amber-200 text-[11px] font-semibold transition cursor-pointer"
+                  >
+                    Retry
+                  </button>
+                </div>
+              )}
+
+              <div className="flex items-center justify-between mt-2 text-[9px] font-mono opacity-60">
+                <span>{failedMessages.has(msg.id) ? "⚠️ Unsaved" : ""}</span>
+                <span>{msg.timestamp}</span>
+              </div>
             </div>
           </div>
         ))}

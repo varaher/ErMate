@@ -15,6 +15,7 @@ interface CasesListViewProps {
   onDiscussCase?: (patientCase: ClinicalCase) => void;
   onDeleteAllCases?: () => void;
   isIndependent?: boolean;
+  isPlatformAdmin?: boolean;
 }
 
 export default function CasesListView({
@@ -29,6 +30,7 @@ export default function CasesListView({
   onDiscussCase,
   onDeleteAllCases,
   isIndependent = false,
+  isPlatformAdmin = false,
 }: CasesListViewProps) {
   const [searchTerm, setSearchTerm] = useState("");
   const [caseToDelete, setCaseToDelete] = useState<{ id: string; name: string } | null>(null);
@@ -126,7 +128,7 @@ export default function CasesListView({
           >
             Quick Case
           </button>
-          {onDeleteAllCases && (
+          {onDeleteAllCases && isPlatformAdmin && (
             <button
               onClick={() => {
                 setShowDeleteAllConfirm(true);
@@ -364,17 +366,28 @@ export default function CasesListView({
                         <FileText className="w-4 h-4 text-purple-600 dark:text-purple-400" />
                       </button>
                     )}
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        e.preventDefault();
-                        setCaseToDelete({ id: c.id, name: c.patient.name });
-                      }}
-                      className="p-1.5 bg-rose-50 hover:bg-rose-100 text-rose-500 hover:text-rose-700 dark:bg-rose-950/20 dark:hover:bg-rose-950/40 rounded-lg transition-all"
-                      title="Archived/Delete"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+                    {isPlatformAdmin ? (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          e.preventDefault();
+                          setCaseToDelete({ id: c.id, name: c.patient.name });
+                        }}
+                        className="p-1.5 bg-rose-50 hover:bg-rose-100 text-rose-500 hover:text-rose-700 dark:bg-rose-950/20 dark:hover:bg-rose-950/40 rounded-lg transition-all cursor-pointer"
+                        title="Delete Case"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled
+                        className="p-1.5 opacity-30 cursor-not-allowed text-slate-400 dark:text-slate-600 rounded-lg"
+                        title="Only the platform administrator can delete cases"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>

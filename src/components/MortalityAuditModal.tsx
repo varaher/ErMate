@@ -7,7 +7,7 @@ import {
 import { UserProfile, ClinicalCase } from "../types";
 import { BoundChatModal } from "./BoundChatModal";
 import VoiceRecorder from "./shared/VoiceRecorder";
-import { displayGcs } from "../utils/clinicalFormatter";
+import { displayGcs, displaySpo2, displayTemperature, displayGrbs } from "../utils/clinicalFormatter";
 
 interface MortalityAuditModalProps {
   isOpen: boolean;
@@ -55,9 +55,9 @@ Age/Sex: ${foundCase.patient?.age ?? ""}/${foundCase.patient?.gender || ""}
 Hospital No / ID: ${foundCase.id}
 
 PRESENTING COMPLAINT & INITIAL TRIAGE:
-Chief Complaints: ${foundCase.patient?.presentingComplaint || "Emergency presentation"}
-Triage Category: ${foundCase.patient?.triageCategory || "P1 (Immediate)"}
-Vitals on Arrival: BP ${foundCase.vitals?.bp || "N/A"}, HR ${foundCase.vitals?.hr || "N/A"}, SpO2 ${foundCase.vitals?.spo2 || "N/A"}%, RR ${foundCase.vitals?.rr || "N/A"}, Temp ${foundCase.vitals?.temp || "N/A"}
+Chief Complaints: ${foundCase.patient?.presentingComplaint || "Not documented"}
+Triage Category: ${foundCase.patient?.triageCategory || "Not documented"}
+Vitals on Arrival: BP ${foundCase.vitals?.bp || "Not documented"}, HR ${foundCase.vitals?.hr ? `${foundCase.vitals.hr} bpm` : "Not documented"}, SpO2 ${displaySpo2(foundCase.vitals?.spo2)}, RR ${foundCase.vitals?.rr ? `${foundCase.vitals.rr}/min` : "Not documented"}, Temp ${displayTemperature(foundCase.vitals?.temp)}
 
 SAMPLE HISTORY & EXAMINATION:
 Symptoms: ${foundCase.sampleHistory?.symptoms || "N/A"}
@@ -68,11 +68,11 @@ Last Meal: ${foundCase.sampleHistory?.lastMeal || "N/A"}
 Events: ${foundCase.sampleHistory?.events || "N/A"}
 
 PRIMARY ASSESSMENT:
-Airway: ${foundCase.primaryAssessment?.airway || "Patent"}
-Breathing: ${foundCase.primaryAssessment?.breathing || "Spontaneous"}
-Circulation: ${foundCase.primaryAssessment?.circulation || "Stable"}
+Airway: ${foundCase.primaryAssessment?.airway || "Not documented"}
+Breathing: ${foundCase.primaryAssessment?.breathing || "Not documented"}
+Circulation: ${foundCase.primaryAssessment?.circulation || "Not documented"}
 Disability (GCS): ${disabilityDisplay}
-Exposure: ${foundCase.primaryAssessment?.exposure || "Normal"}
+Exposure: ${foundCase.primaryAssessment?.exposure || "Not documented"}
 
 INVESTIGATIONS & TREATMENTS PERFORMED:
 Investigations: ${foundCase.investigations?.map((i) => `${i.testName}: ${i.result || "Done"}`).join("\n") || "ECG, ABG, Routine Labs"}

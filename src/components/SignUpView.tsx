@@ -1,10 +1,13 @@
 import React, { useState } from "react";
 import { Activity, User, Building, ShieldCheck, ArrowRight, ArrowLeft, Mail, Key, Sparkles } from "lucide-react";
 import { UserProfile } from "../types";
-import { createUserWithEmailAndPassword } from "firebase/auth";
-import { doc, setDoc } from "firebase/firestore";
-import { auth, db, handleFirestoreError, OperationType } from "../firebase";
-import { incrementInviteUsage } from "../services/teamInviteService";
+import {
+  createUserWithEmailAndPassword,
+  sendEmailVerification,
+  signOut
+} from "firebase/auth";
+import { doc, setDoc, getDoc } from "firebase/firestore";
+import { auth, db } from "../firebase";
 
 interface SignUpViewProps {
   onSignUp: (profile: UserProfile) => void;
@@ -43,6 +46,11 @@ export default function SignUpView({
   const [error, setError] = useState("");
   const [isRegistering, setIsRegistering] = useState(false);
   const [registerMessage, setRegisterMessage] = useState("Registering new clinical node...");
+  const [verificationSent, setVerificationSent] =
+  useState(false);
+
+const [registeredEmail, setRegisteredEmail] =
+  useState("");
 
   const isEmerald = theme === "emerald";
 
@@ -81,10 +89,7 @@ export default function SignUpView({
       return;
     }
 
-    if (email.toLowerCase().includes("@") && !email.toLowerCase().endsWith("@gmail.com")) {
-      setError("For hospital auto-linking, we recommend a verified Google account (@gmail.com).");
-      return;
-    }
+    
 
     if (!password.trim() || password.length < 6) {
       setError("Password must be at least 6 characters long.");
@@ -107,89 +112,168 @@ export default function SignUpView({
       }, step.delay);
     });
 
-    // Run Firebase Authentication user registration
     const registerUser = async () => {
-      try {
-        const userCredential = await createUserWithEmailAndPassword(auth, email.trim(), password.trim());
-        const user = userCredential.user;
+  try {
+    const normalizedEmail =
+      email.trim().toLowerCase();
 
-        // Determine the precise display subscription tier based on user selection
-        let subTier = "Free Standard";
-        let credits = 100;
-        if (subscription === "Pro Doctor") {
-          subTier = "Pro Doctor Plan (Active)";
-          credits = 250;
-        } else if (subscription === "Team Department") {
-          subTier = "Team Department (Activated)";
-          credits = 500;
-        }
+    const userCredential =
+      await createUserWithEmailAndPassword(
+        auth,
+        normalizedEmail,
+        password
+      );
 
-        const formattedName = name.trim().startsWith("Dr.") ? name.trim() : `Dr. ${name.trim()}`;
-        const activeInviteToken = inviteToken || (typeof sessionStorage !== "undefined" ? sessionStorage.getItem("ermate_pending_invite_token") : "");
+    const user =
+      userCredential.user;
 
-        const newProfile: UserProfile = {
-          name: formattedName,
-          email: email.trim().toLowerCase(),
-          role: "EM Resident", // Hardcoded - all public signups register as EM Resident
-          workplaceName: workplaceName.trim(), // User-editable display name
-          hospital: "", // Secure field, always blank on independent signup. Handled by backend if invited.
-          state: stateName.trim(),
-          hospitalAddress: hospitalAddress.trim(),
-          aiCredits: credits,
-          streak: 1, // new user streak starts at 1
-          subscriptionTier: activeInviteToken ? "Free Standard" : subTier,
-          age: parsedAge
-        };
+    const formattedName =
+      name.trim().startsWith("Dr.")
+        ? name.trim()
+        : `Dr. ${name.trim()}`;
 
-        // Write user profile to firestore
-        await setDoc(doc(db, "users", user.uid), newProfile);
+    const activeInviteToken =
+      inviteToken ||
+      (
+        typeof sessionStorage !== "undefined"
+          ? sessionStorage.getItem(
+              "ermate_pending_invite_token"
+            )
+          : ""
+      );
 
-        // Accept team invite securely via backend
-        if (activeInviteToken) {
-          const idToken = await user.getIdToken();
-          const res = await fetch("/api/team/accept-invite", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "Authorization": `Bearer ${idToken}`
-            },
-            body: JSON.stringify({ token: activeInviteToken })
-          });
-          
-          if (!res.ok) {
-            console.error("Failed to accept invite on backend", await res.text());
-          } else {
-            if (typeof sessionStorage !== "undefined") {
-              sessionStorage.removeItem("ermate_pending_invite_token");
-            }
-            // Update local state to reflect what backend did
-            newProfile.workplaceName = workplaceName.trim();
-            newProfile.subscriptionTier = "Hospital Team Premium (Department Covered)";
-          }
-        } else if (acceptOffer && workplaceName.trim() && !activeInviteToken) {
-          // Individual signing up manually claiming a team without invite (should be rare)
-          // Do nothing special. team_members should not be written by client.
-        }
+    /*
+     * Public signup always creates a safe,
+     * independent Free Standard profile.
+     *
+     * Team authority is granted only later
+     * through trusted backend workflows.
+     */
+    const newProfile: UserProfile = {
+      name: formattedName,
+      email: normalizedEmail,
 
-        // Success callback
-        onSignUp(newProfile);
-      } catch (err: any) {
-        setIsRegistering(false);
-        let errorMsg = err.message || String(err);
-        if (err.code === "auth/email-already-in-use") {
-          errorMsg = "This clinical email address is already registered in ErMate.";
-        } else if (err.code === "auth/invalid-email") {
-          errorMsg = "Please enter a valid email address.";
-        } else if (err.code === "auth/weak-password") {
-          errorMsg = "The password is too weak. Please choose at least 6 characters.";
-        }
-        setError(errorMsg);
-      }
+      role: "EM Resident",
+
+      workplaceName:
+        workplaceName.trim(),
+
+      hospitalLabel:
+        workplaceName.trim(),
+
+      hospital: "",
+
+      state:
+        stateName.trim(),
+
+      hospitalAddress:
+        hospitalAddress.trim(),
+
+      aiCredits: 100,
+      streak: 1,
+      subscriptionTier:
+        "Free Standard",
+
+      age: parsedAge
     };
 
-    setTimeout(() => {
-      registerUser();
-    }, 2200);
+    await setDoc(
+      doc(db, "users", user.uid),
+      newProfile
+    );
+
+    /*
+     * If the clinician declined the invitation,
+     * remove it now.
+     *
+     * If accepted, keep the token temporarily.
+     * It will be consumed only AFTER verified
+     * sign-in.
+     */
+    if (
+      activeInviteToken &&
+      !acceptOffer &&
+      typeof sessionStorage !== "undefined"
+    ) {
+      sessionStorage.removeItem(
+        "ermate_pending_invite_token"
+      );
+
+      sessionStorage.removeItem(
+        "ermate_pending_invite_hospital"
+      );
+    }
+
+    /*
+     * Do NOT activate a hospital invitation yet.
+     * Email ownership must first be verified.
+     */
+    await sendEmailVerification(user);
+
+    /*
+     * Firebase automatically signs in a newly
+     * created email/password account.
+     *
+     * Sign out immediately so the unverified
+     * account cannot continue into ErMate as
+     * an authenticated app session.
+     */
+    await signOut(auth);
+
+    setRegisteredEmail(
+      normalizedEmail
+    );
+
+    setVerificationSent(true);
+    setIsRegistering(false);
+
+    /*
+     * IMPORTANT:
+     * Do not call onSignUp() here.
+     *
+     * The clinician must verify the email and
+     * then sign in normally.
+     */
+    return;
+  } catch (err: any) {
+    /*
+     * Do not leave a partially-created account
+     * signed into the application after an error.
+     */
+    if (auth.currentUser) {
+      await signOut(auth).catch(
+        () => undefined
+      );
+    }
+
+    setIsRegistering(false);
+
+    let errorMsg =
+      err.message || String(err);
+
+    if (
+      err.code ===
+      "auth/email-already-in-use"
+    ) {
+      errorMsg =
+        "This email address is already registered in ErMate.";
+    } else if (
+      err.code === "auth/invalid-email"
+    ) {
+      errorMsg =
+        "Please enter a valid email address.";
+    } else if (
+      err.code === "auth/weak-password"
+    ) {
+      errorMsg =
+        "The password is too weak. Please choose at least 6 characters.";
+    }
+
+    setError(errorMsg);
+  }
+};
+
+    registerUser();
   };
 
   return (
@@ -234,7 +318,73 @@ export default function SignUpView({
           </div>
 
           <div className="p-6 sm:p-8 space-y-5">
-            {isRegistering ? (
+           {verificationSent ? (
+  <div className="flex flex-col items-center justify-center space-y-5 py-10 px-4 text-center">
+    <div
+      className={`h-14 w-14 rounded-full flex items-center justify-center ${
+        isEmerald
+          ? "bg-emerald-100 text-emerald-700"
+          : "bg-blue-950 text-blue-400"
+      }`}
+    >
+      <Mail className="w-7 h-7" />
+    </div>
+
+    <div className="space-y-2">
+      <h3
+        className={`text-base font-extrabold ${
+          isEmerald
+            ? "text-slate-800"
+            : "text-white"
+        }`}
+      >
+        Verify your email
+      </h3>
+
+      <p
+        className={`text-xs leading-relaxed ${
+          isEmerald
+            ? "text-slate-600"
+            : "text-slate-400"
+        }`}
+      >
+        We sent a verification link to{" "}
+        <strong>{registeredEmail}</strong>.
+      </p>
+
+      <p
+        className={`text-xs leading-relaxed ${
+          isEmerald
+            ? "text-slate-500"
+            : "text-slate-400"
+        }`}
+      >
+        Open the email and verify your address,
+        then return to ErMate and sign in.
+      </p>
+
+      {inviteToken && acceptOffer && (
+        <p className="text-xs text-indigo-600 dark:text-indigo-400">
+          Your department invitation has been
+          kept pending and will be completed
+          after your verified sign-in.
+        </p>
+      )}
+    </div>
+
+    <button
+      type="button"
+      onClick={onBackToLogin}
+      className={`w-full py-2.5 rounded-xl text-xs font-bold text-white ${
+        isEmerald
+          ? "bg-emerald-600 hover:bg-emerald-700"
+          : "bg-blue-600 hover:bg-blue-700"
+      }`}
+    >
+      Back to Log In
+    </button>
+  </div>
+) : isRegistering ? (
               <div className="flex flex-col items-center justify-center space-y-6 py-12">
                 <div className="relative w-16 h-16">
                   <div className={`absolute inset-0 rounded-full border-4 ${isEmerald ? 'border-slate-100' : 'border-slate-800'}`} />
@@ -399,7 +549,7 @@ export default function SignUpView({
                 {/* Gmail Address */}
                 <div className="space-y-1">
                   <label htmlFor="signup-email" className={`block text-[9px] font-bold uppercase tracking-wider font-mono ${isEmerald ? 'text-slate-500' : 'text-slate-400'}`}>
-                    Verified Google Account Gmail
+                    Email Address
                   </label>
                   <div className="relative rounded-lg">
                     <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
@@ -410,7 +560,7 @@ export default function SignUpView({
                       type="email"
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
-                      placeholder="yourname@gmail.com"
+                    placeholder="doctor@example.com"
                       className={`${isEmerald ? 'bg-slate-50 border-slate-200 text-slate-800 focus:ring-emerald-500' : 'bg-slate-900 border-slate-800 text-slate-200 focus:ring-blue-500'} block w-full pl-9 pr-3 py-2 text-xs rounded-lg font-mono font-semibold focus:outline-none focus:ring-1`}
                       required
                     />
@@ -524,7 +674,7 @@ export default function SignUpView({
 
       <div className="mt-6 text-center text-[10px] text-slate-500 font-mono flex items-center justify-center gap-1.5">
         <ShieldCheck className="w-4 h-4 text-emerald-500" />
-        <span>Secure ISO 27001 Clinical Sandbox Nodes</span>
+        <span>Secured with Firebase Authentication</span>
       </div>
     </div>
   );

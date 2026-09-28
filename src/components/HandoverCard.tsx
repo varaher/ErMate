@@ -86,7 +86,7 @@ export function HandoverCard({
             ageGender: pl.ageSex || "N/A",
             erNo: pl.erNumber || "N/A",
             doctor: pl.admittingConsultant || pl.treatingERPhysician || "Duty Medical Officer",
-            vitals: patient.vitalsNow || "Stable",
+            vitals: patient.vitalsNow || "Not documented",
             complaints: patient.presentingComplaint || "Emergency evaluation",
             assessment: patient.diagnosis || "Under evaluation",
             planToBeDone: (patient.done || []).concat(patient.toBeDone || []).join(" | "),

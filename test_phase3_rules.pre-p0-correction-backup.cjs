@@ -21,9 +21,6 @@ async function runTests() {
 
   console.log('[EXECUTED] Test environment initialized with firestore.rules on port 8085');
 
-  // Clear previous test run state
-  await testEnv.clearFirestore();
-
   // Test identities
   const UID_HOSP_A_1 = 'user_hosp_a_1'; // Active in HospA
   const UID_HOSP_A_2 = 'user_hosp_a_2'; // Active in HospA (colleague)
@@ -43,7 +40,6 @@ async function runTests() {
       email: 'a1@hospital.com',
       role: 'EM Resident',
       status: 'active',
-      membershipVerified: true,
       shift: 'Morning',
       hospital: 'Hospital Alpha',
       hospitalId: 'hosp_alpha_id',
@@ -55,7 +51,6 @@ async function runTests() {
       email: 'a2@hospital.com',
       role: 'EM Resident',
       status: 'active',
-      membershipVerified: true,
       shift: 'Evening',
       hospital: 'Hospital Alpha',
       hospitalId: 'hosp_alpha_id',
@@ -67,7 +62,6 @@ async function runTests() {
       email: 'a_susp@hospital.com',
       role: 'EM Resident',
       status: 'inactive',
-      membershipVerified: true,
       shift: 'Off',
       hospital: 'Hospital Alpha',
       hospitalId: 'hosp_alpha_id',
@@ -79,56 +73,9 @@ async function runTests() {
       email: 'b@hospital.com',
       role: 'EM Resident',
       status: 'active',
-      membershipVerified: true,
       shift: 'Night',
       hospital: 'Hospital Beta',
       hospitalId: 'hosp_beta_id',
-    });
-
-    // Hospital X identities for SX1-SX3
-    await db.collection('team_members').doc('user_hosp_x_1').set({
-      id: 'user_hosp_x_1',
-      name: 'Dr. Hosp X Primary',
-      email: 'x1@hospital.com',
-      role: 'EM Resident',
-      status: 'active',
-      membershipVerified: true,
-      shift: 'Morning',
-      hospital: 'Hospital X',
-      hospitalId: 'hosp_x_id',
-    });
-
-    await db.collection('team_members').doc('user_hosp_x_2').set({
-      id: 'user_hosp_x_2',
-      name: 'Dr. Hosp X Colleague',
-      email: 'x2@hospital.com',
-      role: 'EM Resident',
-      status: 'active',
-      membershipVerified: true,
-      shift: 'Evening',
-      hospital: 'Hospital X',
-      hospitalId: 'hosp_x_id',
-    });
-
-    // Legacy multi-hospital member with 5 legacy names for SX4-SX6
-    await db.collection('team_members').doc('user_legacy_five').set({
-      id: 'user_legacy_five',
-      name: 'Dr. Legacy Multi-Hospital',
-      email: 'legacy.multi@hospital.org',
-      role: 'EM Resident',
-      status: 'active',
-      membershipVerified: true,
-      shift: 'Morning',
-      hospitalId: 'hosp_main_id',
-      hospitalName: 'Main Regional Hospital',
-      hospital: 'Main Regional Hospital',
-      legacyHospitalNames: [
-        'Legacy Apollo Central',
-        'Apollo City Care',
-        'Apollo Metro ER',
-        'Apollo South Clinic',
-        'Apollo Trauma Centre'
-      ],
     });
 
     // 2. User profiles (for sameHospital legacy fallback)
@@ -164,14 +111,6 @@ async function runTests() {
       createdByUid: UID_HOSP_A_1,
       hospitalId: 'hosp_alpha_id',
       chiefComplaints: 'Chest pain',
-    });
-
-    await db.collection('cases').doc('case_hosp_b_existing').set({
-      patientName: 'Patient HospB Existing',
-      workspaceType: 'hospital',
-      createdByUid: UID_HOSP_B,
-      hospitalId: 'hosp_beta_id',
-      chiefComplaints: 'Shortness of breath',
     });
 
     // 4. Existing Individual Case
@@ -213,63 +152,6 @@ async function runTests() {
       supervisor: 'Dr. Consultant',
       date: '2026-09-18',
     });
-
-    // 8. Sessions for S19, S20, S21
-    await db.collection('scribeSessions').doc('session_s19').set({
-      id: 'session_s19',
-      ownerUid: UID_HOSP_A_INACTIVE,
-      workspaceType: 'hospital',
-      hospitalId: 'hosp_alpha_id',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      linkedCaseId: 'case_hosp_a_existing',
-      mode: 'case',
-    });
-    await db.collection('scribeSessions').doc('session_s20').set({
-      id: 'session_s20',
-      ownerUid: UID_HOSP_A_INACTIVE,
-      workspaceType: 'hospital',
-      hospitalId: 'hosp_alpha_id',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      linkedCaseId: null,
-      mode: 'case',
-    });
-    await db.collection('scribeSessions').doc('session_s21').set({
-      id: 'session_s21',
-      ownerUid: UID_INDIVIDUAL,
-      workspaceType: 'individual',
-      hospitalId: null,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      linkedCaseId: 'case_individual_existing',
-      mode: 'case',
-    });
-
-    // 9. Baseline data for SX1-SX6
-    await db.collection('cases').doc('case_hosp_x_1').set({
-      patientName: 'Patient HospX Case',
-      workspaceType: 'hospital',
-      createdByUid: 'user_hosp_x_1',
-      hospitalId: 'hosp_x_id',
-      chiefComplaints: 'Chest pain in Hosp X',
-    });
-
-    await db.collection('cases').doc('case_legacy_five').set({
-      patientName: 'Legacy Patient Five Names',
-      hospital: 'Apollo South Clinic',
-      chiefComplaints: 'High fever',
-    });
-
-    await db.collection('cases').doc('case_legacy_five').collection('notes').doc('note_five').set({
-      text: 'Permitted legacy note',
-    });
-
-    await db.collection('handovers').doc('handover_legacy_five').set({
-      patientName: 'Legacy Handover Patient',
-      hospital: 'Apollo South Clinic',
-      summary: 'Handover details',
-    });
   });
 
   console.log('[EXECUTED] Test data seeded successfully');
@@ -296,9 +178,6 @@ async function runTests() {
   const ctxSolo = testEnv.authenticatedContext(UID_INDIVIDUAL, { email: 'solo@private.com' });
   const ctxPlatformAdmin = testEnv.authenticatedContext('user_platform_admin', { email: 'varahgrp@gmail.com' });
   const ctxAnon = testEnv.unauthenticatedContext();
-  const ctxHospX1 = testEnv.authenticatedContext('user_hosp_x_1', { email: 'x1@hospital.com' });
-  const ctxHospX2 = testEnv.authenticatedContext('user_hosp_x_2', { email: 'x2@hospital.com' });
-  const ctxLegacyFive = testEnv.authenticatedContext('user_legacy_five', { email: 'legacy.multi@hospital.org' });
 
   // ==========================================
   // A. Hospital Cases: Create
@@ -649,34 +528,6 @@ async function runTests() {
     );
   });
 
-  await test('F5', 'Same-hospital user writes addenda on a LEGACY case -> ALLOW', async () => {
-    await assertSucceeds(
-      ctxHospA1.firestore().collection('cases').doc('case_legacy_existing').collection('addenda').doc('add_legacy_1').set({
-        text: 'Legacy addendum by same hospital clinician',
-        timestamp: new Date().toISOString(),
-      })
-    );
-  });
-
-  await test('F6', 'Other-hospital user writes addenda on a LEGACY case -> DENY', async () => {
-    await assertFails(
-      ctxHospB.firestore().collection('cases').doc('case_legacy_existing').collection('addenda').doc('add_legacy_intruder').set({
-        text: 'Legacy addendum by other hospital clinician',
-        timestamp: new Date().toISOString(),
-      })
-    );
-  });
-
-  await test('F7', 'Write to cases/{nonExistentId}/scribeChatMessages must be strictly DENIED', async () => {
-    await assertFails(
-      ctxHospA1.firestore().collection('cases').doc('non_existent_case_f7').collection('scribeChatMessages').doc('msg_f7').set({
-        role: 'user',
-        text: 'Disappearing chat probe',
-        timestamp: new Date().toISOString(),
-      })
-    );
-  });
-
   // ==========================================
   // G. Log Book and Team Members
   // ==========================================
@@ -730,357 +581,8 @@ async function runTests() {
     );
   });
 
-  // ==========================================
-  // H. Scribe Sessions & Messages (S1 - S15)
-  // ==========================================
-  const ctxSolo2 = testEnv.authenticatedContext('user_individual_2', { email: 'solo2@private.com' });
-
-  await test('S1', 'Owner creates session -> ALLOW', async () => {
-    await assertSucceeds(
-      ctxHospA1.firestore().collection('scribeSessions').doc('session_s1').set({
-        id: 'session_s1',
-        ownerUid: UID_HOSP_A_1,
-        workspaceType: 'hospital',
-        hospitalId: 'hosp_alpha_id',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        linkedCaseId: null,
-        mode: 'case',
-      })
-    );
-  });
-
-  await test('S2', 'ownerUid != uid -> DENY', async () => {
-    await assertFails(
-      ctxHospA1.firestore().collection('scribeSessions').doc('session_s2_bad').set({
-        id: 'session_s2_bad',
-        ownerUid: UID_HOSP_A_2, // Not matching auth.uid
-        workspaceType: 'hospital',
-        hospitalId: 'hosp_alpha_id',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        linkedCaseId: null,
-        mode: 'case',
-      })
-    );
-  });
-
-  await test('S3', 'Other user reads unlinked session -> DENY', async () => {
-    await assertFails(
-      ctxHospA2.firestore().collection('scribeSessions').doc('session_s1').get()
-    );
-  });
-
-  await test('S4', 'Owner writes messages -> ALLOW', async () => {
-    await assertSucceeds(
-      ctxHospA1.firestore().collection('scribeSessions').doc('session_s1').collection('messages').doc('msg_s4').set({
-        role: 'user',
-        content: 'Patient has severe chest pain radiating to left arm.',
-        timestamp: new Date().toISOString(),
-      })
-    );
-  });
-
-  await test('S5', 'Owner links to accessible case -> ALLOW', async () => {
-    await assertSucceeds(
-      ctxHospA1.firestore().collection('scribeSessions').doc('session_s1').update({
-        linkedCaseId: 'case_hosp_a_existing',
-        updatedAt: new Date().toISOString(),
-      })
-    );
-  });
-
-  await test('S6', 'Links to inaccessible case -> DENY', async () => {
-    // HospA1 creates session_s6 unlinked first
-    await ctxHospA1.firestore().collection('scribeSessions').doc('session_s6').set({
-      id: 'session_s6',
-      ownerUid: UID_HOSP_A_1,
-      workspaceType: 'hospital',
-      hospitalId: 'hosp_alpha_id',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      linkedCaseId: null,
-      mode: 'case',
-    });
-    // HospA1 tries to link to HospB case (inaccessible)
-    await assertFails(
-      ctxHospA1.firestore().collection('scribeSessions').doc('session_s6').update({
-        linkedCaseId: 'case_hosp_b_existing',
-      })
-    );
-  });
-
-  await test('S7', 'Same-hospital member reads linked session -> ALLOW', async () => {
-    // session_s1 is linked to case_hosp_a_existing in HospA; HospA2 should be able to read it
-    await assertSucceeds(
-      ctxHospA2.firestore().collection('scribeSessions').doc('session_s1').get()
-    );
-    // and read its messages
-    await assertSucceeds(
-      ctxHospA2.firestore().collection('scribeSessions').doc('session_s1').collection('messages').doc('msg_s4').get()
-    );
-  });
-
-  await test('S8', 'Other-hospital DENY', async () => {
-    // HospB user tries to read session_s1 linked to HospA case
-    await assertFails(
-      ctxHospB.firestore().collection('scribeSessions').doc('session_s1').get()
-    );
-    await assertFails(
-      ctxHospB.firestore().collection('scribeSessions').doc('session_s1').collection('messages').doc('msg_s4').get()
-    );
-  });
-
-  await test('S9', 'Re-link already-linked session -> DENY', async () => {
-    // session_s1 is already linked to case_hosp_a_existing. Trying to re-link to another case should fail.
-    await assertFails(
-      ctxHospA1.firestore().collection('scribeSessions').doc('session_s1').update({
-        linkedCaseId: 'case_legacy_existing',
-      })
-    );
-  });
-
-  await test('S10', 'Non-admin delete DENY', async () => {
-    await assertFails(
-      ctxHospA1.firestore().collection('scribeSessions').doc('session_s1').delete()
-    );
-  });
-
-  await test('S11', 'Independent user creates session: workspaceType == "individual", ownerUid == uid(), hospitalId == null -> ALLOW', async () => {
-    await assertSucceeds(
-      ctxSolo.firestore().collection('scribeSessions').doc('session_s11_ind').set({
-        id: 'session_s11_ind',
-        ownerUid: UID_INDIVIDUAL,
-        workspaceType: 'individual',
-        hospitalId: null,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        linkedCaseId: null,
-        mode: 'case',
-      })
-    );
-  });
-
-  await test('S12', 'Hospital member attempts: workspaceType == "individual", hospitalId == null -> DENY', async () => {
-    await assertFails(
-      ctxHospA1.firestore().collection('scribeSessions').doc('session_s12_bad').set({
-        id: 'session_s12_bad',
-        ownerUid: UID_HOSP_A_1,
-        workspaceType: 'individual',
-        hospitalId: null,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        linkedCaseId: null,
-        mode: 'case',
-      })
-    );
-  });
-
-  await test('S13', 'Independent owner reads/writes own unlinked session -> ALLOW', async () => {
-    await assertSucceeds(
-      ctxSolo.firestore().collection('scribeSessions').doc('session_s11_ind').collection('messages').doc('msg_solo').set({
-        role: 'user',
-        content: 'Independent patient consultation notes',
-        timestamp: new Date().toISOString(),
-      })
-    );
-    await assertSucceeds(
-      ctxSolo.firestore().collection('scribeSessions').doc('session_s11_ind').get()
-    );
-  });
-
-  await test('S14', 'Different independent user reads it -> DENY', async () => {
-    await assertFails(
-      ctxSolo2.firestore().collection('scribeSessions').doc('session_s11_ind').get()
-    );
-    await assertFails(
-      ctxSolo2.firestore().collection('scribeSessions').doc('session_s11_ind').collection('messages').doc('msg_solo').get()
-    );
-  });
-
-  await test('S15', 'Message write under nonexistent scribeSession parent -> DENY', async () => {
-    await assertFails(
-      ctxHospA1.firestore().collection('scribeSessions').doc('non_existent_session_s15').collection('messages').doc('msg_fail').set({
-        role: 'user',
-        content: 'Should fail immediately because parent does not exist',
-        timestamp: new Date().toISOString(),
-      })
-    );
-  });
-
-  await test('S16', 'Same-hospital member queries scribeSessions where linkedCaseId==X -> ALLOW', async () => {
-    await assertSucceeds(
-      ctxHospA2.firestore().collection('scribeSessions').where('linkedCaseId', '==', 'case_hosp_a_existing').get()
-    );
-  });
-
-  await test('S17', 'Other-hospital member same query -> DENY', async () => {
-    await assertFails(
-      ctxHospB.firestore().collection('scribeSessions').where('linkedCaseId', '==', 'case_hosp_a_existing').get()
-    );
-  });
-
-  await test('S18', 'Owner update changing ownerUid -> DENY', async () => {
-    await assertFails(
-      ctxHospA1.firestore().collection('scribeSessions').doc('session_s1').update({
-        ownerUid: UID_HOSP_A_2,
-        updatedAt: new Date().toISOString(),
-      })
-    );
-  });
-
-  await test('S19', 'Owner whose hospital membership was removed reads their LINKED session -> DENY', async () => {
-    await assertFails(
-      ctxHospASuspended.firestore().collection('scribeSessions').doc('session_s19').get()
-    );
-  });
-
-  await test('S20', 'Owner whose hospital membership was removed reads their UNLINKED hospital session -> DENY', async () => {
-    await assertFails(
-      ctxHospASuspended.firestore().collection('scribeSessions').doc('session_s20').get()
-    );
-  });
-
-  await test('S21', 'Independent owner reads own linked session (owns the case) -> ALLOW', async () => {
-    await assertSucceeds(
-      ctxSolo.firestore().collection('scribeSessions').doc('session_s21').get()
-    );
-  });
-
-  // ==========================================
-  // SX: Worst-Case Legitimate Positive Tests (Expression Limit Verification)
-  // ==========================================
-  await test('SX1', 'Verified Hospital-X member links a hospital Scribe session to an accessible Hospital-X case -> ALLOW', async () => {
-    await ctxHospX1.firestore().collection('scribeSessions').doc('session_sx1').set({
-      id: 'session_sx1',
-      ownerUid: 'user_hosp_x_1',
-      workspaceType: 'hospital',
-      hospitalId: 'hosp_x_id',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      linkedCaseId: null,
-      mode: 'case',
-    });
-
-    await assertSucceeds(
-      ctxHospX1.firestore().collection('scribeSessions').doc('session_sx1').update({
-        linkedCaseId: 'case_hosp_x_1',
-        updatedAt: new Date().toISOString(),
-      })
-    );
-  });
-
-  await test('SX2', 'Verified member writes a message under a legitimately linked hospital session -> ALLOW', async () => {
-    await assertSucceeds(
-      ctxHospX1.firestore().collection('scribeSessions').doc('session_sx1').collection('messages').doc('msg_sx2').set({
-        role: 'user',
-        content: 'Clinical update for hospital X case',
-        timestamp: new Date().toISOString(),
-      })
-    );
-  });
-
-  await test('SX3', 'Verified same-hospital colleague reads a linked hospital session where current P0 visibility allows it -> ALLOW', async () => {
-    await assertSucceeds(
-      ctxHospX2.firestore().collection('scribeSessions').doc('session_sx1').get()
-    );
-    await assertSucceeds(
-      ctxHospX2.firestore().collection('scribeSessions').doc('session_sx1').collection('messages').doc('msg_sx2').get()
-    );
-  });
-
-  await test('SX4', 'Verified legacy member with FIVE legacyHospitalNames reads a matching legacy case -> ALLOW', async () => {
-    await assertSucceeds(
-      ctxLegacyFive.firestore().collection('cases').doc('case_legacy_five').get()
-    );
-  });
-
-  await test('SX5', 'Same member reads a matching handover -> ALLOW', async () => {
-    await assertSucceeds(
-      ctxLegacyFive.firestore().collection('handovers').doc('handover_legacy_five').get()
-    );
-  });
-
-  await test('SX6', 'Same member accesses permitted legacy case subcollection -> ALLOW', async () => {
-    await assertSucceeds(
-      ctxLegacyFive.firestore().collection('cases').doc('case_legacy_five').collection('notes').doc('note_five').get()
-    );
-    await assertSucceeds(
-      ctxLegacyFive.firestore().collection('cases').doc('case_legacy_five').collection('notes').doc('note_five_new').set({
-        text: 'New clinical addendum by legacy member',
-      })
-    );
-  });
-
-  await test('R1', 'Create a case with NO workspaceType field -> DENY', async () => {
-    await assertFails(
-      ctxHospA1.firestore().collection('cases').doc('case_r1_no_workspace').set({
-        hospital: 'Hospital Alpha',
-        patientName: 'Patient R1',
-      })
-    );
-  });
-
-  await test('R2', 'Unauthenticated user CREATES an individual case -> DENY', async () => {
-    await assertFails(
-      ctxAnon.firestore().collection('cases').doc('case_r2_anon_create').set({
-        workspaceType: 'individual',
-        createdByUid: 'anon',
-        ownerUid: 'anon',
-        patientName: 'Patient R2',
-      })
-    );
-  });
-
-  await test('R3', 'Active same-hospital clinician attempts to hard-delete an ownership-aware HOSPITAL ClinicalCase -> DENY', async () => {
-    await assertFails(
-      ctxHospA2.firestore().collection('cases').doc('case_hosp_a_existing').delete()
-    );
-  });
-
-  await test('R4', 'The original case creator attempts to hard-delete their own ownership-aware HOSPITAL ClinicalCase -> DENY', async () => {
-    await assertFails(
-      ctxHospA1.firestore().collection('cases').doc('case_hosp_a_existing').delete()
-    );
-  });
-
-  await test('R5', 'Platform admin hard-deletes an ownership-aware HOSPITAL ClinicalCase -> ALLOW', async () => {
-    await testEnv.withSecurityRulesDisabled(async (context) => {
-      const db = context.firestore();
-      await db.collection('cases').doc('case_hosp_a_admin_del').set({
-        patientName: 'Patient HospA Admin Del',
-        workspaceType: 'hospital',
-        createdByUid: UID_HOSP_A_1,
-        hospitalId: 'hosp_alpha_id',
-        chiefComplaints: 'Chest pain',
-      });
-    });
-    await assertSucceeds(
-      ctxPlatformAdmin.firestore().collection('cases').doc('case_hosp_a_admin_del').delete()
-    );
-  });
-
-  await test('R6', 'Platform admin deletes a scribeSession -> ALLOW', async () => {
-    await testEnv.withSecurityRulesDisabled(async (context) => {
-      const db = context.firestore();
-      await db.collection('scribeSessions').doc('session_admin_del').set({
-        id: 'session_admin_del',
-        ownerUid: UID_HOSP_A_1,
-        workspaceType: 'hospital',
-        hospitalId: 'hosp_alpha_id',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        linkedCaseId: null,
-        mode: 'case',
-      });
-    });
-    await assertSucceeds(
-      ctxPlatformAdmin.firestore().collection('scribeSessions').doc('session_admin_del').delete()
-    );
-  });
-
   console.log('\n==========================================');
-  console.log(`TEST SUMMARY: ${passed} passed, ${failed} failed (total ${passed + failed})`);
+  console.log(`TEST SUMMARY: ${passed} PASSED, ${failed} FAILED (TOTAL ${passed + failed})`);
   console.log('==========================================');
 
   await testEnv.cleanup();

@@ -8,6 +8,17 @@ export interface UserRoleContext {
   membershipRole?: string | null;
 }
 
+export const EXACT_ADMIN_ROLES = [
+  "hod",
+  "hod / department lead",
+  "hod / shift lead"
+] as const;
+
+export function isExactHospitalAdminRole(roleStr?: string | null): boolean {
+  if (!roleStr || typeof roleStr !== "string") return false;
+  return EXACT_ADMIN_ROLES.includes(roleStr.trim().toLowerCase() as any);
+}
+
 /**
  * Normalizes user and membership roles into one of 4 canonical roles:
  * - hod
@@ -16,7 +27,7 @@ export interface UserRoleContext {
  * - independent
  *
  * Rules:
- * - If user has an active hospital team membership with role containing hod/head/lead/owner -> hod
+ * - If user has an active hospital team membership with exact admin role ('hod', 'hod / department lead', 'hod / shift lead') -> hod
  * - Else if user has active hospital team membership with consultant -> consultant
  * - Else if user has active hospital team membership with resident/doctor/physician/smo/cmo -> resident
  * - Else if user has no active hospital membership -> independent
@@ -28,7 +39,7 @@ export function getNormalizedRole(context: UserRoleContext): NormalizedRole {
     return "hod";
   }
 
-  const roleStr = (context.membershipRole || context.role || "").toLowerCase().trim();
+  const roleStr = (context.membershipRole || context.role || "").trim();
   
   // Determine if active hospital membership exists
   const hasHospital = context.hasActiveHospitalMembership !== undefined
@@ -39,16 +50,12 @@ export function getNormalizedRole(context: UserRoleContext): NormalizedRole {
     return "independent";
   }
 
-  if (
-    roleStr.includes("hod") ||
-    roleStr.includes("head") ||
-    roleStr.includes("lead") ||
-    roleStr.includes("owner")
-  ) {
+  if (isExactHospitalAdminRole(roleStr)) {
     return "hod";
   }
 
-  if (roleStr.includes("consultant")) {
+  const roleLower = roleStr.toLowerCase();
+  if (roleLower.includes("consultant")) {
     return "consultant";
   }
 

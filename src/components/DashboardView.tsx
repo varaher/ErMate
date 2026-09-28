@@ -58,6 +58,7 @@ interface DashboardViewProps {
   onStartDischargeSummary?: () => void;
   onDeleteAllCases?: () => void;
   onDeleteCase?: (caseId: string) => void;
+  isPlatformAdmin?: boolean;
 }
 
 export default function DashboardView({
@@ -99,6 +100,7 @@ export default function DashboardView({
   shifts = [],
   pendingContributionsCount = 0,
   onDiscussCase,
+  isPlatformAdmin = false,
 }: DashboardViewProps) {
   // Statistics
   const activeCasesCount = cases.filter(c => c.status === "Active" || c.status === "Triage").length;
@@ -257,11 +259,15 @@ export default function DashboardView({
     if (!auth.currentUser || !tempHospital.trim()) return;
     try {
       const userDocRef = doc(db, "users", auth.currentUser.uid);
-      await updateDoc(userDocRef, { hospital: tempHospital.trim() });
-      profile.hospital = tempHospital.trim();
+      await updateDoc(userDocRef, { 
+        hospitalLabel: tempHospital.trim(),
+        workplaceName: tempHospital.trim()
+      });
+      profile.hospitalLabel = tempHospital.trim();
+      profile.workplaceName = tempHospital.trim();
       setIsEditingHospital(false);
     } catch (err) {
-      console.error("Error updating hospital: ", err);
+      console.error("Error updating hospital label: ", err);
     }
   };
 
@@ -442,18 +448,18 @@ INITIAL PRESENTATION VITALS:
 
 SAMPLE HISTORY:
 - Symptoms: ${c.sampleHistory?.symptoms || "N/A"}
-- Allergies: ${c.sampleHistory?.allergies || "NKDA"}
+- Allergies: ${c.sampleHistory?.allergies || "Not documented"}
 - Past Medical History: ${c.sampleHistory?.pastHistory || "None"}
 - Outpatient Meds: ${c.sampleHistory?.medications || "None"}
 - Last Meal: ${c.sampleHistory?.lastMeal || "N/A"}
 - Events: ${c.sampleHistory?.events || "N/A"}
 
 PRIMARY SURVEY (ABCDE):
-- Airway: ${c.primaryAssessment?.airwayStatus || c.primaryAssessment?.airway || "Normal"}
-- Breathing: ${c.primaryAssessment?.breathingStatus || c.primaryAssessment?.breathing || "Normal"}
-- Circulation: ${c.primaryAssessment?.circulationStatus || c.primaryAssessment?.circulation || "Normal"}
-- Disability: ${c.primaryAssessment?.disabilityStatus || c.primaryAssessment?.disability || "Normal"}
-- Exposure: ${c.primaryAssessment?.exposureStatus || c.primaryAssessment?.exposure || "Normal"}
+- Airway: ${c.primaryAssessment?.airwayStatus || c.primaryAssessment?.airway || "Not documented"}
+- Breathing: ${c.primaryAssessment?.breathingStatus || c.primaryAssessment?.breathing || "Not documented"}
+- Circulation: ${c.primaryAssessment?.circulationStatus || c.primaryAssessment?.circulation || "Not documented"}
+- Disability: ${c.primaryAssessment?.disabilityStatus || c.primaryAssessment?.disability || "Not documented"}
+- Exposure: ${c.primaryAssessment?.exposureStatus || c.primaryAssessment?.exposure || "Not documented"}
 ${adjunctsSection}
 
 SECONDARY ASSESSMENT / EXAMINATION:
@@ -468,7 +474,7 @@ TREATMENTS & MEDICATION ORDERS:
 ${treatmentSection}
 
 DIFFERENTIAL DIAGNOSES:
-${c.differentials?.map(d => `- ${d.diagnosis} (${d.status || "EVALUATING"})`).join("\n") || "Under evaluation"}
+${c.differentials?.map(d => `- ${d.diagnosis}${d.status ? ` (${d.status})` : ""}`).join("\n") || "Under evaluation"}
 ${dispositionSection}
 ${notesSection}
 ${mlcSection}
@@ -496,7 +502,7 @@ Blood Pressure: ${d?.dischargeBp || "Not recorded"} mmHg
 Heart Rate: ${d?.dischargeHr || "Not recorded"} bpm
 Oxygen Saturation: ${d?.dischargeSpo2 || "Not recorded"}% on Room Air
 Respiratory Rate: ${d?.dischargeRr || "Not recorded"} /min
-Temperature: ${d?.dischargeTemp || "Not recorded"} °F
+Temperature: ${displayTemperature(d?.dischargeTemp)}
 GCS Score: ${d?.dischargeGcs || "Not recorded"}
 Pain Score: ${d?.dischargePainScore || "Not recorded"}
 GRBS (Glucose): ${d?.dischargeGrbs || "Not recorded"} mg/dL
@@ -999,7 +1005,7 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
                 </div>
 
                 <div className="flex items-center gap-2 mt-2.5">
-                  {onDeleteCase && (
+                  {onDeleteCase && isPlatformAdmin && (
                     <button
                       type="button"
                       onClick={(e) => {
@@ -2020,7 +2026,7 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
                   </button>
                 </div>
               )}
-              {onDeleteAllCases && (
+              {onDeleteAllCases && isPlatformAdmin && (
                 <button
                   onClick={() => {
                     setShowDeleteAllConfirm(true);
@@ -2379,7 +2385,7 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
                                   </div>
                                 )}
                                 
-                                {onDeleteCase && (
+                                {onDeleteCase && isPlatformAdmin && (
                                   <div className="pt-2 border-t border-slate-100 dark:border-slate-800/50 mt-4">
                                     <button
                                       type="button"
@@ -2622,7 +2628,7 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
                               text += `   Triage Category: ${c.patient.triageCategory}\n`;
                               text += `   Chief Complaint: ${c.patient.presentingComplaint}\n`;
                               text += `   Vitals: HR ${c.vitals.hr || "N/A"} | BP ${c.vitals.bp || "N/A"} | SpO2 ${c.vitals.spo2 || "N/A"}%\n`;
-                              text += `   Airway Status: ${c.primaryAssessment?.airwayStatus || "Normal"}\n`;
+                              text += `   Airway Status: ${c.primaryAssessment?.airwayStatus || "Not documented"}\n`;
                               text += `   Past History: ${c.sampleHistory?.pastHistory || "Nil documented"}\n`;
                               text += `   ER Plan Summary: Handed over to HOD for queue management.\n`;
                               text += `--------------------------------------------------\n\n`;
@@ -2644,7 +2650,7 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
                             <p className="font-extrabold text-slate-800 dark:text-white text-[10.5px]">#{idx + 1} Patient: {c.patient.name}</p>
                             <p className="mt-1"><strong className="text-blue-700 dark:text-blue-400 font-bold">[S] Situation:</strong> Presents with {c.patient.presentingComplaint}</p>
                             <p><strong className="text-purple-700 dark:text-purple-400 font-bold">[B] Background:</strong> {c.sampleHistory?.pastHistory || "Nil past history documented."}</p>
-                            <p><strong className="text-amber-700 dark:text-amber-400 font-bold">[A] Assessment:</strong> Vitals: HR {c.vitals?.hr || "N/A"}, BP {c.vitals?.bp || "N/A"}, SpO2 {c.vitals?.spo2 || "N/A"}%. Airway: {c.primaryAssessment?.airwayStatus || "Normal"}</p>
+                            <p><strong className="text-amber-700 dark:text-amber-400 font-bold">[A] Assessment:</strong> Vitals: HR {c.vitals?.hr || "N/A"}, BP {c.vitals?.bp || "N/A"}, SpO2 {c.vitals?.spo2 || "N/A"}%. Airway: {c.primaryAssessment?.airwayStatus || "Not documented"}</p>
                             <p><strong className="text-emerald-700 dark:text-emerald-400 font-bold">[R] Recommendation:</strong> Handed over to department HOD Dr. {profile.name} for queue management and active assignment.</p>
                           </div>
                         ))}

@@ -151,6 +151,8 @@ export interface ScribeTurnResponse {
     intent: string;
     patchCount: number;
     patchPaths: string[];
+    raw?: any;
+    cleaned?: any;
   };
 }
 
@@ -362,9 +364,13 @@ export async function processScribeChatTurn(
   let extractionMessage: ScribeChatMessage | null = null;
   let updatedCaseSheetFields: Partial<CaseSheetData> & Record<string, any> = {};
   let ageQuestionNeeded = false;
+  let rawExt: any = null;
+  let cleanedExt: any = null;
 
   if (extractionResult.status === "fulfilled") {
-    const { cleaned, updatedFields } = extractionResult.value;
+    const { cleaned, updatedFields, raw } = extractionResult.value;
+    rawExt = raw;
+    cleanedExt = cleaned;
     if (Object.keys(updatedFields).length > 0) {
       updatedCaseSheetFields = { ...updatedFields };
       extractionMessage = {
@@ -586,7 +592,9 @@ export async function processScribeChatTurn(
       inputWords: userInput.trim().split(/\s+/).filter(Boolean).length,
       intent: taskResolution.intent,
       patchCount: taskResolution.patches?.length ?? 0,
-      patchPaths: (taskResolution.patches || []).map((p: any) => p.path)
+      patchPaths: (taskResolution.patches || []).map((p: any) => p.path),
+      raw: rawExt,
+      cleaned: cleanedExt
     }
   };
 }
@@ -605,7 +613,7 @@ export async function runExtraction(
   existingCaseSheet: any,
   callExtractionModel: any,
   clinicianProtection?: ProtectedCliniciansResult
-): Promise<{ cleaned: ReturnType<typeof cleanExtractionOutput>; updatedFields: Record<string, any> }> {
+): Promise<{ cleaned: ReturnType<typeof cleanExtractionOutput>; updatedFields: Record<string, any>; raw: RawExtractionFields }> {
   let raw: RawExtractionFields;
 
   try {
@@ -722,6 +730,36 @@ export async function runExtraction(
     "[SCRIBE-CLEANED-CORE-TRACE]",
     JSON.stringify(cleaned)
   );
+
+  console.log(
+    "[DIAGNOSTIC-RAW-CLEANED]",
+    JSON.stringify({
+      raw: {
+        treatment: (raw as any)?.treatment ?? null,
+        plan: (raw as any)?.plan ?? null,
+        airway: (raw as any)?.airway ?? null,
+        events: (raw as any)?.events ?? null,
+        pastMedicalHistory: (raw as any)?.pastMedicalHistory ?? null,
+        medications: (raw as any)?.medications ?? null,
+        temp: (raw as any)?.vitals?.temp ?? null,
+        generalExamination: (raw as any)?.generalExamination ?? null,
+        respiratoryExamination: (raw as any)?.respiratoryExamination ?? null,
+        abdomenExamination: (raw as any)?.abdomenExamination ?? null,
+        cnsExamination: (raw as any)?.cnsExamination ?? null,
+        allergies: (raw as any)?.allergies ?? null,
+        breathing: (raw as any)?.breathing ?? null,
+        circulation: (raw as any)?.circulation ?? null,
+        exposure: (raw as any)?.exposure ?? null,
+      },
+      cleaned: {
+        drugs: (cleaned as any)?.drugs ?? null,
+        procedures: (cleaned as any)?.procedures ?? null,
+        plan: (cleaned as any)?.plan ?? null,
+        treatment: (cleaned as any)?.treatment ?? null,
+        medications: (cleaned as any)?.medications ?? null,
+      }
+    })
+  );
   // VOICE-03: pass the de-identified input text through so field mapping
   // can detect explicit normalcy phrases — the ONLY trigger allowed for
   // normal-exam defaults. Never applied just because a field is empty.
@@ -733,7 +771,7 @@ export async function runExtraction(
     clinicianProtection
   );
 
-  return { cleaned, updatedFields };
+  return { cleaned, updatedFields, raw };
 }
 
 // ── Stage B: Clinical reasoning (Claude Sonnet ONLY, no fallback) ────
@@ -967,6 +1005,8 @@ export function normalizeExposureAndSecondarySurvey(
   let exp = typeof raw.exposure === "string" ? raw.exposure.trim() : "";
   if (!exp) return { updatedSecSurvey: false };
 
+  const originalExposure = exp;
+
   // 1. Temperature extraction from exposure
   const tempMatch = exp.match(/(?:temp(?:erature)?\s*[:=]?\s*)?(\b\d{2}(?:\.\d)?\s*(?:°?[cC]|°?[fF])\b)/i);
   if (tempMatch) {
@@ -978,44 +1018,49 @@ export function normalizeExposureAndSecondarySurvey(
     exp = exp.replace(tempMatch[0], "").trim();
   }
 
-  // 2. Abdomen extraction from exposure
+  // 2. Abdomen extraction from exposure (verbatim, no canonical rewrite)
   const abdRegex = /\b(?:abdomen\s+(?:is\s+)?soft(?:,\s*|\s+and\s+)non-tender|abdomen\s+soft|soft(?:,\s*|\s+and\s+)non-tender\s+abdomen|soft,?\s+non-tender|soft\s+and\s+non-tender|per\s+abdomen\s+[^\.\n;,]+)\b/gi;
   const abdMatch = exp.match(abdRegex);
   if (abdMatch) {
     const extractedAbd = abdMatch[0].trim();
     if (!secSurvey.abdomen) {
-      secSurvey.abdomen = /soft/i.test(extractedAbd) ? "Soft, non-tender" : extractedAbd;
+      secSurvey.abdomen = extractedAbd;
       updatedSecSurvey = true;
     }
     exp = exp.replace(abdRegex, "").trim();
   }
 
-  // 3. CNS extraction from exposure
-  const cnsRegex = /\b(?:no\s+neck\s+stiffness(?:,\s*|\s+and\s+|\s+or\s+)?(?:no\s+)?focal\s+neurological\s+deficit|no\s+neck\s+stiffness|no\s+focal\s+(?:neurological\s+)?deficit|neck\s+supple|no\s+meningeal\s+signs)\b/gi;
+  // 3. CNS extraction from exposure (verbatim, no canonical expansion)
+  const cnsRegex = /\b(?:(?:there\s+is\s+)?no\s+neck\s+stiffness(?:,\s*|\s+and\s+|\s+or\s+)?(?:no\s+)?focal\s+neurological\s+deficit|no\s+neck\s+stiffness|no\s+focal\s+(?:neurological\s+)?deficit|neck\s+supple|no\s+meningeal\s+signs)\b/gi;
   const cnsMatch = exp.match(cnsRegex);
   if (cnsMatch) {
-    const extractedCns = cnsMatch.join(", ").trim();
+    const extractedCns = cnsMatch.map(m => m.replace(/^there\s+is\s+/i, "").trim()).join(", ").trim();
     if (!secSurvey.cns) {
-      secSurvey.cns = extractedCns.includes("stiffness") && extractedCns.includes("deficit")
-        ? "No neck stiffness, no focal neurological deficit"
-        : extractedCns;
+      secSurvey.cns = extractedCns;
       updatedSecSurvey = true;
     }
     exp = exp.replace(cnsRegex, "").trim();
   }
 
   // 4. Hydration / General extraction from exposure
-  const hydrationRegex = /\b(?:(?:mild|moderate|severe)?\s*dehydration(?:,\s*|\s+with\s+)?(?:slightly\s+)?dry\s+oral\s+mucosa|(?:slightly\s+)?dry\s+oral\s+mucosa|(?:mild|moderate|severe)\s+dehydration|sunken\s+eyes|decreased\s+skin\s+turgor)\b/gi;
-  const hydMatch = exp.match(hydrationRegex);
-  if (hydMatch) {
-    const extractedHyd = hydMatch.join(", ").trim();
-    if (!secSurvey.general) {
-      secSurvey.general = /mild\s+dehydration/i.test(extractedHyd) && /dry\s+oral\s+mucosa/i.test(extractedHyd)
-        ? "Mild dehydration, slightly dry oral mucosa"
-        : extractedHyd;
+  const isHydrationRelated = /\b(?:hydration|dehydrat|oral\s+mucosa|skin\s+turgor|sunken\s+eyes)\b/i.test(exp);
+  if (isHydrationRelated) {
+    const cleanedHyd = exp
+      .replace(/^[,\.\s;]+/, "")
+      .replace(/[,\.\s;]+$/, "")
+      .replace(/^there\s+is\s+/i, "")
+      .trim();
+    if (!secSurvey.general || !secSurvey.general.trim()) {
+      secSurvey.general = cleanedHyd;
       updatedSecSurvey = true;
+      exp = "";
+    } else if (!secSurvey.general.toLowerCase().includes("hydration") && !secSurvey.general.toLowerCase().includes("oral mucosa")) {
+      secSurvey.general = `${secSurvey.general.trim().replace(/[.;]+$/, "")}. ${cleanedHyd}`;
+      updatedSecSurvey = true;
+      exp = "";
+    } else {
+      exp = "";
     }
-    exp = exp.replace(hydrationRegex, "").trim();
   }
 
   // 5. History negative guard: "no rash"
@@ -1040,6 +1085,16 @@ export function normalizeExposureAndSecondarySurvey(
   // If only non-substantive words remain (e.g. "and", "with", "no"), clear it
   if (/^(?:and|with|no|nil|none)[\.\s]*$/i.test(exp)) {
     exp = "";
+  }
+
+  // D. DANGLING CONNECTOR SAFETY
+  // If the remaining exposure ends with a dangling connector such as: "with", "and", "or", ","
+  // or an equivalent visibly incomplete fragment, restore original exposure.
+  if (exp.length > 0) {
+    const endsWithDangling = /\b(?:with|and|or)\s*[,;.]*$/i.test(exp) || /[,;\-]\s*$/.test(exp);
+    if (endsWithDangling) {
+      exp = originalExposure;
+    }
   }
 
   raw.exposure = exp.length > 0 ? exp : null;
@@ -1178,6 +1233,10 @@ function extractExplicitSecondarySection(
   rawInputText: string,
   section: SecondarySection
 ): string | null {
+  if (!/\b(?:general|systemic)\s+examination\b/i.test(rawInputText)) {
+    return null;
+  }
+
   const text = getExaminationWindow(rawInputText);
 
   if (!text) return null;
@@ -1187,16 +1246,16 @@ function extractExplicitSecondarySection(
       /\bgeneral\s+examination\s*[:,-]?\s*([\s\S]*?)(?=\bsystemic\s+examination\b|\bcvs\b|\bcardiovascular\b)/i,
 
     cvs:
-      /\b(?:cvs|cardiovascular(?:\s+examination)?)\s*[:,-]?\s*([\s\S]*?)(?=\b(?:chest|respiratory|rs|abdomen|per\s+abdomen|p\/a|cns|neurological|extremities|psychological\s+assessment|investigations)\b)/i,
+      /\b(?:cvs|cardiovascular(?:\s+examination)?)\s*[:,-]?\s*([\s\S]*?)(?=\b(?:chest(?!\s+pain)|respiratory(?!\s+(?:rate|distress|arrest))|rs|abdomen|per\s+abdomen|p\/a|cns|neurological(?!\s+deficit)|extremities|psychological\s+assessment|investigations)\b)/i,
 
     respiratory:
-      /\b(?:chest|respiratory(?:\s+examination)?|rs)\s*[:,-]?\s*([\s\S]*?)(?=\b(?:abdomen|per\s+abdomen|p\/a|cns|neurological|extremities|psychological\s+assessment|investigations)\b)/i,
+      /\b(?:chest(?!\s+pain)|respiratory(?!\s+(?:rate|distress|arrest))(?:\s+examination)?|rs)\s*[:,-]?\s*([\s\S]*?)(?=\b(?:abdomen|per\s+abdomen|p\/a|cns|neurological(?!\s+deficit)|extremities|psychological\s+assessment|investigations)\b)/i,
 
     abdomen:
-      /\b(?:abdomen(?:\s+examination)?|per\s+abdomen|p\/a)\s*[:,-]?\s*([\s\S]*?)(?=\b(?:then\s+)?(?:cns|neurological|extremities|psychological\s+assessment|investigations)\b)/i,
+      /\b(?:abdomen(?:\s+examination)?|per\s+abdomen|p\/a)\s*[:,-]?\s*([\s\S]*?)(?=\b(?:then\s+)?(?:cns|neurological(?!\s+deficit)|extremities|psychological\s+assessment|investigations)\b)/i,
 
     cns:
-      /\b(?:cns|neurological(?:\s+examination)?)\s*[:,-]?\s*([\s\S]*?)(?=\b(?:then\s+)?(?:extremities|psychological\s+assessment|investigations)\b)/i,
+      /\b(?:cns|neurological(?!\s+deficit)(?:\s+examination)?)\s*[:,-]?\s*([\s\S]*?)(?=\b(?:then\s+)?(?:extremities|psychological\s+assessment|investigations)\b)/i,
 
     extremities:
       /\bextremities(?:\s+examination)?\s*[:,-]?\s*([\s\S]*?)(?=\b(?:psychological\s+assessment|investigations|treatment\s+plan|differential\s+diagnosis)\b|$)/i,

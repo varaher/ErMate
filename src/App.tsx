@@ -58,8 +58,20 @@ import { isEstablishedCaseSheet } from "./utils/establishedCaseCheck";
 import { auth, db, handleFirestoreError, OperationType } from "./firebase";
 import { sanitizeForFirestore } from "./utils/firestoreSanitizer";
 import { onAuthStateChanged, signOut } from "firebase/auth";
-import { doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, collection, addDoc, onSnapshot, query, where } from "firebase/firestore";
-
+import {
+  doc,
+  getDoc,
+  getDocs,
+  setDoc,
+  updateDoc,
+  deleteDoc,
+  collection,
+  addDoc,
+  onSnapshot,
+  query,
+  where,
+  runTransaction
+} from "firebase/firestore";
 interface StaticReference {
   id: string;
   title: string;
@@ -546,7 +558,7 @@ useEffect(() => {
     name: "Emergency Physician",
     email: "",
     role: "EM Resident",
-    hospital: "Emergency Department",
+    hospital: "",
     aiCredits: 100,
     streak: 1,
     subscriptionTier: "Free Standard"
@@ -661,188 +673,323 @@ useEffect(() => {
     });
   }, [profile?.email, profile?.role, profile?.hospital, teamMembers]);
 
-  // Auth state listener with real-time onSnapshot for UserProfile and team invite sync
-  useEffect(() => {
-    let unsubscribeProfile: (() => void) | null = null;
+// Auth state listener with real-time UserProfile sync.
+//
+// SECURITY:
+// - Firebase Auth establishes identity.
+// - users/{uid} is profile/display state, not membership authority.
+// - Hospital/team authority comes from trusted team_members/backend flows.
+// - Missing profiles are created atomically so signup and auth bootstrap
+//   cannot overwrite each other.
+useEffect(() => {
+  let unsubscribeProfile:
+    (() => void) | null = null;
 
-    const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
-      setAuthLoading(true);
-      if (user) {
-        const profileDocRef = doc(db, "users", user.uid);
-        try {
-          const profileSnap = await getDoc(profileDocRef);
-          let currentProfile: UserProfile;
+  /*
+   * Prevent an older asynchronous auth callback
+   * from changing state after Firebase identity
+   * has already changed.
+   */
+  let authGeneration = 0;
 
-          if (!profileSnap.exists()) {
-            // Check if there is a pending team invite for this new user
-            const emailClean = (user.email || "").trim().toLowerCase();
-            const memberId = `mem-${emailClean.replace(/[^a-zA-Z0-9]/g, "-")}`;
-            const memberDocRef = doc(db, "team_members", memberId);
-            const memberSnap = await getDoc(memberDocRef);
+  const unsubscribeAuth =
+    onAuthStateChanged(
+      auth,
+      async (user) => {
+        const generation =
+          ++authGeneration;
 
-            let initialHospital = "";
-            let initialTier = "Free Standard";
-            let initialRole = "Senior Consultant";
-
-            if (memberSnap.exists()) {
-              const mData = memberSnap.data();
-              initialHospital = mData.hospital || initialHospital;
-              initialRole = mData.role || initialRole;
-              initialTier = "Hospital Team Premium (Department Covered)";
-
-              // Update team member status to Active (Joined)
-              await updateDoc(memberDocRef, {
-                status: "Active (Joined)",
-                updatedAt: new Date().toISOString()
-              });
-            }
-
-            const initialProfile: UserProfile = {
-              name: user.displayName || "Dr. " + (user.email?.split("@")[0] || "Doctor"),
-              email: user.email || "doctor@ermate.in",
-              role: initialRole,
-              hospital: initialHospital,
-              aiCredits: 350,
-              streak: 5,
-              subscriptionTier: initialTier
-            };
-
-            if (memberSnap.exists()) {
-              (initialProfile as any).teamAddedNotification = {
-                title: "Welcome to Your Team!",
-                message: `You have been automatically incorporated into the team at ${initialHospital}. Your workspace and shifts are fully synchronized!`,
-                timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) + " | " + new Date().toLocaleDateString([], { month: "short", day: "numeric" }),
-                acknowledged: false
-              };
-            }
-
-            await setDoc(profileDocRef, initialProfile);
-            currentProfile = initialProfile;
-          } else {
-            currentProfile = profileSnap.data() as UserProfile;
-            // Unblock UI immediately for existing users!
-            setProfile(currentProfile);
-            setIsLoggedIn(true);
-            setAuthLoading(false);
-
-            // For existing profiles, check if they have a pending team invite that wasn't incorporated yet
-            const emailClean = (user.email || "").trim().toLowerCase();
-            const memberId = `mem-${emailClean.replace(/[^a-zA-Z0-9]/g, "-")}`;
-            const memberDocRef = doc(db, "team_members", memberId);
-            getDoc(memberDocRef).then(async (memberSnap) => {
-
-            if (memberSnap.exists()) {
-              const mData = memberSnap.data();
-              if (mData.status === "Pending Invite" || currentProfile.hospital !== mData.hospital) {
-                const isIndividualPlan = currentProfile.subscriptionTier?.toLowerCase().includes("pro") || currentProfile.subscriptionTier?.toLowerCase().includes("individual");
-
-                let updatedTier = currentProfile.subscriptionTier || "Free Standard";
-                let nextBillingTier = (currentProfile as any).nextBillingTier || "";
-                let subscriptionTransitionPending = (currentProfile as any).subscriptionTransitionPending || false;
-                let subscriptionTransitionMessage = (currentProfile as any).subscriptionTransitionMessage || "";
-
-                if (isIndividualPlan) {
-                  nextBillingTier = "Hospital Team Premium (Department Covered)";
-                  subscriptionTransitionPending = true;
-                  subscriptionTransitionMessage = "From next month, your individual plan transitions to your hospital's shared Department Plan (no further individual charges).";
-                } else {
-                  updatedTier = "Hospital Team Premium (Department Covered)";
-                }
-
-                await updateDoc(profileDocRef, {
-                  hospital: mData.hospital,
-                  subscriptionTier: updatedTier,
-                  nextBillingTier,
-                  subscriptionTransitionPending,
-                  subscriptionTransitionMessage,
-                  teamAddedNotification: {
-                    title: "Added to Team!",
-                    message: `You have been added to the team at ${mData.hospital} by your HOD. Your clinical workspace and roster are now synced!`,
-                    timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) + " | " + new Date().toLocaleDateString([], { month: "short", day: "numeric" }),
-                    acknowledged: false
-                  }
-                });
-
-                await updateDoc(memberDocRef, {
-                  status: "Active (Joined)",
-                  updatedAt: new Date().toISOString()
-                });
-              }
-            }
-          }).catch(e => console.warn("Background invite check failed:", e));
-          }
-          setProfile(currentProfile);
-          setIsLoggedIn(true);
-          setAuthLoading(false);
-        } catch (err) {
-          console.warn("Offline or error checking profile/invites, using fallback profile:", err);
-          const fallbackProfile: UserProfile = {
-            name: user.displayName || "Dr. " + (user.email?.split("@")[0] || "Doctor"),
-            email: user.email || "doctor@ermate.in",
-            role: "Senior Consultant",
-            hospital: "",
-            aiCredits: 350,
-            streak: 5,
-            subscriptionTier: "Hospital Team Premium (Department Covered)"
-          };
-          setProfile(fallbackProfile);
-          setIsLoggedIn(true);
-        }
-
-        // Set up real-time onSnapshot listener for UserProfile
-        unsubscribeProfile = onSnapshot(profileDocRef, (snapshot) => {
-          if (snapshot.exists()) {
-            const data = snapshot.data() as UserProfile & {
-              teamAddedNotification?: {
-                title: string;
-                message: string;
-                timestamp: string;
-                acknowledged: boolean;
-              }
-            };
-
-            // Process real-time team added notification
-            if (data.teamAddedNotification && !data.teamAddedNotification.acknowledged) {
-              triggerNotification(
-                data.teamAddedNotification.title,
-                data.teamAddedNotification.message,
-                "success"
-              );
-
-              // Acknowledge notification
-              updateDoc(profileDocRef, {
-                "teamAddedNotification.acknowledged": true
-              }).catch(e => console.warn("Error acknowledging team notification:", e));
-            }
-
-            setProfile(data);
-          }
-        }, (error) => {
-          console.warn("Profile onSnapshot offline warning:", error?.message || error);
-        });
-
-      } else {
-        setIsLoggedIn(false);
-        setProfile(null as any);
-        setCases([]);
-        setHandovers([]);
-        setQuickPasteList([]);
-        setTeamMembers([]);
+        /*
+         * Remove any listener belonging to the
+         * previously authenticated user.
+         */
         if (unsubscribeProfile) {
           unsubscribeProfile();
           unsubscribeProfile = null;
         }
-      }
-      setAuthLoading(false);
-    });
 
-    return () => {
-      unsubscribeAuth();
-      if (unsubscribeProfile) {
-        unsubscribeProfile();
+        setAuthLoading(true);
+
+        /*
+         * Firebase says there is no signed-in user.
+         */
+        if (!user) {
+          setIsLoggedIn(false);
+          setProfile(null as any);
+
+          setCases([]);
+          setHandovers([]);
+          setQuickPasteList([]);
+          setTeamMembers([]);
+          setShifts([]);
+          setHospitalSubscription(null);
+
+          setAuthLoading(false);
+          return;
+        }
+
+        const authenticatedEmail =
+          String(user.email || "")
+            .trim()
+            .toLowerCase();
+
+        /*
+         * ErMate requires an authenticated email
+         * identity.
+         *
+         * Never fabricate doctor@ermate.in or another
+         * identity if Firebase supplies no email.
+         */
+        if (!authenticatedEmail) {
+          console.warn(
+            "Authenticated Firebase user has no email address."
+          );
+
+          /*
+           * Do not leave Firebase authenticated while
+           * showing the ErMate login screen.
+           */
+          await signOut(auth).catch(
+            () => undefined
+          );
+
+          setIsLoggedIn(false);
+          setProfile(null as any);
+          setAuthLoading(false);
+
+          return;
+        }
+
+        const profileDocRef =
+          doc(
+            db,
+            "users",
+            user.uid
+          );
+
+        const rawName =
+          String(
+            user.displayName ||
+            authenticatedEmail.split("@")[0] ||
+            "Doctor"
+          ).trim();
+
+        const formattedName =
+          rawName.startsWith("Dr.")
+            ? rawName
+            : `Dr. ${rawName}`;
+
+        /*
+         * Safe standalone defaults only.
+         *
+         * These values grant:
+         * - no hospital membership
+         * - no HOD/leadership authority
+         * - no paid entitlement
+         */
+        const safeInitialProfile:
+          UserProfile = {
+          name: formattedName,
+          email: authenticatedEmail,
+
+          role: "EM Resident",
+          hospital: "",
+
+          aiCredits: 100,
+          streak: 1,
+
+          subscriptionTier:
+            "Free Standard"
+        };
+
+        let currentProfile:
+          UserProfile;
+
+        try {
+          /*
+           * Atomic CREATE-IF-MISSING.
+           *
+           * Signup may be writing users/{uid} at
+           * almost exactly the same time that
+           * onAuthStateChanged runs.
+           *
+           * The transaction re-checks the document
+           * before writing, so App.tsx cannot overwrite
+           * a profile SignUpView just created.
+           */
+          currentProfile =
+            await runTransaction(
+              db,
+              async (transaction) => {
+                const latestSnap =
+                  await transaction.get(
+                    profileDocRef
+                  );
+
+                if (
+                  latestSnap.exists()
+                ) {
+                  return latestSnap.data() as UserProfile;
+                }
+
+                transaction.set(
+                  profileDocRef,
+                  safeInitialProfile,
+                  {
+                    merge: true
+                  }
+                );
+
+                return safeInitialProfile;
+              }
+            );
+
+          /*
+           * Ignore stale asynchronous results if the
+           * Firebase identity changed meanwhile.
+           */
+          if (
+            generation !== authGeneration
+          ) {
+            return;
+          }
+
+          setProfile(
+            currentProfile
+          );
+
+          setIsLoggedIn(true);
+        } catch (err) {
+          console.warn(
+            "Profile bootstrap unavailable; using safe local fallback:",
+            err
+          );
+
+          if (
+            generation !== authGeneration
+          ) {
+            return;
+          }
+
+          /*
+           * Local fallback only.
+           *
+           * It does not grant hospital membership
+           * or backend permissions.
+           */
+          currentProfile =
+            safeInitialProfile;
+
+          setProfile(
+            currentProfile
+          );
+
+          setIsLoggedIn(true);
+        }
+
+        if (
+          generation !== authGeneration
+        ) {
+          return;
+        }
+
+        /*
+         * Real-time UserProfile listener.
+         */
+        unsubscribeProfile =
+          onSnapshot(
+            profileDocRef,
+
+            (snapshot) => {
+              if (
+                generation !==
+                authGeneration
+              ) {
+                return;
+              }
+
+              if (
+                !snapshot.exists()
+              ) {
+                return;
+              }
+
+              const data = snapshot.data() as (UserProfile & {
+                teamAddedNotification?: {
+                  title: string;
+                  message: string;
+                  timestamp: string;
+                  acknowledged: boolean;
+                };
+              });
+
+              if (
+                data.teamAddedNotification &&
+                !data.teamAddedNotification
+                  .acknowledged
+              ) {
+                triggerNotification(
+                  data.teamAddedNotification
+                    .title,
+
+                  data.teamAddedNotification
+                    .message,
+
+                  "success"
+                );
+
+                /*
+                 * Notification acknowledgement changes
+                 * no membership/authority fields.
+                 */
+                updateDoc(
+                  profileDocRef,
+                  {
+                    "teamAddedNotification.acknowledged":
+                      true
+                  }
+                ).catch((error) => {
+                  console.warn(
+                    "Error acknowledging team notification:",
+                    error
+                  );
+                });
+              }
+
+              setProfile(data);
+            },
+
+            (error) => {
+              if (
+                generation !==
+                authGeneration
+              ) {
+                return;
+              }
+
+              console.warn(
+                "Profile onSnapshot unavailable:",
+                error?.message ||
+                error
+              );
+            }
+          );
+
+        setAuthLoading(false);
       }
-    };
-  }, []);
+    );
+
+  return () => {
+    authGeneration++;
+
+    unsubscribeAuth();
+
+    if (unsubscribeProfile) {
+      unsubscribeProfile();
+      unsubscribeProfile = null;
+    }
+  };
+}, []);
 
   // Real-time Firestore sync for cases & handovers when logged in
   useEffect(() => {
@@ -998,12 +1145,24 @@ useEffect(() => {
         // Seed initial or local items to Firestore if first time
         const currentItems = quickPasteListRef.current.length > 0 ? quickPasteListRef.current : DEFAULT_QUICK_PASTE_PATIENTS;
         for (const item of currentItems) {
-          const itemToSave: QuickPastePatient = {
-            ...item,
-            hospital: item.hospital || profile.hospital || "",
-            createdByEmail: item.createdByEmail || profile.email || auth.currentUser?.email || undefined,
-            updatedAt: new Date().toISOString()
-          };
+         const itemToSave = {
+  ...item,
+
+  // Independent-workspace seed.
+  // Creator identity must come from Firebase Auth.
+  hospital: profile.hospital || "",
+
+  createdByUid:
+    auth.currentUser?.uid || "",
+
+  createdByEmail:
+    auth.currentUser?.email ||
+    profile.email ||
+    "",
+
+  updatedAt:
+    new Date().toISOString()
+};
           try {
             await setDoc(doc(db, "quick_paste_patients", itemToSave.id), itemToSave);
           } catch (err) {
@@ -1022,129 +1181,192 @@ useEffect(() => {
       console.error("Error streaming quick paste patients:", error);
     });
 
-    // Stream Team Members
-    const teamQuery = userHospital ? query(collection(db, "team_members"), where("hospital", "==", userHospital)) : collection(db, "team_members");
-    const unsubscribeTeam = onSnapshot(teamQuery, async (snapshot) => {
-      const DEMO_EMAILS = [
-        "dr.vipin@gmail.com",
-        "priya.nair@gmail.com",
-        "sanjay.verma@gmail.com",
-        "dr.ananya@gmail.com",
-        "dr.jenkins@gmail.com",
-        "chloe.harrison@gmail.com",
-        "robert.miller@gmail.com"
-      ];
+   // Stream Team Members
+// READ-ONLY in the browser.
+// Membership creation, activation, removal and role authority are handled
+// only by the trusted /api/team backend.
+let unsubscribeTeam: () => void = () => {};
 
+if (userHospital && userHospital.trim()) {
+  const teamQuery = query(
+    collection(db, "team_members"),
+    where("hospital", "==", userHospital)
+  );
+
+  unsubscribeTeam = onSnapshot(
+    teamQuery,
+    (snapshot) => {
       const loadedTeam: TeamMember[] = [];
+
       snapshot.forEach((docSnap) => {
         const data = docSnap.data() as TeamMember;
-        const emailLower = (data.email || "").toLowerCase().trim();
-        const idLower = (data.id || docSnap.id).toLowerCase();
 
-        if (DEMO_EMAILS.includes(emailLower) || idLower.startsWith("mem-vipin") || idLower.startsWith("mem-priya") || idLower.startsWith("mem-sanjay") || idLower.startsWith("mem-ananya") || ["mem-1", "mem-2", "mem-3", "mem-4"].includes(idLower)) {
-          // Permanently purge demo documents from Firestore database
-          deleteDoc(doc(db, "team_members", docSnap.id)).catch(() => {});
-        } else {
-          loadedTeam.push(data);
-        }
+        loadedTeam.push({
+          ...data,
+          id: data.id || docSnap.id
+        });
       });
 
-      const filteredTeam = loadedTeam.filter(m => {
-        const memberHospital = (m.hospital || "").trim().toLowerCase();
-        return userHospitalLower ? memberHospital === userHospitalLower : true;
+      const filteredTeam = loadedTeam.filter((member) => {
+        const memberHospital = (member.hospital || "")
+          .trim()
+          .toLowerCase();
+
+        return memberHospital === userHospitalLower;
       });
 
-      // If logged in user is not in the team list, let's automatically add them to the team list so they are displayed!
-      const currentEmail = (profile?.email || "").toLowerCase().trim();
-      const existingMember = currentEmail ? loadedTeam.find(m => m.email.toLowerCase().trim() === currentEmail) : undefined;
-      const hasSelf = currentEmail ? filteredTeam.some(m => m.email.toLowerCase().trim() === currentEmail) : true;
-      if (!hasSelf && profile?.email) {
-        const selfMember: TeamMember = {
-          id: existingMember?.id || `mem-${profile.email.replace(/[^a-zA-Z0-9]/g, "-")}`,
-          name: profile.name || existingMember?.name || "Physician",
-          email: profile.email || existingMember?.email || "",
-          role: profile.role || existingMember?.role || "EM Resident",
-          status: "Active (Joined)",
-          shift: existingMember?.shift || "morning",
-          hospital: userHospital || existingMember?.hospital || ""
-        };
-        try {
-          await setDoc(doc(db, "team_members", selfMember.id), sanitizeForFirestore(selfMember), { merge: true });
-        } catch (err) {
-          console.error("Error auto-adding self to team list:", err);
-        }
-      }
       setTeamMembers(filteredTeam);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, "team_members");
-    });
+    },
+    (error) => {
+      console.warn(
+        "Team members listener unavailable:",
+        error?.message || error
+      );
+
+      setTeamMembers([]);
+    }
+  );
+} else {
+  // Independent users must not enumerate hospital membership records.
+  setTeamMembers([]);
+}
 
     // Stream Hospital Subscription & Shifts Configuration
     let unsubscribeSub: () => void = () => {};
-    let unsubscribeShifts: () => void = () => {};
+let unsubscribeShifts: () => void = () => {};
+let unsubscribeShiftMembership: () => void = () => {};
 
     const hospitalSlug = userHospitalLower.replace(/[^a-z0-9]/g, "-").replace(/^-+|-+$/g, "");
     if (hospitalSlug && hospitalSlug.trim().length > 0) {
       const subDocRef = doc(db, "hospital_subscriptions", hospitalSlug);
-      unsubscribeSub = onSnapshot(subDocRef, async (snapshot) => {
-        if (snapshot.exists()) {
-          const data = snapshot.data();
-          setHospitalSubscription({
-            active: data.active,
-            subscriptionTier: data.subscriptionTier
-          });
-        } else {
-          // If snapshot doesn't exist, check if current profile has a team plan.
-          const tier = profile?.subscriptionTier || "Free Plan";
-          const isTeamPlan = tier.toLowerCase().includes("team") || tier.toLowerCase().includes("enterprise");
-          if (isTeamPlan) {
-            // Auto initialize the hospital subscription so all members benefit!
-            const initialSub = {
-              id: hospitalSlug,
-              hospital: userHospital,
-              subscriptionTier: tier,
-              active: true,
-              updatedAt: new Date().toISOString()
-            };
-            try {
-              await setDoc(subDocRef, initialSub);
-              setHospitalSubscription({
-                active: true,
-                subscriptionTier: tier
-              });
-            } catch (err) {
-              console.error("Error creating hospital subscription:", err);
-            }
-          } else {
-            setHospitalSubscription(null);
-          }
-        }
-      }, (error) => {
-        console.warn("Subscription onSnapshot offline warning:", error?.message || error);
-        setHospitalSubscription(null);
-      });
+    unsubscribeSub = onSnapshot(
+  subDocRef,
+  (snapshot) => {
+    if (snapshot.exists()) {
+      const data = snapshot.data();
 
-      const shiftDocRef = doc(db, "hospital_shifts", hospitalSlug);
-      unsubscribeShifts = onSnapshot(shiftDocRef, (snapshot) => {
-        if (snapshot.exists()) {
+      setHospitalSubscription({
+        active: data.active === true,
+        subscriptionTier:
+          data.subscriptionTier || "Free Standard"
+      });
+    } else {
+      // READ-ONLY client:
+      // Hospital subscriptions are created/activated only by trusted
+      // backend/admin workflows. The browser must never self-create one.
+      setHospitalSubscription(null);
+    }
+  },
+  (error) => {
+    console.warn(
+      "Subscription onSnapshot unavailable:",
+      error?.message || error
+    );
+
+    setHospitalSubscription(null);
+  }
+);
+     
+    } else {
+      setHospitalSubscription(null);
+     
+    }
+// Hospital shift configuration must follow the canonical
+// team_members/{uid} membership, never users/{uid}.hospital.
+if (auth.currentUser) {
+  const selfMembershipRef = doc(
+    db,
+    "team_members",
+    auth.currentUser.uid
+  );
+
+  unsubscribeShiftMembership = onSnapshot(
+    selfMembershipRef,
+    (memberSnapshot) => {
+      // Stop listening to any previous hospital shift document.
+      unsubscribeShifts();
+      unsubscribeShifts = () => {};
+
+      if (!memberSnapshot.exists()) {
+        setShifts(ROTA_SHIFTS);
+        return;
+      }
+
+      const membership = memberSnapshot.data() as any;
+
+      const membershipStatus =
+        String(membership.status || "");
+
+      const isActiveMembership =
+        membershipStatus === "active" ||
+        membershipStatus === "Active (Joined)";
+
+      const isVerifiedMembership =
+        membership.membershipVerified === true;
+
+      const trustedHospitalId =
+        typeof membership.hospitalId === "string" &&
+        membership.hospitalId.trim()
+          ? membership.hospitalId.trim()
+          : (
+              typeof membership.hospital === "string"
+                ? membership.hospital.trim()
+                : ""
+            );
+
+      if (
+        !isActiveMembership ||
+        !isVerifiedMembership ||
+        !trustedHospitalId
+      ) {
+        setShifts(ROTA_SHIFTS);
+        return;
+      }
+
+      const shiftDocRef = doc(
+        db,
+        "hospital_shifts",
+        trustedHospitalId
+      );
+
+      unsubscribeShifts = onSnapshot(
+        shiftDocRef,
+        (snapshot) => {
+          if (!snapshot.exists()) {
+            setShifts(ROTA_SHIFTS);
+            return;
+          }
+
           const data = snapshot.data();
-          if (data.shifts && Array.isArray(data.shifts)) {
+
+          if (Array.isArray(data.shifts)) {
             setShifts(data.shifts);
           } else {
             setShifts(ROTA_SHIFTS);
           }
-        } else {
+        },
+        (error) => {
+          console.error(
+            "Error fetching hospital shifts:",
+            error
+          );
+
           setShifts(ROTA_SHIFTS);
         }
-      }, (error) => {
-        console.error("Error fetching hospital shifts:", error);
-        setShifts(ROTA_SHIFTS);
-      });
-    } else {
-      setHospitalSubscription(null);
+      );
+    },
+    (error) => {
+      console.warn(
+        "Trusted membership unavailable for shifts:",
+        error?.message || error
+      );
+
       setShifts(ROTA_SHIFTS);
     }
-
+  );
+} else {
+  setShifts(ROTA_SHIFTS);
+}
     // Stream Clinical Contributions for Peer Review Notifications
     const contributionsQuery = userHospital ? query(collection(db, "contributions"), where("hospital", "==", userHospital)) : collection(db, "contributions");
     const unsubscribeContributions = onSnapshot(contributionsQuery, (snapshot) => {
@@ -1193,6 +1415,7 @@ useEffect(() => {
       unsubscribeQuickPaste();
       unsubscribeTeam();
       unsubscribeSub();
+      unsubscribeShiftMembership();
       unsubscribeShifts();
       unsubscribeContributions();
     };
@@ -1287,58 +1510,141 @@ useEffect(() => {
   };
 
   // Delete a case
-  const handleDeleteCase = async (caseId: string) => {
+// P0 rule: hard deletion is reserved for the platform admin.
+// Normal clinicians must never remove the case locally if Firestore denies it.
+const handleDeleteCase = async (caseId: string) => {
+  const currentEmail = (auth.currentUser?.email || "")
+    .trim()
+    .toLowerCase();
+
+  const isPlatformAdminUser =
+    currentEmail === "varahgrp@gmail.com";
+
+  if (!isPlatformAdminUser) {
+    triggerNotification(
+      "Deletion Restricted",
+      "Clinical cases cannot be permanently deleted by normal users.",
+      "warning"
+    );
+    return;
+  }
+
+  try {
+    const targetCase = cases.find(c => c.id === caseId);
+
+    console.log("[Delete] Path: cases/" + caseId);
+
+    await deleteDoc(doc(db, "cases", caseId));
+
+    // Platform-admin cleanup of legacy department mirror if present.
+    const deptId =
+      targetCase?.departmentId ||
+      profile.hospital ||
+      "er";
+
     try {
-      const targetCase = cases.find(c => c.id === caseId);
-      console.log('[Delete] Path: cases/' + caseId);
-      await deleteDoc(doc(db, "cases", caseId));
-      
-      // Also delete from department subcollection if applicable
-      const deptId = targetCase?.departmentId || profile.hospital || "er";
+      await deleteDoc(
+        doc(db, "departments", deptId, "cases", caseId)
+      );
+    } catch (subErr) {
+      console.warn(
+        "Department mirror delete skipped or unavailable:",
+        subErr
+      );
+    }
+
+    // Update UI only AFTER Firestore deletion succeeded.
+    setCases(prev =>
+      prev.filter(c => c.id !== caseId)
+    );
+
+    if (selectedCaseId === caseId) {
+      setSelectedCaseId(null);
+    }
+
+    triggerNotification(
+      "Case Deleted",
+      "The case was permanently deleted by the platform administrator.",
+      "info"
+    );
+  } catch (err: any) {
+    console.error("[Delete Case Error]", err);
+
+    // IMPORTANT:
+    // Do NOT remove the case from local state when deletion fails.
+    triggerNotification(
+      "Delete Failed",
+      "The case was not deleted. Your clinical record remains unchanged.",
+      "warning"
+    );
+  }
+};
+
+
+// Delete all cases
+// P0 rule: bulk hard deletion is platform-admin only.
+const handleDeleteAllCases = async () => {
+  const currentEmail = (auth.currentUser?.email || "")
+    .trim()
+    .toLowerCase();
+
+  const isPlatformAdminUser =
+    currentEmail === "varahgrp@gmail.com";
+
+  if (!isPlatformAdminUser) {
+    triggerNotification(
+      "Deletion Restricted",
+      "Bulk permanent deletion of clinical cases is not permitted.",
+      "warning"
+    );
+    return;
+  }
+
+  try {
+    const currentCases = [...cases];
+
+    for (const c of currentCases) {
+      console.log("[Delete All] Path: cases/" + c.id);
+
+      await deleteDoc(doc(db, "cases", c.id));
+
+      const deptId =
+        c.departmentId ||
+        profile.hospital ||
+        "er";
+
       try {
-        await deleteDoc(doc(db, "departments", deptId, "cases", caseId));
+        await deleteDoc(
+          doc(db, "departments", deptId, "cases", c.id)
+        );
       } catch (subErr) {
-        // Silently handle if subcollection entry doesn't exist
+        console.warn(
+          "Department mirror delete skipped:",
+          subErr
+        );
       }
-
-      setCases(prev => prev.filter(c => c.id !== caseId));
-      if (selectedCaseId === caseId) {
-        setSelectedCaseId(null);
-      }
-      triggerNotification("Success", "Case deleted successfully.", "info");
-    } catch (err: any) {
-      console.error("[Delete Case Error]", err);
-      // Ensure removal from UI even if network/offline
-      setCases(prev => prev.filter(c => c.id !== caseId));
-      if (selectedCaseId === caseId) {
-        setSelectedCaseId(null);
-      }
-      triggerNotification("Deleted", "Case removed from board.", "info");
     }
-  };
 
-  // Delete all cases for this hospital from Firestore permanently
-  const handleDeleteAllCases = async () => {
-    try {
-      const currentCases = [...cases];
-      for (const c of currentCases) {
-        console.log('[Delete All] Path: cases/' + c.id);
-        await deleteDoc(doc(db, "cases", c.id));
-        const deptId = c.departmentId || profile.hospital || "er";
-        try {
-          await deleteDoc(doc(db, "departments", deptId, "cases", c.id));
-        } catch (e) {}
-      }
-      setCases([]);
-      setSelectedCaseId(null);
-      triggerNotification("Success", "All cases cleared.", "info");
-    } catch (err: any) {
-      console.error("[Delete All Cases Error]", err);
-      setCases([]);
-      setSelectedCaseId(null);
-    }
-  };
+    // Clear UI only after all primary deletions succeeded.
+    setCases([]);
+    setSelectedCaseId(null);
 
+    triggerNotification(
+      "Cases Deleted",
+      "All selected cases were permanently deleted by the platform administrator.",
+      "info"
+    );
+  } catch (err: any) {
+    console.error("[Delete All Cases Error]", err);
+
+    // Never falsely clear the UI when deletion failed.
+    triggerNotification(
+      "Delete Failed",
+      "One or more cases could not be deleted. Reload to confirm the current records.",
+      "warning"
+    );
+  }
+};
   // Helper to trigger learning consent flow if user hasn't made a decision yet
   const checkConsentOnCaseSaved = () => {
     if (profile && profile.hasConsentedToLearning === undefined) {
@@ -2692,143 +2998,253 @@ useEffect(() => {
       alert(err.message || "Failed to leave previous hospital team. Please try again.");
     }
   };
+const handleRoleSelectionSubmit = async () => {
+  if (!auth.currentUser || !initialHospital) return;
 
-  const handleRoleSelectionSubmit = async () => {
-    if (!auth.currentUser || !initialHospital) return;
-    try {
-      const activeInviteToken = typeof sessionStorage !== "undefined" ? sessionStorage.getItem("ermate_pending_invite_token") : "";
-      
-      if (activeInviteToken) {
-        const idToken = await auth.currentUser.getIdToken();
-        const res = await fetch("/api/team/accept-invite", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${idToken}`
-          },
-          body: JSON.stringify({ token: activeInviteToken })
-        });
-        
-        if (!res.ok) {
-          const errorData = await res.json().catch(() => ({}));
-          throw new Error(errorData.error || "Failed to accept invite");
-        }
-        
-        if (typeof sessionStorage !== "undefined") {
-          sessionStorage.removeItem("ermate_pending_invite_token");
-        }
-        
-        setProfile(prev => ({ ...prev, hospital: initialHospital, subscriptionTier: "Hospital Team Premium (Department Covered)" }));
-        setShowRoleSelectionModal(false);
-        triggerNotification("Joined Department", `Successfully joined ${initialHospital}.`, "success");
-      } else {
-        throw new Error("You must have a valid invitation link to join a department.");
-      }
-    } catch (err: any) {
-      console.error("Error updating hospital affiliation:", err);
-      alert(err.message || "Failed to update affiliation. Please try again.");
+  try {
+    const activeInviteToken =
+      typeof sessionStorage !== "undefined"
+        ? sessionStorage.getItem(
+            "ermate_pending_invite_token"
+          )
+        : "";
+
+    if (!activeInviteToken) {
+      throw new Error(
+        "You must have a valid invitation link to join a department."
+      );
     }
+
+    const idToken =
+      await auth.currentUser.getIdToken(true);
+
+    const res = await fetch(
+      "/api/team/accept-invite",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${idToken}`
+        },
+        body: JSON.stringify({
+          token: activeInviteToken
+        })
+      }
+    );
+
+    if (!res.ok) {
+      const errorData =
+        await res.json().catch(() => ({}));
+
+      throw new Error(
+        errorData.error ||
+        "Failed to accept invite"
+      );
+    }
+
+    if (
+  typeof sessionStorage !==
+  "undefined"
+) {
+  sessionStorage.removeItem(
+    "ermate_pending_invite_token"
+  );
+
+  sessionStorage.removeItem(
+    "ermate_pending_invite_hospital"
+  );
+}
+    // IMPORTANT:
+    // Do not invent hospital, role or subscription state
+    // in the browser. Re-read the server-written profile.
+    const profileDocRef = doc(
+      db,
+      "users",
+      auth.currentUser.uid
+    );
+
+    const refreshedProfile =
+      await getDoc(profileDocRef);
+
+    if (refreshedProfile.exists()) {
+      setProfile(
+        refreshedProfile.data() as UserProfile
+      );
+    }
+
+    setShowRoleSelectionModal(false);
+
+    triggerNotification(
+      "Joined Department",
+      `Successfully joined ${initialHospital}.`,
+      "success"
+    );
+  } catch (err: any) {
+    console.error(
+      "Error updating hospital affiliation:",
+      err
+    );
+
+    alert(
+      err?.message ||
+      "Failed to update affiliation. Please try again."
+    );
   }
+};
 
-  const handleApproveTeamMember = async (memberId: string) => {
-    try {
-      const memberDocRef = doc(db, "team_members", memberId);
-      await updateDoc(memberDocRef, {
-        status: "Active (Joined)",
-        joinedAt: new Date().toISOString()
-      });
-      
-      triggerNotification(
-        "Clinician Approved",
-        "The clinician registration has been approved. They are now active on your team.",
-        "success"
-      );
-    } catch (err) {
-      console.error("Error approving member:", err);
+ const handleApproveTeamMember = async (memberId: string) => {
+  try {
+    if (!auth.currentUser) {
+      throw new Error("Not authenticated");
     }
-  };
 
-  const handleDeclineTeamMember = async (memberId: string) => {
-    try {
-      const memberDocRef = doc(db, "team_members", memberId);
-      const snap = await getDoc(memberDocRef);
-      if (snap.exists()) {
-        const data = snap.data();
-        const userEmail = data.email || "";
-        
-        // Find corresponding user and revert them
-        const usersRef = collection(db, "users");
-        const q = query(usersRef, where("email", "==", userEmail.trim().toLowerCase()));
-        const userSnap = await getDocs(q);
-        if (!userSnap.empty) {
-          const userDocRef = doc(db, "users", userSnap.docs[0].id);
-          await updateDoc(userDocRef, {
-            hospital: "",
-            subscriptionTier: "Free Standard"
-          });
-        }
+    const idToken = await auth.currentUser.getIdToken();
+
+    const res = await fetch("/api/team/approve-member", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${idToken}`
+      },
+      body: JSON.stringify({ memberId })
+    });
+
+    if (!res.ok) {
+      const errorData = await res.json().catch(() => ({}));
+
+      throw new Error(
+        errorData.error || "Failed to approve member"
+      );
+    }
+
+    triggerNotification(
+      "Clinician Approved",
+      "The clinician registration has been approved. They are now active on your team.",
+      "success"
+    );
+  } catch (err: any) {
+    console.error("Error approving member:", err);
+
+    triggerNotification(
+      "Approval Failed",
+      err?.message || "Failed to approve clinician.",
+      "warning"
+    );
+  }
+};
+const handleDeclineTeamMember = async (memberId: string) => {
+  try {
+    if (!auth.currentUser) {
+      throw new Error("Not authenticated");
+    }
+
+    const idToken = await auth.currentUser.getIdToken();
+
+    const res = await fetch("/api/team/decline-member", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${idToken}`
+      },
+      body: JSON.stringify({ memberId })
+    });
+
+    if (!res.ok) {
+      const errorData = await res.json().catch(() => ({}));
+
+      throw new Error(
+        errorData.error || "Failed to decline member"
+      );
+    }
+
+    triggerNotification(
+      "Request Declined",
+      "The registration request was successfully declined.",
+      "info"
+    );
+  } catch (err: any) {
+    console.error("Error declining member:", err);
+
+    triggerNotification(
+      "Decline Failed",
+      err?.message || "Failed to decline request.",
+      "warning"
+    );
+  }
+};
+ const handleLeaveTeam = async () => {
+  if (!auth.currentUser) return;
+
+  try {
+    const idToken = await auth.currentUser.getIdToken();
+
+    const res = await fetch("/api/team/leave", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${idToken}`
       }
-      
-      await deleteDoc(memberDocRef);
-      triggerNotification(
-        "Request Declined",
-        "The registration request was successfully declined.",
-        "info"
-      );
-    } catch (err) {
-      console.error("Error declining member:", err);
-    }
-  };
+    });
 
-  const handleLeaveTeam = async () => {
-    if (!auth.currentUser) return;
-    try {
-      const emailClean = (profile.email || "").trim().toLowerCase();
-      const memberId = `mem-${emailClean.replace(/[^a-zA-Z0-9]/g, "-")}`;
-      
-      // Delete their team member doc
-      await deleteDoc(doc(db, "team_members", memberId));
-      
-      // Reset user profile back to default
-      const profileDocRef = doc(db, "users", auth.currentUser.uid);
-      await updateDoc(profileDocRef, {
-        hospital: "",
-        subscriptionTier: "Free Standard"
-      });
-      
-      triggerNotification(
-        "Left Department",
-        "You have successfully left your previous hospital team. You are now on a Standalone Standard plan.",
-        "info"
-      );
-    } catch (err) {
-      console.error("Error leaving team:", err);
-    }
-  };
+    if (!res.ok) {
+      const errorData = await res.json().catch(() => ({}));
 
-  const handleCancelJoinRequest = async () => {
-    if (!auth.currentUser) return;
-    try {
-      const emailClean = (profile.email || "").trim().toLowerCase();
-      const memberId = `mem-${emailClean.replace(/[^a-zA-Z0-9]/g, "-")}`;
-      
-      await deleteDoc(doc(db, "team_members", memberId));
-      
-      const profileDocRef = doc(db, "users", auth.currentUser.uid);
-      await updateDoc(profileDocRef, {
-        hospital: "",
-        subscriptionTier: "Free Standard"
-      });
-      
-      triggerNotification(
-        "Request Cancelled",
-        "Your request to join the hospital team has been cancelled.",
-        "info"
+      throw new Error(
+        errorData.error || "Failed to leave team."
       );
-    } catch (err) {
-      console.error("Error cancelling request:", err);
     }
-  };
+
+    triggerNotification(
+      "Left Department",
+      "You have successfully left your previous hospital team. You are now on a Standalone Standard plan.",
+      "info"
+    );
+  } catch (err: any) {
+    console.error("Error leaving team:", err);
+
+    alert(
+      err?.message || "Failed to leave team."
+    );
+  }
+};
+
+const handleCancelJoinRequest = async () => {
+  if (!auth.currentUser) return;
+
+  try {
+    const idToken = await auth.currentUser.getIdToken();
+
+   const res = await fetch("/api/team/cancel-request", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${idToken}`
+      }
+    });
+
+    if (!res.ok) {
+      const errorData = await res.json().catch(() => ({}));
+
+      throw new Error(
+        errorData.error || "Failed to cancel request."
+      );
+    }
+
+    triggerNotification(
+      "Request Cancelled",
+      "Your request to join the hospital team has been cancelled.",
+      "info"
+    );
+  } catch (err: any) {
+    console.error("Error cancelling request:", err);
+
+    triggerNotification(
+      "Cancellation Failed",
+      err?.message || "Failed to cancel join request.",
+      "warning"
+    );
+  }
+};
 
   // Roster Management Handlers
   const handleAddTeamMember = async (name: string, email: string, role: string, shift: string) => {
@@ -2889,168 +3305,340 @@ useEffect(() => {
     }
   };
 
-  const handleUpdateTeamMemberShift = async (id: string, shift: string) => {
-    try {
-      await updateDoc(doc(db, "team_members", id), { shift });
-      triggerNotification("Shift Updated", "Updated assigned clinician shift.", "info");
-    } catch (err: any) {
-      console.error("Error updating team member shift:", err);
-      handleFirestoreError(err, OperationType.WRITE, "team_members");
-      throw err;
+ const handleUpdateTeamMemberShift = async (
+  id: string,
+  shift: string
+) => {
+  try {
+    if (!auth.currentUser) {
+      throw new Error("Not authenticated");
     }
-  };
 
-  const handleUpdateTeamMemberRole = async (id: string, role: string) => {
-    try {
-      const userRole = (profile.role || "").toLowerCase();
-      const callerEmail = (auth.currentUser?.email || profile.email || "").toLowerCase().trim();
-      const isCallerHODOrOwner = userRole.includes("hod") || userRole.includes("owner") || callerEmail === "varahgrp@gmail.com";
-
-      if (!isCallerHODOrOwner) {
-        triggerNotification("Access Denied 🔒", "Only Department Head (HOD) or Owner can assign clinical roles.", "warning");
-        return;
+    await updateDoc(
+      doc(db, "team_members", id),
+      {
+        shift,
+        updatedAt: new Date().toISOString()
       }
+    );
 
-      // Check member details
-      const memberRef = doc(db, "team_members", id);
-      const memberSnap = await getDoc(memberRef);
-      if (!memberSnap.exists()) {
-        triggerNotification("Error", "Team member record not found.", "warning");
-        return;
-      }
+    triggerNotification(
+      "Shift Updated",
+      "Updated assigned clinician shift.",
+      "info"
+    );
+  } catch (err: any) {
+    console.error(
+      "Error updating team member shift:",
+      err
+    );
 
-      const memberData = memberSnap.data();
-      const memberEmail = (memberData.email || "").toLowerCase().trim();
+    handleFirestoreError(
+      err,
+      OperationType.WRITE,
+      "team_members"
+    );
 
-      // Prevent self demotion/promotion unless Owner
-      if (memberEmail && memberEmail === callerEmail && callerEmail !== "varahgrp@gmail.com") {
-        triggerNotification("Action Restricted 🔒", "You cannot modify your own role designation. Another HOD must make this change.", "warning");
-        return;
-      }
-
-      const previousRole = memberData.role || "Unassigned";
-
-      // 1. Update team member role in Firebase team_members collection
-      await updateDoc(memberRef, { role });
-      
-      // 2. Find the clinician's user profile in 'users' and update their profile role too
-      if (memberEmail) {
-        const q = query(collection(db, "users"), where("email", "==", memberEmail));
-        const userSnap = await getDocs(q);
-        if (!userSnap.empty) {
-          const userDocRef = doc(db, "users", userSnap.docs[0].id);
-          await updateDoc(userDocRef, { role });
-        }
-      }
-
-      // 3. TASK 3 — Write audit log entry to roleChangeLog collection
-      try {
-        await addDoc(collection(db, "roleChangeLog"), {
-          targetMemberId: id,
-          targetEmail: memberEmail,
-          targetName: memberData.name || memberEmail,
-          previousRole: previousRole,
-          newRole: role,
-          changedByUid: auth.currentUser?.uid || "",
-          changedByEmail: callerEmail,
-          changedByName: profile.name || callerEmail,
-          changedAt: new Date().toISOString(),
-          hospital: profile.hospital || ""
-        });
-      } catch (logErr) {
-        console.warn("[RoleAuditLog] Failed to log role change:", logErr);
-      }
-
-      triggerNotification("Role Updated ✓", `Clinical role for ${memberData.name || memberEmail} updated from "${previousRole}" to "${role}". Audit log recorded.`, "success");
-    } catch (err: any) {
-      console.error("Error updating team member role:", err);
-      handleFirestoreError(err, OperationType.WRITE, "team_members");
-      throw err;
+    throw err;
+  }
+};
+ const handleUpdateTeamMemberRole = async (
+  id: string,
+  role: string
+) => {
+  try {
+    if (!auth.currentUser) {
+      throw new Error("Not authenticated");
     }
-  };
 
-  const handleUpdateHospitalShifts = async (newShifts: any[]) => {
-    const userHospital = profile.hospital || "General Emergency Department";
-    const userHospitalLower = userHospital.trim().toLowerCase();
-    const hospitalSlug = userHospitalLower.replace(/[^a-z0-9]/g, "-");
-    try {
-      await setDoc(doc(db, "hospital_shifts", hospitalSlug), {
-        id: hospitalSlug,
-        hospital: userHospital,
+    const idToken = await auth.currentUser.getIdToken();
+
+    const res = await fetch("/api/team/update-role", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${idToken}`
+      },
+      body: JSON.stringify({
+        memberId: id,
+        role
+      })
+    });
+
+    if (!res.ok) {
+      const errorData = await res.json().catch(() => ({}));
+
+      throw new Error(
+        errorData.error || "Failed to update role"
+      );
+    }
+
+    triggerNotification(
+      "Role Updated ✓",
+      `Clinical role updated to "${role}".`,
+      "success"
+    );
+  } catch (err: any) {
+    console.error(
+      "Error updating team member role:",
+      err
+    );
+
+    triggerNotification(
+      "Action Restricted 🔒",
+      err?.message || "Failed to update role.",
+      "warning"
+    );
+
+    throw err;
+  }
+};
+ const handleUpdateHospitalShifts = async (
+  newShifts: any[]
+) => {
+  try {
+    if (!auth.currentUser) {
+      throw new Error("Not authenticated");
+    }
+
+    const uid = auth.currentUser.uid;
+
+    // Hospital authority comes only from canonical membership.
+    const memberRef = doc(
+      db,
+      "team_members",
+      uid
+    );
+
+    const memberSnap =
+      await getDoc(memberRef);
+
+    if (!memberSnap.exists()) {
+      throw new Error(
+        "No verified hospital membership found."
+      );
+    }
+
+    const membership =
+      memberSnap.data() as any;
+
+    const membershipStatus =
+      String(membership.status || "");
+
+    const isActive =
+      membershipStatus === "active" ||
+      membershipStatus === "Active (Joined)";
+
+    const isVerified =
+      membership.membershipVerified === true;
+
+    if (!isActive || !isVerified) {
+      throw new Error(
+        "Your hospital membership is not active and verified."
+      );
+    }
+
+    const normalizedRole =
+      String(membership.role || "")
+        .trim()
+        .toLowerCase();
+
+    const isHospitalHod = [
+      "hod",
+      "hod / department lead",
+      "hod / shift lead"
+    ].includes(normalizedRole);
+
+    const isPlatformAdmin =
+      (auth.currentUser.email || "")
+        .trim()
+        .toLowerCase() ===
+      "varahgrp@gmail.com";
+
+    if (!isHospitalHod && !isPlatformAdmin) {
+      throw new Error(
+        "Only the authorized HOD can configure department shift times."
+      );
+    }
+
+    const trustedHospitalId =
+      typeof membership.hospitalId === "string" &&
+      membership.hospitalId.trim()
+        ? membership.hospitalId.trim()
+        : (
+            typeof membership.hospital === "string"
+              ? membership.hospital.trim()
+              : ""
+          );
+
+    if (!trustedHospitalId) {
+      throw new Error(
+        "No trusted hospital identifier is available."
+      );
+    }
+
+    const hospitalLabel =
+      (
+        typeof membership.hospitalName === "string" &&
+        membership.hospitalName.trim()
+      )
+        ? membership.hospitalName.trim()
+        : (
+            typeof membership.hospital === "string" &&
+            membership.hospital.trim()
+              ? membership.hospital.trim()
+              : trustedHospitalId
+          );
+
+    await setDoc(
+      doc(
+        db,
+        "hospital_shifts",
+        trustedHospitalId
+      ),
+      sanitizeForFirestore({
+        id: trustedHospitalId,
+        hospitalId: trustedHospitalId,
+        hospital: hospitalLabel,
         shifts: newShifts,
         updatedAt: new Date().toISOString(),
-        updatedBy: auth.currentUser?.email || ""
-      });
-      triggerNotification("Roster Configured", "Shift rota times updated successfully.", "success");
-    } catch (err: any) {
-      console.error("Error updating hospital shifts:", err);
-      triggerNotification("Error", "Failed to update shift times.", "warning");
-    }
-  };
+        updatedByUid: uid,
+        updatedByEmail:
+          auth.currentUser.email || ""
+      }),
+      { merge: true }
+    );
+
+    triggerNotification(
+      "Roster Configured",
+      "Shift rota times updated successfully.",
+      "success"
+    );
+  } catch (err: any) {
+    console.error(
+      "Error updating hospital shifts:",
+      err
+    );
+
+    triggerNotification(
+      "Shift Update Failed",
+      err?.message ||
+        "Failed to update shift times.",
+      "warning"
+    );
+  }
+};
 
   // Handle user profile save to Firestore
-  const handleSaveProfile = async (newProfile: UserProfile) => {
-    // Guard against unauthorized self-role modification
-    const currentRole = profile.role || "EM Resident";
-    const userRoleLower = currentRole.toLowerCase();
-    const isCallerHODOrOwner = userRoleLower.includes("hod") || userRoleLower.includes("owner") || auth.currentUser?.email?.toLowerCase().trim() === "varahgrp@gmail.com";
+// Protected authority/billing fields cannot be changed from profile editing.
+const handleSaveProfile = async (newProfile: UserProfile) => {
+  if (!auth.currentUser) {
+    triggerNotification(
+      "Save Failed",
+      "You must be signed in to update your profile.",
+      "warning"
+    );
+    return;
+  }
 
-    const profileToSave: UserProfile = {
-      ...newProfile,
-      role: isCallerHODOrOwner ? newProfile.role : currentRole
-    };
+  // Preserve all protected values from the currently trusted profile.
+  // Role changes happen through /api/team/update-role.
+  // Hospital assignment happens through trusted membership workflows.
+  // Credits/subscription are never self-edited here.
+  const profileToSave: UserProfile = {
+    ...newProfile,
 
-    setProfile(profileToSave);
-    if (auth.currentUser) {
-      try {
-        await setDoc(doc(db, "users", auth.currentUser.uid), profileToSave);
+    email:
+      auth.currentUser.email ||
+      profile.email ||
+      newProfile.email,
 
-        // Also update shared hospital subscription if the user upgraded to a team/enterprise plan
-        const tier = newProfile.subscriptionTier || "Free Plan";
-        const isTeamPlan = tier.toLowerCase().includes("team") || tier.toLowerCase().includes("enterprise");
-        if (isTeamPlan && newProfile.hospital && newProfile.hospital.trim()) {
-          const hospitalSlug = newProfile.hospital.trim().toLowerCase().replace(/[^a-z0-9]/g, "-").replace(/^-+|-+$/g, "");
-          if (hospitalSlug) {
-            await setDoc(doc(db, "hospital_subscriptions", hospitalSlug), {
-              id: hospitalSlug,
-              hospital: newProfile.hospital,
-              subscriptionTier: tier,
-              active: true,
-              updatedAt: new Date().toISOString()
-            });
-          }
-        }
+    hospital:
+      profile.hospital || "",
 
-        // Sync with Cloud SQL (PostgreSQL) backend
-        try {
-          const idToken = await auth.currentUser.getIdToken(true);
-          await fetch("/api/sql/sync-user", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "Authorization": `Bearer ${idToken}`
-            },
-            body: JSON.stringify({
-              uid: auth.currentUser.uid,
-              email: newProfile.email,
-              name: newProfile.name,
-              role: newProfile.role,
-              hospital: newProfile.hospital,
-              aiCredits: newProfile.aiCredits,
-              streak: newProfile.streak,
-              subscriptionTier: newProfile.subscriptionTier,
-              hasConsentedToLearning: newProfile.hasConsentedToLearning
-            })
-          });
-        } catch (e) {
-          console.error("Failed to sync profile change with Cloud SQL:", e);
-        }
+    hospitalLabel:
+      newProfile.hospitalLabel ||
+      newProfile.workplaceName ||
+      profile.hospitalLabel ||
+      profile.hospital ||
+      "",
 
-      } catch (err) {
-        console.error("Error saving profile to Firestore:", err);
-      }
-    }
+    role:
+      profile.role || "EM Resident",
+
+    aiCredits:
+      profile.aiCredits,
+
+    subscriptionTier:
+      profile.subscriptionTier || "Free Standard",
+
+    streak:
+      profile.streak
   };
+
+  try {
+    await setDoc(
+      doc(db, "users", auth.currentUser.uid),
+      sanitizeForFirestore(profileToSave),
+      { merge: true }
+    );
+
+    // Update local UI only after Firestore save succeeds.
+    setProfile(profileToSave);
+
+    // Optional Cloud SQL mirror.
+    // Only send the already-protected values, never raw newProfile authority fields.
+    try {
+      const idToken =
+        await auth.currentUser.getIdToken(true);
+
+      const res = await fetch("/api/sql/sync-user", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${idToken}`
+        },
+        body: JSON.stringify({
+          uid: auth.currentUser.uid,
+          email: profileToSave.email,
+          name: profileToSave.name,
+          role: profileToSave.role,
+          hospital: profileToSave.hospital,
+          aiCredits: profileToSave.aiCredits,
+          streak: profileToSave.streak,
+          subscriptionTier:
+            profileToSave.subscriptionTier,
+          hasConsentedToLearning:
+            profileToSave.hasConsentedToLearning
+        })
+      });
+
+      if (!res.ok) {
+        console.warn(
+          "Cloud SQL profile mirror returned:",
+          res.status
+        );
+      }
+    } catch (syncErr) {
+      // Firestore remains source for this profile save.
+      console.warn(
+        "Failed to sync profile change with Cloud SQL:",
+        syncErr
+      );
+    }
+  } catch (err: any) {
+    console.error(
+      "Error saving profile to Firestore:",
+      err
+    );
+
+    triggerNotification(
+      "Save Failed",
+      "Your profile changes could not be saved.",
+      "warning"
+    );
+  }
+};
 
   // Process user's consent choice (Yes or Not right now)
   const handleConsentChoice = async (consented: boolean) => {
@@ -3135,12 +3723,54 @@ useEffect(() => {
 
     // Save or update items in Firestore
     for (const item of processedList) {
-      const itemToSave: QuickPastePatient = {
-        ...item,
-        hospital: item.hospital || profile.hospital || "",
-        createdByEmail: item.createdByEmail || profile.email,
-        updatedAt: new Date().toISOString()
-      };
+      const existingItem =
+  previousList.find(p => p.id === item.id);
+
+const existingCreatedByUid =
+  (existingItem as any)?.createdByUid;
+
+const itemToSave = {
+  ...item,
+
+  // Existing Quick Paste records keep their original tenant.
+  // A newly-created item is assigned only to the current workspace.
+  hospital:
+    existingItem
+      ? (existingItem.hospital || "")
+      : (profile.hospital || ""),
+
+  // Creator identity is immutable.
+  // Do not claim ownership of an old legacy record that had no UID.
+  ...(existingItem
+    ? (
+        existingCreatedByUid
+          ? { createdByUid: existingCreatedByUid }
+          : {}
+      )
+    : {
+        createdByUid:
+          auth.currentUser?.uid || ""
+      }),
+
+  ...(existingItem
+    ? (
+        existingItem.createdByEmail
+          ? {
+              createdByEmail:
+                existingItem.createdByEmail
+            }
+          : {}
+      )
+    : {
+        createdByEmail:
+          auth.currentUser?.email ||
+          profile.email ||
+          ""
+      }),
+
+  updatedAt:
+    new Date().toISOString()
+};
       try {
         await setDoc(doc(db, "quick_paste_patients", itemToSave.id), itemToSave);
       } catch (err) {
@@ -3161,34 +3791,121 @@ useEffect(() => {
     }
   };
 
-  // Secure sign out
-  const handleSignOut = async () => {
+// Secure sign out
+const handleSignOut = async () => {
+  try {
+    const signingOutUid =
+      auth.currentUser?.uid || "";
+
+    // 1. Unmount logged-in / patient-facing views first.
+    setIsLoggedIn(false);
+    setLoginScreenMode("login");
+    setSelectedCaseId(null);
+    setViewCaseSheetPrintId(null);
+    setActiveFormMode(null);
+    setShowDischargeSummaryId(null);
+
+    // 2. Clear Scribe / discussion state containing case context.
+    setShowVoiceScribeChat(false);
+    setVoiceScribeCaseId(null);
+    setShowVoiceScribeEntryChoice(false);
+    setVoiceScribeDiscussionMode(false);
+    setDiscussionModalCase(null);
+    setIsScribeBusy(false);
+
+    setScribeMessages([
+      {
+        id: "msg-1",
+        sender: "ai",
+        text:
+          "ErMate is ready.\n\n🎙️ Dictate your case in your native language\n📄 Scan a referral letter\n💬 Ask a clinical question\n\nEvidence-based. Built for Indian ERs.",
+        timestamp: new Date().toLocaleTimeString(
+          [],
+          {
+            hour: "2-digit",
+            minute: "2-digit"
+          }
+        )
+      }
+    ]);
+
+    // 3. Clear unsaved / preview patient-specific state.
+    setPendingNewCase(null);
+    setPreviewCase(null);
+    setIsPreviewMode(false);
+    setPendingPreviewContext(null);
+    setQuickDischargeCase(null);
+    setShowQuickDischarge(false);
+    setIsCaseSheetDirty(false);
+
+    setSavedBanner({
+      visible: false,
+      patientName: "",
+      caseId: ""
+    });
+
+    // 4. Clear authenticated application data.
+    setProfile(null as any);
+    setCases([]);
+    setHandovers([]);
+    setQuickPasteList([]);
+    setTeamMembers([]);
+    setShifts([]);
+    setHospitalSubscription(null);
+
+    // Shift state is account-specific on a shared device.
+    setIsOnShift(false);
+    setShowShiftCheckIn(true);
+
+    // 5. Remove locally cached patient/account-specific data.
     try {
-      // 1. Switch views & unmount logged-in components FIRST before clearing data underneath them
-      setIsLoggedIn(false);
-      setLoginScreenMode("login");
-      setSelectedCaseId(null);
-      setViewCaseSheetPrintId(null);
-      setActiveFormMode(null);
-      setShowDischargeSummaryId(null);
-      setShowVoiceScribeChat(false);
+      localStorage.removeItem(
+        "ermate_quick_paste_list"
+      );
 
-      // 2. Clear session state now that views are unmounted
-      setProfile(null as any);
-      setCases([]);
-      setHandovers([]);
-      setQuickPasteList([]);
-      setTeamMembers([]);
-      setShifts([]);
-      setHospitalSubscription(null);
+      localStorage.removeItem(
+        "ermate_isOnShift"
+      );
 
-      // 3. Finally sign out of Firebase Auth
-      await signOut(auth);
-    } catch (err) {
-      console.error("Error signing out:", err);
+      localStorage.removeItem(
+        "ermate_shiftDate"
+      );
+
+      localStorage.removeItem(
+        "ermate_shiftDismissed"
+      );
+
+      // Safe now and also prepares for the newer
+      // scribeSessions architecture that will be restored later.
+      if (signingOutUid) {
+        localStorage.removeItem(
+          `ermate:scribeSession:${signingOutUid}`
+        );
+      }
+
+      sessionStorage.removeItem(
+        "ermate_pending_invite_token"
+      );
+
+      sessionStorage.removeItem(
+        "ermate_pending_invite_hospital"
+      );
+    } catch (storageErr) {
+      console.warn(
+        "Unable to clear local sign-out state:",
+        storageErr
+      );
     }
-  };
 
+    // 6. Finally terminate Firebase authentication.
+    await signOut(auth);
+  } catch (err) {
+    console.error(
+      "Error signing out:",
+      err
+    );
+  }
+};
   // Direct tab navigating
   const navigateToTab = (tabId: string) => {
     setActiveTab(tabId as any);
@@ -3223,12 +3940,14 @@ useEffect(() => {
             initialHospital={initialHospital}
             initialRole={initialRole}
             inviteToken={activeInviteToken}
-            onSignUp={(newProfile) => {
-              setProfile(newProfile);
-              setIsLoggedIn(true);
-              setActiveTab("dashboard");
-              setLoginScreenMode("login");
-            }}
+           onSignUp={() => {
+  // Firebase Auth/onAuthStateChanged is the
+  // only source of truth for session state.
+  //
+  // Do NOT set isLoggedIn true or false here.
+  setActiveTab("dashboard");
+  setLoginScreenMode("login");
+}}
             onBackToLogin={() => setLoginScreenMode("login")}
           />
         ) : loginScreenMode === "forgot_password" ? (

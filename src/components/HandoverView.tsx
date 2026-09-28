@@ -2483,9 +2483,9 @@ function extractLatestVitalsWithTime(
       text += `   Chief Complaint: ${c.patient.presentingComplaint}\n`;
       text += `   SAMPLE History:\n`;
       text += `     - Symptoms: ${c.sampleHistory?.symptoms || "N/A"}\n`;
-      text += `     - Allergies: ${c.sampleHistory?.allergies || "NKDA"}\n`;
+      text += `     - Allergies: ${c.sampleHistory?.allergies || "Not documented"}\n`;
       text += `     - Medications: ${c.sampleHistory?.medications || "N/A"}\n`;
-      text += `   Primary Assessment: A-${c.primaryAssessment?.airwayStatus || "Normal"}, B-${c.primaryAssessment?.breathingStatus || "Normal"}, C-${c.primaryAssessment?.circulationStatus || "Normal"}\n`;
+      text += `   Primary Assessment: A-${c.primaryAssessment?.airwayStatus || "Not documented"}, B-${c.primaryAssessment?.breathingStatus || "Not documented"}, C-${c.primaryAssessment?.circulationStatus || "Not documented"}\n`;
       text += `   ER Treatment Given: ${c.treatments.map(t => `${t.drugName} ${t.dose}`).join(", ") || "None recorded"}\n`;
       text += `   Progress Notes Summary: ${c.progressNotes || "Not documented."}\n`;
       text += `--------------------------------------------------\n\n`;
@@ -3541,7 +3541,11 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
                         </div>
                         <div>
                           <p><strong className="text-slate-500">Clinical History:</strong> {c.sampleHistory?.symptoms || "No active history listed"}</p>
-                          <p><strong className="text-slate-500">Allergies:</strong> <span className="text-red-600 font-bold">{c.sampleHistory?.allergies || "NKDA"}</span></p>
+                          <p><strong className="text-slate-500">Allergies:</strong> {c.sampleHistory?.allergies ? (
+                            <span className="text-red-600 font-bold">{c.sampleHistory.allergies}</span>
+                          ) : (
+                            <span className="text-slate-600 font-normal">Not documented</span>
+                          )}</p>
                           <p><strong className="text-slate-500">Therapies given in ER:</strong> {c.treatments.map(t => `${t.drugName} ${t.dose}`).join(", ") || "None recorded"}</p>
                         </div>
                       </div>

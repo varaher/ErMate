@@ -45,6 +45,165 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-09-27] — Auth State Listener Race Condition Closure & Transactional User Profile Bootstrap
+- **Auth State Listener (`src/App.tsx`)**:
+  - Implemented transactional `runTransaction` create-if-missing profile initialization inside `onAuthStateChanged`, eliminating potential race condition overwrites between client signup and session bootstrap.
+  - Formatted type assertions cleanly inline to resolve JSX parsing ambiguities under TSX rules.
+  - Forced fresh token retrieval (`getIdToken(true)`) during invite acceptance and ensured pending invite tokens and hospital keys are consistently cleared on department acceptance.
+  - Verified clean TypeScript validation (`tsc --noEmit`) and successful production bundling with `compile_applet`.
+
+### [2026-09-27] — Authentication UI Hardening: Verified Email Flow, Mock Login & Password Reset Overhaul
+- **Forgot Password View (`src/components/ForgotPasswordView.tsx`)**:
+  - Replaced simulated multi-step fake OTP flow with authentic Firebase `sendPasswordResetEmail(auth, cleanEmail)`.
+  - Implemented anti-enumeration UX ensuring unrecognized accounts receive identical success messaging to protect user privacy.
+  - Added clean confirmation screen with instructions for email/password and Google OAuth users.
+- **Sign-Up View (`src/components/SignUpView.tsx`)**:
+  - Replaced immediate client-side account activation with explicit email verification flow (`sendEmailVerification`) and sign-out to prevent unverified app session access.
+  - Added clean verification pending screen informing clinicians to verify their email before logging in.
+  - Fixed syntax error in `handleSubmit` closure.
+- **Login View (`src/components/MockLoginView.tsx`)**:
+  - Removed simulated credentials, fake device-link pairing, and preset password fallbacks.
+  - Implemented authentic Firebase Authentication (`signInWithEmailAndPassword`, `signInWithPopup` via Google OAuth) with safe fallback profile loading (`loadProfile`).
+  - Added non-blocking email verification reminders for legacy accounts without blocking independent clinician access.
+  - Verified clean TypeScript validation (`tsc --noEmit`) and successful production bundling with `compile_applet`.
+
+### [2026-09-27] — Auth Middleware Hardening & Verified Email Middleware Support
+- **Auth Middleware (`src/middleware/auth.ts`)**:
+  - Refactored `requireAuth` with safe regex-based Bearer token extraction (`getBearerToken`) and explicit error messaging for missing or malformed authorization headers.
+  - Added scoped `requireVerifiedEmail` middleware to support operations requiring email verification (e.g. accepting email-restricted invites or privileged actions) without enforcing it globally before frontend verification UX is in place.
+  - Verified clean TypeScript validation (`tsc --noEmit`) and successful production bundling with `compile_applet`.
+
+### [2026-09-27] — Remove-Member Canonical UID Hardening & Last-HOD Safeguard
+- **Canonical Member Removal (`server/routes/team.routes.ts`)**:
+  - Hardened `/api/team/remove-member` to operate strictly on canonical `team_members/{targetUid}` documents, ignoring legacy `mem-*` formats.
+  - Enforced that target members must be active and verified (`status === "active" && membershipVerified === true`), directing pending join requests to `/api/team/decline-member`.
+  - Transactionally verified that caller is an active verified HOD matching the target member's hospital (or platform admin) and enforced that the hospital cannot be left without at least one active verified HOD.
+  - Synchronized `users/{targetUid}` profile reset (`hospital: ""`, `subscriptionTier: "Free Standard"`) within the same transaction.
+  - Verified clean TypeScript validation (`tsc --noEmit`) and successful production bundling with `compile_applet`.
+
+### [2026-09-27] — Leadership Invite Provenance & Join-Request History Archival
+- **Invite Acceptance Leadership Role Guard (`server/routes/team.routes.ts`)**:
+  - Enforced that if an invitation role is an exact HOD/leadership role (`isExactHospitalAdminRole`), the invite must have been created by the platform administrator (`createdByPlatformAdmin === true`), otherwise rejecting acceptance with a 400 error.
+- **Join-Request Prior State Archival (`server/routes/team.routes.ts`)**:
+  - When submitting a new join request on an existing membership document (cancelled, rejected, or inactive), transactionally archives the previous record into `team_members/{uid}/history` with `archivedReason: "replaced_by_join_request"`.
+  - Verified clean TypeScript validation (`tsc --noEmit`) and successful production bundling with `compile_applet`.
+
+### [2026-09-27] — Invite Creation Role Policy: Platform Admin Only for Leadership Roles
+- **Invite Creation Authorization (`server/routes/team.routes.ts`)**:
+  - Enforced that only the platform administrator can create an invitation for an HOD or leadership role (`isExactHospitalAdminRole`).
+  - Verified clean TypeScript validation (`tsc --noEmit`) and successful production bundling with `compile_applet`.
+
+### [2026-09-27] — Transactional Member Approval Hardening & Typecheck Verification
+- **Approve-Member Transactional Verification (`server/routes/team.routes.ts`)**:
+  - Implemented transactional re-check of target member request state, provenance, and email identity inside `db.runTransaction()`.
+  - Enforced explicit platform administrator hospital assignment (`hospitalId`, `hospitalName`) without relying on applicant-submitted hospital parameters.
+  - Hardened caller HOD verification inside the transaction, confirming active membership, verified status, and hospital match at the exact moment of activation.
+  - Verified clean TypeScript validation (`tsc --noEmit`) and successful production bundling with `compile_applet`.
+
+### [2026-09-27] — Dev Server Restoration: Route Syntax & Platform Admin Approval Scoping Fix
+- **Dev Server Compilation Fix (`server/routes/team.routes.ts`)**:
+  - Resolved esbuild compiler failure caused by duplicate variable declarations (`callerHospitalId`, `callerHospitalName`, etc.) in `/api/team/approve-member`.
+  - Removed misplaced platform admin approval checks from `/api/team/decline-member` where undeclared `hospitalId` / `hospitalName` variables were mistakenly evaluated.
+  - Verified clean TypeScript validation (`tsc --noEmit`) and successful production bundling with `compile_applet`.
+  - Restarted dev server successfully on port 3000.
+
+### [2026-09-26] — P0 Final Closure: Platform Admin Provenance, Invite Role Policy, Auth Identity Binding & Dev Server Fix
+- **Dev Server Restoration & Syntax Fix (`server/routes/team.routes.ts`)**:
+  - Restored full, pristine `server/routes/team.routes.ts` implementation after previous truncation caused esbuild syntax error (`Unexpected "}"`), successfully unblocking the dev server and app compilation.
+- **Accept-Invite Platform Admin Provenance Hardening (`/api/team/accept-invite`)**:
+  - If `invite.createdByPlatformAdmin == true`, does not trust the boolean in isolation; verifies `invite.createdByUid` against Firebase Admin Auth (`getUser(invite.createdByUid)`), enforcing existence, UID match, and normalized email match against configured `PLATFORM_ADMIN_EMAIL` (`varahgrp@gmail.com`).
+  - For ordinary HOD-created invites, strictly enforces that `team_members/{createdByUid}` exists, is `membershipVerified: true`, has active status, holds an exact approved HOD role, and matches `invite.hospitalId`.
+  - Validated via AC6 (spoofed platform admin denied), AC7 (unverified creator denied), AC8 (creator in other hospital denied), AC9 (inactive creator denied), AC10 (verified same-hospital HOD allowed), and AC11 (verified platform admin allowed).
+- **Explicit Invite Role Policy (`/api/team/create-invite`)**:
+  - Documented and enforced trusted role model: allows exact approved HOD roles (`hod`, `hod / department lead`, `hod / shift lead`) to enable legitimate HOD expansion/co-lead onboarding, alongside legitimate clinical roles (`resident`, `consultant`, `senior consultant`, `em resident`, `em intern`, `em_physician`, `nurse`, `doctor`, `fellow`, `medical_officer`, `scribe specialist`).
+  - Rejects arbitrary or fuzzy roles without fuzzy matching (CI1: `super_admin` denied, CI2: `hod_trainee` denied, CI3: legitimate ordinary role allowed, CI4: exact legitimate HOD role allowed).
+- **Approve-Member Firebase Auth Identity Binding (`/api/team/approve-member`)**:
+  - Preserved checks: `status == "pending_approval"`, `requestProvenance == "authenticated_join_request"`, `membershipVerified != true`, and `doc.id == target.uid`.
+  - Added strict Firebase Admin Auth identity binding via `getUser(target.uid)`: verifies applicant exists in Firebase Auth, UID matches target, and normalized auth email matches document email before stamping `membershipVerified: true`.
+  - Validated via AP6 (nonexistent Auth UID denied), AP7 (doc ID/UID mismatch denied), AP8 (target email != Auth email denied), and AP9 (matching valid applicant allowed).
+- **100% Test Suite Verification**:
+  - `test_backend_team_auth.cjs`: 44/44 tests passed with 0 failures (covering AP1–AP9, RQ1–RQ4, AC1–AC11, LHOD1–LHOD5, ROLE1–ROLE5, CI1–CI4, DEC1–DEC3, RM1–RM3).
+  - `test_phase3_rules.cjs`: 79/79 tests passed with 0 failures.
+  - `test_migration_safety.cjs`: 19/19 tests passed with 0 failures.
+  - `test_p0_regression.cjs`: 38/38 tests passed with 0 failures.
+- **Firestore Rule Expression Optimization (`firestore.rules`)**:
+  - Eliminated 1000-expression limit evaluation aborts in `scribeSessions` authorization (`canAccessSession()`, `canAccessCase()`).
+  - Evaluates authorization predicates with short-circuit ordering, ensuring inexpensive checks (`ownerUid`, `workspaceType`) evaluate prior to document lookups.
+  - S6, S9, S18 cleanly evaluate to `false` without expression limit overflows.
+  - Verified worst-case legitimate access tests SX1–SX6 passing with 0 expression limit errors.
+- **Real-Route Backend Team Authorization (`test_backend_team_auth.ts`, `server/routes/team.routes.ts`)**:
+  - Rewrote backend test suite to mount the real Express router (`teamRouter`) and execute native HTTP requests against Firebase emulator.
+  - Replaced legacy duplicate route testing in `test_backend_team_auth.cjs` with direct execution of the real-route suite (30/30 tests passing).
+  - Aligned exact admin role allowlist (`isExactHospitalAdminRole`) in `accept-invite` creator verification.
+- **Strict Migration Safety Tooling (`scripts/backfill-membership-verified.cjs`, `test_migration_safety.cjs`)**:
+  - Enforced zero-guesswork hospital mapping (`UNMAPPED_REQUIRES_HUMAN_REVIEW`).
+  - Mandatory authority fields validation for approved files with atomic transactional execution (`M1`–`M19` passing).
+  - Retained immutable `legacyHospitalNames` and comprehensive inventory including `departments/{deptId}/cases`.
+
+### [2026-09-25] — P0 Root-of-Trust Security Patch & Privilege Escalation Closure
+- **Root-of-Trust Authorization via `team_members/{uid}` (`firestore.rules`)**:
+  - Eliminated `users/{uid}.hospital` as an authorization source across all Firestore security rules. Profile hospital is now treated strictly as display/backward-compatibility metadata and cannot grant clinical case access.
+  - Hardened `users/{uid}` updates: users are forbidden from self-modifying their `hospital`, `role`, `aiCredits`, or `subscriptionTier`.
+  - Hardened `team_members`: client creation and deletion are strictly blocked (`isPlatformAdmin()` only). Client updates are restricted exclusively to self-service shift updates (`['shift', 'updatedAt']`) on own verified records (`memberId == uid()`) or HOD-managed shift updates on same-hospital members. Status and hospital changes are entirely mediated server-side.
+  - Trusted membership verification: rules enforce active status and `membershipVerified == true` on `team_members/{uid}` for clinical access.
+- **Backend-Mediated Membership & Invite Management (`server/routes/team.routes.ts`)**:
+  - Moved public `/invite-preview/:token` route prior to `requireAuth` middleware to allow prospective invitees to preview department name and role before signing up or logging in.
+  - Server endpoints (`/api/team/accept-invite`, `/api/team/approve-member`) stamp `membershipVerified: true` atomically via Firebase Admin SDK.
+  - Team departure (`/api/team/leave`) is executed via transactional server route, resetting user profile hospital safely.
+- **Client Integration & Shift Persistence Fixes (`src/App.tsx`)**:
+  - Roster sync listener explicitly attaches `docSnap.id` to every loaded team member so shift updates reliably target the exact Firestore document ID.
+  - Replaced legacy client-side `deleteDoc` and `updateDoc` calls in `handleLeaveTeam` and `handleCancelJoinRequest` with authenticated POST calls to `/api/team/leave`.
+  - Added timestamp `updatedAt` to `handleUpdateTeamMemberShift` matching security rules' whitelist.
+- **Security Audit Verification (`test_privilege_escalation_audit.cjs`, `test_phase3_rules.cjs`)**:
+  - Validated that all privilege escalation vectors (P1 to P11) are strictly DENIED (profile spoofing, unverified membership injection, cross-hospital case access, ordinary clinician member activation, quick paste injection, anonymous invite reading).
+  - Validated that P12 (duty shift persistence for legitimate clinicians, regardless of casing or whitespace in legacy strings) is reliably ALLOWED.
+  - 100% pass rate achieved on full Phase 3 security test suite (73/73 tests passing).
+- **Truthful eFAST Aggregation with Window Precedence (`src/components/CaseSheetView.tsx`)**:
+  - Reordered `formatEfastAdjunct` evaluation precedence to prioritize structured windows over top-level status. If `efastObj` contains any documented window, display is derived strictly from individual windows; global `"eFAST: Negative"` is asserted ONLY if all 5 expected windows (`ruq`, `luq`, `suprapubic`, `pericardial`, `lungs`) are explicitly negative.
+  - Falls back to top-level `efastStatus` / `efastNotes` only when no structured window has any recorded value.
+- **Rostered Consultant On Shift Attribution Hardening (`src/App.tsx`)**:
+  - Restricted `consultantOnShift` selector in `handleSaveNewCase` and `buildExtractedCaseDraft` to strictly verify `role.toLowerCase().includes("consultant")` and active shift match.
+  - Eliminated consultant inference from `"HOD"` or `"Lead"` alone.
+  - Enforced singular matching: auto-selects consultant ONLY when exactly ONE consultant matches that shift. If 0 or >1 consultants match, `consultantId` and `consultantName` are set to `""` to prevent arbitrary `.find()` attribution.
+- **Removal of Stored ABCDE Status and Differential Status Defaults (`src/App.tsx`, `src/components/QuickDischargeIntake.tsx`)**:
+  - Removed `"Normal"` status defaults from new case intake and draft creation (`airwayStatus: ""`, `breathingStatus: ""`, etc.).
+  - Removed synthetic `status: "POSSIBLE"` default when adding differentials.
+- **Sanitized Display Defaults Across Handover, Dashboard, and Mortality Audit**:
+  - Sanitized allergies fallbacks to `"Not documented"` in `HandoverView.tsx` and `DashboardView.tsx`, preserving red warning styles only for documented allergies.
+  - Replaced `vitalsNow || "Stable"` in `HandoverCard.tsx` with `"Not documented"`.
+  - Replaced hardcoded temperature interpolation in `DashboardView.tsx` with `displayTemperature()`.
+  - Sanitized `presentingComplaint` and `triageCategory` in `MortalityAuditModal.tsx` to `"Not documented"` (no synthetic P1 default).
+
+### [2026-09-24] — Removal of Invented Findings from Export / Preview / Print (Batch 3a)
+- **Elimination of Fabricated Findings in Markdown and HTML Exports (`src/components/CaseSheetView.tsx`)**:
+  - Implemented centralized `buildExportPrimarySurvey(case)` helper generating truthful Markdown and HTML representations for Airway, Breathing, Circulation, Disability, and Exposure.
+  - Eliminated hardcoded text: "Symmetrical bilaterally", "CCT: Normal", "Subcutaneous emphysema: Absent", "EFAST: Negative", "Intervention: None", "CRT: < 2s", "Distended Neck Veins: No", "PCT: Normal", "Long bone deformity: None", "FAST: Negative", "Interventions: IV access", "Logroll: Completed (No spinal tenderness)", and ungrounded "°F" unit additions.
+  - Replaced fallback defaults across SAMPLE and Disposition (`|| "NKDA"`, `|| "None"`, `|| "N/A"`, `|| "Unremarkable"`, `|| "Normal / Not applicable"`, resident/consultant fallbacks) with strictly `"Not documented"`.
+  - Integrated `displayTemperature`, `displaySpo2`, `displayGcs`, and `displayGrbs`.
+- **Elimination of Invented Clinical Statements in Case Sheet Preview Modal (`src/components/CaseSheetView.tsx`)**:
+  - Replaced ABCDE fallbacks ("Patent and clear", "Bilateral breath sounds present", "Peripheral pulses palpable, CRT < 2 sec", "No external trauma or injuries noted") with honest stored findings or `"Not documented"`.
+  - Updated SAMPLE items in modal: Allergies `|| "NKDA"` → `"Not documented"`; Medications `|| "Nil regular"` → `"Not documented"`; Past Medical History `|| "None reported"` → `"Not documented"`; Events `|| progressNotes || "Stabilized in Emergency Ward."` → `events || "Not documented"`.
+  - Updated Condition at Transfer/Shift from `|| "Stable"` to `|| "Not documented"`.
+  - Updated physician signature lines to render stored clinician names or `"Not documented"` (no synthetic defaults).
+- **Inlined Print Views Sanitization (Adult & Pediatric) (`src/components/CaseSheetView.tsx`)**:
+  - Sanitized pediatric and adult inlined print ABCDE, TICLS appearance, focused secondary exams (HEENT, RS, CVS, Abdomen, Back, Extremities), trauma logroll, and disposition notes to strictly render documented values or `"Not documented"`.
+- **Primary Survey Badge Standardization (`src/components/CaseSheetPrintView.tsx`)**:
+  - Migrated SpO2, GCS, and GRBS display badges from raw template strings to `displaySpo2()`, `displayGcs()`, and `displayGrbs()`.
+- **Mortality Audit EMR Record Sanitization (`src/components/MortalityAuditModal.tsx`)**:
+  - Replaced `|| "Patent"`, `|| "Spontaneous"`, `|| "Stable"`, and `|| "Normal"` with `|| "Not documented"`.
+
+### [2026-09-23] — Elimination of Remaining Stored & Printed Vital Defaults (Batch 1e)
+- **Elimination of Fabricated Vitals in Quick Discharge (`src/components/QuickDischargeIntake.tsx`)**:
+  - Implemented `toClinicalString` helper and replaced fallback defaults (`|| "0"`, `|| "Not recorded"`, hardcoded `gcs_e: "4"`, `gcs_v: "5"`, `gcs_m: "6"`, `avpu: "Alert"`, `painScore: "0"`) across both extraction and OCR vitals intake locations with presence-aware string mapping.
+- **Truthful Component-Aware GCS Calculation (`src/components/CaseSheetView.tsx`)**:
+  - Refactored `calculatedGcs` from fabricated default summation (`|| 4 + || 5 + || 6 = 15`) to strict presence validation: requires explicit `gcs` or all three components (E, V, M) to derive a total, otherwise evaluating to `""`.
+- **Honest Disability Render Across All Export Pathways (`src/components/CaseSheetView.tsx`)**:
+  - Refactored Markdown, HTML, and Preview Modal Disability display lines:
+    - AVPU: renders stored value or `"Not documented"` (never defaulted to "Alert").
+    - GCS: routed through `displayGcs` to render explicit total or documented subcomponents without synthetic 15/15 or fabricated E/V/M.
+    - Pupils: reads stored pupil findings (`primaryDisabilityPupils`, `disabilityPupils`, `survey.disability`, or qualitative `primaryAssessment.disability`), rendering exact findings or `"Not documented"` (never hardcoding "Equal and Reactive").
+    - GRBS: renders actual blood glucose with unit or `"Not documented"` (never defaulting to "0 mg/dL" or "N/A mg/dL").
+
 ### [2026-09-23] — Removal of Remaining Vital/GCS/Exam Fabrications (Batch 1d Finish)
 - **Elimination of Stored GCS 15 in Quick Discharge (`src/components/QuickDischargeIntake.tsx`)**:
   - Replaced fallback `String(ext.vitals?.gcs || "15")` and `String(ocr.gcs || "15")` with honest conditional extraction `ext.vitals?.gcs ? String(ext.vitals.gcs) : ""` and `ocr.gcs ? String(ocr.gcs) : ""`.

@@ -181,15 +181,15 @@ export interface SecondarySurvey {
 export interface PrimaryAssessment {
 
   airway: string;
-  airwayStatus: "Normal" | "Abnormal";
+  airwayStatus: "Normal" | "Abnormal" | "";
   breathing: string;
-  breathingStatus: "Normal" | "Abnormal";
+  breathingStatus: "Normal" | "Abnormal" | "";
   circulation: string;
-  circulationStatus: "Normal" | "Abnormal";
+  circulationStatus: "Normal" | "Abnormal" | "";
   disability: string;
-  disabilityStatus: "Normal" | "Abnormal";
+  disabilityStatus: "Normal" | "Abnormal" | "";
   exposure: string;
-  exposureStatus: "Normal" | "Abnormal";
+  exposureStatus: "Normal" | "Abnormal" | "";
   survey?: PrimarySurvey;
 }
 
@@ -275,7 +275,7 @@ export interface InvestigationItem {
 
 export interface DifferentialDiagnosis {
   diagnosis: string;
-  status: "CONSISTENT" | "POSSIBLE" | "LESS LIKELY";
+  status?: "CONSISTENT" | "POSSIBLE" | "LESS LIKELY" | "" | string;
   reasoning: string;
   citations: string[];
   nextSteps: string[];
@@ -448,6 +448,8 @@ export interface ClinicalCase {
   createdByUid?: string;
   hospitalId?: string | null;
   id: string;
+  displayId?: string;
+  scribeSessionId?: string;
   bedNo?: string;
   patient: PatientDemographics;
   vitals: PatientVitals;
@@ -632,6 +634,7 @@ export interface UserProfile {
   email: string;
   role: string;
   hospital: string;
+  hospitalLabel?: string;
   workplaceName?: string;
   place?: string;
   state?: string;

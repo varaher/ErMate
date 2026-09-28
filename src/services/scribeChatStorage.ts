@@ -1,27 +1,21 @@
 /**
  * scribeChatStorage.ts
  *
- * Two independent storage scopes, kept deliberately separate so a
- * free-form clinical discussion can never be mistaken for, or leak
- * into, a real patient's case record:
+ * Unified and secure storage for ErMate Scribe Sessions & Messages.
  *
- *   1. CASE-LINKED chat history (dictation + case-bound discussion)
- *      Storage: cases/{caseId}/scribeChatMessages
- *      ID format: whatever handleSaveExtractedVoiceCase generates
- *      elsewhere (C-####) — unchanged, untouched by this file.
+ * 1. SESSION-BACKED CHAT HISTORY:
+ *    Storage: scribeSessions/{sessionId}/messages/{messageId}
+ *    Session Metadata: scribeSessions/{sessionId}
+ *    Fields: ownerUid, workspaceType, hospitalId, createdAt, updatedAt, linkedCaseId, mode
+ *    Linked to ClinicalCase via case.scribeSessionId & session.linkedCaseId
  *
- *   2. STANDALONE discussion sessions (no linked ErMate patient —
- *      e.g. a doctor pastes/attaches an external case just to
- *      discuss it, never to save it as a case sheet)
- *      Storage: users/{uid}/discussions/{discussionId}
- *      ID format: Dis-YYYYMMDD-### (day-scoped, zero-padded,
- *      transaction-counted so two sessions started back-to-back on
- *      the same day can never collide)
+ * 2. BACKWARD COMPATIBILITY:
+ *    Legacy cases/{caseId}/scribeChatMessages are read-only and merged into
+ *    active views so historical chats remain visible.
  *
- * Case-linked behavior (1) is UNCHANGED from the original version of
- * this file — same functions, same signatures, same Firestore paths.
- * Everything under "STANDALONE DISCUSSION SESSIONS" below is new and
- * additive only.
+ * 3. STANDALONE DISCUSSION SESSIONS:
+ *    Storage: users/{uid}/discussions/{discussionId}
+ *    ID format: Dis-YYYYMMDD-###
  */
 
 import {
@@ -43,67 +37,657 @@ import {
 } from "firebase/firestore";
 import { db, auth } from "../firebase";
 import type { ScribeChatMessage } from "../../server/scribeChatTurn";
+import type { ClinicalCase } from "../types";
 
-// ════════════════════════════════════════════════════════════════
-// CASE-LINKED CHAT HISTORY — unchanged from original file
-// ════════════════════════════════════════════════════════════════
+export interface ScribeSessionDoc {
+  id: string;
+  ownerUid: string;
+  workspaceType: "hospital" | "individual";
+  hospitalId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  linkedCaseId: string | null;
+  mode: "case" | "discussion";
+}
 
-/**
- * Subscribes to a case's chat history in real time. Call this when
- * the chat screen mounts for a given caseId — it immediately fires
- * with whatever history already exists (empty array for a brand new
- * case), then updates live as new messages are appended.
- *
- * Returns the unsubscribe function — call it on unmount / caseId change.
- */
-export function subscribeChatHistory(
-  caseId: string,
-  onMessages: (messages: ScribeChatMessage[]) => void
-): Unsubscribe {
-  if (!caseId) {
-    onMessages([]);
-    return () => {};
+function mapDocToMessage(docSnap: any): ScribeChatMessage {
+  const data = docSnap.data();
+  return {
+    id: data.id || docSnap.id,
+    docId: docSnap.id,
+    role: data.role || "assistant",
+    timestamp: data.timestamp || new Date().toISOString(),
+    type: data.type || "text",
+    content: data.content || "",
+    extractionSummary: data.extractionSummary,
+    clinicalReasoning: data.clinicalReasoning,
+    unappliedExtraction: data.unappliedExtraction,
+    dischargeDraft: data.dischargeDraft,
+    mode: data.mode,
+    extractionApplied: data.extractionApplied,
+    dischargeApplied: data.dischargeApplied,
+    dischargeIntent: data.dischargeIntent,
+  } as any;
+}
+
+export function mergeChatMessages(
+  listA: ScribeChatMessage[],
+  listB: ScribeChatMessage[]
+): ScribeChatMessage[] {
+  const seenIds = new Set<string>();
+  const combined: ScribeChatMessage[] = [];
+
+  for (const m of [...listA, ...listB]) {
+    const key = m.id || (m as any).docId;
+    if (key && seenIds.has(key)) continue;
+    if (key) seenIds.add(key);
+    combined.push(m);
   }
 
-  const messagesRef = collection(db, "cases", caseId, "scribeChatMessages");
-  const q = query(messagesRef, orderBy("timestamp", "asc"));
+  combined.sort((a, b) => {
+    const tA = new Date(a.timestamp || 0).getTime();
+    const tB = new Date(b.timestamp || 0).getTime();
+    return tA - tB;
+  });
 
-  return onSnapshot(q, snapshot => {
-    const messages = snapshot.docs.map(doc => {
-      const data = doc.data();
-      return {
-        id: data.id || doc.id,
-        docId: doc.id,
-        role: data.role || "assistant",
-        timestamp: data.timestamp || new Date().toISOString(),
-        type: data.type || "text",
-        content: data.content || "",
-        extractionSummary: data.extractionSummary,
-        clinicalReasoning: data.clinicalReasoning,
-        unappliedExtraction: data.unappliedExtraction,
-        dischargeDraft: data.dischargeDraft,
-        mode: data.mode,
-        extractionApplied: data.extractionApplied,
-        dischargeApplied: data.dischargeApplied,
-        dischargeIntent: data.dischargeIntent,
-      } as any;
-    });
-    onMessages(messages);
-  }, error => {
-    console.warn(`[subscribeChatHistory] Listener fallback for case ${caseId}:`, error);
+  return combined;
+}
+
+/**
+ * Creates a brand new Scribe session document with linkedCaseId == null.
+ * Re-throws on any Firestore permission or network failure.
+ */
+export async function createScribeSession(params: {
+  sessionId?: string;
+  ownerUid: string;
+  workspaceType: "hospital" | "individual";
+  hospitalId: string | null;
+  mode?: "case" | "discussion";
+}): Promise<string> {
+  const sessionId = params.sessionId || (typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `sess-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`);
+  const now = new Date().toISOString();
+  const sessionDoc: ScribeSessionDoc = {
+    id: sessionId,
+    ownerUid: params.ownerUid,
+    workspaceType: params.workspaceType,
+    hospitalId: params.hospitalId,
+    createdAt: now,
+    updatedAt: now,
+    linkedCaseId: null,
+    mode: params.mode || "case",
+  };
+
+  await setDoc(doc(db, "scribeSessions", sessionId), sessionDoc);
+  return sessionId;
+}
+
+/**
+ * Links an unlinked Scribe session to an accessible case document.
+ * Re-throws on error.
+ */
+export async function linkSessionToCase(sessionId: string, caseId: string): Promise<void> {
+  if (!sessionId || !caseId) throw new Error("Missing sessionId or caseId for linking");
+  const sessionRef = doc(db, "scribeSessions", sessionId);
+  await updateDoc(sessionRef, {
+    linkedCaseId: caseId,
+    updatedAt: new Date().toISOString(),
   });
 }
 
 /**
- * Checks if a case has any persisted scribe chat history in Firestore.
+ * Two-sided linkage between a Scribe session and a ClinicalCase.
+ * A link is complete ONLY when both:
+ * 1. scribeSessions/{sessionId}.linkedCaseId == caseId
+ * 2. cases/{caseId}.scribeSessionId == sessionId
+ */
+export async function linkScribeSessionAndCase(
+  sessionId: string,
+  caseId: string
+): Promise<{ success: boolean; sessionLinked: boolean; caseLinked: boolean; error?: string }> {
+  if (!sessionId || !caseId) {
+    throw new Error("Missing sessionId or caseId for two-sided link");
+  }
+
+  let sessionLinked = false;
+  let caseLinked = false;
+  let errorMsg = "";
+
+  // 1. Attempt session link (or verify if already linked)
+  try {
+    const sessionRef = doc(db, "scribeSessions", sessionId);
+    const sessionSnap = await getDoc(sessionRef);
+    if (sessionSnap.exists()) {
+      const data = sessionSnap.data();
+      if (data?.linkedCaseId === caseId) {
+        sessionLinked = true;
+      } else if (data?.linkedCaseId == null) {
+        await updateDoc(sessionRef, {
+          linkedCaseId: caseId,
+          updatedAt: new Date().toISOString(),
+        });
+        sessionLinked = true;
+      } else {
+        errorMsg = `Session ${sessionId} already linked to case ${data.linkedCaseId}`;
+      }
+    } else {
+      errorMsg = `Session document ${sessionId} not found`;
+    }
+  } catch (err: any) {
+    console.error("[linkScribeSessionAndCase] Error linking session side:", err);
+    errorMsg = err?.message || "Session link failed";
+  }
+
+  // 2. Attempt case pointer (or verify if already pointing)
+  try {
+    const caseRef = doc(db, "cases", caseId);
+    const caseSnap = await getDoc(caseRef);
+    if (caseSnap.exists()) {
+      const data = caseSnap.data();
+      if (data?.scribeSessionId === sessionId) {
+        caseLinked = true;
+      } else {
+        await updateDoc(caseRef, {
+          scribeSessionId: sessionId,
+        });
+        caseLinked = true;
+      }
+    } else {
+      if (!errorMsg) errorMsg = `Case document ${caseId} not found`;
+    }
+  } catch (err: any) {
+    console.error("[linkScribeSessionAndCase] Error linking case side:", err);
+    if (!errorMsg) errorMsg = err?.message || "Case pointer failed";
+  }
+
+  const success = sessionLinked && caseLinked;
+  return { success, sessionLinked, caseLinked, error: success ? undefined : errorMsg };
+}
+
+/**
+ * Reads both documents and strictly verifies two-sided link invariant.
+ */
+export async function verifyTwoSidedLink(sessionId: string, caseId: string): Promise<boolean> {
+  try {
+    const sessionSnap = await getDoc(doc(db, "scribeSessions", sessionId));
+    const caseSnap = await getDoc(doc(db, "cases", caseId));
+    if (!sessionSnap.exists() || !caseSnap.exists()) return false;
+    const sData = sessionSnap.data();
+    const cData = caseSnap.data();
+    return sData?.linkedCaseId === caseId && cData?.scribeSessionId === sessionId;
+  } catch (e) {
+    console.error("[verifyTwoSidedLink] Verification read failed:", e);
+    return false;
+  }
+}
+
+/**
+ * Resolves or establishes an authorized Scribe session for an existing case.
+ * Follows strict protocol:
+ * 1. If case.scribeSessionId exists and is valid, uses it.
+ * 2. Looks for an existing authorized session linked to caseId.
+ *    If multiple discovered: does NOT throw. Sorts deterministically,
+ *    proposes earliest as canonical, and transactions case.scribeSessionId.
+ * 3. Only if none exists: creates session with linkedCaseId: null, awaits,
+ *    then links to caseId, awaits, and persists case.scribeSessionId.
+ */
+export async function resolveSessionForExistingCase(
+  caseItem: ClinicalCase,
+  user: any,
+  workspace: { workspaceType: "hospital" | "individual"; hospitalId: string | null; ownerUid: string | null }
+): Promise<{ sessionId: string; warning?: string }> {
+  if (!caseItem.id) {
+    throw new Error("Cannot resolve session without a valid case ID");
+  }
+
+  // 1. case.scribeSessionId if present
+  if (caseItem.scribeSessionId) {
+    try {
+      const existingSnap = await getDoc(doc(db, "scribeSessions", caseItem.scribeSessionId));
+      if (existingSnap.exists()) {
+        const sData = existingSnap.data();
+        if (sData?.linkedCaseId === caseItem.id || sData?.linkedCaseId == null) {
+          if (sData?.linkedCaseId == null) {
+            await linkSessionToCase(caseItem.scribeSessionId, caseItem.id);
+          }
+          return { sessionId: caseItem.scribeSessionId };
+        }
+      }
+    } catch (e) {
+      console.warn(`[resolveSessionForExistingCase] Could not read existing session ${caseItem.scribeSessionId}:`, e);
+    }
+  }
+
+  // 2. Query for existing sessions linked to this case
+  try {
+    const sessionsRef = collection(db, "scribeSessions");
+    const q = query(sessionsRef, where("linkedCaseId", "==", caseItem.id));
+    const snap = await getDocs(q);
+
+    if (snap.size === 1) {
+      const foundSessionId = snap.docs[0].id;
+      try {
+        await updateDoc(doc(db, "cases", caseItem.id), {
+          scribeSessionId: foundSessionId,
+        });
+      } catch (err) {
+        console.warn("[resolveSessionForExistingCase] Could not backfill case.scribeSessionId:", err);
+      }
+      return { sessionId: foundSessionId };
+    }
+
+    if (snap.size > 1) {
+      // Sort linked sessions deterministically by createdAt, then sessionId
+      const sortedDocs = [...snap.docs].sort((a, b) => {
+        const tA = new Date(a.data().createdAt || 0).getTime();
+        const tB = new Date(b.data().createdAt || 0).getTime();
+        if (tA !== tB) return tA - tB;
+        return a.id.localeCompare(b.id);
+      });
+
+      const proposedCanonical = sortedDocs[0].id;
+
+      // Set case.scribeSessionId using a Firestore transaction
+      let chosenCanonical: string | null = null;
+      let txnSucceeded = false;
+      try {
+        chosenCanonical = await runTransaction(db, async (txn) => {
+          const caseRef = doc(db, "cases", caseItem.id);
+          const cSnap = await txn.get(caseRef);
+          if (cSnap.exists()) {
+            const storedScribeId = cSnap.data()?.scribeSessionId;
+            if (storedScribeId) {
+              return storedScribeId;
+            }
+            txn.update(caseRef, { scribeSessionId: proposedCanonical });
+            return proposedCanonical;
+          }
+          return proposedCanonical;
+        });
+        txnSucceeded = true;
+      } catch (txnErr) {
+        console.warn("[resolveSessionForExistingCase] Initial transaction setting canonical session warning:", txnErr);
+        txnSucceeded = false;
+      }
+
+      // If the canonical-session transaction fails:
+      if (!txnSucceeded) {
+        // a. Re-read cases/{caseId}.scribeSessionId
+        const recheckSnap = await getDoc(doc(db, "cases", caseItem.id));
+        const currentScribeId = recheckSnap.exists() ? recheckSnap.data()?.scribeSessionId : null;
+
+        // b. If it is now set:
+        if (currentScribeId) {
+          // use that stored session as canonical
+          // verify it exists and is linked to this case
+          const sSnap = await getDoc(doc(db, "scribeSessions", currentScribeId));
+          if (sSnap.exists() && sSnap.data()?.linkedCaseId === caseItem.id) {
+            // only then enable writes
+            return { sessionId: currentScribeId };
+          } else {
+            console.error(`[resolveSessionForExistingCase] Stored session ${currentScribeId} failed verification`);
+            throw new Error("Unable to attach Scribe history to this case.");
+          }
+        }
+
+        // c. If it is STILL null:
+        // DO NOT simply fall back to proposedCanonical
+        // retry setting proposedCanonical using a transaction
+        try {
+          chosenCanonical = await runTransaction(db, async (txn) => {
+            const caseRef = doc(db, "cases", caseItem.id);
+            const cSnap = await txn.get(caseRef);
+            if (cSnap.exists()) {
+              const stored = cSnap.data()?.scribeSessionId;
+              if (stored) return stored;
+              txn.update(caseRef, { scribeSessionId: proposedCanonical });
+              return proposedCanonical;
+            }
+            return proposedCanonical;
+          });
+        } catch (retryErr) {
+          console.error("[resolveSessionForExistingCase] Retry transaction setting canonical session failed:", retryErr);
+        }
+
+        // verify both: case.scribeSessionId == chosenSessionId && session.linkedCaseId == caseId
+        if (chosenCanonical) {
+          const verifyCaseSnap = await getDoc(doc(db, "cases", caseItem.id));
+          const verifySessionSnap = await getDoc(doc(db, "scribeSessions", chosenCanonical));
+          const caseMatches = verifyCaseSnap.exists() && verifyCaseSnap.data()?.scribeSessionId === chosenCanonical;
+          const sessionMatches = verifySessionSnap.exists() && verifySessionSnap.data()?.linkedCaseId === caseItem.id;
+          if (caseMatches && sessionMatches) {
+            return { sessionId: chosenCanonical };
+          }
+        }
+
+        // d. If canonicalization still cannot be committed/verified: fail safely
+        throw new Error("Unable to attach Scribe history to this case.");
+      }
+
+      if (chosenCanonical) {
+        return { sessionId: chosenCanonical };
+      }
+      throw new Error("Unable to attach Scribe history to this case.");
+    }
+  } catch (err: any) {
+    console.warn("[resolveSessionForExistingCase] Query for linked sessions failed:", err);
+  }
+
+  // 3. Create unlinked first, await, then link to existing case.id
+  const newSessionId = await createScribeSession({
+    ownerUid: user?.uid || "",
+    workspaceType: workspace.workspaceType,
+    hospitalId: workspace.hospitalId,
+    mode: "case",
+  });
+
+  try {
+    await linkSessionToCase(newSessionId, caseItem.id);
+  } catch (err: any) {
+    console.error("[resolveSessionForExistingCase] Failed to link new session to case:", err);
+    throw new Error("Unable to attach Scribe history to this case.");
+  }
+
+  try {
+    await updateDoc(doc(db, "cases", caseItem.id), {
+      scribeSessionId: newSessionId,
+    });
+  } catch (e) {
+    console.warn("[resolveSessionForExistingCase] Could not update case.scribeSessionId:", e);
+  }
+
+  return { sessionId: newSessionId };
+}
+
+/**
+ * Persists a single chat message to the session's message subcollection.
+ * RE-THROWS on failure to guarantee honest error handling.
+ */
+export async function appendChatMessage(
+  targetId: string,
+  message: ScribeChatMessage,
+  options?: { isSession?: boolean }
+): Promise<void> {
+  if (!targetId) throw new Error("Missing target session or case ID");
+  const cleanMessage = JSON.parse(JSON.stringify(message));
+  const msgId = message.id || (typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `msg-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`);
+  cleanMessage.id = msgId;
+
+  const isSession = options?.isSession !== false;
+
+  if (isSession) {
+    const msgRef = doc(db, "scribeSessions", targetId, "messages", msgId);
+    await setDoc(msgRef, {
+      ...cleanMessage,
+      serverTimestamp: serverTimestamp(),
+    }, { merge: true });
+  } else {
+    const msgRef = doc(db, "cases", targetId, "scribeChatMessages", msgId);
+    await setDoc(msgRef, {
+      ...cleanMessage,
+      serverTimestamp: serverTimestamp(),
+    }, { merge: true });
+  }
+}
+
+/**
+ * Updates an existing chat message. RE-THROWS on failure.
+ */
+export async function updateChatMessage(
+  targetId: string,
+  messageId: string,
+  updates: Partial<ScribeChatMessage>,
+  options?: { isSession?: boolean }
+): Promise<void> {
+  if (!targetId || !messageId) throw new Error("Missing ID for message update");
+  const isSession = options?.isSession !== false;
+
+  if (isSession) {
+    const messageRef = doc(db, "scribeSessions", targetId, "messages", messageId);
+    const snap = await getDoc(messageRef);
+    if (snap.exists()) {
+      await updateDoc(messageRef, updates);
+      return;
+    }
+
+    const messagesRef = collection(db, "scribeSessions", targetId, "messages");
+    const q = query(messagesRef, where("id", "==", messageId), limit(1));
+    const querySnap = await getDocs(q);
+    if (!querySnap.empty) {
+      await updateDoc(querySnap.docs[0].ref, updates);
+      return;
+    }
+
+    throw new Error(`Message ${messageId} not found in session ${targetId}`);
+  } else {
+    const messageRef = doc(db, "cases", targetId, "scribeChatMessages", messageId);
+    const snap = await getDoc(messageRef);
+    if (snap.exists()) {
+      await updateDoc(messageRef, updates);
+      return;
+    }
+
+    const messagesRef = collection(db, "cases", targetId, "scribeChatMessages");
+    const q = query(messagesRef, where("id", "==", messageId), limit(1));
+    const querySnap = await getDocs(q);
+    if (!querySnap.empty) {
+      await updateDoc(querySnap.docs[0].ref, updates);
+      return;
+    }
+
+    throw new Error(`Message ${messageId} not found in case ${targetId}`);
+  }
+}
+
+/**
+ * Retrieves chat history from a session, optionally merging legacy messages.
+ * RE-THROWS on failure.
+ */
+export async function getChatHistory(
+  sessionId: string,
+  legacyCaseId?: string | null
+): Promise<ScribeChatMessage[]> {
+  if (!sessionId) throw new Error("Missing session ID for getChatHistory");
+
+  const sessionMsgsRef = collection(db, "scribeSessions", sessionId, "messages");
+  const qSession = query(sessionMsgsRef, orderBy("timestamp", "asc"));
+  const snapSession = await getDocs(qSession);
+  let allMessages = snapSession.docs.map(mapDocToMessage);
+
+  if (!legacyCaseId) {
+    return allMessages;
+  }
+
+  // 1. Legacy messages
+  try {
+    const legacyRef = collection(db, "cases", legacyCaseId, "scribeChatMessages");
+    const qLegacy = query(legacyRef, orderBy("timestamp", "asc"));
+    const legacySnap = await getDocs(qLegacy);
+    const legacyMessages = legacySnap.docs.map(mapDocToMessage);
+    allMessages = mergeChatMessages(legacyMessages, allMessages);
+  } catch (err) {
+    console.warn(`[getChatHistory] Legacy message read skipped for case ${legacyCaseId}:`, err);
+  }
+
+  // 2. Any other linked sessions for this case (read-only historical display)
+  try {
+    const sessionsRef = collection(db, "scribeSessions");
+    const qOther = query(sessionsRef, where("linkedCaseId", "==", legacyCaseId));
+    const snapOther = await getDocs(qOther);
+    for (const oDoc of snapOther.docs) {
+      if (oDoc.id !== sessionId) {
+        const oMsgsRef = collection(db, "scribeSessions", oDoc.id, "messages");
+        const oSnap = await getDocs(query(oMsgsRef, orderBy("timestamp", "asc")));
+        const oMessages = oSnap.docs.map(mapDocToMessage);
+        allMessages = mergeChatMessages(oMessages, allMessages);
+      }
+    }
+  } catch (err) {
+    console.warn(`[getChatHistory] Other linked sessions read skipped for case ${legacyCaseId}:`, err);
+  }
+
+  return allMessages;
+}
+
+/**
+ * Subscribes to chat history in real time.
+ */
+export function subscribeChatHistory(
+  targetId: string,
+  onMessages: (messages: ScribeChatMessage[]) => void,
+  onError?: (err: Error) => void
+): Unsubscribe {
+  if (!targetId) {
+    onMessages([]);
+    return () => {};
+  }
+
+  const messagesRef = collection(db, "cases", targetId, "scribeChatMessages");
+  const q = query(messagesRef, orderBy("timestamp", "asc"));
+
+  return onSnapshot(
+    q,
+    snapshot => {
+      onMessages(snapshot.docs.map(mapDocToMessage));
+    },
+    error => {
+      console.warn(`[subscribeChatHistory] Listener error for ${targetId}:`, error);
+      onError?.(error);
+    }
+  );
+}
+
+/**
+ * Subscribes to session messages AND legacy case messages, merging them seamlessly.
+ * Also loads any additional linked sessions' messages for this case read-only.
+ */
+export function subscribeSessionAndLegacyHistory(
+  sessionId: string,
+  legacyCaseId: string | null | undefined,
+  onMessages: (messages: ScribeChatMessage[]) => void,
+  onError?: (err: Error) => void
+): Unsubscribe {
+  if (!sessionId) {
+    onMessages([]);
+    return () => {};
+  }
+
+  let canonicalMessages: ScribeChatMessage[] = [];
+  let legacyMessages: ScribeChatMessage[] = [];
+  const secondarySessionsMap = new Map<string, ScribeChatMessage[]>();
+  const secondaryUnsubs: (() => void)[] = [];
+  let unsubLegacy: (() => void) | null = null;
+  let isClosed = false;
+
+  const emit = () => {
+    if (isClosed) return;
+    const secondaryMessages: ScribeChatMessage[] = [];
+    for (const msgs of secondarySessionsMap.values()) {
+      secondaryMessages.push(...msgs);
+    }
+    const combinedSecondary = mergeChatMessages(legacyMessages, secondaryMessages);
+    const merged = mergeChatMessages(combinedSecondary, canonicalMessages);
+    onMessages(merged);
+  };
+
+  const sessionRef = collection(db, "scribeSessions", sessionId, "messages");
+  const qSession = query(sessionRef, orderBy("timestamp", "asc"));
+
+  const unsubSession = onSnapshot(
+    qSession,
+    snapshot => {
+      canonicalMessages = snapshot.docs.map(mapDocToMessage);
+      emit();
+    },
+    error => {
+      console.error(`[subscribeSessionHistory] Error for session ${sessionId}:`, error);
+      onError?.(error);
+    }
+  );
+
+  if (legacyCaseId) {
+    const legacyRef = collection(db, "cases", legacyCaseId, "scribeChatMessages");
+    const qLegacy = query(legacyRef, orderBy("timestamp", "asc"));
+    unsubLegacy = onSnapshot(
+      qLegacy,
+      snapshot => {
+        legacyMessages = snapshot.docs.map(mapDocToMessage);
+        emit();
+      },
+      error => {
+        console.warn(`[subscribeSessionHistory] Legacy listener warning for case ${legacyCaseId}:`, error);
+      }
+    );
+
+    // Multi-session support: query any additional sessions linked to this same case
+    getDocs(query(collection(db, "scribeSessions"), where("linkedCaseId", "==", legacyCaseId)))
+      .then(snap => {
+        if (isClosed) return;
+        for (const sDoc of snap.docs) {
+          if (sDoc.id !== sessionId) {
+            const secRef = collection(db, "scribeSessions", sDoc.id, "messages");
+            const qSec = query(secRef, orderBy("timestamp", "asc"));
+            const unsubSec = onSnapshot(
+              qSec,
+              sSnap => {
+                secondarySessionsMap.set(sDoc.id, sSnap.docs.map(mapDocToMessage));
+                emit();
+              },
+              e => console.warn(`[subscribeSessionHistory] Secondary session ${sDoc.id} listener warning:`, e)
+            );
+            secondaryUnsubs.push(unsubSec);
+          }
+        }
+      })
+      .catch(e => console.warn("[subscribeSessionHistory] Query for secondary linked sessions error:", e));
+  }
+
+  return () => {
+    isClosed = true;
+    unsubSession();
+    if (unsubLegacy) unsubLegacy();
+    secondaryUnsubs.forEach(u => u());
+  };
+}
+
+/**
+ * Checks if a case has any persisted scribe chat history.
+ * Checks EITHER legacy cases/{caseId}/scribeChatMessages
+ * OR any authorized scribeSession linked to this case containing messages.
  */
 export async function hasCaseScribeHistory(caseId: string): Promise<boolean> {
   if (!caseId) return false;
   try {
-    const messagesRef = collection(db, "cases", caseId, "scribeChatMessages");
-    const q = query(messagesRef, limit(1));
-    const snapshot = await getDocs(q);
-    return !snapshot.empty;
+    // 1. Check legacy path first
+    const legacyRef = collection(db, "cases", caseId, "scribeChatMessages");
+    const legacySnap = await getDocs(query(legacyRef, limit(1)));
+    if (!legacySnap.empty) return true;
+
+    // 2. Check session-backed history on the case itself
+    try {
+      const caseDocSnap = await getDoc(doc(db, "cases", caseId));
+      if (caseDocSnap.exists()) {
+        const cData = caseDocSnap.data();
+        if (cData?.scribeSessionId) {
+          const sMsgsRef = collection(db, "scribeSessions", cData.scribeSessionId, "messages");
+          const sMsgSnap = await getDocs(query(sMsgsRef, limit(1)));
+          if (!sMsgSnap.empty) return true;
+        }
+      }
+    } catch (e) {
+      console.warn(`[hasCaseScribeHistory] Case doc lookup check error for ${caseId}:`, e);
+    }
+
+    // 3. Query scribeSessions where linkedCaseId == caseId
+    const sessionsRef = collection(db, "scribeSessions");
+    const qSessions = query(sessionsRef, where("linkedCaseId", "==", caseId));
+    const sessionSnap = await getDocs(qSessions);
+    for (const sDoc of sessionSnap.docs) {
+      const msgsRef = collection(db, "scribeSessions", sDoc.id, "messages");
+      const mSnap = await getDocs(query(msgsRef, limit(1)));
+      if (!mSnap.empty) return true;
+    }
+
+    return false;
   } catch (err) {
     console.warn(`[hasCaseScribeHistory] Error checking history for case ${caseId}:`, err);
     return false;
@@ -111,112 +695,14 @@ export async function hasCaseScribeHistory(caseId: string): Promise<boolean> {
 }
 
 /**
- * One-shot retrieval of a case's chat history for manual refresh.
- */
-export async function getChatHistory(caseId: string): Promise<ScribeChatMessage[]> {
-  if (!caseId) return [];
-  try {
-    const messagesRef = collection(db, "cases", caseId, "scribeChatMessages");
-    const q = query(messagesRef, orderBy("timestamp", "asc"));
-    const snapshot = await getDocs(q);
-    return snapshot.docs.map(doc => {
-      const data = doc.data();
-      return {
-        id: data.id || doc.id,
-        docId: doc.id,
-        role: data.role || "assistant",
-        timestamp: data.timestamp || new Date().toISOString(),
-        type: data.type || "text",
-        content: data.content || "",
-        extractionSummary: data.extractionSummary,
-        clinicalReasoning: data.clinicalReasoning,
-        unappliedExtraction: data.unappliedExtraction,
-        dischargeDraft: data.dischargeDraft,
-        mode: data.mode,
-        extractionApplied: data.extractionApplied,
-        dischargeApplied: data.dischargeApplied,
-        dischargeIntent: data.dischargeIntent,
-      } as any;
-    });
-  } catch (err) {
-    console.warn(`[getChatHistory] Error fetching chat history for case ${caseId}:`, err);
-    return [];
-  }
-}
-
-/**
- * Persists a single message to the case's chat history. Call this
- * for every user turn AND every assistant response (extraction
- * confirmation + clinical reasoning), so the full thread survives
- * app restarts / re-opens.
- */
-export async function appendChatMessage(caseId: string, message: ScribeChatMessage): Promise<void> {
-  if (!caseId) return;
-  try {
-    const cleanMessage = JSON.parse(JSON.stringify(message));
-    if (message.id) {
-      const messageDocRef = doc(db, "cases", caseId, "scribeChatMessages", message.id);
-      await setDoc(messageDocRef, {
-        ...cleanMessage,
-        serverTimestamp: serverTimestamp(),
-      }, { merge: true });
-    } else {
-      const messagesRef = collection(db, "cases", caseId, "scribeChatMessages");
-      await addDoc(messagesRef, {
-        ...cleanMessage,
-        serverTimestamp: serverTimestamp(),
-      });
-    }
-  } catch (err) {
-    console.warn(`[appendChatMessage] Error writing chat message for case ${caseId}:`, err);
-  }
-}
-
-/**
- * Generates a new case and returns its ID, for the "start new chat"
- * action after a case is finalized. This does NOT touch or clear the
- * previous case's messages — they remain permanently attached to
- * their own caseId.
+ * Returns a collision-safe Firestore auto-ID for new case documents.
  */
 export function generateNewCaseId(): string {
-  return "C-" + Math.floor(1000 + Math.random() * 9000);
-}
-
-export async function updateChatMessage(caseId: string, messageId: string, updates: Partial<ScribeChatMessage>): Promise<void> {
-  if (!caseId || !messageId) return;
-  try {
-    const messageRef = doc(db, "cases", caseId, "scribeChatMessages", messageId);
-    const snap = await getDoc(messageRef);
-    if (snap.exists()) {
-      await updateDoc(messageRef, updates);
-      return;
-    }
-
-    // LEGACY MESSAGE COMPATIBILITY:
-    // If messageId was not stored as the Firestore document ID (e.g. legacy addDoc with auto-ID),
-    // fallback to locating the existing message whose stored id == messageId and update that doc.
-    const messagesRef = collection(db, "cases", caseId, "scribeChatMessages");
-    const q = query(messagesRef, where("id", "==", messageId), limit(1));
-    const querySnap = await getDocs(q);
-    if (!querySnap.empty) {
-      const legacyDoc = querySnap.docs[0];
-      await updateDoc(legacyDoc.ref, updates);
-      return;
-    }
-
-    console.warn(`[updateChatMessage] Message ${messageId} not found in case ${caseId}`);
-  } catch (err) {
-    console.warn(`[updateChatMessage] Error updating message ${messageId} for case ${caseId}:`, err);
-  }
+  return doc(collection(db, "cases")).id;
 }
 
 // ════════════════════════════════════════════════════════════════
-// STANDALONE DISCUSSION SESSIONS — new, additive only
-//
-// These NEVER touch the "cases" collection and never get a C-####
-// ID. A discussion session id is unmistakably distinct (Dis- prefix)
-// so it can never be confused with, or accidentally queried
-// alongside, a real patient case.
+// STANDALONE DISCUSSION SESSIONS
 // ════════════════════════════════════════════════════════════════
 
 function formatDateStamp(d: Date): string {
@@ -226,26 +712,9 @@ function formatDateStamp(d: Date): string {
   return `${yyyy}${mm}${dd}`;
 }
 
-/**
- * Generates a new discussion session ID scoped to today's date and
- * the current user, e.g. "Dis-20260908-001". Uses a Firestore
- * transaction on a small per-user, per-day counter document so two
- * sessions started in quick succession can never receive the same
- * sequence number — a plain "count existing docs" approach would be
- * race-prone under that scenario.
- *
- * Falls back to a timestamp-based id (still Dis-prefixed, still safe
- * to use, just not sequentially numbered) if Firestore is unreachable
- * — a doctor should never be blocked from starting a discussion
- * because of a counter-write failure.
- */
-export async function generateNewDiscussionId(): Promise<string> {
-  const uid = auth.currentUser?.uid;
+export async function generateNewDiscussionId(uid: string): Promise<string> {
   const todayStamp = formatDateStamp(new Date());
-
   if (!uid) {
-    // No authenticated user context available — fall back to a
-    // timestamp suffix rather than blocking discussion creation.
     return `Dis-${todayStamp}-${Date.now().toString().slice(-4)}`;
   }
 
@@ -266,12 +735,6 @@ export async function generateNewDiscussionId(): Promise<string> {
   }
 }
 
-/**
- * Subscribes to a standalone discussion session's chat history.
- * Mirrors subscribeChatHistory's shape/behavior exactly, but reads
- * from users/{uid}/discussions/{discussionId}/messages instead of
- * cases/{caseId}/scribeChatMessages.
- */
 export function subscribeDiscussionHistory(
   discussionId: string,
   onMessages: (messages: ScribeChatMessage[]) => void
@@ -286,34 +749,12 @@ export function subscribeDiscussionHistory(
   const q = query(messagesRef, orderBy("timestamp", "asc"));
 
   return onSnapshot(q, snapshot => {
-    const messages = snapshot.docs.map(docSnap => {
-      const data = docSnap.data();
-      return {
-        id: data.id || docSnap.id,
-        docId: docSnap.id,
-        role: data.role || "assistant",
-        timestamp: data.timestamp || new Date().toISOString(),
-        type: data.type || "text",
-        content: data.content || "",
-        extractionSummary: data.extractionSummary,
-        clinicalReasoning: data.clinicalReasoning,
-        unappliedExtraction: data.unappliedExtraction,
-        dischargeDraft: data.dischargeDraft,
-        mode: data.mode,
-        extractionApplied: data.extractionApplied,
-        dischargeApplied: data.dischargeApplied,
-        dischargeIntent: data.dischargeIntent,
-      } as any;
-    });
-    onMessages(messages);
+    onMessages(snapshot.docs.map(mapDocToMessage));
   }, error => {
     console.warn(`[subscribeDiscussionHistory] Listener fallback for discussion ${discussionId}:`, error);
   });
 }
 
-/**
- * One-shot retrieval of a standalone discussion session's chat history for manual refresh.
- */
 export async function getDiscussionHistory(discussionId: string): Promise<ScribeChatMessage[]> {
   const uid = auth.currentUser?.uid;
   if (!discussionId || !uid) return [];
@@ -321,74 +762,32 @@ export async function getDiscussionHistory(discussionId: string): Promise<Scribe
     const messagesRef = collection(db, "users", uid, "discussions", discussionId, "messages");
     const q = query(messagesRef, orderBy("timestamp", "asc"));
     const snapshot = await getDocs(q);
-    return snapshot.docs.map(docSnap => {
-      const data = docSnap.data();
-      return {
-        id: data.id || docSnap.id,
-        docId: docSnap.id,
-        role: data.role || "assistant",
-        timestamp: data.timestamp || new Date().toISOString(),
-        type: data.type || "text",
-        content: data.content || "",
-        extractionSummary: data.extractionSummary,
-        clinicalReasoning: data.clinicalReasoning,
-        unappliedExtraction: data.unappliedExtraction,
-        dischargeDraft: data.dischargeDraft,
-        mode: data.mode,
-        extractionApplied: data.extractionApplied,
-        dischargeApplied: data.dischargeApplied,
-        dischargeIntent: data.dischargeIntent,
-      } as any;
-    });
+    return snapshot.docs.map(mapDocToMessage);
   } catch (err) {
     console.warn(`[getDiscussionHistory] Error fetching discussion history for ${discussionId}:`, err);
     return [];
   }
 }
 
-/**
- * Persists a single message to a standalone discussion session.
- * Also touches the parent discussion document's summary metadata
- * (title/updatedAt) so a future "My Discussions" list can be built
- * from a single collection query without reading every message
- * subcollection — the actual summary TEXT generation (AI-written
- * synopsis) is intentionally NOT done here; that belongs in the
- * component logic that decides WHEN to summarize (e.g. on session
- * end), not in the low-level storage write path.
- */
 export async function appendDiscussionMessage(discussionId: string, message: ScribeChatMessage): Promise<void> {
   const uid = auth.currentUser?.uid;
   if (!discussionId || !uid) return;
 
-  try {
-    const messagesRef = collection(db, "users", uid, "discussions", discussionId, "messages");
-    const cleanMessage = JSON.parse(JSON.stringify(message));
+  const messagesRef = collection(db, "users", uid, "discussions", discussionId, "messages");
+  const cleanMessage = JSON.parse(JSON.stringify(message));
 
-    await addDoc(messagesRef, {
-      ...cleanMessage,
-      serverTimestamp: serverTimestamp(),
-    });
+  await addDoc(messagesRef, {
+    ...cleanMessage,
+    serverTimestamp: serverTimestamp(),
+  });
 
-    // Keep the parent discussion doc's updatedAt fresh so a
-    // discussions-list view can sort by recency without reading
-    // every subcollection.
-    const discussionDocRef = doc(db, "users", uid, "discussions", discussionId);
-    await setDoc(discussionDocRef, {
-      id: discussionId,
-      updatedAt: new Date().toISOString(),
-    }, { merge: true });
-  } catch (err) {
-    console.warn(`[appendDiscussionMessage] Error writing message for discussion ${discussionId}:`, err);
-  }
+  const discussionDocRef = doc(db, "users", uid, "discussions", discussionId);
+  await setDoc(discussionDocRef, {
+    id: discussionId,
+    updatedAt: new Date().toISOString(),
+  }, { merge: true });
 }
 
-/**
- * Saves/updates the AI-generated summary (title + short synopsis) for
- * a discussion session. Call this once, when the doctor navigates
- * away from or explicitly closes a discussion session — never on
- * every message, to avoid burning a Claude call per turn just to
- * refresh a summary nobody has looked at yet.
- */
 export async function saveDiscussionSummary(
   discussionId: string,
   summary: { title: string; synopsis: string }
@@ -396,15 +795,11 @@ export async function saveDiscussionSummary(
   const uid = auth.currentUser?.uid;
   if (!discussionId || !uid) return;
 
-  try {
-    const discussionDocRef = doc(db, "users", uid, "discussions", discussionId);
-    await setDoc(discussionDocRef, {
-      id: discussionId,
-      title: summary.title,
-      synopsis: summary.synopsis,
-      summarizedAt: new Date().toISOString(),
-    }, { merge: true });
-  } catch (err) {
-    console.warn(`[saveDiscussionSummary] Error saving summary for discussion ${discussionId}:`, err);
-  }
+  const discussionDocRef = doc(db, "users", uid, "discussions", discussionId);
+  await setDoc(discussionDocRef, {
+    id: discussionId,
+    title: summary.title,
+    synopsis: summary.synopsis,
+    summarizedAt: new Date().toISOString(),
+  }, { merge: true });
 }

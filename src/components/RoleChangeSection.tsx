@@ -7,6 +7,7 @@ import { collection, query, where, getDocs, addDoc, updateDoc, doc, onSnapshot, 
 import { db, auth } from "../firebase";
 import { UserProfile } from "../types";
 import VoiceRecorder from "./shared/VoiceRecorder";
+import { isExactHospitalAdminRole } from "../utils/roleUtils";
 
 interface RoleChangeSectionProps {
   profile: UserProfile;
@@ -33,10 +34,7 @@ export default function RoleChangeSection({ profile, onRoleUpdated }: RoleChange
   const userRoleLower = currentRole.toLowerCase();
   const userEmail = (profile.email || auth.currentUser?.email || "").toLowerCase().trim();
 
-  const isHOD = userRoleLower.includes("hod") || 
-                userRoleLower.includes("head") || 
-                userRoleLower.includes("lead") || 
-                userRoleLower.includes("owner") || 
+  const isHOD = isExactHospitalAdminRole(currentRole) || 
                 userEmail === "varahgrp@gmail.com";
 
   // State for non-HOD applicants
@@ -170,39 +168,25 @@ export default function RoleChangeSection({ profile, onRoleUpdated }: RoleChange
         reviewedAt: new Date().toISOString()
       });
 
-      // 2. Update user's profile in Firestore `/users/{targetUid}`
-      const userDocRef = doc(db, "users", req.requestedBy);
-      await updateDoc(userDocRef, {
-        role: req.requestedRole
-      });
-
-      // 3. Update team_members record if exists
+      // 2. Update role and audit log via secure backend API
       try {
-        const tmQuery = query(collection(db, "team_members"), where("email", "==", req.requestedByEmail));
-        const tmSnap = await getDocs(tmQuery);
-        tmSnap.forEach(async (tmDoc) => {
-          await updateDoc(doc(db, "team_members", tmDoc.id), { role: req.requestedRole });
-        });
+        const idToken = await auth.currentUser?.getIdToken();
+        if (idToken) {
+          const tmQuery = query(collection(db, "team_members"), where("email", "==", req.requestedByEmail));
+          const tmSnap = await getDocs(tmQuery);
+          for (const tmDoc of tmSnap.docs) {
+            await fetch("/api/team/update-role", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "Authorization": `Bearer ${idToken}`
+              },
+              body: JSON.stringify({ memberId: tmDoc.id, role: req.requestedRole })
+            });
+          }
+        }
       } catch (e) {
         console.warn("Could not sync team_members role update:", e);
-      }
-
-      // 4. Record audit log entry in `roleChangeLog` (NABH compliance)
-      try {
-        await addDoc(collection(db, "roleChangeLog"), {
-          targetMemberId: req.requestedBy,
-          targetEmail: req.requestedByEmail,
-          targetName: req.requestedByName,
-          previousRole: req.currentRole,
-          newRole: req.requestedRole,
-          changedByUid: currentHODUid,
-          changedByEmail: currentHODEmail,
-          changedByName: profile.name || currentHODEmail,
-          changedAt: new Date().toISOString(),
-          hospital: profile.hospital || req.hospital || ""
-        });
-      } catch (logErr) {
-        console.warn("Role change audit logging failed:", logErr);
       }
 
       if (onRoleUpdated) onRoleUpdated();

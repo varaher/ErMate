@@ -813,7 +813,7 @@ function PrimarySurveySection({ data }: { data: PrimarySurveyData }) {
           {(v?.rr || v?.spo2) && (
             <div className="inline-flex items-center gap-3 ml-2 font-mono text-xs bg-slate-100 print:bg-transparent px-2 py-0.5 rounded border border-slate-200 print:border-none">
               {v.rr && <span><strong className="font-sans text-[11px] text-slate-600">RR:</strong> {v.rr} /min</span>}
-              {v.spo2 && <span><strong className="font-sans text-[11px] text-slate-600">SpO2:</strong> {v.spo2}%</span>}
+              {v.spo2 && <span><strong className="font-sans text-[11px] text-slate-600">SpO2:</strong> {displaySpo2(v.spo2)}</span>}
             </div>
           )}
         </div>
@@ -836,8 +836,8 @@ function PrimarySurveySection({ data }: { data: PrimarySurveyData }) {
           <span>{disabilityFindings || "Not documented"}</span>
           {(v?.gcs || v?.gcsComponents || v?.grbs) && (
             <div className="inline-flex items-center gap-3 ml-2 font-mono text-xs bg-slate-100 print:bg-transparent px-2 py-0.5 rounded border border-slate-200 print:border-none">
-              {v.gcs && <span><strong className="font-sans text-[11px] text-slate-600">GCS:</strong> {v.gcs}/15 {v.gcsComponents ? `(${v.gcsComponents})` : ""}</span>}
-              {v.grbs && <span><strong className="font-sans text-[11px] text-slate-600">GRBS:</strong> {v.grbs} mg/dL</span>}
+              {(v.gcs || v.gcsComponents) && <span><strong className="font-sans text-[11px] text-slate-600">GCS:</strong> {displayGcs(v)}</span>}
+              {v.grbs && <span><strong className="font-sans text-[11px] text-slate-600">GRBS:</strong> {displayGrbs(v.grbs)}</span>}
             </div>
           )}
         </div>
@@ -1449,7 +1449,7 @@ export default function CaseSheetPrintView({
                 <SectionHeading>Differential Diagnosis</SectionHeading>
                 {data.differentials.length > 0 ? (
                   <ul className="text-sm list-disc pl-5 mt-1 space-y-0.5">
-                    {data.differentials.map((d, i) => <li key={i}>{d.diagnosis} ({d.status})</li>)}
+                    {data.differentials.map((d, i) => <li key={i}>{d.diagnosis}{d.status ? ` (${d.status})` : ""}</li>)}
                   </ul>
                 ) : data.provisionalDifferentialDiagnoses ? (
                   <div className="text-sm whitespace-pre-line">{data.provisionalDifferentialDiagnoses}</div>
@@ -1531,7 +1531,7 @@ export default function CaseSheetPrintView({
                 {data.provisionalDiagnosis && <div className="text-sm font-bold text-indigo-950 print:text-black mb-1">{data.provisionalDiagnosis}</div>}
                 {data.differentials.length > 0 && (
                   <ul className="text-sm list-disc pl-5 mt-1 space-y-0.5">
-                    {data.differentials.map((d, i) => <li key={i}>{d.diagnosis} ({d.status})</li>)}
+                    {data.differentials.map((d, i) => <li key={i}>{d.diagnosis}{d.status ? ` (${d.status})` : ""}</li>)}
                   </ul>
                 )}
                 {data.provisionalDifferentialDiagnoses && (

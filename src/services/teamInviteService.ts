@@ -64,39 +64,31 @@ export async function createTeamInvite(
 export async function validateTeamInvite(
   token: string
 ): Promise<{ valid: boolean; hospital?: string; invite?: TeamInvite; error?: string }> {
-    if (!token || !token.trim()) {
+  if (!token || !token.trim()) {
     return { valid: false, error: "Missing invitation token." };
   }
 
   const cleanToken = token.trim();
 
   try {
-    const inviteRef = doc(db, "teamInvites", cleanToken);
-    const inviteSnap = await getDoc(inviteRef);
-
-    if (!inviteSnap.exists()) {
-      // No fallback. An invite must exist in Firestore to be valid.
-      // If truly old pre-migration links need support, backfill real
-      // teamInvites documents for those known slugs instead of trusting
-      // arbitrary client input here.
-      return { valid: false, error: "Invalid or expired invitation link." };
+    const res = await fetch(`/api/team/invite-preview/${encodeURIComponent(cleanToken)}`);
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      return { valid: false, error: errData.error || "Invalid or expired invitation link." };
     }
 
-    const invite = inviteSnap.data() as TeamInvite;
-
-    if (invite.revoked) {
-      return { valid: false, error: "This department invitation link has been revoked." };
-    }
-
-    if (new Date(invite.expiresAt).getTime() < Date.now()) {
-      return { valid: false, error: "This department invitation link has expired." };
-    }
-
-    if (invite.usedCount >= invite.maxUses) {
-      return { valid: false, error: "This department invitation link has reached its maximum usage limit." };
-    }
-
-    return { valid: true, hospital: invite.hospital, invite };
+    const data = await res.json();
+    return {
+      valid: true,
+      hospital: data.hospitalName,
+      invite: {
+        id: cleanToken,
+        hospital: data.hospitalName,
+        hospitalName: data.hospitalName,
+        role: data.role,
+        expiresAt: data.expiresAt
+      } as any
+    };
   } catch (err: any) {
     console.warn("Error validating team invite:", err);
     // Fail closed, not open. A read error is never proof of a valid invite.

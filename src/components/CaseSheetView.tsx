@@ -37,7 +37,7 @@ import {
 } from "recharts";
 import { getCasePendingStatus } from "../utils/caseHelper";
 import { classifyEmergencyTriage } from "../utils/triageClassifier";
-import { formatTemperature, formatDoctorName, deduplicateMeds, validateMedRoute, formatDisabilityAssessment, displaySpo2 } from "../utils/clinicalFormatter";
+import { formatTemperature, formatDoctorName, deduplicateMeds, validateMedRoute, formatDisabilityAssessment, displaySpo2, displayGcs, displayTemperature, displayGrbs } from "../utils/clinicalFormatter";
 import { isTriageCategoryPending } from "./NewPatientEntryMenu";
 import { hasCaseScribeHistory } from "../services/scribeChatStorage";
 import { PediatricVitalReference } from "./PediatricVitalReference";
@@ -1433,7 +1433,7 @@ export default function CaseSheetView({
       circulationStatus: 'Normal' as const,
       disability: 'GCS 15/15 (E4V5M6). Pupils 3mm bilaterally equal and reactive to light.',
       disabilityStatus: 'Normal' as const,
-      exposure: 'Temperature 37°C (98.6°F). No obvious injuries or rashes.',
+      exposure: 'No obvious injuries or rashes.',
       exposureStatus: 'Normal' as const,
     },
     secondarySurvey: `General: No pallor, icterus, cyanosis, clubbing, lymphadenopathy, or pedal edema.
@@ -2004,8 +2004,281 @@ Extremities: No deformity. No peripheral oedema. Peripheral pulses present.`,
     };
   }, [onRegisterActions, isPreview, onApplyPreview, handleSave, currentCase]);
 
-  // Calculated composite GCS based on subscale variables
-  const calculatedGcs = (parseInt(currentCase.vitals.gcs_e) || 4) + (parseInt(currentCase.vitals.gcs_v) || 5) + (parseInt(currentCase.vitals.gcs_m) || 6);
+  // Calculated composite GCS based on explicit vitals or complete subscale variables
+  const calculatedGcs = (() => {
+    const rawTotal = currentCase.vitals?.gcs;
+    if (rawTotal !== undefined && rawTotal !== null && String(rawTotal).trim() !== "") {
+      return String(rawTotal).replace(/\s*\/\s*15$/, "").trim();
+    }
+    const eStr = currentCase.vitals?.gcs_e;
+    const vStr = currentCase.vitals?.gcs_v;
+    const mStr = currentCase.vitals?.gcs_m;
+    const hasAll = Boolean(
+      eStr !== undefined && eStr !== null && String(eStr).trim() !== "" &&
+      vStr !== undefined && vStr !== null && String(vStr).trim() !== "" &&
+      mStr !== undefined && mStr !== null && String(mStr).trim() !== ""
+    );
+    if (!hasAll) return "";
+    const e = parseInt(String(eStr), 10);
+    const v = parseInt(String(vStr), 10);
+    const m = parseInt(String(mStr), 10);
+    if (Number.isFinite(e) && Number.isFinite(v) && Number.isFinite(m)) {
+      return String(e + v + m);
+    }
+    return "";
+  })();
+
+  const formatGrbsValue = (raw: any): string => {
+    if (raw === null || raw === undefined) return "Not documented";
+    const s = String(raw).trim();
+    if (!s || ["n/a", "na", "null", "undefined", "not documented", "0"].includes(s.toLowerCase())) {
+      return "Not documented";
+    }
+    return /mg\s*\/?\s*dl|mmol/i.test(s) ? s : `${s} mg/dL`;
+  };
+
+  const resolveDisabilityPupils = (c: ClinicalCase): string => {
+    if (c.dischargeInfo?.primaryDisabilityPupils?.trim()) {
+      return c.dischargeInfo.primaryDisabilityPupils.trim();
+    }
+    if (c.pediatricDetails?.disabilityPupils?.trim()) {
+      return c.pediatricDetails.disabilityPupils.trim();
+    }
+    const s = c.primaryAssessment?.survey?.disability;
+    if (s) {
+      const parts: string[] = [];
+      if (s.pupilsEqual === true) parts.push("Equal");
+      else if (s.pupilsEqual === false) parts.push("Unequal");
+      if (s.pupilSizeR || s.pupilSizeL) {
+        parts.push(`${s.pupilSizeR || "?"}mm R / ${s.pupilSizeL || "?"}mm L`);
+      }
+      if (s.pupilReaction) {
+        parts.push(s.pupilReaction);
+      }
+      if (parts.length > 0) return parts.join(", ");
+    }
+    const rawDis = c.primaryAssessment?.disability;
+    if (rawDis && typeof rawDis === "string") {
+      const m = rawDis.match(/\bpupils?\s+([^,.;\n]+)/i);
+      if (m && m[1]) {
+        const captured = m[1].trim();
+        return captured.charAt(0).toUpperCase() + captured.slice(1);
+      }
+      if (/equal|reactive|sluggish|fixed|pearl|anisocoria|pinpoint|dilated/i.test(rawDis)) {
+        const cleaned = rawDis
+          .replace(/GCS[^.;]*/gi, '')
+          .replace(/total GCS[^.;]*/gi, '')
+          .replace(/GRBS[^.;]*/gi, '')
+          .replace(/^\s*[,.;-]+\s*|\s*[,.;-]+\s*$/g, '')
+          .trim();
+        if (cleaned) {
+          const withoutPrefix = cleaned.replace(/^pupils?\s*[:-]?\s*/i, '');
+          return withoutPrefix.charAt(0).toUpperCase() + withoutPrefix.slice(1);
+        }
+      }
+    }
+    return "Not documented";
+  };
+
+  const avpuDisplay = (currentCase.vitals?.avpu && currentCase.vitals.avpu.trim())
+    ? currentCase.vitals.avpu.trim()
+    : "Not documented";
+
+  const gcsDisplay = displayGcs({
+    gcs: calculatedGcs || undefined,
+    gcs_e: currentCase.vitals?.gcs_e,
+    gcs_v: currentCase.vitals?.gcs_v,
+    gcs_m: currentCase.vitals?.gcs_m,
+  });
+
+  const pupilsDisplay = resolveDisabilityPupils(currentCase);
+  const grbsDisplay = displayGrbs(currentCase.vitals?.grbs || currentCase.pediatricDetails?.disabilityGrbs);
+
+  const formatEfastAdjunct = (efastStatus?: string, efastNotes?: string, efastObj?: any): string | null => {
+    if (efastObj && typeof efastObj === "object") {
+      const windows = [
+        { key: "ruq", label: "RUQ" },
+        { key: "luq", label: "LUQ" },
+        { key: "suprapubic", label: "Suprapubic" },
+        { key: "pericardial", label: "Pericardial" },
+        { key: "lungs", label: "Lungs" }
+      ] as const;
+
+      const isNeg = (key: string, val: any) => {
+        if (!val) return false;
+        const s = String(val).trim().toLowerCase();
+        return s === "negative" || (key === "lungs" && (s === "no_blines" || s === "negative"));
+      };
+
+      const hasAnyWindow = windows.some(w => {
+        const v = efastObj[w.key];
+        return v !== undefined && v !== null && String(v).trim() !== "";
+      });
+
+      if (hasAnyWindow) {
+        const allNegative = windows.every(w => isNeg(w.key, efastObj[w.key]));
+        if (allNegative) {
+          return "eFAST: Negative";
+        }
+
+        const renderedWindows = windows.map(w => {
+          const raw = efastObj[w.key];
+          if (!raw || String(raw).trim() === "") return `${w.label}: Not documented`;
+          const s = String(raw).trim();
+          const sLower = s.toLowerCase();
+          if (sLower === "negative") return `${w.label}: Negative`;
+          if (sLower === "positive") return `${w.label}: Positive`;
+          if (sLower === "not_done") return `${w.label}: Not done`;
+          if (w.key === "lungs") {
+            if (sLower === "no_blines") return `${w.label}: No B-lines`;
+            if (sLower === "blines") return `${w.label}: B-lines`;
+          }
+          return `${w.label}: ${s}`;
+        });
+
+        return `eFAST: ${renderedWindows.join(", ")}`;
+      }
+    }
+
+    if (efastStatus && efastStatus !== "Not done") {
+      return `eFAST: ${efastStatus}${efastNotes ? ` (${efastNotes})` : ""}`;
+    }
+    if (efastNotes) {
+      return `eFAST: ${efastNotes}`;
+    }
+    return null;
+  };
+
+  const buildExportPrimarySurvey = (c: ClinicalCase) => {
+    const peds = c.pediatricDetails;
+
+    // Airway (A)
+    const airStatus = peds?.airwayStatus || c.primaryAssessment.airway || c.primaryAssessment.survey?.airway?.status || "Not documented";
+    const airParts: string[] = [airStatus];
+    if (c.primaryAssessment.airwayStatus && c.primaryAssessment.airwayStatus !== airStatus && c.primaryAssessment.airwayStatus !== "Normal") {
+      airParts.push(`(${c.primaryAssessment.airwayStatus})`);
+    }
+    if (peds?.airwayCry) {
+      airParts.push(`Cry: ${peds.airwayCry}`);
+    }
+    const airInt = peds?.airwayIntervention || c.primaryAssessment.survey?.airway?.intervention;
+    if (airInt) {
+      airParts.push(`Intervention: ${airInt}`);
+    }
+    const airwayMd = airParts.join(", ");
+
+    // Breathing (B)
+    const brParts: string[] = [];
+    brParts.push(`**RR:** ${c.vitals.rr ? `${c.vitals.rr} /min` : "Not documented"}`);
+    brParts.push(`**SpO2:** ${displaySpo2(c.vitals.spo2)}`);
+    const wob = peds?.breathingWob || c.primaryAssessment.breathing || c.primaryAssessment.survey?.breathing?.workOfBreathing;
+    brParts.push(`**Work of breathing:** ${wob || "Not documented"}`);
+    if (peds?.breathingAbnormalPositioning) {
+      brParts.push(`**Abnormal positioning:** ${peds.breathingAbnormalPositioning}`);
+    }
+    const airEntry = peds?.breathingAirEntry || c.primaryAssessment.survey?.breathing?.airEntry;
+    if (airEntry) {
+      brParts.push(`**Air entry:** ${airEntry}`);
+    }
+    const cct = (c.primaryAssessment.survey?.breathing as any)?.cct;
+    if (cct) {
+      brParts.push(`**CCT:** ${cct}`);
+    }
+    const subq = peds?.breathingSubcutaneousEmphysema || (c.primaryAssessment.survey?.breathing as any)?.subcutaneousEmphysema;
+    if (subq) {
+      brParts.push(`**Subcutaneous emphysema:** ${subq}`);
+    }
+    const brInt = peds?.breathingIntervention || (c.primaryAssessment.survey?.breathing as any)?.intervention;
+    if (brInt) {
+      brParts.push(`**Intervention:** ${brInt}`);
+    }
+    const breathingMd = brParts.join(", ");
+
+    // Circulation (C)
+    const circParts: string[] = [];
+    const crt = peds?.circulationCrt || c.primaryAssessment.survey?.circulation?.crt;
+    circParts.push(`**CRT:** ${crt || "Not documented"}`);
+    circParts.push(`**HR:** ${c.vitals.hr ? `${c.vitals.hr} bpm` : "Not documented"}`);
+    circParts.push(`**BP:** ${c.vitals.bp ? `${c.vitals.bp} mmHg` : "Not documented"}`);
+    if (c.primaryAssessment.circulation && c.primaryAssessment.circulation !== crt) {
+      circParts.push(`**Findings:** ${c.primaryAssessment.circulation}`);
+    }
+    if (peds?.circulationSkinColorTemp) {
+      circParts.push(`**Skin color/temp:** ${peds.circulationSkinColorTemp}`);
+    }
+    const neckVeins = peds?.circulationDistendedNeckVeins || (c.primaryAssessment.survey?.circulation as any)?.distendedNeckVeins;
+    if (neckVeins) {
+      circParts.push(`**Distended neck veins:** ${neckVeins}`);
+    }
+    const pct = (c.primaryAssessment.survey?.circulation as any)?.pct;
+    if (pct) {
+      circParts.push(`**PCT:** ${pct}`);
+    }
+    const longBone = peds?.exposureLongBoneDeformities || c.primaryAssessment.survey?.exposure?.longBones || (c.primaryAssessment.survey?.circulation as any)?.longBoneDeformity;
+    if (longBone) {
+      circParts.push(`**Long bone deformity:** ${longBone}`);
+    }
+    const circInt = peds?.circulationIntervention || (c.primaryAssessment.survey?.circulation as any)?.intervention || c.primaryAssessment.survey?.circulation?.ivAccess;
+    if (circInt) {
+      circParts.push(`**Interventions:** ${circInt}`);
+    }
+    const circulationMd = circParts.join(", ");
+
+    // Disability (D)
+    const disParts: string[] = [];
+    disParts.push(`**AVPU:** ${avpuDisplay}`);
+    disParts.push(`**GCS:** ${gcsDisplay}`);
+    disParts.push(`**Pupils:** ${pupilsDisplay}`);
+    disParts.push(`**GRBS:** ${grbsDisplay}`);
+    if (peds?.disabilityAbnormalResponses) {
+      disParts.push(`**Abnormal responses:** ${peds.disabilityAbnormalResponses}`);
+    }
+    const disabilityMd = disParts.join(" / ");
+
+    // Exposure (E)
+    const expParts: string[] = [];
+    expParts.push(`**Temp:** ${displayTemperature(c.vitals.temp)}`);
+    const logroll = peds?.exposureTraumaLogroll || c.primaryAssessment.survey?.exposure?.logRoll;
+    if (logroll) {
+      expParts.push(`**Logroll:** ${logroll}`);
+    }
+    const localExam = c.primaryAssessment.exposure;
+    expParts.push(`**Local Examination:** ${localExam || "Not documented"}`);
+    if (peds?.exposureSignsOfTrauma) {
+      expParts.push(`**Signs of trauma:** ${peds.exposureSignsOfTrauma}`);
+    }
+    if (peds?.exposureEvidenceInfectionBleeding) {
+      expParts.push(`**Evidence of infection/bleeding:** ${peds.exposureEvidenceInfectionBleeding}`);
+    }
+    if (peds?.exposureExtremitiesCheck) {
+      expParts.push(`**Extremities:** ${peds.exposureExtremitiesCheck}`);
+    }
+    if (peds?.exposureImmobilizeInjuredLimbs) {
+      expParts.push(`**Immobilization:** ${peds.exposureImmobilizeInjuredLimbs}`);
+    }
+    const exposureMd = expParts.join(", ");
+
+    const toHtml = (s: string) => s.replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>");
+
+    return {
+      md: {
+        airway: airwayMd,
+        breathing: breathingMd,
+        circulation: circulationMd,
+        disability: disabilityMd,
+        exposure: exposureMd,
+      },
+      html: {
+        airway: toHtml(airwayMd),
+        breathing: toHtml(breathingMd),
+        circulation: toHtml(circulationMd),
+        disability: toHtml(disabilityMd),
+        exposure: toHtml(exposureMd),
+      },
+    };
+  };
+
+  const toPlainText = (s: string) => s.replace(/\*\*/g, "");
 
   const [copiedCaseText, setCopiedCaseText] = useState(false);
 
@@ -2052,6 +2325,8 @@ Extremities: No deformity. No peripheral oedema. Peripheral pulses present.`,
       ? currentCase.investigations.map((inv, idx) => `${idx + 1}. ${inv.testName} (Status: ${inv.result}, Ordered: ${inv.orderTime})`).join("\n")
       : 'No diagnostic investigations logged for this case.';
 
+    const exportSurvey = buildExportPrimarySurvey(currentCase);
+
     return `**INITIAL ASSESSMENT AND EMERGENCY DEPARTMENT CASE RECORD**
 --------------------------------------------------
 **Patient Name:** ${currentCase.patient.name}
@@ -2071,11 +2346,11 @@ Extremities: No deformity. No peripheral oedema. Peripheral pulses present.`,
 - ${currentCase.patient.presentingComplaint || "None"}
 ${pediatricText}
 **Primary Survey (ABCDE):**
-- **Airway (A)** → ${currentCase.primaryAssessment.airway || "Patent"} / ${currentCase.primaryAssessment.airwayStatus || "Normal"}, **Intervention:** ${currentCase.primaryAssessment.airway === "Patent" ? "None" : "Oral airway / Collar"}
-- **Breathing (B)** → **RR:** ${currentCase.vitals.rr || "N/A"}, **SPO2:** ${currentCase.vitals.spo2 || "N/A"}%, **Work of breathing:** ${currentCase.primaryAssessment.breathing || "Normal"}, **Air entry:** Symmetrical bilaterally, **CCT:** Normal, **Subcutaneous emphysema:** Absent, **EFAST:** Negative, **Intervention:** None.
-- **Circulation (C)** → **CRT:** < 2s, **HR:** ${currentCase.vitals.hr || "N/A"} bpm, **BP:** ${currentCase.vitals.bp || "N/A"} mmHg, **Distended Neck Veins:** No, **PCT:** Normal, **Long bone deformity:** None, **FAST:** Negative, **Interventions:** IV access.
-- **Disability (D)** → **AVPU/GCS:** ${currentCase.vitals.avpu || "Alert"} / ${calculatedGcs}/15 (E${currentCase.vitals.gcs_e || "4"} V${currentCase.vitals.gcs_v || "5"} M${currentCase.vitals.gcs_m || "6"}), **Pupils:** Equal and Reactive, **GRBS:** ${currentCase.vitals.grbs || "N/A"} mg/dL
-- **Exposure (E)** → **Temp:** ${currentCase.vitals.temp || "N/A"} °F, **Logroll:** Completed (No spinal tenderness), **Local Examination:** ${currentCase.primaryAssessment.exposure || "Unremarkable"}
+- **Airway (A)** → ${exportSurvey.md.airway}
+- **Breathing (B)** → ${exportSurvey.md.breathing}
+- **Circulation (C)** → ${exportSurvey.md.circulation}
+- **Disability (D)** → ${exportSurvey.md.disability}
+- **Exposure (E)** → ${exportSurvey.md.exposure}
 
 **Adjuvants to Primary:**
 - **ECG:** ${(() => {
@@ -2112,18 +2387,8 @@ ${pediatricText}
   const efastObj = currentCase.primaryAssessment.survey?.circulation?.efast;
   
   const results: string[] = [];
-  if (efastStatus && efastStatus !== "Not done") {
-    results.push(`eFAST: ${efastStatus}${efastNotes ? ` (${efastNotes})` : ""}`);
-  } else if (efastNotes) {
-    results.push(`eFAST: ${efastNotes}`);
-  } else if (efastObj && typeof efastObj === "object") {
-    const pos = Object.entries(efastObj).filter(([_, v]) => v && v !== "not_done" && v !== "negative");
-    if (pos.length > 0) {
-      results.push(`eFAST: Positive (${pos.map(([k, v]) => `${k}: ${v}`).join(", ")})`);
-    } else if (Object.values(efastObj).some(v => v === "negative")) {
-      results.push("eFAST: Negative");
-    }
-  }
+  const efastRes = formatEfastAdjunct(efastStatus, efastNotes, efastObj);
+  if (efastRes) results.push(efastRes);
 
   if (echoStatus && echoStatus !== "Not done") {
     results.push(`Echo: ${echoStatus}${echoNotes ? ` (${echoNotes})` : ""}`);
@@ -2137,14 +2402,14 @@ ${pediatricText}
 })()}
 
 **History (SAMPLE):**
-- **S - Signs & Symptoms:** ${currentCase.sampleHistory.symptoms || "None"}
-- **A - Allergies:** ${currentCase.sampleHistory.allergies || "NKDA (No Known Drug Allergies)"}
-- **M - Medications:** ${currentCase.sampleHistory.medications || "None"}
-- **P - Past History:** ${currentCase.sampleHistory.pastHistory || "None"}
-- **L - Last Meal:** ${currentCase.sampleHistory.lastMeal || "N/A"}
-- **E - Events:** ${currentCase.sampleHistory.events || "None"}
-- **Family / Gynae History:** ${currentCase.sampleHistory.familyHistory || "Unremarkable"}
-- **LMP:** ${currentCase.isPediatric ? "N/A" : "Normal / Not applicable"}
+- **S - Signs & Symptoms:** ${currentCase.sampleHistory.symptoms || "Not documented"}
+- **A - Allergies:** ${currentCase.sampleHistory.allergies || "Not documented"}
+- **M - Medications:** ${currentCase.sampleHistory.medications || "Not documented"}
+- **P - Past History:** ${currentCase.sampleHistory.pastHistory || "Not documented"}
+- **L - Last Meal:** ${currentCase.sampleHistory.lastMeal || "Not documented"}
+- **E - Events:** ${currentCase.sampleHistory.events || "Not documented"}
+- **Family / Gynae History:** ${currentCase.sampleHistory.familyHistory || "Not documented"}
+- **LMP:** ${currentCase.isPediatric ? "N/A" : "Not documented"}
 
 **Secondary Survey (Systemic & General Examination):**
 ${(() => {
@@ -2182,9 +2447,9 @@ ${currentCase.progressNotes || "No progress notes recorded."}
 
 **Disposition:**
 - **Disposition:** ${currentCase.dispositionDetails?.dispositionType || "Not yet determined"} (ICU, Room, Ward, Referral, DAMA)
-- **Differential Diagnosis:** ${currentCase.differentials.length > 0 ? currentCase.differentials.map((d, idx) => `${idx + 1}. ${d.diagnosis} (${d.status})`).join("\n") : "None recorded"}
-- **EM Resident:** ${currentCase.dispositionDetails?.residentName || currentCase.doctorName || ""}
-- **EM Consultant:** ${currentCase.dispositionDetails?.consultantName || currentCase.consultantName || "Duty Consultant"}
+- **Differential Diagnosis:** ${currentCase.differentials.length > 0 ? currentCase.differentials.map((d, idx) => `${idx + 1}. ${d.diagnosis}${d.status ? ` (${d.status})` : ""}`).join("\n") : "None recorded"}
+- **EM Resident:** ${(currentCase.dispositionDetails?.residentName || currentCase.doctorName) ? formatDoctorName(currentCase.dispositionDetails?.residentName || currentCase.doctorName) : "Not documented"}
+- **EM Consultant:** ${(currentCase.dispositionDetails?.consultantName || currentCase.consultantName) ? formatDoctorName(currentCase.dispositionDetails?.consultantName || currentCase.consultantName) : "Not documented"}
 
 --------------------------------------------------
 **Hospital Information:**
@@ -2263,11 +2528,11 @@ ${currentCase.progressNotes || "No progress notes recorded."}
 ${pediatricHtml}
 <strong>Primary Survey (ABCDE):</strong><br/>
 <ul>
-  <li><strong>Airway (A)</strong> → ${currentCase.primaryAssessment.airway || "Patent"} / ${currentCase.primaryAssessment.airwayStatus || "Normal"}, <strong>Intervention:</strong> ${currentCase.primaryAssessment.airway === "Patent" ? "None" : "Oral airway / Collar"}</li>
-  <li><strong>Breathing (B)</strong> → <strong>RR:</strong> ${currentCase.vitals.rr || "N/A"}, <strong>SPO2:</strong> ${currentCase.vitals.spo2 || "N/A"}%, <strong>Work of breathing:</strong> ${currentCase.primaryAssessment.breathing || "Normal"}, <strong>Air entry:</strong> Symmetrical bilaterally, <strong>CCT:</strong> Normal, <strong>Subcutaneous emphysema:</strong> Absent, <strong>EFAST:</strong> Negative, <strong>Intervention:</strong> None.</li>
-  <li><strong>Circulation (C)</strong> → <strong>CRT:</strong> &lt; 2s, <strong>HR:</strong> ${currentCase.vitals.hr || "N/A"} bpm, <strong>BP:</strong> ${currentCase.vitals.bp || "N/A"} mmHg, <strong>Distended Neck Veins:</strong> No, <strong>PCT:</strong> Normal, <strong>Long bone deformity:</strong> None, <strong>FAST:</strong> Negative, <strong>Interventions:</strong> IV access.</li>
-  <li><strong>Disability (D)</strong> → <strong>AVPU/GCS:</strong> ${currentCase.vitals.avpu || "Alert"} / ${calculatedGcs}/15 (E${currentCase.vitals.gcs_e || "4"} V${currentCase.vitals.gcs_v || "5"} M${currentCase.vitals.gcs_m || "6"}), <strong>Pupils:</strong> Equal and Reactive, <strong>GRBS:</strong> ${currentCase.vitals.grbs || "N/A"} mg/dL</li>
-  <li><strong>Exposure (E)</strong> → <strong>Temp:</strong> ${currentCase.vitals.temp || "N/A"} °F, <strong>Logroll:</strong> Completed (No spinal tenderness), <strong>Local Examination:</strong> ${currentCase.primaryAssessment.exposure || "Unremarkable"}</li>
+  <li><strong>Airway (A)</strong> → ${buildExportPrimarySurvey(currentCase).html.airway}</li>
+  <li><strong>Breathing (B)</strong> → ${buildExportPrimarySurvey(currentCase).html.breathing}</li>
+  <li><strong>Circulation (C)</strong> → ${buildExportPrimarySurvey(currentCase).html.circulation}</li>
+  <li><strong>Disability (D)</strong> → ${buildExportPrimarySurvey(currentCase).html.disability}</li>
+  <li><strong>Exposure (E)</strong> → ${buildExportPrimarySurvey(currentCase).html.exposure}</li>
 </ul>
 <br/>
 <strong>Adjuvants to Primary:</strong>
@@ -2306,18 +2571,8 @@ ${pediatricHtml}
     const efastObj = currentCase.primaryAssessment.survey?.circulation?.efast;
     
     const results: string[] = [];
-    if (efastStatus && efastStatus !== "Not done") {
-      results.push(`eFAST: ${efastStatus}${efastNotes ? ` (${efastNotes})` : ""}`);
-    } else if (efastNotes) {
-      results.push(`eFAST: ${efastNotes}`);
-    } else if (efastObj && typeof efastObj === "object") {
-      const pos = Object.entries(efastObj).filter(([_, v]) => v && v !== "not_done" && v !== "negative");
-      if (pos.length > 0) {
-        results.push(`eFAST: Positive (${pos.map(([k, v]) => `${k}: ${v}`).join(", ")})`);
-      } else if (Object.values(efastObj).some(v => v === "negative")) {
-        results.push("eFAST: Negative");
-      }
-    }
+    const efastRes = formatEfastAdjunct(efastStatus, efastNotes, efastObj);
+    if (efastRes) results.push(efastRes);
 
     if (echoStatus && echoStatus !== "Not done") {
       results.push(`Echo: ${echoStatus}${echoNotes ? ` (${echoNotes})` : ""}`);
@@ -2334,14 +2589,14 @@ ${pediatricHtml}
 <br/>
 <strong>History (SAMPLE):</strong><br/>
 <ul>
-  <li><strong>S - Signs & Symptoms:</strong> ${currentCase.sampleHistory.symptoms || "None"}</li>
-  <li><strong>A - Allergies:</strong> ${currentCase.sampleHistory.allergies || "NKDA (No Known Drug Allergies)"}</li>
-  <li><strong>M - Medications:</strong> ${currentCase.sampleHistory.medications || "None"}</li>
-  <li><strong>P - Past History:</strong> ${currentCase.sampleHistory.pastHistory || "None"}</li>
-  <li><strong>L - Last Meal:</strong> ${currentCase.sampleHistory.lastMeal || "N/A"}</li>
-  <li><strong>E - Events:</strong> ${currentCase.sampleHistory.events || "None"}</li>
-  <li><strong>Family / Gynae History:</strong> ${currentCase.sampleHistory.familyHistory || "Unremarkable"}</li>
-  <li><strong>LMP:</strong> ${currentCase.isPediatric ? "N/A" : "Normal / Not applicable"}</li>
+  <li><strong>S - Signs & Symptoms:</strong> ${currentCase.sampleHistory.symptoms || "Not documented"}</li>
+  <li><strong>A - Allergies:</strong> ${currentCase.sampleHistory.allergies || "Not documented"}</li>
+  <li><strong>M - Medications:</strong> ${currentCase.sampleHistory.medications || "Not documented"}</li>
+  <li><strong>P - Past History:</strong> ${currentCase.sampleHistory.pastHistory || "Not documented"}</li>
+  <li><strong>L - Last Meal:</strong> ${currentCase.sampleHistory.lastMeal || "Not documented"}</li>
+  <li><strong>E - Events:</strong> ${currentCase.sampleHistory.events || "Not documented"}</li>
+  <li><strong>Family / Gynae History:</strong> ${currentCase.sampleHistory.familyHistory || "Not documented"}</li>
+  <li><strong>LMP:</strong> ${currentCase.isPediatric ? "N/A" : "Not documented"}</li>
 </ul>
 <br/>
 <strong>Secondary Survey (Systemic & General Examination):</strong><br/>
@@ -2391,9 +2646,9 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
 <strong>Disposition:</strong><br/>
 <ul>
   <li><strong>Disposition:</strong> ${currentCase.dispositionDetails?.dispositionType || "Not yet determined"} (ICU, Room, Ward, Referral, DAMA)</li>
-  <li><strong>Differential Diagnosis:</strong> ${currentCase.differentials.length > 0 ? currentCase.differentials.map((d, idx) => `${idx + 1}. ${d.diagnosis} (${d.status})`).join("<br/>") : "None recorded"}</li>
-  <li><strong>EM Resident:</strong> ${currentCase.dispositionDetails?.residentName || currentCase.doctorName || ""}</li>
-  <li><strong>EM Consultant:</strong> ${currentCase.dispositionDetails?.consultantName || currentCase.consultantName || "Duty Consultant"}</li>
+  <li><strong>Differential Diagnosis:</strong> ${currentCase.differentials.length > 0 ? currentCase.differentials.map((d, idx) => `${idx + 1}. ${d.diagnosis}${d.status ? ` (${d.status})` : ""}`).join("<br/>") : "None recorded"}</li>
+  <li><strong>EM Resident:</strong> ${(currentCase.dispositionDetails?.residentName || currentCase.doctorName) ? formatDoctorName(currentCase.dispositionDetails?.residentName || currentCase.doctorName) : "Not documented"}</li>
+  <li><strong>EM Consultant:</strong> ${(currentCase.dispositionDetails?.consultantName || currentCase.consultantName) ? formatDoctorName(currentCase.dispositionDetails?.consultantName || currentCase.consultantName) : "Not documented"}</li>
 </ul>
 <br/>
 <hr/>
@@ -4350,15 +4605,17 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                         >
                           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200/50 dark:border-slate-800 pb-1.5">
                             <div className="flex items-center gap-2">
-                              <span className={`text-[9px] px-2 py-0.5 rounded-full font-bold font-mono ${
-                                diff.status === "CONSISTENT"
-                                  ? "bg-rose-50 border border-rose-200 text-rose-700 dark:bg-rose-950/20 dark:text-rose-300"
-                                  : diff.status === "POSSIBLE"
-                                  ? "bg-amber-50 border border-amber-200 text-amber-700 dark:bg-amber-950/20 dark:text-amber-300"
-                                  : "bg-slate-100 border border-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300"
-                              }`}>
-                                {diff.status}
-                              </span>
+                              {diff.status ? (
+                                <span className={`text-[9px] px-2 py-0.5 rounded-full font-bold font-mono ${
+                                  diff.status === "CONSISTENT"
+                                    ? "bg-rose-50 border border-rose-200 text-rose-700 dark:bg-rose-950/20 dark:text-rose-300"
+                                    : diff.status === "POSSIBLE"
+                                    ? "bg-amber-50 border border-amber-200 text-amber-700 dark:bg-amber-950/20 dark:text-amber-300"
+                                    : "bg-slate-100 border border-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                                }`}>
+                                  {diff.status}
+                                </span>
+                              ) : null}
                               <h5 className="text-xs font-bold text-slate-800 dark:text-white">{diff.diagnosis}</h5>
                             </div>
                           </div>
@@ -5689,20 +5946,20 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                 <div>
                   <strong className="text-slate-700 block mb-1 underline">Appearance (TICLS)</strong>
                   <div className="grid grid-cols-2 gap-2">
-                    <p><strong>Tone:</strong> {currentCase.pediatricDetails?.patAppearanceTone || "Normal spontaneous tone"}</p>
-                    <p><strong>Interactivity:</strong> {currentCase.pediatricDetails?.patAppearanceInteractivity || "Normal alert interactivity"}</p>
-                    <p><strong>Consolability:</strong> {currentCase.pediatricDetails?.patAppearanceConsolability || "Easily consolable by parent"}</p>
-                    <p><strong>Look/Gaze:</strong> {currentCase.pediatricDetails?.patAppearanceLookGaze || "Makes normal eye contact"}</p>
-                    <p className="col-span-2"><strong>Speech/Cry:</strong> {currentCase.pediatricDetails?.patAppearanceSpeechCry || "Age-appropriate vocalizations"}</p>
+                    <p><strong>Tone:</strong> {currentCase.pediatricDetails?.patAppearanceTone || "Not documented"}</p>
+                    <p><strong>Interactivity:</strong> {currentCase.pediatricDetails?.patAppearanceInteractivity || "Not documented"}</p>
+                    <p><strong>Consolability:</strong> {currentCase.pediatricDetails?.patAppearanceConsolability || "Not documented"}</p>
+                    <p><strong>Look/Gaze:</strong> {currentCase.pediatricDetails?.patAppearanceLookGaze || "Not documented"}</p>
+                    <p className="col-span-2"><strong>Speech/Cry:</strong> {currentCase.pediatricDetails?.patAppearanceSpeechCry || "Not documented"}</p>
                   </div>
                 </div>
                 <div>
                   <strong className="text-orange-700 block mb-1 underline">Work of Breathing</strong>
-                  <p>{currentCase.pediatricDetails?.patWorkOfBreathing || "Normal, no distress"}</p>
+                  <p>{currentCase.pediatricDetails?.patWorkOfBreathing || "Not documented"}</p>
                 </div>
                 <div>
                   <strong className="text-red-700 block mb-1 underline">Circulation to Skin</strong>
-                  <p>{currentCase.pediatricDetails?.patCirculation || "Pink, warm"}</p>
+                  <p>{currentCase.pediatricDetails?.patCirculation || "Not documented"}</p>
                 </div>
               </div>
             </div>
@@ -5714,48 +5971,48 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
               </span>
               <div className="border border-slate-300 rounded-xl p-3 bg-slate-50/20 space-y-1.5 text-[10px]">
                 <p>
-                  <strong>Airway Status:</strong> {currentCase.pediatricDetails?.airwayStatus || "Patent"} | 
-                  <strong> Cry Quality:</strong> {currentCase.pediatricDetails?.airwayCry || "Good"} | 
-                  <strong> Intervention:</strong> {currentCase.pediatricDetails?.airwayIntervention || "None"}
+                  <strong>Airway Status:</strong> {currentCase.pediatricDetails?.airwayStatus || currentCase.primaryAssessment.airway || "Not documented"} | 
+                  <strong> Cry Quality:</strong> {currentCase.pediatricDetails?.airwayCry || "Not documented"} | 
+                  <strong> Intervention:</strong> {currentCase.pediatricDetails?.airwayIntervention || currentCase.primaryAssessment.survey?.airway?.intervention || "None documented"}
                 </p>
                 <p>
-                  <strong>Breathing (RR- {currentCase.vitals.rr || "N/A"} | SpO2- {currentCase.vitals.spo2 || "N/A"}%):</strong> 
-                  Work of Breathing: {currentCase.pediatricDetails?.breathingWob || "Normal"} | 
-                  Abnormal Positioning: {currentCase.pediatricDetails?.breathingAbnormalPositioning || "NO"} | 
-                  Air Entry: {currentCase.pediatricDetails?.breathingAirEntry || "Normal"} | 
-                  Subcutaneous Emphysema: {currentCase.pediatricDetails?.breathingSubcutaneousEmphysema || "NO"} | 
-                  Intervention: {currentCase.pediatricDetails?.breathingIntervention || "None"}
+                  <strong>Breathing (RR- {currentCase.vitals.rr ? `${currentCase.vitals.rr} /min` : "Not documented"} | SpO2- {displaySpo2(currentCase.vitals.spo2)}):</strong> 
+                  Work of Breathing: {currentCase.pediatricDetails?.breathingWob || currentCase.primaryAssessment.breathing || "Not documented"} | 
+                  Abnormal Positioning: {currentCase.pediatricDetails?.breathingAbnormalPositioning || "Not documented"} | 
+                  Air Entry: {currentCase.pediatricDetails?.breathingAirEntry || "Not documented"} | 
+                  Subcutaneous Emphysema: {currentCase.pediatricDetails?.breathingSubcutaneousEmphysema || "Not documented"} | 
+                  Intervention: {currentCase.pediatricDetails?.breathingIntervention || "None documented"}
                 </p>
                 <p>
-                  <strong>Circulation (HR- {currentCase.vitals.hr || "N/A"} | BP- {currentCase.vitals.bp || "N/A"}):</strong> 
-                  CRT: {currentCase.pediatricDetails?.circulationCrt || "Normal"} | 
-                  Distended Neck Veins: {currentCase.pediatricDetails?.circulationDistendedNeckVeins || "NO"} | 
-                  Skin Color/Temp: {currentCase.pediatricDetails?.circulationSkinColorTemp || "Pink, warm"} | 
-                  Intervention: {currentCase.pediatricDetails?.circulationIntervention || "None"}
+                  <strong>Circulation (HR- {currentCase.vitals.hr ? `${currentCase.vitals.hr} bpm` : "Not documented"} | BP- {currentCase.vitals.bp ? `${currentCase.vitals.bp} mmHg` : "Not documented"}):</strong> 
+                  CRT: {currentCase.pediatricDetails?.circulationCrt || "Not documented"} | 
+                  Distended Neck Veins: {currentCase.pediatricDetails?.circulationDistendedNeckVeins || "Not documented"} | 
+                  Skin Color/Temp: {currentCase.pediatricDetails?.circulationSkinColorTemp || "Not documented"} | 
+                  Intervention: {currentCase.pediatricDetails?.circulationIntervention || "None documented"}
                 </p>
                 <p>
                   <strong>Disability & Neurological:</strong> 
-                  AVPU/GCS: {currentCase.pediatricDetails?.disabilityAvpuGcs || "Alert / GCS 15"} | 
-                  Pupils: {currentCase.pediatricDetails?.disabilityPupils || "Equal and reactive"} | 
-                  Abnormal Responses: {currentCase.pediatricDetails?.disabilityAbnormalResponses || "None"} | 
-                  GRBS: {currentCase.vitals.grbs || "N/A"} mg/dL
+                  AVPU/GCS: {currentCase.pediatricDetails?.disabilityAvpuGcs || gcsDisplay} | 
+                  Pupils: {currentCase.pediatricDetails?.disabilityPupils || pupilsDisplay} | 
+                  Abnormal Responses: {currentCase.pediatricDetails?.disabilityAbnormalResponses || "Not documented"} | 
+                  GRBS: {displayGrbs(currentCase.vitals?.grbs || currentCase.pediatricDetails?.disabilityGrbs)}
                 </p>
                 <p>
                   <strong>Exposure & Spine Check:</strong> 
-                  Temp: {currentCase.vitals.temp || "N/A"} °F | 
-                  Trauma Survey (Logroll): {currentCase.pediatricDetails?.exposureTraumaLogroll || "Completed. No midline spinal tenderness."} | 
-                  Signs of Trauma: {currentCase.pediatricDetails?.exposureSignsOfTrauma || "None"} | 
-                  Evidence of Infection/Bleeding: {currentCase.pediatricDetails?.exposureEvidenceInfectionBleeding || "None"} | 
-                  Deformities: {currentCase.pediatricDetails?.exposureLongBoneDeformities || "NO"} | 
-                  Extremities: {currentCase.pediatricDetails?.exposureExtremitiesCheck || "No abnormalities"} | 
-                  Immobilize: {currentCase.pediatricDetails?.exposureImmobilizeInjuredLimbs || "NO"}
+                  Temp: {displayTemperature(currentCase.vitals.temp)} | 
+                  Trauma Survey (Logroll): {currentCase.pediatricDetails?.exposureTraumaLogroll || "Not documented"} | 
+                  Signs of Trauma: {currentCase.pediatricDetails?.exposureSignsOfTrauma || "Not documented"} | 
+                  Evidence of Infection/Bleeding: {currentCase.pediatricDetails?.exposureEvidenceInfectionBleeding || "Not documented"} | 
+                  Deformities: {currentCase.pediatricDetails?.exposureLongBoneDeformities || "Not documented"} | 
+                  Extremities: {currentCase.pediatricDetails?.exposureExtremitiesCheck || "Not documented"} | 
+                  Immobilize: {currentCase.pediatricDetails?.exposureImmobilizeInjuredLimbs || "Not documented"}
                 </p>
                 <p>
                   <strong>Adjuvant / EFAST Ultrasound:</strong> 
-                  Heart: {currentCase.pediatricDetails?.adjuvantEfastHeart || "No effusion"} | 
-                  Abdomen: {currentCase.pediatricDetails?.adjuvantEfastAbdomen || "No free fluid"} | 
-                  Lungs: {currentCase.pediatricDetails?.adjuvantEfastLungs || "Normal lung sliding"} | 
-                  Pelvis: {currentCase.pediatricDetails?.adjuvantEfastPelvis || "Stable"}
+                  Heart: {currentCase.pediatricDetails?.adjuvantEfastHeart || "Not documented"} | 
+                  Abdomen: {currentCase.pediatricDetails?.adjuvantEfastAbdomen || "Not documented"} | 
+                  Lungs: {currentCase.pediatricDetails?.adjuvantEfastLungs || "Not documented"} | 
+                  Pelvis: {currentCase.pediatricDetails?.adjuvantEfastPelvis || "Not documented"}
                 </p>
               </div>
             </div>
@@ -5766,22 +6023,22 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                 <strong>Secondary Assessment (Focused Pediatric History & Examination)</strong>
               </span>
               <div className="border border-slate-300 rounded-xl p-3 bg-slate-50/20 space-y-2 text-[10px]">
-                <p><strong>Signs & Symptoms:</strong> {currentCase.sampleHistory?.symptoms || "None"}</p>
-                <p><strong>Allergies:</strong> {currentCase.sampleHistory?.allergies || "NKDA (No Known Drug Allergies)"}</p>
-                <p><strong>Medications:</strong> {currentCase.sampleHistory?.medications || "None"}</p>
-                <p><strong>Past Medical History:</strong> {currentCase.sampleHistory?.pastHistory || "Unremarkable developmental history"}</p>
-                <p><strong>Last Meal:</strong> {currentCase.sampleHistory?.lastMeal || "Light oral fluids"}</p>
+                <p><strong>Signs & Symptoms:</strong> {currentCase.sampleHistory?.symptoms || "Not documented"}</p>
+                <p><strong>Allergies:</strong> {currentCase.sampleHistory?.allergies || "Not documented"}</p>
+                <p><strong>Medications:</strong> {currentCase.sampleHistory?.medications || "Not documented"}</p>
+                <p><strong>Past Medical History:</strong> {currentCase.sampleHistory?.pastHistory || "Not documented"}</p>
+                <p><strong>Last Meal:</strong> {currentCase.sampleHistory?.lastMeal || "Not documented"}</p>
                 {(currentCase.sampleHistory?.events &&
                    currentCase.sampleHistory.events.trim() &&
                    !["none", "n/a", "nil", "refer to complaints"].includes(currentCase.sampleHistory.events.trim().toLowerCase())) && (
                   <p><strong>Preceding Events / Trauma:</strong> {currentCase.sampleHistory?.events}</p>
                 )}
-                <p className="border-t pt-1.5 mt-1"><strong>HEENT:</strong> {currentCase.pediatricDetails?.examHeent || "Normocephalic, pupils equal and reactive"}</p>
-                <p><strong>Respiratory:</strong> {currentCase.pediatricDetails?.focusedRespiratory || "Lungs clear, symmetrical breath sounds"}</p>
-                <p><strong>Cardiovascular:</strong> {currentCase.pediatricDetails?.focusedCardiovascular || "S1 S2 heard clearly, normal rhythm"}</p>
-                <p><strong>Abdomen:</strong> {currentCase.pediatricDetails?.focusedAbdomen || "Soft, non-tender, non-distended"}</p>
-                <p><strong>Back / Spine:</strong> {currentCase.pediatricDetails?.focusedBack || "No spinal tenderness"}</p>
-                <p><strong>Extremities:</strong> {currentCase.pediatricDetails?.focusedExtremities || "Full range of motion, no deformities"}</p>
+                <p className="border-t pt-1.5 mt-1"><strong>HEENT:</strong> {currentCase.pediatricDetails?.examHeent || "Not documented"}</p>
+                <p><strong>Respiratory:</strong> {currentCase.pediatricDetails?.focusedRespiratory || "Not documented"}</p>
+                <p><strong>Cardiovascular:</strong> {currentCase.pediatricDetails?.focusedCardiovascular || "Not documented"}</p>
+                <p><strong>Abdomen:</strong> {currentCase.pediatricDetails?.focusedAbdomen || "Not documented"}</p>
+                <p><strong>Back / Spine:</strong> {currentCase.pediatricDetails?.focusedBack || "Not documented"}</p>
+                <p><strong>Extremities:</strong> {currentCase.pediatricDetails?.focusedExtremities || "Not documented"}</p>
               </div>
             </div>
 
@@ -5791,23 +6048,23 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                 <strong>Course, Treatment, & Provisional Diagnosis</strong>
               </span>
               <div className="border border-slate-300 rounded-xl p-3 bg-slate-50/20 space-y-1.5 text-[10px]">
-                <p><strong>Hospital Clinical Course:</strong> {currentCase.progressNotes || "Evaluated and monitored in ED"}</p>
-                <p><strong>Treatment Given in Hospital:</strong> {currentCase.treatmentNotes || "Observation and reassuring counseling"}</p>
-                <p><strong>Provisional Diagnosis at Discharge/Shift:</strong> <strong>{currentCase.provisionalPrimaryDiagnosis || currentCase.pediatricDetails?.dispositionProvisionalDiagnosis || "Clinically stable child"}</strong></p>
-                <p><strong>Differential Diagnosis:</strong> {currentCase.differentials?.map(d => d.diagnosis).join(", ") || (currentCase.provisionalDifferentialDiagnoses ? currentCase.provisionalDifferentialDiagnoses : "None")}</p>
+                <p><strong>Hospital Clinical Course:</strong> {currentCase.progressNotes || "Not documented"}</p>
+                <p><strong>Treatment Given in Hospital:</strong> {currentCase.treatmentNotes || "Not documented"}</p>
+                <p><strong>Provisional Diagnosis at Discharge/Shift:</strong> <strong>{currentCase.provisionalPrimaryDiagnosis || currentCase.pediatricDetails?.dispositionProvisionalDiagnosis || "Not documented"}</strong></p>
+                <p><strong>Differential Diagnosis:</strong> {currentCase.differentials?.map(d => d.diagnosis).join(", ") || (currentCase.provisionalDifferentialDiagnoses ? currentCase.provisionalDifferentialDiagnoses : "None recorded")}</p>
               </div>
             </div>
 
             {/* Disposition & Clinicians  */}
             <div className="grid grid-cols-3 gap-4 border border-slate-300 p-3 rounded-xl bg-slate-50/40 text-[10px] mt-4">
               <div>
-                <strong>Disposition / Condition:</strong> {currentCase.dispositionDetails?.dispositionType || "Not yet determined"} / {currentCase.conditionAtShift || currentCase.pediatricDetails?.dispositionConditionAtShift || "Stable"}
+                <strong>Disposition / Condition:</strong> {currentCase.dispositionDetails?.dispositionType || "Not yet determined"} / {currentCase.conditionAtShift || currentCase.pediatricDetails?.dispositionConditionAtShift || "Not documented"}
               </div>
               <div>
-                <strong>EM Resident:</strong> {currentCase.dispositionDetails?.residentName || currentCase.pediatricDetails?.dispositionEmResident || currentCase.doctorName || ""}
+                <strong>EM Resident:</strong> {(currentCase.dispositionDetails?.residentName || currentCase.pediatricDetails?.dispositionEmResident || currentCase.doctorName) ? formatDoctorName(currentCase.dispositionDetails?.residentName || currentCase.pediatricDetails?.dispositionEmResident || currentCase.doctorName) : "Not documented"}
               </div>
               <div>
-                <strong>EM Consultant:</strong> {currentCase.dispositionDetails?.consultantName || currentCase.pediatricDetails?.dispositionEmConsultant || "Duty Consultant"}
+                <strong>EM Consultant:</strong> {(currentCase.dispositionDetails?.consultantName || currentCase.pediatricDetails?.dispositionEmConsultant) ? formatDoctorName(currentCase.dispositionDetails?.consultantName || currentCase.pediatricDetails?.dispositionEmConsultant) : "Not documented"}
               </div>
             </div>
           </div>
@@ -5904,11 +6161,11 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                 <strong>Primary Assessment</strong>
               </span>
               <div className="border border-slate-300 rounded-xl p-3 bg-slate-50/20 space-y-1.5 text-[10px]">
-                <p><strong>Airway</strong> → {currentCase.primaryAssessment.airway || "Patent"} / {currentCase.primaryAssessment.airwayStatus || "Normal"}, <strong>Intervention-</strong> {currentCase.primaryAssessment.airway === "Patent" ? "None" : "Oral airway / Collar"}</p>
-                <p><strong>Breathing</strong> → <strong>RR-</strong> {currentCase.vitals.rr || "N/A"}, <strong>SPO2-</strong> {currentCase.vitals.spo2 || "N/A"}%, <strong>Work of breathing-</strong> {currentCase.primaryAssessment.breathing || "Normal"}, <strong>Air entry-</strong> Symmetrical bilaterally, <strong>CCT-</strong> Normal, <strong>Subcutaneous emphysema-</strong> Absent, <strong>EFAST-</strong> Negative, <strong>Intervention-</strong> None.</p>
-                <p><strong>Circulation</strong> → <strong>CRT-</strong> &lt; 2s, <strong>HR-</strong> {currentCase.vitals.hr || "N/A"} bpm, <strong>BP-</strong> {currentCase.vitals.bp || "N/A"} mmHg, <strong>Distended Neck Veins-</strong> No, <strong>PCT-</strong> Normal, <strong>Long bone deformity-</strong> None, <strong>FAST-</strong> Negative, <strong>Interventions-</strong> IV access.</p>
-                <p><strong>Disability</strong> → <strong>AVPU/GCS-</strong> {currentCase.vitals.avpu || "Alert"} / {calculatedGcs}/15 (E{currentCase.vitals.gcs_e || "4"} V{currentCase.vitals.gcs_v || "5"} M{currentCase.vitals.gcs_m || "6"}), <strong>Pupils-</strong> Equal and Reactive, <strong>GRBS-</strong> {currentCase.vitals.grbs || "N/A"} mg/dL</p>
-                <p><strong>Exposure</strong> → <strong>Temp-</strong> {currentCase.vitals.temp || "N/A"} °F, <strong>Logroll</strong> - Completed (No spinal tenderness), <strong>Local Examination-</strong> {currentCase.primaryAssessment.exposure || "Unremarkable"}</p>
+                <p><strong>Airway</strong> → {toPlainText(buildExportPrimarySurvey(currentCase).md.airway)}</p>
+                <p><strong>Breathing</strong> → {toPlainText(buildExportPrimarySurvey(currentCase).md.breathing)}</p>
+                <p><strong>Circulation</strong> → {toPlainText(buildExportPrimarySurvey(currentCase).md.circulation)}</p>
+                <p><strong>Disability</strong> → {toPlainText(buildExportPrimarySurvey(currentCase).md.disability)}</p>
+                <p><strong>Exposure</strong> → {toPlainText(buildExportPrimarySurvey(currentCase).md.exposure)}</p>
               </div>
             </div>
 
@@ -5918,9 +6175,48 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                 <strong>Adjuvants to Primary</strong>
               </span>
               <div className="border border-slate-300 rounded-xl p-3 bg-slate-50/20 space-y-1 text-[10px]">
-                <p><strong>ECG:</strong> Normal sinus rhythm, no acute ST-T changes.</p>
-                <p><strong>VBG - PH:</strong> 7.38 | <strong>PCO2:</strong> 40 mmHg | <strong>HC03:</strong> 24 mEq/L | <strong>HB:</strong> 14.2 g/dL | <strong>GLU:</strong> 105 mg/dL | <strong>LAC:</strong> 1.1 mmol/L | <strong>NA:</strong> 138 mEq/L | <strong>K:</strong> 4.1 mEq/L | <strong>CR:</strong> 0.9 mg/dL</p>
-                <p><strong>Bed side Screening Echo:</strong> 1. Good LVM, IVC Collapsing, No B-lines, No RWMA, No RA RV strain.</p>
+                <p><strong>ECG:</strong> {(() => {
+                  const ecgStatus = currentCase.primaryAssessment.survey?.adjuncts?.ecgStatus;
+                  const ecgNotes = currentCase.primaryAssessment.survey?.adjuncts?.ecgNotes || currentCase.primaryAssessment.survey?.circulation?.ecg || currentCase.adjuncts?.ecgNotes || currentCase.adjuncts?.ecgFindings;
+                  const parts = [ecgStatus && ecgStatus !== "Not done" ? ecgStatus : null, ecgNotes].filter(Boolean);
+                  if (parts.length > 0) return parts.join(" — ");
+                  return ecgStatus === "Not done" ? "Not done" : "Not documented";
+                })()}</p>
+                <p><strong>VBG/ABG:</strong> {(() => {
+                  const abg = currentCase.primaryAssessment.survey?.adjuncts?.abg;
+                  const topAdj = currentCase.adjuncts;
+                  const vals: string[] = [];
+                  const ph = abg?.ph || topAdj?.abgPh;
+                  if (ph) vals.push(`pH: ${ph}`);
+                  const pco2 = abg?.pco2 || topAdj?.abgPco2;
+                  if (pco2) vals.push(`pCO2: ${pco2}`);
+                  const hco3 = abg?.hco3 || topAdj?.abgHco3;
+                  if (hco3) vals.push(`HCO3: ${hco3}`);
+                  const lac = abg?.lactate || topAdj?.abgLactate;
+                  if (lac) vals.push(`Lactate: ${lac}`);
+                  const interp = abg?.clinicalInterpretation || abg?.finalDiagnosis || abg?.interpretation;
+                  if (vals.length > 0 || interp) {
+                    const prefix = abg?.sampleType || (topAdj?.abgSampleType ? topAdj.abgSampleType : "ABG/VBG");
+                    return `${prefix}: ${vals.join(", ")}${interp ? ` — ${interp}` : ""}`;
+                  }
+                  return "Not documented";
+                })()}</p>
+                <p><strong>Bed side Screening Echo / EFAST:</strong> {(() => {
+                  const efastStatus = currentCase.primaryAssessment.survey?.adjuncts?.efastStatus;
+                  const efastNotes = currentCase.primaryAssessment.survey?.adjuncts?.efastNotes || currentCase.adjuncts?.efastNotes;
+                  const echoStatus = currentCase.primaryAssessment.survey?.adjuncts?.echoStatus;
+                  const echoNotes = currentCase.primaryAssessment.survey?.adjuncts?.echoNotes || currentCase.primaryAssessment.survey?.adjuncts?.echoFindings || currentCase.adjuncts?.echoNotes || currentCase.adjuncts?.echoFindings;
+                  const efastObj = currentCase.primaryAssessment.survey?.circulation?.efast;
+                  const results: string[] = [];
+                  const efastRes = formatEfastAdjunct(efastStatus, efastNotes, efastObj);
+                  if (efastRes) results.push(efastRes);
+                  if (echoStatus && echoStatus !== "Not done") {
+                    results.push(`Echo: ${echoStatus}${echoNotes ? ` (${echoNotes})` : ""}`);
+                  } else if (echoNotes) {
+                    results.push(`Echo: ${echoNotes}`);
+                  }
+                  return results.length > 0 ? results.join(" | ") : "Not documented";
+                })()}</p>
               </div>
             </div>
 
@@ -5940,15 +6236,14 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                 <strong>Secondary Survey</strong>
               </span>
               <div className="border border-slate-300 rounded-xl p-3 bg-slate-50/20 space-y-1 text-[10px]">
-                <p><strong>Signs and Symptoms:</strong> {currentCase.sampleHistory.symptoms || "None"}</p>
-                <p><strong>Past medical history:</strong> {currentCase.sampleHistory.pastHistory || "None"}</p>
+                <p><strong>Signs and Symptoms:</strong> {currentCase.sampleHistory.symptoms || "Not documented"}</p>
+                <p><strong>Past medical history:</strong> {currentCase.sampleHistory.pastHistory || "Not documented"}</p>
                 {currentCase.sampleHistory.events && currentCase.sampleHistory.events.trim() && !["none", "n/a", "nil"].includes(currentCase.sampleHistory.events.trim().toLowerCase()) && (
                   <p><strong>Preceding Events / Trauma:</strong> {currentCase.sampleHistory.events}</p>
                 )}
-                <p><strong>Surgical history:</strong> None reported.</p>
-                <p><strong>Family / Gynae History:</strong> {currentCase.sampleHistory.familyHistory || "Unremarkable"}</p>
-                <p><strong>LMP:</strong> {currentCase.isPediatric ? "N/A" : "Normal / Not applicable"}</p>
-                <p><strong>Allergies:</strong> {currentCase.sampleHistory.allergies || "NKDA (No Known Drug Allergies)"}</p>
+                <p><strong>Family / Gynae History:</strong> {currentCase.sampleHistory.familyHistory || "Not documented"}</p>
+                <p><strong>LMP:</strong> {currentCase.isPediatric ? "N/A" : ((currentCase.sampleHistory as any).lmp || "Not documented")}</p>
+                <p><strong>Allergies:</strong> {currentCase.sampleHistory.allergies || "Not documented"}</p>
               </div>
             </div>
 
@@ -6081,10 +6376,10 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                 <p className="text-[9px] text-slate-500 mt-0.5">(ICU, Room, Ward, Referral, DAMA)</p>
               </div>
               <div>
-                <strong>EM Resident:</strong> {currentCase.dispositionDetails?.residentName || currentCase.doctorName || ""}
+                <strong>EM Resident:</strong> {(currentCase.dispositionDetails?.residentName || currentCase.doctorName) ? formatDoctorName(currentCase.dispositionDetails?.residentName || currentCase.doctorName) : "Not documented"}
               </div>
               <div>
-                <strong>EM Consultant:</strong> {currentCase.dispositionDetails?.consultantName || currentCase.consultantName || "Duty Consultant"}
+                <strong>EM Consultant:</strong> {(currentCase.dispositionDetails?.consultantName || currentCase.consultantName) ? formatDoctorName(currentCase.dispositionDetails?.consultantName || currentCase.consultantName) : "Not documented"}
               </div>
             </div>
           </>
@@ -6345,11 +6640,11 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                     Primary Survey (ABCDE Assessment)
                   </h4>
                   <div className="space-y-1 text-[10px] bg-slate-50 p-2.5 rounded border border-slate-200">
-                    <p><strong>Airway:</strong> {currentCase.primaryAssessment.airway || "Patent and clear"}</p>
-                    <p><strong>Breathing:</strong> {currentCase.primaryAssessment.breathing || "Bilateral breath sounds present"}</p>
-                    <p><strong>Circulation:</strong> {currentCase.primaryAssessment.circulation || "Peripheral pulses palpable, CRT < 2 sec"}</p>
+                    <p><strong>Airway:</strong> {currentCase.primaryAssessment.airway || "Not documented"}</p>
+                    <p><strong>Breathing:</strong> {currentCase.primaryAssessment.breathing || "Not documented"}</p>
+                    <p><strong>Circulation:</strong> {currentCase.primaryAssessment.circulation || "Not documented"}</p>
                     <p><strong>Disability:</strong> {formatDisabilityAssessment(currentCase.primaryAssessment.disability, currentCase.vitals?.gcs || currentCase.primaryAssessment.survey?.disability?.gcsTotal, currentCase.vitals?.grbs || currentCase.primaryAssessment.survey?.disability?.grbs)}</p>
-                    <p><strong>Exposure:</strong> {currentCase.primaryAssessment.exposure || "No external trauma or injuries noted"}</p>
+                    <p><strong>Exposure:</strong> {currentCase.primaryAssessment.exposure || "Not documented"}</p>
                   </div>
                 </div>
 
@@ -6359,11 +6654,11 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                     SAMPLE History & Clinical Evolution
                   </h4>
                   <div className="grid grid-cols-2 gap-2 text-[10px] bg-slate-50 p-2.5 rounded border border-slate-200">
-                    <p><strong>Symptoms:</strong> {currentCase.sampleHistory.symptoms || "As presenting complaint"}</p>
-                    <p><strong>Allergies:</strong> {currentCase.sampleHistory.allergies || "NKDA"}</p>
-                    <p><strong>Medications:</strong> {currentCase.sampleHistory.medications || "Nil regular"}</p>
-                    <p><strong>Past Medical History:</strong> {currentCase.sampleHistory.pastHistory || "None reported"}</p>
-                    <p className="col-span-2"><strong>Events & Course:</strong> {currentCase.sampleHistory.events || currentCase.progressNotes || "Stabilized in Emergency Ward."}</p>
+                    <p><strong>Symptoms:</strong> {currentCase.sampleHistory.symptoms || "Not documented"}</p>
+                    <p><strong>Allergies:</strong> {currentCase.sampleHistory.allergies || "Not documented"}</p>
+                    <p><strong>Medications:</strong> {currentCase.sampleHistory.medications || "Not documented"}</p>
+                    <p><strong>Past Medical History:</strong> {currentCase.sampleHistory.pastHistory || "Not documented"}</p>
+                    <p className="col-span-2"><strong>Events & Course:</strong> {currentCase.sampleHistory.events || "Not documented"}</p>
                   </div>
                 </div>
 
@@ -6400,15 +6695,15 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                 <div className="space-y-2 pt-2 border-t border-slate-300">
                   <div className="flex justify-between text-[10px]">
                     <p><strong>Disposition Outcome:</strong> <span className="uppercase font-bold text-indigo-800">{currentCase.dispositionDetails?.dispositionType || "Not yet determined"}</span></p>
-                    <p><strong>Condition at Transfer/Shift:</strong> <span className="font-bold">{currentCase.conditionAtShift || "Stable"}</span></p>
+                    <p><strong>Condition at Transfer/Shift:</strong> <span className="font-bold">{currentCase.conditionAtShift || "Not documented"}</span></p>
                   </div>
                   <div className="grid grid-cols-2 gap-4 pt-6 text-[10px] text-center border-t border-slate-200">
                     <div>
-                      <p className="font-bold border-b border-slate-400 pb-1 max-w-[180px] mx-auto">{formatDoctorName(currentCase.dispositionDetails?.residentName || currentCase.doctorName)}</p>
+                      <p className="font-bold border-b border-slate-400 pb-1 max-w-[180px] mx-auto">{(currentCase.dispositionDetails?.residentName || currentCase.doctorName) ? formatDoctorName(currentCase.dispositionDetails?.residentName || currentCase.doctorName) : "Not documented"}</p>
                       <p className="text-slate-500 text-[9px] mt-0.5">Resident Emergency Physician Signature</p>
                     </div>
                     <div>
-                      <p className="font-bold border-b border-slate-400 pb-1 max-w-[180px] mx-auto">{formatDoctorName(currentCase.dispositionDetails?.consultantName || currentCase.consultantName || "Dr. Consultant EM")}</p>
+                      <p className="font-bold border-b border-slate-400 pb-1 max-w-[180px] mx-auto">{(currentCase.dispositionDetails?.consultantName || currentCase.consultantName) ? formatDoctorName(currentCase.dispositionDetails?.consultantName || currentCase.consultantName) : "Not documented"}</p>
                       <p className="text-slate-500 text-[9px] mt-0.5">Consultant / Attending Physician Signature</p>
                     </div>
                   </div>

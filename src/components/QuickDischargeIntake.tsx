@@ -3,6 +3,8 @@ import React, { useState, useRef } from "react";
 import { Mic, Camera, FileText, Loader2, ArrowRight } from "lucide-react";
 import { ClinicalCase, TriageCategory, ArrivalMode } from "../types";
 import VoiceRecorder from "./shared/VoiceRecorder";
+import { collection, doc } from "firebase/firestore";
+import { db } from "../firebase";
 
 /**
  * QuickDischargeIntake.tsx
@@ -38,6 +40,11 @@ interface Props {
   onCancel: () => void;
 }
 
+const toClinicalString = (value: unknown): string => {
+  if (value === null || value === undefined || value === "") return "";
+  return String(value);
+};
+
 export function createQuickDischargeCase(
   extractedFields: Partial<ClinicalCase>,
   createdByEmail: string,
@@ -47,7 +54,8 @@ export function createQuickDischargeCase(
   const age = extractedFields.patient?.age ?? null;
 
   return {
-    id: `CASE-${Date.now()}`,
+    id: doc(collection(db, "cases")).id,
+    displayId: `CASE-${Date.now()}`,
     status: "Active",
     savedTime: now,
     timeSpentMin: 0,
@@ -94,15 +102,15 @@ export function createQuickDischargeCase(
     },
     primaryAssessment: {
       airway: "Not documented",
-      airwayStatus: "Normal",
+      airwayStatus: "",
       breathing: "Not documented",
-      breathingStatus: "Normal",
+      breathingStatus: "",
       circulation: "Not documented",
-      circulationStatus: "Normal",
+      circulationStatus: "",
       disability: "Not documented",
-      disabilityStatus: "Normal",
+      disabilityStatus: "",
       exposure: "Not documented",
-      exposureStatus: "Normal",
+      exposureStatus: "",
       ...extractedFields.primaryAssessment,
     },
     secondaryAssessment: extractedFields.secondaryAssessment || "",
@@ -180,18 +188,18 @@ export default function QuickDischargeIntake({
           caseType: "Medical",
         },
         vitals: {
-          bp: ext.vitals?.bp || "Not recorded",
-          hr: String(ext.vitals?.hr || "0"),
-          spo2: String(ext.vitals?.spo2 || "0"),
-          rr: String(ext.vitals?.rr || "0"),
-          temp: String(ext.vitals?.temp || "0"),
-          gcs: ext.vitals?.gcs ? String(ext.vitals.gcs) : "",
-          gcs_e: "4",
-          gcs_v: "5",
-          gcs_m: "6",
-          grbs: String(ext.vitals?.grbs || "0"),
-          avpu: "Alert",
-          painScore: String(ext.vitals?.painScore || "0"),
+          bp: toClinicalString(ext.vitals?.bp),
+          hr: toClinicalString(ext.vitals?.hr),
+          spo2: toClinicalString(ext.vitals?.spo2),
+          rr: toClinicalString(ext.vitals?.rr),
+          temp: toClinicalString(ext.vitals?.temp),
+          gcs: toClinicalString(ext.vitals?.gcs),
+          gcs_e: toClinicalString(ext.vitals?.gcs_e ?? (ext.vitals as any)?.gcsE),
+          gcs_v: toClinicalString(ext.vitals?.gcs_v ?? (ext.vitals as any)?.gcsV),
+          gcs_m: toClinicalString(ext.vitals?.gcs_m ?? (ext.vitals as any)?.gcsM),
+          grbs: toClinicalString(ext.vitals?.grbs),
+          avpu: toClinicalString(ext.vitals?.avpu),
+          painScore: toClinicalString(ext.vitals?.painScore),
         },
         sampleHistory: {
           symptoms: ext.sampleHistory?.symptoms || ext.presentingComplaint || "",
@@ -206,15 +214,15 @@ export default function QuickDischargeIntake({
         },
         primaryAssessment: ext.primaryAssessment || {
           airway: "Not documented",
-          airwayStatus: "Normal",
+          airwayStatus: "",
           breathing: "Not documented",
-          breathingStatus: "Normal",
+          breathingStatus: "",
           circulation: "Not documented",
-          circulationStatus: "Normal",
+          circulationStatus: "",
           disability: "Not documented",
-          disabilityStatus: "Normal",
+          disabilityStatus: "",
           exposure: "Not documented",
-          exposureStatus: "Normal",
+          exposureStatus: "",
         },
         secondaryAssessment: typeof ext.secondaryAssessment === "string" ? ext.secondaryAssessment : "",
         progressNotes: ext.progressNotes || "",
@@ -377,18 +385,18 @@ export default function QuickDischargeIntake({
             caseType: "Medical",
           },
           vitals: {
-            bp: ocr.bp || "Not recorded",
-            hr: String(ocr.hr || "0"),
-            spo2: String(ocr.spo2 || "0"),
-            rr: String(ocr.rr || "0"),
-            temp: String(ocr.temp || "0"),
-            gcs: ocr.gcs ? String(ocr.gcs) : "",
-            gcs_e: "4",
-            gcs_v: "5",
-            gcs_m: "6",
-            grbs: String(ocr.grbs || "0"),
-            avpu: "Alert",
-            painScore: String(ocr.painScore || "0"),
+            bp: toClinicalString(ocr.bp),
+            hr: toClinicalString(ocr.hr),
+            spo2: toClinicalString(ocr.spo2),
+            rr: toClinicalString(ocr.rr),
+            temp: toClinicalString(ocr.temp),
+            gcs: toClinicalString(ocr.gcs),
+            gcs_e: toClinicalString(ocr.gcs_e ?? (ocr as any)?.gcsE),
+            gcs_v: toClinicalString(ocr.gcs_v ?? (ocr as any)?.gcsV),
+            gcs_m: toClinicalString(ocr.gcs_m ?? (ocr as any)?.gcsM),
+            grbs: toClinicalString(ocr.grbs),
+            avpu: toClinicalString(ocr.avpu),
+            painScore: toClinicalString(ocr.painScore),
           },
           sampleHistory: {
             symptoms: ocr.symptoms || ocr.presentingComplaint || "",
@@ -403,15 +411,15 @@ export default function QuickDischargeIntake({
           },
           primaryAssessment: {
             airway: ocr.airway || "Not documented",
-            airwayStatus: "Normal",
+            airwayStatus: "",
             breathing: ocr.breathing || "Not documented",
-            breathingStatus: "Normal",
+            breathingStatus: "",
             circulation: ocr.circulation || "Not documented",
-            circulationStatus: "Normal",
+            circulationStatus: "",
             disability: ocr.disability || "Not documented",
-            disabilityStatus: "Normal",
+            disabilityStatus: "",
             exposure: ocr.exposure || "Not documented",
-            exposureStatus: "Normal",
+            exposureStatus: "",
           },
           secondaryAssessment: ocr.secondaryAssessment || "",
           progressNotes: ocr.progressNotes || ocr.clinicalNarrative || "",

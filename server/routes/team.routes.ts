@@ -1,248 +1,1376 @@
 import { Router } from "express";
-import { requireAuth, AuthRequest } from "../../src/middleware/auth.js";
-import { db } from "../../src/lib/firebase-admin.js";
-import { FieldValue } from "firebase-admin/firestore";
+import { randomBytes } from "crypto";
+import { adminAuth, db } from "../../src/lib/firebase-admin.ts";
+import { requireAuth, AuthRequest } from "../../src/middleware/auth.ts";
 
 const router = Router();
 
-router.use(requireAuth);
+const PLATFORM_ADMIN_EMAIL = "varahgrp@gmail.com";
 
-function generateInviteToken(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return crypto.randomUUID().replace(/-/g, "");
-  }
-  return "inv_" + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+const EXACT_ADMIN_ROLES = new Set([
+  "hod",
+  "hod / department lead",
+  "hod / shift lead"
+]);
+
+const INVITE_ALLOWED_ROLES = new Set([
+  "resident",
+  "consultant",
+  "senior consultant",
+  "em resident",
+  "em intern",
+  "em_physician",
+  "nurse",
+  "doctor",
+  "fellow",
+  "medical_officer",
+  "scribe specialist",
+  "hod",
+  "hod / department lead",
+  "hod / shift lead"
+]);
+
+function isExactHospitalAdminRole(role?: string): boolean {
+  if (!role) return false;
+  return EXACT_ADMIN_ROLES.has(role.trim().toLowerCase());
 }
 
-router.post("/create-invite", async (req: AuthRequest, res) => {
+function isVerifiedHod(member: any): boolean {
+  if (!member) return false;
+  return (
+    member.status === "active" &&
+    member.membershipVerified === true &&
+    isExactHospitalAdminRole(member.role) &&
+    !!member.hospitalId
+  );
+}
+
+function isPlatformAdminReq(req: AuthRequest): boolean {
+  const email = (req.user?.email || "").trim().toLowerCase();
+  return email === PLATFORM_ADMIN_EMAIL;
+}
+
+function nowIso(): string {
+  return new Date().toISOString();
+}
+
+// ── GET /invite-preview/:token ───────────────────────────────────────────────
+router.get("/invite-preview/:token", async (req, res) => {
   try {
-    const { maxUses, invitedEmail, role } = req.body;
-    const uid = req.user!.uid;
+    const { token } = req.params;
+    if (!token) return res.status(400).json({ error: "Token is required." });
 
-    const callerMembershipSnap = await db.collection("team_members").doc(uid).get();
-    
-    if (!callerMembershipSnap.exists) {
-      return res.status(403).json({ error: "No active membership found." });
-    }
-    
-    const callerMembership = callerMembershipSnap.data()!;
-    if (callerMembership.status !== "active" || callerMembership.role !== "hod") {
-      return res.status(403).json({ error: "Only active HODs can create invites." });
+    const inviteDoc = await db.collection("teamInvites").doc(token).get();
+    if (!inviteDoc.exists) {
+      return res.status(404).json({ error: "Invite not found or expired." });
     }
 
-    const hospitalId = callerMembership.hospitalId;
-    const hospitalName = callerMembership.hospitalName || hospitalId;
+    const data = inviteDoc.data()!;
+    if (data.revoked) {
+      return res.status(400).json({ error: "Invite has been revoked." });
+    }
+    if (data.expiresAt && new Date(data.expiresAt) <= new Date()) {
+      return res.status(400).json({ error: "Invite has expired." });
+    }
+    if (typeof data.maxUses === "number" && (data.usedCount || 0) >= data.maxUses) {
+      return res.status(400).json({ error: "Invite usage limit exceeded." });
+    }
 
-    const token = generateInviteToken();
-    const now = new Date();
-    const expiresAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString();
-
-    const invite = {
-      id: token,
-      hospitalId,
-      hospitalName,
-      createdByUid: uid,
-      role: role || "resident",
-      invitedEmail: invitedEmail ? invitedEmail.toLowerCase().trim() : null,
-      createdAt: now.toISOString(),
-      expiresAt,
-      maxUses: maxUses || 10,
-      usedCount: 0,
-      revoked: false
-    };
-
-    await db.collection("teamInvites").doc(token).set(invite);
-
-    res.json({ token, invite });
-  } catch (error) {
-    console.error("Error creating invite:", error);
-    res.status(500).json({ error: "Internal server error" });
+    return res.json({
+      valid: true,
+      hospitalName: data.hospitalName || "",
+      role: data.role || "resident",
+      expiresAt: data.expiresAt
+    });
+  } catch (error: any) {
+    console.error("Error previewing invite:", error);
+    return res.status(400).json({ error: error.message || "Failed to load invite preview." });
   }
 });
 
+// All subsequent routes require authentication
+router.use(requireAuth);
+
+// ── POST /create-invite ─────────────────────────────────────────────────────
+router.post("/create-invite", async (req: AuthRequest, res) => {
+  try {
+    const { invitedEmail, role, maxUses, expiresHours, hospitalId, hospitalName } = req.body || {};
+    const uid = req.user!.uid;
+    const isAdmin = isPlatformAdminReq(req);
+
+    let callerHospitalId = "";
+    let callerHospitalName = "";
+
+    if (!isAdmin) {
+      const callerSnap = await db.collection("team_members").doc(uid).get();
+      if (!callerSnap.exists) {
+        return res.status(403).json({ error: "Only active verified HODs can create invites." });
+      }
+      const caller = callerSnap.data()!;
+      if (!isVerifiedHod(caller)) {
+        return res.status(403).json({ error: "Only active verified HODs can create invites." });
+      }
+      callerHospitalId = caller.hospitalId;
+      callerHospitalName = caller.hospitalName || caller.hospital || "";
+    } else {
+  const requestedHospitalId =
+    String(hospitalId || "").trim();
+
+  const requestedHospitalName =
+    String(hospitalName || "").trim();
+
+  if (!requestedHospitalId || !requestedHospitalName) {
+    return res.status(400).json({
+      error:
+        "Platform admin invites require both hospitalId and hospitalName."
+    });
+  }
+
+  callerHospitalId = requestedHospitalId;
+  callerHospitalName = requestedHospitalName;
+}
+    
+
+    let targetRole = "resident";
+
+if (role) {
+  const normRole =
+    String(role).trim().toLowerCase();
+
+  if (!INVITE_ALLOWED_ROLES.has(normRole)) {
+    return res.status(400).json({
+      error:
+        `Role "${role}" is not permitted for invitation.`
+    });
+  }
+
+  if (
+    isExactHospitalAdminRole(normRole) &&
+    !isAdmin
+  ) {
+    return res.status(403).json({
+      error:
+        "Only the platform administrator can create an invitation for an HOD or leadership role."
+    });
+  }
+
+  targetRole = normRole;
+}
+   const token = `inv_${randomBytes(24).toString("hex")}`;
+    const hours = typeof expiresHours === "number" && expiresHours > 0 ? expiresHours : 48;
+    const expiresAt = new Date(Date.now() + hours * 3600000).toISOString();
+    const uses = typeof maxUses === "number" && maxUses > 0 ? maxUses : 1;
+
+    const inviteDoc = {
+      id: token,
+      token,
+      hospitalId: callerHospitalId,
+      hospitalName: callerHospitalName,
+      role: targetRole,
+      invitedEmail: invitedEmail ? String(invitedEmail).trim().toLowerCase() : null,
+      maxUses: uses,
+      usedCount: 0,
+      revoked: false,
+      expiresAt,
+      createdAt: nowIso(),
+      createdByUid: uid,
+      createdByPlatformAdmin: isAdmin
+    };
+
+    await db.collection("teamInvites").doc(token).set(inviteDoc);
+
+    return res.json({
+      success: true,
+      token,
+      expiresAt,
+      role: targetRole,
+      hospitalName: callerHospitalName
+    });
+  } catch (error: any) {
+    console.error("Error creating invite:", error);
+    return res.status(400).json({ error: error.message || "Failed to create invite." });
+  }
+});
+
+// ── POST /accept-invite ─────────────────────────────────────────────────────
 router.post("/accept-invite", async (req: AuthRequest, res) => {
   try {
-    const { token } = req.body;
+    const { token } = req.body || {};
     const uid = req.user!.uid;
-    const email = req.user!.email?.toLowerCase();
+    const userEmail = (req.user!.email || "").trim().toLowerCase();
 
-    if (!token) return res.status(400).json({ error: "Token required." });
+    if (!token) return res.status(400).json({ error: "Invite token is required." });
+
+    const inviteRef = db.collection("teamInvites").doc(token);
+    const inviteSnap = await inviteRef.get();
+
+    if (!inviteSnap.exists) {
+      return res.status(400).json({ error: "Invalid invite token." });
+    }
+
+    const invite = inviteSnap.data()!;
+
+    if (invite.revoked) {
+      return res.status(400).json({ error: "This invite has been revoked." });
+    }
+    if (invite.expiresAt && new Date(invite.expiresAt) <= new Date()) {
+      return res.status(400).json({ error: "This invite has expired." });
+    }
+    if (typeof invite.maxUses === "number" && (invite.usedCount || 0) >= invite.maxUses) {
+      return res.status(400).json({ error: "This invite has exceeded its maximum allowed uses." });
+    }
+
+    if (invite.invitedEmail) {
+      const targetEmail = String(invite.invitedEmail).trim().toLowerCase();
+      if (targetEmail !== userEmail) {
+        return res.status(400).json({ error: "This invite is restricted to a different email address." });
+      }
+    }
+
+    // Provenance verification
+    if (invite.createdByPlatformAdmin === true) {
+      if (!invite.createdByUid) {
+        return res.status(400).json({ error: "Platform admin invite missing creator UID." });
+      }
+      try {
+        const creatorAuth = await adminAuth.getUser(invite.createdByUid);
+        const creatorEmail = (creatorAuth.email || "").trim().toLowerCase();
+        if (creatorAuth.uid !== invite.createdByUid || creatorEmail !== PLATFORM_ADMIN_EMAIL) {
+          return res.status(400).json({ error: "Invite creator is not the configured platform admin." });
+        }
+      } catch (authErr: any) {
+        return res.status(400).json({ error: "Invite creator is not the configured platform admin." });
+      }
+    } else {
+      if (!invite.createdByUid) {
+        return res.status(400).json({ error: "Invite creator UID is missing." });
+      }
+      const creatorSnap = await db.collection("team_members").doc(invite.createdByUid).get();
+      if (!creatorSnap.exists) {
+        return res.status(400).json({ error: "Invite creator membership not found." });
+      }
+      const creator = creatorSnap.data()!;
+      if (creator.status !== "active") {
+        return res.status(400).json({ error: "Invite creator is not active." });
+      }
+      if (creator.membershipVerified !== true) {
+        return res.status(400).json({ error: "Invite creator membership is not verified." });
+      }
+      if (!isExactHospitalAdminRole(creator.role)) {
+        return res.status(400).json({ error: "Invite creator does not have verified HOD role." });
+      }
+      if (!creator.hospitalId || creator.hospitalId !== invite.hospitalId) {
+        return res.status(400).json({ error: "Invite creator does not belong to the invited hospital." });
+      }
+    }
 
     await db.runTransaction(async (tx) => {
-      const inviteRef = db.collection("teamInvites").doc(token.trim());
-      const inviteSnap = await tx.get(inviteRef);
-
-      if (!inviteSnap.exists) {
-        throw new Error("Invalid or expired invitation link.");
+      const invTx = await tx.get(inviteRef);
+      if (!invTx.exists) throw new Error("Invite does not exist.");
+      const currentInv = invTx.data()!;
+      if (currentInv.revoked) throw new Error("Invite was revoked.");
+      if (currentInv.expiresAt && new Date(currentInv.expiresAt) <= new Date()) throw new Error("Invite expired.");
+      if (typeof currentInv.maxUses === "number" && (currentInv.usedCount || 0) >= currentInv.maxUses) {
+        throw new Error("Invite usage limit reached.");
       }
+// Validate the role from the invite snapshot
+// read inside this transaction.
+const normalizedInviteRole =
+  String(currentInv.role || "resident")
+    .trim()
+    .toLowerCase();
 
-      const invite = inviteSnap.data()!;
-      if (invite.revoked) throw new Error("Invitation has been revoked.");
-      if (new Date(invite.expiresAt).getTime() < Date.now()) throw new Error("Invitation has expired.");
-      if (invite.usedCount >= invite.maxUses) throw new Error("Invitation limit reached.");
-      if (invite.invitedEmail && invite.invitedEmail !== email) {
-        throw new Error("Invitation is restricted to a different email address.");
-      }
-
-      // Verify creator HOD status
-      const creatorRef = db.collection("team_members").doc(invite.createdByUid);
-      const creatorSnap = await tx.get(creatorRef);
-      if (!creatorSnap.exists || creatorSnap.data()!.status !== "active" || creatorSnap.data()!.role !== "hod") {
-        throw new Error("The HOD who created this invite is no longer active.");
-      }
-
-      // Verify current membership
-      const membershipRef = db.collection("team_members").doc(uid);
-      const membershipSnap = await tx.get(membershipRef);
-      if (membershipSnap.exists) {
-        const mem = membershipSnap.data()!;
-        if (mem.status === "active") {
-          throw new Error(`You already have an active membership at ${mem.hospitalName || mem.hospitalId}. Leave your current team first.`);
-        }
-      }
-
-      const newMembership = {
-        uid,
-        hospitalId: invite.hospitalId,
-        hospitalName: invite.hospitalName,
-        role: invite.role || "resident",
-        status: "active",
-        joinedAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        invitedByUid: invite.createdByUid,
-        inviteId: invite.id
-      };
-
-      tx.set(membershipRef, newMembership);
-      tx.update(inviteRef, { usedCount: FieldValue.increment(1) });
-
+if (
+  !INVITE_ALLOWED_ROLES.has(
+    normalizedInviteRole
+  )
+) {
+  throw new Error(
+    "Invitation contains an invalid clinical role."
+  );
+}
+if (
+  isExactHospitalAdminRole(normalizedInviteRole) &&
+  currentInv.createdByPlatformAdmin !== true
+) {
+  throw new Error(
+    "HOD or leadership invitations may only be issued by the platform administrator."
+  );
+}
+      const memberRef = db.collection("team_members").doc(uid);
       const userRef = db.collection("users").doc(uid);
-      tx.update(userRef, {
-        hospital: invite.hospitalId,
-        subscriptionTier: "Hospital Team Premium (Department Covered)"
+      const existingMemberSnap = await tx.get(memberRef);
+
+if (existingMemberSnap.exists) {
+  const existingMember = existingMemberSnap.data()!;
+
+  if (
+    existingMember.status === "active" &&
+    existingMember.membershipVerified === true
+  ) {
+    throw new Error(
+      "You already have an active hospital membership. Leave your current team before accepting another invitation."
+    );
+  }
+
+  const historyRef =
+    memberRef.collection("history").doc();
+
+  tx.set(historyRef, {
+    ...existingMember,
+    archivedAt: nowIso(),
+    archivedReason: "replaced_by_invite"
+  });
+}
+
+
+      tx.update(inviteRef, {
+        usedCount: (currentInv.usedCount || 0) + 1,
+        lastUsedAt: nowIso(),
+        updatedAt: nowIso()
+      });
+
+      tx.set(memberRef, {
+        id: uid,
+        uid: uid,
+        email: userEmail,
+        name: req.user!.name || userEmail.split("@")[0],
+   hospitalId: currentInv.hospitalId,
+hospitalName: currentInv.hospitalName || "",
+hospital: currentInv.hospitalName || "",
+role: normalizedInviteRole,
+        status: "active",
+        membershipVerified: true,
+        joinedAt: nowIso(),
+        updatedAt: nowIso(),
+        inviteToken: token,
+        invitedByUid: currentInv.createdByUid || null
+      });
+
+      tx.set(
+  userRef,
+  {
+    hospital: currentInv.hospitalName || "",
+    hospitalId: currentInv.hospitalId,
+    subscriptionTier: "Hospital Team Premium (Department Covered)"
+  },
+  { merge: true }
+);
+    });
+
+    return res.json({
+      success: true,
+      
+    });
+  } catch (error: any) {
+    console.error("Error accepting invite:", error);
+    return res.status(400).json({ error: error.message || "Failed to accept invite." });
+  }
+});
+
+// ── POST /request-join ───────────────────────────────────────────────────────
+router.post("/request-join", async (req: AuthRequest, res) => {
+  try {
+    const { hospitalId, hospitalName, role } = req.body || {};
+    const uid = req.user!.uid;
+    const email = (req.user!.email || "").trim().toLowerCase();
+    const requestedHospitalId = String(hospitalId || "").trim();
+    const requestedHospitalName = String(hospitalName || "").trim();
+if (!requestedHospitalId) {
+  return res.status(400).json({
+    error: "Hospital ID is required."
+  });
+}
+
+    const memberRef = db.collection("team_members").doc(uid);
+   
+
+    let safeRole = "resident";
+    if (role) {
+      const normRole = String(role).trim().toLowerCase();
+     if (
+  !isExactHospitalAdminRole(normRole) &&
+  INVITE_ALLOWED_ROLES.has(normRole)
+) {
+  safeRole = normRole;
+}
+    }
+await db.runTransaction(async (tx) => {
+  const currentSnap = await tx.get(memberRef);
+
+  if (currentSnap.exists) {
+    const current = currentSnap.data()!;
+
+    if (
+      current.status === "active" &&
+      current.membershipVerified === true
+    ) {
+      throw new Error(
+        "You already have an active verified hospital membership."
+      );
+    }
+
+    if (current.status === "pending_approval") {
+      throw new Error(
+        "A join request is already pending approval."
+      );
+    }
+
+    /*
+     * Preserve the previous canonical membership/request
+     * before replacing it with a new join request.
+     *
+     * This keeps cancelled, rejected, inactive, or other
+     * non-current states available for audit/history.
+     */
+    const historyRef =
+      memberRef.collection("history").doc();
+
+    tx.set(historyRef, {
+      ...current,
+      archivedAt: nowIso(),
+      archivedReason: "replaced_by_join_request"
+    });
+  }
+
+  tx.set(memberRef, {
+    id: uid,
+    uid: uid,
+    email,
+    name:
+      req.user!.name ||
+      email.split("@")[0],
+
+    hospitalId: requestedHospitalId,
+    hospitalName: requestedHospitalName,
+    hospital: requestedHospitalName,
+
+    role: safeRole,
+
+    status: "pending_approval",
+    requestProvenance:
+      "authenticated_join_request",
+    membershipVerified: false,
+
+    requestedAt: nowIso(),
+    updatedAt: nowIso()
+  });
+});
+    return res.json({ success: true });
+  } catch (error: any) {
+    console.error("Error requesting to join:", error);
+    return res.status(400).json({ error: error.message || "Failed to submit join request." });
+  }
+});
+// ── POST /cancel-request ────────────────────────────────────────────────────
+router.post("/cancel-request", async (req: AuthRequest, res) => {
+  try {
+    const uid = req.user!.uid;
+    const memberRef = db.collection("team_members").doc(uid);
+
+    await db.runTransaction(async (tx) => {
+      const memberSnap = await tx.get(memberRef);
+
+      if (!memberSnap.exists) {
+        throw new Error("No pending join request found.");
+      }
+
+      const member = memberSnap.data()!;
+
+      if (
+        member.status !== "pending_approval" ||
+        member.requestProvenance !== "authenticated_join_request" ||
+        member.membershipVerified === true
+      ) {
+        throw new Error(
+          "No pending join request is available to cancel."
+        );
+      }
+
+      if (
+        member.uid !== uid ||
+        memberSnap.id !== uid
+      ) {
+        throw new Error(
+          "Membership identity does not match the authenticated user."
+        );
+      }
+
+      tx.update(memberRef, {
+        status: "cancelled",
+        cancelledAt: nowIso(),
+        cancelledByUid: uid,
+        updatedAt: nowIso()
       });
     });
 
-    res.json({ success: true });
+    return res.json({ success: true });
   } catch (error: any) {
-    console.error("Error accepting invite:", error);
-    res.status(400).json({ error: error.message || "Could not accept invite." });
+    console.error("Error cancelling join request:", error);
+
+    return res.status(400).json({
+      error:
+        error.message ||
+        "Failed to cancel join request."
+    });
+  }
+});
+// ── POST /approve-member ────────────────────────────────────────────────────
+router.post("/approve-member", async (req: AuthRequest, res) => {
+  try {
+    const {
+      memberId,
+      hospitalId,
+      hospitalName
+    } = req.body || {};
+
+    const callerUid = req.user!.uid;
+    const isAdmin = isPlatformAdminReq(req);
+
+    if (!memberId) {
+      return res.status(400).json({
+        error: "memberId is required."
+      });
+    }
+
+    // Platform admin must explicitly choose the hospital.
+    // Never trust the applicant's requested hospital as platform authority.
+    const requestedHospitalId =
+      isAdmin ? String(hospitalId || "").trim() : "";
+
+    const requestedHospitalName =
+      isAdmin ? String(hospitalName || "").trim() : "";
+
+    if (
+      isAdmin &&
+      (!requestedHospitalId || !requestedHospitalName)
+    ) {
+      return res.status(400).json({
+        error:
+          "Platform admin approval requires both hospitalId and hospitalName."
+      });
+    }
+
+    const targetRef =
+      db.collection("team_members").doc(String(memberId));
+
+    // Initial validation before Firebase Auth lookup.
+    const targetSnap = await targetRef.get();
+
+    if (!targetSnap.exists) {
+      return res.status(404).json({
+        error: "Member not found."
+      });
+    }
+
+    const target = targetSnap.data()!;
+
+    if (target.status !== "pending_approval") {
+      return res.status(400).json({
+        error: "Member is not pending approval."
+      });
+    }
+
+    if (
+      target.requestProvenance !==
+      "authenticated_join_request"
+    ) {
+      return res.status(400).json({
+        error: "Invalid request provenance."
+      });
+    }
+
+    if (target.membershipVerified === true) {
+      return res.status(400).json({
+        error: "Member is already verified."
+      });
+    }
+
+    if (
+      String(memberId) !== target.uid ||
+      targetRef.id !== target.uid
+    ) {
+      return res.status(400).json({
+        error:
+          "Target document ID does not match target.uid."
+      });
+    }
+
+    // Verify applicant identity against Firebase Auth.
+    let authUser: any;
+
+    try {
+      authUser = await adminAuth.getUser(target.uid);
+    } catch (e: any) {
+      return res.status(400).json({
+        error:
+          `Applicant does not exist in Firebase Auth: ${e.message}`
+      });
+    }
+
+    if (
+      !authUser ||
+      authUser.uid !== target.uid
+    ) {
+      return res.status(400).json({
+        error:
+          "Target UID does not match Firebase Auth UID."
+      });
+    }
+
+    const authEmail =
+      (authUser.email || "")
+        .trim()
+        .toLowerCase();
+
+    const targetEmail =
+      (target.email || "")
+        .trim()
+        .toLowerCase();
+
+    if (
+      !authEmail ||
+      authEmail !== targetEmail
+    ) {
+      return res.status(400).json({
+        error:
+          "Target email does not match Firebase Auth email."
+      });
+    }
+
+    /*
+     * Final authorization and activation happen transactionally.
+     *
+     * This prevents a join request, caller role, hospital,
+     * membership state, or verification state from changing
+     * between the earlier checks and activation.
+     */
+    await db.runTransaction(async (tx) => {
+      const latestTargetSnap =
+        await tx.get(targetRef);
+
+      if (!latestTargetSnap.exists) {
+        throw new Error(
+          "Member request no longer exists."
+        );
+      }
+
+      const latestTarget =
+        latestTargetSnap.data()!;
+
+      if (
+        latestTarget.status !== "pending_approval" ||
+        latestTarget.requestProvenance !==
+          "authenticated_join_request" ||
+        latestTarget.membershipVerified === true
+      ) {
+        throw new Error(
+          "Member request is no longer eligible for approval."
+        );
+      }
+
+      if (
+        latestTarget.uid !== String(memberId) ||
+        latestTargetSnap.id !== String(memberId)
+      ) {
+        throw new Error(
+          "Target membership identity is invalid."
+        );
+      }
+
+      const latestTargetEmail =
+        String(latestTarget.email || "")
+          .trim()
+          .toLowerCase();
+
+      if (
+        !latestTargetEmail ||
+        latestTargetEmail !== authEmail
+      ) {
+        throw new Error(
+          "Target email no longer matches Firebase Auth email."
+        );
+      }
+
+      let finalHospitalId = "";
+      let finalHospitalName = "";
+      let finalHospital = "";
+      let finalLegacyHospitalNames: string[] = [];
+
+      if (isAdmin) {
+        /*
+         * Platform admin authority comes from the explicit
+         * hospital selected by the platform admin.
+         *
+         * Do NOT use the applicant's hospitalId/hospitalName.
+         */
+        finalHospitalId =
+          requestedHospitalId;
+
+        finalHospitalName =
+          requestedHospitalName;
+
+        finalHospital =
+          requestedHospitalName;
+
+        finalLegacyHospitalNames = [];
+      } else {
+        /*
+         * Normal approval requires the caller's canonical
+         * team_members/{uid} document to still be an active,
+         * verified HOD at transaction time.
+         */
+        const callerRef =
+          db.collection("team_members").doc(callerUid);
+
+        const callerSnap =
+          await tx.get(callerRef);
+
+        if (!callerSnap.exists) {
+          throw new Error(
+            "Only active verified HODs can approve members."
+          );
+        }
+
+        const caller =
+          callerSnap.data()!;
+
+        if (!isVerifiedHod(caller)) {
+          throw new Error(
+            "Only active verified HODs can approve members."
+          );
+        }
+
+        if (
+          !caller.hospitalId ||
+          caller.hospitalId !== latestTarget.hospitalId
+        ) {
+          throw new Error(
+            "Target member is not in your hospital."
+          );
+        }
+
+        finalHospitalId =
+          caller.hospitalId;
+
+        finalHospitalName =
+          caller.hospitalName ||
+          caller.hospital ||
+          "";
+
+        finalHospital =
+          caller.hospital ||
+          caller.hospitalName ||
+          "";
+
+        finalLegacyHospitalNames =
+          Array.isArray(caller.legacyHospitalNames)
+            ? caller.legacyHospitalNames
+            : [];
+      }
+
+      const userRef =
+        db.collection("users").doc(latestTarget.uid);
+
+      tx.update(targetRef, {
+        status: "active",
+        membershipVerified: true,
+
+        hospitalId: finalHospitalId,
+        hospitalName: finalHospitalName,
+        hospital: finalHospital,
+
+        legacyHospitalNames:
+          finalLegacyHospitalNames,
+
+        approvedAt: nowIso(),
+        approvedByUid: callerUid,
+        updatedAt: nowIso()
+      });
+
+      tx.set(
+        userRef,
+        {
+          hospital: finalHospital,
+          hospitalId: finalHospitalId,
+          subscriptionTier:
+            "Hospital Team Premium (Department Covered)"
+        },
+        { merge: true }
+      );
+    });
+
+    return res.json({
+      success: true
+    });
+  } catch (error: any) {
+    console.error(
+      "Error approving member:",
+      error
+    );
+
+    const message =
+      error.message ||
+      "Failed to approve member.";
+
+    const status =
+      message.includes(
+        "Only active verified HODs"
+      ) ||
+      message.includes(
+        "not in your hospital"
+      )
+        ? 403
+        : message.includes(
+            "no longer exists"
+          )
+          ? 404
+          : 400;
+
+    return res.status(status).json({
+      error: message
+    });
+  }
+});
+// ── POST /update-role ───────────────────────────────────────────────────────
+router.post("/update-role", async (req: AuthRequest, res) => {
+  try {
+    const { memberId, role } = req.body || {};
+    const callerUid = req.user!.uid;
+    const isAdmin = isPlatformAdminReq(req);
+
+    if (!memberId) {
+      return res.status(400).json({
+        error: "memberId is required."
+      });
+    }
+
+    if (!role) {
+      return res.status(400).json({
+        error: "role is required."
+      });
+    }
+
+    if (String(memberId) === callerUid) {
+      return res.status(400).json({
+        error: "You cannot change your own role."
+      });
+    }
+
+    const normalizedRole =
+      String(role).trim().toLowerCase();
+
+    if (!INVITE_ALLOWED_ROLES.has(normalizedRole)) {
+      return res.status(400).json({
+        error: "Invalid clinical role."
+      });
+    }
+
+    // HOD / leadership roles may only be assigned
+    // by the configured platform administrator.
+    if (
+      isExactHospitalAdminRole(normalizedRole) &&
+      !isAdmin
+    ) {
+      return res.status(403).json({
+        error:
+          "Only the platform administrator can assign an HOD or leadership role."
+      });
+    }
+
+    const targetRef =
+      db.collection("team_members").doc(String(memberId));
+
+    const userRef =
+      db.collection("users").doc(String(memberId));
+
+    const logRef =
+      db.collection("roleChangeLog").doc();
+
+    await db.runTransaction(async (tx) => {
+      const targetSnap = await tx.get(targetRef);
+
+      if (!targetSnap.exists) {
+        throw new Error("Target member not found.");
+      }
+
+      const target = targetSnap.data()!;
+
+      if (
+        target.uid !== String(memberId) ||
+        targetSnap.id !== String(memberId)
+      ) {
+        throw new Error(
+          "Target membership identity is invalid."
+        );
+      }
+
+      if (
+        target.status !== "active" ||
+        target.membershipVerified !== true
+      ) {
+        throw new Error(
+          "Only active verified members can have their role changed."
+        );
+      }
+
+      let caller: any = null;
+
+      if (!isAdmin) {
+        const callerRef =
+          db.collection("team_members").doc(callerUid);
+
+        const callerSnap = await tx.get(callerRef);
+
+        if (!callerSnap.exists) {
+          throw new Error(
+            "Only active verified HODs can change roles."
+          );
+        }
+
+        caller = callerSnap.data()!;
+
+        if (!isVerifiedHod(caller)) {
+          throw new Error(
+            "Only active verified HODs can change roles."
+          );
+        }
+
+        if (
+          !caller.hospitalId ||
+          caller.hospitalId !== target.hospitalId
+        ) {
+          throw new Error(
+            "Target member is not in your hospital."
+          );
+        }
+      }
+
+      const previousRole =
+        String(target.role || "").trim().toLowerCase();
+
+      if (previousRole === normalizedRole) {
+        throw new Error(
+          "Member already has this role."
+        );
+      }
+
+      // Never leave a hospital without an active verified HOD.
+      if (
+        isVerifiedHod(target) &&
+        !isExactHospitalAdminRole(normalizedRole)
+      ) {
+        const hodsSnap = await tx.get(
+          db
+            .collection("team_members")
+            .where("hospitalId", "==", target.hospitalId)
+        );
+
+        const otherHods = hodsSnap.docs.filter(
+          (docSnap) =>
+            docSnap.id !== targetRef.id &&
+            isVerifiedHod(docSnap.data())
+        );
+
+        if (otherHods.length === 0) {
+          throw new Error(
+            "Cannot change the role of the only active verified HOD. Assign another HOD first."
+          );
+        }
+      }
+
+      tx.update(targetRef, {
+        role: normalizedRole,
+        updatedAt: nowIso()
+      });
+
+      tx.set(
+        userRef,
+        {
+          role: normalizedRole
+        },
+        { merge: true }
+      );
+
+      tx.set(logRef, {
+        targetUid: String(memberId),
+        targetEmail: target.email || "",
+        hospitalId: target.hospitalId || "",
+        previousRole,
+        newRole: normalizedRole,
+        changedByUid: callerUid,
+        changedByPlatformAdmin: isAdmin,
+        changedAt: nowIso()
+      });
+    });
+
+    return res.json({ success: true });
+  } catch (error: any) {
+    console.error("Error updating member role:", error);
+
+    const message =
+      error.message || "Failed to update member role.";
+
+    const status =
+      message.includes("Only active verified HODs") ||
+      message.includes("not in your hospital") ||
+      message.includes("platform administrator")
+        ? 403
+        : 400;
+
+    return res.status(status).json({
+      error: message
+    });
+  }
+});
+// ── POST /decline-member ────────────────────────────────────────────────────
+router.post("/decline-member", async (req: AuthRequest, res) => {
+  try {
+    const { memberId } = req.body || {};
+    const callerUid = req.user!.uid;
+    const isAdmin = isPlatformAdminReq(req);
+
+    if (!memberId) return res.status(400).json({ error: "memberId is required." });
+
+    const targetRef = db.collection("team_members").doc(String(memberId));
+    const targetSnap = await targetRef.get();
+    if (!targetSnap.exists) {
+      return res.status(404).json({ error: "Member not found." });
+    }
+
+    const target = targetSnap.data()!;
+    if (target.status !== "pending_approval") {
+  return res.status(400).json({
+    error: "Only pending join requests can be declined."
+  });
+}
+
+if (
+  target.requestProvenance !==
+  "authenticated_join_request"
+) {
+  return res.status(400).json({
+    error: "Invalid join request provenance."
+  });
+}
+
+if (target.membershipVerified === true) {
+  return res.status(400).json({
+    error: "Verified active memberships cannot be declined."
+  });
+}
+
+if (
+  String(memberId) !== target.uid ||
+  targetRef.id !== target.uid
+) {
+  return res.status(400).json({
+    error: "Target document ID does not match target.uid."
+  });
+}
+
+    if (!isAdmin) {
+      const callerSnap = await db.collection("team_members").doc(callerUid).get();
+      if (!callerSnap.exists) {
+        return res.status(403).json({ error: "Only active verified HODs can decline members." });
+      }
+      const caller = callerSnap.data()!;
+      if (!isVerifiedHod(caller)) {
+        return res.status(403).json({ error: "Only active verified HODs can decline members." });
+      }
+      if (caller.hospitalId !== target.hospitalId) {
+        return res.status(403).json({ error: "Target member is not in your hospital." });
+      }
+    }
+
+   await db.runTransaction(async (tx) => {
+  const latestSnap = await tx.get(targetRef);
+
+  if (!latestSnap.exists) {
+    throw new Error("Member request no longer exists.");
+  }
+
+  const latest = latestSnap.data()!;
+if (
+  latest.status !== "pending_approval" ||
+  latest.requestProvenance !== "authenticated_join_request" ||
+  latest.membershipVerified === true
+) {
+    throw new Error(
+      "Member request is no longer pending approval."
+    );
+  }
+
+  tx.update(targetRef, {
+    status: "rejected",
+    declinedAt: nowIso(),
+    declinedByUid: callerUid,
+    updatedAt: nowIso()
+  });
+});
+    return res.json({ success: true });
+  } catch (error: any) {
+    console.error("Error declining member:", error);
+    return res.status(400).json({ error: error.message || "Failed to decline member." });
   }
 });
 
+// ── POST /remove-member ─────────────────────────────────────────────────────
 router.post("/remove-member", async (req: AuthRequest, res) => {
   try {
-    const { memberId } = req.body;
-    const uid = req.user!.uid;
+    const { memberId } = req.body || {};
 
-    if (!memberId) return res.status(400).json({ error: "memberId required" });
+    const callerUid = req.user!.uid;
+    const isAdmin = isPlatformAdminReq(req);
 
-    // Step 1: Pre-query the user document if possible
-    const targetDocSnap = await db.collection("team_members").doc(memberId).get();
-    if (!targetDocSnap.exists) {
-      return res.status(404).json({ error: "Member not found." });
+    if (!memberId) {
+      return res.status(400).json({
+        error: "memberId is required."
+      });
     }
-    const targetEmail = targetDocSnap.data()!.email;
-    let targetUserRef = null;
-    
-    if (targetEmail) {
-      const usersQuery = await db.collection("users").where("email", "==", targetEmail).limit(1).get();
-      if (!usersQuery.empty) {
-        targetUserRef = usersQuery.docs[0].ref;
-      }
-    } else {
-      // If it's the new schema, memberId IS the targetUid
-      targetUserRef = db.collection("users").doc(memberId);
+
+    const targetUid = String(memberId).trim();
+
+    if (!targetUid) {
+      return res.status(400).json({
+        error: "Invalid memberId."
+      });
     }
+
+    if (targetUid === callerUid) {
+      return res.status(400).json({
+        error:
+          "Use Leave Team to remove yourself."
+      });
+    }
+
+    const targetRef =
+      db.collection("team_members").doc(targetUid);
+
+    const userRef =
+      db.collection("users").doc(targetUid);
 
     await db.runTransaction(async (tx) => {
-      const callerRef = db.collection("team_members").doc(uid);
-      const callerSnap = await tx.get(callerRef);
-      
-      if (!callerSnap.exists || callerSnap.data()!.status !== "active" || callerSnap.data()!.role !== "hod") {
-        throw new Error("Unauthorized. Only active HODs can remove members.");
+      /*
+       * Canonical runtime membership only:
+       * team_members/{firebaseAuthUid}
+       *
+       * Legacy mem-* documents are never trusted
+       * for authorization or member removal.
+       */
+      const targetSnap =
+        await tx.get(targetRef);
+
+      if (!targetSnap.exists) {
+        throw new Error(
+          "Member not found."
+        );
       }
-      
-      // Fallback check for legacy hospital field matching
-      const callerHospitalId = callerSnap.data()!.hospitalId || callerSnap.data()!.hospital;
 
-      const targetRef = db.collection("team_members").doc(memberId);
-      const targetSnap = await tx.get(targetRef);
-      if (!targetSnap.exists) throw new Error("Target member not found in transaction.");
-      
-      const targetHospitalId = targetSnap.data()!.hospitalId || targetSnap.data()!.hospital;
+      const target =
+        targetSnap.data()!;
 
-      if (targetHospitalId !== callerHospitalId) {
-        throw new Error("Target member is not in your hospital.");
+      if (
+        target.uid !== targetUid ||
+        targetSnap.id !== targetUid
+      ) {
+        throw new Error(
+          "Target membership identity is invalid."
+        );
+      }
+
+      /*
+       * /remove-member is for an existing active,
+       * verified team member.
+       *
+       * Pending join requests must use
+       * /decline-member instead.
+       */
+      if (
+        target.status !== "active" ||
+        target.membershipVerified !== true
+      ) {
+        throw new Error(
+          "Only active verified members can be removed."
+        );
+      }
+
+      if (!isAdmin) {
+        const callerRef =
+          db.collection("team_members").doc(callerUid);
+
+        const callerSnap =
+          await tx.get(callerRef);
+
+        if (!callerSnap.exists) {
+          throw new Error(
+            "Only active verified HODs can remove members."
+          );
+        }
+
+        const caller =
+          callerSnap.data()!;
+
+        if (!isVerifiedHod(caller)) {
+          throw new Error(
+            "Only active verified HODs can remove members."
+          );
+        }
+
+        if (
+          !caller.hospitalId ||
+          caller.hospitalId !== target.hospitalId
+        ) {
+          throw new Error(
+            "Target member is not in your hospital."
+          );
+        }
+      }
+
+      /*
+       * Never leave a hospital without
+       * an active verified HOD.
+       */
+      if (isVerifiedHod(target)) {
+        const hodsSnap =
+          await tx.get(
+            db
+              .collection("team_members")
+              .where(
+                "hospitalId",
+                "==",
+                target.hospitalId
+              )
+          );
+
+        const otherHods =
+          hodsSnap.docs.filter(
+            (docSnap) =>
+              docSnap.id !== targetUid &&
+              isVerifiedHod(docSnap.data())
+          );
+
+        if (otherHods.length === 0) {
+          throw new Error(
+            "Cannot remove the only active verified HOD of this hospital. Assign another HOD first."
+          );
+        }
       }
 
       tx.update(targetRef, {
         status: "inactive",
-        updatedAt: new Date().toISOString(),
-        removedAt: new Date().toISOString(),
-        removedByUid: uid
+        removedAt: nowIso(),
+        removedByUid: callerUid,
+        updatedAt: nowIso(),
+        reason: "removed_from_team"
       });
 
-      if (targetUserRef) {
-        tx.update(targetUserRef, {
+      /*
+       * Clear hospital access mirror on users/{uid}.
+       * Authority remains team_members/{uid}.
+       */
+      tx.set(
+        userRef,
+        {
           hospital: "",
-          subscriptionTier: "Free Standard"
-        });
-      }
+          hospitalId: "",
+          subscriptionTier:
+            "Free Standard"
+        },
+        { merge: true }
+      );
     });
 
-    res.json({ success: true });
+    return res.json({
+      success: true
+    });
   } catch (error: any) {
-    console.error("Error removing member:", error);
-    res.status(400).json({ error: error.message || "Failed to remove member." });
+    console.error(
+      "Error removing member:",
+      error
+    );
+
+    const message =
+      error.message ||
+      "Failed to remove member.";
+
+    const status =
+      message.includes(
+        "Only active verified HODs"
+      ) ||
+      message.includes(
+        "not in your hospital"
+      )
+        ? 403
+        : message.includes(
+            "Member not found"
+          )
+          ? 404
+          : 400;
+
+    return res.status(status).json({
+      error: message
+    });
   }
 });
 
+// ── POST /leave ─────────────────────────────────────────────────────────────
 router.post("/leave", async (req: AuthRequest, res) => {
   try {
     const uid = req.user!.uid;
-    const email = req.user!.email?.toLowerCase() || "";
-    const legacyMemId = `mem-${email.replace(/[^a-zA-Z0-9]/g, "-")}`;
+   
 
     await db.runTransaction(async (tx) => {
-      let memRef = db.collection("team_members").doc(uid);
-      let memSnap = await tx.get(memRef);
+     const memRef = db.collection("team_members").doc(uid);
+const memSnap = await tx.get(memRef);
+     
 
-      if (!memSnap.exists) {
-        // Fallback to legacy
-        memRef = db.collection("team_members").doc(legacyMemId);
-        memSnap = await tx.get(memRef);
-      }
+      if (!memSnap.exists) throw new Error("No active membership to leave.");
+      const me = memSnap.data()!;
+if (
+  me.status !== "active" ||
+  me.membershipVerified !== true
+) {
+  throw new Error(
+    "No active verified membership to leave."
+  );
+}
+      if (isExactHospitalAdminRole(me.role)) {
+       if (!isVerifiedHod(me)) {
+          throw new Error("Only an active verified HOD can leave a leadership role.");
+        }
 
-      // Allow leaving even if 'status' isn't explicitly 'active' in legacy records
-      // Just check existence.
-      if (!memSnap.exists) {
-        throw new Error("No active membership to leave.");
+        const hodsSnap = await tx.get(
+          db.collection("team_members").where("hospitalId", "==", me.hospitalId)
+        );
+        const otherHods = hodsSnap.docs.filter((d) => d.id !== uid && isVerifiedHod(d.data()));
+        if (otherHods.length === 0) {
+          throw new Error("Cannot leave department: You are the sole active verified HOD for this hospital. Please assign another HOD first.");
+        }
       }
-      
-      const role = (memSnap.data()!.role || "").toLowerCase();
-      if (role.includes("hod") || role.includes("lead")) {
-        throw new Error("HOD cannot leave team directly. Please assign a new HOD or contact platform support first.");
-      }
-
-      tx.update(memRef, {
-        status: "inactive",
-        updatedAt: new Date().toISOString(),
-        leftAt: new Date().toISOString(),
-        reason: "voluntary"
-      });
 
       const userRef = db.collection("users").doc(uid);
-      tx.update(userRef, {
-        hospital: "",
-        subscriptionTier: "Free Standard"
-      });
-    });
+tx.update(memRef, {
+  status: "inactive",
+  leftAt: nowIso(),
+  updatedAt: nowIso(),
+  reason: "voluntary"
+});
+     tx.set(
+  userRef,
+  {
+    hospital: "",
+    hospitalId: "",
+    subscriptionTier: "Free Standard"
+  },
+  { merge: true }
+);
+});
 
-    res.json({ success: true });
+    return res.json({ success: true });
   } catch (error: any) {
     console.error("Error leaving team:", error);
-    res.status(400).json({ error: error.message || "Failed to leave team." });
+    return res.status(400).json({ error: error.message || "Failed to leave team." });
   }
 });
 
