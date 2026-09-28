@@ -160,15 +160,43 @@ export async function interpretMatePreview(
     };
   }
 
-  const raw = await extractFromTranscript(input.transcript);
-  const cleaned = cleanExtractionOutput(raw as any);
-  const existingCaseSheet = (input.activeCase as any)?.caseSheet ?? input.activeCase ?? {};
-  const mapped = mapExtractionToCaseSheetFields(
-    cleaned as any,
-    raw as any,
-    existingCaseSheet,
-    input.transcript,
-  ) as Record<string, unknown>;
+
+ const extractionResult = await extractFromTranscript(input.transcript);
+
+if (!extractionResult.success || !extractionResult.extracted) {
+  return {
+    executionMode: "PREVIEW",
+    caseId,
+    isPediatric: initialRoute,
+    intents: route.intents,
+    proposedFacts: [],
+    blockedFacts: [],
+    questions: [
+      extractionResult.error ||
+        "Clinical extraction was unavailable. No patient data was changed.",
+    ],
+    appActions: [],
+    extracted: {},
+    mappedFields: {},
+    warnings: [
+      extractionResult.error ||
+        "Clinical extraction was unavailable. No patient data was changed.",
+    ],
+  };
+}
+
+const raw = extractionResult.extracted;
+const cleaned = cleanExtractionOutput(raw as any);
+
+const existingCaseSheet =
+  (input.activeCase as any)?.caseSheet ?? input.activeCase ?? {};
+
+const mapped = mapExtractionToCaseSheetFields(
+  cleaned as any,
+  raw as any,
+  existingCaseSheet,
+  input.transcript,
+) as Record<string, unknown>;
 
   const extractedAgeRaw = (raw as any)?.age ?? (cleaned as any)?.age;
   const extractedAge = extractedAgeRaw !== null && extractedAgeRaw !== undefined && extractedAgeRaw !== ""
