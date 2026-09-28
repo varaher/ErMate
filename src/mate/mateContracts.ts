@@ -17,6 +17,7 @@ export type MateIntent =
   | "CORRECTION"
   | "REASSESSMENT"
   | "QUESTION"
+  | "ROUNDS"
   | "APP_ACTION"
   | "MIXED";
 
@@ -45,6 +46,12 @@ export type MateInformationSource =
   | "clinician_measured"
   | "investigation_result"
   | "unknown";
+
+export type MateCapabilityRisk =
+  | "READ_ONLY"
+  | "NON_DESTRUCTIVE_WRITE"
+  | "CONFIRMATION_REQUIRED"
+  | "DESTRUCTIVE";
 
 export interface MateEvidence {
   /** Exact words that support the proposed fact. */
@@ -76,6 +83,46 @@ export interface MatePreviewResult {
 }
 
 /**
+ * A MATE capability is a route into an EXISTING ErMate feature. The capability
+ * registry must never duplicate the underlying clinical engine.
+ */
+export interface MateCapability {
+  id: string;
+  label: string;
+  description: string;
+  risk: MateCapabilityRisk;
+  requiresActiveCase: boolean;
+  writesClinicalRecord: boolean;
+  existingEndpoint?: string;
+}
+
+/**
+ * Rounds is an existing ErMate decision-support lane. MATE only routes the
+ * current case/question to it and returns its response conversationally.
+ * Rounds output is NEVER silently promoted into documentation.
+ */
+export const MATE_ROUNDS_CAPABILITY: MateCapability = Object.freeze({
+  id: "case.rounds.review",
+  label: "7-Lens Clinical Rounds",
+  description: "Run the active case through ErMate's existing Clinical Rounds / 7-Lens debrief engine.",
+  risk: "READ_ONLY",
+  requiresActiveCase: true,
+  writesClinicalRecord: false,
+  existingEndpoint: "/api/rounds-debrief",
+});
+
+export const MATE_ROUNDS_RULES = Object.freeze({
+  readCurrentCase: true,
+  mayAnswerConversationally: true,
+  mayIdentifyGaps: true,
+  maySuggestConsiderations: true,
+  autoDocumentOutput: false,
+  autoChangeDiagnosis: false,
+  autoChangeTreatment: false,
+  autoChangeDisposition: false,
+});
+
+/**
  * Locked documentation invariants for MATE V1.
  *
  * Explicit positive -> capture.
@@ -100,6 +147,7 @@ export const MATE_DOCUMENTATION_RULES = Object.freeze({
   partialGcs: "never-infer",
   reassessment: "append-chronologically",
   clinicalDiscussion: "do-not-document-by-default",
+  roundsOutput: "decision-support-only-unless-explicitly-documented",
 });
 
 /** Current executable ErMate routing rule: known age 0-16 is pediatric. */
