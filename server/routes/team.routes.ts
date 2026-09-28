@@ -177,7 +177,75 @@ if (role) {
       createdByPlatformAdmin: isAdmin
     };
 
-    await db.collection("teamInvites").doc(token).set(inviteDoc);
+    /*
+ * Create the invitation and its security audit event
+ * atomically.
+ *
+ * IMPORTANT:
+ * - Never write the invitation token into the audit log.
+ * - Audit identity comes from the verified Firebase
+ *   request, never from client-supplied UID/email.
+ */
+const inviteRef =
+  db.collection("teamInvites").doc(token);
+
+const auditRef =
+  db.collection("teamAuditLog").doc();
+
+const batch = db.batch();
+
+batch.set(
+  inviteRef,
+  inviteDoc
+);
+
+batch.set(
+  auditRef,
+  {
+    id: auditRef.id,
+
+    eventType: "TEAM_INVITE_CREATED",
+
+    actorUid: uid,
+
+    actorEmail:
+      (req.user?.email || "")
+        .trim()
+        .toLowerCase(),
+
+    actorType:
+      isAdmin
+        ? "platform_admin"
+        : "hospital_hod",
+
+    hospitalId:
+      callerHospitalId,
+
+    hospitalName:
+      callerHospitalName,
+
+    targetEmail:
+      invitedEmail
+        ? String(invitedEmail)
+            .trim()
+            .toLowerCase()
+        : null,
+
+    targetRole:
+      targetRole,
+
+    maxUses:
+      uses,
+
+    expiresAt:
+      expiresAt,
+
+    createdAt:
+      nowIso()
+  }
+);
+
+await batch.commit();
 
     return res.json({
       success: true,
@@ -220,12 +288,34 @@ router.post("/accept-invite", async (req: AuthRequest, res) => {
       return res.status(400).json({ error: "This invite has exceeded its maximum allowed uses." });
     }
 
-    if (invite.invitedEmail) {
-      const targetEmail = String(invite.invitedEmail).trim().toLowerCase();
-      if (targetEmail !== userEmail) {
-        return res.status(400).json({ error: "This invite is restricted to a different email address." });
-      }
-    }
+   if (invite.invitedEmail) {
+  const targetEmail =
+    String(invite.invitedEmail)
+      .trim()
+      .toLowerCase();
+
+  /*
+   * Email-restricted hospital invitations require
+   * proof that the authenticated Firebase email
+   * has actually been verified.
+   *
+   * This does NOT block normal ErMate login for
+   * legacy/unverified independent users.
+   */
+  if (req.user!.email_verified !== true) {
+    return res.status(403).json({
+      error:
+        "Please verify your email address before accepting this department invitation."
+    });
+  }
+
+  if (targetEmail !== userEmail) {
+    return res.status(400).json({
+      error:
+        "This invite is restricted to a different email address."
+    });
+  }
+}
 
     // Provenance verification
     if (invite.createdByPlatformAdmin === true) {
@@ -273,6 +363,31 @@ router.post("/accept-invite", async (req: AuthRequest, res) => {
       if (typeof currentInv.maxUses === "number" && (currentInv.usedCount || 0) >= currentInv.maxUses) {
         throw new Error("Invite usage limit reached.");
       }
+      /*
+ * Re-check email restriction using the invitation
+ * snapshot read inside this transaction.
+ *
+ * This prevents the pre-transaction validation
+ * from being the only identity check.
+ */
+if (currentInv.invitedEmail) {
+  const currentTargetEmail =
+    String(currentInv.invitedEmail)
+      .trim()
+      .toLowerCase();
+
+  if (req.user!.email_verified !== true) {
+    throw new Error(
+      "Please verify your email address before accepting this department invitation."
+    );
+  }
+
+  if (currentTargetEmail !== userEmail) {
+    throw new Error(
+      "This invite is restricted to a different email address."
+    );
+  }
+}
 // Validate the role from the invite snapshot
 // read inside this transaction.
 const normalizedInviteRole =
@@ -348,14 +463,44 @@ role: normalizedInviteRole,
       });
 
       tx.set(
-  userRef,
-  {
-    hospital: currentInv.hospitalName || "",
-    hospitalId: currentInv.hospitalId,
-    subscriptionTier: "Hospital Team Premium (Department Covered)"
-  },
-  { merge: true }
-);
+        userRef,
+        {
+          hospital: currentInv.hospitalName || "",
+          hospitalId: currentInv.hospitalId,
+          subscriptionTier: "Hospital Team Premium (Department Covered)"
+        },
+        { merge: true }
+      );
+
+      /*
+       * Security audit:
+       * Record successful invitation acceptance in the
+       * SAME transaction as membership activation.
+       *
+       * Do not store the invitation token in the audit log.
+       */
+      const acceptanceAuditRef = db.collection("teamAuditLog").doc();
+
+      tx.set(
+        acceptanceAuditRef,
+        {
+          id: acceptanceAuditRef.id,
+          eventType: "TEAM_INVITE_ACCEPTED",
+          actorUid: uid,
+          actorEmail: userEmail,
+          actorType: "invited_user",
+          hospitalId: currentInv.hospitalId,
+          hospitalName: currentInv.hospitalName || "",
+          targetUid: uid,
+          targetEmail: userEmail,
+          targetRole: normalizedInviteRole,
+          invitedByUid: currentInv.createdByUid || null,
+          inviteCreatedByPlatformAdmin: currentInv.createdByPlatformAdmin === true,
+          membershipVerified: true,
+          previousMembershipArchived: existingMemberSnap.exists,
+          createdAt: nowIso()
+        }
+      );
     });
 
     return res.json({
@@ -455,6 +600,59 @@ await db.runTransaction(async (tx) => {
     requestedAt: nowIso(),
     updatedAt: nowIso()
   });
+  /*
+ * Security audit:
+ * Record the authenticated clinician's department
+ * join request in the SAME transaction.
+ */
+const joinAuditRef =
+  db.collection("teamAuditLog").doc();
+
+tx.set(
+  joinAuditRef,
+  {
+    id: joinAuditRef.id,
+
+    eventType:
+      "TEAM_JOIN_REQUESTED",
+
+    actorUid:
+      uid,
+
+    actorEmail:
+      email,
+
+    actorType:
+      "applicant",
+
+    hospitalId:
+      requestedHospitalId,
+
+    hospitalName:
+      requestedHospitalName,
+
+    targetUid:
+      uid,
+
+    targetEmail:
+      email,
+
+    targetRole:
+      safeRole,
+
+    requestProvenance:
+      "authenticated_join_request",
+
+    membershipVerified:
+      false,
+
+    previousMembershipArchived:
+      currentSnap.exists,
+
+    createdAt:
+      nowIso()
+  }
+);
 });
     return res.json({ success: true });
   } catch (error: any) {
@@ -502,6 +700,69 @@ router.post("/cancel-request", async (req: AuthRequest, res) => {
         cancelledByUid: uid,
         updatedAt: nowIso()
       });
+      /*
+ * Security audit:
+ * Record cancellation of the clinician's pending
+ * department join request in the SAME transaction.
+ */
+const cancelAuditRef =
+  db.collection("teamAuditLog").doc();
+
+tx.set(
+  cancelAuditRef,
+  {
+    id: cancelAuditRef.id,
+
+    eventType:
+      "TEAM_JOIN_REQUEST_CANCELLED",
+
+    actorUid:
+      uid,
+
+    actorEmail:
+      (req.user?.email || member.email || "")
+        .trim()
+        .toLowerCase(),
+
+    actorType:
+      "applicant",
+
+    hospitalId:
+      member.hospitalId || "",
+
+    hospitalName:
+      member.hospitalName ||
+      member.hospital ||
+      "",
+
+    targetUid:
+      uid,
+
+    targetEmail:
+      (member.email || req.user?.email || "")
+        .trim()
+        .toLowerCase(),
+
+    targetRole:
+      member.role || "",
+
+    previousStatus:
+      "pending_approval",
+
+    newStatus:
+      "cancelled",
+
+    requestProvenance:
+      member.requestProvenance ||
+      "authenticated_join_request",
+
+    membershipVerified:
+      false,
+
+    createdAt:
+      nowIso()
+  }
+);
     });
 
     return res.json({ success: true });
@@ -798,6 +1059,72 @@ router.post("/approve-member", async (req: AuthRequest, res) => {
         },
         { merge: true }
       );
+      /*
+ * Security audit:
+ * Record successful department membership approval
+ * in the SAME transaction as membership activation.
+ */
+const approvalAuditRef =
+  db.collection("teamAuditLog").doc();
+
+tx.set(
+  approvalAuditRef,
+  {
+    id: approvalAuditRef.id,
+
+    eventType:
+      "TEAM_MEMBER_APPROVED",
+
+    actorUid:
+      callerUid,
+
+    actorEmail:
+      (req.user?.email || "")
+        .trim()
+        .toLowerCase(),
+
+    actorType:
+      isAdmin
+        ? "platform_admin"
+        : "hospital_hod",
+
+    hospitalId:
+      finalHospitalId,
+
+    hospitalName:
+      finalHospitalName,
+
+    targetUid:
+      latestTarget.uid,
+
+    targetEmail:
+      String(latestTarget.email || "")
+        .trim()
+        .toLowerCase(),
+
+    targetRole:
+      latestTarget.role || "",
+
+    previousStatus:
+      "pending_approval",
+
+    newStatus:
+      "active",
+
+    requestProvenance:
+      latestTarget.requestProvenance ||
+      "authenticated_join_request",
+
+    membershipVerified:
+      true,
+
+    approvedByUid:
+      callerUid,
+
+    createdAt:
+      nowIso()
+  }
+);
     });
 
     return res.json({
@@ -1002,6 +1329,70 @@ router.post("/update-role", async (req: AuthRequest, res) => {
         changedByPlatformAdmin: isAdmin,
         changedAt: nowIso()
       });
+      /*
+ * Uniform security audit:
+ * Preserve the dedicated roleChangeLog above,
+ * and also record the role change in teamAuditLog.
+ */
+const roleAuditRef =
+  db.collection("teamAuditLog").doc();
+
+tx.set(
+  roleAuditRef,
+  {
+    id: roleAuditRef.id,
+
+    eventType:
+      "TEAM_MEMBER_ROLE_CHANGED",
+
+    actorUid:
+      callerUid,
+
+    actorEmail:
+      (req.user?.email || "")
+        .trim()
+        .toLowerCase(),
+
+    actorType:
+      isAdmin
+        ? "platform_admin"
+        : "hospital_hod",
+
+    hospitalId:
+      target.hospitalId || "",
+
+    hospitalName:
+      target.hospitalName ||
+      target.hospital ||
+      "",
+
+    targetUid:
+      String(memberId),
+
+    targetEmail:
+      String(target.email || "")
+        .trim()
+        .toLowerCase(),
+
+    previousRole:
+      previousRole,
+
+    newRole:
+      normalizedRole,
+
+    membershipVerified:
+      target.membershipVerified === true,
+
+    status:
+      target.status || "",
+
+    changedByUid:
+      callerUid,
+
+    createdAt:
+      nowIso()
+  }
+);
     });
 
     return res.json({ success: true });
@@ -1107,6 +1498,74 @@ if (
     declinedByUid: callerUid,
     updatedAt: nowIso()
   });
+  /*
+ * Security audit:
+ * Record rejection of a pending department join
+ * request in the SAME transaction.
+ */
+const declineAuditRef =
+  db.collection("teamAuditLog").doc();
+
+tx.set(
+  declineAuditRef,
+  {
+    id: declineAuditRef.id,
+
+    eventType:
+      "TEAM_MEMBER_DECLINED",
+
+    actorUid:
+      callerUid,
+
+    actorEmail:
+      (req.user?.email || "")
+        .trim()
+        .toLowerCase(),
+
+    actorType:
+      isAdmin
+        ? "platform_admin"
+        : "hospital_hod",
+
+    hospitalId:
+      latest.hospitalId || "",
+
+    hospitalName:
+      latest.hospitalName ||
+      latest.hospital ||
+      "",
+
+    targetUid:
+      latest.uid,
+
+    targetEmail:
+      String(latest.email || "")
+        .trim()
+        .toLowerCase(),
+
+    targetRole:
+      latest.role || "",
+
+    previousStatus:
+      "pending_approval",
+
+    newStatus:
+      "rejected",
+
+    requestProvenance:
+      latest.requestProvenance ||
+      "authenticated_join_request",
+
+    membershipVerified:
+      false,
+
+    declinedByUid:
+      callerUid,
+
+    createdAt:
+      nowIso()
+  }
+);
 });
     return res.json({ success: true });
   } catch (error: any) {
@@ -1279,6 +1738,73 @@ router.post("/remove-member", async (req: AuthRequest, res) => {
         },
         { merge: true }
       );
+      /*
+ * Security audit:
+ * Record removal of an active verified clinician
+ * from the department in the SAME transaction.
+ */
+const removalAuditRef =
+  db.collection("teamAuditLog").doc();
+
+tx.set(
+  removalAuditRef,
+  {
+    id: removalAuditRef.id,
+
+    eventType:
+      "TEAM_MEMBER_REMOVED",
+
+    actorUid:
+      callerUid,
+
+    actorEmail:
+      (req.user?.email || "")
+        .trim()
+        .toLowerCase(),
+
+    actorType:
+      isAdmin
+        ? "platform_admin"
+        : "hospital_hod",
+
+    hospitalId:
+      target.hospitalId || "",
+
+    hospitalName:
+      target.hospitalName ||
+      target.hospital ||
+      "",
+
+    targetUid:
+      targetUid,
+
+    targetEmail:
+      String(target.email || "")
+        .trim()
+        .toLowerCase(),
+
+    targetRole:
+      target.role || "",
+
+    previousStatus:
+      "active",
+
+    newStatus:
+      "inactive",
+
+    membershipVerifiedAtRemoval:
+      target.membershipVerified === true,
+
+    reason:
+      "removed_from_team",
+
+    removedByUid:
+      callerUid,
+
+    createdAt:
+      nowIso()
+  }
+);
     });
 
     return res.json({
@@ -1364,6 +1890,68 @@ tx.update(memRef, {
     subscriptionTier: "Free Standard"
   },
   { merge: true }
+);
+/*
+ * Security audit:
+ * Record voluntary departure from the department
+ * in the SAME transaction.
+ */
+const leaveAuditRef =
+  db.collection("teamAuditLog").doc();
+
+tx.set(
+  leaveAuditRef,
+  {
+    id: leaveAuditRef.id,
+
+    eventType:
+      "TEAM_MEMBER_LEFT",
+
+    actorUid:
+      uid,
+
+    actorEmail:
+      (req.user?.email || me.email || "")
+        .trim()
+        .toLowerCase(),
+
+    actorType:
+      "member",
+
+    hospitalId:
+      me.hospitalId || "",
+
+    hospitalName:
+      me.hospitalName ||
+      me.hospital ||
+      "",
+
+    targetUid:
+      uid,
+
+    targetEmail:
+      String(me.email || req.user?.email || "")
+        .trim()
+        .toLowerCase(),
+
+    targetRole:
+      me.role || "",
+
+    previousStatus:
+      "active",
+
+    newStatus:
+      "inactive",
+
+    membershipVerifiedAtLeave:
+      me.membershipVerified === true,
+
+    reason:
+      "voluntary",
+
+    createdAt:
+      nowIso()
+  }
 );
 });
 

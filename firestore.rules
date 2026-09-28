@@ -472,10 +472,21 @@ service cloud.firestore {
 
     match /roleChangeLog/{logId} {
       allow read: if isPlatformAdmin();
-      allow create: if isPlatformAdmin();
+     allow create: if false;
       allow update, delete: if false;
     }
+// ── Team Security Audit Log — backend-write only ──────────
+//
+// All lifecycle audit events are written by the trusted
+// Express/Firebase Admin backend.
+//
+// Browser clients must never create, modify, or delete
+// security audit records.
+match /teamAuditLog/{logId} {
+  allow read: if isPlatformAdmin();
 
+  allow create, update, delete: if false;
+}
     // ── HOD Claim Requests (bootstrapping gate) ───────────────
 
     match /hodClaimRequests/{claimId} {
@@ -608,7 +619,7 @@ service cloud.firestore {
     }
 
     // ── Team members ──────────────────────────────────────────
-    // - create / delete: backend (Admin SDK) or platform admin only.
+    // - create / delete: trusted backend (Admin SDK) only.
     // - update: own shift, or an exact verified HOD of the same hospital
     //   changing a colleague's shift. Only ['shift','updatedAt'] may change.
 
@@ -624,10 +635,9 @@ service cloud.firestore {
           )
         );
 
-      allow create, delete: if isPlatformAdmin();
+     allow create, delete: if false;
 
-      allow update: if isPlatformAdmin()
-        || (
+     allow update: if (
           isLoggedIn()
           && isValidId(memberId)
           && userHasActiveHospitalMembership(uid())
@@ -651,7 +661,8 @@ service cloud.firestore {
     // ── Team Invites — backend only (preview/create/accept via API) ──
 
     match /teamInvites/{token} {
-      allow read, write: if isPlatformAdmin();
+      allow read: if isPlatformAdmin();
+allow create, update, delete: if false;
     }
 
     // ── Hospital shift configuration — readable by all, editable by HOD ──

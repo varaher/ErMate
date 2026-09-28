@@ -3247,39 +3247,156 @@ const handleCancelJoinRequest = async () => {
 };
 
   // Roster Management Handlers
-  const handleAddTeamMember = async (name: string, email: string, role: string, shift: string) => {
-    try {
-      if (!auth.currentUser) throw new Error("Not authenticated");
-      const idToken = await auth.currentUser.getIdToken();
-      
-      const res = await fetch("/api/team/create-invite", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${idToken}`
-        },
-        body: JSON.stringify({ invitedEmail: email, role, maxUses: 1 })
-      });
-      
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.error || "Failed to generate invite");
-      }
-      
-      const data = await res.json();
-      const origin = typeof window !== "undefined" ? window.location.origin : "https://ermate.hospital";
-      const link = `${origin}/join/${data.token}`;
-      
-      triggerNotification("Invite Generated", `Secure invite link created for ${email}. Please share this link: ${link}`, "success");
-      // Could auto-copy to clipboard here
-      if (navigator.clipboard) {
-        navigator.clipboard.writeText(link).catch(() => {});
-      }
-    } catch (err: any) {
-      console.error("Error creating invite:", err);
-      alert(err.message || "Failed to create invite.");
+  const handleAddTeamMember = async (
+  name: string,
+  email: string,
+  role: string,
+  shift: string
+) => {
+  try {
+    if (!auth.currentUser) {
+      throw new Error("Not authenticated");
     }
+
+    const currentEmail =
+      (auth.currentUser.email || "")
+        .trim()
+        .toLowerCase();
+
+    const isPlatformAdmin =
+      currentEmail === "varahgrp@gmail.com";
+
+    const requestBody: any = {
+      invitedEmail: email.trim().toLowerCase(),
+      role,
+      maxUses: 1
+    };
+
+    /*
+     * Normal HOD:
+     * Hospital authority is derived by the backend
+     * from team_members/{uid}.
+     *
+     * Platform admin:
+     * Backend intentionally requires an explicit
+     * hospitalId + hospitalName.
+     */
+    if (isPlatformAdmin) {
+      const adminProfileSnap =
+        await getDoc(
+          doc(
+            db,
+            "users",
+            auth.currentUser.uid
+          )
+        );
+
+      if (!adminProfileSnap.exists()) {
+        throw new Error(
+          "Platform administrator profile could not be loaded."
+        );
+      }
+
+      const adminProfile =
+        adminProfileSnap.data() as any;
+
+      const hospitalId =
+        String(
+          adminProfile.hospitalId || ""
+        ).trim();
+
+      const hospitalName =
+        String(
+          adminProfile.hospital ||
+          adminProfile.hospitalName ||
+          ""
+        ).trim();
+
+      /*
+       * Never manufacture hospitalId from the
+       * display hospital name.
+       */
+      if (!hospitalId || !hospitalName) {
+        throw new Error(
+          "The current platform-admin profile does not have a canonical hospitalId and hospitalName."
+        );
+      }
+
+      requestBody.hospitalId =
+        hospitalId;
+
+      requestBody.hospitalName =
+        hospitalName;
+    }
+
+    const idToken =
+      await auth.currentUser.getIdToken(true);
+
+    const res = await fetch(
+      "/api/team/create-invite",
+      {
+        method: "POST",
+
+        headers: {
+          "Content-Type":
+            "application/json",
+
+          Authorization:
+            `Bearer ${idToken}`
+        },
+
+        body: JSON.stringify(
+          requestBody
+        )
+      }
+    );
+
+    if (!res.ok) {
+      const errData =
+        await res
+          .json()
+          .catch(() => ({}));
+
+      throw new Error(
+        errData.error ||
+        "Failed to generate invite"
+      );
+    }
+
+    const data =
+      await res.json();
+
+    const origin =
+      typeof window !== "undefined"
+        ? window.location.origin
+        : "https://ermate.hospital";
+
+    const link =
+      `${origin}/join/${data.token}`;
+
+    triggerNotification(
+      "Invite Generated",
+      `Secure invite link created for ${email}. Please share this link: ${link}`,
+      "success"
+    );
+
+    if (navigator.clipboard) {
+      navigator.clipboard
+        .writeText(link)
+        .catch(() => {});
+    }
+  } catch (err: any) {
+    console.error(
+      "Error creating invite:",
+      err
+    );
+
+    alert(
+      err.message ||
+      "Failed to create invite."
+    );
   }
+};
 
   const handleRemoveTeamMember = async (id: string) => {
     try {

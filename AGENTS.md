@@ -45,6 +45,43 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-09-27] — Full Team Lifecycle Security Audit Logging (`teamAuditLog`)
+- **Comprehensive Team Audit Events (`server/routes/team.routes.ts`)**:
+  - Attached atomic transactional security audit records to all critical membership mutations inside `db.runTransaction()`:
+    - `/api/team/request-join`: `TEAM_JOIN_REQUESTED` logging applicant UID, requested hospital, target role, and archival state.
+    - `/api/team/cancel-join-request`: `TEAM_JOIN_REQUEST_CANCELLED` recording applicant self-cancellation.
+    - `/api/team/approve-member`: `TEAM_MEMBER_APPROVED` recording approving HOD/admin UID, hospital binding, and member activation.
+    - `/api/team/decline-member`: `TEAM_MEMBER_DECLINED` recording rejecting HOD/admin UID and applicant details.
+    - `/api/team/change-role`: `TEAM_MEMBER_ROLE_CHANGED` paired with legacy `roleChangeLog`.
+    - `/api/team/remove-member`: `TEAM_MEMBER_REMOVED` recording HOD removal authority and target member status transition.
+    - `/api/team/leave`: `TEAM_MEMBER_LEFT` capturing voluntary departure.
+  - Verified clean TypeScript validation (`tsc --noEmit`) and successful production bundling with `compile_applet`.
+
+### [2026-09-27] — Transactional Invite Acceptance Security Audit Logging
+- **Invite Acceptance Audit Log (`server/routes/team.routes.ts`)**:
+  - Placed `teamAuditLog/{id}` event (`TEAM_INVITE_ACCEPTED`) directly inside the `db.runTransaction()` block of `/api/team/accept-invite`, ensuring atomic commit alongside membership activation and profile synchronization.
+  - Recorded actor identity, hospital scope, assigned role, inviting authority, verification status, and whether prior membership was archived, without exposing secret invite tokens.
+  - Resolved transaction closure scoping and verified clean TypeScript validation (`tsc --noEmit`) and successful production bundling with `compile_applet`.
+
+### [2026-09-27] — Atomic Invite Creation & Security Audit Logging
+- **Invite Creation Security Audit (`server/routes/team.routes.ts`)**:
+  - Implemented atomic batch creation (`db.batch()`) pairing `teamInvites/{token}` storage with `teamAuditLog/{id}` audit events (`TEAM_INVITE_CREATED`).
+  - Recorded verified caller authority (`platform_admin` vs `hospital_hod`), caller UID, actor email, hospital scope, recipient email restriction, role, max uses, and expiration timestamp.
+  - Sanitized audit payload to never store the secret invite token in audit records.
+  - Verified clean TypeScript validation (`tsc --noEmit`) and successful production bundling with `compile_applet`.
+
+### [2026-09-27] — Platform Admin Invite Creation Alignment & Token Refresh
+- **Team Roster Invite Generation (`src/App.tsx`)**:
+  - Aligned client-side `handleAddTeamMember` with platform administrator authority checks on `/api/team/create-invite`. When requested by platform admin (`varahgrp@gmail.com`), securely loads canonical `hospitalId` and `hospitalName` directly from the administrator's profile rather than relying on browser defaults.
+  - Forced fresh token retrieval (`getIdToken(true)`) prior to dispatching invite creation requests.
+  - Verified clean TypeScript validation (`tsc --noEmit`) and successful production bundling with `compile_applet`.
+
+### [2026-09-27] — Email-Restricted Invite Verification Hardening
+- **Invite Acceptance (`server/routes/team.routes.ts`)**:
+  - Enforced `req.user.email_verified === true` for email-restricted department invitations (`invite.invitedEmail`) both in pre-transaction checks and inside `db.runTransaction()`.
+  - Re-verified `targetEmail === userEmail` within the transaction against the freshest snapshot of `currentInv`, ensuring invite restrictions cannot be bypassed.
+  - Verified clean TypeScript validation (`tsc --noEmit`) and successful production bundling with `compile_applet`.
+
 ### [2026-09-27] — Auth State Listener Race Condition Closure & Transactional User Profile Bootstrap
 - **Auth State Listener (`src/App.tsx`)**:
   - Implemented transactional `runTransaction` create-if-missing profile initialization inside `onAuthStateChanged`, eliminating potential race condition overwrites between client signup and session bootstrap.
