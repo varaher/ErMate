@@ -30,6 +30,8 @@ ErMate implements **Local On-The-Fly PHI De-identification** hosted on Indian Cl
 - **SBAR Structure**: Situation, Background, Assessment, Recommendation, Alert Banners, Pending Labs, and Vitals Trajectory.
 - **Direct PDF & WhatsApp Export**: One-click formatted handover sheets for shift transitions.
 - **Decoupled Shift Transition & Operational Continuity**: Doctor shift end is strictly decoupled from patient encounter termination (`Doctor shift ended ≠ Patient encounter ended`). Handover PDF download, printing, or text export never alters `ClinicalCase.status` or `dispositionDetails.dispositionType`. Active patients remain visible on the active ER board for the incoming shift team until an explicit clinical disposition occurs. Unsafe board-clearing mutations and misleading clean-slate warnings have been completely eliminated.
+- **Duty-Bound Current Clinician Assignment (`Patch D4A/D4B`)**: Preserves original case creation duty provenance (`case.shiftId`, `shiftDate`, `shiftName`) immutably while recording the operational current clinician (`currentAssigneeUid`, `currentAssigneeEmail`, `currentAssigneeName`) and the exact Actual Duty Session (`currentAssignmentDutySessionId`, `currentAssignmentDutyDateKey`, `currentAssignmentShiftId`, `currentAssignmentAt`) during which responsibility was accepted or transferred via handover. Gated by Patch D4B: hospital case takeover strictly requires an active, unexpired Actual Duty Session, rejecting off-duty attempts prior to database mutation while allowing routine edits and emergency case creations unhindered.
+- **Current Duty Case Visibility on Home (`Patch H1`)**: Hospital clinician "My Assigned Cases" on the Home dashboard strictly isolates operationally active cases (`status === "Active" || status === "Triage"`) bound to the clinician's valid, running Actual Duty Session (`currentAssignmentDutySessionId === activeDutySession.id` and `currentAssigneeEmail === profile.email` with `isActiveDutySessionNow(activeDutySession) === true`). Completely eliminates stale fallback to `doctorEmail === profile.email`, guaranteeing that old cases from previous shifts, expired duty sessions, or off-duty periods never pollute the doctor's active queue. Department cases and badge counts automatically reflect active admissions with zero database mutation.
 
 ### 2. Auto-Discharge Summary & Quick Discharge Generator
 - Converts complex ED stay trajectories into NABH/JCI-ready Discharge Summaries.
@@ -141,6 +143,8 @@ ErMate employs a dynamic role-based navigation hierarchy computed from `getNorma
 | `/server/dischargeSummary.ts` | Auto-Discharge summary synthesizer |
 | `/server/extraction.ts` | Voice dictation & clinical case parser |
 | `/server/mortalityAudit.ts` | M&M Audit generator & DOCX builder |
+| `/src/utils/dutyWindow.ts` | Pure duty window resolver & overnight midnight transition calculator (Patch D1) |
+| `/src/services/dutySessionService.ts` | Persisted actual duty session lifecycle & atomic session-safe termination (Patch D2) |
 | `/src/utils/roleUtils.ts` | Role normalization & dynamic navigation permissions helper (`getNormalizedRole`) |
 | `/src/components/ToolsView.tsx` | Consolidated acute clinical tools hub (Drug Guide, Peds Calculator, Pocket Mirror) |
 | `/src/components/MoreView.tsx` | Secondary utilities hub (Directory, MLC, Governance, Settings, Admin) |

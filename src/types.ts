@@ -531,6 +531,16 @@ export interface ClinicalCase {
   consultantName?: string;
   departmentId?: string;
   createdAt?: string;
+
+  // Operational current clinician assignment & duty session (Patch D4A)
+  currentAssigneeUid?: string;
+  currentAssigneeEmail?: string;
+  currentAssigneeName?: string;
+  currentAssignmentDutySessionId?: string;
+  currentAssignmentDutyDateKey?: string;
+  currentAssignmentShiftId?: string;
+  currentAssignmentAt?: string;
+
   lastEditedBy?: string;
   lastEditedByName?: string;
   lastEditedByRole?: string;

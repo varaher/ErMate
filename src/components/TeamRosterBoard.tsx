@@ -1043,6 +1043,8 @@ export default function TeamRosterBoard({
                   ...targetCase,
                   doctorEmail: profile.email,
                   doctorName: "Dr. " + profile.name,
+                  currentAssigneeEmail: profile.email,
+                  currentAssigneeName: "Dr. " + profile.name,
                   dispositionDetails: {
                     ...(targetCase.dispositionDetails || { dispositionType: "Discharge", durationInEr: "", residentName: "Dr. " + profile.name, consultantName: "Dr. " + profile.name, observationNotes: "" }),
                     residentName: "Dr. " + profile.name

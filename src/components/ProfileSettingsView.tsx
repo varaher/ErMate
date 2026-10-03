@@ -50,6 +50,8 @@ interface ProfileSettingsViewProps {
   shifts?: any[];
   onUpdateShifts?: (newShifts: any[]) => Promise<void> | void;
   initialSubSection?: string | null;
+  onStartDutySession?: (shift: any) => Promise<void>;
+  onEndDutySession?: () => Promise<void>;
 }
 
 export default function ProfileSettingsView({
@@ -79,6 +81,8 @@ export default function ProfileSettingsView({
   shifts = [],
   onUpdateShifts,
   initialSubSection = null,
+  onStartDutySession,
+  onEndDutySession,
 }: ProfileSettingsViewProps) {
   const normalizeSubSection = (sub: string | null | undefined): string | null => {
     if (!sub) return null;
@@ -424,10 +428,39 @@ const startRealCheckout = async (planKey: string) => {
 };
 
   // Toggle Shift Checked-In State
-  const handleToggleShift = () => {
+  const handleToggleShift = async () => {
     if (!setIsOnShift) return;
     const targetState = !isOnShift;
-    setIsOnShift(targetState);
+
+    if (!targetState) {
+      if (onEndDutySession) {
+        await onEndDutySession();
+      } else {
+        setIsOnShift(false);
+      }
+    } else {
+      const userEmailLower = profile.email.toLowerCase().trim();
+      const currentUserMember = teamMembers.find(
+        m => m.email.toLowerCase().trim() === userEmailLower
+      );
+      const plannedShiftId = currentUserMember?.shift || "morning";
+      const activeShiftsList = shifts && shifts.length > 0 ? shifts : [
+        { id: "morning", name: "Morning", time: "08:00 - 14:00" },
+        { id: "evening", name: "Evening", time: "14:00 - 20:00" },
+        { id: "night", name: "Night", time: "20:00 - 08:00" },
+        { id: "off", name: "Off Shift", time: "Off Duty" },
+        { id: "d1", name: "D1 Shift", time: "08:00 - 18:00" },
+        { id: "d2", name: "D2 Shift", time: "18:00 - 08:00" },
+        { id: "g1", name: "G1 Shift", time: "08:00 - 16:00" },
+        { id: "g2", name: "G2 Shift", time: "12:00 - 20:00" },
+      ];
+      const chosenShift = activeShiftsList.find(s => s.id === plannedShiftId) || activeShiftsList[0];
+      if (onStartDutySession) {
+        await onStartDutySession(chosenShift);
+      } else {
+        setIsOnShift(true);
+      }
+    }
     
     // Create custom feedback toast
     const toast = document.createElement("div");

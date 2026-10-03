@@ -54,6 +54,14 @@ import { GlobalRefreshButton } from "./components/shared/GlobalRefreshButton";
 import { updateChatMessage, appendChatMessage, linkScribeSessionAndCase, verifyTwoSidedLink } from "./services/scribeChatStorage";
 import { deduplicateConsultations } from "./utils/consultationNormalization";
 import { isEstablishedCaseSheet } from "./utils/establishedCaseCheck";
+import { resolveDutyWindow } from "./utils/dutyWindow";
+import {
+  startDutySession,
+  endDutySession,
+  subscribeActiveDutySession,
+  isActiveDutySessionNow,
+  type DutySessionRecord,
+} from "./services/dutySessionService";
 
 import { auth, db, handleFirestoreError, OperationType } from "./firebase";
 import { sanitizeForFirestore } from "./utils/firestoreSanitizer";
@@ -586,16 +594,274 @@ useEffect(() => {
   }, [profile]);
 
   // Shift & Team states
+  const [activeDutySession, setActiveDutySession] = useState<DutySessionRecord | null>(() => {
+    try {
+      const saved = localStorage.getItem("ermate_activeDutySession");
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && isActiveDutySessionNow(parsed, new Date())) return parsed;
+      }
+    } catch (e) {}
+    return null;
+  });
+
+  const activeDutySessionIdRef = useRef<string | null>(
+    activeDutySession?.id ?? null
+  );
+
   const [isOnShift, setIsOnShift] = useState<boolean>(() => {
     try {
-      const saved = localStorage.getItem('ermate_isOnShift');
-      const savedDate = localStorage.getItem('ermate_shiftDate');
-      if (saved === 'true' && savedDate === new Date().toDateString()) {
-        return true;
+      const savedSession = localStorage.getItem("ermate_activeDutySession");
+      if (savedSession) {
+        const parsed = JSON.parse(savedSession);
+        if (parsed && isActiveDutySessionNow(parsed, new Date())) {
+          return true;
+        }
       }
     } catch(e) {}
     return false;
   });
+
+  // Real-time cross-device synchronization for active duty session
+  useEffect(() => {
+    const uid = auth.currentUser?.uid;
+    if (!uid) return;
+
+    const unsubscribe = subscribeActiveDutySession(uid, (session) => {
+      activeDutySessionIdRef.current = session?.id ?? null;
+      setActiveDutySession(session);
+      if (session && isActiveDutySessionNow(session, new Date())) {
+        setIsOnShift(true);
+      } else {
+        setIsOnShift(false);
+      }
+    });
+
+    return () => unsubscribe();
+  }, [auth.currentUser?.uid]);
+
+  // Authoritative clock-based automatic expiry & visibility/focus listener
+  useEffect(() => {
+    const uid = auth.currentUser?.uid;
+    if (!activeDutySession) {
+      setIsOnShift(false);
+      return;
+    }
+
+    const sessionId = activeDutySession.id;
+
+    const recheckValidity = () => {
+      const now = new Date();
+      if (!isActiveDutySessionNow(activeDutySession, now)) {
+        if (activeDutySessionIdRef.current === sessionId) {
+          setIsOnShift(false);
+        }
+
+        if (uid && activeDutySession.status === "active") {
+          endDutySession(uid, sessionId).catch(() => {});
+        }
+
+        return false;
+      }
+
+      if (activeDutySessionIdRef.current === sessionId) {
+        setIsOnShift(true);
+      }
+      return true;
+    };
+
+    // Immediate check on mount/session update
+    const isValid = recheckValidity();
+    if (!isValid) return;
+
+    // Schedule exact timeout for duty end
+    const endMs = new Date(activeDutySession.end).getTime();
+    const remainingMs = endMs - Date.now();
+    let timerId: any = null;
+
+    if (remainingMs > 0) {
+      timerId = setTimeout(() => {
+        if (activeDutySessionIdRef.current === sessionId) {
+          setIsOnShift(false);
+        }
+
+        if (uid) {
+          endDutySession(uid, sessionId).catch(() => {});
+        }
+      }, remainingMs);
+    } else {
+      if (activeDutySessionIdRef.current === sessionId) {
+        setIsOnShift(false);
+      }
+
+      if (uid) {
+        endDutySession(uid, sessionId).catch(() => {});
+      }
+    }
+
+    // Re-evaluate on window focus & document visibility change (mobile background / laptop lid sleep)
+    const handleActivity = () => {
+      recheckValidity();
+    };
+
+    window.addEventListener("focus", handleActivity);
+    document.addEventListener("visibilitychange", handleActivity);
+
+    return () => {
+      if (timerId) clearTimeout(timerId);
+      window.removeEventListener("focus", handleActivity);
+      document.removeEventListener("visibilitychange", handleActivity);
+    };
+  }, [activeDutySession, auth.currentUser?.uid]);
+
+  const handleStartDutySession = async (shift: any) => {
+    const uid = auth.currentUser?.uid;
+    if (!uid) return;
+
+    const session = await startDutySession(uid, shift, {
+      hospital: profile.hospital,
+      hospitalId: (profile as any)?.hospitalId,
+    });
+    if (!session) {
+      triggerNotification(
+        "Shift Inactive",
+        `The ${shift?.name || "selected"} shift (${shift?.time || ""}) is not active at the current time.`,
+        "warning"
+      );
+      return;
+    }
+    // Set authoritative session without optimistic forcing
+    activeDutySessionIdRef.current = session.id;
+    setActiveDutySession(session);
+  };
+
+  const handleEndDutySession = async () => {
+    const uid = auth.currentUser?.uid;
+    const sessionId = activeDutySession?.id;
+
+    if (!uid || !sessionId) return;
+
+    const didEnd = await endDutySession(uid, sessionId);
+
+    // Clear local state only if THIS exact session was actually ended
+    // and has not meanwhile been replaced by another device/session.
+    if (
+      didEnd &&
+      activeDutySessionIdRef.current === sessionId
+    ) {
+      activeDutySessionIdRef.current = null;
+      setActiveDutySession(null);
+      setIsOnShift(false);
+    }
+  };
+
+  /**
+   * Canonical Case-Creation Duty Provenance Resolver (ErMate — Patch D3A)
+   *
+   * ClinicalCase shift provenance must describe a REAL confirmed Actual Duty Session.
+   * If there is no valid Actual Duty Session:
+   *   - DO NOT infer from team rota
+   *   - DO NOT invent Morning
+   *   - DO NOT create fake shift provenance
+   *
+   * Only two semantic outcomes:
+   * A. Valid Actual Duty: return real metadata
+   * B. No Valid Actual Duty: return null
+   */
+  const getCaseCreationDutyMetadata = (
+    sessionOverride?: DutySessionRecord | null
+  ): {
+    shiftId: string;
+    shiftDate: string;
+    shiftName: string;
+    baseShiftId: string;
+  } | null => {
+    const sessionToUse =
+      sessionOverride !== undefined
+        ? sessionOverride
+        : activeDutySession;
+
+    if (
+      !sessionToUse ||
+      !isActiveDutySessionNow(sessionToUse, new Date())
+    ) {
+      return null;
+    }
+
+    const baseShiftId = sessionToUse.shiftId || "custom";
+    const cleanBase = baseShiftId.startsWith("shift_") ? baseShiftId.replace(/^shift_/, "") : baseShiftId;
+    const shiftDate = sessionToUse.dutyDateKey;
+    const compactDate = shiftDate.replace(/-/g, "");
+    const shiftId = `shift_${cleanBase}_${compactDate}`;
+    const shiftName = sessionToUse.shiftName || (cleanBase.charAt(0).toUpperCase() + cleanBase.slice(1));
+
+    return {
+      shiftId,
+      shiftDate,
+      shiftName,
+      baseShiftId: cleanBase,
+    };
+  };
+
+  /**
+   * Canonical Duty-Bound Current Clinician Assignment Resolver (ErMate — Patch D4A)
+   *
+   * Resolves the operational current clinician assignment and duty session:
+   * - currentAssigneeUid: Auth UID of clinician currently responsible
+   * - currentAssigneeEmail: current clinician email
+   * - currentAssigneeName: current clinician display name
+   * - currentAssignmentDutySessionId: exact Actual Duty Session during which responsibility was accepted
+   * - currentAssignmentDutyDateKey: that session's canonical dutyDateKey
+   * - currentAssignmentShiftId: raw Actual Duty Session shift ID (e.g. "morning", "evening", "night", "d1")
+   * - currentAssignmentAt: ISO timestamp when this assignment/takeover occurred
+   *
+   * If there is no valid Actual Duty Session active right now:
+   * - The clinician assignment fields (uid, email, name, at) are still recorded
+   * - The duty session fields (dutySessionId, dutyDateKey, shiftId) are omitted (never fabricated)
+   */
+  const getCurrentAssignmentMetadata = (
+    clinicianOverride?: { uid?: string; email?: string; name?: string },
+    sessionOverride?: DutySessionRecord | null,
+    assignmentTimestamp?: string
+  ): {
+    currentAssigneeUid: string;
+    currentAssigneeEmail: string;
+    currentAssigneeName: string;
+    currentAssignmentAt: string;
+    currentAssignmentDutySessionId?: string;
+    currentAssignmentDutyDateKey?: string;
+    currentAssignmentShiftId?: string;
+  } => {
+    const sessionToUse =
+      sessionOverride !== undefined
+        ? sessionOverride
+        : activeDutySession;
+
+    const isSessionActive =
+      sessionToUse && isActiveDutySessionNow(sessionToUse, new Date());
+
+    const rawShiftId = isSessionActive
+      ? (sessionToUse.shiftId || "custom").trim().toLowerCase().replace(/^shift_/, "")
+      : undefined;
+
+    const editName = (profile?.name || "").startsWith("Dr. ")
+      ? profile.name
+      : "Dr. " + (profile?.name || "Doctor");
+
+    return {
+      currentAssigneeUid: clinicianOverride?.uid || auth.currentUser?.uid || "uid_priya",
+      currentAssigneeEmail: clinicianOverride?.email || profile?.email || auth.currentUser?.email || "",
+      currentAssigneeName: clinicianOverride?.name || editName,
+      currentAssignmentAt: assignmentTimestamp || new Date().toISOString(),
+      ...(isSessionActive && rawShiftId && sessionToUse
+        ? {
+            currentAssignmentDutySessionId: sessionToUse.id,
+            currentAssignmentDutyDateKey: sessionToUse.dutyDateKey,
+            currentAssignmentShiftId: rawShiftId,
+          }
+        : {}),
+    };
+  };
   const [showShiftCheckIn, setShowShiftCheckIn] = useState<boolean>(() => {
     try {
       const savedDismissed = localStorage.getItem('ermate_shiftDismissed');
@@ -1677,21 +1943,16 @@ const handleDeleteAllCases = async () => {
     if (!auth.currentUser) throw new Error("Not authenticated");
     const workspace = await resolveWorkspaceForUser(auth.currentUser.uid);
     
-    // Calculate shift and creation context fields dynamically
-    const todayDateStr = new Date().toISOString().split('T')[0];
-    const todayDateCompact = todayDateStr.replace(/-/g, '');
-    const currentUserMember = teamMembers.find(
-      m => (m.email || "").toLowerCase().trim() === (profile.email || "").toLowerCase().trim()
-    );
-    const activeUserShiftId = currentUserMember?.shift || "morning";
-    const activeShiftName = activeUserShiftId.charAt(0).toUpperCase() + activeUserShiftId.slice(1);
-    const computedShiftId = `shift_${activeUserShiftId}_${todayDateCompact}`;
+    // Resolve case creation duty provenance dynamically (ErMate — Patch D3A)
+    const creationDuty = getCaseCreationDutyMetadata();
     
-    const consultantOnShift = teamMembers.find(
-      m => ((m.role || "").toLowerCase().includes("consultant") || (m.role || "").toLowerCase().includes("hod") || (m.role || "").toLowerCase().includes("lead")) && m.shift === activeUserShiftId
-    );
-    const consultantId = consultantOnShift ? consultantOnShift.id : "uid_nirmal";
-    const consultantName = consultantOnShift ? consultantOnShift.name || "Dr. Nirmal" : "Dr. Nirmal";
+    const consultantOnShift = creationDuty
+      ? teamMembers.find(
+          m => ((m.role || "").toLowerCase().includes("consultant") || (m.role || "").toLowerCase().includes("hod") || (m.role || "").toLowerCase().includes("lead")) && m.shift === creationDuty.baseShiftId
+        )
+      : null;
+    const consultantId = consultantOnShift ? consultantOnShift.id : undefined;
+    const consultantName = consultantOnShift ? (consultantOnShift.name || undefined) : undefined;
     const createdByUid = auth.currentUser?.uid || "uid_priya";
     const createdByRoleVal = (profile.role || "").toLowerCase().includes("hod") ? "hod" : ((profile.role || "").toLowerCase().includes("consultant") ? "consultant" : "resident");
     const hospitalSlug = (profile.hospital || "general-er").trim().toLowerCase().replace(/[^a-z0-9]/g, "-");
@@ -1723,13 +1984,28 @@ const handleDeleteAllCases = async () => {
       createdByUid: auth.currentUser?.uid || createdByUid,
       createdByName: (profile.name || "").startsWith("Dr. ") ? profile.name : "Dr. " + (profile.name || "Doctor"),
       createdByRole: createdByRoleVal,
-      shiftId: computedShiftId,
-      shiftDate: todayDateStr,
-      shiftName: activeShiftName,
-      consultantId,
-      consultantName,
+      ...(creationDuty
+        ? {
+            shiftId: creationDuty.shiftId,
+            shiftDate: creationDuty.shiftDate,
+            shiftName: creationDuty.shiftName,
+          }
+        : {}),
+      ...(consultantId ? { consultantId } : {}),
+      ...(consultantName ? { consultantName } : {}),
       departmentId: hospitalSlug,
       createdAt: new Date().toISOString(),
+      currentAssigneeUid: auth.currentUser?.uid || createdByUid,
+      currentAssigneeEmail: profile.email,
+      currentAssigneeName: (profile.name || "").startsWith("Dr. ") ? profile.name : "Dr. " + (profile.name || "Doctor"),
+      currentAssignmentAt: new Date().toISOString(),
+      ...(creationDuty && activeDutySession
+        ? {
+            currentAssignmentDutySessionId: activeDutySession.id,
+            currentAssignmentDutyDateKey: activeDutySession.dutyDateKey,
+            currentAssignmentShiftId: creationDuty.baseShiftId,
+          }
+        : {}),
       patient: demographics,
       vitals,
       sampleHistory: {
@@ -1856,10 +2132,133 @@ const handleDeleteAllCases = async () => {
     const editUid = auth.currentUser?.uid || "uid_priya";
     const editName = (profile.name || "").startsWith("Dr. ") ? profile.name : "Dr. " + (profile.name || "Doctor");
 
+    const isBrandNewCase = !previousCase;
+    const creationDuty = isBrandNewCase ? getCaseCreationDutyMetadata() : null;
+
+    // Resolve shift provenance (Patch D3A):
+    // 1. Existing case: preserve previousCase provenance exactly (even if undefined/absent)
+    // 2. New case with pre-assigned provenance: preserve updatedCase provenance
+    // 3. New case without provenance: stamp creationDuty ONLY if a valid Actual Duty Session exists
+    // 4. Otherwise: leave fields absent (never infer or fabricate)
+    const resolvedShiftProvenance = previousCase
+      ? {
+          ...(previousCase.shiftId !== undefined ? { shiftId: previousCase.shiftId } : {}),
+          ...(previousCase.shiftDate !== undefined ? { shiftDate: previousCase.shiftDate } : {}),
+          ...(previousCase.shiftName !== undefined ? { shiftName: previousCase.shiftName } : {}),
+        }
+      : {
+          ...(updatedCase.shiftId !== undefined
+            ? { shiftId: updatedCase.shiftId }
+            : creationDuty ? { shiftId: creationDuty.shiftId } : {}),
+          ...(updatedCase.shiftDate !== undefined
+            ? { shiftDate: updatedCase.shiftDate }
+            : creationDuty ? { shiftDate: creationDuty.shiftDate } : {}),
+          ...(updatedCase.shiftName !== undefined
+            ? { shiftName: updatedCase.shiftName }
+            : creationDuty ? { shiftName: creationDuty.shiftName } : {}),
+        };
+
+    // Resolve current clinician assignment & duty session (ErMate — Patch D4A):
+    // 1. Is it a takeover / transfer to a different clinician?
+    //    Detected if updatedCase explicitly specifies a new currentAssigneeUid/Email,
+    //    or if updatedCase.doctorEmail differs from previousCase.doctorEmail.
+    // 2. Is it a brand new case?
+    //    Stamp the creator as current assignee with their active duty session (if active).
+    // 3. Is it an existing case being edited by the same clinician?
+    //    Preserve the existing currentAssignee* and currentAssignment* fields strictly without mutation.
+    const isClinicianTakeover = Boolean(
+      previousCase && (
+        (updatedCase.currentAssigneeUid && previousCase.currentAssigneeUid && updatedCase.currentAssigneeUid !== previousCase.currentAssigneeUid) ||
+        (updatedCase.doctorEmail && previousCase.doctorEmail && updatedCase.doctorEmail.toLowerCase().trim() !== previousCase.doctorEmail.toLowerCase().trim()) ||
+        (updatedCase.currentAssigneeEmail && previousCase.currentAssigneeEmail && updatedCase.currentAssigneeEmail.toLowerCase().trim() !== previousCase.currentAssigneeEmail.toLowerCase().trim())
+      )
+    );
+
+    const activeDutySessionValid = activeDutySession && isActiveDutySessionNow(activeDutySession, new Date());
+    const rawShiftId = activeDutySessionValid
+      ? (activeDutySession.shiftId || "custom").trim().toLowerCase().replace(/^shift_/, "")
+      : null;
+
+    // Hospital Takeover Gate (ErMate — Patch D4B):
+    // An explicit takeover/reassignment of an existing hospital patient to the logged-in clinician
+    // must succeed ONLY when that clinician has a valid Actual Duty Session active right now.
+    // Off-duty or expired-duty takeover attempts are aborted before any Firestore write.
+    const isHospitalScopedCase = Boolean(
+      previousCase && (
+        previousCase.workspaceType === "hospital" ||
+        (previousCase.workspaceType !== "individual" && Boolean(previousCase.hospitalId || previousCase.hospital || workspaceMetadata.hospitalId || workspaceMetadata.workspaceType === "hospital"))
+      )
+    );
+
+    if (previousCase && isHospitalScopedCase && isClinicianTakeover && !activeDutySessionValid) {
+      triggerNotification("Duty Session Required", "Start your current duty before taking handover.", "warning");
+      return;
+    }
+
+    let resolvedCurrentAssignment: Partial<ClinicalCase> = {};
+
+    if (isBrandNewCase) {
+      const assigneeUid = updatedCase.currentAssigneeUid || auth.currentUser?.uid || editUid;
+      const assigneeEmail = updatedCase.currentAssigneeEmail || updatedCase.doctorEmail || profile.email;
+      const assigneeName = updatedCase.currentAssigneeName || updatedCase.doctorName || editName;
+      const assignedAt = updatedCase.currentAssignmentAt || new Date().toISOString();
+
+      resolvedCurrentAssignment = {
+        currentAssigneeUid: assigneeUid,
+        currentAssigneeEmail: assigneeEmail,
+        currentAssigneeName: assigneeName,
+        currentAssignmentAt: assignedAt,
+        ...(activeDutySessionValid && rawShiftId && activeDutySession
+          ? {
+              currentAssignmentDutySessionId: activeDutySession.id,
+              currentAssignmentDutyDateKey: activeDutySession.dutyDateKey,
+              currentAssignmentShiftId: rawShiftId,
+            }
+          : (updatedCase.currentAssignmentDutySessionId
+              ? {
+                  currentAssignmentDutySessionId: updatedCase.currentAssignmentDutySessionId,
+                  currentAssignmentDutyDateKey: updatedCase.currentAssignmentDutyDateKey,
+                  currentAssignmentShiftId: updatedCase.currentAssignmentShiftId,
+                }
+              : {})),
+      };
+    } else if (isClinicianTakeover) {
+      const assigneeUid = auth.currentUser?.uid || updatedCase.currentAssigneeUid || editUid;
+      const assigneeEmail = updatedCase.doctorEmail || profile.email || updatedCase.currentAssigneeEmail;
+      const assigneeName = updatedCase.doctorName || editName || updatedCase.currentAssigneeName;
+      const assignedAt = new Date().toISOString();
+
+      resolvedCurrentAssignment = {
+        currentAssigneeUid: assigneeUid,
+        currentAssigneeEmail: assigneeEmail,
+        currentAssigneeName: assigneeName,
+        currentAssignmentAt: assignedAt,
+        ...(activeDutySessionValid && rawShiftId && activeDutySession
+          ? {
+              currentAssignmentDutySessionId: activeDutySession.id,
+              currentAssignmentDutyDateKey: activeDutySession.dutyDateKey,
+              currentAssignmentShiftId: rawShiftId,
+            }
+          : {}),
+      };
+    } else {
+      resolvedCurrentAssignment = {
+        ...(previousCase.currentAssigneeUid !== undefined ? { currentAssigneeUid: previousCase.currentAssigneeUid } : (updatedCase.currentAssigneeUid !== undefined ? { currentAssigneeUid: updatedCase.currentAssigneeUid } : {})),
+        ...(previousCase.currentAssigneeEmail !== undefined ? { currentAssigneeEmail: previousCase.currentAssigneeEmail } : (updatedCase.currentAssigneeEmail !== undefined ? { currentAssigneeEmail: updatedCase.currentAssigneeEmail } : {})),
+        ...(previousCase.currentAssigneeName !== undefined ? { currentAssigneeName: previousCase.currentAssigneeName } : (updatedCase.currentAssigneeName !== undefined ? { currentAssigneeName: updatedCase.currentAssigneeName } : {})),
+        ...(previousCase.currentAssignmentDutySessionId !== undefined ? { currentAssignmentDutySessionId: previousCase.currentAssignmentDutySessionId } : (updatedCase.currentAssignmentDutySessionId !== undefined ? { currentAssignmentDutySessionId: updatedCase.currentAssignmentDutySessionId } : {})),
+        ...(previousCase.currentAssignmentDutyDateKey !== undefined ? { currentAssignmentDutyDateKey: previousCase.currentAssignmentDutyDateKey } : (updatedCase.currentAssignmentDutyDateKey !== undefined ? { currentAssignmentDutyDateKey: updatedCase.currentAssignmentDutyDateKey } : {})),
+        ...(previousCase.currentAssignmentShiftId !== undefined ? { currentAssignmentShiftId: previousCase.currentAssignmentShiftId } : (updatedCase.currentAssignmentShiftId !== undefined ? { currentAssignmentShiftId: updatedCase.currentAssignmentShiftId } : {})),
+        ...(previousCase.currentAssignmentAt !== undefined ? { currentAssignmentAt: previousCase.currentAssignmentAt } : (updatedCase.currentAssignmentAt !== undefined ? { currentAssignmentAt: updatedCase.currentAssignmentAt } : {})),
+      };
+    }
+
     const caseToSave: ClinicalCase = {
 
       ...(previousCase || {}),
       ...updatedCase,
+      ...resolvedShiftProvenance,
+      ...resolvedCurrentAssignment,
       patient: {
         ...(previousCase?.patient || {}),
         ...updatedCase.patient,
@@ -2161,6 +2560,7 @@ const handleDeleteAllCases = async () => {
       profile?: any;
       currentUser?: any;
       teamMembers?: any[];
+      activeDutySession?: DutySessionRecord | null;
     }
   ): ClinicalCase => {
     const newCaseId = context?.caseId || existingMatch?.id || ("C-" + Math.floor(1000 + Math.random() * 9000));
@@ -2169,21 +2569,18 @@ const handleDeleteAllCases = async () => {
     const user = context?.currentUser || auth.currentUser;
     const members = context?.teamMembers || teamMembers || [];
 
-    // Calculate shift and creation context fields dynamically
-    const todayDateStr = new Date().toISOString().split('T')[0];
-    const todayDateCompact = todayDateStr.replace(/-/g, '');
-    const currentUserMember = members.find(
-      (m: any) => (m.email || "").toLowerCase().trim() === (prof.email || "").toLowerCase().trim()
+    // Resolve case creation duty provenance dynamically (ErMate — Patch D3)
+    const creationDuty = getCaseCreationDutyMetadata(
+      context?.activeDutySession !== undefined ? context.activeDutySession : activeDutySession
     );
-    const activeUserShiftId = currentUserMember?.shift || "morning";
-    const activeShiftName = activeUserShiftId.charAt(0).toUpperCase() + activeUserShiftId.slice(1);
-    const computedShiftId = `shift_${activeUserShiftId}_${todayDateCompact}`;
     
-    const consultantOnShift = members.find(
-      (m: any) => ((m.role || "").toLowerCase().includes("consultant") || (m.role || "").toLowerCase().includes("hod") || (m.role || "").toLowerCase().includes("lead")) && m.shift === activeUserShiftId
-    );
-    const consultantId = consultantOnShift ? consultantOnShift.id : "uid_nirmal";
-    const consultantName = consultantOnShift ? consultantOnShift.name || "Dr. Nirmal" : "Dr. Nirmal";
+    const consultantOnShift = (!existingMatch && creationDuty)
+      ? members.find(
+          (m: any) => ((m.role || "").toLowerCase().includes("consultant") || (m.role || "").toLowerCase().includes("hod") || (m.role || "").toLowerCase().includes("lead")) && m.shift === creationDuty.baseShiftId
+        )
+      : null;
+    const resolvedConsultantId = existingMatch?.consultantId || consultantOnShift?.id || undefined;
+    const resolvedConsultantName = extracted.emConsultant || existingMatch?.consultantName || (consultantOnShift ? consultantOnShift.name : undefined);
     const createdByUid = user?.uid || "uid_priya";
     const createdByRoleVal = (prof.role || "").toLowerCase().includes("hod") ? "hod" : ((prof.role || "").toLowerCase().includes("consultant") ? "consultant" : "resident");
     const hospitalSlug = (prof.hospital || "general-er").trim().toLowerCase().replace(/[^a-z0-9]/g, "-");
@@ -2216,6 +2613,55 @@ const handleDeleteAllCases = async () => {
     const rawDocName = prof.name || user?.displayName || (prof.email ? prof.email.split("@")[0] : "Doctor");
     const docFormattedName = rawDocName.startsWith("Dr. ") ? rawDocName : "Dr. " + rawDocName;
 
+    // Resolve shift provenance (Patch D3A):
+    // 1. Existing case: preserve existingMatch provenance (even if undefined/absent)
+    // 2. New case: stamp creationDuty ONLY if a valid Actual Duty Session exists
+    // 3. Otherwise: leave fields absent
+    const provenanceFields = existingMatch
+      ? {
+          ...(existingMatch.shiftId !== undefined ? { shiftId: existingMatch.shiftId } : {}),
+          ...(existingMatch.shiftDate !== undefined ? { shiftDate: existingMatch.shiftDate } : {}),
+          ...(existingMatch.shiftName !== undefined ? { shiftName: existingMatch.shiftName } : {}),
+        }
+      : creationDuty
+      ? {
+          shiftId: creationDuty.shiftId,
+          shiftDate: creationDuty.shiftDate,
+          shiftName: creationDuty.shiftName,
+        }
+      : {};
+
+    // Resolve current clinician assignment & duty session (Patch D4A):
+    const dutySessionToUse = context?.activeDutySession !== undefined ? context.activeDutySession : activeDutySession;
+    const isSessionActive = dutySessionToUse && isActiveDutySessionNow(dutySessionToUse, new Date());
+    const rawAssignmentShiftId = isSessionActive
+      ? (dutySessionToUse.shiftId || "custom").trim().toLowerCase().replace(/^shift_/, "")
+      : undefined;
+
+    const assignmentFields = existingMatch
+      ? {
+          ...(existingMatch.currentAssigneeUid !== undefined ? { currentAssigneeUid: existingMatch.currentAssigneeUid } : {}),
+          ...(existingMatch.currentAssigneeEmail !== undefined ? { currentAssigneeEmail: existingMatch.currentAssigneeEmail } : {}),
+          ...(existingMatch.currentAssigneeName !== undefined ? { currentAssigneeName: existingMatch.currentAssigneeName } : {}),
+          ...(existingMatch.currentAssignmentDutySessionId !== undefined ? { currentAssignmentDutySessionId: existingMatch.currentAssignmentDutySessionId } : {}),
+          ...(existingMatch.currentAssignmentDutyDateKey !== undefined ? { currentAssignmentDutyDateKey: existingMatch.currentAssignmentDutyDateKey } : {}),
+          ...(existingMatch.currentAssignmentShiftId !== undefined ? { currentAssignmentShiftId: existingMatch.currentAssignmentShiftId } : {}),
+          ...(existingMatch.currentAssignmentAt !== undefined ? { currentAssignmentAt: existingMatch.currentAssignmentAt } : {}),
+        }
+      : {
+          currentAssigneeUid: user?.uid,
+          currentAssigneeEmail: prof.email || user?.email || "",
+          currentAssigneeName: docFormattedName,
+          currentAssignmentAt: new Date().toISOString(),
+          ...(isSessionActive && rawAssignmentShiftId && dutySessionToUse
+            ? {
+                currentAssignmentDutySessionId: dutySessionToUse.id,
+                currentAssignmentDutyDateKey: dutySessionToUse.dutyDateKey,
+                currentAssignmentShiftId: rawAssignmentShiftId,
+              }
+            : {}),
+        };
+
     const newCase: ClinicalCase = {
       ...(existingMatch || {}),
       id: newCaseId,
@@ -2226,11 +2672,10 @@ const handleDeleteAllCases = async () => {
       createdByUid: existingMatch ? existingMatch.createdByUid : user?.uid,
       createdByName: existingMatch?.createdByName || docFormattedName,
       createdByRole: existingMatch?.createdByRole || createdByRoleVal,
-      shiftId: existingMatch?.shiftId || computedShiftId,
-      shiftDate: existingMatch?.shiftDate || todayDateStr,
-      shiftName: existingMatch?.shiftName || activeShiftName,
-      consultantId: existingMatch?.consultantId || consultantId,
-      consultantName: extracted.emConsultant || existingMatch?.consultantName || consultantName,
+      ...provenanceFields,
+      ...assignmentFields,
+      ...(resolvedConsultantId ? { consultantId: resolvedConsultantId } : {}),
+      ...(resolvedConsultantName ? { consultantName: resolvedConsultantName } : {}),
       departmentId: existingMatch?.departmentId || hospitalSlug,
       createdAt: existingMatch?.createdAt || new Date().toISOString(),
       patient: {
@@ -2636,7 +3081,7 @@ const handleDeleteAllCases = async () => {
         })();
 
         const resolvedResident = extracted.emResident || existingDisp?.residentName || docFormattedName;
-        const resolvedConsultant = extracted.emConsultant || existingDisp?.consultantName || consultantName;
+        const resolvedConsultant = extracted.emConsultant || existingDisp?.consultantName || resolvedConsultantName;
 
         return {
           ...(existingDisp || {}),
@@ -3126,8 +3571,60 @@ const handleDeleteAllCases = async () => {
     }
 
     // Ensure caseUpdatedAfterPreparation is maintained if the case already had a prepared or drafted dischargeInfo
+    const existingCase = cases.find(c => c.id === reviewedCase.id);
+    const creationDuty = !existingCase && !reviewedCase.shiftId ? getCaseCreationDutyMetadata() : null;
+
+    const resolvedProvenance = existingCase
+      ? {
+          ...(existingCase.shiftId !== undefined ? { shiftId: existingCase.shiftId } : {}),
+          ...(existingCase.shiftDate !== undefined ? { shiftDate: existingCase.shiftDate } : {}),
+          ...(existingCase.shiftName !== undefined ? { shiftName: existingCase.shiftName } : {}),
+        }
+      : {
+          ...(reviewedCase.shiftId !== undefined
+            ? { shiftId: reviewedCase.shiftId }
+            : creationDuty ? { shiftId: creationDuty.shiftId } : {}),
+          ...(reviewedCase.shiftDate !== undefined
+            ? { shiftDate: reviewedCase.shiftDate }
+            : creationDuty ? { shiftDate: creationDuty.shiftDate } : {}),
+          ...(reviewedCase.shiftName !== undefined
+            ? { shiftName: reviewedCase.shiftName }
+            : creationDuty ? { shiftName: creationDuty.shiftName } : {}),
+        };
+
+    // Resolve current clinician assignment & duty session (Patch D4A):
+    const resolvedAssignment = existingCase
+      ? {
+          ...(existingCase.currentAssigneeUid !== undefined ? { currentAssigneeUid: existingCase.currentAssigneeUid } : {}),
+          ...(existingCase.currentAssigneeEmail !== undefined ? { currentAssigneeEmail: existingCase.currentAssigneeEmail } : {}),
+          ...(existingCase.currentAssigneeName !== undefined ? { currentAssigneeName: existingCase.currentAssigneeName } : {}),
+          ...(existingCase.currentAssignmentDutySessionId !== undefined ? { currentAssignmentDutySessionId: existingCase.currentAssignmentDutySessionId } : {}),
+          ...(existingCase.currentAssignmentDutyDateKey !== undefined ? { currentAssignmentDutyDateKey: existingCase.currentAssignmentDutyDateKey } : {}),
+          ...(existingCase.currentAssignmentShiftId !== undefined ? { currentAssignmentShiftId: existingCase.currentAssignmentShiftId } : {}),
+          ...(existingCase.currentAssignmentAt !== undefined ? { currentAssignmentAt: existingCase.currentAssignmentAt } : {}),
+        }
+      : {
+          currentAssigneeUid: reviewedCase.currentAssigneeUid || auth.currentUser?.uid,
+          currentAssigneeEmail: reviewedCase.currentAssigneeEmail || reviewedCase.doctorEmail || profile.email,
+          currentAssigneeName: reviewedCase.currentAssigneeName || reviewedCase.doctorName || profile.name || "Doctor",
+          currentAssignmentAt: reviewedCase.currentAssignmentAt || new Date().toISOString(),
+          ...(reviewedCase.currentAssignmentDutySessionId
+            ? {
+                currentAssignmentDutySessionId: reviewedCase.currentAssignmentDutySessionId,
+                currentAssignmentDutyDateKey: reviewedCase.currentAssignmentDutyDateKey,
+                currentAssignmentShiftId: reviewedCase.currentAssignmentShiftId,
+              }
+            : (creationDuty && activeDutySession ? {
+                currentAssignmentDutySessionId: activeDutySession.id,
+                currentAssignmentDutyDateKey: activeDutySession.dutyDateKey,
+                currentAssignmentShiftId: creationDuty.baseShiftId,
+              } : {})),
+        };
+
     const caseToPersist: ClinicalCase = {
       ...reviewedCase,
+      ...resolvedProvenance,
+      ...resolvedAssignment,
       dischargeInfo: reviewedCase.dischargeInfo ? {
         ...reviewedCase.dischargeInfo,
         caseUpdatedAfterPreparation: true
@@ -5695,10 +6192,19 @@ const handleSignOut = async () => {
               hospitalName={profile?.hospital || "General Hospital"}
               onCaseReady={async (minimalCase) => {
                 try {
-                  await handleSaveCase(minimalCase);
+                  const creationDuty = getCaseCreationDutyMetadata();
+                  const caseToSave = {
+                    ...minimalCase,
+                    ...(creationDuty ? {
+                      shiftId: minimalCase.shiftId || creationDuty.shiftId,
+                      shiftDate: minimalCase.shiftDate || creationDuty.shiftDate,
+                      shiftName: minimalCase.shiftName || creationDuty.shiftName,
+                    } : {}),
+                  };
+                  await handleSaveCase(caseToSave);
                   setShowQuickDischarge(false);
-                  setQuickDischargeCase(minimalCase);
-                  setShowDischargeSummaryId(minimalCase.id);
+                  setQuickDischargeCase(caseToSave);
+                  setShowDischargeSummaryId(caseToSave.id);
                 } catch (err) {
                   console.error("Failed to persist quick discharge case:", err);
                   triggerNotification("Save Failed", "Unable to save this case. Please try again.", "warning");
@@ -5767,6 +6273,12 @@ const handleSignOut = async () => {
                     );
                     // Override generic CASE-XXXX id to preserve the active link with the chat session
                     minimalCase.id = targetCaseId;
+                    const creationDuty = getCaseCreationDutyMetadata();
+                    if (creationDuty) {
+                      minimalCase.shiftId = minimalCase.shiftId || creationDuty.shiftId;
+                      minimalCase.shiftDate = minimalCase.shiftDate || creationDuty.shiftDate;
+                      minimalCase.shiftName = minimalCase.shiftName || creationDuty.shiftName;
+                    }
                     
                     await handleSaveCase(minimalCase);
                     setQuickDischargeCase(minimalCase);
@@ -5852,6 +6364,9 @@ const handleSignOut = async () => {
                   onDeclineMember={handleDeclineTeamMember}
                   onUpdateRole={handleUpdateTeamMemberRole}
                   shifts={shifts}
+                  activeDutySession={activeDutySession}
+                  onStartDutySession={handleStartDutySession}
+                  onEndDutySession={handleEndDutySession}
                 />
               )}
 
@@ -5991,6 +6506,8 @@ const handleSignOut = async () => {
                   hospitalSubscription={hospitalSubscription}
                   shifts={shifts}
                   onUpdateShifts={handleUpdateHospitalShifts}
+                  onStartDutySession={handleStartDutySession}
+                  onEndDutySession={handleEndDutySession}
                 />
               )}
 
@@ -6022,6 +6539,8 @@ const handleSignOut = async () => {
                   hospitalSubscription={hospitalSubscription}
                   shifts={shifts}
                   onUpdateShifts={handleUpdateHospitalShifts}
+                  onStartDutySession={handleStartDutySession}
+                  onEndDutySession={handleEndDutySession}
                 />
               )}
 
@@ -6052,6 +6571,8 @@ const handleSignOut = async () => {
                   hospitalSubscription={hospitalSubscription}
                   shifts={shifts}
                   onUpdateShifts={handleUpdateHospitalShifts}
+                  onStartDutySession={handleStartDutySession}
+                  onEndDutySession={handleEndDutySession}
                 />
               )}
             </>
@@ -6078,8 +6599,18 @@ const handleSignOut = async () => {
               return;
             }
 
+            const creationDuty = getCaseCreationDutyMetadata();
             const caseToSave = {
               ...newCase,
+              ...(creationDuty ? {
+                shiftId: newCase.shiftId || creationDuty.shiftId,
+                shiftDate: newCase.shiftDate || creationDuty.shiftDate,
+                shiftName: newCase.shiftName || creationDuty.shiftName,
+              } : (newCase.shiftId ? {
+                shiftId: newCase.shiftId,
+                shiftDate: newCase.shiftDate,
+                shiftName: newCase.shiftName,
+              } : {})),
               hospital: newCase.hospital || profile.hospital,
               doctorEmail: newCase.doctorEmail || profile.email,
               doctorName: newCase.doctorName || profile.name || "Emergency Doctor",

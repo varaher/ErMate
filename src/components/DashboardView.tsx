@@ -8,6 +8,8 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { ClinicalCase, UserProfile, HandoverRecord, TeamMember } from "../types";
+import { DutySessionRecord, isActiveDutySessionNow } from "../services/dutySessionService";
+import { formatLocalDateKey } from "../utils/dutyWindow";
 import { getCasePendingStatus } from "../utils/caseHelper";
 import { triggerPrintWithTip } from "../utils/printWithTip";
 import { doc, updateDoc } from "firebase/firestore";
@@ -59,6 +61,9 @@ interface DashboardViewProps {
   onDeleteAllCases?: () => void;
   onDeleteCase?: (caseId: string) => void;
   isPlatformAdmin?: boolean;
+  activeDutySession?: DutySessionRecord | null;
+  onStartDutySession?: (shift: any) => Promise<void>;
+  onEndDutySession?: () => Promise<void>;
 }
 
 export default function DashboardView({
@@ -101,21 +106,111 @@ export default function DashboardView({
   pendingContributionsCount = 0,
   onDiscussCase,
   isPlatformAdmin = false,
+  activeDutySession = null,
+  onStartDutySession,
+  onEndDutySession,
 }: DashboardViewProps) {
-  // Statistics
-  const activeCasesCount = cases.filter(c => c.status === "Active" || c.status === "Triage").length;
-  const casesThisWeekCount = cases.length;
-  
-  const recentCases = [...cases]
-    .sort((a, b) => new Date(b.patient.dateOpened).getTime() - new Date(a.patient.dateOpened).getTime())
-    .slice(0, 3);
-
   // Resolve current logged-in user's assigned shift name and time
   const userEmailLower = profile.email.toLowerCase().trim();
   const currentUserMember = teamMembers.find(
     m => m.email.toLowerCase().trim() === userEmailLower
   );
-  const activeUserShiftId = currentUserMember?.shift || "morning";
+  // PLANNED DUTY: Shared rota / team shift (suggestion only)
+  const plannedShiftId = currentUserMember?.shift || "morning";
+
+  // Operational active department cases (Patch H1)
+  const activeDepartmentCases = cases.filter(c => c.status === "Active" || c.status === "Triage");
+
+  const isHospitalClinician = Boolean(
+    currentUserMember || (profile.hospital && profile.hospital.trim() !== "")
+  );
+
+  const validActiveDutySession = Boolean(
+    activeDutySession && isActiveDutySessionNow(activeDutySession)
+  );
+
+  // HOSPITAL — MY ASSIGNED CASES (Patch H1)
+  // Shows ONLY operationally active cases with currentAssigneeEmail matching doctor and currentAssignmentDutySessionId matching valid active duty session.
+  // Strictly zero fallback to doctorEmail === profile.email.
+  const myCurrentDutyCases = validActiveDutySession && activeDutySession
+    ? activeDepartmentCases.filter(c =>
+        c.currentAssigneeEmail?.toLowerCase().trim() === userEmailLower &&
+        c.currentAssignmentDutySessionId === activeDutySession.id
+      )
+    : [];
+
+  // INDEPENDENT HOME = CURRENT LOCAL DAY (Patch H1A)
+  // For individual/independent workspace, Home personal cases must be:
+  // - owned/assigned to that doctor
+  // - operationally active
+  // - created on the CURRENT LOCAL CALENDAR DAY
+  // Do NOT require activeDutySession.
+  // At local midnight, yesterday's cases disappear from Home automatically.
+  // They remain untouched in Case Registry / History.
+  // Uses local calendar date components without UTC toISOString() date comparison.
+  const todayLocalKey = formatLocalDateKey(new Date());
+
+  const isCaseCreatedOnLocalDay = (c: ClinicalCase, targetLocalKey: string): boolean => {
+    if (c.createdAt) {
+      const d = new Date(c.createdAt);
+      if (!isNaN(d.getTime())) {
+        return formatLocalDateKey(d) === targetLocalKey;
+      }
+    }
+    if (c.savedTime) {
+      const d = new Date(c.savedTime);
+      if (!isNaN(d.getTime())) {
+        return formatLocalDateKey(d) === targetLocalKey;
+      }
+    }
+    if (c.currentAssignmentAt) {
+      const d = new Date(c.currentAssignmentAt);
+      if (!isNaN(d.getTime())) {
+        return formatLocalDateKey(d) === targetLocalKey;
+      }
+    }
+    if (c.patient?.dateOpened) {
+      const d = new Date(c.patient.dateOpened);
+      if (!isNaN(d.getTime())) {
+        return formatLocalDateKey(d) === targetLocalKey;
+      }
+      const parts = c.patient.dateOpened.split("|");
+      if (parts.length > 1) {
+        const datePart = parts[1].trim();
+        const dPart = new Date(datePart);
+        if (!isNaN(dPart.getTime())) {
+          return formatLocalDateKey(dPart) === targetLocalKey;
+        }
+        const dWithYear = new Date(`${datePart} ${new Date().getFullYear()}`);
+        if (!isNaN(dWithYear.getTime())) {
+          return formatLocalDateKey(dWithYear) === targetLocalKey;
+        }
+      }
+    }
+    return false;
+  };
+
+  const myIndependentCases = activeDepartmentCases.filter(c => {
+    const isOwnedOrAssigned = Boolean(
+      (c.currentAssigneeEmail && c.currentAssigneeEmail.toLowerCase().trim() === userEmailLower) ||
+      (c.doctorEmail && c.doctorEmail.toLowerCase().trim() === userEmailLower) ||
+      (auth.currentUser?.uid && c.ownerUid === auth.currentUser.uid) ||
+      (auth.currentUser?.uid && (c as any).createdByUid === auth.currentUser.uid)
+    );
+    if (!isOwnedOrAssigned) return false;
+    return isCaseCreatedOnLocalDay(c, todayLocalKey);
+  });
+
+  const myCases = isHospitalClinician ? myCurrentDutyCases : myIndependentCases;
+
+  // Statistics & Home scoped metrics (Patch H1A):
+  // For independent personal: active count, pending alerts, and recent cases all use the SAME current-day scoped list.
+  const activeCasesCount = isHospitalClinician ? activeDepartmentCases.length : myCases.length;
+  const casesThisWeekCount = cases.length;
+  
+  const recentCases = [...(isHospitalClinician ? cases : myCases)]
+    .sort((a, b) => new Date(b.patient.dateOpened).getTime() - new Date(a.patient.dateOpened).getTime())
+    .slice(0, 3);
   
   // Use the default fallback if shifts prop is empty
   const activeShiftsList = shifts && shifts.length > 0 ? shifts : [
@@ -129,11 +224,24 @@ export default function DashboardView({
     { id: "g2", name: "G2 Shift", time: "12:00 - 20:00" },
   ];
   
-  const assignedShift = activeShiftsList.find(s => s.id === activeUserShiftId) || activeShiftsList[0];
+  const plannedShift = activeShiftsList.find(s => s.id === plannedShiftId) || activeShiftsList[0];
 
-  // Filter out discharged cases, check which active ones are pending/incomplete
-  const pendingCases = cases
-    .filter(c => c.status !== "Discharged")
+  // ACTUAL DUTY: Doctor confirms/selects shift -> persisted duty session (cross-device source of truth)
+  const actualDutyShift = activeDutySession
+    ? (activeShiftsList.find(s => s.id === activeDutySession.shiftId) || {
+        id: activeDutySession.shiftId,
+        name: activeDutySession.shiftName,
+        time: activeDutySession.shiftTime,
+      })
+    : plannedShift;
+
+  const assignedShift = actualDutyShift;
+
+  const isResident = profile.role.toLowerCase().includes("resident");
+
+  // Filter out discharged cases, check which active ones are pending/incomplete (Patch H1A: independent uses current-day scoped list)
+  const pendingCasesSource = isHospitalClinician ? (isResident ? myCases : activeDepartmentCases) : myCases;
+  const pendingCases = pendingCasesSource
     .map(c => ({
       case: c,
       status: getCasePendingStatus(c)
@@ -146,9 +254,9 @@ export default function DashboardView({
 
   React.useEffect(() => {
     if (showShiftCheckIn) {
-      setModalShiftId(activeUserShiftId);
+      setModalShiftId(activeDutySession?.shiftId || plannedShiftId);
     }
-  }, [showShiftCheckIn, activeUserShiftId]);
+  }, [showShiftCheckIn, plannedShiftId, activeDutySession?.shiftId]);
 
 
   React.useEffect(() => {
@@ -690,11 +798,16 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
           <div className="flex items-center gap-3">
             <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
             <div>
-              <p className="text-xs font-black text-emerald-850 dark:text-emerald-400 uppercase tracking-wider">
-                Morning Shift • Active on Duty
+              <p className="text-xs font-black text-emerald-850 dark:text-emerald-400 uppercase tracking-wider flex items-center gap-2">
+                <span>{actualDutyShift.name} • Active on Duty</span>
+                {activeDutySession?.dutyDateKey && (
+                  <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-900/50 text-emerald-700 dark:text-emerald-300">
+                    [{activeDutySession.dutyDateKey}]
+                  </span>
+                )}
               </p>
               <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                06:00 – 14:00 • {profile.hospital} • {activeShiftDoctors.length} clinicians active
+                {actualDutyShift.time} • {profile.hospital} • {activeShiftDoctors.length} clinicians active
               </p>
             </div>
           </div>
@@ -704,16 +817,20 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
                 setShowShiftWarning(true);
                 setWarningSeconds(300); // 5 minutes
               }}
-              className="flex-1 sm:flex-initial px-3 py-1.5 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 text-amber-600 dark:text-amber-400 font-bold rounded-lg text-[11px] transition-all"
+              className="flex-1 sm:flex-initial px-3 py-1.5 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 text-amber-600 dark:text-amber-400 font-bold rounded-lg text-[11px] transition-all cursor-pointer"
             >
               Simulate Shift End
             </button>
             <button
-              onClick={() => {
-                setIsOnShift(false);
+              onClick={async () => {
+                if (onEndDutySession) {
+                  await onEndDutySession();
+                } else {
+                  setIsOnShift(false);
+                }
                 setShowShiftWarning(false);
               }}
-              className="flex-1 sm:flex-initial px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-lg text-[11px] shadow-xs transition-all"
+              className="flex-1 sm:flex-initial px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-lg text-[11px] shadow-xs transition-all cursor-pointer"
             >
               End Shift
             </button>
@@ -728,13 +845,13 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
                 OFF SHIFT • Clinical Records Locked
               </p>
               <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                Please check into your scheduled shift to access cases, log metrics, and collaborate.
+                Scheduled rota: <span className="font-bold text-slate-700 dark:text-slate-300">{plannedShift.name} ({plannedShift.time})</span>. Check in to log cases & handovers.
               </p>
             </div>
           </div>
           <button
             onClick={() => setShowShiftCheckIn(true)}
-            className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg text-[11px] shadow-xs transition-all shrink-0"
+            className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg text-[11px] shadow-xs transition-all shrink-0 cursor-pointer"
           >
             Check In Now
           </button>
@@ -765,8 +882,12 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
               Extend Shift (30m)
             </button>
             <button
-              onClick={() => {
-                setIsOnShift(false);
+              onClick={async () => {
+                if (onEndDutySession) {
+                  await onEndDutySession();
+                } else {
+                  setIsOnShift(false);
+                }
                 setShowShiftWarning(false);
               }}
               className="bg-rose-700 text-white hover:bg-rose-800 px-3 py-1.5 rounded font-bold text-[10px]"
@@ -800,7 +921,7 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
                   >
                     {activeShiftsList.map(s => (
                       <option key={s.id} value={s.id} className="text-slate-900 dark:text-slate-100 bg-white dark:bg-slate-900">
-                        {s.name}
+                        {s.name} {s.id === plannedShift.id ? "(Roster Suggestion)" : ""}
                       </option>
                     ))}
                   </select>
@@ -809,7 +930,7 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
               </div>
               <div className="flex items-center justify-between text-xs font-bold text-slate-700 dark:text-slate-300">
                 <span className="uppercase tracking-wider">Time Window:</span>
-                <span className="font-semibold text-slate-800 dark:text-slate-200">{activeShiftsList.find(s => s.id === modalShiftId)?.time || assignedShift.time}</span>
+                <span className="font-semibold text-slate-800 dark:text-slate-200">{activeShiftsList.find(s => s.id === modalShiftId)?.time || plannedShift.time}</span>
               </div>
               <div className="flex items-center justify-between text-xs font-bold text-slate-700 dark:text-slate-300">
                 <span className="uppercase tracking-wider">Clinical Facility:</span>
@@ -834,19 +955,24 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
                 onClick={() => {
                   setShowShiftCheckIn(false);
                 }}
-                className="flex-1 py-2 border text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-900 font-bold rounded-xl text-xs transition-all"
+                className="flex-1 py-2 border text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-900 font-bold rounded-xl text-xs transition-all cursor-pointer"
               >
                 Dismiss
               </button>
               <button
-                onClick={() => {
-                  if (modalShiftId !== activeUserShiftId && currentUserMember && onUpdateShift) {
+                onClick={async () => {
+                  const chosenShift = activeShiftsList.find(s => s.id === modalShiftId) || plannedShift;
+                  if (modalShiftId !== plannedShiftId && currentUserMember && onUpdateShift) {
                     onUpdateShift(currentUserMember.id, modalShiftId);
                   }
-                  setIsOnShift(true);
+                  if (onStartDutySession) {
+                    await onStartDutySession(chosenShift);
+                  } else {
+                    setIsOnShift(true);
+                  }
                   setShowShiftCheckIn(false);
                 }}
-                className="flex-1 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs shadow-sm transition-all"
+                className="flex-1 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs shadow-sm transition-all cursor-pointer"
               >
                 Start Shift
               </button>
@@ -2001,7 +2127,7 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
                         ? "bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400"
                         : "bg-slate-200 dark:bg-slate-855 text-slate-600"
                     }`}>
-                      {cases.filter(c => c.doctorEmail === profile.email).length}
+                      {myCases.length}
                     </span>
                   </button>
                   <button
@@ -2015,13 +2141,13 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
                         : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
                     }`}
                   >
-                    All ER Admissions
+                    {isHospitalClinician ? "All ER Admissions" : "Today's Admissions"}
                     <span className={`text-[10px] px-1.5 py-0.2 rounded-full ${
                       activeCasesTab === "all"
                         ? "bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400"
                         : "bg-slate-200 dark:bg-slate-855 text-slate-600"
                     }`}>
-                      {cases.length}
+                      {isHospitalClinician ? activeDepartmentCases.length : myCases.length}
                     </span>
                   </button>
                 </div>
@@ -2040,9 +2166,11 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
             </div>
 
             {(() => {
-              const isResident = profile.role.toLowerCase().includes("resident");
-              const myCases = cases.filter(c => c.doctorEmail === profile.email);
-              const displayedCases = [...(isResident || activeCasesTab === "my" ? myCases : cases)]
+              const displayedCases = [
+                ...(isHospitalClinician
+                  ? (isResident || activeCasesTab === "my" ? myCases : activeDepartmentCases)
+                  : myCases)
+              ]
                 .sort((a, b) => {
                   const getNumTime = (str: string) => {
                     try {
@@ -2066,9 +2194,13 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
                     <Users className="w-12 h-12 mx-auto mb-3 text-slate-300 dark:text-slate-700 animate-pulse-slow" />
                     <p className="text-slate-700 dark:text-slate-300 font-bold">No Patients in this Registry</p>
                     <p className="text-xs text-slate-500 mt-1.5 max-w-md mx-auto">
-                      {activeCasesTab === "my" 
-                        ? "You don't have any patients assigned to you right now. Select 'All ER Admissions' above to browse department cases or click 'Triage/Quick Register' to admit a new patient."
-                        : "No active or registered admissions found in the ER department today."}
+                      {isHospitalClinician
+                        ? (activeCasesTab === "my" 
+                            ? (validActiveDutySession
+                                ? "You don't have any patients assigned to your active duty session right now. Select 'All ER Admissions' above to browse department cases or click 'Triage/Quick Register' to admit a new patient."
+                                : "You are currently off-shift or your duty session has ended. Start your shift or check in to assume care of patients and view assigned cases.")
+                            : "No active or registered admissions found in the ER department today.")
+                        : "No active patients registered today. Click 'Triage/Quick Register' to admit a new patient."}
                     </p>
                   </div>
                 );
@@ -2681,7 +2813,9 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
                           const updatedCase = {
                             ...c,
                             doctorEmail: profile.email,
-                            doctorName: profile.name
+                            doctorName: profile.name,
+                            currentAssigneeEmail: profile.email,
+                            currentAssigneeName: profile.name,
                           };
                           onSaveCase(updatedCase);
                         });

@@ -45,6 +45,110 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-03] — Current Duty Case Visibility — Patch H1
+- **Current Duty Case Visibility on Home/Dashboard (`src/components/DashboardView.tsx`)**:
+  - **Hospital "My Assigned Cases" Isolation**: Hospital clinicians on the Home view only see cases that are operationally active (`status === "Active" || status === "Triage"`), assigned to their email (`currentAssigneeEmail === profile.email`), and bound to their currently valid Actual Duty Session (`currentAssignmentDutySessionId === activeDutySession.id` where `isActiveDutySessionNow(activeDutySession) === true`).
+  - **Zero Fallback to Doctor Email**: Strictly removed fallback to `doctorEmail === profile.email` for hospital My Assigned Cases, guaranteeing that cases from previous shifts, expired duty sessions, or off-duty periods do not pollute the doctor's active shift queue.
+  - **Automatic Clean Slate & Off-Duty Guidance**: When a doctor is off-duty or their duty session ends, "My Assigned Cases" evaluates to empty (`[]`) with clear UI guidance to check in to an active shift.
+  - **Department Cases & Badge Synchronization**: "All ER Admissions" and top metric cards display operationally active department cases (`activeDepartmentCases = cases.filter(c => c.status === "Active" || c.status === "Triage")`), synchronizing badge counts and preventing discharged patients from lingering in active registry views.
+  - **Independent Clinician Compatibility**: Clinicians in individual workspaces without hospital duty sessions retain access to their active cases via email/ownership matching.
+  - **Zero Database Mutation**: All changes are view-layer visibility filters without altering, deleting, or archiving any `ClinicalCase` documents.
+
+### [2026-10-03] — Require Active Duty for Explicit Hospital Takeover — Patch D4B
+- **Hospital Takeover Gate (`handleSaveCase` in `src/App.tsx`)**:
+  - **Off-Duty and Expired-Duty Gating**: Implemented an explicit guard in `handleSaveCase` immediately following `isClinicianTakeover` and `activeDutySessionValid` resolution.
+  - **Enforcement Scope**: For any existing hospital-scoped case (`previousCase.workspaceType === "hospital"` or legacy case with `hospital`/`hospitalId`), takeover attempts by clinicians without a valid, running Actual Duty Session (`activeDutySessionValid !== true`) trigger a warning (`triggerNotification("Duty Session Required", "Start your current duty before taking handover.", "warning")`) and abort immediately via early return.
+  - **Zero Firestore Writes**: Aborts prior to `caseToSave` construction, `setDoc` persistence, audit trail logging, and local `cases` state mutation, guaranteeing previous doctor and assignment fields remain intact in Firestore.
+  - **Invariants Preserved**:
+    - **New Case Creation**: `isBrandNewCase` bypasses the gate, guaranteeing emergency triage and intake creation succeed without duty check-in.
+    - **Routine Edits**: Same-doctor edits (`isClinicianTakeover === false`) bypass the gate, allowing off-duty record completion.
+    - **Independent Workspaces**: `workspaceType === "individual"` cases bypass hospital duty requirements.
+    - **Creation Provenance**: Original `case.shiftId`, `shiftDate`, and `shiftName` remain strictly immutable.
+
+### [2026-10-03] — Duty-Bound Current Clinician Assignment — Patch D4A
+- **Operational Current Clinician Assignment & Duty Session (`src/types.ts`, `src/App.tsx`, `src/components/DashboardView.tsx`, `src/components/TeamRosterBoard.tsx`)**:
+  - **Explicit Current Assignment Fields (`ClinicalCase`)**:
+    - Added optional fields: `currentAssigneeUid`, `currentAssigneeEmail`, `currentAssigneeName`, `currentAssignmentDutySessionId`, `currentAssignmentDutyDateKey`, `currentAssignmentShiftId`, `currentAssignmentAt`.
+    - Maintained strict separation: `shiftId`, `shiftDate`, `shiftName` represent immutable original case creation duty; `doctorEmail` and `doctorName` maintain backwards-compatible display; `currentAssignment*` fields track the exact clinician and Actual Duty Session currently responsible.
+  - **Canonical Assignment Resolver (`getCurrentAssignmentMetadata` in `src/App.tsx`)**:
+    - Validates runtime clock validity of `activeDutySession` using `isActiveDutySessionNow`.
+    - When valid duty session exists: stamps `currentAssignmentDutySessionId` with session doc ID, `currentAssignmentDutyDateKey` with `session.dutyDateKey`, `currentAssignmentShiftId` with raw shift ID (e.g. `"evening"` or `"morning"`), and `currentAssignmentAt` with ISO timestamp.
+    - When no active duty session exists (e.g. independent doctors or off-duty creation): stamps clinician UID, email, name, and assignment timestamp, while leaving duty session fields absent (never fabricated).
+  - **Takeover / Handover Flow Integration (`handleSaveCase`)**:
+    - All takeover paths (`DashboardView.Take Handover` and `TeamRosterBoard.Take Handover`) route through canonical `handleSaveCase`.
+    - Clinician takeover is detected dynamically when `doctorEmail` or `currentAssigneeUid/Email` changes from `previousCase`.
+    - On takeover: stamps the new clinician with their active Actual Duty Session, while strictly preserving original creation provenance (`shiftId`, `shiftDate`, `shiftName`).
+    - On routine case updates (same clinician modifying vitals, notes, or labs): existing `currentAssignee*` and `currentAssignment*` fields are preserved without mutation or timestamp refresh.
+  - **New Case Creation Paths**:
+    - Updated `handleTriageSubmit`, `buildExtractedCaseDraft`, `handleApplyPreviewCase`, and `handleSaveCase` to stamp new cases with current assignee and active duty session metadata.
+
+### [2026-10-03] — Remove False Duty Provenance Fallback — Patch D3A
+- **Strict Actual-Duty Only Provenance (`getCaseCreationDutyMetadata` in `src/App.tsx`)**:
+  - Removed all team rota, `currentUserMember.shift`, `"morning"`, and `new Date().toISOString()` fallbacks from `getCaseCreationDutyMetadata()`.
+  - The helper now has strictly TWO semantic outcomes: returns real `{ shiftId, shiftDate, shiftName, baseShiftId }` if an authoritative Actual Duty Session is currently active (`isActiveDutySessionNow`), or returns `null`.
+  - **No Fake Shift Provenance**: If a clinician creates a patient case without being on an active duty session (e.g. forgot to check in, emergency unassigned triage, or independent doctor in individual workspace), case creation succeeds unhindered with `shiftId`, `shiftDate`, and `shiftName` remaining absent (not fabricated).
+  - **Consultant Matching Guard**: If `creationDuty` is null, on-duty consultant matching is safely bypassed (not defaulted to "morning" or fake consultant attribution).
+  - **Case Creation Paths Updated**:
+    - `handleTriageSubmit`: Conditionally spreads `creationDuty` properties and consultant matching only when `creationDuty !== null`.
+    - `buildExtractedCaseDraft`: Preserves existing case provenance strictly; for new cases, adds `creationDuty` only when present.
+    - `handleSaveCase`: Resolves shift provenance without fallback; existing case provenance is preserved; new cases without active duty leave fields absent.
+    - `NewPatientEntryMenu.onSelect`: Conditionally spreads `creationDuty` only when active duty exists.
+    - `QuickDischargeIntake`: `onCaseReady` and `onPrepareDischarge` conditionally stamp `creationDuty` only when active duty exists.
+    - `handleApplyPreviewCase`: Safely checks `existingCase` and `reviewedCase.shiftId` before attaching `creationDuty`.
+  - **Independent Clinicians Safe**: Individual workspace cases have no shift provenance fields and function normally without check-in requirements.
+
+### [2026-10-03] — Actual-Duty Case Creation Provenance — Patch D3
+- **Canonical Case-Creation Duty Provenance Resolver (`getCaseCreationDutyMetadata` in `src/App.tsx`)**:
+  - Implemented single canonical helper `getCaseCreationDutyMetadata(sessionOverride?)` that reads `activeDutySession` and verifies runtime clock validity with `isActiveDutySessionNow(session, now)`.
+  - **Actual Duty Session Provenance**: When active duty is valid, stamps `shiftDate` from `activeDutySession.dutyDateKey` (the canonical date when the shift began, ensuring overnight shifts crossing midnight anchor to the shift start date rather than the next calendar day), `shiftName` from `activeDutySession.shiftName`, and `shiftId` as `shift_<baseShiftId>_<compactDutyDateKey>`.
+  - **Fall-back Safety**: When no active duty session exists or session is outside `[start, end)`, falls back gracefully to planned rota / calendar today without breaking offline or triage flows.
+  - **Applied Across All Case-Creation Paths**:
+    - `handleTriageSubmit`: Stamped with `creationDuty` and matches consultant on duty for the active shift.
+    - `buildExtractedCaseDraft`: When `!existingMatch`, stamped with `creationDuty` (new cases).
+    - `handleSaveCase`: When `!previousCase`, stamps `creationDuty` on newly created cases.
+    - `NewPatientEntryMenu.onSelect`: Stamps `creationDuty` on new patient creations across voice, typing, adult, and pediatric direct entries.
+    - `QuickDischargeIntake.onCaseReady` & voice `onPrepareDischarge`: Stamps `creationDuty` on new minimal case generation.
+    - `handleApplyPreviewCase`: Stamped with `creationDuty` if case was unassigned.
+  - **Historical Provenance Invariant Strictly Preserved**: All updates and edits to existing cases retain `existingMatch.shiftId`, `existingMatch.shiftDate`, and `existingMatch.shiftName` without mutation. Case creation provenance is immutable and never treated as a mutable current-assignment field.
+
+### [2026-10-03] — Session-Safe Local Duty State — Patch D2D
+- **Session-Safe Local Duty & React UI Guarding (`src/App.tsx`)**:
+  - **Authoritative Session ID Ref (`activeDutySessionIdRef`)**: Added `useRef<string | null>(activeDutySession?.id ?? null)` to track the exact current active session synchronously.
+  - **Synchronous Subscription Update**: `activeDutySessionIdRef.current = session?.id ?? null` updates synchronously upon receiving Firestore snapshot events, preventing race conditions within the same event-loop tick.
+  - **Session-Guarded Expiry Closures**: Automatic timeouts, recheck validity, and immediate/already-expired branches verify `activeDutySessionIdRef.current === sessionId` before setting `isOnShift = false`. Delayed timers from an old Morning session cannot turn off `isOnShift` for a newly active Evening session.
+  - **Session-Guarded Manual End**: `handleEndDutySession` clears local state (`activeDutySessionIdRef.current = null`, `setActiveDutySession(null)`, `setIsOnShift(false)`) ONLY if the atomic Firestore transaction returned `true` AND the current ref still matches the ended session ID.
+
+### [2026-10-03] — Session-Safe Atomic Duty End — Patch D2C
+- **Session-Safe & Atomic Duty Session Termination (`src/services/dutySessionService.ts`, `src/App.tsx`)**:
+  - **Atomic Transaction (`endDutySession(uid, expectedSessionId)`)**: Uses `runTransaction(db, async txn => ...)` to atomically read `users/{uid}/meta/activeDutySession` and update only if `current.id === expectedSessionId` and `current.status === "active"`.
+  - **Cross-Session Race Prevention**: Stale expiry timeouts or background cleanups for an older session (e.g. Morning `M`) cannot terminate or modify a newly established session (e.g. Evening `E`) started on another device.
+  - **Session-Safe Local Storage Cleanup**: `localStorage.getItem("ermate_activeDutySession")` is updated/cleared only if `cached.id === expectedSessionId`, preventing late cleanups from clearing newer sessions.
+  - **App Expiry Closures Bound to Exact Session ID**: All automatic expiry timeouts, focus/visibility rechecks, and manual End Shift handlers in `App.tsx` pass `activeDutySession.id` to `endDutySession`.
+
+### [2026-10-03] — Authoritative Duty Lifecycle & Automatic Expiry — Patch D2B
+- **Authoritative Duty Session Validation & Runtime Truth (`src/services/dutySessionService.ts`, `src/App.tsx`)**:
+  - **Validity Invariant (`isActiveDutySessionNow`)**: Duty session is active strictly when `status === "active"` AND `now >= session.start` AND `now < session.end`.
+  - **Start Guard**: `startDutySession` strictly verifies `window.isActive === true` before writing to Firestore. Prevents starting future shifts prematurely; returns `null` and alerts with clear feedback ("Shift Inactive").
+  - **Optimistic Forcing Removed**: `handleStartDutySession` eliminates pre-validation `setIsOnShift(true)`. `isOnShift` is derived authoritatively from session validity and real-time reconciliation.
+  - **Clock-Based Automatic Expiry**: Scheduled `setTimeout` triggers immediately at exact duty end (`endMs`), flipping `isOnShift = false` and idempotently closing the Firestore session without requiring navigation or reloads.
+  - **Sleep / Visibility / Resume Resilience**: Event listeners on `window.focus` and `document.visibilitychange` immediately re-evaluate session validity upon device wake or tab activation, expiring stale sessions on resume.
+  - **Stale Active Session Auto-Closure**: `subscribeActiveDutySession` automatically cleans up sessions whose end time passed while the app was closed or offline.
+
+### [2026-10-03] — Planned vs Actual Duty Session Persistence — Patch D2
+- **Planned vs Actual Duty Session Architecture (`src/services/dutySessionService.ts`, `src/App.tsx`, `src/components/DashboardView.tsx`)**:
+  - **Planned Duty**: Shared rota / team shift (`currentUserMember?.shift`) serves as a roster suggestion only. Pre-populates the check-in modal dropdown with a "(Roster Suggestion)" indicator.
+  - **Actual Duty**: Doctor selects/confirms their duty shift on check-in, creating a persisted duty session stored at `users/{uid}/meta/activeDutySession` with `resolveDutyWindow` timestamps, `dutyDateKey`, and status.
+  - **Cross-Device Truth**: `subscribeActiveDutySession` synchronizes active duty status across desktop, tablet, and mobile in real-time, removing single-device localStorage drift.
+  - **Home (DashboardView)**: Renders active duty session details (shift name, time window, `dutyDateKey`, active clinician count) and activates duty controls with direct `onStartDutySession` and `onEndDutySession` handlers.
+
+### [2026-10-03] — Canonical Duty Window Resolver — Patch D1
+- **Pure Duty Window Resolution Utility (`src/utils/dutyWindow.ts`)**:
+  - Implemented `resolveDutyWindow(shift, now)` and `isWithinDutyWindow(window, timestamp)`.
+  - Supports standard ER same-day shifts (e.g. `08:00 - 14:00`), overnight shifts crossing midnight (e.g. `20:00 - 08:00`, `18:00 - 08:00`), custom hospital shifts (`21:30 - 07:30`), and hyphen/dash variations (`-`, `–`, `—`).
+  - Correctly anchors post-midnight duty turns (e.g. `02:00` for a `20:00 - 08:00` night shift) to the duty's starting calendar date (`dutyDateKey`), while correctly marking active status (`start <= now < end`).
+  - Rejects `"Off Duty"`, malformed inputs, and identical start/end times (`08:00 - 08:00`) by returning `null` without guessing fallback times.
+  - Zero side effects: zero Firestore writes, zero mutations to `ClinicalCase`, zero changes to `isOnShift` or `localStorage`.
+
 ### [2026-10-02] — MATE Conversational Wrapper Normalization — Patch R1D
 - **Repeated & Punctuation-Tolerant Conversational Wrapper Normalization (`detectRoundsLensIntent` in `src/components/VoiceScribeChatView.tsx`)**:
   - Upgraded leading conversational wrapper stripper to support repeated phrases and optional commas (`/^(?:(?:please|can you|could you|would you|kindly|hey mate|mate)[,\s]+)+/i`).
