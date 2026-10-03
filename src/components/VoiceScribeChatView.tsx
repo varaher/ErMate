@@ -24,6 +24,7 @@ import { isEstablishedCaseSheet } from "../utils/establishedCaseCheck";
 import { PROCEDURE_DEFINITIONS, ProcedureDefinition } from "../data/procedureDefinitions";
 import { ProcedureNote } from "../types/procedureNotes";
 import { ProcedureNoteFormModal } from "./ProcedureNoteFormModal";
+import type { ClinicalCase } from "../types";
 
 type ChatMode = "dictation" | "discuss";
 
@@ -68,6 +69,7 @@ interface VoiceScribeChatViewProps {
   initialEntryMode?: "case" | "discussion";
   refreshTrigger?: number;
   onBusyChange?: (isBusy: boolean) => void;
+  onRequestRoundsCase?: (unappliedExtraction?: any) => ClinicalCase | null;
 }
 
 const LENSES: { id: string; label: string }[] = [
@@ -79,6 +81,203 @@ const LENSES: { id: string; label: string }[] = [
   { id: "disease-snapshot", label: "Disease Snapshot" },
   { id: "full-debrief", label: "Full Debrief" },
 ];
+
+/**
+ * Detects whether an utterance contains clinical findings, updates, numbers, or interventions.
+ * If true, the utterance is NOT a pure Rounds command and must not be intercepted by Rounds.
+ */
+function hasMixedClinicalContent(text: string): boolean {
+  const lower = text.toLowerCase();
+  // 1. Blood pressure readings: e.g. 90/60, 120/80
+  if (/\b\d{2,3}\s*\/\s*\d{2,3}\b/.test(lower)) return true;
+  // 2. Numerical vitals / lab values with units: e.g. 300 mg, 5 mcg, 98%, 110 bpm
+  if (/\b\d+\s*(mg|mcg|ml|g|gm|iu|units?|cpm|bpm|%|mmol|meq)\b/.test(lower)) return true;
+  // 3. Treatment administration / medication orders
+  if (/\b(given|administered|started|infused|bolus|loading|prescribed|injected)\b/.test(lower)) return true;
+  // 4. Lab / diagnostic findings
+  if (/\b(troponin|ecg|ekg|lactate|abg|vbg|creatinine|potassium|hemoglobin|platelets?|cxr|pocus)\b/.test(lower)) return true;
+  // 5. Patient status / acute clinical state changes
+  if (/\b(bradycardic|tachycardic|hypotensive|hypertensive|hypoxic|desaturating|arrested|intubated|drowsy|lethargic)\b/.test(lower)) return true;
+  if (/\bpatient\s+(is|was|became|presents?|presented|arrived|developed)\b/.test(lower)) return true;
+  // 6. Multiple clauses / sentence boundaries combined with clinical indicators
+  if (/[.;\n]/.test(text) && /\b(bp|hr|rr|spo2|temp|iv|po|gcs|sugar|grbs)\b/.test(lower)) return true;
+
+  return false;
+}
+
+/**
+ * Deterministic Rounds intent detector for patient-linked conversations (Patch R1C).
+ * Only auto-routes natural language when the COMPLETE normalized utterance matches an approved
+ * pure Rounds command pattern. Anything containing surrounding clinical narrative, multiple clauses,
+ * or general medical queries returns null to preserve safe Scribe extraction and discussion.
+ * Explicit individual lenses take priority over broad full-case debriefs.
+ */
+export function detectRoundsLensIntent(text: string): string | null {
+  if (!text || typeof text !== "string") return null;
+
+  // Additional safety guard against mixed clinical content / vitals / updates
+  if (hasMixedClinicalContent(text)) {
+    return null;
+  }
+
+  const lower = text.trim().toLowerCase();
+  // Strip only leading conversational polite wrappers (including repeated/comma-separated)
+  const clean = lower
+    .replace(
+      /^(?:(?:please|can you|could you|would you|kindly|hey mate|mate)[,\s]+)+/i,
+      ""
+    )
+    .replace(/[?.!]+$/, "")
+    .trim();
+
+  // 1. FIRST PRINCIPLES (beats broad review; exact whole-message whitelist)
+  if (
+    clean === "first principles" ||
+    clean === "from first principles" ||
+    clean === "take this from first principles" ||
+    clean === "take this case back to first principles" ||
+    clean === "take this case from first principles" ||
+    clean === "explain this case from first principles" ||
+    clean === "explain this patient from first principles" ||
+    clean === "analyse this case from first principles" ||
+    clean === "analyze this case from first principles" ||
+    clean === "review this case from first principles" ||
+    clean === "deconstruct this case from first principles" ||
+    /^(explain|analyse|analyze|review|deconstruct)\s+(this\s+case|this\s+patient|this)\s+(back\s+to\s+|from\s+)first\s+principles$/.test(clean)
+  ) {
+    return "first-principles";
+  }
+
+  // 2. DEVIL'S ADVOCATE (exact whole-message whitelist)
+  if (
+    clean === "devil's advocate" ||
+    clean === "devils advocate" ||
+    clean === "play devil's advocate" ||
+    clean === "play devils advocate" ||
+    clean === "play devil's advocate on this case" ||
+    clean === "play devils advocate on this case" ||
+    clean === "play devil's advocate in this case" ||
+    clean === "play devils advocate in this case" ||
+    clean === "challenge my diagnosis" ||
+    clean === "challenge this diagnosis" ||
+    clean === "challenge my assumptions" ||
+    clean === "challenge my assumptions in this case" ||
+    clean === "challenge my assumptions on this case" ||
+    /^(play\s+)?devils?\s+advocate\s+(on|in|for)\s+(this\s+case|this\s+patient)$/.test(clean) ||
+    /^challenge\s+(my|this)\s+(diagnosis|assumptions)(\s+(in|on|for)\s+(this\s+case|this\s+patient))?$/.test(clean)
+  ) {
+    return "devils-advocate";
+  }
+
+  // 3. RARE BUT REAL (exact whole-message whitelist)
+  if (
+    clean === "rare but real" ||
+    clean === "rare but dangerous" ||
+    clean === "anything rare but dangerous here" ||
+    clean === "anything rare but dangerous in this case" ||
+    clean === "anything rare but dangerous on this case" ||
+    clean === "anything rare but real here" ||
+    clean === "anything rare but real in this case" ||
+    clean === "what rare but dangerous diagnoses should i consider" ||
+    clean === "what rare but dangerous diagnoses should i consider in this case" ||
+    clean === "what rare but dangerous diagnoses should i consider here" ||
+    clean === "show me the rare critical mimics in this case" ||
+    clean === "show me rare critical mimics in this case" ||
+    clean === "show me the rare critical mimics" ||
+    clean === "rare critical mimics in this case" ||
+    clean === "rare critical mimics" ||
+    /^anything\s+rare\s+but\s+(dangerous|real)(\s+(here|in\s+this\s+case|on\s+this\s+case))?$/.test(clean) ||
+    /^what\s+rare\s+but\s+dangerous\s+diagnoses\s+should\s+i\s+consider(\s+(here|in\s+this\s+case|on\s+this\s+case))?$/.test(clean) ||
+    /^(show\s+me\s+)?(the\s+)?rare\s+critical\s+mimics(\s+(here|in\s+this\s+case|on\s+this\s+case))?$/.test(clean)
+  ) {
+    return "rare-but-real";
+  }
+
+  // 4. PATHOPHYSIOLOGY (case-specific whole-message whitelist; rejects general knowledge questions like DKA)
+  if (
+    clean === "explain the pathophysiology of this case" ||
+    clean === "explain the pathophysiology in this patient" ||
+    clean === "explain the pathophysiology of this patient" ||
+    clean === "explain the pathophysiology in this case" ||
+    clean === "explain the pathophysiology here" ||
+    clean === "what is the pathophysiology in this case" ||
+    clean === "what is the pathophysiology of this case" ||
+    clean === "pathophysiology of this case" ||
+    clean === "pathophysiology in this case" ||
+    clean === "pathophysiology of this patient" ||
+    clean === "pathophysiological explanation of this case" ||
+    clean === "pathophysiological explanation in this case" ||
+    /^(explain\s+(the\s+)?|what\s+is\s+the\s+)?pathophysiolog(y|ical\s+explanation)\s+(of|in|for)\s+(this\s+case|this\s+patient|this\s+presentation)$/.test(clean)
+  ) {
+    return "pathophysiology";
+  }
+
+  // 5. GUIDELINES (case-specific whole-message whitelist; rejects general dosing/guidelines questions)
+  if (
+    clean === "review this case against guidelines" ||
+    clean === "review this case against current guidelines" ||
+    clean === "guideline review of this case" ||
+    clean === "guideline review on this case" ||
+    clean === "guideline review for this case" ||
+    clean === "what do the guidelines say about this case" ||
+    clean === "check this case against guidelines" ||
+    clean === "check this case against current guidelines" ||
+    clean === "evaluate this case against guidelines" ||
+    clean === "evaluate this case against current guidelines" ||
+    /^(review|check|evaluate)\s+(this\s+case|this\s+patient)\s+against\s+(current\s+)?guidelines$/.test(clean) ||
+    /^guideline\s+review\s+(of|on|for)\s+(this\s+case|this\s+patient)$/.test(clean) ||
+    /^what\s+do\s+(the\s+)?guidelines\s+say\s+about\s+(this\s+case|this\s+patient)$/.test(clean)
+  ) {
+    return "guidelines";
+  }
+
+  // 6. DISEASE SNAPSHOT (exact whole-message whitelist)
+  if (
+    clean === "disease snapshot" ||
+    clean === "give me a disease snapshot" ||
+    clean === "case snapshot" ||
+    clean === "give me a case snapshot" ||
+    clean === "quick disease overview of this case" ||
+    clean === "quick disease overview in this case" ||
+    clean === "quick disease overview" ||
+    /^(give\s+me\s+a\s+)?(disease|case)\s+snapshot$/.test(clean) ||
+    /^quick\s+disease\s+overview(\s+(of|in|for)\s+(this\s+case|this\s+patient))?$/.test(clean)
+  ) {
+    return "disease-snapshot";
+  }
+
+  // 7. FULL DEBRIEF / ALL-LENS (evaluated AFTER individual lenses with anchored whole-message whitelist)
+  if (
+    clean === "full debrief" ||
+    clean === "debrief this case" ||
+    clean === "debrief the case" ||
+    clean === "complete case analysis" ||
+    clean === "teach me this case" ||
+    clean === "explain this case" ||
+    clean === "explain about this case" ||
+    clean === "explain the case" ||
+    clean === "explain the whole case" ||
+    clean === "review this case" ||
+    clean === "review the case" ||
+    clean === "review the whole case" ||
+    clean === "analyse this case" ||
+    clean === "analyze this case" ||
+    clean === "analyse the case" ||
+    clean === "analyze the case" ||
+    clean === "analyse the whole case" ||
+    clean === "analyze the whole case" ||
+    clean === "what do you think about this whole case" ||
+    clean === "what do you think of this whole case" ||
+    clean === "what do you think about this case" ||
+    clean === "what do you think of this case" ||
+    /^(explain|review|teach\s+me|debrief|analyse|analyze|give\s+me\s+a\s+full\s+debrief\s+on)\s+(about\s+)?(this\s+case|the\s+whole\s+case|this\s+patient|the\s+case)$/.test(clean) ||
+    /^what\s+do\s+you\s+think\s+(about|of)\s+(this\s+whole\s+case|this\s+case|the\s+case)$/.test(clean)
+  ) {
+    return "full-debrief";
+  }
+
+  return null;
+}
 
 // ── UI-01 FIX (Sept 2026) ─────────────────────────────────────────────
 // Previously, whether the "Captured from your update" card was shown at
@@ -446,6 +645,7 @@ export default function VoiceScribeChatView({
   initialEntryMode = "case",
   refreshTrigger,
   onBusyChange,
+  onRequestRoundsCase,
 }: VoiceScribeChatViewProps) {
   const processingActionRef = useRef(false);
   // A chat is "case-linked" if either a real caseId was passed in, OR
@@ -1046,9 +1246,149 @@ export default function VoiceScribeChatView({
     }
   };
 
+  const runRoundsLens = async (lensId: string, doctorPromptText?: string) => {
+    if (isSending) return;
+
+    const matchedLens = LENSES.find(l => l.id === lensId);
+    const lensLabel = matchedLens?.label || lensId;
+    const promptText = (doctorPromptText || "").trim() || `Discuss this case through the ${lensLabel} lens.`;
+
+    setInputText("");
+    setIsSending(true);
+
+    const userMsg: Message = {
+      id: `u-${Date.now()}`,
+      sender: "user",
+      text: promptText,
+      timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      mode: "discuss",
+    };
+
+    setMessages((prev) => [...prev, userMsg]);
+    persistMessage({
+      id: userMsg.id,
+      role: "user",
+      type: "text",
+      content: promptText,
+      timestamp: new Date().toISOString(),
+    });
+
+    try {
+      // 1. Obtain current in-memory case (saved ClinicalCase + any unapplied Scribe extractions)
+      const unappliedExtraction = getMergedUnappliedExtraction(messages);
+      let targetCase: ClinicalCase | null = null;
+      if (onRequestRoundsCase) {
+        targetCase = onRequestRoundsCase(unappliedExtraction);
+      } else if (caseData) {
+        targetCase = caseData;
+      }
+
+      if (!targetCase && isDiscussionOnly) {
+        const replyText = "Clinical Rounds lenses require patient case details. Dictate or describe the patient first, or ask a general clinical question.";
+        const aiMsg: Message = {
+          id: `ai-${Date.now()}`,
+          sender: "ai",
+          text: replyText,
+          timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+          mode: "discuss",
+        };
+        setMessages((prev) => [...prev, aiMsg]);
+        persistMessage({
+          id: aiMsg.id,
+          role: "assistant",
+          type: "text",
+          content: replyText,
+          timestamp: new Date().toISOString(),
+        });
+        return;
+      }
+
+      if (!targetCase) {
+        const replyText = "No patient case information is available yet to debrief. Please dictate the case first.";
+        const aiMsg: Message = {
+          id: `ai-${Date.now()}`,
+          sender: "ai",
+          text: replyText,
+          timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+          mode: "discuss",
+        };
+        setMessages((prev) => [...prev, aiMsg]);
+        persistMessage({
+          id: aiMsg.id,
+          role: "assistant",
+          type: "text",
+          content: replyText,
+          timestamp: new Date().toISOString(),
+        });
+        return;
+      }
+
+      // 2. Single Claude Sonnet rounds call via /api/rounds-debrief with exact canonical lensId
+      const res = await fetch("/api/rounds-debrief", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          caseData: targetCase,
+          lens: lensId,
+          userMessage: promptText,
+          chatHistory: messages.map((m) => ({
+            sender: m.sender === "user" ? "user" : "ai",
+            text: m.text,
+          })),
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || data.success === false) {
+        throw new Error(data.error || data.reply || "Clinical Rounds debrief unavailable");
+      }
+
+      const content = data.data?.content || data.reply || data.response || "No debrief analysis generated.";
+      const keyTakeaway = data.data?.keyTakeaway;
+      const fullReply = keyTakeaway ? `${content}\n\n**Key Takeaway:** ${keyTakeaway}` : content;
+
+      const aiMsg: Message = {
+        id: `ai-${Date.now()}`,
+        sender: "ai",
+        text: fullReply,
+        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        mode: "discuss",
+      };
+
+      setMessages((prev) => [...prev, aiMsg]);
+      persistMessage({
+        id: aiMsg.id,
+        role: "assistant",
+        type: "text",
+        content: fullReply,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (err: any) {
+      console.error("[VoiceScribeChatView] Rounds debrief failed:", err);
+      const errMsg: Message = {
+        id: `err-${Date.now()}`,
+        sender: "ai",
+        text: `⚠️ Could not reach clinical assistant (${err.message || "network error"}). Your message was saved.`,
+        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      };
+      setMessages((prev) => [...prev, errMsg]);
+    } finally {
+      setIsSending(false);
+    }
+  };
+
    const sendToChat = async (text: string) => {
     const trimmed = text.trim();
     if (!trimmed || isSending) return;
+
+    // Natural-language Rounds routing (patient-linked / case conversation)
+    if (!isDiscussionOnly) {
+      const roundsLens = detectRoundsLensIntent(trimmed);
+      if (roundsLens) {
+        await runRoundsLens(roundsLens, trimmed);
+        return;
+      }
+    }
 
     setInputText("");
     setIsSending(true);
@@ -1195,10 +1535,9 @@ export default function VoiceScribeChatView({
     }
   };
 
-  const handleLensClick = (lensLabel: string) => {
+  const handleLensClick = (lensId: string) => {
     setShowLensMenu(false);
-    setCurrentMode("discuss");
-    sendToChat(`Please apply the "${lensLabel}" clinical lens to this case. Challenge clinical heuristics, investigate underlying physiology, and provide an expert debrief.`);
+    runRoundsLens(lensId);
   };
 
   const handleAttachmentSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1632,7 +1971,7 @@ export default function VoiceScribeChatView({
               {LENSES.map((lens) => (
                 <button
                   key={lens.id}
-                  onClick={() => handleLensClick(lens.label)}
+                  onClick={() => handleLensClick(lens.id)}
                   className="w-full text-left px-3 py-2 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-indigo-50 dark:hover:bg-slate-700 transition-colors cursor-pointer"
                 >
                   {lens.label}

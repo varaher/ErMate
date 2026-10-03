@@ -5734,6 +5734,19 @@ const handleSignOut = async () => {
               }}
               onPreviewCaseSheet={handlePreviewCaseSheet}
               onPreviewDischargeSummary={handlePreviewDischargeSummary}
+              onRequestRoundsCase={(unappliedExtraction) => {
+                const existingCase = (voiceScribeCaseId ? cases.find(c => c.id === voiceScribeCaseId) : null) || (selectedCaseId ? cases.find(c => c.id === selectedCaseId) : null) || null;
+                const hasExtraction = unappliedExtraction && Object.keys(unappliedExtraction).length > 0;
+                if (!existingCase && !hasExtraction) {
+                  return null;
+                }
+                return buildExtractedCaseDraft(existingCase, unappliedExtraction || {}, {
+                  caseId: existingCase?.id || voiceScribeCaseId || ("draft-rounds-" + Date.now()),
+                  profile,
+                  currentUser: auth.currentUser,
+                  teamMembers,
+                });
+              }}
               onSaveExtractedCase={handleSaveExtractedVoiceCase}
               onPrepareDischarge={async (extraction, msgId, chatCaseId) => {
                 const targetCaseId = chatCaseId || voiceScribeCaseId;

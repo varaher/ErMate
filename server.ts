@@ -1278,11 +1278,11 @@ app.post("/api/rounds-debrief", async (req, res) => {
   const gcs = caseData.vitals?.gcs || "N/A";
 
   const sampleHistory = caseData.sampleHistory || {};
-  const safeSymptoms = deidentifyText(sampleHistory.symptoms || "N/A").deidentified;
-  const safePastHistory = deidentifyText(sampleHistory.pastHistory || "None documented").deidentified;
-  const safeMedications = deidentifyText(sampleHistory.medications || "None").deidentified;
-  const safeAllergies = deidentifyText(sampleHistory.allergies || "NKDA").deidentified;
-  const safeEvents = deidentifyText(sampleHistory.events || "N/A").deidentified;
+  const safeSymptoms = deidentifyText(sampleHistory.symptoms || caseData.symptoms || "Not documented").deidentified;
+  const safePastHistory = deidentifyText(sampleHistory.pastHistory || caseData.pastMedicalHistory || "Not documented").deidentified;
+  const safeMedications = deidentifyText(sampleHistory.medications || (Array.isArray(caseData.currentMedications) ? caseData.currentMedications.join(", ") : caseData.currentMedications) || "Not documented").deidentified;
+  const safeAllergies = deidentifyText(sampleHistory.allergies || caseData.allergies || "Not documented").deidentified;
+  const safeEvents = deidentifyText(sampleHistory.events || caseData.events || "Not documented").deidentified;
 
   const primaryAssessment = caseData.primaryAssessment || {};
   const safeSecondaryAssessment = deidentifyText(typeof caseData.secondaryAssessment === 'string' ? caseData.secondaryAssessment : "").deidentified;
@@ -1348,7 +1348,15 @@ Follow-Up / Summary: ${deidentifyText(dischargeInfo.followUpPlan || "N/A").deide
     4. "rare-but-real": Spotlight 3-4 rare, critical, or life-threatening mimics and complications of this presentation that must not be missed.
     5. "guidelines": Detail the gold-standard society recommendations (e.g., ACC/AHA, GINA, GOLD, KDIGO, Surviving Sepsis, NICE).
     6. "disease-snapshot": A super-dense clinical cheat-sheet for the primary suspected diagnosis.
-    7. "full-debrief": Comprehensive performance review of how the case was managed. If the patient died, include a dedicated Cause of Death & Mortality Analysis.
+    7. "full-debrief": Comprehensive all-lens integrated debrief synthesizing all 7 clinical perspectives in structured Markdown sections:
+       1. 🏛️ First Principles: Core physiological and biophysical fundamentals — what is happening and why.
+       2. ⚖️ Devil's Advocate: Challenge working assumptions, identify cognitive bias (anchoring/premature closure), and evaluate plausible alternatives.
+       3. ⚡ Rare but Real: Critical uncommon mimics and life-threatening complications that must not be missed.
+       4. 🔬 Pathophysiology: Mechanistic cellular and organ-system disease progression specific to THIS patient's presentation.
+       5. 📋 Guidelines: Compare management with current accepted emergency guidance; identify concordance and gaps.
+       6. 📸 Disease Snapshot: Concise bedside summary of emergency priorities, classic presentation, and major clinical pitfall.
+       7. 🎯 Integrated Full Debrief: What was managed well, what should be reconsidered, immediate emergency priorities, and key learning points.
+       (If the patient died or terminal CPR was required, integrate a dedicated Cause of Death & Resuscitation Audit).
     8. "cause-of-death": Deep mortality cause deconstruction analyzing the full story as detailed above.
     9. "rounds-chat": Engage in interactive clinical rounds discussion. Answer this custom query: "${userMessage || ""}" specifically in the context of this case's whole story.
 

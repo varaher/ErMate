@@ -45,6 +45,49 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-02] — MATE Conversational Wrapper Normalization — Patch R1D
+- **Repeated & Punctuation-Tolerant Conversational Wrapper Normalization (`detectRoundsLensIntent` in `src/components/VoiceScribeChatView.tsx`)**:
+  - Upgraded leading conversational wrapper stripper to support repeated phrases and optional commas (`/^(?:(?:please|can you|could you|would you|kindly|hey mate|mate)[,\s]+)+/i`).
+  - Supports natural compound openings (e.g. `"Hey Mate, can you please explain this case from first principles?"` → `"explain this case from first principles"` → `first-principles`).
+  - Retains strict whole-message safety: messages containing clinical text after conversational wrappers (e.g. `"Hey Mate, patient has chest pain. Explain this case."`) normalize with clinical text intact and evaluate strictly to `null`.
+
+### [2026-10-02] — Pure Rounds Command Whitelist — Patch R1C
+- **Strict Whole-Message Whitelist (`detectRoundsLensIntent` in `src/components/VoiceScribeChatView.tsx`)**:
+  - Replaced heuristic substring checks with strict anchored whole-message whitelists for every lens.
+  - Natural-language auto-routing executes only when the doctor's entire normalized utterance matches an approved Rounds command.
+  - Normalization retains all clinical narrative while stripping only harmless leading conversational wrappers (`"please"`, `"can you"`, etc.) and terminal punctuation.
+  - Utterances with surrounding clinical statements (e.g. `"Patient has chest pain. Explain this case from first principles."`, `"Fever since morning. Explain the pathophysiology of this case."`, `"She has melena. Play devil's advocate on this case."`, `"Patient complains of abdominal pain. Anything rare but dangerous here?"`) evaluate strictly to `null`, ensuring they pass safely to the standard Scribe extraction pipeline.
+  - Maintained explicit individual lens priority over broad debriefs for pure commands (e.g. `"Explain this case from first principles."` → `first-principles`).
+  - Preserved direct invocation for lens buttons without natural language classification.
+
+### [2026-10-02] — Rounds Turn Isolation & Mixed-Utterance Safety — Patch R1B
+- **Preserve User's Persistent Chat Mode (`runRoundsLens` in `src/components/VoiceScribeChatView.tsx`)**:
+  - Removed `setCurrentMode("discuss")` from `runRoundsLens()`. Executing a Rounds lens now leaves the clinician's persistent input mode intact (`currentMode = "dictation"` remains `"dictation"` for subsequent clinical documentation turns).
+  - Rounds messages themselves retain read-only `mode: "discuss"` presentation without mutating the input mode state.
+- **Mixed Clinical Utterance Safety Guard (`hasMixedClinicalContent` in `src/components/VoiceScribeChatView.tsx`)**:
+  - Added deterministic pre-routing guard detecting blood pressure (`90/60`), medication doses (`300 mg`), clinical administration verbs (`given`, `started`), diagnostic findings (`troponin positive`), and acute patient state changes (`became bradycardic`).
+  - Mixed utterances (e.g. `"Troponin is positive, BP 90/60 and aspirin 300 mg given. Explain this case."`) evaluate to `null` for direct Rounds routing, passing safely to the existing Scribe extraction pipeline so no clinical facts are dropped.
+- **Anchored Pure Command Matching (`detectRoundsLensIntent`)**:
+  - Enforced anchored, exact-command matching for broad debrief requests (`"Explain this case"`, `"Review this case"`, `"Teach me this case"`).
+  - Guarded pathophysiology matching to require reference to `"this case"`, `"this patient"`, or `"here"`, preventing general medical knowledge questions (`"What is the pathophysiology of DKA?"`) from hijacking patient-specific Rounds contexts.
+
+### [2026-10-02] — MATE / 7-Lens Rounds Router — Patch R1
+- **Narrow Rounds Intent Detector (`detectRoundsLensIntent` in `src/components/VoiceScribeChatView.tsx`)**:
+  - Implemented deterministic intent parser prioritizing explicit individual lenses over broad case reviews (e.g. `"Explain this case from first principles"` routes to `first-principles`, not `full-debrief`).
+  - Supports canonical lens IDs: `first-principles`, `devils-advocate`, `rare-but-real`, `pathophysiology`, `guidelines`, `disease-snapshot`, and `full-debrief`.
+  - Preserves ordinary clinical inquiries without false classification (e.g. `"What is the guideline dose of alteplase?"` remains an ordinary clinical question).
+- **Direct Rounds Execution Path (`runRoundsLens`)**:
+  - Eliminates asynchronous `currentMode` React state race by executing directly via `/api/rounds-debrief`.
+  - Lens buttons directly supply `lens.id` rather than prose wrapper prompts.
+  - Zero writes to `ClinicalCase` or Firestore; sets zero `extractionData`, `extractionApplied`, or `dischargeApplied` flags; preserves read-only debrief invariant.
+  - Persists assistant response and key takeaway to the active same-patient Scribe conversation.
+- **In-Memory Case Synthesis with Unapplied Extractions (`onRequestRoundsCase` in `src/App.tsx`)**:
+  - Wires `onRequestRoundsCase` using canonical `buildExtractedCaseDraft(existingCase, unappliedExtraction)` to construct a pure in-memory case combining saved case data with recent unapplied Scribe turns with zero Firestore writes.
+  - Supports pre-case unlinked Scribe drafts before Case Sheet apply without saving a blank case.
+- **Integrated All-Lens Synthesis & Neutral Defaults (`/api/rounds-debrief` in `server.ts`)**:
+  - Upgraded `full-debrief` prompt so ONE Sonnet call synthesizes all 7 perspectives with structured headings.
+  - Replaced false negative defaults (`None`, `NKDA`, `None documented`) with neutral `"Not documented"` strings.
+
 ### [2026-10-01] — Scribe Link Final Atomicity Hardening (`src/services/scribeChatStorage.ts`)
 - **Atomic Two-Sided Link Transaction (`linkScribeSessionAndCase`)**:
   - Wrapped two-sided pre-flight reads, conflict validations, and selective updates in a single Firestore `runTransaction(db, async txn => ...)`.
