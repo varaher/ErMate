@@ -51,7 +51,7 @@ import PWABadge from "./components/PWABadge";
 import { APP_VERSION, CHANGELOG } from "./changelog";
 import { HeaderUpdateButton } from "./hooks/useAppUpdate";
 import { GlobalRefreshButton } from "./components/shared/GlobalRefreshButton";
-import { updateChatMessage, appendChatMessage } from "./services/scribeChatStorage";
+import { updateChatMessage, appendChatMessage, linkScribeSessionAndCase, verifyTwoSidedLink } from "./services/scribeChatStorage";
 import { deduplicateConsultations } from "./utils/consultationNormalization";
 import { isEstablishedCaseSheet } from "./utils/establishedCaseCheck";
 
@@ -461,6 +461,7 @@ useEffect(() => {
   };
   const [showVoiceScribeChat, setShowVoiceScribeChat] = useState<boolean>(false);
   const [voiceScribeCaseId, setVoiceScribeCaseId] = useState<string | null>(null);
+  const [voiceScribeSessionId, setVoiceScribeSessionId] = useState<string | null>(null);
   // NEW — entry-choice popup and discussion-mode flag for the merged
   // ErMate Assistant. See handleVoiceScribeEntryClick / handleStartFreeDiscussion.
   const [showVoiceScribeEntryChoice, setShowVoiceScribeEntryChoice] = useState<boolean>(false);
@@ -481,7 +482,22 @@ useEffect(() => {
   // Preview Case Sheet State (in-memory review before Firestore write)
   const [previewCase, setPreviewCase] = useState<ClinicalCase | null>(null);
   const [isPreviewMode, setIsPreviewMode] = useState<boolean>(false);
-  const [pendingPreviewContext, setPendingPreviewContext] = useState<{ msgId?: string; caseId: string } | null>(null);
+  const [pendingPreviewContext, setPendingPreviewContext] = useState<{
+    msgId?: string;
+    caseId: string;
+    contributingMsgIds: string[];
+    scribeSessionId?: string | null;
+  } | null>(null);
+
+  // Preview Discharge Summary State (in-memory review before Firestore write)
+  const [previewDischargeCase, setPreviewDischargeCase] = useState<ClinicalCase | null>(null);
+  const [isDischargePreviewMode, setIsDischargePreviewMode] = useState<boolean>(false);
+  const [pendingDischargePreviewContext, setPendingDischargePreviewContext] = useState<{
+    msgId?: string;
+    caseId: string;
+    contributingMsgIds: string[];
+    scribeSessionId?: string | null;
+  } | null>(null);
   
   // Manual Data Refresh & Dirty Tracking State
   const [isCaseSheetDirty, setIsCaseSheetDirty] = useState<boolean>(false);
@@ -2002,51 +2018,84 @@ const handleDeleteAllCases = async () => {
     checkConsentOnCaseSaved();
   };
 
+  /**
+   * Canonical low-level discharge persistence helper.
+   * Receives explicit target ClinicalCase and dischargeInfo.
+   * Persists dischargeInfo to cases/{caseId} and creates addendum audit log.
+   * Returns updated ClinicalCase only after primary case write succeeds.
+   * Throws on primary persistence failure so callers know definitively whether it succeeded.
+   */
+  const persistDischargeInfo = async (
+    targetCase: ClinicalCase,
+    dischargeInfo: DischargeInfo
+  ): Promise<ClinicalCase> => {
+    const editRole = (profile.role || "").toLowerCase().includes("hod") ? "hod" : ((profile.role || "").toLowerCase().includes("consultant") ? "consultant" : "resident");
+    const editUid = auth.currentUser?.uid || "uid_priya";
+    const editName = (profile.name || "").startsWith("Dr. ") ? profile.name : "Dr. " + (profile.name || "Doctor");
+
+    // Preserve patient operational status - Discharge Summary finalization must not alter ClinicalCase.status
+    const updated: ClinicalCase = {
+      ...targetCase,
+      dischargeInfo,
+      status: targetCase.status,
+      hospital: targetCase.hospital || profile.hospital,
+      lastEditedBy: editUid,
+      lastEditedByName: editName,
+      lastEditedByRole: editRole,
+      lastEditedAt: new Date().toISOString()
+    };
+
+    // 1. Primary write to Firestore cases collection - MUST throw on failure
+    await setDoc(doc(db, "cases", updated.id), sanitizeForFirestore(updated), { merge: true });
+
+    // 2. Secondary department index write if applicable
+    if (updated.departmentId) {
+      try {
+        await setDoc(doc(db, "departments", updated.departmentId, "cases", updated.id), sanitizeForFirestore(updated), { merge: true });
+      } catch (deptErr) {
+        console.warn("Secondary department index write for discharge failed (primary case persisted):", deptErr);
+      }
+    }
+
+    // 3. Add audit log to addenda subcollection
+    try {
+      const addendumId = "add-" + Math.floor(100000 + Math.random() * 900000);
+      const addendumRef = doc(db, "cases", updated.id, "addenda", addendumId);
+      const auditLog = {
+        id: addendumId,
+        type: "discharge",
+        editedBy: editUid,
+        editedByName: editName,
+        editedByRole: editRole,
+        fieldsChanged: ["dischargeInfo"],
+        previousValues: { summaryStatus: targetCase.dischargeInfo?.summaryStatus || "DRAFT" },
+        newValues: { summaryStatus: dischargeInfo.summaryStatus },
+        addedAt: new Date().toISOString(),
+        addedBy: editUid // for rules create constraint
+      };
+      await setDoc(addendumRef, auditLog);
+    } catch (auditErr) {
+      console.warn("Discharge addendum audit write failed (primary case was persisted):", auditErr);
+    }
+
+    // 4. Update in-memory cases state
+    setCases(prev => prev.map(c => c.id === updated.id ? updated : c));
+    checkConsentOnCaseSaved();
+
+    return updated;
+  };
+
   // Finalize discharge summary
   const handleSaveDischarge = async (dischargeInfo: DischargeInfo) => {
     if (!showDischargeSummaryId) return;
     const targetCase = cases.find(c => c.id === showDischargeSummaryId);
     if (targetCase) {
-      const editRole = (profile.role || "").toLowerCase().includes("hod") ? "hod" : ((profile.role || "").toLowerCase().includes("consultant") ? "consultant" : "resident");
-      const editUid = auth.currentUser?.uid || "uid_priya";
-      const editName = (profile.name || "").startsWith("Dr. ") ? profile.name : "Dr. " + (profile.name || "Doctor");
-
-      // Preserve patient operational status - Discharge Summary finalization must not alter ClinicalCase.status
-      const updated: ClinicalCase = {
-        ...targetCase,
-        dischargeInfo,
-        status: targetCase.status,
-        hospital: targetCase.hospital || profile.hospital,
-        lastEditedBy: editUid,
-        lastEditedByName: editName,
-        lastEditedByRole: editRole,
-        lastEditedAt: new Date().toISOString()
-      };
       try {
-        await setDoc(doc(db, "cases", updated.id), sanitizeForFirestore(updated), { merge: true });
-
-        // Add audit log to addenda subcollection
-        const addendumId = "add-" + Math.floor(100000 + Math.random() * 900000);
-        const addendumRef = doc(db, "cases", updated.id, "addenda", addendumId);
-        const auditLog = {
-          id: addendumId,
-          type: "discharge",
-          editedBy: editUid,
-          editedByName: editName,
-          editedByRole: editRole,
-          fieldsChanged: ["dischargeInfo"],
-          previousValues: { summaryStatus: targetCase.dischargeInfo?.summaryStatus || "DRAFT" },
-          newValues: { summaryStatus: dischargeInfo.summaryStatus },
-          addedAt: new Date().toISOString(),
-          addedBy: editUid // for rules create constraint
-        };
-        await setDoc(addendumRef, auditLog);
+        await persistDischargeInfo(targetCase, dischargeInfo);
       } catch (err: any) {
         console.error("Error updating discharge summary in Firestore:", err);
         handleFirestoreError(err, OperationType.WRITE, "cases");
       }
-      setCases(prev => prev.map(c => c.id === showDischargeSummaryId ? updated : c));
-      checkConsentOnCaseSaved();
     }
   };
 
@@ -2061,6 +2110,12 @@ const handleDeleteAllCases = async () => {
 
   const handleStartVoiceScribe = (caseId?: string) => {
     setVoiceScribeCaseId(caseId || null);
+    if (caseId) {
+      const match = cases.find(c => c.id === caseId);
+      setVoiceScribeSessionId(match?.scribeSessionId || null);
+    } else {
+      setVoiceScribeSessionId(null);
+    }
     setVoiceScribeDiscussionMode(false);
     setShowVoiceScribeChat(true);
     setSelectedCaseId(null);
@@ -2079,6 +2134,7 @@ const handleDeleteAllCases = async () => {
 
   const handleStartNewPatientDictation = () => {
     setShowVoiceScribeEntryChoice(false);
+    setVoiceScribeSessionId(null);
     handleStartVoiceScribe();
   };
 
@@ -2785,7 +2841,12 @@ const handleDeleteAllCases = async () => {
    */
   const handlePreviewCaseSheet = async (
     extracted: any, 
-    options?: { existingCaseId?: string | null; msgId?: string }
+    options?: {
+      existingCaseId?: string | null;
+      msgId?: string;
+      contributingMsgIds?: string[];
+      scribeSessionId?: string | null;
+    }
   ) => {
     const existingId = options?.existingCaseId || voiceScribeCaseId || ("C-" + Math.floor(1000 + Math.random() * 9000));
     let existingMatch = cases.find(c => c.id === existingId) || null;
@@ -2829,7 +2890,12 @@ const handleDeleteAllCases = async () => {
     });
 
     if (options?.msgId) {
-      setPendingPreviewContext({ msgId: options.msgId, caseId: existingId });
+      setPendingPreviewContext({
+        msgId: options.msgId,
+        caseId: existingId,
+        contributingMsgIds: options.contributingMsgIds || (options.msgId ? [options.msgId] : []),
+        scribeSessionId: options.scribeSessionId || null,
+      });
     } else {
       setPendingPreviewContext(null);
     }
@@ -2841,10 +2907,217 @@ const handleDeleteAllCases = async () => {
   };
 
   /**
+   * Preview Discharge Summary handler:
+   * Merges extracted clinical data into an in-memory draft with ZERO Firestore writes.
+   * Directs clinician into DischargeSummaryView in preview mode.
+   */
+  const handlePreviewDischargeSummary = async (
+    extracted: any,
+    options?: {
+      existingCaseId?: string | null;
+      msgId?: string;
+      contributingMsgIds?: string[];
+      scribeSessionId?: string | null;
+    }
+  ) => {
+    const existingId = options?.existingCaseId || voiceScribeCaseId || ("C-" + Math.floor(1000 + Math.random() * 9000));
+    let existingMatch = cases.find(c => c.id === existingId) || null;
+    if (!existingMatch && existingId) {
+      try {
+        const snap = await getDoc(doc(db, "cases", existingId));
+        if (snap.exists()) {
+          existingMatch = snap.data() as ClinicalCase;
+        }
+      } catch (e) {
+        console.warn("Could not load existing case for discharge preview:", e);
+      }
+    }
+
+    let workspaceMetadata: any = {};
+    if (!existingMatch && auth.currentUser) {
+      try {
+        const workspace = await resolveWorkspaceForUser(auth.currentUser.uid);
+        workspaceMetadata = {
+          workspaceType: workspace.workspaceType,
+          ownerUid: workspace.ownerUid,
+          hospitalId: workspace.hospitalId,
+        };
+      } catch (e) {
+        console.warn("Could not resolve workspace for discharge preview:", e);
+      }
+    } else if (existingMatch) {
+      workspaceMetadata = {
+        workspaceType: existingMatch.workspaceType,
+        ownerUid: existingMatch.ownerUid,
+        hospitalId: existingMatch.hospitalId,
+      };
+    }
+
+    const draftCase = buildExtractedCaseDraft(existingMatch, extracted, {
+      caseId: existingId,
+      workspaceMetadata,
+      profile,
+      currentUser: auth.currentUser,
+      teamMembers,
+    });
+
+    setPreviewDischargeCase(draftCase);
+    setIsDischargePreviewMode(true);
+    setShowDischargeSummaryId(existingId);
+    setShowVoiceScribeChat(false);
+
+    setPendingDischargePreviewContext({
+      caseId: existingId,
+      msgId: options?.msgId,
+      contributingMsgIds: options?.contributingMsgIds || (options?.msgId ? [options.msgId] : []),
+      scribeSessionId: options?.scribeSessionId || null,
+    });
+  };
+
+  /**
+   * Apply Preview Discharge Summary handler:
+   * Clinician reviewed the preview (and optionally made in-memory modifications).
+   * Persists reviewed dischargeInfo using canonical persistDischargeInfo helper.
+   * If there is no persisted ClinicalCase yet: fails closed with "Apply the Case Sheet first...".
+   * On success: marks all contributing messages dischargeApplied: true.
+   * Handles partial message flag sync failure honestly without false claims of full success.
+   * Returns clinician to the exact same Scribe session without losing state.
+   */
+  const handleApplyPreviewDischarge = async (reviewedDischargeInfo: DischargeInfo): Promise<void> => {
+    if (!auth.currentUser) {
+      triggerNotification("Authentication Required", "Please sign in to save this discharge summary.", "warning");
+      throw new Error("Not authenticated");
+    }
+
+    const targetCaseId = pendingDischargePreviewContext?.caseId || showDischargeSummaryId;
+    if (!targetCaseId) {
+      triggerNotification("Error", "Missing target case for discharge summary.", "warning");
+      return;
+    }
+
+    // Check for existing persisted ClinicalCase
+    let persistedCase = cases.find(c => c.id === targetCaseId) || null;
+    if (!persistedCase && targetCaseId) {
+      try {
+        const snap = await getDoc(doc(db, "cases", targetCaseId));
+        if (snap.exists()) {
+          persistedCase = snap.data() as ClinicalCase;
+        }
+      } catch (e) {
+        console.warn("Could not check Firestore for persisted case:", e);
+      }
+    }
+
+    // Fail closed if case record is not yet established
+    if (!persistedCase) {
+      triggerNotification(
+        "Apply Case Sheet First",
+        "Apply the Case Sheet first to establish the patient record.",
+        "warning"
+      );
+      throw new Error("Apply the Case Sheet first to establish the patient record.");
+    }
+
+    try {
+      // 1. Persist dischargeInfo using canonical persistence helper (throws if primary write fails)
+      await persistDischargeInfo(persistedCase, reviewedDischargeInfo);
+
+      // 2. Mark all contributing messages as dischargeApplied in the authoritative Scribe session
+      const targetSessionId = pendingDischargePreviewContext?.scribeSessionId;
+      const contributingIds = pendingDischargePreviewContext?.contributingMsgIds || [];
+
+      const successfulMsgIds: string[] = [];
+      const failedMsgIds: string[] = [];
+
+      if (targetSessionId && contributingIds.length > 0) {
+        for (const mId of contributingIds) {
+          try {
+            await updateChatMessage(targetSessionId, mId, { dischargeApplied: true }, { isSession: true });
+            successfulMsgIds.push(mId);
+          } catch (chatErr) {
+            console.warn(`Could not update dischargeApplied state for message ${mId}:`, chatErr);
+            failedMsgIds.push(mId);
+          }
+        }
+      }
+
+      // 3. Update local scribeMessages state ONLY for successfully updated messages
+      // Failed message IDs remain unapplied so they are recoverable and retryable
+      setScribeMessages(prev => {
+        return prev.map(m => {
+          if (successfulMsgIds.includes(m.id)) {
+            return { ...m, dischargeApplied: true };
+          }
+          return m;
+        });
+      });
+
+      // 4. Honest reporting of sync outcome
+      const syncComplete = contributingIds.length === 0 || (
+        Boolean(targetSessionId) &&
+        failedMsgIds.length === 0 &&
+        successfulMsgIds.length === contributingIds.length
+      );
+      const statusText = syncComplete
+        ? "✓ Discharge Summary updated successfully."
+        : "Discharge Summary saved — Scribe status sync pending.";
+
+      const confMsgId = `conf-discharge-applied-${Date.now()}`;
+      const confMsg = {
+        id: confMsgId,
+        role: "assistant" as const,
+        type: "text" as const,
+        content: statusText,
+        timestamp: new Date().toISOString(),
+      };
+
+      setScribeMessages(prev => {
+        if (prev.some(m => m.id === confMsgId)) return prev;
+        return [
+          ...prev,
+          {
+            id: confMsgId,
+            sender: "ai",
+            text: statusText,
+            timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+            mode: "dictation",
+          }
+        ];
+      });
+
+      if (targetSessionId) {
+        appendChatMessage(targetSessionId, confMsg, { isSession: true }).catch(err => {
+          console.warn("Could not persist discharge confirmation message to chat session:", err);
+        });
+      }
+
+      triggerNotification(
+        syncComplete ? "Discharge Summary Updated" : "Discharge Summary Saved",
+        statusText,
+        syncComplete ? "success" : "info"
+      );
+
+      // 5. Clean up discharge preview states and return to same Scribe session
+      setIsDischargePreviewMode(false);
+      setPreviewDischargeCase(null);
+      setPendingDischargePreviewContext(null);
+      setShowDischargeSummaryId(null);
+      setShowVoiceScribeChat(true);
+    } catch (err: any) {
+      console.error("Failed to apply discharge summary preview:", err);
+      if (!err?.message?.includes("Apply the Case Sheet first to establish the patient record")) {
+        triggerNotification("Save Failed", "Unable to update discharge summary. Please try again.", "warning");
+      }
+      throw err;
+    }
+  };
+
+  /**
    * Apply Preview Case Sheet handler:
    * Clinician reviewed the preview (and optionally made in-memory modifications).
    * Persists reviewed draft using the canonical authenticated Firestore path.
-   * Updates scribe chat status only upon successful persistence.
+   * Updates authoritative scribe session chat status only upon successful persistence.
+   * Handles multiple contributing messages and reports partial sync results honestly.
    */
   const handleApplyPreviewCase = async (reviewedCase: ClinicalCase): Promise<void> => {
     if (!auth.currentUser) {
@@ -2880,51 +3153,106 @@ const handleDeleteAllCases = async () => {
       throw err;
     }
 
-    // Update in-memory cases list
-    setCases(prev => {
-      const idx = prev.findIndex(c => c.id === caseToPersist.id);
-      if (idx >= 0) {
-        const copy = [...prev];
-        copy[idx] = caseToPersist;
-        return copy;
-      }
-      return [caseToPersist, ...prev];
-    });
-
-    // Update scribe chat message if we have pending context
-    const targetMsgId = pendingPreviewContext?.msgId;
-    if (targetMsgId && reviewedCase.id) {
+    // Attempt two-sided linkage between Scribe session and the newly created/persisted ClinicalCase
+    let linkSuccess = false;
+    const sourceSessionId = pendingPreviewContext?.scribeSessionId;
+    if (sourceSessionId) {
       try {
-        await updateChatMessage(reviewedCase.id, targetMsgId, { extractionApplied: true });
-        const confId = `${targetMsgId}-case-sheet-prepared`;
-        const confirmationMsg = {
-          id: confId,
-          role: "assistant" as const,
-          type: "text" as const,
-          content: "✓ Case Sheet prepared successfully.",
-          timestamp: new Date().toISOString(),
-        };
-        await appendChatMessage(reviewedCase.id, confirmationMsg);
-
-        // Also update local scribeMessages state
-        setScribeMessages(prev => {
-          const updated = prev.map(m => m.id === targetMsgId ? { ...m, extractionApplied: true } : m);
-          const confId = `${targetMsgId}-case-sheet-prepared`;
-          if (!updated.some(m => m.id === confId)) {
-            updated.push({
-              id: confId,
-              sender: "ai",
-              text: "✓ Case Sheet prepared successfully.",
-              timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-              mode: "dictation",
-            });
-          }
-          return updated;
-        });
-      } catch (chatErr) {
-        console.warn("Could not update chat message status post-save:", chatErr);
+        const linkResult = await linkScribeSessionAndCase(sourceSessionId, caseToPersist.id);
+        if (linkResult.success) {
+          linkSuccess = await verifyTwoSidedLink(sourceSessionId, caseToPersist.id);
+        } else {
+          console.warn("[handleApplyPreviewCase] linkScribeSessionAndCase returned unsuccessful:", linkResult.error);
+        }
+      } catch (linkErr) {
+        console.warn("[handleApplyPreviewCase] Scribe session linking failed:", linkErr);
+        linkSuccess = false;
       }
     }
+
+    // Attach scribeSessionId to local case object if link succeeded
+    const finalSavedCase: ClinicalCase = (sourceSessionId && linkSuccess)
+      ? { ...caseToPersist, scribeSessionId: sourceSessionId }
+      : caseToPersist;
+
+    // Update in-memory cases list
+    setCases(prev => {
+      const idx = prev.findIndex(c => c.id === finalSavedCase.id);
+      if (idx >= 0) {
+        const copy = [...prev];
+        copy[idx] = finalSavedCase;
+        return copy;
+      }
+      return [finalSavedCase, ...prev];
+    });
+
+    // Update scribe chat messages in authoritative Scribe session
+    const targetSessionId = sourceSessionId;
+    const contributingIds = pendingPreviewContext?.contributingMsgIds || (pendingPreviewContext?.msgId ? [pendingPreviewContext.msgId] : []);
+
+    const successfulMsgIds: string[] = [];
+    const failedMsgIds: string[] = [];
+
+    if (targetSessionId && contributingIds.length > 0) {
+      for (const mId of contributingIds) {
+        try {
+          await updateChatMessage(targetSessionId, mId, { extractionApplied: true }, { isSession: true });
+          successfulMsgIds.push(mId);
+        } catch (chatErr) {
+          console.warn(`Could not update extractionApplied state for message ${mId}:`, chatErr);
+          failedMsgIds.push(mId);
+        }
+      }
+    }
+
+    const syncComplete = contributingIds.length === 0 || (
+      Boolean(targetSessionId) &&
+      failedMsgIds.length === 0 &&
+      successfulMsgIds.length === contributingIds.length
+    );
+
+    const isWorkflowSuccess = (sourceSessionId ? linkSuccess : true) && syncComplete;
+    const statusText = !isWorkflowSuccess
+      ? (sourceSessionId && !linkSuccess
+          ? "Case Sheet saved — Scribe link pending."
+          : "Case Sheet saved — Scribe status sync pending.")
+      : "✓ Case Sheet prepared successfully.";
+
+    // Generate ONE single confirmation ID for both Firestore chat append and local scribeMessages
+    const confId = `conf-case-sheet-${Date.now()}`;
+
+    if (targetSessionId) {
+      const confirmationMsg = {
+        id: confId,
+        role: "assistant" as const,
+        type: "text" as const,
+        content: statusText,
+        timestamp: new Date().toISOString(),
+      };
+      await appendChatMessage(targetSessionId, confirmationMsg, { isSession: true }).catch(err => {
+        console.warn("Could not persist case sheet confirmation message to chat session:", err);
+      });
+    }
+
+    // Update local scribeMessages state ONLY for successfully updated messages
+    setScribeMessages(prev => {
+      const updated = prev.map(m => {
+        if (successfulMsgIds.includes(m.id)) {
+          return { ...m, extractionApplied: true };
+        }
+        return m;
+      });
+      if (!updated.some(m => m.id === confId)) {
+        updated.push({
+          id: confId,
+          sender: "ai",
+          text: statusText,
+          timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+          mode: "dictation",
+        });
+      }
+      return updated;
+    });
 
     setSavedBanner({
       visible: true,
@@ -2942,14 +3270,18 @@ const handleDeleteAllCases = async () => {
             Authorization: `Bearer ${token}`
           },
           body: JSON.stringify({
-            caseData: reviewedCase,
+            caseData: finalSavedCase,
             sourceType: "active_case"
           })
         }).catch(err => console.warn("Background logbook sync error:", err));
       }).catch(err => console.warn("Failed to get token for logbook sync:", err));
     }
 
-    triggerNotification("Case Sheet Ready", "Case Sheet prepared successfully.", "success");
+    triggerNotification(
+      isWorkflowSuccess ? "Case Sheet Ready" : "Case Sheet Saved",
+      statusText,
+      isWorkflowSuccess ? "success" : "info"
+    );
     checkConsentOnCaseSaved();
 
     // Reset preview states and transition to standard case sheet view
@@ -2957,6 +3289,10 @@ const handleDeleteAllCases = async () => {
     setPreviewCase(null);
     setPendingPreviewContext(null);
     setSelectedCaseId(reviewedCase.id);
+    setVoiceScribeCaseId(reviewedCase.id);
+    if (sourceSessionId && linkSuccess) {
+      setVoiceScribeSessionId(sourceSessionId);
+    }
   };
 
   // Accepting Joining Offers (e.g., from share links)
@@ -3098,36 +3434,159 @@ const handleRoleSelectionSubmit = async () => {
       throw new Error("Not authenticated");
     }
 
-    const idToken = await auth.currentUser.getIdToken();
+    const currentEmail =
+      (auth.currentUser.email || "")
+        .trim()
+        .toLowerCase();
 
-    const res = await fetch("/api/team/approve-member", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${idToken}`
-      },
-      body: JSON.stringify({ memberId })
-    });
+    const isPlatformAdminUser =
+      currentEmail === "varahgrp@gmail.com";
+
+    const approvalPayload: {
+      memberId: string;
+      hospitalId?: string;
+      hospitalName?: string;
+    } = {
+      memberId
+    };
+
+    /*
+     * Normal HOD:
+     *   Send only memberId.
+     *   Backend derives hospital authority from the HOD's
+     *   verified team_members/{uid} record.
+     *
+     * Platform admin:
+     *   Must explicitly confirm which hospital receives
+     *   this clinician. Never silently trust the applicant.
+     */
+    if (isPlatformAdminUser) {
+      const targetSnap = await getDoc(
+        doc(db, "team_members", memberId)
+      );
+
+      if (!targetSnap.exists()) {
+        throw new Error(
+          "Pending clinician membership record was not found."
+        );
+      }
+
+      const targetData = targetSnap.data();
+
+      const requestedHospitalId =
+        typeof targetData.hospitalId === "string"
+          ? targetData.hospitalId.trim()
+          : "";
+
+      const requestedHospitalName =
+        typeof targetData.hospitalName === "string" &&
+        targetData.hospitalName.trim()
+          ? targetData.hospitalName.trim()
+          : (
+              typeof targetData.hospital === "string"
+                ? targetData.hospital.trim()
+                : ""
+            );
+
+      const selectedHospitalId =
+        window.prompt(
+          "Platform Admin Approval\n\n" +
+          "Confirm the canonical hospital ID for this clinician:",
+          requestedHospitalId
+        )?.trim() || "";
+
+      if (!selectedHospitalId) {
+        triggerNotification(
+          "Approval Cancelled",
+          "No hospital ID was confirmed.",
+          "info"
+        );
+        return;
+      }
+
+      const selectedHospitalName =
+        window.prompt(
+          "Platform Admin Approval\n\n" +
+          "Confirm the hospital display name:",
+          requestedHospitalName
+        )?.trim() || "";
+
+      if (!selectedHospitalName) {
+        triggerNotification(
+          "Approval Cancelled",
+          "No hospital name was confirmed.",
+          "info"
+        );
+        return;
+      }
+
+      const confirmed = window.confirm(
+        "Approve this clinician into:\n\n" +
+        selectedHospitalName +
+        "\nHospital ID: " +
+        selectedHospitalId +
+        "\n\nContinue?"
+      );
+
+      if (!confirmed) {
+        triggerNotification(
+          "Approval Cancelled",
+          "Clinician approval was not submitted.",
+          "info"
+        );
+        return;
+      }
+
+      approvalPayload.hospitalId =
+        selectedHospitalId;
+
+      approvalPayload.hospitalName =
+        selectedHospitalName;
+    }
+
+    // Refresh token immediately before the privileged request.
+    const idToken =
+      await auth.currentUser.getIdToken(true);
+
+    const res = await fetch(
+      "/api/team/approve-member",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${idToken}`
+        },
+        body: JSON.stringify(
+          approvalPayload
+        )
+      }
+    );
 
     if (!res.ok) {
-      const errorData = await res.json().catch(() => ({}));
+      const errorData =
+        await res.json().catch(() => ({}));
 
       throw new Error(
-        errorData.error || "Failed to approve member"
+        errorData.error ||
+        "Failed to approve member"
       );
     }
 
     triggerNotification(
       "Clinician Approved",
-      "The clinician registration has been approved. They are now active on your team.",
+      "The clinician registration has been approved. They are now active on the team.",
       "success"
     );
   } catch (err: any) {
-    console.error("Error approving member:", err);
+    console.error(
+      "Error approving member:",
+      err
+    );
 
     triggerNotification(
       "Approval Failed",
-      err?.message || "Failed to approve clinician.",
+      err?.message ||
+        "Failed to approve clinician.",
       "warning"
     );
   }
@@ -5175,6 +5634,11 @@ const handleSignOut = async () => {
                     const targetCaseId = caseId || selectedCaseId;
                     if (targetCaseId) {
                       setVoiceScribeCaseId(targetCaseId);
+                      const match = cases.find(c => c.id === targetCaseId);
+                      setVoiceScribeSessionId(match?.scribeSessionId || null);
+                    } else {
+                      setVoiceScribeCaseId(null);
+                      setVoiceScribeSessionId(null);
                     }
                     setShowVoiceScribeChat(true);
                     setSelectedCaseId(null);
@@ -5196,12 +5660,23 @@ const handleSignOut = async () => {
           {/* 3. Discharge Summary View */}
           {showDischargeSummaryId && !selectedCaseId && !activeFormMode && !showQuickDischarge && (
             (() => {
-              const matched = cases.find(c => c.id === showDischargeSummaryId) || (quickDischargeCase?.id === showDischargeSummaryId ? quickDischargeCase : null);
+              const matched = isDischargePreviewMode && previewDischargeCase
+                ? previewDischargeCase
+                : (cases.find(c => c.id === showDischargeSummaryId) || (quickDischargeCase?.id === showDischargeSummaryId ? quickDischargeCase : null));
               if (!matched) return <p className="p-6 text-slate-400">Case not found</p>;
               return (
                 <DischargeSummaryView
                   currentCase={matched}
+                  previewMode={isDischargePreviewMode}
+                  onApplyPreviewDischarge={handleApplyPreviewDischarge}
                   onBack={() => {
+                    if (isDischargePreviewMode) {
+                      setIsDischargePreviewMode(false);
+                      setPreviewDischargeCase(null);
+                      setShowDischargeSummaryId(null);
+                      setShowVoiceScribeChat(true);
+                      return;
+                    }
                     setShowDischargeSummaryId(null);
                     setQuickDischargeCase(null);
                   }}
@@ -5238,12 +5713,15 @@ const handleSignOut = async () => {
             <VoiceScribeChatView
               caseId={voiceScribeCaseId}
               caseData={cases.find(c => c.id === voiceScribeCaseId) || (selectedCaseId ? cases.find(c => c.id === selectedCaseId) : null)}
+              sessionId={voiceScribeSessionId}
+              onSessionIdChange={setVoiceScribeSessionId}
               initialEntryMode={voiceScribeDiscussionMode ? "discussion" : "case"}
               refreshTrigger={scribeRefreshTrigger}
               onBusyChange={setIsScribeBusy}
               onBack={() => {
                 setShowVoiceScribeChat(false);
                 setVoiceScribeCaseId(null);
+                setVoiceScribeSessionId(null);
                 setVoiceScribeDiscussionMode(false);
               }}
               onOpenCaseSheet={(cId) => {
@@ -5255,6 +5733,7 @@ const handleSignOut = async () => {
                 setSelectedCaseId(cId);
               }}
               onPreviewCaseSheet={handlePreviewCaseSheet}
+              onPreviewDischargeSummary={handlePreviewDischargeSummary}
               onSaveExtractedCase={handleSaveExtractedVoiceCase}
               onPrepareDischarge={async (extraction, msgId, chatCaseId) => {
                 const targetCaseId = chatCaseId || voiceScribeCaseId;

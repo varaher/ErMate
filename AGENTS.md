@@ -45,6 +45,86 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-01] — Scribe Link Final Atomicity Hardening (`src/services/scribeChatStorage.ts`)
+- **Atomic Two-Sided Link Transaction (`linkScribeSessionAndCase`)**:
+  - Wrapped two-sided pre-flight reads, conflict validations, and selective updates in a single Firestore `runTransaction(db, async txn => ...)`.
+  - Transaction reads `scribeSessions/{sessionId}` and `cases/{caseId}` via `txn.get()`.
+  - Atomically validates document existence and enforces both conflict checks:
+    - Session Conflict: `session.linkedCaseId != null && session.linkedCaseId !== caseId` aborts with zero writes.
+    - Case Conflict: `case.scribeSessionId != null && case.scribeSessionId !== sessionId` aborts with zero writes.
+  - Selective updates (`txn.update`) occur strictly within the transaction boundaries if either link pointer is null.
+  - Concurrency guarantee: Simultaneous attempts to link different sessions (e.g. S1 and S2) to the same case (C1) cannot race; the winning transaction updates C1, causing the competing transaction to retry, detect the conflict, and fail closed with zero writes.
+
+### [2026-10-01] — Scribe Continuity Final Closure: Two-Sided Link Pre-Flight
+- **Two-Sided Pre-Flight Reads & Conflict Check (`src/services/scribeChatStorage.ts`)**:
+  - Refactored `linkScribeSessionAndCase(sessionId, caseId)` to execute concurrent pre-flight reads (`getDoc` on `scribeSessions/{sessionId}` and `cases/{caseId}`) before modifying either document.
+  - If either document is absent, fails closed immediately with descriptive error.
+  - Pre-flight evaluates both conflict vectors:
+    - Session Conflict: `session.linkedCaseId != null && session.linkedCaseId !== caseId` fails closed with zero writes.
+    - Case Conflict: `case.scribeSessionId != null && case.scribeSessionId !== sessionId` fails closed with zero writes, guaranteeing that an unlinked `S3` cannot overwrite `C2.scribeSessionId = S2`, and `S3.linkedCaseId` remains `null`.
+  - Handles valid states idempotently and performs surgical partial repairs without redundant writes.
+
+### [2026-10-01] — Same-Patient Scribe Continuity Hardening
+- **Clear Stale Session When Opening a Case (`src/App.tsx`)**:
+  - In `handleStartVoiceScribe(caseId)`, updated session state assignment to `setVoiceScribeSessionId(match?.scribeSessionId || null)`. If a case has no `scribeSessionId`, the previous patient's session ID is explicitly cleared rather than lingering in state.
+- **Clear Stale Session in `onReturnToScribe` (`src/App.tsx`)**:
+  - In `onReturnToScribe(caseId)`, updated session assignment to `setVoiceScribeSessionId(match?.scribeSessionId || null)`. If returning to a case without an established Scribe session, or if targetCaseId is absent, clears `voiceScribeSessionId` immediately.
+- **Fail-Closed Session Link Helper (`src/services/scribeChatStorage.ts`)**:
+  - In `linkScribeSessionAndCase(sessionId, caseId)`, if the session document already has `linkedCaseId != null && linkedCaseId !== caseId`, immediately stops and returns `{ success: false, sessionLinked: false, caseLinked: false, error: ... }`.
+  - Guarantees that a session belonging to Patient A (C1) can never overwrite or update `cases/{C2}.scribeSessionId` with S1.
+
+### [2026-10-01] — Scribe Continuity Patch: First Case Apply Two-Sided Link & Session Preservation
+- **Authoritative Two-Sided Link On First Case Apply (`src/App.tsx`)**:
+  - In `handleApplyPreviewCase`, upon primary `ClinicalCase` write success, invokes canonical `linkScribeSessionAndCase(sourceSessionId, caseToPersist.id)` followed by `verifyTwoSidedLink(sourceSessionId, caseToPersist.id)`.
+  - Stamped `caseToPersist.scribeSessionId = sourceSessionId` in local `cases` state, ensuring `cases/{caseId}.scribeSessionId === sourceSessionId` and `scribeSessions/{sourceSessionId}.linkedCaseId === caseId`.
+  - If linking fails, primary case is preserved and UI honestly reports `"Case Sheet saved — Scribe link pending."` without false claims of workflow completion.
+- **Scribe Continuity Across Navigation (`src/App.tsx`)**:
+  - Added `voiceScribeSessionId` state synchronized with `onSessionIdChange` and `sessionId` props on `VoiceScribeChatView`.
+  - Updated `onReturnToScribe` and `handleStartVoiceScribe` to immediately restore `voiceScribeSessionId` from `case.scribeSessionId`.
+  - New-patient dictation clears `voiceScribeSessionId`, guaranteeing clean session creation for subsequent patients without polluting previous patient sessions.
+- **Confirmation Message ID Deduplication (`src/App.tsx`)**:
+  - Consolidated Case Sheet confirmation ID generation into a single `confId` shared between Firestore `appendChatMessage` and local `setScribeMessages`.
+
+### [2026-10-01] — Patch 2D: Missing Scribe Session Sync Pending Closure
+- **Sync Completion Definition Hardened (`src/App.tsx`)**:
+  - Refactored `syncComplete` in both `handleApplyPreviewDischarge` and `handleApplyPreviewCase`:
+    `syncComplete = contributingIds.length === 0 || (Boolean(targetSessionId) && failedMsgIds.length === 0 && successfulMsgIds.length === contributingIds.length)`.
+  - When `contributingIds.length > 0` but `targetSessionId` is missing/null, the primary ClinicalCase / dischargeInfo save is preserved, but no local messages are falsely marked applied, and the UI honestly reports `"Discharge Summary saved — Scribe status sync pending."` / `"Case Sheet saved — Scribe status sync pending."`.
+  - When `contributingIds.length === 0`, `syncComplete` evaluates to `true` with no false warnings.
+
+### [2026-10-01] — Patch 2C: Discharge Persistence Acknowledgement & Authoritative Scribe Session Target
+- **Discharge Persistence Success Signal & Canonical Helper (`src/App.tsx`)**:
+  - Implemented `persistDischargeInfo(targetCase, dischargeInfo)` canonical helper that writes primary case `dischargeInfo` to `cases/{caseId}`, logs addendum audit, and strictly throws on primary write failures.
+  - Normal `handleSaveDischarge` and preview `handleApplyPreviewDischarge` reuse this canonical helper.
+  - `dischargeApplied` flags are never marked if the primary Firestore write fails.
+- **Brand-New Patient Guard for Discharge Apply (`src/App.tsx`)**:
+  - In `handleApplyPreviewDischarge`, verified existence of a persisted `ClinicalCase`.
+  - If no persisted case exists, fails closed with notification: `"Apply the Case Sheet first to establish the patient record."` without modifying Firestore or setting flags, preserving in-memory preview state.
+- **Authoritative Scribe Session Target & Multi-Message Support for Case Sheet Preview (`src/App.tsx`, `src/components/VoiceScribeChatView.tsx`)**:
+  - Extended `onPreviewCaseSheet` and `pendingPreviewContext` with `contributingMsgIds` and `scribeSessionId: activeSessionId || null`.
+  - Added `getMergedUnappliedCaseExtraction` to collect contributing message IDs up to the clicked target.
+  - In `handleApplyPreviewCase`, updates `scribeSessions/{scribeSessionId}/messages/{messageId}` with `{ isSession: true }`, eliminating the bug where `caseId` was passed as `sessionId`.
+- **Honest Partial Scribe Sync Handling (`src/App.tsx`)**:
+  - Both Case Sheet and Discharge Apply flows track `successfulMsgIds` and `failedMsgIds`.
+  - Reports `"✓ Discharge Summary updated successfully."` / `"✓ Case Sheet prepared successfully."` when all succeed.
+  - Reports honest state `"Discharge Summary saved — Scribe status sync pending."` / `"Case Sheet saved — Scribe status sync pending."` if any chat flag fails, keeping failed IDs retryable in Scribe.
+
+### [2026-09-28] — Firestore Security Rules Hardening & Platform Admin Approval Alignment
+- **Firestore Rules Hardening (`firestore.rules`)**:
+  - `users/{userId}`: Enforced authenticated email match against `request.auth.token.email` on both create and update operations. Restricted initial `subscriptionTier` creation strictly to `'Free Standard'`.
+  - `teamAuditLog`, `roleChangeLog`, `hospital_subscriptions`: Restricted creation, modification, and deletion to server-side only (`allow create, update, delete: if false`).
+  - `teamInvites`: Client writes completely disallowed (`allow create, update, delete: if false`). Read access limited to platform admin.
+  - `team_members`: Creation and deletion forbidden from client SDKs (`allow create, delete: if false`). Updates restricted exclusively to duty shifts (`['shift', 'updatedAt']`) by verified members or their hospital HOD.
+  - `hospital_shifts`: Restricted create and update strictly to verified HODs of that hospital with field integrity validation (`id`, `hospitalId`, `shifts`, `updatedByUid == uid()`). Delete disallowed.
+  - `contributions`: Added check that only `pending` contributions can be edited by the submitter.
+  - `mortalityAudits`: Tenant identity made strictly immutable during update. Added canonical `hospitalId` validation on create, and permitted deletion by verified HODs for their own hospital.
+  - `chatSessions`: Bound session creation and updates strictly to `createdBy == uid()`. Ownership made immutable.
+  - Rules successfully compiled and deployed to Firebase project.
+- **Platform Admin Member Approval Workflow (`src/App.tsx`)**:
+  - Updated `handleApproveMember` for platform administrator callers to explicitly confirm the canonical `hospitalId` and `hospitalName` via verification prompts before dispatching `/api/team/approve-member`.
+  - Forced fresh token retrieval (`getIdToken(true)`) prior to approving memberships.
+  - Verified clean TypeScript validation (`tsc --noEmit`) and successful production bundling with `compile_applet`.
+
 ### [2026-09-27] — Full Team Lifecycle Security Audit Logging (`teamAuditLog`)
 - **Comprehensive Team Audit Events (`server/routes/team.routes.ts`)**:
   - Attached atomic transactional security audit records to all critical membership mutations inside `db.runTransaction()`:

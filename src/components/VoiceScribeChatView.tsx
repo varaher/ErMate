@@ -56,7 +56,8 @@ interface VoiceScribeChatViewProps {
   onCaseSheetUpdated?: (fields: any) => void;
   onSaveExtractedCase?: (extracted: any, options?: { autoNavigate?: boolean; existingCaseId?: string }) => Promise<string>;
   onPrepareDischarge?: (extractedData: any, messageId: string, caseId: string) => Promise<void>;
-  onPreviewCaseSheet?: (extracted: any, options?: { existingCaseId?: string | null; msgId?: string }) => void | Promise<void>;
+  onPreviewCaseSheet?: (extracted: any, options?: { existingCaseId?: string | null; msgId?: string; contributingMsgIds?: string[]; scribeSessionId?: string | null }) => void | Promise<void>;
+  onPreviewDischargeSummary?: (extracted: any, options?: { existingCaseId?: string | null; msgId?: string; contributingMsgIds?: string[]; scribeSessionId?: string | null }) => void | Promise<void>;
   profile?: any;
   onSaveProfile?: (newProfile: any) => Promise<any>;
   messages?: any;
@@ -381,18 +382,45 @@ export function deepMergeExtraction(base: any, incoming: any): any {
  * If targetId is provided, merges unapplied turns up to and including targetId.
  * Preserves nested objects (vitals, sampleHistory, secondarySurvey, fastFindings, mlcDetails, vbgAbg)
  * without shallow-replacing them.
+ * Returns both the merged object and the array of contributing message IDs.
  */
-export function getMergedUnappliedExtraction(messages: Message[], targetId?: string): any {
+export function getMergedUnappliedCaseExtraction(messages: Message[], targetId?: string): { merged: any; contributingMsgIds: string[] } {
   let merged: any = {};
+  const contributingMsgIds: string[] = [];
   for (const msg of messages) {
     if (msg.extractionData && !msg.extractionApplied) {
       merged = deepMergeExtraction(merged, msg.extractionData);
+      contributingMsgIds.push(msg.id);
     }
     if (targetId && msg.id === targetId) {
       break;
     }
   }
-  return merged;
+  return { merged, contributingMsgIds };
+}
+
+export function getMergedUnappliedExtraction(messages: Message[], targetId?: string): any {
+  return getMergedUnappliedCaseExtraction(messages, targetId).merged;
+}
+
+/**
+ * Destination-specific deep-merge helper for DISCHARGE SUMMARY.
+ * Merges extraction data for all turns where dischargeApplied !== true up to targetId.
+ * Does NOT care whether extractionApplied is true (Case Sheet and Discharge are independent).
+ */
+export function getMergedUnappliedDischargeExtraction(messages: Message[], targetId?: string): { merged: any; contributingMsgIds: string[] } {
+  let merged: any = {};
+  const contributingMsgIds: string[] = [];
+  for (const msg of messages) {
+    if (msg.extractionData && !msg.dischargeApplied) {
+      merged = deepMergeExtraction(merged, msg.extractionData);
+      contributingMsgIds.push(msg.id);
+    }
+    if (targetId && msg.id === targetId) {
+      break;
+    }
+  }
+  return { merged, contributingMsgIds };
 }
 
 export function mergeExtractionUpTo(messages: Message[], targetId: string): any {
@@ -410,6 +438,7 @@ export default function VoiceScribeChatView({
   onSaveExtractedCase,
   onPrepareDischarge,
   onPreviewCaseSheet,
+  onPreviewDischargeSummary,
   profile,
   onSaveProfile,
   messages: propMessages,
@@ -814,9 +843,28 @@ export default function VoiceScribeChatView({
   const handlePreviewExtraction = (msgId: string, extractionData: any) => {
     setSaveError(null);
     if (onPreviewCaseSheet) {
-      onPreviewCaseSheet(extractionData, { existingCaseId: activeCaseId || null, msgId });
+      const { merged: caseMerged, contributingMsgIds } = getMergedUnappliedCaseExtraction(messages, msgId);
+      onPreviewCaseSheet(caseMerged || extractionData, {
+        existingCaseId: activeCaseId || null,
+        msgId,
+        contributingMsgIds,
+        scribeSessionId: activeSessionId || null,
+      });
     } else if (onOpenCaseSheet && activeCaseId) {
       onOpenCaseSheet(activeCaseId);
+    }
+  };
+
+  const handlePreviewDischarge = (msgId: string) => {
+    setSaveError(null);
+    if (onPreviewDischargeSummary) {
+      const { merged: dischargeMerged, contributingMsgIds } = getMergedUnappliedDischargeExtraction(messages, msgId);
+      onPreviewDischargeSummary(dischargeMerged, {
+        existingCaseId: activeCaseId || null,
+        msgId,
+        contributingMsgIds,
+        scribeSessionId: activeSessionId || null,
+      });
     }
   };
 
@@ -1270,9 +1318,14 @@ export default function VoiceScribeChatView({
               onClick={async () => {
                 const unappliedMessages = messages.filter(m => m.extractionData && !m.extractionApplied);
                 if (unappliedMessages.length > 0 && onPreviewCaseSheet) {
-                  const mergedExtraction = getMergedUnappliedExtraction(messages);
+                  const { merged: mergedExtraction, contributingMsgIds } = getMergedUnappliedCaseExtraction(messages);
                   const latestMsg = unappliedMessages[unappliedMessages.length - 1];
-                  onPreviewCaseSheet(mergedExtraction, { existingCaseId: activeCaseId || null, msgId: latestMsg?.id });
+                  onPreviewCaseSheet(mergedExtraction, {
+                    existingCaseId: activeCaseId || null,
+                    msgId: latestMsg?.id,
+                    contributingMsgIds,
+                    scribeSessionId: activeSessionId || null,
+                  });
                   return;
                 }
                 if (onSaveExtractedCase) {
@@ -1380,7 +1433,9 @@ export default function VoiceScribeChatView({
  msg.extractionData !== undefined &&
  (() => {
 
-  const merged = mergeExtractionUpTo(messages, msg.id);
+  const caseMerged = mergeExtractionUpTo(messages, msg.id);
+  const { merged: dischargeMerged } = getMergedUnappliedDischargeExtraction(messages, msg.id);
+  const merged = msg.extractionApplied ? dischargeMerged : caseMerged;
   const entries = getDisplayableExtractionEntries(merged);
 
   if (entries.length === 0) return null;
@@ -1495,28 +1550,17 @@ export default function VoiceScribeChatView({
           </button>
         ) : (
           <button
-            onClick={() => handlePreviewExtraction(msg.id, merged)}
+            onClick={() => handlePreviewExtraction(msg.id, caseMerged)}
             className="flex-1 py-1.5 flex items-center justify-center gap-2 rounded text-xs font-bold transition-all cursor-pointer bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm"
           >
             <span>Preview Case Sheet</span>
           </button>
         )}
         <button
-          disabled={msg.dischargeApplied || !!processingAction}
-          onClick={() => handleApplyDischarge(msg.id, merged)}
-          className={`flex-1 py-1.5 flex items-center justify-center gap-2 rounded text-xs font-bold transition-all cursor-pointer shadow-sm ${
-            msg.dischargeApplied
-              ? "bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 opacity-80"
-              : processingAction?.messageId === msg.id && processingAction?.type === "discharge"
-                ? "bg-purple-400 cursor-not-allowed text-white"
-                : "bg-purple-600 hover:bg-purple-700 text-white"
-          }`}
+          onClick={() => handlePreviewDischarge(msg.id)}
+          className="flex-1 py-1.5 flex items-center justify-center gap-2 rounded text-xs font-bold transition-all cursor-pointer shadow-sm bg-purple-600 hover:bg-purple-700 text-white"
         >
-          {msg.dischargeApplied
-            ? "Discharge Summary Prepared ✓"
-            : processingAction?.messageId === msg.id && processingAction?.type === "discharge"
-              ? "Preparing Discharge Summary…"
-              : "Prepare Discharge Summary"}
+          <span>Preview Discharge Summary</span>
         </button>
       </div>
     </div>

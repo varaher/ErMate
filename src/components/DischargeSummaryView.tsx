@@ -22,6 +22,8 @@ interface DischargeSummaryViewProps {
   onSaveDischarge: (dischargeInfo: DischargeInfo) => void;
   profile?: UserProfile;
   onDeleteCase?: (caseId: string) => void;
+  previewMode?: boolean;
+  onApplyPreviewDischarge?: (info: DischargeInfo) => Promise<void> | void;
 }
 
 type TabType = "admin-vitals" | "clinical-hx" | "primary-assessment" | "secondary-assessment" | "course-plans";
@@ -31,7 +33,9 @@ export default function DischargeSummaryView({
   onBack,
   onSaveDischarge,
   profile,
-  onDeleteCase
+  onDeleteCase,
+  previewMode = false,
+  onApplyPreviewDischarge
 }: DischargeSummaryViewProps) {
   // Prepopulate from case records or existing dischargeInfo
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -522,23 +526,12 @@ export default function DischargeSummaryView({
     }
   };
 
-  const handleSave = (statusToSave?: DischargeSummaryStatus) => {
-    // Determine the lifecycle status
-    const effectiveStatus: DischargeSummaryStatus = statusToSave || (isManuallyEdited ? "MANUALLY_EDITED" : (summaryStatus === "FINALIZED" ? "FINALIZED" : "PREPARED"));
-    setSummaryStatus(effectiveStatus);
+  const [isApplyingDischarge, setIsApplyingDischarge] = useState(false);
 
-    if (aiDrafted && currentCase?.dischargeInfo) {
-      const caseAny = currentCase as any;
-      if (currentCase.dischargeInfo.primaryDiagnosis !== primaryDiagnosis) {
-        captureFeedbackCorrection("primary_diagnosis", currentCase.dischargeInfo.primaryDiagnosis || "", primaryDiagnosis, caseAny.historyOfPresentIllness || caseAny.presentingComplaint || "", "discharge_summary", profile?.name || "Doctor");
-      }
-      if (currentCase.dischargeInfo.dischargeMedications !== dischargeMedications) {
-        captureFeedbackCorrection("discharge_medications", currentCase.dischargeInfo.dischargeMedications || "", dischargeMedications, caseAny.treatmentInEr || caseAny.treatments || "", "discharge_summary", profile?.name || "Doctor");
-      }
-    }
-
+  const buildCurrentDischargeInfo = (statusToUse?: DischargeSummaryStatus): DischargeInfo => {
+    const effectiveStatus: DischargeSummaryStatus = statusToUse || (isManuallyEdited ? "MANUALLY_EDITED" : (summaryStatus === "FINALIZED" ? "FINALIZED" : "PREPARED"));
     const nowIso = new Date().toISOString();
-    const info: DischargeInfo = {
+    return {
       primaryDiagnosis,
       secondaryDiagnosis,
       conditionAtDischarge: generalExamination,
@@ -624,6 +617,43 @@ export default function DischargeSummaryView({
       dischargeCondition,
       dispositionStatus
     };
+  };
+
+  const handleApplyPreviewDischargeAction = async () => {
+    if (!onApplyPreviewDischarge || isApplyingDischarge) return;
+    setIsApplyingDischarge(true);
+    try {
+      const targetStatus: DischargeSummaryStatus = isManuallyEdited ? "MANUALLY_EDITED" : "PREPARED";
+      const infoToApply = buildCurrentDischargeInfo(targetStatus);
+      await onApplyPreviewDischarge(infoToApply);
+    } catch (err) {
+      console.error("Failed to apply preview discharge summary:", err);
+      setIsApplyingDischarge(false);
+    }
+  };
+
+  const handleSave = (statusToSave?: DischargeSummaryStatus) => {
+    // Defensive safety guard: true preview mode MUST NOT write or persist anything
+    if (previewMode) {
+      console.warn("[DischargeSummaryView] Save action blocked: Discharge Summary is in Preview Mode.");
+      return;
+    }
+
+    // Determine the lifecycle status
+    const effectiveStatus: DischargeSummaryStatus = statusToSave || (isManuallyEdited ? "MANUALLY_EDITED" : (summaryStatus === "FINALIZED" ? "FINALIZED" : "PREPARED"));
+    setSummaryStatus(effectiveStatus);
+
+    if (aiDrafted && currentCase?.dischargeInfo) {
+      const caseAny = currentCase as any;
+      if (currentCase.dischargeInfo.primaryDiagnosis !== primaryDiagnosis) {
+        captureFeedbackCorrection("primary_diagnosis", currentCase.dischargeInfo.primaryDiagnosis || "", primaryDiagnosis, caseAny.historyOfPresentIllness || caseAny.presentingComplaint || "", "discharge_summary", profile?.name || "Doctor");
+      }
+      if (currentCase.dischargeInfo.dischargeMedications !== dischargeMedications) {
+        captureFeedbackCorrection("discharge_medications", currentCase.dischargeInfo.dischargeMedications || "", dischargeMedications, caseAny.treatmentInEr || caseAny.treatments || "", "discharge_summary", profile?.name || "Doctor");
+      }
+    }
+
+    const info = buildCurrentDischargeInfo(effectiveStatus);
     onSaveDischarge(info);
     setSaveBanner(true);
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -652,7 +682,9 @@ export default function DischargeSummaryView({
               </h1>
               {/* Status Badge */}
               <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider ${
-                summaryStatus === "FINALIZED"
+                previewMode
+                  ? "bg-purple-100 text-purple-800 dark:bg-purple-950/40 dark:text-purple-300 border border-purple-300 dark:border-purple-800"
+                  : summaryStatus === "FINALIZED"
                   ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800"
                   : summaryStatus === "MANUALLY_EDITED"
                   ? "bg-purple-100 text-purple-800 dark:bg-purple-950/40 dark:text-purple-300 border border-purple-300 dark:border-purple-800"
@@ -660,7 +692,7 @@ export default function DischargeSummaryView({
                   ? "bg-blue-100 text-blue-800 dark:bg-blue-950/40 dark:text-blue-300 border border-blue-300 dark:border-blue-800"
                   : "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 border border-slate-300 dark:border-slate-700"
               }`}>
-                {summaryStatus === "MANUALLY_EDITED" ? "Edited" : summaryStatus}
+                {previewMode ? "Preview Mode" : summaryStatus === "MANUALLY_EDITED" ? "Edited" : summaryStatus}
               </span>
             </div>
             <p className="text-xs text-slate-400">
@@ -770,23 +802,47 @@ export default function DischargeSummaryView({
             <Printer className="w-4 h-4" />
             Print Case Card
           </button>
-          <button
-            onClick={() => handleSave(isManuallyEdited ? "MANUALLY_EDITED" : "PREPARED")}
-            className="px-3 py-2 bg-slate-200 hover:bg-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 shadow-xs"
-            id="save-draft-btn-discharge"
-            title="Save draft and preserve edits"
-          >
-            <Save className="w-3.5 h-3.5" />
-            Save Draft
-          </button>
-          <button
-            onClick={() => handleSave("FINALIZED")}
-            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 shadow-xs"
-            id="save-btn-discharge"
-          >
-            <CheckCircle className="w-4 h-4" />
-            Finalize & Save Summary
-          </button>
+          {previewMode ? (
+            <button
+              type="button"
+              disabled={isApplyingDischarge}
+              onClick={handleApplyPreviewDischargeAction}
+              className="px-4 py-2 bg-purple-600 hover:bg-purple-700 disabled:bg-purple-400 text-white text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 shadow-xs cursor-pointer"
+              id="apply-discharge-btn"
+            >
+              {isApplyingDischarge ? (
+                <>
+                  <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  <span>Applying…</span>
+                </>
+              ) : (
+                <>
+                  <CheckCircle className="w-4 h-4" />
+                  <span>Apply to Discharge Summary</span>
+                </>
+              )}
+            </button>
+          ) : (
+            <>
+              <button
+                onClick={() => handleSave(isManuallyEdited ? "MANUALLY_EDITED" : "PREPARED")}
+                className="px-3 py-2 bg-slate-200 hover:bg-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 shadow-xs"
+                id="save-draft-btn-discharge"
+                title="Save draft and preserve edits"
+              >
+                <Save className="w-3.5 h-3.5" />
+                Save Draft
+              </button>
+              <button
+                onClick={() => handleSave("FINALIZED")}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 shadow-xs"
+                id="save-btn-discharge"
+              >
+                <CheckCircle className="w-4 h-4" />
+                Finalize & Save Summary
+              </button>
+            </>
+          )}
         </div>
       </div>
 
@@ -795,6 +851,21 @@ export default function DischargeSummaryView({
         <div className="bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900 text-emerald-700 dark:text-emerald-300 p-4 rounded-xl flex items-center gap-2 text-sm font-semibold no-print">
           <CheckCircle className="w-5 h-5 text-emerald-500 shrink-0" />
           Discharge Summary Card permanently finalized and archived. Status changed to DISCHARGED!
+        </div>
+      )}
+
+      {/* Preview Mode Banner */}
+      {previewMode && (
+        <div className="bg-purple-50 dark:bg-purple-950/30 border border-purple-200 dark:border-purple-800 text-purple-800 dark:text-purple-300 p-4 rounded-xl flex items-center justify-between gap-3 text-xs font-semibold no-print">
+          <div className="flex items-center gap-2">
+            <FileText className="w-5 h-5 text-purple-600 dark:text-purple-400 shrink-0" />
+            <span>
+              <strong>PREVIEW MODE</strong> — In-memory draft generated from current Scribe dictations. Not yet applied to the patient record.
+            </span>
+          </div>
+          <span className="px-2.5 py-1 bg-purple-100 dark:bg-purple-900/50 text-purple-700 dark:text-purple-300 rounded-md text-[11px] font-bold shrink-0">
+            Read-Only Review
+          </span>
         </div>
       )}
 

@@ -148,59 +148,94 @@ export async function linkScribeSessionAndCase(
     throw new Error("Missing sessionId or caseId for two-sided link");
   }
 
-  let sessionLinked = false;
-  let caseLinked = false;
-  let errorMsg = "";
+  const sessionRef = doc(db, "scribeSessions", sessionId);
+  const caseRef = doc(db, "cases", caseId);
 
-  // 1. Attempt session link (or verify if already linked)
   try {
-    const sessionRef = doc(db, "scribeSessions", sessionId);
-    const sessionSnap = await getDoc(sessionRef);
-    if (sessionSnap.exists()) {
-      const data = sessionSnap.data();
-      if (data?.linkedCaseId === caseId) {
-        sessionLinked = true;
-      } else if (data?.linkedCaseId == null) {
-        await updateDoc(sessionRef, {
+    return await runTransaction(db, async (txn) => {
+      // 1. ATOMIC PRE-FLIGHT READS: read both documents inside the transaction
+      const sessionSnap = await txn.get(sessionRef);
+      const caseSnap = await txn.get(caseRef);
+
+      // Verify existence of both documents
+      if (!sessionSnap.exists()) {
+        return {
+          success: false,
+          sessionLinked: false,
+          caseLinked: false,
+          error: `Session document ${sessionId} not found`,
+        };
+      }
+      if (!caseSnap.exists()) {
+        return {
+          success: false,
+          sessionLinked: false,
+          caseLinked: false,
+          error: `Case document ${caseId} not found`,
+        };
+      }
+
+      const sessionData = sessionSnap.data();
+      const caseData = caseSnap.data();
+
+      const currentSessionLinkedCaseId = sessionData?.linkedCaseId ?? null;
+      const currentCaseScribeSessionId = caseData?.scribeSessionId ?? null;
+
+      // 2. CONFLICT CHECKS: validate both directions atomically before any writes
+      // Session conflict: session belongs to another case
+      if (currentSessionLinkedCaseId != null && currentSessionLinkedCaseId !== caseId) {
+        return {
+          success: false,
+          sessionLinked: false,
+          caseLinked: false,
+          error: `Session conflict: session ${sessionId} is already linked to case ${currentSessionLinkedCaseId}`,
+        };
+      }
+
+      // Case conflict: case already linked to another session
+      if (currentCaseScribeSessionId != null && currentCaseScribeSessionId !== sessionId) {
+        return {
+          success: false,
+          sessionLinked: false,
+          caseLinked: false,
+          error: `Case conflict: case ${caseId} already has canonical session ${currentCaseScribeSessionId}`,
+        };
+      }
+
+      // 3. ATOMIC MUTATIONS (only executed if pre-flight and conflict checks pass cleanly)
+      const sessionNeedsUpdate = currentSessionLinkedCaseId == null;
+      const caseNeedsUpdate = currentCaseScribeSessionId == null;
+
+      // Write session link if needed
+      if (sessionNeedsUpdate) {
+        txn.update(sessionRef, {
           linkedCaseId: caseId,
           updatedAt: new Date().toISOString(),
         });
-        sessionLinked = true;
-      } else {
-        errorMsg = `Session ${sessionId} already linked to case ${data.linkedCaseId}`;
       }
-    } else {
-      errorMsg = `Session document ${sessionId} not found`;
-    }
-  } catch (err: any) {
-    console.error("[linkScribeSessionAndCase] Error linking session side:", err);
-    errorMsg = err?.message || "Session link failed";
-  }
 
-  // 2. Attempt case pointer (or verify if already pointing)
-  try {
-    const caseRef = doc(db, "cases", caseId);
-    const caseSnap = await getDoc(caseRef);
-    if (caseSnap.exists()) {
-      const data = caseSnap.data();
-      if (data?.scribeSessionId === sessionId) {
-        caseLinked = true;
-      } else {
-        await updateDoc(caseRef, {
+      // Write case pointer if needed
+      if (caseNeedsUpdate) {
+        txn.update(caseRef, {
           scribeSessionId: sessionId,
         });
-        caseLinked = true;
       }
-    } else {
-      if (!errorMsg) errorMsg = `Case document ${caseId} not found`;
-    }
-  } catch (err: any) {
-    console.error("[linkScribeSessionAndCase] Error linking case side:", err);
-    if (!errorMsg) errorMsg = err?.message || "Case pointer failed";
-  }
 
-  const success = sessionLinked && caseLinked;
-  return { success, sessionLinked, caseLinked, error: success ? undefined : errorMsg };
+      return {
+        success: true,
+        sessionLinked: true,
+        caseLinked: true,
+      };
+    });
+  } catch (err: any) {
+    console.error("[linkScribeSessionAndCase] Transaction error during two-sided link:", err);
+    return {
+      success: false,
+      sessionLinked: false,
+      caseLinked: false,
+      error: err?.message || "Transaction failed during two-sided link",
+    };
+  }
 }
 
 /**
