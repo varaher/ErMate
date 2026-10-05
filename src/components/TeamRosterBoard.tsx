@@ -48,6 +48,8 @@ interface TeamRosterBoardProps {
   hospitalSubscriptionActive?: boolean;
   shifts?: any[];
   onUpdateShifts?: (newShifts: any[]) => Promise<void> | void;
+  erPhysicalBedCapacity?: number | null;
+  onUpdateErPhysicalBedCapacity?: (capacity: number) => Promise<void> | void;
 }
 
 export default function TeamRosterBoard({
@@ -64,6 +66,8 @@ export default function TeamRosterBoard({
   hospitalSubscriptionActive = false,
   shifts = [],
   onUpdateShifts,
+  erPhysicalBedCapacity = null,
+  onUpdateErPhysicalBedCapacity,
 }: TeamRosterBoardProps) {
   // Active dynamic shifts
   const activeShifts = shifts && shifts.length > 0 ? shifts : ROTA_SHIFTS;
@@ -83,6 +87,22 @@ export default function TeamRosterBoard({
   const [addShiftTime, setAddShiftTime] = useState("");
   const [addShiftColor, setAddShiftColor] = useState(SHIFT_COLOR_OPTIONS[0].color);
   const [shiftActionMsg, setShiftActionMsg] = useState("");
+
+  const [capacityInput, setCapacityInput] = useState(
+    erPhysicalBedCapacity
+      ? String(erPhysicalBedCapacity)
+      : ""
+  );
+  const [capacityActionMsg, setCapacityActionMsg] = useState("");
+  const [capacitySaving, setCapacitySaving] = useState(false);
+
+  useEffect(() => {
+    setCapacityInput(
+      erPhysicalBedCapacity
+        ? String(erPhysicalBedCapacity)
+        : ""
+    );
+  }, [erPhysicalBedCapacity]);
 
   // Search and Filter States
   const [searchQuery, setSearchQuery] = useState("");
@@ -278,6 +298,63 @@ export default function TeamRosterBoard({
       } catch (err) {
         setShiftActionMsg("Failed to save shifts. Please try again.");
       }
+    }
+  };
+
+  const handleSaveErPhysicalBedCapacity = async () => {
+    if (!isUserHOD) {
+      setCapacityActionMsg(
+        "Only Department Leads / HODs can configure ER capacity."
+      );
+      return;
+    }
+
+    const normalizedInput = capacityInput.trim();
+
+    if (!/^\d+$/.test(normalizedInput)) {
+      setCapacityActionMsg(
+        "Enter the number of physical numbered ER beds."
+      );
+      return;
+    }
+
+    const capacity = Number(normalizedInput);
+
+    if (
+      !Number.isInteger(capacity) ||
+      capacity <= 0
+    ) {
+      setCapacityActionMsg(
+        "Capacity must be a positive whole number."
+      );
+      return;
+    }
+
+    if (!onUpdateErPhysicalBedCapacity) {
+      setCapacityActionMsg(
+        "ER capacity configuration is unavailable."
+      );
+      return;
+    }
+
+    try {
+      setCapacitySaving(true);
+      setCapacityActionMsg("");
+
+      await onUpdateErPhysicalBedCapacity(capacity);
+
+      setCapacityActionMsg(
+        `ER capacity saved: ${capacity} numbered beds. ` +
+        `MATE locations available: 1/1A/1B through ` +
+        `${capacity}/${capacity}A/${capacity}B.`
+      );
+    } catch (err: any) {
+      setCapacityActionMsg(
+        err?.message ||
+          "Failed to save ER physical bed capacity."
+      );
+    } finally {
+      setCapacitySaving(false);
     }
   };
 
@@ -747,6 +824,83 @@ export default function TeamRosterBoard({
 
         </div>
       ) : null}
+
+
+      {/* ER Physical Capacity Configuration */}
+      {isUserHOD && (
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 space-y-4">
+          <div>
+            <h3 className="text-sm font-black text-slate-900 dark:text-white">
+              ER Physical Bed Capacity
+            </h3>
+
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
+              Enter the number of physical numbered ER beds or positions.
+              ErMate automatically makes the base location and A/B subdivisions
+              available for each number.
+            </p>
+          </div>
+
+          <div className="flex flex-col sm:flex-row sm:items-end gap-3">
+            <div className="flex-1 max-w-xs">
+              <label className="text-[10px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400 block mb-1.5">
+                Physical numbered beds
+              </label>
+
+              <input
+                type="number"
+                min="1"
+                step="1"
+                inputMode="numeric"
+                value={capacityInput}
+                onChange={(e) => {
+                  setCapacityInput(e.target.value);
+                  setCapacityActionMsg("");
+                }}
+                placeholder="e.g. 30"
+                className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-sm text-slate-900 dark:text-white font-mono"
+              />
+            </div>
+
+            <button
+              type="button"
+              onClick={handleSaveErPhysicalBedCapacity}
+              disabled={capacitySaving}
+              className="py-2 px-5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-black text-xs rounded-xl shadow-xs transition-all cursor-pointer"
+            >
+              {capacitySaving ? "Saving..." : "Save ER Capacity"}
+            </button>
+          </div>
+
+          {capacityInput &&
+            /^\d+$/.test(capacityInput) &&
+            Number(capacityInput) > 0 && (
+              <div className="bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2">
+                <p className="text-[11px] text-slate-600 dark:text-slate-400">
+                  Location namespace:
+                  {" "}
+                  <strong>
+                    1, 1A, 1B ... {Number(capacityInput)},
+                    {" "}
+                    {Number(capacityInput)}A,
+                    {" "}
+                    {Number(capacityInput)}B
+                  </strong>
+                </p>
+
+                <p className="text-[10px] text-slate-500 mt-1">
+                  These are valid ER locations. They do not represent occupied beds.
+                </p>
+              </div>
+            )}
+
+          {capacityActionMsg && (
+            <p className="text-xs font-bold text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-900/40 px-3 py-2 rounded-xl">
+              {capacityActionMsg}
+            </p>
+          )}
+        </div>
+      )}
 
       {/* 3. Clinical Staffing Compliance Metric Banner */}
       <div className="bg-indigo-50/50 dark:bg-slate-950/20 border border-indigo-100 dark:border-slate-850 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">

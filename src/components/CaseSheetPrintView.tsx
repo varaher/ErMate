@@ -1336,10 +1336,10 @@ export default function CaseSheetPrintView({
             <Section>
               <SectionHeading>Secondary Assessment / SAMPLE History</SectionHeading>
               <div className="text-sm space-y-1.5">
-                <div><span className="font-semibold text-slate-900">S — Signs & Symptoms:</span> {data.symptoms.length > 0 ? data.symptoms.join(", ") : ((data.pediatricDetails as LegacyPediatricDetails)?.historySignsSymptoms || "None documented")}</div>
-                <div><span className="font-semibold text-slate-900">A — Allergies:</span> {data.allergies.length > 0 ? data.allergies.join(", ") : ((data.pediatricDetails as LegacyPediatricDetails)?.historyAllergies || "None documented")}</div>
-                <div><span className="font-semibold text-slate-900">M — Medications:</span> {data.currentMedications.length > 0 ? data.currentMedications.join(", ") : ((data.pediatricDetails as LegacyPediatricDetails)?.historyMedications || "None documented")}</div>
-                <div><span className="font-semibold text-slate-900">P — Past Medical History:</span> {data.pastHistory.length > 0 ? data.pastHistory.join(" · ") : ((data.pediatricDetails as LegacyPediatricDetails)?.historyPastMedical || "Not significant")}</div>
+                <div><span className="font-semibold text-slate-900">S — Signs & Symptoms:</span> {data.symptoms.length > 0 ? data.symptoms.join(", ") : ((data.pediatricDetails as LegacyPediatricDetails)?.historySignsSymptoms || "Not documented")}</div>
+                <div><span className="font-semibold text-slate-900">A — Allergies:</span> {data.allergies.length > 0 ? data.allergies.join(", ") : ((data.pediatricDetails as LegacyPediatricDetails)?.historyAllergies || "Not documented")}</div>
+                <div><span className="font-semibold text-slate-900">M — Medications:</span> {data.currentMedications.length > 0 ? data.currentMedications.join(", ") : ((data.pediatricDetails as LegacyPediatricDetails)?.historyMedications || "Not documented")}</div>
+                <div><span className="font-semibold text-slate-900">P — Past Medical History:</span> {data.pastHistory.length > 0 ? data.pastHistory.join(" · ") : ((data.pediatricDetails as LegacyPediatricDetails)?.historyPastMedical || "Not documented")}</div>
                 <div><span className="font-semibold text-slate-900">L — Last Meal:</span> {data.lastMeal || (data.pediatricDetails as LegacyPediatricDetails)?.historyLastMeal || "Not documented"}</div>
                 <div><span className="font-semibold text-slate-900">E — Events Preceding:</span> {data.events || (data.pediatricDetails as LegacyPediatricDetails)?.historyEvents || "Not documented"}</div>
               </div>

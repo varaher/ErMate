@@ -1867,7 +1867,7 @@ Extremities: No deformity. No peripheral oedema. Peripheral pulses present.`,
     setPreviewError(null);
 
     const isPeds = (currentCase.patient?.age !== null && currentCase.patient?.age !== undefined)
-      ? currentCase.patient.age < 18
+      ? recomputeIsPediatric(currentCase.patient.age)
       : false;
 
     const formattedVitals = {
@@ -2773,14 +2773,17 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
   }, [isPreview, initialCase]);
 
   // Consolidated Printable Preview mode
+  // In preview, initialCase is the authoritative in-memory MATE draft.
+  // Pass it directly to the print view so preview cannot render a stale
+  // local currentCase before React state synchronization completes.
   if (isPreview) {
     return (
       <CaseSheetPrintView
-        clinicalCase={currentCase}
+        clinicalCase={initialCase}
         isPreview={true}
         onBack={() => {
           if (onReturnToScribe) {
-            onReturnToScribe(currentCase.id);
+            onReturnToScribe(initialCase.id);
           } else {
             onBack();
           }

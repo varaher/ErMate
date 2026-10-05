@@ -38,6 +38,54 @@ export function routeMateInput(input: MateRouterInput): MateRoute {
     };
   }
 
+  // --------------------------------------------------------
+  // SOCIAL / CONVERSATIONAL LANE
+  //
+  // Bare greetings and acknowledgements are not clinical
+  // narratives and must never create/update a patient record.
+  //
+  // Keep this deliberately narrow. Clinical content must still
+  // fall through to the existing safe Scribe extraction path.
+  // --------------------------------------------------------
+  const normalizedConversation = text
+    .replace(/[!?.,]+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const conversationalOnlyPhrases = new Set([
+    "hi",
+    "hello",
+    "hey",
+    "hi mate",
+    "hello mate",
+    "hey mate",
+    "good morning",
+    "good morning mate",
+    "good afternoon",
+    "good afternoon mate",
+    "good evening",
+    "good evening mate",
+    "thanks",
+    "thank you",
+    "thanks mate",
+    "thank you mate",
+    "ok",
+    "okay",
+    "ok mate",
+    "okay mate",
+  ]);
+
+  if (conversationalOnlyPhrases.has(normalizedConversation)) {
+    return {
+      intents: ["CONVERSATION"],
+      primaryIntent: "CONVERSATION",
+      requiresActiveCase: false,
+      shouldDocument: false,
+      reason:
+        "Matched a social/conversational turn; do not treat it as clinical documentation.",
+    };
+  }
+
   const isRounds = containsAny(text, [
     "review this patient",
     "review the patient",
@@ -71,7 +119,6 @@ export function routeMateInput(input: MateRouterInput): MateRoute {
     "correct that",
     "change that",
     "i meant",
-    "not ",
   ]);
 
   const isReassessment = containsAny(text, [
@@ -84,8 +131,12 @@ export function routeMateInput(input: MateRouterInput): MateRoute {
     "pulse is now",
     "now saturation",
     "spo2 is now",
-    "reassessment",
     "on reassessment",
+    "on re-assessment",
+    "reassessment shows",
+    "reassessment reveals",
+    "reassessment is",
+    "reassessment:",
   ]);
 
   const isExplicitDocument = containsAny(text, [
@@ -97,25 +148,41 @@ export function routeMateInput(input: MateRouterInput): MateRoute {
     "note this",
   ]);
 
-  const isAppAction = containsAny(text, [
+  // MATE TRAFFIC-POLICE CAPABILITY RESOLUTION
+  //
+  // case.open is the first executable vertical slice.
+  // It does NOT create a second Case Sheet workflow. The frontend bridge
+  // delegates to ErMate's existing Open/Preview Case Sheet behavior.
+  const isCaseOpenAction = containsAny(text, [
     "show case sheet",
+    "show the case sheet",
     "view case sheet",
+    "view the case sheet",
     "open case sheet",
-    "show investigations",
-    "open investigations",
-    "show treatment",
-    "open treatment",
-    "prepare discharge",
-    "show discharge",
+    "open the case sheet",
   ]);
+
+  const isAppAction =
+    isCaseOpenAction ||
+    containsAny(text, [
+      "show investigations",
+      "open investigations",
+      "show treatment",
+      "open treatment",
+      "prepare discharge",
+      "show discharge",
+    ]);
 
   if (isAppAction && !isExplicitDocument) {
     return {
       intents: ["APP_ACTION"],
       primaryIntent: "APP_ACTION",
       requiresActiveCase: true,
+      targetCapability: isCaseOpenAction ? "case.open" : undefined,
       shouldDocument: false,
-      reason: "Matched an ErMate navigation/workflow action without a documentation request.",
+      reason: isCaseOpenAction
+        ? "Matched the existing ErMate Case Sheet open workflow."
+        : "Matched an ErMate navigation/workflow action without a documentation request.",
     };
   }
 

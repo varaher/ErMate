@@ -68,6 +68,12 @@ export default function VoiceRecorder({
   const wsRef = useRef<WebSocket | null>(null);
   const isStoppingRef = useRef<boolean>(false);
   const finalSubmissionSentRef = useRef<boolean>(false);
+
+  // One physical recording must reach the parent exactly once.
+  // Streaming finalization and batch fallback are alternative transcript
+  // producers, but neither may create a second MATE/Scribe turn.
+  const transcriptDeliveredRef = useRef<boolean>(false);
+
   const accumulatedRef = useRef<string>("");
 
   useEffect(() => {
@@ -221,6 +227,7 @@ export default function VoiceRecorder({
     setIsReconnecting(false);
     isStoppingRef.current = false;
     finalSubmissionSentRef.current = false;
+    transcriptDeliveredRef.current = false;
 
     try {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -453,6 +460,24 @@ export default function VoiceRecorder({
     }
   };
 
+  const deliverTranscriptOnce = (transcript: string) => {
+    const cleanTranscript = transcript.trim();
+
+    if (!cleanTranscript) return false;
+
+    if (transcriptDeliveredRef.current) {
+      console.warn(
+        "[VoiceRecorder] Ignored duplicate transcript delivery.",
+        cleanTranscript
+      );
+      return false;
+    }
+
+    transcriptDeliveredRef.current = true;
+    onTranscript(cleanTranscript);
+    return true;
+  };
+
   const finalizeTranscription = () => {
     if (finalSubmissionSentRef.current) return;
     finalSubmissionSentRef.current = true;
@@ -464,7 +489,7 @@ export default function VoiceRecorder({
     setIsTranscribing(false);
     
     if (finalStr.trim().length > 0) {
-       onTranscript(finalStr.trim());
+       deliverTranscriptOnce(finalStr);
     } else {
        // If WS yielded nothing, fallback to batch just in case
        if (audioChunksRef.current.length > 0) {
@@ -516,7 +541,7 @@ export default function VoiceRecorder({
       }
 
       setIsTranscribing(false);
-      onTranscript(data.transcript);
+      deliverTranscriptOnce(data.transcript);
     } catch (err: any) {
       console.error("[VoiceRecorder] Transcription error:", err);
       const errMsg = err.message || "Transcription failed. Please try again.";

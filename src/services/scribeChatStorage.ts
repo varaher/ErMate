@@ -249,11 +249,18 @@ export async function resolveSessionForExistingCase(
           if (sData?.linkedCaseId == null) {
             await linkSessionToCase(caseItem.scribeSessionId, caseItem.id);
           }
+
+          const verified = await verifyTwoSidedLink(caseItem.scribeSessionId, caseItem.id);
+          if (!verified) {
+            throw new Error("Unable to attach Scribe history to this case.");
+          }
+
           return { sessionId: caseItem.scribeSessionId };
         }
       }
     } catch (e) {
-      console.warn(`[resolveSessionForExistingCase] Could not read existing session ${caseItem.scribeSessionId}:`, e);
+      console.error(`[resolveSessionForExistingCase] Existing canonical session verification failed for ${caseItem.scribeSessionId}:`, e);
+      throw new Error("Unable to attach Scribe history to this case.");
     }
   }
 
@@ -265,13 +272,16 @@ export async function resolveSessionForExistingCase(
 
     if (snap.size === 1) {
       const foundSessionId = snap.docs[0].id;
-      try {
-        await updateDoc(doc(db, "cases", caseItem.id), {
-          scribeSessionId: foundSessionId,
-        });
-      } catch (err) {
-        console.warn("[resolveSessionForExistingCase] Could not backfill case.scribeSessionId:", err);
+
+      await updateDoc(doc(db, "cases", caseItem.id), {
+        scribeSessionId: foundSessionId,
+      });
+
+      const verified = await verifyTwoSidedLink(foundSessionId, caseItem.id);
+      if (!verified) {
+        throw new Error("Unable to attach Scribe history to this case.");
       }
+
       return { sessionId: foundSessionId };
     }
 
@@ -364,12 +374,17 @@ export async function resolveSessionForExistingCase(
       }
 
       if (chosenCanonical) {
-        return { sessionId: chosenCanonical };
+        const verified = await verifyTwoSidedLink(chosenCanonical, caseItem.id);
+        if (verified) {
+          return { sessionId: chosenCanonical };
+        }
       }
+
       throw new Error("Unable to attach Scribe history to this case.");
     }
   } catch (err: any) {
-    console.warn("[resolveSessionForExistingCase] Query for linked sessions failed:", err);
+    console.error("[resolveSessionForExistingCase] Linked-session resolution failed:", err);
+    throw new Error("Unable to attach Scribe history to this case.");
   }
 
   // 3. Create unlinked first, await, then link to existing case.id
@@ -392,7 +407,13 @@ export async function resolveSessionForExistingCase(
       scribeSessionId: newSessionId,
     });
   } catch (e) {
-    console.warn("[resolveSessionForExistingCase] Could not update case.scribeSessionId:", e);
+    console.error("[resolveSessionForExistingCase] Could not update case.scribeSessionId:", e);
+    throw new Error("Unable to attach Scribe history to this case.");
+  }
+
+  const verified = await verifyTwoSidedLink(newSessionId, caseItem.id);
+  if (!verified) {
+    throw new Error("Unable to attach Scribe history to this case.");
   }
 
   return { sessionId: newSessionId };

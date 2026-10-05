@@ -51,7 +51,12 @@ import PWABadge from "./components/PWABadge";
 import { APP_VERSION, CHANGELOG } from "./changelog";
 import { HeaderUpdateButton } from "./hooks/useAppUpdate";
 import { GlobalRefreshButton } from "./components/shared/GlobalRefreshButton";
-import { updateChatMessage, appendChatMessage } from "./services/scribeChatStorage";
+import {
+  updateChatMessage,
+  appendChatMessage,
+  linkScribeSessionAndCase,
+  verifyTwoSidedLink,
+} from "./services/scribeChatStorage";
 import { deduplicateConsultations } from "./utils/consultationNormalization";
 import { isEstablishedCaseSheet } from "./utils/establishedCaseCheck";
 
@@ -461,6 +466,12 @@ useEffect(() => {
   };
   const [showVoiceScribeChat, setShowVoiceScribeChat] = useState<boolean>(false);
   const [voiceScribeCaseId, setVoiceScribeCaseId] = useState<string | null>(null);
+
+  // Tracks the exact active Scribe session independently from the ClinicalCase ID.
+  // This is required for pre-case dictation, Preview, New Chat, and later
+  // two-sided ClinicalCase <-> scribeSession linking.
+  const [voiceScribeSessionId, setVoiceScribeSessionId] = useState<string | null>(null);
+
   // NEW — entry-choice popup and discussion-mode flag for the merged
   // ErMate Assistant. See handleVoiceScribeEntryClick / handleStartFreeDiscussion.
   const [showVoiceScribeEntryChoice, setShowVoiceScribeEntryChoice] = useState<boolean>(false);
@@ -481,7 +492,11 @@ useEffect(() => {
   // Preview Case Sheet State (in-memory review before Firestore write)
   const [previewCase, setPreviewCase] = useState<ClinicalCase | null>(null);
   const [isPreviewMode, setIsPreviewMode] = useState<boolean>(false);
-  const [pendingPreviewContext, setPendingPreviewContext] = useState<{ msgId?: string; caseId: string } | null>(null);
+  const [pendingPreviewContext, setPendingPreviewContext] = useState<{
+    msgId?: string;
+    caseId: string;
+    sessionId?: string | null;
+  } | null>(null);
   
   // Manual Data Refresh & Dirty Tracking State
   const [isCaseSheetDirty, setIsCaseSheetDirty] = useState<boolean>(false);
@@ -661,6 +676,12 @@ useEffect(() => {
   }, [savedBanner.visible]);
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
   const [shifts, setShifts] = useState<any[]>([]);
+
+  // Hospital ER physical numbered-bed capacity.
+  // Example: 30 means base locations 1..30.
+  // MATE derives 1/1A/1B ... 30/30A/30B from this value.
+  const [erPhysicalBedCapacity, setErPhysicalBedCapacity] =
+    useState<number | null>(null);
   const [hospitalSubscription, setHospitalSubscription] = useState<{ active: boolean; subscriptionTier: string } | null>(null);
 
   // Normalized clinical role for role-based navigation and permissions
@@ -1289,6 +1310,7 @@ if (auth.currentUser) {
 
       if (!memberSnapshot.exists()) {
         setShifts(ROTA_SHIFTS);
+        setErPhysicalBedCapacity(null);
         return;
       }
 
@@ -1334,6 +1356,7 @@ if (auth.currentUser) {
         (snapshot) => {
           if (!snapshot.exists()) {
             setShifts(ROTA_SHIFTS);
+            setErPhysicalBedCapacity(null);
             return;
           }
 
@@ -1343,6 +1366,17 @@ if (auth.currentUser) {
             setShifts(data.shifts);
           } else {
             setShifts(ROTA_SHIFTS);
+          }
+
+          const storedCapacity = Number(data.erPhysicalBedCapacity);
+
+          if (
+            Number.isInteger(storedCapacity) &&
+            storedCapacity > 0
+          ) {
+            setErPhysicalBedCapacity(storedCapacity);
+          } else {
+            setErPhysicalBedCapacity(null);
           }
         },
         (error) => {
@@ -2137,7 +2171,8 @@ const handleDeleteAllCases = async () => {
     const isAgeValid = parsedAge !== null && !isNaN(parsedAge);
     const finalAge = isAgeValid ? parsedAge : null;
     
-    let resolvedAge = existingMatch?.patient.age || null;
+    // PEDIATRIC-AGE-CONTRACT: preserve valid newborn age 0.
+    let resolvedAge = existingMatch?.patient.age ?? null;
     let resolvedIsPediatric = existingMatch ? Boolean(existingMatch.isPediatric) : false;
 
     if (finalAge !== null) {
@@ -2691,6 +2726,439 @@ const handleDeleteAllCases = async () => {
     return newCase;
   };
 
+  /**
+   * STEP 2B — Ensure a minimal ClinicalCase shell exists for a meaningful
+   * Scribe session.
+   *
+   * SAFETY CONTRACT:
+   * - This function receives NO extracted clinical data.
+   * - It MUST NOT call buildExtractedCaseDraft().
+   * - No patient facts, vitals, history, examination, investigations,
+   *   treatment, diagnosis or disposition are copied from MATE here.
+   * - Extracted facts remain unapplied until Preview -> Apply.
+   * - The shell exists only to establish durable patient/case identity,
+   *   Dashboard Current Cases visibility and Scribe continuity.
+   */
+  const handleEnsureDraftScribeCase = async (
+    sessionId: string,
+    options?: { bedNo?: string }
+  ): Promise<string> => {
+    const user = auth.currentUser;
+    const requestedBedNo =
+      typeof options?.bedNo === "string" && options.bedNo.trim()
+        ? options.bedNo.trim()
+        : null;
+
+    try {
+      if (!user) {
+        throw new Error("Not authenticated");
+      }
+
+      if (!sessionId) {
+        throw new Error("Missing Scribe session ID");
+      }
+
+      const upsertCaseLocally = (caseItem: ClinicalCase) => {
+        setCases(prev => {
+          const idx = prev.findIndex(c => c.id === caseItem.id);
+
+          if (idx >= 0) {
+            const next = [...prev];
+            next[idx] = caseItem;
+            return next;
+          }
+
+          return [caseItem, ...prev];
+        });
+      };
+
+      const linkAndVerify = async (caseId: string): Promise<boolean> => {
+        try {
+          const linkResult = await linkScribeSessionAndCase(sessionId, caseId);
+
+          const verified =
+            linkResult.success &&
+            (await verifyTwoSidedLink(sessionId, caseId));
+
+          if (!verified) {
+            console.warn(
+              "[DraftCase] Two-sided Scribe link pending:",
+              linkResult.error || "verification incomplete"
+            );
+
+            triggerNotification(
+              "Scribe Link Pending",
+              "Draft case was saved, but Scribe history linkage is still pending.",
+              "warning"
+            );
+          }
+
+          return verified;
+        } catch (linkErr: any) {
+          console.error(
+            "[DraftCase] Failed to establish two-sided Scribe link:",
+            linkErr
+          );
+
+          triggerNotification(
+            "Scribe Link Pending",
+            "Draft case was saved, but Scribe history linkage is still pending.",
+            "warning"
+          );
+
+          return false;
+        }
+      };
+
+      /*
+       * Read the session first.
+       *
+       * The session is authoritative for an already-established link.
+       * If parent case context and session linkage disagree, fail closed
+       * rather than choosing one patient context.
+       */
+      const sessionSnap = await getDoc(
+        doc(db, "scribeSessions", sessionId)
+      );
+
+      if (!sessionSnap.exists()) {
+        throw new Error("Scribe session not found");
+      }
+
+      const sessionData = sessionSnap.data();
+      const linkedCaseId =
+        typeof sessionData?.linkedCaseId === "string" &&
+        sessionData.linkedCaseId.trim()
+          ? sessionData.linkedCaseId.trim()
+          : null;
+
+      if (
+        voiceScribeCaseId &&
+        linkedCaseId &&
+        voiceScribeCaseId !== linkedCaseId
+      ) {
+        throw new Error(
+          "Scribe session/case mismatch detected. Draft creation stopped."
+        );
+      }
+
+      /*
+       * Idempotent recovery:
+       * if this session is already linked, reuse that ClinicalCase.
+       */
+      if (linkedCaseId) {
+        const linkedCaseSnap = await getDoc(
+          doc(db, "cases", linkedCaseId)
+        );
+
+        if (!linkedCaseSnap.exists()) {
+          throw new Error(
+            "Scribe session points to a ClinicalCase that does not exist."
+          );
+        }
+
+        let linkedCase: ClinicalCase = {
+          ...(linkedCaseSnap.data() as ClinicalCase),
+          id: linkedCaseId,
+        };
+
+        if (requestedBedNo) {
+          const existingBedNo =
+            typeof linkedCase.bedNo === "string" && linkedCase.bedNo.trim()
+              ? linkedCase.bedNo.trim()
+              : null;
+
+          if (existingBedNo && existingBedNo !== requestedBedNo) {
+            throw new Error(
+              `Existing case is already assigned to Bed ${existingBedNo}; refusing to reassign it automatically to Bed ${requestedBedNo}.`
+            );
+          }
+
+          if (!existingBedNo) {
+            await setDoc(
+              doc(db, "cases", linkedCaseId),
+              sanitizeForFirestore({
+                bedNo: requestedBedNo,
+                lastEditedBy: user.uid,
+                lastEditedAt: new Date().toISOString(),
+              }),
+              { merge: true }
+            );
+
+            linkedCase = {
+              ...linkedCase,
+              bedNo: requestedBedNo,
+              lastEditedBy: user.uid,
+              lastEditedAt: new Date().toISOString(),
+            };
+          }
+        }
+
+        upsertCaseLocally(linkedCase);
+
+        await linkAndVerify(linkedCaseId);
+
+        /*
+         * Drive the existing VoiceScribe case-boundary machinery.
+         * VoiceScribeChatView will update activeCaseId from this prop.
+         */
+        setVoiceScribeCaseId(linkedCaseId);
+
+        return linkedCaseId;
+      }
+
+      /*
+       * If App already has a case context but the session is still unlinked,
+       * attach this session to that exact existing case. Never create another.
+       */
+      if (voiceScribeCaseId) {
+        const existingCaseSnap = await getDoc(
+          doc(db, "cases", voiceScribeCaseId)
+        );
+
+        if (!existingCaseSnap.exists()) {
+          throw new Error(
+            "Current Scribe case context does not exist in Firestore."
+          );
+        }
+
+        let existingCase: ClinicalCase = {
+          ...(existingCaseSnap.data() as ClinicalCase),
+          id: voiceScribeCaseId,
+        };
+
+        if (requestedBedNo) {
+          const existingBedNo =
+            typeof existingCase.bedNo === "string" && existingCase.bedNo.trim()
+              ? existingCase.bedNo.trim()
+              : null;
+
+          if (existingBedNo && existingBedNo !== requestedBedNo) {
+            throw new Error(
+              `Current case is already assigned to Bed ${existingBedNo}; refusing to reassign it automatically to Bed ${requestedBedNo}.`
+            );
+          }
+
+          if (!existingBedNo) {
+            await setDoc(
+              doc(db, "cases", voiceScribeCaseId),
+              sanitizeForFirestore({
+                bedNo: requestedBedNo,
+                lastEditedBy: user.uid,
+                lastEditedAt: new Date().toISOString(),
+              }),
+              { merge: true }
+            );
+
+            existingCase = {
+              ...existingCase,
+              bedNo: requestedBedNo,
+              lastEditedBy: user.uid,
+              lastEditedAt: new Date().toISOString(),
+            };
+          }
+        }
+
+        upsertCaseLocally(existingCase);
+
+        await linkAndVerify(voiceScribeCaseId);
+
+        setVoiceScribeCaseId(voiceScribeCaseId);
+
+        return voiceScribeCaseId;
+      }
+
+      /*
+       * FIRST MEANINGFUL EXTRACTION:
+       * Create a clinically empty shell.
+       *
+       * Do NOT populate this object from extraction.
+       * Do NOT initialize PrimarySurvey defaults.
+       */
+      const workspace = await resolveWorkspaceForUser(user.uid);
+
+      const now = new Date();
+      const nowIso = now.toISOString();
+      const newCaseId = doc(collection(db, "cases")).id;
+
+      const doctorEmail = (
+        profile?.email ||
+        user.email ||
+        ""
+      ).trim();
+
+      const rawDoctorName =
+        profile?.name ||
+        user.displayName ||
+        "Physician";
+
+      const doctorName = rawDoctorName.startsWith("Dr. ")
+        ? rawDoctorName
+        : `Dr. ${rawDoctorName}`;
+
+      const hospitalName = profile?.hospital || "";
+
+      const draftCase: ClinicalCase = {
+        workspaceType: workspace.workspaceType,
+        ownerUid:
+          workspace.workspaceType === "individual"
+            ? user.uid
+            : null,
+        hospitalId: workspace.hospitalId || null,
+        createdByUid: user.uid,
+
+        id: newCaseId,
+        scribeSessionId: sessionId,
+        ...(requestedBedNo ? { bedNo: requestedBedNo } : {}),
+
+        patient: {
+          name: "",
+          age: null,
+          gender: "",
+          presentingComplaint: "",
+          triageCategory: "" as any,
+          dateOpened: now.toLocaleString(),
+          uhid: "",
+          isMlc: false,
+          caseType: "",
+        },
+
+        vitals: {
+          bp: "",
+          hr: "",
+          spo2: "",
+          rr: "",
+          temp: "",
+          gcs: "",
+          gcs_e: "",
+          gcs_v: "",
+          gcs_m: "",
+          grbs: "",
+          avpu: "",
+          painScore: "",
+        },
+
+        sampleHistory: {
+          symptoms: "",
+          allergies: "",
+          medications: "",
+          pastHistory: "",
+          lastMeal: "",
+          events: "",
+          socialHistory: "",
+          familyHistory: "",
+          psychiatricFlags: "",
+        },
+
+        primaryAssessment: {
+          airway: "",
+          airwayStatus: "" as any,
+          breathing: "",
+          breathingStatus: "" as any,
+          circulation: "",
+          circulationStatus: "" as any,
+          disability: "",
+          disabilityStatus: "" as any,
+          exposure: "",
+          exposureStatus: "" as any,
+        },
+
+        secondaryAssessment: "",
+
+        investigations: [],
+        treatments: [],
+        progressNotes: "",
+        dischargeInfo: null,
+        differentials: [],
+
+        /*
+         * Unknown age remains on the existing default adult UI path.
+         * Pediatric routing is recalculated only when age is actually applied.
+         */
+        isPediatric: false,
+
+        /*
+         * "Triage" is the existing incomplete/current-patient status.
+         * We intentionally do NOT introduce a new ClinicalCase status/schema.
+         */
+        status: "Triage",
+
+        savedTime: now.toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+        }),
+        timeSpentMin: 0,
+
+        doctorEmail,
+        doctorName,
+        hospital: hospitalName,
+
+        createdBy: user.uid,
+        createdAt: nowIso,
+        lastEditedBy: user.uid,
+        lastEditedAt: nowIso,
+
+        vitalsHistory: [],
+      };
+
+      /*
+       * Persist the shell BEFORE linking.
+       *
+       * The case-side scribeSessionId is already present, so an interrupted
+       * link can be repaired safely by the existing session resolver.
+       */
+      await setDoc(
+        doc(db, "cases", newCaseId),
+        sanitizeForFirestore(draftCase)
+      );
+
+      upsertCaseLocally(draftCase);
+
+      /*
+       * Establish and verify:
+       *
+       * scribeSessions/{sessionId}.linkedCaseId === newCaseId
+       * cases/{newCaseId}.scribeSessionId === sessionId
+       *
+       * A saved shell is never rolled back merely because the second link
+       * step temporarily fails.
+       */
+      await linkAndVerify(newCaseId);
+
+      /*
+       * Only now expose the new ClinicalCase as the active parent case.
+       * The existing VoiceScribeChatView case-boundary effect will resolve
+       * the SAME session from draftCase.scribeSessionId.
+       */
+      setVoiceScribeCaseId(newCaseId);
+
+      console.info(
+        "[DraftCase] Minimal Scribe ClinicalCase shell ready:",
+        {
+          caseId: newCaseId,
+          sessionId,
+        }
+      );
+
+      return newCaseId;
+    } catch (err: any) {
+      console.error(
+        "[DraftCase] Unable to ensure draft ClinicalCase shell:",
+        err
+      );
+
+      triggerNotification(
+        "Draft Case Not Saved",
+        `Chat remains available, but the draft case could not be created: ${
+          err?.message || "storage error"
+        }`,
+        "warning"
+      );
+
+      throw err;
+    }
+  };
+
   const handleSaveExtractedVoiceCase = async (
     extracted: any, 
     options?: { autoNavigate?: boolean; existingCaseId?: string | null }
@@ -2784,8 +3252,12 @@ const handleDeleteAllCases = async () => {
    * Directs clinician into CaseSheetView in preview mode.
    */
   const handlePreviewCaseSheet = async (
-    extracted: any, 
-    options?: { existingCaseId?: string | null; msgId?: string }
+    extracted: any,
+    options?: {
+      existingCaseId?: string | null;
+      msgId?: string;
+      sessionId?: string | null;
+    }
   ) => {
     const existingId = options?.existingCaseId || voiceScribeCaseId || ("C-" + Math.floor(1000 + Math.random() * 9000));
     let existingMatch = cases.find(c => c.id === existingId) || null;
@@ -2829,7 +3301,11 @@ const handleDeleteAllCases = async () => {
     });
 
     if (options?.msgId) {
-      setPendingPreviewContext({ msgId: options.msgId, caseId: existingId });
+      setPendingPreviewContext({
+        msgId: options.msgId,
+        caseId: existingId,
+        sessionId: options.sessionId || voiceScribeSessionId || null,
+      });
     } else {
       setPendingPreviewContext(null);
     }
@@ -2891,11 +3367,25 @@ const handleDeleteAllCases = async () => {
       return [caseToPersist, ...prev];
     });
 
-    // Update scribe chat message if we have pending context
+    // Update the exact Scribe session message if we have pending Preview context.
+    // IMPORTANT: updateChatMessage()/appendChatMessage() expect a Scribe session ID
+    // by default — never substitute the ClinicalCase ID here.
     const targetMsgId = pendingPreviewContext?.msgId;
-    if (targetMsgId && reviewedCase.id) {
+    const targetSessionId =
+      pendingPreviewContext?.sessionId ||
+      voiceScribeSessionId ||
+      reviewedCase.scribeSessionId ||
+      null;
+
+    if (targetMsgId && targetSessionId) {
       try {
-        await updateChatMessage(reviewedCase.id, targetMsgId, { extractionApplied: true });
+        await updateChatMessage(
+          targetSessionId,
+          targetMsgId,
+          { extractionApplied: true },
+          { isSession: true }
+        );
+
         const confId = `${targetMsgId}-case-sheet-prepared`;
         const confirmationMsg = {
           id: confId,
@@ -2904,7 +3394,12 @@ const handleDeleteAllCases = async () => {
           content: "✓ Case Sheet prepared successfully.",
           timestamp: new Date().toISOString(),
         };
-        await appendChatMessage(reviewedCase.id, confirmationMsg);
+
+        await appendChatMessage(
+          targetSessionId,
+          confirmationMsg,
+          { isSession: true }
+        );
 
         // Also update local scribeMessages state
         setScribeMessages(prev => {
@@ -3510,7 +4005,232 @@ const handleCancelJoinRequest = async () => {
     throw err;
   }
 };
- const handleUpdateHospitalShifts = async (
+ const resolveTrustedHospitalConfigContext = async (): Promise<{
+  hospitalId: string;
+  hospitalLabel: string;
+}> => {
+  if (!auth.currentUser) {
+    throw new Error("Not authenticated");
+  }
+
+  const uid = auth.currentUser.uid;
+
+  const currentEmail =
+    (auth.currentUser.email || "")
+      .trim()
+      .toLowerCase();
+
+  const isPlatformAdmin =
+    currentEmail === "varahgrp@gmail.com";
+
+  /*
+   * PLATFORM ADMIN — HOSPITAL CONFIGURATION CONTEXT
+   *
+   * Prefer canonical verified team_members/{uid} context when the
+   * platform administrator is also a member of a hospital.
+   *
+   * This keeps hospital configuration aligned with the same canonical
+   * hospital document used by the normal shift/capacity reader.
+   *
+   * If no usable membership exists, fall back to the platform-admin's
+   * explicit users/{uid} hospital target. The profile remains a target
+   * selector for the platform superadmin — not ordinary membership
+   * authority.
+   *
+   * Never manufacture hospitalId from a display hospital name.
+   */
+  if (isPlatformAdmin) {
+    const adminMemberSnap =
+      await getDoc(
+        doc(
+          db,
+          "team_members",
+          uid
+        )
+      );
+
+    if (adminMemberSnap.exists()) {
+      const membership =
+        adminMemberSnap.data() as any;
+
+      const membershipStatus =
+        String(membership.status || "");
+
+      const isActive =
+        membershipStatus === "active" ||
+        membershipStatus === "Active (Joined)";
+
+      const isVerified =
+        membership.membershipVerified === true;
+
+      const memberHospitalId =
+        typeof membership.hospitalId === "string" &&
+        membership.hospitalId.trim()
+          ? membership.hospitalId.trim()
+          : (
+              typeof membership.hospital === "string"
+                ? membership.hospital.trim()
+                : ""
+            );
+
+      const memberHospitalLabel =
+        typeof membership.hospitalName === "string" &&
+        membership.hospitalName.trim()
+          ? membership.hospitalName.trim()
+          : (
+              typeof membership.hospital === "string" &&
+              membership.hospital.trim()
+                ? membership.hospital.trim()
+                : memberHospitalId
+            );
+
+      if (
+        isActive &&
+        isVerified &&
+        memberHospitalId
+      ) {
+        return {
+          hospitalId: memberHospitalId,
+          hospitalLabel: memberHospitalLabel
+        };
+      }
+    }
+
+    const adminProfileSnap =
+      await getDoc(
+        doc(
+          db,
+          "users",
+          uid
+        )
+      );
+
+    if (!adminProfileSnap.exists()) {
+      throw new Error(
+        "Platform administrator profile could not be loaded."
+      );
+    }
+
+    const adminProfile =
+      adminProfileSnap.data() as any;
+
+    const hospitalId =
+      String(
+        adminProfile.hospitalId || ""
+      ).trim();
+
+    const hospitalLabel =
+      String(
+        adminProfile.hospital ||
+        adminProfile.hospitalName ||
+        ""
+      ).trim();
+
+    if (!hospitalId || !hospitalLabel) {
+      throw new Error(
+        "No canonical hospital configuration context is available for this platform administrator."
+      );
+    }
+
+    return {
+      hospitalId,
+      hospitalLabel
+    };
+  }
+
+  /*
+   * NORMAL HOSPITAL ADMIN / HOD
+   *
+   * Hospital authority comes ONLY from canonical team_members/{uid}.
+   */
+  const memberRef = doc(
+    db,
+    "team_members",
+    uid
+  );
+
+  const memberSnap =
+    await getDoc(memberRef);
+
+  if (!memberSnap.exists()) {
+    throw new Error(
+      "No verified hospital membership found."
+    );
+  }
+
+  const membership =
+    memberSnap.data() as any;
+
+  const membershipStatus =
+    String(membership.status || "");
+
+  const isActive =
+    membershipStatus === "active" ||
+    membershipStatus === "Active (Joined)";
+
+  const isVerified =
+    membership.membershipVerified === true;
+
+  if (!isActive || !isVerified) {
+    throw new Error(
+      "Your hospital membership is not active and verified."
+    );
+  }
+
+  const normalizedRole =
+    String(membership.role || "")
+      .trim()
+      .toLowerCase();
+
+  const isHospitalHod = [
+    "hod",
+    "hod / department lead",
+    "hod / shift lead"
+  ].includes(normalizedRole);
+
+  if (!isHospitalHod) {
+    throw new Error(
+      "Only the authorized HOD can configure hospital settings."
+    );
+  }
+
+  const hospitalId =
+    typeof membership.hospitalId === "string" &&
+    membership.hospitalId.trim()
+      ? membership.hospitalId.trim()
+      : (
+          typeof membership.hospital === "string"
+            ? membership.hospital.trim()
+            : ""
+        );
+
+  if (!hospitalId) {
+    throw new Error(
+      "No trusted hospital identifier is available."
+    );
+  }
+
+  const hospitalLabel =
+    (
+      typeof membership.hospitalName === "string" &&
+      membership.hospitalName.trim()
+    )
+      ? membership.hospitalName.trim()
+      : (
+          typeof membership.hospital === "string" &&
+          membership.hospital.trim()
+            ? membership.hospital.trim()
+            : hospitalId
+        );
+
+  return {
+    hospitalId,
+    hospitalLabel
+  };
+};
+
+
+const handleUpdateHospitalShifts = async (
   newShifts: any[]
 ) => {
   try {
@@ -3520,92 +4240,10 @@ const handleCancelJoinRequest = async () => {
 
     const uid = auth.currentUser.uid;
 
-    // Hospital authority comes only from canonical membership.
-    const memberRef = doc(
-      db,
-      "team_members",
-      uid
-    );
-
-    const memberSnap =
-      await getDoc(memberRef);
-
-    if (!memberSnap.exists()) {
-      throw new Error(
-        "No verified hospital membership found."
-      );
-    }
-
-    const membership =
-      memberSnap.data() as any;
-
-    const membershipStatus =
-      String(membership.status || "");
-
-    const isActive =
-      membershipStatus === "active" ||
-      membershipStatus === "Active (Joined)";
-
-    const isVerified =
-      membership.membershipVerified === true;
-
-    if (!isActive || !isVerified) {
-      throw new Error(
-        "Your hospital membership is not active and verified."
-      );
-    }
-
-    const normalizedRole =
-      String(membership.role || "")
-        .trim()
-        .toLowerCase();
-
-    const isHospitalHod = [
-      "hod",
-      "hod / department lead",
-      "hod / shift lead"
-    ].includes(normalizedRole);
-
-    const isPlatformAdmin =
-      (auth.currentUser.email || "")
-        .trim()
-        .toLowerCase() ===
-      "varahgrp@gmail.com";
-
-    if (!isHospitalHod && !isPlatformAdmin) {
-      throw new Error(
-        "Only the authorized HOD can configure department shift times."
-      );
-    }
-
-    const trustedHospitalId =
-      typeof membership.hospitalId === "string" &&
-      membership.hospitalId.trim()
-        ? membership.hospitalId.trim()
-        : (
-            typeof membership.hospital === "string"
-              ? membership.hospital.trim()
-              : ""
-          );
-
-    if (!trustedHospitalId) {
-      throw new Error(
-        "No trusted hospital identifier is available."
-      );
-    }
-
-    const hospitalLabel =
-      (
-        typeof membership.hospitalName === "string" &&
-        membership.hospitalName.trim()
-      )
-        ? membership.hospitalName.trim()
-        : (
-            typeof membership.hospital === "string" &&
-            membership.hospital.trim()
-              ? membership.hospital.trim()
-              : trustedHospitalId
-          );
+    const {
+      hospitalId: trustedHospitalId,
+      hospitalLabel
+    } = await resolveTrustedHospitalConfigContext();
 
     await setDoc(
       doc(
@@ -3643,6 +4281,76 @@ const handleCancelJoinRequest = async () => {
         "Failed to update shift times.",
       "warning"
     );
+
+    throw err;
+  }
+};
+
+
+const handleUpdateErPhysicalBedCapacity = async (
+  newCapacity: number
+) => {
+  try {
+    if (!auth.currentUser) {
+      throw new Error("Not authenticated");
+    }
+
+    if (
+      !Number.isInteger(newCapacity) ||
+      newCapacity <= 0
+    ) {
+      throw new Error(
+        "ER physical bed capacity must be a positive whole number."
+      );
+    }
+
+    const uid = auth.currentUser.uid;
+
+    const {
+      hospitalId: trustedHospitalId,
+      hospitalLabel
+    } = await resolveTrustedHospitalConfigContext();
+
+    await setDoc(
+      doc(
+        db,
+        "hospital_shifts",
+        trustedHospitalId
+      ),
+      sanitizeForFirestore({
+        id: trustedHospitalId,
+        hospitalId: trustedHospitalId,
+        hospital: hospitalLabel,
+        erPhysicalBedCapacity: newCapacity,
+        updatedAt: new Date().toISOString(),
+        updatedByUid: uid,
+        updatedByEmail:
+          auth.currentUser.email || ""
+      }),
+      { merge: true }
+    );
+
+    setErPhysicalBedCapacity(newCapacity);
+
+    triggerNotification(
+      "ER Capacity Configured",
+      `ER physical numbered-bed capacity set to ${newCapacity}.`,
+      "success"
+    );
+  } catch (err: any) {
+    console.error(
+      "Error updating ER physical bed capacity:",
+      err
+    );
+
+    triggerNotification(
+      "Capacity Update Failed",
+      err?.message ||
+        "Failed to update ER physical bed capacity.",
+      "warning"
+    );
+
+    throw err;
   }
 };
 
@@ -5238,6 +5946,25 @@ const handleSignOut = async () => {
             <VoiceScribeChatView
               caseId={voiceScribeCaseId}
               caseData={cases.find(c => c.id === voiceScribeCaseId) || (selectedCaseId ? cases.find(c => c.id === selectedCaseId) : null)}
+              sessionId={voiceScribeSessionId}
+              onSessionIdChange={setVoiceScribeSessionId}
+              onEnsureDraftCase={handleEnsureDraftScribeCase}
+              cases={cases.filter(
+                (c) => !(c as ClinicalCase & { archivedAt?: string }).archivedAt
+              )}
+              erPhysicalBedCapacity={erPhysicalBedCapacity}
+              onSelectMateCase={(caseId) => {
+                setVoiceScribeCaseId(caseId);
+              }}
+              onNewChat={() => {
+                // Hard patient-context boundary:
+                // a new Scribe session must not inherit the previous patient's case.
+                setVoiceScribeCaseId(null);
+                setSelectedCaseId(null);
+                setPendingPreviewContext(null);
+                setPreviewCase(null);
+                setIsPreviewMode(false);
+              }}
               initialEntryMode={voiceScribeDiscussionMode ? "discussion" : "case"}
               refreshTrigger={scribeRefreshTrigger}
               onBusyChange={setIsScribeBusy}
@@ -5499,6 +6226,8 @@ const handleSignOut = async () => {
                   hospitalSubscription={hospitalSubscription}
                   shifts={shifts}
                   onUpdateShifts={handleUpdateHospitalShifts}
+                  erPhysicalBedCapacity={erPhysicalBedCapacity}
+                  onUpdateErPhysicalBedCapacity={handleUpdateErPhysicalBedCapacity}
                 />
               )}
 
@@ -5530,6 +6259,8 @@ const handleSignOut = async () => {
                   hospitalSubscription={hospitalSubscription}
                   shifts={shifts}
                   onUpdateShifts={handleUpdateHospitalShifts}
+                  erPhysicalBedCapacity={erPhysicalBedCapacity}
+                  onUpdateErPhysicalBedCapacity={handleUpdateErPhysicalBedCapacity}
                 />
               )}
 
@@ -5560,6 +6291,8 @@ const handleSignOut = async () => {
                   hospitalSubscription={hospitalSubscription}
                   shifts={shifts}
                   onUpdateShifts={handleUpdateHospitalShifts}
+                  erPhysicalBedCapacity={erPhysicalBedCapacity}
+                  onUpdateErPhysicalBedCapacity={handleUpdateErPhysicalBedCapacity}
                 />
               )}
             </>
@@ -6194,6 +6927,33 @@ const handleSignOut = async () => {
             </div>
           </div>
         </div>
+      )}
+
+      {/* MATE Universal Floating Entry
+          Universal voice-first doorway into the EXISTING ErMate Assistant.
+          This does not duplicate Scribe, Sarvam, extraction, routing,
+          case-sheet, discharge, or persistence logic. */}
+      {!showVoiceScribeChat && (
+        <button
+          type="button"
+          onClick={() => handleStartVoiceScribe()}
+          className="fixed bottom-20 right-4 md:bottom-6 md:right-6 z-40
+                     w-14 h-14 md:w-16 md:h-16 rounded-full
+                     bg-indigo-600 hover:bg-indigo-700
+                     text-white shadow-2xl
+                     flex items-center justify-center
+                     transition-all hover:scale-105 active:scale-95
+                     no-print"
+          aria-label="Open MATE"
+          title="MATE"
+        >
+          <div className="flex flex-col items-center justify-center leading-none">
+            <Mic className="w-5 h-5 md:w-6 md:h-6" />
+            <span className="text-[8px] md:text-[9px] font-black tracking-wide mt-1">
+              MATE
+            </span>
+          </div>
+        </button>
       )}
 
       {/* Saved Case Confirmation Banner */}

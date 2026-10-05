@@ -269,8 +269,30 @@ export async function processScribeChatTurn(
   }
 
   const mergedPendingExtraction = getMergedPendingExtraction(chatHistory, existingCaseSheet);
-  const effectiveAgeYears = patientAgeYears || mergedPendingExtraction.age || mergedPendingExtraction?.patient?.age || null;
-  const isPediatric = effectiveAgeYears !== null && Number(effectiveAgeYears) <= 16;
+  // PEDIATRIC-AGE-CONTRACT (Sept 2026)
+  // Age 0 is a valid newborn age and must not be lost through truthiness.
+  // Canonical routing remains:
+  //   known age 0–16 inclusive -> pediatric
+  //   known age >=17          -> adult
+  //   unknown age             -> unknown/default until established
+  const effectiveAgeYears =
+    patientAgeYears ??
+    mergedPendingExtraction?.age ??
+    mergedPendingExtraction?.patient?.age ??
+    null;
+
+  const numericEffectiveAge =
+    effectiveAgeYears !== null &&
+    effectiveAgeYears !== undefined &&
+    String(effectiveAgeYears).trim() !== ""
+      ? Number(effectiveAgeYears)
+      : null;
+
+  const isPediatric =
+    numericEffectiveAge !== null &&
+    Number.isFinite(numericEffectiveAge)
+      ? numericEffectiveAge >= 0 && numericEffectiveAge <= 16
+      : false;
 
   // Resolve natural language clinical task intent and deterministic patches
   const taskResolution = resolveNaturalLanguageClinicalTask(userInput, mergedPendingExtraction, isPediatric);
@@ -336,7 +358,11 @@ export async function processScribeChatTurn(
   const lastAiMessage = [...chatHistory].reverse().find(m => m.sender === "ai" || m.role === "assistant");
   const lastAiText = lastAiMessage?.content ?? lastAiMessage?.text ?? "";
   if (lastAiText && /what is the patient's age/i.test(lastAiText)) {
-    if (!effectiveAgeYears) {
+    if (
+      effectiveAgeYears === null ||
+      effectiveAgeYears === undefined ||
+      String(effectiveAgeYears).trim() === ""
+    ) {
       pendingClarification = "age";
     }
   }
@@ -390,6 +416,35 @@ export async function processScribeChatTurn(
         (mergedPendingExtraction as any)?.age ??
         (mergedPendingExtraction as any)?.patient?.age;
       const ageFromProp = patientAgeYears;
+
+      // PEDIATRIC-AGE-CANONICAL-BRIDGE (Sept 2026)
+      //
+      // App.tsx preview/case construction consumes extracted.age.
+      // Scribe may establish age either from the existing case prop or from
+      // the current/pending extraction. Normalize the resolved valid age into
+      // that canonical field without inferring an age.
+      const canonicalAgeCandidate =
+        ageFromProp ??
+        updatedCaseSheetFields?.age ??
+        updatedCaseSheetFields?.patient?.age ??
+        mergedPendingExtraction?.age ??
+        mergedPendingExtraction?.patient?.age ??
+        null;
+
+      if (
+        canonicalAgeCandidate !== null &&
+        canonicalAgeCandidate !== undefined &&
+        String(canonicalAgeCandidate).trim() !== ""
+      ) {
+        const canonicalAgeNumber = Number(canonicalAgeCandidate);
+
+        if (
+          Number.isFinite(canonicalAgeNumber) &&
+          canonicalAgeNumber >= 0
+        ) {
+          updatedCaseSheetFields.age = canonicalAgeNumber;
+        }
+      }
       const hasAge =
         (ageFromThisTurn !== undefined && ageFromThisTurn !== null && String(ageFromThisTurn).trim() !== "") ||
         (ageAlreadyKnown !== undefined && ageAlreadyKnown !== null && String(ageAlreadyKnown).trim() !== "") ||
@@ -660,6 +715,11 @@ export async function runExtraction(
       abdomenExamination: (raw as any)?.abdomenExamination ?? null,
       cnsExamination: (raw as any)?.cnsExamination ?? null,
       extremitiesExamination: (raw as any)?.extremitiesExamination ?? null,
+
+      // Diagnostic visibility for pediatric extraction.
+      // Logging only — does not alter extraction or mapping.
+      isPediatric: (raw as any)?.isPediatric ?? null,
+      pediatricDetails: (raw as any)?.pediatricDetails ?? null,
 
       psychologicalAssessment: (raw as any)?.psychologicalAssessment ?? null,
       investigationsOrdered: (raw as any)?.investigationsOrdered ?? null,
@@ -1185,7 +1245,8 @@ function transcriptHasExplicitTotalGcs(text: string): boolean {
   // Numbers belonging to limb power (e.g. 5/5, 0/5), BP (160/90), RR (18), age (14yo),
   // glucose, or component-only strings (E3V4M5) must NEVER validate a GCS total.
   return /\b(?:total\s+gcs|gcs\s+total|gcs\s+score|glasgow\s+(?:coma\s+)?(?:scale|score)|gcs)\s*(?:is|of|[:=-])?\s*(?:total\s*)?(?:[3-9]|1[0-5])\b/i.test(text) ||
-    /\b(?:gcs\s+)?total\s+(?:[3-9]|1[0-5])\s*(?:out\s+of|\/)\s*15\b/i.test(text);
+    /\b(?:gcs\s+)?total\s+(?:[3-9]|1[0-5])\s*(?:out\s+of|\/)\s*15\b/i.test(text) ||
+    /\bgcs\s*(?:is|of|[:=-])?\s*e\s*[1-4]\s*v\s*[1-5]\s*m\s*[1-6]\s*[,;:-]?\s*(?:total\s*)?(?:[3-9]|1[0-5])\s*(?:out\s+of|\/)\s*15\b/i.test(text);
 }
 
 function transcriptGcsEyeOnly(text: string): string | null {
@@ -1585,7 +1646,9 @@ export function mapExtractionToCaseSheetFields(
   if (raw.mlcDetails && typeof raw.mlcDetails === 'object') {
     const mlc: Record<string, any> = {};
     if (typeof raw.mlcDetails.isMlc === 'boolean') mlc.isMlc = raw.mlcDetails.isMlc;
-    if (typeof raw.mlcDetails.possibleMlc === 'boolean') mlc.possibleMlc = raw.mlcDetails.possibleMlc;
+    // possibleMlc is a positive classifier signal.
+    // Absence of an MLC trigger must remain absence, not a synthetic false fact.
+    if (raw.mlcDetails.possibleMlc === true) mlc.possibleMlc = true;
     for (const key of ['natureOfIncident', 'placeOfIncident', 'dateTimeOfIncident', 'mechanismOfInjury', 'broughtBy', 'informant', 'identificationMark']) {
       if (isValidStr(raw.mlcDetails[key])) mlc[key] = raw.mlcDetails[key];
     }
@@ -1600,19 +1663,52 @@ export function mapExtractionToCaseSheetFields(
       const isFluidConcept = /\b(?:oral\s+or\s+iv\s+)?fluids?(?:\s+were\s+given)?(?:\s+depending\s+on\s+tolerance)?\b/i.test(drugStr) ||
         /\b(?:hydration|fluids?)\s+(?:as|depending|tolerated)\b/i.test(drugStr);
 
-      if (isFluidConcept && !/\b(?:normal\s+saline|0\.9%|ringer|rl\b|ns\b|d5|isolyte)\b/i.test(drugStr)) {
-        // Hydration statement: preserve in treatmentNotes and managementPlan, do NOT create an incorrect medication object
-        const hydrationStmt = "Oral or IV fluids depending on tolerance";
-        if (!fields.treatmentNotes) {
-          fields.treatmentNotes = hydrationStmt;
-        } else if (!fields.treatmentNotes.includes("fluids")) {
-          fields.treatmentNotes = `${fields.treatmentNotes}; ${hydrationStmt}`;
+      const hasSpecificFluidOrder =
+        (typeof d === "object" && d !== null && Boolean(
+          String(d.dose || "").trim() ||
+          String(d.rate || "").trim()
+        )) ||
+        /\b\d+(?:\.\d+)?\s*(?:ml|mL|l|L|litre|liter|litres|liters)\b/.test(drugStr) ||
+        /\bover\s+\d+(?:\.\d+)?\s*(?:min|mins|minutes?|hr|hrs|hours?)\b/i.test(
+          typeof d === "string"
+            ? d
+            : `${d.drugName || d.name || ""} ${d.dose || ""} ${d.instruction || ""}`
+        );
+
+      if (
+        isFluidConcept &&
+        !hasSpecificFluidOrder &&
+        !/\b(?:normal\s+saline|0\.9%|ringer|rl\b|ns\b|d5|isolyte)\b/i.test(drugStr)
+      ) {
+        // Generic/conditional hydration statement: preserve the clinician's actual words.
+        // Never substitute a hard-coded hydration sentence.
+        const hydrationStmt =
+          typeof d === "string"
+            ? d.trim()
+            : [
+                d.drugName || d.name || "",
+                d.dose || "",
+                d.route || "",
+                d.instruction || "",
+              ]
+                .filter(Boolean)
+                .join(" ")
+                .trim();
+
+        if (hydrationStmt) {
+          if (!fields.treatmentNotes) {
+            fields.treatmentNotes = hydrationStmt;
+          } else if (!fields.treatmentNotes.includes(hydrationStmt)) {
+            fields.treatmentNotes = `${fields.treatmentNotes}; ${hydrationStmt}`;
+          }
+
+          if (!fields.managementPlan) {
+            fields.managementPlan = hydrationStmt;
+          } else if (!fields.managementPlan.includes(hydrationStmt)) {
+            fields.managementPlan = `${fields.managementPlan}; ${hydrationStmt}`;
+          }
         }
-        if (!fields.managementPlan) {
-          fields.managementPlan = hydrationStmt;
-        } else if (!fields.managementPlan.includes("fluids")) {
-          fields.managementPlan = `${fields.managementPlan}; ${hydrationStmt}`;
-        }
+
         continue;
       }
 
@@ -1732,22 +1828,156 @@ export function mapExtractionToCaseSheetFields(
   }
 
   if (raw.isPediatric !== undefined && raw.isPediatric !== null) fields.isPediatric = raw.isPediatric;
+
   if (raw.pediatricDetails && Object.keys(raw.pediatricDetails).length > 0) {
     const filteredPed: any = {};
-    for (const [k, v] of Object.entries(raw.pediatricDetails)) {
+    const sourcePed = raw.pediatricDetails as Record<string, any>;
+
+    // Preserve explicitly extracted PAT observations.
+    //
+    // PAT and ABCDE describe related physiology, but they are separate
+    // documented assessments in the pediatric case sheet.
+    //
+    // Therefore:
+    // - explicit patWorkOfBreathing must not be overwritten by breathingWob
+    // - explicit patCirculation must not be overwritten/merged with ABCDE
+    //   circulationCrt or circulationSkinColorTemp
+    //
+    // Legacy fallback aliases are retained ONLY when the dedicated PAT
+    // field was not explicitly extracted.
+    const hasExplicitPatWorkOfBreathing =
+      isValidStr(sourcePed.patWorkOfBreathing);
+
+    const hasExplicitPatCirculation =
+      isValidStr(sourcePed.patCirculation);
+
+    for (const [k, v] of Object.entries(sourcePed)) {
       if (isValidStr(v) || typeof v === 'boolean') {
         filteredPed[k] = v;
-        // Also map to UI aliases
-        if (k === 'breathingWob') {
-          filteredPed['patWorkOfBreathing'] = v;
+
+        // Backward-compatible fallback:
+        // ABCDE WOB may populate PAT WOB only when no explicit PAT WOB
+        // was dictated/extracted.
+        if (
+          k === 'breathingWob' &&
+          !hasExplicitPatWorkOfBreathing &&
+          !isValidStr(filteredPed.patWorkOfBreathing)
+        ) {
+          filteredPed.patWorkOfBreathing = v;
         }
-        if (k === 'circulationCrt' || k === 'circulationSkinColorTemp') {
-          filteredPed['patCirculation'] = [filteredPed['patCirculation'], v].filter(Boolean).join(", ");
+
+        // Backward-compatible fallback:
+        // ABCDE circulation findings may populate PAT circulation only
+        // when no explicit PAT circulation observation exists.
+        if (
+          (k === 'circulationCrt' || k === 'circulationSkinColorTemp') &&
+          !hasExplicitPatCirculation
+        ) {
+          filteredPed.patCirculation = [
+            filteredPed.patCirculation,
+            v,
+          ]
+            .filter(Boolean)
+            .join(", ");
         }
       }
     }
+
     if (Object.keys(filteredPed).length > 0) {
-      fields.pediatricDetails = { ...(fields.pediatricDetails || {}), ...filteredPed };
+      fields.pediatricDetails = {
+        ...(fields.pediatricDetails || {}),
+        ...filteredPed,
+      };
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // PEDIATRIC-FOCUSED-BRIDGE (Sept 2026)
+  //
+  // The extraction model may place an explicitly dictated pediatric
+  // focused-system finding in the canonical secondary-exam field even
+  // when the matching pediatricDetails.focused* field is null.
+  //
+  // Bridge ONLY already-extracted examination facts.
+  // - Never invent normal findings.
+  // - Never use symptoms/history as examination.
+  // - Never overwrite an explicit pediatric focused field.
+  // ══════════════════════════════════════════════════════════════
+  if (raw.isPediatric === true) {
+    const pediatricFocused: Record<string, any> = {
+      ...(fields.pediatricDetails || {})
+    };
+
+    const fillFocusedIfMissing = (key: string, value: unknown) => {
+      if (!isValidStr(pediatricFocused[key]) && isValidStr(value)) {
+        pediatricFocused[key] = String(value).trim();
+      }
+    };
+
+    // Explicit pediatricDetails.focused* remains authoritative.
+    // These are fallbacks only when that pediatric destination is empty.
+
+    // PEDIATRIC-FOCUSED-HEENT-BRIDGE (Sept 2026)
+    //
+    // The canonical extractor may place an explicitly dictated HEENT
+    // examination into generalExamination while leaving
+    // pediatricDetails.focusedHeent empty.
+    //
+    // IMPORTANT: only bridge this value when the clinician explicitly
+    // labelled an HEENT / ENT / head-and-neck examination in THIS turn.
+    // This prevents an unrelated general examination from being copied
+    // into the pediatric HEENT field.
+    const hasExplicitHeentExamLabel =
+      /\b(?:heent|ent|head\s*(?:and|&)\s*neck)\s+(?:examination|exam)\b/i.test(
+        rawInputText
+      );
+
+    if (hasExplicitHeentExamLabel) {
+      fillFocusedIfMissing(
+        "focusedHeent",
+        cleaned.generalExamination ?? raw.generalExamination
+      );
+    }
+
+    fillFocusedIfMissing(
+      "focusedRespiratory",
+      raw.respiratoryExamination
+    );
+
+    fillFocusedIfMissing(
+      "focusedCardiovascular",
+      raw.cvsExamination
+    );
+
+    fillFocusedIfMissing(
+      "focusedAbdomen",
+      raw.abdomenExamination
+    );
+
+    fillFocusedIfMissing(
+      "focusedExtremities",
+      raw.extremitiesExamination
+    );
+
+    // There is currently no shared canonical back-examination field.
+    // Recover ONLY an explicitly labelled Back/Spine examination
+    // statement from the clinician's current turn.
+    if (!isValidStr(pediatricFocused.focusedBack)) {
+      const backMatch = rawInputText.match(
+        /\b(?:back|spine|spinal)\s+(?:examination|exam)\s*(?:shows?|reveals?|is|:|-)?\s*([\s\S]*?)(?=\n\s*\n|\b(?:extremit(?:y|ies)|heent|respiratory(?:\s+system)?|cardiovascular|abdomen|abdominal|cns|neurological)\s+(?:examination|exam)\b|$)/i
+      );
+
+      if (backMatch?.[1]) {
+        const backText = normalizeClinicalText(backMatch[1]);
+
+        if (isValidStr(backText)) {
+          pediatricFocused.focusedBack = backText;
+        }
+      }
+    }
+
+    if (Object.keys(pediatricFocused).length > 0) {
+      fields.pediatricDetails = pediatricFocused;
     }
   }
 

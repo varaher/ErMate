@@ -22,8 +22,16 @@ import { getChecklistForKind, type CaseSheetKind } from "../../server/caseSheetC
 import { ScribeReasoningRenderer } from "./ScribeReasoningRenderer";
 import { isEstablishedCaseSheet } from "../utils/establishedCaseCheck";
 import { PROCEDURE_DEFINITIONS, ProcedureDefinition } from "../data/procedureDefinitions";
+import type { ClinicalCase } from "../types";
 import { ProcedureNote } from "../types/procedureNotes";
 import { ProcedureNoteFormModal } from "./ProcedureNoteFormModal";
+import { routeMateInput } from "../mate/mateRouter";
+import {
+  extractMateBedReference,
+  resolveMateCaseReference,
+} from "../mate/mateCaseResolver";
+import { dispatchMateAction } from "../mate/mateActionDispatcher";
+import { planMateConversation } from "../mate/mateConversationPlanner";
 
 type ChatMode = "dictation" | "discuss";
 
@@ -56,7 +64,35 @@ interface VoiceScribeChatViewProps {
   onCaseSheetUpdated?: (fields: any) => void;
   onSaveExtractedCase?: (extracted: any, options?: { autoNavigate?: boolean; existingCaseId?: string }) => Promise<string>;
   onPrepareDischarge?: (extractedData: any, messageId: string, caseId: string) => Promise<void>;
-  onPreviewCaseSheet?: (extracted: any, options?: { existingCaseId?: string | null; msgId?: string }) => void | Promise<void>;
+  onPreviewCaseSheet?: (
+    extracted: any,
+    options?: {
+      existingCaseId?: string | null;
+      msgId?: string;
+      sessionId?: string | null;
+    }
+  ) => void | Promise<void>;
+  onEnsureDraftCase?: (
+    sessionId: string,
+    options?: { bedNo?: string }
+  ) => Promise<string>;
+
+  /**
+   * Existing ErMate patient census used only for deterministic
+   * MATE patient-context resolution.
+   */
+  cases?: ClinicalCase[];
+
+  /**
+   * Canonical configured physical ER capacity.
+   */
+  erPhysicalBedCapacity?: number | null;
+
+  /**
+   * Parent-owned bridge for switching MATE to an EXISTING case.
+   * This must not create or mutate a ClinicalCase.
+   */
+  onSelectMateCase?: (caseId: string) => void;
   profile?: any;
   onSaveProfile?: (newProfile: any) => Promise<any>;
   messages?: any;
@@ -214,6 +250,43 @@ function getDisplayableExtractionEntries(data: any): [string, any][] {
   delete normalizedData.controlledPatches;
   delete normalizedData.userConfirmationSummary;
   delete normalizedData.intent;
+
+  // MATE V1 SAFETY:
+  // Classifier-only negative MLC metadata must not count as a
+  // meaningful clinical extraction or create a ghost draft case.
+  //
+  // Positive MLC classification and explicitly extracted MLC text
+  // remain displayable. This changes display/draft eligibility only;
+  // it does not invent, remove, or apply patient clinical facts.
+  if (
+    normalizedData.mlcDetails &&
+    typeof normalizedData.mlcDetails === "object" &&
+    !Array.isArray(normalizedData.mlcDetails)
+  ) {
+    const meaningfulMlcEntries = Object.entries(
+      normalizedData.mlcDetails
+    ).filter(([key, val]) => {
+      if (
+        (key === "possibleMlc" || key === "isMlc") &&
+        val === false
+      ) {
+        return false;
+      }
+
+      if (val === null || val === undefined || val === "") {
+        return false;
+      }
+
+      return true;
+    });
+
+    if (meaningfulMlcEntries.length === 0) {
+      delete normalizedData.mlcDetails;
+    } else {
+      normalizedData.mlcDetails =
+        Object.fromEntries(meaningfulMlcEntries);
+    }
+  }
 
   return Object.entries(normalizedData).filter(([key, val]) => {
     if (val === null || val === undefined || val === "") return false;
@@ -410,6 +483,10 @@ export default function VoiceScribeChatView({
   onSaveExtractedCase,
   onPrepareDischarge,
   onPreviewCaseSheet,
+  onEnsureDraftCase,
+  cases = [],
+  erPhysicalBedCapacity = null,
+  onSelectMateCase,
   profile,
   onSaveProfile,
   messages: propMessages,
@@ -423,16 +500,10 @@ export default function VoiceScribeChatView({
   // the caller didn't explicitly ask for a standalone discussion.
   const isDiscussionOnly = initialEntryMode === "discussion" && !propCaseId;
 
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: "welcome",
-      sender: "ai",
-      text: isDiscussionOnly
-        ? "ErMate Assistant is ready.\n\n💬 Paste or describe a case to discuss — differentials, next steps, or anything you're unsure about.\n🔍 Use the lenses (⋮ menu) for a deeper clinical breakdown."
-        : "ErMate is ready.\n\n🎙️ Dictate the case in your native language and save it to the case sheet.\n💬 Or ask a clinical question — about this patient or any case.",
-      timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-    },
-  ]);
+  // MATE opens silently.
+  // Opening MATE is not itself a conversation turn.
+  // The clinician's first actual input becomes the first visible message.
+  const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState("");
   const [isSending, setIsSending] = useState(false);
   const [saveConfirmation, setSaveConfirmation] = useState<{ type: "case" | "discharge" } | null>(null);
@@ -451,51 +522,134 @@ export default function VoiceScribeChatView({
     return propCaseId || caseData?.id || null;
   });
 
-  useEffect(() => {
+  type FailedMessageRecord = {
+    message: any;
+    error: string;
+    targetSessionId: string | null;
+  };
+
+  type PendingMessageRecord = {
+    message: any;
+    contextGeneration: number;
+  };
+
+  // Scribe session state: ensures continuity across remounts and refresh
+  // Fail closed until session initialization/recovery has verified the
+  // session that belongs to the current Scribe context.
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [sessionAttachError, setSessionAttachError] = useState<string | null>(null);
+  const [historyLoadError, setHistoryLoadError] = useState<string | null>(null);
+  const [failedMessages, setFailedMessages] = useState<Map<string, FailedMessageRecord>>(new Map());
+  const pendingMessageQueueRef = useRef<PendingMessageRecord[]>([]);
+  const sessionContextGenerationRef = useRef(0);
+
+  /**
+   * MATE new-patient handoff.
+   *
+   * A spoken "new patient" command must never reuse the previous
+   * patient's Scribe session.
+   *
+   * MATE therefore:
+   * 1. crosses the existing ErMate New Chat/session boundary,
+   * 2. waits until that unlinked session is active,
+   * 3. establishes the new ClinicalCase/bed,
+   * 4. waits until that case-bound session is active,
+   * 5. replays the ORIGINAL clinician utterance into the existing Scribe.
+   *
+   * This is orchestration only. No clinical extraction happens here.
+   */
+  const pendingMateNewPatientRef = useRef<{
+    text: string;
+    stage: "AWAIT_UNLINKED_SESSION" | "AWAIT_BOUND_CASE";
+    expectedCaseId?: string;
+    notice?: string;
+  } | null>(null);
+
+  /**
+   * Existing-patient MATE handoff.
+   *
+   * When MATE resolves a DIFFERENT existing patient, React state updates
+   * do not rewrite the current render closure immediately.
+   *
+   * Therefore we stop processing, allow ErMate to attach the canonical
+   * case + Scribe session, then replay the ORIGINAL utterance once.
+   *
+   * No ClinicalCase creation or clinical extraction occurs here.
+   */
+  const pendingMateExistingPatientRef = useRef<{
+    text: string;
+    expectedCaseId: string;
+  } | null>(null);
+
+  /**
+   * MATE operational conversation context.
+   *
+   * This is NOT clinical memory.
+   * It stores only the last safely resolved ErMate patient reference so
+   * later conversational commands can eventually support phrases such as
+   * "open it" or "summarise him" without guessing.
+   */
+  const mateConversationContextRef = useRef<{
+    lastReferencedCaseId: string | null;
+    lastReferencedBed: string | null;
+  }>({
+    lastReferencedCaseId: null,
+    lastReferencedBed: null,
+  });
+
+  React.useLayoutEffect(() => {
     const target = propCaseId || caseData?.id;
     if (target !== activeCaseId) {
+      // A patient/case boundary invalidates the previous session immediately.
+      // No message may use the old session while the new case is resolving.
+      sessionContextGenerationRef.current += 1;
+      pendingMessageQueueRef.current = [];
+      setFailedMessages(new Map());
+      setSessionAttachError(null);
+      setActiveSessionId(null);
+      setIsSending(false);
+      setIsUploadingAttachment(false);
       setActiveCaseId(target || null);
     }
   }, [propCaseId, caseData?.id]);
 
-  // Scribe session state: ensures continuity across remounts and refresh
-  const [activeSessionId, setActiveSessionId] = useState<string | null>(propSessionId || null);
-  const [sessionAttachError, setSessionAttachError] = useState<string | null>(null);
-  const [historyLoadError, setHistoryLoadError] = useState<string | null>(null);
-  const [failedMessages, setFailedMessages] = useState<Map<string, { message: any; error: string }>>(new Map());
-  const pendingMessageQueueRef = useRef<any[]>([]);
-
-  const STANDARD_WELCOME_MESSAGE = {
-    id: "welcome",
-    sender: "ai" as const,
-    text: "ErMate is ready.\n\n🎙️ Dictate the case in your native language and save it to the case sheet.\n💬 Or ask a clinical question — about this patient or any case.",
-    timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-  };
-
   // On EVERY activeSessionId change:
-  // 1. Synchronously reset UI state to standard welcome-only state
+  // 1. Synchronously reset UI state to an empty conversation
   // 2. Clear any extraction/draft state derived from the previous session
   useEffect(() => {
     if (isDiscussionOnly) return;
-    setMessages([STANDARD_WELCOME_MESSAGE]);
+    setMessages([]);
     setHistoryLoadError(null);
     setProcedureModalState(null);
     setProcessingAction(null);
     setSaveConfirmation(null);
   }, [activeSessionId, isDiscussionOnly]);
 
-  // Flush messages written before session was ready
+  // Flush messages written before session was ready.
+  // A queued message may flush only inside the same Scribe context in which
+  // it was created. The resolved session ID is captured before the write.
   useEffect(() => {
     if (!activeSessionId || sessionAttachError) return;
     if (pendingMessageQueueRef.current.length === 0) return;
 
     const queue = [...pendingMessageQueueRef.current];
     pendingMessageQueueRef.current = [];
+    const targetSessionId = activeSessionId;
 
     const flushQueue = async () => {
-      for (const msg of queue) {
+      for (const queued of queue) {
+        const msg = queued.message;
+
+        if (queued.contextGeneration !== sessionContextGenerationRef.current) {
+          console.warn(
+            "[VoiceScribeChatView] Dropped stale queued message from a previous Scribe context:",
+            msg.id
+          );
+          continue;
+        }
+
         try {
-          await appendChatMessage(activeSessionId, msg, { isSession: true });
+          await appendChatMessage(targetSessionId, msg, { isSession: true });
           setFailedMessages(prev => {
             if (!prev.has(msg.id)) return prev;
             const next = new Map(prev);
@@ -505,7 +659,13 @@ export default function VoiceScribeChatView({
         } catch (err: any) {
           console.error("[VoiceScribeChatView] Failed to flush queued message:", err);
           const reason = err?.message || "Storage write error";
-          setFailedMessages(prev => new Map(prev).set(msg.id, { message: msg, error: reason }));
+          setFailedMessages(prev =>
+            new Map(prev).set(msg.id, {
+              message: msg,
+              error: reason,
+              targetSessionId,
+            })
+          );
         }
       }
     };
@@ -695,7 +855,7 @@ export default function VoiceScribeChatView({
               }))
             );
           } else {
-            setMessages([STANDARD_WELCOME_MESSAGE]);
+            setMessages([]);
           }
         },
         (err) => {
@@ -814,7 +974,11 @@ export default function VoiceScribeChatView({
   const handlePreviewExtraction = (msgId: string, extractionData: any) => {
     setSaveError(null);
     if (onPreviewCaseSheet) {
-      onPreviewCaseSheet(extractionData, { existingCaseId: activeCaseId || null, msgId });
+      onPreviewCaseSheet(extractionData, {
+        existingCaseId: activeCaseId || null,
+        msgId,
+        sessionId: activeSessionId,
+      });
     } else if (onOpenCaseSheet && activeCaseId) {
       onOpenCaseSheet(activeCaseId);
     }
@@ -919,18 +1083,31 @@ export default function VoiceScribeChatView({
 
     if (sessionAttachError) {
       console.warn("Cannot persist message while session attach failed:", sessionAttachError);
-      setFailedMessages(prev => new Map(prev).set(message.id, { message, error: sessionAttachError }));
+      setFailedMessages(prev =>
+        new Map(prev).set(message.id, {
+          message,
+          error: sessionAttachError,
+          targetSessionId: null,
+        })
+      );
       return;
     }
 
     if (!activeSessionId) {
       console.log("[VoiceScribeChatView] Session ID not yet established, queueing message:", message.id);
-      pendingMessageQueueRef.current.push(message);
+      pendingMessageQueueRef.current.push({
+        message,
+        contextGeneration: sessionContextGenerationRef.current,
+      });
       return;
     }
 
+    // Capture the destination at message creation/write time.
+    // Never substitute a later activeSessionId for this write.
+    const targetSessionId = activeSessionId;
+
     try {
-      await appendChatMessage(activeSessionId, message, { isSession: true });
+      await appendChatMessage(targetSessionId, message, { isSession: true });
       setFailedMessages(prev => {
         if (!prev.has(message.id)) return prev;
         const next = new Map(prev);
@@ -940,15 +1117,42 @@ export default function VoiceScribeChatView({
     } catch (err: any) {
       console.error("[VoiceScribeChatView] Failed to save chat message:", err);
       const reason = err?.message || "Storage write error";
-      setFailedMessages(prev => new Map(prev).set(message.id, { message, error: reason }));
+      setFailedMessages(prev =>
+        new Map(prev).set(message.id, {
+          message,
+          error: reason,
+          targetSessionId,
+        })
+      );
     }
   };
 
   const handleRetryFailedMessage = async (msgId: string) => {
     const item = failedMessages.get(msgId);
-    if (!item || !activeSessionId) return;
+    if (!item) return;
+
+    if (!item.targetSessionId) {
+      setFailedMessages(prev =>
+        new Map(prev).set(msgId, {
+          ...item,
+          error: "Original Scribe session was not established. Message was not written.",
+        })
+      );
+      return;
+    }
+
+    if (!activeSessionId || activeSessionId !== item.targetSessionId) {
+      setFailedMessages(prev =>
+        new Map(prev).set(msgId, {
+          ...item,
+          error: "This message belongs to a different Scribe session and was not written here.",
+        })
+      );
+      return;
+    }
+
     try {
-      await appendChatMessage(activeSessionId, item.message, { isSession: true });
+      await appendChatMessage(item.targetSessionId, item.message, { isSession: true });
       setFailedMessages(prev => {
         const next = new Map(prev);
         next.delete(msgId);
@@ -956,7 +1160,13 @@ export default function VoiceScribeChatView({
       });
     } catch (err: any) {
       console.error("Retry failed for message", msgId, err);
-      setFailedMessages(prev => new Map(prev).set(msgId, { message: item.message, error: err?.message || "Retry failed" }));
+      setFailedMessages(prev =>
+        new Map(prev).set(msgId, {
+          message: item.message,
+          error: err?.message || "Retry failed",
+          targetSessionId: item.targetSessionId,
+        })
+      );
     }
   };
 
@@ -969,6 +1179,17 @@ export default function VoiceScribeChatView({
   const handleStartNewChat = async () => {
     const user = auth.currentUser;
     if (!user) return;
+
+    // Explicit Scribe context boundary: no message from the previous
+    // chat may be written while the new session is being created.
+    sessionContextGenerationRef.current += 1;
+    const newChatContextGeneration = sessionContextGenerationRef.current;
+    pendingMessageQueueRef.current = [];
+    setSessionAttachError(null);
+    setActiveSessionId(null);
+    setIsSending(false);
+    setIsUploadingAttachment(false);
+
     try {
       const workspace = await resolveWorkspaceForUser(user.uid);
       const newSessionId = await createScribeSession({
@@ -977,30 +1198,980 @@ export default function VoiceScribeChatView({
         hospitalId: workspace.hospitalId,
         mode: isDiscussionOnly ? "discussion" : "case",
       });
+
+      if (newChatContextGeneration !== sessionContextGenerationRef.current) {
+        console.warn("[VoiceScribeChatView] Ignored stale New Chat session result.");
+        return;
+      }
+
       setActiveSessionId(newSessionId);
       onSessionIdChange?.(newSessionId);
       localStorage.setItem(`ermate:scribeSession:${user.uid}`, newSessionId);
       setActiveCaseId(null);
-      setMessages([
-        {
-          id: "welcome",
-          sender: "ai",
-          text: "ErMate is ready.\n\n🎙️ Dictate the case in your native language and save it to the case sheet.\n💬 Or ask a clinical question — about this patient or any case.",
-          timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-        },
-      ]);
+      // A new MATE conversation begins silently.
+      // The clinician's first actual input establishes the conversation.
+      setMessages([]);
       setFailedMessages(new Map());
       setSessionAttachError(null);
       onNewChat?.();
     } catch (err: any) {
+      if (newChatContextGeneration !== sessionContextGenerationRef.current) {
+        console.warn("[VoiceScribeChatView] Ignored stale New Chat error.");
+        return;
+      }
+
       console.error("Failed to start new chat session:", err);
       setSaveError(`Failed to start new chat: ${err?.message || "Error"}`);
     }
   };
 
-   const sendToChat = async (text: string) => {
+   /*
+   * STEP 2B — Draft ClinicalCase lifecycle.
+   *
+   * A shell is created only when ALL are true:
+   * 1. this is a patient/case Scribe, not discussion-only mode
+   * 2. there is no active ClinicalCase yet
+   * 3. the Scribe session has been successfully established
+   * 4. at least one unapplied assistant extraction contains a real,
+   *    displayable/documentable clinical fact
+   *
+   * Greetings and question-only turns therefore create NO ClinicalCase.
+   *
+   * IMPORTANT:
+   * We pass ONLY activeSessionId to App. The extraction itself stays inside
+   * the Scribe message and remains unapplied until Preview -> Apply.
+   */
+  const draftCaseEnsureInFlightRef = useRef(false);
+
+  useEffect(() => {
+    if (isDiscussionOnly) return;
+    if (activeCaseId) return;
+    if (!activeSessionId) return;
+    if (!onEnsureDraftCase) return;
+    if (draftCaseEnsureInFlightRef.current) return;
+
+    const hasMeaningfulUnappliedExtraction = messages.some(
+      (message: Message) =>
+        !message.extractionApplied &&
+        hasDisplayableExtraction(message.extractionData)
+    );
+
+    if (!hasMeaningfulUnappliedExtraction) return;
+
+    const targetSessionId = activeSessionId;
+    const targetGeneration = sessionContextGenerationRef.current;
+
+    draftCaseEnsureInFlightRef.current = true;
+
+    void (async () => {
+      try {
+        await onEnsureDraftCase(targetSessionId);
+      } catch (err) {
+        /*
+         * Do not destroy or re-route the Scribe session because shell
+         * persistence failed. Chat persistence and clinical extraction are
+         * separate safety boundaries.
+         */
+        if (
+          sessionContextGenerationRef.current === targetGeneration
+        ) {
+          console.error(
+            "[VoiceScribeChatView] Draft ClinicalCase shell creation failed:",
+            err
+          );
+        }
+      } finally {
+        draftCaseEnsureInFlightRef.current = false;
+      }
+    })();
+  }, [
+    messages,
+    activeCaseId,
+    activeSessionId,
+    isDiscussionOnly,
+    onEnsureDraftCase,
+  ]);
+
+  const sendToChat = async (
+    text: string,
+    options?: { skipMatePatientResolution?: boolean }
+  ) => {
     const trimmed = text.trim();
     if (!trimmed || isSending) return;
+
+    // Bind every async MATE/Scribe request to the exact context
+    // that created it. This must be established BEFORE routing because
+    // the general-conversation lane also performs an async request.
+    const requestContextGeneration = sessionContextGenerationRef.current;
+    const requestIsCurrent = () =>
+      requestContextGeneration === sessionContextGenerationRef.current;
+
+    // ========================================================
+    // MATE TRAFFIC-POLICE — VERTICAL SLICE 1
+    // Capability: case.open
+    //
+    // Important:
+    // - This does not extract clinical data.
+    // - This does not write directly to Firestore.
+    // - This reuses the existing ErMate Case Sheet workflow.
+    // - Pending unapplied dictation is PREVIEWED before any commit.
+    // ========================================================
+    /**
+     * MATE UNIVERSAL PATIENT CONTEXT
+     *
+     * Resolve an explicit ER bed reference BEFORE intent routing.
+     *
+     * This is traffic-police logic only:
+     * - no clinical extraction
+     * - no case creation
+     * - no Firestore write
+     * - no mutation of clinical facts
+     *
+     * The original utterance continues unchanged into the existing
+     * MATE/Scribe pipeline after a successful context switch.
+     */
+    /*
+     * MATE NEW-PATIENT INTENT
+     *
+     * IMPORTANT:
+     * "open case sheet" is an EXISTING-patient action and must NEVER,
+     * by itself, create a new ClinicalCase.
+     *
+     * New-patient creation requires an explicit patient introduction
+     * or explicit new/create/start language.
+     *
+     * Examples that ARE new-patient intent:
+     * - "I have a patient in Bed 11..."
+     * - "I have a new patient in Bed 11..."
+     * - "Another patient in Bed 11..."
+     * - "Create a new case for Bed 11"
+     *
+     * Examples that are NOT new-patient intent:
+     * - "Open the case sheet"
+     * - "Open Bed 11 case sheet"
+     * - "Bed 11 BP is falling, open the case sheet"
+     * - "Review Bed 11"
+     */
+    const explicitNewCaseIntent =
+      /\b(?:new|another)\s+(?:patient|pt|case)\b/i.test(trimmed) ||
+      /\b(?:i|we)\s+(?:have|got)\s+(?:a\s+)?(?:new\s+)?(?:patient|pt)\b/i.test(trimmed) ||
+      /\b(?:start|create|begin)\s+(?:a\s+)?(?:new\s+)?(?:case\s*sheet|patient\s+case|case)\b/i.test(trimmed);
+
+    const mateConversationPlan =
+      planMateConversation(trimmed);
+
+    const requestedMateBedReference =
+      extractMateBedReference(text);
+
+    const recentReferencedCase =
+      !requestedMateBedReference &&
+      mateConversationPlan.refersToRecentPatient &&
+      mateConversationContextRef.current.lastReferencedCaseId
+        ? cases.find(
+            (clinicalCase) =>
+              clinicalCase.id ===
+                mateConversationContextRef.current.lastReferencedCaseId &&
+              clinicalCase.status !== "Discharged"
+          ) || null
+        : null;
+
+    const mateCaseResolution =
+      options?.skipMatePatientResolution && activeCaseId
+        ? {
+            status: "CURRENT_CASE" as const,
+            referenceType: "CURRENT_CASE" as const,
+            referenceValue: null,
+            caseId: activeCaseId,
+          }
+        : recentReferencedCase
+          ? {
+              status: "RESOLVED" as const,
+              referenceType: "BED" as const,
+              referenceValue:
+                recentReferencedCase.bedNo ||
+                mateConversationContextRef.current.lastReferencedBed ||
+                "CURRENT",
+              caseId: recentReferencedCase.id,
+            }
+          : resolveMateCaseReference({
+              utterance: text,
+              cases,
+              activeCaseId,
+              physicalCapacity: erPhysicalBedCapacity,
+              newCaseIntent: explicitNewCaseIntent,
+            });
+
+    if (mateCaseResolution.status === "AMBIGUOUS") {
+      const bed = mateCaseResolution.referenceValue;
+
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `mate-context-${Date.now()}`,
+          sender: "ai",
+          text:
+            explicitNewCaseIntent &&
+            requestedMateBedReference &&
+            /[AB]$/i.test(requestedMateBedReference)
+              ? `Bed ${bed} is already occupied. Please give me another bed.`
+              : explicitNewCaseIntent &&
+                  requestedMateBedReference &&
+                  !/[AB]$/i.test(requestedMateBedReference)
+                ? `Both Bed ${bed}A and Bed ${bed}B are occupied. Please give me another bed.`
+                : `I found more than one active patient in Bed ${bed}. ` +
+                  `Please specify the exact bed slot.`,
+          timestamp: new Date().toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+          }),
+        },
+      ]);
+
+      return;
+    }
+
+    if (mateCaseResolution.status === "INVALID_LOCATION") {
+      const bed = mateCaseResolution.referenceValue;
+
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `mate-context-${Date.now()}`,
+          sender: "ai",
+          text:
+            `Bed ${bed} is outside the configured ER bed/location range. ` +
+            `Please check the bed number.`,
+          timestamp: new Date().toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+          }),
+        },
+      ]);
+
+      return;
+    }
+
+    if (mateCaseResolution.status === "NOT_FOUND") {
+      const bed = mateCaseResolution.referenceValue;
+
+      /*
+       * NOT_FOUND means the referenced physical bed is valid but no active
+       * ClinicalCase currently occupies it.
+       *
+       * That is not, by itself, permission to create a patient.
+       * Creation is allowed only when the clinician explicitly asks to
+       * start/create/prepare a case or case sheet for the patient.
+       */
+      if (!explicitNewCaseIntent) {
+        const isBedStatusQuestion =
+          mateConversationPlan.actions.includes("BED_STATUS");
+
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `mate-context-${Date.now()}`,
+            sender: "ai",
+            text: isBedStatusQuestion
+              ? `No. Bed ${bed} is currently vacant in ErMate.`
+              : `I don't currently have an active ErMate case assigned to Bed ${bed}. ` +
+                `I won't create or choose a patient automatically.`,
+            timestamp: new Date().toLocaleTimeString([], {
+              hour: "2-digit",
+              minute: "2-digit",
+            }),
+          },
+        ]);
+
+        if (isBedStatusQuestion) {
+          mateConversationContextRef.current.lastReferencedCaseId = null;
+          mateConversationContextRef.current.lastReferencedBed = bed;
+        }
+
+        return;
+      }
+
+      /*
+       * NEW PATIENT while MATE is currently bound to another patient:
+       *
+       * Never give the previous patient's Scribe session to the new case.
+       * Reuse ErMate's existing New Chat/session-boundary implementation,
+       * then automatically replay this exact utterance once the fresh,
+       * unlinked session has settled.
+       */
+      if (
+        activeCaseId ||
+        propCaseId ||
+        caseData?.id
+      ) {
+        pendingMateNewPatientRef.current = {
+          text: trimmed,
+          stage: "AWAIT_UNLINKED_SESSION",
+        };
+
+        await handleStartNewChat();
+        return;
+      }
+
+      if (!activeSessionId || !onEnsureDraftCase) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `mate-context-${Date.now()}`,
+            sender: "ai",
+            text:
+              `Bed ${bed} is currently unassigned in ErMate, but I couldn't establish the new case safely yet. ` +
+              `Please try the case-sheet request again.`,
+            timestamp: new Date().toLocaleTimeString([], {
+              hour: "2-digit",
+              minute: "2-digit",
+            }),
+          },
+        ]);
+
+        return;
+      }
+
+      const targetSessionId = activeSessionId;
+      const targetGeneration = requestContextGeneration;
+
+      try {
+        const newCaseId = await onEnsureDraftCase(targetSessionId, {
+          bedNo: bed,
+        });
+
+        if (
+          targetGeneration !== sessionContextGenerationRef.current
+        ) {
+          return;
+        }
+
+        const allocationNotice =
+          requestedMateBedReference &&
+          !/[AB]$/i.test(requestedMateBedReference) &&
+          bed === `${requestedMateBedReference}B`
+            ? `Bed ${requestedMateBedReference}A is occupied. I'll assign this patient to Bed ${bed}.`
+            : undefined;
+
+        /*
+         * onEnsureDraftCase has now safely created/linked the new ErMate case.
+         *
+         * Do NOT continue clinical processing inside this render closure:
+         * activeCaseId / activeSessionId still belong to the pre-bound render.
+         *
+         * Wait for the normal ErMate case/session boundary to settle, then
+         * replay the original utterance exactly once into the existing Scribe.
+         */
+        pendingMateNewPatientRef.current = {
+          text: trimmed,
+          stage: "AWAIT_BOUND_CASE",
+          expectedCaseId: newCaseId,
+          notice: allocationNotice,
+        };
+
+        setActiveCaseId(newCaseId);
+
+        if (onSelectMateCase) {
+          onSelectMateCase(newCaseId);
+        }
+
+        return;
+      } catch (err) {
+        if (targetGeneration !== sessionContextGenerationRef.current) {
+          return;
+        }
+
+        console.error(
+          "[MATE] Unable to establish vacant-bed draft case:",
+          err
+        );
+
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `mate-context-${Date.now()}`,
+            sender: "ai",
+            text:
+              `Bed ${bed} appears to be unassigned, but I couldn't safely establish the new patient case. ` +
+              `No existing patient was changed.`,
+            timestamp: new Date().toLocaleTimeString([], {
+              hour: "2-digit",
+              minute: "2-digit",
+            }),
+          },
+        ]);
+
+        return;
+      }
+
+    }
+
+    /*
+     * PURE BED STATUS
+     *
+     * Occupancy checks are read-only.
+     *
+     * Do not switch active patient.
+     * Do not invoke Scribe.
+     * Do not create a ClinicalCase.
+     *
+     * We only remember the safely resolved patient so a later conversational
+     * follow-up can explicitly refer back to that patient.
+     */
+    if (
+      mateCaseResolution.status === "RESOLVED" &&
+      mateConversationPlan.actions.includes("BED_STATUS") &&
+      !mateConversationPlan.actions.includes("PATIENT_OPEN") &&
+      !mateConversationPlan.actions.includes("CASE_SUMMARY") &&
+      !mateConversationPlan.actions.includes("CASE_SHEET_OPEN") &&
+      !mateConversationPlan.mayContainClinicalUpdate
+    ) {
+      const referencedCase = cases.find(
+        (clinicalCase) =>
+          clinicalCase.id === mateCaseResolution.caseId
+      );
+
+      const referencedBed =
+        referencedCase?.bedNo ||
+        mateCaseResolution.referenceValue;
+
+      mateConversationContextRef.current.lastReferencedCaseId =
+        mateCaseResolution.caseId;
+
+      mateConversationContextRef.current.lastReferencedBed =
+        referencedBed || null;
+
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `mate-bed-status-${Date.now()}`,
+          sender: "ai",
+          text: `Yes. Bed ${referencedBed} is occupied.`,
+          timestamp: new Date().toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+          }),
+        },
+      ]);
+
+      return;
+    }
+
+    if (
+      mateCaseResolution.status === "RESOLVED" &&
+      mateCaseResolution.caseId !== activeCaseId
+    ) {
+      /**
+       * EXISTING-PATIENT CONTEXT BOUNDARY
+       *
+       * setActiveCaseId() does not rewrite values captured by this render.
+       * Continuing below could therefore execute against the previous
+       * patient's caseData/messages/session.
+       *
+       * Store the ORIGINAL utterance, switch context, stop here, and replay
+       * only after ErMate has attached the resolved case's canonical session.
+       */
+      pendingMateExistingPatientRef.current = {
+        text: trimmed,
+        expectedCaseId: mateCaseResolution.caseId,
+      };
+
+      sessionContextGenerationRef.current += 1;
+
+      setActiveCaseId(mateCaseResolution.caseId);
+
+      if (onSelectMateCase) {
+        onSelectMateCase(mateCaseResolution.caseId);
+      }
+
+      return;
+    }
+
+    const wantsCaseSummary =
+      mateConversationPlan.actions.includes("CASE_SUMMARY");
+
+    if (
+      wantsCaseSummary &&
+      !mateConversationPlan.mayContainClinicalUpdate
+    ) {
+      const summaryCaseId =
+        mateCaseResolution.status === "RESOLVED" ||
+        mateCaseResolution.status === "CURRENT_CASE"
+          ? mateCaseResolution.caseId
+          : activeCaseId;
+
+      const summaryCase =
+        summaryCaseId
+          ? cases.find(
+              (clinicalCase) =>
+                clinicalCase.id === summaryCaseId &&
+                clinicalCase.status !== "Discharged"
+            ) || null
+          : null;
+
+      if (!summaryCase) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `mate-summary-context-${Date.now()}`,
+            sender: "ai",
+            text:
+              "I don't have an active patient to summarise yet. Please tell me the bed.",
+            timestamp: new Date().toLocaleTimeString([], {
+              hour: "2-digit",
+              minute: "2-digit",
+            }),
+          },
+        ]);
+
+        return;
+      }
+
+      const summaryBed =
+        summaryCase.bedNo ||
+        mateConversationContextRef.current.lastReferencedBed ||
+        null;
+
+      mateConversationContextRef.current.lastReferencedCaseId =
+        summaryCase.id;
+
+      mateConversationContextRef.current.lastReferencedBed =
+        summaryBed;
+
+      setInputText("");
+      setIsSending(true);
+
+      const summaryGeneration =
+        sessionContextGenerationRef.current;
+
+      const userMsg: Message = {
+        id: `u-${Date.now()}-mate-summary`,
+        sender: "user",
+        text: trimmed,
+        timestamp: new Date().toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+        }),
+        mode: currentMode,
+      };
+
+      setMessages((prev) => [...prev, userMsg]);
+
+      persistMessage({
+        id: userMsg.id,
+        role: "user",
+        type: "text",
+        content: trimmed,
+        timestamp: new Date().toISOString(),
+      });
+
+      try {
+        const res = await fetch("/api/case-discussion", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            message:
+              "Summarise this documented emergency case concisely for the treating emergency physician. " +
+              "Use only information present in the supplied case. " +
+              "Do not invent missing history, examination findings, investigations, diagnosis, treatment or disposition.",
+            contextType: "case",
+            contextData: summaryCase,
+            caseData: summaryCase,
+            history: [],
+            messages: [
+              {
+                sender: "user",
+                text:
+                  "Give me a concise summary of the currently documented case only.",
+              },
+            ],
+          }),
+        });
+
+        const data = await res.json();
+
+        if (
+          summaryGeneration !==
+          sessionContextGenerationRef.current
+        ) {
+          console.warn(
+            "[MATE] Ignored stale case-summary response from a previous patient context."
+          );
+          return;
+        }
+
+        if (!res.ok || data?.success === false) {
+          throw new Error(
+            data?.error ||
+              "MATE case summary request failed"
+          );
+        }
+
+        const summaryText =
+          typeof data?.response === "string" &&
+          data.response.trim()
+            ? data.response.trim()
+            : typeof data?.reply === "string" &&
+                data.reply.trim()
+              ? data.reply.trim()
+              : "I couldn't form a reliable summary from the documented case.";
+
+        const statusRequested =
+          mateConversationPlan.actions.includes(
+            "BED_STATUS"
+          );
+
+        const openRequested =
+          mateConversationPlan.actions.includes(
+            "PATIENT_OPEN"
+          );
+
+        const operationalPrefixParts: string[] = [];
+
+        if (statusRequested && summaryBed) {
+          operationalPrefixParts.push(
+            `Yes. Bed ${summaryBed} is occupied.`
+          );
+        }
+
+        if (openRequested && summaryBed) {
+          operationalPrefixParts.push(
+            `I've opened Bed ${summaryBed} in MATE.`
+          );
+        }
+
+        const operationalPrefix =
+          operationalPrefixParts.length > 0
+            ? `${operationalPrefixParts.join(" ")}
+
+`
+            : "";
+
+        const aiMsg: Message = {
+          id: `ai-${Date.now()}-mate-summary`,
+          sender: "ai",
+          text: `${operationalPrefix}${summaryText}`,
+          timestamp: new Date().toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+          }),
+          mode: currentMode,
+        };
+
+        setMessages((prev) => [...prev, aiMsg]);
+
+        persistMessage({
+          id: aiMsg.id,
+          role: "assistant",
+          type: "text",
+          content: aiMsg.text,
+          timestamp: new Date().toISOString(),
+        });
+      } catch (err: any) {
+        if (
+          summaryGeneration !==
+          sessionContextGenerationRef.current
+        ) {
+          return;
+        }
+
+        console.error(
+          "[MATE] Case summary failed:",
+          err
+        );
+
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `ai-${Date.now()}-mate-summary-error`,
+            sender: "ai",
+            text:
+              "I've got the correct patient, but I couldn't generate the case summary just now.",
+            timestamp: new Date().toLocaleTimeString([], {
+              hour: "2-digit",
+              minute: "2-digit",
+            }),
+          },
+        ]);
+      } finally {
+        if (
+          summaryGeneration ===
+          sessionContextGenerationRef.current
+        ) {
+          setIsSending(false);
+        }
+      }
+
+      return;
+    }
+
+    const pureReferentialPatientOpen =
+      mateConversationPlan.actions.includes("PATIENT_OPEN") &&
+      mateConversationPlan.refersToRecentPatient &&
+      !mateConversationPlan.actions.includes("CASE_SUMMARY") &&
+      !mateConversationPlan.actions.includes("CASE_SHEET_OPEN") &&
+      !mateConversationPlan.mayContainClinicalUpdate;
+
+    if (pureReferentialPatientOpen) {
+      const referencedCase =
+        mateCaseResolution.status === "RESOLVED" ||
+        mateCaseResolution.status === "CURRENT_CASE"
+          ? cases.find(
+              (clinicalCase) =>
+                clinicalCase.id === mateCaseResolution.caseId
+            ) || null
+          : null;
+
+      if (!referencedCase) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `mate-recent-context-${Date.now()}`,
+            sender: "ai",
+            text:
+              "I don't have a recent active patient to open yet. Please tell me the bed.",
+            timestamp: new Date().toLocaleTimeString([], {
+              hour: "2-digit",
+              minute: "2-digit",
+            }),
+          },
+        ]);
+
+        return;
+      }
+
+      const bed =
+        referencedCase.bedNo ||
+        mateConversationContextRef.current.lastReferencedBed;
+
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `mate-patient-open-${Date.now()}`,
+          sender: "ai",
+          text: bed
+            ? `I've opened Bed ${bed} in MATE.`
+            : "I've opened that patient in MATE.",
+          timestamp: new Date().toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+          }),
+        },
+      ]);
+
+      return;
+    }
+
+    const mateRoute = routeMateInput({
+      text: trimmed,
+      patientAgeYears: caseData?.patient?.age ?? null,
+    });
+
+    // ========================================================
+    // MATE CONVERSATION LANE
+    //
+    // Social/general conversation is READ-ONLY.
+    //
+    // It uses the existing /api/case-discussion endpoint with
+    // contextType "general", which has no patient context and
+    // cannot enter the clinical extraction path.
+    // ========================================================
+    if (mateRoute.primaryIntent === "CONVERSATION") {
+      setInputText("");
+
+      const userMsg: Message = {
+        id: `u-${Date.now()}`,
+        sender: "user",
+        text: trimmed,
+        timestamp: new Date().toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+        }),
+        mode: currentMode,
+      };
+
+      setMessages((prev) => [...prev, userMsg]);
+
+      persistMessage({
+        id: userMsg.id,
+        role: "user",
+        type: "text",
+        content: trimmed,
+        timestamp: new Date().toISOString(),
+      });
+
+      try {
+        const conversationMessages = [...messages, userMsg].map((m) => ({
+          sender: m.sender === "user" ? "user" : "ai",
+          text: m.text,
+        }));
+
+        const res = await fetch("/api/case-discussion", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            contextType: "general",
+            contextData: {},
+            message: trimmed,
+            messages: conversationMessages,
+          }),
+        });
+
+        const data = await res.json();
+
+        if (!requestIsCurrent()) {
+          console.warn(
+            "[MATE] Ignored stale general conversation response."
+          );
+          return;
+        }
+
+        if (!res.ok || data?.success === false) {
+          throw new Error(
+            data?.error || "MATE general conversation request failed"
+          );
+        }
+
+        const replyText =
+          typeof data?.response === "string" && data.response.trim()
+            ? data.response.trim()
+            : typeof data?.reply === "string" && data.reply.trim()
+              ? data.reply.trim()
+              : "I'm here. What are we working on?";
+
+        const aiMsg: Message = {
+          id: `ai-${Date.now()}-conversation`,
+          sender: "ai",
+          text: replyText,
+          timestamp: new Date().toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+          }),
+          mode: currentMode,
+        };
+
+        setMessages((prev) => [...prev, aiMsg]);
+
+        persistMessage({
+          id: aiMsg.id,
+          role: "assistant",
+          type: "text",
+          content: replyText,
+          timestamp: new Date().toISOString(),
+        });
+      } catch (error) {
+        console.error("[MATE general conversation] failed:", error);
+
+        const fallbackText =
+          "I'm here. What are we working on?";
+
+        const fallbackMsg: Message = {
+          id: `ai-${Date.now()}-conversation-fallback`,
+          sender: "ai",
+          text: fallbackText,
+          timestamp: new Date().toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+          }),
+          mode: currentMode,
+        };
+
+        setMessages((prev) => [...prev, fallbackMsg]);
+
+        persistMessage({
+          id: fallbackMsg.id,
+          role: "assistant",
+          type: "text",
+          content: fallbackText,
+          timestamp: new Date().toISOString(),
+        });
+      }
+
+      return;
+    }
+
+    if (
+      mateRoute.primaryIntent === "APP_ACTION" &&
+      mateRoute.targetCapability
+    ) {
+      const actionResult = await dispatchMateAction(
+        {
+          capability: mateRoute.targetCapability,
+          caseId: activeCaseId || null,
+          sessionId: activeSessionId || null,
+          utterance: trimmed,
+        },
+        {
+          openCase: async () => {
+            const unappliedMessages = messages.filter(
+              (m: Message) => m.extractionData && !m.extractionApplied
+            );
+
+            // Preserve the existing ErMate safety contract:
+            // pending Scribe information must go through Preview Case Sheet.
+            if (unappliedMessages.length > 0 && onPreviewCaseSheet) {
+              const mergedExtraction = getMergedUnappliedExtraction(messages);
+
+              console.log("[MATE PEDIATRIC TRACE] case.open", {
+                activeCaseId,
+                activeSessionId,
+                unappliedMessageCount: unappliedMessages.length,
+                mergedExtraction,
+                mergedAge:
+                  mergedExtraction?.age ??
+                  mergedExtraction?.patient?.age ??
+                  null,
+                expectedPediatric:
+                  mergedExtraction?.age !== undefined &&
+                  mergedExtraction?.age !== null
+                    ? Number(mergedExtraction.age) <= 16
+                    : null,
+              });
+
+              const latestMsg = unappliedMessages[unappliedMessages.length - 1];
+
+              await onPreviewCaseSheet(mergedExtraction, {
+                existingCaseId: activeCaseId || null,
+                msgId: latestMsg?.id,
+              });
+
+              return;
+            }
+
+            const extractionMessages = messages.filter(
+              (m: Message) => m.extractionData
+            );
+
+            // Preserve the existing new/empty-case initialization path.
+            if (extractionMessages.length === 0 && onSaveExtractedCase) {
+              await onSaveExtractedCase(
+                {},
+                {
+                  existingCaseId: activeCaseId || undefined,
+                  autoNavigate: true,
+                }
+              );
+
+              return;
+            }
+
+            // Existing established case with nothing pending:
+            // simply open the canonical ErMate Case Sheet.
+            if (activeCaseId && onOpenCaseSheet) {
+              onOpenCaseSheet(activeCaseId);
+              return;
+            }
+          },
+        }
+      );
+
+      if (actionResult.handled) {
+        return;
+      }
+    }
 
     setInputText("");
     setIsSending(true);
@@ -1045,6 +2216,12 @@ export default function VoiceScribeChatView({
           }),
         });
         const data = await res.json();
+
+        if (!requestIsCurrent()) {
+          console.warn("[VoiceScribeChatView] Ignored stale response from a previous Scribe context.");
+          return;
+        }
+
         if (!res.ok) throw new Error(data.error || "Request failed");
 
         const replyText = data.response || data.reply || "I've reviewed the case, but couldn't form a clear answer just now.";
@@ -1081,9 +2258,26 @@ export default function VoiceScribeChatView({
         });
 
         const data = await res.json();
+
+        if (!requestIsCurrent()) {
+          console.warn("[VoiceScribeChatView] Ignored stale response from a previous Scribe context.");
+          return;
+        }
+
         if (!res.ok) throw new Error(data.error || "Request failed");
 
         const replyText = data.reply || data.aiReply || data.summary || "Processed case details.";
+        console.log("[MATE PEDIATRIC TRACE] scribe response", {
+          unappliedExtraction: data.unappliedExtraction ?? null,
+          updatedCaseSheetFields: data.updatedCaseSheetFields ?? null,
+          extractedFields: data.extractedFields ?? null,
+          returnedAge:
+            data.unappliedExtraction?.age ??
+            data.updatedCaseSheetFields?.age ??
+            data.extractedFields?.age ??
+            null,
+        });
+
         const rawFieldsToExtract = data.unappliedExtraction || data.updatedCaseSheetFields || data.extractedFields;
         // Always keep the extraction object (even if empty) so the full
         // checklist card can render and honestly show 0/N captured, rather
@@ -1134,6 +2328,11 @@ export default function VoiceScribeChatView({
         });
       }
     } catch (err: any) {
+      if (!requestIsCurrent()) {
+        console.warn("[VoiceScribeChatView] Ignored stale request error from a previous Scribe context.");
+        return;
+      }
+
       console.error("[VoiceScribeChatView] Send failed:", err);
       const errMsg: Message = {
         id: `err-${Date.now()}`,
@@ -1143,9 +2342,144 @@ export default function VoiceScribeChatView({
       };
       setMessages((prev) => [...prev, errMsg]);
     } finally {
-      setIsSending(false);
+      if (requestIsCurrent()) {
+        setIsSending(false);
+      }
     }
   };
+
+  /**
+   * Resume a MATE EXISTING-patient command only after ErMate has crossed
+   * the case/session boundary.
+   *
+   * Requirements:
+   * - local activeCaseId == expected case
+   * - parent case context == expected case
+   * - canonical Scribe session is attached
+   *
+   * Then replay the exact original utterance once, while skipping patient
+   * resolution because that resolution has already been safely completed.
+   */
+  useEffect(() => {
+    if (isDiscussionOnly) return;
+
+    const pending =
+      pendingMateExistingPatientRef.current;
+
+    if (!pending) return;
+
+    const parentCaseId =
+      propCaseId ||
+      caseData?.id ||
+      null;
+
+    if (
+      activeCaseId !== pending.expectedCaseId ||
+      parentCaseId !== pending.expectedCaseId ||
+      !activeSessionId
+    ) {
+      return;
+    }
+
+    pendingMateExistingPatientRef.current = null;
+
+    void sendToChat(pending.text, {
+      skipMatePatientResolution: true,
+    });
+
+    // sendToChat intentionally omitted: this effect is driven only by
+    // verified patient/session boundary state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    activeSessionId,
+    activeCaseId,
+    propCaseId,
+    caseData?.id,
+    isDiscussionOnly,
+  ]);
+
+  /**
+   * Resume a MATE new-patient command only after ErMate has crossed the
+   * required Scribe/case boundary.
+   *
+   * The original clinician utterance is never reconstructed or altered.
+   * It is replayed exactly once into the normal existing Scribe pipeline.
+   */
+  useEffect(() => {
+    if (isDiscussionOnly) return;
+
+    const pending = pendingMateNewPatientRef.current;
+    if (!pending) return;
+
+    if (pending.stage === "AWAIT_UNLINKED_SESSION") {
+      const stillBoundToCase =
+        Boolean(activeCaseId) ||
+        Boolean(propCaseId) ||
+        Boolean(caseData?.id);
+
+      if (!activeSessionId || stillBoundToCase) {
+        return;
+      }
+
+      pendingMateNewPatientRef.current = null;
+
+      void sendToChat(pending.text);
+      return;
+    }
+
+    if (pending.stage === "AWAIT_BOUND_CASE") {
+      const expectedCaseId = pending.expectedCaseId;
+
+      if (!expectedCaseId) {
+        pendingMateNewPatientRef.current = null;
+        return;
+      }
+
+      const parentCaseId =
+        propCaseId ||
+        caseData?.id ||
+        null;
+
+      if (
+        activeCaseId !== expectedCaseId ||
+        parentCaseId !== expectedCaseId ||
+        !activeSessionId
+      ) {
+        return;
+      }
+
+      pendingMateNewPatientRef.current = null;
+
+      if (pending.notice) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `mate-bed-allocation-${Date.now()}`,
+            sender: "ai",
+            text: pending.notice!,
+            timestamp: new Date().toLocaleTimeString([], {
+              hour: "2-digit",
+              minute: "2-digit",
+            }),
+          },
+        ]);
+      }
+
+      void sendToChat(pending.text, {
+        skipMatePatientResolution: true,
+      });
+    }
+
+    // sendToChat intentionally omitted: this effect is driven only by
+    // ErMate patient/session boundary state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    activeSessionId,
+    activeCaseId,
+    propCaseId,
+    caseData?.id,
+    isDiscussionOnly,
+  ]);
 
   const handleLensClick = (lensLabel: string) => {
     setShowLensMenu(false);
@@ -1157,6 +2491,10 @@ export default function VoiceScribeChatView({
     const file = e.target.files?.[0];
     e.target.value = ""; // allow re-selecting the same file later
     if (!file) return;
+
+    const attachmentContextGeneration = sessionContextGenerationRef.current;
+    const attachmentIsCurrent = () =>
+      attachmentContextGeneration === sessionContextGenerationRef.current;
 
     const isImage = file.type.startsWith("image/");
     if (!isImage) {
@@ -1183,12 +2521,23 @@ export default function VoiceScribeChatView({
         reader.readAsDataURL(file);
       });
 
+      if (!attachmentIsCurrent()) {
+        console.warn("[VoiceScribeChatView] Ignored stale attachment from a previous Scribe context.");
+        return;
+      }
+
       const res = await fetch("/api/scribe-ocr-scan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ image: base64, mimeType: file.type }),
       });
       const data = await res.json();
+
+      if (!attachmentIsCurrent()) {
+        console.warn("[VoiceScribeChatView] Ignored stale OCR response from a previous Scribe context.");
+        return;
+      }
+
       if (!data.success || !data.data) {
         throw new Error(data.error || "Could not read the attached image.");
       }
@@ -1202,6 +2551,11 @@ export default function VoiceScribeChatView({
       // as if the doctor had typed or dictated it.
       await sendToChat(scannedText);
     } catch (err: any) {
+      if (!attachmentIsCurrent()) {
+        console.warn("[VoiceScribeChatView] Ignored stale attachment error from a previous Scribe context.");
+        return;
+      }
+
       setMessages(prev => [...prev, {
         id: `err-attach-${Date.now()}`,
         sender: "ai",
@@ -1209,7 +2563,9 @@ export default function VoiceScribeChatView({
         timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       }]);
     } finally {
-      setIsUploadingAttachment(false);
+      if (attachmentIsCurrent()) {
+        setIsUploadingAttachment(false);
+      }
     }
   };
 
@@ -1272,7 +2628,11 @@ export default function VoiceScribeChatView({
                 if (unappliedMessages.length > 0 && onPreviewCaseSheet) {
                   const mergedExtraction = getMergedUnappliedExtraction(messages);
                   const latestMsg = unappliedMessages[unappliedMessages.length - 1];
-                  onPreviewCaseSheet(mergedExtraction, { existingCaseId: activeCaseId || null, msgId: latestMsg?.id });
+                  onPreviewCaseSheet(mergedExtraction, {
+                    existingCaseId: activeCaseId || null,
+                    msgId: latestMsg?.id,
+                    sessionId: activeSessionId,
+                  });
                   return;
                 }
                 if (onSaveExtractedCase) {

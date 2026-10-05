@@ -12,6 +12,7 @@ export type MateMode = "DICTATION" | "CONSULTATION";
 export type MateExecutionMode = "PREVIEW" | "WRITE";
 
 export type MateIntent =
+  | "CONVERSATION"
   | "CLINICAL_NARRATIVE"
   | "DOCUMENT_FACT"
   | "CORRECTION"

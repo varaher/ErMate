@@ -49,6 +49,8 @@ interface ProfileSettingsViewProps {
   hospitalSubscription?: { active: boolean; subscriptionTier: string } | null;
   shifts?: any[];
   onUpdateShifts?: (newShifts: any[]) => Promise<void> | void;
+  erPhysicalBedCapacity?: number | null;
+  onUpdateErPhysicalBedCapacity?: (capacity: number) => Promise<void> | void;
   initialSubSection?: string | null;
 }
 
@@ -78,6 +80,8 @@ export default function ProfileSettingsView({
   hospitalSubscription = null,
   shifts = [],
   onUpdateShifts,
+  erPhysicalBedCapacity = null,
+  onUpdateErPhysicalBedCapacity,
   initialSubSection = null,
 }: ProfileSettingsViewProps) {
   const normalizeSubSection = (sub: string | null | undefined): string | null => {
@@ -1663,6 +1667,8 @@ const startRealCheckout = async (planKey: string) => {
               hospitalSubscriptionActive={!!hospitalSubscription?.active}
               shifts={shifts}
               onUpdateShifts={onUpdateShifts}
+              erPhysicalBedCapacity={erPhysicalBedCapacity}
+              onUpdateErPhysicalBedCapacity={onUpdateErPhysicalBedCapacity}
             />
           </div>
         </div>

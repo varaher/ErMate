@@ -6,9 +6,9 @@ import {
   matePediatricRoute,
 } from "../src/mate/mateContracts";
 import { routeMateInput } from "../src/mate/mateRouter";
-import { extractFromTranscript } from "./voiceExtraction.ts";
-import { cleanExtractionOutput } from "./extractionCleanup.ts";
-import { mapExtractionToCaseSheetFields } from "./scribeChatTurn.ts";
+import { runExtraction } from "./scribeChatTurn.ts";
+import { callScribeExtractionModel } from "./scribeExtractionModel.ts";
+import { deidentifyText, protectInternalClinicians } from "./deidentify.ts";
 
 export interface MatePreviewInterpreterInput {
   transcript: string;
@@ -160,15 +160,49 @@ export async function interpretMatePreview(
     };
   }
 
-  const raw = await extractFromTranscript(input.transcript);
-  const cleaned = cleanExtractionOutput(raw as any);
-  const existingCaseSheet = (input.activeCase as any)?.caseSheet ?? input.activeCase ?? {};
-  const mapped = mapExtractionToCaseSheetFields(
-    cleaned as any,
-    raw as any,
-    existingCaseSheet,
-    input.transcript,
-  ) as Record<string, unknown>;
+  // Use the exact same protected/de-identified extraction pipeline as live Scribe.
+  // PREVIEW SAFETY: existingCaseSheet is deliberately {} so existing patient
+  // data cannot be surfaced as newly proposed facts from this utterance.
+  const clinicianProtection = protectInternalClinicians(input.transcript);
+  const phiResult = deidentifyText(clinicianProtection.protectedText);
+  const deidentifiedInput = phiResult.deidentified;
+
+  let raw: any;
+  let cleaned: any;
+  let mapped: Record<string, unknown>;
+
+  try {
+    const extractionResult = await runExtraction(
+      deidentifiedInput,
+      input.patientAgeYears ?? null,
+      undefined,
+      {},
+      callScribeExtractionModel,
+      clinicianProtection,
+    );
+
+    raw = extractionResult.raw;
+    cleaned = extractionResult.cleaned;
+    mapped = extractionResult.updatedFields as Record<string, unknown>;
+  } catch (error: any) {
+    const extractionError =
+      error?.message ||
+      "Clinical extraction was unavailable. No patient data was changed.";
+
+    return {
+      executionMode: "PREVIEW",
+      caseId,
+      isPediatric: initialRoute,
+      intents: route.intents,
+      proposedFacts: [],
+      blockedFacts: [],
+      questions: [extractionError],
+      appActions: [],
+      extracted: {},
+      mappedFields: {},
+      warnings: [extractionError],
+    };
+  }
 
   const extractedAgeRaw = (raw as any)?.age ?? (cleaned as any)?.age;
   const extractedAge = extractedAgeRaw !== null && extractedAgeRaw !== undefined && extractedAgeRaw !== ""

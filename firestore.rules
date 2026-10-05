@@ -692,23 +692,18 @@ allow create, update, delete: if false;
    match /hospital_shifts/{hospitalId} {
   allow read: if isLoggedIn();
 
-  // Shift configuration may be created/updated only by
-  // an active, verified HOD whose canonical membership
-  // matches this hospital.
-  allow create, update: if isLoggedIn()
-    && hospitalId is string
+  // Shift configuration may be created/updated only by:
+  // 1. the platform administrator, OR
+  // 2. an active, verified HOD whose canonical membership
+  //    matches this hospital.
+  //
+  // isHospitalAdminFor() is the canonical hospital-admin
+  // authorization helper and preserves team_members/{uid}
+  // as the hospital membership root of trust.
+  allow create, update: if
+    hospitalId is string
     && hospitalId.size() > 0
-
-    && exists(
-      /databases/$(database)/documents/team_members/$(uid())
-    )
-
-    && checkAdminMember(
-      get(
-        /databases/$(database)/documents/team_members/$(uid())
-      ).data,
-      hospitalId
-    )
+    && isHospitalAdminFor(hospitalId)
 
     // The document identity must match its Firestore path.
     && incoming().id == hospitalId
@@ -720,6 +715,7 @@ allow create, update, delete: if false;
       'hospitalId',
       'hospital',
       'shifts',
+      'erPhysicalBedCapacity',
       'updatedAt',
       'updatedByUid',
       'updatedByEmail'
@@ -728,6 +724,17 @@ allow create, update, delete: if false;
     // Basic field integrity.
     && incoming().hospital is string
     && incoming().shifts is list
+
+    // ER physical capacity is optional for legacy/unconfigured hospitals.
+    // When configured it must be a positive whole number.
+    && (
+      !('erPhysicalBedCapacity' in incoming())
+      || (
+        incoming().erPhysicalBedCapacity is int
+        && incoming().erPhysicalBedCapacity > 0
+      )
+    )
+
     && incoming().updatedAt is string
 
     // The authenticated clinician must be recorded

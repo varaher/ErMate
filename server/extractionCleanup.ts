@@ -260,13 +260,23 @@ export function cleanExtractionOutput(raw: RawExtractionFields): CleanedExtracti
     return { symptoms: [], events: [], drugs: [], plan: [], labs: [] };
   }
 
-  // Symptoms — accept either array or single narrative string,
-  // normalize to array of short entity fragments
+  // Symptoms — accept either array or single narrative string.
+  //
+  // CLINICAL-SAFETY: Do NOT split a narrative symptom string on commas.
+  // Commas may occur inside a single clinically scoped statement, especially
+  // explicit negatives ("no history of seizures, breathing difficulty, rash")
+  // or anatomical lists ("abrasions over forearms, chest, abdomen and chin").
+  // Splitting those commas can detach the qualifier/negation and reverse the
+  // clinical meaning.
+  //
+  // Arrays supplied by the extractor retain their explicit item boundaries.
+  // For a single string, only explicit semicolon/newline delimiters are safe
+  // deterministic boundaries.
   const rawSymptoms = raw.symptoms;
   const symptomsArray = Array.isArray(rawSymptoms)
     ? rawSymptoms
     : typeof rawSymptoms === "string" && rawSymptoms.trim()
-    ? rawSymptoms.split(/;|\n|,/).map(s => s.trim())
+    ? rawSymptoms.split(/;|\n/).map(s => s.trim())
     : [];
 
   const symptoms = cleanEntityList(symptomsArray);

@@ -79,6 +79,16 @@ PSYCHOLOGICAL ASSESSMENT
   or "Notes: Normal"
   unless specifically stated.
 
+MEDICATIONS VS ACUTE TREATMENT
+- "medications" means ONLY medication the patient was already taking before the current encounter.
+- Regular/home/outpatient/chronic medication belongs in medications/currentMedications/outpatientMedications.
+- Medication explicitly given, administered, started, initiated, or commenced during the current encounter belongs in treatment.
+- Example: "on Budecort inhaler" is a home/current medication.
+- Example: "Atropine therapy was initiated" is acute treatment.
+- Do not move home medication into treatment.
+- Do not move acute treatment into home/current medications.
+- If the transcript does not establish whether a medication was pre-existing or given during this encounter, do not infer its role or timing.
+
 INVESTIGATIONS VS TREATMENT
 - Imaging tests belong only under investigations/imaging.
 - Monitoring, medications, observation and symptomatic management are treatment/plan,

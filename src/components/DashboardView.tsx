@@ -131,9 +131,52 @@ export default function DashboardView({
   
   const assignedShift = activeShiftsList.find(s => s.id === activeUserShiftId) || activeShiftsList[0];
 
-  // Filter out discharged cases, check which active ones are pending/incomplete
+  /*
+   * HOME ACTIVE-QUEUE POLICY
+   *
+   * Home is a working queue, not the permanent case registry.
+   *
+   * A case remains in the underlying cases collection / Case Log.
+   * We only stop displaying it on Home when:
+   *   1. it is discharged,
+   *   2. it has been explicitly archived as invalid/test/duplicate, or
+   *   3. more than 24 hours have elapsed since it was opened.
+   *
+   * IMPORTANT:
+   * - No case is deleted here.
+   * - No clinical disposition/status is changed here.
+   * - If the opening time cannot be parsed, keep the case visible rather
+   *   than accidentally hiding a potentially active patient.
+   */
+  const isHomeQueueEligible = (c: ClinicalCase): boolean => {
+    if (c.status === "Discharged") return false;
+
+    const archiveMeta = c as ClinicalCase & {
+      archivedAt?: string;
+    };
+
+    if (archiveMeta.archivedAt) return false;
+
+    const openedRaw =
+      c.patient?.dateOpened ||
+      (c as any).savedTime ||
+      null;
+
+    if (!openedRaw) return true;
+
+    const openedMs = new Date(openedRaw).getTime();
+
+    if (!Number.isFinite(openedMs)) {
+      return true;
+    }
+
+    const HOME_QUEUE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+    return Date.now() - openedMs < HOME_QUEUE_MAX_AGE_MS;
+  };
+
   const pendingCases = cases
-    .filter(c => c.status !== "Discharged")
+    .filter(isHomeQueueEligible)
     .map(c => ({
       case: c,
       status: getCasePendingStatus(c)
@@ -961,12 +1004,25 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
                 <div className="absolute left-0 top-0 bottom-0 w-[4px] bg-gradient-to-b from-amber-400 to-purple-600" />
                 
                 <div className="space-y-2">
+                  {/* Bed is the primary ER identity for an active patient. */}
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="inline-flex items-center rounded-lg border border-indigo-200 dark:border-indigo-800 bg-indigo-50 dark:bg-indigo-950/40 px-2.5 py-1 text-[11px] font-black font-mono text-indigo-700 dark:text-indigo-300 tracking-wide">
+                      BED {pc.bedNo || "UNASSIGNED"}
+                    </span>
+
+                    <span
+                      className="text-[8px] font-mono text-slate-400 dark:text-slate-600 truncate max-w-[110px]"
+                      title={pc.id}
+                    >
+                      {pc.id}
+                    </span>
+                  </div>
+
                   <div className="flex items-center justify-between gap-2">
                     <span className="font-extrabold text-xs text-slate-800 dark:text-white truncate">
-                      {pc.patient.name}
-                    </span>
-                    <span className="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-500">
-                      {pc.id}
+                      {pc.patient.name ||
+                        pc.patient.presentingComplaint ||
+                        "Unnamed patient"}
                     </span>
                   </div>
 
@@ -1019,6 +1075,53 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
                   )}
+                  {/* Soft archive: removes accidental/test/duplicate cases
+                      from active Home/MATE context without hard deletion. */}
+                  <button
+                    type="button"
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      e.preventDefault();
+
+                      const reason = window.prompt(
+                        "Archive this case? Enter reason (for example: Test case, Duplicate, Created by mistake, Invalid case)."
+                      );
+
+                      if (!reason || !reason.trim()) {
+                        return;
+                      }
+
+                      const confirmed = window.confirm(
+                        `Archive this case as "${reason.trim()}"?\n\n` +
+                        "It will disappear from the active Home queue and MATE active-bed context, " +
+                        "but it will NOT be permanently deleted."
+                      );
+
+                      if (!confirmed) {
+                        return;
+                      }
+
+                      await onSaveCase({
+                        ...pc,
+                        archivedAt: new Date().toISOString(),
+                        archivedBy:
+                          profile?.email ||
+                          auth.currentUser?.email ||
+                          auth.currentUser?.uid ||
+                          "unknown",
+                        archiveReason: reason.trim(),
+                      } as ClinicalCase & {
+                        archivedAt: string;
+                        archivedBy: string;
+                        archiveReason: string;
+                      });
+                    }}
+                    className="px-3 py-2 bg-slate-50 hover:bg-slate-100 text-slate-600 dark:bg-slate-900 dark:hover:bg-slate-800 dark:text-slate-300 border border-slate-200 dark:border-slate-800 rounded-lg text-[10.5px] font-bold transition-all flex items-center justify-center shrink-0"
+                    title="Archive invalid, duplicate or test case"
+                  >
+                    Archive
+                  </button>
+
                   {onDiscussCase && (
                     <button
                       type="button"

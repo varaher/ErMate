@@ -478,6 +478,96 @@ PRIMARY SURVEY EXTRACTION:
 
  
 
+  SECONDARY / SYSTEMIC EXAMINATION — STRICT DESTINATION RULES:
+
+  Explicit examination findings must be captured in the matching field:
+
+  - generalExamination:
+    general appearance, pallor, icterus, cyanosis, clubbing, edema,
+    hydration, dry mucosa, and other explicitly examined general findings.
+
+  - cvsExamination:
+    heart sounds, murmurs, JVP and other explicitly stated cardiovascular
+    examination findings.
+
+  - respiratoryExamination:
+    chest/respiratory examination findings such as bilateral air entry,
+    added sounds, crepitations, wheeze, or chest examination findings.
+
+  - abdomenExamination:
+    abdominal examination findings such as soft, tenderness, guarding,
+    rigidity, distension, bowel sounds, or palpable findings.
+
+  - cnsExamination:
+    neurological examination findings such as focal neurological deficit,
+    limb power, sensory findings, cranial-nerve findings, neck stiffness,
+    orientation, or other explicitly stated CNS findings.
+
+  - extremitiesExamination:
+    explicitly examined limb/extremity findings that belong to the
+    secondary/systemic examination.
+
+  Preserve explicit positive AND explicit negative findings.
+
+  A finding already correctly belonging to the Primary Survey must not be
+  duplicated merely to fill a secondary-survey field.
+
+  Trauma wounds, abrasions, deformities and other visible injuries described
+  during Exposure remain in exposure unless the clinician separately dictates
+  them as part of a specific secondary/extremity examination.
+
+  "No other significant abnormality", "rest of secondary survey normal",
+  or similar summary wording MUST NOT by itself populate every otherwise
+  unmentioned systemic field as "normal".
+
+  Silence about a particular system remains null.
+
+  PEDIATRIC FOCUSED PHYSICAL EXAMINATION — STRICT DESTINATION RULES:
+
+  When the patient is pediatric, explicitly dictated focused physical
+  examination findings must be captured inside pediatricDetails using
+  the following destinations:
+
+  - focusedHeent:
+    head, eyes, ears, nose, throat, thyroid and lymph-node examination
+    findings explicitly stated by the clinician.
+
+  - focusedRespiratory:
+    chest examination, air entry, breath sounds, stridor, wheeze,
+    crackles, nasal obstruction or flaring, retractions, and abnormal
+    chest movement explicitly stated during focused examination.
+
+  - focusedCardiovascular:
+    heart sounds, murmurs, gallop rhythm, and explicitly examined signs
+    of heart failure or poor perfusion such as cyanosis, feeble pulses,
+    cold extremities, peripheral edema, or flushed skin.
+
+  - focusedAbdomen:
+    abdominal tenderness, distension, guarding, injury findings,
+    hepatomegaly, organomegaly, bowel sounds, or other explicitly
+    dictated abdominal examination findings.
+
+  - focusedBack:
+    explicitly examined back, spine, or vertebral injury findings.
+
+  - focusedExtremities:
+    explicitly examined fractures, swelling, bruising, deformities,
+    tenderness, range-of-movement, or other extremity findings.
+
+  Preserve explicit positive AND explicit negative findings.
+
+  These pediatric focused-examination fields describe the examination,
+  not symptoms or history. Do not convert historical negatives into
+  examination negatives.
+
+  Do NOT invent a normal pediatric examination because the patient is
+  pediatric or because a focused-examination field was not mentioned.
+
+  Silence about a pediatric focused-examination section means null.
+
+  Do NOT duplicate a pediatric focused-examination finding into an adult
+  systemic-examination field merely to fill both destinations.
+
   CERVICAL SPINE / NECK:
 
     Any dictated cervical-spine or neck examination finding including tenderness,
@@ -506,15 +596,51 @@ HPI (History of Present Illness):
 
 FAST/EFAST FINDINGS:
 
-  If the doctor dictates FAST/EFAST results (heart/pericardial, abdomen/
+  Extract explicitly dictated FAST/EFAST findings into fastFindings.
 
-  hepatorenal/splenorenal/pelvic, lungs, extremities), extract each organ
+  The clinician does NOT need to literally say "FAST" or "EFAST".
+  In a trauma assessment, an explicitly dictated bedside ultrasound / POCUS
+  finding that clearly describes a FAST/EFAST anatomical window must also be
+  captured here.
 
-  mentioned as positive or negative. NEVER invent a finding not stated.
+  Examples of FAST-compatible dictated findings include:
+  - free fluid in the right hepatorenal angle / Morrison's pouch
+  - free fluid in the left splenorenal region
+  - free fluid in the pelvis / around the urinary bladder / perivesical region
+  - pericardial fluid or explicitly stated absence of pericardial effusion
+    when described as part of FAST/EFAST
+  - explicitly dictated EFAST pleural/lung findings
 
-  Return null for the whole object if FAST was not mentioned at all.
+  Map abdominal FAST windows such as hepatorenal or splenorenal findings to
+  fastFindings.abdomen.
 
- 
+  Map pelvic / perivesical / around-the-bladder FAST findings to
+  fastFindings.pelvis.
+
+  Example:
+  "On bedside ultrasound, free fluid is noted in the right hepatorenal angle
+  and around the urinary bladder in the pelvis."
+
+  MUST produce findings equivalent to:
+
+  "fastFindings": {
+    "heart": null,
+    "abdomen": "Free fluid noted in the right hepatorenal angle",
+    "pelvis": "Free fluid noted around the urinary bladder in the pelvis"
+  }
+
+  Preserve only what the clinician explicitly stated.
+  NEVER invent an unmentioned FAST window or convert an unexamined window
+  into a negative finding.
+
+  Do NOT classify every bedside ultrasound or POCUS finding as FAST.
+  Cardiac function described as bedside echo remains in "echo".
+  Other ultrasound findings that are not FAST/EFAST anatomical findings must
+  remain in their appropriate field.
+
+  Return null for the whole object only when neither FAST/EFAST nor any
+  explicitly dictated FAST/EFAST-compatible trauma ultrasound finding is
+  present.
 
   Return as:
 
@@ -528,25 +654,42 @@ FAST/EFAST FINDINGS:
 
   } | null
 
- 
 
 MLC DETAILS:
 
   Set "possibleMlc": true whenever the case involves trauma, assault, RTA/road
-
   traffic accident, poisoning, burns, or any legally reportable incident
+  — even if the doctor never says "MLC" explicitly.
 
-  — even if the doctor never says "MLC" explicitly. Extract
-
+  Extract ONLY explicitly dictated MLC details:
   natureOfIncident, placeOfIncident, dateTimeOfIncident, mechanismOfInjury,
+  broughtBy, informant, and identificationMark.
 
-  broughtBy, and informant from what was dictated. identificationMark
+  INCIDENT DATE / TIME:
+  - dateTimeOfIncident may contain a date, a time, or both.
+  - A specifically dictated incident time MUST be captured even when no date
+    was dictated.
+  - Preserve approximate wording such as "around", "approximately", or
+    "about" when stated.
+  - Example:
+    "RTA near Chunungambeli at around 8 AM"
+    MUST allow:
+    placeOfIncident: "Near Chunungambeli"
+    dateTimeOfIncident: "Around 8 AM"
+  - Do NOT invent today's date or any missing date merely because a time was
+    stated.
+  - Do NOT use ER arrival time, referral time, treatment time, or another
+    unrelated time as the incident time.
+  - If neither incident date nor incident time was explicitly dictated,
+    dateTimeOfIncident must remain null.
 
-  stays null unless a doctor explicitly describes a specific mark — never
+  identificationMark stays null unless the doctor explicitly describes a
+  specific identification mark — never default to example text.
 
-  default to any example text. If not trauma/legally-reportable, set
+  If no trauma/legally-reportable trigger is present, do NOT manufacture
+  "possibleMlc": false. Leave possibleMlc null/absent and leave the remaining
+  mlcDetails null unless the doctor explicitly dictated an MLC detail.
 
-  "possibleMlc": false and leave the rest of mlcDetails null.
 
 NO ASSUMPTIONS - CRITICAL RULE:
 
@@ -675,6 +818,24 @@ Do NOT generate, infer, suggest, or complete differentials.
 If none were stated, return [].
 
  
+
+MEDICATIONS VS ACUTE TREATMENT — STRICT DESTINATION RULE:
+
+HOME / CURRENT MEDICATIONS:
+- "medications" means ONLY medication the patient was already taking before the current encounter.
+- This includes regular, home, outpatient, chronic, or pre-existing medication.
+- Examples: "on Budecort inhaler", "takes amlodipine 5 mg daily", "on regular insulin".
+- Put these in "medications".
+- Do NOT place a home/current medication into "treatment" merely because a drug name was stated.
+
+ACUTE TREATMENT GIVEN:
+- Medication explicitly given, administered, started, initiated, or commenced as part of the current encounter belongs in "treatment".
+- Example: "Atropine therapy was initiated and titrated according to clinical response" MUST go to "treatment", NOT "medications".
+- Preserve only explicitly dictated drug, dose, route, instruction, and administration time.
+- Do NOT move acute treatment into home/current medications.
+
+TIMING / ROLE UNCERTAIN:
+- If the transcript does not establish whether a medication was pre-existing or administered during the current encounter, do NOT infer its role or timing.
 
 TREATMENT EXTRACTION:
 
@@ -928,17 +1089,63 @@ INVESTIGATIONS EXTRACTION — STRICT NO-INVENTION RULE:
 
     "patAppearanceSpeechCry": string | null,
 
+    "patWorkOfBreathing": string | null,
+
+    "patCirculation": string | null,
+
     "airwayCry": string | null,
 
     "airwayStatus": string | null,
+
+    "airwayIntervention": string | null,
 
     "breathingWob": string | null,
 
     "breathingAbnormalPositioning": string | null,
 
+    "breathingAirEntry": string | null,
+
+    "breathingSubcutaneousEmphysema": string | null,
+
+    "breathingIntervention": string | null,
+
     "circulationCrt": string | null,
 
     "circulationSkinColorTemp": string | null,
+
+    "circulationDistendedNeckVeins": string | null,
+
+    "circulationIntervention": string | null,
+
+    "disabilityAvpuGcs": string | null,
+
+    "disabilityPupils": string | null,
+
+    "disabilityAbnormalResponses": string | null,
+
+    "disabilityGrbs": string | null,
+
+    "exposureTemp": string | null,
+
+    "exposureTraumaLogroll": string | null,
+
+    "exposureSignsOfTrauma": string | null,
+
+    "exposureEvidenceInfectionBleeding": string | null,
+
+    "exposureLongBoneDeformities": string | null,
+
+    "exposureExtremitiesCheck": string | null,
+
+    "exposureImmobilizeInjuredLimbs": string | null,
+
+    "adjuvantEfastHeart": string | null,
+
+    "adjuvantEfastAbdomen": string | null,
+
+    "adjuvantEfastLungs": string | null,
+
+    "adjuvantEfastPelvis": string | null,
 
     "birthHistory": string | null,
 
@@ -946,7 +1153,19 @@ INVESTIGATIONS EXTRACTION — STRICT NO-INVENTION RULE:
 
     "developmentalHistory": string | null,
 
-      "feedingHistory": string | null
+    "feedingHistory": string | null,
+
+    "focusedHeent": string | null,
+
+    "focusedRespiratory": string | null,
+
+    "focusedCardiovascular": string | null,
+
+    "focusedAbdomen": string | null,
+
+    "focusedBack": string | null,
+
+    "focusedExtremities": string | null
 
   }
 
