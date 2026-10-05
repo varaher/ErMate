@@ -1962,4 +1962,140 @@ tx.set(
   }
 });
 
+// ── POST /approve-hod-claim ────────────────────────────────────────────────
+router.post("/approve-hod-claim", async (req: AuthRequest, res) => {
+  try {
+    if (!isPlatformAdminReq(req)) {
+      return res.status(403).json({
+        error: "Forbidden. Only the platform administrator (varahgrp@gmail.com) can approve HOD claims."
+      });
+    }
+
+    const { claimId, hospitalId: explicitHospitalId, hospitalName: explicitHospitalName } = req.body || {};
+    if (!claimId) {
+      return res.status(400).json({ error: "claimId is required." });
+    }
+
+    const claimRef = db.collection("hodClaimRequests").doc(String(claimId));
+    const claimSnap = await claimRef.get();
+    if (!claimSnap.exists) {
+      return res.status(404).json({ error: "HOD claim request not found." });
+    }
+
+    const claim = claimSnap.data()!;
+    if (claim.status !== "pending") {
+      return res.status(400).json({ error: "Claim is not pending approval." });
+    }
+
+    const claimantUid = String(claim.claimedByUid || "").trim();
+    if (!claimantUid) {
+      return res.status(400).json({ error: "Claim does not have a valid claimant UID." });
+    }
+
+    // Verify claimant identity in Firebase Auth
+    let claimantRecord;
+    try {
+      claimantRecord = await adminAuth.getUser(claimantUid);
+    } catch {
+      return res.status(400).json({ error: "Claimant Firebase user record not found." });
+    }
+
+    // Resolve canonical hospitalId and hospitalName
+    const rawHospitalName = String(explicitHospitalName || claim.hospital || "").trim();
+    if (!rawHospitalName) {
+      return res.status(400).json({ error: "Hospital name cannot be resolved." });
+    }
+
+    const rawHospitalId = String(explicitHospitalId || claim.hospitalId || "").trim();
+    const resolvedHospitalId = rawHospitalId || rawHospitalName.toLowerCase().replace(/[^a-z0-9]/g, "_").slice(0, 32);
+
+    const now = nowIso();
+    const adminUid = req.user!.uid;
+    const adminEmail = req.user!.email || PLATFORM_ADMIN_EMAIL;
+
+    const batch = db.batch();
+
+    // 1. Establish canonical team_members/{claimedByUid}
+    const memberRef = db.collection("team_members").doc(claimantUid);
+    batch.set(
+      memberRef,
+      {
+        id: claimantUid,
+        uid: claimantUid,
+        name: claim.claimedByName || claimantRecord.displayName || "Dr. HOD",
+        email: (claim.claimedByEmail || claimantRecord.email || "").trim().toLowerCase(),
+        role: "HOD / Department Lead",
+        status: "active",
+        membershipVerified: true,
+        hospitalId: resolvedHospitalId,
+        hospital: rawHospitalName,
+        hospitalName: rawHospitalName,
+        assignedBy: adminEmail,
+        approvedBy: adminUid,
+        approvedAt: now,
+        updatedAt: now,
+        requestProvenance: "platform_admin_approved_hod_claim",
+        shift: "Active"
+      },
+      { merge: true }
+    );
+
+    // 2. Update users/{claimedByUid} profile mirror
+    const userRef = db.collection("users").doc(claimantUid);
+    batch.set(
+      userRef,
+      {
+        role: "HOD / Department Lead",
+        hospital: rawHospitalName,
+        hospitalId: resolvedHospitalId,
+        hospitalName: rawHospitalName,
+        state: claim.state || "",
+        place: claim.place || "",
+        updatedAt: now
+      },
+      { merge: true }
+    );
+
+    // 3. Update hodClaimRequests/{claimId} -> approved
+    batch.update(claimRef, {
+      status: "approved",
+      reviewedAt: now,
+      reviewedBy: adminUid,
+      reviewedByEmail: adminEmail,
+      resolvedHospitalId,
+      resolvedHospitalName: rawHospitalName
+    });
+
+    // 4. Add teamAuditLog entry
+    const auditRef = db.collection("teamAuditLog").doc();
+    batch.set(auditRef, {
+      action: "approve_hod_claim",
+      actorUid: adminUid,
+      actorEmail: adminEmail,
+      actorRole: "platform_admin",
+      targetUid: claimantUid,
+      targetEmail: (claim.claimedByEmail || claimantRecord.email || "").trim().toLowerCase(),
+      claimId,
+      hospitalId: resolvedHospitalId,
+      hospitalName: rawHospitalName,
+      assignedRole: "HOD / Department Lead",
+      timestamp: now
+    });
+
+    await batch.commit();
+
+    return res.json({
+      success: true,
+      message: `Approved ${claim.claimedByName} as HOD of ${rawHospitalName}.`,
+      hospitalId: resolvedHospitalId,
+      hospitalName: rawHospitalName
+    });
+  } catch (err: any) {
+    console.error("Error approving HOD claim:", err);
+    return res.status(500).json({
+      error: err.message || "Failed to approve HOD claim."
+    });
+  }
+});
+
 export default router;

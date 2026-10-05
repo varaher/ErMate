@@ -11,7 +11,7 @@ import {
   Heart, Mic, Compass, BarChart2, Camera, BookOpen, Wrench, Search
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
-import { UserProfile, ClinicalCase, TriageCategory, TeamMember, ArrivalMode, LogbookEntry } from "../types";
+import { UserProfile, ClinicalCase, TriageCategory, TeamMember, ArrivalMode, LogbookEntry, isPendingApprovalStatus } from "../types";
 import TeamRosterBoard from "./TeamRosterBoard";
 import TeamBuilder from "./TeamBuilder";
 import MortalityAuditModal from "./MortalityAuditModal";
@@ -1203,17 +1203,17 @@ const startRealCheckout = async (planKey: string) => {
                           </span>
                           {isSelf && (
                             <span className="text-[8px] bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-400 px-1 py-0.2 rounded font-black uppercase tracking-wider font-mono shrink-0">
-                              You{member.status === "Pending Approval" ? " (Pending)" : ""}
+                              You{isPendingApprovalStatus(member.status) ? " (Pending)" : ""}
                             </span>
                           )}
-                          {!isSelf && member.status === "Pending Approval" && (
+                          {!isSelf && isPendingApprovalStatus(member.status) && (
                             <span className="text-[8px] bg-amber-100 dark:bg-amber-950/45 text-amber-700 dark:text-amber-400 px-1.5 py-0.2 rounded font-black uppercase tracking-wider font-mono shrink-0 animate-pulse">
                               Pending
                             </span>
                           )}
                         </div>
                         <span className="text-[10px] text-slate-500 dark:text-slate-400 block truncate font-mono">
-                          {member.role || "EM Resident"} • {member.shift || "off"}{member.status === "Pending Approval" ? " • Pending Approval" : ""}
+                          {member.role || "EM Resident"} • {member.shift || "off"}{isPendingApprovalStatus(member.status) ? " • Pending Approval" : ""}
                         </span>
                       </div>
                     </div>

@@ -50,9 +50,9 @@ export default function CasesListView({
     let matchesStatus = true;
     const dispType = c.dispositionDetails?.dispositionType || c.dispositionAndPlan?.dispositionStatus;
     if (statusFilter === "Active") {
-      matchesStatus = c.status === "Active" || !c.status;
+      matchesStatus = !c.archivedAt && (c.status === "Active" || !c.status);
     } else if (statusFilter === "Triage") {
-      matchesStatus = c.status === "Triage";
+      matchesStatus = !c.archivedAt && c.status === "Triage";
     } else if (statusFilter === "Discharged") {
       matchesStatus = c.status === "Discharged" || dispType === "Discharge";
     } else if (statusFilter === "Admitted") {
@@ -301,13 +301,19 @@ export default function CasesListView({
                       </h3>
                     </div>
 
-                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${
-                      c.status === "Discharged"
-                        ? "bg-slate-100 text-slate-600 dark:bg-slate-900 dark:text-slate-400"
-                        : "bg-blue-50 text-blue-700 dark:bg-blue-950/20 dark:text-blue-400 animate-pulse-slow"
-                    }`}>
-                      {c.status}
-                    </span>
+                    {c.archivedAt ? (
+                      <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400 font-mono" title={`Archived: ${c.archiveReason || "incomplete_case_24h"}`}>
+                        Archived
+                      </span>
+                    ) : (
+                      <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${
+                        c.status === "Discharged"
+                          ? "bg-slate-100 text-slate-600 dark:bg-slate-900 dark:text-slate-400"
+                          : "bg-blue-50 text-blue-700 dark:bg-blue-950/20 dark:text-blue-400 animate-pulse-slow"
+                      }`}>
+                        {c.status}
+                      </span>
+                    )}
                   </div>
 
                   <div className="text-xs text-slate-500 space-y-1 pt-1.5 border-t border-slate-100 dark:border-slate-900 font-mono">

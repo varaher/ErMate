@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { Send, ArrowLeft, MoreVertical, Paperclip, Sparkles, MessageSquare, Mic as MicIcon, Activity, AlertTriangle, Plus } from "lucide-react";
+import { Send, ArrowLeft, MoreVertical, Paperclip, Sparkles, MessageSquare, Mic as MicIcon, Activity, AlertTriangle, Plus, X } from "lucide-react";
 import { doc, getDoc, setDoc } from "firebase/firestore";
 import { db, auth } from "../firebase";
 import {
@@ -59,6 +59,17 @@ interface Message {
   };
 }
 
+/**
+ * Detect explicit new-patient intake intent.
+ * Locked rule: Bed mention alone NEVER creates a patient.
+ * Only explicit new patient phrases ("new patient in Bed 11", "start a new case for Bed 12",
+ * "patient just arrived in Bed 11 with chest pain") trigger new case creation.
+ */
+export function detectExplicitNewCaseIntent(text: string): boolean {
+  if (!text) return false;
+  return /\b(?:new\s+(?:patient|case|intake|arrival|admission)|start\s+a?\s*new\s+(?:patient|case)|patient\s+just\s+arrived|admit(?:ted)?\s+a?\s*new\s+patient|fresh\s+arrival)\b/i.test(text);
+}
+
 interface VoiceScribeChatViewProps {
   caseId?: string | null;
   caseData?: any;
@@ -86,6 +97,8 @@ interface VoiceScribeChatViewProps {
   allCases?: ClinicalCase[];
   physicalBedCapacity?: number;
   onSwitchCase?: (caseId: string) => void;
+  onEnsureDraftCase?: (sessionId: string, options?: { bedNo?: string }) => Promise<string>;
+  isSidecar?: boolean;
 }
 
 const LENSES: { id: string; label: string }[] = [
@@ -672,14 +685,28 @@ export default function VoiceScribeChatView({
   allCases,
   physicalBedCapacity = 30,
   onSwitchCase,
+  onEnsureDraftCase,
+  isSidecar = false,
 }: VoiceScribeChatViewProps) {
   const processingActionRef = useRef(false);
+  // Session context generation guard against stale late async responses
+  const sessionContextGenerationRef = useRef<number>(0);
+
   // MATE Operational Context (remembers ONLY bed/case references; never clinical facts)
   const lastReferencedCaseIdRef = useRef<string | null>(null);
   const lastReferencedBedRef = useRef<string | null>(null);
   const pendingUtteranceAfterSwitchRef = useRef<{
     targetCaseId: string;
     utterance: string;
+    generation: number;
+  } | null>(null);
+
+  // Pending new-patient handoff state
+  const pendingNewPatientHandoffRef = useRef<{
+    targetCaseId: string;
+    targetBed: string;
+    utterance: string;
+    generation: number;
   } | null>(null);
   // A chat is "case-linked" if either a real caseId was passed in, OR
   // the caller didn't explicitly ask for a standalone discussion.
@@ -725,7 +752,25 @@ export default function VoiceScribeChatView({
   const [sessionAttachError, setSessionAttachError] = useState<string | null>(null);
   const [historyLoadError, setHistoryLoadError] = useState<string | null>(null);
   const [failedMessages, setFailedMessages] = useState<Map<string, { message: any; error: string }>>(new Map());
-  const pendingMessageQueueRef = useRef<any[]>([]);
+  // Pending message queue bound to session context generation
+  const pendingMessageQueueRef = useRef<{ message: any; generation: number }[]>([]);
+
+  // Advance generation whenever patient or session boundary shifts
+  const prevActiveCaseIdRef = useRef<string | null>(activeCaseId);
+  const prevActiveSessionIdRef = useRef<string | null>(activeSessionId);
+  useEffect(() => {
+    if (prevActiveCaseIdRef.current !== activeCaseId || prevActiveSessionIdRef.current !== activeSessionId) {
+      // If this transition was initiated by a pending MATE switch or handoff, generation was already advanced
+      const isExpectedSwitch =
+        activeCaseId === pendingUtteranceAfterSwitchRef.current?.targetCaseId ||
+        activeCaseId === pendingNewPatientHandoffRef.current?.targetCaseId;
+      if (!isExpectedSwitch) {
+        sessionContextGenerationRef.current += 1;
+      }
+      prevActiveCaseIdRef.current = activeCaseId;
+      prevActiveSessionIdRef.current = activeSessionId;
+    }
+  }, [activeCaseId, activeSessionId]);
 
   const STANDARD_WELCOME_MESSAGE = {
     id: "welcome",
@@ -746,16 +791,18 @@ export default function VoiceScribeChatView({
     setSaveConfirmation(null);
   }, [activeSessionId, isDiscussionOnly]);
 
-  // Flush messages written before session was ready
+  // Flush messages written before session was ready (strictly matching current context generation)
   useEffect(() => {
     if (!activeSessionId || sessionAttachError) return;
     if (pendingMessageQueueRef.current.length === 0) return;
 
-    const queue = [...pendingMessageQueueRef.current];
+    const currentGen = sessionContextGenerationRef.current;
+    const queue = pendingMessageQueueRef.current.filter(item => item.generation === currentGen);
     pendingMessageQueueRef.current = [];
 
     const flushQueue = async () => {
-      for (const msg of queue) {
+      for (const item of queue) {
+        const msg = item.message;
         try {
           await appendChatMessage(activeSessionId, msg, { isSession: true });
           setFailedMessages(prev => {
@@ -1206,7 +1253,7 @@ export default function VoiceScribeChatView({
 
     if (!activeSessionId) {
       console.log("[VoiceScribeChatView] Session ID not yet established, queueing message:", message.id);
-      pendingMessageQueueRef.current.push(message);
+      pendingMessageQueueRef.current.push({ message, generation: sessionContextGenerationRef.current });
       return;
     }
 
@@ -1288,6 +1335,7 @@ export default function VoiceScribeChatView({
 
     setInputText("");
     setIsSending(true);
+    const requestGeneration = sessionContextGenerationRef.current;
 
     const userMsg: Message = {
       id: `u-${Date.now()}`,
@@ -1372,6 +1420,10 @@ export default function VoiceScribeChatView({
       });
 
       const data = await res.json();
+      if (sessionContextGenerationRef.current !== requestGeneration) {
+        console.warn("[VoiceScribeChatView] Stale rounds debrief response dropped due to generation mismatch.");
+        return;
+      }
       if (!res.ok || data.success === false) {
         throw new Error(data.error || data.reply || "Clinical Rounds debrief unavailable");
       }
@@ -1414,6 +1466,8 @@ export default function VoiceScribeChatView({
     const trimmed = text.trim();
     if (!trimmed || isSending) return;
 
+    const requestGeneration = sessionContextGenerationRef.current;
+
     // Natural-language Rounds routing (patient-linked / case conversation)
     if (!isDiscussionOnly) {
       const roundsLens = detectRoundsLensIntent(trimmed);
@@ -1425,8 +1479,9 @@ export default function VoiceScribeChatView({
 
     // ── MATE TRAFFIC-POLICE & CONVERSATIONAL CONTROLLER ─────────────
     if (!isDiscussionOnly && allCases) {
+      const activeCensusCases = allCases.filter(c => !(c as any).archivedAt);
       const matePlan = planMateConversation(trimmed);
-      const activeCase = activeCaseId ? allCases.find(c => c.id === activeCaseId) || caseData || null : (caseData || null);
+      const activeCase = activeCaseId ? activeCensusCases.find(c => c.id === activeCaseId) || caseData || null : (caseData || null);
       const mateRoute = routeMateInput({ text: trimmed, activeCase });
 
       // 1. Social greetings lane (CONVERSATION) -> Respond friendly, zero DB write, zero LLM extraction
@@ -1455,6 +1510,7 @@ export default function VoiceScribeChatView({
 
       // 2. Patient / Bed context resolution
       const bedRef = extractMateBedReference(trimmed);
+      const explicitNewCaseIntent = detectExplicitNewCaseIntent(trimmed);
       let targetCaseId: string | null = null;
       let targetCase: ClinicalCase | null = null;
 
@@ -1462,9 +1518,10 @@ export default function VoiceScribeChatView({
         lastReferencedBedRef.current = bedRef;
         const resolution = resolveMateCaseReference({
           utterance: trimmed,
-          cases: allCases,
+          cases: activeCensusCases,
           activeCaseId,
           physicalCapacity: physicalBedCapacity,
+          newCaseIntent: explicitNewCaseIntent,
         });
 
         if (resolution.status === "INVALID_LOCATION") {
@@ -1501,7 +1558,9 @@ export default function VoiceScribeChatView({
           const aiMsg: Message = {
             id: `ai-${Date.now()}`,
             sender: "ai",
-            text: `⚠️ Bed ${resolution.referenceValue} has multiple active occupants (${resolution.candidateCaseIds.length} patients). Please specify the exact slot (e.g. Bed ${resolution.referenceValue}A or ${resolution.referenceValue}B).`,
+            text: explicitNewCaseIntent
+              ? `⚠️ Both Bed ${resolution.referenceValue}A and Bed ${resolution.referenceValue}B are currently occupied. Cannot assign a new patient to Bed ${resolution.referenceValue}.`
+              : `⚠️ Bed ${resolution.referenceValue} has multiple active occupants (${resolution.candidateCaseIds.length} patients). Please specify the exact slot (e.g. Bed ${resolution.referenceValue}A or ${resolution.referenceValue}B).`,
             timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
             mode: "discuss",
           };
@@ -1511,9 +1570,79 @@ export default function VoiceScribeChatView({
           return;
         }
 
+        if (resolution.status === "RESOLVED") {
+          if (explicitNewCaseIntent) {
+            setInputText("");
+            const userMsg: Message = {
+              id: `u-${Date.now()}`,
+              sender: "user",
+              text: trimmed,
+              timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+              mode: currentMode,
+            };
+            const existingOccupant = activeCensusCases.find(c => c.id === resolution.caseId);
+            const aiMsg: Message = {
+              id: `ai-${Date.now()}`,
+              sender: "ai",
+              text: `⚠️ Bed ${resolution.referenceValue} is already occupied by ${existingOccupant?.patient?.name || 'an active patient'}. Please specify a vacant bed or discharge the current occupant first.`,
+              timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+              mode: "discuss",
+            };
+            setMessages(prev => [...prev, userMsg, aiMsg]);
+            persistMessage(userMsg);
+            persistMessage(aiMsg);
+            return;
+          }
+          targetCaseId = resolution.caseId;
+          targetCase = activeCensusCases.find(c => c.id === targetCaseId) || null;
+          lastReferencedCaseIdRef.current = targetCaseId;
+        }
+
         if (resolution.status === "NOT_FOUND") {
           lastReferencedCaseIdRef.current = null;
-          // Bed is vacant / unoccupied
+          if (explicitNewCaseIntent && onEnsureDraftCase) {
+            // Explicit new patient workflow on vacant bed -> Establish new draft ClinicalCase
+            const assignedBed = resolution.referenceValue || bedRef;
+            setInputText("");
+            setIsSending(true);
+            try {
+              const user = auth.currentUser;
+              if (!user) throw new Error("Not authenticated");
+              const workspace = await resolveWorkspaceForUser(user.uid);
+              const newSessionId = await createScribeSession({
+                ownerUid: user.uid,
+                workspaceType: workspace.workspaceType,
+                hospitalId: workspace.hospitalId,
+                mode: "case",
+              });
+              const newCaseId = await onEnsureDraftCase(newSessionId, { bedNo: assignedBed });
+              sessionContextGenerationRef.current += 1;
+              const currentGen = sessionContextGenerationRef.current;
+              pendingNewPatientHandoffRef.current = {
+                targetCaseId: newCaseId,
+                targetBed: assignedBed,
+                utterance: trimmed,
+                generation: currentGen,
+              };
+              setActiveSessionId(newSessionId);
+              onSessionIdChange?.(newSessionId);
+              onSwitchCase?.(newCaseId);
+            } catch (err: any) {
+              console.error("[VoiceScribeChatView] Failed to ensure draft case for new patient:", err);
+              const errMsg: Message = {
+                id: `err-${Date.now()}`,
+                sender: "ai",
+                text: `⚠️ Could not establish new case for Bed ${assignedBed}: ${err?.message || "Storage error"}`,
+                timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+              };
+              setMessages(prev => [...prev, errMsg]);
+            } finally {
+              setIsSending(false);
+            }
+            return;
+          }
+
+          // Bed is vacant / unoccupied (read-only query)
           if (matePlan.actions.includes("BED_STATUS") || (!matePlan.mayContainClinicalUpdate && (matePlan.actions.includes("PATIENT_OPEN") || matePlan.actions.includes("CASE_SUMMARY")))) {
             setInputText("");
             const userMsg: Message = {
@@ -1536,17 +1665,11 @@ export default function VoiceScribeChatView({
             return;
           }
         }
-
-        if (resolution.status === "RESOLVED") {
-          targetCaseId = resolution.caseId;
-          targetCase = allCases.find(c => c.id === targetCaseId) || null;
-          lastReferencedCaseIdRef.current = targetCaseId;
-        }
       } else if (matePlan.refersToRecentPatient) {
         // Conversational pronoun reference: "Open it", "Summarise him", "Open his case sheet"
         if (lastReferencedCaseIdRef.current) {
           targetCaseId = lastReferencedCaseIdRef.current;
-          targetCase = allCases.find(c => c.id === targetCaseId) || null;
+          targetCase = activeCensusCases.find(c => c.id === targetCaseId) || null;
         } else if (activeCaseId) {
           targetCaseId = activeCaseId;
           targetCase = activeCase;
@@ -1555,10 +1678,13 @@ export default function VoiceScribeChatView({
 
       // 3. CRITICAL SESSION SAFETY: When resolving a DIFFERENT existing patient
       if (targetCaseId && targetCaseId !== activeCaseId) {
-        // A. Store original clinician utterance as pending
+        sessionContextGenerationRef.current += 1;
+        const currentGen = sessionContextGenerationRef.current;
+        // A. Store original clinician utterance as pending bound to target generation
         pendingUtteranceAfterSwitchRef.current = {
           targetCaseId,
           utterance: trimmed,
+          generation: currentGen,
         };
 
         // B. Immediately request existing ErMate patient/case switch
@@ -1752,6 +1878,10 @@ export default function VoiceScribeChatView({
           }),
         });
         const data = await res.json();
+        if (sessionContextGenerationRef.current !== requestGeneration) {
+          console.warn("[VoiceScribeChatView] Stale discuss response dropped due to generation mismatch.");
+          return;
+        }
         if (!res.ok) throw new Error(data.error || "Request failed");
 
         const replyText = data.response || data.reply || "I've reviewed the case, but couldn't form a clear answer just now.";
@@ -1788,6 +1918,10 @@ export default function VoiceScribeChatView({
         });
 
         const data = await res.json();
+        if (sessionContextGenerationRef.current !== requestGeneration) {
+          console.warn("[VoiceScribeChatView] Stale scribe extraction response dropped due to generation mismatch.");
+          return;
+        }
         if (!res.ok) throw new Error(data.error || "Request failed");
 
         const replyText = data.reply || data.aiReply || data.summary || "Processed case details.";
@@ -1841,6 +1975,10 @@ export default function VoiceScribeChatView({
         });
       }
     } catch (err: any) {
+      if (sessionContextGenerationRef.current !== requestGeneration) {
+        console.warn("[VoiceScribeChatView] Stale error dropped due to generation mismatch.");
+        return;
+      }
       console.error("[VoiceScribeChatView] Send failed:", err);
       const errMsg: Message = {
         id: `err-${Date.now()}`,
@@ -1850,17 +1988,41 @@ export default function VoiceScribeChatView({
       };
       setMessages((prev) => [...prev, errMsg]);
     } finally {
-      setIsSending(false);
+      if (sessionContextGenerationRef.current === requestGeneration) {
+        setIsSending(false);
+      }
     }
   };
 
   // Replay pending utterance once target case AND canonical Scribe session are attached
   useEffect(() => {
-    if (!pendingUtteranceAfterSwitchRef.current) return;
-    const pending = pendingUtteranceAfterSwitchRef.current;
-    if (activeCaseId === pending.targetCaseId && activeSessionId && !sessionAttachError && !isSending) {
-      pendingUtteranceAfterSwitchRef.current = null;
-      sendToChat(pending.utterance);
+    // 1. Explicit new patient handoff replay
+    if (pendingNewPatientHandoffRef.current) {
+      const pendingNew = pendingNewPatientHandoffRef.current;
+      if (
+        activeCaseId === pendingNew.targetCaseId &&
+        activeSessionId &&
+        !sessionAttachError &&
+        !isSending
+      ) {
+        pendingNewPatientHandoffRef.current = null;
+        sendToChat(pendingNew.utterance);
+        return;
+      }
+    }
+
+    // 2. Existing patient switch replay
+    if (pendingUtteranceAfterSwitchRef.current) {
+      const pending = pendingUtteranceAfterSwitchRef.current;
+      if (
+        activeCaseId === pending.targetCaseId &&
+        activeSessionId &&
+        !sessionAttachError &&
+        !isSending
+      ) {
+        pendingUtteranceAfterSwitchRef.current = null;
+        sendToChat(pending.utterance);
+      }
     }
   }, [activeCaseId, activeSessionId, sessionAttachError, isSending]);
 
@@ -1935,37 +2097,49 @@ export default function VoiceScribeChatView({
     : "Dictate the case in your native language, or ask a clinical question";
 
   return (
-    <div className="flex flex-col h-[calc(100vh-140px)] min-h-[500px] w-full max-w-5xl mx-auto bg-white dark:bg-slate-950 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-xl">
-      <div className="bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-4 py-3 flex items-center justify-between gap-2.5">
-        <div className="flex items-center gap-2.5">
-          <button onClick={onBack} className="p-1.5 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-lg text-slate-500 font-bold flex items-center gap-1 cursor-pointer">
-            <ArrowLeft size={16} /> Back
-          </button>
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
-              <h2 className="text-xs font-black text-slate-900 dark:text-white uppercase tracking-wider">
-                {headerTitle}
-              </h2>
+    <div className={`flex flex-col h-full w-full bg-white dark:bg-slate-950 overflow-hidden ${isSidecar ? '' : 'h-[calc(100vh-140px)] min-h-[500px] max-w-5xl mx-auto rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xl'}`}>
+      <div className={`bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2 shrink-0 ${isSidecar ? 'px-3.5 py-2.5' : 'px-4 py-3'}`}>
+        {isSidecar ? (
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="p-1.5 bg-indigo-500/10 dark:bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 rounded-lg shrink-0">
+              <Sparkles size={16} />
             </div>
-            <p className="text-[10px] text-slate-500 dark:text-slate-400">{headerSubtitle}</p>
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+                <h2 className="text-xs font-black text-slate-900 dark:text-white uppercase tracking-wider font-mono">
+                  MATE
+                </h2>
+              </div>
+              <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate font-mono">
+                {caseData
+                  ? `Current context: ${caseData.bedNo || caseData.patient?.bed ? `Bed ${caseData.bedNo || caseData.patient?.bed}` : "Case"} / ${caseData.patient?.name || "Patient"}`
+                  : "Current context: No patient selected"}
+              </p>
+            </div>
           </div>
-        </div>
+        ) : (
+          <div className="flex items-center gap-2.5">
+            <button onClick={onBack} className="p-1.5 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-lg text-slate-500 font-bold flex items-center gap-1 cursor-pointer">
+              <ArrowLeft size={16} /> Back
+            </button>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+                <h2 className="text-xs font-black text-slate-900 dark:text-white uppercase tracking-wider">
+                  {headerTitle}
+                </h2>
+              </div>
+              <p className="text-[10px] text-slate-500 dark:text-slate-400">{headerSubtitle}</p>
+            </div>
+          </div>
+        )}
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5 shrink-0">
           {(failedMessages.size > 0 || sessionAttachError || historyLoadError) && (
-            <div className="px-2.5 py-1 bg-amber-50 dark:bg-amber-950/60 border border-amber-300 dark:border-amber-700/60 text-amber-800 dark:text-amber-300 rounded-lg text-xs font-semibold flex items-center gap-1.5 shadow-sm">
-              <AlertTriangle size={14} className="text-amber-600 dark:text-amber-400 shrink-0" />
-              <span>{historyLoadError || `Chat not saved (${failedMessages.size || 1})`}</span>
-              {failedMessages.size > 0 && !historyLoadError && (
-                <button
-                  type="button"
-                  onClick={handleRetryAllFailed}
-                  className="ml-1 px-1.5 py-0.5 bg-amber-200 dark:bg-amber-800/60 hover:bg-amber-300 rounded text-[10px] font-bold cursor-pointer"
-                >
-                  Retry
-                </button>
-              )}
+            <div className="px-2 py-0.5 bg-amber-50 dark:bg-amber-950/60 border border-amber-300 dark:border-amber-700/60 text-amber-800 dark:text-amber-300 rounded text-[10px] font-semibold flex items-center gap-1">
+              <AlertTriangle size={12} className="text-amber-600 dark:text-amber-400 shrink-0" />
+              <span className="truncate max-w-[80px]">{historyLoadError || `Failed (${failedMessages.size || 1})`}</span>
             </div>
           )}
 
@@ -1973,70 +2147,82 @@ export default function VoiceScribeChatView({
             <button
               type="button"
               onClick={handleStartNewChat}
-              className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-lg text-xs font-semibold flex items-center gap-1 transition-all cursor-pointer"
-              title="Start a new Scribe session"
+              className="px-2 py-1 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-md text-[11px] font-semibold flex items-center gap-1 transition-all cursor-pointer font-mono"
+              title="Start a new Scribe session (clears patient context)"
             >
-              <Plus size={14} />
+              <Plus size={13} />
               <span>New Chat</span>
             </button>
           )}
 
-          {onOpenCaseSheet && !isDiscussionOnly && (
+          {isSidecar ? (
             <button
-              onClick={async () => {
-                const unappliedMessages = messages.filter(m => m.extractionData && !m.extractionApplied);
-                if (unappliedMessages.length > 0 && onPreviewCaseSheet) {
-                  const { merged: mergedExtraction, contributingMsgIds } = getMergedUnappliedCaseExtraction(messages);
-                  const latestMsg = unappliedMessages[unappliedMessages.length - 1];
-                  onPreviewCaseSheet(mergedExtraction, {
-                    existingCaseId: activeCaseId || null,
-                    msgId: latestMsg?.id,
-                    contributingMsgIds,
-                    scribeSessionId: activeSessionId || null,
-                  });
-                  return;
-                }
-                if (onSaveExtractedCase) {
-                  try {
-                    if (unappliedMessages.length > 0) {
-                      const mergedExtraction = getMergedUnappliedExtraction(messages);
-                      await onSaveExtractedCase(mergedExtraction, { existingCaseId: activeCaseId || undefined, autoNavigate: true });
-                      setMessages(prev => prev.map(m => m.extractionData ? { ...m, extractionApplied: true } : m));
-                    } else {
-                      if (messages.filter(m => m.extractionData).length === 0) {
-                        await onSaveExtractedCase({}, { existingCaseId: activeCaseId || undefined, autoNavigate: true });
-                      }
-                    }
-                  } catch (e) {
-                    console.warn("[VoiceScribeChatView] Failed to initialize case:", e);
-                    setSaveError("Unable to save this case. Please try again.");
+              type="button"
+              onClick={onBack}
+              className="p-1.5 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-lg text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 transition-all cursor-pointer"
+              title="Close MATE"
+              aria-label="Close"
+            >
+              <X size={18} />
+            </button>
+          ) : (
+            onOpenCaseSheet && !isDiscussionOnly && (
+              <button
+                onClick={async () => {
+                  const unappliedMessages = messages.filter(m => m.extractionData && !m.extractionApplied);
+                  if (unappliedMessages.length > 0 && onPreviewCaseSheet) {
+                    const { merged: mergedExtraction, contributingMsgIds } = getMergedUnappliedCaseExtraction(messages);
+                    const latestMsg = unappliedMessages[unappliedMessages.length - 1];
+                    onPreviewCaseSheet(mergedExtraction, {
+                      existingCaseId: activeCaseId || null,
+                      msgId: latestMsg?.id,
+                      contributingMsgIds,
+                      scribeSessionId: activeSessionId || null,
+                    });
                     return;
                   }
-                }
-                if (activeCaseId) {
-                  onOpenCaseSheet(activeCaseId);
-                }
-              }}
-              className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
-            >
-              <span>📄 Open Case Sheet</span>
-            </button>
+                  if (onSaveExtractedCase) {
+                    try {
+                      if (unappliedMessages.length > 0) {
+                        const mergedExtraction = getMergedUnappliedExtraction(messages);
+                        await onSaveExtractedCase(mergedExtraction, { existingCaseId: activeCaseId || undefined, autoNavigate: true });
+                        setMessages(prev => prev.map(m => m.extractionData ? { ...m, extractionApplied: true } : m));
+                      } else {
+                        if (messages.filter(m => m.extractionData).length === 0) {
+                          await onSaveExtractedCase({}, { existingCaseId: activeCaseId || undefined, autoNavigate: true });
+                        }
+                      }
+                    } catch (e) {
+                      console.warn("[VoiceScribeChatView] Failed to initialize case:", e);
+                      setSaveError("Unable to save this case. Please try again.");
+                      return;
+                    }
+                  }
+                  if (activeCaseId) {
+                    onOpenCaseSheet(activeCaseId);
+                  }
+                }}
+                className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
+              >
+                <span>📄 Open Case Sheet</span>
+              </button>
+            )
           )}
         </div>
       </div>
 
-      {!isDiscussionOnly && (
-        <div className="bg-slate-100 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-4 py-1.5 text-[10px] font-mono text-slate-500 dark:text-slate-400 flex items-center justify-between">
-          <span>
-            Bed {caseData?.patient?.bed || "--"} • UHID {caseData?.patient?.uhid || "--"} • {caseData?.patient?.age ? `${caseData.patient.age}${caseData.patient.sex?.charAt(0) || ""}` : "--"}
+      {!isDiscussionOnly && caseData && !isSidecar && (
+        <div className="bg-slate-100 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-3.5 py-1.5 text-[10px] font-mono text-slate-500 dark:text-slate-400 flex items-center justify-between shrink-0">
+          <span className="truncate">
+            Bed {caseData?.bedNo || caseData?.patient?.bed || "--"} • UHID {caseData?.patient?.uhid || "--"} • {caseData?.patient?.age ? `${caseData.patient.age}${caseData.patient.sex?.charAt(0) || ""}` : "--"}
           </span>
-          <span>Case opened {new Date(caseData?.createdAt || Date.now()).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+          <span className="shrink-0">{caseData?.status || "Active"}</span>
         </div>
       )}
 
       {/* Mode toggle strip — only shown when dictation is actually an option */}
       {!isDiscussionOnly && (
-        <div className="bg-white dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 px-4 py-2 flex items-center gap-2">
+        <div className={`bg-white dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 flex items-center gap-2 ${isSidecar ? 'px-3 py-1.5' : 'px-4 py-2'}`}>
           <button
             onClick={() => setCurrentMode("dictation")}
             className={`px-3 py-1.5 rounded-lg text-[11px] font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
@@ -2057,7 +2243,7 @@ export default function VoiceScribeChatView({
           >
             <MessageSquare size={13} /> Discuss
           </button>
-          {currentMode === "discuss" && (
+          {currentMode === "discuss" && !isSidecar && (
             <span className="text-[10px] text-slate-400 italic ml-1">Read-only — won't be saved to the case sheet</span>
           )}
         </div>

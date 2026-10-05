@@ -67,54 +67,42 @@ export interface MateActionHandlers {
  *
  * IMPORTANT:
  * - no clinical extraction
- * - no ClinicalCase mutation
- * - no Firestore write
- * - no navigation implementation duplicated here
+ * - no Firestore mutation
+ * - no schema persistence
  */
 export async function dispatchMateAction(
   request: MateActionRequest,
-  handlers: MateActionHandlers
+  handlers: MateActionHandlers = {}
 ): Promise<MateActionResult> {
-  switch (request.capability) {
-    case "case.open": {
-      if (!handlers.openCase) {
-        return {
-          handled: false,
-          capability: request.capability,
-          reason: "UNSUPPORTED_CAPABILITY",
-        };
-      }
-
+  if (request.capability === "case.open") {
+    if (handlers.openCase) {
       await handlers.openCase(request);
-
-      return {
-        handled: true,
-        capability: request.capability,
-      };
+      return { handled: true, capability: request.capability };
     }
 
-    case "case.rounds.review": {
-      if (!handlers.reviewRounds) {
-        return {
-          handled: false,
-          capability: request.capability,
-          reason: "UNSUPPORTED_CAPABILITY",
-        };
-      }
-
-      await handlers.reviewRounds(request);
-
-      return {
-        handled: true,
-        capability: request.capability,
-      };
-    }
-
-    default:
-      return {
-        handled: false,
-        capability: request.capability,
-        reason: "UNSUPPORTED_CAPABILITY",
-      };
+    return {
+      handled: false,
+      capability: request.capability,
+      reason: "UNSUPPORTED_CAPABILITY",
+    };
   }
+
+  if (request.capability === "case.rounds.review") {
+    if (handlers.reviewRounds) {
+      await handlers.reviewRounds(request);
+      return { handled: true, capability: request.capability };
+    }
+
+    return {
+      handled: false,
+      capability: request.capability,
+      reason: "UNSUPPORTED_CAPABILITY",
+    };
+  }
+
+  return {
+    handled: false,
+    capability: request.capability,
+    reason: "UNSUPPORTED_CAPABILITY",
+  };
 }

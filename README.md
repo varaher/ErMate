@@ -95,6 +95,8 @@ ErMate implements **Local On-The-Fly PHI De-identification** hosted on Indian Cl
 - **Router & Preview (`src/mate/mateRouter.ts`)**: Conservative lane router and non-destructive empty PREVIEW envelope generator.
 - **Universal Action Dispatcher (`src/mate/mateActionDispatcher.ts`)**: Dispatches clinician capabilities (`case.open`, `case.rounds.review`) to existing ErMate handlers.
 - **Traffic-Police & Critical Session Safety (`src/components/VoiceScribeChatView.tsx`)**: Intercepts social and operational commands locally without Firestore writes or false extractions. When switching patients, suspends processing immediately and automatically replays pending utterances once the canonical Scribe session is safely attached.
+- **MATE App.tsx Hardening & Context Boundary (`src/App.tsx`)**: Enforces hard patient-context clearing on Scribe new-chat sessions (`voiceScribeCaseId`, `selectedCaseId`, preview state), provides hospital-configured dynamic bed capacity via reactive `hospital_shifts` listener, hardens draft case intake with two-sided Scribe ↔ ClinicalCase link verification (`verifyTwoSidedLink`), and enforces fail-closed mismatch and bed collision protection to prevent silent bed reassignments.
+- **Persistent Floating MATE Sidecar & Action Badge (`src/App.tsx`, `src/components/VoiceScribeChatView.tsx`)**: Evolves MATE into a persistent conversational sidecar accessible via a floating action badge in the bottom-right corner (`bottom-20 md:bottom-6 right-4 md:right-6 z-40`). On desktop/tablet, slides in as a 420px right-hand panel while keeping the live Dashboard, Case Sheets, and Case Lists active and responsive on the left (`md:mr-[420px]`). On mobile, presents an overlay drawer ending safely above the bottom navigation (`bottom-16`). Allows clinicians to update patients (e.g., Bed 2, Bed 7) conversationally, with live onSnapshot Firestore synchronization reflecting across the Dashboard in real time without page reload or component unmounting.
 
 ---
 
@@ -145,6 +147,8 @@ ErMate employs a dynamic role-based navigation hierarchy computed from `getNorma
 
 | Path | Purpose |
 | :--- | :--- |
+| `/src/utils/caseLifecycle.ts` | 24-hour incomplete case soft-archive engine, active non-archived census filtering, and clinical record retention |
+| `/verify_team_and_archive.ts` | Verification suite for team membership status normalization, invite restoration, HOD claims, and 24h archive |
 | `/server/deidentify.ts` | On-the-fly local PHI stripping engine & date-to-relative-timeline converter |
 | `/firestore.rules` | P0 Root-of-Trust Firestore Security Rules (Canonical team_members authorization, verified status enforcement, privilege-escalation prevention) |
 | `/server/routes/team.routes.ts` | Backend-mediated team governance API (Platform admin provenance verification, exact invite role policy, Auth identity binding, membership lifecycle) |

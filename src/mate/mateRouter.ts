@@ -9,252 +9,226 @@ export interface MateRouterInput {
 }
 
 export interface MateRoute {
-  intents: MateIntent[];
   primaryIntent: MateIntent;
   requiresActiveCase: boolean;
-  targetCapability?: string;
   shouldDocument: boolean;
-  reason: string;
+  isPediatric: boolean;
+  targetCapability?: string;
+  notes: string[];
 }
 
-const containsAny = (text: string, phrases: string[]) =>
-  phrases.some((phrase) => text.includes(phrase));
+const SOCIAL_PHRASES = [
+  /^hi\b/i,
+  /^hello\b/i,
+  /^hey\b/i,
+  /^good\s+(morning|afternoon|evening)\b/i,
+  /^thanks?\b/i,
+  /^thank\s+you\b/i,
+  /^ok\b/i,
+  /^okay\b/i,
+  /^cool\b/i,
+];
+
+const QUESTION_WORDS = [
+  /\bwhat\b/i,
+  /\bhow\b/i,
+  /\bwhy\b/i,
+  /\bwhen\b/i,
+  /\bwhere\b/i,
+  /\bwhich\b/i,
+  /\bwho\b/i,
+  /\bcan\s+you\b/i,
+  /\bcould\s+you\b/i,
+];
+
+const ROUNDS_WORDS = [
+  /\brounds\b/i,
+  /\bdebrief\b/i,
+  /\bdevil'?s?\s+advocate\b/i,
+  /\bfirst\s+principles\b/i,
+  /\brare\s+but\s+real\b/i,
+  /\bpathophysiology\b/i,
+  /\bguidelines?\b/i,
+  /\bdisease\s+snapshot\b/i,
+];
+
+const EXPLICIT_DOCUMENT_TRIGGERS = [
+  /\bdocument\b/i,
+  /\brecord\b/i,
+  /\bnote\b/i,
+  /\bwrite\s+down\b/i,
+  /\badd\s+to\s+chart\b/i,
+  /\badd\s+to\s+case\s*sheet\b/i,
+  /\bupdate\s+case\s*sheet\b/i,
+  /\bput\s+in\s+notes\b/i,
+];
+
+const REASSESSMENT_TRIGGERS = [
+  /\bnow\b/i,
+  /\brepeat\b/i,
+  /\breassessed\b/i,
+  /\breassessment\b/i,
+  /\bimproved\b/i,
+  /\bworsened\b/i,
+  /\bpost-?\s*medication\b/i,
+  /\bpost-?\s*treatment\b/i,
+  /\bpost-?\s*nebulization\b/i,
+  /\bpost-?\s*procedure\b/i,
+];
+
+const CORRECTION_TRIGGERS = [
+  /\bcorrection\b/i,
+  /\bmistake\b/i,
+  /\bactually\b/i,
+  /\bnot\s+[a-z0-9]+\s*,\s*it'?s?\b/i,
+  /\bchange\s+[a-z\s]+\s+to\b/i,
+  /\berror\b/i,
+];
+
+const ACTION_TRIGGERS = [
+  /\bopen\s+case\s*sheet\b/i,
+  /\bview\s+case\s*sheet\b/i,
+  /\bopen\s+chart\b/i,
+  /\bdischarge\s+summary\b/i,
+];
+
+function containsAny(text: string, patterns: RegExp[]): boolean {
+  return patterns.some((p) => p.test(text));
+}
 
 /**
- * V1 routing is deliberately deterministic and conservative.
- * It decides the lane; it does NOT extract or mutate clinical facts.
+ * Route a clinician utterance into the appropriate MATE lane.
  */
 export function routeMateInput(input: MateRouterInput): MateRoute {
-  const raw = input.text.trim();
-  const text = raw.toLowerCase();
+  const { text, activeCase, patientAgeYears } = input;
+  const trimmed = text.trim();
+  const notes: string[] = [];
 
-  if (!raw) {
+  const effectiveAge =
+    patientAgeYears ?? activeCase?.patient?.age ?? null;
+  const pediatricCheck = matePediatricRoute(effectiveAge);
+  notes.push(pediatricCheck.reason);
+
+  // 1. Social lane
+  if (containsAny(trimmed, SOCIAL_PHRASES) && trimmed.split(/\s+/).length <= 4) {
     return {
-      intents: ["QUESTION"],
-      primaryIntent: "QUESTION",
-      requiresActiveCase: false,
-      shouldDocument: false,
-      reason: "Empty input has no documentable clinical content.",
-    };
-  }
-
-  // --------------------------------------------------------
-  // SOCIAL / CONVERSATIONAL LANE
-  //
-  // Bare greetings and acknowledgements are not clinical
-  // narratives and must never create/update a patient record.
-  //
-  // Keep this deliberately narrow. Clinical content must still
-  // fall through to the existing safe Scribe extraction path.
-  // --------------------------------------------------------
-  const normalizedConversation = text
-    .replace(/[!?.,]+$/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-
-  const conversationalOnlyPhrases = new Set([
-    "hi",
-    "hello",
-    "hey",
-    "hi mate",
-    "hello mate",
-    "hey mate",
-    "good morning",
-    "good morning mate",
-    "good afternoon",
-    "good afternoon mate",
-    "good evening",
-    "good evening mate",
-    "thanks",
-    "thank you",
-    "thanks mate",
-    "thank you mate",
-    "ok",
-    "okay",
-    "ok mate",
-    "okay mate",
-  ]);
-
-  if (conversationalOnlyPhrases.has(normalizedConversation)) {
-    return {
-      intents: ["CONVERSATION"],
       primaryIntent: "CONVERSATION",
       requiresActiveCase: false,
       shouldDocument: false,
-      reason:
-        "Matched a social/conversational turn; do not treat it as clinical documentation.",
+      isPediatric: pediatricCheck.isPediatric,
+      notes: [...notes, "Social / greeting lane: read-only"],
     };
   }
 
-  const isRounds = containsAny(text, [
-    "review this patient",
-    "review the patient",
-    "full round",
-    "full rounds",
-    "quick round",
-    "quick rounds",
-    "do a round",
-    "do rounds",
-    "use rounds",
-    "7 lens",
-    "7-lens",
-    "seven lens",
-    "what needs attention",
-    "important gaps",
-  ]);
-
-  if (isRounds) {
+  // 2. Explicit action commands
+  if (containsAny(trimmed, ACTION_TRIGGERS)) {
+    let capability = "case.open";
+    if (/rounds/i.test(trimmed)) capability = "case.rounds.review";
     return {
-      intents: ["ROUNDS"],
-      primaryIntent: "ROUNDS",
-      requiresActiveCase: true,
-      targetCapability: "case.rounds.review",
-      shouldDocument: false,
-      reason: "Matched an explicit Clinical Rounds / 7-Lens review request.",
-    };
-  }
-
-  const isCorrection = containsAny(text, [
-    "correction",
-    "correct that",
-    "change that",
-    "i meant",
-  ]);
-
-  const isReassessment = containsAny(text, [
-    "repeat vitals",
-    "repeat bp",
-    "repeat blood pressure",
-    "now bp",
-    "bp is now",
-    "now pulse",
-    "pulse is now",
-    "now saturation",
-    "spo2 is now",
-    "on reassessment",
-    "on re-assessment",
-    "reassessment shows",
-    "reassessment reveals",
-    "reassessment is",
-    "reassessment:",
-  ]);
-
-  const isExplicitDocument = containsAny(text, [
-    "document",
-    "add to case sheet",
-    "add this to case sheet",
-    "add this",
-    "record this",
-    "note this",
-  ]);
-
-  // MATE TRAFFIC-POLICE CAPABILITY RESOLUTION
-  //
-  // case.open is the first executable vertical slice.
-  // It does NOT create a second Case Sheet workflow. The frontend bridge
-  // delegates to ErMate's existing Open/Preview Case Sheet behavior.
-  const isCaseOpenAction = containsAny(text, [
-    "show case sheet",
-    "show the case sheet",
-    "view case sheet",
-    "view the case sheet",
-    "open case sheet",
-    "open the case sheet",
-  ]);
-
-  const isAppAction =
-    isCaseOpenAction ||
-    containsAny(text, [
-      "show investigations",
-      "open investigations",
-      "show treatment",
-      "open treatment",
-      "prepare discharge",
-      "show discharge",
-    ]);
-
-  if (isAppAction && !isExplicitDocument) {
-    return {
-      intents: ["APP_ACTION"],
       primaryIntent: "APP_ACTION",
       requiresActiveCase: true,
-      targetCapability: isCaseOpenAction ? "case.open" : undefined,
       shouldDocument: false,
-      reason: isCaseOpenAction
-        ? "Matched the existing ErMate Case Sheet open workflow."
-        : "Matched an ErMate navigation/workflow action without a documentation request.",
+      isPediatric: pediatricCheck.isPediatric,
+      targetCapability: capability,
+      notes: [...notes, `Action trigger: dispatching ${capability}`],
     };
   }
 
-  if (isCorrection) {
+  // 3. Rounds review lane
+  if (containsAny(trimmed, ROUNDS_WORDS)) {
     return {
-      intents: ["CORRECTION"],
+      primaryIntent: "ROUNDS",
+      requiresActiveCase: true,
+      shouldDocument: false,
+      isPediatric: pediatricCheck.isPediatric,
+      targetCapability: "case.rounds.review",
+      notes: [...notes, "Rounds review lane: read-only, non-destructive"],
+    };
+  }
+
+  // 4. Corrections lane
+  if (containsAny(trimmed, CORRECTION_TRIGGERS) && activeCase) {
+    return {
       primaryIntent: "CORRECTION",
       requiresActiveCase: true,
       shouldDocument: true,
-      reason: "Matched a correction to the active clinical record.",
+      isPediatric: pediatricCheck.isPediatric,
+      notes: [...notes, "Correction to active case sheet: requires confirmation"],
     };
   }
 
-  if (isReassessment) {
+  // 5. Reassessment lane
+  if (containsAny(trimmed, REASSESSMENT_TRIGGERS) && activeCase) {
     return {
-      intents: ["REASSESSMENT"],
       primaryIntent: "REASSESSMENT",
       requiresActiveCase: true,
       shouldDocument: true,
-      reason: "Matched a repeat/reassessment statement; chronology must be preserved.",
+      isPediatric: pediatricCheck.isPediatric,
+      notes: [...notes, "Reassessment timeline update"],
     };
   }
 
-  if (isExplicitDocument) {
+  // 6. Explicit documentation request
+  if (containsAny(trimmed, EXPLICIT_DOCUMENT_TRIGGERS)) {
     return {
-      intents: ["DOCUMENT_FACT"],
       primaryIntent: "DOCUMENT_FACT",
-      requiresActiveCase: true,
+      requiresActiveCase: false,
       shouldDocument: true,
-      reason: "Clinician explicitly requested documentation.",
+      isPediatric: pediatricCheck.isPediatric,
+      notes: [...notes, "Explicit documentation requested"],
     };
   }
 
-  const looksLikeQuestion = /\?$/.test(raw) || /^(why|what|when|where|which|how|can|could|should|would|is|are|do|does)\b/i.test(raw);
-  if (looksLikeQuestion) {
+  // 7. Clinical Question / Discussion lane
+  if (containsAny(trimmed, QUESTION_WORDS) || trimmed.endsWith("?")) {
     return {
-      intents: ["QUESTION"],
       primaryIntent: "QUESTION",
       requiresActiveCase: false,
       shouldDocument: false,
-      reason: "Clinical discussion/question lane; answers are not documentation by default.",
+      isPediatric: pediatricCheck.isPediatric,
+      notes: [...notes, "Clinical consultation question: read-only"],
     };
   }
 
+  // 8. Default: Clinical narrative
   return {
-    intents: ["CLINICAL_NARRATIVE"],
     primaryIntent: "CLINICAL_NARRATIVE",
     requiresActiveCase: false,
     shouldDocument: true,
-    reason: "Free-flowing clinical narrative; send to the safe extraction preview pipeline.",
+    isPediatric: pediatricCheck.isPediatric,
+    notes: [...notes, "Clinical dictation narrative for Scribe extraction"],
   };
 }
 
 /**
- * Produces the empty PREVIEW envelope used before clinical extraction is wired.
- * No ClinicalCase mutation occurs here.
+ * Generate a non-destructive PREVIEW envelope for an utterance.
  */
-export function createMatePreview(input: MateRouterInput): MatePreviewResult {
-  const route = routeMateInput(input);
-  const caseId = input.activeCase?.id ?? null;
+export function createMatePreview(
+  input: MateRouterInput,
+  route: MateRoute
+): MatePreviewResult {
+  const envelope = {
+    mode: "PREVIEW" as const,
+    intent: route.primaryIntent,
+    caseId: input.activeCase?.id || null,
+    bedNo: input.activeCase?.bedNo || null,
+    pediatric: route.isPediatric,
+    unappliedExtraction: {},
+    provenance: {},
+    requiresConfirmation:
+      route.primaryIntent === "CORRECTION" ||
+      route.primaryIntent === "DOCUMENT_FACT",
+    notes: route.notes,
+  };
+
+  const reasonsBlocked: string[] = [];
+  if (route.requiresActiveCase && !input.activeCase) {
+    reasonsBlocked.push("Capability requires an active patient case context.");
+  }
 
   return {
-    executionMode: "PREVIEW",
-    caseId,
-    isPediatric: matePediatricRoute(input.patientAgeYears),
-    intents: route.intents,
-    proposedFacts: [],
-    blockedFacts: [],
-    questions:
-      route.requiresActiveCase && !caseId
-        ? ["Please open or start the patient case first."]
-        : [],
-    appActions: route.targetCapability ? [route.targetCapability] : [],
+    envelope,
+    canApply: reasonsBlocked.length === 0 && route.shouldDocument,
+    reasonsBlocked,
   };
 }

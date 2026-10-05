@@ -84,82 +84,71 @@ export function normalizeMateBedId(
     .replace(/^BED\s*(?:NO\.?|NUMBER|#)?\s*/i, "")
     .replace(/[\s_-]+/g, "");
 
-  const match = text.match(/^0*(\d+)([AB])?$/i);
-
+  const match = text.match(/^0*(\d+)([AB])?$/);
   if (!match) return null;
 
-  const bedNumber = Number(match[1]);
+  const num = parseInt(match[1], 10);
+  if (Number.isNaN(num) || num <= 0) return null;
 
-  if (!Number.isInteger(bedNumber) || bedNumber <= 0) {
-    return null;
-  }
-
-  const subdivision = (match[2] || "").toUpperCase();
-
-  return `${bedNumber}${subdivision}`;
+  const subdivision = (match[2] || "") as MateBedSubdivision;
+  return `${num}${subdivision}`;
 }
 
 /**
- * Generate the complete valid ER location namespace.
+ * Generate the canonical set of all physical and subdivided ER bed locations
+ * for an emergency department with physical capacity N.
  *
- * Capacity 3 produces:
- *
- * 1, 1A, 1B,
- * 2, 2A, 2B,
- * 3, 3A, 3B
+ * Default fallback is 30 beds (1..30, 1A/1B..30A/30B).
  */
 export function generateMateBedLocations(
-  physicalCapacity: number
+  physicalCapacity: number = 30
 ): MateBedLocation[] {
-  if (
-    !Number.isInteger(physicalCapacity) ||
-    physicalCapacity <= 0
-  ) {
-    return [];
-  }
-
+  const safeCapacity = Math.max(1, Math.min(200, physicalCapacity || 30));
   const locations: MateBedLocation[] = [];
 
-  for (let bed = 1; bed <= physicalCapacity; bed += 1) {
-    const subdivisions: MateBedSubdivision[] = ["", "A", "B"];
+  for (let bedNum = 1; bedNum <= safeCapacity; bedNum++) {
+    // 1. Base physical bed location (e.g. "3")
+    locations.push({
+      id: String(bedNum),
+      baseBedNumber: bedNum,
+      subdivision: "",
+      label: `Bed ${bedNum}`,
+    });
 
-    for (const subdivision of subdivisions) {
-      const id = `${bed}${subdivision}`;
+    // 2. Subdivision A (e.g. "3A")
+    locations.push({
+      id: `${bedNum}A`,
+      baseBedNumber: bedNum,
+      subdivision: "A",
+      label: `Bed ${bedNum}A`,
+    });
 
-      locations.push({
-        id,
-        baseBedNumber: bed,
-        subdivision,
-        label: `Bed ${id}`,
-      });
-    }
+    // 3. Subdivision B (e.g. "3B")
+    locations.push({
+      id: `${bedNum}B`,
+      baseBedNumber: bedNum,
+      subdivision: "B",
+      label: `Bed ${bedNum}B`,
+    });
   }
 
   return locations;
 }
 
 /**
- * Determine whether a requested bed/location belongs to the
- * configured ER namespace.
+ * Validate whether a bed location string is within the hospital's capacity.
  */
 export function isValidMateBedLocation(
   value: string | number | null | undefined,
-  physicalCapacity: number
+  physicalCapacity: number = 30
 ): boolean {
   const normalized = normalizeMateBedId(value);
-
   if (!normalized) return false;
 
-  const match = normalized.match(/^(\d+)([AB])?$/);
-
+  const match = normalized.match(/^(\d+)[AB]?$/);
   if (!match) return false;
 
-  const baseBedNumber = Number(match[1]);
-
-  return (
-    Number.isInteger(physicalCapacity) &&
-    physicalCapacity > 0 &&
-    baseBedNumber >= 1 &&
-    baseBedNumber <= physicalCapacity
-  );
+  const num = parseInt(match[1], 10);
+  const safeCapacity = Math.max(1, Math.min(200, physicalCapacity || 30));
+  return num >= 1 && num <= safeCapacity;
 }

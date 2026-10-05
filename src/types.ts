@@ -547,6 +547,11 @@ export interface ClinicalCase {
   lastEditedAt?: string;
   discussionMessages?: any[];
   clinicalSummary?: any;
+
+  // 24-hour soft-archive metadata (never hard-delete)
+  archivedAt?: string;
+  archivedBy?: string;
+  archiveReason?: string;
 }
 
 export interface PediatricDetails {
@@ -706,16 +711,49 @@ export interface HandoverRecord {
   hospital?: string; // hospital name for data isolation and security
 }
 
+export type CanonicalMembershipStatus =
+  | "active"
+  | "pending_approval"
+  | "cancelled"
+  | "rejected"
+  | "inactive";
+
+export type LegacyMembershipStatus =
+  | "Pending Invite"
+  | "Active (Joined)"
+  | "Pending Approval";
+
+export type MembershipStatus =
+  | CanonicalMembershipStatus
+  | LegacyMembershipStatus
+  | string;
+
+export function isPendingApprovalStatus(status?: string): boolean {
+  if (!status) return false;
+  const s = status.trim().toLowerCase();
+  return s === "pending_approval" || s === "pending approval";
+}
+
+export function isActiveMembershipStatus(status?: string): boolean {
+  if (!status) return false;
+  const s = status.trim().toLowerCase();
+  return s === "active" || s === "active (joined)";
+}
+
 export interface TeamMember {
   id: string;
+  uid?: string;
   name?: string;
   email: string;
   role: string;
-  status: "Pending Invite" | "Active (Joined)" | "Pending Approval";
+  status: MembershipStatus;
   shift?: string;
   hospital?: string;
+  hospitalId?: string;
+  hospitalName?: string;
   assignedBy?: string;
   updatedAt?: string;
+  membershipVerified?: boolean;
 }
 
 export interface HandoverAlertBanner {

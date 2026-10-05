@@ -70,26 +70,29 @@ export default function AdminHodClaimReview() {
   }
 
   const handleApprove = async (claim: HodClaimRequest) => {
-    
-
     try {
-      const now = new Date().toISOString();
+      if (!auth.currentUser) throw new Error("Not authenticated");
+      const idToken = await auth.currentUser.getIdToken(true);
 
-      // 1. Mark claim approved
-      await updateDoc(doc(db, "hodClaimRequests", claim.id), {
-        status: "approved",
-        reviewedAt: now,
-        reviewedBy: auth.currentUser?.uid || "admin",
+      const res = await fetch("/api/team/approve-hod-claim", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${idToken}`
+        },
+        body: JSON.stringify({
+          claimId: claim.id,
+          hospitalName: claim.hospital
+        })
       });
 
-      // 2. Elevate claimant's role in their user profile
-      await updateDoc(doc(db, "users", claim.claimedByUid), {
-        role: "HOD / Department Lead",
-        hospital: claim.hospital,
-        state: claim.state,
-      });
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to approve HOD claim.");
+      }
 
-      alert(`Approved! ${claim.claimedByName} is now the verified HOD of ${claim.hospital}.`);
+      const data = await res.json();
+      alert(`Approved! ${claim.claimedByName} is now verified HOD of ${data.hospitalName || claim.hospital}.`);
     } catch (err: any) {
       console.error("Approve failed:", err);
       alert("Failed to approve claim: " + err.message);

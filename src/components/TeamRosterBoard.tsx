@@ -5,7 +5,7 @@ import {
   UserX, ShieldAlert, CheckCircle2, Mail, Calendar, Sparkles,
   Building2, Link, Copy, Check, BookOpen, FileText, CheckSquare, Square, ChevronRight, ClipboardList
 } from "lucide-react";
-import { TeamMember, UserProfile, ClinicalCase } from "../types";
+import { TeamMember, UserProfile, ClinicalCase, isPendingApprovalStatus, isActiveMembershipStatus } from "../types";
 import GoogleCalendarModal from "./GoogleCalendarModal";
 import { createTeamInvite } from "../services/teamInviteService";
 import { auth } from "../firebase";
@@ -293,7 +293,7 @@ export default function TeamRosterBoard({
     return matchesSearch && matchesShift;
   });
 
-  const joinedMembers = teamMembers.filter(m => m.status === "Active (Joined)");
+  const joinedMembers = teamMembers.filter(m => isActiveMembershipStatus(m.status));
 
   return (
     <div id="team-roster-board" className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 space-y-6 text-slate-800 dark:text-slate-100">
@@ -395,19 +395,19 @@ export default function TeamRosterBoard({
       })()}
 
       {/* Pending Join Requests for HOD */}
-      {isUserHOD && teamMembers.filter(m => m.status === "Pending Approval").length > 0 && (
+      {isUserHOD && teamMembers.filter(m => isPendingApprovalStatus(m.status)).length > 0 && (
         <div className="bg-amber-50/40 dark:bg-amber-950/10 border border-amber-200/60 dark:border-amber-900/40 rounded-2xl p-5 space-y-4 shadow-sm">
           <div className="flex items-center gap-2 border-b border-amber-100 dark:border-amber-900/20 pb-2">
             <Users className="w-4.5 h-4.5 text-amber-500 shrink-0" />
             <h3 className="text-xs font-black uppercase text-slate-800 dark:text-slate-200 font-mono tracking-wider">
-              Pending Join Requests ({teamMembers.filter(m => m.status === "Pending Approval").length})
+              Pending Join Requests ({teamMembers.filter(m => isPendingApprovalStatus(m.status)).length})
             </h3>
           </div>
           <p className="text-xs text-slate-600 dark:text-slate-400 leading-normal">
             The following clinicians requested to link their profile and sync with your ER department roster. Please verify and approve their registration:
           </p>
           <div className="space-y-2.5">
-            {teamMembers.filter(m => m.status === "Pending Approval").map(req => (
+            {teamMembers.filter(m => isPendingApprovalStatus(m.status)).map(req => (
               <div key={req.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white dark:bg-slate-900 border border-slate-150 dark:border-slate-850 p-4 rounded-xl">
                 <div className="text-left space-y-1">
                   <div className="flex items-center gap-2">
@@ -842,18 +842,18 @@ export default function TeamRosterBoard({
                     <div className="flex items-center gap-2 flex-wrap">
                       <span 
                         onClick={() => {
-                          if (member.status === "Active (Joined)") {
+                          if (isActiveMembershipStatus(member.status)) {
                             setSelectedMemberForCases(member);
                             const activeCases = cases.filter(
-                              c => c.doctorEmail?.toLowerCase().trim() === member.email.toLowerCase().trim() && c.status === "Active"
+                              c => !c.archivedAt && c.doctorEmail?.toLowerCase().trim() === member.email.toLowerCase().trim() && c.status === "Active"
                             ).map(c => c.id);
                             setSelectedCaseIdsToTake(activeCases);
                           }
                         }}
                         className={`text-xs font-extrabold text-slate-900 dark:text-white flex items-center gap-1.5 ${
-                          member.status === "Active (Joined)" ? "hover:underline hover:text-indigo-600 dark:hover:text-indigo-400 cursor-pointer" : ""
+                          isActiveMembershipStatus(member.status) ? "hover:underline hover:text-indigo-600 dark:hover:text-indigo-400 cursor-pointer" : ""
                         }`}
-                        title={member.status === "Active (Joined)" ? "Click to view case logs & take handover" : undefined}
+                        title={isActiveMembershipStatus(member.status) ? "Click to view case logs & take handover" : undefined}
                       >
                         {member.name}
                       </span>
@@ -862,11 +862,11 @@ export default function TeamRosterBoard({
                           Self
                         </span>
                       )}
-                      {member.status === "Active (Joined)" ? (
+                      {isActiveMembershipStatus(member.status) ? (
                         <span className="text-[8.5px] bg-emerald-100 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-400 border border-emerald-200/50 dark:border-emerald-900/30 px-2 py-0.2 rounded-full font-mono font-bold uppercase">
                           Active (Joined)
                         </span>
-                      ) : member.status === "Pending Approval" ? (
+                      ) : isPendingApprovalStatus(member.status) ? (
                         <span className="text-[8.5px] bg-amber-100 dark:bg-amber-950/30 text-amber-700 dark:text-amber-450 border border-amber-200/50 dark:border-amber-900/30 px-2 py-0.2 rounded-full font-mono font-bold uppercase animate-pulse">
                           Pending Approval
                         </span>
@@ -1013,7 +1013,7 @@ export default function TeamRosterBoard({
       {selectedMemberForCases && (() => {
         const memberEmailLower = selectedMemberForCases.email.toLowerCase().trim();
         const memberCases = cases.filter(c => c.doctorEmail?.toLowerCase().trim() === memberEmailLower);
-        const activeMemberCases = memberCases.filter(c => c.status === "Active");
+        const activeMemberCases = memberCases.filter(c => !c.archivedAt && c.status === "Active");
         const dischargedMemberCases = memberCases.filter(c => c.status === "Discharged");
 
         const handleToggleSelectCase = (caseId: string) => {

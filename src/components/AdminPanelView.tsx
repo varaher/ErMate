@@ -17,6 +17,211 @@ interface AdminPanelViewProps {
   onNavigateToTab?: (tabId: string) => void;
 }
 
+function PlatformAdminInviteSection() {
+  const [hospitalId, setHospitalId] = useState("");
+  const [hospitalName, setHospitalName] = useState("");
+  const [invitedEmail, setInvitedEmail] = useState("");
+  const [role, setRole] = useState("HOD / Department Lead");
+  const [maxUses, setMaxUses] = useState(1);
+  const [expiresHours, setExpiresHours] = useState(72);
+  const [submitting, setSubmitting] = useState(false);
+  const [generatedLink, setGeneratedLink] = useState("");
+  const [generatedToken, setGeneratedToken] = useState("");
+  const [copied, setCopied] = useState(false);
+  const [errorMsg, setErrorMsg] = useState("");
+  const [successMsg, setSuccessMsg] = useState("");
+
+  const handleCreateInvite = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!hospitalId.trim() || !hospitalName.trim() || !invitedEmail.trim()) {
+      setErrorMsg("Please fill in hospital ID, hospital name, and clinician email.");
+      return;
+    }
+
+    setSubmitting(true);
+    setErrorMsg("");
+    setSuccessMsg("");
+    setGeneratedLink("");
+
+    try {
+      const user = auth.currentUser;
+      if (!user) throw new Error("Not authenticated");
+      const idToken = await user.getIdToken(true);
+
+      const res = await fetch("/api/team/create-invite", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${idToken}`
+        },
+        body: JSON.stringify({
+          hospitalId: hospitalId.trim(),
+          hospitalName: hospitalName.trim(),
+          invitedEmail: invitedEmail.trim().toLowerCase(),
+          role: role.trim(),
+          maxUses,
+          expiresHours
+        })
+      });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || "Failed to create department invitation.");
+      }
+
+      const data = await res.json();
+      const origin = typeof window !== "undefined" ? window.location.origin : "https://ermate.hospital";
+      const link = `${origin}/join/${data.token}`;
+      setGeneratedToken(data.token);
+      setGeneratedLink(link);
+      setSuccessMsg(`Secure department invitation issued successfully for ${invitedEmail.trim()}!`);
+    } catch (err: any) {
+      setErrorMsg(err.message || "Failed to generate invite.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleCopy = () => {
+    if (!generatedLink) return;
+    navigator.clipboard.writeText(generatedLink);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 text-white space-y-6">
+      <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+        <div className="flex items-center gap-3">
+          <div className="p-2 bg-indigo-500/20 text-indigo-400 rounded-2xl border border-indigo-500/30">
+            <Building className="w-6 h-6" />
+          </div>
+          <div>
+            <h2 className="text-base font-black uppercase font-mono tracking-wider">
+              Issue Department Invitation
+            </h2>
+            <p className="text-xs text-slate-400 font-sans">
+              Platform Admin Gateway — Issue cryptographically signed onboarding invitations with canonical hospital binding and HOD/Consultant assignment.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <form onSubmit={handleCreateInvite} className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div>
+          <label className="text-[11px] font-bold text-slate-400 uppercase font-mono block mb-1">
+            Canonical Hospital ID *
+          </label>
+          <input
+            type="text"
+            value={hospitalId}
+            onChange={(e) => setHospitalId(e.target.value)}
+            placeholder="e.g. apollo_greams_er"
+            className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3.5 py-2 text-xs font-mono text-white focus:outline-none focus:border-indigo-500"
+            required
+          />
+          <p className="text-[10px] text-slate-500 mt-1 font-mono">Unique lowercase slug for Firestore hospital scoping.</p>
+        </div>
+
+        <div>
+          <label className="text-[11px] font-bold text-slate-400 uppercase font-mono block mb-1">
+            Hospital / Facility Name *
+          </label>
+          <input
+            type="text"
+            value={hospitalName}
+            onChange={(e) => setHospitalName(e.target.value)}
+            placeholder="e.g. Apollo Hospital, Greams Road"
+            className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3.5 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
+            required
+          />
+        </div>
+
+        <div>
+          <label className="text-[11px] font-bold text-slate-400 uppercase font-mono block mb-1">
+            Invited Clinician Email *
+          </label>
+          <input
+            type="email"
+            value={invitedEmail}
+            onChange={(e) => setInvitedEmail(e.target.value)}
+            placeholder="e.g. hod.emergency@apollo.in"
+            className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3.5 py-2 text-xs font-mono text-white focus:outline-none focus:border-indigo-500"
+            required
+          />
+          <p className="text-[10px] text-slate-500 mt-1 font-mono">Restricts token redemption strictly to this email.</p>
+        </div>
+
+        <div>
+          <label className="text-[11px] font-bold text-slate-400 uppercase font-mono block mb-1">
+            Assigned Clinical Role
+          </label>
+          <select
+            value={role}
+            onChange={(e) => setRole(e.target.value)}
+            className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3.5 py-2 text-xs text-white focus:outline-none focus:border-indigo-500 font-mono"
+          >
+            <option value="HOD / Department Lead">HOD / Department Lead (Hospital Lead)</option>
+            <option value="Senior Consultant">Senior Consultant</option>
+            <option value="EM Resident">EM Resident</option>
+            <option value="Fellow">Fellow</option>
+            <option value="Consultant">Consultant</option>
+          </select>
+        </div>
+
+        <div className="md:col-span-2 flex items-center justify-between pt-2">
+          <div className="flex gap-4 text-xs font-mono text-slate-400">
+            <span>Expiry: {expiresHours}h</span>
+            <span>Max Uses: {maxUses}</span>
+          </div>
+          <button
+            type="submit"
+            disabled={submitting}
+            className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-700 text-white font-bold text-xs rounded-xl shadow-lg shadow-indigo-600/20 font-mono transition-all cursor-pointer"
+          >
+            {submitting ? "Issuing..." : "Generate Secure Invite Link"}
+          </button>
+        </div>
+      </form>
+
+      {errorMsg && (
+        <div className="p-3 bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs rounded-xl font-mono">
+          {errorMsg}
+        </div>
+      )}
+
+      {successMsg && (
+        <div className="p-3 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs rounded-xl font-mono">
+          {successMsg}
+        </div>
+      )}
+
+      {generatedLink && (
+        <div className="bg-slate-950 border border-indigo-500/30 rounded-2xl p-4 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-mono uppercase text-indigo-400 font-bold">
+              Server-Authorized Token: {generatedToken}
+            </span>
+            <button
+              type="button"
+              onClick={handleCopy}
+              className="flex items-center gap-1.5 px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-lg cursor-pointer transition-all font-mono"
+            >
+              {copied ? "Copied!" : "Copy Link"}
+            </button>
+          </div>
+          <input
+            type="text"
+            readOnly
+            value={generatedLink}
+            className="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5 text-xs font-mono text-slate-300 select-all"
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function AdminPanelView({
   currentProfile,
   cases,
@@ -748,6 +953,9 @@ export default function AdminPanelView({
         </div>
 
       </div>
+
+      {/* Platform Admin Department / HOD Invitation Issuer */}
+      <PlatformAdminInviteSection />
 
       {/* HOD Claim Review Gate (Initial Bootstrapping Gate) */}
       <AdminHodClaimReview />

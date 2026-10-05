@@ -9,6 +9,7 @@ import type { ClinicalCase } from "../types";
  */
 
 export type MateMode = "DICTATION" | "CONSULTATION";
+
 export type MateExecutionMode = "PREVIEW" | "WRITE";
 
 export type MateIntent =
@@ -25,134 +26,82 @@ export type MateIntent =
 export type MateEvidenceState =
   | "EXPLICIT_POSITIVE"
   | "EXPLICIT_NEGATIVE"
-  | "EXPLICIT_UNKNOWN"
-  | "AMBIGUOUS"
-  | "CONTRADICTORY"
-  | "CONDITIONAL_PLAN";
+  | "NOT_MENTIONED";
 
-export type MateSpeakerRole =
-  | "doctor"
-  | "patient"
-  | "relative"
-  | "nurse"
-  | "resident"
-  | "other_clinician"
-  | "unknown";
-
-export type MateInformationSource =
-  | "clinician_dictation"
-  | "patient_reported"
-  | "collateral_history"
-  | "clinician_observed"
-  | "clinician_measured"
-  | "investigation_result"
-  | "unknown";
-
-export type MateCapabilityRisk =
-  | "READ_ONLY"
-  | "NON_DESTRUCTIVE_WRITE"
-  | "CONFIRMATION_REQUIRED"
-  | "DESTRUCTIVE";
-
-export interface MateEvidence {
-  /** Exact words that support the proposed fact. */
-  text: string;
-  speakerRole: MateSpeakerRole;
-  informationSource: MateInformationSource;
+export interface MateSectionMapping {
+  adultSection: string;
+  pediatricSection: string;
+  dischargeSection: string;
 }
 
-export interface MateProposedFact {
-  id: string;
-  state: MateEvidenceState;
-  /** Existing ClinicalCase destination only. No parallel MATE schema. */
-  destination: string;
-  value: unknown;
-  evidence: MateEvidence;
-  requiresClarification: boolean;
-  clarificationReason?: string;
+export interface MateFieldProvenance {
+  sourceText: string;
+  evidence: MateEvidenceState;
+  mappedAt: string;
+}
+
+export interface MatePreviewEnvelope {
+  mode: MateExecutionMode;
+  intent: MateIntent;
+  caseId: string | null;
+  bedNo: string | null;
+  pediatric: boolean;
+  unappliedExtraction: Record<string, unknown>;
+  provenance: Record<string, MateFieldProvenance>;
+  requiresConfirmation: boolean;
+  notes: string[];
 }
 
 export interface MatePreviewResult {
-  executionMode: "PREVIEW";
-  caseId: ClinicalCase["id"] | null;
-  isPediatric: boolean | null;
-  intents: MateIntent[];
-  proposedFacts: MateProposedFact[];
-  blockedFacts: MateProposedFact[];
-  questions: string[];
-  appActions: string[];
+  envelope: MatePreviewEnvelope;
+  canApply: boolean;
+  reasonsBlocked: string[];
 }
 
 /**
- * A MATE capability is a route into an EXISTING ErMate feature. The capability
- * registry must never duplicate the underlying clinical engine.
- */
-export interface MateCapability {
-  id: string;
-  label: string;
-  description: string;
-  risk: MateCapabilityRisk;
-  requiresActiveCase: boolean;
-  writesClinicalRecord: boolean;
-  existingEndpoint?: string;
-}
-
-/**
- * Rounds is an existing ErMate decision-support lane. MATE only routes the
- * current case/question to it and returns its response conversationally.
- * Rounds output is NEVER silently promoted into documentation.
- */
-export const MATE_ROUNDS_CAPABILITY: MateCapability = Object.freeze({
-  id: "case.rounds.review",
-  label: "7-Lens Clinical Rounds",
-  description: "Run the active case through ErMate's existing Clinical Rounds / 7-Lens debrief engine.",
-  risk: "READ_ONLY",
-  requiresActiveCase: true,
-  writesClinicalRecord: false,
-  existingEndpoint: "/api/rounds-debrief",
-});
-
-export const MATE_ROUNDS_RULES = Object.freeze({
-  readCurrentCase: true,
-  mayAnswerConversationally: true,
-  mayIdentifyGaps: true,
-  maySuggestConsiderations: true,
-  autoDocumentOutput: false,
-  autoChangeDiagnosis: false,
-  autoChangeTreatment: false,
-  autoChangeDisposition: false,
-});
-
-/**
- * Locked documentation invariants for MATE V1.
+ * Locked pediatric routing invariant.
  *
- * Explicit positive -> capture.
- * Explicit negative -> capture.
- * Unmentioned -> never create.
- * Unknown -> preserve as unknown.
- * Ambiguous/contradictory -> do not silently resolve.
- * Conditional plan -> never convert to a completed treatment/disposition.
- * Partial GCS -> never infer missing components or total.
- * Reassessment -> preserve chronology; do not overwrite arrival vitals.
- * Clinical discussion/reasoning -> never enter the record unless the clinician
- * explicitly asks to document it.
+ * Age < 18 always routes to Pediatric Case Sheet.
+ * Age >= 18 always routes to Adult Case Sheet.
+ * Null age defaults to Adult with a prompt to confirm age.
  */
-export const MATE_DOCUMENTATION_RULES = Object.freeze({
-  explicitPositive: "capture",
-  explicitNegative: "capture",
-  unmentioned: "do-not-create",
-  explicitUnknown: "preserve-unknown",
-  ambiguous: "block-or-preserve-verbatim",
-  contradictory: "block-and-clarify",
-  conditionalPlan: "plan-only",
-  partialGcs: "never-infer",
-  reassessment: "append-chronologically",
-  clinicalDiscussion: "do-not-document-by-default",
-  roundsOutput: "decision-support-only-unless-explicitly-documented",
-});
-
-/** Current executable ErMate routing rule: known age 0-16 is pediatric. */
-export function matePediatricRoute(ageYears: number | null | undefined): boolean | null {
-  if (ageYears === null || ageYears === undefined) return null;
-  return ageYears >= 0 && ageYears <= 16;
+export function matePediatricRoute(
+  patientAgeYears: number | null | undefined
+): { isPediatric: boolean; reason: string } {
+  if (patientAgeYears === null || patientAgeYears === undefined) {
+    return {
+      isPediatric: false,
+      reason: "Age not specified; default to Adult with age confirmation required",
+    };
+  }
+  if (patientAgeYears < 18) {
+    return {
+      isPediatric: true,
+      reason: `Age ${patientAgeYears} < 18: strictly Pediatric Case Sheet`,
+    };
+  }
+  return {
+    isPediatric: false,
+    reason: `Age ${patientAgeYears} >= 18: Adult Case Sheet`,
+  };
 }
+
+/**
+ * Locked clinical documentation rules.
+ */
+export const MATE_DOCUMENTATION_RULES = {
+  explicitPositive: "MUST capture and map to corresponding section",
+  explicitNegative: "MUST capture as explicit negative, never drop silently",
+  notMentioned: "MUST leave null/blank, NEVER infer normal or baseline",
+  ambiguous: "MUST flag for confirmation, never guess",
+  contradiction: "MUST highlight conflict to clinician before write",
+} as const;
+
+/**
+ * Locked 7-lens rounds review rules.
+ */
+export const MATE_ROUNDS_RULES = {
+  execution: "READ-ONLY. Never writes to ClinicalCase directly.",
+  context: "Must bind to active case or require bed reference.",
+  action: "Dispatches to existing ErMate lens pipeline.",
+} as const;

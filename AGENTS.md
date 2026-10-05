@@ -45,6 +45,49 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-05] — Persistent Floating MATE Sidecar & Floating Action Badge
+- **Floating MATE Action Badge (`src/App.tsx`)**:
+  - Added persistent floating badge in the bottom-right corner (`bottom-20 md:bottom-6 right-4 md:right-6 z-40`).
+  - Safe above mobile bottom navigation (80px bottom clearance avoids collision with 64px mobile nav bar).
+  - Visible on all standard ErMate views when authenticated; hidden when MATE drawer is already open, hidden on printable views (`viewCaseSheetPrintId`), and hidden on unauthenticated login/signup flows.
+  - Clicking badge strictly opens the MATE sidecar without creating cases, patients, bed allocations, recordings, or initiating automatic Scribe extractions.
+- **Right-Side Persistent MATE Sidecar Drawer (`src/App.tsx`, `src/components/VoiceScribeChatView.tsx`)**:
+  - Desktop/tablet: Fixed right-side panel (`md:w-[420px] lg:w-[440px]`) sliding in smoothly with `<main>` automatically adjusting margin (`md:mr-[420px] lg:mr-[440px]`), keeping Dashboard, Case Sheets, and Case Lists live, interactive, and fully visible on the left.
+  - Mobile: Overlay drawer (`bottom-16 md:bottom-0`) preserving close/back controls and maintaining full accessibility of the mobile bottom navigation bar (`bottom-0 h-16`).
+  - Context Header: Displays `Current context: Bed <No> / <Patient>` or `Current context: No patient selected` without duplicating redundant clinical sub-bars.
+  - New Chat Context Boundary: Clicking `[New Chat]` safely resets `voiceScribeCaseId` and `voiceScribeSessionId` to null, creating a fresh Scribe session without inheriting stale patient context.
+  - Real-time Dashboard Synchronization: MATE extractions persist to Firestore and trigger reactive onSnapshot updates to the active `DashboardView` live without manual refresh or page unmounting.
+
+### [2026-10-05] — Team / Invitation Workflows & 24-Hour Incomplete Case Soft Archive
+- **Canonical Membership Status Normalization (`src/types.ts`, `src/components/TeamRosterBoard.tsx`, `src/App.tsx`, `src/components/DashboardView.tsx`, `src/components/ProfileSettingsView.tsx`)**:
+  - Replaced legacy `"Pending Approval"` string checks with canonical backend snake_case `pending_approval` using backward-compatible helpers (`isPendingApprovalStatus`, `isActiveMembershipStatus`).
+  - Pending applicants now reliably populate the HOD approval queue and see their pending-status onboarding screen across reloads.
+- **Invitation Restoration on Login (`src/App.tsx`)**:
+  - Restores pending invitation token and hospital context from `sessionStorage` upon authenticated login following email verification or signup redirects.
+  - Revalidates the token against the backend preview endpoint `/api/team/invite-preview/:token`; clears invalid/expired tokens without fabricating unauthorized memberships.
+- **Trusted Platform-Admin HOD Claim Approval (`server/routes/team.routes.ts`, `src/components/AdminHodClaimReview.tsx`)**:
+  - Replaced insecure browser direct `updateDoc` on `users/{uid}` with trusted backend route `POST /api/team/approve-hod-claim`.
+  - Atomically establishes canonical `team_members/{claimedByUid}` with `status: "active"`, `membershipVerified: true`, canonical `hospitalId`, and `HOD / Department Lead` role, updates profile mirror, records audit logs, and restricts access strictly to platform administrator (`varahgrp@gmail.com`).
+- **Platform Admin Department Invitation Interface (`src/components/AdminPanelView.tsx`)**:
+  - Added "Issue Department Invitation" card allowing platform administrators to issue cryptographically signed onboarding invitations with canonical hospital binding and HOD/Consultant assignment using `POST /api/team/create-invite`.
+- **24-Hour Incomplete Case Soft Archive Lifecycle (`src/utils/caseLifecycle.ts`, `src/App.tsx`, `src/components/DashboardView.tsx`, `src/components/CasesListView.tsx`, `src/components/VoiceScribeChatView.tsx`)**:
+  - Implemented deterministic soft-archive engine for incomplete active cases aged $\ge 24$ hours (`archivedAt: ISO timestamp`, `archivedBy: "system"`, `archiveReason: "incomplete_case_24h"`).
+  - Strictly prohibits hard deletion (`deleteDoc`); archived cases remain visible, searchable, and reviewable in historical Case Log (`CasesListView.tsx`).
+  - Automatically removes archived cases from active department cards, pending queues, bedside censuses, and MATE bed resolution (`filterActiveNonArchivedCases`).
+  - Completed/discharged records (`status: "Discharged"` or finalized discharge summaries) are protected from automated archival.
+
+### [2026-10-05] — MATE App.tsx Hardening — Phase 2
+- **Hard Patient-Context Boundary on New Chat (`src/App.tsx`)**:
+  - Wired `onNewChat` handler on `<VoiceScribeChatView />` to cleanly reset `voiceScribeCaseId`, `selectedCaseId`, `pendingPreviewContext`, `previewCase`, and `isPreviewMode` so a fresh Scribe session never inherits stale patient context.
+- **Dynamic Hospital ER Physical Bed Capacity (`src/App.tsx`)**:
+  - Replaced hardcoded `physicalBedCapacity={30}` with reactive `erPhysicalBedCapacity || 30` derived from `hospital_shifts` Firestore listener, safely resetting to null/fallback on unmount or unverified memberships.
+- **Two-Sided Link Verification in Draft Case Intake (`src/App.tsx`)**:
+  - Hardened `handleEnsureDraftCase` with `verifyTwoSidedLink(sessionId, caseId)` following `linkScribeSessionAndCase`.
+  - Pending linkages log non-fatal warnings and trigger a user notification without rolling back the saved draft case or creating duplicate sessions.
+- **Fail-Closed Session / Case & Bed Mismatch Protection (`src/App.tsx`)**:
+  - Verifies `scribeSessions/{sessionId}.linkedCaseId` against `voiceScribeCaseId` and halts execution if an incompatible mismatch is detected.
+  - Validates requested bed against existing bed assignments and refuses automatic reassignments, strictly preventing silent alterations of explicit A/B bed slots.
+
 ### [2026-10-05] — MATE Controller & Traffic-Police Integration — Phase 1
 - **Traffic-Police & Operational Interception (`src/components/VoiceScribeChatView.tsx`, `src/App.tsx`)**:
   - Integrated MATE conversational controller in `sendToChat` ahead of clinical extraction:

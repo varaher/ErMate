@@ -11,8 +11,9 @@ import {
 import { 
   ClinicalCase, UserProfile, PatientDemographics, PatientVitals, 
   DischargeInfo, TriageCategory, ArrivalMode, HandoverRecord, TeamMember, QuickPastePatient, HandoverPatient,
-  VitalsRecord, PrimarySurvey, getInitialPrimarySurvey
+  VitalsRecord, PrimarySurvey, getInitialPrimarySurvey, isPendingApprovalStatus, isActiveMembershipStatus
 } from "./types";
+import { isCaseEligibleFor24hArchive, filterActiveNonArchivedCases, isCaseArchived } from "./utils/caseLifecycle";
 import { saveHandoverPatient } from "./utils/handoverUtils";
 import { triggerPrintWithTip } from "./utils/printWithTip";
 import { getNormalizedRole } from "./utils/roleUtils";
@@ -198,6 +199,7 @@ export default function App() {
   const isInitialCases = React.useRef(true);
   const isInitialHandovers = React.useRef(true);
   const isInitialContributions = React.useRef(true);
+  const processedArchiveIdsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     try {
@@ -943,6 +945,12 @@ useEffect(() => {
   }, [savedBanner.visible]);
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
   const [shifts, setShifts] = useState<any[]>([]);
+
+  // Hospital ER physical numbered-bed capacity.
+  // Example: 30 means base locations 1..30.
+  // MATE derives 1/1A/1B ... 30/30A/30B from this value.
+  const [erPhysicalBedCapacity, setErPhysicalBedCapacity] =
+    useState<number | null>(null);
   const [hospitalSubscription, setHospitalSubscription] = useState<{ active: boolean; subscriptionTier: string } | null>(null);
 
   // Normalized clinical role for role-based navigation and permissions
@@ -1273,6 +1281,80 @@ useEffect(() => {
   };
 }, []);
 
+  // A2: Restore invitation after email verification / login on the same device
+  useEffect(() => {
+    if (!isLoggedIn || !auth.currentUser) return;
+    if (typeof sessionStorage === "undefined") return;
+
+    const storedToken = sessionStorage.getItem("ermate_pending_invite_token");
+    const storedHospital = sessionStorage.getItem("ermate_pending_invite_hospital");
+
+    if (storedToken && storedToken.trim()) {
+      const cleanToken = storedToken.trim();
+      validateTeamInvite(cleanToken)
+        .then((result) => {
+          if (result.valid && result.hospital) {
+            setActiveInviteToken(cleanToken);
+            setInitialHospital(result.hospital);
+          } else {
+            // Invalid, expired, revoked, or max uses exceeded
+            sessionStorage.removeItem("ermate_pending_invite_token");
+            sessionStorage.removeItem("ermate_pending_invite_hospital");
+            setActiveInviteToken("");
+            setInitialHospital("");
+          }
+        })
+        .catch((err) => {
+          console.warn("Could not revalidate pending invite on login:", err);
+        });
+    }
+  }, [isLoggedIn]);
+
+  // B3 & B6: 24-Hour Incomplete Case Soft-Archive Engine (Never Hard-Delete)
+  useEffect(() => {
+    if (!isLoggedIn || !cases || cases.length === 0) return;
+
+    const runArchiveAudit = async () => {
+      const now = new Date();
+      const eligibleCases = cases.filter((c) => isCaseEligibleFor24hArchive(c, now));
+      if (eligibleCases.length === 0) return;
+
+      for (const c of eligibleCases) {
+        if (processedArchiveIdsRef.current.has(c.id)) continue;
+        processedArchiveIdsRef.current.add(c.id);
+
+        try {
+          const nowIso = now.toISOString();
+          await updateDoc(doc(db, "cases", c.id), {
+            archivedAt: nowIso,
+            archivedBy: "system",
+            archiveReason: "incomplete_case_24h"
+          });
+          // Optimistically update local case state
+          setCases((prev) =>
+            prev.map((existing) =>
+              existing.id === c.id
+                ? {
+                    ...existing,
+                    archivedAt: nowIso,
+                    archivedBy: "system",
+                    archiveReason: "incomplete_case_24h"
+                  }
+                : existing
+            )
+          );
+        } catch (err) {
+          console.error("Failed to soft-archive case:", c.id, err);
+          processedArchiveIdsRef.current.delete(c.id);
+        }
+      }
+    };
+
+    runArchiveAudit();
+    const interval = setInterval(runArchiveAudit, 60000);
+    return () => clearInterval(interval);
+  }, [isLoggedIn, cases]);
+
   // Real-time Firestore sync for cases & handovers when logged in
   useEffect(() => {
     if (!isLoggedIn || !profile) return;
@@ -1580,8 +1662,7 @@ if (auth.currentUser) {
         String(membership.status || "");
 
       const isActiveMembership =
-        membershipStatus === "active" ||
-        membershipStatus === "Active (Joined)";
+        isActiveMembershipStatus(membershipStatus);
 
       const isVerifiedMembership =
         membership.membershipVerified === true;
@@ -1602,6 +1683,7 @@ if (auth.currentUser) {
         !trustedHospitalId
       ) {
         setShifts(ROTA_SHIFTS);
+        setErPhysicalBedCapacity(null);
         return;
       }
 
@@ -1616,6 +1698,7 @@ if (auth.currentUser) {
         (snapshot) => {
           if (!snapshot.exists()) {
             setShifts(ROTA_SHIFTS);
+            setErPhysicalBedCapacity(null);
             return;
           }
 
@@ -1626,6 +1709,16 @@ if (auth.currentUser) {
           } else {
             setShifts(ROTA_SHIFTS);
           }
+
+          const storedCapacity = Number(data.erPhysicalBedCapacity);
+          if (
+            Number.isInteger(storedCapacity) &&
+            storedCapacity > 0
+          ) {
+            setErPhysicalBedCapacity(storedCapacity);
+          } else {
+            setErPhysicalBedCapacity(null);
+          }
         },
         (error) => {
           console.error(
@@ -1634,6 +1727,7 @@ if (auth.currentUser) {
           );
 
           setShifts(ROTA_SHIFTS);
+          setErPhysicalBedCapacity(null);
         }
       );
     },
@@ -1644,10 +1738,12 @@ if (auth.currentUser) {
       );
 
       setShifts(ROTA_SHIFTS);
+      setErPhysicalBedCapacity(null);
     }
   );
 } else {
   setShifts(ROTA_SHIFTS);
+  setErPhysicalBedCapacity(null);
 }
     // Stream Clinical Contributions for Peer Review Notifications
     const contributionsQuery = userHospital ? query(collection(db, "contributions"), where("hospital", "==", userHospital)) : collection(db, "contributions");
@@ -2517,9 +2613,21 @@ const handleDeleteAllCases = async () => {
     }
     setVoiceScribeDiscussionMode(false);
     setShowVoiceScribeChat(true);
-    setSelectedCaseId(null);
-    setActiveFormMode(null);
-    setShowDischargeSummaryId(null);
+  };
+
+  const handleOpenMateBadge = () => {
+    // If clinician is currently viewing an active Case Sheet, bind MATE to that patient context safely
+    if (selectedCaseId) {
+      setVoiceScribeCaseId(selectedCaseId);
+      const match = cases.find(c => c.id === selectedCaseId);
+      setVoiceScribeSessionId(match?.scribeSessionId || null);
+    } else {
+      // Dashboard with no specific patient selected: open conversationally with no forced case context
+      setVoiceScribeCaseId(null);
+      setVoiceScribeSessionId(null);
+    }
+    setVoiceScribeDiscussionMode(false);
+    setShowVoiceScribeChat(true);
   };
 
   // NEW — invoked when the doctor taps the Voice Scribe entry point with
@@ -2541,10 +2649,8 @@ const handleDeleteAllCases = async () => {
     setShowVoiceScribeEntryChoice(false);
     setVoiceScribeDiscussionMode(true);
     setVoiceScribeCaseId(null);
+    setVoiceScribeSessionId(null);
     setShowVoiceScribeChat(true);
-    setSelectedCaseId(null);
-    setActiveFormMode(null);
-    setShowDischargeSummaryId(null);
   };
 
   /**
@@ -3294,6 +3400,274 @@ const handleDeleteAllCases = async () => {
     }
 
     checkConsentOnCaseSaved();
+    return newCaseId;
+  };
+
+  /**
+   * MATE / Voice Scribe ensure draft case:
+   * Establishes a draft ClinicalCase shell linked to a Scribe session on explicit new-patient intent.
+   */
+  const handleEnsureDraftCase = async (
+    sessionId: string,
+    options?: { bedNo?: string }
+  ): Promise<string> => {
+    const user = auth.currentUser;
+    if (!user) throw new Error("Not authenticated");
+
+    if (!sessionId) {
+      throw new Error("Missing Scribe session ID");
+    }
+
+    const requestedBedNo =
+      typeof options?.bedNo === "string" && options.bedNo.trim()
+        ? options.bedNo.trim()
+        : null;
+
+    const upsertCaseLocally = (caseItem: ClinicalCase) => {
+      setCases(prev => {
+        const idx = prev.findIndex(c => c.id === caseItem.id);
+        if (idx >= 0) {
+          const next = [...prev];
+          next[idx] = caseItem;
+          return next;
+        }
+        return [caseItem, ...prev];
+      });
+    };
+
+    const linkAndVerify = async (caseId: string): Promise<boolean> => {
+      try {
+        const linkResult = await linkScribeSessionAndCase(sessionId, caseId);
+        const verified =
+          linkResult.success && (await verifyTwoSidedLink(sessionId, caseId));
+
+        if (!verified) {
+          console.warn(
+            "[handleEnsureDraftCase] Two-sided Scribe link pending:",
+            linkResult.error || "verification incomplete"
+          );
+          triggerNotification(
+            "Scribe Link Pending",
+            "Draft case was saved, but Scribe history linkage is still pending.",
+            "warning"
+          );
+        }
+
+        return verified;
+      } catch (linkErr: any) {
+        console.error(
+          "[handleEnsureDraftCase] Failed to establish two-sided Scribe link:",
+          linkErr
+        );
+        triggerNotification(
+          "Scribe Link Pending",
+          "Draft case was saved, but Scribe history linkage is still pending.",
+          "warning"
+        );
+        return false;
+      }
+    };
+
+    /*
+     * 1. Read current session from Firestore first.
+     * The session is authoritative for an already-established link.
+     * If parent case context and session linkage disagree, fail closed.
+     */
+    const sessionSnap = await getDoc(doc(db, "scribeSessions", sessionId));
+    if (!sessionSnap.exists()) {
+      throw new Error("Scribe session not found");
+    }
+
+    const sessionData = sessionSnap.data();
+    const linkedCaseId =
+      typeof sessionData?.linkedCaseId === "string" && sessionData.linkedCaseId.trim()
+        ? sessionData.linkedCaseId.trim()
+        : null;
+
+    if (voiceScribeCaseId && linkedCaseId && voiceScribeCaseId !== linkedCaseId) {
+      throw new Error(
+        "Scribe session/case mismatch detected. Draft creation stopped."
+      );
+    }
+
+    /*
+     * 2. Idempotent recovery / existing linked case:
+     * If this session is already linked to a case, reuse that ClinicalCase.
+     */
+    if (linkedCaseId) {
+      let linkedCase = cases.find(c => c.id === linkedCaseId) || null;
+      if (!linkedCase) {
+        const linkedCaseSnap = await getDoc(doc(db, "cases", linkedCaseId));
+        if (!linkedCaseSnap.exists()) {
+          throw new Error("Scribe session points to a ClinicalCase that does not exist.");
+        }
+        linkedCase = {
+          ...(linkedCaseSnap.data() as ClinicalCase),
+          id: linkedCaseId,
+        };
+      }
+
+      if (requestedBedNo) {
+        const existingBedNo =
+          typeof linkedCase.bedNo === "string" && linkedCase.bedNo.trim()
+            ? linkedCase.bedNo.trim()
+            : null;
+
+        if (existingBedNo && existingBedNo !== requestedBedNo) {
+          throw new Error(
+            `Existing case is already assigned to Bed ${existingBedNo}; refusing to reassign it automatically to Bed ${requestedBedNo}.`
+          );
+        }
+
+        if (!existingBedNo) {
+          await setDoc(
+            doc(db, "cases", linkedCaseId),
+            sanitizeForFirestore({
+              bedNo: requestedBedNo,
+              lastEditedBy: user.uid,
+              lastEditedAt: new Date().toISOString(),
+            }),
+            { merge: true }
+          );
+
+          linkedCase = {
+            ...linkedCase,
+            bedNo: requestedBedNo,
+            lastEditedBy: user.uid,
+            lastEditedAt: new Date().toISOString(),
+          };
+        }
+      }
+
+      upsertCaseLocally(linkedCase);
+      await linkAndVerify(linkedCaseId);
+      setVoiceScribeCaseId(linkedCaseId);
+      return linkedCaseId;
+    }
+
+    /*
+     * 3. Existing case context in App:
+     * If App already has a case context but session is not yet linked,
+     * attach this session to that exact existing case. Never create duplicate.
+     */
+    if (voiceScribeCaseId) {
+      let existingCase = cases.find(c => c.id === voiceScribeCaseId) || null;
+      if (!existingCase) {
+        const existingCaseSnap = await getDoc(doc(db, "cases", voiceScribeCaseId));
+        if (!existingCaseSnap.exists()) {
+          throw new Error("Current Scribe case context does not exist in Firestore.");
+        }
+        existingCase = {
+          ...(existingCaseSnap.data() as ClinicalCase),
+          id: voiceScribeCaseId,
+        };
+      }
+
+      if (requestedBedNo) {
+        const existingBedNo =
+          typeof existingCase.bedNo === "string" && existingCase.bedNo.trim()
+            ? existingCase.bedNo.trim()
+            : null;
+
+        if (existingBedNo && existingBedNo !== requestedBedNo) {
+          throw new Error(
+            `Current case is already assigned to Bed ${existingBedNo}; refusing to reassign it automatically to Bed ${requestedBedNo}.`
+          );
+        }
+
+        if (!existingBedNo) {
+          await setDoc(
+            doc(db, "cases", voiceScribeCaseId),
+            sanitizeForFirestore({
+              bedNo: requestedBedNo,
+              lastEditedBy: user.uid,
+              lastEditedAt: new Date().toISOString(),
+            }),
+            { merge: true }
+          );
+
+          existingCase = {
+            ...existingCase,
+            bedNo: requestedBedNo,
+            lastEditedBy: user.uid,
+            lastEditedAt: new Date().toISOString(),
+          };
+        }
+      }
+
+      upsertCaseLocally(existingCase);
+      await linkAndVerify(voiceScribeCaseId);
+      setVoiceScribeCaseId(voiceScribeCaseId);
+      return voiceScribeCaseId;
+    }
+
+    /*
+     * 4. Check if cases array already has a case linked via scribeSessionId
+     */
+    const existingBySession = cases.find(c => c.scribeSessionId === sessionId);
+    if (existingBySession) {
+      if (requestedBedNo) {
+        const existingBedNo =
+          typeof existingBySession.bedNo === "string" && existingBySession.bedNo.trim()
+            ? existingBySession.bedNo.trim()
+            : null;
+
+        if (existingBedNo && existingBedNo !== requestedBedNo) {
+          throw new Error(
+            `Existing case is already assigned to Bed ${existingBedNo}; refusing to reassign it automatically to Bed ${requestedBedNo}.`
+          );
+        }
+
+        if (!existingBedNo) {
+          existingBySession.bedNo = requestedBedNo;
+          await setDoc(
+            doc(db, "cases", existingBySession.id),
+            sanitizeForFirestore({
+              bedNo: requestedBedNo,
+              lastEditedBy: user.uid,
+              lastEditedAt: new Date().toISOString(),
+            }),
+            { merge: true }
+          );
+        }
+      }
+      upsertCaseLocally(existingBySession);
+      await linkAndVerify(existingBySession.id);
+      setVoiceScribeCaseId(existingBySession.id);
+      return existingBySession.id;
+    }
+
+    /*
+     * 5. Brand new intake: create minimal ClinicalCase shell using buildExtractedCaseDraft
+     */
+    const workspace = await resolveWorkspaceForUser(user.uid);
+    const newCaseId = "C-" + Math.floor(1000 + Math.random() * 9000);
+
+    const draftCase = buildExtractedCaseDraft(null, {
+      bedNo: requestedBedNo || "",
+    }, {
+      caseId: newCaseId,
+      workspaceMetadata: {
+        workspaceType: workspace.workspaceType,
+        ownerUid: workspace.ownerUid,
+        hospitalId: workspace.hospitalId,
+      },
+      profile,
+      currentUser: user,
+      teamMembers,
+    });
+
+    draftCase.scribeSessionId = sessionId;
+    draftCase.bedNo = requestedBedNo || draftCase.bedNo || "";
+
+    const cleanCase = sanitizeForFirestore(draftCase);
+    await setDoc(doc(db, "cases", draftCase.id), cleanCase, { merge: true });
+
+    upsertCaseLocally(draftCase);
+
+    await linkAndVerify(draftCase.id);
+
+    setVoiceScribeCaseId(draftCase.id);
     return newCaseId;
   };
 
@@ -4517,8 +4891,7 @@ const handleCancelJoinRequest = async () => {
       String(membership.status || "");
 
     const isActive =
-      membershipStatus === "active" ||
-      membershipStatus === "Active (Joined)";
+      isActiveMembershipStatus(membershipStatus);
 
     const isVerified =
       membership.membershipVerified === true;
@@ -5067,7 +5440,6 @@ const handleSignOut = async () => {
     // 1. Voice Scribe Chat / ErMate Assistant View
     if (showVoiceScribeChat) {
       setScribeRefreshTrigger(Date.now());
-      return;
     }
 
     // 2. Editable Case Sheet View
@@ -5864,7 +6236,7 @@ const handleSignOut = async () => {
               : baseTabs;
           })().map((tab) => {
             const Icon = tab.icon;
-            const isAnyModalActive = Boolean(selectedCaseId || viewCaseSheetPrintId || activeFormMode || showDischargeSummaryId || showVoiceScribeChat || showPediatricCalculator || showPocketMirror || showQuickDischarge);
+            const isAnyModalActive = Boolean(selectedCaseId || viewCaseSheetPrintId || activeFormMode || showDischargeSummaryId || showPediatricCalculator || showPocketMirror || showQuickDischarge);
             const active = !isAnyModalActive && (
               activeTab === tab.id ||
               (tab.id === "tools" && ["tools", "emdrugs"].includes(activeTab)) ||
@@ -5943,7 +6315,7 @@ const handleSignOut = async () => {
               : baseTabs;
           })().map((tab) => {
             const Icon = tab.icon;
-            const isAnyModalActive = Boolean(selectedCaseId || viewCaseSheetPrintId || activeFormMode || showDischargeSummaryId || showVoiceScribeChat || showPediatricCalculator || showPocketMirror || showQuickDischarge);
+            const isAnyModalActive = Boolean(selectedCaseId || viewCaseSheetPrintId || activeFormMode || showDischargeSummaryId || showPediatricCalculator || showPocketMirror || showQuickDischarge);
             const active = !isAnyModalActive && (
               activeTab === tab.id ||
               (tab.id === "tools" && ["tools", "emdrugs"].includes(activeTab)) ||
@@ -5971,7 +6343,7 @@ const handleSignOut = async () => {
       </nav>
 
       {/* Main Content Render Space */}
-      <main className="flex-1 p-4 md:p-6 pb-24 md:pb-6">
+      <main className={`flex-1 p-4 md:p-6 pb-24 md:pb-6 transition-all duration-200 ${showVoiceScribeChat ? "md:mr-[420px] lg:mr-[440px]" : ""}`}>
         <div className="max-w-7xl mx-auto">
 
         <Suspense fallback={
@@ -5986,7 +6358,7 @@ const handleSignOut = async () => {
             const myTeamMember = teamMembers.find(
               m => m.email.toLowerCase().trim() === (profile?.email || "").toLowerCase().trim()
             );
-            const isPendingApproval = myTeamMember && myTeamMember.status === "Pending Approval";
+            const isPendingApproval = myTeamMember && isPendingApprovalStatus(myTeamMember.status);
 
             if (isPendingApproval && activeTab !== "profile") {
               const departmentHOD = teamMembers.find(m => m.role?.toLowerCase().includes("hod") || m.role?.toLowerCase().includes("lead"));
@@ -6039,7 +6411,7 @@ const handleSignOut = async () => {
             const myTeamMember = teamMembers.find(
               m => m.email.toLowerCase().trim() === (profile?.email || "").toLowerCase().trim()
             );
-            const isPendingApproval = myTeamMember && myTeamMember.status === "Pending Approval";
+            const isPendingApproval = myTeamMember && isPendingApprovalStatus(myTeamMember.status);
             if (isPendingApproval && activeTab !== "profile") return null;
 
             return (
@@ -6062,7 +6434,14 @@ const handleSignOut = async () => {
               </div>
               <div className="flex items-center gap-2.5 self-end md:self-center">
                 <button
-                  onClick={() => setInitialHospital("")}
+                  onClick={() => {
+                    setInitialHospital("");
+                    setActiveInviteToken("");
+                    if (typeof sessionStorage !== "undefined") {
+                      sessionStorage.removeItem("ermate_pending_invite_token");
+                      sessionStorage.removeItem("ermate_pending_invite_hospital");
+                    }
+                  }}
                   className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold rounded-xl transition-all cursor-pointer"
                 >
                   Decline
@@ -6156,7 +6535,6 @@ const handleSignOut = async () => {
                       setVoiceScribeSessionId(null);
                     }
                     setShowVoiceScribeChat(true);
-                    setSelectedCaseId(null);
                   }}
                   hasActiveScribeSession={Boolean((selectedCaseId && voiceScribeCaseId === selectedCaseId) || scribeMessages.length > 1)}
                   onDiscussCase={(c) => handleStartVoiceScribe(c.id)}
@@ -6232,113 +6610,22 @@ const handleSignOut = async () => {
             />
           )}
 
-          {/* 5. Voice Scribe Chat View (now "ErMate Assistant") */}
-          {showVoiceScribeChat && !selectedCaseId && !activeFormMode && !showDischargeSummaryId && (
-            <VoiceScribeChatView
-              caseId={voiceScribeCaseId}
-              caseData={cases.find(c => c.id === voiceScribeCaseId) || (selectedCaseId ? cases.find(c => c.id === selectedCaseId) : null)}
-              sessionId={voiceScribeSessionId}
-              onSessionIdChange={setVoiceScribeSessionId}
-              allCases={cases}
-              physicalBedCapacity={30}
-              onSwitchCase={(newCaseId) => {
-                setVoiceScribeCaseId(newCaseId);
-              }}
-              initialEntryMode={voiceScribeDiscussionMode ? "discussion" : "case"}
-              refreshTrigger={scribeRefreshTrigger}
-              onBusyChange={setIsScribeBusy}
-              onBack={() => {
-                setShowVoiceScribeChat(false);
-                setVoiceScribeCaseId(null);
-                setVoiceScribeSessionId(null);
-                setVoiceScribeDiscussionMode(false);
-              }}
-              onOpenCaseSheet={(cId) => {
-                setShowVoiceScribeChat(false);
-                setVoiceScribeDiscussionMode(false);
-                setIsPreviewMode(false);
-                setPreviewCase(null);
-                setPendingPreviewContext(null);
-                setSelectedCaseId(cId);
-              }}
-              onPreviewCaseSheet={handlePreviewCaseSheet}
-              onPreviewDischargeSummary={handlePreviewDischargeSummary}
-              onRequestRoundsCase={(unappliedExtraction) => {
-                const existingCase = (voiceScribeCaseId ? cases.find(c => c.id === voiceScribeCaseId) : null) || (selectedCaseId ? cases.find(c => c.id === selectedCaseId) : null) || null;
-                const hasExtraction = unappliedExtraction && Object.keys(unappliedExtraction).length > 0;
-                if (!existingCase && !hasExtraction) {
-                  return null;
-                }
-                return buildExtractedCaseDraft(existingCase, unappliedExtraction || {}, {
-                  caseId: existingCase?.id || voiceScribeCaseId || ("draft-rounds-" + Date.now()),
-                  profile,
-                  currentUser: auth.currentUser,
-                  teamMembers,
-                });
-              }}
-              onSaveExtractedCase={handleSaveExtractedVoiceCase}
-              onPrepareDischarge={async (extraction, msgId, chatCaseId) => {
-                const targetCaseId = chatCaseId || voiceScribeCaseId;
-                if (!targetCaseId) return;
-                
-                const existingCase = cases.find(c => c.id === targetCaseId);
-
-                try {
-                  if (existingCase) {
-                    // Ensure any new details are persisted to the existing case before opening discharge summary
-                    await handleSaveExtractedVoiceCase(extraction, { existingCaseId: targetCaseId, autoNavigate: false });
-                  } else {
-                    // No case saved yet, create the minimal quick discharge case
-                    const minimalCase = createQuickDischargeCase(
-                      extraction,
-                      profile?.email || auth?.currentUser?.email || "doctor@ermate.ai",
-                      profile?.hospital || "General Hospital"
-                    );
-                    // Override generic CASE-XXXX id to preserve the active link with the chat session
-                    minimalCase.id = targetCaseId;
-                    const creationDuty = getCaseCreationDutyMetadata();
-                    if (creationDuty) {
-                      minimalCase.shiftId = minimalCase.shiftId || creationDuty.shiftId;
-                      minimalCase.shiftDate = minimalCase.shiftDate || creationDuty.shiftDate;
-                      minimalCase.shiftName = minimalCase.shiftName || creationDuty.shiftName;
-                    }
-                    
-                    await handleSaveCase(minimalCase);
-                    setQuickDischargeCase(minimalCase);
-                  }
-                } catch (err) {
-                  console.error("Failed to prepare discharge:", err);
-                  throw err; // Propagate the error so the UI can show failure
-                }
-                
-                setShowVoiceScribeChat(false);
-                setSelectedCaseId(targetCaseId);
-                setShowDischargeSummaryId(targetCaseId);
-                triggerNotification("Discharge Summary Ready", "Discharge Summary prepared successfully.", "success");
-              }}
-              profile={profile}
-              onSaveProfile={handleSaveProfile}
-              messages={scribeMessages}
-              onUpdateMessages={setScribeMessages}
-            />
-          )}
-
           {/* Pediatric Drug Calculator View */}
-          {showPediatricCalculator && !selectedCaseId && !activeFormMode && !showDischargeSummaryId && !showVoiceScribeChat && (
+          {showPediatricCalculator && !selectedCaseId && !activeFormMode && !showDischargeSummaryId && (
             <PediatricDrugCalculatorView
               onBack={() => setShowPediatricCalculator(false)}
             />
           )}
 
           {/* Pocket Mirror & Pupil Inspector View */}
-          {showPocketMirror && !selectedCaseId && !activeFormMode && !showDischargeSummaryId && !showVoiceScribeChat && (
+          {showPocketMirror && !selectedCaseId && !activeFormMode && !showDischargeSummaryId && (
             <PocketMirrorView
               onBack={() => setShowPocketMirror(false)}
             />
           )}
 
           {/* 6. Main Tab Views */}
-          {!selectedCaseId && !viewCaseSheetPrintId && !activeFormMode && !showDischargeSummaryId && !showVoiceScribeChat && !showPediatricCalculator && !showPocketMirror && !showQuickDischarge && (
+          {!selectedCaseId && !viewCaseSheetPrintId && !activeFormMode && !showDischargeSummaryId && !showPediatricCalculator && !showPocketMirror && !showQuickDischarge && (
             <>
               {activeTab === "dashboard" && (
                 <DashboardView
@@ -6607,6 +6894,133 @@ const handleSignOut = async () => {
         </Suspense>
         </div>
       </main>
+
+      {/* Floating MATE Badge */}
+      {isLoggedIn && !showVoiceScribeChat && !viewCaseSheetPrintId && (
+        <button
+          type="button"
+          onClick={handleOpenMateBadge}
+          className="fixed bottom-20 md:bottom-6 right-4 md:right-6 z-40 flex items-center gap-2 px-3.5 py-2.5 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 text-white font-mono text-xs font-black rounded-full shadow-lg shadow-indigo-600/30 hover:shadow-indigo-600/50 hover:scale-105 active:scale-95 transition-all cursor-pointer border border-indigo-400/30 group no-print select-none"
+          title="Open MATE Assistant"
+          aria-label="Open MATE Assistant"
+        >
+          <span className="relative flex h-2.5 w-2.5">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+            <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-400"></span>
+          </span>
+          <Sparkles className="w-4 h-4 text-indigo-200 group-hover:rotate-12 transition-transform" />
+          <span className="tracking-wider">MATE</span>
+        </button>
+      )}
+
+      {/* Persistent Floating MATE Sidecar Drawer */}
+      {showVoiceScribeChat && (
+        <aside
+          aria-label="MATE Assistant Drawer"
+          className="fixed top-0 left-0 right-0 bottom-16 md:bottom-0 md:left-auto md:w-[420px] lg:w-[440px] z-30 md:z-50 bg-white dark:bg-slate-950 border-t md:border-t-0 md:border-l border-slate-200 dark:border-slate-800 shadow-2xl flex flex-col overflow-hidden animate-in slide-in-from-right duration-200 no-print"
+        >
+          <VoiceScribeChatView
+            isSidecar={true}
+            caseId={voiceScribeCaseId}
+            caseData={voiceScribeCaseId ? (cases.find(c => c.id === voiceScribeCaseId) || null) : null}
+            sessionId={voiceScribeSessionId}
+            onSessionIdChange={setVoiceScribeSessionId}
+            allCases={filterActiveNonArchivedCases(cases)}
+            physicalBedCapacity={erPhysicalBedCapacity || 30}
+            onSwitchCase={(newCaseId) => {
+              setVoiceScribeCaseId(newCaseId);
+              const match = cases.find(c => c.id === newCaseId);
+              if (match?.scribeSessionId) {
+                setVoiceScribeSessionId(match.scribeSessionId);
+              }
+            }}
+            onNewChat={() => {
+              // Hard patient-context boundary:
+              // a new Scribe session must not inherit the previous patient's case.
+              setVoiceScribeCaseId(null);
+              setVoiceScribeSessionId(null);
+              setPendingPreviewContext(null);
+              setPreviewCase(null);
+              setIsPreviewMode(false);
+            }}
+            initialEntryMode={voiceScribeDiscussionMode ? "discussion" : "case"}
+            refreshTrigger={scribeRefreshTrigger}
+            onBusyChange={setIsScribeBusy}
+            onBack={() => {
+              setShowVoiceScribeChat(false);
+            }}
+            onOpenCaseSheet={(cId) => {
+              setVoiceScribeDiscussionMode(false);
+              setIsPreviewMode(false);
+              setPreviewCase(null);
+              setPendingPreviewContext(null);
+              setSelectedCaseId(cId);
+              setVoiceScribeCaseId(cId);
+            }}
+            onPreviewCaseSheet={handlePreviewCaseSheet}
+            onPreviewDischargeSummary={handlePreviewDischargeSummary}
+            onRequestRoundsCase={(unappliedExtraction) => {
+              const targetId = voiceScribeCaseId || selectedCaseId;
+              const existingCase = targetId ? cases.find(c => c.id === targetId) : null;
+              const hasExtraction = unappliedExtraction && Object.keys(unappliedExtraction).length > 0;
+              if (!existingCase && !hasExtraction) {
+                return null;
+              }
+              return buildExtractedCaseDraft(existingCase, unappliedExtraction || {}, {
+                caseId: existingCase?.id || targetId || ("draft-rounds-" + Date.now()),
+                profile,
+                currentUser: auth.currentUser,
+                teamMembers,
+              });
+            }}
+            onEnsureDraftCase={handleEnsureDraftCase}
+            onSaveExtractedCase={handleSaveExtractedVoiceCase}
+            onPrepareDischarge={async (extraction, msgId, chatCaseId) => {
+              const targetCaseId = chatCaseId || voiceScribeCaseId || selectedCaseId;
+              if (!targetCaseId) return;
+              
+              const existingCase = cases.find(c => c.id === targetCaseId);
+
+              try {
+                if (existingCase) {
+                  // Ensure any new details are persisted to the existing case before opening discharge summary
+                  await handleSaveExtractedVoiceCase(extraction, { existingCaseId: targetCaseId, autoNavigate: false });
+                } else {
+                  // No case saved yet, create the minimal quick discharge case
+                  const minimalCase = createQuickDischargeCase(
+                    extraction,
+                    profile?.email || auth?.currentUser?.email || "doctor@ermate.ai",
+                    profile?.hospital || "General Hospital"
+                  );
+                  // Override generic CASE-XXXX id to preserve the active link with the chat session
+                  minimalCase.id = targetCaseId;
+                  const creationDuty = getCaseCreationDutyMetadata();
+                  if (creationDuty) {
+                    minimalCase.shiftId = minimalCase.shiftId || creationDuty.shiftId;
+                    minimalCase.shiftDate = minimalCase.shiftDate || creationDuty.shiftDate;
+                    minimalCase.shiftName = minimalCase.shiftName || creationDuty.shiftName;
+                  }
+                  
+                  await handleSaveCase(minimalCase);
+                  setQuickDischargeCase(minimalCase);
+                }
+              } catch (err) {
+                console.error("Failed to prepare discharge:", err);
+                throw err; // Propagate the error so the UI can show failure
+              }
+              
+              setShowVoiceScribeChat(false);
+              setSelectedCaseId(targetCaseId);
+              setShowDischargeSummaryId(targetCaseId);
+              triggerNotification("Discharge Summary Ready", "Discharge Summary prepared successfully.", "success");
+            }}
+            profile={profile}
+            onSaveProfile={handleSaveProfile}
+            messages={scribeMessages}
+            onUpdateMessages={setScribeMessages}
+          />
+        </aside>
+      )}
 
       {/* New Patient Entry Method Selection Menu */}
       {showEntryMenu && (

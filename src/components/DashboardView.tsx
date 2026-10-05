@@ -7,7 +7,7 @@ import {
   Camera, Building, Trash2, UserPlus, ShieldCheck, Share2, Lightbulb, BookOpen, MessageSquare, GraduationCap
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
-import { ClinicalCase, UserProfile, HandoverRecord, TeamMember } from "../types";
+import { ClinicalCase, UserProfile, HandoverRecord, TeamMember, isPendingApprovalStatus, isActiveMembershipStatus } from "../types";
 import { DutySessionRecord, isActiveDutySessionNow } from "../services/dutySessionService";
 import { formatLocalDateKey } from "../utils/dutyWindow";
 import { getCasePendingStatus } from "../utils/caseHelper";
@@ -119,7 +119,7 @@ export default function DashboardView({
   const plannedShiftId = currentUserMember?.shift || "morning";
 
   // Operational active department cases (Patch H1)
-  const activeDepartmentCases = cases.filter(c => c.status === "Active" || c.status === "Triage");
+  const activeDepartmentCases = cases.filter(c => !c.archivedAt && (c.status === "Active" || c.status === "Triage"));
 
   const isHospitalClinician = Boolean(
     currentUserMember || (profile.hospital && profile.hospital.trim() !== "")
@@ -208,7 +208,7 @@ export default function DashboardView({
   const activeCasesCount = isHospitalClinician ? activeDepartmentCases.length : myCases.length;
   const casesThisWeekCount = cases.length;
   
-  const recentCases = [...(isHospitalClinician ? cases : myCases)]
+  const recentCases = [...(isHospitalClinician ? cases.filter(c => !c.archivedAt) : myCases)]
     .sort((a, b) => new Date(b.patient.dateOpened).getTime() - new Date(a.patient.dateOpened).getTime())
     .slice(0, 3);
   
@@ -645,7 +645,7 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
 ==================================================`;
   };
 
-  const pendingMembers = (teamMembers || []).filter(m => m.status === "Pending Approval");
+  const pendingMembers = (teamMembers || []).filter(m => isPendingApprovalStatus(m.status));
 
   return (
     <div className="space-y-6" id="dashboard-container">
@@ -1549,7 +1549,7 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
                               (c.doctorEmail && member.email && c.doctorEmail.trim().toLowerCase() === member.email.trim().toLowerCase()) ||
                               (c.doctorName && member.name && c.doctorName.trim().toLowerCase().includes(member.name.trim().toLowerCase()))
                             );
-                            const activeIds = clinicianCases.filter(c => c.status === "Active" || c.status === "Triage").map(c => c.id);
+                            const activeIds = clinicianCases.filter(c => !c.archivedAt && (c.status === "Active" || c.status === "Triage")).map(c => c.id);
                             setSelectedClinicianCaseIds(activeIds);
                           }}
                           title="Click to inspect & takeover cases"
@@ -1898,7 +1898,7 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
                               </td>
 
                               <td className="p-3.5">
-                                {member.status === "Active (Joined)" ? (
+                                {isActiveMembershipStatus(member.status) ? (
                                   <span className="inline-flex items-center gap-1 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 text-[10px] px-2 py-0.5 rounded-full border border-emerald-200 dark:border-emerald-500/20 font-bold font-sans">
                                     <ShieldCheck className="w-3.5 h-3.5" />
                                     Active (Joined)
@@ -1906,7 +1906,7 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
                                 ) : (
                                   <span className="inline-flex items-center gap-1 bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 text-[10px] px-2 py-0.5 rounded-full border border-amber-200 dark:border-amber-500/20 font-bold font-sans">
                                     <Clock className="w-3 h-3" />
-                                    Claim Pending
+                                    {isPendingApprovalStatus(member.status) ? "Pending Approval" : "Claim Pending"}
                                   </span>
                                 )}
                               </td>
