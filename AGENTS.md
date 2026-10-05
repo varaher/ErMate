@@ -45,6 +45,38 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-05] — MATE Controller & Traffic-Police Integration — Phase 1
+- **Traffic-Police & Operational Interception (`src/components/VoiceScribeChatView.tsx`, `src/App.tsx`)**:
+  - Integrated MATE conversational controller in `sendToChat` ahead of clinical extraction:
+    - Pure social greetings (`CONVERSATION`) return immediate local assistant guidance without calling extraction endpoints.
+    - Bed status queries (`"Is 10B occupied?"`, `"Who is in Bed 4?"`) return occupancy or vacant status without mutating Firestore or creating patient records.
+    - Pronoun follow-ups (`"Open it"`, `"Summarise him"`, `"Open his case sheet"`) resolve against `lastReferencedCaseIdRef` / `lastReferencedBedRef`.
+    - Compound commands (`"I think 10B is occupied, open Bed 10B and summarise the case"`) execute read-only case summaries without generating false unapplied extractions or writing to `ClinicalCase`.
+    - Case Sheet opening (`"Open case sheet"`) delegates to existing `onOpenCaseSheet` via `dispatchMateAction("case.open")`.
+  - **Critical Session Safety**:
+    - When MATE resolves a different existing patient, the original clinician utterance is queued in `pendingUtteranceAfterSwitchRef`.
+    - Processing halts immediately before any API call or state mutation on the stale session.
+    - Once the new target case and its canonical Scribe session are attached, the pending utterance automatically replays once against the new context.
+  - **Clinical Update Preservation**:
+    - Utterances containing clinical facts (e.g. `"Bed 10B BP is now 90/50 and patient is more drowsy"`) pass through unhindered to the existing Scribe pipeline (`/api/scribe-chat`) with zero MATE clinical interpretation.
+  - **Deterministic Verification**: Added `verify_mate_integration.ts` with 7/7 passing unit tests alongside the 19/19 clinical documentation regression suite.
+
+### [2026-10-05] — MATE Core Foundation Architecture (`src/mate/`)
+- **Canonical Bed Model (`src/mate/mateBedModel.ts`)**:
+  - Implemented ER physical location namespace generation and normalization (`normalizeMateBedId`, `generateMateBedLocations`, `isValidMateBedLocation`).
+  - Strict isolation: defines ER physical locations (e.g. `1`, `1A`, `1B`) without mutating Firestore or creating patient records.
+- **Case Reference Resolver (`src/mate/mateCaseResolver.ts`)**:
+  - Implemented single-source traffic-police resolver (`extractMateBedReference`, `resolveMateCaseReference`).
+  - Disambiguates clinician utterances against existing `ClinicalCase`s with explicit fail-closed safety semantics (`RESOLVED`, `CURRENT_CASE`, `NOT_FOUND`, `AMBIGUOUS`, `INVALID_LOCATION`, `NO_REFERENCE`).
+- **MATE V1 Contracts (`src/mate/mateContracts.ts`)**:
+  - Defined MATE modes (`DICTATION`, `CONSULTATION`), execution modes (`PREVIEW`, `WRITE`), intent taxonomy (`CONVERSATION`, `CLINICAL_NARRATIVE`, `DOCUMENT_FACT`, `CORRECTION`, `REASSESSMENT`, `QUESTION`, `ROUNDS`, `APP_ACTION`, `MIXED`), and locked documentation invariants (`MATE_DOCUMENTATION_RULES`, `MATE_ROUNDS_RULES`).
+- **Conversational Operational Planner (`src/mate/mateConversationPlanner.ts`)**:
+  - Deterministic operational command parser (`planMateConversation`) recognizing `BED_STATUS`, `PATIENT_OPEN`, `CASE_SUMMARY`, `CASE_SHEET_OPEN`, and `PREVIOUS_PATIENT`.
+- **MATE Router & Preview Envelope (`src/mate/mateRouter.ts`)**:
+  - Conservative intent classifier (`routeMateInput`) with social lane filtering and non-destructive preview generator (`createMatePreview`).
+- **Universal Action Dispatcher (`src/mate/mateActionDispatcher.ts`)**:
+  - Action routing scaffold (`dispatchMateAction`) bridging capabilities to existing ErMate workflows.
+
 ### [2026-10-05] — Final Clinical Documentation Regression — VERIFY CS-DS-FINAL
 - **Complete Verification of Integrated Clinical Pipeline (Patches C1–C5)**:
   - Validated end-to-end data integrity across Doctor speech/text → Scribe extraction → Cleanup → Mapping → ClinicalCase → Adult/Pediatric Case Sheet → Case Sheet Print → Discharge Summary → Live Course synchronization → Save → Reload / Reopen.

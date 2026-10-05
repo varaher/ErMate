@@ -87,6 +87,15 @@ ErMate implements **Local On-The-Fly PHI De-identification** hosted on Indian Cl
 - **Voice Scribe Protection**: Prevents refreshing during active voice recording, transcription, or message transmission.
 - **Context & Route Preservation**: Preserves active routes, selected cases, active tabs, and clinician credentials without resetting in-memory UI navigation.
 
+### 7. MATE Core Foundation & Traffic-Police Controller (`src/mate/`)
+- **Canonical Bed Model (`src/mate/mateBedModel.ts`)**: Generates physical ER location namespace (base bed numbers + `A`/`B` subdivisions) with normalizers and boundary checks.
+- **Case Reference Resolver (`src/mate/mateCaseResolver.ts`)**: Resolves explicit spoken/text bed references against active cases with fail-closed safety semantics (`RESOLVED`, `CURRENT_CASE`, `NOT_FOUND`, `AMBIGUOUS`).
+- **MATE V1 Contracts (`src/mate/mateContracts.ts`)**: Defines intent taxonomy, evidence states, pediatric routing rule, and locked documentation invariants.
+- **Conversational Planner (`src/mate/mateConversationPlanner.ts`)**: Deterministic operational parser for bed status, patient open, case summary, and case sheet actions.
+- **Router & Preview (`src/mate/mateRouter.ts`)**: Conservative lane router and non-destructive empty PREVIEW envelope generator.
+- **Universal Action Dispatcher (`src/mate/mateActionDispatcher.ts`)**: Dispatches clinician capabilities (`case.open`, `case.rounds.review`) to existing ErMate handlers.
+- **Traffic-Police & Critical Session Safety (`src/components/VoiceScribeChatView.tsx`)**: Intercepts social and operational commands locally without Firestore writes or false extractions. When switching patients, suspends processing immediately and automatically replays pending utterances once the canonical Scribe session is safely attached.
+
 ---
 
 ## 🤖 AI Model Assignments & Route-Specific Cascades

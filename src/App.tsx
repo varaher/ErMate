@@ -6239,6 +6239,11 @@ const handleSignOut = async () => {
               caseData={cases.find(c => c.id === voiceScribeCaseId) || (selectedCaseId ? cases.find(c => c.id === selectedCaseId) : null)}
               sessionId={voiceScribeSessionId}
               onSessionIdChange={setVoiceScribeSessionId}
+              allCases={cases}
+              physicalBedCapacity={30}
+              onSwitchCase={(newCaseId) => {
+                setVoiceScribeCaseId(newCaseId);
+              }}
               initialEntryMode={voiceScribeDiscussionMode ? "discussion" : "case"}
               refreshTrigger={scribeRefreshTrigger}
               onBusyChange={setIsScribeBusy}
