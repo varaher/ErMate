@@ -332,9 +332,12 @@ VBG / ABG EXTRACTION:
 
   Return null for the whole vbg object if no blood gas values were dictated at all.
 
- 
+  Sample Type rules:
+  - If doctor explicitly says "ABG" or "arterial": "type": "ABG"
+  - If doctor explicitly says "VBG" or "venous": "type": "VBG"
+  - If values given without stating ABG/VBG: "type": null (NEVER assume ABG)
 
-   Return as:
+  Return as:
 
   "vbg": {
 
@@ -352,15 +355,27 @@ VBG / ABG EXTRACTION:
 
     "lactate": string | null,
 
+    "sao2": string | null,
+
+    "fio2": string | null,
+
     "na": string | null,
 
     "k": string | null,
 
-    "cl": string | null
+    "cl": string | null,
+
+    "anionGap": string | null,
+
+    "glucose": string | null,
+
+    "hb": string | null,
+
+    "aa": string | null
 
   }
 
-  or null if not done. Include "cl" (chloride) whenever stated.
+  or null if not done. Capture every explicitly stated blood gas and electrolyte parameter.
 
 CLINICAL LANGUAGE / SHORTHAND NORMALIZATION:
 
@@ -802,15 +817,23 @@ INVESTIGATIONS EXTRACTION — STRICT NO-INVENTION RULE:
 
     "lactate": string | null,
 
+    "sao2": string | null,
+
+    "fio2": string | null,
+
     "na": string | null,
 
     "k": string | null,
 
     "cl": string | null,
 
+    "anionGap": string | null,
+
+    "glucose": string | null,
+
     "hb": string | null,
 
-    "anionGap": string | null
+    "aa": string | null
 
   } | null,
 

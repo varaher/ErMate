@@ -546,16 +546,23 @@ export function deepMergeExtraction(base: any, incoming: any): any {
         const combined = [...existing];
         for (const item of val) {
           if (item && typeof item === "object") {
-            const isDup = combined.some(c => {
+            const existingIdx = combined.findIndex(c => {
               if (!c || typeof c !== "object") return false;
               if (c.id && item.id && c.id === item.id) return true;
+              if (c.param && item.param && c.param === item.param) return true;
               if (c.name && item.name && c.name.toLowerCase() === item.name.toLowerCase()) return true;
               if (c.diagnosis && item.diagnosis && c.diagnosis.toLowerCase() === item.diagnosis.toLowerCase()) return true;
               if (c.medication && item.medication && c.medication.toLowerCase() === item.medication.toLowerCase()) return true;
               if (c.drugName && item.drugName && c.drugName.toLowerCase() === item.drugName.toLowerCase()) return true;
               return false;
             });
-            if (!isDup) combined.push(item);
+            if (existingIdx >= 0) {
+              if (item.param || item.value !== undefined) {
+                combined[existingIdx] = { ...combined[existingIdx], ...item };
+              }
+            } else {
+              combined.push(item);
+            }
           } else if (!combined.includes(item)) {
             combined.push(item);
           }

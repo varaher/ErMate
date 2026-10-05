@@ -1118,10 +1118,10 @@ export default function CaseSheetView({
         };
         const generated = {
           ...existingDischarge,
-          primaryDiagnosis: existingDischarge.primaryDiagnosis || resData.data.primaryDiagnosis || caseToSync.provisionalPrimaryDiagnosis || caseToSync.patient.presentingComplaint || "",
-          secondaryDiagnosis: existingDischarge.secondaryDiagnosis || resData.data.secondaryDiagnosis || caseToSync.sampleHistory?.pastHistory || "",
+          primaryDiagnosis: existingDischarge.primaryDiagnosis || resData.data.primaryDiagnosis || caseToSync.provisionalPrimaryDiagnosis || "",
+          secondaryDiagnosis: existingDischarge.secondaryDiagnosis || resData.data.secondaryDiagnosis || "",
           conditionAtDischarge: existingDischarge.conditionAtDischarge || resData.data.conditionAtDischarge || "",
-          dischargeMedications: existingDischarge.dischargeMedications || resData.data.dischargeMedications || (caseToSync.treatments && caseToSync.treatments.length > 0 ? caseToSync.treatments.map((t, idx) => `${idx + 1}. ${t.drugName} ${t.dose || ""} (${t.route || ""}) - ${t.timeGiven || "Given in ER"}`).join("\n") : ""),
+          dischargeMedications: existingDischarge.dischargeMedications || resData.data.dischargeMedications || "",
           followUpPlan: existingDischarge.followUpPlan || resData.data.followUpPlan || "",
           patientInstructions: existingDischarge.patientInstructions || resData.data.patientInstructions || "",
           courseInHospital: existingDischarge.courseInHospital || resData.data.courseInHospital || caseToSync.progressNotes || "",
@@ -1488,30 +1488,42 @@ Extremities: No deformity. No peripheral oedema. Peripheral pulses present.`,
     });
   };
 
+  const lastInterpretedAbgSignatureRef = useRef<string>("");
+  const isInterpretingAbgRef = useRef<boolean>(false);
+
+  const buildAbgParamString = (abg: any): string => {
+    const parts = [];
+    if (abg.sampleType) parts.push(`Sample: ${abg.sampleType}`);
+    if (abg.ph) parts.push(`pH: ${abg.ph}`);
+    if (abg.pco2) parts.push(`pCO2: ${abg.pco2}`);
+    if (abg.po2) parts.push(`pO2: ${abg.po2}`);
+    if (abg.hco3) parts.push(`HCO3: ${abg.hco3}`);
+    if (abg.be) parts.push(`BE: ${abg.be}`);
+    if (abg.lactate) parts.push(`Lactate: ${abg.lactate}`);
+    if (abg.sao2) parts.push(`SaO2: ${abg.sao2}%`);
+    if (abg.fio2) parts.push(`FiO2: ${abg.fio2}%`);
+    if (abg.na) parts.push(`Na: ${abg.na}`);
+    if (abg.k) parts.push(`K: ${abg.k}`);
+    if (abg.cl) parts.push(`Cl: ${abg.cl}`);
+    if (abg.ag) parts.push(`Anion Gap: ${abg.ag}`);
+    if (abg.glucose) parts.push(`Glucose: ${abg.glucose}`);
+    if (abg.hb) parts.push(`Hb: ${abg.hb}`);
+    if (abg.aa) parts.push(`A-a: ${abg.aa}`);
+    return parts.join(", ");
+  };
+
   const handleInterpretABG = async () => {
     const abg = currentCase.primaryAssessment?.survey?.adjuncts?.abg;
     if (!abg) return;
 
-    const hasValues = ["ph", "pco2", "po2", "hco3", "lactate", "sao2"].some(k => !!(abg as any)[k]);
+    const hasValues = ["ph", "pco2", "po2", "hco3", "lactate", "sao2", "na", "cl"].some(k => !!(abg as any)[k]);
     if (!hasValues) {
       alert("Please enter some ABG values first.");
       return;
     }
 
     try {
-      const parts = [];
-      if (abg.ph) parts.push(`pH: ${abg.ph}`);
-      if (abg.pco2) parts.push(`pCO2: ${abg.pco2}`);
-      if (abg.po2) parts.push(`pO2: ${abg.po2}`);
-      if (abg.hco3) parts.push(`HCO3: ${abg.hco3}`);
-      if (abg.be) parts.push(`BE: ${abg.be}`);
-      if (abg.lactate) parts.push(`Lactate: ${abg.lactate}`);
-      if (abg.sao2) parts.push(`SaO2: ${abg.sao2}%`);
-      if (abg.na) parts.push(`Na: ${abg.na}`);
-      if (abg.k) parts.push(`K: ${abg.k}`);
-      if (abg.cl) parts.push(`Cl: ${abg.cl}`);
-      if (abg.glucose) parts.push(`Glucose: ${abg.glucose}`);
-      const abgString = parts.join(", ");
+      const abgString = buildAbgParamString(abg);
 
       const response = await fetch("/api/interpret-abg", {
         method: "POST",
@@ -1519,16 +1531,19 @@ Extremities: No deformity. No peripheral oedema. Peripheral pulses present.`,
         body: JSON.stringify({
           abgValues: abgString,
           patientContext: {
-            age: currentCase.patient.age,
-            sex: currentCase.patient.gender,
-            presenting_complaint: currentCase.patient.presentingComplaint,
-            vitals: JSON.stringify(currentCase.vitals)
+            age: currentCase.patient?.age,
+            sex: currentCase.patient?.gender,
+            presenting_complaint: currentCase.patient?.presentingComplaint,
+            vitals: JSON.stringify(currentCase.vitals || {})
           }
         })
       });
 
       if (!response.ok) throw new Error("Failed to interpret ABG");
       const data = await response.json();
+
+      const diag = data.diagnosis || data.interpretation?.split("\n\n")?.[0] || data.interpretation;
+      const narrative = data.clinicalInterpretation || data.interpretation;
       
       setCurrentCase(prev => {
         const prevSurvey = prev.primaryAssessment?.survey || getInitialPrimarySurvey(prev.patient.caseType);
@@ -1542,7 +1557,9 @@ Extremities: No deformity. No peripheral oedema. Peripheral pulses present.`,
                 ...prevSurvey.adjuncts,
                 abg: {
                   ...prevSurvey.adjuncts?.abg,
-                  finalDiagnosis: data.interpretation
+                  interpretation: data.isAbnormal ? "Abnormal" : "Normal",
+                  finalDiagnosis: diag,
+                  clinicalInterpretation: narrative
                 }
               }
             }
@@ -1550,10 +1567,162 @@ Extremities: No deformity. No peripheral oedema. Peripheral pulses present.`,
         };
       });
     } catch (err) {
-      console.error(err);
-      alert("Failed to interpret ABG. Please try again.");
+      console.error("[handleInterpretABG] Manual ABG interpretation error:", err);
+      // Section 14: Keep all numerical values, display temporarily unavailable
+      setCurrentCase(prev => {
+        const prevSurvey = prev.primaryAssessment?.survey || getInitialPrimarySurvey(prev.patient.caseType);
+        return {
+          ...prev,
+          primaryAssessment: {
+            ...prev.primaryAssessment,
+            survey: {
+              ...prevSurvey,
+              adjuncts: {
+                ...prevSurvey.adjuncts,
+                abg: {
+                  ...prevSurvey.adjuncts?.abg,
+                  finalDiagnosis: prevSurvey.adjuncts?.abg?.finalDiagnosis || "Interpretation temporarily unavailable.",
+                  clinicalInterpretation: prevSurvey.adjuncts?.abg?.clinicalInterpretation || "Interpretation temporarily unavailable. Please try again."
+                }
+              }
+            }
+          }
+        };
+      });
     }
   };
+
+  // Automatic ABG / VBG interpretation trigger (Sections 5 & 6)
+  // When merged ABG contains pH + pCO2 + HCO3, automatically runs /api/interpret-abg
+  useEffect(() => {
+    const abg = currentCase.primaryAssessment?.survey?.adjuncts?.abg;
+    if (!abg) return;
+
+    const isPresent = (v: any) => v !== undefined && v !== null && String(v).trim() !== "" && !["unknown", "not documented", "n/a", "null"].includes(String(v).trim().toLowerCase());
+    const hasTrio = isPresent(abg.ph) && isPresent(abg.pco2) && isPresent(abg.hco3);
+    if (!hasTrio) return;
+
+    const signature = [
+      abg.sampleType || "",
+      abg.ph || "",
+      abg.pco2 || "",
+      abg.po2 || "",
+      abg.hco3 || "",
+      abg.be || "",
+      abg.lactate || "",
+      abg.sao2 || "",
+      abg.fio2 || "",
+      abg.na || "",
+      abg.k || "",
+      abg.cl || "",
+      abg.ag || "",
+      abg.glucose || "",
+      abg.hb || "",
+      abg.aa || "",
+    ].join("|");
+
+    if (lastInterpretedAbgSignatureRef.current === signature) {
+      return;
+    }
+
+    if (abg.finalDiagnosis && abg.clinicalInterpretation && lastInterpretedAbgSignatureRef.current === "") {
+      lastInterpretedAbgSignatureRef.current = signature;
+      return;
+    }
+
+    if (isInterpretingAbgRef.current) return;
+
+    lastInterpretedAbgSignatureRef.current = signature;
+    isInterpretingAbgRef.current = true;
+
+    (async () => {
+      try {
+        const abgString = buildAbgParamString(abg);
+        const response = await fetch("/api/interpret-abg", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            abgValues: abgString,
+            patientContext: {
+              age: currentCase.patient?.age,
+              sex: currentCase.patient?.gender,
+              presenting_complaint: currentCase.patient?.presentingComplaint,
+              vitals: JSON.stringify(currentCase.vitals || {})
+            }
+          })
+        });
+
+        if (!response.ok) throw new Error("Failed to interpret ABG");
+        const data = await response.json();
+
+        const diag = data.diagnosis || data.interpretation?.split("\n\n")?.[0] || data.interpretation;
+        const narrative = data.clinicalInterpretation || data.interpretation;
+
+        setCurrentCase(prev => {
+          const prevSurvey = prev.primaryAssessment?.survey || getInitialPrimarySurvey(prev.patient.caseType);
+          return {
+            ...prev,
+            primaryAssessment: {
+              ...prev.primaryAssessment,
+              survey: {
+                ...prevSurvey,
+                adjuncts: {
+                  ...prevSurvey.adjuncts,
+                  abg: {
+                    ...prevSurvey.adjuncts?.abg,
+                    interpretation: data.isAbnormal ? "Abnormal" : "Normal",
+                    finalDiagnosis: diag,
+                    clinicalInterpretation: narrative
+                  }
+                }
+              }
+            }
+          };
+        });
+      } catch (err) {
+        console.error("[AutoABG] Automatic ABG interpretation error:", err);
+        setCurrentCase(prev => {
+          const prevSurvey = prev.primaryAssessment?.survey || getInitialPrimarySurvey(prev.patient.caseType);
+          return {
+            ...prev,
+            primaryAssessment: {
+              ...prev.primaryAssessment,
+              survey: {
+                ...prevSurvey,
+                adjuncts: {
+                  ...prevSurvey.adjuncts,
+                  abg: {
+                    ...prevSurvey.adjuncts?.abg,
+                    finalDiagnosis: prevSurvey.adjuncts?.abg?.finalDiagnosis || "Interpretation temporarily unavailable.",
+                    clinicalInterpretation: prevSurvey.adjuncts?.abg?.clinicalInterpretation || "Interpretation temporarily unavailable. Please try again."
+                  }
+                }
+              }
+            }
+          };
+        });
+      } finally {
+        isInterpretingAbgRef.current = false;
+      }
+    })();
+  }, [
+    currentCase.primaryAssessment?.survey?.adjuncts?.abg?.sampleType,
+    currentCase.primaryAssessment?.survey?.adjuncts?.abg?.ph,
+    currentCase.primaryAssessment?.survey?.adjuncts?.abg?.pco2,
+    currentCase.primaryAssessment?.survey?.adjuncts?.abg?.po2,
+    currentCase.primaryAssessment?.survey?.adjuncts?.abg?.hco3,
+    currentCase.primaryAssessment?.survey?.adjuncts?.abg?.be,
+    currentCase.primaryAssessment?.survey?.adjuncts?.abg?.lactate,
+    currentCase.primaryAssessment?.survey?.adjuncts?.abg?.sao2,
+    currentCase.primaryAssessment?.survey?.adjuncts?.abg?.fio2,
+    currentCase.primaryAssessment?.survey?.adjuncts?.abg?.na,
+    currentCase.primaryAssessment?.survey?.adjuncts?.abg?.k,
+    currentCase.primaryAssessment?.survey?.adjuncts?.abg?.cl,
+    currentCase.primaryAssessment?.survey?.adjuncts?.abg?.ag,
+    currentCase.primaryAssessment?.survey?.adjuncts?.abg?.glucose,
+    currentCase.primaryAssessment?.survey?.adjuncts?.abg?.hb,
+    currentCase.primaryAssessment?.survey?.adjuncts?.abg?.aa,
+  ]);
 
   const markPrimarySurveyNormal = () => {
     const initialSurvey = getInitialPrimarySurvey(currentCase.patient.caseType);

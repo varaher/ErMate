@@ -510,17 +510,15 @@ LIST 2 — Results (values received):
 
 VBG / ABG — extract all components:
 
-  pH, pCO2, pO2, HCO3, BE,
+  Sample type ("type": "ABG" if ABG/arterial, "VBG" if VBG/venous, null if not stated),
 
-  Lactate, Na, K, Glucose, Hb
+  pH, pCO2, pO2, HCO3, BE, Lactate, SaO2, FiO2, Na, K, Cl, Anion Gap, Glucose, Hb, A-a gradient
 
-  
+  Return as:
 
-   Return as:
+  "vbg": { "type": "ABG", "ph": "7.32", "pco2": "45", "po2": "88", "hco3": "24", "lactate": "1.8", "cl": "102", "na": "138", "k": "4.1" }
 
-  "vbg": { "ph": "7.32", "lactate": "3.9", "cl": "108" }
-
-  or null if not done. Include "cl" (chloride) whenever stated.
+  or null if not done. Capture every explicitly stated parameter. Never assume ABG if not stated.
 
  
 

@@ -88,6 +88,7 @@ import {
 import { deduplicateConsultations } from "./consultationNormalization";
 import { isEstablishedCaseSheet } from "./establishedCaseCheck";
 import { assertCanonicalExtractionShape } from "./voiceExtraction";
+import { deterministicAbgAnalysis } from "./aiDiagnosis";
 
 console.log(
   "[scribeChatTurn] module loaded: SCRIBE-RUNTIME-2026-09-23-B"
@@ -1195,6 +1196,68 @@ function transcriptGcsEyeOnly(text: string): string | null {
   return match ? `E${match[1]}` : null;
 }
 
+/**
+ * Deterministically derives GCS total if and only if ALL THREE components
+ * (E, V, M) are explicitly present in the clinician's dictation.
+ * Pure arithmetic (E + V + M). Never infers missing components.
+ */
+function deriveExplicitGcsTotal(
+  filteredVitals: Record<string, any>,
+  rawInputText: string
+): string | null {
+  // First require transcript explicitly contains ALL: E, V, M
+  if (
+    !transcriptHasExplicitGcsComponent(rawInputText, "e") ||
+    !transcriptHasExplicitGcsComponent(rawInputText, "v") ||
+    !transcriptHasExplicitGcsComponent(rawInputText, "m")
+  ) {
+    return null;
+  }
+
+  // Then read: filteredVitals.gcs_e, filteredVitals.gcs_v, filteredVitals.gcs_m
+  const rawE = filteredVitals.gcs_e;
+  const rawV = filteredVitals.gcs_v;
+  const rawM = filteredVitals.gcs_m;
+
+  if (
+    rawE === undefined || rawE === null ||
+    rawV === undefined || rawV === null ||
+    rawM === undefined || rawM === null
+  ) {
+    return null;
+  }
+
+  // Normalize only their numeric component
+  const parseComponent = (val: any): number | null => {
+    const s = String(val).replace(/^[evm]\s*[:=-]?\s*/i, "").trim();
+    const n = parseInt(s, 10);
+    return Number.isFinite(n) ? n : null;
+  };
+
+  const e = parseComponent(rawE);
+  const v = parseComponent(rawV);
+  const m = parseComponent(rawM);
+
+  if (e === null || v === null || m === null) {
+    return null;
+  }
+
+  // Accept ranges ONLY:
+  // E = 1–4
+  // V = 1–5
+  // M = 1–6
+  if (e < 1 || e > 4 || v < 1 || v > 5 || m < 1 || m > 6) {
+    return null;
+  }
+
+  // Normalize components in filteredVitals to clean numeric strings
+  filteredVitals.gcs_e = String(e);
+  filteredVitals.gcs_v = String(v);
+  filteredVitals.gcs_m = String(m);
+
+  return String(e + v + m);
+}
+
 function normalizeClinicalText(value: string): string {
   return value
     .replace(/\s+/g, " ")
@@ -1377,10 +1440,29 @@ export function mapExtractionToCaseSheetFields(
           continue;
         }
 
-        filteredVitals[k] = v;
+        if (k === "gcs_e" || k === "gcs_v" || k === "gcs_m") {
+          const num = String(v).replace(/^[evm]\s*[:=-]?\s*/i, "").trim();
+          filteredVitals[k] = num;
+        } else {
+          filteredVitals[k] = v;
+        }
         hasRealVitals = true;
       }
     }
+
+    // Deterministic GCS total from explicit E/V/M components (Patch C1)
+    if (
+      filteredVitals.gcs === undefined ||
+      filteredVitals.gcs === null ||
+      String(filteredVitals.gcs).trim() === ""
+    ) {
+      const derivedGcsTotal = deriveExplicitGcsTotal(filteredVitals, rawInputText);
+      if (derivedGcsTotal !== null) {
+        filteredVitals.gcs = derivedGcsTotal;
+        hasRealVitals = true;
+      }
+    }
+
     if (hasRealVitals) {
       fields.vitals = filteredVitals;
     }
@@ -1397,37 +1479,100 @@ export function mapExtractionToCaseSheetFields(
   // extending ClinicalParam is a separate product decision.
   // ══════════════════════════════════════════════════════════════
   if (raw.vbg && typeof raw.vbg === 'object') {
-    // CHLORIDE FIX (Sept 2026): "cl" was missing from this map entirely.
-    // The extraction schema (extraction.ts / voiceExtraction.ts) has
-    // correctly asked for and received chloride from the model since
-    // this session's earlier fix, but this mapping step — which writes
-    // the model's output into the actual case sheet field — was never
-    // updated, so a dictated chloride value was silently dropped here
-    // even though it was successfully extracted upstream.
-    const VBG_PARAM_MAP: Record<string, string> = {
-      ph: "pH", pco2: "pCO2", hco3: "HCO3", lactate: "Lactate", na: "Na", k: "K", cl: "Cl", po2: "PO2", hb: "Hb", be: "Base Excess", anionGap: "Anion Gap"
+    const transcriptHasAbg = /\b(?:abg|arterial(?:\s+blood\s+gas|\s+sample|\s+gas)?)\b/i.test(rawInputText);
+    const transcriptHasVbg = /\b(?:vbg|venous(?:\s+blood\s+gas|\s+sample|\s+gas)?)\b/i.test(rawInputText);
+    let resolvedType: "ABG" | "VBG" | null = null;
+    if (transcriptHasAbg && !transcriptHasVbg) {
+      resolvedType = "ABG";
+    } else if (transcriptHasVbg && !transcriptHasAbg) {
+      resolvedType = "VBG";
+    } else if (!transcriptHasAbg && !transcriptHasVbg) {
+      resolvedType = null; // Unspecified: never assume ABG!
+    } else {
+      resolvedType = raw.vbg.type === "ABG" || raw.vbg.type === "VBG" ? raw.vbg.type : null;
+    }
+
+    const VBG_PARAM_MAP: Record<string, { name: string; param: string }> = {
+      ph: { name: "pH", param: "ph" },
+      pco2: { name: "pCO2", param: "pco2" },
+      po2: { name: "pO2", param: "po2" },
+      hco3: { name: "HCO3", param: "hco3" },
+      be: { name: "Base Excess", param: "be" },
+      lactate: { name: "Lactate", param: "lactate" },
+      sao2: { name: "SaO2", param: "sao2" },
+      fio2: { name: "FiO2", param: "fio2" },
+      na: { name: "Na", param: "na" },
+      k: { name: "K", param: "k" },
+      cl: { name: "Cl", param: "cl" },
+      anionGap: { name: "Anion Gap", param: "anionGap" },
+      ag: { name: "Anion Gap", param: "anionGap" },
+      glucose: { name: "Glucose", param: "glucose" },
+      hb: { name: "Hb", param: "hb" },
+      aa: { name: "A-a gradient", param: "aa" },
+      aaGradient: { name: "A-a gradient", param: "aa" },
     };
+
     const values: { name: string; param: string; value: number | string | null }[] = [];
-    for (const [key, name] of Object.entries(VBG_PARAM_MAP)) {
+    const addedParams = new Set<string>();
+
+    for (const [key, meta] of Object.entries(VBG_PARAM_MAP)) {
+      if (addedParams.has(meta.param)) continue;
       const v = raw.vbg[key];
       if (v !== null && v !== undefined && v !== "" && String(v).toLowerCase() !== "unknown") {
-        if (key === "anionGap") {
-          values.push({ name, param: key, value: String(v) });
+        addedParams.add(meta.param);
+        if (meta.param === "po2" && /\bpo2\s*(?:is|of|[:=-])?\s*\d+(?:\.\d+)?\s*(?:%|percent\b)/i.test(rawInputText)) {
+          // Unit safety (Section 13): Preserve unit inconsistency instead of silently converting % to mmHg
+          values.push({ name: meta.name, param: meta.param, value: `${v}% (unit conflict: stated in %)` });
+        } else if (meta.param === "be" || (typeof v === "string" && /minus/i.test(v))) {
+          const num = parseFloat(String(v).replace(/minus\s*/i, "-").replace(/\s+/g, ""));
+          values.push({ name: meta.name, param: meta.param, value: Number.isFinite(num) ? num : String(v) });
         } else {
           const num = parseFloat(String(v));
           if (!isNaN(num)) {
-            values.push({ name, param: key, value: num });
+            values.push({ name: meta.name, param: meta.param, value: num });
           } else {
-            values.push({ name, param: key, value: String(v) });
+            values.push({ name: meta.name, param: meta.param, value: String(v) });
           }
         }
       }
     }
+
     if (values.length > 0) {
       fields.vbgAbg = {
-        type: raw.vbg.type === "ABG" || raw.vbg.type === "VBG" ? raw.vbg.type : null,
+        type: resolvedType,
         values,
       };
+
+      if (!fields.adjuncts) fields.adjuncts = {};
+      const existingAbg = existingCaseSheet?.primaryAssessment?.survey?.adjuncts?.abg || existingCaseSheet?.adjuncts?.abg || {};
+      fields.adjuncts.abg = {
+        ...existingAbg,
+        ...(resolvedType ? { sampleType: resolvedType === "VBG" ? "Venous (VBG)" : "Arterial (ABG)" } : {}),
+      };
+
+      for (const item of values) {
+        const p = item.param;
+        const valStr = String(item.value);
+        if (p === "anionGap") {
+          fields.adjuncts.abg.ag = valStr;
+        } else {
+          fields.adjuncts.abg[p] = valStr;
+        }
+      }
+
+      // Automatic interpretation trigger:
+      // When the merged ABG has pH + pCO2 + HCO3, automatically interpret!
+      const currentMergedAbg = fields.adjuncts?.abg;
+      if (currentMergedAbg?.ph && currentMergedAbg?.pco2 && currentMergedAbg?.hco3) {
+        const autoAnalysis = deterministicAbgAnalysis(currentMergedAbg);
+        if (autoAnalysis) {
+          fields.abgDiagnosis = autoAnalysis.diagnosis;
+          fields.abgInterpretation = autoAnalysis.fullText;
+          fields.adjuncts.abg.finalDiagnosis = autoAnalysis.diagnosis;
+          fields.adjuncts.abg.clinicalInterpretation = autoAnalysis.fullText;
+          fields.adjuncts.abg.interpretation = autoAnalysis.isAbnormal ? "Abnormal" : "Normal";
+        }
+      }
     }
   }
 

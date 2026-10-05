@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { ConfirmModal } from "./shared/ConfirmModal";
 import { ArrowLeft, Sparkles, CheckCircle, Save, RefreshCw, AlertCircle, Printer, ShieldAlert, FileText, Check, AlertTriangle, ListFilter, Copy, Download, ChevronDown, FileCheck, MessageSquare, Trash2 } from "lucide-react";
 import { ClinicalCase, DischargeInfo, DischargeSummaryStatus, UserProfile } from "../types";
@@ -9,6 +9,7 @@ import { captureFeedbackCorrection } from "../services/learningClient";
 import { formatDischargeSummaryText, formatDischargeSummaryHtml, DischargeSummaryData, STATUTORY_FOOTER } from "../utils/dischargeSummaryFormat";
 import {
   deriveInitialCourseInHospital,
+  mergeAutoCoursePreservingManualEdits,
   formatInvestigationsText,
   formatDischargeMedicationsText,
   mergeCourseInHospital,
@@ -48,7 +49,7 @@ export default function DischargeSummaryView({
     currentCase.dischargeInfo?.uhid || currentCase.patient.uhid || ""
   );
   const [broughtBy, setBroughtBy] = useState(
-    currentCase.dischargeInfo?.broughtBy || "Self / Relatives"
+    currentCase.dischargeInfo?.broughtBy || currentCase.pediatricDetails?.broughtBy || (currentCase.patient as any)?.broughtBy || ""
   );
   const [dischargeDateTime, setDischargeDateTime] = useState(
     currentCase.dischargeInfo?.dischargeDateTime || new Date().toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })
@@ -63,21 +64,21 @@ export default function DischargeSummaryView({
     currentCase.dischargeInfo?.isMlc || (currentCase.patient.isMlc ? "Yes" : "No")
   );
   const [mlcNo, setMlcNo] = useState(
-    currentCase.dischargeInfo?.mlcNo || currentCase.patient.mlcDetails?.ddEntryNo || "N/A"
+    currentCase.dischargeInfo?.mlcNo || currentCase.patient.mlcDetails?.ddEntryNo || ""
   );
   const [allergies, setAllergies] = useState(
-    currentCase.dischargeInfo?.allergies || currentCase.sampleHistory?.allergies || "No Known Drug Allergies (NKDA)"
+    currentCase.dischargeInfo?.allergies || currentCase.sampleHistory?.allergies || ""
   );
 
   // --- Arrival Vitals ---
-  const [arrivalHr, setArrivalHr] = useState(currentCase.dischargeInfo?.arrivalHr || currentCase.vitals.hr || "N/A");
-  const [arrivalBp, setArrivalBp] = useState(currentCase.dischargeInfo?.arrivalBp || currentCase.vitals.bp || "N/A");
-  const [arrivalRr, setArrivalRr] = useState(currentCase.dischargeInfo?.arrivalRr || currentCase.vitals.rr || "N/A");
-  const [arrivalSpo2, setArrivalSpo2] = useState(currentCase.dischargeInfo?.arrivalSpo2 || currentCase.vitals.spo2 || "N/A");
-  const [arrivalGcs, setArrivalGcs] = useState(currentCase.dischargeInfo?.arrivalGcs || currentCase.vitals.gcs || "N/A");
-  const [arrivalPainScore, setArrivalPainScore] = useState(currentCase.dischargeInfo?.arrivalPainScore || currentCase.vitals.painScore || "N/A");
-  const [arrivalGrbs, setArrivalGrbs] = useState(currentCase.dischargeInfo?.arrivalGrbs || currentCase.vitals.grbs || "N/A");
-  const [arrivalTemp, setArrivalTemp] = useState(currentCase.dischargeInfo?.arrivalTemp || currentCase.vitals.temp || "N/A");
+  const [arrivalHr, setArrivalHr] = useState(currentCase.dischargeInfo?.arrivalHr || currentCase.vitals.hr || "");
+  const [arrivalBp, setArrivalBp] = useState(currentCase.dischargeInfo?.arrivalBp || currentCase.vitals.bp || "");
+  const [arrivalRr, setArrivalRr] = useState(currentCase.dischargeInfo?.arrivalRr || currentCase.vitals.rr || "");
+  const [arrivalSpo2, setArrivalSpo2] = useState(currentCase.dischargeInfo?.arrivalSpo2 || currentCase.vitals.spo2 || "");
+  const [arrivalGcs, setArrivalGcs] = useState(currentCase.dischargeInfo?.arrivalGcs || currentCase.vitals.gcs || "");
+  const [arrivalPainScore, setArrivalPainScore] = useState(currentCase.dischargeInfo?.arrivalPainScore || currentCase.vitals.painScore || "");
+  const [arrivalGrbs, setArrivalGrbs] = useState(currentCase.dischargeInfo?.arrivalGrbs || currentCase.vitals.grbs || "");
+  const [arrivalTemp, setArrivalTemp] = useState(currentCase.dischargeInfo?.arrivalTemp || currentCase.vitals.temp || "");
 
   // --- Clinical Complaints & Illness ---
   const [presentingComplaints, setPresentingComplaints] = useState(
@@ -87,16 +88,16 @@ export default function DischargeSummaryView({
     currentCase.dischargeInfo?.historyOfPresentIllness || currentCase.sampleHistory?.events || currentCase.sampleHistory?.symptoms || ""
   );
   const [pastMedicalHistory, setPastMedicalHistory] = useState(
-    currentCase.dischargeInfo?.pastMedicalHistory || currentCase.sampleHistory?.pastHistory || "None recorded"
+    currentCase.dischargeInfo?.pastMedicalHistory || currentCase.sampleHistory?.pastHistory || ""
   );
   const [familyGynaeHistory, setFamilyGynaeHistory] = useState(
-    currentCase.dischargeInfo?.familyGynaeHistory || currentCase.sampleHistory?.familyHistory || "None recorded"
+    currentCase.dischargeInfo?.familyGynaeHistory || currentCase.sampleHistory?.familyHistory || ""
   );
   const [lmp, setLmp] = useState(
-    currentCase.dischargeInfo?.lmp || (currentCase.patient.gender === "Female" ? "Not Recorded" : "N/A")
+    currentCase.dischargeInfo?.lmp || (currentCase.sampleHistory as any)?.lmp || ""
   );
   const [generalExamination, setGeneralExamination] = useState(
-    currentCase.dischargeInfo?.generalExamination || (currentCase.vitals.hr ? "Patient conscious, oriented, vitals recorded on arrival." : "")
+    currentCase.dischargeInfo?.generalExamination || ""
   );
 
   // --- Primary Assessment (Arrival) ---
@@ -237,10 +238,10 @@ export default function DischargeSummaryView({
     currentCase.dischargeInfo?.investigationsResults || formatInvestigationsText(currentCase)
   );
   const [primaryDiagnosis, setPrimaryDiagnosis] = useState(
-    currentCase.dischargeInfo?.primaryDiagnosis || currentCase.provisionalPrimaryDiagnosis || (currentCase.differentials?.[0]?.diagnosis) || currentCase.patient.presentingComplaint || ""
+    currentCase.dischargeInfo?.primaryDiagnosis || currentCase.provisionalPrimaryDiagnosis || ""
   );
   const [secondaryDiagnosis, setSecondaryDiagnosis] = useState(
-    currentCase.dischargeInfo?.secondaryDiagnosis || currentCase.sampleHistory?.pastHistory || ""
+    currentCase.dischargeInfo?.secondaryDiagnosis || ""
   );
   const _safeStringFromMixed = (val: any) => {
     if (!val) return "";
@@ -251,7 +252,7 @@ export default function DischargeSummaryView({
   };
 
   const [dischargeMedications, setDischargeMedications] = useState(
-    _safeStringFromMixed(currentCase.dischargeInfo?.dischargeMedications) || formatDischargeMedicationsText(currentCase)
+    _safeStringFromMixed(currentCase.dischargeInfo?.dischargeMedications) || ""
   );
 
   // --- Discharge Summary Status Lifecycle State ---
@@ -261,6 +262,43 @@ export default function DischargeSummaryView({
   const [isManuallyEdited, setIsManuallyEdited] = useState<boolean>(
     currentCase.dischargeInfo?.summaryStatus === "MANUALLY_EDITED"
   );
+
+  // --- Live Course-in-Hospital Synchronization (Patch C4B) ---
+  const autoCourseSnapshot = deriveInitialCourseInHospital(currentCase);
+  const lastAutoCourseRef = useRef<string>(autoCourseSnapshot);
+  const courseTextRef = useRef<string>(courseInHospital);
+
+  useEffect(() => {
+    courseTextRef.current = courseInHospital;
+  }, [courseInHospital]);
+
+  useEffect(() => {
+    if (summaryStatus === "FINALIZED") {
+      return;
+    }
+
+    const previousAuto = lastAutoCourseRef.current;
+    const nextAuto = autoCourseSnapshot;
+
+    if (nextAuto === previousAuto) {
+      return;
+    }
+
+    try {
+      const merged = mergeAutoCoursePreservingManualEdits(
+        previousAuto,
+        courseTextRef.current,
+        nextAuto
+      );
+
+      if (merged !== courseTextRef.current) {
+        courseTextRef.current = merged;
+        setCourseInHospital(merged);
+      }
+    } finally {
+      lastAutoCourseRef.current = nextAuto;
+    }
+  }, [autoCourseSnapshot, summaryStatus]);
 
   // --- Discharge Vitals & Follow-Up ---
   const [dischargeHr, setDischargeHr] = useState(currentCase.dischargeInfo?.dischargeHr || currentCase.dispositionDetails?.dischargeVitals?.hr || "");
@@ -313,7 +351,7 @@ export default function DischargeSummaryView({
   // --- Canonical discharge summary formatter (shared with HandoverView's paste-from-EMR path) ---
   const buildDischargeSummaryData = (): DischargeSummaryData => ({
     patientName: currentCase.patient.name,
-    patientAge: currentCase.patient.age || "N/A",
+    patientAge: currentCase.patient.age || "",
     patientGender: currentCase.patient.gender,
     uhid,
     isMlc,
@@ -494,8 +532,8 @@ export default function DischargeSummaryView({
     if (currentCase.provisionalPrimaryDiagnosis && !primaryDiagnosis.trim()) {
       setPrimaryDiagnosis(currentCase.provisionalPrimaryDiagnosis);
     }
-    if (currentCase.sampleHistory?.pastHistory && !secondaryDiagnosis.trim()) {
-      setSecondaryDiagnosis(currentCase.sampleHistory.pastHistory);
+    if (currentCase.dischargeInfo?.secondaryDiagnosis && !secondaryDiagnosis.trim()) {
+      setSecondaryDiagnosis(currentCase.dischargeInfo.secondaryDiagnosis);
     }
 
     // 5. History & examination findings synchronization (fill if blank or empty)
@@ -1505,6 +1543,7 @@ export default function DischargeSummaryView({
                     rows={3}
                     value={courseInHospital}
                     onChange={(e) => {
+                      courseTextRef.current = e.target.value;
                       setCourseInHospital(e.target.value);
                       setIsManuallyEdited(true);
                       if (summaryStatus !== "FINALIZED") setSummaryStatus("MANUALLY_EDITED");
@@ -1637,27 +1676,27 @@ export default function DischargeSummaryView({
   <div className="font-bold mb-4 text-[14px]">Discharge Summary</div>
 
   <div><span className="font-bold">PATIENT NAME:</span> {currentCase.patient.name}</div>
-  <div><span className="font-bold">AGE / GENDER:</span> {currentCase.patient.age || "N/A"} Years / {currentCase.patient.gender}</div>
-  <div><span className="font-bold">UHID / CR NUMBER:</span> {uhid}</div>
+  <div><span className="font-bold">AGE / GENDER:</span> {currentCase.patient.age ? `${currentCase.patient.age} Years` : "Not documented"} / {currentCase.patient.gender || "Not documented"}</div>
+  <div><span className="font-bold">UHID / CR NUMBER:</span> {uhid || "Not documented"}</div>
 
-  <div className="mt-4"><span className="font-bold">MLC:</span> {isMlc === "Yes" ? `Yes (${mlcNo})` : "No"}</div>
+  <div className="mt-4"><span className="font-bold">MLC:</span> {isMlc === "Yes" ? `Yes (${mlcNo || "Not documented"})` : "No"}</div>
 
-  <div><span className="font-bold">Allergy :</span> {allergies}</div>
+  <div><span className="font-bold">Allergy :</span> {allergies || "Not documented"}</div>
 
   <div className="font-bold mt-4">Vitals at the time of arrival:</div>
-  <div>HR-{arrivalHr} ,BP-{arrivalBp} ,RR-{arrivalRr} ,Spo2-{arrivalSpo2} ,GCS-{arrivalGcs} ,Pain Score-{arrivalPainScore} ,GRBS-{arrivalGrbs} ,Temp-{arrivalTemp}</div>
+  <div>HR-{arrivalHr || "Not documented"} ,BP-{arrivalBp || "Not documented"} ,RR-{arrivalRr || "Not documented"} ,Spo2-{arrivalSpo2 || "Not documented"} ,GCS-{arrivalGcs || "Not documented"} ,Pain Score-{arrivalPainScore || "Not documented"} ,GRBS-{arrivalGrbs || "Not documented"} ,Temp-{arrivalTemp || "Not documented"}</div>
 
   <div className="font-bold mt-4">Presenting Complaints:</div>
-  <div>{presentingComplaints}</div>
+  <div>{presentingComplaints || "Not documented"}</div>
 
   <div className="font-bold mt-4">History of Present Illness:</div>
-  <div>{historyOfPresentIllness}</div>
+  <div>{historyOfPresentIllness || "Not documented"}</div>
 
   <div className="font-bold mt-4">Past Medical/Surgical Histories:</div>
-  <div>{pastMedicalHistory}</div>
+  <div>{pastMedicalHistory || "Not documented"}</div>
 
-  <div className="mt-2"><span className="font-bold">Family / Gynae History :</span> {familyGynaeHistory}</div>
-  <div><span className="font-bold">LMP :</span> {lmp}</div>
+  <div className="mt-2"><span className="font-bold">Family / Gynae History :</span> {familyGynaeHistory || "Not documented"}</div>
+  <div><span className="font-bold">LMP :</span> {lmp || "Not documented"}</div>
 
   {currentCase.isPediatric && currentCase.pediatricDetails && (
     <div className="mt-2 text-slate-600">
@@ -1669,34 +1708,34 @@ export default function DischargeSummaryView({
   )}
 
   <div className="font-bold mt-4">General Examination / Systemic examination:</div>
-  <div>{generalExamination}</div>
+  <div>{generalExamination || "Not documented"}</div>
 
   <div className="font-bold mt-4">Primary Assessment:</div>
-  <div><span className="font-bold">Airway &rarr;</span> {primaryAirway} ,Intervention- {primaryAirwayIntervention}</div>
-  <div><span className="font-bold">Breathing &rarr;</span> Work of breathing- {primaryBreathingWork} ,Air entry- {primaryBreathingAirEntry} ,CCT- {primaryBreathingCct} ,Subcutaneous emphysema- {primaryBreathingSubcut} ,EFAST- {primaryBreathingEfast} ,Intervention- {primaryBreathingIntervention}.</div>
-  <div><span className="font-bold">Circulation &rarr;</span> CRT- {primaryCirculationCrt} , Distended Neck Veins- {primaryCirculationDnv} , PCT- {primaryCirculationPct} ,Long bone deformity- {primaryCirculationDeformity} ,FAST- {primaryCirculationFast} ,Interventions- {primaryCirculationInterventions}.</div>
-  <div><span className="font-bold">Disability &rarr;</span> AVPU/GCS- {primaryDisabilityAvpuGcs} ,Pupils- {primaryDisabilityPupils} ,GRBS- {primaryDisabilityGrbs}</div>
-  <div><span className="font-bold">Exposure &rarr;</span> Temp- {primaryExposureTemp} | Trauma-Logroll- {primaryExposureTrauma}</div>
+  <div><span className="font-bold">Airway &rarr;</span> {primaryAirway || "Not documented"} ,Intervention- {primaryAirwayIntervention || "Not documented"}</div>
+  <div><span className="font-bold">Breathing &rarr;</span> Work of breathing- {primaryBreathingWork || "Not documented"} ,Air entry- {primaryBreathingAirEntry || "Not documented"} ,CCT- {primaryBreathingCct || "Not documented"} ,Subcutaneous emphysema- {primaryBreathingSubcut || "Not documented"} ,EFAST- {primaryBreathingEfast || "Not documented"} ,Intervention- {primaryBreathingIntervention || "Not documented"}.</div>
+  <div><span className="font-bold">Circulation &rarr;</span> CRT- {primaryCirculationCrt || "Not documented"} , Distended Neck Veins- {primaryCirculationDnv || "Not documented"} , PCT- {primaryCirculationPct || "Not documented"} ,Long bone deformity- {primaryCirculationDeformity || "Not documented"} ,FAST- {primaryCirculationFast || "Not documented"} ,Interventions- {primaryCirculationInterventions || "Not documented"}.</div>
+  <div><span className="font-bold">Disability &rarr;</span> AVPU/GCS- {primaryDisabilityAvpuGcs || "Not documented"} ,Pupils- {primaryDisabilityPupils || "Not documented"} ,GRBS- {primaryDisabilityGrbs || "Not documented"}</div>
+  <div><span className="font-bold">Exposure &rarr;</span> Temp- {primaryExposureTemp || "Not documented"} | Trauma-Logroll- {primaryExposureTrauma || "Not documented"}</div>
 
   <div className="font-bold mt-4">Secondary Assesment:</div>
-  <div>Pallor Icterus Cyanosis Clubbing Lymphadenopathy Edema- {secondaryPicle}</div>
-  <div><span className="font-bold">CHEST-</span> {secondaryChest}</div>
-  <div><span className="font-bold">CVS-</span> {secondaryCvs}</div>
-  <div><span className="font-bold">P/A-</span> {secondaryPa}</div>
-  <div><span className="font-bold">CNS-</span> {secondaryCns}</div>
-  <div><span className="font-bold">EXTREMITIES-</span> {secondaryExtremities}</div>
+  <div>Pallor Icterus Cyanosis Clubbing Lymphadenopathy Edema- {secondaryPicle || "Not documented"}</div>
+  <div><span className="font-bold">CHEST-</span> {secondaryChest || "Not documented"}</div>
+  <div><span className="font-bold">CVS-</span> {secondaryCvs || "Not documented"}</div>
+  <div><span className="font-bold">P/A-</span> {secondaryPa || "Not documented"}</div>
+  <div><span className="font-bold">CNS-</span> {secondaryCns || "Not documented"}</div>
+  <div><span className="font-bold">EXTREMITIES-</span> {secondaryExtremities || "Not documented"}</div>
 
   <div className="font-bold mt-4">Course in Hospital with Medications and Procedure:</div>
-  <div>{courseInHospital}</div>
+  <div>{courseInHospital || "Not documented"}</div>
 
   <div className="font-bold mt-4">Investigations:</div>
-  <div>{investigationsResults}</div>
+  <div>{investigationsResults || "Not documented"}</div>
 
   <div className="font-bold mt-4">Diagnosis at the time of discharge:</div>
-  <div>{primaryDiagnosis}{secondaryDiagnosis ? ` ; ${secondaryDiagnosis}` : ""}</div>
+  <div>{primaryDiagnosis || "Not documented"}{secondaryDiagnosis ? ` ; ${secondaryDiagnosis}` : ""}</div>
 
   <div className="font-bold mt-4">Discharge Medications:</div>
-  <div>{dischargeMedications}</div>
+  <div>{dischargeMedications || "Not documented"}</div>
 
   <div className="font-bold mt-4">Disposition:</div>
   {(!dispositionStatus || dispositionStatus === "Pending / Not Documented") ? (
@@ -1714,17 +1753,17 @@ export default function DischargeSummaryView({
   )}
 
   <div className="font-bold mt-4">Condition at time of discharge:(STABLE/UNSTABLE)</div>
-  <div>{dischargeCondition}</div>
+  <div>{dischargeCondition || "Not documented"}</div>
 
   <div className="font-bold mt-4">Vitals at the time of Discharge:</div>
-  <div>HR-{dischargeHr} ,BP-{dischargeBp} ,RR-{dischargeRr} ,Sp02-{dischargeSpo2} ,GCS-{dischargeGcs} ,Pain Score-{dischargePainScore} ,GRBS-{dischargeGrbs} ,Temp-{dischargeTemp}</div>
+  <div>HR-{dischargeHr || "Not documented"} ,BP-{dischargeBp || "Not documented"} ,RR-{dischargeRr || "Not documented"} ,Sp02-{dischargeSpo2 || "Not documented"} ,GCS-{dischargeGcs || "Not documented"} ,Pain Score-{dischargePainScore || "Not documented"} ,GRBS-{dischargeGrbs || "Not documented"} ,Temp-{dischargeTemp || "Not documented"}</div>
 
   <div className="font-bold mt-4">Follow-Up Advice:</div>
-  <div>{followUpPlan}</div>
+  <div>{followUpPlan || "Not documented"}</div>
 
   <div className="mt-8 flex gap-8">
-    <div><span className="font-bold">ED Resident:</span> {emResidentName}</div>
-    <div><span className="font-bold">ED Consultant:</span> {emConsultantName}</div>
+    <div><span className="font-bold">ED Resident:</span> {emResidentName || "Not documented"}</div>
+    <div><span className="font-bold">ED Consultant:</span> {emConsultantName || "Not documented"}</div>
   </div>
 
   <div className="flex gap-8 mt-2">

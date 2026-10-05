@@ -481,17 +481,28 @@ export function convertClinicalCaseToCaseSheetData(c: ClinicalCase, defaultHospi
   // ABG / VBG
   const abgObj = surveyAdj?.abg;
   const vbgPerformed = !!(abgObj && (abgObj.interpretation || abgObj.ph || abgObj.finalDiagnosis)) || adj.abgStatus === "done";
-  const abgType: "VBG" | "ABG" | null = (abgObj?.sampleType?.includes("VBG") || abgObj?.sampleType?.includes("Venous")) ? "VBG" : "ABG";
+  const abgType: "VBG" | "ABG" | null = (abgObj?.sampleType?.includes("VBG") || abgObj?.sampleType?.includes("Venous"))
+    ? "VBG"
+    : ((abgObj?.sampleType?.includes("ABG") || abgObj?.sampleType?.includes("Arterial")) ? "ABG" : null);
   const abgNotes = abgObj?.finalDiagnosis || abgObj?.interpretation || abgObj?.clinicalInterpretation || "";
   
   const vbgValues = vbgPerformed
     ? [
         { name: "pH", param: "ph" as ClinicalParam, value: parseVal(abgObj?.ph || adj.abgPh) },
         { name: "pCO2", param: "pco2" as ClinicalParam, value: parseVal(abgObj?.pco2 || adj.abgPco2) },
+        { name: "pO2", param: "po2" as ClinicalParam, value: parseVal(abgObj?.po2 || adj.abgPo2) },
         { name: "HCO3", param: "hco3" as ClinicalParam, value: parseVal(abgObj?.hco3 || adj.abgHco3) },
+        { name: "BE", param: "be" as ClinicalParam, value: parseVal(abgObj?.be || adj.abgBe) },
         { name: "Lactate", param: "lactate" as ClinicalParam, value: parseVal(abgObj?.lactate || adj.abgLactate) },
+        { name: "SaO2", param: "sao2" as ClinicalParam, value: parseVal(abgObj?.sao2 || adj.abgSao2) },
+        { name: "FiO2", param: "fio2" as ClinicalParam, value: parseVal(abgObj?.fio2 || adj.abgFio2) },
         { name: "Na", param: "na" as ClinicalParam, value: parseVal(abgObj?.na || adj.abgNa) },
         { name: "K", param: "k" as ClinicalParam, value: parseVal(abgObj?.k || adj.abgK) },
+        { name: "Cl", param: "cl" as ClinicalParam, value: parseVal(abgObj?.cl || adj.abgCl) },
+        { name: "AG", param: "anionGap" as ClinicalParam, value: parseVal(abgObj?.ag || adj.abgAnionGap) },
+        { name: "Glucose", param: "glucose" as ClinicalParam, value: parseVal(abgObj?.glucose || adj.abgGlucose) },
+        { name: "Hb", param: "hb" as ClinicalParam, value: parseVal(abgObj?.hb || adj.abgHb) },
+        { name: "A-a", param: "aa" as ClinicalParam, value: parseVal(abgObj?.aa || adj.abgAa) },
       ].filter(v => v.value !== null)
     : [];
 

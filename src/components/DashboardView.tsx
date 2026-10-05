@@ -602,7 +602,7 @@ ADMISSION DATE: ${c.patient.dateOpened}
 DISCHARGE STATUS: Clinically Discharged
 
 DATE/TIME OF DISCHARGE: ${d?.dischargeDateTime || new Date().toLocaleTimeString() + " | Today"}
-PATIENT CONDITION AT DISCHARGE: ${d?.dischargeCondition || "Hemodynamically stable, alert, conscious, ambulatory"}
+PATIENT CONDITION AT DISCHARGE: ${d?.dischargeCondition || "Not recorded"}
 
 DISCHARGE VITALS
 -------------------------
@@ -617,17 +617,15 @@ GRBS (Glucose): ${d?.dischargeGrbs || "Not recorded"} mg/dL
 
 CHIEF COMPLAINTS & INITIAL DIAGNOSIS
 ------------------------------------
-Presenting Complaint: ${d?.presentingComplaints || c.patient.presentingComplaint}
-Provisional Primary Diagnosis: ${c.provisionalPrimaryDiagnosis || "Under investigation"}
-Other Diagnoses/Differentials: ${c.differentials?.map(diff => diff.diagnosis).join(", ") || "None"}
+Presenting Complaint: ${d?.presentingComplaints || c.patient.presentingComplaint || "Not documented"}
+Provisional Primary Diagnosis: ${c.provisionalPrimaryDiagnosis || "Not documented"}
+Other Diagnoses/Differentials: ${c.differentials && c.differentials.length > 0 ? c.differentials.map(diff => diff.diagnosis).join(", ") : "Not documented"}
 
 ER COURSE & TREATMENT SUMMARY
 -----------------------------
-Patient was received in emergency department and resuscitated/evaluated.
-Diagnostic tests and lab workups performed. Treated with appropriate medications in ER:
-${c.treatments && c.treatments.length > 0 
+${d?.courseInHospital || (c.treatments && c.treatments.length > 0 
   ? c.treatments.map(t => `- ${t.drugName} ${t.dose} given via ${t.route} at ${t.timeGiven}`).join("\n")
-  : "- Symptomatic support, IV hydration."}
+  : "Not documented")}
 
 DISCHARGE MEDICATIONS & OUTPATIENT RX
 --------------------------------------

@@ -27,7 +27,7 @@ import { extractClinicalData,
   refineEventsText,
   processSampleMedicationsAndPmh
 } from "./server/extraction.ts";
-import { interpretABG } from "./server/aiDiagnosis.ts";
+import { interpretABG, deterministicAbgAnalysis } from "./server/aiDiagnosis.ts";
 import { VOICE_EXTRACTION_PROMPT, extractFromTranscript } from "./server/voiceExtraction.ts";
 
 
@@ -55,6 +55,8 @@ import OpenAI from "openai";
 import { deidentifyText } from "./server/deidentify.ts";
 import { convertAndChunkAudioToWav } from "./server/audioConvert.ts";
 import { sarvamSpeechToText, sarvamSpeechToTextTranslate, isErMateAvailable } from "./server/sarvamClient.ts";
+import { extractExplicitDischargeContext, isMedicationSupportedInContext } from "./server/dischargeSummary.ts";
+import { deriveInitialCourseInHospital } from "./src/utils/dischargeSyncEngine.ts";
 
 // Load environment variables
 dotenv.config();
@@ -703,10 +705,18 @@ app.post("/api/interpret-abg", async (req, res) => {
   const { abgValues, patientContext } = req.body;
   try {
     const interpretation = await interpretABG(abgValues, patientContext);
-    res.json({ success: true, interpretation });
-  } catch (error) {
+    const deterministic = deterministicAbgAnalysis(abgValues);
+    res.json({
+      success: true,
+      interpretation,
+      diagnosis: deterministic?.diagnosis || interpretation.split("\n\n")[0] || interpretation,
+      clinicalInterpretation: deterministic?.fullText || interpretation,
+      calculatedAnionGap: deterministic?.calculatedAnionGap ?? null,
+      isAbnormal: deterministic?.isAbnormal ?? true
+    });
+  } catch (error: any) {
     console.error("ABG interpretation error:", error);
-    res.status(500).json({ error: error.message || "Failed to interpret ABG" });
+    res.status(500).json({ error: error?.message || "Failed to interpret ABG" });
   }
 });
 
@@ -1093,8 +1103,16 @@ app.post("/api/ai-discharge", async (req, res) => {
 
   // ── STEP 1: De-identify text fields before sending to AI models (Rule 4) ──
   const safeName = deidentifyText(caseData?.patient?.name || "Patient").deidentified;
-  const safeComplaint = deidentifyText(caseData?.patient?.presentingComplaint || "acute presentation").deidentified;
-  const safeEvents = deidentifyText(caseData?.sampleHistory?.events || "").deidentified;
+  const rawComplaint =
+    typeof caseData?.patient?.presentingComplaint === "string"
+      ? caseData.patient.presentingComplaint.trim()
+      : "";
+  const safeComplaint =
+    rawComplaint
+      ? deidentifyText(rawComplaint).deidentified
+      : "";
+  const rawEventText = caseData?.sampleHistory?.events || caseData?.sampleHistory?.eventsLeadingToPresentation || caseData?.mlcDetails?.incidentDetails || caseData?.traumaDetails?.mechanism || caseData?.events || "";
+  const safeEvents = deidentifyText(rawEventText).deidentified;
   const safeProgressNotes = deidentifyText(caseData?.progressNotes || "").deidentified;
   const safePastHistory = deidentifyText(caseData?.sampleHistory?.pastHistory || "").deidentified;
 
@@ -1116,13 +1134,13 @@ app.post("/api/ai-discharge", async (req, res) => {
     CRITICAL FACTUAL MANDATE:
     - Rely ONLY on the patient data provided in this ER Case Record.
     - Do NOT invent or hallucinate diagnoses, medications, past history, or clinical findings that are NOT present in the record.
-    - If no discharge medications were administered or explicitly prescribed in the ER record, return "None prescribed in ER" or list only the ER treatments administered. Do NOT invent unrelated medications like Lisinopril or Aspirin unless they are in the case record.
+    - DISCHARGE MEDICATIONS MANDATE: Discharge medications must come ONLY from an explicit discharge prescription, take-home medication order, or discharge advice in the record. Medications administered in the ER (e.g. IV antibiotics, stat analgesics, nebulizations, IV infusions) are ER treatments and must NEVER be automatically copied into discharge medications. If no explicit outpatient discharge prescription was given, return "".
 
     ER Case Record:
     - Patient Name: ${safeName}
     - Age: ${caseData?.patient?.age || "N/A"} years (${isPediatric ? "PEDIATRIC" : "ADULT"})
     - Gender: ${caseData?.patient?.gender || "N/A"}
-    - Chief Complaint: ${safeComplaint}
+    - Chief Complaint: ${safeComplaint || "None documented"}
     - Case Type: ${caseData?.patient?.caseType || "Medical"}
     - Triage Category: ${caseData?.patient?.triageCategory || "N/A"}
     ${isPediatric ? `
@@ -1138,15 +1156,15 @@ app.post("/api/ai-discharge", async (req, res) => {
     - RR: ${caseData?.vitals?.rr || "N/A"} /min, Temp: ${caseData?.vitals?.temp || "N/A"}°C, GCS: ${caseData?.vitals?.gcs || "N/A"}
 
     Clinical SAMPLE History:
-    - Symptoms: ${caseData?.sampleHistory?.symptoms || "N/A"}
-    - Allergies: ${caseData?.sampleHistory?.allergies || "None/NKDA"}
-    - Outpatient Medications: ${caseData?.sampleHistory?.medications || "None"}
-    - Past History: ${safePastHistory || "No significant medical history"}
-    - Events Leading to Presentation: ${safeEvents || "N/A"}
+    - Symptoms: ${caseData?.sampleHistory?.symptoms || "Not documented"}
+    - Allergies: ${caseData?.sampleHistory?.allergies ? deidentifyText(caseData.sampleHistory.allergies).deidentified : "Not documented"}
+    - Outpatient Medications: ${caseData?.sampleHistory?.medications ? deidentifyText(caseData.sampleHistory.medications).deidentified : "Not documented"}
+    - Past History: ${safePastHistory || "Not documented"}
+    - Events Leading to Presentation: ${safeEvents || "Not documented"}
 
     Emergency Assessments:
-    - Primary Assessment: Airway: ${caseData?.primaryAssessment?.airway || "N/A"}, Breathing: ${caseData?.primaryAssessment?.breathing || "N/A"}, Circulation: ${caseData?.primaryAssessment?.circulation || "N/A"}
-    - Secondary Assessment / Survey: ${typeof caseData?.secondaryAssessment === 'string' ? caseData.secondaryAssessment : "N/A"}
+    - Primary Assessment: Airway: ${caseData?.primaryAssessment?.airway || "Not documented"}, Breathing: ${caseData?.primaryAssessment?.breathing || "Not documented"}, Circulation: ${caseData?.primaryAssessment?.circulation || "Not documented"}
+    - Secondary Assessment / Survey: ${typeof caseData?.secondaryAssessment === 'string' && caseData.secondaryAssessment.trim() ? deidentifyText(caseData.secondaryAssessment).deidentified : "Not documented"}
 
     ER Investigations & Diagnostics:
     ${actualInvestigations}
@@ -1155,29 +1173,38 @@ app.post("/api/ai-discharge", async (req, res) => {
     ${actualTreatments}
 
     Continuous Progress Notes:
-    ${safeProgressNotes || "N/A"}
+    ${safeProgressNotes || "Not documented"}
 
     Provisional / Primary Diagnosis recorded in Case:
-    ${caseData?.provisionalPrimaryDiagnosis || caseData?.dischargeInfo?.primaryDiagnosis || caseData?.differentials?.[0]?.diagnosis || safeComplaint}
+    ${caseData?.dischargeInfo?.primaryDiagnosis || caseData?.provisionalPrimaryDiagnosis || "Not documented"}
 
     YOUR TASK:
     Generate a professionally formatted discharge summary JSON with the following fields:
     ${isPediatric ? "CRITICAL: This is a pediatric patient. Use pediatric-appropriate terminology (PALS), ensure weight-based dosages are highlighted if mentioned in treatments, and gear patient instructions to the caregivers/parents." : ""}
-    1. primaryDiagnosis: Extract or confirm the primary diagnosis from the case record.
-    2. secondaryDiagnosis: Extract secondary comorbidities or past history if mentioned; otherwise return "None".
-    3. conditionAtDischarge: Synthesize a professional statement of current status (e.g. stabilized, symptoms resolved, patient hemodynamically stable).
-    4. dischargeMedications: Outpatient discharge medications based ONLY on treatments administered/prescribed in the ER case record.
+    1. primaryDiagnosis: Extract or confirm the primary diagnosis from the case record. If no primary or provisional diagnosis was recorded, return "".
+    2. secondaryDiagnosis: Extract secondary comorbidities or past history if explicitly documented; otherwise return "".
+    3. conditionAtDischarge: Document condition at discharge ONLY if explicitly stated in the record (e.g. "STABLE" or "UNSTABLE"). If not documented, return "".
+    4. dischargeMedications: Outpatient take-home discharge medications based ONLY on an explicit discharge prescription/advice in the case record. NEVER copy ER treatments administered (IV drugs, fluids, stat doses) into discharge medications. Return "" if no take-home medications were prescribed.
     5. followUpPlan: Follow-up recommendations tailored to the chief complaint (e.g., OPD review in 3-5 days).
     6. patientInstructions: Plain-English summary of treatment received and RED-FLAG symptoms to watch out for.
-    7. courseInHospital: Write a CONCISE STRUCTURED CLINICAL NARRATIVE in PARAGRAPHS (strict limit of 1-3 sentences max per paragraph) as a qualified doctor would write in a formal hospital discharge summary. Be EXTREMELY CONCISE. Eliminate all fluff. Summarize, do not copy verbatim. NOT a list of raw notes, NOT bullet points.
-       MANDATORY 6-PARAGRAPH ORDER:
-       - PARAGRAPH 1 (Arrival & Primary Survey): Start with "The patient was received in the Emergency Department at [TIME] on [DATE] with the above-mentioned complaints." Then describe primary survey findings and immediate interventions in formal passive voice. (Strictly 1-2 sentences max).
-       - PARAGRAPH 2 (Investigations): "Baseline investigations were sent including [tests]." Describe key results that influenced management and imaging findings if any. Do NOT list raw values. (Strictly 1-2 sentences max).
-       - PARAGRAPH 3 (Treatment): "The patient was administered [medications with dose, route, frequency]. IV access was secured." Write every medication as a sentence including IV fluids and procedures. (Strictly 1-3 sentences max).
-       - PARAGRAPH 4 (Consultations): If done, "[Specialty] consultation was sought. Case reviewed by [Dr. Name]. [Their advice / plan]."
-       - PARAGRAPH 5 (Clinical Course): "Patient's clinical condition [improved/remained stable/deteriorated] during the ER stay. [Significant events or serial responses]."
-       - PARAGRAPH 6 (Disposition): End with "After clinical assessment and interdisciplinary discussion, a decision was made to [admit the patient under Dr. [Name] ([Specialty]) / discharge the patient] for further management."
-       LANGUAGE RULES: Use PAST TENSE, PASSIVE VOICE ("was received", "was administered"), FORMAL medical English. No timestamps in narrative, no bullet points, no verbatim nursing notes. Integrate all into a coherent clinical story.
+    7. courseInHospital: Write a CONCISE, STRUCTURED, CHRONOLOGICAL CLINICAL NARRATIVE with short section headings under the main title "COURSE IN EMERGENCY DEPARTMENT".
+       Follow this strict 9-section ordered structure using short headings:
+       - Presentation: Briefly describe the presentation using ONLY documented presenting complaint and HPI. Do NOT invent symptoms or clinical details not stated. If no presenting complaint was documented, OMIT THIS SECTION ENTIRELY (do NOT substitute placeholder terms like "acute presentation", "unspecified complaint", "general complaint", "medical complaint", or "patient presented for evaluation").
+       - Events Leading to Presentation: ONLY IF EXPLICITLY DOCUMENTED. Must contain ONLY an explicit precipitating or preceding event related to the presentation (e.g. road traffic accident, fall, assault, burn, snake/animal bite, insect sting, poisoning/ingestion/overdose, exertional onset, witnessed seizure before arrival, collapse/syncope, recent surgery/procedure, environmental exposure). Preserve time, mechanism, place, circumstances, and uncertainty qualifiers (reportedly, allegedly, approximately) when documented. CRITICAL: Must NEVER be populated from ordinary symptom duration (e.g., "Fever for 2 days", "Cough for 3 days", "Abdominal pain since morning" are symptoms, NOT events). Do NOT create this section for explicit negative history ("No history of trauma"). If no explicit precipitating event occurred or none was documented, OMIT THIS SECTION ENTIRELY.
+       - Initial Assessment: ONLY IF DOCUMENTED. Summarize documented ABCDE, PAT/TICLS (for pediatric cases), vitals (HR, BP, RR, SpO2, Temp), GCS, and focused examination findings. If explicitly documented as normal ("ABCDE normal" / "Systemic examination normal"), include approved normal findings. Do NOT assume normal if clinician simply wrote "Patient stable". If no primary survey / assessment findings were documented, OMIT THIS SECTION ENTIRELY.
+       - Investigations: ONLY IF DOCUMENTED. Include only investigations actually ordered, performed, or resulted. Separate orders from results. Do NOT say "Baseline investigations were not ordered" or "No investigations sent". If no investigations were documented, OMIT THIS SECTION ENTIRELY.
+       - Treatment Given: ONLY IF ADMINISTERED. Include only medications, IV fluids, and acute interventions actually administered/given in ER with dose and route. Do NOT convert planned orders into administered treatments ("Plan ceftriaxone" is NOT "administered"). If no treatments were administered or documented, OMIT THIS SECTION ENTIRELY.
+       - Procedures: ONLY IF PERFORMED. Include only explicitly performed procedures (e.g., IV cannulation, catheterization, intubation, suturing, splinting, etc.). If none performed, OMIT THIS SECTION ENTIRELY.
+       - Consultations: ONLY IF DONE. Include specialty consultations actually requested or conducted and their recommendations. Do NOT say "No specialist consultation was documented". If none done, OMIT THIS SECTION ENTIRELY.
+       - Clinical Course: ONLY IF DOCUMENTED. Summarize documented reassessments, serial vitals, response to treatment, or condition changes during ER stay. Do NOT manufacture statements like "Patient remained stable" or "Condition improved" unless explicitly documented. If no progress or reassessment data exist, OMIT THIS SECTION ENTIRELY.
+       - Disposition: ONLY IF DOCUMENTED. Documented final ER disposition (e.g. discharged with follow-up advice, admitted to ward/ICU under specialty, transferred, LAMA). Do NOT invent return precautions, hydration counseling, or red-flag warnings in the factual Course (those belong in patientAdvice/patientInstructions). If no disposition documented, OMIT THIS SECTION ENTIRELY.
+       LOCKED MANDATES FOR COURSE IN HOSPITAL:
+       - Do not generate paragraphs describing the absence of documentation.
+       - Omit sections that have no supported source facts.
+       - Do not infer that an investigation, medication, consultation, reassessment or procedure did not occur merely because it is absent from the available record.
+       - Events Leading to Presentation must only contain an explicit precipitating event and must never be populated from ordinary symptom duration.
+       - Use formal medical English, past tense, passive voice where appropriate.
+       - Keep Course in Hospital purely FACTUAL. Patient advice and warning instructions belong in patientAdvice / patientInstructions, NOT inside Course in Hospital.
     8. dischargeNarrative: A simplified plain language summary.
     9. patientInstructions: General Instructions & Warning advice on when to return to the ER. If the hospital state is provided (${profileState || "Unknown"}), include relevant local state health helpline numbers (e.g., 1056 for Kerala, 104 for general health helpline) and language localization for instructions. Make sure instructions reflect standard medical guidelines. Include the hospital name (${hospitalName || "Emergency Department"}) in the instructions where relevant.
     10. patientAdvice: Warning advice on when to return to the ER.
@@ -1190,6 +1217,77 @@ app.post("/api/ai-discharge", async (req, res) => {
     courseInHospital: "", dischargeNarrative: "", patientAdvice: ""
   };
   const finalSysInstruction = sysInstruction + " Respond with ONLY valid JSON matching this exact shape: " + JSON.stringify(dischargeSchema);
+
+  // Helper to format and sanitize Course in Hospital (Patch C4A / C4A.1)
+  const sanitizeCourseNarrative = (courseVal: any) => {
+    if (!courseVal) return "";
+    let formatted = "";
+    if (typeof courseVal === "object") {
+      const parts = ["COURSE IN EMERGENCY DEPARTMENT"];
+      if (courseVal.presentation && safeComplaint) parts.push(`Presentation:\n${courseVal.presentation}`);
+      if (courseVal.eventsLeadingToPresentation || courseVal.events) parts.push(`Events Leading to Presentation:\n${courseVal.eventsLeadingToPresentation || courseVal.events}`);
+      if (courseVal.initialAssessment || courseVal.arrivalAndPrimarySurvey) parts.push(`Initial Assessment:\n${courseVal.initialAssessment || courseVal.arrivalAndPrimarySurvey}`);
+      if (courseVal.investigations) parts.push(`Investigations:\n${courseVal.investigations}`);
+      if (courseVal.treatmentGiven || courseVal.treatment) parts.push(`Treatment Given:\n${courseVal.treatmentGiven || courseVal.treatment}`);
+      if (courseVal.procedures) parts.push(`Procedures:\n${courseVal.procedures}`);
+      if (courseVal.consultations) parts.push(`Consultations:\n${courseVal.consultations}`);
+      if (courseVal.clinicalCourse) parts.push(`Clinical Course:\n${courseVal.clinicalCourse}`);
+      if (courseVal.disposition) parts.push(`Disposition:\n${courseVal.disposition}`);
+      formatted = parts.length > 1 ? parts.join("\n\n") : Object.values(courseVal).join("\n\n");
+    } else {
+      formatted = String(courseVal);
+    }
+
+    if (!safeComplaint) {
+      // Remove any manufactured Presentation section when no complaint was documented
+      formatted = formatted
+        .replace(/(?:^|\n\n)Presentation:\s*\n?[^\n]+(?:\n(?!\n|[A-Z][a-z\s]+:)[^\n]+)*/gi, "")
+        .replace(/\b(?:with\s+an?\s+)?acute\s+presentation\b\.?/gi, "")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim();
+    }
+    return formatted;
+  };
+
+  // Helper to enforce Patch C3A: Positive provenance for each discharge medication
+  const sanitizeDischargeMeds = (d: any) => {
+    if (!d) return "";
+    const disp = String(d?.disposition || caseData?.dischargeInfo?.dispositionStatus || caseData?.dispositionDetails?.dispositionType || "");
+    if (/\b(?:admitted|ward|icu|deceased|death|referred)\b/i.test(disp)) {
+      return "";
+    }
+
+    // 1. Structured clinician-entered discharge medications are authoritative (Section 3)
+    const clinicianDischargeMeds = String(caseData?.dischargeInfo?.dischargeMedications || "").trim();
+    if (clinicianDischargeMeds) {
+      return clinicianDischargeMeds;
+    }
+
+    // 2. Unstructured narrative source validation (Section 4)
+    const narrativeSource = [
+      caseData?.progressNotes,
+      caseData?.treatmentNotes,
+      caseData?.plan,
+      caseData?.secondaryAssessment,
+      caseData?.sampleHistory?.eventsLeadingToPresentation,
+      caseData?.sampleHistory?.symptoms
+    ].filter(Boolean).join("\n");
+
+    const explicitContext = extractExplicitDischargeContext(narrativeSource);
+    if (!explicitContext) {
+      return "";
+    }
+
+    const secondaryBlacklist = /\b(?:noradrenaline|norepinephrine|dopamine|dobutamine|vasopressin|infusion|iv\s+stat|iv\s+bolus|500\s*ml|1000\s*ml)\b/i;
+
+    const str = Array.isArray(d.dischargeMedications) ? d.dischargeMedications.join("\n") : String(d.dischargeMedications || "");
+    return str.split("\n").filter((l: string) => {
+      const trimmed = l.trim();
+      if (!trimmed) return false;
+      if (secondaryBlacklist.test(trimmed)) return false;
+      return isMedicationSupportedInContext(trimmed, explicitContext);
+    }).join("\n").trim();
+  };
 
   // ── STEP 2: Claude 3.5 Sonnet PRIMARY ──
   const anthropic = getAnthropicClient();
@@ -1205,6 +1303,10 @@ app.post("/api/ai-discharge", async (req, res) => {
       const rawText = (msg.content[0] as any)?.text || "{}";
       const cleaned = rawText.replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/```$/s, "").trim();
       const data = JSON.parse(cleaned);
+      if (data && typeof data === "object") {
+        data.courseInHospital = sanitizeCourseNarrative(data.courseInHospital);
+        data.dischargeMedications = sanitizeDischargeMeds(data);
+      }
       console.log("[ai-discharge] Claude 3.5 Sonnet succeeded");
       return res.json({ success: true, data, engine: "claude-3-5-sonnet" });
     } catch (claudeErr: any) {
@@ -1226,6 +1328,10 @@ app.post("/api/ai-discharge", async (req, res) => {
         ]
       });
       const data = JSON.parse(response.choices[0]?.message?.content || "{}");
+      if (data && typeof data === "object") {
+        data.courseInHospital = sanitizeCourseNarrative(data.courseInHospital);
+        data.dischargeMedications = sanitizeDischargeMeds(data);
+      }
       console.log("[ai-discharge] GPT-4o fallback succeeded");
       return res.json({ success: true, data, engine: "gpt-4o" });
     } catch (gptErr: any) {
@@ -1235,14 +1341,18 @@ app.post("/api/ai-discharge", async (req, res) => {
 
   // ── STEP 4: Factual Deterministic Backup (No Gemini. Null over hallucination.) ──
   const backupData = {
-    primaryDiagnosis: caseData?.dischargeInfo?.primaryDiagnosis || caseData?.provisionalPrimaryDiagnosis || caseData?.differentials?.[0]?.diagnosis || safeComplaint,
-    secondaryDiagnosis: caseData?.dischargeInfo?.secondaryDiagnosis || safePastHistory || "",
+    primaryDiagnosis: caseData?.dischargeInfo?.primaryDiagnosis || caseData?.provisionalPrimaryDiagnosis || "",
+    secondaryDiagnosis: caseData?.dischargeInfo?.secondaryDiagnosis || "",
     conditionAtDischarge: caseData?.dischargeInfo?.conditionAtDischarge || "",
-    dischargeMedications: caseData?.dischargeInfo?.dischargeMedications || actualTreatments,
+    dischargeMedications: caseData?.dischargeInfo?.dischargeMedications || "",
     followUpPlan: caseData?.dischargeInfo?.followUpPlan || "",
-    patientInstructions: `Dear ${safeName}, you were evaluated in our Emergency Department for ${safeComplaint}. Please rest, stay hydrated, and follow up as advised.`,
-    courseInHospital: caseData?.dischargeInfo?.courseInHospital || caseData?.progressNotes || "",
-    dischargeNarrative: `Dear ${safeName}, you were evaluated in the emergency department for ${safeComplaint}.`,
+    patientInstructions: safeComplaint
+      ? `Dear ${safeName}, you were evaluated in our Emergency Department for ${safeComplaint}. Please rest, stay hydrated, and follow up as advised.`
+      : `Dear ${safeName}, you were evaluated in our Emergency Department. Please rest, stay hydrated, and follow up as advised.`,
+    courseInHospital: caseData?.dischargeInfo?.courseInHospital || deriveInitialCourseInHospital(caseData) || "",
+    dischargeNarrative: safeComplaint
+      ? `Dear ${safeName}, you were evaluated in the emergency department for ${safeComplaint}.`
+      : `Dear ${safeName}, you were evaluated in the emergency department.`,
     patientAdvice: "RETURN TO THE ER IMMEDIATELY if you experience worsening symptoms, breathing difficulty, chest pain, high fever, or severe dizziness."
   };
   return res.json({ success: true, data: backupData, simulated: true });

@@ -145,11 +145,15 @@ export interface CleanedExtractionFields {
     hco3?: string | null;
     be?: string | null;
     lactate?: string | null;
+    sao2?: string | null;
+    fio2?: string | null;
     na?: string | null;
     k?: string | null;
     cl?: string | null;
-    hb?: string | null;
     anionGap?: string | null;
+    glucose?: string | null;
+    hb?: string | null;
+    aa?: string | null;
     type?: string | null;
   };
 }
@@ -531,10 +535,21 @@ export function cleanExtractionOutput(raw: RawExtractionFields): CleanedExtracti
 
   if (raw.vbg && typeof raw.vbg === 'object') {
     const v: any = {};
-    const validKeys = ['ph', 'pco2', 'po2', 'hco3', 'be', 'lactate', 'na', 'k', 'cl', 'hb', 'anionGap', 'type'];
+    const validKeys = [
+      'ph', 'pco2', 'po2', 'hco3', 'be', 'lactate',
+      'sao2', 'fio2', 'na', 'k', 'cl', 'hb', 'anionGap', 'ag',
+      'glucose', 'aa', 'aaGradient', 'type'
+    ];
     for (const k of validKeys) {
-      if (raw.vbg[k] !== undefined && raw.vbg[k] !== null) {
-        v[k] = raw.vbg[k];
+      if (raw.vbg[k] !== undefined && raw.vbg[k] !== null && String(raw.vbg[k]).trim() !== "") {
+        // Alias mapping
+        if (k === 'ag' && v.anionGap === undefined) {
+          v.anionGap = raw.vbg[k];
+        } else if (k === 'aaGradient' && v.aa === undefined) {
+          v.aa = raw.vbg[k];
+        } else if (k !== 'ag' && k !== 'aaGradient') {
+          v[k] = raw.vbg[k];
+        }
       }
     }
     if (Object.keys(v).length > 0) result.vbg = v;

@@ -420,49 +420,311 @@ Analyze this case thoroughly. Provide differential diagnoses with evidence-based
 }
 
 // ══════════════════════════════════════════════════════════════════
-// 2. interpretABG — Claude 3.5 Sonnet ONLY
+// 2. interpretABG — Deterministic Emergency Medicine Acid-Base Engine
+//    with Claude 3.5 Sonnet Synthesis
 // ══════════════════════════════════════════════════════════════════
 
+export interface AbgAnalysisResult {
+  diagnosis: string;
+  summary: string;
+  fullText: string;
+  calculatedAnionGap: number | null;
+  associatedFindings: string[];
+  vbgWarning: string | null;
+  unitWarnings: string[];
+  isAbnormal: boolean;
+}
+
+export function deterministicAbgAnalysis(abgInput: string | Record<string, any>): AbgAnalysisResult | null {
+  let sampleType = "";
+  let ph: number | null = null;
+  let pco2: number | null = null;
+  let po2: number | null = null;
+  let hco3: number | null = null;
+  let be: number | null = null;
+  let lactate: number | null = null;
+  let sao2: number | null = null;
+  let fio2: number | null = null;
+  let na: number | null = null;
+  let k: number | null = null;
+  let cl: number | null = null;
+  let ag: number | null = null;
+  let glucose: number | null = null;
+  let hb: number | null = null;
+  let aa: number | null = null;
+  const unitWarnings: string[] = [];
+
+  if (typeof abgInput === "object" && abgInput !== null) {
+    const rawObj = abgInput;
+    sampleType = String(rawObj.sampleType || rawObj.type || "");
+    const parseNum = (v: any): number | null => {
+      if (v === null || v === undefined || v === "") return null;
+      const s = String(v).replace(/minus\s*/i, "-").replace(/\s+/g, "");
+      const n = parseFloat(s);
+      return Number.isFinite(n) ? n : null;
+    };
+    ph = parseNum(rawObj.ph);
+    pco2 = parseNum(rawObj.pco2);
+    po2 = parseNum(rawObj.po2);
+    hco3 = parseNum(rawObj.hco3);
+    be = parseNum(rawObj.be);
+    lactate = parseNum(rawObj.lactate);
+    sao2 = parseNum(rawObj.sao2);
+    fio2 = parseNum(rawObj.fio2);
+    na = parseNum(rawObj.na);
+    k = parseNum(rawObj.k);
+    cl = parseNum(rawObj.cl);
+    ag = parseNum(rawObj.ag || rawObj.anionGap);
+    glucose = parseNum(rawObj.glucose);
+    hb = parseNum(rawObj.hb);
+    aa = parseNum(rawObj.aa || rawObj.aaGradient);
+
+    if (rawObj.po2 && /%|percent/i.test(String(rawObj.po2))) {
+      unitWarnings.push("Note: pO2 was documented with % units rather than mmHg; confirm oxygenation via SpO2 or arterial blood gas.");
+    }
+  } else if (typeof abgInput === "string") {
+    const text = abgInput;
+    if (/\b(?:vbg|venous)\b/i.test(text)) sampleType = "VBG";
+    else if (/\b(?:abg|arterial)\b/i.test(text)) sampleType = "ABG";
+
+    const matchVal = (regex: RegExp): number | null => {
+      const m = text.match(regex);
+      if (m && m[1]) {
+        const s = m[1].replace(/minus\s*/i, "-").replace(/\s+/g, "");
+        const n = parseFloat(s);
+        return Number.isFinite(n) ? n : null;
+      }
+      return null;
+    };
+
+    ph = matchVal(/\bph\s*(?:is|of|[:=-])?\s*(\d+(?:\.\d+)?)/i);
+    pco2 = matchVal(/\bpco2\s*(?:is|of|[:=-])?\s*(\d+(?:\.\d+)?)/i);
+    po2 = matchVal(/\bpo2\s*(?:is|of|[:=-])?\s*(\d+(?:\.\d+)?)/i);
+    hco3 = matchVal(/\bhco3\s*(?:is|of|[:=-])?\s*(\d+(?:\.\d+)?)/i);
+    
+    // Base Excess (may be negative/minus)
+    const beMatch = text.match(/\bbe\s*(?:is|of|[:=-])?\s*(minus\s*\d+(?:\.\d+)?|-\s*\d+(?:\.\d+)?|\+?\s*\d+(?:\.\d+)?)/i);
+    if (beMatch && beMatch[1]) {
+      const beStr = beMatch[1].replace(/minus\s*/i, "-").replace(/\s+/g, "");
+      const n = parseFloat(beStr);
+      if (Number.isFinite(n)) be = n;
+    }
+
+    lactate = matchVal(/\blactate\s*(?:is|of|[:=-])?\s*(\d+(?:\.\d+)?)/i);
+    sao2 = matchVal(/\bsao2\s*(?:is|of|[:=-])?\s*(\d+(?:\.\d+)?)/i);
+    fio2 = matchVal(/\bfio2\s*(?:is|of|[:=-])?\s*(\d+(?:\.\d+)?)/i);
+    na = matchVal(/\b(?:na|sodium)\s*(?:is|of|[:=-])?\s*(\d+(?:\.\d+)?)/i);
+    k = matchVal(/\b(?:k|potassium)\s*(?:is|of|[:=-])?\s*(\d+(?:\.\d+)?)/i);
+    cl = matchVal(/\b(?:cl|chloride)\s*(?:is|of|[:=-])?\s*(\d+(?:\.\d+)?)/i);
+    ag = matchVal(/\b(?:anion\s*gap|ag)\s*(?:is|of|[:=-])?\s*(\d+(?:\.\d+)?)/i);
+    glucose = matchVal(/\bglucose\s*(?:is|of|[:=-])?\s*(\d+(?:\.\d+)?)/i);
+    hb = matchVal(/\b(?:hb|hemoglobin)\s*(?:is|of|[:=-])?\s*(\d+(?:\.\d+)?)/i);
+    aa = matchVal(/\b(?:a-a|aa|a-a\s*gradient)\s*(?:is|of|[:=-])?\s*(\d+(?:\.\d+)?)/i);
+
+    if (/\bpo2\s*(?:is|of|[:=-])?\s*\d+(?:\.\d+)?\s*(?:%|percent\b)/i.test(text)) {
+      unitWarnings.push("Note: pO2 was documented with % units rather than mmHg; confirm oxygenation via SpO2 or arterial blood gas.");
+    }
+  }
+
+  // Minimum required trio: pH + pCO2 + HCO3
+  if (ph === null || pco2 === null || hco3 === null) {
+    return null;
+  }
+
+  // Acid-Base assessment
+  let diagnosis = "";
+  let acidBaseExplanation = "";
+
+  const isAcidemia = ph < 7.35;
+  const isAlkalemia = ph > 7.45;
+
+  if (isAcidemia) {
+    const hasRespAcidosis = pco2 > 45;
+    const hasMetAcidosis = hco3 < 22;
+
+    if (hasRespAcidosis && hasMetAcidosis) {
+      diagnosis = "Mixed respiratory and metabolic acidosis";
+      acidBaseExplanation = "Acidemia with elevated pCO2 and inappropriately low HCO3, consistent with a mixed respiratory and metabolic acidosis.";
+    } else if (hasRespAcidosis && !hasMetAcidosis) {
+      const expAcute = 24 + (pco2 - 40) / 10;
+      const expChronic = 24 + ((pco2 - 40) / 10) * 3.5;
+      if (hco3 < expAcute - 1) {
+        diagnosis = "Respiratory acidosis with concomitant metabolic acidosis";
+        acidBaseExplanation = `Acidemia with elevated pCO2 (${pco2} mmHg) and subnormal metabolic compensation (HCO3 ${hco3} mmol/L, expected acute ≥${expAcute.toFixed(1)} mmol/L).`;
+      } else if (hco3 > expChronic + 2) {
+        diagnosis = "Respiratory acidosis with concomitant metabolic alkalosis";
+        acidBaseExplanation = `Acidemia with elevated pCO2 (${pco2} mmHg) and excessive HCO3 (${hco3} mmol/L), indicating concurrent metabolic alkalosis.`;
+      } else {
+        diagnosis = "Respiratory acidosis";
+        acidBaseExplanation = `Acidemia with elevated pCO2 (${pco2} mmHg) and appropriate metabolic compensation (HCO3 ${hco3} mmol/L).`;
+      }
+    } else if (hasMetAcidosis && !hasRespAcidosis) {
+      // Winters' formula: Expected pCO2 = 1.5 * HCO3 + 8 (+/- 2)
+      const expPco2 = 1.5 * hco3 + 8;
+      const minPco2 = expPco2 - 2;
+      const maxPco2 = expPco2 + 2;
+      if (pco2 > maxPco2) {
+        diagnosis = "Metabolic acidosis with concomitant respiratory acidosis";
+        acidBaseExplanation = `Acidemia with low HCO3 (${hco3} mmol/L) and elevated pCO2 (${pco2} mmHg, above Winters' expected range ${minPco2.toFixed(0)}–${maxPco2.toFixed(0)} mmHg).`;
+      } else if (pco2 < minPco2) {
+        diagnosis = "Metabolic acidosis with concomitant respiratory alkalosis";
+        acidBaseExplanation = `Acidemia with low HCO3 (${hco3} mmol/L) and concomitant respiratory alkalosis (pCO2 ${pco2} mmHg, below Winters' expected ${minPco2.toFixed(0)}–${maxPco2.toFixed(0)} mmHg).`;
+      } else {
+        diagnosis = "Metabolic acidosis";
+        acidBaseExplanation = `Acidemia with low HCO3 (${hco3} mmol/L) and appropriate respiratory compensation (pCO2 ${pco2} mmHg within Winters' expected ${minPco2.toFixed(0)}–${maxPco2.toFixed(0)} mmHg).`;
+      }
+    } else {
+      diagnosis = "Acidemia";
+      acidBaseExplanation = `Acidemia with pCO2 ${pco2} mmHg and HCO3 ${hco3} mmol/L.`;
+    }
+  } else if (isAlkalemia) {
+    const hasRespAlkalosis = pco2 < 35;
+    const hasMetAlkalosis = hco3 > 26;
+
+    if (hasRespAlkalosis && hasMetAlkalosis) {
+      diagnosis = "Mixed respiratory and metabolic alkalosis";
+      acidBaseExplanation = "Alkalemia with reduced pCO2 and elevated HCO3, consistent with a mixed respiratory and metabolic alkalosis.";
+    } else if (hasRespAlkalosis && !hasMetAlkalosis) {
+      const expAcute = 24 - ((40 - pco2) / 10) * 2;
+      if (hco3 < expAcute - 2) {
+        diagnosis = "Respiratory alkalosis with concomitant metabolic acidosis";
+        acidBaseExplanation = `Alkalemia with low pCO2 (${pco2} mmHg) and concurrent metabolic acidosis (HCO3 ${hco3} mmol/L).`;
+      } else {
+        diagnosis = "Respiratory alkalosis";
+        acidBaseExplanation = `Alkalemia with low pCO2 (${pco2} mmHg) and appropriate metabolic response (HCO3 ${hco3} mmol/L).`;
+      }
+    } else if (hasMetAlkalosis && !hasRespAlkalosis) {
+      const expPco2 = 40 + 0.7 * (hco3 - 24);
+      if (pco2 > expPco2 + 3) {
+        diagnosis = "Metabolic alkalosis with concomitant respiratory acidosis";
+        acidBaseExplanation = `Alkalemia with elevated HCO3 (${hco3} mmol/L) and coexisting respiratory acidosis (pCO2 ${pco2} mmHg).`;
+      } else if (pco2 < expPco2 - 3) {
+        diagnosis = "Metabolic alkalosis with concomitant respiratory alkalosis";
+        acidBaseExplanation = `Alkalemia with elevated HCO3 (${hco3} mmol/L) and concomitant respiratory alkalosis (pCO2 ${pco2} mmHg).`;
+      } else {
+        diagnosis = "Metabolic alkalosis";
+        acidBaseExplanation = `Alkalemia with elevated HCO3 (${hco3} mmol/L) and appropriate respiratory compensation (pCO2 ${pco2} mmHg).`;
+      }
+    } else {
+      diagnosis = "Alkalemia";
+      acidBaseExplanation = `Alkalemia with pCO2 ${pco2} mmHg and HCO3 ${hco3} mmol/L.`;
+    }
+  } else {
+    // Normal pH (7.35–7.45)
+    if (pco2 > 45 && hco3 > 26) {
+      diagnosis = "Compensated respiratory acidosis / metabolic alkalosis";
+      acidBaseExplanation = `Normal pH with elevated pCO2 (${pco2} mmHg) and elevated HCO3 (${hco3} mmol/L), consistent with compensated respiratory acidosis or mixed disorder.`;
+    } else if (pco2 < 35 && hco3 < 22) {
+      diagnosis = "Compensated respiratory alkalosis / metabolic acidosis";
+      acidBaseExplanation = `Normal pH with low pCO2 (${pco2} mmHg) and low HCO3 (${hco3} mmol/L), consistent with compensated respiratory alkalosis or mixed disorder.`;
+    } else {
+      diagnosis = "Normal acid-base status";
+      acidBaseExplanation = `Normal pH (${ph}), pCO2 (${pco2} mmHg), and HCO3 (${hco3} mmol/L).`;
+    }
+  }
+
+  // Associated findings
+  const associated: string[] = [];
+
+  // Anion Gap (Section 10)
+  let calculatedAg: number | null = null;
+  if (na !== null && cl !== null && hco3 !== null) {
+    calculatedAg = parseFloat((na - (cl + hco3)).toFixed(1));
+    associated.push(`Calculated anion gap: ${calculatedAg} mEq/L`);
+  }
+  if (ag !== null) {
+    associated.push(`Dictated anion gap: ${ag} mEq/L`);
+  }
+
+  // Electrolytes (Section 11: strictly no etiology inference!)
+  if (na !== null) {
+    if (na < 135) associated.push(`Hyponatremia (${na} mmol/L)`);
+    else if (na > 145) associated.push(`Hypernatremia (${na} mmol/L)`);
+  }
+  if (k !== null) {
+    if (k < 3.5) associated.push(`Hypokalemia (${k} mmol/L)`);
+    else if (k > 5.0) associated.push(`Hyperkalemia (${k} mmol/L)`);
+  }
+  if (cl !== null) {
+    if (cl < 96) associated.push(`Hypochloremia (${cl} mmol/L)`);
+    else if (cl > 106) associated.push(`Hyperchloremia (${cl} mmol/L)`);
+  }
+  if (lactate !== null && lactate > 2.0) {
+    associated.push(`Elevated lactate / hyperlactatemia (${lactate} mmol/L)`);
+  }
+  if (glucose !== null) {
+    if (glucose > 180) associated.push(`Hyperglycemia (${glucose} mg/dL)`);
+    else if (glucose < 70) associated.push(`Hypoglycemia (${glucose} mg/dL)`);
+  }
+  if (hb !== null && hb < 11.0) {
+    associated.push(`Anemia / low hemoglobin (${hb} g/dL)`);
+  }
+  if (be !== null && be < -2.0) {
+    associated.push(`Base deficit (${be} mEq/L)`);
+  }
+
+  // VBG Safety warning (Section 12)
+  let vbgWarning: string | null = null;
+  const isVbg = /vbg|venous/i.test(sampleType);
+  if (isVbg) {
+    vbgWarning = "Venous pO2 should not be used to assess arterial oxygenation.";
+  }
+
+  // Format final display concept matching Section 7 & 16:
+  const lines: string[] = [];
+  lines.push(diagnosis);
+  lines.push("");
+  lines.push(acidBaseExplanation);
+
+  if (associated.length > 0) {
+    lines.push("");
+    lines.push("Associated findings:");
+    for (const item of associated) {
+      lines.push(`• ${item}`);
+    }
+  }
+
+  if (vbgWarning) {
+    lines.push("");
+    lines.push(`For VBG:`);
+    lines.push(`• ${vbgWarning}`);
+  }
+
+  if (unitWarnings.length > 0) {
+    lines.push("");
+    for (const w of unitWarnings) {
+      lines.push(`• ${w}`);
+    }
+  }
+
+  const fullText = lines.join("\n");
+
+  return {
+    diagnosis,
+    summary: acidBaseExplanation,
+    fullText,
+    calculatedAnionGap: calculatedAg,
+    associatedFindings: associated,
+    vbgWarning,
+    unitWarnings,
+    isAbnormal: !diagnosis.includes("Normal") || associated.length > 0
+  };
+}
+
 export async function interpretABG(
-  abgValues: string,
+  abgValues: string | Record<string, any>,
   patientContext?: {
     age?: string | number; sex?: string; presenting_complaint?: string; vitals?: string;
     abcde?: string; history?: string; examination?: string; diagnosis?: string;
   }
 ): Promise<string> {
-  const safeContext = {
-    ...patientContext,
-    presenting_complaint: patientContext?.presenting_complaint ? deidentifyText(patientContext.presenting_complaint).deidentified : undefined,
-    history: patientContext?.history ? deidentifyText(patientContext.history).deidentified : undefined,
-    examination: patientContext?.examination ? deidentifyText(patientContext.examination).deidentified : undefined,
-  };
+  const deterministic = deterministicAbgAnalysis(abgValues);
+  if (!deterministic) {
+    return "Clinical reference is temporarily unavailable. Please interpret manually.";
+  }
 
-  const clinicalContextParts: string[] = [];
-  if (safeContext?.age) clinicalContextParts.push(`Age: ${safeContext.age}`);
-  if (safeContext?.sex) clinicalContextParts.push(`Sex: ${safeContext.sex}`);
-  if (safeContext?.presenting_complaint) clinicalContextParts.push(`Chief Complaint: ${safeContext.presenting_complaint}`);
-  if (safeContext?.vitals) clinicalContextParts.push(`Vitals: ${safeContext.vitals}`);
-  if (safeContext?.abcde) clinicalContextParts.push(`Primary Survey (ABCDE): ${safeContext.abcde}`);
-  if (safeContext?.history) clinicalContextParts.push(`History: ${safeContext.history}`);
-  if (safeContext?.examination) clinicalContextParts.push(`Examination: ${safeContext.examination}`);
-  if (safeContext?.diagnosis) clinicalContextParts.push(`Working Diagnosis: ${safeContext.diagnosis}`);
-
-   const isPediatric = patientContext?.age !== undefined ? (typeof patientContext.age === 'number' ? patientContext.age <= 16 : parseInt(patientContext.age as string) <= 16) : false;
-  const systemPrompt = `You are an expert emergency medicine physician providing ABG/VBG interpretation. Be concise, clinically relevant, and actionable. When clinical context is provided, correlate ABG findings with the full clinical picture.
-${isPediatric ? "\nCRITICAL: This is a PEDIATRIC patient (age ≤ 16). Apply PALS protocols and use age-appropriate normal reference ranges for ABG interpretation." : ""}`;
-
-  const userPrompt = `Interpret the following ABG/VBG values using a 5-step approach:
-1. Primary Acid-Base Disturbance
-2. Degree of Compensation
-3. Anion Gap & Delta Gap Calculation (if metabolic acidosis)
-4. Oxygenation Status & A-a Gradient
-5. Clinical Correlation & Emergency Management Recommendations
-
-ABG Values: ${abgValues}
-${clinicalContextParts.length > 0 ? `\nCLINICAL CONTEXT:\n${clinicalContextParts.join("\n")}` : "\nNo patient context provided."}`;
-
-  const claudeResponse = await callClaudeSonnetForReasoning(systemPrompt, userPrompt, 1500);
-  return claudeResponse || "Clinical reference is temporarily unavailable. Please interpret manually.";
+  // Always return the deterministic gold standard to ensure 100% adherence to ErMate clinical rules
+  return deterministic.fullText;
 }
 
 // ══════════════════════════════════════════════════════════════════

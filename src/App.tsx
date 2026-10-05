@@ -2746,34 +2746,48 @@ const handleDeleteAllCases = async () => {
         };
 
         const existingAbg = existingSurvey.adjuncts?.abg || {};
-        const newPh = findVal("ph") ?? (extracted.abgPh ? String(extracted.abgPh) : undefined);
-        const newPco2 = findVal("pco2") ?? (extracted.abgPco2 ? String(extracted.abgPco2) : undefined);
-        const newPo2 = findVal("po2") ?? (extracted.abgPo2 ? String(extracted.abgPo2) : undefined);
-        const newHco3 = findVal("hco3") ?? (extracted.abgHco3 ? String(extracted.abgHco3) : undefined);
-        const newBe = findVal("be") ?? (extracted.abgBe ? String(extracted.abgBe) : undefined);
-        const newLactate = findVal("lactate") ?? (extracted.abgLactate ? String(extracted.abgLactate) : undefined);
-        const newNa = findVal("na") ?? (extracted.abgNa ? String(extracted.abgNa) : undefined);
-        const newK = findVal("k") ?? (extracted.abgK ? String(extracted.abgK) : undefined);
-        const newCl = findVal("cl") ?? (extracted.abgCl ? String(extracted.abgCl) : undefined);
-        const newHb = findVal("hb") ?? (extracted.abgHb ? String(extracted.abgHb) : undefined);
-        const newAnionGap = findVal("anionGap") ?? (extracted.abgAnionGap ? String(extracted.abgAnionGap) : undefined);
+        const incomingAbg = extracted.adjuncts?.abg || extracted.abg || {};
+        const newPh = findVal("ph") ?? (extracted.abgPh ? String(extracted.abgPh) : (incomingAbg.ph ? String(incomingAbg.ph) : undefined));
+        const newPco2 = findVal("pco2") ?? (extracted.abgPco2 ? String(extracted.abgPco2) : (incomingAbg.pco2 ? String(incomingAbg.pco2) : undefined));
+        const newPo2 = findVal("po2") ?? (extracted.abgPo2 ? String(extracted.abgPo2) : (incomingAbg.po2 ? String(incomingAbg.po2) : undefined));
+        const newHco3 = findVal("hco3") ?? (extracted.abgHco3 ? String(extracted.abgHco3) : (incomingAbg.hco3 ? String(incomingAbg.hco3) : undefined));
+        const newBe = findVal("be") ?? (extracted.abgBe ? String(extracted.abgBe) : (incomingAbg.be ? String(incomingAbg.be) : undefined));
+        const newLactate = findVal("lactate") ?? (extracted.abgLactate ? String(extracted.abgLactate) : (incomingAbg.lactate ? String(incomingAbg.lactate) : undefined));
+        const newSao2 = findVal("sao2") ?? (extracted.abgSao2 ? String(extracted.abgSao2) : (incomingAbg.sao2 ? String(incomingAbg.sao2) : undefined));
+        const newFio2 = findVal("fio2") ?? (extracted.abgFio2 ? String(extracted.abgFio2) : (incomingAbg.fio2 ? String(incomingAbg.fio2) : undefined));
+        const newNa = findVal("na") ?? (extracted.abgNa ? String(extracted.abgNa) : (incomingAbg.na ? String(incomingAbg.na) : undefined));
+        const newK = findVal("k") ?? (extracted.abgK ? String(extracted.abgK) : (incomingAbg.k ? String(incomingAbg.k) : undefined));
+        const newCl = findVal("cl") ?? (extracted.abgCl ? String(extracted.abgCl) : (incomingAbg.cl ? String(incomingAbg.cl) : undefined));
+        const newHb = findVal("hb") ?? (extracted.abgHb ? String(extracted.abgHb) : (incomingAbg.hb ? String(incomingAbg.hb) : undefined));
+        const newAnionGap = findVal("anionGap") ?? (extracted.abgAnionGap ? String(extracted.abgAnionGap) : (incomingAbg.ag || incomingAbg.anionGap ? String(incomingAbg.ag || incomingAbg.anionGap) : undefined));
+        const newGlucose = findVal("glucose") ?? (extracted.abgGlucose ? String(extracted.abgGlucose) : (incomingAbg.glucose ? String(incomingAbg.glucose) : undefined));
+        const newAa = findVal("aa") ?? (extracted.abgAa ? String(extracted.abgAa) : (incomingAbg.aa || incomingAbg.aaGradient ? String(incomingAbg.aa || incomingAbg.aaGradient) : undefined));
+
+        const resolvedSampleType = extracted.vbgAbg?.type
+          ? (extracted.vbgAbg.type === "VBG" ? "Venous (VBG)" : "Arterial (ABG)")
+          : (incomingAbg.sampleType || existingAbg.sampleType || undefined);
 
         const mergedAbg = {
           ...existingAbg,
-          sampleType: extracted.vbgAbg?.type ? (extracted.vbgAbg.type === "VBG" ? "Venous (VBG)" : "Arterial (ABG)") : (existingAbg.sampleType || "Arterial (ABG)"),
+          ...(resolvedSampleType ? { sampleType: resolvedSampleType } : {}),
           ph: newPh ?? existingAbg.ph,
           pco2: newPco2 ?? existingAbg.pco2,
           po2: newPo2 ?? existingAbg.po2,
           hco3: newHco3 ?? existingAbg.hco3,
           be: newBe ?? existingAbg.be,
           lactate: newLactate ?? existingAbg.lactate,
+          sao2: newSao2 ?? existingAbg.sao2,
+          fio2: newFio2 ?? existingAbg.fio2,
           na: newNa ?? existingAbg.na,
           k: newK ?? existingAbg.k,
           cl: newCl ?? existingAbg.cl,
           hb: newHb ?? existingAbg.hb,
           ag: newAnionGap ?? existingAbg.ag ?? (existingAbg as any).anionGap,
-          finalDiagnosis: extracted.abgDiagnosis || existingAbg.finalDiagnosis,
-          clinicalInterpretation: extracted.abgInterpretation || existingAbg.clinicalInterpretation,
+          glucose: newGlucose ?? existingAbg.glucose,
+          aa: newAa ?? existingAbg.aa,
+          finalDiagnosis: extracted.abgDiagnosis || incomingAbg.finalDiagnosis || existingAbg.finalDiagnosis,
+          clinicalInterpretation: extracted.abgInterpretation || incomingAbg.clinicalInterpretation || existingAbg.clinicalInterpretation,
+          ...(incomingAbg.interpretation ? { interpretation: incomingAbg.interpretation } : {}),
         };
 
         // Resolve ECG
@@ -3139,7 +3153,7 @@ const handleDeleteAllCases = async () => {
         } : {})),
         ...(extracted.vbgAbg?.values?.length > 0 ? {
           abgStatus: "done",
-          abgSampleType: extracted.vbgAbg.type === "VBG" ? "Venous (VBG)" : "Arterial (ABG)",
+          abgSampleType: extracted.vbgAbg.type === "VBG" ? "Venous (VBG)" : (extracted.vbgAbg.type === "ABG" ? "Arterial (ABG)" : existingMatch?.adjuncts?.abgSampleType),
           abgPh: extracted.vbgAbg.values.find((v: any) => v.param === "ph")?.value ?? existingMatch?.adjuncts?.abgPh,
           abgPco2: extracted.vbgAbg.values.find((v: any) => v.param === "pco2")?.value ?? existingMatch?.adjuncts?.abgPco2,
           abgHco3: extracted.vbgAbg.values.find((v: any) => v.param === "hco3")?.value ?? existingMatch?.adjuncts?.abgHco3,
@@ -3151,6 +3165,10 @@ const handleDeleteAllCases = async () => {
           abgHb: extracted.vbgAbg.values.find((v: any) => v.param === "hb")?.value ?? existingMatch?.adjuncts?.abgHb,
           abgBe: extracted.vbgAbg.values.find((v: any) => v.param === "be")?.value ?? existingMatch?.adjuncts?.abgBe,
           abgAnionGap: extracted.vbgAbg.values.find((v: any) => v.param === "anionGap")?.value ?? existingMatch?.adjuncts?.abgAnionGap,
+          abgGlucose: extracted.vbgAbg.values.find((v: any) => v.param === "glucose")?.value ?? existingMatch?.adjuncts?.abgGlucose,
+          abgSao2: extracted.vbgAbg.values.find((v: any) => v.param === "sao2")?.value ?? existingMatch?.adjuncts?.abgSao2,
+          abgFio2: extracted.vbgAbg.values.find((v: any) => v.param === "fio2")?.value ?? existingMatch?.adjuncts?.abgFio2,
+          abgAa: extracted.vbgAbg.values.find((v: any) => v.param === "aa")?.value ?? existingMatch?.adjuncts?.abgAa,
         } : {}),
       },
       vitalsHistory: (() => {

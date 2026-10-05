@@ -17,11 +17,18 @@ export type ClinicalParam =
   | "grbs"
   | "ph"
   | "pco2"
+  | "po2"
   | "hco3"
+  | "be"
   | "lactate"
+  | "sao2"
+  | "fio2"
   | "na"
   | "k"
   | "cl"
+  | "anionGap"
+  | "glucose"
+  | "aa"
   | "creatinine"
   | "urea"
   | "hb"
@@ -50,13 +57,20 @@ export const CLINICAL_RANGES: Record<ClinicalParam, Range> = {
   // ABG / VBG
   ph:        { low: 7.35, high: 7.45 },
   pco2:      { low: 35,   high: 45 },                 // mmHg
+  po2:       { low: 80,   high: 100 },                // mmHg (arterial)
   hco3:      { low: 22,   high: 26 },                 // mmol/L
+  be:        { low: -2,   high: 2 },                  // mEq/L
   lactate:   { high: 2.0 },                            // mmol/L
+  sao2:      { low: 95 },                             // %
+  fio2:      { low: 21 },                             // %
+  anionGap:  { low: 4,    high: 12 },                 // mEq/L
+  aa:        { high: 20 },                            // mmHg
 
-    // Electrolytes
+  // Electrolytes
   na:        { low: 135,  high: 145 },                // mmol/L
   k:         { low: 3.5,  high: 5.0 },                // mmol/L
   cl:        { low: 98,   high: 107 },                // mmol/L (matches adult band used in pediatricClinicalRanges.ts for the oldest age group)
+  glucose:   { low: 70,   high: 180 },                // mg/dL
 
   // Renal
   creatinine:{ low: 0.6,  high: 1.3 },                // mg/dL

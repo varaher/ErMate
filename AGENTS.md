@@ -45,6 +45,121 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-05] — Final Clinical Documentation Regression — VERIFY CS-DS-FINAL
+- **Complete Verification of Integrated Clinical Pipeline (Patches C1–C5)**:
+  - Validated end-to-end data integrity across Doctor speech/text → Scribe extraction → Cleanup → Mapping → ClinicalCase → Adult/Pediatric Case Sheet → Case Sheet Print → Discharge Summary → Live Course synchronization → Save → Reload / Reopen.
+  - Verified 19/19 comprehensive regression tests passing (`verify_regression.ts`):
+    - **Adult Complete Case Integration**: Verified 45yo male chest pain presentation, events leading to presentation ("Pain started while climbing stairs"), arrival vitals, explicit GCS 15 from E4V5M6 (`gcs=15`, `gcs_e=4`, `gcs_v=5`, `gcs_m=6`), primary/secondary assessments, investigations, 16-parameter ABG with metabolic acidosis & anion gap interpretation, acute ER treatments (Aspirin, Clopidogrel, Atorvastatin), distinct take-home prescription (Ticagrelor, Rosuvastatin), and admission disposition.
+    - **Pediatric Complete Case Integration**: Verified 5yo female fever presentation, zero precipitating event ("Fever for 2 days" duration correctly excluded from events), PAT normal, vital preservation, GCS E4V5M6, ER Paracetamol treatment, progress reassessment, and zero take-home prescription leakage.
+    - **GCS Deterministic Derivation & Hallucination Defense (Patch C1)**: Verified component arithmetic (E2V3M4 → 9), explicit total preservation ("GCS 14"), and rejection of model-hallucinated totals on partial dictations (E4 only, E2V3, E3 only).
+    - **ABG/VBG 16-Parameter & Acid-Base Engine (Patch C2)**: Verified complete VBG interpretation, mixed disorder recognition, anion gap calculation, hyponatremia detection, and VBG venous $pO_2$ arterial oxygenation safety warnings. Multi-turn blood gas deep merging preserves established parameters and sample types.
+    - **SAMPLE Events Extraction (Patch C4A)**: Verified explicit precipitating events (RTA, snake bite, acute ingestion) correctly populate while ordinary symptom chronologies and explicit negatives ("No history of trauma") do not create event sections.
+    - **Canonical 9-Section Course & Zero-Filler (Patch C4A/C4A.1)**: Verified canonical ordering, zero empty filler headings, and omission of presentation section when presenting complaint is undocumented.
+    - **Live Three-Way Course Merge & Manual Edit Preservation (Patch C4B)**: Verified clinician manual edits survive auto-refresh, new clinical facts append non-destructively, deleted sections are never resurrected, and finalized summaries remain strictly frozen.
+    - **ER Treatment Given ≠ Discharge Rx Separation (Patches C3/C3A)**: Verified acute ER treatments never leak into discharge medications, explicit take-home prescriptions are preserved with positive provenance, same drug in distinct contexts coexists safely, and records without take-home prescriptions remain strictly blank.
+    - **Remove Fabricated Discharge Facts (Patch C5)**: Verified minimal case undocumented fields store as blank (`""`) and render as `"Not documented"` strictly in presentation; explicit negatives (e.g. `"No Known Drug Allergies"`, `"No significant medical history"`) are preserved exactly; differentials and presenting complaint never auto-become primary diagnosis, and PMH never auto-becomes secondary diagnosis.
+    - **Persistence & Legacy Safety**: Verified JSON/database round-trip survival and preservation of legacy clinician-entered values without data loss.
+
+### [2026-10-04] — Remove Fabricated Discharge-Summary Facts — Patch C5
+- **Strict Separation: Documented Clinical Facts vs. Undocumented / Missing Data**:
+  - Enforced locked rule across the entire Discharge Summary pipeline:
+    - **Explicit positive** → display (e.g. `"Allergy to penicillin"` → `"Penicillin allergy"`).
+    - **Explicit negative** → display (e.g. `"No known drug allergies"` → `"No Known Drug Allergies"`).
+    - **Not mentioned / missing** → blank (`""`) in state and database storage; presented as `"Not documented"` strictly as UI presentation, never as a stored clinical fact.
+- **Eliminated Factual Fallbacks Across Core Files**:
+  - **Allergies**: Removed `"No Known Drug Allergies (NKDA)"` and `"None/NKDA"` fallbacks. Missing allergies initialize to `""` in state and display `"Not documented"` in text/HTML/preview card.
+  - **Brought By / Informant**: Removed fabricated `"Self / Relatives"` default in `DischargeSummaryView.tsx`; defaults to `""` if not documented.
+  - **LMP, Past History, Family/Gynae History**: Removed `"None recorded"`, `"Not Recorded"`, and `"N/A"` defaults; missing fields initialize to `""` in state and render `"Not documented"` strictly in presentation.
+  - **General Physical Examination**: Removed fabricated `"Patient conscious, oriented, vitals recorded on arrival."` fallback that generated physical examination findings from mere heart rate presence; defaults to `""`.
+  - **Primary & Secondary Diagnoses**: Removed unsafe fallbacks where missing primary diagnosis defaulted to differentials or presenting complaint, and secondary diagnosis defaulted to past medical history (in `DischargeSummaryView.tsx`, `CaseSheetView.tsx`, and `server.ts`).
+  - **Course, Investigations, Medications & Discharge Condition**: Replaced fabricated negative claims (`"Patient evaluated and stabilized in ER."`, `"No investigations ordered."`, `"Under Evaluation"`, `"No outpatient medications prescribed."`, `"Hemodynamically stable..."`) in `dischargeSummaryFormat.ts` and `DashboardView.tsx` with neutral `"Not documented"` indicators.
+
+### [2026-10-04] — Live Course-in-Hospital Synchronization with Manual-Edit Preservation — Patch C4B
+- **Live Three-Way Course-in-Hospital Synchronization (`src/utils/dischargeSyncEngine.ts` & `src/components/DischargeSummaryView.tsx`)**:
+  - Implemented `mergeAutoCoursePreservingManualEdits(previousAutoCourse, currentClinicianText, nextAutoCourse)` implementing deterministic three-way merge semantics:
+    - **Rule 1 (A)**: Unchanged sections (`LOCAL == BASE`) safely update to `NEXT` automatically when new case facts occur.
+    - **Rule 2 (B)**: Clinician manual edits (`LOCAL != BASE` and `NEXT == BASE`) are preserved exactly.
+    - **Rule 3 (C)**: Concurrent changes (`LOCAL != BASE` and `NEXT != BASE`) preserve clinician manual edits and append only genuinely new clinical facts from `NEXT` not already represented in `LOCAL`.
+    - **Rule 4 (D)**: Newly documented clinical sections are inserted automatically in canonical 9-section order.
+    - **Rule 5 (E)**: Clinician section deletions are preserved (historical deleted paragraphs are not resurrected blindly).
+    - **Rule 6**: Custom clinician-created text, notes, and headings survive untouched.
+  - Added live `autoCourseSnapshot` trigger, `lastAutoCourseRef`, and `courseTextRef` synchronization inside `DischargeSummaryView.tsx`, updating the open textarea without marking automatic sync as a manual edit, without altering finalized summaries, and without triggering automatic database saves.
+
+### [2026-10-04] — Remove Fabricated Presenting-Complaint Fallback — Patch C4A.1
+- **Eliminated Fabricated "acute presentation" Fallback (`server.ts`)**:
+  - Replaced the unsafe fallback `caseData?.patient?.presentingComplaint || "acute presentation"` in `/api/ai-discharge` with strict factual extraction: `rawComplaint = typeof caseData?.patient?.presentingComplaint === "string" ? caseData.patient.presentingComplaint.trim() : ""; const safeComplaint = rawComplaint ? deidentifyText(rawComplaint).deidentified : "";`.
+  - Audited and updated the discharge prompt in `server.ts` and `server/dischargeSummary.ts` to mandate that if no presenting complaint was documented, the `Presentation:` section must be strictly omitted rather than substituting generic filler (e.g. "acute presentation", "unspecified complaint", "patient presented for evaluation").
+  - Added `sanitizeCourseNarrative` in `server.ts` to strip any model-manufactured `Presentation:` section when `safeComplaint === ""`.
+  - Updated deterministic backup data in `server.ts` so `patientInstructions` and `dischargeNarrative` cleanly adapt when no presenting complaint exists without generating trailing prepositions or fictional complaints.
+
+### [2026-10-04] — Structured Course + Explicit Events — Patch C4A
+- **Strict 9-Section Ordered Clinical Course**:
+  - Implemented ordered, structured course under `"COURSE IN EMERGENCY DEPARTMENT"` across deterministic engine (`deriveInitialCourseInHospital` in `src/utils/dischargeSyncEngine.ts`), fallback heuristic, and LLM discharge prompts (`server/dischargeSummary.ts`, `server.ts`):
+    1. `Presentation:`
+    2. `Events Leading to Presentation:` (ONLY IF explicitly documented)
+    3. `Initial Assessment:` (ONLY IF documented)
+    4. `Investigations:` (ONLY IF documented)
+    5. `Treatment Given:` (ONLY IF documented)
+    6. `Procedures:` (ONLY IF performed)
+    7. `Consultations:` (ONLY IF done)
+    8. `Clinical Course:` (ONLY IF documented)
+    9. `Disposition:` (ONLY IF documented)
+- **Zero-Filler Empty Section Rule**:
+  - Empty sections are strictly omitted rather than generating repetitive negative statements ("no investigations ordered", "no medications administered", "no consultation documented", "clinical course could not be characterized").
+- **Explicit Precipitating Events Extraction (`extractPrecedingEvent`)**:
+  - Reads `sampleHistory.events` and canonical event fields (`eventsLeadingToPresentation`, `mlcDetails.incidentDetails`, trauma mechanism).
+  - Explicit precipitating events (RTA, fall, assault, burn, snake/animal bite, insect sting, poisoning/ingestion, exertional onset, witnessed seizure, collapse/syncope, etc.) populate `Events Leading to Presentation:`.
+  - Ordinary symptom chronologies ("Fever for 2 days", "Cough for 3 days", "Abdominal pain since morning") belong in Presenting Complaint and are strictly barred from becoming Events.
+  - Explicit negative history ("No history of trauma", "No precipitating event") omits the Events section.
+  - De-duplicates events that duplicate the presenting complaint.
+- **Factual Course vs. Discharge Advice Isolation**:
+  - Return precautions, caregiver advice, and red-flag warnings belong strictly in `patientAdvice` / `patientInstructions` outside the factual Course.
+
+### [2026-10-04] — Positive Provenance for Each Discharge Medication — Patch C3A
+- **Positive-Provenance Rule for Discharge Medications**:
+  - **Item-by-Item Verification (`isMedicationSupportedInContext`)**: Every medication proposed for take-home discharge prescriptions must be positively evidenced inside an explicit discharge-prescription context (e.g. `"Discharge on..."`, `"Discharge with..."`, `"Home medications..."`, `"Take-home medications..."`, `"On discharge..."`, `"Prescribed on discharge..."`, `"Discharge prescription..."`, `"Discharge medications..."`).
+  - **Explicit Context Isolation (`extractExplicitDischargeContext`)**: Dynamically extracts segments and sentences introduced by explicit discharge triggers from narrative text, barring unrelated ER treatment sentences from serving as discharge evidence.
+  - **Structured Field Authoritative Precedence**: When `caseData.dischargeInfo.dischargeMedications` already contains clinician-entered discharge prescriptions, it is authoritative and preserved verbatim (unless patient disposition is admitted/ICU/deceased/referred), preventing overwrite by model-generated medications or ER treatments.
+  - **Medication Normalization & Matching (`extractIdentifiableDrugName`)**: Normalizes formulation prefixes (`Tab`, `Inj`, `Cap`, `Syr`, etc.) and verifies that the identifiable drug name appears as positive evidence in the isolated discharge context without requiring identical dose formatting.
+  - **Same Drug, Distinct Context Handling**: Preserves take-home discharge prescriptions when the same drug was administered acutely in ER (e.g. ER: "Paracetamol 1 g IV given" vs Discharge: "Tab Paracetamol 500 mg SOS"), deciding provenance by clinical context rather than drug-name collision.
+  - **Eliminated Blacklist Reliance as Primary Safety**: Retired negative blacklist as the primary safety gate; secondary defense filters (noradrenaline, vasopressors, IV infusions/boluses) remain active solely as defense-in-depth.
+
+### [2026-10-04] — Strict Separation: ER Treatment Given ≠ Discharge Medication — Patch C3
+- **Decoupled ER Acute Treatments from Take-Home Prescriptions**:
+  - **Single Source of Truth (`dischargeInfo.dischargeMedications`)**: Replaced `formatDischargeMedicationsText(c)` so it strictly extracts from explicit `c.dischargeInfo?.dischargeMedications`. Never derives, maps, or formats discharge prescriptions from `c.treatments`, `c.infusions`, or `c.treatmentNotes`.
+  - **Intelligent Non-Destructive Merge (`mergeDischargeMedications`)**: Updated refresh logic to preserve existing clinician-entered discharge prescriptions exactly. Newly administered ER treatments are strictly barred from being appended to discharge prescriptions.
+  - **Discharge Summary Initial State**: Initial state in `DischargeSummaryView.tsx` reads exclusively from explicit `currentCase.dischargeInfo?.dischargeMedications` or empty string `""`. Never pre-populates acute ER treatments as discharge medications.
+  - **Case Sheet Synchronization Guard**: Removed legacy fallback in `CaseSheetView.tsx` (`caseToSync.treatments.map(...)`) that copied ER treatments into `dischargeMedications`.
+  - **AI Prompt Mandate & Server-Side Fallback (`server.ts` & `server/dischargeSummary.ts`)**:
+    - Removed `|| actualTreatments` fallback in `/api/ai-discharge`, guaranteeing that missing discharge medications default strictly to `""`.
+    - Strengthened LLM prompt mandates (Claude 3.5 Sonnet & GPT-4o) requiring explicit discharge prescription/advice context before outputting discharge medications.
+    - Implemented post-generation safety sanitizers that zero out discharge medications for admitted/ICU/deceased/referred encounters or records lacking explicit discharge prescription phrases.
+  - **Preserved ER Treatments in Hospital Course**: Acute medications (e.g., Ceftriaxone IV, Paracetamol IV, Noradrenaline infusions, nebulizations) continue to populate "Medications administered in ER" and "IV Infusions" under `courseInHospital`.
+
+### [2026-10-04] — Complete ABG/VBG Capture & Automatic Interpretation — Patch C2
+- **Full 16-Parameter ABG/VBG Pipeline**:
+  - **Comprehensive Capture**: End-to-end extraction, cleanup, mapping, and storage for all 16 clinical ABG/VBG parameters across the ErMate Case Sheet UI: `sampleType`, `ph`, `pco2`, `po2`, `hco3`, `be` (Base Excess), `lactate`, `sao2`, `fio2`, `na`, `k`, `cl`, `ag` / `anionGap`, `glucose`, `hb`, and `aa` / `aaGradient`.
+  - **Sample Type Strict Discrimination**: Dictations explicitly referencing "ABG" or "arterial" map to `Arterial (ABG)`; explicit "VBG" or "venous" map to `Venous (VBG)`. Unspecified gases remain unspecified (`null` / absent) without defaulting or guessing.
+  - **Safe Multi-Turn Cumulative Merging**: Unapplied Scribe turns deep-merge newly dictated analytes (e.g. Turn 2 adding HCO3, Na, Cl) with existing blood gas parameters (e.g. Turn 1 pH and pCO2) without overwriting historical values or clearing the established sample type.
+  - **Deterministic Emergency Acid-Base Engine (`server/aiDiagnosis.ts`)**:
+    - Automatically analyzes complete merged blood gases when sufficient core acid-base parameters (`pH`, `pCO2`, `HCO3`) are present. Partial gases return `null` without fabricating diagnostic narratives.
+    - Accurately classifies primary and mixed acid-base disorders using Winters' formula and expected metabolic/respiratory compensation.
+    - Calculates Anion Gap deterministically ($Na - [Cl + HCO_3]$) while identifying associated electrolyte disorders without unsupported etiology inference.
+    - Flags venous $pO_2$ safety warnings on VBG samples to alert clinicians that venous $pO_2$ must not be used to assess arterial oxygenation.
+    - Preserves unit safety and flags stated percentage units on $pO_2$ dictations (e.g. `41%`) without silent $mmHg$ conversions.
+  - **UI Integration & Manual Re-Analysis Preservation**:
+    - Automatic interpretations populate the existing `Final ABG Diagnosis` and `Your Interpretation` sections in the ABG/VBG accordion on both Adult and Pediatric Case Sheets.
+    - Preserves the manual "Interpret ABG" button and `/api/interpret-abg` endpoint for on-demand clinician-triggered re-analysis.
+    - Propagates all 16 blood gas parameters into `CaseSheetPrintView` and the Discharge Summary Clinical Course bedside adjuncts (`src/utils/dischargeSyncEngine.ts`).
+
+### [2026-10-03] — Deterministic GCS Total from Explicit E/V/M — Patch C1
+- **Deterministic GCS Component Sum (`server/scribeChatTurn.ts`)**:
+  - **Component-Presence Gate (`deriveExplicitGcsTotal`)**: GCS total is derived if and only if all three components (E, V, M) are explicitly present in the clinician's dictation via `transcriptHasExplicitGcsComponent`.
+  - **Component Range Validation**: Validates `E` in 1–4, `V` in 1–5, `M` in 1–6. Missing or invalid components (e.g. E5) return `null` and abort total derivation without fabrication.
+  - **Server-Side Arithmetic**: Deterministically calculates `gcs = String(E + V + M)` in server code (e.g. "E2V3M4" → gcs="9", gcs_e="2", gcs_v="3", gcs_m="4").
+  - **Anti-Hallucination & Explicit Total Preservation**: Preserves explicit dictated totals (e.g. "GCS 14" → gcs="14", components absent; "GCS 9, E2 V3 M4" → gcs="9" preserved). Rejects model-inferred totals on partial dictations (e.g. "GCS E4" retains only `gcs_e="4"` while model-generated `gcs=15`, `gcs_v`, `gcs_m` are dropped).
+  - **End-to-End Preservation**: Propagates all four fields (`gcs`, `gcs_e`, `gcs_v`, `gcs_m`) into `ClinicalCase.vitals`, Adult Case Sheet, Pediatric Case Sheet, and Discharge Summary arrival vitals.
+
 ### [2026-10-03] — Current Duty Case Visibility — Patch H1
 - **Current Duty Case Visibility on Home/Dashboard (`src/components/DashboardView.tsx`)**:
   - **Hospital "My Assigned Cases" Isolation**: Hospital clinicians on the Home view only see cases that are operationally active (`status === "Active" || status === "Triage"`), assigned to their email (`currentAssigneeEmail === profile.email`), and bound to their currently valid Actual Duty Session (`currentAssignmentDutySessionId === activeDutySession.id` where `isActiveDutySessionNow(activeDutySession) === true`).
