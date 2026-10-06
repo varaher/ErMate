@@ -58,6 +58,7 @@ import { convertAndChunkAudioToWav } from "./server/audioConvert.ts";
 import { sarvamSpeechToText, sarvamSpeechToTextTranslate, isErMateAvailable } from "./server/sarvamClient.ts";
 import { extractExplicitDischargeContext, isMedicationSupportedInContext } from "./server/dischargeSummary.ts";
 import { deriveInitialCourseInHospital } from "./src/utils/dischargeSyncEngine.ts";
+import { validateNarrativeFacts } from "./server/dischargeFactValidator.ts";
 import { executeCaseDiscussionWithFailover, executeRoundsDebriefWithFailover } from "./server/aiProviderFailover.ts";
 
 // Load environment variables
@@ -1309,6 +1310,11 @@ app.post("/api/ai-discharge", async (req, res) => {
       if (data && typeof data === "object") {
         data.courseInHospital = sanitizeCourseNarrative(data.courseInHospital);
         data.dischargeMedications = sanitizeDischargeMeds(data);
+        const factCheck = validateNarrativeFacts(data.courseInHospital, caseData);
+        if (!factCheck.valid) {
+          console.warn("[ai-discharge] Claude narrative introduced unproven facts, falling back to deterministic course:", factCheck.violations);
+          data.courseInHospital = deriveInitialCourseInHospital(caseData);
+        }
       }
       console.log("[ai-discharge] Claude 3.5 Sonnet succeeded");
       return res.json({ success: true, data, engine: "claude-3-5-sonnet" });
@@ -1334,6 +1340,11 @@ app.post("/api/ai-discharge", async (req, res) => {
       if (data && typeof data === "object") {
         data.courseInHospital = sanitizeCourseNarrative(data.courseInHospital);
         data.dischargeMedications = sanitizeDischargeMeds(data);
+        const factCheck = validateNarrativeFacts(data.courseInHospital, caseData);
+        if (!factCheck.valid) {
+          console.warn("[ai-discharge] GPT-4o narrative introduced unproven facts, falling back to deterministic course:", factCheck.violations);
+          data.courseInHospital = deriveInitialCourseInHospital(caseData);
+        }
       }
       console.log("[ai-discharge] GPT-4o fallback succeeded");
       return res.json({ success: true, data, engine: "gpt-4o" });

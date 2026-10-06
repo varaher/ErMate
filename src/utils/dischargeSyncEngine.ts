@@ -149,7 +149,10 @@ export function extractPrecedingEvent(c: ClinicalCase): string | null {
     if (!trimmed) continue;
 
     // 1. Explicit negative history check (Section 6 & 19)
-    if (/^(?:no\s+(?:history\s+of\s+)?(?:trauma|fall|accident|poisoning|bite|seizure|events?|precipitating\s+event)|nil|none|no\s+precipitating\s+event|denies\s+(?:trauma|fall|accident)|na|n\/a|not\s+applicable|not\s+documented)\.?$/i.test(trimmed)) {
+    if (/^(?:no\s+(?:history\s+of\s+)?(?:trauma|fall|accident|poisoning|bite|seizure|events?|precipitating\s+event)(?:\s+(?:or|and)\s+(?:trauma|fall|accident|poisoning|bite|seizure|events?|precipitating\s+event))*|nil|none|no\s+precipitating\s+event|denies\s+(?:trauma|fall|accident)|na|n\/a|not\s+applicable|not\s+documented)\.?$/i.test(trimmed)) {
+      continue;
+    }
+    if (/^(?:no|denies)\s+(?:known\s+|reported\s+|alleged\s+)?(?:history\s+of\s+)?(?:trauma|fall|accident|poisoning|bite|injury|seizure)/i.test(trimmed)) {
       continue;
     }
     if (/\bno\s+precipitating\s+event\b/i.test(trimmed) && trimmed.length < 35) {

@@ -2941,7 +2941,7 @@ const handleDeleteAllCases = async () => {
         })(),
         pastHistory: extracted.sampleHistory?.pastHistory || extracted.pastMedicalHistory || extracted.pastHistory || existingMatch?.sampleHistory.pastHistory || "",
         lastMeal: extracted.sampleHistory?.lastMeal || extracted.lastMeal || existingMatch?.sampleHistory.lastMeal || "",
-        events: extracted.sampleHistory?.events || extracted.events || extracted.hpi || existingMatch?.sampleHistory.events || "",
+        events: extracted.sampleHistory?.events || extracted.events || existingMatch?.sampleHistory.events || "",
         socialHistory: extracted.sampleHistory?.socialHistory || extracted.socialHistory || existingMatch?.sampleHistory?.socialHistory || "",
         familyHistory: extracted.sampleHistory?.familyHistory || extracted.familyHistory || existingMatch?.sampleHistory?.familyHistory || "",
         psychiatricFlags: extracted.sampleHistory?.psychiatricFlags || extracted.psychiatricFlags || existingMatch?.sampleHistory?.psychiatricFlags || ""
