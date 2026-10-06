@@ -729,11 +729,13 @@ export async function hasCaseScribeHistory(caseId: string): Promise<boolean> {
   }
 }
 
+import { generateInternalCaseId } from "../utils/caseIdentity";
+
 /**
- * Returns a collision-safe Firestore auto-ID for new case documents.
+ * Returns a collision-safe UUID for new case documents.
  */
 export function generateNewCaseId(): string {
-  return doc(collection(db, "cases")).id;
+  return generateInternalCaseId();
 }
 
 // ════════════════════════════════════════════════════════════════

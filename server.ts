@@ -722,7 +722,7 @@ app.post("/api/interpret-abg", async (req, res) => {
 
 
 // 1. AI Clinical Decision Support (CDS) / Differential Diagnosis (Locked to Claude Sonnet)
-app.post("/api/clinical-decision-support", async (req, res) => {
+app.post("/api/clinical-decision-support", requireAuth, async (req: AuthRequest, res) => {
   const { patient, history, vitals, primaryAssessment } = req.body;
   const prompt = `
     You are an Emergency Medicine expert Clinical Decision Support assistant (Claude Sonnet).
@@ -1363,7 +1363,7 @@ app.post("/api/ai-discharge", async (req, res) => {
 });
 
 // 5.5. Unlimited Clinical Rounds & 7-Lens Case Debrief API (Locked to Claude Sonnet)
-app.post("/api/rounds-debrief", async (req, res) => {
+app.post("/api/rounds-debrief", requireAuth, async (req: AuthRequest, res) => {
   const { caseData, lens, userMessage, chatHistory } = req.body;
 
   if (!caseData) {
@@ -1660,7 +1660,7 @@ app.post("/api/mlc-extract", async (req, res) => {
 });
 
 // 5b. AI Scribe Dictation Extractor
-app.post("/api/scribe-extract", async (req, res) => {
+app.post("/api/scribe-extract", requireAuth, async (req: AuthRequest, res) => {
   const { dictation } = req.body;
   if (!dictation) return res.status(400).json({ error: "No dictation provided" });
   try {
@@ -1752,7 +1752,7 @@ app.post("/api/scribe-extract", async (req, res) => {
 });
 
 // 5c. AI Scribe Chat Assistant with Textbook References & Post-Dictation Summarizer
-app.post("/api/scribe-chat", async (req, res) => {
+app.post("/api/scribe-chat", requireAuth, async (req: AuthRequest, res) => {
   const { userInput, patientAgeYears, caseContext, caseId, messages, caseData } = req.body;
 
   // New two-way turn format with parallel Extraction & Clinical Reasoning
@@ -2135,7 +2135,7 @@ app.post(
 // route back to it and silently reintroduce the exact Rule 1 violation
 // this fix corrected.
 
-app.post("/api/case-discussion", async (req, res) => {
+app.post("/api/case-discussion", requireAuth, async (req: AuthRequest, res) => {
   try {
     const { caseData, contextType, contextData, messages, history, message } = req.body;
 
@@ -2534,7 +2534,7 @@ app.post("/api/handover/pdf", async (req, res) => {
 });
 
 // 5d. AI Scribe Document Scanner (OCR & Mapping)
-app.post("/api/scribe-ocr-scan", async (req, res) => {
+app.post("/api/scribe-ocr-scan", requireAuth, async (req: AuthRequest, res) => {
   const { image, mimeType, imageText } = req.body;
 
   try {

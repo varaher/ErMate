@@ -1,16 +1,19 @@
 import React, { useState, useEffect } from "react";
-import { ArrowLeft, User, Heart, ShieldAlert, ChevronRight, Scale, Clock, Phone, Hash, FileText, Check, BrainCircuit } from "lucide-react";
-import { TriageCategory, ArrivalMode, PatientDemographics, PatientVitals, MlcDetails } from "../types";
+import { ArrowLeft, User, Heart, ShieldAlert, ChevronRight, Scale, Clock, Phone, Hash, FileText, Check, BrainCircuit, AlertTriangle } from "lucide-react";
+import { TriageCategory, ArrivalMode, PatientDemographics, PatientVitals, MlcDetails, ClinicalCase } from "../types";
 import VoiceRecorder from "./shared/VoiceRecorder";
 import { classifyEmergencyTriage } from "../utils/triageClassifier";
+import { allocateOrValidateBed } from "../utils/bedAllocation";
 
 interface TriageFormProps {
   onBack: () => void;
-  onSubmit: (demographics: PatientDemographics, vitals: PatientVitals) => void;
+  onSubmit: (demographics: PatientDemographics, vitals: PatientVitals, bedNo?: string) => void;
   initialMode: "full" | "quick";
+  activeCases?: ClinicalCase[];
+  physicalBedCapacity?: number;
 }
 
-export default function TriageForm({ onBack, onSubmit, initialMode }: TriageFormProps) {
+export default function TriageForm({ onBack, onSubmit, initialMode, activeCases = [], physicalBedCapacity = 30 }: TriageFormProps) {
   // Demographic State
   const [name, setName] = useState("");
   const [age, setAge] = useState<string>("");
@@ -18,6 +21,8 @@ export default function TriageForm({ onBack, onSubmit, initialMode }: TriageForm
   const [presentingComplaint, setPresentingComplaint] = useState("");
   const [triageCategory, setTriageCategory] = useState<TriageCategory>(TriageCategory.P2);
   const [arrivalMode, setArrivalMode] = useState<ArrivalMode>(ArrivalMode.WalkIn);
+  const [bedNo, setBedNo] = useState("");
+  const [bedError, setBedError] = useState<string | null>(null);
   
   // NABH / JCI Specific Demographics
   const [uhid, setUhid] = useState("");
@@ -133,7 +138,21 @@ export default function TriageForm({ onBack, onSubmit, initialMode }: TriageForm
       painScore: painScore
     };
 
-    onSubmit(demographics, vitals);
+    let finalBedNo: string | undefined = undefined;
+    if (bedNo.trim()) {
+      const allocation = allocateOrValidateBed(
+        bedNo.trim(),
+        activeCases || [],
+        physicalBedCapacity || 30
+      );
+      if (!allocation.success || !allocation.canonicalBed) {
+        setBedError(allocation.error || "Invalid bed number or bed already occupied.");
+        return;
+      }
+      finalBedNo = allocation.canonicalBed;
+    }
+
+    onSubmit(demographics, vitals, finalBedNo);
   };
 
   return (
@@ -251,7 +270,7 @@ export default function TriageForm({ onBack, onSubmit, initialMode }: TriageForm
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-1">
             {/* UHID (JCI Identifier standard) */}
             <div className="relative">
               <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5 flex items-center gap-1">
@@ -280,6 +299,35 @@ export default function TriageForm({ onBack, onSubmit, initialMode }: TriageForm
                 onChange={(e) => setPhone(e.target.value)}
                 className="w-full px-4 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 dark:text-slate-100"
               />
+            </div>
+
+            {/* ER Bed / Location (Optional) */}
+            <div className="relative">
+              <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5 flex items-center justify-between">
+                <span className="flex items-center gap-1">
+                  <Hash className="w-3.5 h-3.5 text-slate-400" />
+                  ER Bed (Optional)
+                </span>
+                <span className="text-[10px] text-slate-400 font-normal">e.g. 11, 11A</span>
+              </label>
+              <input
+                type="text"
+                placeholder="e.g. 11, 11A, Bed 10B"
+                value={bedNo}
+                onChange={(e) => {
+                  setBedNo(e.target.value);
+                  setBedError(null);
+                }}
+                className={`w-full px-4 py-2 bg-slate-50 dark:bg-slate-900 border ${
+                  bedError ? "border-rose-500 focus:ring-rose-500" : "border-slate-200 dark:border-slate-800 focus:ring-blue-500"
+                } rounded-lg text-sm font-mono text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2`}
+              />
+              {bedError && (
+                <p className="text-[11px] text-rose-600 dark:text-rose-400 mt-1 font-medium flex items-center gap-1">
+                  <AlertTriangle className="w-3 h-3 shrink-0" />
+                  {bedError}
+                </p>
+              )}
             </div>
           </div>
 

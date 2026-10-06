@@ -30,6 +30,7 @@ interface ProcedureNoteFormModalProps {
   isOpen: boolean;
   onClose: () => void;
   caseId: string;
+  displayCaseId?: string;
   defaultDoctorName?: string;
   procDef: ProcedureDefinition;
   editingNote?: ProcedureNote | null;
@@ -44,6 +45,7 @@ export const ProcedureNoteFormModal: React.FC<ProcedureNoteFormModalProps> = ({
   isOpen,
   onClose,
   caseId,
+  displayCaseId,
   defaultDoctorName = "",
   procDef,
   editingNote,
@@ -254,7 +256,7 @@ export const ProcedureNoteFormModal: React.FC<ProcedureNoteFormModalProps> = ({
               </span>
               <span className="text-xs text-slate-400">•</span>
               <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">
-                Case ID: {caseId}
+                Case ID: {displayCaseId || caseId}
               </span>
             </div>
             <h3 className="text-base sm:text-lg font-black text-slate-900 dark:text-white mt-0.5">

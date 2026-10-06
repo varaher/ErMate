@@ -56,6 +56,8 @@ import { updateChatMessage, appendChatMessage, linkScribeSessionAndCase, verifyT
 import { deduplicateConsultations } from "./utils/consultationNormalization";
 import { isEstablishedCaseSheet } from "./utils/establishedCaseCheck";
 import { resolveDutyWindow } from "./utils/dutyWindow";
+import { allocateOrValidateBed } from "./utils/bedAllocation";
+import { generateInternalCaseId, reserveNextDisplaySequence, getDisplayCaseId } from "./utils/caseIdentity";
 import {
   startDutySession,
   endDutySession,
@@ -2032,7 +2034,11 @@ const handleDeleteAllCases = async () => {
   };
 
   // Submit triage / registration form
-  const handleTriageSubmit = async (demographics: PatientDemographics, vitals: PatientVitals) => {
+  const handleTriageSubmit = async (
+    demographics: PatientDemographics, 
+    vitals: PatientVitals,
+    bedNo?: string
+  ) => {
     const isPeds = demographics.age !== null && demographics.age <= 16;
     
     // Phase 2: Resolve workspace ownership securely
@@ -2071,8 +2077,21 @@ const handleDeleteAllCases = async () => {
       vitals.temp,
     ].some(value => typeof value === "string" && value.trim() !== "");
 
+    const internalCaseId = generateInternalCaseId();
+    let displayCaseId: string | undefined = undefined;
+    try {
+      const reserved = await reserveNextDisplaySequence(db);
+      displayCaseId = reserved.displayId;
+    } catch (seqErr: any) {
+      console.error("[handleTriageSubmit] Failed to reserve displayId sequence:", seqErr);
+      triggerNotification("Registration Error", seqErr?.message || "Could not reserve daily case ID.", "warning");
+      return;
+    }
+
     const newCase: ClinicalCase = {
-      id: "C-" + Math.floor(1000 + Math.random() * 9000),
+      id: internalCaseId,
+      ...(displayCaseId ? { displayId: displayCaseId } : {}),
+      ...(bedNo ? { bedNo } : {}),
       workspaceType: workspace.workspaceType,
       ownerUid: workspace.ownerUid,
       hospitalId: workspace.hospitalId,
@@ -2102,7 +2121,10 @@ const handleDeleteAllCases = async () => {
             currentAssignmentShiftId: creationDuty.baseShiftId,
           }
         : {}),
-      patient: demographics,
+      patient: {
+        ...demographics,
+        ...(bedNo ? { bed: bedNo } : {}),
+      },
       vitals,
       sampleHistory: {
         symptoms: demographics.presentingComplaint,
@@ -2349,10 +2371,23 @@ const handleDeleteAllCases = async () => {
       };
     }
 
-    const caseToSave: ClinicalCase = {
+    let displayIdToUse = previousCase?.displayId || updatedCase.displayId;
+    if (isBrandNewCase && (!displayIdToUse || !/^[0-9]{9}$/.test(displayIdToUse))) {
+      try {
+        const reserved = await reserveNextDisplaySequence(db);
+        displayIdToUse = reserved.displayId;
+      } catch (err: any) {
+        console.error("[handleSaveCase] Failed to reserve displayId sequence:", err);
+        triggerNotification("Registration Error", err?.message || "Could not reserve daily case ID.", "warning");
+        return;
+      }
+    }
 
+    const caseToSave: ClinicalCase = {
       ...(previousCase || {}),
       ...updatedCase,
+      id: previousCase?.id || updatedCase.id || generateInternalCaseId(),
+      ...(displayIdToUse ? { displayId: displayIdToUse } : {}),
       ...resolvedShiftProvenance,
       ...resolvedCurrentAssignment,
       patient: {
@@ -2603,6 +2638,72 @@ const handleDeleteAllCases = async () => {
     setShowVoiceScribeChat(false);
   };
 
+  /**
+   * Assign or update physical ER bed for a ClinicalCase.
+   * Validates occupancy, normalizes bed, and saves to Firestore with merge: true.
+   * Does NOT modify case ID or create new cases/sessions.
+   */
+  const handleAssignBedToCase = async (
+    caseId: string,
+    bedInput: string
+  ): Promise<{ success: boolean; error?: string; assignedBed?: string }> => {
+    const targetCase = cases.find(c => c.id === caseId);
+    if (!targetCase) {
+      return { success: false, error: "Case not found." };
+    }
+
+    const allocation = allocateOrValidateBed(
+      bedInput,
+      filterActiveNonArchivedCases(cases),
+      erPhysicalBedCapacity || 30,
+      caseId
+    );
+
+    if (!allocation.success || !allocation.canonicalBed) {
+      return {
+        success: false,
+        error: allocation.error || "Unable to allocate requested bed.",
+      };
+    }
+
+    const canonicalBed = allocation.canonicalBed;
+
+    try {
+      const user = auth.currentUser;
+      await setDoc(
+        doc(db, "cases", caseId),
+        sanitizeForFirestore({
+          bedNo: canonicalBed,
+          ...(targetCase.patient ? { patient: { ...targetCase.patient, bed: canonicalBed } } : {}),
+          lastEditedBy: user?.uid || "system",
+          lastEditedAt: new Date().toISOString(),
+        }),
+        { merge: true }
+      );
+
+      // Update local state immediately
+      setCases(prev =>
+        prev.map(c => (c.id === caseId ? {
+          ...c,
+          bedNo: canonicalBed,
+          patient: c.patient ? { ...c.patient, bed: canonicalBed } : c.patient
+        } : c))
+      );
+
+      triggerNotification(
+        "Bed Assigned",
+        `Patient ${targetCase.patient?.name || targetCase.id} assigned to Bed ${canonicalBed}.`,
+        "success"
+      );
+
+      return { success: true, assignedBed: canonicalBed };
+    } catch (err: any) {
+      console.error("[handleAssignBedToCase] Error saving bed:", err);
+      handleFirestoreError(err, OperationType.WRITE, "cases");
+      return { success: false, error: "Failed to persist bed assignment to Firestore." };
+    }
+  };
+
   const handleStartVoiceScribe = (caseId?: string) => {
     setVoiceScribeCaseId(caseId || null);
     if (caseId) {
@@ -2662,6 +2763,7 @@ const handleDeleteAllCases = async () => {
     extracted: any,
     context?: {
       caseId?: string;
+      displayId?: string;
       workspaceMetadata?: any;
       profile?: any;
       currentUser?: any;
@@ -2669,7 +2771,8 @@ const handleDeleteAllCases = async () => {
       activeDutySession?: DutySessionRecord | null;
     }
   ): ClinicalCase => {
-    const newCaseId = context?.caseId || existingMatch?.id || ("C-" + Math.floor(1000 + Math.random() * 9000));
+    const newCaseId = context?.caseId || existingMatch?.id || generateInternalCaseId();
+    const resolvedDisplayId = existingMatch?.displayId || (context as any)?.displayId || extracted.displayId || undefined;
     const workspaceMetadata = context?.workspaceMetadata || {};
     const prof = context?.profile || profile || {};
     const user = context?.currentUser || auth.currentUser;
@@ -2771,6 +2874,8 @@ const handleDeleteAllCases = async () => {
     const newCase: ClinicalCase = {
       ...(existingMatch || {}),
       id: newCaseId,
+      ...(resolvedDisplayId ? { displayId: resolvedDisplayId } : {}),
+      ...(extracted.bedNo || existingMatch?.bedNo ? { bedNo: extracted.bedNo || existingMatch?.bedNo } : {}),
       workspaceType: existingMatch?.workspaceType || workspaceMetadata.workspaceType,
       ownerUid: existingMatch?.ownerUid || workspaceMetadata.ownerUid || null,
       hospitalId: existingMatch?.hospitalId || workspaceMetadata.hospitalId || null,
@@ -2786,6 +2891,7 @@ const handleDeleteAllCases = async () => {
       createdAt: existingMatch?.createdAt || new Date().toISOString(),
       patient: {
         ...(existingMatch?.patient || {}),
+        ...(extracted.bedNo || existingMatch?.bedNo || existingMatch?.patient?.bed ? { bed: extracted.bedNo || existingMatch?.bedNo || existingMatch?.patient?.bed } : {}),
         name: extracted.patientName || existingMatch?.patient.name || "",
         age: resolvedAge,
         gender: extracted.gender || existingMatch?.patient.gender || "",
@@ -3322,7 +3428,20 @@ const handleDeleteAllCases = async () => {
   ): Promise<string> => {
     const shouldNavigate = options?.autoNavigate !== false;
     const existingId = options?.existingCaseId;
-    const newCaseId = existingId || ("C-" + Math.floor(1000 + Math.random() * 9000));
+    let newCaseId = existingId;
+    let reservedDisplayId: string | undefined = undefined;
+
+    if (!newCaseId) {
+      newCaseId = generateInternalCaseId();
+      try {
+        const reserved = await reserveNextDisplaySequence(db);
+        reservedDisplayId = reserved.displayId;
+      } catch (err: any) {
+        console.error("[handleSaveExtractedVoiceCase] Failed to reserve displayId sequence:", err);
+        triggerNotification("Registration Error", err?.message || "Could not reserve daily case ID.", "warning");
+        throw err;
+      }
+    }
     let existingMatch = cases.find(c => c.id === newCaseId) || null;
     if (!existingMatch && existingId) {
       try {
@@ -3348,6 +3467,7 @@ const handleDeleteAllCases = async () => {
 
     const newCase = buildExtractedCaseDraft(existingMatch || null, extracted, {
       caseId: newCaseId,
+      ...(reservedDisplayId ? { displayId: reservedDisplayId } : {}),
       workspaceMetadata,
       profile,
       currentUser: auth.currentUser,
@@ -3641,12 +3761,23 @@ const handleDeleteAllCases = async () => {
      * 5. Brand new intake: create minimal ClinicalCase shell using buildExtractedCaseDraft
      */
     const workspace = await resolveWorkspaceForUser(user.uid);
-    const newCaseId = "C-" + Math.floor(1000 + Math.random() * 9000);
+    const newCaseId = generateInternalCaseId();
+    let displayCaseId: string | undefined = undefined;
+    try {
+      const reserved = await reserveNextDisplaySequence(db);
+      displayCaseId = reserved.displayId;
+    } catch (seqErr: any) {
+      console.error("[handleEnsureDraftCase] Failed to reserve displayId sequence:", seqErr);
+      triggerNotification("Registration Error", seqErr?.message || "Could not reserve daily case ID.", "warning");
+      throw seqErr;
+    }
 
     const draftCase = buildExtractedCaseDraft(null, {
       bedNo: requestedBedNo || "",
+      displayId: displayCaseId,
     }, {
       caseId: newCaseId,
+      displayId: displayCaseId,
       workspaceMetadata: {
         workspaceType: workspace.workspaceType,
         ownerUid: workspace.ownerUid,
@@ -3659,6 +3790,9 @@ const handleDeleteAllCases = async () => {
 
     draftCase.scribeSessionId = sessionId;
     draftCase.bedNo = requestedBedNo || draftCase.bedNo || "";
+    if (displayCaseId) {
+      draftCase.displayId = displayCaseId;
+    }
 
     const cleanCase = sanitizeForFirestore(draftCase);
     await setDoc(doc(db, "cases", draftCase.id), cleanCase, { merge: true });
@@ -3685,7 +3819,7 @@ const handleDeleteAllCases = async () => {
       scribeSessionId?: string | null;
     }
   ) => {
-    const existingId = options?.existingCaseId || voiceScribeCaseId || ("C-" + Math.floor(1000 + Math.random() * 9000));
+    const existingId = options?.existingCaseId || voiceScribeCaseId || generateInternalCaseId();
     let existingMatch = cases.find(c => c.id === existingId) || null;
     if (!existingMatch && existingId) {
       try {
@@ -3757,7 +3891,7 @@ const handleDeleteAllCases = async () => {
       scribeSessionId?: string | null;
     }
   ) => {
-    const existingId = options?.existingCaseId || voiceScribeCaseId || ("C-" + Math.floor(1000 + Math.random() * 9000));
+    const existingId = options?.existingCaseId || voiceScribeCaseId || generateInternalCaseId();
     let existingMatch = cases.find(c => c.id === existingId) || null;
     if (!existingMatch && existingId) {
       try {
@@ -4022,6 +4156,17 @@ const handleDeleteAllCases = async () => {
         caseUpdatedAfterPreparation: true
       } : null
     };
+
+    if (!existingCase && (!caseToPersist.displayId || !/^[0-9]{9}$/.test(caseToPersist.displayId))) {
+      try {
+        const reserved = await reserveNextDisplaySequence(db);
+        caseToPersist.displayId = reserved.displayId;
+      } catch (seqErr: any) {
+        console.error("[handleApplyPreviewCase] Failed to reserve displayId sequence:", seqErr);
+        triggerNotification("Registration Error", seqErr?.message || "Could not reserve daily case ID.", "warning");
+        throw seqErr;
+      }
+    }
 
     try {
       const cleanCase = sanitizeForFirestore(caseToPersist);
@@ -5570,6 +5715,7 @@ const handleSignOut = async () => {
   const matchedCases = searchTerm
     ? cases.filter(c => 
         c.patient.name.toLowerCase().includes(searchTerm) ||
+        (c.displayId && c.displayId.toLowerCase().includes(searchTerm)) ||
         c.id.toLowerCase().includes(searchTerm) ||
         (c.patient.uhid && c.patient.uhid.toLowerCase().includes(searchTerm)) ||
         c.patient.presentingComplaint.toLowerCase().includes(searchTerm)
@@ -5867,7 +6013,7 @@ const handleSignOut = async () => {
                             </div>
                             <div className="flex flex-col items-end shrink-0 gap-1 ml-2">
                               <span className="text-[9px] bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 px-1.5 py-0.5 rounded font-mono font-extrabold">
-                                {c.id}
+                                {c.displayId || c.id}
                               </span>
                               <span className={`text-[8px] font-bold px-1 rounded-sm uppercase tracking-wide ${
                                 c.patient.triageCategory.startsWith("P1") 
@@ -6462,6 +6608,8 @@ const handleSignOut = async () => {
               onBack={() => setActiveFormMode(null)}
               onSubmit={handleTriageSubmit}
               initialMode={activeFormMode}
+              activeCases={filterActiveNonArchivedCases(cases)}
+              physicalBedCapacity={erPhysicalBedCapacity || 30}
             />
           )}
 
@@ -6665,6 +6813,8 @@ const handleSignOut = async () => {
                   activeShiftDoctors={activeShiftDoctors}
                   setActiveShiftDoctors={setActiveShiftDoctors}
                   onSaveCase={handleSaveCase}
+                  onAssignBed={handleAssignBedToCase}
+                  physicalBedCapacity={erPhysicalBedCapacity || 30}
                   isDarkMode={isDarkMode}
                   teamMembers={teamMembers}
                   onAddMember={handleAddTeamMember}
@@ -6751,6 +6901,8 @@ const handleSignOut = async () => {
                   onDeleteCase={handleDeleteCase}
                   onDeleteAllCases={handleDeleteAllCases}
                   onDiscussCase={(c) => handleStartVoiceScribe(c.id)}
+                  onAssignBed={handleAssignBedToCase}
+                  physicalBedCapacity={erPhysicalBedCapacity || 30}
                   isIndependent={userNormalizedRole === "independent"}
                 />
               )}

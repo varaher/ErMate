@@ -45,6 +45,7 @@ export interface PatientDemographics {
   uhid?: string;
   phone?: string;
   address?: string;
+  bed?: string;
   isMlc: boolean;
   mlcDetails?: MlcDetails;
   caseType?: "Medical" | "Trauma" | "";

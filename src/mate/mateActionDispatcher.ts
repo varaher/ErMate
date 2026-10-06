@@ -10,9 +10,8 @@
  * the existing ErMate workflows.
  */
 
-export type MateActionCapability =
-  | "case.open"
-  | "case.rounds.review";
+import type { MateActionCapability } from "./mateContracts";
+export type { MateActionCapability };
 
 export interface MateActionRequest {
   capability: MateActionCapability | string;

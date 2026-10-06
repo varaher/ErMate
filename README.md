@@ -97,6 +97,30 @@ ErMate implements **Local On-The-Fly PHI De-identification** hosted on Indian Cl
 - **Traffic-Police & Critical Session Safety (`src/components/VoiceScribeChatView.tsx`)**: Intercepts social and operational commands locally without Firestore writes or false extractions. When switching patients, suspends processing immediately and automatically replays pending utterances once the canonical Scribe session is safely attached.
 - **MATE App.tsx Hardening & Context Boundary (`src/App.tsx`)**: Enforces hard patient-context clearing on Scribe new-chat sessions (`voiceScribeCaseId`, `selectedCaseId`, preview state), provides hospital-configured dynamic bed capacity via reactive `hospital_shifts` listener, hardens draft case intake with two-sided Scribe ↔ ClinicalCase link verification (`verifyTwoSidedLink`), and enforces fail-closed mismatch and bed collision protection to prevent silent bed reassignments.
 - **Persistent Floating MATE Sidecar & Action Badge (`src/App.tsx`, `src/components/VoiceScribeChatView.tsx`)**: Evolves MATE into a persistent conversational sidecar accessible via a floating action badge in the bottom-right corner (`bottom-20 md:bottom-6 right-4 md:right-6 z-40`). On desktop/tablet, slides in as a 420px right-hand panel while keeping the live Dashboard, Case Sheets, and Case Lists active and responsive on the left (`md:mr-[420px]`). On mobile, presents an overlay drawer ending safely above the bottom navigation (`bottom-16`). Allows clinicians to update patients (e.g., Bed 2, Bed 7) conversationally, with live onSnapshot Firestore synchronization reflecting across the Dashboard in real time without page reload or component unmounting.
+- **Canonical ER Bed Assignment & MATE Resolution (`src/utils/bedAllocation.ts`, `src/components/TriageForm.tsx`, `src/components/DashboardView.tsx`)**: Decouples stable ClinicalCase identity (`id`, e.g. `C-2976`) from physical ER location (`bedNo`, e.g. `11A`). Normalizes all bed representations (`11`, `11A`, `11 B`, `10b`, `Bed 10B`) using single-source `normalizeMateBedId`. Implements locked family occupancy semantics for bare bed inputs (`11` allocates `11A` if vacant, `11B` if `11A` occupied, fails closed if full) and refuses collisions on occupied explicit slots. Provides quick bed assignment on incomplete Dashboard cards, updates incomplete cards to prominently prioritize physical bed badges (`BED 11A` or `BED UNASSIGNED`) over internal case IDs, binds unassigned Discuss clicks safely without inferring beds, and resolves spoken bed references (e.g. `"Bed 11 SAMPLE is incomplete..."`) directly to assigned existing cases with zero spurious case creations.
+
+### 8. Safe Clinical Case ID Architecture (P0 Patch 1)
+- **Separation of Concerns (`src/utils/caseIdentity.ts`)**:
+  - **Internal ID (`ClinicalCase.id`)**: Collision-resistant UUID (`crypto.randomUUID()`) serving as the immutable Firestore document ID (`/cases/{id}`), Scribe session link (`linkedCaseId`), and backend reference.
+  - **Display ID (`ClinicalCase.displayId`)**: Human-facing clinical case number in format `YYMMDD###` (e.g. `261005001`), resetting daily, strictly monotonic from `001` to `999`.
+- **Atomic Daily Sequence Transaction (`case_counters/{YYYY-MM-DD}`)**:
+  - Incremented via Firestore transactions with optimistic concurrency control. Concurrent patient creation requests from multiple clinicians never collide or produce duplicate display IDs.
+  - Hard ceiling at 999: requests exceeding 999 fail closed with an explicit error without wraparound or silent duplicates. Gaps from downstream failures are acceptable; collisions are prevented.
+- **Universal Case Creation Audit (`src/App.tsx`)**:
+  - All new-case pathways (Triage, MATE draft creation, Voice Scribe extraction, Preview save) reserve an atomic `displayId` and use internal UUIDs.
+  - Existing case modifications strictly preserve existing `id` and `displayId`, never generating a new display ID during edits.
+  - Scribe sessions link strictly to internal UUIDs; Firestore paths remain `/cases/{internalId}`.
+- **Clinician UI Presentation & Legacy Compatibility**:
+  - UI views (`DashboardView`, `CasesListView`, `CaseSheetView`, `CaseSheetPrintView`, `HandoverView`, `VoiceScribeChatView`, global search) display `displayId || id`, showing clean human-facing case numbers for new patients while preserving legacy `C-xxxx` records without migration or breaking changes.
+
+### 9. Controlled Replay & MATE Resolution Bypass (P0 Patch 2)
+- **Controlled Scribe Replay Bypass (`src/components/VoiceScribeChatView.tsx`)**:
+  - Replaying pending utterances (`pendingNewPatientHandoffRef`, `pendingUtteranceAfterSwitchRef`) sets `{ skipMatePatientResolution: true }`, completely bypassing MATE traffic-police, bed-status queries, bed resolution, and new case detection.
+  - Prevents the original utterance containing `"New patient in Bed 11..."` from re-entering MATE, completely eliminating duplicate bed allocation (e.g. allocating `11B` after `11A` was occupied by the first pass) and duplicate case creation.
+  - Replay routes directly into the existing clinical Scribe extraction pipeline (`/api/scribe-chat`), extracting clinical information (age, gender, complaints, vitals) into the single created patient record.
+- **Generation & Session Link Safety**:
+  - Stamped `generation` prevents stale handoffs from replaying if context shifted unexpectedly.
+  - Pending handoff refs are cleared to `null` before dispatch, guaranteeing exactly-once replay with single-message chat history.
 
 ---
 

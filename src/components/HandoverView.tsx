@@ -1546,7 +1546,7 @@ function extractLatestVitalsWithTime(
         bed: c.bedNo || `Bed ${idx + 1}`,
         name: c.patient.name || "Anonymous",
         ageGender: `${c.patient.age || "N/A"}${c.patient.gender === "Male" ? "M" : c.patient.gender === "Female" ? "F" : "U"}`,
-        erNo: `ER# ${c.patient.id || c.id.substring(0, 7)}`,
+        erNo: `ER# ${c.patient.id || c.displayId || c.id.substring(0, 7)}`,
         doctor: `Dr. ${profile.name || "Manoj"}`,
         stayDuration: `In ER since: ${c.admissionTime ? new Date(c.admissionTime).toLocaleDateString('en-GB') : 'Today'}`,
         complaints: c.patient.presentingComplaint || "Acute ER Presentation",
@@ -2399,7 +2399,7 @@ function extractLatestVitalsWithTime(
           bed: c.bedNo || "N/A",
           name: c.patient.name,
           ageGender: `${c.patient.age || "N/A"}y / ${c.patient.gender}`,
-          erNo: c.patient.uhid || c.id.substring(0, 7),
+          erNo: c.patient.uhid || c.displayId || c.id.substring(0, 7),
           doctor: c.createdByName || c.doctorName || `Dr. ${profile.name}`,
           vitals: `HR ${c.vitals.hr || "N/A"}, BP ${c.vitals.bp || "N/A"}, SpO2 ${c.vitals.spo2 || "N/A"}%`,
           complaints: c.patient.presentingComplaint,
@@ -2478,7 +2478,7 @@ function extractLatestVitalsWithTime(
 
     selectedCases.forEach((c, idx) => {
       text += `${idx + 1}. PATIENT: ${c.patient.name} (${c.patient.age}y / ${c.patient.gender}) [${c.bedNo || 'Bed N/A'}]\n`;
-      text += `   Case ID: ${c.id} | UHID: ${c.patient.uhid} | Triage Level: ${c.patient.triageCategory}\n`;
+      text += `   Case ID: ${c.displayId || c.id} | UHID: ${c.patient.uhid} | Triage Level: ${c.patient.triageCategory}\n`;
       text += `   Vitals: HR ${c.vitals.hr || "N/A"} | BP ${c.vitals.bp || "N/A"} | SpO2 ${c.vitals.spo2 || "N/A"}%\n`;
       text += `   Chief Complaint: ${c.patient.presentingComplaint}\n`;
       text += `   SAMPLE History:\n`;

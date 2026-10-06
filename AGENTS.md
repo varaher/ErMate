@@ -45,6 +45,63 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-05] — ErMate P0 Patch 2: Controlled Replay & MATE Resolution Bypass
+- **Controlled Scribe Replay Bypass (`src/components/VoiceScribeChatView.tsx`)**:
+  - Added internal `options?: { skipMatePatientResolution?: boolean }` argument to `sendToChat(text, options)`.
+  - Normal clinician messages (keyboard, voice mic, photo OCR, send button) continue through the standard MATE traffic-police and bed-resolution controller unhindered.
+  - When replaying pending utterances (`pendingNewPatientHandoffRef`, `pendingUtteranceAfterSwitchRef`) after context switch and canonical Scribe session establishment, calls `sendToChat(pending.utterance, { skipMatePatientResolution: true })`.
+  - Bypasses MATE patient/new-case resolution entirely on replay: prevents `detectExplicitNewCaseIntent` or `resolveMateCaseReference` from running on the original utterance (e.g. `"New patient in Bed 11 with fever..."`), completely eliminating duplicate bed allocation (e.g. 11B) and duplicate patient creation.
+- **Generation Safety Guard (`src/components/VoiceScribeChatView.tsx`)**:
+  - Stamped `generation` on pending replays and verified `pending.generation === sessionContextGenerationRef.current` in the replay `useEffect`.
+  - Stale handoffs (where context shifted unexpectedly before session attachment) are immediately discarded without replaying or creating patients.
+  - Pending refs are cleared to `null` prior to invoking `sendToChat`, preventing duplicate replays.
+- **Deterministic Single-Message History**:
+  - The first pass does not persist user messages during handoff. The controlled replay persists the user message into the new canonical Scribe session exactly once before Scribe extraction.
+- **Deterministic Verification**: Added `verify_mate_replay_safety.ts` testing all 12 required scenarios (vacant allocation, occupied fallback, full bed family fail-closed, explicit slot preservation, resolution bypass, Scribe original utterance extraction, single message history, stale generation rejection, existing-patient switch bypass, and normal clinician pass-through). All 12/12 tests pass alongside 14/14 case identity, 7/7 bed binding, 7/7 MATE integration, 10/10 sidecar, 25/25 team/archive, and 19/19 clinical documentation regression suites.
+
+### [2026-10-05] — ErMate P0 Patch 1: Safe Clinical Case ID Architecture
+- **Two Distinct Identifiers (`src/types.ts`, `src/utils/caseIdentity.ts`)**:
+  - **INTERNAL ID (`ClinicalCase.id`)**: Collision-resistant UUID (`crypto.randomUUID()`) used exclusively as the immutable Firestore document ID (`/cases/{id}`), Scribe session link (`linkedCaseId`), and backend reference.
+  - **DISPLAY ID (`ClinicalCase.displayId`)**: Human-facing clinical case number in format `YYMMDD###` (e.g. `261005001`), resetting daily, strictly monotonic from `001` to `999`.
+- **Atomic Daily Transactional Counter (`case_counters/{YYYY-MM-DD}`)**:
+  - Generated via Firestore optimistic concurrency transaction (`reserveNextDisplaySequence(db)`).
+  - Enforces 3-digit daily ceiling (001–999). Exceeding 999 fails closed with an explicit range exhaustion error without wraparound or silent duplicates.
+  - Document version check guarantees that concurrent creators receive distinct sequential display IDs. Gaps from failed downstream saves are acceptable; duplicates are impossible.
+- **Audit & Patch of All Case Creation Paths (`src/App.tsx`)**:
+  - Normal Triage / New Patient registration (`handleTriageSubmit`): Obtains internal UUID and transactional `displayId`, failing closed on reservation error.
+  - MATE explicit new-patient intake (`handleEnsureDraftCase`): Obtains internal UUID and transactional `displayId`, links Scribe session using internal UUID.
+  - Scribe voice-extracted new case creation (`handleSaveExtractedVoiceCase`): Reserves internal UUID and transactional `displayId`.
+  - Preview to save intake (`handleSaveCase`, `handleApplyPreviewCase`): Generates UUID and reserves `displayId` on brand new cases, while existing case edits strictly preserve their existing `id` and `displayId` without generating new sequences.
+  - Eliminated all active instances of unsafe short-random `"C-" + Math.floor(1000 + Math.random() * 9000)` case ID generation.
+- **Clinician UI Display & Backward Compatibility (`src/components/`)**:
+  - All clinician-facing views (`DashboardView`, `CasesListView`, `CaseSheetView`, `CaseSheetPrintView`, `HandoverView`, `VoiceScribeChatView`, global search) use `displayId || id`, showing clean human-facing case numbers for new patients while preserving legacy `C-xxxx` records without migration or breakage.
+  - Scribe sessions and internal Firestore paths continue using internal UUIDs.
+- **Firestore Security Rules (`firestore.rules`)**:
+  - Added minimal, strictly validated rule for `/case_counters/{counterDate}` requiring authentication, verifying `dateKey == counterDate`, enforcing `lastSequence == 1` on creation, `lastSequence == existing.lastSequence + 1` and `<= 999` on update, and prohibiting deletion.
+- **Deterministic Verification**: Added `verify_case_identity.ts` testing all 14 required scenarios (first/second/10th/999th case, 1000th failure, concurrency retry, triage intake, MATE intake, edit preservation, legacy fallback, UI presentation, session linkage, Firestore path, zero remaining unsafe patterns). All 14/14 tests pass alongside 7/7 bed binding, 7/7 MATE integration, 10/10 sidecar, 25/25 team/archive, and 19/19 clinical documentation regression suites.
+
+### [2026-10-05] — Canonical ER Bed Assignment (Triage & Existing Cases) & MATE Resolution
+- **Canonical Bed Allocation & Occupancy Safety (`src/utils/bedAllocation.ts`)**:
+  - Reused single-source `normalizeMateBedId` and `isValidMateBedLocation` to normalize inputs (`"11"`, `"11A"`, `"11 B"`, `"10b"`, `"Bed 10B"`).
+  - Enforced locked ER family allocation semantics for bare bed inputs (e.g. `11` -> `11A` if vacant, `11B` if `11A` is occupied, and fail-closed if both are occupied).
+  - Explicit slots (e.g. `11A`) check active census (`status !== "Discharged"` and non-archived), refusing collisions with existing occupants.
+  - Discharged and soft-archived historical cases do not block vacant bed allocation.
+- **Triage & New Patient Registration Integration (`src/components/TriageForm.tsx`, `src/App.tsx`)**:
+  - Maintained optional ER Bed entry with live occupancy validation upon submission.
+  - Persists canonical `ClinicalCase.bedNo` (and syncs `demographics.bed`) to Firestore without mutating case ID or generating extra records.
+- **Existing Unassigned Case Bed Assignment (`src/App.tsx`, `src/components/DashboardView.tsx`)**:
+  - Minimal quick bed assignment action on incomplete case cards allows typing a bed number (e.g. `11`).
+  - Executes `handleAssignBedToCase`, persists to Firestore with `{ merge: true }`, updates local state immediately, and triggers cross-device updates without altering case ID or creating duplicate Scribe sessions.
+- **Incomplete-Case Card Visual Hierarchy (`src/components/DashboardView.tsx`)**:
+  - Reordered incomplete case card header to prioritize physical bed prominence:
+    - Assigned: `BED 11A` badge + quick edit action, with case ID (`C-2976`) as secondary mono tag.
+    - Unassigned: `BED UNASSIGNED` badge + `[Assign Bed]` action, with case ID as secondary tag.
+    - Demographics line prominently displays `{gender} • {age} years` alongside triage category pill (`P1`/`P2`/`P3`).
+- **MATE Discuss Button Context & Spoken Resolution (`src/components/VoiceScribeChatView.tsx`, `src/mate/mateCaseResolver.ts`)**:
+  - Discuss button on unassigned cases sets `voiceScribeCaseId` and displays `Current context: <id> / <age><gender> • Bed: Unassigned`.
+  - Once assigned a bed (e.g. `11A`), spoken clinician references (e.g. `"Bed 11 SAMPLE is incomplete. Past medical history is nil."`) resolve directly to the existing case via `resolveMateCaseReference` without creating new cases or asking generic age questions.
+- **Deterministic Verification**: Added `verify_bed_binding.ts` with 7/7 passing unit tests alongside the 25/25 team/archive suite, 10/10 sidecar suite, 7/7 MATE integration suite, and 19/19 clinical documentation regression suite.
+
 ### [2026-10-05] — Persistent Floating MATE Sidecar & Floating Action Badge
 - **Floating MATE Action Badge (`src/App.tsx`)**:
   - Added persistent floating badge in the bottom-right corner (`bottom-20 md:bottom-6 right-4 md:right-6 z-40`).

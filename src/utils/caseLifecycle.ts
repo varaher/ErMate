@@ -81,11 +81,21 @@ export function isCaseEligibleFor24hArchive(c: ClinicalCase, now = new Date()): 
   if (c.status === "Discharged") return false;
   if (c.dischargeInfo?.summaryStatus === "FINALIZED") return false;
 
-  // Rule 3: Only incomplete/draft cases are eligible
+  // Rule 3: Physical Bed Safety Invariant
+  // Active bedside patients occupying an ER bed are physically in the department.
+  // 24 hours + incomplete documentation alone is NOT proof the patient left the ER.
+  // Fail-safe: Established physical bed occupants remain active in census and must
+  // never be automatically archived or have their bed marked as vacant.
+  const hasActiveBed = Boolean((c.bedNo && String(c.bedNo).trim() !== "") || (c.patient?.bed && String(c.patient.bed).trim() !== ""));
+  if (hasActiveBed) {
+    return false;
+  }
+
+  // Rule 4: Only incomplete/draft cases are eligible
   const pending = getCasePendingStatus(c);
   if (!pending.isPending) return false;
 
-  // Rule 4: Must be >= 24 hours old
+  // Rule 5: Must be >= 24 hours old
   const createdDate = getCaseCreationTimestamp(c);
   if (!createdDate) return false;
 

@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { ConfirmModal } from "./shared/ConfirmModal";
-import { Search, Filter, Plus, Calendar, Activity, Eye, Edit, Trash2, Clock, CheckCircle, ChevronLeft, MessageSquare, FileText } from "lucide-react";
+import { Search, Filter, Plus, Calendar, Activity, Eye, Edit, Trash2, Clock, CheckCircle, ChevronLeft, MessageSquare, FileText, Bed, X, AlertTriangle } from "lucide-react";
 import { ClinicalCase } from "../types";
 
 interface CasesListViewProps {
@@ -14,6 +14,8 @@ interface CasesListViewProps {
   onNavigateToTab?: (tabId: string) => void;
   onDiscussCase?: (patientCase: ClinicalCase) => void;
   onDeleteAllCases?: () => void;
+  onAssignBed?: (caseId: string, bedInput: string) => Promise<{ success: boolean; error?: string; assignedBed?: string }>;
+  physicalBedCapacity?: number;
   isIndependent?: boolean;
   isPlatformAdmin?: boolean;
 }
@@ -29,10 +31,35 @@ export default function CasesListView({
   onNavigateToTab,
   onDiscussCase,
   onDeleteAllCases,
+  onAssignBed,
+  physicalBedCapacity = 30,
   isIndependent = false,
   isPlatformAdmin = false,
 }: CasesListViewProps) {
   const [searchTerm, setSearchTerm] = useState("");
+  const [assigningBedCase, setAssigningBedCase] = useState<ClinicalCase | null>(null);
+  const [bedInputValue, setBedInputValue] = useState("");
+  const [assignBedError, setAssignBedError] = useState<string | null>(null);
+  const [isAssigningBed, setIsAssigningBed] = useState(false);
+
+  const handleConfirmAssignBed = async () => {
+    if (!assigningBedCase || !onAssignBed) return;
+    setIsAssigningBed(true);
+    setAssignBedError(null);
+    try {
+      const res = await onAssignBed(assigningBedCase.id, bedInputValue);
+      if (res.success) {
+        setAssigningBedCase(null);
+        setBedInputValue("");
+      } else {
+        setAssignBedError(res.error || "Failed to assign bed.");
+      }
+    } catch (err: any) {
+      setAssignBedError(err?.message || "Failed to assign bed.");
+    } finally {
+      setIsAssigningBed(false);
+    }
+  };
   const [caseToDelete, setCaseToDelete] = useState<{ id: string; name: string } | null>(null);
   const [showDeleteAllConfirm, setShowDeleteAllConfirm] = useState(false);
   const [statusFilter, setStatusFilter] = useState<"All" | "Active" | "Triage" | "Admitted" | "Discharged" | "Transferred" | "MLC">("All");
@@ -45,6 +72,7 @@ export default function CasesListView({
       c.patient.presentingComplaint.toLowerCase().includes(searchTerm.toLowerCase()) ||
       (c.provisionalPrimaryDiagnosis || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
       (c.doctorName || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (c.displayId && c.displayId.toLowerCase().includes(searchTerm.toLowerCase())) ||
       c.id.toLowerCase().includes(searchTerm.toLowerCase());
 
     let matchesStatus = true;
@@ -295,6 +323,9 @@ export default function CasesListView({
                             Adult
                           </span>
                         )}
+                        <span className="text-[9px] font-mono font-medium px-1.5 py-0.2 rounded bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-500">
+                          {c.displayId || c.id}
+                        </span>
                       </div>
                       <h3 className="text-sm font-bold text-slate-800 dark:text-white mt-1 group-hover:text-blue-600 transition-colors">
                         {c.patient.name}

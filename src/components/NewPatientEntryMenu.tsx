@@ -2,8 +2,7 @@ import { generateUHID } from "../utils/caseHelper";
 import React from "react";
 import { Mic, PenLine, ClipboardList, User, Heart, ChevronRight, X } from "lucide-react";
 import { ClinicalCase } from "../types";
-import { collection, doc } from "firebase/firestore";
-import { db } from "../firebase";
+import { generateInternalCaseId } from "../utils/caseIdentity";
 
 /**
  * NewPatientEntryMenu.tsx
@@ -46,8 +45,8 @@ function createNewCase(
 ): ClinicalCase {
   const now = new Date().toISOString();
   return {
-    id: doc(collection(db, "cases")).id,
-    displayId: `CASE-${Date.now()}`,
+    id: generateInternalCaseId(),
+    displayId: undefined,
     status: "Triage",
     savedTime: now,
     timeSpentMin: 0,

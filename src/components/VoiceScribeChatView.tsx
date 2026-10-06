@@ -1462,14 +1462,14 @@ export default function VoiceScribeChatView({
     }
   };
 
-   const sendToChat = async (text: string) => {
+   const sendToChat = async (text: string, options?: { skipMatePatientResolution?: boolean }) => {
     const trimmed = text.trim();
     if (!trimmed || isSending) return;
 
     const requestGeneration = sessionContextGenerationRef.current;
 
     // Natural-language Rounds routing (patient-linked / case conversation)
-    if (!isDiscussionOnly) {
+    if (!isDiscussionOnly && !options?.skipMatePatientResolution) {
       const roundsLens = detectRoundsLensIntent(trimmed);
       if (roundsLens) {
         await runRoundsLens(roundsLens, trimmed);
@@ -1478,7 +1478,7 @@ export default function VoiceScribeChatView({
     }
 
     // ── MATE TRAFFIC-POLICE & CONVERSATIONAL CONTROLLER ─────────────
-    if (!isDiscussionOnly && allCases) {
+    if (!isDiscussionOnly && allCases && !options?.skipMatePatientResolution) {
       const activeCensusCases = allCases.filter(c => !(c as any).archivedAt);
       const matePlan = planMateConversation(trimmed);
       const activeCase = activeCaseId ? activeCensusCases.find(c => c.id === activeCaseId) || caseData || null : (caseData || null);
@@ -1999,6 +1999,11 @@ export default function VoiceScribeChatView({
     // 1. Explicit new patient handoff replay
     if (pendingNewPatientHandoffRef.current) {
       const pendingNew = pendingNewPatientHandoffRef.current;
+      // Stale generation check: discard without replaying if generation shifted
+      if (pendingNew.generation !== sessionContextGenerationRef.current) {
+        pendingNewPatientHandoffRef.current = null;
+        return;
+      }
       if (
         activeCaseId === pendingNew.targetCaseId &&
         activeSessionId &&
@@ -2006,7 +2011,7 @@ export default function VoiceScribeChatView({
         !isSending
       ) {
         pendingNewPatientHandoffRef.current = null;
-        sendToChat(pendingNew.utterance);
+        sendToChat(pendingNew.utterance, { skipMatePatientResolution: true });
         return;
       }
     }
@@ -2014,6 +2019,11 @@ export default function VoiceScribeChatView({
     // 2. Existing patient switch replay
     if (pendingUtteranceAfterSwitchRef.current) {
       const pending = pendingUtteranceAfterSwitchRef.current;
+      // Stale generation check: discard without replaying if generation shifted
+      if (pending.generation !== sessionContextGenerationRef.current) {
+        pendingUtteranceAfterSwitchRef.current = null;
+        return;
+      }
       if (
         activeCaseId === pending.targetCaseId &&
         activeSessionId &&
@@ -2021,7 +2031,7 @@ export default function VoiceScribeChatView({
         !isSending
       ) {
         pendingUtteranceAfterSwitchRef.current = null;
-        sendToChat(pending.utterance);
+        sendToChat(pending.utterance, { skipMatePatientResolution: true });
       }
     }
   }, [activeCaseId, activeSessionId, sessionAttachError, isSending]);
@@ -2094,7 +2104,11 @@ export default function VoiceScribeChatView({
   const headerTitle = "ErMate Assistant";
   const headerSubtitle = isDiscussionOnly
     ? "Discuss any case — no patient record required"
-    : "Dictate the case in your native language, or ask a clinical question";
+    : caseData
+      ? (caseData.bedNo || caseData.patient?.bed
+          ? `Current context: Bed ${caseData.bedNo || caseData.patient?.bed} / ${caseData.patient?.name || "Patient"}`
+          : `Current context: ${caseData.displayId || caseData.id} / ${caseData.patient?.age !== null && caseData.patient?.age !== undefined ? `${caseData.patient.age}${caseData.patient.gender?.charAt(0) || ""}` : (caseData.patient?.name || "Patient")} • Bed: Unassigned`)
+      : "Dictate the case in your native language, or ask a clinical question";
 
   return (
     <div className={`flex flex-col h-full w-full bg-white dark:bg-slate-950 overflow-hidden ${isSidecar ? '' : 'h-[calc(100vh-140px)] min-h-[500px] max-w-5xl mx-auto rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xl'}`}>
@@ -2113,7 +2127,9 @@ export default function VoiceScribeChatView({
               </div>
               <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate font-mono">
                 {caseData
-                  ? `Current context: ${caseData.bedNo || caseData.patient?.bed ? `Bed ${caseData.bedNo || caseData.patient?.bed}` : "Case"} / ${caseData.patient?.name || "Patient"}`
+                  ? (caseData.bedNo || caseData.patient?.bed
+                      ? `Current context: Bed ${caseData.bedNo || caseData.patient?.bed} / ${caseData.patient?.name || "Patient"}`
+                      : `Current context: ${caseData.displayId || caseData.id} / ${caseData.patient?.age !== null && caseData.patient?.age !== undefined ? `${caseData.patient.age}${caseData.patient.gender?.charAt(0) || ""}` : (caseData.patient?.name || "Patient")} • Bed: Unassigned`)
                   : "Current context: No patient selected"}
               </p>
             </div>
@@ -2214,7 +2230,7 @@ export default function VoiceScribeChatView({
       {!isDiscussionOnly && caseData && !isSidecar && (
         <div className="bg-slate-100 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-3.5 py-1.5 text-[10px] font-mono text-slate-500 dark:text-slate-400 flex items-center justify-between shrink-0">
           <span className="truncate">
-            Bed {caseData?.bedNo || caseData?.patient?.bed || "--"} • UHID {caseData?.patient?.uhid || "--"} • {caseData?.patient?.age ? `${caseData.patient.age}${caseData.patient.sex?.charAt(0) || ""}` : "--"}
+            {caseData.bedNo || caseData.patient?.bed ? `Bed ${caseData.bedNo || caseData.patient?.bed}` : `${caseData.displayId || caseData.id} • Bed: Unassigned`} • UHID {caseData?.patient?.uhid || "--"} • {caseData?.patient?.age ? `${caseData.patient.age}${caseData.patient.gender?.charAt(0) || caseData.patient.sex?.charAt(0) || ""}` : "--"}
           </span>
           <span className="shrink-0">{caseData?.status || "Active"}</span>
         </div>

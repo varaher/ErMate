@@ -3,8 +3,7 @@ import React, { useState, useRef } from "react";
 import { Mic, Camera, FileText, Loader2, ArrowRight } from "lucide-react";
 import { ClinicalCase, TriageCategory, ArrivalMode } from "../types";
 import VoiceRecorder from "./shared/VoiceRecorder";
-import { collection, doc } from "firebase/firestore";
-import { db } from "../firebase";
+import { generateInternalCaseId } from "../utils/caseIdentity";
 
 /**
  * QuickDischargeIntake.tsx
@@ -54,8 +53,8 @@ export function createQuickDischargeCase(
   const age = extractedFields.patient?.age ?? null;
 
   return {
-    id: doc(collection(db, "cases")).id,
-    displayId: `CASE-${Date.now()}`,
+    id: generateInternalCaseId(),
+    displayId: extractedFields.displayId || undefined,
     status: "Active",
     savedTime: now,
     timeSpentMin: 0,

@@ -58,6 +58,7 @@ export interface PsychologicalAssessmentData {
 
 export interface CaseSheetData {
   caseId: string;
+  internalCaseId?: string;
   hospitalName?: string;
   triageCategory?: string | null;
   caseType?: string | null;
@@ -553,7 +554,8 @@ export function convertClinicalCaseToCaseSheetData(c: ClinicalCase, defaultHospi
   };
 
   return {
-    caseId: c.id,
+    caseId: c.displayId || c.id,
+    internalCaseId: c.id,
     hospitalName: c.hospital || defaultHospital || undefined, // no hardcoded hospital name fallback either
     triageCategory: c.patient?.triageCategory || (c as any).triageCategory || null,
     caseType: c.patient?.caseType || (c as any).caseType || null,
@@ -1191,7 +1193,7 @@ export default function CaseSheetPrintView({
                   <button
                     onClick={() => {
                       if (onViewCaseSheet) {
-                        onViewCaseSheet(data.caseId);
+                        onViewCaseSheet(data.internalCaseId || data.caseId);
                       } else if (onEdit) {
                         onEdit();
                       }

@@ -930,5 +930,23 @@ match /chatSessions/{sessionId} {
     match /paymentIntents/{orderId} {
       allow read, write: if false;
     }
+
+    // ── Case Counters (atomic daily clinical sequence YYMMDD###) ──
+    match /case_counters/{counterDate} {
+      allow read: if isLoggedIn();
+      allow create: if isLoggedIn()
+        && incoming().keys().hasOnly(['dateKey', 'lastSequence', 'updatedAt'])
+        && incoming().dateKey == counterDate
+        && incoming().lastSequence == 1
+        && incoming().updatedAt is string;
+      allow update: if isLoggedIn()
+        && incoming().keys().hasOnly(['dateKey', 'lastSequence', 'updatedAt'])
+        && incoming().dateKey == existing().dateKey
+        && incoming().lastSequence is int
+        && incoming().lastSequence == existing().lastSequence + 1
+        && incoming().lastSequence <= 999
+        && incoming().updatedAt is string;
+      allow delete: if false;
+    }
   }
 }
