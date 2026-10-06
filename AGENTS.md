@@ -45,6 +45,14 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-06] — ErMate: Firestore Named Database Targeting & Security Rules Deployment
+- **Named Database Targeting (`firebase.json`)**:
+  - Configured `firebase.json` firestore target to explicitly bind to the named database `ai-studio-ermate-c85078ba-126c-43fd-b799-a4aa8b82bf03` (`[{"database": "ai-studio-ermate-c85078ba-126c-43fd-b799-a4aa8b82bf03", "rules": "firestore.rules"}]`).
+  - Guarantees rule deployments target the live named database used by client and backend rather than defaulting to `(default)`.
+- **Security Rules Deployment (`firestore.rules`)**:
+  - Successfully deployed `firestore.rules` containing `/case_counters/{counterDate}` atomic sequence increment rules (`dateKey == counterDate`, `lastSequence == 1` on create, monotonic `+1` on update up to `999`).
+  - Resolves `Missing or insufficient permissions` on Preview Case Sheet "Apply to Case Sheet" and new case intake displayId generation.
+
 ### [2026-10-06] — ErMate: MATE Conversational Orchestrator Live UI Wiring & Fast Path Integration
 - **Deterministic Fast Path Wiring (`src/components/VoiceScribeChatView.tsx`, `src/mate/mateFastPath.ts`)**:
   - `tryDeterministicFastPath` directly intercepting clinician utterances in `sendToChat()` ahead of server interpretation and Scribe fallthrough.

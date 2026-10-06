@@ -1,7 +1,10 @@
 {
-  "firestore": {
-    "rules": "firestore.rules"
-  },
+  "firestore": [
+    {
+      "database": "ai-studio-ermate-c85078ba-126c-43fd-b799-a4aa8b82bf03",
+      "rules": "firestore.rules"
+    }
+  ],
   "emulators": {
     "firestore": {
       "host": "127.0.0.1",
@@ -10,3 +13,4 @@
     "singleProjectMode": false
   }
 }
+

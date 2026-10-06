@@ -191,6 +191,7 @@ ErMate employs a dynamic role-based navigation hierarchy computed from `getNorma
 | `/test_phase3_rules.cjs` | 79-scenario emulator test suite validating full Phase-3 authorization matrix |
 | `/test_privilege_escalation_audit.cjs` | Privilege escalation audit test suite verifying strict closure of P1-P11 attack vectors and P12 shift persistence |
 | `/src/lib/firebase-admin.ts` | Named Firestore database Admin singleton (`ai-studio-ermate-c85078ba-126c-43fd-b799-a4aa8b82bf03`) |
+| `/firebase.json` | Explicit Named Firestore database targeting for `ai-studio-ermate-c85078ba-126c-43fd-b799-a4aa8b82bf03` security rules deployments |
 | `/server/clinicalRanges.ts` | Deterministic adult ED reference ranges & zero-hallucination abnormal flagger |
 | `/server/alertCompiler.ts` | Rule-based post-synthesis critical alert compiler (Section 0) |
 | `/server/crossConsultParser.ts` | Regex-first cross-consultation extractor & duration-conditioned section renderer |
