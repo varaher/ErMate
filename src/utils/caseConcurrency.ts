@@ -35,8 +35,8 @@ export function mergeConcurrentCaseLeaves(
   if (!incoming) return baseCase;
 
   // 1. Merge Vitals leaf-by-leaf
-  const baseVitals = baseCase.vitals || {};
-  const inVitals = incoming.vitals || {};
+  const baseVitals: any = baseCase.vitals || {};
+  const inVitals: any = incoming.vitals || {};
   const mergedVitals = {
     ...baseVitals,
     ...(inVitals.bp !== undefined && inVitals.bp !== "" ? { bp: inVitals.bp } : {}),
@@ -54,8 +54,8 @@ export function mergeConcurrentCaseLeaves(
   };
 
   // 2. Merge SAMPLE History leaf-by-leaf
-  const baseSample = baseCase.sampleHistory || {};
-  const inSample = incoming.sampleHistory || {};
+  const baseSample: any = baseCase.sampleHistory || {};
+  const inSample: any = incoming.sampleHistory || {};
   const mergedSample = {
     ...baseSample,
     ...(inSample.symptoms !== undefined && inSample.symptoms !== "" ? { symptoms: inSample.symptoms } : {}),
@@ -149,14 +149,15 @@ export function mergeConcurrentCaseLeaves(
     patient: {
       ...(baseCase.patient || {}),
       ...(incoming.patient || {}),
-      bed: incoming.patient?.bed || incoming.bedNo || baseCase.patient?.bed || baseCase.bedNo,
+      bed: incoming.patient?.bed || incoming.bedNo || baseCase.patient?.bed || baseCase.bedNo || "",
       name: incoming.patient?.name || baseCase.patient?.name || "",
       age: incoming.patient?.age !== undefined ? incoming.patient.age : baseCase.patient?.age,
       gender: incoming.patient?.gender || baseCase.patient?.gender || "",
       uhid: baseCase.patient?.uhid || incoming.patient?.uhid || "",
-    },
-    vitals: mergedVitals,
-    sampleHistory: mergedSample,
+      presentingComplaint: incoming.patient?.presentingComplaint || baseCase.patient?.presentingComplaint || "",
+    } as any,
+    vitals: mergedVitals as any,
+    sampleHistory: mergedSample as any,
     primaryAssessment: mergedPA,
     secondarySurvey: Object.keys(mergedSec).length > 0 ? mergedSec : undefined,
     investigations: mergedInv,

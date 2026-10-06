@@ -45,6 +45,25 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-06] — ErMate: MATE Universal Controller Phase 1 (Read + Navigation ONLY)
+- **Zero Clinical Write Power**: Phase 1 is strictly restricted to Read + Navigation operations. No new ClinicalCase mutations or schema alterations exist.
+- **Universal App Map & Runtime Context (`src/mate/mateAppMap.ts`, `src/mate/mateRuntimeContext.ts`)**:
+  - Centralized single source of truth for MATE-addressable ErMate views, surfaces, and Case Sheet sections (`MATE_APP_CAPABILITIES`).
+  - Runtime UI context captures active tabs, dirty states, and role permissions without storing clinical facts or duplicating EMR state.
+- **Expanded Action Dispatcher (`src/mate/mateActionDispatcher.ts`)**:
+  - Bridges MATE natural language intent to existing ErMate UI handlers (`openCase`, `openCaseSection`, `summarizeCase`, `reviewCaseCompleteness`, `reviewDischargeCompleteness`, `reviewRounds`, `navigateApp`).
+- **Deterministic Case Completeness Review**:
+  - Reuses existing `getCasePendingStatus(case)` in `src/utils/caseHelper.ts` to identify and report missing sections without guessing or LLM inference.
+- **Deterministic Discharge Completeness Review (`src/utils/dischargeCompleteness.ts`)**:
+  - Pure presence-check evaluator reviewing primary diagnosis, clinical course, discharge medications, condition at discharge, follow-up plan, disposition type, and pending lab/imaging reports.
+- **Display-ID Case Resolution (`src/mate/mateCaseDisplayResolver.ts`)**:
+  - Resolves monotonic 9-digit daily displayId (`261006004`) and legacy IDs (`C-xxxx`) deterministically against active records without confusing display numbers with internal UUIDs.
+- **Recent Patient Context Memory & Mixed Content Protection (`src/components/VoiceScribeChatView.tsx`, `src/mate/mateConversationPlanner.ts`)**:
+  - Pronoun references (`"his investigations"`, `"summarise him"`, `"what is incomplete?"`) bind to the current/recent active patient context.
+  - Mixed-content defense: utterances containing clinical facts (PMH, medications, vitals, allergies) are never swallowed as navigation, preserving the Scribe clinical documentation pipeline.
+- **Pediatric Routing Invariant**: Explicitly verified `age <= 16` as pediatric, `age >= 17` as adult, with null/unknown age defaulting to adult with age confirmation required.
+- **Deterministic Verification**: Added `verify_mate_universal_phase1.ts` testing all 15 required scenarios (15/15 PASS). Full regression suite passes (14/14 identity, 7/7 bed binding, 7/7 MATE integration, 12/12 replay safety, 10/10 sidecar, 25/25 team/archive, 19/19 clinical documentation). TypeScript clean, production build passed.
+
 ### [2026-10-05] — ErMate P0 Patch 2: Controlled Replay & MATE Resolution Bypass
 - **Controlled Scribe Replay Bypass (`src/components/VoiceScribeChatView.tsx`)**:
   - Added internal `options?: { skipMatePatientResolution?: boolean }` argument to `sendToChat(text, options)`.

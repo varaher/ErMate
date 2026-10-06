@@ -1404,6 +1404,22 @@ app.post("/api/rounds-debrief", requireAuth, async (req: AuthRequest, res) => {
   const dispositionDetails = caseData.dispositionDetails || {};
   const dischargeInfo = caseData.dischargeInfo || {};
 
+  // Additional Clinical Structures (ABG/VBG, Reassessments, Procedures, PAT, Discharge Rx)
+  const abgData = caseData.primaryAssessment?.survey?.adjuncts?.abg || (caseData as any).bloodGasAnalysis || null;
+  const abgSummary = abgData ? `Sample: ${abgData.sampleType || "Blood Gas"}, pH: ${abgData.ph || "N/A"}, pCO2: ${abgData.pco2 || "N/A"}, pO2: ${abgData.po2 || "N/A"}, HCO3: ${abgData.hco3 || "N/A"}, BE: ${abgData.be || "N/A"}, Lactate: ${abgData.lactate || "N/A"}, Na: ${abgData.na || "N/A"}, K: ${abgData.k || "N/A"}, Cl: ${abgData.cl || "N/A"}, AG: ${abgData.ag || "N/A"}, Interp: ${abgData.clinicalInterpretation || abgData.interpretation || "N/A"}` : "None documented";
+
+  const reassessments = Array.isArray((caseData as any).reassessments) ? (caseData as any).reassessments : [];
+  const reassessmentSummary = reassessments.length > 0 ? JSON.stringify(reassessments) : "None recorded";
+
+  const procedures = Array.isArray(caseData.procedureNotes) ? caseData.procedureNotes : ((caseData as any).procedures || []);
+  const procedureSummary = procedures.length > 0 ? JSON.stringify(procedures.map((p: any) => ({ name: p.procedureName || p.name, time: p.performedAt || p.time, findings: p.findings || p.notes }))) : "None recorded";
+
+  const pat = (caseData.patient as any)?.pediatricTriangle || (caseData as any).pediatricAssessmentTriangle || null;
+  const patSummary = pat ? `Appearance: ${pat.appearance || "Normal"}, Work of Breathing: ${pat.workOfBreathing || "Normal"}, Circulation to Skin: ${pat.circulationToSkin || "Normal"}` : (caseData.isPediatric ? "Not documented" : "N/A (Adult)");
+
+  const rx = Array.isArray((caseData as any).dischargePrescriptions) ? (caseData as any).dischargePrescriptions : [];
+  const rxSummary = rx.length > 0 ? JSON.stringify(rx) : "None prescribed";
+
   const dispositionText = `Disposition Type: ${dispositionDetails.dispositionType || "In ER Evaluation"}
 Duration in ER: ${dispositionDetails.durationInEr || "N/A"}
 Observation & ER Notes: ${deidentifyText(dispositionDetails.observationNotes || "N/A").deidentified}`;
@@ -1428,11 +1444,16 @@ Follow-Up / Summary: ${deidentifyText(dischargeInfo.followUpPlan || "N/A").deide
       - Events / Story of Presenting Illness: ${safeEvents}
     - Primary Survey (ABCDE): Airway: ${primaryAssessment.airwayStatus || primaryAssessment.airway || "N/A"}, Breathing: ${primaryAssessment.breathingStatus || primaryAssessment.breathing || "N/A"}, Circulation: ${primaryAssessment.circulationStatus || primaryAssessment.circulation || "N/A"}, Disability: ${primaryAssessment.disability || "N/A"}, Exposure: ${primaryAssessment.exposure || "N/A"}
     - Secondary Assessment / Physical Exam: ${safeSecondaryAssessment || "N/A"}
+    - Pediatric Assessment Triangle (PAT): ${patSummary}
+    - Blood Gas Analysis (ABG/VBG): ${abgSummary}
     - Diagnostics Ordered/Done: ${JSON.stringify(investigations)}
     - Lab / Imaging Results Summary: ${safeResultsSummary || "N/A"}
     - Treatments/Medications Administered: ${JSON.stringify(treatments)}
+    - Procedures / Interventions: ${procedureSummary}
+    - Serial Reassessments & Vital Trends: ${reassessmentSummary}
     - Progress & Observation Notes (ER Course & Timeline): ${safeProgressNotes}
     - Differential Diagnoses considered: ${JSON.stringify(differentials)}
+    - Take-Home Discharge Prescriptions: ${rxSummary}
     - Disposition & Outcome Details:
       ${dispositionText}
       ${dischargeText}

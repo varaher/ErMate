@@ -23,15 +23,22 @@ export interface MateActionRequest {
   caseId?: string | null;
 
   /**
+   * Target section for case.section.* capabilities.
+   */
+  sectionId?: string | null;
+
+  /**
+   * Target tab for navigation capabilities.
+   */
+  targetTab?: string | null;
+
+  /**
    * Existing MATE/Scribe session context.
    */
   sessionId?: string | null;
 
   /**
    * Original clinician utterance.
-   *
-   * Retained as context only. The dispatcher does not perform clinical
-   * extraction from this text.
    */
   utterance?: string;
 }
@@ -40,25 +47,51 @@ export type MateActionResult =
   | {
       handled: true;
       capability: string;
+      message?: string;
+      data?: any;
     }
   | {
       handled: false;
       capability: string;
-      reason: "UNSUPPORTED_CAPABILITY";
+      reason: "UNSUPPORTED_CAPABILITY" | "MISSING_HANDLER" | "ERROR";
+      error?: string;
     };
 
 export interface MateActionHandlers {
   /**
-   * Bridge into ErMate's EXISTING Case Sheet open/preview workflow.
+   * Bridge into ErMate's EXISTING Case Sheet open workflow.
    */
   openCase?: (request: MateActionRequest) => void | Promise<void>;
 
   /**
-   * Reserved bridge into ErMate's EXISTING 7-Lens / Clinical Rounds workflow.
-   *
-   * It is deliberately not executed until its vertical slice is wired.
+   * Bridge into ErMate's EXISTING Case Sheet section navigation.
+   */
+  openCaseSection?: (request: MateActionRequest, sectionId: string) => void | Promise<void>;
+
+  /**
+   * Bridge into ErMate's EXISTING case summary generator.
+   */
+  summarizeCase?: (request: MateActionRequest) => string | Promise<string>;
+
+  /**
+   * Bridge into ErMate's EXISTING getCasePendingStatus completeness review.
+   */
+  reviewCaseCompleteness?: (request: MateActionRequest) => any | Promise<any>;
+
+  /**
+   * Bridge into ErMate's read-only discharge completeness review.
+   */
+  reviewDischargeCompleteness?: (request: MateActionRequest) => any | Promise<any>;
+
+  /**
+   * Bridge into ErMate's EXISTING 7-Lens / Clinical Rounds debrief.
    */
   reviewRounds?: (request: MateActionRequest) => void | Promise<void>;
+
+  /**
+   * Bridge into ErMate's EXISTING top-level navigation (navigateToTab).
+   */
+  navigateApp?: (request: MateActionRequest, targetTab: string) => void | Promise<void>;
 }
 
 /**
@@ -73,35 +106,76 @@ export async function dispatchMateAction(
   request: MateActionRequest,
   handlers: MateActionHandlers = {}
 ): Promise<MateActionResult> {
-  if (request.capability === "case.open") {
+  const cap = request.capability;
+
+  // 1. Open Case Sheet
+  if (cap === "case.open") {
     if (handlers.openCase) {
       await handlers.openCase(request);
-      return { handled: true, capability: request.capability };
+      return { handled: true, capability: cap };
     }
-
-    return {
-      handled: false,
-      capability: request.capability,
-      reason: "UNSUPPORTED_CAPABILITY",
-    };
+    return { handled: false, capability: cap, reason: "MISSING_HANDLER" };
   }
 
-  if (request.capability === "case.rounds.review") {
+  // 2. Open Case Sheet Section
+  if (cap.startsWith("case.section.") || cap === "case.section") {
+    const sectionId = request.sectionId || cap.replace("case.section.", "");
+    if (handlers.openCaseSection) {
+      await handlers.openCaseSection(request, sectionId);
+      return { handled: true, capability: cap };
+    }
+    return { handled: false, capability: cap, reason: "MISSING_HANDLER" };
+  }
+
+  // 3. Summarize Case
+  if (cap === "case.summary") {
+    if (handlers.summarizeCase) {
+      const summaryText = await handlers.summarizeCase(request);
+      return { handled: true, capability: cap, message: summaryText };
+    }
+    return { handled: false, capability: cap, reason: "MISSING_HANDLER" };
+  }
+
+  // 4. Review Incomplete Sections
+  if (cap === "case.completeness.review") {
+    if (handlers.reviewCaseCompleteness) {
+      const pendingData = await handlers.reviewCaseCompleteness(request);
+      return { handled: true, capability: cap, data: pendingData };
+    }
+    return { handled: false, capability: cap, reason: "MISSING_HANDLER" };
+  }
+
+  // 5. Review Discharge Completeness
+  if (cap === "case.discharge.pending") {
+    if (handlers.reviewDischargeCompleteness) {
+      const dischargeData = await handlers.reviewDischargeCompleteness(request);
+      return { handled: true, capability: cap, data: dischargeData };
+    }
+    return { handled: false, capability: cap, reason: "MISSING_HANDLER" };
+  }
+
+  // 6. Clinical Rounds Review
+  if (cap === "case.rounds.review") {
     if (handlers.reviewRounds) {
       await handlers.reviewRounds(request);
-      return { handled: true, capability: request.capability };
+      return { handled: true, capability: cap };
     }
+    return { handled: false, capability: cap, reason: "MISSING_HANDLER" };
+  }
 
-    return {
-      handled: false,
-      capability: request.capability,
-      reason: "UNSUPPORTED_CAPABILITY",
-    };
+  // 7. Top-Level App Navigation
+  if (cap.startsWith("navigate.")) {
+    const targetTab = request.targetTab || cap.replace("navigate.", "");
+    if (handlers.navigateApp) {
+      await handlers.navigateApp(request, targetTab);
+      return { handled: true, capability: cap };
+    }
+    return { handled: false, capability: cap, reason: "MISSING_HANDLER" };
   }
 
   return {
     handled: false,
-    capability: request.capability,
+    capability: cap,
     reason: "UNSUPPORTED_CAPABILITY",
   };
 }

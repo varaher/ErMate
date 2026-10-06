@@ -155,9 +155,9 @@ export interface MatePreviewResult {
 /**
  * Locked pediatric routing invariant.
  *
- * Age < 18 always routes to Pediatric Case Sheet.
- * Age >= 18 always routes to Adult Case Sheet.
- * Null age defaults to Adult with a prompt to confirm age.
+ * Age <= 16 always routes to Pediatric Case Sheet (0–16 inclusive).
+ * Age >= 17 always routes to Adult Case Sheet.
+ * Null/undefined age defaults to Adult with a prompt to confirm age.
  */
 export function matePediatricRoute(
   patientAgeYears: number | null | undefined
@@ -168,15 +168,15 @@ export function matePediatricRoute(
       reason: "Age not specified; default to Adult with age confirmation required",
     };
   }
-  if (patientAgeYears < 18) {
+  if (patientAgeYears <= 16) {
     return {
       isPediatric: true,
-      reason: `Age ${patientAgeYears} < 18: strictly Pediatric Case Sheet`,
+      reason: `Age ${patientAgeYears} <= 16: strictly Pediatric Case Sheet`,
     };
   }
   return {
     isPediatric: false,
-    reason: `Age ${patientAgeYears} >= 18: Adult Case Sheet`,
+    reason: `Age ${patientAgeYears} >= 17: Adult Case Sheet`,
   };
 }
 

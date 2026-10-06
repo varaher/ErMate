@@ -1803,6 +1803,7 @@ if (auth.currentUser) {
 
   // View controllers
   const [selectedCaseId, setSelectedCaseId] = useState<string | null>(null);
+  const [caseSheetInitialTab, setCaseSheetInitialTab] = useState<string | null>(null);
   const [pendingNewCase, setPendingNewCase] = useState<ClinicalCase | null>(null);
   const [viewCaseSheetPrintId, setViewCaseSheetPrintId] = useState<string | null>(null);
   const [activeFormMode, setActiveFormMode] = useState<"full" | "quick" | null>(null);
@@ -5519,6 +5520,7 @@ const handleSignOut = async () => {
   const navigateToTab = (tabId: string) => {
     setActiveTab(tabId as any);
     setSelectedCaseId(null);
+    setCaseSheetInitialTab(null);
     setViewCaseSheetPrintId(null);
     setActiveFormMode(null);
     setShowDischargeSummaryId(null);
@@ -6639,6 +6641,7 @@ const handleSignOut = async () => {
               return (
                 <CaseSheetView
                   initialCase={matched}
+                  initialTab={caseSheetInitialTab as any}
                   allCases={cases}
                   onSelectCase={handleSelectCase}
                   onViewPrintSheet={handleViewPrintSheet}
@@ -7108,7 +7111,18 @@ const handleSignOut = async () => {
               setPendingPreviewContext(null);
               setSelectedCaseId(cId);
               setVoiceScribeCaseId(cId);
+              setCaseSheetInitialTab(null);
             }}
+            onOpenCaseSection={(cId, sectionId) => {
+              setVoiceScribeDiscussionMode(false);
+              setIsPreviewMode(false);
+              setPreviewCase(null);
+              setPendingPreviewContext(null);
+              setSelectedCaseId(cId);
+              setVoiceScribeCaseId(cId);
+              setCaseSheetInitialTab(sectionId);
+            }}
+            onNavigateToTab={navigateToTab}
             onPreviewCaseSheet={handlePreviewCaseSheet}
             onPreviewDischargeSummary={handlePreviewDischargeSummary}
             onRequestRoundsCase={(unappliedExtraction) => {

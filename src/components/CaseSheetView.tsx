@@ -268,6 +268,7 @@ interface CaseSheetViewProps {
   onDirtyChange?: (isDirty: boolean) => void;
   caseRefreshTimestamp?: number;
   onRegisterActions?: (actions: { save: () => Promise<void>; discard: () => void } | null) => void;
+  initialTab?: "complaints" | "primary-survey" | "history" | "secondary-survey" | "investigations" | "trends" | "treatment" | "notes" | "disposition" | "rounds";
 }
 
 export function isCaseSheetDirty(current: ClinicalCase | null | undefined, saved: ClinicalCase | null | undefined): boolean {
@@ -420,6 +421,7 @@ export default function CaseSheetView({
   onDirtyChange,
   caseRefreshTimestamp,
   onRegisterActions,
+  initialTab,
 }: CaseSheetViewProps) {
     const tabHasData = (tabId: string): boolean => {
     if (!currentCase) return false;
@@ -459,7 +461,13 @@ export default function CaseSheetView({
 
   const [activeTab, setActiveTab] = useState<
     "complaints" | "primary-survey" | "history" | "secondary-survey" | "investigations" | "trends" | "treatment" | "notes" | "disposition" | "rounds"
-  >("complaints");
+  >((initialTab as any) || "complaints");
+
+  useEffect(() => {
+    if (initialTab) {
+      setActiveTab(initialTab as any);
+    }
+  }, [initialTab]);
   const navContainerRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (navContainerRef.current) {
