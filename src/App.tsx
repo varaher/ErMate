@@ -2941,7 +2941,7 @@ const handleDeleteAllCases = async () => {
         })(),
         pastHistory: extracted.sampleHistory?.pastHistory || extracted.pastMedicalHistory || extracted.pastHistory || existingMatch?.sampleHistory.pastHistory || "",
         lastMeal: extracted.sampleHistory?.lastMeal || extracted.lastMeal || existingMatch?.sampleHistory.lastMeal || "",
-        events: extracted.sampleHistory?.events || extracted.events || existingMatch?.sampleHistory.events || "",
+        events: extracted.sampleHistory?.events || extracted.events || extracted.hpi || existingMatch?.sampleHistory.events || "",
         socialHistory: extracted.sampleHistory?.socialHistory || extracted.socialHistory || existingMatch?.sampleHistory?.socialHistory || "",
         familyHistory: extracted.sampleHistory?.familyHistory || extracted.familyHistory || existingMatch?.sampleHistory?.familyHistory || "",
         psychiatricFlags: extracted.sampleHistory?.psychiatricFlags || extracted.psychiatricFlags || existingMatch?.sampleHistory?.psychiatricFlags || ""
@@ -3268,9 +3268,21 @@ const handleDeleteAllCases = async () => {
         return [...existingDiffs, newDiff];
       })(),
       isPediatric: resolvedIsPediatric,
-      pediatricDetails: extracted.pediatricDetails 
-        ? { ...(existingMatch?.pediatricDetails || {}), ...extracted.pediatricDetails } 
-        : existingMatch?.pediatricDetails || undefined,
+      pediatricDetails: (() => {
+        const existingPed = existingMatch?.pediatricDetails || {};
+        const incomingPed = extracted.pediatricDetails || {};
+        const hasIncoming = Boolean(extracted.pediatricDetails || extracted.patientWeight || extracted.weight);
+        if (!hasIncoming && !existingMatch?.pediatricDetails) {
+          return undefined;
+        }
+        const mergedPed = { ...existingPed, ...incomingPed };
+        const rawWeight = incomingPed.patientWeight ?? incomingPed.weight ?? extracted.patientWeight ?? extracted.weight ?? existingPed.patientWeight ?? existingPed.weight;
+        if (rawWeight !== undefined && rawWeight !== null && String(rawWeight).trim() !== "") {
+          mergedPed.patientWeight = String(rawWeight).trim();
+          mergedPed.weight = String(rawWeight).trim();
+        }
+        return Object.keys(mergedPed).length > 0 ? mergedPed : undefined;
+      })(),
       status: "Active",
       savedTime: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       timeSpentMin: 1,

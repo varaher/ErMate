@@ -115,5 +115,9 @@ export async function reserveNextDisplaySequence(
  */
 export function getDisplayCaseId(c?: { displayId?: string | null; id: string } | null): string {
   if (!c) return "";
-  return c.displayId || c.id;
+  if (c.displayId) return c.displayId;
+  if (c.id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(c.id)) {
+    return "New Case — ID pending";
+  }
+  return c.id;
 }

@@ -4,6 +4,7 @@ import { ArrowLeft, Edit3, Printer, FileText, AlertTriangle, CheckCircle, Refres
 import { ClinicalCase, LegacyPediatricDetails, ProcedureNote, IpsgChecklist } from "../types";
 import { deduplicateConsultations } from "../utils/consultationNormalization";
 import { displayGcs, displayTemperature, displaySpo2, displayGrbs, displayDocumentedBoolean } from "../utils/clinicalFormatter";
+import { getDisplayCaseId } from "../utils/caseIdentity";
 
 interface VitalReading {
   label: string;
@@ -311,7 +312,7 @@ export function convertClinicalCaseToCaseSheetData(c: ClinicalCase, defaultHospi
     const normalizeSecKey = (k: string): "General" | "CVS" | "RS" | "PA" | "CNS" | "Extremities" | null => {
       const lower = k.trim().toLowerCase();
       if (lower.startsWith("rs") || lower.includes("respiratory") || lower.includes("chest") || lower.includes("lung")) return "RS";
-      if (lower.startsWith("pa") || lower.includes("abdomen") || lower.includes("abdominal")) return "PA";
+      if (lower.startsWith("pa") || lower.startsWith("p/a") || lower.startsWith("p / a") || lower.includes("abdomen") || lower.includes("abdominal")) return "PA";
       if (lower.includes("cvs") || lower.includes("cardiovascular") || lower.includes("heart")) return "CVS";
       if (lower.includes("cns") || lower.includes("neurological") || lower.includes("neuro")) return "CNS";
       if (lower.includes("general")) return "General";
@@ -319,7 +320,7 @@ export function convertClinicalCaseToCaseSheetData(c: ClinicalCase, defaultHospi
       return null;
     };
 
-    const headerPattern = "(?:general(?:\\s+examination|\\s+exam)?|cvs(?:\\s+examination|\\s+exam)?|cardiovascular(?:\\s+examination|\\s+exam)?|respiratory(?:\\s+system|\\s+examination|\\s+exam)?|rs(?:\\s+examination|\\s+exam)?|chest(?:\\s+examination|\\s+exam)?|per\\s+abdomen(?:\\s+examination|\\s+exam)?|pa(?:\\s+examination|\\s+exam)?|abdomen(?:\\s+examination|\\s+exam)?|abdominal(?:\\s+examination|\\s+exam)?|cns(?:\\s+examination|\\s+exam)?|neurological(?:\\s+examination|\\s+exam)?|extremities(?:\\s+examination|\\s+exam)?|extremity(?:\\s+examination|\\s+exam)?|musculoskeletal(?:\\s+examination|\\s+exam)?|msk)";
+    const headerPattern = "(?:general(?:\\s+examination|\\s+exam)?|cvs(?:\\s+examination|\\s+exam)?|cardiovascular(?:\\s+examination|\\s+exam)?|respiratory(?:\\s+system|\\s+examination|\\s+exam)?|rs(?:\\s+examination|\\s+exam)?|chest(?:\\s+examination|\\s+exam)?|per\\s+abdomen(?:\\s+examination|\\s+exam)?|p\\s*\\/\\s*a(?:\\s+examination|\\s+exam)?|pa(?:\\s+examination|\\s+exam)?|abdomen(?:\\s+examination|\\s+exam)?|abdominal(?:\\s+examination|\\s+exam)?|cns(?:\\s+examination|\\s+exam)?|neurological(?:\\s+examination|\\s+exam)?|extremities(?:\\s+examination|\\s+exam)?|extremity(?:\\s+examination|\\s+exam)?|musculoskeletal(?:\\s+examination|\\s+exam)?|msk)";
 
     const narrativeBuckets: Record<string, string> = {};
     const regex = new RegExp(`(?:^|[\\n;,]|\\.\\s+|:\\s*|[-*•]\\s*|\\s+)(${headerPattern})\\s*[:\\-]\\s*([\\s\\S]*?)(?=(?:[\\n;,]|\\.\\s+|:\\s*|[-*•]\\s*|\\s+)(?:${headerPattern})\\s*[:\\-]|$)`, "gi");
@@ -416,7 +417,7 @@ export function convertClinicalCaseToCaseSheetData(c: ClinicalCase, defaultHospi
     c.investigations.forEach(i => {
       // Legacy array — only add if not already covered by investigationResults
       if (!labValues.some(lv => lv.name === i.testName)) {
-        labValues.push({ name: i.testName, param: matchLabParam(i.testName), value: null, unit: "" });
+        labValues.push({ name: i.testName, param: matchLabParam(i.testName), value: parseVal(i.result), unit: "" });
       }
     });
   }
@@ -554,7 +555,7 @@ export function convertClinicalCaseToCaseSheetData(c: ClinicalCase, defaultHospi
   };
 
   return {
-    caseId: c.displayId || c.id,
+    caseId: getDisplayCaseId(c),
     internalCaseId: c.id,
     hospitalName: c.hospital || defaultHospital || undefined, // no hardcoded hospital name fallback either
     triageCategory: c.patient?.triageCategory || (c as any).triageCategory || null,

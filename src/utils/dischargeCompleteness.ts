@@ -49,11 +49,10 @@ export function checkDischargeCompleteness(c?: ClinicalCase | null): DischargeCo
     missing.push("Primary Diagnosis");
   }
 
-  // 2. ER Course / Treatment Summary
+  // 2. ER Course / Treatment Summary (Must be genuine clinical course or progress notes, NEVER presenting complaint)
   const hasCourse = Boolean(
-    (c.progressNotes && c.progressNotes.trim()) ||
-    (c.treatments && c.treatments.length > 0) ||
-    (di?.presentingComplaints && di.presentingComplaints.trim())
+    (di?.courseInHospital && di.courseInHospital.trim()) ||
+    (c.progressNotes && c.progressNotes.trim() && c.progressNotes.trim() !== "Case created via ErMate Voice Scribe dictation.")
   );
   if (!hasCourse) {
     missing.push("ER Clinical Course");
@@ -68,8 +67,14 @@ export function checkDischargeCompleteness(c?: ClinicalCase | null): DischargeCo
     missing.push("Discharge Medications");
   }
 
-  // 4. Condition at Discharge
-  const condition = (di?.conditionAtDischarge || di?.generalExamination || "").trim();
+  // 4. Condition at Discharge (Must be explicit condition at discharge/shift, NEVER general physical examination)
+  const condition = (
+    di?.conditionAtDischarge ||
+    di?.dischargeCondition ||
+    c.conditionAtShift ||
+    (c.dispositionDetails as any)?.conditionAtShift ||
+    ""
+  ).trim();
   if (!condition) {
     missing.push("Condition at Discharge");
   }

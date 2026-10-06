@@ -36,6 +36,7 @@ import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend
 } from "recharts";
 import { getCasePendingStatus } from "../utils/caseHelper";
+import { getDisplayCaseId } from "../utils/caseIdentity";
 import { classifyEmergencyTriage } from "../utils/triageClassifier";
 import { formatTemperature, formatDoctorName, deduplicateMeds, validateMedRoute, formatDisabilityAssessment, displaySpo2, displayGcs, displayTemperature, displayGrbs } from "../utils/clinicalFormatter";
 import { isTriageCategoryPending } from "./NewPatientEntryMenu";
@@ -3385,7 +3386,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                 </h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs mt-3">
                   <div className="space-y-2 bg-slate-50 dark:bg-slate-900 p-4 rounded-xl border border-slate-100 dark:border-slate-850">
-                    <p><span className="font-semibold text-slate-400">Case ID:</span> <span className="font-mono font-bold text-slate-700 dark:text-slate-200">{currentCase.displayId || currentCase.id}</span></p>
+                    <p><span className="font-semibold text-slate-400">Case ID:</span> <span className="font-mono font-bold text-slate-700 dark:text-slate-200">{getDisplayCaseId(currentCase)}</span></p>
                     <p><span className="font-semibold text-slate-400">UHID (JCI Identifier):</span> <span className="font-mono font-bold text-slate-700 dark:text-slate-200">{currentCase.patient.uhid || "Not Provided"}</span></p>
                     <p><span className="font-semibold text-slate-400">Patient Name:</span> <span className="font-bold text-slate-700 dark:text-slate-200">{currentCase.patient.name}</span></p>
                     <p><span className="font-semibold text-slate-400">Age / Gender:</span> <span className="font-semibold text-slate-700 dark:text-slate-200">{currentCase.patient.age || "N/A"} years | {currentCase.patient.gender}</span></p>
@@ -6699,7 +6700,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                 <div>
                   <h3 className="font-extrabold text-sm text-white">Clinical Case Sheet PDF Preview</h3>
                   <p className="text-[10px] text-slate-400 font-mono">
-                    {currentCase.patient.name} · UHID: {currentCase.patient.uhid || "N/A"} · Case ID: {currentCase.displayId || currentCase.id}
+                    {currentCase.patient.name} · UHID: {currentCase.patient.uhid || "N/A"} · Case ID: {getDisplayCaseId(currentCase)}
                   </p>
                 </div>
               </div>
@@ -7292,7 +7293,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
             setEditingProcedureNote(null);
           }}
           caseId={currentCase.id || "NEW-CASE"}
-          displayCaseId={currentCase.displayId || currentCase.id}
+          displayCaseId={getDisplayCaseId(currentCase)}
           defaultDoctorName={currentCase.doctorName || currentCase.primaryDoctor || profile?.name || ""}
           procDef={activeProcedureDef}
           editingNote={editingProcedureNote || null}

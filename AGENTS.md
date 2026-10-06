@@ -45,6 +45,32 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-06] — ErMate: Comprehensive Clinical Preview & Discharge Integrity Audit
+- **Condition at Discharge Integrity Hardening (`src/components/DischargeSummaryView.tsx`)**:
+  - Identified and repaired critical mapping bug in `buildCurrentDischargeInfo()`: `conditionAtDischarge` was incorrectly mapping to `generalExamination`.
+  - Re-anchored `conditionAtDischarge: dischargeCondition`, strictly maintaining separation between general physical examination and post-treatment clinical condition at discharge.
+- **Investigation Results Preservation in Print View (`src/components/CaseSheetPrintView.tsx`)**:
+  - Enhanced `labValues` aggregation for legacy/extracted `investigations` array to parse `i.result` via `parseVal(i.result)` instead of leaving `value: null`.
+- **Dedicated Case Preview Integrity Test Suite (`verify_case_preview_integrity.ts` — 27 / 27 PASS)**:
+  - Validated Adult complete preview, Pediatric complete preview, PAT TICLS components (Tone, Interactivity, Consolability, Look/Gaze, Speech/Cry), Work of Breathing, Circulation, Pediatric section order (Focused Examination -> Investigations -> Treatment Given -> Provisional Diagnosis).
+  - Verified SAMPLE aliases, `abdomenExamination` / `abdominalExamination` / `perAbdomen` / `P/A` terminology landing in `secondarySurvey.abdomen`, investigations ordered vs results separation, treatment/procedure preservation, diagnosis vs differential separation, explicit negative preservation, unmentioned fields remaining blank, partial update deep merge, and JSON round-trip consistency.
+- **Dedicated Discharge Preview Integrity Test Suite (`verify_discharge_preview_integrity.ts` — 20 / 20 PASS)**:
+  - Verified `presentingComplaint` never satisfies ER clinical course, `generalExamination` never satisfies condition at discharge, `courseInHospital` 9-section structure preserved, primary/secondary diagnosis preserved, ER treatment never becomes discharge medication, discharge Rx requires explicit prescription, condition at discharge required independently, finalized summaries protected from overwrite, manual edits preserved during 3-way merge, and `caseUpdatedAfterPreparation` properly set.
+- **Comprehensive Regression Suite Parity**:
+  - 100% of tests pass across all suites: 27/27 Case Preview Integrity, 20/20 Discharge Preview Integrity, 4/4 Preview Clinical Integrity, 17/17 Live Orchestrator Wiring, 15/15 MATE Universal Phase 1, 12/12 MATE Replay Safety, 14/14 Case Identity, 7/7 Bed Binding.
+
+### [2026-10-06] — ErMate: Clinical Preview Integrity Audit & Data Preservation
+- **Display ID Preview Exposure Hardening (`src/utils/caseIdentity.ts`, `src/components/CaseSheetPrintView.tsx`, `src/components/CaseSheetView.tsx`)**:
+  - Hardened `getDisplayCaseId` to deterministically return `"New Case — ID pending"` when `displayId` is not yet assigned and internal ID is a UUID.
+  - Converted `CaseSheetPrintView.tsx` (`convertClinicalCaseToCaseSheetData`) and `CaseSheetView.tsx` (Demographics and PDF Preview headers) to consume `getDisplayCaseId`.
+  - Strictly prevents internal UUID leakage (e.g. `0908b2d7-bfa2-49f4-b7a4-57b6d9f3f209`) in clinician-facing Preview Case Sheet and print cards.
+- **Pediatric Assessment & Weight Alias Synchronization (`src/App.tsx`, `server/scribeChatTurn.ts`, `src/components/DischargeSummaryView.tsx`)**:
+  - Synchronized `patientWeight` and `weight` aliases in `buildExtractedCaseDraft`, Scribe extraction mapper, and `DischargeSummaryView`.
+  - Expanded `DischargeSummaryView` pediatric section to resolve `patWorkOfBreathing` / `breathingWob` and `patCirculation` / `circulationSkinColorTemp` aliases.
+- **Adult & Pediatric Case Sheet Full Trace Integrity**:
+  - Verified 100% end-to-end survival of all clinical fields from voice/text Scribe extraction through multi-turn merge, draft preview, Firestore persistence, and printed card rendering.
+  - All 19 regression tests and 4 targeted preview clinical integrity tests pass deterministically.
+
 ### [2026-10-06] — ErMate: Firestore Named Database Targeting & Security Rules Deployment
 - **Named Database Targeting (`firebase.json`)**:
   - Configured `firebase.json` firestore target to explicitly bind to the named database `ai-studio-ermate-c85078ba-126c-43fd-b799-a4aa8b82bf03` (`[{"database": "ai-studio-ermate-c85078ba-126c-43fd-b799-a4aa8b82bf03", "rules": "firestore.rules"}]`).

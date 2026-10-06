@@ -380,10 +380,10 @@ export default function DischargeSummaryView({
       ? `${profile.hospitalAddress}${profile?.state ? `, ${profile.state}` : ''}`
       : undefined,
     pediatric: currentCase.isPediatric && currentCase.pediatricDetails ? {
-      weight: currentCase.pediatricDetails.patientWeight,
-      workOfBreathing: currentCase.pediatricDetails.patWorkOfBreathing,
-      circulation: currentCase.pediatricDetails.patCirculation,
-      immunization: currentCase.pediatricDetails.immunizationHistory
+      weight: currentCase.pediatricDetails.patientWeight || (currentCase.pediatricDetails as any).weight,
+      workOfBreathing: currentCase.pediatricDetails.patWorkOfBreathing || (currentCase.pediatricDetails as any).breathingWob || (currentCase.pediatricDetails as any).workOfBreathing,
+      circulation: currentCase.pediatricDetails.patCirculation || (currentCase.pediatricDetails as any).circulationSkinColorTemp || (currentCase.pediatricDetails as any).circulation,
+      immunization: currentCase.pediatricDetails.immunizationHistory || (currentCase.pediatricDetails as any).immunization
     } : null
   });
 
@@ -572,7 +572,7 @@ export default function DischargeSummaryView({
     return {
       primaryDiagnosis,
       secondaryDiagnosis,
-      conditionAtDischarge: generalExamination,
+      conditionAtDischarge: dischargeCondition,
       dischargeMedications,
       followUpPlan,
       patientInstructions,

@@ -1889,11 +1889,26 @@ export function mapExtractionToCaseSheetFields(
         if (k === 'circulationCrt' || k === 'circulationSkinColorTemp') {
           filteredPed['patCirculation'] = [filteredPed['patCirculation'], v].filter(Boolean).join(", ");
         }
+        if (k === 'weight') {
+          filteredPed['patientWeight'] = v;
+        } else if (k === 'patientWeight') {
+          filteredPed['weight'] = v;
+        }
       }
     }
     if (Object.keys(filteredPed).length > 0) {
       fields.pediatricDetails = { ...(fields.pediatricDetails || {}), ...filteredPed };
     }
+  }
+
+  if (isValidStr(raw.weight)) {
+    if (!fields.pediatricDetails) fields.pediatricDetails = {};
+    fields.pediatricDetails.weight = raw.weight;
+    fields.pediatricDetails.patientWeight = raw.weight;
+  } else if (isValidStr(raw.patientWeight)) {
+    if (!fields.pediatricDetails) fields.pediatricDetails = {};
+    fields.pediatricDetails.weight = raw.patientWeight;
+    fields.pediatricDetails.patientWeight = raw.patientWeight;
   }
 
   // ══════════════════════════════════════════════════════════════

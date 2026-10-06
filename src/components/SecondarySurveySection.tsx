@@ -10,7 +10,7 @@ export function parseSecondaryAssessmentToSurvey(text: string): Record<string, s
   const normalizeKey = (k: string): string | null => {
     const lower = k.trim().toLowerCase();
     if (lower.startsWith("rs") || lower.includes("respiratory") || lower.includes("chest") || lower.includes("lung")) return "respiratory";
-    if (lower.startsWith("pa") || lower.includes("abdomen") || lower.includes("abdominal")) return "abdomen";
+    if (lower.startsWith("pa") || lower.startsWith("p/a") || lower.startsWith("p / a") || lower.includes("abdomen") || lower.includes("abdominal")) return "abdomen";
     if (lower.includes("cvs") || lower.includes("cardiovascular") || lower.includes("heart")) return "cvs";
     if (lower.includes("cns") || lower.includes("neurological") || lower.includes("neuro")) return "cns";
     if (lower.includes("general")) return "general";
@@ -18,7 +18,7 @@ export function parseSecondaryAssessmentToSurvey(text: string): Record<string, s
     return null;
   };
 
-  const headerPattern = "(?:general(?:\\s+examination|\\s+exam)?|cvs(?:\\s+examination|\\s+exam)?|cardiovascular(?:\\s+examination|\\s+exam)?|respiratory(?:\\s+system|\\s+examination|\\s+exam)?|rs(?:\\s+examination|\\s+exam)?|chest(?:\\s+examination|\\s+exam)?|per\\s+abdomen(?:\\s+examination|\\s+exam)?|pa(?:\\s+examination|\\s+exam)?|abdomen(?:\\s+examination|\\s+exam)?|abdominal(?:\\s+examination|\\s+exam)?|cns(?:\\s+examination|\\s+exam)?|neurological(?:\\s+examination|\\s+exam)?|extremities(?:\\s+examination|\\s+exam)?|extremity(?:\\s+examination|\\s+exam)?|musculoskeletal(?:\\s+examination|\\s+exam)?|msk)";
+  const headerPattern = "(?:general(?:\\s+examination|\\s+exam)?|cvs(?:\\s+examination|\\s+exam)?|cardiovascular(?:\\s+examination|\\s+exam)?|respiratory(?:\\s+system|\\s+examination|\\s+exam)?|rs(?:\\s+examination|\\s+exam)?|chest(?:\\s+examination|\\s+exam)?|per\\s+abdomen(?:\\s+examination|\\s+exam)?|p\\s*\\/\\s*a(?:\\s+examination|\\s+exam)?|pa(?:\\s+examination|\\s+exam)?|abdomen(?:\\s+examination|\\s+exam)?|abdominal(?:\\s+examination|\\s+exam)?|cns(?:\\s+examination|\\s+exam)?|neurological(?:\\s+examination|\\s+exam)?|extremities(?:\\s+examination|\\s+exam)?|extremity(?:\\s+examination|\\s+exam)?|musculoskeletal(?:\\s+examination|\\s+exam)?|msk)";
 
   const regex = new RegExp(`(?:^|[\\n;,]|\\.\\s+|:\\s*|[-*•]\\s*|\\s+)(${headerPattern})\\s*[:\\-]\\s*([\\s\\S]*?)(?=(?:[\\n;,]|\\.\\s+|:\\s*|[-*•]\\s*|\\s+)(?:${headerPattern})\\s*[:\\-]|$)`, "gi");
 
