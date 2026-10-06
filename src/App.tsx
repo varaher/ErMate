@@ -6700,7 +6700,7 @@ const handleSignOut = async () => {
                     setShowVoiceScribeChat(true);
                   }}
                   hasActiveScribeSession={Boolean((selectedCaseId && voiceScribeCaseId === selectedCaseId) || scribeMessages.length > 1)}
-                  onDiscussCase={(c) => handleStartVoiceScribe(c.id)}
+                  onDiscussCase={(c) => setDiscussionModalCase(c)}
                   isPreview={isPreviewMode}
                   onApplyPreview={handleApplyPreviewCase}
                   onDirtyChange={setIsCaseSheetDirty}
@@ -6795,7 +6795,7 @@ const handleSignOut = async () => {
                   profile={profile}
                   cases={cases}
                   pendingContributionsCount={pendingContributionsCount}
-                  onDiscussCase={(c) => handleStartVoiceScribe(c.id)}
+                  onDiscussCase={(c) => setDiscussionModalCase(c)}
                   onStartFullFlow={() => setShowEntryMenu(true)}
                   onStartQuickCase={() => setActiveFormMode("quick")}
                   onSelectCase={handleSelectCase}
@@ -6915,7 +6915,7 @@ const handleSignOut = async () => {
                   onNavigateToTab={navigateToTab}
                   onDeleteCase={handleDeleteCase}
                   onDeleteAllCases={handleDeleteAllCases}
-                  onDiscussCase={(c) => handleStartVoiceScribe(c.id)}
+                  onDiscussCase={(c) => setDiscussionModalCase(c)}
                   onAssignBed={handleAssignBedToCase}
                   physicalBedCapacity={erPhysicalBedCapacity || 30}
                   isIndependent={userNormalizedRole === "independent"}
@@ -7911,11 +7911,7 @@ const handleSignOut = async () => {
         ))}
       </div>
 
-      {/* Patient Case Discussion Modal - Context-Bound Chat
-          NOTE: nothing sets discussionModalCase anymore as of this change —
-          the Discuss button now calls handleStartVoiceScribe(c.id) instead.
-          Left in place, not deleted, per the standing rule that dead code
-          gets flagged for an explicit decision rather than silently removed. */}
+      {/* Patient Case Discussion Modal - Context-Bound Chat */}
       {discussionModalCase && (
         <BoundChatModal
           context={{

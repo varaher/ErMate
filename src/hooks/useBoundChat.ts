@@ -13,6 +13,7 @@ import {
   limit
 } from 'firebase/firestore';
 import { db, auth } from '../firebase';
+import { authenticatedFetch, AuthRequiredError } from '../services/authenticatedFetch';
 
 export interface ChatContext {
   type: 'case' | 'handover' | 'discharge' | 'mortality_audit' | 'reference' | 'general';
@@ -152,7 +153,7 @@ export function useBoundChat(context: ChatContext) {
         try {
           const summaryPrompt = "Please provide a concise clinical summary of this case based on the provided record, and then ask me what I would like to focus on or what follow-up queries I have.";
           setSending(true);
-          const response = await fetch('/api/case-discussion', {
+          const response = await authenticatedFetch('/api/case-discussion', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -188,8 +189,18 @@ export function useBoundChat(context: ChatContext) {
                 lastMessageAt: serverTimestamp()
              }).catch(() => {});
           }
-        } catch (e) {
+        } catch (e: any) {
           console.warn('Failed to auto-generate summary', e);
+          if (e instanceof AuthRequiredError) {
+            setMessages(prev => [
+              ...prev,
+              {
+                role: 'assistant',
+                content: 'Your session needs to be refreshed. Please sign in again.',
+                timestamp: new Date().toISOString()
+              }
+            ]);
+          }
         } finally {
           setSending(false);
         }
@@ -218,7 +229,7 @@ export function useBoundChat(context: ChatContext) {
     setMessages(updatedMessages);
 
     try {
-      const response = await fetch('/api/case-discussion', {
+      const response = await authenticatedFetch('/api/case-discussion', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -275,11 +286,14 @@ export function useBoundChat(context: ChatContext) {
           console.warn('[BoundChat] Firestore update error:', e);
         }
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('[BoundChat] Send message error:', err);
+      const isAuthErr = err instanceof AuthRequiredError;
       const errorMsg: ChatMessage = {
         role: 'assistant',
-        content: '⚠️ Clinical assistant is temporarily unavailable. Please try again in a moment.',
+        content: isAuthErr
+          ? 'Your session needs to be refreshed. Please sign in again.'
+          : '⚠️ Clinical assistant is temporarily unavailable. Please try again in a moment.',
         timestamp: new Date().toISOString(),
       };
       setMessages((prev) => [...prev, errorMsg]);

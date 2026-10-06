@@ -58,6 +58,7 @@ import { convertAndChunkAudioToWav } from "./server/audioConvert.ts";
 import { sarvamSpeechToText, sarvamSpeechToTextTranslate, isErMateAvailable } from "./server/sarvamClient.ts";
 import { extractExplicitDischargeContext, isMedicationSupportedInContext } from "./server/dischargeSummary.ts";
 import { deriveInitialCourseInHospital } from "./src/utils/dischargeSyncEngine.ts";
+import { executeCaseDiscussionWithFailover, executeRoundsDebriefWithFailover } from "./server/aiProviderFailover.ts";
 
 // Load environment variables
 dotenv.config();
@@ -1505,24 +1506,28 @@ Follow-Up / Summary: ${deidentifyText(dischargeInfo.followUpPlan || "N/A").deide
 
   try {
     const sysInstruction = "You are an expert Emergency Medicine Clinical Mentor with zero fluff. Keep responses dense, clinical, and precise. Return strictly valid JSON.";
-    const claudeResult = await callClaudeSonnetOnly(prompt, sysInstruction, true);
+    const failoverResult = await executeRoundsDebriefWithFailover(prompt, sysInstruction);
 
-    if (claudeResult && typeof claudeResult === "object" && claudeResult.content) {
-      return res.json({ success: true, data: claudeResult, model: "claude-3-5-sonnet" });
+    if (failoverResult.success && failoverResult.data) {
+      return res.json({
+        success: true,
+        data: failoverResult.data,
+        provider: failoverResult.provider,
+        model: failoverResult.provider === "openai" ? "gpt-4o" : "claude-3-5-sonnet"
+      });
     }
 
-    // Rule 1 & Rule 3: Clinical Q&A / Reference Chat & Rounds are locked strictly to Claude 3.5 Sonnet. No Gemini Flash fallback.
     return res.json({
       success: false,
-      error: "Claude 3.5 Sonnet clinical mentor is temporarily unavailable. Please try again shortly.",
-      reply: "Claude 3.5 Sonnet clinical mentor is temporarily unavailable. Please try again shortly."
+      error: "Clinical rounds mentor is temporarily unavailable. Your case data is safe. Please try again shortly.",
+      reply: "Clinical rounds mentor is temporarily unavailable. Your case data is safe. Please try again shortly."
     });
   } catch (error: any) {
     console.error("[Clinical Reasoning] Rounds Debrief Error:", error?.message || error);
     return res.json({
       success: false,
-      error: "Claude 3.5 Sonnet clinical mentor is temporarily unavailable.",
-      reply: "Claude 3.5 Sonnet clinical mentor is temporarily unavailable."
+      error: "Clinical rounds mentor is temporarily unavailable. Your case data is safe. Please try again shortly.",
+      reply: "Clinical rounds mentor is temporarily unavailable. Your case data is safe. Please try again shortly."
     });
   }
 });
@@ -2403,23 +2408,21 @@ YOUR CRITICAL GUIDELINES:
       conversationHistoryText = `Doctor: ${deidentifyText(message).deidentified}`;
     }
 
-    let claudeReply: string | null = null;
-    try {
-      claudeReply = await callClaudeSonnetOnly(conversationHistoryText, discussionSystemInstruction, false);
-    } catch (claudeErr: any) {
-      console.warn("[CaseDiscussion] Claude Sonnet attempt failed:", claudeErr?.message || claudeErr);
-    }
+    const failoverResult = await executeCaseDiscussionWithFailover(
+      conversationHistoryText,
+      discussionSystemInstruction
+    );
 
-    if (claudeReply && typeof claudeReply === "string" && claudeReply.trim().length > 5) {
-      let cleanResponse = claudeReply;
+    if (failoverResult.success && failoverResult.response && failoverResult.response.trim().length > 5) {
+      let cleanResponse = failoverResult.response;
       let suggestedUpdate = null;
 
       // Detect [UPDATE: {...}] tag
-      const match = claudeReply.match(/\[UPDATE:\s*(\{[^\]]+\})\]/s);
+      const match = cleanResponse.match(/\[UPDATE:\s*(\{[^\]]+\})\]/s);
       if (match) {
         try {
           suggestedUpdate = JSON.parse(match[1]);
-          cleanResponse = claudeReply.replace(/\[UPDATE:\s*\{[^\]]+\}\]/s, "").trim();
+          cleanResponse = cleanResponse.replace(/\[UPDATE:\s*\{[^\]]+\}\]/s, "").trim();
         } catch (e) {
           console.warn("[CaseDiscussion] Failed to parse [UPDATE] tag JSON:", e);
         }
@@ -2430,34 +2433,24 @@ YOUR CRITICAL GUIDELINES:
         response: cleanResponse,
         reply: cleanResponse,
         suggestedUpdate: suggestedUpdate,
-        model: "claude-sonnet-3-5"
+        provider: failoverResult.provider,
+        model: failoverResult.provider === "openai" ? "gpt-4o" : "claude-sonnet-4-6"
       });
     }
 
-       // FINDING O FIX (Sept 2026): this heuristic text was previously
-    // returned as {success: true}, indistinguishable from a real Claude
-    // Sonnet clinical response. Per Rule 1, Clinical Q&A / Case
-    // Discussion has NO fallback model — when Claude is unavailable,
-    // the honest behavior is a clear failure, never a templated
-    // "requires continuous monitoring" note presented as if a clinician
-    // AI generated it. The frontend must show an unavailable message,
-    // not silently render this as a real answer.
-    console.warn("[CaseDiscussion] Claude Sonnet unavailable or returned empty — returning honest failure, no heuristic disguised as success.");
+    console.warn("[CaseDiscussion] Both providers unavailable or returned empty — returning controlled failure message.");
     return res.json({
       success: false,
-      response: "Claude Sonnet clinical discussion is temporarily unavailable. Please try again shortly.",
-      reply: "Claude Sonnet clinical discussion is temporarily unavailable. Please try again shortly.",
+      response: "Clinical discussion is temporarily unavailable. Your case data is safe. Please try again shortly.",
+      reply: "Clinical discussion is temporarily unavailable. Your case data is safe. Please try again shortly.",
       model: "unavailable"
     });
   } catch (error: any) {
-    // FINDING O FIX (Sept 2026): same principle as above — an unhandled
-    // error in this route must surface as an honest failure, not a
-    // heuristic note wrapped in {success: true}.
     console.error("[Clinical Reasoning] Case Discussion Error:", error?.message || error);
     return res.status(503).json({
       success: false,
-      response: "Claude Sonnet clinical discussion is temporarily unavailable. Please try again shortly.",
-      reply: "Claude Sonnet clinical discussion is temporarily unavailable. Please try again shortly.",
+      response: "Clinical discussion is temporarily unavailable. Your case data is safe. Please try again shortly.",
+      reply: "Clinical discussion is temporarily unavailable. Your case data is safe. Please try again shortly.",
       model: "unavailable"
     });
   }

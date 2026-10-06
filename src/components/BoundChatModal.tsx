@@ -18,6 +18,7 @@ import {
   ArrowRight
 } from 'lucide-react';
 import { useBoundChat, ChatContext } from '../hooks/useBoundChat';
+import { getDisplayCaseId } from '../utils/caseIdentity';
 
 interface BoundChatModalProps {
   context: ChatContext;
@@ -120,15 +121,31 @@ export const BoundChatModal: React.FC<BoundChatModalProps> = ({
   };
 
   const d = context.data || {};
-  const patientDisplayName =
-    context.type === 'reference'
-      ? (title || 'ErMate Standalone EM Reference')
-      : (d.patientLabel?.name ||
-        d.patientInfo?.name ||
-        d.patient?.name ||
-        d.patientName ||
-        d.name ||
-        'Patient Record');
+  const patientDisplayName = (() => {
+    if (context.type === 'reference') {
+      return title || 'ErMate Standalone EM Reference';
+    }
+    if (context.type === 'case') {
+      const bed = d.bedNo || d.patient?.bed;
+      const age = d.patient?.age;
+      const gender = d.patient?.gender ? (d.patient.gender.toUpperCase().startsWith('M') ? 'M' : d.patient.gender.toUpperCase().startsWith('F') ? 'F' : 'O') : '';
+      const ageGender = [age !== undefined && age !== null ? `${age}` : '', gender].filter(Boolean).join('/');
+      const displayId = getDisplayCaseId(d);
+
+      if (bed) {
+        return `Discuss • Bed ${bed}${ageGender ? ` • ${ageGender}` : ''}`;
+      }
+      return `Discuss • Case ${displayId}${ageGender ? ` • ${ageGender}` : ''}`;
+    }
+    return (
+      d.patientLabel?.name ||
+      d.patientInfo?.name ||
+      d.patient?.name ||
+      d.patientName ||
+      d.name ||
+      'Patient Record'
+    );
+  })();
 
   const contextBadgeColors: Record<string, string> = {
     case: 'bg-indigo-500/20 text-indigo-300 border-indigo-400/30',
