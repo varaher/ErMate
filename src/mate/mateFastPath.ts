@@ -166,7 +166,8 @@ export function tryDeterministicFastPath(params: {
   }
 
   // If compound commands (more than one distinct action)
-  if (plan.actions.length > 1) {
+  const isOpeningOnly = plan.actions.length === 2 && plan.actions.includes("CASE_SHEET_OPEN") && plan.actions.includes("PATIENT_OPEN");
+  if (plan.actions.length > 1 && !isOpeningOnly) {
     return null;
   }
 
@@ -191,6 +192,44 @@ export function tryDeterministicFastPath(params: {
         targetCaseId: target.id,
         targetSection: plan.targetSection,
         replyText: `Opening ${bedLabel} ${plan.targetSection} section.`,
+      };
+    }
+  }
+
+  // 8. Exact Bed Open ("Open Bed 9", "Open Bed 10B", "Bed 9")
+  const bedOpenMatch = trimmed.match(/^(?:open\s+)?bed\s+([0-9]+[a-b]?)[.]?$/i);
+  if (bedOpenMatch && !plan.mayContainClinicalUpdate) {
+    const rawBed = bedOpenMatch[1];
+    const resolution = resolveMateCaseReference({
+      utterance: `Bed ${rawBed}`,
+      cases: censusCases,
+      activeCaseId: activeCase?.id || null,
+      physicalCapacity,
+    });
+    if (resolution.status === "RESOLVED" && resolution.caseId) {
+      const target = censusCases.find((c) => c.id === resolution.caseId);
+      return {
+        handled: true,
+        action: "OPEN_CASE",
+        targetCaseId: resolution.caseId,
+        targetBed: target?.bedNo || rawBed,
+        replyText: `Opening Bed ${target?.bedNo || rawBed}.`,
+      };
+    }
+  }
+
+  // 9. Exact Display ID Open ("Open case 261006004", "Case 261006004")
+  const displayIdMatch = trimmed.match(/^(?:open\s+)?(?:case\s+)?([0-9]{9}|C-[0-9]{4})[.]?$/i);
+  if (displayIdMatch && !plan.mayContainClinicalUpdate) {
+    const rawDisplayId = displayIdMatch[1];
+    const resolution = resolveMateCaseByDisplayId(rawDisplayId, censusCases);
+    if (resolution.status === "RESOLVED" && resolution.matchedCase) {
+      return {
+        handled: true,
+        action: "OPEN_CASE",
+        targetCaseId: resolution.matchedCase.id,
+        targetBed: resolution.matchedCase.bedNo,
+        replyText: `Opening case ${resolution.matchedCase.displayId || rawDisplayId}.`,
       };
     }
   }

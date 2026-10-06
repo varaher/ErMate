@@ -45,6 +45,24 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-06] — ErMate: MATE Conversational Orchestrator Live UI Wiring & Fast Path Integration
+- **Deterministic Fast Path Wiring (`src/components/VoiceScribeChatView.tsx`, `src/mate/mateFastPath.ts`)**:
+  - `tryDeterministicFastPath` directly intercepting clinician utterances in `sendToChat()` ahead of server interpretation and Scribe fallthrough.
+  - Zero server latency for greetings, thanks, active patient counts, ER orientation/census overviews, incomplete case lists, occupied beds, exact bed opening, exact display ID opening, and top-level tab/section navigation.
+  - Clinical updates (BP, pulse, medications, symptoms, PMH) are strictly excluded from fast path and preserved for Scribe extraction.
+- **Server-Side Intent Interpreter & Task Validation (`src/mate/mateInterpreterClient.ts`, `src/mate/mateTaskValidator.ts`, `src/mate/matePatientDisambiguator.ts`)**:
+  - Calls `POST /api/mate/interpret` with de-identified conversation and census context when fast path does not handle the utterance.
+  - Untrusted model tasks validated with `validateAndBuildMateTask` enforcing deterministic case ID and bed number binding (model-provided arbitrary UUIDs cannot override deterministic resolver).
+  - Ambiguous bed references (e.g. Bed 11 when 11A and 11B exist) fail closed and prompt single clarification question without mutating state or selecting randomly.
+  - Context switching to different existing patients enforces session context generation advancement and queues utterance for replay into the target patient's canonical session.
+  - Multi-task utterances (e.g. "Bed 15 BP dropped to 80/50, noradrenaline started. Add it and show me his investigations.") execute operational tasks (open investigations section) and fall through to Scribe dictation pipeline for clinical documentation extraction.
+- **Authenticated Fetch Migration (`src/services/authenticatedFetch.ts`, `src/components/VoiceScribeChatView.tsx`)**:
+  - Replaced all 5 direct unauthenticated `fetch("/api/...")` endpoints in `VoiceScribeChatView.tsx` (`/api/rounds-debrief`, `/api/scribe-chat`, `/api/case-discussion` [2x], `/api/scribe-ocr-scan`) with `authenticatedFetch`.
+  - Attaches Firebase ID Bearer token automatically; throws `AuthRequiredError` on unauthenticated calls without raw 401 exposure.
+- **Deterministic Verification**:
+  - All 17 live UI wiring tests pass (`verify_live_orchestrator_wiring.ts`).
+  - Full regression test suite passes: 22/22 orchestrator, 15/15 universal phase 1, 14/14 case identity, 7/7 bed binding, 7/7 MATE integration, 12/12 replay safety, 10/10 sidecar, 25/25 team/archive, 19/19 clinical documentation. Production compile succeeded.
+
 ### [2026-10-06] — ErMate: MATE Universal Controller Phase 1 (Read + Navigation ONLY)
 - **Zero Clinical Write Power**: Phase 1 is strictly restricted to Read + Navigation operations. No new ClinicalCase mutations or schema alterations exist.
 - **Universal App Map & Runtime Context (`src/mate/mateAppMap.ts`, `src/mate/mateRuntimeContext.ts`)**:

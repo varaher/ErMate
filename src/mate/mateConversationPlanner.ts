@@ -231,9 +231,15 @@ export function planMateConversation(text: string): MateConversationPlan {
     actions.push("PREVIOUS_PATIENT");
   }
 
-  const mayContainClinicalUpdate = CLINICAL_FACT_INDICATORS.some((p) =>
-    p.test(trimmed)
-  );
+  const isPureSectionNavigation = actions.includes("SECTION_NAVIGATE") && trimmed.split(/\s+/).length <= 5;
+  const mayContainClinicalUpdate = isPureSectionNavigation
+    ? CLINICAL_FACT_INDICATORS.filter(
+        (p) =>
+          !p.source.includes("investigation") &&
+          !p.source.includes("treatment") &&
+          !p.source.includes("disposition")
+      ).some((p) => p.test(trimmed))
+    : CLINICAL_FACT_INDICATORS.some((p) => p.test(trimmed));
 
   return {
     actions,

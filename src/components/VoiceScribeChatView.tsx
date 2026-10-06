@@ -44,6 +44,12 @@ import {
 } from "../mate/mateCaseDisplayResolver";
 import { getCasePendingStatus } from "../utils/caseHelper";
 import { checkDischargeCompleteness } from "../utils/dischargeCompleteness";
+import { tryDeterministicFastPath } from "../mate/mateFastPath";
+import { interpretWithServer } from "../mate/mateInterpreterClient";
+import { validateAndBuildMateTask } from "../mate/mateTaskValidator";
+import { resolveInterpretedPatient } from "../mate/matePatientDisambiguator";
+import { computeCensusOrientation, formatErOverviewMessage } from "../mate/mateOrientation";
+import { authenticatedFetch } from "../services/authenticatedFetch";
 
 type ChatMode = "dictation" | "discuss";
 
@@ -705,6 +711,8 @@ export default function VoiceScribeChatView({
   // MATE Operational Context (remembers ONLY bed/case references; never clinical facts)
   const lastReferencedCaseIdRef = useRef<string | null>(null);
   const lastReferencedBedRef = useRef<string | null>(null);
+  const lastReferencedDisplayIdRef = useRef<string | null>(null);
+  const lastPresentedCaseIdsRef = useRef<string[]>([]);
   const pendingUtteranceAfterSwitchRef = useRef<{
     targetCaseId: string;
     utterance: string;
@@ -779,8 +787,14 @@ export default function VoiceScribeChatView({
       }
       prevActiveCaseIdRef.current = activeCaseId;
       prevActiveSessionIdRef.current = activeSessionId;
+      if (activeCaseId) {
+        lastReferencedCaseIdRef.current = activeCaseId;
+        const curCase = allCases?.find(c => c.id === activeCaseId) || caseData;
+        if (curCase?.bedNo) lastReferencedBedRef.current = curCase.bedNo;
+        if (curCase?.displayId) lastReferencedDisplayIdRef.current = curCase.displayId;
+      }
     }
-  }, [activeCaseId, activeSessionId]);
+  }, [activeCaseId, activeSessionId, allCases, caseData]);
 
   const STANDARD_WELCOME_MESSAGE = {
     id: "welcome",
@@ -1099,7 +1113,7 @@ export default function VoiceScribeChatView({
           .map(m => `${m.sender === "user" ? "Doctor" : "ErMate"}: ${m.text}`)
           .join("\n");
         if (!transcript.trim()) return;
-        fetch("/api/case-discussion", {
+        authenticatedFetch("/api/case-discussion", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -1415,7 +1429,7 @@ export default function VoiceScribeChatView({
       }
 
       // 2. Single Claude Sonnet rounds call via /api/rounds-debrief with exact canonical lensId
-      const res = await fetch("/api/rounds-debrief", {
+      const res = await authenticatedFetch("/api/rounds-debrief", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1487,16 +1501,35 @@ export default function VoiceScribeChatView({
       }
     }
 
-    // ── MATE TRAFFIC-POLICE & CONVERSATIONAL CONTROLLER ─────────────
+    // ── MATE CONVERSATIONAL ORCHESTRATOR & CONTROLLER ───────────────
     if (!isDiscussionOnly && allCases && !options?.skipMatePatientResolution) {
       const activeCensusCases = allCases.filter(c => !(c as any).archivedAt);
-      const matePlan = planMateConversation(trimmed);
       const activeCase = activeCaseId ? activeCensusCases.find(c => c.id === activeCaseId) || caseData || null : (caseData || null);
-      const mateRoute = routeMateInput({ text: trimmed, activeCase });
+      const recentCase = lastReferencedCaseIdRef.current
+        ? activeCensusCases.find(c => c.id === lastReferencedCaseIdRef.current) || null
+        : null;
 
-      // 1. Social greetings lane (CONVERSATION) -> Respond friendly, zero DB write, zero LLM extraction
-      if (mateRoute.primaryIntent === "CONVERSATION" && !matePlan.mayContainClinicalUpdate) {
+      // ── PART 1: DETERMINISTIC FAST PATH ─────────────────────────
+      const fastPathResult = tryDeterministicFastPath({
+        utterance: trimmed,
+        activeCase,
+        recentCase,
+        censusCases: activeCensusCases,
+        physicalCapacity: physicalBedCapacity,
+      });
+
+      if (fastPathResult && fastPathResult.handled) {
         setInputText("");
+        if (fastPathResult.listedCaseIds && fastPathResult.listedCaseIds.length > 0) {
+          lastPresentedCaseIdsRef.current = fastPathResult.listedCaseIds;
+        }
+        if (fastPathResult.targetCaseId) {
+          lastReferencedCaseIdRef.current = fastPathResult.targetCaseId;
+          const tCase = activeCensusCases.find(c => c.id === fastPathResult.targetCaseId);
+          if (tCase?.bedNo) lastReferencedBedRef.current = tCase.bedNo;
+          if (tCase?.displayId) lastReferencedDisplayIdRef.current = tCase.displayId;
+        }
+
         const userMsg: Message = {
           id: `u-${Date.now()}`,
           sender: "user",
@@ -1504,34 +1537,46 @@ export default function VoiceScribeChatView({
           timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
           mode: currentMode,
         };
-        const replyText = "Hello Doctor. ErMate is ready. Mention a bed number, ask about bed status, or dictate clinical notes.";
         const aiMsg: Message = {
           id: `ai-${Date.now()}`,
           sender: "ai",
-          text: replyText,
+          text: fastPathResult.replyText || "Done.",
           timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
           mode: "discuss",
         };
         setMessages(prev => [...prev, userMsg, aiMsg]);
         persistMessage(userMsg);
         persistMessage(aiMsg);
+
+        if (fastPathResult.action === "NAVIGATE_TAB" && fastPathResult.targetTab) {
+          onNavigateToTab?.(fastPathResult.targetTab);
+        } else if (fastPathResult.action === "OPEN_CASE" && fastPathResult.targetCaseId) {
+          if (fastPathResult.targetCaseId !== activeCaseId) {
+            onSwitchCase?.(fastPathResult.targetCaseId);
+          }
+          onOpenCaseSheet?.(fastPathResult.targetCaseId);
+        } else if (fastPathResult.action === "OPEN_SECTION" && fastPathResult.targetCaseId && fastPathResult.targetSection) {
+          if (fastPathResult.targetCaseId !== activeCaseId) {
+            onSwitchCase?.(fastPathResult.targetCaseId);
+          }
+          onOpenCaseSection?.(fastPathResult.targetCaseId, fastPathResult.targetSection);
+        }
+
         return;
       }
 
-      // 2. Patient / Bed context resolution
+      // Check for explicit new-patient intake
       const bedRef = extractMateBedReference(trimmed);
       const explicitNewCaseIntent = detectExplicitNewCaseIntent(trimmed);
-      let targetCaseId: string | null = null;
-      let targetCase: ClinicalCase | null = null;
 
-      if (bedRef) {
+      if (bedRef && explicitNewCaseIntent) {
         lastReferencedBedRef.current = bedRef;
         const resolution = resolveMateCaseReference({
           utterance: trimmed,
           cases: activeCensusCases,
           activeCaseId,
           physicalCapacity: physicalBedCapacity,
-          newCaseIntent: explicitNewCaseIntent,
+          newCaseIntent: true,
         });
 
         if (resolution.status === "INVALID_LOCATION") {
@@ -1568,9 +1613,7 @@ export default function VoiceScribeChatView({
           const aiMsg: Message = {
             id: `ai-${Date.now()}`,
             sender: "ai",
-            text: explicitNewCaseIntent
-              ? `⚠️ Both Bed ${resolution.referenceValue}A and Bed ${resolution.referenceValue}B are currently occupied. Cannot assign a new patient to Bed ${resolution.referenceValue}.`
-              : `⚠️ Bed ${resolution.referenceValue} has multiple active occupants (${resolution.candidateCaseIds.length} patients). Please specify the exact slot (e.g. Bed ${resolution.referenceValue}A or ${resolution.referenceValue}B).`,
+            text: `⚠️ Both Bed ${resolution.referenceValue}A and Bed ${resolution.referenceValue}B are currently occupied. Cannot assign a new patient to Bed ${resolution.referenceValue}.`,
             timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
             mode: "discuss",
           };
@@ -1581,233 +1624,124 @@ export default function VoiceScribeChatView({
         }
 
         if (resolution.status === "RESOLVED") {
-          if (explicitNewCaseIntent) {
-            setInputText("");
-            const userMsg: Message = {
-              id: `u-${Date.now()}`,
-              sender: "user",
-              text: trimmed,
-              timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-              mode: currentMode,
-            };
-            const existingOccupant = activeCensusCases.find(c => c.id === resolution.caseId);
-            const aiMsg: Message = {
-              id: `ai-${Date.now()}`,
-              sender: "ai",
-              text: `⚠️ Bed ${resolution.referenceValue} is already occupied by ${existingOccupant?.patient?.name || 'an active patient'}. Please specify a vacant bed or discharge the current occupant first.`,
-              timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-              mode: "discuss",
-            };
-            setMessages(prev => [...prev, userMsg, aiMsg]);
-            persistMessage(userMsg);
-            persistMessage(aiMsg);
-            return;
-          }
-          targetCaseId = resolution.caseId;
-          targetCase = activeCensusCases.find(c => c.id === targetCaseId) || null;
-          lastReferencedCaseIdRef.current = targetCaseId;
+          setInputText("");
+          const userMsg: Message = {
+            id: `u-${Date.now()}`,
+            sender: "user",
+            text: trimmed,
+            timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+            mode: currentMode,
+          };
+          const existingOccupant = activeCensusCases.find(c => c.id === resolution.caseId);
+          const aiMsg: Message = {
+            id: `ai-${Date.now()}`,
+            sender: "ai",
+            text: `⚠️ Bed ${resolution.referenceValue} is already occupied by ${existingOccupant?.patient?.name || 'an active patient'}. Please specify a vacant bed or discharge the current occupant first.`,
+            timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+            mode: "discuss",
+          };
+          setMessages(prev => [...prev, userMsg, aiMsg]);
+          persistMessage(userMsg);
+          persistMessage(aiMsg);
+          return;
         }
 
-        if (resolution.status === "NOT_FOUND") {
-          lastReferencedCaseIdRef.current = null;
-          if (explicitNewCaseIntent && onEnsureDraftCase) {
-            // Explicit new patient workflow on vacant bed -> Establish new draft ClinicalCase
-            const assignedBed = resolution.referenceValue || bedRef;
-            setInputText("");
-            setIsSending(true);
-            try {
-              const user = auth.currentUser;
-              if (!user) throw new Error("Not authenticated");
-              const workspace = await resolveWorkspaceForUser(user.uid);
-              const newSessionId = await createScribeSession({
-                ownerUid: user.uid,
-                workspaceType: workspace.workspaceType,
-                hospitalId: workspace.hospitalId,
-                mode: "case",
-              });
-              const newCaseId = await onEnsureDraftCase(newSessionId, { bedNo: assignedBed });
-              sessionContextGenerationRef.current += 1;
-              const currentGen = sessionContextGenerationRef.current;
-              pendingNewPatientHandoffRef.current = {
-                targetCaseId: newCaseId,
-                targetBed: assignedBed,
-                utterance: trimmed,
-                generation: currentGen,
-              };
-              setActiveSessionId(newSessionId);
-              onSessionIdChange?.(newSessionId);
-              onSwitchCase?.(newCaseId);
-            } catch (err: any) {
-              console.error("[VoiceScribeChatView] Failed to ensure draft case for new patient:", err);
-              const errMsg: Message = {
-                id: `err-${Date.now()}`,
-                sender: "ai",
-                text: `⚠️ Could not establish new case for Bed ${assignedBed}: ${err?.message || "Storage error"}`,
-                timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-              };
-              setMessages(prev => [...prev, errMsg]);
-            } finally {
-              setIsSending(false);
-            }
-            return;
-          }
-
-          // Bed is vacant / unoccupied (read-only query)
-          if (matePlan.actions.includes("BED_STATUS") || (!matePlan.mayContainClinicalUpdate && (matePlan.actions.includes("PATIENT_OPEN") || matePlan.actions.includes("CASE_SUMMARY")))) {
-            setInputText("");
-            const userMsg: Message = {
-              id: `u-${Date.now()}`,
-              sender: "user",
-              text: trimmed,
-              timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-              mode: currentMode,
+        if (resolution.status === "NOT_FOUND" && onEnsureDraftCase) {
+          const assignedBed = resolution.referenceValue || bedRef;
+          setInputText("");
+          setIsSending(true);
+          try {
+            const user = auth.currentUser;
+            if (!user) throw new Error("Not authenticated");
+            const workspace = await resolveWorkspaceForUser(user.uid);
+            const newSessionId = await createScribeSession({
+              ownerUid: user.uid,
+              workspaceType: workspace.workspaceType,
+              hospitalId: workspace.hospitalId,
+              mode: "case",
+            });
+            const newCaseId = await onEnsureDraftCase(newSessionId, { bedNo: assignedBed });
+            sessionContextGenerationRef.current += 1;
+            const currentGen = sessionContextGenerationRef.current;
+            pendingNewPatientHandoffRef.current = {
+              targetCaseId: newCaseId,
+              targetBed: assignedBed,
+              utterance: trimmed,
+              generation: currentGen,
             };
-            const aiMsg: Message = {
-              id: `ai-${Date.now()}`,
+            setActiveSessionId(newSessionId);
+            onSessionIdChange?.(newSessionId);
+            onSwitchCase?.(newCaseId);
+          } catch (err: any) {
+            console.error("[VoiceScribeChatView] Failed to ensure draft case for new patient:", err);
+            const errMsg: Message = {
+              id: `err-${Date.now()}`,
               sender: "ai",
-              text: `Bed ${resolution.referenceValue} is currently vacant (no active patient case).`,
+              text: `⚠️ Could not establish new case for Bed ${assignedBed}: ${err?.message || "Storage error"}`,
               timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-              mode: "discuss",
             };
-            setMessages(prev => [...prev, userMsg, aiMsg]);
-            persistMessage(userMsg);
-            persistMessage(aiMsg);
-            return;
+            setMessages(prev => [...prev, errMsg]);
+          } finally {
+            setIsSending(false);
           }
-        }
-      } else {
-        const displayIdRef = extractMateDisplayIdReference(trimmed);
-        if (displayIdRef) {
-          const displayRes = resolveMateCaseByDisplayId(displayIdRef, activeCensusCases);
-          if (displayRes.status === "RESOLVED") {
-            targetCaseId = displayRes.caseId;
-            targetCase = displayRes.matchedCase;
-            lastReferencedCaseIdRef.current = targetCaseId;
-            if (targetCase?.bedNo) {
-              lastReferencedBedRef.current = targetCase.bedNo;
-            }
-          } else if (displayRes.status === "AMBIGUOUS") {
-            setInputText("");
-            const userMsg: Message = {
-              id: `u-${Date.now()}`,
-              sender: "user",
-              text: trimmed,
-              timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-              mode: currentMode,
-            };
-            const aiMsg: Message = {
-              id: `ai-${Date.now()}`,
-              sender: "ai",
-              text: `⚠️ Multiple cases match reference "${displayIdRef}". Please specify the exact full case ID.`,
-              timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-              mode: "discuss",
-            };
-            setMessages(prev => [...prev, userMsg, aiMsg]);
-            persistMessage(userMsg);
-            persistMessage(aiMsg);
-            return;
-          } else if (displayRes.status === "NOT_FOUND") {
-            setInputText("");
-            const userMsg: Message = {
-              id: `u-${Date.now()}`,
-              sender: "user",
-              text: trimmed,
-              timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-              mode: currentMode,
-            };
-            const aiMsg: Message = {
-              id: `ai-${Date.now()}`,
-              sender: "ai",
-              text: `Case "${displayIdRef}" was not found in active records.`,
-              timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-              mode: "discuss",
-            };
-            setMessages(prev => [...prev, userMsg, aiMsg]);
-            persistMessage(userMsg);
-            persistMessage(aiMsg);
-            return;
-          }
-        } else if (
-          matePlan.refersToRecentPatient ||
-          matePlan.actions.includes("SECTION_NAVIGATE") ||
-          matePlan.actions.includes("CASE_COMPLETENESS") ||
-          matePlan.actions.includes("DISCHARGE_PENDING") ||
-          matePlan.actions.includes("EXPLAIN_CASE") ||
-          matePlan.actions.includes("CASE_SUMMARY")
-        ) {
-          // Conversational pronoun / implicit patient reference: "Open it", "Summarise him", "Show his investigations", "What is incomplete?"
-          if (lastReferencedCaseIdRef.current) {
-            targetCaseId = lastReferencedCaseIdRef.current;
-            targetCase = activeCensusCases.find(c => c.id === targetCaseId) || null;
-          } else if (activeCaseId) {
-            targetCaseId = activeCaseId;
-            targetCase = activeCase;
-          }
+          return;
         }
       }
 
-      // 3. CRITICAL SESSION SAFETY: When resolving a DIFFERENT existing patient
-      if (targetCaseId && targetCaseId !== activeCaseId) {
-        sessionContextGenerationRef.current += 1;
-        const currentGen = sessionContextGenerationRef.current;
-        // A. Store original clinician utterance as pending bound to target generation
-        pendingUtteranceAfterSwitchRef.current = {
-          targetCaseId,
-          utterance: trimmed,
-          generation: currentGen,
-        };
+      // ── PART 2: SERVER INTERPRETATION & TASK VALIDATION ───────────
+      const censusSummary = computeCensusOrientation(activeCensusCases);
+      setIsSending(true);
+      const serverInterp = await interpretWithServer({
+        utterance: trimmed,
+        conversationContext: {
+          lastReferencedBed: lastReferencedBedRef.current,
+          lastReferencedDisplayId: lastReferencedDisplayIdRef.current,
+          hasActivePatient: Boolean(activeCase),
+          lastPresentedCount: lastPresentedCaseIdsRef.current.length,
+        },
+        runtimeContext: {
+          activeTopLevelTab: "dashboard",
+          activeSurface: isSidecar ? "sidecar" : "full",
+          hasActiveCase: Boolean(activeCase),
+        },
+        censusSummary: {
+          totalActive: censusSummary.activePatientCount,
+          occupiedBeds: censusSummary.occupiedBeds,
+          triageCounts: censusSummary.triageDistribution,
+          incompleteCount: censusSummary.incompleteCount,
+          unassignedCount: censusSummary.unassignedBedCount,
+        },
+      });
+      setIsSending(false);
 
-        // B. Immediately request existing ErMate patient/case switch
-        onSwitchCase?.(targetCaseId);
-
-        // C. Stop processing immediately — wait for target case and session attachment
+      if (serverInterp.isAuthError) {
         setInputText("");
+        const userMsg: Message = {
+          id: `u-${Date.now()}`,
+          sender: "user",
+          text: trimmed,
+          timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+          mode: currentMode,
+        };
+        const aiMsg: Message = {
+          id: `ai-${Date.now()}`,
+          sender: "ai",
+          text: serverInterp.data?.conversationalReply || "Your session needs to be refreshed. Please sign in again.",
+          timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+          mode: "discuss",
+        };
+        setMessages(prev => [...prev, userMsg, aiMsg]);
+        persistMessage(userMsg);
+        persistMessage(aiMsg);
         return;
       }
 
-      // If we reached here, the target case (if any) is ALREADY the active case!
-      // 4. Handle Operational Non-Clinical Commands:
-      if (!matePlan.mayContainClinicalUpdate) {
-        // A. Pure Bed Status query ("Is 10B occupied?", "Who is on Bed 4?")
-        if (matePlan.actions.includes("BED_STATUS") && !matePlan.actions.includes("CASE_SUMMARY") && !matePlan.actions.includes("CASE_SHEET_OPEN") && !matePlan.actions.includes("PATIENT_OPEN")) {
-          setInputText("");
-          const userMsg: Message = {
-            id: `u-${Date.now()}`,
-            sender: "user",
-            text: trimmed,
-            timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-            mode: currentMode,
-          };
-          const aiText = targetCase
-            ? `Bed ${targetCase.bedNo || bedRef} is occupied by ${targetCase.patient?.name || 'Patient'} (${targetCase.patient?.age !== null && targetCase.patient?.age !== undefined ? targetCase.patient.age + 'y/' : ''}${targetCase.patient?.gender || '—'}). Presenting complaint: ${targetCase.patient?.presentingComplaint || 'Under evaluation'}. Status: ${targetCase.status || 'Active'}.`
-            : (activeCase
-                ? `Bed ${activeCase.bedNo || '—'} is occupied by ${activeCase.patient?.name || 'Patient'} (${activeCase.patient?.age !== null && activeCase.patient?.age !== undefined ? activeCase.patient.age + 'y/' : ''}${activeCase.patient?.gender || '—'}). Presenting complaint: ${activeCase.patient?.presentingComplaint || 'Under evaluation'}. Status: ${activeCase.status || 'Active'}.`
-                : `Bed ${bedRef || '—'} is currently vacant (no active patient).`);
-          const aiMsg: Message = {
-            id: `ai-${Date.now()}`,
-            sender: "ai",
-            text: aiText,
-            timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-            mode: "discuss",
-          };
-          setMessages(prev => [...prev, userMsg, aiMsg]);
-          persistMessage(userMsg);
-          persistMessage(aiMsg);
-          return;
-        }
+      if (serverInterp.success && serverInterp.data) {
+        const interp = serverInterp.data;
 
-        // B. Top-level App Tab Navigation ("Go back to Dashboard", "Open cases", "Show handover")
-        if (matePlan.actions.includes("NAVIGATE_TAB") && matePlan.targetTab) {
+        // A. Explicit Clarification needed
+        if (interp.needsClarification && interp.clarificationQuestion) {
           setInputText("");
-          const tab = matePlan.targetTab;
-          await dispatchMateAction(
-            { capability: `navigate.${tab}`, targetTab: tab, utterance: trimmed },
-            {
-              navigateApp: (req, targetTab) => {
-                onNavigateToTab?.(targetTab);
-              }
-            }
-          );
           const userMsg: Message = {
             id: `u-${Date.now()}`,
             sender: "user",
@@ -1818,7 +1752,7 @@ export default function VoiceScribeChatView({
           const aiMsg: Message = {
             id: `ai-${Date.now()}`,
             sender: "ai",
-            text: `Navigating to ${tab.charAt(0).toUpperCase() + tab.slice(1)}.`,
+            text: interp.clarificationQuestion,
             timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
             mode: "discuss",
           };
@@ -1828,68 +1762,17 @@ export default function VoiceScribeChatView({
           return;
         }
 
-        // C. Section Navigation ("Show his investigations", "Open treatment", "Show disposition")
-        if (matePlan.actions.includes("SECTION_NAVIGATE") && matePlan.targetSection) {
-          const caseToNav = targetCase || activeCase;
-          const caseToNavId = caseToNav?.id || targetCaseId || activeCaseId;
-          if (caseToNavId) {
-            setInputText("");
-            const section = matePlan.targetSection;
-            await dispatchMateAction(
-              { capability: `case.section.${section}`, caseId: caseToNavId, sectionId: section, utterance: trimmed },
-              {
-                openCaseSection: (req, secId) => {
-                  onOpenCaseSection?.(req.caseId!, secId);
-                }
-              }
-            );
-            const userMsg: Message = {
-              id: `u-${Date.now()}`,
-              sender: "user",
-              text: trimmed,
-              timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-              mode: currentMode,
-            };
-            const bedLabel = caseToNav?.bedNo ? `Bed ${caseToNav.bedNo}` : (caseToNav?.displayId || "patient");
-            const aiMsg: Message = {
-              id: `ai-${Date.now()}`,
-              sender: "ai",
-              text: `Opening ${bedLabel} ${section} section.`,
-              timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-              mode: "discuss",
-            };
-            setMessages(prev => [...prev, userMsg, aiMsg]);
-            persistMessage(userMsg);
-            persistMessage(aiMsg);
-            return;
-          }
-        }
+        // B. Patient Reference Disambiguation
+        const patientResolution = resolveInterpretedPatient({
+          reference: interp.patientReference,
+          activeCase,
+          recentCase,
+          censusCases: activeCensusCases,
+          lastPresentedCaseIds: lastPresentedCaseIdsRef.current,
+          physicalCapacity: physicalBedCapacity,
+        });
 
-        // D. Case Completeness Review ("What is incomplete in Bed 9?", "What is pending in this case?")
-        if (matePlan.actions.includes("CASE_COMPLETENESS")) {
-          const caseToReview = targetCase || activeCase;
-          if (!caseToReview) {
-            setInputText("");
-            const userMsg: Message = {
-              id: `u-${Date.now()}`,
-              sender: "user",
-              text: trimmed,
-              timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-              mode: currentMode,
-            };
-            const aiMsg: Message = {
-              id: `ai-${Date.now()}`,
-              sender: "ai",
-              text: "No active or recent patient context to check completeness for. Please specify a bed number (e.g. Bed 9).",
-              timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-              mode: "discuss",
-            };
-            setMessages(prev => [...prev, userMsg, aiMsg]);
-            persistMessage(userMsg);
-            persistMessage(aiMsg);
-            return;
-          }
-
+        if (patientResolution.status === "AMBIGUOUS") {
           setInputText("");
           const userMsg: Message = {
             id: `u-${Date.now()}`,
@@ -1898,20 +1781,10 @@ export default function VoiceScribeChatView({
             timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
             mode: currentMode,
           };
-          const pendingStatus = getCasePendingStatus(caseToReview);
-          const bedLabel = caseToReview.bedNo ? `Bed ${caseToReview.bedNo}` : (caseToReview.displayId || "This case");
-          let replyText = "";
-          if (!pendingStatus.isPending || pendingStatus.pendingCount === 0) {
-            replyText = `✓ ${bedLabel} documentation is complete. All clinical sections are filled.`;
-          } else {
-            replyText = `${bedLabel} has ${pendingStatus.pendingCount} incomplete section${pendingStatus.pendingCount > 1 ? "s" : ""}:\n` +
-              pendingStatus.pendingSections.map(s => `• ${s}`).join("\n");
-          }
-
           const aiMsg: Message = {
             id: `ai-${Date.now()}`,
             sender: "ai",
-            text: replyText,
+            text: patientResolution.clarificationMessage || "Multiple patients match your query. Please specify the bed number.",
             timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
             mode: "discuss",
           };
@@ -1921,31 +1794,61 @@ export default function VoiceScribeChatView({
           return;
         }
 
-        // E. Discharge Completeness ("What is pending in Bed 30 discharge?", "Bed 30 is for discharge. What is pending in the discharge summary?")
-        if (matePlan.actions.includes("DISCHARGE_PENDING")) {
-          const caseToReview = targetCase || activeCase;
-          if (!caseToReview) {
-            setInputText("");
-            const userMsg: Message = {
-              id: `u-${Date.now()}`,
-              sender: "user",
-              text: trimmed,
-              timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-              mode: currentMode,
-            };
-            const aiMsg: Message = {
-              id: `ai-${Date.now()}`,
-              sender: "ai",
-              text: "No active patient context to review discharge status. Please specify a bed number (e.g. Bed 30).",
-              timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-              mode: "discuss",
-            };
-            setMessages(prev => [...prev, userMsg, aiMsg]);
-            persistMessage(userMsg);
-            persistMessage(aiMsg);
-            return;
-          }
+        let interpTargetCaseId = patientResolution.caseId;
+        let interpTargetCase = patientResolution.matchedCase;
 
+        if (interpTargetCaseId) {
+          lastReferencedCaseIdRef.current = interpTargetCaseId;
+          if (interpTargetCase?.bedNo) lastReferencedBedRef.current = interpTargetCase.bedNo;
+          if (interpTargetCase?.displayId) lastReferencedDisplayIdRef.current = interpTargetCase.displayId;
+        }
+
+        // C. Different Existing Patient Switch Safety Guard
+        if (interpTargetCaseId && interpTargetCaseId !== activeCaseId) {
+          sessionContextGenerationRef.current += 1;
+          const currentGen = sessionContextGenerationRef.current;
+          pendingUtteranceAfterSwitchRef.current = {
+            targetCaseId: interpTargetCaseId,
+            utterance: trimmed,
+            generation: currentGen,
+          };
+          onSwitchCase?.(interpTargetCaseId);
+          setInputText("");
+          return;
+        }
+
+        // D. Task Validation
+        const validatedTasks = (interp.tasks || []).map(planned => validateAndBuildMateTask({
+          plannedTask: planned,
+          actorUid: auth.currentUser?.uid || "clinician",
+          hospitalId: null,
+          conversationId: activeSessionId || "conv-default",
+          deterministicCaseId: interpTargetCaseId || activeCaseId,
+          deterministicBedNo: interpTargetCase?.bedNo || activeCase?.bedNo || null,
+          scribeSessionId: activeSessionId,
+          contextGeneration: sessionContextGenerationRef.current,
+          sourceUtterance: trimmed,
+        })).filter(env => env.isValid && env.mateTask);
+
+        const hasClinicalDoc = validatedTasks.some(t => t.mateTask?.capability === "case.document");
+        const navTask = validatedTasks.find(t => t.mateTask?.capability === "case.navigate" && t.sanitizedPlannedTask?.section);
+        const appNavTask = validatedTasks.find(t => t.mateTask?.capability === "case.navigate" && t.sanitizedPlannedTask?.targetTab);
+        const openCaseTask = validatedTasks.find(t => t.mateTask?.capability === "case.open");
+        const explainTask = validatedTasks.find(t => t.mateTask?.capability === "case.rounds.review");
+        const reminderTask = validatedTasks.find(t => t.mateTask?.capability === "reminder.create");
+        const summaryTask = validatedTasks.find(t => t.mateTask?.capability === "case.summary");
+        const completenessTask = validatedTasks.find(t => t.sanitizedPlannedTask?.type === "CASE_COMPLETENESS");
+        const dischargeTask = validatedTasks.find(t => t.sanitizedPlannedTask?.type === "DISCHARGE_PENDING");
+
+        if (hasClinicalDoc) {
+          if (navTask?.sanitizedPlannedTask?.section) {
+            onOpenCaseSection?.(interpTargetCaseId || activeCaseId!, navTask.sanitizedPlannedTask.section);
+          }
+          if (appNavTask?.sanitizedPlannedTask?.targetTab) {
+            onNavigateToTab?.(appNavTask.sanitizedPlannedTask.targetTab);
+          }
+          // Clinical facts present: proceed into Scribe extraction pipeline below
+        } else if (reminderTask) {
           setInputText("");
           const userMsg: Message = {
             id: `u-${Date.now()}`,
@@ -1954,26 +1857,12 @@ export default function VoiceScribeChatView({
             timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
             mode: currentMode,
           };
-          const report = checkDischargeCompleteness(caseToReview);
-          const bedLabel = caseToReview.bedNo ? `Bed ${caseToReview.bedNo}` : (caseToReview.displayId || "This case");
-          let replyText = "";
-          if (report.complete) {
-            replyText = `✓ ${bedLabel} discharge documentation is complete. No pending items.`;
-          } else {
-            const lines: string[] = [];
-            if (report.missing.length > 0) {
-              lines.push(`• Missing: ${report.missing.join(", ")}`);
-            }
-            if (report.pendingReports.length > 0) {
-              lines.push(`• Pending Reports: ${report.pendingReports.join(", ")}`);
-            }
-            replyText = `${bedLabel} has pending items before discharge:\n` + lines.join("\n");
-          }
-
+          const bedLabel = interpTargetCase?.bedNo ? `Bed ${interpTargetCase.bedNo}` : (interpTargetCase?.displayId || "this patient");
+          const minutes = reminderTask.sanitizedPlannedTask?.reminderMinutes || 10;
           const aiMsg: Message = {
             id: `ai-${Date.now()}`,
             sender: "ai",
-            text: replyText,
+            text: `I understand the reminder request for ${bedLabel} (${minutes} mins), but scheduled persistent notifications are not enabled yet.`,
             timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
             mode: "discuss",
           };
@@ -1981,54 +1870,12 @@ export default function VoiceScribeChatView({
           persistMessage(userMsg);
           persistMessage(aiMsg);
           return;
-        }
-
-        // F. Whole-Case Explain ("Mate, explain Bed 14", "Use the whole case and explain")
-        if (matePlan.actions.includes("EXPLAIN_CASE")) {
-          const caseToExplain = targetCase || activeCase;
-          if (!caseToExplain) {
-            setInputText("");
-            const userMsg: Message = {
-              id: `u-${Date.now()}`,
-              sender: "user",
-              text: trimmed,
-              timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-              mode: currentMode,
-            };
-            const aiMsg: Message = {
-              id: `ai-${Date.now()}`,
-              sender: "ai",
-              text: "No active patient case to explain. Please specify a bed number (e.g. Bed 14).",
-              timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-              mode: "discuss",
-            };
-            setMessages(prev => [...prev, userMsg, aiMsg]);
-            persistMessage(userMsg);
-            persistMessage(aiMsg);
-            return;
-          }
-
+        } else if (explainTask) {
           await runRoundsLens("full-debrief", trimmed);
           return;
-        }
-
-        // G. Case Sheet Open ("open case sheet", "view case sheet", "open his case sheet", "open case 261006004")
-        if (matePlan.actions.includes("CASE_SHEET_OPEN") || mateRoute.targetCapability === "case.open") {
-          const caseToOpenId = targetCaseId || activeCaseId;
-          if (caseToOpenId) {
-            setInputText("");
-            await dispatchMateAction(
-              { capability: "case.open", caseId: caseToOpenId, utterance: trimmed },
-              { openCase: (req) => onOpenCaseSheet?.(req.caseId!) }
-            );
-            return;
-          }
-        }
-
-        // H. Case Summary ("Summarise him", "I think 10B is occupied, open Bed 10B and summarise the case")
-        if (matePlan.actions.includes("CASE_SUMMARY")) {
-          const caseToSummarize = targetCase || activeCase;
-          if (!caseToSummarize) {
+        } else if (completenessTask) {
+          const cToReview = interpTargetCase || activeCase;
+          if (cToReview) {
             setInputText("");
             const userMsg: Message = {
               id: `u-${Date.now()}`,
@@ -2037,10 +1884,19 @@ export default function VoiceScribeChatView({
               timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
               mode: currentMode,
             };
+            const pendingStatus = getCasePendingStatus(cToReview);
+            const bedLabel = cToReview.bedNo ? `Bed ${cToReview.bedNo}` : (cToReview.displayId || "This case");
+            let replyText = "";
+            if (!pendingStatus.isPending || pendingStatus.pendingCount === 0) {
+              replyText = `✓ ${bedLabel} documentation is complete. All clinical sections are filled.`;
+            } else {
+              replyText = `${bedLabel} has ${pendingStatus.pendingCount} incomplete section${pendingStatus.pendingCount > 1 ? "s" : ""}:\n` +
+                pendingStatus.pendingSections.map(s => `• ${s}`).join("\n");
+            }
             const aiMsg: Message = {
               id: `ai-${Date.now()}`,
               sender: "ai",
-              text: "No active or recent patient context to summarize. Please specify a bed number (e.g. Bed 10B).",
+              text: replyText,
               timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
               mode: "discuss",
             };
@@ -2049,8 +1905,94 @@ export default function VoiceScribeChatView({
             persistMessage(aiMsg);
             return;
           }
+        } else if (dischargeTask) {
+          const cToReview = interpTargetCase || activeCase;
+          if (cToReview) {
+            setInputText("");
+            const userMsg: Message = {
+              id: `u-${Date.now()}`,
+              sender: "user",
+              text: trimmed,
+              timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+              mode: currentMode,
+            };
+            const report = checkDischargeCompleteness(cToReview);
+            const bedLabel = cToReview.bedNo ? `Bed ${cToReview.bedNo}` : (cToReview.displayId || "This case");
+            let replyText = "";
+            if (report.complete) {
+              replyText = `✓ ${bedLabel} discharge documentation is complete. No pending items.`;
+            } else {
+              const lines: string[] = [];
+              if (report.missing.length > 0) lines.push(`• Missing: ${report.missing.join(", ")}`);
+              if (report.pendingReports.length > 0) lines.push(`• Pending Reports: ${report.pendingReports.join(", ")}`);
+              replyText = `${bedLabel} has pending items before discharge:\n` + lines.join("\n");
+            }
+            const aiMsg: Message = {
+              id: `ai-${Date.now()}`,
+              sender: "ai",
+              text: replyText,
+              timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+              mode: "discuss",
+            };
+            setMessages(prev => [...prev, userMsg, aiMsg]);
+            persistMessage(userMsg);
+            persistMessage(aiMsg);
+            return;
+          }
+        } else if (summaryTask) {
+          const cToSummarize = interpTargetCase || activeCase;
+          if (cToSummarize) {
+            setInputText("");
+            const userMsg: Message = {
+              id: `u-${Date.now()}`,
+              sender: "user",
+              text: trimmed,
+              timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+              mode: currentMode,
+            };
+            const p = cToSummarize.patient;
+            const v = cToSummarize.vitals;
+            const complaint = p?.presentingComplaint || "Under Evaluation";
+            const vitalsStr = [
+              v?.hr ? `HR ${v.hr} bpm` : null,
+              v?.bp ? `BP ${v.bp}` : null,
+              v?.spo2 ? `SpO2 ${v.spo2}%` : null,
+              v?.rr ? `RR ${v.rr}` : null,
+              v?.temp ? `Temp ${v.temp}°C` : null,
+              v?.gcs ? `GCS ${v.gcs}` : null,
+            ].filter(Boolean).join(", ") || "Vitals not recorded";
+            const dx = cToSummarize.dischargeInfo?.primaryDiagnosis || cToSummarize.provisionalPrimaryDiagnosis || "Under evaluation";
 
+            const summaryText = `📋 **Bed ${cToSummarize.bedNo || '—'} Case Summary**\n` +
+              `• **Patient:** ${p?.name || 'Unknown'}, ${p?.age !== null && p?.age !== undefined ? p.age + 'y/' : ''}${p?.gender || '—'}\n` +
+              `• **Presenting Complaint:** ${complaint}\n` +
+              `• **Arrival Vitals:** ${vitalsStr}\n` +
+              `• **Working Diagnosis:** ${dx}\n` +
+              `• **Current Status:** ${cToSummarize.status || 'Active'}`;
+
+            const aiMsg: Message = {
+              id: `ai-${Date.now()}`,
+              sender: "ai",
+              text: summaryText,
+              timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+              mode: "discuss",
+            };
+            setMessages(prev => [...prev, userMsg, aiMsg]);
+            persistMessage(userMsg);
+            persistMessage(aiMsg);
+            return;
+          }
+        } else if (openCaseTask || navTask || appNavTask) {
           setInputText("");
+          if (appNavTask?.sanitizedPlannedTask?.targetTab) {
+            onNavigateToTab?.(appNavTask.sanitizedPlannedTask.targetTab);
+          }
+          if (openCaseTask && (interpTargetCaseId || activeCaseId)) {
+            onOpenCaseSheet?.(interpTargetCaseId || activeCaseId!);
+          }
+          if (navTask?.sanitizedPlannedTask?.section && (interpTargetCaseId || activeCaseId)) {
+            onOpenCaseSection?.(interpTargetCaseId || activeCaseId!, navTask.sanitizedPlannedTask.section);
+          }
           const userMsg: Message = {
             id: `u-${Date.now()}`,
             sender: "user",
@@ -2058,34 +2000,11 @@ export default function VoiceScribeChatView({
             timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
             mode: currentMode,
           };
-          const p = caseToSummarize.patient;
-          const v = caseToSummarize.vitals;
-          const complaint = p?.presentingComplaint || "Under Evaluation";
-          const vitalsStr = [
-            v?.hr ? `HR ${v.hr} bpm` : null,
-            v?.bp ? `BP ${v.bp}` : null,
-            v?.spo2 ? `SpO2 ${v.spo2}%` : null,
-            v?.rr ? `RR ${v.rr}` : null,
-            v?.temp ? `Temp ${v.temp}°C` : null,
-            v?.gcs ? `GCS ${v.gcs}` : null,
-          ].filter(Boolean).join(", ") || "Vitals not recorded";
-          const dx = caseToSummarize.dischargeInfo?.primaryDiagnosis || caseToSummarize.provisionalPrimaryDiagnosis || "Under evaluation";
-
-          let summaryText = `📋 **Bed ${caseToSummarize.bedNo || '—'} Case Summary**\n` +
-            `• **Patient:** ${p?.name || 'Unknown'}, ${p?.age !== null && p?.age !== undefined ? p.age + 'y/' : ''}${p?.gender || '—'}\n` +
-            `• **Presenting Complaint:** ${complaint}\n` +
-            `• **Arrival Vitals:** ${vitalsStr}\n` +
-            `• **Working Diagnosis:** ${dx}\n` +
-            `• **Current Status:** ${caseToSummarize.status || 'Active'}`;
-
-          if (matePlan.actions.includes("BED_STATUS")) {
-            summaryText = `✓ Bed ${caseToSummarize.bedNo || '—'} is occupied.\n\n` + summaryText;
-          }
-
+          const replyText = interp.conversationalReply || "Done.";
           const aiMsg: Message = {
             id: `ai-${Date.now()}`,
             sender: "ai",
-            text: summaryText,
+            text: replyText,
             timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
             mode: "discuss",
           };
@@ -2093,10 +2012,7 @@ export default function VoiceScribeChatView({
           persistMessage(userMsg);
           persistMessage(aiMsg);
           return;
-        }
-
-        // I. Pure Patient Open confirmation ("Open Bed 10B", "Open it")
-        if (matePlan.actions.includes("PATIENT_OPEN") && targetCase) {
+        } else if (validatedTasks.length === 0 && interp.confidence !== "LOW" && interp.conversationalReply) {
           setInputText("");
           const userMsg: Message = {
             id: `u-${Date.now()}`,
@@ -2108,7 +2024,7 @@ export default function VoiceScribeChatView({
           const aiMsg: Message = {
             id: `ai-${Date.now()}`,
             sender: "ai",
-            text: `Patient context active: Bed ${targetCase.bedNo || '—'} (${targetCase.patient?.name || 'Patient'}, ${targetCase.patient?.age !== null && targetCase.patient?.age !== undefined ? targetCase.patient.age + 'y/' : ''}${targetCase.patient?.gender || '—'}). Ready for clinical dictation or debrief.`,
+            text: interp.conversationalReply,
             timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
             mode: "discuss",
           };
@@ -2119,7 +2035,7 @@ export default function VoiceScribeChatView({
         }
       }
     }
-    // ── END OF MATE TRAFFIC-POLICE INTERCEPTION ─────────────────────
+    // ── END OF MATE CONTROLLER ──────────────────────────────────────
 
     setInputText("");
     setIsSending(true);
@@ -2148,7 +2064,7 @@ export default function VoiceScribeChatView({
         // (and dictation, below) now wait indefinitely for a response.
         // suggestedUpdate is deliberately ignored — discuss-mode conversations
         // never write to the real case sheet, regardless of what the model proposes.
-        const res = await fetch("/api/case-discussion", {
+        const res = await authenticatedFetch("/api/case-discussion", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -2190,7 +2106,7 @@ export default function VoiceScribeChatView({
       } else {
         // ── DICTATION MODE — GPT-4o-mini extraction (parallel) + Claude
         // Sonnet reasoning, via /api/scribe-chat. No timeout, as above.
-        const res = await fetch("/api/scribe-chat", {
+        const res = await authenticatedFetch("/api/scribe-chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -2357,7 +2273,7 @@ export default function VoiceScribeChatView({
         reader.readAsDataURL(file);
       });
 
-      const res = await fetch("/api/scribe-ocr-scan", {
+      const res = await authenticatedFetch("/api/scribe-ocr-scan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ image: base64, mimeType: file.type }),
