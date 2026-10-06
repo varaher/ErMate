@@ -1646,58 +1646,35 @@ const startRealCheckout = async (planKey: string) => {
         </div>
       );
     } else if (selectedSubSection === "roster") {
-      title = "Roster Setup & Workbench";
+      title = "Team Management";
       content = (
-        <div className="space-y-6 text-left">
-                <TeamBuilder
-            hospitalName={workplaceName}
-            onHospitalChange={(name) => {
-              setWorkplaceName(name);
-            }}
+        <div className="text-left">
+          <TeamRosterBoard
+            teamMembers={teamMembers}
             profile={profile}
-            onSaveConfig={(teamName, department, teamColor) => {
+            cases={cases}
+            onAddMember={onAddMember}
+            onRemoveMember={onRemoveMember}
+            onUpdateShift={onUpdateShift}
+            onApproveMember={onApproveMember}
+            onDeclineMember={onDeclineMember}
+            onUpdateRole={onUpdateRole}
+            hospitalSubscriptionActive={!!hospitalSubscription?.active}
+            shifts={shifts}
+            onUpdateShifts={onUpdateShifts}
+            hospitalName={workplaceName}
+            onHospitalChange={(name) => setWorkplaceName(name)}
+            onSaveConfig={(tName, dept, tCol) => {
               onSaveProfile({
                 ...profile,
                 workplaceName: workplaceName.trim(),
-                teamName,
-                department,
-                teamColor
+                teamName: tName,
+                department: dept,
+                teamColor: tCol
               });
             }}
-            members={teamMembers}
-            onMembersChange={(updatedMembers) => {
-              if (updatedMembers.length > teamMembers.length) {
-                const added = updatedMembers[updatedMembers.length - 1];
-                onAddMember(
-                  added.name || added.email.split("@")[0],
-                  added.email,
-                  added.role,
-                  added.shift || "Not Scheduled"
-                );
-              } else if (updatedMembers.length < teamMembers.length) {
-                const deleted = teamMembers.find(m => !updatedMembers.some(um => um.id === m.id));
-                if (deleted) {
-                  onRemoveMember(deleted.id);
-                }
-              }
-            }}
+            onLeaveTeam={onLeaveTeam}
           />
-
-          <div className="border-t border-slate-200 dark:border-slate-200 dark:border-slate-800/80 pt-6">
-            <TeamRosterBoard
-              teamMembers={teamMembers}
-              profile={profile}
-              onAddMember={onAddMember}
-              onRemoveMember={onRemoveMember}
-              onUpdateShift={onUpdateShift}
-              onApproveMember={onApproveMember}
-              onDeclineMember={onDeclineMember}
-              onUpdateRole={onUpdateRole}
-              hospitalSubscriptionActive={!!hospitalSubscription?.active}
-              shifts={shifts}
-              onUpdateShifts={onUpdateShifts}
-            />
-          </div>
         </div>
       );
     } else if (selectedSubSection === "log-book") {

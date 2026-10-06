@@ -3,7 +3,9 @@ import React, { useState, useEffect } from "react";
 import { 
   Users, Plus, Trash2, Shield, Clock, Search, UserCheck, 
   UserX, ShieldAlert, CheckCircle2, Mail, Calendar, Sparkles,
-  Building2, Link, Copy, Check, BookOpen, FileText, CheckSquare, Square, ChevronRight, ClipboardList
+  Building2, Link, Copy, Check, ChevronRight, ClipboardList,
+  LayoutDashboard, Settings, Share2, QrCode, UserPlus, Activity,
+  RefreshCw, Send, ShieldCheck, X, AlertCircle
 } from "lucide-react";
 import { TeamMember, UserProfile, ClinicalCase, isPendingApprovalStatus, isActiveMembershipStatus } from "../types";
 import GoogleCalendarModal from "./GoogleCalendarModal";
@@ -34,21 +36,27 @@ export const SHIFT_COLOR_OPTIONS = [
   { label: "Blue / Triage", color: "text-blue-600 bg-blue-50 border-blue-200 dark:text-blue-400 dark:bg-blue-400/10 dark:border-blue-400/20" },
 ];
 
-interface TeamRosterBoardProps {
+export interface TeamRosterBoardProps {
   teamMembers: TeamMember[];
   profile: UserProfile;
   cases?: ClinicalCase[];
   onSaveCase?: (updatedCase: ClinicalCase) => Promise<void>;
-  onAddMember: (name: string, email: string, role: string, shift: string) => Promise<void>;
-  onRemoveMember: (id: string) => Promise<void>;
-  onUpdateShift: (id: string, shift: string) => Promise<void>;
-  onApproveMember?: (id: string) => Promise<void>;
-  onDeclineMember?: (id: string) => Promise<void>;
-  onUpdateRole?: (id: string, role: string) => Promise<void>;
+  onAddMember: (name: string, email: string, role: string, shift: string) => Promise<void> | void;
+  onRemoveMember: (id: string) => Promise<void> | void;
+  onUpdateShift: (id: string, shift: string) => Promise<void> | void;
+  onApproveMember?: (id: string) => Promise<void> | void;
+  onDeclineMember?: (id: string) => Promise<void> | void;
+  onUpdateRole?: (id: string, role: string) => Promise<void> | void;
   hospitalSubscriptionActive?: boolean;
   shifts?: any[];
   onUpdateShifts?: (newShifts: any[]) => Promise<void> | void;
+  hospitalName?: string;
+  onHospitalChange?: (name: string) => void;
+  onSaveConfig?: (teamName: string, department: string, teamColor: "emerald" | "blue" | "indigo" | "violet") => void;
+  onLeaveTeam?: () => Promise<void>;
 }
+
+export type TeamSectionTab = "overview" | "members" | "rota" | "settings";
 
 export default function TeamRosterBoard({
   teamMembers,
@@ -64,49 +72,70 @@ export default function TeamRosterBoard({
   hospitalSubscriptionActive = false,
   shifts = [],
   onUpdateShifts,
+  hospitalName = "",
+  onHospitalChange,
+  onSaveConfig,
+  onLeaveTeam,
 }: TeamRosterBoardProps) {
+  // Navigation Tabs: 1. OVERVIEW, 2. MEMBERS, 3. ROTA, 4. SETTINGS
+  const [activeTab, setActiveTab] = useState<TeamSectionTab>("overview");
+
   // Active dynamic shifts
   const activeShifts = shifts && shifts.length > 0 ? shifts : ROTA_SHIFTS;
   const [editedShifts, setEditedShifts] = useState<any[]>([]);
 
-  // Sync editedShifts with activeShifts when props change
   useEffect(() => {
     setEditedShifts(JSON.parse(JSON.stringify(activeShifts)));
   }, [shifts, activeShifts]);
 
-  // Shift Manager State & Form States
+  // Modal and state controllers
   const [showShiftManagerModal, setShowShiftManagerModal] = useState(false);
   const [isAddingNewShift, setIsAddingNewShift] = useState(false);
   const [showWorkspaceSync, setShowWorkspaceSync] = useState(false);
+  const [showInviteModal, setShowInviteModal] = useState(false);
+  const [showQR, setShowQR] = useState(false);
 
+  // Add shift state
   const [addShiftName, setAddShiftName] = useState("");
   const [addShiftTime, setAddShiftTime] = useState("");
   const [addShiftColor, setAddShiftColor] = useState(SHIFT_COLOR_OPTIONS[0].color);
   const [shiftActionMsg, setShiftActionMsg] = useState("");
 
-  // Search and Filter States
+  // Filters
   const [searchQuery, setSearchQuery] = useState("");
   const [shiftFilter, setShiftFilter] = useState("all");
 
-  // HOD Member Case view and Handover States
+  // Handover state
   const [selectedMemberForCases, setSelectedMemberForCases] = useState<TeamMember | null>(null);
   const [selectedCaseIdsToTake, setSelectedCaseIdsToTake] = useState<string[]>([]);
   const [handoverInProgress, setHandoverInProgress] = useState(false);
   const [handoverSuccessMsg, setHandoverSuccessMsg] = useState("");
 
-  // Form States for Add Member
+  // Add Clinician Form State
+  const [showAddMemberForm, setShowAddMemberForm] = useState(false);
+  const [addMode, setAddMode] = useState<"single" | "bulk">("single");
   const [newName, setNewName] = useState("");
   const [newEmail, setNewEmail] = useState("");
   const [newRole, setNewRole] = useState("EM Resident");
-  const [newShift, setNewShift] = useState("off");
-  
+  const [newShift, setNewShift] = useState("morning");
+  const [bulkEmailsText, setBulkEmailsText] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
   const [copiedLink, setCopiedLink] = useState(false);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
 
-  // Google Calendar Sync Modal State
+  // Workplace Settings State
+  const [workplaceInput, setWorkplaceInput] = useState(hospitalName || profile.workplaceName || profile.hospital || "");
+  const [teamNameInput, setTeamNameInput] = useState(profile.teamName || "EM Trauma Response Core");
+  const [departmentInput, setDepartmentInput] = useState(profile.department || "Emergency & Trauma Medicine");
+  const [teamColorInput, setTeamColorInput] = useState<"emerald" | "blue" | "indigo" | "violet">(profile.teamColor || "blue");
+  const [configSavedNotice, setConfigSavedNotice] = useState(false);
+
+  // Sandbox Simulator State
+  const [selectedSimEmail, setSelectedSimEmail] = useState("");
+
+  // Calendar sync modal state
   const [isCalendarModalOpen, setIsCalendarModalOpen] = useState(false);
   const [calendarModalConfig, setCalendarModalConfig] = useState<{
     defaultEventType: "shift" | "audit" | "handover";
@@ -122,7 +151,7 @@ export default function TeamRosterBoard({
     initialEndTime: "14:00",
   });
 
-   const userEmailLower = profile.email.toLowerCase().trim();
+  const userEmailLower = profile.email.toLowerCase().trim();
   const roleLower = (profile.role || "").toLowerCase();
   const isUserHOD =
     roleLower.includes("hod") ||
@@ -139,20 +168,23 @@ export default function TeamRosterBoard({
 
   const currentOrigin = typeof window !== "undefined" ? window.location.origin : "https://ermate.app";
   const [generatedLink, setGeneratedLink] = useState<string>(
-    `${currentOrigin}/join/${slugify(profile.hospital || "department")}?ref=team_invite`
+    `${currentOrigin}/join/${slugify(profile.hospital || workplaceInput || "department")}?ref=team_invite`
   );
+
+  const activeHospitalName = (workplaceInput || profile.workplaceName || profile.hospital || "Emergency Department").trim();
 
   useEffect(() => {
     let active = true;
-    if (profile.hospital) {
-      createTeamInvite(profile.hospital, auth.currentUser?.uid || "hod", profile.name || "HOD").then(res => {
+    const targetHosp = profile.hospital || workplaceInput;
+    if (targetHosp) {
+      createTeamInvite(targetHosp, auth.currentUser?.uid || "hod", profile.name || "HOD").then(res => {
         if (active) {
           setGeneratedLink(res.link);
         }
       });
     }
     return () => { active = false; };
-  }, [profile.hospital, profile.name]);
+  }, [profile.hospital, profile.name, workplaceInput]);
 
   const handleCopyLink = () => {
     navigator.clipboard.writeText(generatedLink);
@@ -160,11 +192,27 @@ export default function TeamRosterBoard({
     setTimeout(() => setCopiedLink(false), 2000);
   };
 
-  // Handle adding a new member
+  const handleShareLink = async () => {
+    if (typeof navigator !== "undefined" && navigator.share) {
+      try {
+        await navigator.share({
+          title: `Join ${activeHospitalName} Team on ErMate`,
+          text: `Share this secure link with clinicians who have already been added to your team:`,
+          url: generatedLink,
+        });
+        return;
+      } catch (err) {
+        // Fallback to copy if user dismisses or share fails
+      }
+    }
+    handleCopyLink();
+  };
+
+  // Add Clinician Submit
   const handleAddSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!isUserHOD) {
-      setErrorMsg("Only Department Leads / HODs can onboard team clinicians.");
+      setErrorMsg("Only Department Leads / HODs can add team clinicians.");
       return;
     }
     if (!newName.trim() || !newEmail.trim()) {
@@ -188,19 +236,63 @@ export default function TeamRosterBoard({
 
     try {
       await onAddMember(newName.trim(), emailLower, newRole, newShift);
-      setSuccessMsg(`Successfully whitelisted ${newName}!`);
+      setSuccessMsg(`Successfully added Dr. ${newName.trim()} to the team!`);
       setNewName("");
       setNewEmail("");
       setNewRole("EM Resident");
-      setNewShift("off");
+      setNewShift("morning");
       setTimeout(() => setSuccessMsg(""), 4000);
     } catch (err: any) {
-      setErrorMsg(err?.message || "Failed to add member. Please try again.");
+      setErrorMsg(err?.message || "Failed to add clinician. Please try again.");
     } finally {
       setIsSubmitting(false);
     }
   };
 
+  // Bulk Add Submit
+  const handleBulkAddSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!isUserHOD) {
+      setErrorMsg("Only Department Leads / HODs can add team clinicians.");
+      return;
+    }
+    const rawEmails = bulkEmailsText
+      .split(/[\n,;]+/)
+      .map(e => e.trim().toLowerCase())
+      .filter(e => e.length > 3 && e.includes("@"));
+
+    if (rawEmails.length === 0) {
+      setErrorMsg("Please paste valid email addresses.");
+      return;
+    }
+
+    const newOnes = rawEmails.filter(email => !teamMembers.some(m => m.email.toLowerCase() === email));
+    if (newOnes.length === 0) {
+      setErrorMsg("All provided emails are already on the team.");
+      return;
+    }
+
+    setIsSubmitting(true);
+    setErrorMsg("");
+    setSuccessMsg("");
+
+    try {
+      for (const email of newOnes) {
+        const namePart = email.split("@")[0].replace(/[._-]+/g, " ");
+        const formattedName = namePart.charAt(0).toUpperCase() + namePart.slice(1);
+        await onAddMember(formattedName, email, newRole, newShift);
+      }
+      setSuccessMsg(`Successfully added ${newOnes.length} clinicians to team!`);
+      setBulkEmailsText("");
+      setTimeout(() => setSuccessMsg(""), 4000);
+    } catch (err: any) {
+      setErrorMsg(err?.message || "Failed to import clinicians.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // Shift setup handlers
   const handleCreateNewShift = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!isUserHOD) {
@@ -236,14 +328,7 @@ export default function TeamRosterBoard({
   };
 
   const handleUpdateShiftField = (shiftId: string, field: "name" | "time" | "color", value: string) => {
-    setEditedShifts(prev => {
-      return prev.map(item => {
-        if (item.id === shiftId) {
-          return { ...item, [field]: value };
-        }
-        return item;
-      });
-    });
+    setEditedShifts(prev => prev.map(item => item.id === shiftId ? { ...item, [field]: value } : item));
   };
 
   const handleDeleteShift = async (shiftId: string) => {
@@ -281,369 +366,1074 @@ export default function TeamRosterBoard({
     }
   };
 
-  // Filter team members
+  // Filter calculations
   const filteredMembers = teamMembers.filter(m => {
     const matchesSearch = 
       m.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       m.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
       m.role.toLowerCase().includes(searchQuery.toLowerCase());
-    
     const matchesShift = shiftFilter === "all" || m.shift === shiftFilter;
-    
     return matchesSearch && matchesShift;
   });
 
   const joinedMembers = teamMembers.filter(m => isActiveMembershipStatus(m.status));
+  const pendingApprovals = teamMembers.filter(m => isPendingApprovalStatus(m.status));
+  const pendingInvites = teamMembers.filter(m => !isActiveMembershipStatus(m.status) && !isPendingApprovalStatus(m.status));
+  const totalPending = pendingApprovals.length + pendingInvites.length;
+
+  const onDutyMembers = teamMembers.filter(m => m.shift && m.shift !== "off" && isActiveMembershipStatus(m.status));
+  const onDutyCount = onDutyMembers.length;
 
   return (
-    <div id="team-roster-board" className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 space-y-6 text-slate-800 dark:text-slate-100">
+    <div id="team-roster-board" className="space-y-5 text-slate-800 dark:text-slate-100 max-w-7xl mx-auto">
       
-      {/* 1. Header & Roster Metadata */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-slate-100 dark:border-slate-800 pb-4">
-        <div className="space-y-1">
-          <div className="flex items-center gap-2">
-            <Users className="w-5 h-5 text-indigo-500" />
-            <h2 className="text-lg font-bold text-slate-900 dark:text-white">
-              {isUserHOD ? "HOD Admin Control Panel" : "Hospital Clinical Roster & Team"}
-            </h2>
-          </div>
-          <p className="text-xs text-slate-500 dark:text-slate-400">
-            Hospital / Institution: <span className="text-indigo-600 dark:text-indigo-400 font-bold">{profile.hospital || "Not Configured"}</span>
-          </p>
-        </div>
+      {/* ======================================================== */}
+      {/* TOP-LEVEL 4-SECTION NAVIGATION BAR (MOBILE-FIRST)        */}
+      {/* 1. OVERVIEW  2. MEMBERS  3. ROTA  4. SETTINGS            */}
+      {/* ======================================================== */}
+      <div className="flex items-center gap-1.5 p-1 bg-slate-100 dark:bg-slate-800/80 rounded-2xl border border-slate-200/80 dark:border-slate-700/80 shadow-xs overflow-x-auto no-scrollbar">
+        <button
+          type="button"
+          onClick={() => setActiveTab("overview")}
+          className={`flex-1 min-w-[90px] py-2 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+            activeTab === "overview"
+              ? "bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 shadow-xs font-black"
+              : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
+          }`}
+        >
+          <LayoutDashboard className="w-3.5 h-3.5 shrink-0" />
+          <span>Overview</span>
+        </button>
 
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={() => {
-              setCalendarModalConfig({
-                defaultEventType: "shift",
-                initialTitle: `ER Duty Shift — ${profile.hospital || "Emergency Dept"}`,
-                initialDescription: `Emergency Department duty shift schedule for Dr. ${profile.name}.`,
-                initialStartTime: "08:00",
-                initialEndTime: "14:00",
-              });
-              setIsCalendarModalOpen(true);
-            }}
-            className="px-3.5 py-1.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold text-xs rounded-xl flex items-center gap-1.5 transition-all shadow-sm cursor-pointer"
-            title="Sync shift rotas & events with Google Calendar"
-          >
-            <Calendar className="w-3.5 h-3.5 text-white" />
-            <span>Sync Google Calendar</span>
-          </button>
-
-          <div className="bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-850 px-3.5 py-1.5 rounded-xl flex items-center gap-2 text-[11px] text-slate-600 dark:text-slate-400 font-medium">
-            <UserCheck className="w-3.5 h-3.5 text-emerald-500" />
-            <span>
-              Logged in as <strong>{profile.name}</strong> ({isUserHOD ? "HOD / Admin" : profile.role})
+        <button
+          type="button"
+          onClick={() => setActiveTab("members")}
+          className={`flex-1 min-w-[90px] py-2 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+            activeTab === "members"
+              ? "bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 shadow-xs font-black"
+              : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
+          }`}
+        >
+          <Users className="w-3.5 h-3.5 shrink-0" />
+          <span>Members</span>
+          {teamMembers.length > 0 && (
+            <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 font-mono">
+              {teamMembers.length}
             </span>
-          </div>
-        </div>
+          )}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab("rota")}
+          className={`flex-1 min-w-[90px] py-2 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+            activeTab === "rota"
+              ? "bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 shadow-xs font-black"
+              : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
+          }`}
+        >
+          <Calendar className="w-3.5 h-3.5 shrink-0" />
+          <span>Rota</span>
+          {onDutyCount > 0 && (
+            <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400 font-mono font-bold">
+              {onDutyCount}
+            </span>
+          )}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab("settings")}
+          className={`flex-1 min-w-[90px] py-2 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+            activeTab === "settings"
+              ? "bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 shadow-xs font-black"
+              : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
+          }`}
+        >
+          <Settings className="w-3.5 h-3.5 shrink-0" />
+          <span>Settings</span>
+          {pendingApprovals.length > 0 && (
+            <span className="text-[10px] w-4 h-4 rounded-full bg-amber-500 text-white font-bold flex items-center justify-center">
+              !
+            </span>
+          )}
+        </button>
       </div>
 
-      {/* Department Leadership & HOD Info Banner */}
-      {(() => {
-        const departmentHODMember = teamMembers.find(m => 
-          m.role?.toLowerCase().includes("hod") || 
-          m.role?.toLowerCase().includes("head") || 
-          m.role?.toLowerCase().includes("lead")
-        );
-        const isSelfHOD = profile.role?.toLowerCase().includes("hod") || profile.role?.toLowerCase().includes("owner") || profile.role?.toLowerCase().includes("head");
-        const hodDisplayName = departmentHODMember ? departmentHODMember.name : (isSelfHOD ? profile.name : (profile.hospital ? `Dr. ${profile.hospital.split(' ')[0]} HOD` : "Department Head"));
-        const hodEmail = departmentHODMember ? departmentHODMember.email : (isSelfHOD ? profile.email : "hod@" + (profile.hospital ? profile.hospital.toLowerCase().replace(/[^a-z]/g, '') : "ermate") + ".in");
-        const hodShift = departmentHODMember ? (departmentHODMember.shift || "Active") : "On Duty / Oversight";
+      {/* ======================================================== */}
+      {/* 1. OVERVIEW (DEFAULT SCREEN)                             */}
+      {/* ======================================================== */}
+      {activeTab === "overview" && (
+        <div className="space-y-6 animate-fade-in">
+          
+          {/* Header Card */}
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 md:p-6 shadow-xs flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+            <div className="space-y-1">
+              <span className="text-[10px] font-black uppercase tracking-widest text-indigo-600 dark:text-indigo-400 font-mono">
+                TEAM
+              </span>
+              <h2 className="text-xl md:text-2xl font-black text-slate-900 dark:text-white tracking-tight">
+                {activeHospitalName}
+              </h2>
+              <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">
+                {joinedMembers.length} clinicians · {onDutyCount} on duty
+              </p>
+            </div>
 
-        return (
-          <div className="bg-gradient-to-r from-amber-500/15 via-amber-500/5 to-indigo-500/15 border border-amber-500/30 rounded-2xl p-4 md:p-5 shadow-sm space-y-3">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            {/* Primary Actions */}
+            <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTab("members");
+                  setShowAddMemberForm(true);
+                }}
+                className="flex-1 sm:flex-initial px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <UserPlus className="w-3.5 h-3.5" />
+                <span>+ Add Clinician</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowInviteModal(true)}
+                className="flex-1 sm:flex-initial px-4 py-2 bg-slate-900 hover:bg-slate-800 dark:bg-slate-100 dark:hover:bg-white text-white dark:text-slate-950 font-extrabold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <Share2 className="w-3.5 h-3.5" />
+                <span>Invite Team</span>
+              </button>
+            </div>
+          </div>
+
+          {/* 4 Summary Cards */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
+            {/* 1. Members */}
+            <div 
+              onClick={() => setActiveTab("members")}
+              className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 space-y-1 shadow-xs hover:border-indigo-300 dark:hover:border-indigo-800 transition-all cursor-pointer group"
+            >
+              <div className="flex justify-between items-center text-slate-400">
+                <span className="text-[10px] font-bold uppercase font-mono tracking-wider">Members</span>
+                <Users className="w-4 h-4 text-indigo-500 group-hover:scale-110 transition-transform" />
+              </div>
+              <div className="text-2xl font-black text-slate-900 dark:text-white">
+                {joinedMembers.length}
+              </div>
+              <p className="text-[10.5px] text-slate-500 dark:text-slate-400 font-mono">
+                {teamMembers.length} allowlisted seats
+              </p>
+            </div>
+
+            {/* 2. Pending Invitations */}
+            <div 
+              onClick={() => setActiveTab("members")}
+              className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 space-y-1 shadow-xs hover:border-amber-300 dark:hover:border-amber-800 transition-all cursor-pointer group"
+            >
+              <div className="flex justify-between items-center text-slate-400">
+                <span className="text-[10px] font-bold uppercase font-mono tracking-wider">Pending Invitations</span>
+                <Clock className="w-4 h-4 text-amber-500 group-hover:scale-110 transition-transform" />
+              </div>
+              <div className="text-2xl font-black text-slate-900 dark:text-white flex items-center gap-1.5">
+                <span>{totalPending}</span>
+                {pendingApprovals.length > 0 && (
+                  <span className="text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.2 rounded font-bold uppercase font-mono animate-pulse">
+                    {pendingApprovals.length} Approval
+                  </span>
+                )}
+              </div>
+              <p className="text-[10.5px] text-slate-500 dark:text-slate-400 font-mono">
+                {totalPending > 0 ? "Awaiting join / approval" : "All verified"}
+              </p>
+            </div>
+
+            {/* 3. On Duty Now */}
+            <div 
+              onClick={() => setActiveTab("rota")}
+              className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 space-y-1 shadow-xs hover:border-emerald-300 dark:hover:border-emerald-800 transition-all cursor-pointer group"
+            >
+              <div className="flex justify-between items-center text-slate-400">
+                <span className="text-[10px] font-bold uppercase font-mono tracking-wider">On Duty Now</span>
+                <Activity className="w-4 h-4 text-emerald-500 group-hover:scale-110 transition-transform" />
+              </div>
+              <div className="text-2xl font-black text-slate-900 dark:text-white flex items-center gap-2">
+                <span>{onDutyCount}</span>
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+              </div>
+              <p className="text-[10.5px] text-slate-500 dark:text-slate-400 font-mono">
+                Active clinical shift
+              </p>
+            </div>
+
+            {/* 4. Configured Shifts */}
+            <div 
+              onClick={() => setActiveTab("rota")}
+              className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 space-y-1 shadow-xs hover:border-purple-300 dark:hover:border-purple-800 transition-all cursor-pointer group"
+            >
+              <div className="flex justify-between items-center text-slate-400">
+                <span className="text-[10px] font-bold uppercase font-mono tracking-wider">Configured Shifts</span>
+                <Calendar className="w-4 h-4 text-purple-500 group-hover:scale-110 transition-transform" />
+              </div>
+              <div className="text-2xl font-black text-slate-900 dark:text-white">
+                {activeShifts.length}
+              </div>
+              <p className="text-[10.5px] text-slate-500 dark:text-slate-400 font-mono">
+                Universal shift slots
+              </p>
+            </div>
+          </div>
+
+          {/* Pending Approval Alert if any */}
+          {isUserHOD && pendingApprovals.length > 0 && (
+            <div className="bg-amber-50/70 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900/40 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-amber-500/20 text-amber-500 border border-amber-500/30 flex items-center justify-center shrink-0 shadow-xs">
-                  <ShieldAlert className="w-5 h-5 text-amber-500" />
+                <div className="p-2 bg-amber-500/20 text-amber-600 rounded-xl">
+                  <ShieldAlert className="w-4 h-4" />
                 </div>
-                <div className="text-left">
-                  <div className="flex items-center gap-2">
-                    <span className="text-[10px] font-black uppercase tracking-widest text-amber-600 dark:text-amber-400 font-mono flex items-center gap-1">
-                      👑 Head of Department (HOD) / Clinical Chief
-                    </span>
-                    <span className="text-[9px] bg-amber-500/20 text-amber-700 dark:text-amber-300 border border-amber-500/30 px-2 py-0.2 rounded-full font-bold uppercase font-mono">
-                      Department Lead
-                    </span>
-                  </div>
-                  <h3 className="text-sm md:text-base font-extrabold text-slate-900 dark:text-white flex items-center gap-1.5 mt-0.5">
-                    {hodDisplayName}
-                    {isSelfHOD && (
-                      <span className="text-[9px] bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 px-1.5 py-0.2 rounded font-mono font-bold uppercase">
-                        (You are HOD)
-                      </span>
-                    )}
-                  </h3>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 font-mono">
-                    {hodEmail} • Hospital: <strong className="text-slate-700 dark:text-slate-200">{profile.hospital || "General Emergency Dept"}</strong>
+                <div>
+                  <h4 className="text-xs font-bold text-amber-900 dark:text-amber-300">
+                    {pendingApprovals.length} Clinician{pendingApprovals.length > 1 ? "s" : ""} Awaiting HOD Approval
+                  </h4>
+                  <p className="text-[11px] text-amber-700/80 dark:text-amber-400 font-mono">
+                    Verify and approve registration to grant access to the department roster.
                   </p>
                 </div>
               </div>
+              <button
+                type="button"
+                onClick={() => setActiveTab("members")}
+                className="px-3.5 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs rounded-xl shadow-xs transition-all cursor-pointer shrink-0"
+              >
+                Review Requests →
+              </button>
+            </div>
+          )}
 
-              <div className="flex items-center gap-2 self-start sm:self-center">
-                <div className="bg-white/80 dark:bg-slate-900/80 border border-amber-500/20 px-3.5 py-1.5 rounded-xl text-left">
-                  <span className="text-[9px] text-slate-400 uppercase font-mono font-bold block">Duty Shift Status</span>
-                  <span className="text-xs font-black text-indigo-600 dark:text-indigo-400 font-mono uppercase">{hodShift}</span>
-                </div>
+          {/* TODAY'S TEAM */}
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 md:p-6 space-y-4 shadow-xs">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 border-b border-slate-100 dark:border-slate-800 pb-3">
+              <div>
+                <h3 className="text-sm font-black text-slate-900 dark:text-white uppercase font-mono tracking-wider flex items-center gap-2">
+                  <span>TODAY'S TEAM</span>
+                  <span className="text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 px-2 py-0.5 rounded-full font-bold">
+                    {joinedMembers.length} Clinicians
+                  </span>
+                </h3>
+                <p className="text-[11px] text-slate-400">Current assigned shift and on-call active status</p>
               </div>
+
+              <button
+                type="button"
+                onClick={() => setActiveTab("rota")}
+                className="text-xs font-bold text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1 cursor-pointer"
+              >
+                <span>Full Shift Schedule</span>
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            {/* Clinician Rows */}
+            {joinedMembers.length === 0 ? (
+              <div className="py-10 text-center space-y-2 border border-dashed border-slate-200 dark:border-slate-800 rounded-xl">
+                <UserX className="w-8 h-8 text-slate-300 dark:text-slate-600 mx-auto" />
+                <p className="text-xs font-bold text-slate-600 dark:text-slate-300">No active clinicians on the team yet</p>
+                <p className="text-[11px] text-slate-400 max-w-sm mx-auto">
+                  Add doctors using the directory or share your team invitation link.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveTab("members");
+                    setShowAddMemberForm(true);
+                  }}
+                  className="mt-2 px-3.5 py-1.5 bg-indigo-600 text-white rounded-xl text-xs font-bold"
+                >
+                  + Add First Clinician
+                </button>
+              </div>
+            ) : (
+              <div className="divide-y divide-slate-100 dark:divide-slate-800/80">
+                {joinedMembers.map((member) => {
+                  const isSelf = member.email.toLowerCase().trim() === userEmailLower;
+                  const shiftObj = activeShifts.find(s => s.id === member.shift) || activeShifts[0];
+                  const isOnDuty = member.shift && member.shift !== "off";
+
+                  return (
+                    <div
+                      key={member.id}
+                      className="py-3 sm:py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 transition-all hover:bg-slate-50/50 dark:hover:bg-slate-800/30 px-2 rounded-xl"
+                    >
+                      <div className="flex items-center gap-3">
+                        {/* Avatar Initial with Status Dot */}
+                        <div className="relative">
+                          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-indigo-500/20 to-purple-500/20 text-indigo-600 dark:text-indigo-400 font-black text-xs flex items-center justify-center border border-indigo-200/50 dark:border-indigo-500/20">
+                            {member.name.charAt(0).toUpperCase()}
+                          </div>
+                          {isOnDuty && (
+                            <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-emerald-500 rounded-full border-2 border-white dark:border-slate-900" />
+                          )}
+                        </div>
+
+                        <div>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-xs font-extrabold text-slate-900 dark:text-white">
+                              Dr {member.name}
+                            </span>
+                            {isSelf && (
+                              <span className="text-[8.5px] bg-indigo-50 text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-400 font-mono font-bold px-1.5 py-0.2 rounded border border-indigo-200 dark:border-indigo-800">
+                                You
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                            {member.role}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Shift & Duty Badge */}
+                      <div className="flex items-center gap-2 self-start sm:self-center">
+                        <span className={`text-[11px] font-bold font-mono px-2.5 py-1 rounded-xl border ${shiftObj.color}`}>
+                          {shiftObj.name} · {isOnDuty ? "On Duty" : "Off Duty"}
+                        </span>
+                        
+                        {isOnDuty ? (
+                          <span className="text-[10px] font-bold bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-900 px-2 py-0.5 rounded-full inline-flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                            On Duty
+                          </span>
+                        ) : (
+                          <span className="text-[10px] font-bold bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400 px-2 py-0.5 rounded-full">
+                            Off
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+        </div>
+      )}
+
+      {/* ======================================================== */}
+      {/* 2. MEMBERS (MEMBER DIRECTORY & INVITATIONS)               */}
+      {/* ======================================================== */}
+      {activeTab === "members" && (
+        <div className="space-y-6 animate-fade-in">
+
+          {/* Section Header */}
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-xs">
+            <div>
+              <span className="text-[10px] font-black uppercase tracking-widest text-indigo-600 dark:text-indigo-400 font-mono">
+                DIRECTORY
+              </span>
+              <h2 className="text-lg font-black text-slate-900 dark:text-white">
+                MEMBER DIRECTORY
+              </h2>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                Manage clinician roster accounts, duty designations, and access credentials.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2 w-full sm:w-auto">
+              <button
+                type="button"
+                onClick={() => setShowAddMemberForm(!showAddMemberForm)}
+                className="flex-1 sm:flex-initial px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>{showAddMemberForm ? "Close Form" : "+ Add Clinician"}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setShowInviteModal(true)}
+                className="flex-1 sm:flex-initial px-3.5 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-white font-bold text-xs rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <Share2 className="w-3.5 h-3.5 text-indigo-500" />
+                <span>Invite Team</span>
+              </button>
             </div>
           </div>
-        );
-      })()}
 
-      {/* Pending Join Requests for HOD */}
-      {isUserHOD && teamMembers.filter(m => isPendingApprovalStatus(m.status)).length > 0 && (
-        <div className="bg-amber-50/40 dark:bg-amber-950/10 border border-amber-200/60 dark:border-amber-900/40 rounded-2xl p-5 space-y-4 shadow-sm">
-          <div className="flex items-center gap-2 border-b border-amber-100 dark:border-amber-900/20 pb-2">
-            <Users className="w-4.5 h-4.5 text-amber-500 shrink-0" />
-            <h3 className="text-xs font-black uppercase text-slate-800 dark:text-slate-200 font-mono tracking-wider">
-              Pending Join Requests ({teamMembers.filter(m => isPendingApprovalStatus(m.status)).length})
-            </h3>
-          </div>
-          <p className="text-xs text-slate-600 dark:text-slate-400 leading-normal">
-            The following clinicians requested to link their profile and sync with your ER department roster. Please verify and approve their registration:
-          </p>
-          <div className="space-y-2.5">
-            {teamMembers.filter(m => isPendingApprovalStatus(m.status)).map(req => (
-              <div key={req.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white dark:bg-slate-900 border border-slate-150 dark:border-slate-850 p-4 rounded-xl">
-                <div className="text-left space-y-1">
-                  <div className="flex items-center gap-2">
-                    <strong className="text-xs font-bold text-slate-900 dark:text-white">{req.name}</strong>
-                    {onUpdateRole ? (
+          {/* Add Clinician Form (Collapsible or visible) */}
+          {showAddMemberForm && (
+            <div className="bg-white dark:bg-slate-900 border-2 border-indigo-200 dark:border-indigo-900/50 rounded-2xl p-5 space-y-4 shadow-sm animate-fade-in">
+              <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
+                <div className="flex items-center gap-2">
+                  <UserPlus className="w-4 h-4 text-indigo-500" />
+                  <h3 className="text-xs font-black uppercase font-mono tracking-wider text-slate-900 dark:text-white">
+                    Add Clinician to Department
+                  </h3>
+                </div>
+
+                {/* Single / Bulk toggle */}
+                <div className="flex bg-slate-100 dark:bg-slate-800 p-0.5 rounded-xl text-[10px] font-bold font-mono">
+                  <button
+                    type="button"
+                    onClick={() => setAddMode("single")}
+                    className={`px-2.5 py-1 rounded-lg transition-all ${
+                      addMode === "single" ? "bg-white dark:bg-slate-900 text-indigo-600 font-black shadow-xs" : "text-slate-500"
+                    }`}
+                  >
+                    Single Clinician
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAddMode("bulk")}
+                    className={`px-2.5 py-1 rounded-lg transition-all ${
+                      addMode === "bulk" ? "bg-white dark:bg-slate-900 text-indigo-600 font-black shadow-xs" : "text-slate-500"
+                    }`}
+                  >
+                    Bulk Import
+                  </button>
+                </div>
+              </div>
+
+              {addMode === "single" ? (
+                <form onSubmit={handleAddSubmit} className="space-y-3.5">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">Full Name</label>
+                      <input
+                        type="text"
+                        value={newName}
+                        onChange={e => setNewName(e.target.value)}
+                        placeholder="e.g. Dr Amit Verma"
+                        className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-xs font-bold text-slate-900 dark:text-white focus:outline-none focus:border-indigo-500"
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">Gmail / Email</label>
+                      <input
+                        type="email"
+                        value={newEmail}
+                        onChange={e => setNewEmail(e.target.value)}
+                        placeholder="e.g. amit@gmail.com"
+                        className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-xs font-mono text-slate-900 dark:text-white focus:outline-none focus:border-indigo-500"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">Designation</label>
                       <select
-                        value={req.role}
-                        onChange={async (e) => {
-                          try {
-                            await onUpdateRole(req.id, e.target.value);
-                          } catch (err) {
-                            console.error("Error updating pending role:", err);
-                          }
-                        }}
-                        className="bg-indigo-50 dark:bg-indigo-950/50 border border-indigo-150 dark:border-indigo-900 text-indigo-600 dark:text-indigo-400 text-[10px] font-bold rounded-lg px-2 py-0.5 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer uppercase font-mono"
+                        value={newRole}
+                        onChange={e => setNewRole(e.target.value)}
+                        className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-xs font-bold text-slate-900 dark:text-white focus:outline-none"
                       >
                         <option value="Senior Consultant">Senior Consultant</option>
                         <option value="EM Resident">EM Resident</option>
                         <option value="HOD / Shift Lead">HOD / Shift Lead</option>
+                        <option value="Scribe Specialist">Scribe Specialist</option>
+                        <option value="EM Intern">EM Intern</option>
                       </select>
-                    ) : (
-                      <span className="text-[9px] bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400 px-2 py-0.5 rounded-full font-mono font-bold uppercase tracking-wider">
-                        {req.role}
-                      </span>
-                    )}
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">Assigned Shift</label>
+                      <select
+                        value={newShift}
+                        onChange={e => setNewShift(e.target.value)}
+                        className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-xs font-bold text-slate-900 dark:text-white focus:outline-none"
+                      >
+                        {activeShifts.map(s => (
+                          <option key={s.id} value={s.id}>
+                            {s.name} ({s.time})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                   </div>
-                  <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">
-                    Email: {req.email}
-                  </span>
+
+                  {errorMsg && <p className="text-xs text-rose-600 bg-rose-50 border border-rose-200 p-2 rounded-xl font-mono">{errorMsg}</p>}
+                  {successMsg && <p className="text-xs text-emerald-600 bg-emerald-50 border border-emerald-200 p-2 rounded-xl font-mono">{successMsg}</p>}
+
+                  <div className="flex justify-end gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setShowAddMemberForm(false)}
+                      className="px-3 py-2 text-xs text-slate-500 hover:text-slate-800 font-bold cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={isSubmitting}
+                      className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs rounded-xl shadow-xs transition-all cursor-pointer flex items-center gap-1.5"
+                    >
+                      <Check className="w-3.5 h-3.5" />
+                      <span>{isSubmitting ? "Adding..." : "Add to Team"}</span>
+                    </button>
+                  </div>
+                </form>
+              ) : (
+                <form onSubmit={handleBulkAddSubmit} className="space-y-3">
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">Paste Clinician Emails</label>
+                    <textarea
+                      rows={3}
+                      value={bulkEmailsText}
+                      onChange={e => setBulkEmailsText(e.target.value)}
+                      placeholder="e.g. rahul.sharma@gmail.com, amit.clinical@gmail.com, priya.nair@gmail.com"
+                      className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl p-3 text-xs font-mono text-slate-900 dark:text-white focus:outline-none"
+                    />
+                    <p className="text-[10px] text-slate-400 font-mono">
+                      Separate addresses by commas, semicolons, or lines.
+                    </p>
+                  </div>
+
+                  {errorMsg && <p className="text-xs text-rose-600 bg-rose-50 border border-rose-200 p-2 rounded-xl font-mono">{errorMsg}</p>}
+                  {successMsg && <p className="text-xs text-emerald-600 bg-emerald-50 border border-emerald-200 p-2 rounded-xl font-mono">{successMsg}</p>}
+
+                  <div className="flex justify-end gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setShowAddMemberForm(false)}
+                      className="px-3 py-2 text-xs text-slate-500 hover:text-slate-800 font-bold cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={isSubmitting}
+                      className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs rounded-xl shadow-xs transition-all cursor-pointer"
+                    >
+                      {isSubmitting ? "Importing..." : "Add Clinicians in Bulk"}
+                    </button>
+                  </div>
+                </form>
+              )}
+            </div>
+          )}
+
+          {/* Canonical Team Invitation Card */}
+          <div className="bg-gradient-to-br from-indigo-50/60 to-purple-50/40 dark:from-slate-900 dark:to-indigo-950/20 border border-indigo-150 dark:border-indigo-900/40 rounded-2xl p-5 space-y-4 shadow-xs">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
+              <div>
+                <span className="text-[10px] font-black uppercase tracking-wider text-indigo-600 dark:text-indigo-400 font-mono">
+                  SECURE ONBOARDING
+                </span>
+                <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                  TEAM INVITATION
+                </h3>
+              </div>
+              <span className="text-[10px] bg-indigo-100 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 font-bold px-2 py-0.5 rounded-full font-mono">
+                Canonical Link
+              </span>
+            </div>
+
+            <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+              Share this secure link with clinicians who have already been added to your team.
+            </p>
+
+            <div className="flex flex-col sm:flex-row bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl p-2 items-center gap-2">
+              <span className="text-[11px] font-mono text-slate-500 dark:text-slate-400 select-all truncate flex-1 px-2 w-full sm:w-auto">
+                {generatedLink}
+              </span>
+              <div className="flex items-center gap-1.5 w-full sm:w-auto justify-end">
+                <button
+                  type="button"
+                  onClick={handleCopyLink}
+                  className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-lg transition-all flex items-center gap-1 cursor-pointer shrink-0"
+                >
+                  {copiedLink ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                  <span>{copiedLink ? "Copied" : "Copy Link"}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowQR(!showQR)}
+                  className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold text-xs rounded-lg transition-all flex items-center gap-1 cursor-pointer shrink-0"
+                >
+                  <QrCode className="w-3.5 h-3.5" />
+                  <span>{showQR ? "Hide QR" : "Show QR"}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleShareLink}
+                  className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold text-xs rounded-lg transition-all flex items-center gap-1 cursor-pointer shrink-0"
+                >
+                  <Share2 className="w-3.5 h-3.5" />
+                  <span>Share</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Simulated Vector QR Mockup */}
+            {showQR && (
+              <div className="p-4 bg-white dark:bg-slate-950 border border-dashed border-indigo-200 dark:border-indigo-900 rounded-xl flex items-center gap-4 animate-fade-in">
+                <div className="w-16 h-16 bg-slate-900 dark:bg-slate-100 rounded-xl p-1.5 shrink-0 flex flex-wrap gap-[2.5px] overflow-hidden opacity-90 relative">
+                  <div className="absolute inset-1.5 border border-indigo-500/40 animate-pulse pointer-events-none" />
+                  {Array.from({ length: 49 }).map((_, i) => (
+                    <div 
+                      key={i} 
+                      className={`w-[6px] h-[6px] rounded-xs ${
+                        (i % 3 === 0 || i % 7 === 0 || i < 12 || i > 38) 
+                          ? "bg-slate-100 dark:bg-slate-900" 
+                          : "bg-slate-900 dark:bg-slate-100"
+                      }`} 
+                    />
+                  ))}
                 </div>
-                <div className="flex items-center gap-2 self-end sm:self-center">
-                  <button
-                    type="button"
-                    onClick={() => onDeclineMember ? onDeclineMember(req.id) : null}
-                    className="px-3 py-1.5 border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-slate-600 dark:text-slate-400 font-bold text-xs rounded-xl transition-all cursor-pointer"
-                  >
-                    Decline ✗
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onApproveMember ? onApproveMember(req.id) : null}
-                    className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl transition-all shadow-md shadow-emerald-600/10 cursor-pointer"
-                  >
-                    Approve ✓
-                  </button>
+                <div className="space-y-1">
+                  <span className="text-xs font-bold text-slate-900 dark:text-white block font-mono">
+                    Scan QR on Mobile Device
+                  </span>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-normal">
+                    Colleagues can scan this during handovers or rounds to link their Google account.
+                  </p>
                 </div>
               </div>
-            ))}
+            )}
           </div>
+
+          {/* Pending Invitations & Join Requests */}
+          {(pendingApprovals.length > 0 || pendingInvites.length > 0) && (
+            <div className="bg-amber-50/40 dark:bg-amber-950/10 border border-amber-200/70 dark:border-amber-900/40 rounded-2xl p-5 space-y-4 shadow-xs">
+              <div className="flex items-center gap-2 border-b border-amber-100 dark:border-amber-900/30 pb-2">
+                <Clock className="w-4 h-4 text-amber-500" />
+                <h3 className="text-xs font-black uppercase text-slate-900 dark:text-white font-mono tracking-wider">
+                  PENDING INVITATIONS & APPROVALS ({totalPending})
+                </h3>
+              </div>
+
+              <div className="space-y-2.5">
+                {/* Pending HOD Approvals */}
+                {pendingApprovals.map(req => (
+                  <div key={req.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white dark:bg-slate-900 border border-amber-200 dark:border-amber-900/40 p-3.5 rounded-xl">
+                    <div className="space-y-0.5">
+                      <div className="flex items-center gap-2">
+                        <strong className="text-xs font-bold text-slate-900 dark:text-white">Dr {req.name}</strong>
+                        <span className="text-[9px] bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 px-2 py-0.2 rounded-full font-bold uppercase font-mono animate-pulse">
+                          Awaiting Approval
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400 font-mono">
+                        {req.email} • {req.role}
+                      </p>
+                    </div>
+
+                    {isUserHOD && (
+                      <div className="flex items-center gap-2 self-end sm:self-center">
+                        <button
+                          type="button"
+                          onClick={() => onDeclineMember && onDeclineMember(req.id)}
+                          className="px-3 py-1.5 border border-slate-200 dark:border-slate-800 hover:bg-slate-50 text-slate-600 dark:text-slate-400 text-xs font-bold rounded-xl cursor-pointer"
+                        >
+                          Decline
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onApproveMember && onApproveMember(req.id)}
+                          className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-xs cursor-pointer"
+                        >
+                          Approve ✓
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+
+                {/* Pending Link Clicks */}
+                {pendingInvites.map(inv => (
+                  <div key={inv.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white dark:bg-slate-900 border border-slate-150 dark:border-slate-850 p-3.5 rounded-xl">
+                    <div className="space-y-0.5">
+                      <div className="flex items-center gap-2">
+                        <strong className="text-xs font-bold text-slate-800 dark:text-slate-200">Dr {inv.name}</strong>
+                        <span className="text-[9px] bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400 px-2 py-0.2 rounded-full font-bold uppercase font-mono">
+                          Invited · Awaiting join
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400 font-mono">
+                        {inv.email} • {inv.role}
+                      </p>
+                    </div>
+
+                    {isUserHOD && (
+                      <button
+                        type="button"
+                        onClick={() => onRemoveMember(inv.id)}
+                        className="text-xs text-rose-500 hover:underline self-end sm:self-center font-bold"
+                      >
+                        Revoke Invite
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Members Search & Cards */}
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 space-y-4 shadow-xs">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+              <h3 className="text-xs font-black uppercase font-mono tracking-wider text-slate-500 dark:text-slate-400">
+                TEAM MEMBERS ({filteredMembers.length})
+              </h3>
+
+              <div className="relative w-full sm:w-72">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                  placeholder="Search by name, email, designation..."
+                  className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl pl-9 pr-3 py-1.5 text-xs text-slate-900 dark:text-white focus:outline-none"
+                />
+              </div>
+            </div>
+
+            {/* Member Cards Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5 pt-1">
+              {filteredMembers.map(member => {
+                const isSelf = member.email.toLowerCase().trim() === userEmailLower;
+                const shiftObj = activeShifts.find(s => s.id === member.shift) || activeShifts[0];
+
+                return (
+                  <div
+                    key={member.id}
+                    className="p-4 bg-slate-50/60 dark:bg-slate-950/40 border border-slate-200 dark:border-slate-800/80 rounded-2xl space-y-3 transition-all hover:border-indigo-300 dark:hover:border-indigo-800/60"
+                  >
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <h4 className="text-xs font-black text-slate-900 dark:text-white">
+                            Dr {member.name}
+                          </h4>
+                          {isSelf && (
+                            <span className="text-[8.5px] bg-indigo-50 text-indigo-700 font-mono font-bold px-1.5 py-0.2 rounded border border-indigo-200">
+                              You
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[11px] text-slate-500 dark:text-slate-400 font-mono mt-0.5">
+                          {member.email}
+                        </p>
+                      </div>
+
+                      {/* Status badge */}
+                      {isActiveMembershipStatus(member.status) ? (
+                        <span className="text-[9px] bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-400 border border-emerald-200 px-2 py-0.5 rounded-full font-bold uppercase font-mono">
+                          Active
+                        </span>
+                      ) : isPendingApprovalStatus(member.status) ? (
+                        <span className="text-[9px] bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-400 border border-amber-200 px-2 py-0.5 rounded-full font-bold uppercase font-mono animate-pulse">
+                          Pending Approval
+                        </span>
+                      ) : (
+                        <span className="text-[9px] bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400 px-2 py-0.5 rounded-full font-bold uppercase font-mono">
+                          Invited
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="flex items-center justify-between text-xs pt-1 border-t border-slate-150 dark:border-slate-800/60">
+                      <div>
+                        <span className="text-[9px] text-slate-400 uppercase font-bold font-mono block">Designation</span>
+                        {isUserHOD && !isSelf && onUpdateRole ? (
+                          <select
+                            value={member.role}
+                            onChange={e => onUpdateRole(member.id, e.target.value)}
+                            className="bg-transparent text-xs font-bold text-slate-800 dark:text-slate-200 focus:outline-none cursor-pointer"
+                          >
+                            <option value="Senior Consultant">Senior Consultant</option>
+                            <option value="EM Resident">EM Resident</option>
+                            <option value="HOD / Shift Lead">HOD / Shift Lead</option>
+                            <option value="Scribe Specialist">Scribe Specialist</option>
+                            <option value="EM Intern">EM Intern</option>
+                          </select>
+                        ) : (
+                          <span className="font-bold text-slate-800 dark:text-slate-200">{member.role}</span>
+                        )}
+                      </div>
+
+                      <div className="text-right">
+                        <span className="text-[9px] text-slate-400 uppercase font-bold font-mono block">Shift Rota</span>
+                        {isUserHOD || isSelf ? (
+                          <select
+                            value={member.shift}
+                            onChange={e => onUpdateShift(member.id, e.target.value)}
+                            className="bg-transparent text-xs font-bold text-indigo-600 dark:text-indigo-400 focus:outline-none cursor-pointer"
+                          >
+                            {activeShifts.map(s => (
+                              <option key={s.id} value={s.id}>{s.name}</option>
+                            ))}
+                          </select>
+                        ) : (
+                          <span className="font-bold text-slate-700 dark:text-slate-300">{shiftObj.name}</span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Actions */}
+                    <div className="flex items-center justify-between pt-2 border-t border-slate-150 dark:border-slate-800/60 text-xs">
+                      {isUserHOD && !isSelf ? (
+                        pendingDeleteId === member.id ? (
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                await onRemoveMember(member.id);
+                                setPendingDeleteId(null);
+                              }}
+                              className="px-2 py-1 bg-rose-600 text-white font-bold rounded-lg text-[10px] cursor-pointer"
+                            >
+                              Confirm
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setPendingDeleteId(null)}
+                              className="px-2 py-1 bg-slate-200 text-slate-700 font-bold rounded-lg text-[10px] cursor-pointer"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => setPendingDeleteId(member.id)}
+                            className="text-slate-400 hover:text-rose-600 text-[11px] font-bold cursor-pointer"
+                          >
+                            Remove
+                          </button>
+                        )
+                      ) : (
+                        <span className="text-[10px] text-slate-400 font-mono">Verified Doctor</span>
+                      )}
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCalendarModalConfig({
+                            defaultEventType: "shift",
+                            initialTitle: `ER Duty Shift (${shiftObj.name}) — Dr. ${member.name}`,
+                            initialDescription: `Scheduled Duty Shift for ${member.name} (${member.role}) at ${activeHospitalName}.`,
+                            initialStartTime: shiftObj.time.split(" - ")[0] || "08:00",
+                            initialEndTime: shiftObj.time.split(" - ")[1] || "14:00",
+                          });
+                          setIsCalendarModalOpen(true);
+                        }}
+                        className="text-indigo-600 dark:text-indigo-400 font-bold text-[11px] hover:underline flex items-center gap-1 cursor-pointer"
+                      >
+                        <Calendar className="w-3 h-3" />
+                        <span>Sync Calendar</span>
+                      </button>
+                    </div>
+
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
         </div>
       )}
 
-      {/* 2. HOD Exclusive Workspace Tools */}
-      {isUserHOD ? (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 pt-2">
-          
-          {/* Shareable Invite Link Section */}
-          <div className="bg-slate-50 dark:bg-slate-950/40 border border-slate-150 dark:border-slate-850 p-5 rounded-2xl space-y-4">
-            <div className="space-y-1">
-              <span className="text-[10px] bg-indigo-100 dark:bg-indigo-500/10 text-indigo-700 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-500/20 px-2.5 py-0.5 rounded-full font-mono font-bold uppercase tracking-wider">
-                Step 1: Share Invitation Link
+      {/* ======================================================== */}
+      {/* 3. ROTA (DUTY SHIFTS & SCHEDULE)                         */}
+      {/* ======================================================== */}
+      {activeTab === "rota" && (
+        <div className="space-y-6 animate-fade-in">
+
+          {/* Section Header */}
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-xs">
+            <div>
+              <span className="text-[10px] font-black uppercase tracking-widest text-indigo-600 dark:text-indigo-400 font-mono">
+                SCHEDULE
               </span>
-              <h3 className="text-sm font-bold text-slate-800 dark:text-slate-200 pt-1">Dynamic Workspace Link</h3>
-              <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-                Copy and share this secure onboarding link with your team members (via WhatsApp, Slack, or Email). When they tap the link and log in, they will automatically join your hospital group network!
+              <h2 className="text-lg font-black text-slate-900 dark:text-white">
+                ROTA & DUTY SHIFTS
+              </h2>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                Active clinical shift windows, duty status toggles, and Google Calendar sync.
               </p>
             </div>
 
-            <div className="flex bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-2 items-center gap-2">
-              <span className="text-[11px] font-mono text-slate-500 dark:text-slate-450 truncate flex-1 pl-2 select-all">
-                {generatedLink}
-              </span>
+            <div className="flex items-center gap-2 w-full sm:w-auto">
               <button
                 type="button"
-                onClick={handleCopyLink}
-                className="py-1.5 px-3 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-lg transition-all flex items-center gap-1 shrink-0"
+                onClick={() => setShowWorkspaceSync(true)}
+                className="flex-1 sm:flex-initial px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer"
               >
-                {copiedLink ? (
-                  <>
-                    <Check className="w-3.5 h-3.5" />
-                    <span>Copied!</span>
-                  </>
-                ) : (
-                  <>
-                    <Copy className="w-3.5 h-3.5" />
-                    <span>Copy Link</span>
-                  </>
-                )}
+                <Calendar className="w-3.5 h-3.5" />
+                <span>Sync Google Calendar</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setShowShiftManagerModal(true)}
+                className="flex-1 sm:flex-initial px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>+ Add / Edit Shifts</span>
               </button>
             </div>
           </div>
 
-          {/* Add Team Member Section */}
-          <form onSubmit={handleAddSubmit} className="bg-slate-50 dark:bg-slate-950/40 border border-slate-150 dark:border-slate-850 p-5 rounded-2xl space-y-4">
-            <div className="space-y-1">
-              <span className="text-[10px] bg-emerald-100 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20 px-2.5 py-0.5 rounded-full font-mono font-bold uppercase tracking-wider">
-                Step 2: Whitelist & Add Members
-              </span>
-              <h3 className="text-sm font-bold text-slate-800 dark:text-slate-200 pt-1">Onboard Team Clinician</h3>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div className="space-y-1">
-                <label className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wide">Full Name</label>
-                <input
-                  type="text"
-                  value={newName}
-                  onChange={e => setNewName(e.target.value)}
-                  placeholder="e.g. Dr. Amit Verma"
-                  className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-indigo-500 font-semibold"
-                />
-              </div>
-
-              <div className="space-y-1">
-                <label className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wide">Email ID / Gmail</label>
-                <input
-                  type="email"
-                  value={newEmail}
-                  onChange={e => setNewEmail(e.target.value)}
-                  placeholder="e.g. amit@gmail.com"
-                  className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-indigo-500 font-mono"
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div className="space-y-1">
-                <label className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wide">Post / Designation</label>
-                <select
-                  value={newRole}
-                  onChange={e => setNewRole(e.target.value)}
-                  className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-2 py-2 text-xs focus:outline-none focus:border-indigo-500 font-bold"
-                >
-                  <option value="HOD / Shift Lead">HOD / Shift Lead</option>
-                  <option value="Senior Consultant">Senior Consultant</option>
-                  <option value="EM Resident">EM Resident</option>
-                  <option value="Scribe Specialist">Scribe Specialist</option>
-                  <option value="EM Intern">EM Intern</option>
-                </select>
-              </div>
-
-              <div className="space-y-1">
-                <label className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wide">Assign Shift Rota</label>
-                <select
-                  value={newShift}
-                  onChange={e => setNewShift(e.target.value)}
-                  className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-2 py-2 text-xs focus:outline-none"
-                >
-                  {activeShifts.map(s => (
-                    <option key={s.id} value={s.id}>
-                      {s.name} ({s.time})
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            {errorMsg && <p className="text-[11px] font-bold text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-900/40 px-3 py-1.5 rounded-lg font-mono">{errorMsg}</p>}
-            {successMsg && <p className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-900/40 px-3 py-1.5 rounded-lg font-mono">{successMsg}</p>}
-
+          {/* Shift Filter Tabs */}
+          <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">
             <button
-              type="submit"
-              disabled={isSubmitting}
-              className="w-full py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-extrabold text-xs rounded-xl transition-all flex items-center justify-center gap-1.5 shadow-sm"
+              type="button"
+              onClick={() => setShiftFilter("all")}
+              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer ${
+                shiftFilter === "all"
+                  ? "bg-indigo-600 text-white shadow-xs"
+                  : "bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-800 hover:bg-slate-50"
+              }`}
             >
-              {isSubmitting ? "Onboarding..." : "Whitelist & Onboard Member"}
+              All Shifts ({teamMembers.length})
             </button>
-          </form>
+            {activeShifts.map(s => {
+              const count = teamMembers.filter(m => m.shift === s.id).length;
+              return (
+                <button
+                  key={s.id}
+                  type="button"
+                  onClick={() => setShiftFilter(s.id)}
+                  className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer flex items-center gap-1.5 ${
+                    shiftFilter === s.id
+                      ? "bg-indigo-600 text-white shadow-xs"
+                      : "bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-800 hover:bg-slate-50"
+                  }`}
+                >
+                  <span>{s.name}</span>
+                  <span className="text-[10px] opacity-75 font-mono">({count})</span>
+                </button>
+              );
+            })}
+          </div>
 
-          {/* Shift Time Configuration Panel */}
-          <div className="bg-slate-50 dark:bg-slate-950/40 border border-slate-150 dark:border-slate-850 p-5 rounded-2xl space-y-4 col-span-1 lg:col-span-2">
+          {/* Clinicians on Selected Rota */}
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 space-y-4 shadow-xs">
+            <h3 className="text-xs font-black uppercase font-mono tracking-wider text-slate-500 dark:text-slate-400">
+              CLINICIANS ON ROTA ({filteredMembers.length})
+            </h3>
+
+            <div className="divide-y divide-slate-100 dark:divide-slate-800">
+              {filteredMembers.map(member => {
+                const shiftObj = activeShifts.find(s => s.id === member.shift) || activeShifts[0];
+                const isSelf = member.email.toLowerCase().trim() === userEmailLower;
+                const isOnDuty = member.shift && member.shift !== "off";
+
+                return (
+                  <div key={member.id} className="py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <strong className="text-xs font-bold text-slate-900 dark:text-white">Dr {member.name}</strong>
+                        {isSelf && <span className="text-[8.5px] bg-indigo-100 text-indigo-700 font-mono font-bold px-1.5 py-0.2 rounded">You</span>}
+                      </div>
+                      <p className="text-[11px] text-slate-500 font-mono">
+                        {member.role} • {member.email}
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-2.5 self-start sm:self-center">
+                      {/* Shift selector */}
+                      <select
+                        value={member.shift}
+                        onChange={e => onUpdateShift(member.id, e.target.value)}
+                        className={`text-xs font-bold rounded-xl px-2.5 py-1.5 border focus:outline-none cursor-pointer ${shiftObj.color}`}
+                      >
+                        {activeShifts.map(s => (
+                          <option key={s.id} value={s.id}>
+                            {s.name} ({s.time})
+                          </option>
+                        ))}
+                      </select>
+
+                      {/* On Duty Status Badge */}
+                      {isOnDuty ? (
+                        <span className="text-[10.5px] font-bold text-emerald-600 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-xl">
+                          On Duty
+                        </span>
+                      ) : (
+                        <span className="text-[10.5px] font-bold text-slate-500 bg-slate-100 px-2.5 py-1 rounded-xl">
+                          Off Shift
+                        </span>
+                      )}
+
+                      {/* Case logs & handover trigger */}
+                      {cases && cases.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedMemberForCases(member);
+                            const memberCases = cases.filter(c => c.doctorEmail?.toLowerCase().trim() === member.email.toLowerCase().trim() && c.status === "Active");
+                            setSelectedCaseIdsToTake(memberCases.map(c => c.id));
+                          }}
+                          className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-lg cursor-pointer"
+                          title="View case logs / Handover"
+                        >
+                          Cases
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Universal Shift Setup (Shift Configuration for HOD) */}
+          <div className="bg-slate-50 dark:bg-slate-950/40 border border-slate-150 dark:border-slate-850 p-5 rounded-2xl space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div className="space-y-1">
-                <span className="text-[10px] bg-purple-100 dark:bg-purple-500/10 text-purple-700 dark:text-purple-400 border border-purple-200 dark:border-purple-500/20 px-2.5 py-0.5 rounded-full font-mono font-bold uppercase tracking-wider">
-                  Step 3: Customize Rota Shifts & Time Windows
+              <div>
+                <span className="text-[10px] font-black uppercase tracking-wider text-purple-700 dark:text-purple-400 font-mono">
+                  CONFIGURED SHIFT SLOTS
                 </span>
-                <h3 className="text-sm font-bold text-slate-800 dark:text-slate-200 pt-1">Universal Shift Setup</h3>
-                <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-                  As HOD, you can add new custom shifts, edit titles, and set exact duty hours. Modifications immediately update across all team browsers and rosters!
+                <h3 className="text-sm font-bold text-slate-800 dark:text-slate-200">
+                  Universal Shift Setup
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                  Configure duty hours and badge colors for all ER rosters.
                 </p>
               </div>
 
-              
-              <div className="flex gap-2 shrink-0">
+              {isUserHOD && (
                 <button
                   type="button"
-                  onClick={() => setShowWorkspaceSync(true)}
-                  className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
+                  onClick={() => setIsAddingNewShift(!isAddingNewShift)}
+                  className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer self-start sm:self-center"
                 >
-                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>
-                  <span>Sync via Workspace</span>
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>{isAddingNewShift ? "Cancel" : "+ Add Shift"}</span>
                 </button>
-  <button
-                type="button"
-                onClick={() => setIsAddingNewShift(!isAddingNewShift)}
-                className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer shrink-0"
-              >
-                <Plus className="w-4 h-4" />
-                <span>{isAddingNewShift ? "Cancel Adding" : "+ Add New Shift"}</span>
-              </button>
-              </div>
+              )}
             </div>
 
-            {/* Add Shift Inline Form */}
+            {/* Add Shift Inline */}
             {isAddingNewShift && (
-              <form onSubmit={handleCreateNewShift} className="p-4 bg-white dark:bg-slate-900 border-2 border-dashed border-indigo-300 dark:border-indigo-800/80 rounded-2xl space-y-3">
-                <h4 className="text-xs font-bold text-indigo-600 dark:text-indigo-400 flex items-center gap-1.5 uppercase font-mono">
-                  <Sparkles className="w-3.5 h-3.5" /> Add New Shift Rota Option
-                </h4>
+              <form onSubmit={handleCreateNewShift} className="p-4 bg-white dark:bg-slate-900 border border-indigo-200 rounded-2xl space-y-3">
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <div>
-                    <label className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase block mb-1">Shift Name / Code</label>
+                    <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Shift Name</label>
                     <input
                       type="text"
                       value={addShiftName}
                       onChange={e => setAddShiftName(e.target.value)}
-                      placeholder="e.g. S3 Shift, Night Resus"
-                      className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-1.5 text-xs text-slate-900 dark:text-white font-bold"
+                      placeholder="e.g. S3 Shift"
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-bold"
                     />
                   </div>
                   <div>
-                    <label className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase block mb-1">Duty Hours</label>
+                    <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Duty Hours</label>
                     <input
                       type="text"
                       value={addShiftTime}
                       onChange={e => setAddShiftTime(e.target.value)}
-                      placeholder="e.g. 07:00 - 15:00"
-                      className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-1.5 text-xs text-slate-900 dark:text-white font-mono"
+                      placeholder="e.g. 08:00 - 16:00"
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-mono"
                     />
                   </div>
                   <div>
-                    <label className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase block mb-1">Color Theme</label>
+                    <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Color Theme</label>
                     <select
                       value={addShiftColor}
                       onChange={e => setAddShiftColor(e.target.value)}
-                      className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-1.5 text-xs text-slate-900 dark:text-white font-bold"
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-bold"
                     >
                       {SHIFT_COLOR_OPTIONS.map((c, i) => (
                         <option key={i} value={c.color}>{c.label}</option>
@@ -652,606 +1442,411 @@ export default function TeamRosterBoard({
                   </div>
                 </div>
                 <div className="flex justify-end gap-2 pt-1">
-                  <button
-                    type="button"
-                    onClick={() => setIsAddingNewShift(false)}
-                    className="px-3 py-1.5 text-xs text-slate-500 hover:text-slate-800 font-semibold cursor-pointer"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-xs cursor-pointer"
-                  >
-                    Save & Add Shift
-                  </button>
+                  <button type="button" onClick={() => setIsAddingNewShift(false)} className="text-xs font-bold text-slate-500">Cancel</button>
+                  <button type="submit" className="px-4 py-1.5 bg-emerald-600 text-white font-bold text-xs rounded-xl">Save & Add</button>
                 </div>
               </form>
             )}
 
             {shiftActionMsg && (
-              <p className="text-xs font-bold text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-900/40 px-3 py-2 rounded-xl font-mono">
+              <p className="text-xs font-bold text-indigo-600 bg-indigo-50 border border-indigo-200 px-3 py-2 rounded-xl font-mono">
                 {shiftActionMsg}
               </p>
             )}
 
             {/* Grid of Shifts */}
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 pt-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
               {editedShifts.map((s) => (
-                <div key={s.id} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3.5 rounded-2xl space-y-2.5 shadow-xs relative group">
-                  <div className="flex items-center justify-between gap-2">
-                    <input
-                      type="text"
-                      value={s.name}
-                      onChange={(e) => handleUpdateShiftField(s.id, "name", e.target.value)}
-                      className="bg-transparent text-xs font-bold text-slate-800 dark:text-slate-100 border-b border-transparent hover:border-slate-300 focus:border-indigo-500 focus:bg-slate-50 dark:focus:bg-slate-950 px-1 py-0.5 rounded transition-all w-full"
-                      placeholder="Shift Title"
-                    />
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      <span className={`text-[9px] px-1.5 py-0.5 rounded border uppercase font-mono font-bold ${s.color || 'bg-indigo-50 text-indigo-600 border-indigo-100'}`}>
-                        {s.id.slice(0, 8)}
-                      </span>
+                <div key={s.id} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3 rounded-xl space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-900 dark:text-white">{s.name}</span>
+                    {isUserHOD && (
                       <button
                         type="button"
                         onClick={() => handleDeleteShift(s.id)}
-                        className="p-1 text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 transition-colors cursor-pointer"
-                        title="Delete Shift Option"
+                        className="text-slate-400 hover:text-rose-600 transition-colors cursor-pointer"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
-                    </div>
+                    )}
                   </div>
-
-                  <div className="grid grid-cols-2 gap-2 pt-1">
-                    <div>
-                      <label className="text-[9px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wide block">Duty Hours</label>
-                      <input
-                        type="text"
-                        value={s.time}
-                        onChange={(e) => handleUpdateShiftField(s.id, "time", e.target.value)}
-                        className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg px-2 py-1 text-xs text-slate-800 dark:text-white font-mono"
-                        placeholder="e.g. 08:00 - 14:00"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[9px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wide block">Badge Color</label>
-                      <select
-                        value={s.color}
-                        onChange={(e) => handleUpdateShiftField(s.id, "color", e.target.value)}
-                        className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg px-2 py-1 text-[10px] text-slate-800 dark:text-white font-bold"
-                      >
-                        {SHIFT_COLOR_OPTIONS.map((c, idx) => (
-                          <option key={idx} value={c.color}>{c.label}</option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
+                  <p className="text-[11px] text-slate-500 font-mono">{s.time}</p>
                 </div>
               ))}
             </div>
 
-            <div className="flex justify-between items-center pt-2">
-              <span className="text-[11px] text-slate-400 font-mono">
-                Total configured shift slots: <strong className="text-slate-700 dark:text-slate-200">{editedShifts.length}</strong>
-              </span>
+            {isUserHOD && (
+              <div className="flex justify-end pt-2">
+                <button
+                  type="button"
+                  onClick={handleSaveShifts}
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-xs transition-all cursor-pointer flex items-center gap-1.5"
+                >
+                  <Check className="w-3.5 h-3.5" />
+                  <span>Save Universal Shift Times</span>
+                </button>
+              </div>
+            )}
+          </div>
+
+        </div>
+      )}
+
+      {/* ======================================================== */}
+      {/* 4. SETTINGS (WORKPLACE SETUP & LEADERSHIP PANEL)         */}
+      {/* ======================================================== */}
+      {activeTab === "settings" && (
+        <div className="space-y-6 animate-fade-in">
+
+          {/* Section Header */}
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-xs">
+            <span className="text-[10px] font-black uppercase tracking-widest text-indigo-600 dark:text-indigo-400 font-mono">
+              WORKPLACE
+            </span>
+            <h2 className="text-lg font-black text-slate-900 dark:text-white">
+              TEAM & WORKPLACE SETTINGS
+            </h2>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+              Hospital branding, department identity, leadership governance, and license status.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+            {/* Left: Workplace Setup */}
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 space-y-4 shadow-xs">
+              <div className="border-b border-slate-100 dark:border-slate-800 pb-3">
+                <h3 className="text-xs font-black uppercase font-mono tracking-wider text-slate-900 dark:text-white flex items-center gap-1.5">
+                  <Building2 className="w-4 h-4 text-indigo-500" />
+                  Workplace Branding & Metadata
+                </h3>
+                <p className="text-[11px] text-slate-400 mt-0.5">Customizes invitations and printable clinical headers.</p>
+              </div>
+
+              <div className="space-y-3.5">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-slate-500 uppercase font-mono">Hospital / Institution Name</label>
+                  <input
+                    type="text"
+                    value={workplaceInput}
+                    onChange={e => {
+                      setWorkplaceInput(e.target.value);
+                      if (onHospitalChange) onHospitalChange(e.target.value);
+                    }}
+                    placeholder="e.g. Rajagiri Emergency Care"
+                    className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-xs font-bold text-slate-900 dark:text-white focus:outline-none"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-slate-500 uppercase font-mono">Specialty Department</label>
+                  <input
+                    type="text"
+                    value={departmentInput}
+                    onChange={e => setDepartmentInput(e.target.value)}
+                    placeholder="e.g. Emergency & Trauma Medicine"
+                    className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-xs font-bold text-slate-900 dark:text-white focus:outline-none"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-slate-500 uppercase font-mono">Team Core Identifier</label>
+                  <input
+                    type="text"
+                    value={teamNameInput}
+                    onChange={e => setTeamNameInput(e.target.value)}
+                    placeholder="e.g. EM Trauma Response Core"
+                    className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-xs font-bold text-slate-900 dark:text-white focus:outline-none"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-bold text-slate-500 uppercase font-mono">Brand Theme Accent</label>
+                  <div className="flex gap-2">
+                    {(["blue", "emerald", "indigo", "violet"] as const).map(color => (
+                      <button
+                        key={color}
+                        type="button"
+                        onClick={() => setTeamColorInput(color)}
+                        className={`flex-1 py-1 px-2 rounded-lg text-[10px] font-mono capitalize border transition-all ${
+                          teamColorInput === color
+                            ? "bg-slate-900 text-white dark:bg-white dark:text-slate-950 border-slate-800 font-black shadow-xs"
+                            : "bg-slate-50 text-slate-500 border-slate-200 hover:bg-slate-100"
+                        }`}
+                      >
+                        {color}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {configSavedNotice && (
+                  <p className="text-xs text-emerald-600 bg-emerald-50 border border-emerald-200 p-2 rounded-xl font-mono">
+                    ✓ Workplace configuration saved successfully!
+                  </p>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (onSaveConfig) {
+                      onSaveConfig(teamNameInput, departmentInput, teamColorInput);
+                    }
+                    setConfigSavedNotice(true);
+                    setTimeout(() => setConfigSavedNotice(false), 3000);
+                  }}
+                  className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  <ShieldCheck className="w-4 h-4" />
+                  <span>Apply & Update Configuration</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Right: Leadership & Subscription */}
+            <div className="space-y-6">
+              
+              {/* Department Leadership / HOD Card */}
+              <div className="bg-gradient-to-r from-amber-500/15 via-amber-500/5 to-indigo-500/15 border border-amber-500/30 rounded-2xl p-5 shadow-xs space-y-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-amber-500/20 text-amber-500 border border-amber-500/30 flex items-center justify-center shrink-0">
+                    <ShieldAlert className="w-5 h-5 text-amber-500" />
+                  </div>
+                  <div>
+                    <span className="text-[10px] font-black uppercase tracking-widest text-amber-600 dark:text-amber-400 font-mono">
+                      👑 Head of Department (HOD)
+                    </span>
+                    <h3 className="text-sm font-black text-slate-900 dark:text-white">
+                      Dr {profile.name}
+                    </h3>
+                    <p className="text-[11px] text-slate-500 font-mono">
+                      {profile.email} • {activeHospitalName}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Hospital License / Subscription Status */}
+              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 space-y-3 shadow-xs">
+                <div className="flex justify-between items-center border-b border-slate-100 dark:border-slate-800 pb-2">
+                  <span className="text-xs font-black uppercase font-mono tracking-wider text-slate-900 dark:text-white">
+                    Hospital Group License
+                  </span>
+                  <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full font-mono">
+                    {hospitalSubscriptionActive || joinedMembers.length > 0 ? "Active" : "Awaiting Verification"}
+                  </span>
+                </div>
+
+                <div className="text-xs space-y-1.5 text-slate-600 dark:text-slate-300">
+                  <p>• Department Seats: <strong className="text-slate-900 dark:text-white">{teamMembers.length} allowlisted</strong></p>
+                  <p>• Active Clinicians: <strong className="text-emerald-600">{joinedMembers.length} joined</strong></p>
+                  <p>• Group License Tier: <strong className="text-indigo-600">Department Covered (Enterprise)</strong></p>
+                </div>
+              </div>
+
+              {/* Colleague Onboarding Simulator */}
+              <div className="bg-gradient-to-br from-indigo-950 via-slate-950 to-blue-950/90 text-white border border-indigo-800/40 rounded-2xl p-5 shadow-lg space-y-3 relative overflow-hidden">
+                <div className="flex justify-between items-center border-b border-indigo-900/60 pb-2">
+                  <h4 className="text-xs font-black uppercase tracking-wider text-indigo-300 flex items-center gap-1.5 font-mono">
+                    <RefreshCw className="w-3.5 h-3.5 text-emerald-400" />
+                    Sandbox Invitation Simulator
+                  </h4>
+                  <span className="text-[8.5px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-1.5 py-0.2 rounded font-mono font-bold uppercase">
+                    Testing
+                  </span>
+                </div>
+
+                <p className="text-[11px] text-slate-300 font-mono">
+                  Simulate a colleague clicking the generated invitation link on their device.
+                </p>
+
+                <div className="flex gap-2">
+                  <select
+                    value={selectedSimEmail}
+                    onChange={e => setSelectedSimEmail(e.target.value)}
+                    className="flex-1 px-3 py-1.5 bg-slate-900 border border-slate-800 rounded-xl text-xs font-bold text-white focus:outline-none"
+                  >
+                    <option value="">-- Choose doctor to simulate join --</option>
+                    {teamMembers.map(m => (
+                      <option key={m.id} value={m.email}>{m.name} ({m.email})</option>
+                    ))}
+                  </select>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!selectedSimEmail) return;
+                      const target = teamMembers.find(m => m.email === selectedSimEmail);
+                      if (target && onApproveMember) {
+                        onApproveMember(target.id);
+                        alert(`Simulated successful join for ${target.name}!`);
+                      }
+                    }}
+                    disabled={!selectedSimEmail}
+                    className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold text-xs rounded-xl transition-all cursor-pointer flex items-center gap-1"
+                  >
+                    <Send className="w-3 h-3" />
+                    <span>Simulate</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Leave Team option */}
+              {onLeaveTeam && !isUserHOD && (
+                <div className="pt-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (confirm("Are you sure you want to leave this clinical team?")) {
+                        onLeaveTeam();
+                      }
+                    }}
+                    className="w-full py-2 border border-rose-200 text-rose-600 hover:bg-rose-50 text-xs font-bold rounded-xl transition-all cursor-pointer"
+                  >
+                    Leave Clinical Team
+                  </button>
+                </div>
+              )}
+
+            </div>
+          </div>
+
+        </div>
+      )}
+
+      {/* ======================================================== */}
+      {/* CANONICAL TEAM INVITATION MODAL                           */}
+      {/* ======================================================== */}
+      {showInviteModal && (
+        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto animate-fade-in">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl space-y-0 my-auto">
+            <div className="p-5 bg-gradient-to-r from-slate-900 to-indigo-950 text-white flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-indigo-500/20 rounded-xl border border-indigo-400/30 text-indigo-300">
+                  <Share2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold tracking-tight">TEAM INVITATION</h3>
+                  <p className="text-xs text-slate-300">{activeHospitalName}</p>
+                </div>
+              </div>
               <button
                 type="button"
-                onClick={handleSaveShifts}
-                className="py-2 px-5 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer font-extrabold"
+                onClick={() => setShowInviteModal(false)}
+                className="p-1.5 text-slate-400 hover:text-white rounded-lg transition-colors cursor-pointer text-sm font-bold"
               >
-                <Clock className="w-3.5 h-3.5" />
-                <span>Save Universal Shift Times</span>
+                ✕
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4 text-xs">
+              <p className="text-slate-600 dark:text-slate-300 leading-relaxed font-sans">
+                Share this secure link with clinicians who have already been added to your team.
+              </p>
+
+              <div className="bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl p-3 space-y-2">
+                <span className="text-[11px] font-mono text-slate-600 dark:text-slate-300 select-all break-all block">
+                  {generatedLink}
+                </span>
+                <div className="flex items-center gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={handleCopyLink}
+                    className="flex-1 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
+                  >
+                    {copiedLink ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                    <span>{copiedLink ? "Link Copied!" : "Copy Link"}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowQR(!showQR)}
+                    className="px-3 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-white font-bold text-xs rounded-xl transition-all flex items-center justify-center gap-1 cursor-pointer"
+                  >
+                    <QrCode className="w-3.5 h-3.5" />
+                    <span>{showQR ? "Hide QR" : "Show QR"}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleShareLink}
+                    className="px-3 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-white font-bold text-xs rounded-xl transition-all flex items-center justify-center gap-1 cursor-pointer"
+                  >
+                    <Share2 className="w-3.5 h-3.5" />
+                    <span>Share</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* QR display in modal */}
+              {showQR && (
+                <div className="p-4 bg-slate-50 dark:bg-slate-950 border border-dashed border-indigo-200 rounded-xl flex items-center gap-4 animate-fade-in">
+                  <div className="w-16 h-16 bg-slate-900 dark:bg-slate-100 rounded-xl p-1.5 shrink-0 flex flex-wrap gap-[2.5px] overflow-hidden opacity-90 relative">
+                    {Array.from({ length: 49 }).map((_, i) => (
+                      <div 
+                        key={i} 
+                        className={`w-[6px] h-[6px] rounded-xs ${
+                          (i % 3 === 0 || i % 7 === 0 || i < 12 || i > 38) 
+                            ? "bg-slate-100 dark:bg-slate-900" 
+                            : "bg-slate-900 dark:bg-slate-100"
+                        }`} 
+                      />
+                    ))}
+                  </div>
+                  <div className="space-y-1">
+                    <span className="text-xs font-bold text-slate-900 dark:text-white block font-mono">
+                      Scan QR Code
+                    </span>
+                    <p className="text-[11px] text-slate-500 leading-normal">
+                      Instant mobile browser onboarding during ER shifts.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* PENDING INVITATIONS IN MODAL */}
+              <div className="space-y-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+                <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 font-mono block">
+                  PENDING INVITATIONS
+                </span>
+                {totalPending === 0 ? (
+                  <p className="text-[11px] text-slate-400 font-mono">All allowlisted doctors have joined the team.</p>
+                ) : (
+                  <div className="space-y-1.5 max-h-36 overflow-y-auto">
+                    {pendingApprovals.map(p => (
+                      <div key={p.id} className="flex justify-between items-center text-xs p-2 bg-amber-50 dark:bg-amber-950/20 rounded-lg">
+                        <span className="font-bold text-slate-800 dark:text-slate-200">Dr {p.name}</span>
+                        <span className="text-[10px] font-bold text-amber-600">Pending Approval</span>
+                      </div>
+                    ))}
+                    {pendingInvites.map(p => (
+                      <div key={p.id} className="flex justify-between items-center text-xs p-2 bg-slate-50 dark:bg-slate-950 rounded-lg">
+                        <span className="font-bold text-slate-700 dark:text-slate-300">Dr {p.name}</span>
+                        <span className="text-[10px] text-slate-400 font-mono">Invited · Awaiting join</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="p-4 bg-slate-50 dark:bg-slate-950 border-t border-slate-200 dark:border-slate-800 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setShowInviteModal(false)}
+                className="px-4 py-2 bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 font-bold text-xs rounded-xl cursor-pointer"
+              >
+                Close
               </button>
             </div>
           </div>
-
         </div>
-      ) : null}
+      )}
 
-      {/* 3. Clinical Staffing Compliance Metric Banner */}
-      <div className="bg-indigo-50/50 dark:bg-slate-950/20 border border-indigo-100 dark:border-slate-850 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <div className="p-2 bg-indigo-100 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 rounded-xl border border-indigo-200/50 dark:border-indigo-500/20">
-            <Building2 className="w-5 h-5" />
-          </div>
-          <div>
-            <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200 font-mono">Department Roster Status</h4>
-            <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-              Currently {joinedMembers.length} team members joined and verified. Roster updates automatically as members log in.
-            </p>
-          </div>
-        </div>
-
-        <div className="px-3 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-[11px] font-mono shrink-0">
-          Total allowlisted: <strong className="text-indigo-600 dark:text-indigo-400 font-black">{teamMembers.length} seats</strong>
-        </div>
-      </div>
-
-      {/* 4. Roster Filters */}
-      <div className="flex flex-col sm:flex-row gap-3 pt-2">
-        <div className="relative flex-1">
-          <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 dark:text-slate-500" />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={e => setSearchQuery(e.target.value)}
-            placeholder="Search roster by name, email or post..."
-            className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl pl-10 pr-4 py-2 text-xs text-slate-800 dark:text-white placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:border-indigo-500"
-          />
-        </div>
-
-        <div className="flex items-center gap-2">
-          <select
-            value={shiftFilter}
-            onChange={e => setShiftFilter(e.target.value)}
-            className="bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-2 text-xs text-slate-800 dark:text-white focus:outline-none focus:border-indigo-500 font-bold"
-          >
-            <option value="all">All Shifts</option>
-            {activeShifts.map(s => (
-              <option key={s.id} value={s.id}>{s.name} Duty</option>
-            ))}
-          </select>
-
-          <button
-            type="button"
-            onClick={() => setShowShiftManagerModal(true)}
-            className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer shrink-0"
-            title="Add new shift or edit existing shift rotas"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">+ Add / Edit Shifts</span>
-            <span className="sm:hidden">+ Shifts</span>
-          </button>
-        </div>
-      </div>
-
-      {/* 5. Roster Table */}
-      <div className="border border-slate-200 dark:border-slate-800/80 rounded-2xl overflow-hidden bg-white dark:bg-slate-950/20">
-        
-        {/* Table Headers (Desktop) */}
-        <div className="hidden md:grid grid-cols-12 bg-slate-50 dark:bg-slate-950/60 border-b border-slate-200 dark:border-slate-800 px-5 py-3 text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
-          <div className="col-span-4">Clinician & Email</div>
-          <div className="col-span-3">Post / Designation</div>
-          <div className="col-span-3">Assigned Shift</div>
-          <div className="col-span-2 text-right">Actions</div>
-        </div>
-
-        {/* Empty State */}
-        {filteredMembers.length === 0 ? (
-          <div className="p-8 text-center text-slate-400 dark:text-slate-500 text-xs font-mono">
-            No clinicians matched your roster filters.
-          </div>
-        ) : (
-          <div className="divide-y divide-slate-150 dark:divide-slate-850">
-            {filteredMembers.map(member => {
-              const isSelf = member.email.toLowerCase().trim() === userEmailLower;
-              const activeShift = activeShifts.find(s => s.id === member.shift) || activeShifts[3] || activeShifts[0];
-
-              return (
-                <div 
-                  key={member.id} 
-                  className={`grid grid-cols-1 md:grid-cols-12 px-5 py-4 gap-3 items-center transition-all ${
-                    isSelf 
-                      ? "bg-indigo-50/20 dark:bg-indigo-950/10 border-l-2 border-indigo-500" 
-                      : "hover:bg-slate-50/50 dark:hover:bg-slate-900/30"
-                  }`}
-                >
-                  
-                  {/* Name, Email, Status */}
-                  <div className="col-span-1 md:col-span-4 space-y-1">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span 
-                        onClick={() => {
-                          if (isActiveMembershipStatus(member.status)) {
-                            setSelectedMemberForCases(member);
-                            const activeCases = cases.filter(
-                              c => !c.archivedAt && c.doctorEmail?.toLowerCase().trim() === member.email.toLowerCase().trim() && c.status === "Active"
-                            ).map(c => c.id);
-                            setSelectedCaseIdsToTake(activeCases);
-                          }
-                        }}
-                        className={`text-xs font-extrabold text-slate-900 dark:text-white flex items-center gap-1.5 ${
-                          isActiveMembershipStatus(member.status) ? "hover:underline hover:text-indigo-600 dark:hover:text-indigo-400 cursor-pointer" : ""
-                        }`}
-                        title={isActiveMembershipStatus(member.status) ? "Click to view case logs & take handover" : undefined}
-                      >
-                        {member.name}
-                      </span>
-                      {isSelf && (
-                        <span className="text-[8px] bg-indigo-100 dark:bg-indigo-500/15 text-indigo-700 dark:text-indigo-400 px-1.5 py-0.5 rounded font-mono font-bold uppercase tracking-wide">
-                          Self
-                        </span>
-                      )}
-                      {isActiveMembershipStatus(member.status) ? (
-                        <span className="text-[8.5px] bg-emerald-100 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-400 border border-emerald-200/50 dark:border-emerald-900/30 px-2 py-0.2 rounded-full font-mono font-bold uppercase">
-                          Active (Joined)
-                        </span>
-                      ) : isPendingApprovalStatus(member.status) ? (
-                        <span className="text-[8.5px] bg-amber-100 dark:bg-amber-950/30 text-amber-700 dark:text-amber-450 border border-amber-200/50 dark:border-amber-900/30 px-2 py-0.2 rounded-full font-mono font-bold uppercase animate-pulse">
-                          Pending Approval
-                        </span>
-                      ) : (
-                        <span className="text-[8.5px] bg-amber-100 dark:bg-amber-950/20 text-amber-700 dark:text-amber-400 border border-amber-200/50 dark:border-amber-900/30 px-2 py-0.2 rounded-full font-mono font-bold uppercase">
-                          Claim Pending
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400 font-mono">
-                      <Mail className="w-3.5 h-3.5 text-slate-400" />
-                      <span>{member.email}</span>
-                    </div>
-                  </div>
-
-                  {/* Designation (Post) */}
-                  <div className="col-span-1 md:col-span-3 flex items-center">
-                    {isUserHOD && !isSelf && onUpdateRole ? (
-                      <div className="flex items-center gap-1.5 w-full">
-                        <Shield className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
-                        <select
-                          value={member.role}
-                          onChange={async (e) => {
-                            try {
-                              await onUpdateRole(member.id, e.target.value);
-                            } catch (err) {
-                              console.error("Error updating member role:", err);
-                            }
-                          }}
-                          className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-xs font-bold rounded-lg px-2.5 py-1 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer text-slate-750 dark:text-slate-200"
-                        >
-                          <option value="Senior Consultant">Senior Consultant</option>
-                          <option value="EM Resident">EM Resident</option>
-                          <option value="HOD / Shift Lead">HOD / Shift Lead</option>
-                        </select>
-                      </div>
-                    ) : (
-                      <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 flex items-center gap-1.5 font-sans">
-                        <Shield className="w-3.5 h-3.5 text-slate-400" />
-                        {member.role}
-                      </span>
-                    )}
-                  </div>
-
-                  {/* Assigned Shift */}
-                  <div className="col-span-1 md:col-span-3 space-y-1.5">
-                    {/* Shift Dropdown for HOD OR if the user is changing their OWN shift */}
-                    {isUserHOD || isSelf ? (
-                      <div className="flex items-center gap-1.5">
-                        <select
-                          value={member.shift}
-                          onChange={async (e) => {
-                            try {
-                              await onUpdateShift(member.id, e.target.value);
-                            } catch (err) {
-                              console.error("Error updating shift:", err);
-                            }
-                          }}
-                          className={`bg-white dark:bg-slate-950 border text-xs font-bold rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer ${
-                            activeShift.color.split(" ")[0]
-                          } ${activeShift.color.split(" ")[2]}`}
-                        >
-                          {activeShifts.map(s => (
-                            <option key={s.id} value={s.id}>
-                              {s.name} ({s.time})
-                            </option>
-                          ))}
-                        </select>
-
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setCalendarModalConfig({
-                              defaultEventType: "shift",
-                              initialTitle: `ER Duty Shift (${activeShift.name}) — Dr. ${member.name}`,
-                              initialDescription: `Scheduled Duty Shift (${activeShift.time}) for ${member.name} (${member.role}) at ${profile.hospital || "Emergency Department"}.`,
-                              initialStartTime: activeShift.time.split(" - ")[0] || "08:00",
-                              initialEndTime: activeShift.time.split(" - ")[1] || "14:00",
-                            });
-                            setIsCalendarModalOpen(true);
-                          }}
-                          className="p-1.5 bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800 rounded-lg hover:bg-blue-100 transition-colors cursor-pointer"
-                          title={`Sync ${member.name}'s ${activeShift.name} shift to Google Calendar`}
-                        >
-                          <Calendar className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    ) : (
-                      <div className={`inline-flex flex-col px-3 py-1 border rounded-xl ${activeShift.color}`}>
-                        <span className="text-xs font-extrabold">{activeShift.name}</span>
-                        <span className="text-[9.5px] opacity-80 font-mono">{activeShift.time}</span>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Action Buttons (HOD Only) */}
-                  <div className="col-span-1 md:col-span-2 flex justify-start md:justify-end gap-2.5">
-                    {isUserHOD ? (
-                      pendingDeleteId === member.id ? (
-                        <div className="flex items-center gap-1.5">
-                          <button
-                            onClick={async () => {
-                              try {
-                                await onRemoveMember(member.id);
-                                setPendingDeleteId(null);
-                              } catch (err) {
-                                console.error("Error removing member:", err);
-                              }
-                            }}
-                            className="px-2.5 py-1.5 bg-rose-600 hover:bg-rose-700 text-white text-[10.5px] font-black rounded-lg transition-all cursor-pointer"
-                          >
-                            Confirm Delete
-                          </button>
-                          <button
-                            onClick={() => setPendingDeleteId(null)}
-                            className="px-2 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 text-[10.5px] font-bold rounded-lg transition-all cursor-pointer"
-                          >
-                            Cancel
-                          </button>
-                        </div>
-                      ) : (
-                        <button
-                          onClick={() => setPendingDeleteId(member.id)}
-                          className="p-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 hover:border-rose-300 hover:bg-rose-50 dark:hover:bg-rose-950/20 text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 rounded-xl transition-all cursor-pointer"
-                          title="Remove member"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      )
-                    ) : (
-                      <span className="text-[10px] text-slate-400 dark:text-slate-500 italic font-mono">Read Only</span>
-                    )}
-                  </div>
-
-                </div>
-              );
-            })}
-          </div>
-        )}
-
-      </div>
-
-      {/* 6. HOD Cases Review & Handover Sliding Overlay */}
-      {selectedMemberForCases && (() => {
-        const memberEmailLower = selectedMemberForCases.email.toLowerCase().trim();
-        const memberCases = cases.filter(c => c.doctorEmail?.toLowerCase().trim() === memberEmailLower);
-        const activeMemberCases = memberCases.filter(c => !c.archivedAt && c.status === "Active");
-        const dischargedMemberCases = memberCases.filter(c => c.status === "Discharged");
-
-        const handleToggleSelectCase = (caseId: string) => {
-          if (selectedCaseIdsToTake.includes(caseId)) {
-            setSelectedCaseIdsToTake(prev => prev.filter(id => id !== caseId));
-          } else {
-            setSelectedCaseIdsToTake(prev => [...prev, caseId]);
-          }
-        };
-
-        const handleSelectAll = () => {
-          if (selectedCaseIdsToTake.length === activeMemberCases.length) {
-            setSelectedCaseIdsToTake([]);
-          } else {
-            setSelectedCaseIdsToTake(activeMemberCases.map(c => c.id));
-          }
-        };
-
-        const handleTakeHandoverAction = async () => {
-          if (selectedCaseIdsToTake.length === 0 || !onSaveCase) return;
-          setHandoverInProgress(true);
-          try {
-            for (const caseId of selectedCaseIdsToTake) {
-              const targetCase = cases.find(c => c.id === caseId);
-              if (targetCase) {
-                const updated: ClinicalCase = {
-                  ...targetCase,
-                  doctorEmail: profile.email,
-                  doctorName: "Dr. " + profile.name,
-                  currentAssigneeEmail: profile.email,
-                  currentAssigneeName: "Dr. " + profile.name,
-                  dispositionDetails: {
-                    ...(targetCase.dispositionDetails || { dispositionType: "Discharge", durationInEr: "", residentName: "Dr. " + profile.name, consultantName: "Dr. " + profile.name, observationNotes: "" }),
-                    residentName: "Dr. " + profile.name
-                  }
-                };
-                await onSaveCase(updated);
-              }
-            }
-            setHandoverSuccessMsg(`✓ Successfully took handover of ${selectedCaseIdsToTake.length} cases!`);
-            setSelectedCaseIdsToTake([]);
-            setTimeout(() => {
-              setHandoverSuccessMsg("");
-              setSelectedMemberForCases(null);
-            }, 2500);
-          } catch (err) {
-            console.error("Error taking handover:", err);
-            alert("An error occurred during handover sync. Please try again.");
-          } finally {
-            setHandoverInProgress(false);
-          }
-        };
-
-        return (
-          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex justify-end animate-fade-in no-print">
-            <div className="w-full max-w-2xl bg-white dark:bg-slate-950 h-full overflow-y-auto shadow-2xl flex flex-col border-l border-slate-200 dark:border-slate-800">
-              
-              {/* Overlay Header */}
-              <div className="p-6 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 flex items-center justify-between">
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <ClipboardList className="w-5 h-5 text-indigo-500" />
-                    <h3 className="text-sm font-bold text-slate-900 dark:text-white uppercase font-mono tracking-wider">
-                      Cases Seen By: Dr. {selectedMemberForCases.name}
-                    </h3>
-                  </div>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400 font-mono">
-                    {selectedMemberForCases.email} • {selectedMemberForCases.role}
-                  </p>
-                </div>
-                <button
-                  onClick={() => setSelectedMemberForCases(null)}
-                  className="p-1.5 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-lg text-slate-500 transition-all font-bold text-xs"
-                >
-                  ✕ Close Panel
-                </button>
-              </div>
-
-              {/* Success Alert */}
-              {handoverSuccessMsg && (
-                <div className="mx-6 mt-6 p-4 bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-900/40 rounded-xl text-xs font-bold text-emerald-700 dark:text-emerald-400">
-                  {handoverSuccessMsg}
-                </div>
-              )}
-
-              {/* Main Content Area */}
-              <div className="flex-1 p-6 space-y-6">
-                
-                {/* 1. Active Case Logs for Handover */}
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between border-b border-slate-150 dark:border-slate-800 pb-2">
-                    <h4 className="text-xs font-extrabold uppercase text-indigo-600 dark:text-indigo-400 font-mono tracking-wide flex items-center gap-1.5">
-                      <Clock className="w-4 h-4" />
-                      Active Cases for Handover ({activeMemberCases.length})
-                    </h4>
-                    {activeMemberCases.length > 0 && (
-                      <button
-                        onClick={handleSelectAll}
-                        className="text-[10px] text-indigo-500 hover:underline font-bold"
-                      >
-                        {selectedCaseIdsToTake.length === activeMemberCases.length ? "Deselect All" : "Select All Active"}
-                      </button>
-                    )}
-                  </div>
-
-                  {activeMemberCases.length === 0 ? (
-                    <div className="py-8 text-center bg-slate-50/50 dark:bg-slate-900/20 rounded-xl border border-dashed border-slate-200 dark:border-slate-800">
-                      <p className="text-xs text-slate-450 italic">No active clinical cases currently managed by this clinician.</p>
-                    </div>
-                  ) : (
-                    <div className="space-y-2 max-h-[300px] overflow-y-auto pr-1">
-                      {activeMemberCases.map((c, idx) => {
-                        const isSelected = selectedCaseIdsToTake.includes(c.id);
-                        return (
-                          <div
-                            key={`${c.id}-${idx}`}
-                            onClick={() => handleToggleSelectCase(c.id)}
-                            className={`p-3.5 border rounded-xl flex items-center gap-3 cursor-pointer transition-all ${
-                              isSelected
-                                ? "border-indigo-500 bg-indigo-50/10 dark:bg-indigo-950/10"
-                                : "border-slate-200 dark:border-slate-800 hover:border-slate-350 dark:hover:border-slate-700 bg-white dark:bg-slate-900"
-                            }`}
-                          >
-                            <div className="shrink-0 text-slate-400 hover:text-indigo-600 transition-colors">
-                              {isSelected ? (
-                                <CheckSquare className="w-4.5 h-4.5 text-indigo-500" />
-                              ) : (
-                                <Square className="w-4.5 h-4.5" />
-                              )}
-                            </div>
-                            
-                            <div className="flex-1 text-left space-y-1">
-                              <div className="flex items-center gap-2">
-                                <span className="font-mono text-[10.5px] font-black bg-slate-150 dark:bg-slate-800 text-slate-700 dark:text-slate-300 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-755">
-                                  {c.bedNo || "No Bed"}
-                                </span>
-                                <span className="text-xs font-bold text-slate-850 dark:text-slate-100">{c.patient.name}</span>
-                                <span className="text-[10px] text-slate-400 font-mono">{c.patient.age || "N/A"}y • {c.patient.gender}</span>
-                              </div>
-                              <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-normal line-clamp-1">
-                                <strong className="text-indigo-600 dark:text-indigo-400">CC:</strong> {c.patient.presentingComplaint}
-                              </p>
-                              {c.provisionalPrimaryDiagnosis && (
-                                <p className="text-[10px] text-slate-500 dark:text-slate-400 line-clamp-1 italic">
-                                  Diagnosis: {c.provisionalPrimaryDiagnosis}
-                                </p>
-                              )}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-
-                {/* 2. Historic / Discharged Cases */}
-                <div className="space-y-3">
-                  <div className="border-b border-slate-150 dark:border-slate-800 pb-2">
-                    <h4 className="text-xs font-extrabold uppercase text-slate-500 dark:text-slate-400 font-mono tracking-wide flex items-center gap-1.5">
-                      <CheckCircle2 className="w-4 h-4" />
-                      Discharged / Resolved Cases ({dischargedMemberCases.length})
-                    </h4>
-                  </div>
-
-                  {dischargedMemberCases.length === 0 ? (
-                    <div className="py-6 text-center bg-slate-50/50 dark:bg-slate-900/10 rounded-xl">
-                      <p className="text-xs text-slate-400 italic">No resolved or archived cases registered on profile.</p>
-                    </div>
-                  ) : (
-                    <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1">
-                      {dischargedMemberCases.map((c, idx) => (
-                        <div
-                          key={`${c.id}-${idx}`}
-                          className="p-3 bg-slate-50 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-850 rounded-xl flex justify-between items-center text-left"
-                        >
-                          <div className="space-y-1">
-                            <div className="flex items-center gap-1.5">
-                              <span className="text-[9px] font-bold uppercase bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-350 px-1.5 py-0.2 rounded font-mono">
-                                Resolved
-                              </span>
-                              <span className="text-xs font-bold text-slate-700 dark:text-slate-200">{c.patient.name}</span>
-                              <span className="text-[10px] text-slate-400 font-mono">{c.patient.age || "N/A"}y • {c.patient.gender}</span>
-                            </div>
-                            <p className="text-[10.5px] text-slate-500 dark:text-slate-400 line-clamp-1">
-                              {c.patient.presentingComplaint}
-                            </p>
-                          </div>
-                          <span className="text-[10px] text-slate-400 font-mono shrink-0">{c.savedTime}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-              </div>
-
-              {/* Actions Footer */}
-              {activeMemberCases.length > 0 && (
-                <div className="p-6 border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 flex flex-col gap-3">
-                  <div className="flex justify-between items-center text-xs">
-                    <span className="text-slate-500 font-medium">Selected cases for handover:</span>
-                    <strong className="text-slate-800 dark:text-white font-bold">{selectedCaseIdsToTake.length} of {activeMemberCases.length}</strong>
-                  </div>
-                  
-                  <button
-                    type="button"
-                    disabled={selectedCaseIdsToTake.length === 0 || handoverInProgress}
-                    onClick={handleTakeHandoverAction}
-                    className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white font-black text-xs rounded-xl transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer"
-                  >
-                    {handoverInProgress ? (
-                      <>
-                        <Clock className="w-4 h-4 animate-spin" />
-                        Syncing Handover, please wait...
-                      </>
-                    ) : (
-                      <>
-                        <CheckSquare className="w-4 h-4" />
-                        Take Handover of Selected Cases
-                      </>
-                    )}
-                  </button>
-                  <p className="text-[10px] text-slate-400 text-center leading-normal">
-                    This action will legally re-route and transfer selected cases to Dr. {profile.name} inside the cloud clinical database.
-                  </p>
-                </div>
-              )}
-
-            </div>
-          </div>
-        );
-      })()}
-
-      {/* Shift Manager Modal */}
+      {/* ======================================================== */}
+      {/* SHIFT MANAGER MODAL                                      */}
+      {/* ======================================================== */}
       {showShiftManagerModal && (
         <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto animate-fade-in">
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl w-full max-w-2xl overflow-hidden shadow-2xl space-y-0 my-auto">
-            {/* Header */}
             <div className="p-5 bg-gradient-to-r from-slate-900 to-indigo-950 text-white flex items-center justify-between">
               <div className="flex items-center gap-2.5">
                 <div className="p-2 bg-indigo-500/20 rounded-xl border border-indigo-400/30 text-indigo-300">
@@ -1259,7 +1854,7 @@ export default function TeamRosterBoard({
                 </div>
                 <div>
                   <h3 className="text-base font-bold tracking-tight">Department Duty Shift Manager</h3>
-                  <p className="text-xs text-slate-300">Add new shift slots or edit existing duty hours for Dr. {profile.name}'s department</p>
+                  <p className="text-xs text-slate-300">Configure duty shift slots and hours for {activeHospitalName}</p>
                 </div>
               </div>
               <button
@@ -1271,15 +1866,14 @@ export default function TeamRosterBoard({
               </button>
             </div>
 
-            {/* Body */}
             <div className="p-5 space-y-4 max-h-[70vh] overflow-y-auto">
               {/* Add New Shift Section */}
               <div className="p-4 bg-indigo-50/50 dark:bg-slate-950/40 border border-indigo-100 dark:border-indigo-900/30 rounded-2xl space-y-3">
                 <div className="flex items-center justify-between">
                   <h4 className="text-xs font-extrabold text-indigo-700 dark:text-indigo-400 uppercase tracking-wide flex items-center gap-1.5 font-mono">
-                    <Plus className="w-4 h-4" /> Add New Shift Rota
+                    <Plus className="w-4 h-4" /> Add New Shift Slot
                   </h4>
-                  <span className="text-[10px] text-slate-400 font-mono">e.g., Night Resus, S1, ICU Duty</span>
+                  <span className="text-[10px] text-slate-400 font-mono">e.g., Night Resus, S1</span>
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -1330,14 +1924,14 @@ export default function TeamRosterBoard({
               </div>
 
               {shiftActionMsg && (
-                <p className="text-xs font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900/30 px-3 py-2 rounded-xl font-mono">
+                <p className="text-xs font-bold text-emerald-600 bg-emerald-50 border border-emerald-200 px-3 py-2 rounded-xl font-mono">
                   {shiftActionMsg}
                 </p>
               )}
 
               {/* List of Configured Shifts */}
               <div className="space-y-2">
-                <h4 className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wide font-mono">
+                <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wide font-mono">
                   Configured Shifts ({editedShifts.length})
                 </h4>
 
@@ -1350,14 +1944,12 @@ export default function TeamRosterBoard({
                           value={s.name}
                           onChange={(e) => handleUpdateShiftField(s.id, "name", e.target.value)}
                           className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg px-2.5 py-1 text-xs font-bold text-slate-900 dark:text-white flex-1"
-                          placeholder="Shift Name"
                         />
                         <input
                           type="text"
                           value={s.time}
                           onChange={(e) => handleUpdateShiftField(s.id, "time", e.target.value)}
                           className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg px-2.5 py-1 text-xs font-mono text-slate-800 dark:text-slate-200 w-32"
-                          placeholder="Duty Hours"
                         />
                       </div>
 
@@ -1375,8 +1967,7 @@ export default function TeamRosterBoard({
                         <button
                           type="button"
                           onClick={() => handleDeleteShift(s.id)}
-                          className="p-1.5 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/30 rounded-lg transition-colors cursor-pointer"
-                          title="Delete Shift"
+                          className="p-1.5 text-rose-500 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>
@@ -1387,7 +1978,6 @@ export default function TeamRosterBoard({
               </div>
             </div>
 
-            {/* Footer */}
             <div className="p-4 bg-slate-50 dark:bg-slate-950 border-t border-slate-200 dark:border-slate-800 flex justify-between items-center">
               <span className="text-[11px] text-slate-400 font-mono">Changes sync automatically for all department members</span>
               <button
@@ -1406,7 +1996,122 @@ export default function TeamRosterBoard({
         </div>
       )}
 
-      {/* Google Calendar Sync Modal */}
+      {/* Case Handover Overlay */}
+      {selectedMemberForCases && (() => {
+        const memberEmailLower = selectedMemberForCases.email.toLowerCase().trim();
+        const memberCases = cases.filter(c => c.doctorEmail?.toLowerCase().trim() === memberEmailLower);
+        const activeMemberCases = memberCases.filter(c => !c.archivedAt && c.status === "Active");
+
+        const handleToggleSelectCase = (caseId: string) => {
+          if (selectedCaseIdsToTake.includes(caseId)) {
+            setSelectedCaseIdsToTake(prev => prev.filter(id => id !== caseId));
+          } else {
+            setSelectedCaseIdsToTake(prev => [...prev, caseId]);
+          }
+        };
+
+        const handleTakeHandoverAction = async () => {
+          if (selectedCaseIdsToTake.length === 0 || !onSaveCase) return;
+          setHandoverInProgress(true);
+          try {
+            for (const caseId of selectedCaseIdsToTake) {
+              const targetCase = cases.find(c => c.id === caseId);
+              if (targetCase) {
+                const updated: ClinicalCase = {
+                  ...targetCase,
+                  doctorEmail: profile.email,
+                  doctorName: "Dr. " + profile.name,
+                  currentAssigneeEmail: profile.email,
+                  currentAssigneeName: "Dr. " + profile.name,
+                };
+                await onSaveCase(updated);
+              }
+            }
+            setHandoverSuccessMsg(`✓ Successfully took handover of ${selectedCaseIdsToTake.length} cases!`);
+            setSelectedCaseIdsToTake([]);
+            setTimeout(() => {
+              setHandoverSuccessMsg("");
+              setSelectedMemberForCases(null);
+            }, 2500);
+          } catch (err) {
+            console.error("Error taking handover:", err);
+          } finally {
+            setHandoverInProgress(false);
+          }
+        };
+
+        return (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex justify-end animate-fade-in no-print">
+            <div className="w-full max-w-xl bg-white dark:bg-slate-950 h-full overflow-y-auto shadow-2xl flex flex-col border-l border-slate-200 dark:border-slate-800">
+              <div className="p-6 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 flex items-center justify-between">
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900 dark:text-white uppercase font-mono">
+                    Cases Seen By: Dr {selectedMemberForCases.name}
+                  </h3>
+                  <p className="text-[11px] text-slate-400 font-mono">
+                    {selectedMemberForCases.email} • {selectedMemberForCases.role}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSelectedMemberForCases(null)}
+                  className="p-1.5 hover:bg-slate-200 rounded-lg text-slate-500 font-bold text-xs"
+                >
+                  ✕ Close
+                </button>
+              </div>
+
+              {handoverSuccessMsg && (
+                <div className="m-6 p-4 bg-emerald-50 border border-emerald-200 rounded-xl text-xs font-bold text-emerald-700">
+                  {handoverSuccessMsg}
+                </div>
+              )}
+
+              <div className="p-6 flex-1 space-y-3">
+                {activeMemberCases.length === 0 ? (
+                  <p className="text-xs text-slate-400 font-mono text-center py-10">No active cases assigned to this clinician.</p>
+                ) : (
+                  activeMemberCases.map(c => (
+                    <div
+                      key={c.id}
+                      onClick={() => handleToggleSelectCase(c.id)}
+                      className={`p-3 border rounded-xl flex items-center justify-between cursor-pointer transition-all ${
+                        selectedCaseIdsToTake.includes(c.id) ? "border-indigo-500 bg-indigo-50/30" : "border-slate-200"
+                      }`}
+                    >
+                      <div>
+                        <strong className="text-xs font-bold text-slate-900">{c.displayId || c.id}</strong>
+                        <p className="text-[11px] text-slate-500">{c.demographics?.gender || "Patient"} • Bed {c.bedNo || "Unassigned"}</p>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={selectedCaseIdsToTake.includes(c.id)}
+                        onChange={() => {}}
+                        className="rounded text-indigo-600"
+                      />
+                    </div>
+                  ))
+                )}
+              </div>
+
+              {activeMemberCases.length > 0 && onSaveCase && (
+                <div className="p-5 border-t border-slate-200 bg-slate-50 flex justify-end">
+                  <button
+                    type="button"
+                    onClick={handleTakeHandoverAction}
+                    disabled={selectedCaseIdsToTake.length === 0 || handoverInProgress}
+                    className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-bold text-xs rounded-xl shadow-xs"
+                  >
+                    {handoverInProgress ? "Transferring..." : `Take Handover of ${selectedCaseIdsToTake.length} Cases`}
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Google Calendar Modal */}
       <GoogleCalendarModal
         isOpen={isCalendarModalOpen}
         onClose={() => setIsCalendarModalOpen(false)}
@@ -1415,19 +2120,21 @@ export default function TeamRosterBoard({
         initialDescription={calendarModalConfig.initialDescription}
         initialStartTime={calendarModalConfig.initialStartTime}
         initialEndTime={calendarModalConfig.initialEndTime}
-        hospitalName={profile.hospital || "Emergency Department"}
+        hospitalName={activeHospitalName}
       />
-    
-           {showWorkspaceSync && (
+
+      {/* Workspace Google Calendar Sync */}
+      {showWorkspaceSync && (
         <WorkspaceRotaSyncModal
           onClose={() => setShowWorkspaceSync(false)}
           onSuccess={(count) => {
-             setShowWorkspaceSync(false);
-             alert(`Successfully synced ${count} shifts to Google Calendar!`);
+            setShowWorkspaceSync(false);
+            alert(`Successfully synced ${count} shifts to Google Calendar!`);
           }}
           teamMembers={teamMembers.map(m => ({ email: m.email, name: m.name || m.email }))}
         />
       )}
+
     </div>
   );
 }

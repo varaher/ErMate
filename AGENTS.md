@@ -45,6 +45,30 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-06] — ErMate: Team Section UI Reorganization (Mobile-First, UI-Only)
+- **Top-Level 4-Section Information Architecture (`src/components/TeamRosterBoard.tsx`, `src/components/ProfileSettingsView.tsx`)**:
+  - Reorganized the cluttered single-scroll Team page into 4 clear, mobile-first tabs:
+    1. **OVERVIEW** (Default): Header with "TEAM", hospital name, active clinician/on-duty subtext, primary actions `[+ Add Clinician]` and `[Invite Team]`, 4 summary cards (Members, Pending Invitations, On Duty Now, Configured Shifts), and compact "TODAY'S TEAM" list without scrolling through administrative setups.
+    2. **MEMBERS**: Unified "MEMBER DIRECTORY" combining allowlist and roster concepts into clinician-friendly terminology ("Add Clinician", "Invite Clinician", "Team Member", "Add to Team"); Add Clinician form with Single and Bulk Import modes; canonical "TEAM INVITATION" workflow with Copy Link, Show QR, and Share; and "PENDING INVITATIONS" with HOD approval/decline controls.
+    3. **ROTA**: Universal Shift Setup, duty shift filter tabs (All, Morning, Evening, Night, Off), clinician duty status toggles, Shift Manager modal, and Google Calendar sync.
+    4. **SETTINGS**: Workplace metadata (Hospital name, Department, Team Core Identifier, Theme Accent), HOD Leadership identity, Hospital Group License status, Sandbox Simulator, and team leave controls.
+  - Eliminated duplicate `<TeamBuilder>` stacking in `ProfileSettingsView.tsx`, unifying all department and workplace workflows inside the clean 4-tab `TeamRosterBoard`.
+  - Zero backend/schema changes: 100% backward compatible with existing membership authorization, allowlists, invitation tokens, HOD permissions, and shift persistence.
+- **Dedicated Verification Suite (`verify_team_ui_reorg.ts` — 15 / 15 PASS)**:
+  - Verified 4 top-level sections, default Overview tab, summary cards, Today's Team list, Member Directory terminology, canonical invitation flow, and clean single-component architecture. All 25 tests in `verify_team_and_archive.ts` remain 100% passing.
+
+### [2026-10-06] — ErMate: Clinical Narrative Quality Audit (SAMPLE Events & Discharge Course)
+- **SAMPLE History Events Synthesis (`server/scribeChatTurn.ts`, `src/App.tsx`, `src/utils/dischargeSyncEngine.ts`)**:
+  - Audited `sampleHistory.events` to strictly synthesize precipitating circumstances leading to presentation (trauma mechanism, onset context, acute trigger) without copying Primary Survey (ABCDE) or Secondary Survey physical examination findings.
+  - Preserved explicit negative statements ("No trauma", "No precipitating event") and guaranteed that unmentioned events remain cleanly blank (`""`) without hallucination.
+  - Removed fallback to `extracted.hpi` in `buildExtractedCaseDraft` when no genuine precipitating event is documented.
+- **Discharge Course in Hospital Chronological Synthesis (`server/dischargeSummary.ts`, `server/dischargeFactValidator.ts`, `src/utils/dischargeSyncEngine.ts`)**:
+  - Enforced structured 6-question clinical chronology for Course in Hospital: Arrival reason -> Initial assessment findings -> Relevant investigations -> Treatment given -> Clinical progress -> Final disposition.
+  - Integrated `dischargeFactValidator.ts` to strictly prevent hallucinated clinical stability, fabricated progress notes, or unperformed consultations.
+  - Preserved canonical 9-section structure while producing natural, non-repetitive prose between sections.
+- **Dedicated Narrative Quality Test Suite (`verify_clinical_narrative_quality.ts` — 20 / 20 PASS)**:
+  - Validated ACS narrative synthesis, Trauma/fall synthesis, Pediatric fever narrative, Poisoning synthesis, Explicit negative preservation, Blank events when unmentioned, Physical survey exclusion, Chronological order, Investigation/treatment natural prose, Fact-check stability guards, and Deterministic fallback safety.
+
 ### [2026-10-06] — ErMate: Comprehensive Clinical Preview & Discharge Integrity Audit
 - **Condition at Discharge Integrity Hardening (`src/components/DischargeSummaryView.tsx`)**:
   - Identified and repaired critical mapping bug in `buildCurrentDischargeInfo()`: `conditionAtDischarge` was incorrectly mapping to `generalExamination`.

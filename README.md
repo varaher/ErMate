@@ -162,7 +162,11 @@ ErMate employs a dynamic role-based navigation hierarchy computed from `getNorma
 - **Platform Admin**: Retains dedicated Admin Control Center access alongside Learn.
 
 > **Continuous Learning Hub**: `Learn` is universally visible across all clinician roles as the central education hub containing interactive ER Simulations, Clinical Reference Q&A, Residency Trivia, Clinical Memory Log, and Google Classroom.
-> **Department Governance**: Hospital roster management is strictly consolidated in `Department Team`, with Profile Settings dedicated to personal credentials, workplace settings, preferences, and account security.
+> **Department Team Management**: Unified, mobile-first 4-section architecture:
+>   1. **Overview**: Live department census, on-duty active count, summary cards (Members, Pending, On Duty, Configured Shifts), and immediate "Today's Team" roster visibility without admin scrolling.
+>   2. **Members**: Clinician-friendly "Member Directory" replacing allowlist jargon, single & bulk clinician onboarding, canonical Team Invitation link & mobile QR onboarding, and HOD approval controls.
+>   3. **Rota**: Duty schedule with shift filters (All, Morning, Evening, Night, Off), Universal Shift Setup, Google Calendar synchronization, and shift manager modal.
+>   4. **Settings**: Hospital/workplace metadata and branding, HOD leadership identity, Hospital Group License panel, and sandbox onboarding simulator.
 
 ---
 
