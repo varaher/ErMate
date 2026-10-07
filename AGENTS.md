@@ -45,6 +45,27 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-07] — ErMate: More / Profile / Account & Facility Restructure
+- **Clean 5-Section Information Architecture (`src/components/MoreView.tsx`, `src/components/ProfileSettingsView.tsx`, `src/App.tsx`)**:
+  - Reorganized More, Profile, and Facility settings into 5 clear clinician-facing sections:
+    1. **A. MY ACCOUNT**: Compact account summary card (Doctor name, qualifications, clinical role badge, email, hospital name, account type) + 5 rich current-state rows: Profile credentials, Role & Workplace governance, Security & Access PIN (active session PIN indicator), Notifications & Alerts (clinical/handover toggle status), and Privacy & Data Controls.
+    2. **B. HOSPITAL & ER SETUP**: Unified single facility settings page for HOD/Admin: Hospital / Institution Name, ER / Department Name, Specialty, ER Physical Bed Capacity (connected to canonical `erPhysicalBedCapacity` with validation and helper text), Team Core Identifier, and Brand Theme Accent. Clean read-only status view for non-HOD clinicians.
+    3. **C. TEAM & SUBSCRIPTION**: Canonical two-state subscription model derived strictly from verified team membership:
+       - State 1: Individual Plan ("Your personal ErMate workspace.")
+       - State 2: Team Plan ("Covered by [Hospital] team subscription.")
+       - Displays Plan, Managed by, Team, Membership status (Active / Pending / Not joined) with automatic transitions upon joining an approved hospital team (no manual "upgrade to team" checkout buttons).
+    4. **D. MY WORK / CLINICAL TOOLS**: Clinician Directory ("Find and connect with verified emergency physicians across state departments", distinct from hospital team roster), Medico-Legal (MLC) Certificates, My Log Book, Clinical Analytics & KPIs, Incoming Handovers, Mortality & M&M Audit (HOD & Consultant), and Self-Learning Rules Panel (HOD).
+    5. **E. HELP & APP SETTINGS**: Display Mode (Auto shift mode, Always Light, Always Dark), What's New changelog, Help & Support ops desk contact, About ErMate ATLS standards, and Logout.
+- **Canonical ER Physical Bed Capacity Persistence (`src/App.tsx`, `src/components/MoreView.tsx`, `src/components/TeamRosterBoard.tsx`)**:
+  - Added `handleUpdateErPhysicalBedCapacity(newCapacity)` in `App.tsx` writing validated positive integers to `hospital_shifts/{trustedHospitalId}` with `{ merge: true }`, updating `erPhysicalBedCapacity`, and notifying the user.
+  - Passes `erPhysicalBedCapacity` and `onUpdateBedCapacity` to `MoreView`, `ProfileSettingsView`, and `TeamRosterBoard`, eliminating silent resets and fragmented configurations.
+- **Isolation of Platform Business Tools (`src/components/ProfileSettingsView.tsx`, `src/components/MoreView.tsx`, `src/components/AdminPanelView.tsx`)**:
+  - Removed "Owner Revenue & Cost Planner" and Razorpay checkout simulation modal from clinician and HOD navigation. Platform administration and onboarding token tools remain exclusively accessible behind `AdminPanelView` for authorized administrator accounts.
+- **Guarded Data Safety (`src/components/MoreView.tsx`)**:
+  - Relocated "Delete All Cases" away from top-level navigation into Section A -> Privacy & Data Controls -> Danger Zone, requiring explicit typed uppercase confirmation ("DELETE ALL") to prevent accidental record purges.
+- **Verification (`verify_more_profile_restructure.ts` — 10 / 10 PASS)**:
+  - 100% test pass rate across all 10 restructure specifications and 0 regressions across existing bed binding (7/7), case identity (14/14), team & archive (25/25), team UI reorg (15/15), MATE replay safety (12/12), and case preview integrity (27/27) suites. Build succeeds with zero errors.
+
 ### [2026-10-07] — ErMate: Patient Discuss UX, Context Integrity & Request Resilience Patch
 - **Infinite Spinner Resolution (`src/components/VoiceScribeChatView.tsx`, `src/hooks/useBoundChat.ts`, `server/aiProviderFailover.ts`, `server.ts`)**:
   - Identified root causes of indefinite "Analyzing with ErMate Clinical Engine..." spinner:

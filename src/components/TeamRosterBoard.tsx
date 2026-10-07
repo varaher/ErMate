@@ -54,6 +54,8 @@ export interface TeamRosterBoardProps {
   onHospitalChange?: (name: string) => void;
   onSaveConfig?: (teamName: string, department: string, teamColor: "emerald" | "blue" | "indigo" | "violet") => void;
   onLeaveTeam?: () => Promise<void>;
+  erPhysicalBedCapacity?: number | null;
+  onUpdateBedCapacity?: (newCapacity: number) => Promise<void> | void;
 }
 
 export type TeamSectionTab = "overview" | "members" | "rota" | "settings";
@@ -76,6 +78,8 @@ export default function TeamRosterBoard({
   onHospitalChange,
   onSaveConfig,
   onLeaveTeam,
+  erPhysicalBedCapacity = 30,
+  onUpdateBedCapacity,
 }: TeamRosterBoardProps) {
   // Navigation Tabs: 1. OVERVIEW, 2. MEMBERS, 3. ROTA, 4. SETTINGS
   const [activeTab, setActiveTab] = useState<TeamSectionTab>("overview");
@@ -130,7 +134,16 @@ export default function TeamRosterBoard({
   const [teamNameInput, setTeamNameInput] = useState(profile.teamName || "EM Trauma Response Core");
   const [departmentInput, setDepartmentInput] = useState(profile.department || "Emergency & Trauma Medicine");
   const [teamColorInput, setTeamColorInput] = useState<"emerald" | "blue" | "indigo" | "violet">(profile.teamColor || "blue");
+  const [bedCapacityInput, setBedCapacityInput] = useState<number>(
+    typeof erPhysicalBedCapacity === "number" && erPhysicalBedCapacity > 0 ? erPhysicalBedCapacity : 30
+  );
   const [configSavedNotice, setConfigSavedNotice] = useState(false);
+
+  useEffect(() => {
+    if (typeof erPhysicalBedCapacity === "number" && erPhysicalBedCapacity > 0) {
+      setBedCapacityInput(erPhysicalBedCapacity);
+    }
+  }, [erPhysicalBedCapacity]);
 
   // Sandbox Simulator State
   const [selectedSimEmail, setSelectedSimEmail] = useState("");
@@ -1560,6 +1573,27 @@ export default function TeamRosterBoard({
                   />
                 </div>
 
+                <div className="space-y-1">
+                  <div className="flex justify-between items-center">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase font-mono">ER Physical Bed Capacity</label>
+                    <span className="text-[9px] font-mono text-emerald-600 dark:text-emerald-400 font-bold">MATE Limit</span>
+                  </div>
+                  <input
+                    type="number"
+                    min={1}
+                    max={200}
+                    value={bedCapacityInput}
+                    onChange={e => {
+                      const val = parseInt(e.target.value, 10);
+                      setBedCapacityInput(isNaN(val) ? 1 : Math.max(1, val));
+                    }}
+                    className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-xs font-mono font-bold text-slate-900 dark:text-white focus:outline-none"
+                  />
+                  <p className="text-[10px] text-slate-400 dark:text-slate-500 leading-tight">
+                    Enter the number of physical ER bed locations. MATE uses this to validate bed numbers and A/B subdivisions.
+                  </p>
+                </div>
+
                 <div className="space-y-1.5">
                   <label className="text-[10px] font-bold text-slate-500 uppercase font-mono">Brand Theme Accent</label>
                   <div className="flex gap-2">
@@ -1588,7 +1622,11 @@ export default function TeamRosterBoard({
 
                 <button
                   type="button"
-                  onClick={() => {
+                  onClick={async () => {
+                    const validCapacity = Math.max(1, Math.floor(bedCapacityInput));
+                    if (onUpdateBedCapacity) {
+                      await onUpdateBedCapacity(validCapacity);
+                    }
                     if (onSaveConfig) {
                       onSaveConfig(teamNameInput, departmentInput, teamColorInput);
                     }

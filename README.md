@@ -218,10 +218,11 @@ ErMate employs a dynamic role-based navigation hierarchy computed from `getNorma
 | `/src/services/dutySessionService.ts` | Persisted actual duty session lifecycle & atomic session-safe termination (Patch D2) |
 | `/src/utils/roleUtils.ts` | Role normalization & dynamic navigation permissions helper (`getNormalizedRole`) |
 | `/src/components/ToolsView.tsx` | Consolidated acute clinical tools hub (Drug Guide, Peds Calculator, Pocket Mirror) |
-| `/src/components/MoreView.tsx` | Secondary utilities hub (Directory, MLC, Governance, Settings, Admin) |
+| `/verify_more_profile_restructure.ts` | Verification suite for 5-section More/Profile Information Architecture, canonical bed capacity, 2-state subscription model & data safety |
+| `/src/components/MoreView.tsx` | Reorganized 5-section More & Clinical Hub (My Account, Hospital & ER Setup, Team & Subscription, Clinical Tools, App Settings) |
 | `/src/components/CaseSheetPrintView.tsx` | Official read-only, print-formatted Case Sheet document view |
 | `/src/components/HandoverView.tsx` | Interactive Handover UI & PHI Protection Toast |
-| `/src/components/ProfileSettingsView.tsx` | Settings, Privacy Policy & DPDP Shield Architecture Overview |
+| `/src/components/ProfileSettingsView.tsx` | Settings router delegating canonical profile/account views to MoreView & subviews to TeamRosterBoard / LogBook |
 
 ---
 

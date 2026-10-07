@@ -13,6 +13,7 @@ import {
 import { motion, AnimatePresence } from "motion/react";
 import { UserProfile, ClinicalCase, TriageCategory, TeamMember, ArrivalMode, LogbookEntry, isPendingApprovalStatus } from "../types";
 import TeamRosterBoard from "./TeamRosterBoard";
+import MoreView from "./MoreView";
 import TeamBuilder from "./TeamBuilder";
 import MortalityAuditModal from "./MortalityAuditModal";
 import { SelfLearningRulesPanel } from "./SelfLearningRulesPanel";
@@ -52,6 +53,8 @@ interface ProfileSettingsViewProps {
   initialSubSection?: string | null;
   onStartDutySession?: (shift: any) => Promise<void>;
   onEndDutySession?: () => Promise<void>;
+  erPhysicalBedCapacity?: number | null;
+  onUpdateBedCapacity?: (newCapacity: number) => Promise<void> | void;
 }
 
 export default function ProfileSettingsView({
@@ -83,6 +86,8 @@ export default function ProfileSettingsView({
   initialSubSection = null,
   onStartDutySession,
   onEndDutySession,
+  erPhysicalBedCapacity = 30,
+  onUpdateBedCapacity,
 }: ProfileSettingsViewProps) {
   const normalizeSubSection = (sub: string | null | undefined): string | null => {
     if (!sub) return null;
@@ -240,6 +245,24 @@ export default function ProfileSettingsView({
   const [shareAnalytics, setShareAnalytics] = useState<boolean>(true);
   const [shareAiTraining, setShareAiTraining] = useState<boolean>(true);
   const [biometricLock, setBiometricLock] = useState<boolean>(true);
+
+  // Facility Setup states
+  const [facilityHospitalInput, setFacilityHospitalInput] = useState<string>(profile.hospital || "");
+  const [facilityDepartmentInput, setFacilityDepartmentInput] = useState<string>(profile.department || "Emergency & Trauma Medicine");
+  const [facilitySpecialtyInput, setFacilitySpecialtyInput] = useState<string>("Emergency Medicine");
+  const [facilityBedCapacityInput, setFacilityBedCapacityInput] = useState<number>(
+    typeof erPhysicalBedCapacity === "number" && erPhysicalBedCapacity > 0 ? erPhysicalBedCapacity : 30
+  );
+  const [facilityTeamCoreInput, setFacilityTeamCoreInput] = useState<string>(profile.teamName || "EM Trauma Response Core");
+  const [facilityThemeAccentInput, setFacilityThemeAccentInput] = useState<"emerald" | "blue" | "indigo" | "violet">(profile.teamColor || "indigo");
+  const [facilitySavedNotice, setFacilitySavedNotice] = useState<string | null>(null);
+  const [savingFacility, setSavingFacility] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (typeof erPhysicalBedCapacity === "number" && erPhysicalBedCapacity > 0) {
+      setFacilityBedCapacityInput(erPhysicalBedCapacity);
+    }
+  }, [erPhysicalBedCapacity]);
 
   // Indian ER Market Revenue Planner states
   const [proDoctorCount, setProDoctorCount] = useState<number>(200);
@@ -560,6 +583,17 @@ const startRealCheckout = async (planKey: string) => {
     const isResident = !isHOD && !isConsultant;
     const isSuperAdmin = emailStr === "varahgrp@gmail.com";
 
+    const currentEmail = (profile.email || "").toLowerCase().trim();
+    const myMembership = teamMembers.find(
+      (m) => m.email.toLowerCase().trim() === currentEmail
+    );
+    const isMembershipActive = myMembership
+      ? isActiveMembershipStatus(myMembership.status) && myMembership.membershipVerified !== false
+      : Boolean(profile.hospital && profile.hospital.toLowerCase() !== "independent");
+    const isMembershipPending = myMembership
+      ? isPendingApprovalStatus(myMembership.status)
+      : false;
+
     const displayedRoleLabel = isHOD
       ? (profile.role && profile.role.toLowerCase().includes("hod") ? profile.role : "HOD / Department Lead")
       : isConsultant
@@ -626,7 +660,7 @@ const startRealCheckout = async (planKey: string) => {
             className="mt-3.5 bg-emerald-500/10 hover:bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 px-3.5 py-1 rounded-full text-[11px] font-extrabold inline-flex items-center gap-1.5 transition-all cursor-pointer"
           >
             <Zap className="w-3.5 h-3.5 animate-pulse" />
-            <span>{profile.subscriptionTier || (isHOD ? "Hospital Team Premium" : "Clinical Pro Plan")}</span>
+            <span>{isMembershipActive ? "Hospital Team Plan" : isMembershipPending ? "Individual (Pending Team)" : "Individual Plan"}</span>
           </button>
         </div>
 
@@ -737,24 +771,6 @@ const startRealCheckout = async (planKey: string) => {
                   </div>
                   <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
                 </div>
-
-                {isSuperAdmin && (
-                  <div 
-                    onClick={() => setSelectedSubSection("revenue-planner")}
-                    className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-all"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="w-8.5 h-8.5 rounded-xl bg-purple-500/10 text-purple-400 flex items-center justify-center">
-                        <Calculator className="w-4.5 h-4.5" />
-                      </div>
-                      <div className="text-left">
-                        <strong className="text-sm font-bold block text-purple-400">Owner Revenue & Cost Planner</strong>
-                        <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">Exclusive to varahgrp@gmail.com • Platform Financial Models</span>
-                      </div>
-                    </div>
-                    <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
-                  </div>
-                )}
 
                 <div 
                   onClick={() => setSelectedSubSection("self-learning")}
@@ -1253,8 +1269,26 @@ const startRealCheckout = async (planKey: string) => {
                   <Building2 className="w-4.5 h-4.5" />
                 </div>
                 <div className="text-left">
-                  <strong className="text-sm font-bold block">Clinician Network</strong>
-                  <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">National clinician directory & hospital facilities</span>
+                  <strong className="text-sm font-bold block">Clinician Directory</strong>
+                  <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">Find and connect with verified emergency physicians</span>
+                </div>
+              </div>
+              <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
+            </div>
+
+            <div 
+              onClick={() => setSelectedSubSection("facility")}
+              className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-all"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-8.5 h-8.5 rounded-xl bg-emerald-500/10 text-emerald-500 flex items-center justify-center">
+                  <Building2 className="w-4.5 h-4.5" />
+                </div>
+                <div className="text-left">
+                  <strong className="text-sm font-bold block">Hospital & ER Setup</strong>
+                  <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">
+                    {facilityBedCapacityInput || erPhysicalBedCapacity || 30} physical beds · {profile.hospital || "Emergency Department"}
+                  </span>
                 </div>
               </div>
               <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
@@ -1269,15 +1303,17 @@ const startRealCheckout = async (planKey: string) => {
                   <UserCheck className="w-4.5 h-4.5" />
                 </div>
                 <div className="text-left">
-                  <strong className="text-sm font-bold block">My Role & Facility Details</strong>
-                  <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">Hospital facility & specialty details</span>
+                  <strong className="text-sm font-bold block">Role & Workplace</strong>
+                  <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">
+                    {displayedRoleLabel} · {profile.hospital || "Independent"}
+                  </span>
                 </div>
               </div>
               <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
             </div>
 
             <div 
-              onClick={() => setSelectedSubSection("set-password")}
+              onClick={() => setSelectedSubSection("security")}
               className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-all"
             >
               <div className="flex items-center gap-3">
@@ -1285,8 +1321,10 @@ const startRealCheckout = async (planKey: string) => {
                   <Lock className="w-4.5 h-4.5" />
                 </div>
                 <div className="text-left">
-                  <strong className="text-sm font-bold block">Set Password / PIN</strong>
-                  <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">Change sign-in session PIN credentials</span>
+                  <strong className="text-sm font-bold block">Security & Access PIN</strong>
+                  <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">
+                    Password configured · PIN enabled
+                  </span>
                 </div>
               </div>
               <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
@@ -1301,8 +1339,10 @@ const startRealCheckout = async (planKey: string) => {
                   <Bell className="w-4.5 h-4.5" />
                 </div>
                 <div className="text-left">
-                  <strong className="text-sm font-bold block">Notifications</strong>
-                  <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">Alert sounds, push status toggles</span>
+                  <strong className="text-sm font-bold block">Notifications & Alerts</strong>
+                  <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">
+                    Clinical alerts on · Handover pings active
+                  </span>
                 </div>
               </div>
               <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
@@ -1317,8 +1357,10 @@ const startRealCheckout = async (planKey: string) => {
                   <ShieldCheck className="w-4.5 h-4.5" />
                 </div>
                 <div className="text-left">
-                  <strong className="text-sm font-bold block">Privacy & Security</strong>
-                  <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">ABDM patient clinical privacy keys</span>
+                  <strong className="text-sm font-bold block">Privacy & Data Governance</strong>
+                  <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">
+                    DPDP Act 2023 compliant · Local AES encryption
+                  </span>
                 </div>
               </div>
               <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
@@ -1443,33 +1485,6 @@ const startRealCheckout = async (planKey: string) => {
                   ? "Always Dark: High-contrast night-mode active." 
                   : "Always Light: Crisp standard medical illumination."}
             </span>
-          </div>
-        </div>
-
-        {/* Section: Destructive Data Management */}
-        <div className="space-y-2.5">
-          <h4 className="text-[10px] font-black tracking-widest text-rose-500/80 uppercase font-mono pl-1">DATA MANAGEMENT</h4>
-          
-          <div className="bg-white dark:bg-[#182333] border border-slate-200 dark:border-slate-200 dark:border-slate-800/80 rounded-2xl overflow-hidden shadow-md">
-            <div 
-              onClick={() => {
-                setDeleteConfirmText("");
-                setDeleteStatus(null);
-                setShowDeleteConfirmModal(true);
-              }}
-              className="p-4 flex items-center justify-between gap-3 cursor-pointer text-rose-600 dark:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/10 transition-all font-bold"
-            >
-              <div className="flex items-center gap-3">
-                <div className="w-8.5 h-8.5 rounded-xl bg-rose-500/10 text-rose-500 flex items-center justify-center">
-                  <Trash2 className="w-4.5 h-4.5" />
-                </div>
-                <div className="text-left">
-                  <strong className="text-sm block">Delete All Cases</strong>
-                  <span className="text-[10px] text-rose-500/80 dark:text-rose-400/85 block font-mono">Purge cached records instantly</span>
-                </div>
-              </div>
-              <ChevronRight className="w-4 h-4 text-rose-500 shrink-0" />
-            </div>
           </div>
         </div>
 
@@ -2050,6 +2065,371 @@ const startRealCheckout = async (planKey: string) => {
           </button>
         </div>
       );
+    } else if (selectedSubSection === "role") {
+      title = "Role & Workplace Governance";
+      content = (
+        <div className="space-y-4">
+          <RoleChangeSection
+            currentProfile={profile}
+            onSaveProfile={(updated) => {
+              onSaveProfile(updated);
+              setSelectedSubSection(null);
+            }}
+          />
+        </div>
+      );
+    } else if (selectedSubSection === "facility") {
+      title = "Hospital & ER Setup";
+      content = (
+        <div className="space-y-4 font-mono text-left">
+          <div className="p-4 bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800 rounded-2xl space-y-1">
+            <h4 className="text-xs font-black uppercase text-emerald-700 dark:text-emerald-400">
+              Facility Configuration & Bed Allocation
+            </h4>
+            <p className="text-xs text-slate-600 dark:text-slate-300">
+              Configures hospital identity and physical ER capacity used across MATE bed resolver, triage, and census.
+            </p>
+          </div>
+
+          <div className="bg-white dark:bg-[#182333] border border-slate-200 dark:border-slate-800 p-5 rounded-2xl space-y-4 text-xs">
+            <div className="space-y-1">
+              <label className="text-[10px] font-bold text-slate-500 uppercase">Hospital / Institution Name</label>
+              <input
+                type="text"
+                value={facilityHospitalInput}
+                onChange={(e) => setFacilityHospitalInput(e.target.value)}
+                placeholder="e.g. Rajagiri Emergency Care"
+                className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-xs font-bold text-slate-900 dark:text-white"
+              />
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-[10px] font-bold text-slate-500 uppercase">ER / Department Name</label>
+              <input
+                type="text"
+                value={facilityDepartmentInput}
+                onChange={(e) => setFacilityDepartmentInput(e.target.value)}
+                placeholder="e.g. Emergency & Trauma Medicine"
+                className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-xs font-bold text-slate-900 dark:text-white"
+              />
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-[10px] font-bold text-slate-500 uppercase">Specialty</label>
+              <input
+                type="text"
+                value={facilitySpecialtyInput}
+                onChange={(e) => setFacilitySpecialtyInput(e.target.value)}
+                placeholder="e.g. Emergency Medicine & Acute Resuscitation"
+                className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-xs font-bold text-slate-900 dark:text-white"
+              />
+            </div>
+
+            <div className="space-y-1">
+              <div className="flex justify-between items-center">
+                <label className="text-[10px] font-bold text-slate-500 uppercase">ER Physical Bed Capacity</label>
+                <span className="text-[9px] font-mono text-emerald-600 dark:text-emerald-400 font-bold">MATE Canonical Limit</span>
+              </div>
+              <input
+                type="number"
+                min={1}
+                max={200}
+                value={facilityBedCapacityInput}
+                onChange={(e) => {
+                  const val = parseInt(e.target.value, 10);
+                  setFacilityBedCapacityInput(isNaN(val) ? 1 : Math.max(1, val));
+                }}
+                className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-xs font-mono font-bold text-slate-900 dark:text-white"
+              />
+              <p className="text-[10px] text-slate-400 leading-tight">
+                Enter the number of physical ER bed locations. MATE uses this to validate bed numbers and A/B subdivisions.
+              </p>
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-[10px] font-bold text-slate-500 uppercase">Team Core Identifier</label>
+              <input
+                type="text"
+                value={facilityTeamCoreInput}
+                onChange={(e) => setFacilityTeamCoreInput(e.target.value)}
+                placeholder="e.g. EM Trauma Response Core"
+                className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-xs font-bold text-slate-900 dark:text-white"
+              />
+            </div>
+
+            {facilitySavedNotice && (
+              <p className="text-xs text-emerald-600 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 p-2.5 rounded-xl font-mono">
+                {facilitySavedNotice}
+              </p>
+            )}
+
+            <button
+              type="button"
+              disabled={savingFacility}
+              onClick={async () => {
+                setSavingFacility(true);
+                try {
+                  const validCapacity = Math.max(1, Math.floor(facilityBedCapacityInput));
+                  if (onUpdateBedCapacity) {
+                    await onUpdateBedCapacity(validCapacity);
+                  }
+                  onSaveProfile({
+                    ...profile,
+                    hospital: facilityHospitalInput.trim() || profile.hospital,
+                    hospitalLabel: facilityHospitalInput.trim() || profile.hospitalLabel,
+                    workplaceName: facilityHospitalInput.trim() || profile.workplaceName,
+                    department: facilityDepartmentInput.trim(),
+                    teamName: facilityTeamCoreInput.trim(),
+                    teamColor: facilityThemeAccentInput
+                  });
+                  setFacilitySavedNotice(`✓ Configuration saved. ER capacity set to ${validCapacity} beds.`);
+                  setTimeout(() => setFacilitySavedNotice(null), 3500);
+                } catch (err: any) {
+                  setFacilitySavedNotice(err?.message || "Failed to update facility.");
+                } finally {
+                  setSavingFacility(false);
+                }
+              }}
+              className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold text-xs rounded-xl transition-all cursor-pointer font-mono shadow-xs"
+            >
+              {savingFacility ? "Saving Configuration..." : "Save Facility & Bed Capacity"}
+            </button>
+          </div>
+        </div>
+      );
+    } else if (selectedSubSection === "subscriptions" || selectedSubSection === "upgrade") {
+      title = "Team & Subscription";
+      const isTeam = isMembershipActive;
+      content = (
+        <div className="space-y-4 font-mono text-left">
+          <div className="p-4 bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 rounded-2xl space-y-1">
+            <h4 className="text-xs font-black uppercase text-blue-700 dark:text-blue-400">
+              {isTeam ? "Hospital Team Plan" : "Individual Workspace"}
+            </h4>
+            <p className="text-xs text-slate-600 dark:text-slate-300">
+              {isTeam 
+                ? `Covered by ${profile.hospital || "Hospital"} team subscription.` 
+                : isMembershipPending
+                  ? "Invitation awaiting approval from department lead."
+                  : "Your personal ErMate workspace."}
+            </p>
+          </div>
+
+          <div className="bg-white dark:bg-[#182333] border border-slate-200 dark:border-slate-800 p-5 rounded-2xl space-y-3 text-xs">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="p-3 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-100 dark:border-slate-800">
+                <span className="text-[10px] text-slate-400 uppercase block">Plan</span>
+                <strong className="text-xs font-bold text-slate-900 dark:text-white block mt-0.5">
+                  {isTeam ? "Team Plan" : "Individual Plan"}
+                </strong>
+              </div>
+
+              <div className="p-3 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-100 dark:border-slate-800">
+                <span className="text-[10px] text-slate-400 uppercase block">Managed By</span>
+                <strong className="text-xs font-bold text-slate-900 dark:text-white block mt-0.5 truncate">
+                  {isTeam ? (profile.hospital || "Hospital") : "Self"}
+                </strong>
+              </div>
+
+              <div className="p-3 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-100 dark:border-slate-800">
+                <span className="text-[10px] text-slate-400 uppercase block">Team</span>
+                <strong className="text-xs font-bold text-slate-900 dark:text-white block mt-0.5 truncate">
+                  {profile.hospital || "Independent"}
+                </strong>
+              </div>
+
+              <div className="p-3 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-100 dark:border-slate-800">
+                <span className="text-[10px] text-slate-400 uppercase block">Membership</span>
+                <strong className={`text-xs font-bold block mt-0.5 ${
+                  isTeam ? "text-emerald-500" : isMembershipPending ? "text-amber-500" : "text-slate-400"
+                }`}>
+                  {isTeam ? "Active" : isMembershipPending ? "Pending Approval" : "Not Joined"}
+                </strong>
+              </div>
+            </div>
+
+            <p className="text-[11px] text-slate-400 pt-2 leading-relaxed">
+              Every user starts with an Individual Plan. When you join an approved hospital team on ErMate, your account automatically shifts to the Team Plan without manual upgrades.
+            </p>
+
+            <button
+              type="button"
+              onClick={handleOpenTeamRoster}
+              className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-xs transition-all cursor-pointer font-mono mt-2"
+            >
+              Open Team Roster & Manage Invitations
+            </button>
+          </div>
+        </div>
+      );
+    } else if (selectedSubSection === "security" || selectedSubSection === "set-password") {
+      title = "Security & Access PIN";
+      content = (
+        <div className="space-y-4 font-mono text-left">
+          <div className="p-4 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl space-y-1">
+            <h4 className="text-xs font-black uppercase text-slate-800 dark:text-slate-200">Terminal Authentication</h4>
+            <p className="text-xs text-slate-500">Configure quick session PIN and biometric screen locks.</p>
+          </div>
+
+          <div className="bg-white dark:bg-[#182333] border border-slate-200 dark:border-slate-800 p-5 rounded-2xl space-y-4 text-xs">
+            <div className="space-y-1">
+              <label className="text-[10px] font-bold text-slate-500 uppercase">4-Digit Shift Unlock PIN</label>
+              <input
+                type="password"
+                maxLength={4}
+                defaultValue="4821"
+                className="w-28 text-center font-mono font-bold text-base bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2"
+              />
+            </div>
+
+            <div className="p-3 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-150 dark:border-slate-800">
+              <strong className="block text-slate-800 dark:text-slate-200">Biometric Authentication</strong>
+              <span className="text-[10px] text-slate-400">Face ID & Fingerprint unlock active on supported mobile devices.</span>
+            </div>
+
+            <div className="p-3 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-150 dark:border-slate-800">
+              <strong className="block text-slate-800 dark:text-slate-200">Auto Session Lock</strong>
+              <span className="text-[10px] text-slate-400">Terminal locks after 15 minutes of clinical inactivity.</span>
+            </div>
+          </div>
+        </div>
+      );
+    } else if (selectedSubSection === "notifications") {
+      title = "Clinical Notifications";
+      content = (
+        <div className="space-y-4 font-mono text-left">
+          <div className="p-4 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-2xl space-y-1">
+            <h4 className="text-xs font-black uppercase text-amber-700 dark:text-amber-400">Alert Toggles</h4>
+            <p className="text-xs text-slate-600 dark:text-slate-300">Manage audio chimes and high-acuity push alerts.</p>
+          </div>
+
+          <div className="bg-white dark:bg-[#182333] border border-slate-200 dark:border-slate-800 p-5 rounded-2xl space-y-3 text-xs">
+            <div className="flex justify-between items-center p-3 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-150 dark:border-slate-800">
+              <div>
+                <strong className="block text-slate-800 dark:text-slate-200">P1 Triage Resuscitation Alerts</strong>
+                <span className="text-[10px] text-slate-400">Audible alarm on incoming red cases</span>
+              </div>
+              <span className="text-[10px] bg-emerald-500 text-white font-bold px-2.5 py-0.5 rounded-full">ON</span>
+            </div>
+
+            <div className="flex justify-between items-center p-3 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-150 dark:border-slate-800">
+              <div>
+                <strong className="block text-slate-800 dark:text-slate-200">Shift Handover Transfers</strong>
+                <span className="text-[10px] text-slate-400">Pings when patient transfer sheet is routed to you</span>
+              </div>
+              <span className="text-[10px] bg-emerald-500 text-white font-bold px-2.5 py-0.5 rounded-full">ON</span>
+            </div>
+          </div>
+        </div>
+      );
+    } else if (selectedSubSection === "privacy") {
+      title = "Privacy & Data Governance";
+      content = (
+        <div className="space-y-4 font-mono text-left">
+          <div className="p-4 bg-purple-50 dark:bg-purple-950/20 border border-purple-200 dark:border-purple-800 rounded-2xl space-y-1">
+            <h4 className="text-xs font-black uppercase text-purple-700 dark:text-purple-400">DPDP Act 2023 & Compliance</h4>
+            <p className="text-xs text-slate-600 dark:text-slate-300">
+              Zero-PHI transmission to overseas inference endpoints. Calendar dates converted to relative clinical timeline anchors.
+            </p>
+          </div>
+
+          <div className="bg-white dark:bg-[#182333] border border-slate-200 dark:border-slate-800 p-5 rounded-2xl space-y-4 text-xs">
+            <div className="space-y-1">
+              <strong className="text-slate-800 dark:text-slate-200 block">Local Device Registry</strong>
+              <p className="text-[11px] text-slate-400">
+                Cached clinical records on this terminal: <span className="font-bold text-slate-200">{cases.length} records</span>.
+              </p>
+            </div>
+
+            {/* DANGER ZONE: SAFELY GUARDED */}
+            <div className="border border-rose-500/30 bg-rose-500/10 p-4 rounded-xl space-y-3">
+              <div className="flex items-center gap-2 text-rose-500">
+                <AlertTriangle className="w-4 h-4" />
+                <strong className="text-xs uppercase font-mono tracking-wider">Advanced Data Management — Danger Zone</strong>
+              </div>
+              <p className="text-[10.5px] text-slate-400 leading-relaxed">
+                Purging local cases removes cached patient records on this device. This requires typed confirmation.
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  setDeleteConfirmText("");
+                  setDeleteStatus(null);
+                  setShowDeleteConfirmModal(true);
+                }}
+                className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer font-mono"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Purge Local Case Records</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    } else if (selectedSubSection === "stats") {
+      title = "Clinical Registries & Stats";
+      content = (
+        <div className="space-y-4 font-mono text-left">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="p-3.5 bg-white dark:bg-[#182333] border border-slate-200 dark:border-slate-800 rounded-xl">
+              <span className="text-[10px] text-slate-400 block uppercase">Total Cases</span>
+              <strong className="text-lg font-bold text-slate-900 dark:text-white mt-0.5 block">{totalCases}</strong>
+            </div>
+            <div className="p-3.5 bg-white dark:bg-[#182333] border border-slate-200 dark:border-slate-800 rounded-xl">
+              <span className="text-[10px] text-rose-400 block uppercase">P1 Resus</span>
+              <strong className="text-lg font-bold text-rose-500 mt-0.5 block">{p1Cases}</strong>
+            </div>
+            <div className="p-3.5 bg-white dark:bg-[#182333] border border-slate-200 dark:border-slate-800 rounded-xl">
+              <span className="text-[10px] text-amber-400 block uppercase">P2 Emergent</span>
+              <strong className="text-lg font-bold text-amber-500 mt-0.5 block">{p2Cases}</strong>
+            </div>
+            <div className="p-3.5 bg-white dark:bg-[#182333] border border-slate-200 dark:border-slate-800 rounded-xl">
+              <span className="text-[10px] text-emerald-400 block uppercase">P3 Urgent</span>
+              <strong className="text-lg font-bold text-emerald-500 mt-0.5 block">{p3Cases}</strong>
+            </div>
+          </div>
+        </div>
+      );
+    } else if (selectedSubSection === "support") {
+      title = "Hospital Operations Support";
+      content = (
+        <div className="space-y-4 font-mono text-left">
+          <div className="bg-white dark:bg-[#182333] border border-slate-200 dark:border-slate-800 p-5 rounded-2xl space-y-3 text-xs">
+            <strong className="text-slate-900 dark:text-white block font-bold">24/7 Clinical Hotline</strong>
+            <p className="text-slate-400">Email: support@ermate.in</p>
+            <p className="text-slate-400">Emergency Operations: +91 98765 43210</p>
+          </div>
+        </div>
+      );
+    } else if (selectedSubSection === "about") {
+      title = "About ErMate Clinical OS";
+      content = (
+        <div className="space-y-4 font-mono text-left text-xs">
+          <div className="bg-white dark:bg-[#182333] border border-slate-200 dark:border-slate-800 p-5 rounded-2xl space-y-2">
+            <strong className="text-slate-900 dark:text-white block font-bold">ErMate Clinical OS v3.0</strong>
+            <p className="text-slate-400">• Certified ATLS Protocol Engine</p>
+            <p className="text-slate-400">• DPDP Act 2023 Server-Side De-identification</p>
+            <p className="text-slate-400">• Local AES Encrypted Persistence</p>
+            <p className="text-slate-400">• Monotonic 9-digit Case Identity Counter</p>
+          </div>
+        </div>
+      );
+    } else if (selectedSubSection === "device-link") {
+      title = "Link to Web Workstation";
+      content = (
+        <div className="space-y-4 font-mono text-left text-xs">
+          <div className="bg-white dark:bg-[#182333] border border-slate-200 dark:border-slate-800 p-5 rounded-2xl space-y-3">
+            <strong className="text-slate-900 dark:text-white block font-bold">Desktop Monitor Pairing PIN</strong>
+            <div className="p-3 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-center">
+              <span className="text-xl font-bold tracking-widest text-indigo-500 font-mono">{pairingCode}</span>
+              <p className="text-[10px] text-slate-400 mt-1">Refreshes in {pairingTimeLeft}s</p>
+            </div>
+            <p className="text-[11px] text-slate-400">
+              Enter this 6-digit PIN on any ER desk terminal to sync active shift charts instantly.
+            </p>
+          </div>
+        </div>
+      );
     }
 
     return (
@@ -2101,7 +2481,32 @@ const startRealCheckout = async (planKey: string) => {
 
         {/* Main interactive router */}
         <div className="flex-1">
-          {selectedSubSection === null ? renderProfileMenuList() : renderSubSectionContent()}
+          {selectedSubSection === null ? (
+            <MoreView
+              profile={profile}
+              normalizedRole={(() => {
+                const roleStr = (profile.role || "").toLowerCase();
+                const emailStr = (profile.email || "").toLowerCase();
+                const isHOD = roleStr.includes("hod") || roleStr.includes("owner") || roleStr.includes("head") || emailStr === "varahgrp@gmail.com";
+                const isConsultant = !isHOD && roleStr.includes("consultant");
+                return isHOD ? "hod" : isConsultant ? "consultant" : roleStr.includes("resident") ? "resident" : "independent";
+              })()}
+              onNavigateToTab={onNavigateToTab || (() => {})}
+              isDarkMode={isDarkMode}
+              onOpenUpdatesModal={() => {}}
+              teamMembers={teamMembers}
+              erPhysicalBedCapacity={erPhysicalBedCapacity}
+              onUpdateBedCapacity={onUpdateBedCapacity}
+              onSaveProfile={onSaveProfile}
+              onSignOut={onSignOut}
+              onDeleteAllCases={onDeleteAllCases}
+              cases={cases}
+              hospitalSubscription={hospitalSubscription}
+              handovers={handovers}
+            />
+          ) : (
+            renderSubSectionContent()
+          )}
         </div>
 
         {/* Dynamic Interactive Tour Overlay */}

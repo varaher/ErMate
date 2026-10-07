@@ -5152,6 +5152,74 @@ const handleCancelJoinRequest = async () => {
   }
 };
 
+const handleUpdateErPhysicalBedCapacity = async (newCapacity: number) => {
+  try {
+    if (!auth.currentUser) {
+      throw new Error("Not authenticated");
+    }
+    if (!Number.isInteger(newCapacity) || newCapacity <= 0) {
+      throw new Error("ER physical bed capacity must be a positive whole number.");
+    }
+    const validCapacity = Math.max(1, Math.floor(newCapacity));
+    const uid = auth.currentUser.uid;
+    const memberRef = doc(db, "team_members", uid);
+    const memberSnap = await getDoc(memberRef);
+    let trustedHospitalId = "";
+    let hospitalLabel = "Emergency Department";
+
+    if (memberSnap.exists()) {
+      const membership = memberSnap.data() as any;
+      trustedHospitalId =
+        typeof membership.hospitalId === "string" && membership.hospitalId.trim()
+          ? membership.hospitalId.trim()
+          : (typeof membership.hospital === "string" ? membership.hospital.trim() : "");
+      hospitalLabel =
+        typeof membership.hospitalName === "string" && membership.hospitalName.trim()
+          ? membership.hospitalName.trim()
+          : (typeof membership.hospital === "string" && membership.hospital.trim() ? membership.hospital.trim() : "Emergency Department");
+    }
+
+    if (!trustedHospitalId && profile?.hospital) {
+      trustedHospitalId = profile.hospital.trim();
+      hospitalLabel = profile.hospital.trim();
+    }
+
+    if (!trustedHospitalId) {
+      trustedHospitalId = "default_er";
+    }
+
+    await setDoc(
+      doc(db, "hospital_shifts", trustedHospitalId),
+      sanitizeForFirestore({
+        id: trustedHospitalId,
+        hospitalId: trustedHospitalId,
+        hospital: hospitalLabel,
+        erPhysicalBedCapacity: validCapacity,
+        updatedAt: new Date().toISOString(),
+        updatedByUid: uid,
+        updatedByEmail: auth.currentUser.email || ""
+      }),
+      { merge: true }
+    );
+
+    setErPhysicalBedCapacity(validCapacity);
+
+    triggerNotification(
+      "ER Capacity Configured",
+      `ER physical numbered-bed capacity set to ${validCapacity}.`,
+      "success"
+    );
+  } catch (err: any) {
+    console.error("Error updating ER physical bed capacity:", err);
+    triggerNotification(
+      "Capacity Update Failed",
+      err?.message || "Failed to update ER physical bed capacity.",
+      "warning"
+    );
+    throw err;
+  }
+};
+
   // Handle user profile save to Firestore
 // Protected authority/billing fields cannot be changed from profile editing.
 const handleSaveProfile = async (newProfile: UserProfile) => {
@@ -6951,6 +7019,15 @@ const handleSignOut = async () => {
                   onNavigateToTab={navigateToTab}
                   isDarkMode={isDarkMode}
                   onOpenUpdatesModal={() => setShowUpdatesModal(true)}
+                  teamMembers={teamMembers}
+                  erPhysicalBedCapacity={erPhysicalBedCapacity}
+                  onUpdateBedCapacity={handleUpdateErPhysicalBedCapacity}
+                  onSaveProfile={handleSaveProfile}
+                  onSignOut={handleSignOut}
+                  onDeleteAllCases={handleDeleteAllCases}
+                  cases={cases}
+                  hospitalSubscription={hospitalSubscription}
+                  handovers={handovers}
                 />
               )}
 
@@ -6986,6 +7063,8 @@ const handleSignOut = async () => {
                   onUpdateShifts={handleUpdateHospitalShifts}
                   onStartDutySession={handleStartDutySession}
                   onEndDutySession={handleEndDutySession}
+                  erPhysicalBedCapacity={erPhysicalBedCapacity}
+                  onUpdateBedCapacity={handleUpdateErPhysicalBedCapacity}
                 />
               )}
 
@@ -7019,38 +7098,27 @@ const handleSignOut = async () => {
                   onUpdateShifts={handleUpdateHospitalShifts}
                   onStartDutySession={handleStartDutySession}
                   onEndDutySession={handleEndDutySession}
+                  erPhysicalBedCapacity={erPhysicalBedCapacity}
+                  onUpdateBedCapacity={handleUpdateErPhysicalBedCapacity}
                 />
               )}
 
               {activeTab === "profile" && (
-                <ProfileSettingsView
+                <MoreView
                   profile={profile}
-                  cases={cases}
+                  normalizedRole={userNormalizedRole}
+                  onNavigateToTab={navigateToTab}
+                  isDarkMode={isDarkMode}
+                  onOpenUpdatesModal={() => setShowUpdatesModal(true)}
+                  teamMembers={teamMembers}
+                  erPhysicalBedCapacity={erPhysicalBedCapacity}
+                  onUpdateBedCapacity={handleUpdateErPhysicalBedCapacity}
                   onSaveProfile={handleSaveProfile}
                   onSignOut={handleSignOut}
-                  rotaAssignments={rotaAssignments}
-                  setRotaAssignments={setRotaAssignments}
-                  isDarkMode={isDarkMode}
-                  setIsDarkMode={setIsDarkMode}
                   onDeleteAllCases={handleDeleteAllCases}
-                  isOnShift={isOnShift}
-                  setIsOnShift={setIsOnShift}
-                  handovers={handovers}
-                  setHandovers={customSetHandovers}
-                  onNavigateToTab={navigateToTab}
-                  teamMembers={teamMembers}
-                  onAddMember={handleAddTeamMember}
-                  onRemoveMember={handleRemoveTeamMember}
-                  onUpdateShift={handleUpdateTeamMemberShift}
-                  onApproveMember={handleApproveTeamMember}
-                  onDeclineMember={handleDeclineTeamMember}
-                  onUpdateRole={handleUpdateTeamMemberRole}
-                  onLeaveTeam={handleLeaveTeam}
+                  cases={cases}
                   hospitalSubscription={hospitalSubscription}
-                  shifts={shifts}
-                  onUpdateShifts={handleUpdateHospitalShifts}
-                  onStartDutySession={handleStartDutySession}
-                  onEndDutySession={handleEndDutySession}
+                  handovers={handovers}
                 />
               )}
             </>
