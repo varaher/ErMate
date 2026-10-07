@@ -186,6 +186,7 @@ ErMate employs a dynamic role-based navigation hierarchy computed from `getNorma
 
 | Path | Purpose |
 | :--- | :--- |
+| `/verify_scribe_draft_case_creation.ts` | Verification suite for automatic ClinicalCase shell creation on first clinical Scribe dictation & idempotency |
 | `/src/components/TeamRosterBoard.tsx` | Mobile-first 4-tab Department Team Management (Overview, Member Directory, Rota & Shifts, Department Settings) |
 | `/verify_team_ui_reorg.ts` | Verification suite for 4 top-level sections, Overview summary cards, Member Directory, and canonical invitation flow |
 | `/src/utils/caseLifecycle.ts` | 24-hour incomplete case soft-archive engine, active non-archived census filtering, and clinical record retention |

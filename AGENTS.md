@@ -45,6 +45,25 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-07] — ErMate: Automatic Current Case Creation After First Clinical Dictation
+- **Targeted Workflow Correction (`src/components/VoiceScribeChatView.tsx`)**:
+  - Corrected deficiency where `handleEnsureDraftCase` was previously only invoked during explicit MATE bed `NOT_FOUND` resolution, leaving ordinary typed/voice Scribe dictations without a durable ClinicalCase shell until manual preview or apply.
+  - Implemented automatic draft case shell creation on the **first clinically meaningful Scribe extraction**:
+    - Evaluates `hasMeaningfulClinicalExtraction(fieldsToExtract)` across demographics, vitals, presenting complaints, SAMPLE history, physical exams, provisional diagnosis, treatments, and procedures.
+    - Strictly guarded: Only triggers when `initialEntryMode === "case"`, `!isDiscussionOnly`, `currentMode !== "discuss"`, and no active case is already bound.
+    - Safety exclusions: General medical questions, drug-dose inquiries, protocol/reference queries, Discuss mode, Rounds lenses, MATE navigation, and casual greetings never trigger case creation.
+    - Resolves bed assignment safely via `allocateOrValidateBed(rawBed, allCases, physicalBedCapacity)` if mentioned in dictation or extraction.
+    - Ensures exactly ONE minimal ClinicalCase shell via `onEnsureDraftCase(targetSessionId, { bedNo: targetBed })`, persisting shell to Firestore and two-sided linking `scribeSession ↔ ClinicalCase`.
+    - Immediately reflects in Dashboard → Current Cases with `status: "Active"` and incomplete/pending sections (`isPending: true`).
+  - **Strict Idempotency & Invariants**:
+    - Synchronous `activeCaseIdRef` and `isEnsuringDraftCaseRef` guard against race conditions and concurrent turns.
+    - Subsequent turns (Turn 2: "BP 100/60, pulse 110", Turn 3: "Chest clear, abdomen soft") automatically reuse the existing case ID without duplicate shell creation.
+    - Extraction message remains UNAPPLIED (`extractionApplied: false`), unapplied fields are NOT prematurely merged into the case shell, and clinician is NOT navigated away from Scribe.
+    - Clicking "Start a new Scribe session" cleanly resets `activeCaseId`, `activeSessionId`, and reference generation for the next intake.
+- **Dedicated Verification Suite (`verify_scribe_draft_case_creation.ts` — 20 / 20 PASS)**:
+  - Verified demographic intake detection, isolated vitals, physical exam, secondary survey, provisional diagnosis, treatment, SAMPLE history, bed assignment, empty/null safety, non-clinical metadata exclusion, empty sub-objects exclusion, drug-dose query exclusion, canonical bed allocation (11A vacant, 11B fallback, fail-closed full), dashboard incomplete status recognition, 3-turn dictation workflow idempotency simulation, discussion-mode exclusion, general question exclusion, and new-chat context reset. All 27 case preview, 20 discharge preview, 15 team UI, 12 MATE replay, 14 case identity, and 7 bed binding tests remain 100% passing.
+
+
 ### [2026-10-06] — ErMate: Team Section UI Reorganization (Mobile-First, UI-Only)
 - **Top-Level 4-Section Information Architecture (`src/components/TeamRosterBoard.tsx`, `src/components/ProfileSettingsView.tsx`)**:
   - Reorganized the cluttered single-scroll Team page into 4 clear, mobile-first tabs:

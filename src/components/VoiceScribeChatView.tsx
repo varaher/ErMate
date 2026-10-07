@@ -35,6 +35,7 @@ import {
   extractMateBedReference,
   resolveMateCaseReference,
 } from "../mate/mateCaseResolver";
+import { allocateOrValidateBed } from "../utils/bedAllocation";
 import {
   dispatchMateAction,
 } from "../mate/mateActionDispatcher";
@@ -461,13 +462,84 @@ function getDisplayableExtractionEntries(data: any): [string, any][] {
   return Object.entries(normalizedData).filter(([key, val]) => {
     if (val === null || val === undefined || val === "") return false;
     if (Array.isArray(val) && val.length === 0) return false;
-    if (typeof val === "object" && !Array.isArray(val) && Object.keys(val).length === 0) return false;
+    if (typeof val === "object" && !Array.isArray(val)) {
+      if (Object.keys(val).length === 0) return false;
+      const hasMeaningful = Object.values(val).some(
+        v => v !== null && v !== undefined && v !== "" && !(Array.isArray(v) && v.length === 0)
+      );
+      if (!hasMeaningful) return false;
+    }
     return true;
   });
 }
 
 function hasDisplayableExtraction(data: any): boolean {
   return getDisplayableExtractionEntries(data).length > 0;
+}
+
+export function hasMeaningfulClinicalExtraction(data: any): boolean {
+  if (!data || typeof data !== "object") return false;
+
+  // 1. Patient Demographics & Bed
+  if (typeof data.patientName === "string" && data.patientName.trim()) return true;
+  if (typeof data.name === "string" && data.name.trim()) return true;
+  if (data.age !== undefined && data.age !== null && String(data.age).trim() !== "") return true;
+  if (typeof data.gender === "string" && data.gender.trim()) return true;
+  if (typeof data.bedNo === "string" && data.bedNo.trim()) return true;
+  if (typeof data.bed === "string" && data.bed.trim()) return true;
+  if (typeof data.uhid === "string" && data.uhid.trim()) return true;
+
+  // 2. Vitals
+  if (data.vitals && typeof data.vitals === "object") {
+    const v = data.vitals;
+    if (v.bp || v.hr || v.pulse || v.spo2 || v.rr || v.temp || v.gcs || v.grbs) return true;
+  }
+
+  // 3. Complaints & History
+  if (typeof data.presentingComplaint === "string" && data.presentingComplaint.trim()) return true;
+  if (typeof data.presentingComplaints === "string" && data.presentingComplaints.trim()) return true;
+  if (Array.isArray(data.presentingComplaints) && data.presentingComplaints.length > 0) return true;
+  if (typeof data.historyOfPresentIllness === "string" && data.historyOfPresentIllness.trim()) return true;
+  if (typeof data.hpi === "string" && data.hpi.trim()) return true;
+
+  // 4. SAMPLE history
+  if (data.sampleHistory && typeof data.sampleHistory === "object") {
+    const sh = data.sampleHistory;
+    if (sh.allergies || sh.pastHistory || sh.medications || sh.events || sh.lastMeal || sh.symptoms || sh.psychiatricFlags) return true;
+  }
+  if (typeof data.allergies === "string" && data.allergies.trim()) return true;
+  if (typeof data.pastMedicalHistory === "string" && data.pastMedicalHistory.trim()) return true;
+  if (typeof data.currentMedications === "string" && data.currentMedications.trim()) return true;
+  if (typeof data.events === "string" && data.events.trim()) return true;
+
+  // 5. Examinations
+  if (data.primarySurvey && typeof data.primarySurvey === "object") {
+    const ps = data.primarySurvey;
+    if (ps.airway || ps.breathing || ps.circulation || ps.disability || ps.exposure) return true;
+  }
+  if (data.secondarySurvey && typeof data.secondarySurvey === "object") {
+    const ss = data.secondarySurvey;
+    if (ss.headNeck || ss.chest || ss.abdomen || ss.pelvis || ss.extremities || ss.spine || ss.neurological) return true;
+  }
+  if (typeof data.generalExamination === "string" && data.generalExamination.trim()) return true;
+
+  // 6. Diagnosis & Differentials
+  if (typeof data.provisionalDiagnosis === "string" && data.provisionalDiagnosis.trim()) return true;
+  if (typeof data.diagnosis === "string" && data.diagnosis.trim()) return true;
+  if (typeof data.differentialDiagnosis === "string" && data.differentialDiagnosis.trim()) return true;
+  if (Array.isArray(data.differentials) && data.differentials.length > 0) return true;
+
+  // 7. Treatment & Investigations
+  if (Array.isArray(data.treatmentGiven) && data.treatmentGiven.length > 0) return true;
+  if (Array.isArray(data.treatments) && data.treatments.length > 0) return true;
+  if (Array.isArray(data.procedures) && data.procedures.length > 0) return true;
+  if (Array.isArray(data.proceduresChecked) && data.proceduresChecked.length > 0) return true;
+  if (Array.isArray(data.investigations) && data.investigations.length > 0) return true;
+  if (Array.isArray(data.labs) && data.labs.length > 0) return true;
+  if (data.imaging || data.investigationImaging || data.investigationLabsOrdered) return true;
+
+  // 8. General displayable fallback
+  return hasDisplayableExtraction(data);
 }
 
 export function detectProcedureFromExtraction(data: any): ProcedureDefinition | null {
@@ -757,16 +829,28 @@ export default function VoiceScribeChatView({
     if (isDiscussionOnly) return null;
     return propCaseId || caseData?.id || null;
   });
+  const activeCaseIdRef = useRef<string | null>(activeCaseId);
 
   useEffect(() => {
-    const target = propCaseId || caseData?.id;
+    activeCaseIdRef.current = activeCaseId;
+  }, [activeCaseId]);
+
+  useEffect(() => {
+    const target = propCaseId || caseData?.id || null;
     if (target !== activeCaseId) {
-      setActiveCaseId(target || null);
+      setActiveCaseId(target);
     }
+    activeCaseIdRef.current = target;
   }, [propCaseId, caseData?.id]);
 
   // Scribe session state: ensures continuity across remounts and refresh
   const [activeSessionId, setActiveSessionId] = useState<string | null>(propSessionId || null);
+  const activeSessionIdRef = useRef<string | null>(activeSessionId);
+  useEffect(() => {
+    activeSessionIdRef.current = activeSessionId;
+  }, [activeSessionId]);
+
+  const isEnsuringDraftCaseRef = useRef<boolean>(false);
   const [sessionAttachError, setSessionAttachError] = useState<string | null>(null);
   const [historyLoadError, setHistoryLoadError] = useState<string | null>(null);
   const [failedMessages, setFailedMessages] = useState<Map<string, { message: any; error: string }>>(new Map());
@@ -896,6 +980,30 @@ export default function VoiceScribeChatView({
     });
     return () => { cancelled = true; };
   }, [isDiscussionOnly]);
+
+  const ensureActiveSessionId = async (): Promise<string | null> => {
+    if (activeSessionIdRef.current) return activeSessionIdRef.current;
+    if (activeSessionId) return activeSessionId;
+    const user = auth.currentUser;
+    if (!user) return null;
+    try {
+      const workspace = await resolveWorkspaceForUser(user.uid);
+      const newSessionId = await createScribeSession({
+        ownerUid: user.uid,
+        workspaceType: workspace.workspaceType,
+        hospitalId: workspace.hospitalId,
+        mode: "case",
+      });
+      activeSessionIdRef.current = newSessionId;
+      setActiveSessionId(newSessionId);
+      onSessionIdChange?.(newSessionId);
+      localStorage.setItem(`ermate:scribeSession:${user.uid}`, newSessionId);
+      return newSessionId;
+    } catch (err: any) {
+      console.warn("[VoiceScribeChatView] Failed to ensure activeSessionId:", err);
+      return null;
+    }
+  };
 
   // Session initialization / recovery effect
   useEffect(() => {
@@ -1330,9 +1438,12 @@ export default function VoiceScribeChatView({
         mode: isDiscussionOnly ? "discussion" : "case",
       });
       setActiveSessionId(newSessionId);
+      activeSessionIdRef.current = newSessionId;
       onSessionIdChange?.(newSessionId);
       localStorage.setItem(`ermate:scribeSession:${user.uid}`, newSessionId);
       setActiveCaseId(null);
+      activeCaseIdRef.current = null;
+      isEnsuringDraftCaseRef.current = false;
       setMessages([
         {
           id: "welcome",
@@ -2175,6 +2286,71 @@ export default function VoiceScribeChatView({
           mode: "dictation",
           clinicalReasoning: clinicalReasoning,
         });
+
+        // ── AUTOMATIC DRAFT CASE CREATION AFTER FIRST CLINICAL DICTATION ────
+        // Locked requirement: For a true NEW PATIENT clinical documentation session:
+        // FIRST clinically meaningful Scribe extraction
+        // → ensure exactly ONE minimal ClinicalCase shell exists
+        // → persist shell to Firestore
+        // → link Scribe session ↔ ClinicalCase
+        // → patient appears immediately in Current Cases
+        // → extracted clinical content remains UNAPPLIED until Preview/Apply
+        const hasMeaningfulExtraction = hasMeaningfulClinicalExtraction(fieldsToExtract);
+        const isCaseMode = initialEntryMode === "case" && !isDiscussionOnly && currentMode !== "discuss";
+        const currentActiveCaseId = activeCaseId || activeCaseIdRef.current;
+        const currentSessionId = activeSessionId || activeSessionIdRef.current;
+        const existingSessionLinkedCase = currentSessionId && allCases
+          ? allCases.find((c) => c.scribeSessionId === currentSessionId)
+          : null;
+
+        if (
+          hasMeaningfulExtraction &&
+          isCaseMode &&
+          !currentActiveCaseId &&
+          !existingSessionLinkedCase &&
+          !isEnsuringDraftCaseRef.current &&
+          onEnsureDraftCase
+        ) {
+          isEnsuringDraftCaseRef.current = true;
+          try {
+            let targetSessionId = currentSessionId;
+            if (!targetSessionId) {
+              targetSessionId = await ensureActiveSessionId();
+            }
+            if (targetSessionId) {
+              const rawBed = (
+                (typeof fieldsToExtract.bedNo === "string" && fieldsToExtract.bedNo.trim() ? fieldsToExtract.bedNo.trim() : undefined) ||
+                (typeof fieldsToExtract.bed === "string" && fieldsToExtract.bed.trim() ? fieldsToExtract.bed.trim() : undefined) ||
+                extractMateBedReference(trimmed) ||
+                undefined
+              );
+              let targetBed = rawBed;
+              if (rawBed) {
+                const alloc = allocateOrValidateBed(rawBed, allCases || [], physicalBedCapacity);
+                if (alloc.success && alloc.canonicalBed) {
+                  targetBed = alloc.canonicalBed;
+                }
+              }
+
+              const ensuredCaseId = await onEnsureDraftCase(targetSessionId, { bedNo: targetBed });
+              if (ensuredCaseId) {
+                activeCaseIdRef.current = ensuredCaseId;
+                setActiveCaseId(ensuredCaseId);
+                lastReferencedCaseIdRef.current = ensuredCaseId;
+                onSwitchCase?.(ensuredCaseId);
+              }
+            }
+          } catch (ensureErr: any) {
+            console.error("[VoiceScribeChatView] Failed to ensure draft case on first clinical extraction:", ensureErr);
+          } finally {
+            isEnsuringDraftCaseRef.current = false;
+          }
+        } else if (!currentActiveCaseId && existingSessionLinkedCase) {
+          activeCaseIdRef.current = existingSessionLinkedCase.id;
+          setActiveCaseId(existingSessionLinkedCase.id);
+          lastReferencedCaseIdRef.current = existingSessionLinkedCase.id;
+          onSwitchCase?.(existingSessionLinkedCase.id);
+        }
       }
     } catch (err: any) {
       if (sessionContextGenerationRef.current !== requestGeneration) {
