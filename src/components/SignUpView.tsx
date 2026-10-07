@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { Activity, User, Building, ShieldCheck, ArrowRight, ArrowLeft, Mail, Key, Sparkles } from "lucide-react";
+import { ErMateLogo } from "./shared/ErMateLogo";
 import { UserProfile } from "../types";
 import {
   createUserWithEmailAndPassword,
@@ -288,8 +289,8 @@ const [registeredEmail, setRegisteredEmail] =
 
       {/* Main Brand Logo & Subtitles */}
       <div className="sm:mx-auto sm:w-full sm:max-w-md text-center relative z-10 space-y-3">
-        <div className={`mx-auto h-12 w-12 ${isEmerald ? 'bg-emerald-600 shadow-emerald-600/20' : 'bg-blue-600 shadow-blue-500/20'} rounded-2xl flex items-center justify-center shadow-lg`}>
-          <Activity className="w-6 h-6 text-white animate-pulse" />
+        <div className="flex justify-center mb-1">
+          <ErMateLogo variant="icon" size="lg" className="rounded-2xl shadow-xl ring-4 ring-white/20 dark:ring-slate-800/60" />
         </div>
         <div>
           <h1 className={`text-3xl font-black font-display tracking-tight ${isEmerald ? 'text-emerald-800' : 'text-white'} flex items-center justify-center gap-2`}>

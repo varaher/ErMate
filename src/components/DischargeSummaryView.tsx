@@ -1671,9 +1671,16 @@ export default function DischargeSummaryView({
 
           {/* Actual Printable Page Wrapper */}
           <div className="flex-1 overflow-y-auto p-8 md:p-10 font-sans leading-relaxed text-[12px] text-slate-900 bg-white space-y-4 select-text max-w-full print:p-0 print:m-0 print:w-full print:max-w-full print:text-[12px] whitespace-pre-wrap" id="print-sheet-content">
-   <div className="font-bold text-[13px]">{displayHospitalName}</div>
-  <div className="text-[11px] mb-3">{displayHospitalAddress}</div>
-  <div className="font-bold mb-4 text-[14px]">Discharge Summary</div>
+            <div className="flex items-center justify-between border-b pb-3 mb-3">
+              <div className="flex items-center gap-3">
+                <img src="/icon-192.png" alt="ErMate" className="w-10 h-10 object-contain rounded-lg shrink-0" />
+                <div>
+                  <div className="font-bold text-[13px]">{displayHospitalName}</div>
+                  <div className="text-[11px] text-slate-600">{displayHospitalAddress}</div>
+                  <div className="font-bold text-[14px]">Discharge Summary</div>
+                </div>
+              </div>
+            </div>
 
   <div><span className="font-bold">PATIENT NAME:</span> {currentCase.patient.name}</div>
   <div><span className="font-bold">AGE / GENDER:</span> {currentCase.patient.age ? `${currentCase.patient.age} Years` : "Not documented"} / {currentCase.patient.gender || "Not documented"}</div>

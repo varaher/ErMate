@@ -45,6 +45,47 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-07] — ErMate: Inline Unlimited Dictation Recorder (ChatGPT / WhatsApp Style UX)
+- **Elimination of Centered Modal & Inline Composer Transition (`src/components/shared/VoiceRecorder.tsx`, `src/components/VoiceScribeChatView.tsx`, `src/components/CaseDiscussWorkspace.tsx`, `src/components/BoundChatModal.tsx`)**:
+  - Replaced legacy popup and screen-blocking recording modal with a compact, conversational inline composer-integrated recorder.
+  - **IDLE State**: `[ + ] Type clinical details / questions...     🎙    ➤` (Left actions button toggles clinical lenses and report/image attachments, clean textarea, subtle mic button, and send button).
+  - **RECORDING State**: `[ 🗑 ]  01:42   ▂▅▃▇▅▂▆   Listening…   [ Pause ] [ ✓ ]` (Full width of bottom bar, trash button discards, monospace timer counts continuously, subtle audio waveform in ErMate gradient colors, subtle red listening dot, pause toggle, and emerald Done button).
+  - **PAUSED State**: `[ 🗑 ]  01:42   waveform paused   Paused   [ Resume ] [ ✓ ]`.
+  - **PROCESSING State**: `[ spinner ] Finalizing dictation…` (Auto-restores normal composer upon transcription).
+- **Unbounded Multi-Minute Recording Verification**:
+  - Confirmed and verified zero client-side artificial duration caps (no 30s timer, no `maxDuration = 30`, no auto-termination). Tested logical progression across 1-minute, 3-minute, 5-minute, and 10-minute sessions.
+  - Preserved clear architectural distinction between recording duration (unbounded/clinician-controlled) and post-dictation extraction/reasoning network timeouts (bounded 30s timeout on `/api/scribe-chat`).
+- **Screen & App Lifecycle Safety**:
+  - Preserved screen Wake Lock requesting on dictation start and releasing on cleanup/discard.
+  - Added navigation-away, case-switch, and tab-switch safety confirmations (`"Dictation is still recording. Discard it and leave?"`) across `VoiceScribeChatView`, `CaseDiscussWorkspace`, `BoundChatModal`, and `App.tsx` (`handleSelectCase`, `handleViewPrintSheet`, `navigateToTab`).
+- **Duplicate-Finalization Guard & Memory Safety**:
+  - Preserved `finalSubmissionSentRef` preventing double-finalization on concurrent `session_end` and `closed` events.
+  - Immediate clearing of raw audio buffers on finish, discard, or batch fallback to prevent memory growth during long dictations.
+- **Verification (`verify_inline_voice_recorder.ts` — 18 / 18 PASS)**:
+  - 100% pass across all 18 specifications with 0 regressions in scribe draft creation (20/20), case discussion workspace (25/25), header refresh & notifications (16/16), and profile restructure (10/10). Production build and compilation pass with zero errors.
+
+### [2026-10-07] — ErMate: Official Glossy 3D Medical Cross Logo Integration
+- **Universal New Brand Asset Integration (`public/`, `src/components/shared/ErMateLogo.tsx`)**:
+  - Integrated the new official ErMate brand identity: Glossy 3D medical cross with emerald/cyan/blue/purple ribbon fold transitions, central crisp white ECG heartbeat pulse line, and modern rounded typography.
+  - Generated and deployed optimized vector and raster brand assets:
+    - `public/icon-512.png` (512x512 PWA & high-res app icon)
+    - `public/icon-192.png` (192x192 PWA & mobile app icon)
+    - `public/favicon.png` (64x64 crisp browser favicon)
+    - `public/logo.png` (Full logo with medical cross mark and ErMate typography)
+    - `public/icon.svg` (Refactored high-resolution vector emblem with ribbon gradients and ECG pulse)
+  - Created reusable modular component `src/components/shared/ErMateLogo.tsx` supporting `variant="header"`, `variant="icon"`, and `variant="full"` with responsive sizing (`xs`, `sm`, `md`, `lg`, `xl`).
+- **Comprehensive UI Touchpoints Updated**:
+  - **Global Header (`src/components/GlobalHeader.tsx`)**: Embedded new logo icon mark and title in the clinical shell.
+  - **Login Screen (`src/components/MockLoginView.tsx`)**: Replaced generic Activity box with the official ErMate logo emblem.
+  - **Sign Up Screen (`src/components/SignUpView.tsx`)**: Upgraded doctor onboarding portal with the official brand mark.
+  - **Forgot Password Screen (`src/components/ForgotPasswordView.tsx`)**: Integrated brand mark with consistent clinical aesthetic.
+  - **About ErMate Modal (`src/components/MoreView.tsx`)**: Prominently displays the full official logo above ATLS standards and OS specifications.
+  - **System Updates & Announcements Modal (`src/App.tsx`)**: Enhanced update banner with official brand icon.
+  - **PWA Service Worker Update Toast (`src/components/PWABadge.tsx`)**: Displays official brand icon in the app update alert.
+  - **Clinical Print Views (`src/components/CaseSheetPrintView.tsx`, `src/components/DischargeSummaryView.tsx`)**: High-res logo embedded into official printable Emergency Department Case Sheets and Discharge Summaries.
+  - **Web Meta & PWA Manifest (`index.html`, `public/manifest.json`)**: Updated favicon links, Apple touch icon, OpenGraph, and Twitter sharing cards.
+- **Verification**: All 16 header/notification tests and 10 profile tests pass with 0 regressions. Full production build succeeds.
+
 ### [2026-10-07] — ErMate: Global Header, Refresh & Notification UX Cleanup
 - **Streamlined Global Header Information Architecture (`src/components/GlobalHeader.tsx`, `src/App.tsx`)**:
   - Refactored cluttered global header down to a compact, professional clinical shell:

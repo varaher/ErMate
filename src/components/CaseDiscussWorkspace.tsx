@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import VoiceRecorder from './shared/VoiceRecorder';
+import VoiceRecorder, { isGlobalVoiceRecordingActive } from './shared/VoiceRecorder';
 import {
   ArrowLeft,
   ChevronDown,
@@ -55,8 +55,27 @@ export const CaseDiscussWorkspace: React.FC<CaseDiscussWorkspaceProps> = ({
   const [inputText, setInputText] = useState('');
   const [isContextExpanded, setIsContextExpanded] = useState(false);
   const [isSelectorOpen, setIsSelectorOpen] = useState(false);
+  const [isVoiceRecordingActive, setIsVoiceRecordingActive] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const selectorRef = useRef<HTMLDivElement>(null);
+
+  const handleSafeClose = () => {
+    if (isVoiceRecordingActive || isGlobalVoiceRecordingActive()) {
+      if (!window.confirm("Dictation is still recording. Discard it and leave?")) {
+        return;
+      }
+    }
+    onClose();
+  };
+
+  const handleSelectContextSafe = (ctx: ChatContext) => {
+    if (isVoiceRecordingActive || isGlobalVoiceRecordingActive()) {
+      if (!window.confirm("Dictation is still recording. Discard it and leave?")) {
+        return;
+      }
+    }
+    onSelectContext?.(ctx);
+  };
 
   useEffect(() => {
     if (isOpen) {
@@ -134,7 +153,7 @@ export const CaseDiscussWorkspace: React.FC<CaseDiscussWorkspaceProps> = ({
           <div className="flex items-center gap-3 min-w-0">
             <button
               type="button"
-              onClick={onClose}
+              onClick={handleSafeClose}
               className="p-2 -ml-1 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-colors cursor-pointer flex items-center gap-1.5 shrink-0"
               title="Back to ER workspace"
             >
@@ -196,7 +215,7 @@ export const CaseDiscussWorkspace: React.FC<CaseDiscussWorkspaceProps> = ({
                           type="button"
                           onClick={() => {
                             setIsSelectorOpen(false);
-                            onSelectContext?.(ctx);
+                            handleSelectContextSafe(ctx);
                           }}
                           className={`w-full text-left px-3 py-2 text-xs flex items-center justify-between gap-2 transition-colors cursor-pointer ${
                             isCurrent
@@ -241,7 +260,7 @@ export const CaseDiscussWorkspace: React.FC<CaseDiscussWorkspaceProps> = ({
 
             <button
               type="button"
-              onClick={onClose}
+              onClick={handleSafeClose}
               className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-white rounded-xl transition-colors cursor-pointer"
               title="Close discussion"
             >
@@ -620,32 +639,37 @@ export const CaseDiscussWorkspace: React.FC<CaseDiscussWorkspaceProps> = ({
 
         {/* ── STICKY INPUT BAR ────────────────────────────────────── */}
         <footer className="p-3 sm:p-4 bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 shrink-0">
-          <div className="flex items-end gap-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl p-2 focus-within:border-indigo-500 focus-within:ring-1 focus-within:ring-indigo-500 transition-all">
-            <textarea
-              value={inputText}
-              onChange={(e) => setInputText(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder={`Ask anything about Bed ${bed} • ${displayId}... (Shift+Enter for new line)`}
-              rows={2}
-              className="flex-1 bg-transparent border-0 focus:outline-none resize-none text-xs sm:text-sm text-slate-900 dark:text-white p-1"
+          <div className="flex items-center gap-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl p-2 focus-within:border-indigo-500 focus-within:ring-1 focus-within:ring-indigo-500 transition-all">
+            {!isVoiceRecordingActive && (
+              <textarea
+                value={inputText}
+                onChange={(e) => setInputText(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder={`Ask anything about Bed ${bed} • ${displayId}... (Shift+Enter for new line)`}
+                rows={1}
+                className="flex-1 bg-transparent border-0 focus:outline-none resize-none text-xs sm:text-sm text-slate-900 dark:text-white p-1"
+                style={{ maxHeight: "120px" }}
+              />
+            )}
+
+            <VoiceRecorder
+              renderMode="inline-composer"
+              onTranscript={(txt) => setInputText((prev) => (prev ? `${prev} ${txt}` : txt))}
+              onRecordingStateChange={setIsVoiceRecordingActive}
+              className={isVoiceRecordingActive ? "w-full" : "shrink-0"}
             />
 
-            <div className="flex items-center gap-1.5 shrink-0 pb-1">
-              <VoiceRecorder
-                renderMode="compact-button"
-                onTranscript={(txt) => setInputText((prev) => (prev ? `${prev} ${txt}` : txt))}
-              />
-
+            {!isVoiceRecordingActive && (
               <button
                 type="button"
                 onClick={handleSend}
                 disabled={!inputText.trim() || sending}
-                className="p-2.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white rounded-xl shadow-xs transition-all cursor-pointer"
+                className="p-2 sm:p-2.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-30 text-white rounded-xl shadow-xs transition-all cursor-pointer shrink-0"
                 title="Send message"
               >
                 <Send className="w-4 h-4" />
               </button>
-            </div>
+            )}
           </div>
 
           <div className="flex justify-between items-center mt-1.5 px-1">

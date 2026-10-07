@@ -13,6 +13,7 @@ import { ConfirmModal } from "./shared/ConfirmModal";
 import MortalityAuditModal from "./MortalityAuditModal";
 import { SelfLearningRulesPanel } from "./SelfLearningRulesPanel";
 import RoleChangeSection from "./RoleChangeSection";
+import { ErMateLogo } from "./shared/ErMateLogo";
 import { APP_VERSION } from "../changelog";
 
 interface MoreViewProps {
@@ -1439,6 +1440,10 @@ export default function MoreView({
               >
                 <X className="w-5 h-5" />
               </button>
+            </div>
+
+            <div className="flex flex-col items-center py-2">
+              <ErMateLogo variant="full" size="lg" showSubtitle={false} />
             </div>
 
             <div className="space-y-3 text-xs text-slate-600 dark:text-slate-300">

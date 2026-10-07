@@ -58,6 +58,7 @@ import { updateChatMessage, appendChatMessage, linkScribeSessionAndCase, verifyT
 import { deduplicateConsultations } from "./utils/consultationNormalization";
 import { isEstablishedCaseSheet } from "./utils/establishedCaseCheck";
 import { resolveDutyWindow } from "./utils/dutyWindow";
+import { isGlobalVoiceRecordingActive } from "./components/shared/VoiceRecorder";
 import { allocateOrValidateBed } from "./utils/bedAllocation";
 import { generateInternalCaseId, reserveNextDisplaySequence, getDisplayCaseId } from "./utils/caseIdentity";
 import {
@@ -1895,6 +1896,11 @@ if (auth.currentUser) {
 
   // Select a case for the Case Sheet view (Editable Form)
   const handleSelectCase = (caseId: string) => {
+    if (isGlobalVoiceRecordingActive()) {
+      if (!window.confirm("Dictation is still recording. Discard it and leave?")) {
+        return;
+      }
+    }
     setSelectedCaseId(caseId);
     setViewCaseSheetPrintId(null);
     setActiveFormMode(null);
@@ -1903,6 +1909,11 @@ if (auth.currentUser) {
 
   // Open read-only, print-styled Case Sheet view
   const handleViewPrintSheet = (caseId: string) => {
+    if (isGlobalVoiceRecordingActive()) {
+      if (!window.confirm("Dictation is still recording. Discard it and leave?")) {
+        return;
+      }
+    }
     setViewCaseSheetPrintId(caseId);
     setSelectedCaseId(null);
     setActiveFormMode(null);
@@ -5637,6 +5648,11 @@ const handleSignOut = async () => {
 };
   // Direct tab navigating
   const navigateToTab = (tabId: string) => {
+    if (isGlobalVoiceRecordingActive()) {
+      if (!window.confirm("Dictation is still recording. Discard it and leave?")) {
+        return;
+      }
+    }
     setActiveTab(tabId as any);
     setSelectedCaseId(null);
     setCaseSheetInitialTab(null);
@@ -7070,19 +7086,24 @@ const handleSignOut = async () => {
               >
                 <X className="w-4 h-4" />
               </button>
-              <div className="flex items-center gap-2 mb-1.5">
-                <Sparkles className="w-4 h-4 text-emerald-400 animate-pulse" />
-                <span className="text-[10px] font-mono tracking-widest font-extrabold uppercase bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded-full border border-emerald-500/30">
-                  {isHigherVersion(remoteVersion, APP_VERSION) ? "Update Available" : `Release Notes v${APP_VERSION}`}
-                </span>
+              <div className="flex items-center gap-3 mb-2">
+                <img src="/icon-192.png" alt="ErMate" className="w-10 h-10 object-contain rounded-xl bg-white p-0.5 shadow-sm shrink-0" />
+                <div>
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <Sparkles className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
+                    <span className="text-[10px] font-mono tracking-widest font-extrabold uppercase bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded-full border border-emerald-500/30">
+                      {isHigherVersion(remoteVersion, APP_VERSION) ? "Update Available" : `Release Notes v${APP_VERSION}`}
+                    </span>
+                  </div>
+                  <h2 className="text-sm font-extrabold tracking-tight text-white font-sans">
+                    {isHigherVersion(remoteVersion, APP_VERSION) ? (
+                      <span>⚡ ErMate v{remoteVersion} Update</span>
+                    ) : (
+                      <span>⚡ What's New in ErMate v{APP_VERSION}</span>
+                    )}
+                  </h2>
+                </div>
               </div>
-              <h2 className="text-base font-extrabold tracking-tight text-white font-sans flex items-center gap-1.5">
-                {isHigherVersion(remoteVersion, APP_VERSION) ? (
-                  <span>⚡ ErMate v{remoteVersion} Update Available (Installed: v{APP_VERSION})</span>
-                ) : (
-                  <span>⚡ What's New in ErMate v{APP_VERSION}</span>
-                )}
-              </h2>
             </div>
 
             {/* Updates Body */}

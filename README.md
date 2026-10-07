@@ -89,13 +89,25 @@ ErMate implements **Local On-The-Fly PHI De-identification** hosted on Indian Cl
 - **Same-Case Pending Scribe Pass-Through**: When discussing a case with active unapplied Scribe dictation, unapplied fields are passed as `pendingClinicalContext` labeled `PENDING CLINICIAN DICTATION — NOT YET APPLIED TO CASE SHEET`. Enables conversational assistance without mutating `ClinicalCase` or asserting unconfirmed facts as legal chart records.
 - **Request Resilience & Bounded Lifecycle**: All Discuss and Scribe network requests enforce 25s/30s client `AbortController` timeouts and bounded server failovers (Claude Sonnet primary → OpenAI fallback). Loading state is unconditionally reset in `finally` across all success, error, timeout, and stale generation paths, permanently resolving indefinite spinner locks. If both providers fail, displays a calm retry notice (`"I couldn't complete that response right now. Please try again."`) without leaking API or provider internals.
 
-### 7. Global Header, Refresh & Notification Lifecycle Engine
-- **Streamlined Clinical Shell (`src/components/GlobalHeader.tsx`)**: Compact, un-cluttered header featuring ErMate logo, single-line truncated workplace context (`Rajagiri Emergency`), global search, compact refresh icon (`↻`), actionable notification bell, and circular profile avatar. Moved team license badge, subscription plan, app version, dark mode toggle, and doctor name text into the Profile Menu and More settings.
-- **Deterministic Global Refresh (`src/components/shared/GlobalRefreshButton.tsx`)**: Icon-only button (`↻`) with 8-second safety timeout, animated spinning feedback during refresh, brief green check indicator on success, and automatic reset to idle. Never spins indefinitely. Preserves unsaved clinical work with explicit modal prompt if Case Sheet is dirty, and warns if audio dictation is running.
-- **Actionable Notification Lifecycle**: Three strict states: UNREAD (increments bell badge count), READ BUT PENDING ACTION (zero badge impact, visible in Active tab), and COMPLETED/RESOLVED (removed from active list, archived in History tab). Auto-resolves alerts upon shift handover acknowledgement, team member approval, or case sheet finalization.
-- **Context & Route Preservation**: Preserves active routes, selected cases, active tabs, and clinician credentials without resetting in-memory UI navigation.
+### 8. Inline Unlimited Dictation Recorder (`src/components/shared/VoiceRecorder.tsx`)
+- **ChatGPT / WhatsApp Style Composer UX**: Completely replaced legacy centered popups and screen-blocking modals with a clean, inline composer-integrated dictation bar.
+  - **Idle State**: `[ + ] Type clinical details / questions...     🎙    ➤` (Quick actions button for clinical lenses and report attachments, clean input textarea, subtle mic button, and responsive send button).
+  - **Recording State**: `[ 🗑 ]  01:42   ▂▅▃▇▅▂▆   Listening…   [ Pause ] [ ✓ ]` (Fills bottom composer, trash button discards, tabular monospace timer counts continuously, animated waveform visualizer in ErMate teal/cyan/indigo colors, subtle red pulse indicator, pause/resume toggle, and emerald Done button).
+  - **Paused State**: `[ 🗑 ]  01:42   waveform paused   Paused   [ Resume ] [ ✓ ]`.
+  - **Processing State**: `[ spinner ] Finalizing dictation…` (Seamlessly finalizes transcription and restores normal composer).
+- **Unbounded Recording Duration**: Zero artificial client-side recording limits. Supports practical multi-minute ER dictations (1, 3, 5, 10+ minutes) without auto-stop timers. Clinician maintains full manual control to finish (`Done`) or cancel (`Discard`).
+- **Strict Distinction: Recording Length vs Post-Dictation API Timeout**:
+  - Voice recording is unbounded and user-controlled.
+  - Upstream Sarvam transcription streams continuously via real-time WebSocket with bounded closure finalization.
+  - Post-dictation extraction and reasoning (`/api/scribe-chat`) enforces a bounded 30-second `AbortController` network timeout with calm retry handling.
+- **Screen & Application Lifecycle Safety**:
+  - Automatically requests screen Wake Lock on recording start and releases on completion or discard.
+  - Guards against accidental work loss during active recording: navigating away, switching cases, or tab switching prompts an explicit confirmation (`"Dictation is still recording. Discard it and leave?"`).
+- **Memory Safety & Duplicate Finalization Protection**:
+  - Immediate disposal of raw in-memory audio chunks upon finalization, discard, or batch fallback to prevent memory growth during long dictations.
+  - Preserved `finalSubmissionSentRef` guard preventing double-finalization across concurrent WebSocket `session_end` and `closed` events.
 
-### 7. MATE Core Foundation & Universal Controller (`src/mate/`)
+### 9. MATE Core Foundation & Universal Controller (`src/mate/`)
 - **Canonical Bed Model (`src/mate/mateBedModel.ts`)**: Generates physical ER location namespace (base bed numbers + `A`/`B` subdivisions) with normalizers and boundary checks.
 - **Case Reference Resolver (`src/mate/mateCaseResolver.ts`)**: Resolves explicit spoken/text bed references against active cases with fail-closed safety semantics (`RESOLVED`, `CURRENT_CASE`, `NOT_FOUND`, `AMBIGUOUS`).
 - **Display-ID Case Resolver (`src/mate/mateCaseDisplayResolver.ts`)**: Resolves 9-digit monotonic daily display numbers (`261006004`) and legacy numbers (`C-xxxx`) deterministically against active records without confusing display numbers with internal collision-resistant UUIDs.

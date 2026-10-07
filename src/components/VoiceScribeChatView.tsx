@@ -16,7 +16,7 @@ import {
   getDiscussionHistory,
 } from "../services/scribeChatStorage";
 import { resolveWorkspaceForUser } from "../utils/workspaceResolver";
-import VoiceRecorder from "./shared/VoiceRecorder";
+import VoiceRecorder, { isGlobalVoiceRecordingActive } from "./shared/VoiceRecorder";
 import Markdown from "react-markdown";
 import { getChecklistForKind, type CaseSheetKind } from "../../server/caseSheetChecklist";
 import { ScribeReasoningRenderer } from "./ScribeReasoningRenderer";
@@ -823,6 +823,7 @@ export default function VoiceScribeChatView({
     initialPrefill?: any;
     messageId?: string;
   } | null>(null);
+  const [isVoiceRecordingActive, setIsVoiceRecordingActive] = useState<boolean>(false);
 
   // Active case ID: starts null for new unlinked dictation chats, or populated if a case already exists
   const [activeCaseId, setActiveCaseId] = useState<string | null>(() => {
@@ -1426,7 +1427,21 @@ export default function VoiceScribeChatView({
     }
   };
 
+  const handleSafeBack = () => {
+    if (isVoiceRecordingActive || isGlobalVoiceRecordingActive()) {
+      if (!window.confirm("Dictation is still recording. Discard it and leave?")) {
+        return;
+      }
+    }
+    onBack();
+  };
+
   const handleStartNewChat = async () => {
+    if (isVoiceRecordingActive || isGlobalVoiceRecordingActive()) {
+      if (!window.confirm("Dictation is still recording. Discard it and leave?")) {
+        return;
+      }
+    }
     const user = auth.currentUser;
     if (!user) return;
     try {
@@ -2527,7 +2542,7 @@ export default function VoiceScribeChatView({
           </div>
         ) : (
           <div className="flex items-center gap-2.5">
-            <button onClick={onBack} className="p-1.5 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-lg text-slate-500 font-bold flex items-center gap-1 cursor-pointer">
+            <button onClick={handleSafeBack} className="p-1.5 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-lg text-slate-500 font-bold flex items-center gap-1 cursor-pointer">
               <ArrowLeft size={16} /> Back
             </button>
             <div>
@@ -2565,7 +2580,7 @@ export default function VoiceScribeChatView({
           {isSidecar ? (
             <button
               type="button"
-              onClick={onBack}
+              onClick={handleSafeBack}
               className="p-1.5 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-lg text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 transition-all cursor-pointer"
               title="Close MATE"
               aria-label="Close"
@@ -2903,76 +2918,88 @@ export default function VoiceScribeChatView({
           </>
         )}
 
-        <div className="flex flex-wrap sm:flex-nowrap items-center gap-2">
-          {/* Left Controls */}
-          <div className="flex items-center gap-1 order-2 sm:order-1">
-            <button
-              type="button"
-              onClick={() => setShowLensMenu(v => !v)}
-              className="p-2.5 rounded-full text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all cursor-pointer shrink-0"
-              title="Clinical lenses"
-            >
-              <MoreVertical size={18} />
-            </button>
+        <div className="relative flex items-center gap-1.5 sm:gap-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-2 sm:p-2.5 shadow-sm focus-within:ring-1 focus-within:ring-indigo-500">
+          {!isVoiceRecordingActive && (
+            <>
+              {/* Left Controls [ + ] */}
+              <div className="relative shrink-0 flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => setShowLensMenu(v => !v)}
+                  className="p-2 sm:p-2.5 rounded-full text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all cursor-pointer flex items-center justify-center shrink-0 w-9 h-9 sm:w-10 sm:h-10"
+                  title="Clinical lenses & actions"
+                  id="composer-plus-btn"
+                >
+                  <Plus size={18} />
+                </button>
 
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={isUploadingAttachment}
-              className="p-2.5 rounded-full text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all cursor-pointer shrink-0 disabled:opacity-40"
-              title="Attach an image (PDF/Word not yet supported)"
-            >
-              <Paperclip size={18} />
-            </button>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*,.pdf,.doc,.docx"
-              onChange={handleAttachmentSelected}
-              className="hidden"
-            />
-          </div>
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={isUploadingAttachment}
+                  className="p-2 sm:p-2.5 rounded-full text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all cursor-pointer shrink-0 disabled:opacity-40"
+                  title="Attach an image"
+                >
+                  <Paperclip size={18} />
+                </button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*,.pdf,.doc,.docx"
+                  onChange={handleAttachmentSelected}
+                  className="hidden"
+                />
+              </div>
 
-          {/* Textarea */}
-          <div className="flex-1 flex min-w-0 w-full order-1 sm:order-2 basis-full sm:basis-auto">
-            <textarea
-              ref={inputTextareaRef}
-              value={inputText}
-              onChange={(e) => setInputText(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  if (inputText.trim() && !isSending) {
-                    sendToChat(inputText);
-                  }
+              {/* Textarea */}
+              <div className="flex-1 flex min-w-0 w-full">
+                <textarea
+                  ref={inputTextareaRef}
+                  value={inputText}
+                  onChange={(e) => setInputText(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      if (inputText.trim() && !isSending) {
+                        sendToChat(inputText);
+                      }
+                    }
+                  }}
+                  placeholder={currentMode === "discuss" ? "Ask anything about this case..." : "Type clinical details / questions..."}
+                  disabled={isSending}
+                  rows={1}
+                  className="flex-1 w-full bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2 text-xs text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:opacity-50 resize-none overflow-y-auto leading-relaxed"
+                  style={{ maxHeight: "160px" }}
+                />
+              </div>
+            </>
+          )}
+
+          {/* Voice Recorder (inline-composer mode) */}
+          <VoiceRecorder
+            renderMode="inline-composer"
+            onTranscript={sendToChat}
+            onRecordingStateChange={setIsVoiceRecordingActive}
+            disabled={isSending}
+            className={isVoiceRecordingActive ? "w-full" : "shrink-0"}
+          />
+
+          {!isVoiceRecordingActive && (
+            /* Send Button */
+            <button
+              onClick={() => {
+                if (inputText.trim() && !isSending) {
+                  sendToChat(inputText);
                 }
               }}
-              placeholder={currentMode === "discuss" ? "Ask anything about this case..." : "Type clinical details / questions..."}
-              disabled={isSending}
-              rows={1}
-              className="flex-1 w-full bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2 text-xs text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:opacity-50 resize-none overflow-y-auto leading-relaxed"
-              style={{ maxHeight: "160px" }}
-            />
-          </div>
-
-          {/* Right Controls */}
-          <div className="flex items-center shrink-0 order-3 sm:order-3 ml-auto sm:ml-0">
-            {inputText.trim() ? (
-              <button
-                onClick={() => sendToChat(inputText)}
-                disabled={isSending}
-                className="p-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white rounded-full cursor-pointer shadow-md transition-all flex items-center justify-center shrink-0 w-10 h-10"
-              >
-                <Send size={16} className="mr-0.5" />
-              </button>
-            ) : (
-              <VoiceRecorder
-                renderMode="compact-button"
-                onTranscript={sendToChat}
-                disabled={isSending}
-              />
-            )}
-          </div>
+              disabled={!inputText.trim() || isSending}
+              className="p-2 sm:p-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-30 disabled:cursor-not-allowed text-white rounded-full cursor-pointer shadow-md transition-all flex items-center justify-center shrink-0 w-9 h-9 sm:w-10 sm:h-10"
+              title="Send message"
+              id="send-message-btn"
+            >
+              <Send size={16} className="mr-0.5" />
+            </button>
+          )}
         </div>
       </div>
 

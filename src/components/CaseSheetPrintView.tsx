@@ -1279,9 +1279,12 @@ export default function CaseSheetPrintView({
 
       <div className="case-sheet-print max-w-3xl mx-auto bg-white shadow-md print:shadow-none px-8 py-8 my-6 print:my-0 text-slate-900 border border-slate-200 print:border-none rounded-xl print:rounded-none">
         <div className="flex items-center justify-between border-b-2 border-black pb-3 mb-4">
-          <div>
-            <h1 className="text-lg font-black uppercase tracking-wide">{hospitalName}</h1>
-            <p className="text-xs font-semibold tracking-widest uppercase text-slate-600 print:text-black">Emergency Department — Case Sheet{data.isMlc ? " · MLC CASE" : ""}</p>
+          <div className="flex items-center gap-3">
+            <img src="/icon-192.png" alt="ErMate" className="w-10 h-10 object-contain rounded-lg shrink-0" />
+            <div>
+              <h1 className="text-lg font-black uppercase tracking-wide">{hospitalName}</h1>
+              <p className="text-xs font-semibold tracking-widest uppercase text-slate-600 print:text-black">Emergency Department — Case Sheet{data.isMlc ? " · MLC CASE" : ""}</p>
+            </div>
           </div>
           <div className="text-right text-xs font-mono">
             <div className="font-bold">Case ID: {data.caseId}</div>

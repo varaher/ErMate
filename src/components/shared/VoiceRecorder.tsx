@@ -1,6 +1,5 @@
 import React, { useState, useRef, useEffect } from "react";
-import { createPortal } from "react-dom";
-import { Mic, Trash2, Pause, Play, Check, AlertTriangle, RefreshCw, WifiOff } from "lucide-react";
+import { Mic, Trash2, Pause, Play, Check, AlertTriangle, RefreshCw } from "lucide-react";
 
 // Global active recording state tracking across any VoiceRecorder instances
 let globalActiveRecorders = 0;
@@ -22,7 +21,7 @@ export interface VoiceRecorderProps {
   onTranscript: (transcript: string) => void;
   onError?: (error: string) => void;
   onRecordingStateChange?: (isRecording: boolean) => void;
-  renderMode?: "inline-bubble" | "compact-button";
+  renderMode?: "inline-composer" | "inline-bubble" | "compact-button";
   languageCode?: string;
   disabled?: boolean;
   className?: string;
@@ -71,8 +70,8 @@ export default function VoiceRecorder({
   const accumulatedRef = useRef<string>("");
 
   useEffect(() => {
-    onRecordingStateChange?.(isRecording);
-  }, [isRecording, onRecordingStateChange]);
+    onRecordingStateChange?.(isRecording || isPaused || isTranscribing || isInitializing);
+  }, [isRecording, isPaused, isTranscribing, isInitializing, onRecordingStateChange]);
 
   useEffect(() => {
     const isBusy = isRecording || isTranscribing;
@@ -88,6 +87,19 @@ export default function VoiceRecorder({
     };
   }, [isRecording, isTranscribing]);
 
+  // Tab unload protection while recording is active
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (isRecording || isPaused) {
+        e.preventDefault();
+        e.returnValue = "Dictation is still recording. Discard it and leave?";
+        return e.returnValue;
+      }
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [isRecording, isPaused]);
+
   useEffect(() => {
     return () => {
       clearInterval(timerRef.current);
@@ -95,6 +107,7 @@ export default function VoiceRecorder({
       if (wsRef.current) {
          wsRef.current.close();
       }
+      releaseWakeLock();
     };
   }, []);
 
@@ -212,6 +225,13 @@ export default function VoiceRecorder({
   };
 
   const startRecording = async () => {
+    if (isGlobalVoiceRecordingActive() && !isRecording) {
+      if (!window.confirm("Dictation is still recording. Discard it and leave?")) {
+        setIsInitializing(false);
+        return;
+      }
+    }
+
     setMicError(null);
     setIsInitializing(true);
     setAccumulatedFinalText("");
@@ -272,7 +292,6 @@ export default function VoiceRecorder({
 
       recorder.ondataavailable = (e) => {
         if (e.data.size > 0) {
-          // Always save for fallback
           audioChunksRef.current.push(e.data);
           totalBytesRef.current += e.data.size;
           
@@ -339,13 +358,14 @@ export default function VoiceRecorder({
         }
       };
 
-      // 250ms chunks are ideal for near real-time streaming
+      // 250ms chunks for near real-time streaming
       recorder.start(250);
       await requestWakeLock();
       setIsInitializing(false);
       setIsRecording(true);
       setIsPaused(false);
 
+      // Unbounded recording timer: counts indefinitely up until user chooses Done or Discard
       timerRef.current = setInterval(() => {
         secondsRef.current += 1;
         setRecordingSeconds(secondsRef.current);
@@ -416,7 +436,11 @@ export default function VoiceRecorder({
     releaseWakeLock();
     setIsRecording(false);
     setIsPaused(false);
+    setIsTranscribing(false);
+    setIsInitializing(false);
     audioChunksRef.current = [];
+    accumulatedRef.current = "";
+    totalBytesRef.current = 0;
     setMicError(null);
   };
 
@@ -428,12 +452,10 @@ export default function VoiceRecorder({
     }
     
     // Stop the media recorder FIRST. This triggers recorder.onstop.
-    // Inside onstop, we will handle sending stop_dictation if the WS is open.
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
       setIsTranscribing(true);
       mediaRecorderRef.current.stop();
     } else {
-      // If it's already inactive for some reason, directly trigger cleanup
       setIsTranscribing(true);
       if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN && !useFallbackBatch) {
          wsRef.current.send(JSON.stringify({ action: "stop_dictation" }));
@@ -456,12 +478,13 @@ export default function VoiceRecorder({
   const finalizeTranscription = () => {
     if (finalSubmissionSentRef.current) return;
     finalSubmissionSentRef.current = true;
-    // Collect what we have, append partial if it was abruptly stopped
     let finalStr = accumulatedRef.current;
     if (currentPartialText) {
        finalStr += (finalStr ? " " : "") + currentPartialText.trim();
     }
     setIsTranscribing(false);
+    setIsRecording(false);
+    setIsPaused(false);
     
     if (finalStr.trim().length > 0) {
        onTranscript(finalStr.trim());
@@ -477,6 +500,8 @@ export default function VoiceRecorder({
           onError?.("No speech detected.");
        }
     }
+    // Clean up in-memory raw audio chunks immediately
+    audioChunksRef.current = [];
   };
 
   const transcribeAudioBatch = async (audioBlob: Blob, mimeType: string) => {
@@ -494,7 +519,6 @@ export default function VoiceRecorder({
         ? "wav"
         : "webm";
       formData.append("file", audioBlob, `dictation.${ext}`);
-      // We pass translation intention to batch backend as well
       formData.append("language_code", "auto"); 
       formData.append("mode", transcriptionMode);
 
@@ -516,6 +540,8 @@ export default function VoiceRecorder({
       }
 
       setIsTranscribing(false);
+      setIsRecording(false);
+      setIsPaused(false);
       onTranscript(data.transcript);
     } catch (err: any) {
       console.error("[VoiceRecorder] Transcription error:", err);
@@ -523,161 +549,218 @@ export default function VoiceRecorder({
       setMicError(errMsg);
       onError?.(errMsg);
       setIsTranscribing(false);
+      setIsRecording(false);
+      setIsPaused(false);
+    } finally {
+      audioChunksRef.current = [];
     }
   };
 
   const liveText = (accumulatedFinalText + (currentPartialText ? (accumulatedFinalText ? " " : "") + currentPartialText : "")).trim();
 
-  const renderRecordingOverlay = () => {
-    if (!isRecording) return null;
-    return createPortal(
-      <div className="fixed bottom-6 left-1/2 -translate-x-1/2 w-[calc(100%-2rem)] max-w-sm z-[100000]">
-        <div className="p-4 bg-slate-900 text-white rounded-2xl border border-indigo-500/50 shadow-2xl space-y-3 animate-in slide-in-from-bottom-4 flex flex-col max-h-[60vh]">
-          <div className="flex items-center justify-between shrink-0">
-            <div className="flex items-center gap-2">
-              <span className="relative flex h-3 w-3">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75" />
-                <span className="relative inline-flex rounded-full h-3 w-3 bg-rose-500" />
-              </span>
-              <span className="text-xs font-black uppercase tracking-wider text-rose-400 flex items-center gap-2">
-                {isPaused ? "RECORDING PAUSED" : "RECORDING DICTATION"}
-                {useFallbackBatch && <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 text-[9px] border border-amber-500/50">BATCH</span>}
-              </span>
-            </div>
-            <span className="text-sm font-mono font-bold text-emerald-400 bg-slate-800 px-2.5 py-0.5 rounded-lg border border-slate-700">
-              {formatTime(recordingSeconds)}
-            </span>
-          </div>
-          
-          {/* Audio Waveform Visualizer Simulation */}
-          <div className="flex items-center justify-center gap-1.5 py-2 shrink-0">
-            {[...Array(20)].map((_, i) => (
+  // ─────────────────────────────────────────────────────────────────────────────
+  // 1. INLINE COMPOSER RENDER MODE (ChatGPT / WhatsApp Style)
+  // ─────────────────────────────────────────────────────────────────────────────
+  if (renderMode === "inline-composer") {
+    // A. Initializing state
+    if (isInitializing) {
+      return (
+        <div className={`w-full flex items-center justify-center gap-2.5 px-3 py-2.5 bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl select-none animate-pulse ${className}`}>
+          <RefreshCw size={14} className="animate-spin text-indigo-500 shrink-0" />
+          <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">Connecting microphone…</span>
+        </div>
+      );
+    }
+
+    // B. Finalizing / Transcribing state
+    if (isTranscribing) {
+      return (
+        <div
+          className={`w-full flex items-center justify-center gap-2.5 px-3 py-2.5 bg-indigo-50/80 dark:bg-slate-900 border border-indigo-200/80 dark:border-indigo-900/60 rounded-2xl select-none animate-pulse ${className}`}
+          id="voice-finalizing-bar"
+        >
+          <RefreshCw size={15} className="animate-spin text-indigo-600 dark:text-indigo-400 shrink-0" />
+          <span className="text-xs font-bold text-indigo-700 dark:text-indigo-300">Finalizing dictation…</span>
+        </div>
+      );
+    }
+
+    // C. Active Recording or Paused state (Full Inline Composer Layout)
+    if (isRecording || isPaused) {
+      return (
+        <div
+          className={`w-full flex items-center justify-between gap-2 sm:gap-3 px-3 py-2 ${
+            isPaused
+              ? "bg-slate-100/95 dark:bg-slate-900 border border-amber-300/60 dark:border-amber-800/60"
+              : "bg-slate-100/90 dark:bg-slate-900 border border-slate-200 dark:border-slate-800"
+          } rounded-2xl shadow-inner select-none transition-all ${className}`}
+          id="voice-inline-composer-bar"
+        >
+          {/* [ 🗑 Discard ] */}
+          <button
+            type="button"
+            onClick={(e) => { e.preventDefault(); discardRecording(); }}
+            className="p-2 rounded-xl text-slate-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors cursor-pointer shrink-0"
+            title="Discard dictation"
+            id="voice-discard-btn"
+            aria-label="Discard dictation"
+          >
+            <Trash2 size={16} />
+          </button>
+
+          {/* Timer: 01:42 (Monospace, counts without limit) */}
+          <span
+            className="font-mono font-bold text-xs sm:text-sm text-slate-800 dark:text-slate-100 shrink-0 tabular-nums"
+            id="voice-timer"
+          >
+            {formatTime(recordingSeconds)}
+          </span>
+
+          {/* Subtle Audio Waveform Visualizer */}
+          <div className="flex items-center gap-1 shrink-0 px-1" id="voice-waveform">
+            {[...Array(12)].map((_, i) => (
               <div
                 key={i}
-                className="w-[3px] bg-gradient-to-t from-indigo-500 to-emerald-400 rounded-full"
+                className={`w-[2.5px] rounded-full transition-all ${
+                  isPaused
+                    ? "h-2 bg-slate-400/50"
+                    : "bg-gradient-to-t from-teal-400 via-cyan-500 to-indigo-600"
+                }`}
                 style={{
-                  height: isPaused ? "4px" : `${6 + (i % 5) * 4}px`,
+                  height: isPaused ? "8px" : `${6 + ((i * 3) % 10) + 4}px`,
                   animation: isPaused
                     ? "none"
-                    : `pulse 0.6s ease-in-out ${i * 0.05}s infinite alternate`,
+                    : `pulse 0.5s ease-in-out ${i * 0.04}s infinite alternate`
                 }}
               />
             ))}
           </div>
 
-          {/* Live Transcript Display */}
-          <div className="flex-1 overflow-y-auto min-h-[4rem] bg-slate-950 rounded-xl p-3 border border-slate-800 shadow-inner">
-             {liveText ? (
-                <p className="text-sm font-medium text-slate-300 leading-relaxed">
-                   {accumulatedFinalText && <span className="text-slate-100">{accumulatedFinalText} </span>}
-                   {currentPartialText && <span className="text-indigo-300 animate-pulse">{currentPartialText}</span>}
-                </p>
-             ) : (
-                <div className="h-full flex items-center justify-center text-slate-600 text-xs font-semibold italic">
-                   {useFallbackBatch ? "Listening... (Live transcript unavailable in batch mode)" : "Listening..."}
-                </div>
-             )}
+          {/* Status or Live Transcript Preview */}
+          <div className="flex-1 min-w-0 px-1 truncate text-xs text-slate-500 dark:text-slate-400" id="voice-status-text">
+            {isPaused ? (
+              <span className="font-semibold text-amber-600 dark:text-amber-400">Paused</span>
+            ) : liveText ? (
+              <span className="text-slate-700 dark:text-slate-300 italic truncate block">"{liveText}"</span>
+            ) : (
+              <span className="flex items-center gap-1.5 font-medium">
+                <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping inline-block shrink-0" />
+                Listening…
+              </span>
+            )}
           </div>
 
-          <div className="grid grid-cols-3 gap-2 shrink-0 pt-1">
-            <button
-              type="button"
-              onClick={(e) => { e.preventDefault(); discardRecording(); }}
-              className="flex flex-col items-center gap-1 py-2 rounded-lg bg-rose-950/50 hover:bg-rose-950/70 text-rose-400 border border-rose-800/50 transition-colors cursor-pointer"
-            >
-              <Trash2 size={14} />
-              <span className="text-[9px] font-bold uppercase">Discard</span>
-            </button>
+          {/* Action Buttons: [ Pause / Resume ] [ ✓ Done ] */}
+          <div className="flex items-center gap-1.5 shrink-0">
             <button
               type="button"
               onClick={(e) => { e.preventDefault(); togglePause(); }}
-              className={`flex flex-col items-center gap-1 py-2 rounded-lg border transition-colors cursor-pointer ${
+              className={`px-2.5 py-1.5 text-xs font-semibold rounded-xl border transition-colors cursor-pointer flex items-center gap-1 ${
                 isPaused
-                  ? "bg-emerald-950/50 hover:bg-emerald-950/70 text-emerald-400 border-emerald-800/50"
-                  : "bg-amber-950/50 hover:bg-amber-950/70 text-amber-400 border-amber-800/50"
+                  ? "text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/60 hover:bg-emerald-100 border-emerald-300 dark:border-emerald-800"
+                  : "text-slate-700 dark:text-slate-300 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-750 border-slate-200 dark:border-slate-700"
               }`}
+              title={isPaused ? "Resume dictation" : "Pause dictation"}
+              id={isPaused ? "voice-resume-btn" : "voice-pause-btn"}
             >
-              {isPaused ? <Play size={14} /> : <Pause size={14} />}
-              <span className="text-[9px] font-bold uppercase">{isPaused ? "Resume" : "Pause"}</span>
+              {isPaused ? <Play size={13} /> : <Pause size={13} />}
+              <span className="inline">{isPaused ? "Resume" : "Pause"}</span>
             </button>
+
             <button
               type="button"
               onClick={(e) => { e.preventDefault(); finishRecording(); }}
-              className="flex flex-col items-center gap-1 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold transition-colors cursor-pointer shadow-[0_0_15px_rgba(16,185,129,0.3)]"
+              className="px-3 py-1.5 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 rounded-xl shadow-xs transition-colors cursor-pointer flex items-center gap-1 shrink-0"
+              title="Finish dictation"
+              id="voice-done-btn"
             >
               <Check size={14} />
-              <span className="text-[9px] font-bold uppercase">Done</span>
+              <span className="inline">Done</span>
             </button>
           </div>
         </div>
-      </div>,
-      document.body
-    );
-  };
+      );
+    }
 
+    // D. Idle State (Compact Mic Button in the Composer)
+    return (
+      <div className={`relative inline-flex items-center ${className}`}>
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            startRecording();
+          }}
+          className="p-2.5 rounded-full text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-slate-800 hover:bg-indigo-100 dark:hover:bg-slate-700 transition-all cursor-pointer flex items-center justify-center shrink-0 w-10 h-10 shadow-xs"
+          title="Start voice dictation (Unlimited duration)"
+          id="voice-start-btn"
+        >
+          <Mic size={18} />
+        </button>
+
+        {micError && (
+          <div className="absolute bottom-full right-0 mb-2 z-50 p-2.5 bg-rose-600 text-white text-[11px] font-bold rounded-xl shadow-xl whitespace-normal w-52 text-left flex items-start gap-1.5 border border-rose-500/50">
+            <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+            <div className="flex-1 leading-tight">{micError}</div>
+            <button onClick={() => setMicError(null)} className="p-0.5 text-rose-200 hover:text-white cursor-pointer shrink-0">
+              ×
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // 2. INLINE BUBBLE RENDER MODE (Standalone Full-Width Box)
+  // ─────────────────────────────────────────────────────────────────────────────
   if (renderMode === "inline-bubble") {
     return (
       <div className={`w-full ${className}`}>
-        {!isRecording && !isTranscribing && !isInitializing && (
-          <div className="mb-2 flex items-center justify-center bg-slate-100 dark:bg-slate-800 rounded-lg p-1 border border-slate-200 dark:border-slate-700">
+        {isRecording || isPaused ? (
+          <div className="w-full flex items-center justify-between gap-2.5 px-3 py-2.5 bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-inner">
             <button
               type="button"
-              onClick={(e) => { e.preventDefault(); setTranscriptionMode("transcribe"); }}
-              className={`flex-1 px-3 py-1.5 text-xs font-bold uppercase rounded-md transition-colors ${transcriptionMode === "transcribe" ? "bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-300 shadow-sm" : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"}`}
+              onClick={discardRecording}
+              className="p-2 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-xl"
+              title="Discard dictation"
             >
-              Standard
+              <Trash2 size={16} />
+            </button>
+            <span className="font-mono font-bold text-xs text-slate-800 dark:text-slate-100">
+              {formatTime(recordingSeconds)}
+            </span>
+            <div className="flex-1 min-w-0 px-2 truncate text-xs text-slate-500">
+              {isPaused ? "Paused" : liveText || "Listening…"}
+            </div>
+            <button
+              type="button"
+              onClick={togglePause}
+              className="px-2.5 py-1 text-xs font-semibold rounded-lg border bg-white dark:bg-slate-800"
+            >
+              {isPaused ? "Resume" : "Pause"}
             </button>
             <button
               type="button"
-              onClick={(e) => { e.preventDefault(); setTranscriptionMode("translate"); }}
-              className={`flex-1 px-3 py-1.5 text-xs font-bold uppercase rounded-md transition-colors ${transcriptionMode === "translate" ? "bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-300 shadow-sm" : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"}`}
+              onClick={finishRecording}
+              className="px-3 py-1 text-xs font-bold text-white bg-emerald-600 rounded-lg"
             >
-              Smart
+              Done
             </button>
           </div>
-        )}
-        {isRecording && renderRecordingOverlay()}
-        {micError && (
-          <div className="mb-2 p-2 bg-rose-50 dark:bg-rose-950/40 border border-rose-300 dark:border-rose-800 rounded-xl text-xs text-rose-700 dark:text-rose-300 flex items-center justify-between gap-2">
-            <span className="flex items-center gap-1.5">
-              <AlertTriangle size={14} /> {micError}
-            </span>
-            <button
-              onClick={() => setMicError(null)}
-              className="text-xs font-bold text-rose-500 hover:underline"
-            >
-              Dismiss
-            </button>
-          </div>
-        )}
-        {isTranscribing ? (
-          <div className="p-4 bg-indigo-50 dark:bg-slate-900 border border-indigo-200 dark:border-indigo-950 rounded-2xl flex items-center justify-center gap-3 text-indigo-700 dark:text-indigo-300 font-bold text-xs animate-pulse">
-            <RefreshCw size={18} className="animate-spin" />
-            Transcribing dictation with ErMate...
-          </div>
-        ) : isRecording ? (
-          <div className="p-4 bg-slate-900 text-white rounded-2xl border border-indigo-500/50 shadow-2xl flex items-center justify-center gap-3 font-bold text-xs">
-            <span className="relative flex h-3 w-3">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75" />
-              <span className="relative inline-flex rounded-full h-3 w-3 bg-rose-500" />
-            </span>
-            <span>Recording...</span>
-          </div>
-        ) : isInitializing ? (
-          <div className={`w-full py-3 px-4 bg-slate-200 dark:bg-slate-800 text-slate-500 rounded-2xl font-bold text-xs flex items-center justify-center gap-2 shadow-md ${className}`}>
+        ) : isTranscribing ? (
+          <div className="p-3 bg-indigo-50 dark:bg-slate-900 border border-indigo-200 dark:border-indigo-950 rounded-2xl flex items-center justify-center gap-3 text-indigo-700 dark:text-indigo-300 font-bold text-xs animate-pulse">
             <RefreshCw size={16} className="animate-spin" />
-            <span>Waiting for microphone...</span>
+            Finalizing dictation…
           </div>
         ) : (
           <button
             type="button"
             disabled={disabled}
-            onClick={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              startRecording();
-            }}
-            className={`w-full py-3 px-4 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 disabled:opacity-50 text-white rounded-2xl font-bold text-xs flex items-center justify-center gap-2 shadow-md transition-all cursor-pointer ${className}`}
+            onClick={startRecording}
+            className={`w-full py-2.5 px-4 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 disabled:opacity-50 text-white rounded-xl font-bold text-xs flex items-center justify-center gap-2 shadow-sm transition-all cursor-pointer`}
           >
             <Mic size={16} />
             <span>{buttonLabel || "Start Voice Dictation"}</span>
@@ -687,27 +770,54 @@ export default function VoiceRecorder({
     );
   }
 
+  // ─────────────────────────────────────────────────────────────────────────────
+  // 3. COMPACT BUTTON RENDER MODE (Form Inputs & Table Rows)
+  // ─────────────────────────────────────────────────────────────────────────────
   return (
     <div className={`relative inline-flex items-center ${className}`}>
-      {!isRecording && !isTranscribing && !isInitializing && (
-        <div className="mr-2 flex items-center bg-slate-100 dark:bg-slate-800 rounded-full p-0.5 border border-slate-200 dark:border-slate-700">
+      {/* Non-blocking Floating Mini-Recorder Pill during active recording */}
+      {(isRecording || isPaused) && (
+        <div className="absolute bottom-full mb-2 right-0 z-40 flex items-center gap-2 px-3 py-1.5 bg-slate-900 text-white rounded-xl shadow-xl border border-slate-700 whitespace-nowrap text-xs animate-in fade-in duration-150">
           <button
             type="button"
-            onClick={(e) => { e.preventDefault(); e.stopPropagation(); setTranscriptionMode("transcribe"); }}
-            className={`px-2 py-1 text-[9px] font-bold uppercase rounded-full transition-colors ${transcriptionMode === "transcribe" ? "bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-300 shadow-sm" : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"}`}
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); discardRecording(); }}
+            className="text-slate-400 hover:text-rose-400 p-0.5 transition-colors cursor-pointer"
+            title="Discard"
           >
-            Standard
+            <Trash2 size={13} />
+          </button>
+          <span className="font-mono font-bold text-[11px] text-emerald-400 tabular-nums">
+            {formatTime(recordingSeconds)}
+          </span>
+          <div className="flex items-center gap-0.5 px-0.5">
+            {[...Array(5)].map((_, i) => (
+              <div
+                key={i}
+                className={`w-0.5 rounded-full ${isPaused ? "h-1 bg-slate-500" : "bg-cyan-400 animate-pulse"}`}
+                style={{ height: isPaused ? "4px" : `${4 + (i % 3) * 3}px` }}
+              />
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); togglePause(); }}
+            className="text-slate-300 hover:text-white p-0.5 transition-colors cursor-pointer"
+            title={isPaused ? "Resume" : "Pause"}
+          >
+            {isPaused ? <Play size={13} /> : <Pause size={13} />}
           </button>
           <button
             type="button"
-            onClick={(e) => { e.preventDefault(); e.stopPropagation(); setTranscriptionMode("translate"); }}
-            className={`px-2 py-1 text-[9px] font-bold uppercase rounded-full transition-colors ${transcriptionMode === "translate" ? "bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-300 shadow-sm" : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"}`}
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); finishRecording(); }}
+            className="text-emerald-400 hover:text-emerald-300 p-0.5 font-bold transition-colors cursor-pointer"
+            title="Done"
           >
-            Smart
+            <Check size={14} />
           </button>
         </div>
       )}
-      {isRecording && renderRecordingOverlay()}
+
+      {/* Primary Mic Button */}
       <button
         type="button"
         disabled={disabled || isTranscribing || isInitializing}
@@ -716,7 +826,7 @@ export default function VoiceRecorder({
           e.stopPropagation();
           isRecording ? finishRecording() : startRecording();
         }}
-        className={`p-2 rounded-full min-w-10 min-h-10 justify-center transition-all cursor-pointer flex items-center gap-1.5 ${
+        className={`p-2 rounded-full min-w-9 min-h-9 justify-center transition-all cursor-pointer flex items-center gap-1.5 ${
           isTranscribing
             ? "bg-indigo-100 dark:bg-indigo-950/80 text-indigo-600 dark:text-indigo-400 border border-indigo-300"
             : isInitializing
@@ -727,23 +837,18 @@ export default function VoiceRecorder({
         }`}
         title={
           isTranscribing
-            ? "Transcribing with ErMate..."
+            ? "Finalizing dictation…"
             : isInitializing
-            ? "Waiting for microphone..."
+            ? "Connecting microphone…"
             : isRecording
-            ? "Click to finish dictation and transcribe"
+            ? "Click to finish dictation"
             : "Click to start voice dictation"
         }
       >
         {isTranscribing ? (
-          <>
-            <RefreshCw size={14} className="animate-spin" />
-            <span className="text-xs font-bold mr-1">Transcribing...</span>
-          </>
+          <RefreshCw size={14} className="animate-spin" />
         ) : isInitializing ? (
-          <>
-            <RefreshCw size={14} className="animate-spin" />
-          </>
+          <RefreshCw size={14} className="animate-spin" />
         ) : isRecording ? (
           <>
             <Mic size={14} className="animate-bounce" />
@@ -756,11 +861,12 @@ export default function VoiceRecorder({
           </>
         )}
       </button>
+
       {micError && (
-        <div className="absolute bottom-full right-0 mb-3 z-50 p-2.5 bg-rose-600 text-white text-[11px] font-bold rounded-lg shadow-xl whitespace-normal w-48 text-left flex items-start gap-1.5 border border-rose-500/50">
+        <div className="absolute bottom-full right-0 mb-2 z-50 p-2.5 bg-rose-600 text-white text-[11px] font-bold rounded-lg shadow-xl whitespace-normal w-48 text-left flex items-start gap-1.5 border border-rose-500/50">
           <AlertTriangle size={14} className="shrink-0 mt-0.5" />
           <div className="flex-1 leading-tight">{micError}</div>
-          <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); setMicError(null); }} className="p-1 -mt-1 -mr-1 text-rose-200 hover:text-white transition-colors cursor-pointer shrink-0">
+          <button onClick={() => setMicError(null)} className="p-1 -mt-1 -mr-1 text-rose-200 hover:text-white cursor-pointer shrink-0">
             ×
           </button>
         </div>

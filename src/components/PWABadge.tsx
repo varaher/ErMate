@@ -2,6 +2,7 @@
 import React from 'react';
 import { useRegisterSW } from 'virtual:pwa-register/react';
 import { RefreshCw, X } from 'lucide-react';
+import { ErMateLogo } from './shared/ErMateLogo';
 
 export default function PWABadge() {
   const {
@@ -21,9 +22,12 @@ export default function PWABadge() {
   return (
     <div className="fixed bottom-4 right-4 z-50 p-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl flex flex-col gap-3 animate-in fade-in slide-in-from-bottom-5">
       <div className="flex items-start justify-between gap-4">
-        <div>
-          <h3 className="text-sm font-bold text-slate-900 dark:text-white">Update Available</h3>
-          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">A new version of ErMate is ready.</p>
+        <div className="flex items-center gap-2.5">
+          <ErMateLogo variant="icon" size="sm" />
+          <div>
+            <h3 className="text-sm font-bold text-slate-900 dark:text-white">Update Available</h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">A new version of ErMate is ready.</p>
+          </div>
         </div>
         <button 
           onClick={() => setNeedRefresh(false)}

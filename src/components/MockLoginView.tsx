@@ -6,6 +6,7 @@ import {
   Key,
   Mail
 } from "lucide-react";
+import { ErMateLogo } from "./shared/ErMateLogo";
 
 import { UserProfile } from "../types";
 
@@ -524,14 +525,8 @@ export default function MockLoginView({
     >
       {/* Brand */}
       <div className="sm:mx-auto sm:w-full sm:max-w-md text-center space-y-2">
-        <div
-          className={`mx-auto h-12 w-12 ${
-            isEmerald
-              ? "bg-emerald-600"
-              : "bg-blue-600"
-          } rounded-2xl flex items-center justify-center shadow-lg`}
-        >
-          <Activity className="w-6 h-6 text-white" />
+        <div className="flex justify-center mb-1">
+          <ErMateLogo variant="icon" size="lg" className="rounded-2xl shadow-xl ring-4 ring-white/20 dark:ring-slate-800/60" />
         </div>
 
         <h1

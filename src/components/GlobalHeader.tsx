@@ -22,6 +22,7 @@ import {
   ChevronRight,
 } from "lucide-react";
 import { GlobalRefreshButton } from "./shared/GlobalRefreshButton";
+import { ErMateLogo } from "./shared/ErMateLogo";
 import type { ClinicalCase } from "../types";
 import type { UserProfile } from "../types";
 
@@ -217,21 +218,7 @@ export const GlobalHeader: React.FC<GlobalHeaderProps> = ({
       <div className="max-w-7xl mx-auto flex items-center justify-between gap-3">
         {/* LEFT: ErMate Logo & Branding */}
         <div className="flex items-center gap-3 shrink-0">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 md:w-8.5 md:h-8.5 bg-gradient-to-br from-emerald-500 via-teal-500 to-purple-600 rounded-xl text-white shadow-xs flex items-center justify-center shrink-0">
-              <Activity className="w-4.5 h-4.5 animate-pulse-slow" />
-            </div>
-            <div>
-              <div className="flex items-center gap-1.5 leading-none">
-                <span className="text-sm md:text-base font-black font-display tracking-tight text-slate-900 dark:text-white">
-                  ErMate
-                </span>
-              </div>
-              <p className="text-[9px] md:text-[10px] text-slate-400 font-medium font-mono hidden sm:block leading-tight">
-                The Scribe Companion for ER
-              </p>
-            </div>
-          </div>
+          <ErMateLogo variant="header" size="sm" />
 
           {/* CONTEXT: Current Workplace / Department (Desktop Only) */}
           <div
