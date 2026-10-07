@@ -53,6 +53,7 @@ import PWABadge from "./components/PWABadge";
 import { APP_VERSION, CHANGELOG } from "./changelog";
 import { HeaderUpdateButton } from "./hooks/useAppUpdate";
 import { GlobalRefreshButton } from "./components/shared/GlobalRefreshButton";
+import { GlobalHeader } from "./components/GlobalHeader";
 import { updateChatMessage, appendChatMessage, linkScribeSessionAndCase, verifyTwoSidedLink } from "./services/scribeChatStorage";
 import { deduplicateConsultations } from "./utils/consultationNormalization";
 import { isEstablishedCaseSheet } from "./utils/establishedCaseCheck";
@@ -175,14 +176,17 @@ const LOCAL_REFERENCES: StaticReference[] = [
   }
 ];
 
-interface AppNotification {
+export interface AppNotification {
   id: string;
   title: string;
   message: string;
   type: "info" | "success" | "warning";
   timestamp: string;
   read: boolean;
+  resolved?: boolean;
+  resolvedAt?: string;
   linkView?: string;
+  actionKey?: string;
 }
 
 export default function App() {
@@ -224,13 +228,19 @@ useEffect(() => {
     sessionStorage.removeItem("ermate_update_confirm_pending");
     if (pendingVer === APP_VERSION) {
       triggerNotification("Updated ✓", `ErMate is now running v${APP_VERSION}.`, "success");
+      // Auto-resolve pending update notifications
+      setNotifications(prev => prev.map(n =>
+        (n.title.toLowerCase().includes("update") || n.message.toLowerCase().includes("update"))
+          ? { ...n, resolved: true, resolvedAt: new Date().toISOString() }
+          : n
+      ));
     } else {
       triggerNotification("Update Didn't Apply", `Still on v${APP_VERSION}. Please try again or refresh manually.`, "warning");
     }
   }
 }, []);
 
-  const triggerNotification = (title: string, message: string, type: "info" | "success" | "warning" = "info", linkView?: string) => {
+  const triggerNotification = (title: string, message: string, type: "info" | "success" | "warning" = "info", linkView?: string, actionKey?: string) => {
     const id = "notif-" + Date.now() + "-" + Math.random().toString(36).substring(2, 6);
     const timestamp = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) + " | " + new Date().toLocaleDateString([], { month: "short", day: "numeric" });
     
@@ -242,7 +252,9 @@ useEffect(() => {
       type,
       timestamp,
       read: false,
-      linkView
+      resolved: false,
+      linkView,
+      actionKey
     };
     setNotifications(prev => [newNotif, ...prev].slice(0, 50)); // keep last 50
 
@@ -1475,6 +1487,12 @@ useEffect(() => {
                     `Shift handover ${data.id} was acknowledged by ${data.acknowledgedBy}.`,
                     "info"
                   );
+                  // Auto-resolve notifications relating to this shift handover
+                  setNotifications(prev => prev.map(n =>
+                    (n.title.toLowerCase().includes("handover") && n.message.includes(data.id))
+                      ? { ...n, resolved: true, resolvedAt: new Date().toISOString() }
+                      : n
+                  ));
                 }
               }
             }
@@ -4332,6 +4350,14 @@ const handleDeleteAllCases = async () => {
     );
     checkConsentOnCaseSaved();
 
+    // Auto-resolve pending notifications related to this case draft
+    setNotifications(prev => prev.map(n =>
+      ((n.title.toLowerCase().includes("draft") || n.title.toLowerCase().includes("case")) &&
+       (n.message.includes(reviewedCase.id) || (reviewedCase.displayId && n.message.includes(reviewedCase.displayId))))
+        ? { ...n, resolved: true, resolvedAt: new Date().toISOString() }
+        : n
+    ));
+
     // Reset preview states and transition to standard case sheet view
     setIsPreviewMode(false);
     setPreviewCase(null);
@@ -4625,6 +4651,12 @@ const handleRoleSelectionSubmit = async () => {
       "The clinician registration has been approved. They are now active on the team.",
       "success"
     );
+    // Auto-resolve pending team registration/approval alerts
+    setNotifications(prev => prev.map(n =>
+      (n.title.toLowerCase().includes("join") || n.title.toLowerCase().includes("approval") || n.title.toLowerCase().includes("registration"))
+        ? { ...n, resolved: true, resolvedAt: new Date().toISOString() }
+        : n
+    ));
   } catch (err: any) {
     console.error(
       "Error approving member:",
@@ -4669,6 +4701,12 @@ const handleDeclineTeamMember = async (memberId: string) => {
       "The registration request was successfully declined.",
       "info"
     );
+    // Auto-resolve pending team registration/approval alerts
+    setNotifications(prev => prev.map(n =>
+      (n.title.toLowerCase().includes("join") || n.title.toLowerCase().includes("approval") || n.title.toLowerCase().includes("registration"))
+        ? { ...n, resolved: true, resolvedAt: new Date().toISOString() }
+        : n
+    ));
   } catch (err: any) {
     console.error("Error declining member:", err);
 
@@ -5665,130 +5703,144 @@ const handleSignOut = async () => {
 
   // Manual View-Specific Data Refresh handler
   const handleManualRefresh = async () => {
-    // 1. Voice Scribe Chat / ErMate Assistant View
-    if (showVoiceScribeChat) {
-      setScribeRefreshTrigger(Date.now());
-    }
+    // Deterministic 6-second timeout safety guard
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error("Refresh request timed out. Please try again.")), 6000)
+    );
 
-    // 2. Editable Case Sheet View
-    if (selectedCaseId && !activeFormMode && !showDischargeSummaryId) {
-      try {
-        const caseDocRef = doc(db, "cases", selectedCaseId);
-        const snap = await getDoc(caseDocRef);
-        if (snap.exists()) {
-          const freshCase = snap.data() as ClinicalCase;
-          setCases(prev => prev.map(c => c.id === selectedCaseId ? freshCase : c));
-        }
-        setCaseRefreshTimestamp(Date.now());
-      } catch (err) {
-        console.error("Failed to refresh active case:", err);
-        throw err;
+    const performFetch = async () => {
+      // 1. Voice Scribe Chat / ErMate Assistant View
+      if (showVoiceScribeChat) {
+        setScribeRefreshTrigger(Date.now());
       }
-      return;
-    }
 
-    // 3. Read-Only Printable Case Sheet View
-    if (viewCaseSheetPrintId) {
-      try {
-        const caseDocRef = doc(db, "cases", viewCaseSheetPrintId);
-        const snap = await getDoc(caseDocRef);
-        if (snap.exists()) {
-          const freshCase = snap.data() as ClinicalCase;
-          setCases(prev => prev.map(c => c.id === viewCaseSheetPrintId ? freshCase : c));
+      // 2. Editable Case Sheet View
+      if (selectedCaseId && !activeFormMode && !showDischargeSummaryId) {
+        try {
+          const caseDocRef = doc(db, "cases", selectedCaseId);
+          const snap = await getDoc(caseDocRef);
+          if (snap.exists()) {
+            const freshCase = snap.data() as ClinicalCase;
+            setCases(prev => prev.map(c => c.id === selectedCaseId ? freshCase : c));
+          }
+          setCaseRefreshTimestamp(Date.now());
+        } catch (err) {
+          console.error("Failed to refresh active case:", err);
+          throw err;
         }
-      } catch (err) {
-        console.error("Failed to refresh print case view:", err);
-        throw err;
+        return;
       }
-      return;
-    }
 
-    // 4. Discharge Summary View
-    if (showDischargeSummaryId) {
-      try {
-        const caseDocRef = doc(db, "cases", showDischargeSummaryId);
-        const snap = await getDoc(caseDocRef);
-        if (snap.exists()) {
-          const freshCase = snap.data() as ClinicalCase;
-          setCases(prev => prev.map(c => c.id === showDischargeSummaryId ? freshCase : c));
+      // 3. Read-Only Printable Case Sheet View
+      if (viewCaseSheetPrintId) {
+        try {
+          const caseDocRef = doc(db, "cases", viewCaseSheetPrintId);
+          const snap = await getDoc(caseDocRef);
+          if (snap.exists()) {
+            const freshCase = snap.data() as ClinicalCase;
+            setCases(prev => prev.map(c => c.id === viewCaseSheetPrintId ? freshCase : c));
+          }
+        } catch (err) {
+          console.error("Failed to refresh print case view:", err);
+          throw err;
         }
-      } catch (err) {
-        console.error("Failed to refresh discharge case:", err);
-        throw err;
+        return;
       }
-      return;
-    }
 
-    // 5. Shift Handover View
-    if (activeTab === "handover") {
+      // 4. Discharge Summary View
+      if (showDischargeSummaryId) {
+        try {
+          const caseDocRef = doc(db, "cases", showDischargeSummaryId);
+          const snap = await getDoc(caseDocRef);
+          if (snap.exists()) {
+            const freshCase = snap.data() as ClinicalCase;
+            setCases(prev => prev.map(c => c.id === showDischargeSummaryId ? freshCase : c));
+          }
+        } catch (err) {
+          console.error("Failed to refresh discharge case:", err);
+          throw err;
+        }
+        return;
+      }
+
+      // 5. Shift Handover View
+      if (activeTab === "handover") {
+        try {
+          const userHospital = profile?.hospital || "";
+          const userHospitalLower = userHospital.trim().toLowerCase();
+          const handoversQuery = userHospital
+            ? query(collection(db, "handovers"), where("hospital", "==", userHospital))
+            : (profile?.email ? query(collection(db, "handovers"), where("senderEmail", "==", profile.email)) : collection(db, "handovers"));
+          const snapshot = await getDocs(handoversQuery);
+          const loadedHandovers: HandoverRecord[] = [];
+          snapshot.forEach((d) => {
+            loadedHandovers.push(d.data() as HandoverRecord);
+          });
+          const filtered = loadedHandovers.filter(h => {
+            const hHosp = (h.hospital || "").trim().toLowerCase();
+            const curEmail = (profile?.email || auth.currentUser?.email || "").trim().toLowerCase();
+            const sEmail = (h.senderEmail || "").trim().toLowerCase();
+            return (userHospitalLower && hHosp === userHospitalLower) || (curEmail && sEmail === curEmail);
+          });
+          setHandovers(filtered.sort((a, b) => b.id.localeCompare(a.id)));
+        } catch (err) {
+          console.error("Failed to refresh handovers:", err);
+          throw err;
+        }
+        return;
+      }
+
+      // 6. Default: All other views (Dashboard, Cases, Logbook, Analytics, Tools, Team, etc.)
       try {
         const userHospital = profile?.hospital || "";
         const userHospitalLower = userHospital.trim().toLowerCase();
-        const handoversQuery = userHospital
-          ? query(collection(db, "handovers"), where("hospital", "==", userHospital))
-          : (profile?.email ? query(collection(db, "handovers"), where("senderEmail", "==", profile.email)) : collection(db, "handovers"));
-        const snapshot = await getDocs(handoversQuery);
-        const loadedHandovers: HandoverRecord[] = [];
+        const casesQuery = userHospital
+          ? query(collection(db, "cases"), where("hospital", "==", userHospital))
+          : (profile?.email ? query(collection(db, "cases"), where("doctorEmail", "==", profile.email)) : collection(db, "cases"));
+        const snapshot = await getDocs(casesQuery);
+        const loadedCases: ClinicalCase[] = [];
         snapshot.forEach((d) => {
-          loadedHandovers.push(d.data() as HandoverRecord);
+          loadedCases.push(d.data() as ClinicalCase);
         });
-        const filtered = loadedHandovers.filter(h => {
-          const hHosp = (h.hospital || "").trim().toLowerCase();
-          const curEmail = (profile?.email || auth.currentUser?.email || "").trim().toLowerCase();
-          const sEmail = (h.senderEmail || "").trim().toLowerCase();
-          return (userHospitalLower && hHosp === userHospitalLower) || (curEmail && sEmail === curEmail);
+        const filteredCases = loadedCases.filter(c => {
+          if (!c || !c.id) return false;
+          const currentEmail = (profile?.email || auth.currentUser?.email || "").trim().toLowerCase();
+          const currentUid = auth.currentUser?.uid;
+          const isMyCase = Boolean(
+            (currentUid && (c.lastEditedBy === currentUid || (c as any).createdByUid === currentUid)) ||
+            (currentEmail && c.doctorEmail && c.doctorEmail.trim().toLowerCase() === currentEmail)
+          );
+          if (isMyCase) return true;
+          const caseHospitalLower = (c.hospital || "").trim().toLowerCase();
+          return userHospitalLower ? caseHospitalLower === userHospitalLower : true;
         });
-        setHandovers(filtered.sort((a, b) => b.id.localeCompare(a.id)));
+
+        const uniqueMap = new Map<string, ClinicalCase>();
+        filteredCases.forEach(c => {
+          if (c && c.id && !uniqueMap.has(c.id)) {
+            uniqueMap.set(c.id, c);
+          }
+        });
+        setCases(Array.from(uniqueMap.values()));
+
+        // If on profile tab, also refresh user profile doc
+        if (activeTab === "profile" && auth.currentUser) {
+          const userDocRef = doc(db, "users", auth.currentUser.uid);
+          const userSnap = await getDoc(userDocRef);
+          if (userSnap.exists()) {
+            setProfile(userSnap.data() as UserProfile);
+          }
+        }
       } catch (err) {
-        console.error("Failed to refresh handovers:", err);
+        console.error("Failed to refresh cases data:", err);
         throw err;
       }
-      return;
-    }
+    };
 
-    // 6. Default: All other views (Dashboard, Cases, Logbook, Analytics, Tools, Team, etc.)
     try {
-      const userHospital = profile?.hospital || "";
-      const userHospitalLower = userHospital.trim().toLowerCase();
-      const casesQuery = userHospital
-        ? query(collection(db, "cases"), where("hospital", "==", userHospital))
-        : (profile?.email ? query(collection(db, "cases"), where("doctorEmail", "==", profile.email)) : collection(db, "cases"));
-      const snapshot = await getDocs(casesQuery);
-      const loadedCases: ClinicalCase[] = [];
-      snapshot.forEach((d) => {
-        loadedCases.push(d.data() as ClinicalCase);
-      });
-      const filteredCases = loadedCases.filter(c => {
-        if (!c || !c.id) return false;
-        const currentEmail = (profile?.email || auth.currentUser?.email || "").trim().toLowerCase();
-        const currentUid = auth.currentUser?.uid;
-        const isMyCase = Boolean(
-          (currentUid && (c.lastEditedBy === currentUid || (c as any).createdByUid === currentUid)) ||
-          (currentEmail && c.doctorEmail && c.doctorEmail.trim().toLowerCase() === currentEmail)
-        );
-        if (isMyCase) return true;
-        const caseHospitalLower = (c.hospital || "").trim().toLowerCase();
-        return userHospitalLower ? caseHospitalLower === userHospitalLower : true;
-      });
-
-      const uniqueMap = new Map<string, ClinicalCase>();
-      filteredCases.forEach(c => {
-        if (c && c.id && !uniqueMap.has(c.id)) {
-          uniqueMap.set(c.id, c);
-        }
-      });
-      setCases(Array.from(uniqueMap.values()));
-
-      // If on profile tab, also refresh user profile doc
-      if (activeTab === "profile" && auth.currentUser) {
-        const userDocRef = doc(db, "users", auth.currentUser.uid);
-        const userSnap = await getDoc(userDocRef);
-        if (userSnap.exists()) {
-          setProfile(userSnap.data() as UserProfile);
-        }
-      }
+      await Promise.race([performFetch(), timeoutPromise]);
     } catch (err) {
-      console.error("Failed to refresh cases data:", err);
+      console.warn("[handleManualRefresh] Error during manual refresh:", err);
       throw err;
     }
   };
@@ -5819,593 +5871,37 @@ const handleSignOut = async () => {
       <PWABadge />
       
       {/* Upper Navigation & Branding Header */}
-      <header className="bg-white dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 py-3.5 px-4 md:px-6 shadow-xs sticky top-0 z-40 no-print relative">
-        {/* Colorful top border line */}
-        <div className="absolute top-0 left-0 right-0 h-[3px] bg-gradient-to-r from-emerald-500 via-teal-400 to-purple-600" />
-        <div className="max-w-7xl mx-auto flex flex-col md:flex-row md:items-center justify-between gap-3 md:gap-4 mt-0.5">
-          
-          <div className="flex items-center justify-between w-full md:w-auto gap-4">
-            {/* Logo & branding */}
-            <div className="flex items-center gap-2 shrink-0">
-              <div className="p-2 bg-gradient-to-br from-emerald-500 via-teal-500 to-purple-600 rounded-xl text-white shadow-sm flex items-center justify-center">
-                <Activity className="w-5 h-5 md:w-5.5 md:h-5.5 animate-pulse-slow" />
-              </div>
-              <div>
-                <div className="flex items-center gap-1.5">
-                  <span className="text-sm md:text-base font-black font-display tracking-tight text-slate-900 dark:text-white">ErMate</span>
-                  <span className="text-[9px] md:text-[10px] bg-gradient-to-r from-emerald-500 to-purple-600 text-white px-1 py-0.2 rounded font-mono font-bold shadow-xs">EMR v2.5</span>
-                </div>
-                <p className="text-[9px] md:text-[10px] text-slate-400 font-medium font-mono">The Scribe Companion for ER</p>
-              </div>
-            </div>
-
-            {/* Hospital Workplace Badge */}
-            <div className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 bg-slate-50 dark:bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-xs">
-              <Building2 className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
-              <span className="text-slate-500 dark:text-slate-400 font-medium">Active Hospital:</span>
-              <strong className="text-slate-800 dark:text-white font-bold">{profile?.hospital || "General Emergency Department"}</strong>
-              {hospitalSubscription?.active && (
-                <span className="ml-1 px-1.5 py-0.2 bg-emerald-500/10 text-emerald-500 dark:text-emerald-400 border border-emerald-500/20 rounded text-[9px] font-bold uppercase tracking-wider">
-                  Team Licensed
-                </span>
-              )}
-            </div>
-
-            {/* Mobile-only action shortcuts */}
-            <div className="flex md:hidden items-center gap-1.5">
-         <HeaderUpdateButton hasUpdate={appUpdateBanner} onApplyUpdate={handleUpdateApp} />
-              <GlobalRefreshButton
-                onRefresh={handleManualRefresh}
-                isDirty={isCaseSheetDirty && Boolean(selectedCaseId && !activeFormMode && !showDischargeSummaryId)}
-                isVoiceBusy={isScribeBusy}
-                onSaveAndRefresh={async () => {
-                  if (caseSheetActionsRef.current?.save) {
-                    await caseSheetActionsRef.current.save();
-                  }
-                }}
-                onDiscardAndRefresh={() => {
-                  if (caseSheetActionsRef.current?.discard) {
-                    caseSheetActionsRef.current.discard();
-                  }
-                }}
-              />
-              <button
-                onClick={() => setShowUpdatesModal(true)}
-                className="p-1.5 hover:bg-emerald-50 dark:hover:bg-emerald-950/20 rounded-lg text-emerald-600 dark:text-emerald-400 transition-all"
-                title="Updates & Release Notes"
-              >
-                <Sparkles className="w-4 h-4 animate-pulse" />
-              </button>
-              <button
-                onClick={handleInstallApp}
-                className="p-1.5 hover:bg-indigo-50 dark:hover:bg-indigo-950/20 rounded-lg text-indigo-600 dark:text-indigo-400 transition-all"
-                title="Download App"
-              >
-                <Download className="w-4 h-4" />
-              </button>
-              
-              {/* Real-time Notifications Bell on Mobile */}
-              <div className="relative">
-                <button
-                  onClick={() => setShowNotificationsDropdown(!showNotificationsDropdown)}
-                  className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-slate-500 dark:text-slate-400 transition-all relative"
-                  title="Notifications"
-                  id="notifications-bell-mobile"
-                >
-                  {notifications.some(n => !n.read) ? (
-                    <>
-                      <BellRing className="w-4 h-4 text-rose-500 animate-bounce" />
-                      <span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-rose-500 ring-1 ring-white dark:ring-slate-950" />
-                    </>
-                  ) : (
-                    <Bell className="w-4 h-4" />
-                  )}
-                </button>
-
-                {showNotificationsDropdown && (
-                  <>
-                    <div 
-                      className="fixed inset-0 z-40 bg-transparent" 
-                      onClick={() => setShowNotificationsDropdown(false)}
-                    />
-                    <div className="absolute right-0 mt-2 w-72 sm:w-80 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl shadow-lg z-50 overflow-hidden divide-y divide-slate-100 dark:divide-slate-900 animate-fade-in select-none">
-                      
-                      {/* Header */}
-                      <div className="p-3 bg-slate-50 dark:bg-slate-50 dark:bg-slate-900/60 flex items-center justify-between">
-                        <span className="text-xs font-bold text-slate-800 dark:text-white flex items-center gap-1.5 font-display">
-                          <Activity className="w-3.5 h-3.5 text-emerald-500" />
-                          <span>ER Clinician Alerts</span>
-                        </span>
-                        <div className="flex gap-2">
-                          {notifications.some(n => !n.read) && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setNotifications(prev => prev.map(n => ({ ...n, read: true })));
-                              }}
-                              className="text-[10px] text-emerald-600 hover:text-emerald-700 dark:text-emerald-400 dark:hover:text-emerald-300 font-bold flex items-center gap-1"
-                            >
-                              <Check className="w-3 h-3" />
-                              <span>Read All</span>
-                            </button>
-                          )}
-                          {notifications.length > 0 && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setNotifications([]);
-                                setShowNotificationsDropdown(false);
-                              }}
-                              className="text-[10px] text-slate-500 hover:text-rose-600 dark:text-slate-400 dark:hover:text-rose-400 font-bold flex items-center gap-1"
-                            >
-                              <Trash2 className="w-3 h-3" />
-                              <span>Clear</span>
-                            </button>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Notification list */}
-                      <div className="max-h-80 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-900 scrollbar-thin">
-                        {notifications.length === 0 ? (
-                          <div className="p-6 text-center text-xs text-slate-400 flex flex-col items-center gap-1.5">
-                            <Bell className="w-6 h-6 text-slate-300 dark:text-slate-700 animate-pulse-slow" />
-                            <span className="font-bold text-slate-550">No notifications yet</span>
-                            <span className="text-[10px] text-slate-300 dark:text-slate-600">Updates from other clinicians will appear here in real-time.</span>
-                          </div>
-                        ) : (
-                          notifications.map((notif) => {
-                            const isUnread = !notif.read;
-                            return (
-                              <div 
-                                key={notif.id}
-                                onClick={() => {
-                                  // Mark as read
-                                  setNotifications(prev => prev.map(n => n.id === notif.id ? { ...n, read: true } : n));
-                                  if (notif.linkView) {
-                                    setActiveTab(notif.linkView as any);
-                                    setSelectedCaseId(null);
-                                    setActiveFormMode(null);
-                                    setShowDischargeSummaryId(null);
-                                    setShowVoiceScribeChat(false);
-                                  }
-                                  // Close dropdown
-                                  setShowNotificationsDropdown(false);
-                                }}
-                                className={`p-3 text-left transition-all hover:bg-slate-50/80 dark:hover:bg-slate-50 dark:bg-slate-900/60 cursor-pointer flex gap-2.5 items-start ${
-                                  isUnread ? "bg-slate-50/40 dark:bg-slate-50 dark:bg-slate-900/10 border-l-2 border-emerald-500" : ""
-                                }`}
-                              >
-                                <div className={`mt-1.5 shrink-0 w-2 h-2 rounded-full ${
-                                  notif.type === "success" 
-                                    ? "bg-emerald-500" 
-                                    : notif.type === "warning"
-                                    ? "bg-rose-500"
-                                    : "bg-blue-500"
-                                }`} />
-                                <div className="flex-1 min-w-0">
-                                  <div className="flex items-center justify-between gap-2">
-                                    <span className={`text-[11px] block truncate ${isUnread ? "font-extrabold text-slate-900 dark:text-white" : "font-semibold text-slate-700 dark:text-slate-300"}`}>
-                                      {notif.title}
-                                    </span>
-                                    <div className="flex items-center gap-1.5 shrink-0">
-                                      <span className="text-[8px] text-slate-400 font-mono whitespace-nowrap">{notif.timestamp.split(" | ")[0]}</span>
-                                      {isUnread && (
-                                        <button
-                                          type="button"
-                                          onClick={(e) => {
-                                            e.stopPropagation(); // Prevent closing dropdown or triggering outer click
-                                            setNotifications(prev => prev.map(n => n.id === notif.id ? { ...n, read: true } : n));
-                                          }}
-                                          className="p-0.5 bg-slate-100 hover:bg-emerald-50 dark:bg-slate-800 dark:hover:bg-emerald-950/40 text-slate-400 hover:text-emerald-600 dark:hover:text-emerald-400 rounded transition-all cursor-pointer"
-                                          title="Mark as read"
-                                        >
-                                          <Check className="w-3 h-3" />
-                                        </button>
-                                      )}
-                                    </div>
-                                  </div>
-                                  <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5 leading-snug font-medium">
-                                    {notif.message}
-                                  </p>
-                                </div>
-                              </div>
-                            );
-                          })
-                        )}
-                      </div>
-                    </div>
-                  </>
-                )}
-              </div>
-
-              <button
-                onClick={() => setIsDarkMode(!isDarkMode)}
-                className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-slate-500 dark:text-slate-400 transition-all"
-                title="Toggle Theme"
-              >
-                {isDarkMode ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
-              </button>
-            </div>
-          </div>
-
-          {/* Global Search input */}
-          <div className="relative w-full md:flex-1 md:max-w-xs lg:max-w-md md:mx-2 z-50">
-            <div className="relative">
-              <Search className="w-4 h-4 text-slate-400 dark:text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
-                placeholder="Search patient, ID, UHID, or protocol..."
-                value={searchQuery}
-                onChange={(e) => {
-                  setSearchQuery(e.target.value);
-                  setSearchResultsOpen(true);
-                }}
-                onFocus={() => setSearchResultsOpen(true)}
-                className="w-full bg-slate-100 dark:bg-slate-50 dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-xl pl-9 pr-8 py-2 text-xs text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 transition-all shadow-inner"
-              />
-              {searchQuery && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSearchQuery("");
-                    setSearchResultsOpen(false);
-                  }}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              )}
-            </div>
-
-            {/* Dropdown of results */}
-            {searchResultsOpen && searchQuery.trim().length > 0 && (
-              <>
-                {/* Overlay click catcher */}
-                <div 
-                  className="fixed inset-0 z-40 bg-transparent" 
-                  onClick={() => setSearchResultsOpen(false)}
-                />
-                
-                <div className="absolute top-full left-0 right-0 mt-2 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl shadow-lg z-50 max-h-96 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-900 animate-fade-in select-none">
-                  
-                  {/* Category: Patients / Case IDs */}
-                  {matchedCases.length > 0 && (
-                    <div className="p-2.5">
-                      <span className="block text-[9px] font-extrabold text-slate-400 uppercase tracking-wider font-mono px-2 mb-1.5">
-                        Matched ER Patients ({matchedCases.length})
-                      </span>
-                      <div className="space-y-1">
-                        {matchedCases.map((c, idx) => (
-                          <div
-                            key={`${c.id}-${idx}`}
-                            onClick={() => {
-                              handleSelectCase(c.id);
-                              setSearchQuery("");
-                              setSearchResultsOpen(false);
-                            }}
-                            className="flex items-center justify-between p-2 hover:bg-blue-50/60 dark:hover:bg-slate-50 dark:bg-slate-900 rounded-lg cursor-pointer transition-all"
-                          >
-                            <div className="min-w-0">
-                              <span className="block text-xs font-bold text-slate-800 dark:text-slate-100 truncate">
-                                {c.patient.name}
-                              </span>
-                              <span className="block text-[10px] text-slate-400 truncate">
-                                Age {c.patient.age || "N/A"} • {c.patient.gender} • Complaint: {c.patient.presentingComplaint}
-                              </span>
-                            </div>
-                            <div className="flex flex-col items-end shrink-0 gap-1 ml-2">
-                              <span className="text-[9px] bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 px-1.5 py-0.5 rounded font-mono font-extrabold">
-                                {c.displayId || c.id}
-                              </span>
-                              <span className={`text-[8px] font-bold px-1 rounded-sm uppercase tracking-wide ${
-                                c.patient.triageCategory.startsWith("P1") 
-                                  ? "bg-rose-100 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300"
-                                  : c.patient.triageCategory.startsWith("P2")
-                                  ? "bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300"
-                                  : "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300"
-                              }`}>
-                                {String(c.patient.triageCategory || "P2").split(" ")[0]}
-                              </span>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Category: Clinical Reference Protocols */}
-                  {matchedReferences.length > 0 && (
-                    <div className="p-2.5">
-                      <span className="block text-[9px] font-extrabold text-slate-400 uppercase tracking-wider font-mono px-2 mb-1.5">
-                        Clinical Reference Protocols ({matchedReferences.length})
-                      </span>
-                      <div className="space-y-1">
-                        {matchedReferences.map(r => (
-                          <div
-                            key={r.id}
-                            onClick={() => {
-                              setSelectedReferenceDetail(r);
-                              setSearchQuery("");
-                              setSearchResultsOpen(false);
-                            }}
-                            className="flex items-start gap-2.5 p-2 hover:bg-purple-50/60 dark:hover:bg-purple-950/15 rounded-lg cursor-pointer transition-all"
-                          >
-                            <BookOpen className="w-4 h-4 text-purple-600 shrink-0 mt-0.5" />
-                            <div className="min-w-0 flex-1">
-                              <span className="block text-xs font-bold text-slate-800 dark:text-slate-100">
-                                {r.title}
-                              </span>
-                              <span className="block text-[10px] text-slate-400 truncate">
-                                {r.category} • {r.summary}
-                              </span>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Search fallback block */}
-                  <div className="p-2 flex flex-col gap-1.5 bg-slate-50/60 dark:bg-slate-50 dark:bg-slate-900/30">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        handleQueryAIReference(searchQuery);
-                        setSearchQuery("");
-                        setSearchResultsOpen(false);
-                      }}
-                      className="w-full py-2 px-3 hover:bg-blue-50 hover:text-blue-700 dark:hover:bg-slate-800 text-left rounded-lg text-xs font-bold flex items-center gap-2 text-slate-600 dark:text-slate-300 transition-all border border-dashed border-slate-200 dark:border-slate-800"
-                    >
-                      <Sparkles className="w-3.5 h-3.5 text-blue-600 animate-pulse" />
-                      <span>Ask ErMate EM Reference for <strong className="text-blue-700 dark:text-blue-400">"{searchQuery}"</strong></span>
-                    </button>
-                  </div>
-                  
-                  {matchedCases.length === 0 && matchedReferences.length === 0 && (
-                    <div className="p-6 text-center text-xs text-slate-400">
-                      No direct matches for "{searchQuery}". Try searching for chest pain, sepsis, STEMI, or specific patients.
-                    </div>
-                  )}
-                  
-                </div>
-              </>
-            )}
-          </div>
-
-          {/* Quick Stats Panel */}
-          <div className="hidden lg:flex items-center gap-6 text-xs text-slate-500 font-mono">
-            <div className="flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
-              <span>ER Registry: <strong className="text-slate-700 dark:text-slate-300">{cases.length} patients</strong></span>
-            </div>
-            <div className="flex items-center gap-1">
-              <Clock className="w-4 h-4 text-slate-400" />
-              <span>System Clock: <strong className="text-slate-700 dark:text-slate-300">{currentTime}</strong></span>
-            </div>
-          </div>
-
-          {/* Theme toggles & Profile shortcut (Desktop Only) */}
-          <div className="hidden md:flex items-center gap-2">
-
-            {/* Header Update Button (renders when update is waiting or banner active) */}
-         <HeaderUpdateButton hasUpdate={appUpdateBanner} onApplyUpdate={handleUpdateApp} />
-
-            {/* Global Refresh Button */}
-            <GlobalRefreshButton
-              onRefresh={handleManualRefresh}
-              isDirty={isCaseSheetDirty && Boolean(selectedCaseId && !activeFormMode && !showDischargeSummaryId)}
-              isVoiceBusy={isScribeBusy}
-              onSaveAndRefresh={async () => {
-                if (caseSheetActionsRef.current?.save) {
-                  await caseSheetActionsRef.current.save();
-                }
-              }}
-              onDiscardAndRefresh={() => {
-                if (caseSheetActionsRef.current?.discard) {
-                  caseSheetActionsRef.current.discard();
-                }
-              }}
-            />
-
-            {/* What's New & Announcements Button */}
-            <button
-              onClick={() => setShowUpdatesModal(true)}
-              className="p-1.5 px-2.5 hover:bg-emerald-50 dark:hover:bg-emerald-950/20 rounded-lg text-emerald-600 dark:text-emerald-400 transition-all flex items-center gap-1.5 cursor-pointer border border-emerald-200/50 dark:border-emerald-800/30 font-sans shadow-xs"
-              title="What's New & System Announcements"
-              id="whats-new-announcements-btn"
-            >
-              <Sparkles className="w-3.5 h-3.5 animate-pulse text-amber-500" />
-              <span className="text-[10px] font-extrabold tracking-tight uppercase">v{currentVersion}</span>
-              {appUpdateBanner && (
-                <span className="flex h-1.5 w-1.5 relative">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                  <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span>
-                </span>
-              )}
-            </button>
-
-            
-
-            
-            {/* PWA Download / Install App Option */}
-            <button
-              onClick={handleInstallApp}
-              className="p-1.5 px-2.5 hover:bg-indigo-50 dark:hover:bg-indigo-950/20 rounded-lg text-indigo-600 dark:text-indigo-400 transition-all flex items-center gap-1.5 cursor-pointer border border-indigo-200/50 dark:border-indigo-800/30 font-sans shadow-sm"
-              title="Download ErMate on Mobile or Desktop"
-              id="pwa-install-btn"
-            >
-              <Download className="w-3.5 h-3.5 text-indigo-500" />
-              <span className="text-[10px] font-extrabold tracking-tight uppercase hidden lg:inline">Download App</span>
-              {!isInstalled && (
-                <span className="flex h-1.5 w-1.5 relative">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
-                  <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-indigo-500"></span>
-                </span>
-              )}
-            </button>
-            
-            {/* Real-time Notifications Bell */}
-            <div className="relative">
-              <button
-                onClick={() => setShowNotificationsDropdown(!showNotificationsDropdown)}
-                className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-slate-500 dark:text-slate-400 transition-all relative"
-                title="Notifications"
-                id="notifications-bell"
-              >
-                {notifications.some(n => !n.read) ? (
-                  <>
-                    <BellRing className="w-4.5 h-4.5 text-rose-500 animate-bounce" />
-                    <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-rose-500 ring-2 ring-white dark:ring-slate-950" />
-                  </>
-                ) : (
-                  <Bell className="w-4.5 h-4.5" />
-                )}
-              </button>
-
-              {showNotificationsDropdown && (
-                <>
-                  <div 
-                    className="fixed inset-0 z-40 bg-transparent" 
-                    onClick={() => setShowNotificationsDropdown(false)}
-                  />
-                  <div className="absolute right-0 mt-2 w-80 md:w-96 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl shadow-lg z-50 overflow-hidden divide-y divide-slate-100 dark:divide-slate-900 animate-fade-in select-none">
-                    
-                    {/* Header */}
-                    <div className="p-3 bg-slate-50 dark:bg-slate-50 dark:bg-slate-900/60 flex items-center justify-between">
-                      <span className="text-xs font-bold text-slate-800 dark:text-white flex items-center gap-1.5 font-display">
-                        <Activity className="w-3.5 h-3.5 text-emerald-500" />
-                        <span>ER Clinician Alerts</span>
-                      </span>
-                      <div className="flex gap-2">
-                        {notifications.some(n => !n.read) && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setNotifications(prev => prev.map(n => ({ ...n, read: true })));
-                            }}
-                            className="text-[10px] text-emerald-600 hover:text-emerald-700 dark:text-emerald-400 dark:hover:text-emerald-300 font-bold flex items-center gap-1"
-                          >
-                            <Check className="w-3 h-3" />
-                            <span>Read All</span>
-                          </button>
-                        )}
-                        {notifications.length > 0 && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setNotifications([]);
-                              setShowNotificationsDropdown(false);
-                            }}
-                            className="text-[10px] text-slate-500 hover:text-rose-600 dark:text-slate-400 dark:hover:text-rose-400 font-bold flex items-center gap-1"
-                          >
-                            <Trash2 className="w-3 h-3" />
-                            <span>Clear</span>
-                          </button>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Notification list */}
-                    <div className="max-h-80 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-900 scrollbar-thin">
-                      {notifications.length === 0 ? (
-                        <div className="p-6 text-center text-xs text-slate-400 flex flex-col items-center gap-1.5">
-                          <Bell className="w-6 h-6 text-slate-300 dark:text-slate-700 animate-pulse-slow" />
-                          <span className="font-bold text-slate-550">No notifications yet</span>
-                          <span className="text-[10px] text-slate-300 dark:text-slate-600">Updates from other clinicians will appear here in real-time.</span>
-                        </div>
-                      ) : (
-                        notifications.map((notif) => {
-                          const isUnread = !notif.read;
-                          return (
-                            <div 
-                              key={notif.id}
-                              onClick={() => {
-                                // Mark as read
-                                setNotifications(prev => prev.map(n => n.id === notif.id ? { ...n, read: true } : n));
-                                if (notif.linkView) {
-                                  setActiveTab(notif.linkView as any);
-                                  setSelectedCaseId(null);
-                                  setActiveFormMode(null);
-                                  setShowDischargeSummaryId(null);
-                                  setShowVoiceScribeChat(false);
-                                }
-                                // Close dropdown
-                                setShowNotificationsDropdown(false);
-                              }}
-                              className={`p-3 text-left transition-all hover:bg-slate-50/80 dark:hover:bg-slate-50 dark:bg-slate-900/60 cursor-pointer flex gap-2.5 items-start ${
-                                isUnread ? "bg-slate-50/40 dark:bg-slate-50 dark:bg-slate-900/10 border-l-2 border-emerald-500" : ""
-                              }`}
-                            >
-                              <div className={`mt-1.5 shrink-0 w-2 h-2 rounded-full ${
-                                notif.type === "success" 
-                                  ? "bg-emerald-500" 
-                                  : notif.type === "warning"
-                                  ? "bg-rose-500"
-                                  : "bg-blue-500"
-                              }`} />
-                              <div className="flex-1 min-w-0">
-                                <div className="flex items-center justify-between gap-2">
-                                  <span className={`text-[11px] block truncate ${isUnread ? "font-extrabold text-slate-900 dark:text-white" : "font-semibold text-slate-700 dark:text-slate-300"}`}>
-                                    {notif.title}
-                                  </span>
-                                  <div className="flex items-center gap-1.5 shrink-0">
-                                    <span className="text-[8px] text-slate-400 font-mono whitespace-nowrap">{notif.timestamp.split(" | ")[0]}</span>
-                                    {isUnread && (
-                                      <button
-                                        type="button"
-                                        onClick={(e) => {
-                                          e.stopPropagation(); // Prevent closing dropdown or triggering outer click
-                                          setNotifications(prev => prev.map(n => n.id === notif.id ? { ...n, read: true } : n));
-                                        }}
-                                        className="p-0.5 bg-slate-100 hover:bg-emerald-50 dark:bg-slate-800 dark:hover:bg-emerald-950/40 text-slate-400 hover:text-emerald-600 dark:hover:text-emerald-400 rounded transition-all cursor-pointer"
-                                        title="Mark as read"
-                                      >
-                                        <Check className="w-3 h-3" />
-                                      </button>
-                                    )}
-                                  </div>
-                                </div>
-                                <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5 leading-snug font-medium">
-                                  {notif.message}
-                                </p>
-                              </div>
-                            </div>
-                          );
-                        })
-                      )}
-                    </div>
-                  </div>
-                </>
-              )}
-            </div>
-
-            {/* Theme Toggle Button */}
-            <button
-              onClick={() => setIsDarkMode(!isDarkMode)}
-              className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-slate-500 dark:text-slate-400 transition-all"
-              title={isDarkMode ? "Switch to Light Mode" : "Switch to Dark Mode"}
-            >
-              {isDarkMode ? <Sun className="w-4.5 h-4.5" /> : <Moon className="w-4.5 h-4.5" />}
-            </button>
-
-            {/* Quick credentials link */}
-            <div 
-              onClick={() => navigateToTab("profile")}
-              className="flex items-center gap-2 p-1.5 hover:bg-slate-100 dark:hover:bg-slate-850 rounded-xl cursor-pointer transition-all border border-slate-100 dark:border-slate-800"
-            >
-              <div className="w-7 h-7 rounded-full bg-blue-100 dark:bg-slate-800 text-blue-700 dark:text-blue-400 font-bold text-xs flex items-center justify-center font-mono uppercase">
-                VM
-              </div>
-              <div className="text-left hidden sm:block">
-                <span className="block text-[11px] font-bold leading-tight">Dr. {profile?.name || "Physician"}</span>
-                <span className="block text-[9px] text-slate-400 tracking-wider">Enterprise Scribe</span>
-              </div>
-            </div>
-          </div>
-
-        </div>
-      </header>
+      <GlobalHeader
+        profile={profile}
+        hospitalSubscription={hospitalSubscription}
+        isDarkMode={isDarkMode}
+        onToggleDarkMode={() => setIsDarkMode(!isDarkMode)}
+        searchQuery={searchQuery}
+        onSearchChange={setSearchQuery}
+        searchResultsOpen={searchResultsOpen}
+        onSearchResultsOpenChange={setSearchResultsOpen}
+        matchedCases={matchedCases}
+        matchedReferences={matchedReferences}
+        onSelectCase={handleSelectCase}
+        onSelectReference={setSelectedReferenceDetail}
+        onQueryAIReference={handleQueryAIReference}
+        onManualRefresh={handleManualRefresh}
+        isCaseSheetDirty={isCaseSheetDirty}
+        selectedCaseId={selectedCaseId}
+        activeFormMode={activeFormMode}
+        showDischargeSummaryId={showDischargeSummaryId}
+        isScribeBusy={isScribeBusy}
+        caseSheetActionsRef={caseSheetActionsRef}
+        notifications={notifications}
+        onUpdateNotifications={setNotifications}
+        appUpdateBanner={appUpdateBanner}
+        onShowUpdatesModal={() => setShowUpdatesModal(true)}
+        currentVersion={currentVersion}
+        isInstalled={isInstalled}
+        onInstallApp={handleInstallApp}
+        onNavigateToTab={navigateToTab}
+        onSignOut={handleSignOut}
+      />
 
       {/* Primary Tab Navigation bar (Desktop Only) */}
       <nav className="hidden md:block bg-white dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 py-1 px-4 overflow-x-auto scrollbar-none no-print">

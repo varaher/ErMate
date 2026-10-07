@@ -13,6 +13,7 @@ import { ConfirmModal } from "./shared/ConfirmModal";
 import MortalityAuditModal from "./MortalityAuditModal";
 import { SelfLearningRulesPanel } from "./SelfLearningRulesPanel";
 import RoleChangeSection from "./RoleChangeSection";
+import { APP_VERSION } from "../changelog";
 
 interface MoreViewProps {
   profile: UserProfile | null;
@@ -925,7 +926,7 @@ export default function MoreView({
                 <Info className="w-4 h-4 text-indigo-500 shrink-0" />
                 <div>
                   <strong className="text-xs font-bold text-slate-900 dark:text-white block">About ErMate</strong>
-                  <span className="text-[10px] text-slate-400 font-mono">Standards & DPDP</span>
+                  <span className="text-[10px] text-slate-400 font-mono">ErMate v{APP_VERSION} • Standards & DPDP</span>
                 </div>
               </div>
               <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
@@ -1442,7 +1443,7 @@ export default function MoreView({
 
             <div className="space-y-3 text-xs text-slate-600 dark:text-slate-300">
               <p>
-                <strong className="text-slate-900 dark:text-white block font-bold">ErMate Clinical Operating System (v3.0)</strong>
+                <strong className="text-slate-900 dark:text-white block font-bold">ErMate Clinical Operating System (v{APP_VERSION})</strong>
                 Engineered for Emergency Departments, Resuscitation Bays, and Acute Care Wards.
               </p>
               <div className="space-y-1.5 font-mono text-[11px] pt-1">

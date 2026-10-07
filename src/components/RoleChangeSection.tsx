@@ -10,8 +10,10 @@ import VoiceRecorder from "./shared/VoiceRecorder";
 import { isExactHospitalAdminRole } from "../utils/roleUtils";
 
 interface RoleChangeSectionProps {
-  profile: UserProfile;
+  profile?: UserProfile;
+  currentProfile?: UserProfile;
   onRoleUpdated?: () => void;
+  onSaveProfile?: (updated: any) => void;
 }
 
 interface RoleRequest {
@@ -29,7 +31,13 @@ interface RoleRequest {
   reviewedAt?: string;
 }
 
-export default function RoleChangeSection({ profile, onRoleUpdated }: RoleChangeSectionProps) {
+export default function RoleChangeSection({
+  profile: propProfile,
+  currentProfile,
+  onRoleUpdated,
+  onSaveProfile,
+}: RoleChangeSectionProps) {
+  const profile = propProfile || currentProfile || ({} as UserProfile);
   const currentRole = profile.role || "EM Resident / Duty Doc";
   const userRoleLower = currentRole.toLowerCase();
   const userEmail = (profile.email || auth.currentUser?.email || "").toLowerCase().trim();

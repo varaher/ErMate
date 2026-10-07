@@ -113,11 +113,11 @@ export async function reserveNextDisplaySequence(
  * Prefers human-facing displayId (e.g. 261005001), falls back to legacy id (e.g. C-2976).
  * Never exposes raw internal UUID in standard UI.
  */
-export function getDisplayCaseId(c?: { displayId?: string | null; id: string } | null): string {
+export function getDisplayCaseId(c?: { displayId?: string | null; id?: string } | null): string {
   if (!c) return "";
   if (c.displayId) return c.displayId;
   if (c.id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(c.id)) {
     return "New Case — ID pending";
   }
-  return c.id;
+  return c.id || "";
 }

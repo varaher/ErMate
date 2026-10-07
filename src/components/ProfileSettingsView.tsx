@@ -11,7 +11,7 @@ import {
   Heart, Mic, Compass, BarChart2, Camera, BookOpen, Wrench, Search
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
-import { UserProfile, ClinicalCase, TriageCategory, TeamMember, ArrivalMode, LogbookEntry, isPendingApprovalStatus } from "../types";
+import { UserProfile, ClinicalCase, TriageCategory, TeamMember, ArrivalMode, LogbookEntry, isPendingApprovalStatus, isActiveMembershipStatus } from "../types";
 import TeamRosterBoard from "./TeamRosterBoard";
 import MoreView from "./MoreView";
 import TeamBuilder from "./TeamBuilder";
@@ -2199,6 +2199,16 @@ const startRealCheckout = async (planKey: string) => {
       );
     } else if (selectedSubSection === "subscriptions" || selectedSubSection === "upgrade") {
       title = "Team & Subscription";
+      const currentEmail = (profile.email || "").toLowerCase().trim();
+      const myMembership = teamMembers.find(
+        (m) => m.email.toLowerCase().trim() === currentEmail
+      );
+      const isMembershipActive = myMembership
+        ? isActiveMembershipStatus(myMembership.status) && myMembership.membershipVerified !== false
+        : Boolean(profile.hospital && profile.hospital.toLowerCase() !== "independent");
+      const isMembershipPending = myMembership
+        ? isPendingApprovalStatus(myMembership.status)
+        : false;
       const isTeam = isMembershipActive;
       content = (
         <div className="space-y-4 font-mono text-left">

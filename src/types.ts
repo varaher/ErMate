@@ -557,6 +557,7 @@ export interface ClinicalCase {
 
 export interface PediatricDetails {
   patientWeight?: string;
+  weight?: string;
   broughtBy?: string;
   informant?: string;
   
@@ -657,6 +658,9 @@ export interface UserProfile {
   pincode?: string;
   hospitalAddress?: string;
   hospitalPhone?: string;
+  qualifications?: string;
+  regNo?: string;
+  phone?: string;
   aiCredits: number;
   streak: number;
   subscriptionTier: string;

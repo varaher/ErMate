@@ -9,6 +9,7 @@ export interface GlobalRefreshButtonProps {
   onSaveAndRefresh?: () => Promise<void> | void;
   onDiscardAndRefresh?: () => void;
   className?: string;
+  compact?: boolean;
 }
 
 export const GlobalRefreshButton: React.FC<GlobalRefreshButtonProps> = ({
@@ -18,6 +19,7 @@ export const GlobalRefreshButton: React.FC<GlobalRefreshButtonProps> = ({
   onSaveAndRefresh,
   onDiscardAndRefresh,
   className = "",
+  compact = true,
 }) => {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [feedback, setFeedback] = useState<"idle" | "success" | "error" | "recording_warning">("idle");
@@ -40,19 +42,23 @@ export const GlobalRefreshButton: React.FC<GlobalRefreshButtonProps> = ({
     setIsRefreshing(true);
     setFeedback("idle");
     try {
-      await onRefresh();
+      // Deterministic 8-second safety timeout so button never spins indefinitely
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("Refresh timed out. Please try again.")), 8000)
+      );
+      await Promise.race([Promise.resolve(onRefresh()), timeoutPromise]);
       setFeedback("success");
       setFeedbackMessage("Updated");
       setTimeout(() => {
         setFeedback("idle");
-      }, 2500);
-    } catch (err) {
+      }, 2000);
+    } catch (err: any) {
       console.error("[GlobalRefreshButton] Refresh failed:", err);
       setFeedback("error");
-      setFeedbackMessage("Unable to refresh. Try again.");
+      setFeedbackMessage(err?.message || "Unable to refresh. Try again.");
       setTimeout(() => {
         setFeedback("idle");
-      }, 3500);
+      }, 3000);
     } finally {
       setIsRefreshing(false);
     }
@@ -61,10 +67,10 @@ export const GlobalRefreshButton: React.FC<GlobalRefreshButtonProps> = ({
   const handleClick = () => {
     if (isRecordingOrBusy) {
       setFeedback("recording_warning");
-      setFeedbackMessage("Finish the current recording/save before refreshing");
+      setFeedbackMessage("Finish current recording/save before refreshing");
       setTimeout(() => {
         setFeedback("idle");
-      }, 4000);
+      }, 3500);
       return;
     }
 
@@ -87,7 +93,7 @@ export const GlobalRefreshButton: React.FC<GlobalRefreshButtonProps> = ({
         console.error("[GlobalRefreshButton] Save before refresh failed:", err);
         setFeedback("error");
         setFeedbackMessage("Unable to save changes. Refresh aborted.");
-        setTimeout(() => setFeedback("idle"), 3500);
+        setTimeout(() => setFeedback("idle"), 3000);
         setIsRefreshing(false);
       }
     } else {
@@ -103,6 +109,15 @@ export const GlobalRefreshButton: React.FC<GlobalRefreshButtonProps> = ({
     performRefresh();
   };
 
+  const getTooltip = () => {
+    if (isRecordingOrBusy) return "Finish current recording/save before refreshing";
+    if (isRefreshing) return "Refreshing data...";
+    if (feedback === "success") return "Data refreshed";
+    if (feedback === "error") return feedbackMessage || "Refresh failed. Try again.";
+    if (isDirty) return "Unsaved changes present (click to review)";
+    return "Refresh data";
+  };
+
   return (
     <>
       <div className="relative inline-flex items-center">
@@ -110,37 +125,43 @@ export const GlobalRefreshButton: React.FC<GlobalRefreshButtonProps> = ({
           type="button"
           onClick={handleClick}
           disabled={isRefreshing || isRecordingOrBusy}
-          title={
-            isRecordingOrBusy
-              ? "Finish the current recording/save before refreshing"
-              : isRefreshing
-              ? "Refreshing data..."
-              : "Refresh current view data"
-          }
-          aria-label={
-            isRecordingOrBusy
-              ? "Finish recording before refreshing"
-              : isRefreshing
-              ? "Refreshing"
-              : "Refresh"
-          }
-          className={`relative inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all duration-150 border ${
+          title={getTooltip()}
+          aria-label={getTooltip()}
+          className={`relative inline-flex items-center justify-center rounded-lg text-xs font-medium transition-all duration-150 border cursor-pointer ${
+            compact ? "w-8 h-8 md:w-8.5 md:h-8.5" : "gap-1.5 px-2.5 py-1.5"
+          } ${
             isRecordingOrBusy
               ? "opacity-50 cursor-not-allowed bg-slate-100 dark:bg-slate-800 text-slate-400 border-slate-200 dark:border-slate-700"
               : isRefreshing
               ? "bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 border-indigo-200 dark:border-indigo-800/60"
-              : "bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-750 hover:text-indigo-600 dark:hover:text-indigo-400 border-slate-200 dark:border-slate-700 shadow-xs"
+              : feedback === "success"
+              ? "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800/60"
+              : feedback === "error"
+              ? "bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 border-rose-200 dark:border-rose-800/60"
+              : "bg-white dark:bg-slate-850 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-indigo-600 dark:hover:text-indigo-400 border-slate-200 dark:border-slate-750 shadow-xs"
           } ${className}`}
         >
-          <RefreshCw
-            className={`w-3.5 h-3.5 ${isRefreshing ? "animate-spin text-indigo-600 dark:text-indigo-400" : ""}`}
-          />
-          <span className="hidden sm:inline">
-            {isRefreshing ? "Refreshing..." : "Refresh"}
-          </span>
-          {isDirty && !isRecordingOrBusy && (
+          {feedback === "success" ? (
+            <Check className="w-4 h-4 text-emerald-600 dark:text-emerald-400 animate-in zoom-in-75 duration-150" />
+          ) : feedback === "error" ? (
+            <AlertTriangle className="w-4 h-4 text-rose-600 dark:text-rose-400 animate-in zoom-in-75 duration-150" />
+          ) : (
+            <RefreshCw
+              className={`w-4 h-4 text-slate-600 dark:text-slate-300 ${
+                isRefreshing ? "animate-spin text-indigo-600 dark:text-indigo-400" : ""
+              }`}
+            />
+          )}
+
+          {!compact && (
+            <span className="hidden sm:inline">
+              {isRefreshing ? "Refreshing..." : "Refresh"}
+            </span>
+          )}
+
+          {isDirty && !isRecordingOrBusy && feedback === "idle" && (
             <span
-              className="w-1.5 h-1.5 rounded-full bg-amber-500 ml-0.5"
+              className="absolute top-1 right-1 w-2 h-2 rounded-full bg-amber-500 ring-2 ring-white dark:ring-slate-900"
               title="Unsaved changes present"
             />
           )}

@@ -89,10 +89,10 @@ ErMate implements **Local On-The-Fly PHI De-identification** hosted on Indian Cl
 - **Same-Case Pending Scribe Pass-Through**: When discussing a case with active unapplied Scribe dictation, unapplied fields are passed as `pendingClinicalContext` labeled `PENDING CLINICIAN DICTATION — NOT YET APPLIED TO CASE SHEET`. Enables conversational assistance without mutating `ClinicalCase` or asserting unconfirmed facts as legal chart records.
 - **Request Resilience & Bounded Lifecycle**: All Discuss and Scribe network requests enforce 25s/30s client `AbortController` timeouts and bounded server failovers (Claude Sonnet primary → OpenAI fallback). Loading state is unconditionally reset in `finally` across all success, error, timeout, and stale generation paths, permanently resolving indefinite spinner locks. If both providers fail, displays a calm retry notice (`"I couldn't complete that response right now. Please try again."`) without leaking API or provider internals.
 
-### 7. Non-Destructive In-App Data Refresh Engine
-- **Global Header Refresh Button**: Seamlessly available across desktop and mobile headers (`↻ Refresh`) to pull real-time Firestore updates without page reloads.
-- **Unsaved Clinical Work Protection**: Evaluates open Case Sheet dirty state and presents a safe "Save or discard" prompt before refreshing.
-- **Voice Scribe Protection**: Prevents refreshing during active voice recording, transcription, or message transmission.
+### 7. Global Header, Refresh & Notification Lifecycle Engine
+- **Streamlined Clinical Shell (`src/components/GlobalHeader.tsx`)**: Compact, un-cluttered header featuring ErMate logo, single-line truncated workplace context (`Rajagiri Emergency`), global search, compact refresh icon (`↻`), actionable notification bell, and circular profile avatar. Moved team license badge, subscription plan, app version, dark mode toggle, and doctor name text into the Profile Menu and More settings.
+- **Deterministic Global Refresh (`src/components/shared/GlobalRefreshButton.tsx`)**: Icon-only button (`↻`) with 8-second safety timeout, animated spinning feedback during refresh, brief green check indicator on success, and automatic reset to idle. Never spins indefinitely. Preserves unsaved clinical work with explicit modal prompt if Case Sheet is dirty, and warns if audio dictation is running.
+- **Actionable Notification Lifecycle**: Three strict states: UNREAD (increments bell badge count), READ BUT PENDING ACTION (zero badge impact, visible in Active tab), and COMPLETED/RESOLVED (removed from active list, archived in History tab). Auto-resolves alerts upon shift handover acknowledgement, team member approval, or case sheet finalization.
 - **Context & Route Preservation**: Preserves active routes, selected cases, active tabs, and clinician credentials without resetting in-memory UI navigation.
 
 ### 7. MATE Core Foundation & Universal Controller (`src/mate/`)

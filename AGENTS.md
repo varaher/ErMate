@@ -45,6 +45,34 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-07] — ErMate: Global Header, Refresh & Notification UX Cleanup
+- **Streamlined Global Header Information Architecture (`src/components/GlobalHeader.tsx`, `src/App.tsx`)**:
+  - Refactored cluttered global header down to a compact, professional clinical shell:
+    - **Left**: ErMate logo with Activity indicator and "The Scribe Companion for ER" subtitle (removed obsolete "EMR v2.5" pill).
+    - **Context**: Single-line workplace and department label (`Rajagiri Emergency` / `Hospital • Department`) bounded by `truncate whitespace-nowrap max-w-[200px] lg:max-w-[300px]` to permanently prevent multi-line wrapping (removed "Active Hospital:" label and "Team Licensed" badge from primary bar).
+    - **Right**: Compact search bar (expandable icon on mobile), compact refresh button (`↻`), notification bell with actionable unread count badge, and clean circular profile avatar.
+    - **Moved out of primary header**: Team license badge, subscription plan, app version, update/download buttons, dark mode toggle, full user name text, and role label relocated cleanly into the Profile Dropdown Menu.
+  - Mobile layout optimized: `[ErMate] [Search] [↻] [Bell] [Avatar]` with a single truncated workplace subtitle row, completely eliminating horizontal scroll and oversized button pills.
+- **Profile Dropdown Menu (`src/components/GlobalHeader.tsx`)**:
+  - Housed in header avatar button (with subtle indicator dot if an app update is waiting).
+  - Includes: Doctor name & credentials, clinical role badge, verified email, workplace & department, canonical subscription tier ("Team Plan" vs "Individual Plan"), theme toggle switch (Light / Dark), link to Account & Facility Settings, What's New changelog (showing `v${currentVersion}`), PWA install trigger, and secure Sign Out.
+- **Deterministic Global Refresh Control (`src/components/shared/GlobalRefreshButton.tsx`, `src/App.tsx`)**:
+  - Replaced bulky text button `[ Refresh ]` with a compact `↻` icon button (`w-8 h-8 md:w-8.5 md:h-8.5`) with consistent control height.
+  - Implemented guaranteed 8-second safety timeout in `performRefresh` and 6-second timeout in `handleManualRefresh` so the spinner can NEVER hang indefinitely under low-bandwidth, offline, or preview conditions.
+  - Smooth deterministic state transitions: animated spin during refresh (`animate-spin`), brief green check mark on success (`Check`), brief rose warning on failure (`AlertTriangle`), and self-clearing transient feedback toast (resets to idle after 2-3s).
+  - Preserved clinical safety: If `isDirty` on an active case sheet, clicking refresh opens an explicit dialog explaining unsaved changes with Save & Refresh, Discard & Refresh, and Cancel options. If audio recording/dictation is active, provides immediate feedback ("Finish current recording/save before refreshing").
+- **Actionable Notification Lifecycle & Two-Tab Drawer (`src/components/GlobalHeader.tsx`, `src/App.tsx`)**:
+  - Defined 3 unambiguous lifecycle states:
+    1. **UNREAD** (`!read && !resolved`): increments bell badge count, visible in Active list.
+    2. **READ BUT ACTION PENDING** (`read && !resolved`): zero badge impact, visible in Active list.
+    3. **COMPLETED / RESOLVED** (`resolved === true`): removed from active list and bell badge count, isolated in History tab.
+  - Bell badge displays actionable unread notifications ONLY (`activeUnreadCount`).
+  - Added dedicated **Active ({count})** vs **History ({count})** tab strip in notification popover with "Mark All Read", "Resolve All", item-level resolve (`✓`) action, and "Clear History".
+  - Auto-resolve integration: Handover acknowledgements, team member approvals/declines, and installed updates immediately resolve their matching alerts.
+- **Verification (`verify_global_header_refresh_notifications.ts` — 16 / 16 PASS)**:
+  - 100% pass across all 16 specifications (desktop no wrap, mobile no overflow, badge removals, version removal, dark mode removal, profile menu metadata, refresh execution, spinner clears on success/failure, unsaved work modal, notification badge math, read completed count exclusion, resolved disappearance, pending persistence, history isolation, and production build).
+  - Maintained zero regressions in `verify_more_profile_restructure.ts` (10/10), `verify_bed_binding.ts` (7/7), and `verify_case_identity.ts` (14/14). TypeScript and production build compile with 0 errors.
+
 ### [2026-10-07] — ErMate: More / Profile / Account & Facility Restructure
 - **Clean 5-Section Information Architecture (`src/components/MoreView.tsx`, `src/components/ProfileSettingsView.tsx`, `src/App.tsx`)**:
   - Reorganized More, Profile, and Facility settings into 5 clear clinician-facing sections:

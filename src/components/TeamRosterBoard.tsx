@@ -2119,7 +2119,7 @@ export default function TeamRosterBoard({
                     >
                       <div>
                         <strong className="text-xs font-bold text-slate-900">{c.displayId || c.id}</strong>
-                        <p className="text-[11px] text-slate-500">{c.demographics?.gender || "Patient"} • Bed {c.bedNo || "Unassigned"}</p>
+                        <p className="text-[11px] text-slate-500">{c.patient?.gender || "Patient"} • Bed {c.bedNo || "Unassigned"}</p>
                       </div>
                       <input
                         type="checkbox"

@@ -1818,9 +1818,9 @@ export default function VoiceScribeChatView({
         censusSummary: {
           totalActive: censusSummary.activePatientCount,
           occupiedBeds: censusSummary.occupiedBeds,
-          triageCounts: censusSummary.triageDistribution,
+          triageCounts: censusSummary.triageCounts,
           incompleteCount: censusSummary.incompleteCount,
-          unassignedCount: censusSummary.unassignedBedCount,
+          unassignedCount: censusSummary.unassignedCount,
         },
       });
       setIsSending(false);
@@ -2310,7 +2310,7 @@ export default function VoiceScribeChatView({
         // → patient appears immediately in Current Cases
         // → extracted clinical content remains UNAPPLIED until Preview/Apply
         const hasMeaningfulExtraction = hasMeaningfulClinicalExtraction(fieldsToExtract);
-        const isCaseMode = initialEntryMode === "case" && !isDiscussionOnly && currentMode !== "discuss";
+        const isCaseMode = initialEntryMode === "case" && !isDiscussionOnly && (currentMode as string) !== "discuss";
         const currentActiveCaseId = activeCaseId || activeCaseIdRef.current;
         const currentSessionId = activeSessionId || activeSessionIdRef.current;
         const existingSessionLinkedCase = currentSessionId && allCases
