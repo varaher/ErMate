@@ -778,10 +778,17 @@ export async function generateCourseInHospital(summaryData: any): Promise<{ cour
 
   const prompt = `Synthesize a professional, chronological Emergency Department "Course in Hospital" narrative for a discharge summary based ONLY on the documented data below.
 
-RULES:
-- NEVER invent information not in the documented text.
-- Maintain chronological flow from arrival -> evaluation -> treatment -> response -> disposition.
-- Be concise, factual, and medico-legally sound.
+CORE RULES:
+- Write ONE coherent chronological clinical narrative describing what happened DURING THE ER encounter in natural professional prose (usually 1-3 paragraphs).
+- Resemble a professionally dictated hospital discharge course.
+- Do NOT use section headings (e.g., no "Presentation:", no "Initial Assessment:", no "Investigations:", no "Treatment Given:", no "Clinical Course:", no "Disposition:").
+- Do NOT include any title like "COURSE IN EMERGENCY DEPARTMENT".
+- Do NOT format as a bullet-list dump or a mini-case-sheet.
+- Course in Hospital != Case Sheet summary. Do NOT reproduce full ABCDE, full SAMPLE, or complete vitals table (those have separate discharge sections).
+- Include vitals or exam findings ONLY when clinically relevant to acute management (e.g. "On arrival, the patient was hypotensive with BP 80/50 mmHg").
+- Include only investigations and treatments actually ordered, performed, or administered.
+- NEVER invent "improved", "stable", or "tolerated well" unless explicitly documented in the progress notes.
+- If refusal / discharge at request documented (investigation advised, risks explained, patient declined, preferred outpatient follow-up), express naturally in chronological order.
 
 DOCUMENTED DATA:
 - Working Diagnosis: ${safeWorkingDx}
@@ -794,7 +801,7 @@ DOCUMENTED DATA:
 
 Return JSON format:
 {
-  "course_in_hospital": "Detailed chronological narrative of the stay. Include all full details without truncation.",
+  "course_in_hospital": "Coherent chronological 1-3 paragraph clinical narrative without headings or bullet lists.",
   "diagnosis": "Final Refined Working Diagnosis"
 }`;
 
@@ -849,7 +856,7 @@ Return JSON format:
   }
 
   return {
-    course_in_hospital: "Patient presented with " + safeHpi + ". Treated with " + safeTreatment + " and evaluated with " + safeInvestigations + ". Stable for discharge.",
+    course_in_hospital: "The patient was evaluated in the Emergency Department with " + (safeHpi || "acute complaints") + ". " + (safeTreatment ? "Treatment with " + safeTreatment + " was administered. " : "") + (safeInvestigations ? "Evaluation with " + safeInvestigations + " was completed. " : "") + "The patient was discharged following emergency management.",
     diagnosis: safeWorkingDx
   };
 }

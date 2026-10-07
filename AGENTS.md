@@ -45,6 +45,25 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-07] — ErMate: Course in Hospital Narrative Format Correction (Pure Chronological Clinical Narrative)
+- **Elimination of Fixed 9-Section Structured Headings (`server/dischargeSummary.ts`, `server.ts`, `server/aiDiagnosis.ts`, `src/utils/dischargeSyncEngine.ts`)**:
+  - Replaced the rigid multi-section structure ("Presentation:", "Events Leading to Presentation:", "Initial Assessment:", "Investigations:", "Treatment Given:", "Procedures:", "Clinical Course:", "Disposition:") with ONE coherent, chronological clinical narrative describing what happened during the ER encounter.
+  - Eliminated "COURSE IN EMERGENCY DEPARTMENT" banner heading and mini-case-sheet dumps.
+  - **Narrative Prose (1-3 paragraphs)**: Resembles a professionally dictated hospital discharge course answering:
+    1. Why the patient was evaluated in the Emergency Department (chief complaint & acute presenting context).
+    2. Clinically important issues or notable abnormal findings that affected acute management (e.g. hypotension, tachycardia, acute findings, bedside ECG/POCUS findings) without listing normal ABCDE findings.
+    3. Documented investigations performed, resulted, or advised with actual status (ordered, sent, resulted, or declined).
+    4. Treatments and procedures actually administered with exact drugs, doses, and routes as documented.
+    5. Consultations, counselling, or patient decisions/refusals (e.g. counselled regarding risks of declining investigations or admission, preference for outpatient management, discharged at request).
+    6. Documented progress notes and reassessments. Strict zero-fabrication: never invents "improved", "stable", or "tolerated well" unless explicitly documented.
+    7. Final ER disposition and rationale expressed naturally in professional prose.
+- **Heading Stripping & Robust Fallback Sanitization (`src/utils/dischargeSyncEngine.ts`, `server/dischargeSummary.ts`, `server.ts`)**:
+  - Implemented `stripCourseSectionHeadings(text)` to clean legacy stored or model-generated headings into clean narrative paragraphs.
+  - Updated `sanitizeCourseNarrative` in `server.ts` and `cleanAndParseJSON` in `server/dischargeSummary.ts` to seamlessly convert structured JSON objects or string outputs into fluent narrative prose.
+  - Updated 3-way merge `mergeAutoCoursePreservingManualEdits` to merge headingless narrative texts naturally by factual sentence units, appending genuinely new clinical updates while protecting clinician edits and intentional deletions.
+- **Comprehensive Verification (`verify_clinical_narrative_quality.ts` 20/20, `verify_discharge_preview_integrity.ts` 20/20, `verify_regression.ts` 19/19)**:
+  - 100% test pass across narrative synthesis, chronological flow, refusal/discharge at request, medication preservation, and zero fabrication.
+
 ### [2026-10-07] — ErMate: Inline Unlimited Dictation Recorder (ChatGPT / WhatsApp Style UX)
 - **Elimination of Centered Modal & Inline Composer Transition (`src/components/shared/VoiceRecorder.tsx`, `src/components/VoiceScribeChatView.tsx`, `src/components/CaseDiscussWorkspace.tsx`, `src/components/BoundChatModal.tsx`)**:
   - Replaced legacy popup and screen-blocking recording modal with a compact, conversational inline composer-integrated recorder.

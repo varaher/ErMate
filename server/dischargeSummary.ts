@@ -166,68 +166,29 @@ primarySurvey:
     logRoll: findings if done (trauma)
 
 courseInHospital:
-  Write a CONCISE, STRUCTURED, CHRONOLOGICAL CLINICAL NARRATIVE under the heading "COURSE IN EMERGENCY DEPARTMENT".
-  Follow this strict 9-section ordered structure using short headings:
+  Write ONE coherent, chronological clinical narrative describing what happened DURING THE ER encounter in natural professional prose (usually 1-3 paragraphs).
+  It should resemble a professionally dictated hospital discharge course.
 
-  Presentation:
-    Briefly describe the presentation using ONLY documented presenting complaint and HPI.
-    Do NOT invent symptoms or clinical details not stated. If no presenting complaint was documented, OMIT THIS SECTION ENTIRELY (do NOT substitute generic terms like "acute presentation", "unspecified complaint", or "patient presented for evaluation").
+  Do NOT use section headings (e.g., do NOT write "Presentation:", "Events Leading to Presentation:", "Initial Assessment:", "Investigations:", "Treatment Given:", "Procedures:", "Clinical Course:", "Disposition:").
+  Do NOT write "COURSE IN EMERGENCY DEPARTMENT" as a heading.
+  Do NOT format as a bullet-list dump or mini-case-sheet.
 
-  Events Leading to Presentation:
-    ONLY IF EXPLICITLY DOCUMENTED.
-    Must contain ONLY an explicit precipitating or preceding event related to the presentation (e.g. road traffic accident, fall, assault, burn, snake/animal bite, insect sting, poisoning/ingestion/overdose, exertional onset, witnessed seizure before arrival, collapse/syncope, recent surgery/procedure, environmental exposure).
-    Preserve time, mechanism, place, circumstances, and uncertainty qualifiers (reportedly, allegedly, approximately) when documented.
-    CRITICAL: Must NEVER be populated from ordinary symptom duration (e.g., "Fever for 2 days", "Cough for 3 days", "Abdominal pain since morning" are symptoms, NOT events).
-    Do NOT create this section for explicit negative history ("No history of trauma").
-    If no explicit precipitating event occurred or none was documented, OMIT THIS SECTION ENTIRELY.
+  CORE RULE: Course in Hospital ≠ Case Sheet summary.
+  Do NOT reproduce the complete ABCDE, SAMPLE, secondary survey, systemic examination, complete vitals, full investigation list, or full diagnosis list inside Course in Hospital (those have their own separate discharge sections).
 
-  Initial Assessment:
-    ONLY IF DOCUMENTED.
-    Summarize documented ABCDE, PAT/TICLS (for pediatric cases), vitals (HR, BP, RR, SpO2, Temp), GCS, and focused examination findings.
-    If explicitly documented as normal ("ABCDE normal" / "Systemic examination normal"), include approved normal findings.
-    Do NOT assume normal if clinician simply wrote "Patient stable".
-    If no primary survey / assessment findings were documented, OMIT THIS SECTION ENTIRELY.
-
-  Investigations:
-    ONLY IF DOCUMENTED.
-    Include only investigations actually ordered, performed, or resulted. Separate orders from results.
-    Do NOT say "Baseline investigations were not ordered" or "No investigations sent".
-    If no investigations were documented, OMIT THIS SECTION ENTIRELY.
-
-  Treatment Given:
-    ONLY IF ADMINISTERED.
-    Include only medications, IV fluids, and acute interventions actually administered/given in ER with dose and route.
-    Do NOT convert planned orders into administered treatments ("Plan ceftriaxone" is NOT "administered").
-    If no treatments were administered or documented, OMIT THIS SECTION ENTIRELY.
-
-  Procedures:
-    ONLY IF PERFORMED.
-    Include only explicitly performed procedures (e.g., IV cannulation, catheterization, intubation, suturing, splinting, etc.).
-    If none performed, OMIT THIS SECTION ENTIRELY.
-
-  Consultations:
-    ONLY IF DONE.
-    Include specialty consultations actually requested or conducted and their recommendations.
-    Do NOT say "No specialist consultation was documented".
-    If none done, OMIT THIS SECTION ENTIRELY.
-
-  Clinical Course:
-    ONLY IF DOCUMENTED.
-    Summarize documented reassessments, serial vitals, response to treatment, or condition changes during ER stay.
-    Do NOT manufacture statements like "Patient remained stable" or "Condition improved" unless explicitly documented.
-    If no progress or reassessment data exist, OMIT THIS SECTION ENTIRELY.
-
-  Disposition:
-    ONLY IF DOCUMENTED.
-    Documented final ER disposition (e.g. discharged with follow-up advice, admitted to ward/ICU under specialty, transferred, LAMA).
-    Do NOT invent return precautions, hydration counseling, or red-flag warnings in the factual Course (those belong in patientAdvice/patientInstructions).
-    If no disposition documented, OMIT THIS SECTION ENTIRELY.
+  Answer chronologically:
+  1. Why was the patient evaluated in ER? (Documented chief complaint and presenting clinical context).
+  2. What clinically important issue affected management? (Include examination or vitals only when clinically relevant to the ER course, e.g. "On arrival, the patient was hypotensive with BP 80/50 mmHg." Do NOT recite normal ABCDE or normal vitals).
+  3. What investigations were performed or advised? (Use actual documented status: ordered, performed, resulted, or declined, e.g. "ECG demonstrated an anterior STEMI. Troponin was elevated" or "Blood investigations and chest X-ray were advised; however, the patient declined further evaluation").
+  4. What treatment/procedures were actually given? (Include medications and acute interventions actually administered with doses and routes in natural prose. Do NOT include planned or unadministered medications).
+  5. Was there consultation, counselling, or refusal? (If patient was counselled regarding risks of declining investigations or admission, or expressed preference for outpatient follow-up, state this naturally).
+  6. What happened on reassessment? (Only include documented progress or response to treatment. NEVER invent "improved", "stable", or "tolerated well" unless explicitly documented in progress notes or condition at discharge. If no reassessment documented, omit reassessment language).
+  7. How and why was the patient finally disposed? (In view of the clinical course and disposition, describe discharge, admission, transfer, or discharge at request with documented follow-up advice).
 
   LOCKED MANDATES FOR COURSE IN HOSPITAL:
   - Do not generate paragraphs describing the absence of documentation.
-  - Omit sections that have no supported source facts.
   - Do not infer that an investigation, medication, consultation, reassessment or procedure did not occur merely because it is absent from the available record.
-  - Events Leading to Presentation must only contain an explicit precipitating event and must never be populated from ordinary symptom duration.
+  - Events leading to presentation must only contain an explicit precipitating event and must never be populated from ordinary symptom duration.
   - Use formal medical English, past tense, passive voice where appropriate.
   - Keep Course in Hospital purely FACTUAL. Patient advice and warning instructions belong in patientAdvice / patientInstructions, NOT inside Course in Hospital.
 
@@ -403,28 +364,32 @@ function cleanAndParseJSON(rawStr: string): any {
     }
   }
 
-  // Handle courseInHospital if returned as an object
-  if (parsed && typeof parsed === 'object' && parsed.courseInHospital && typeof parsed.courseInHospital === 'object') {
-    const courseObj = parsed.courseInHospital;
-    const parts = ["COURSE IN EMERGENCY DEPARTMENT"];
-    if (courseObj.presentation && !/\b(?:acute\s+presentation|unspecified\s+complaint|presented\s+for\s+evaluation)\b/i.test(courseObj.presentation)) {
-      parts.push(`Presentation:\n${courseObj.presentation}`);
-    }
-    if (courseObj.eventsLeadingToPresentation || courseObj.events) parts.push(`Events Leading to Presentation:\n${courseObj.eventsLeadingToPresentation || courseObj.events}`);
-    if (courseObj.initialAssessment || courseObj.arrivalAndPrimarySurvey) parts.push(`Initial Assessment:\n${courseObj.initialAssessment || courseObj.arrivalAndPrimarySurvey}`);
-    if (courseObj.investigations) parts.push(`Investigations:\n${courseObj.investigations}`);
-    if (courseObj.treatmentGiven || courseObj.treatment) parts.push(`Treatment Given:\n${courseObj.treatmentGiven || courseObj.treatment}`);
-    if (courseObj.procedures) parts.push(`Procedures:\n${courseObj.procedures}`);
-    if (courseObj.consultations) parts.push(`Consultations:\n${courseObj.consultations}`);
-    if (courseObj.clinicalCourse) parts.push(`Clinical Course:\n${courseObj.clinicalCourse}`);
-    if (courseObj.disposition) parts.push(`Disposition:\n${courseObj.disposition}`);
-    
-    // If we matched any known keys, join them. Otherwise stringify the whole thing.
-    if (parts.length > 1) {
-      parsed.courseInHospital = parts.join("\n\n");
-    } else {
-      // Fallback
-      parsed.courseInHospital = Object.values(courseObj).join("\n\n");
+  // Strip any accidental legacy headings or format courseInHospital cleanly
+  if (parsed && typeof parsed === 'object') {
+    if (typeof parsed.courseInHospital === 'object' && parsed.courseInHospital) {
+      const courseObj = parsed.courseInHospital;
+      const sentences: string[] = [];
+      if (courseObj.presentation && !/\b(?:acute\s+presentation|unspecified\s+complaint|presented\s+for\s+evaluation)\b/i.test(courseObj.presentation)) {
+        sentences.push(courseObj.presentation.trim());
+      }
+      if (courseObj.eventsLeadingToPresentation || courseObj.events) sentences.push((courseObj.eventsLeadingToPresentation || courseObj.events).trim());
+      if (courseObj.initialAssessment || courseObj.arrivalAndPrimarySurvey) sentences.push((courseObj.initialAssessment || courseObj.arrivalAndPrimarySurvey).trim());
+      if (courseObj.investigations) sentences.push(courseObj.investigations.trim());
+      if (courseObj.treatmentGiven || courseObj.treatment) sentences.push((courseObj.treatmentGiven || courseObj.treatment).trim());
+      if (courseObj.procedures) sentences.push(courseObj.procedures.trim());
+      if (courseObj.consultations) sentences.push(courseObj.consultations.trim());
+      if (courseObj.clinicalCourse) sentences.push(courseObj.clinicalCourse.trim());
+      if (courseObj.disposition) sentences.push(courseObj.disposition.trim());
+      
+      parsed.courseInHospital = sentences.length > 0
+        ? sentences.join(" ")
+        : Object.values(courseObj).filter(v => typeof v === 'string').join(" ");
+    } else if (typeof parsed.courseInHospital === 'string') {
+      parsed.courseInHospital = parsed.courseInHospital
+        .replace(/^#*\s*COURSE\s+IN\s+(?:EMERGENCY\s+DEPARTMENT|HOSPITAL)\s*:?\s*/gim, "")
+        .replace(/(?:^|\n)\s*(?:Presentation|Events\s+Leading\s+to\s+Presentation|Initial\s+Assessment|Investigations?|Treatment\s+Given|Treatments?|Procedures?|Consultations?|Clinical\s+Course(?:\s*\/\s*Reassessment)?|Reassessment|Disposition)\s*:\s*/gim, "\n\n")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim();
     }
   }
 
@@ -494,13 +459,9 @@ function buildHeuristicDischargeSummary(rawText: string): Record<string, any> {
       disability: { gcs: gcsM ? gcsM[1] : null, pupils: null, grbs: grbsM ? grbsM[1] : null },
       exposure: { temp: null, logRoll: null }
     },
-    courseInHospital: (() => {
-      const parts = ["COURSE IN EMERGENCY DEPARTMENT"];
-      if (complaintM && complaintM[1].trim()) {
-        parts.push(`Presentation:\nThe patient presented to the Emergency Department with ${complaintM[1].trim()}.`);
-      }
-      return parts.join("\n\n");
-    })(),
+    courseInHospital: complaintM && complaintM[1].trim()
+      ? `The patient was evaluated in the Emergency Department with ${complaintM[1].trim()}. Initial assessment and emergency management were provided.`
+      : "The patient was evaluated and treated in the Emergency Department.",
     investigations: {
       cbc: null, lft: null, rft: null, electrolytes: null, coagulation: null, urine: null, cardiac: null, vbg: null, ecg: null, imaging: null, other: null
     },

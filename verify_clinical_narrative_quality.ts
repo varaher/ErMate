@@ -70,14 +70,21 @@ test("1. ACS Narrative Synthesis", () => {
   } as any;
 
   const course = deriveInitialCourseInHospital(acsCase);
-  assert.ok(course.includes("Presentation:\nThe patient presented to the Emergency Department with Acute retrosternal chest pain of 2 hours duration associated with sweating and nausea."));
-  assert.ok(course.includes("Events Leading to Presentation:\nSymptoms began suddenly while patient was walking."));
-  assert.ok(course.includes("Initial Assessment:"));
-  assert.ok(course.includes("Pulse was 110/min, blood pressure 90/60 mmHg"));
-  assert.ok(course.includes("ECG showed a ST elevation in V1-V4"));
-  assert.ok(course.includes("Troponin I showed a Elevated at 1.4 ng/mL"));
-  assert.ok(course.includes("Aspirin 300 mg oral, Ticagrelor 180 mg oral, Unfractionated Heparin 5000 IU iv was administered."));
-  assert.ok(course.includes("The patient was Admitted to Coronary Care Unit."));
+  // Zero headings mandate
+  assert.ok(!course.includes("Presentation:"), "Must not have Presentation heading");
+  assert.ok(!course.includes("Events Leading to Presentation:"), "Must not have Events heading");
+  assert.ok(!course.includes("Initial Assessment:"), "Must not have Initial Assessment heading");
+  assert.ok(!course.includes("COURSE IN EMERGENCY DEPARTMENT"), "Must not have title heading");
+
+  // Coherent chronological clinical narrative
+  assert.ok(course.includes("The patient was evaluated in the Emergency Department with Acute retrosternal chest pain of 2 hours duration associated with sweating and nausea."));
+  assert.ok(course.includes("Symptoms began suddenly while patient was walking."));
+  assert.ok(course.includes("hypotension with blood pressure 90/60 mmHg"));
+  assert.ok(course.includes("pulse of 110/min"));
+  assert.ok(course.includes("ECG showed ST elevation in V1-V4"));
+  assert.ok(course.includes("Troponin I showed Elevated at 1.4 ng/mL"));
+  assert.ok(course.includes("The patient was treated with Aspirin 300 mg oral, Ticagrelor 180 mg oral, Unfractionated Heparin 5000 IU iv as documented."));
+  assert.ok(course.includes("Admitted to Coronary Care Unit."));
 });
 
 // ---------------------------------------------------------------
@@ -114,11 +121,13 @@ test("2. Trauma / Fall Narrative Synthesis", () => {
   } as any;
 
   const course = deriveInitialCourseInHospital(traumaCase);
-  assert.ok(course.includes("Presentation:\nThe patient presented to the Emergency Department with Pain over right hip and inability to bear weight."));
+  assert.ok(!course.includes("Presentation:"));
+  assert.ok(!course.includes("Procedures:"));
+  assert.ok(course.includes("The patient was evaluated in the Emergency Department with Pain over right hip and inability to bear weight."));
   assert.ok(course.includes("The patient sustained a fall from approximately 6 feet while working at home."));
-  assert.ok(course.includes("Pelvis X-Ray showed a Fracture neck of femur right side."));
+  assert.ok(course.includes("Pelvis X-Ray showed Fracture neck of femur right side."));
   assert.ok(course.includes("Splinting / Immobilization"));
-  assert.ok(course.includes("The patient was Admitted under Orthopedics."));
+  assert.ok(course.includes("Admitted under Orthopedics."));
 });
 
 // ---------------------------------------------------------------
@@ -156,11 +165,12 @@ test("3. Pediatric Fever Narrative Synthesis", () => {
   } as any;
 
   const course = deriveInitialCourseInHospital(pedsCase);
-  assert.ok(course.includes("Presentation:\nThe child presented to the Emergency Department with Fever for 3 days with reduced oral intake."));
+  assert.ok(!course.includes("Presentation:"));
+  assert.ok(course.includes("The child was evaluated in the Emergency Department with Fever for 3 days with reduced oral intake."));
   assert.ok(course.includes("The Pediatric Assessment Triangle was documented as normal."));
   assert.ok(!course.includes("Events Leading to Presentation:"), "Ordinary pediatric fever must not create an Events section");
-  assert.ok(course.includes("Paracetamol 210 mg oral was administered."));
-  assert.ok(course.includes("The child was discharged with advice for Pediatric OPD review in 48 hours."));
+  assert.ok(course.includes("The child was treated with Paracetamol 210 mg oral as documented."));
+  assert.ok(course.includes("The child was discharged from the Emergency Department with advice for Pediatric OPD review in 48 hours."));
 });
 
 // ---------------------------------------------------------------
@@ -195,12 +205,13 @@ test("4. Poisoning Narrative Synthesis", () => {
   } as any;
 
   const course = deriveInitialCourseInHospital(poisonCase);
-  assert.ok(course.includes("Events Leading to Presentation:"));
-  assert.ok(course.includes("Consumption of organophosphate compound"));
+  assert.ok(!course.includes("Events Leading to Presentation:"));
+  assert.ok(!course.includes("Procedures:"));
+  assert.ok(course.includes("consumption of organophosphate compound"));
   assert.ok(course.includes("Nasogastric (NG) Tube"));
   assert.ok(course.includes("Foley's Catheterization"));
-  assert.ok(course.includes("Atropine 2 mg iv, Pralidoxime 1 g iv was administered."));
-  assert.ok(course.includes("The patient was Admitted to Medical ICU."));
+  assert.ok(course.includes("The patient was treated with Atropine 2 mg iv, Pralidoxime 1 g iv as documented."));
+  assert.ok(course.includes("Admitted to Medical ICU."));
 });
 
 // ---------------------------------------------------------------
@@ -293,22 +304,41 @@ test("9. Discharge Course Chronological Order", () => {
   } as any;
 
   const course = deriveInitialCourseInHospital(fullCase);
-  const idxPres = course.indexOf("Presentation:");
-  const idxEvents = course.indexOf("Events Leading to Presentation:");
-  const idxInit = course.indexOf("Initial Assessment:");
-  const idxInv = course.indexOf("Investigations:");
-  const idxTx = course.indexOf("Treatment Given:");
-  const idxProc = course.indexOf("Procedures:");
-  const idxClin = course.indexOf("Clinical Course:");
-  const idxDisp = course.indexOf("Disposition:");
+  // Zero headings mandate
+  assert.ok(!course.includes("Presentation:"));
+  assert.ok(!course.includes("Initial Assessment:"));
+  assert.ok(!course.includes("Investigations:"));
+  assert.ok(!course.includes("Treatment Given:"));
+  assert.ok(!course.includes("Procedures:"));
+  assert.ok(!course.includes("Clinical Course:"));
+  assert.ok(!course.includes("Disposition:"));
 
-  assert.ok(idxPres < idxEvents, "Presentation before Events");
-  assert.ok(idxEvents < idxInit, "Events before Initial Assessment");
-  assert.ok(idxInit < idxInv, "Initial Assessment before Investigations");
+  // Strict chronological ordering of narrative milestones
+  const idxEval = course.indexOf("evaluated in the Emergency Department");
+  const idxEvent = course.indexOf("sudden onset breathlessness after climbing hill");
+  const idxVitals = course.indexOf("pulse of 112/min");
+  const idxInv = course.indexOf("Chest X-Ray showed Bilateral infiltrates");
+  const idxTx = course.indexOf("Furosemide 40 mg iv as documented");
+  const idxProc = course.indexOf("IV Cannulation");
+  const idxProg = course.indexOf("Patient serial vitals monitored in ER");
+  const idxDisp = course.indexOf("Admitted to Ward");
+
+  assert.ok(idxEval !== -1, "Evaluation found");
+  assert.ok(idxEvent !== -1, "Event found");
+  assert.ok(idxVitals !== -1, "Vitals found");
+  assert.ok(idxInv !== -1, "Investigations found");
+  assert.ok(idxTx !== -1, "Treatment found");
+  assert.ok(idxProc !== -1, "Procedure found");
+  assert.ok(idxProg !== -1, "Progress found");
+  assert.ok(idxDisp !== -1, "Disposition found");
+
+  assert.ok(idxEval < idxEvent, "Evaluation before Event");
+  assert.ok(idxEvent < idxVitals, "Event before Vitals");
+  assert.ok(idxVitals < idxInv, "Vitals before Investigations");
   assert.ok(idxInv < idxTx, "Investigations before Treatment Given");
   assert.ok(idxTx < idxProc, "Treatment Given before Procedures");
-  assert.ok(idxProc < idxClin, "Procedures before Clinical Course");
-  assert.ok(idxClin < idxDisp, "Clinical Course before Disposition");
+  assert.ok(idxProc < idxProg, "Procedures before Clinical Course");
+  assert.ok(idxProg < idxDisp, "Clinical Course before Disposition");
 });
 
 // ---------------------------------------------------------------
@@ -331,8 +361,8 @@ test("10. Course Includes Documented Initial Findings", () => {
   } as any;
 
   const course = deriveInitialCourseInHospital(vitalsCase);
-  assert.ok(course.includes("Initial Assessment:"));
-  assert.ok(course.includes("Pulse was 165/min"));
+  assert.ok(!course.includes("Initial Assessment:"), "Zero heading");
+  assert.ok(course.includes("pulse of 165/min"));
   assert.ok(course.includes("blood pressure 110/70 mmHg"));
 });
 
@@ -351,9 +381,10 @@ test("11. Investigations Summarized Naturally", () => {
   } as any;
 
   const course = deriveInitialCourseInHospital(invCase);
+  assert.ok(!course.includes("Investigations:"), "Zero heading");
   assert.ok(course.includes("CBC, LFT, RFT were sent."));
-  assert.ok(course.includes("Serum Amylase showed a Elevated at 850 U/L"));
-  assert.ok(course.includes("Serum Lipase showed a Elevated at 620 U/L"));
+  assert.ok(course.includes("Serum Amylase showed Elevated at 850 U/L"));
+  assert.ok(course.includes("Serum Lipase showed Elevated at 620 U/L"));
 });
 
 // ---------------------------------------------------------------
@@ -370,8 +401,8 @@ test("12. Treatment Summarized Naturally", () => {
   } as any;
 
   const course = deriveInitialCourseInHospital(txCase);
-  assert.ok(course.includes("Treatment Given:"));
-  assert.ok(course.includes("Salbutamol 2.5 mg nebulization, Hydrocortisone 100 mg iv was administered."));
+  assert.ok(!course.includes("Treatment Given:"), "Zero heading");
+  assert.ok(course.includes("Salbutamol 2.5 mg nebulization, Hydrocortisone 100 mg iv as documented."));
 });
 
 // ---------------------------------------------------------------
@@ -384,7 +415,7 @@ test("13. Progress Included Only When Documented", () => {
   } as any;
 
   const courseWithout = deriveInitialCourseInHospital(noNotesCase);
-  assert.ok(!courseWithout.includes("Clinical Course:"), "Missing progress notes must omit Clinical Course section");
+  assert.ok(!courseWithout.includes("On reassessment"), "Missing progress notes must omit reassessment sentence");
 
   const notesCase: ClinicalCase = {
     id: "notes-02",
@@ -393,7 +424,8 @@ test("13. Progress Included Only When Documented", () => {
   } as any;
 
   const courseWith = deriveInitialCourseInHospital(notesCase);
-  assert.ok(courseWith.includes("Clinical Course:\nRe-assessed after 1 hour: breathing easy, tolerating sips of water."));
+  assert.ok(!courseWith.includes("Clinical Course:"), "Zero heading");
+  assert.ok(courseWith.includes("On reassessment, Re-assessed after 1 hour: breathing easy, tolerating sips of water."));
 });
 
 // ---------------------------------------------------------------
@@ -406,7 +438,7 @@ test("14. Disposition Included Only When Documented", () => {
   } as any;
 
   const courseWithout = deriveInitialCourseInHospital(noDispCase);
-  assert.ok(!courseWithout.includes("Disposition:"));
+  assert.ok(!courseWithout.includes("discharged from the Emergency Department"));
 
   const dispCase: ClinicalCase = {
     id: "disp-02",
@@ -418,7 +450,8 @@ test("14. Disposition Included Only When Documented", () => {
   } as any;
 
   const courseWith = deriveInitialCourseInHospital(dispCase);
-  assert.ok(courseWith.includes("Disposition:\nThe patient was discharged with advice for Local clinic review in 3 days."));
+  assert.ok(!courseWith.includes("Disposition:"), "Zero heading");
+  assert.ok(courseWith.includes("discharged from the Emergency Department with advice for Local clinic review in 3 days."));
 });
 
 // ---------------------------------------------------------------
@@ -514,8 +547,9 @@ test("19. Duplicate Facts Minimized Between Sections", () => {
   assert.strictEqual(event, null, "Exact duplicate of presenting complaint must be omitted from Events section");
 
   const course = deriveInitialCourseInHospital(sampleCase);
-  assert.ok(course.includes("Presentation:\nThe patient presented to the Emergency Department with Fall from ladder."));
+  assert.ok(!course.includes("Presentation:"));
   assert.ok(!course.includes("Events Leading to Presentation:"));
+  assert.ok(course.includes("The patient was evaluated in the Emergency Department with Fall from ladder."));
 });
 
 // ---------------------------------------------------------------
@@ -543,12 +577,16 @@ test("20. Model Failure → Deterministic Fallback Preserves Full Structure", ()
   } as any;
 
   const fallbackCourse = deriveInitialCourseInHospital(testCase);
-  assert.ok(fallbackCourse.startsWith("COURSE IN EMERGENCY DEPARTMENT"));
-  assert.ok(fallbackCourse.includes("Presentation:\nThe patient presented to the Emergency Department with Severe dizziness and vertigo."));
-  assert.ok(fallbackCourse.includes("Initial Assessment:"));
-  assert.ok(fallbackCourse.includes("Pulse was 76/min, and blood pressure 130/80 mmHg."));
-  assert.ok(fallbackCourse.includes("Treatment Given:\nBetahistine 16 mg oral was administered."));
-  assert.ok(fallbackCourse.includes("Disposition:\nThe patient was discharged from the Emergency Department."));
+  assert.ok(!fallbackCourse.includes("COURSE IN EMERGENCY DEPARTMENT"));
+  assert.ok(!fallbackCourse.includes("Presentation:"));
+  assert.ok(!fallbackCourse.includes("Initial Assessment:"));
+  assert.ok(!fallbackCourse.includes("Treatment Given:"));
+  assert.ok(!fallbackCourse.includes("Disposition:"));
+  assert.ok(fallbackCourse.includes("The patient was evaluated in the Emergency Department with Severe dizziness and vertigo."));
+  assert.ok(fallbackCourse.includes("blood pressure 130/80 mmHg"));
+  assert.ok(fallbackCourse.includes("pulse was 76/min"));
+  assert.ok(fallbackCourse.includes("Betahistine 16 mg oral as documented."));
+  assert.ok(fallbackCourse.includes("discharged from the Emergency Department."));
 });
 
 console.log("==================================================");

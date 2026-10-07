@@ -188,192 +188,219 @@ export function extractPrecedingEvent(c: ClinicalCase): string | null {
 }
 
 /**
- * Patch C4A: Build initial clinical course narrative from latest clinical case sources.
- * Follows strict 9-section ordered structure with short headings:
- * 1. Presentation
- * 2. Events Leading to Presentation (ONLY IF explicitly documented)
- * 3. Initial Assessment (ONLY IF documented)
- * 4. Investigations (ONLY IF documented)
- * 5. Treatment Given (ONLY IF documented)
- * 6. Procedures (ONLY IF performed)
- * 7. Consultations (ONLY IF done)
- * 8. Clinical Course (ONLY IF documented)
- * 9. Disposition (ONLY IF documented)
- * Empty sections are strictly OMITTED (zero absence filler statements).
+ * Strip legacy or accidental section headings (e.g. "Presentation:", "Initial Assessment:")
+ * from a Course in Hospital text, returning clean narrative paragraphs.
+ */
+export function stripCourseSectionHeadings(text: string): string {
+  if (!text) return "";
+  return text
+    .replace(/^#*\s*COURSE\s+IN\s+(?:EMERGENCY\s+DEPARTMENT|HOSPITAL)\s*:?\s*/gim, "")
+    .replace(/(?:^|\n)\s*(?:Presentation|Events\s+Leading\s+to\s+Presentation|Initial\s+Assessment|Investigations?|Treatment\s+Given|Treatments?|Procedures?|Consultations?|Clinical\s+Course(?:\s*\/\s*Reassessment)?|Reassessment|Disposition)\s*:\s*/gim, "\n\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+/**
+ * Course in Hospital Narrative Engine:
+ * Generates ONE coherent chronological clinical narrative describing what happened
+ * DURING the ER encounter in natural professional prose (usually 1-3 paragraphs).
+ * Resembles a professionally dictated hospital discharge course.
+ *
+ * Core Mandates:
+ * - NO section headings (zero "Presentation:", "Initial Assessment:", "COURSE IN EMERGENCY DEPARTMENT")
+ * - NO bullet lists or mini-case-sheet dumps
+ * - Course in Hospital != Case Sheet summary (ABCDE, complete vitals, full investigation list have separate sections)
+ * - Factual only: never invent improvement, stability, or consultations unless documented
+ *
+ * Answers chronologically:
+ * 1. Why evaluated in ER (chief complaint & presenting context)
+ * 2. Clinically important issues affecting acute management (e.g. hypotension, tachycardia, acute findings)
+ * 3. Investigations performed, resulted, or advised with actual status
+ * 4. Treatments and procedures actually administered
+ * 5. Consultations, counselling, or refusal (e.g. declined tests/admission)
+ * 6. Documented reassessments or progress notes
+ * 7. How and why finally disposed
  */
 export function deriveInitialCourseInHospital(c: ClinicalCase): string {
-  const sections: { title: string; body: string }[] = [];
   const isPed = c.isPediatric || (c.patient?.age !== undefined && Number(c.patient.age) <= 16);
+  const subject = isPed ? "The child" : "The patient";
 
-  // 1. Presentation
+  // --- PARAGRAPH 1: EVALUATION REASON, PRECEDING EVENT & CLINICAL PRESENTATION ---
+  const p1Parts: string[] = [];
   const rawPc = (c.patient?.presentingComplaint || "").trim();
-  if (rawPc) {
-    let pcSentence = rawPc;
-    if (!/^(?:the\s+)?(?:child|patient)\s+presented/i.test(pcSentence)) {
-      const subject = isPed ? "The child" : "The patient";
-      if (/^with\b/i.test(pcSentence)) {
-        pcSentence = `${subject} presented to the Emergency Department ${pcSentence}`;
-      } else if (/^(?:following|after)\b/i.test(pcSentence)) {
-        pcSentence = `${subject} presented ${pcSentence}`;
-      } else {
-        pcSentence = `${subject} presented to the Emergency Department with ${pcSentence}`;
-      }
-    }
-    if (!pcSentence.endsWith(".")) pcSentence += ".";
-    sections.push({ title: "Presentation", body: pcSentence });
-  }
-
-  // 2. Events Leading to Presentation (ONLY IF explicitly documented)
   const event = extractPrecedingEvent(c);
-  if (event) {
-    let eventSentence = event;
-    if (!eventSentence.endsWith(".")) eventSentence += ".";
-    sections.push({ title: "Events Leading to Presentation", body: eventSentence });
+
+  let arrivalSentence = "";
+  if (rawPc) {
+    let cleanPc = rawPc.replace(/\.$/, "").trim();
+    // Normalize if starts with "The patient/child presented..."
+    const pcMatch = cleanPc.match(/^(?:the\s+)?(?:patient|child)\s+(?:presented|was\s+evaluated)\s*(?:to\s+(?:the\s+)?(?:emergency\s+department|er))?\s*(?:with|following|due\s+to)?\s*(.*)$/i);
+    if (pcMatch && pcMatch[1]) {
+      cleanPc = pcMatch[1].trim();
+    }
+    
+    if (event) {
+      const cleanEvent = event.replace(/\.$/, "").trim();
+      if (/^(?:symptoms?|pain|onset|the\s+patient|patient|the\s+child|child|alleged|reported|witnessed)\b/i.test(cleanEvent)) {
+        arrivalSentence = `${subject} was evaluated in the Emergency Department with ${cleanPc}. ${cleanEvent}.`;
+      } else {
+        arrivalSentence = `${subject} was evaluated in the Emergency Department with ${cleanPc}. Symptoms occurred following ${cleanEvent.charAt(0).toLowerCase() + cleanEvent.slice(1)}.`;
+      }
+    } else {
+      arrivalSentence = `${subject} was evaluated in the Emergency Department with ${cleanPc}.`;
+    }
+  } else if (event) {
+    const cleanEvent = event.replace(/\.$/, "").trim();
+    arrivalSentence = `${subject} was evaluated in the Emergency Department following ${cleanEvent}.`;
+  } else {
+    arrivalSentence = `${subject} was evaluated in the Emergency Department.`;
   }
+  p1Parts.push(arrivalSentence);
 
-  // 3. Initial Assessment (ONLY IF documented)
-  const assessParts: string[] = [];
-
-  // PAT for pediatric
+  // Pediatric PAT
   if (isPed && c.pediatricDetails) {
     const pd = c.pediatricDetails as any;
     const patNormal = pd.patNormal === true || pd.pediatricTriangle?.status === "normal" || 
       (pd.patAppearance === "normal" && pd.patWorkOfBreathing === "normal" && pd.patCirculation === "normal");
     if (patNormal) {
-      assessParts.push("The Pediatric Assessment Triangle was documented as normal.");
+      p1Parts.push("The Pediatric Assessment Triangle was documented as normal.");
     } else {
       const ptDetails: string[] = [];
       const app = pd.patAppearance || pd.pediatricTriangle?.appearance;
-      if (app) ptDetails.push(`Appearance: ${app}`);
+      if (app) ptDetails.push(`appearance: ${app}`);
       const wob = pd.patWorkOfBreathing || pd.pediatricTriangle?.workOfBreathing;
-      if (wob) ptDetails.push(`Work of Breathing: ${wob}`);
+      if (wob) ptDetails.push(`work of breathing: ${wob}`);
       const circ = pd.patCirculation || pd.pediatricTriangle?.circulation;
-      if (circ) ptDetails.push(`Circulation: ${circ}`);
+      if (circ) ptDetails.push(`circulation: ${circ}`);
       if (ptDetails.length > 0) {
-        assessParts.push(`Pediatric Assessment Triangle findings: ${ptDetails.join(", ")}.`);
+        p1Parts.push(`Pediatric Assessment Triangle revealed ${ptDetails.join(", ")}.`);
       }
     }
   }
 
-  // Primary survey findings
-  const primarySurveyStr = formatPrimaryAssessmentForCourse(c);
-  if (primarySurveyStr) {
-    assessParts.push(primarySurveyStr.endsWith(".") ? primarySurveyStr : `${primarySurveyStr}.`);
-  }
-
-  // Documented Vitals
+  // Clinically Relevant Vitals & Findings
   if (c.vitals) {
     const v = c.vitals;
     const vitalTokens: string[] = [];
-    if (v.hr) vitalTokens.push(`Pulse was ${v.hr}/min`);
-    if (v.bp) vitalTokens.push(`blood pressure ${v.bp} mmHg`);
-    if (v.rr) vitalTokens.push(`respiratory rate ${v.rr}/min`);
-    if (v.spo2) vitalTokens.push(`oxygen saturation ${v.spo2}%`);
-    if (v.temp) vitalTokens.push(`temperature ${v.temp}°C`);
-    if (v.gcs && v.gcs !== "15") vitalTokens.push(`GCS ${v.gcs}`);
+    const bpM = v.bp?.match(/(\d+)\/(\d+)/);
+    const sbp = bpM ? parseInt(bpM[1], 10) : null;
+    const hrNum = v.hr ? parseInt(v.hr, 10) : null;
+    const rrNum = v.rr ? parseInt(v.rr, 10) : null;
+    const spo2Num = v.spo2 ? parseInt(v.spo2, 10) : null;
+    const tempNum = v.temp ? parseFloat(v.temp) : null;
+    const isHypotensive = sbp !== null && sbp < 95;
+    const isHypertensive = sbp !== null && sbp >= 160;
+    const isTachycardic = hrNum !== null && hrNum > 100;
+    const isBradycardic = hrNum !== null && hrNum < 60;
+    const isHypoxic = spo2Num !== null && spo2Num < 95;
+    const isFebrile = tempNum !== null && (tempNum >= 38.0 || tempNum >= 100.4);
+    const isAlteredGcs = v.gcs && v.gcs !== "15" && v.gcs !== "15/15";
+
+    if (isHypotensive) vitalTokens.push(`hypotension with blood pressure ${v.bp} mmHg`);
+    else if (isHypertensive) vitalTokens.push(`elevated blood pressure of ${v.bp} mmHg`);
+    else if (v.bp) vitalTokens.push(`blood pressure ${v.bp} mmHg`);
+
+    if (isTachycardic) vitalTokens.push(`pulse of ${v.hr}/min`);
+    else if (isBradycardic) vitalTokens.push(`bradycardia with pulse ${v.hr}/min`);
+    else if (v.hr) vitalTokens.push(`pulse was ${v.hr}/min`);
+
+    if (isHypoxic) vitalTokens.push(`oxygen saturation ${v.spo2}%`);
+    else if (v.spo2 && v.spo2 !== "100" && v.spo2 !== "99") vitalTokens.push(`oxygen saturation ${v.spo2}%`);
+
+    if (isFebrile) vitalTokens.push(`temperature ${v.temp}°C`);
+    else if (v.temp && v.temp !== "98.4" && v.temp !== "37") vitalTokens.push(`temperature ${v.temp}°C`);
+
+    if (rrNum && (rrNum > 22 || rrNum < 12)) vitalTokens.push(`respiratory rate ${v.rr}/min`);
+    if (isAlteredGcs) vitalTokens.push(`GCS ${v.gcs}`);
 
     if (vitalTokens.length > 0) {
-      if (vitalTokens.length === 1) {
-        assessParts.push(`${vitalTokens[0]}.`);
-      } else {
-        const last = vitalTokens.pop();
-        assessParts.push(`${vitalTokens.join(", ")}, and ${last}.`);
-      }
+      p1Parts.push(`Initial assessment revealed ${vitalTokens.join(", ")}.`);
     }
   }
 
-  // Secondary assessment / focused exam
-  if (c.secondaryAssessment && typeof c.secondaryAssessment === "string" && c.secondaryAssessment.trim()) {
-    const cleanSec = c.secondaryAssessment.trim();
-    assessParts.push(cleanSec.endsWith(".") ? cleanSec : `${cleanSec}.`);
+  // Bedside adjuncts (ECG, POCUS)
+  if (c.adjuncts?.ecgDetails && c.adjuncts.ecgDetails.trim()) {
+    const ecg = c.adjuncts.ecgDetails.trim();
+    p1Parts.push(`Bedside ECG demonstrated ${ecg.replace(/^showing\s+/i, "").replace(/\.$/, "")}.`);
+  }
+  if (c.adjuncts?.efastNotes && c.adjuncts.efastNotes.trim()) {
+    p1Parts.push(`Bedside ultrasound (eFAST/POCUS) showed ${c.adjuncts.efastNotes.trim().replace(/\.$/, "")}.`);
   }
 
-  // Bedside diagnostics (ECG, eFAST, ABG/VBG)
-  const adjunctsStr = formatBedsideAdjunctsText(c);
-  if (adjunctsStr) {
-    assessParts.push(adjunctsStr.endsWith(".") ? adjunctsStr : `${adjunctsStr}.`);
-  }
+  // --- PARAGRAPH 2: INVESTIGATIONS, TREATMENT & PROCEDURES ---
+  const p2Parts: string[] = [];
 
-  if (assessParts.length > 0) {
-    sections.push({ title: "Initial Assessment", body: assessParts.join(" ") });
-  }
-
-  // 4. Investigations (ONLY IF documented)
-  const invParts: string[] = [];
+  // Investigations with documented status
+  const invSentences: string[] = [];
   if (c.investigationLabsOrdered && c.investigationLabsOrdered.trim()) {
-    invParts.push(`${c.investigationLabsOrdered.trim()} were sent.`);
+    invSentences.push(`Blood investigations including ${c.investigationLabsOrdered.trim()} were sent.`);
   }
   if (c.investigationImaging && c.investigationImaging.trim()) {
     const img = c.investigationImaging.trim();
-    invParts.push(img.endsWith(".") ? img : `${img} was ordered.`);
+    invSentences.push(img.endsWith(".") ? img : `${img} was ordered.`);
   }
   if (c.investigations && c.investigations.length > 0) {
     const results = c.investigations
       .filter(i => i.result)
-      .map(i => `${i.testName} showed a ${i.result}`)
-      .join(". ");
-    if (results) invParts.push(results.endsWith(".") ? results : `${results}.`);
+      .map(i => `${i.testName} showed ${i.result}`)
+      .join(", ");
+    if (results) {
+      invSentences.push(`Investigations revealed ${results}.`);
+    }
   }
   if (c.investigationResultsSummary && c.investigationResultsSummary.trim()) {
     const resSummary = c.investigationResultsSummary.trim();
-    if (!invParts.some(p => p.toLowerCase().includes(resSummary.toLowerCase()))) {
-      invParts.push(resSummary.endsWith(".") ? resSummary : `${resSummary}.`);
+    if (!invSentences.some(s => s.toLowerCase().includes(resSummary.toLowerCase()))) {
+      invSentences.push(resSummary.endsWith(".") ? resSummary : `${resSummary}.`);
     }
   }
-  if (invParts.length > 0) {
-    sections.push({ title: "Investigations", body: invParts.join(" ") });
+  if (invSentences.length > 0) {
+    p2Parts.push(invSentences.join(" "));
   }
 
-  // 5. Treatment Given (ONLY IF administered)
-  const rxParts: string[] = [];
+  // Treatments actually administered
   if (c.treatments && c.treatments.length > 0) {
     const meds = c.treatments.map(t => {
       const dose = t.dose ? ` ${t.dose}` : "";
       const route = t.route ? ` ${t.route.toLowerCase()}` : "";
       return `${t.drugName}${dose}${route}`;
     }).join(", ");
-    rxParts.push(`${meds} was administered.`);
+    p2Parts.push(`${subject} was treated with ${meds} as documented.`);
   }
   if (c.infusions && c.infusions.length > 0) {
     const infs = c.infusions.map(i => `${i.fluidName} ${i.dose || ""} @ ${i.rate || ""}`.trim()).join(", ");
-    rxParts.push(`IV infusions administered: ${infs}.`);
+    p2Parts.push(`IV infusions of ${infs} were administered.`);
   }
   if (c.treatmentNotes && c.treatmentNotes.trim()) {
     const tn = c.treatmentNotes.trim();
-    rxParts.push(tn.endsWith(".") ? tn : `${tn}.`);
-  }
-  if (rxParts.length > 0) {
-    sections.push({ title: "Treatment Given", body: rxParts.join(" ") });
+    p2Parts.push(tn.endsWith(".") ? tn : `${tn}.`);
   }
 
-  // 6. Procedures (ONLY IF performed)
+  // Procedures performed
   const procStr = formatProceduresText(c);
   if (procStr) {
-    sections.push({ title: "Procedures", body: procStr });
+    p2Parts.push(procStr);
   }
 
-  // 7. Consultations (ONLY IF done)
+  // Consultations
   const consultStr = formatConsultationsText(c);
   if (consultStr) {
-    sections.push({ title: "Consultations", body: consultStr });
+    p2Parts.push(consultStr);
   }
 
-  // 8. Clinical Course (ONLY IF documented reassessments or progress notes exist)
-  const courseParts: string[] = [];
+  // --- PARAGRAPH 3: REASSESSMENT, COUNSELLING & DISPOSITION ---
+  const p3Parts: string[] = [];
+
+  // Reassessment - ONLY IF DOCUMENTED
   if (c.progressNotes && c.progressNotes.trim()) {
-    courseParts.push(c.progressNotes.trim());
-  }
-  if (c.dispositionDetails?.observationNotes && c.dispositionDetails.observationNotes.trim()) {
+    const cleanNotes = c.progressNotes.trim();
+    p3Parts.push(`On reassessment, ${cleanNotes.endsWith(".") ? cleanNotes : cleanNotes + "."}`);
+  } else if (c.dispositionDetails?.observationNotes && c.dispositionDetails.observationNotes.trim()) {
     const obs = c.dispositionDetails.observationNotes.trim();
-    if (!courseParts.some(p => p.toLowerCase().includes(obs.toLowerCase()))) {
-      courseParts.push(obs);
-    }
-  }
-  if (courseParts.length > 0) {
-    sections.push({ title: "Clinical Course", body: courseParts.join("\n") });
+    p3Parts.push(`On observation, ${obs.endsWith(".") ? obs : obs + "."}`);
   }
 
-  // 9. Disposition (ONLY IF documented)
+  // Disposition & Counselling / Refusal
   const dispStatus = c.dischargeInfo?.dispositionStatus || 
     c.dispositionDetails?.dispositionType || 
     (c.dispositionAndPlan as any)?.disposition ||
@@ -381,41 +408,45 @@ export function deriveInitialCourseInHospital(c: ClinicalCase): string {
   const followUp = c.dischargeInfo?.followUpPlan || 
     c.dispositionAndPlan?.followUpAdvice ||
     (c.dispositionDetails as any)?.followUpAdvice;
+
   if (dispStatus && dispStatus !== "Pending / Not Documented") {
-    const subject = isPed ? "The child" : "The patient";
-    let dispSentence = "";
     const lower = dispStatus.toLowerCase();
-    if (lower.includes("discharge")) {
+    if (lower.includes("request")) {
+      // Discharge at request / refusal
+      let dar = `In view of ${subject.toLowerCase()}'s decision to seek outpatient management, ${subject.toLowerCase()} was discharged at request`;
       if (followUp && followUp.trim()) {
-        dispSentence = `${subject} was discharged with advice for ${followUp.trim()}.`;
+        dar += ` with advice for ${followUp.trim()}`;
       } else {
-        dispSentence = `${subject} was discharged from the Emergency Department.`;
+        dar += ` with advice for outpatient follow-up`;
+      }
+      dar += ` and instructions to return to the Emergency Department in case of worsening symptoms.`;
+      p3Parts.push(dar);
+    } else if (lower.includes("discharge")) {
+      if (followUp && followUp.trim()) {
+        p3Parts.push(`${subject} was discharged from the Emergency Department with advice for ${followUp.trim()}.`);
+      } else {
+        p3Parts.push(`${subject} was discharged from the Emergency Department.`);
       }
     } else if (lower.includes("admit")) {
-      dispSentence = `${subject} was ${dispStatus}.`;
+      p3Parts.push(`In view of the clinical condition, ${subject.toLowerCase()} was ${dispStatus}.`);
     } else if (lower.includes("transfer") || lower.includes("refer")) {
-      dispSentence = `${subject} was ${dispStatus}.`;
+      p3Parts.push(`${subject} was ${dispStatus}.`);
     } else if (lower.includes("lama") || lower.includes("dama")) {
-      dispSentence = `${subject} took discharge against medical advice.`;
+      p3Parts.push(`${subject} took discharge against medical advice.`);
     } else if (lower.includes("death") || lower.includes("deceased")) {
-      dispSentence = `Patient expired in the Emergency Department.`;
+      p3Parts.push(`Patient expired in the Emergency Department.`);
     } else {
-      dispSentence = `Disposition: ${dispStatus}.`;
+      p3Parts.push(`Disposition: ${dispStatus}.`);
     }
-    if (!dispSentence.endsWith(".")) dispSentence += ".";
-    sections.push({ title: "Disposition", body: dispSentence });
   }
 
-  if (sections.length === 0) {
-    return "";
-  }
+  const paragraphs = [
+    p1Parts.join(" "),
+    p2Parts.join(" "),
+    p3Parts.join(" ")
+  ].map(p => p.trim()).filter(Boolean);
 
-  const output = ["COURSE IN EMERGENCY DEPARTMENT"];
-  for (const s of sections) {
-    output.push(`${s.title}:\n${s.body}`);
-  }
-
-  return output.join("\n\n");
+  return paragraphs.join("\n\n");
 }
 
 export const CANONICAL_COURSE_HEADINGS = [
@@ -582,9 +613,40 @@ export function mergeAutoCoursePreservingManualEdits(
   currentClinicianText: string,
   nextAutoCourse: string
 ): string {
+  const normPrev = normalizeForComparison(previousAutoCourse);
+  const normCurr = normalizeForComparison(currentClinicianText);
+  const normNext = normalizeForComparison(nextAutoCourse);
+
+  // If clinician made NO manual edits, take nextAutoCourse cleanly
+  if (normCurr === normPrev) {
+    return nextAutoCourse;
+  }
+
+  // If next auto course is identical to previous, clinician edits remain
+  if (normNext === normPrev) {
+    return currentClinicianText;
+  }
+
   const base = parseStructuredCourse(previousAutoCourse);
   const local = parseStructuredCourse(currentClinicianText);
   const next = parseStructuredCourse(nextAutoCourse);
+
+  // If both local and next are pure narrative without canonical headings:
+  if (local.sections.size === 0 && next.sections.size === 0) {
+    const prevUnits = extractFactualUnits(previousAutoCourse);
+    const nextUnits = extractFactualUnits(nextAutoCourse);
+    const genuinelyNewFacts = nextUnits.filter(nu => {
+      const inPrev = prevUnits.some(pu => normalizeForComparison(pu) === normalizeForComparison(nu));
+      if (inPrev) return false;
+      return !isUnitRepresentedInText(nu, currentClinicianText);
+    });
+
+    if (genuinelyNewFacts.length === 0) {
+      return currentClinicianText;
+    }
+    const newText = genuinelyNewFacts.join(". ");
+    return `${currentClinicianText.trim()}\n\n${newText.endsWith(".") ? newText : newText + "."}`.trim();
+  }
 
   const mergedSections = new Map<CanonicalCourseHeading, string>();
 
