@@ -186,6 +186,8 @@ ErMate employs a dynamic role-based navigation hierarchy computed from `getNorma
 
 | Path | Purpose |
 | :--- | :--- |
+| `/src/components/TeamRosterBoard.tsx` | Mobile-first 4-tab Department Team Management (Overview, Member Directory, Rota & Shifts, Department Settings) |
+| `/verify_team_ui_reorg.ts` | Verification suite for 4 top-level sections, Overview summary cards, Member Directory, and canonical invitation flow |
 | `/src/utils/caseLifecycle.ts` | 24-hour incomplete case soft-archive engine, active non-archived census filtering, and clinical record retention |
 | `/verify_team_and_archive.ts` | Verification suite for team membership status normalization, invite restoration, HOD claims, and 24h archive |
 | `/server/deidentify.ts` | On-the-fly local PHI stripping engine & date-to-relative-timeline converter |
