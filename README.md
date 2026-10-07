@@ -81,7 +81,15 @@ ErMate implements **Local On-The-Fly PHI De-identification** hosted on Indian Cl
 - Generates thorough M&M audit reviews formatted according to hospital quality standards.
 - Produces downloadable `.docx` audit documents directly from EMR stay histories.
 
-### 6. Non-Destructive In-App Data Refresh Engine
+### 6. Full-Screen Patient Discuss Workspace & Request Resilience (`src/components/CaseDiscussWorkspace.tsx`)
+- **Full-Screen GPT-Style Patient Chat Workspace**: Replaced cramped dialog modals with a dedicated full-viewport patient chat interface (mobile full-screen, desktop centered max-w-5xl).
+- **Patient Context Integrity**: Delivers exact documented clinical facts (Demographics, Vitals, SAMPLE, Primary Survey, Secondary Survey, Labs, Treatments, Procedures, Progress Notes, Differentials, Disposition, and Pediatric metrics) to the clinical reasoning engine with zero raw UUID exposure (monotonic 9-digit `displayId` only).
+- **Expandable Read-Only Patient Context Panel**: Collapsed mode provides an immediate 1-line essential clinical strip (`Bed 14A • 261007001 • 45 M • Chest pain • P1`), while expanded mode renders a complete 2-column read-only summary without editing controls.
+- **Single-Patient Focus & Isolated Switching**: Eliminated horizontal multi-case tabs. A compact selector (`Bed 14A · 261007001 ▾`) enables switching between census patients while strictly isolating independent chat histories (`ermate_chat_session_case_${case.id}`).
+- **Same-Case Pending Scribe Pass-Through**: When discussing a case with active unapplied Scribe dictation, unapplied fields are passed as `pendingClinicalContext` labeled `PENDING CLINICIAN DICTATION — NOT YET APPLIED TO CASE SHEET`. Enables conversational assistance without mutating `ClinicalCase` or asserting unconfirmed facts as legal chart records.
+- **Request Resilience & Bounded Lifecycle**: All Discuss and Scribe network requests enforce 25s/30s client `AbortController` timeouts and bounded server failovers (Claude Sonnet primary → OpenAI fallback). Loading state is unconditionally reset in `finally` across all success, error, timeout, and stale generation paths, permanently resolving indefinite spinner locks. If both providers fail, displays a calm retry notice (`"I couldn't complete that response right now. Please try again."`) without leaking API or provider internals.
+
+### 7. Non-Destructive In-App Data Refresh Engine
 - **Global Header Refresh Button**: Seamlessly available across desktop and mobile headers (`↻ Refresh`) to pull real-time Firestore updates without page reloads.
 - **Unsaved Clinical Work Protection**: Evaluates open Case Sheet dirty state and presents a safe "Save or discard" prompt before refreshing.
 - **Voice Scribe Protection**: Prevents refreshing during active voice recording, transcription, or message transmission.

@@ -2171,34 +2171,40 @@ export default function VoiceScribeChatView({
     try {
       if (currentMode === "discuss") {
         // ── DISCUSS MODE — Claude Sonnet only, read-only, via /api/case-discussion.
-        // No AbortController/timeout — per explicit request, discuss-mode
-        // (and dictation, below) now wait indefinitely for a response.
+        // Bounded client request lifecycle with 25s timeout via AbortController.
         // suggestedUpdate is deliberately ignored — discuss-mode conversations
         // never write to the real case sheet, regardless of what the model proposes.
-        const res = await authenticatedFetch("/api/case-discussion", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            message: trimmed,
-            contextType: isDiscussionOnly ? "general" : "case",
-            contextData: isDiscussionOnly ? {} : (caseData || {}),
-            caseData: isDiscussionOnly ? {} : (caseData || {}),
-            history: messages,
-            messages: [...messages, userMsg].map((m) => ({
-              sender: m.sender === "user" ? "user" : "ai",
-              text: m.text,
-            })),
-          }),
-        });
-        const data = await res.json();
+        const discussController = new AbortController();
+        const discussTimeoutId = setTimeout(() => discussController.abort(), 25000);
+        let res: Response;
+        try {
+          res = await authenticatedFetch("/api/case-discussion", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            signal: discussController.signal,
+            body: JSON.stringify({
+              message: trimmed,
+              contextType: isDiscussionOnly ? "general" : "case",
+              contextData: isDiscussionOnly ? {} : (caseData || {}),
+              caseData: isDiscussionOnly ? {} : (caseData || {}),
+              history: messages,
+              messages: [...messages, userMsg].map((m) => ({
+                sender: m.sender === "user" ? "user" : "ai",
+                text: m.text,
+              })),
+            }),
+          });
+        } finally {
+          clearTimeout(discussTimeoutId);
+        }
+
+        const data = await res.json().catch(() => ({}));
         if (sessionContextGenerationRef.current !== requestGeneration) {
           console.warn("[VoiceScribeChatView] Stale discuss response dropped due to generation mismatch.");
           return;
         }
-        if (!res.ok) throw new Error(data.error || "Request failed");
 
-        const replyText = data.response || data.reply || "I've reviewed the case, but couldn't form a clear answer just now.";
-        const dischargeIntent = data.dischargeIntent;
+        const replyText = data.response || data.reply || (res.ok ? "I've reviewed the case, but couldn't form a clear answer just now." : "I couldn't complete that response right now. Please try again.");
         const aiMsg: Message = {
           id: `ai-${Date.now()}`,
           sender: "ai",
@@ -2216,19 +2222,27 @@ export default function VoiceScribeChatView({
         });
       } else {
         // ── DICTATION MODE — GPT-4o-mini extraction (parallel) + Claude
-        // Sonnet reasoning, via /api/scribe-chat. No timeout, as above.
-        const res = await authenticatedFetch("/api/scribe-chat", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            userInput: trimmed,
-            caseId: activeCaseId,
-            caseData: caseData || {},
-            patientAgeYears: caseData?.patient?.age ?? null,
-            caseContext: caseData || {},
-            messages: messages,
-          }),
-        });
+        // Sonnet reasoning, via /api/scribe-chat. Bounded 30s timeout.
+        const dictationController = new AbortController();
+        const dictationTimeoutId = setTimeout(() => dictationController.abort(), 30000);
+        let res: Response;
+        try {
+          res = await authenticatedFetch("/api/scribe-chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            signal: dictationController.signal,
+            body: JSON.stringify({
+              userInput: trimmed,
+              caseId: activeCaseId,
+              caseData: caseData || {},
+              patientAgeYears: caseData?.patient?.age ?? null,
+              caseContext: caseData || {},
+              messages: messages,
+            }),
+          });
+        } finally {
+          clearTimeout(dictationTimeoutId);
+        }
 
         const data = await res.json();
         if (sessionContextGenerationRef.current !== requestGeneration) {
@@ -2355,20 +2369,19 @@ export default function VoiceScribeChatView({
     } catch (err: any) {
       if (sessionContextGenerationRef.current !== requestGeneration) {
         console.warn("[VoiceScribeChatView] Stale error dropped due to generation mismatch.");
-        return;
+      } else {
+        console.error("[VoiceScribeChatView] Send failed:", err);
+        const errMsg: Message = {
+          id: `err-${Date.now()}`,
+          sender: "ai",
+          text: "I couldn't complete that response right now. Please try again.",
+          timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+          mode: "discuss",
+        };
+        setMessages((prev) => [...prev, errMsg]);
       }
-      console.error("[VoiceScribeChatView] Send failed:", err);
-      const errMsg: Message = {
-        id: `err-${Date.now()}`,
-        sender: "ai",
-        text: `⚠️ Could not reach clinical assistant (${err.message || "network error"}). Your message was saved.`,
-        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-      };
-      setMessages((prev) => [...prev, errMsg]);
     } finally {
-      if (sessionContextGenerationRef.current === requestGeneration) {
-        setIsSending(false);
-      }
+      setIsSending(false);
     }
   };
 

@@ -14,11 +14,13 @@ import {
 } from 'firebase/firestore';
 import { db, auth } from '../firebase';
 import { authenticatedFetch, AuthRequiredError } from '../services/authenticatedFetch';
+import { getDisplayCaseId } from '../utils/caseIdentity';
 
 export interface ChatContext {
   type: 'case' | 'handover' | 'discharge' | 'mortality_audit' | 'reference' | 'general';
   id: string; // parent record ID or user reference ID
   data: Record<string, any>; // full record data or reference state
+  pendingClinicalContext?: Record<string, any>; // unapplied Scribe extraction for same case
   canEdit?: boolean; // can update parent?
   onRecordUpdated?: (updatedData: Record<string, any>) => void;
 }
@@ -228,17 +230,22 @@ export function useBoundChat(context: ChatContext) {
     const updatedMessages = [...messages, userMsg];
     setMessages(updatedMessages);
 
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 25000);
+
     try {
       const response = await authenticatedFetch('/api/case-discussion', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
+        signal: controller.signal,
         body: JSON.stringify({
           message: userText,
           contextType: context.type,
           contextData: context.data,
           caseData: context.data,
+          pendingClinicalContext: context.pendingClinicalContext || undefined,
           history: messages,
           messages: updatedMessages.map((m) => ({
             sender: m.role === 'user' ? 'user' : 'ai',
@@ -246,10 +253,13 @@ export function useBoundChat(context: ChatContext) {
           })),
         }),
       });
+      clearTimeout(timeoutId);
 
-      const data = await response.json();
+      const data = await response.json().catch(() => ({}));
 
-      const assistantContent = data.response || "I have analyzed the request based on this record's clinical context.";
+      const assistantContent = data.response || data.reply || (response.ok 
+        ? "I have analyzed the request based on this record's clinical context."
+        : "I couldn't complete that response right now. Please try again.");
       const suggestedUpdate = data.suggestedUpdate || null;
 
       const assistantMsg: ChatMessage = {
@@ -287,13 +297,14 @@ export function useBoundChat(context: ChatContext) {
         }
       }
     } catch (err: any) {
+      clearTimeout(timeoutId);
       console.error('[BoundChat] Send message error:', err);
       const isAuthErr = err instanceof AuthRequiredError;
       const errorMsg: ChatMessage = {
         role: 'assistant',
         content: isAuthErr
           ? 'Your session needs to be refreshed. Please sign in again.'
-          : '⚠️ Clinical assistant is temporarily unavailable. Please try again in a moment.',
+          : "I couldn't complete that response right now. Please try again.",
         timestamp: new Date().toISOString(),
       };
       setMessages((prev) => [...prev, errorMsg]);
@@ -363,13 +374,29 @@ function buildWelcomeMessage(context: ChatContext): ChatMessage {
   let welcomeText = '';
 
   switch (context.type) {
-    case 'case':
-      welcomeText = `Discussing Active Case: **${d.patient?.name || d.patientName || 'Patient'}**
+    case 'case': {
+      const bed = d.bedNo || d.patient?.bed;
+      const displayId = getDisplayCaseId(d);
+      const pending = context.pendingClinicalContext;
+      const savedComplaint = d.patient?.presentingComplaint || d.chiefComplaint;
+      const pendingComplaint = pending?.presentingComplaint;
 
-${d.dischargeInfo?.primaryDiagnosis || d.provisionalPrimaryDiagnosis || d.diagnosis ? `Working Diagnosis: ${d.dischargeInfo?.primaryDiagnosis || d.provisionalPrimaryDiagnosis || d.diagnosis}` : `Chief Complaint: ${d.patient?.presentingComplaint || d.chiefComplaint || 'Emergency evaluation'}`}
+      const age = d.patient?.age ?? pending?.patient?.age;
+      const rawGender = d.patient?.gender ?? pending?.patient?.gender;
+      const gender = rawGender ? (rawGender.toUpperCase().startsWith('M') ? 'M' : rawGender.toUpperCase().startsWith('F') ? 'F' : 'O') : '';
+      const ageGender = [age !== undefined && age !== null ? `${age}` : '', gender].filter(Boolean).join(' ');
 
-Ask me anything about this case — differentials, management questions, investigation interpretations, or request updates to the case sheet.`;
+      const complaintToShow = savedComplaint || pendingComplaint || d.dischargeInfo?.primaryDiagnosis || d.provisionalPrimaryDiagnosis || 'Emergency evaluation';
+      const hasPendingDetailsOnly = !savedComplaint && !!pendingComplaint;
+
+      const headerTitle = bed ? `Discussing Bed ${bed}` : `Discussing Case ${displayId}`;
+      const subtitle = [ageGender, complaintToShow].filter(Boolean).join(' • ');
+
+      welcomeText = `${headerTitle}${subtitle ? `\n${subtitle}` : ''}${hasPendingDetailsOnly ? '\n\n*Some details are still pending Case Sheet confirmation.*' : ''}
+
+Ask me anything about this patient — differentials, management questions, drug doses, investigation review, or next steps.`;
       break;
+    }
 
     case 'handover':
       welcomeText = `Discussing Handover for: **${d.patientLabel?.name || d.name || 'Patient'}** (Bed ${d.patientLabel?.bed || 'N/A'})

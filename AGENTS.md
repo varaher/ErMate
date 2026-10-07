@@ -45,6 +45,41 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-07] — ErMate: Patient Discuss UX, Context Integrity & Request Resilience Patch
+- **Infinite Spinner Resolution (`src/components/VoiceScribeChatView.tsx`, `src/hooks/useBoundChat.ts`, `server/aiProviderFailover.ts`, `server.ts`)**:
+  - Identified root causes of indefinite "Analyzing with ErMate Clinical Engine..." spinner:
+    1. Lack of client-side `AbortController` timeout on `/api/case-discussion` (and `/api/scribe-chat`).
+    2. Generation mismatch guard in `finally` block previously bypassed `setIsSending(false)` when `sessionContextGenerationRef.current !== requestGeneration`, locking the UI into an unrecoverable loading state.
+    3. Unbounded retries and multi-model loops in failover layer.
+  - Implemented strictly bounded client request lifecycles: 25s timeout via `AbortController` in Discuss paths, and 30s in Scribe dictation.
+  - Hardened `finally` blocks across all paths to unconditionally invoke `setIsSending(false)` and `setSending(false)`, resetting loading spinners in 100% of success, error, timeout, and stale generation paths.
+  - Enforced single primary call (Claude Sonnet with 15s bound) with at most ONE configured fallback (OpenAI `gpt-4o` with 12s bound).
+  - Controlled failure response: If both providers fail or timeout, returns calm user message: `"I couldn't complete that response right now. Please try again."` without exposing API errors or provider names to the clinician.
+- **Full-Screen GPT-Style Case Discuss Workspace (`src/components/CaseDiscussWorkspace.tsx`, `src/components/BoundChatModal.tsx`)**:
+  - Replaced cramped modal (`max-w-3xl h-[88vh]`) for patient case discussions with a near/full-screen dedicated patient chat workspace:
+    - Mobile: Full viewport (`w-screen h-screen fixed inset-0`).
+    - Desktop: Clean large centered workspace (`max-w-5xl mx-auto h-full flex flex-col`).
+    - Top Bar: `← Back` button, patient identity badge (`Bed 14A • 261007001`), clinical subtext (`45 M • Chest pain • P1`), compact dropdown selector, and expandable `[Patient Context ▾]` button.
+    - Full Chat History Area: Spacious GPT-style message history, doctor bubbles, ErMate assistant responses, suggested record updates with one-tap Apply.
+    - Sticky Input Bar: Fixed bottom bar with `[ + ]` quick prompts, voice mic integration (`VoiceRecorder`), and send button.
+- **Elimination of Multi-Case Horizontal Tab Strip (`src/components/BoundChatModal.tsx`, `src/components/CaseDiscussWorkspace.tsx`)**:
+  - Removed confusing horizontal tabs strip (`Case #1`, `Case #2`, etc.).
+  - Discuss sessions are strictly patient-bound, focusing on ONE selected patient.
+  - Compact dropdown selector (`Bed 14A · 261007001 ▾`) allows switching between active census patients while maintaining strict session isolation (`ermate_chat_session_case_${case.id}`), never mixing chat histories.
+- **Compact Expandable Read-Only Patient Context Panel (`src/components/CaseDiscussWorkspace.tsx`)**:
+  - Collapsed state displays 1-line essential strip: Bed, Display ID, Age/Sex, Chief Complaint, Triage Category.
+  - Expanded state provides clean read-only 2-column clinical summary: Chief Complaint/HPI, Vitals on presentation, SAMPLE history, Primary Survey (ABCDE), Focused/Secondary Survey, Investigations & results, Treatments, Procedures, Provisional Diagnosis & Differentials, Progress & reassessments, and Disposition. Strictly read-only with zero inline editing controls.
+- **Backend Exact Saved Case Context & Same-Case Pending Scribe Context (`server.ts`, `src/App.tsx`, `src/hooks/useBoundChat.ts`)**:
+  - Verified exact selected `ClinicalCase` fields are delivered to `/api/case-discussion`: Demographics, Vitals, SAMPLE, Primary Assessment, formatted Secondary Survey object/string, Labs, Treatments, Procedures, Progress Notes, Reassessments, Differentials, and Disposition. No raw internal UUID exposed to clinician or overseas model (uses monotonic 9-digit `displayId`).
+  - Implemented same-case unapplied Scribe extraction pass-through (`pendingClinicalContext`):
+    - When `voiceScribeCaseId === discussionModalCase.id`, extracts unapplied turns via `getMergedUnappliedExtraction(scribeMessages)`.
+    - Labeled server-side prompt: `=== PENDING CLINICIAN DICTATION — NOT YET APPLIED TO CASE SHEET ===`.
+    - Strict read-only conversational context: Informs reasoning without mutating `ClinicalCase` or claiming pending facts are finalized.
+    - Fail-closed isolation: Mismatched case IDs pass `undefined`, completely preventing leakage across patients. Once applied to Case Sheet, unapplied extraction clears and canonical case becomes sole truth.
+  - Welcome message updated to acknowledge pending dictation: `"Discussing Bed 14A • 45 M • Fever for 2 days • Some details are still pending Case Sheet confirmation."`
+- **Dedicated Verification Suite (`verify_case_discuss_workspace.ts` — 25 / 25 PASS)**:
+  - Verified all 25 required test scenarios: Discuss opens exact case, full-screen layout, tab strip removal, patient selector isolation, saved complaint/vitals/SAMPLE/exams/investigations/treatments/progress availability, pending same-case extraction visibility, non-mutation of ClinicalCase, cross-patient leak protection, canonical post-apply parity, no raw UUID, provider timeout spinner clearing, provider failure spinner clearing, fallback success, both-provider failure calm retry message, general drug query case-creation safety, session history preservation, independent case histories, Rounds independence, and production build parity. All 20 Scribe draft case, 27 case preview, 12 MATE replay, 14 case identity, and 19 clinical regression tests remain 100% passing.
+
 ### [2026-10-07] — ErMate: Automatic Current Case Creation After First Clinical Dictation
 - **Targeted Workflow Correction (`src/components/VoiceScribeChatView.tsx`)**:
   - Corrected deficiency where `handleEnsureDraftCase` was previously only invoked during explicit MATE bed `NOT_FOUND` resolution, leaving ordinary typed/voice Scribe dictations without a durable ClinicalCase shell until manual preview or apply.

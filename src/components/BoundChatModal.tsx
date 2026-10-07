@@ -19,6 +19,9 @@ import {
 } from 'lucide-react';
 import { useBoundChat, ChatContext } from '../hooks/useBoundChat';
 import { getDisplayCaseId } from '../utils/caseIdentity';
+import { CaseDiscussWorkspace } from './CaseDiscussWorkspace';
+
+export { CaseDiscussWorkspace };
 
 interface BoundChatModalProps {
   context: ChatContext;
@@ -29,14 +32,19 @@ interface BoundChatModalProps {
   title?: string;
 }
 
-export const BoundChatModal: React.FC<BoundChatModalProps> = ({
-  context,
-  activeContexts,
-  onSelectContext,
-  isOpen,
-  onClose,
-  title
-}) => {
+export const BoundChatModal: React.FC<BoundChatModalProps> = (props) => {
+  if (props.context.type === 'case') {
+    return <CaseDiscussWorkspace {...props} />;
+  }
+
+  const {
+    context,
+    activeContexts,
+    onSelectContext,
+    isOpen,
+    onClose,
+    title
+  } = props;
   const {
     messages,
     loading,
@@ -198,35 +206,6 @@ export const BoundChatModal: React.FC<BoundChatModalProps> = ({
             <X className="w-5 h-5" />
           </button>
         </div>
-
-        {/* Case-Linked Discuss Tabs Strip */}
-        {activeContexts && activeContexts.length > 1 && (
-          <div className="bg-slate-900/90 border-b border-indigo-900/40 px-3 py-2 flex items-center gap-2 overflow-x-auto shrink-0 no-scrollbar">
-            <span className="text-[10px] font-extrabold text-indigo-300 font-mono uppercase tracking-wider shrink-0 flex items-center gap-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-indigo-400" />
-              Discuss Tabs:
-            </span>
-            {activeContexts.map((ctx, idx) => {
-              const isCurrent = ctx.id === context.id && ctx.type === context.type;
-              const name = ctx.data?.patientLabel?.name || ctx.data?.patient?.name || ctx.data?.name || `Case #${idx + 1}`;
-              const bed = ctx.data?.patientLabel?.bed || ctx.data?.bedNo || null;
-              return (
-                <button
-                  key={`${ctx.type}-${ctx.id}`}
-                  onClick={() => onSelectContext?.(ctx)}
-                  className={`px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap transition-all cursor-pointer border ${
-                    isCurrent
-                      ? 'bg-indigo-600 text-white border-indigo-400 shadow-xs font-bold'
-                      : 'bg-slate-800/80 hover:bg-slate-700/90 text-slate-300 border-slate-700/60'
-                  }`}
-                >
-                  <span>👤 {name}</span>
-                  {bed && <span className="text-[10px] opacity-75 font-mono">(Bed {bed})</span>}
-                </button>
-              );
-            })}
-          </div>
-        )}
 
         {/* Banner Notice */}
         {bannerNotice && (

@@ -189,8 +189,8 @@ export async function executeCaseDiscussionWithFailover(
   // 3. BOTH PROVIDERS FAILED
   return {
     success: false,
-    response: "Clinical discussion is temporarily unavailable. Your case data is safe. Please try again shortly.",
-    error: "Clinical discussion is temporarily unavailable. Your case data is safe. Please try again shortly."
+    response: "I couldn't complete that response right now. Please try again.",
+    error: "I couldn't complete that response right now. Please try again."
   };
 }
 

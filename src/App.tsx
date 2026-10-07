@@ -45,6 +45,7 @@ import { validateTeamInvite } from "./services/teamInviteService";
 import { createQuickDischargeCase } from "./components/QuickDischargeIntake";
 import ConsentModal from "./components/ConsentModal";
 import { BoundChatModal } from "./components/BoundChatModal";
+import { getMergedUnappliedExtraction } from "./components/VoiceScribeChatView";
 import { ROTA_SHIFTS } from "./components/TeamRosterBoard";
 import { MlcCertificatesView } from "./components/MlcCertificatesView";
 import { parseSecondaryAssessmentToSurvey } from "./components/SecondarySurveySection";
@@ -7919,6 +7920,9 @@ const handleSignOut = async () => {
             id: discussionModalCase.id,
             data: discussionModalCase,
             canEdit: true,
+            pendingClinicalContext: (voiceScribeCaseId === discussionModalCase.id)
+              ? getMergedUnappliedExtraction(scribeMessages)
+              : undefined,
             onRecordUpdated: (updatedFields) => {
               setCases(prev => prev.map(c => c.id === discussionModalCase.id ? { ...c, ...updatedFields } : c));
             }

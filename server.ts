@@ -2286,23 +2286,105 @@ ${deidentifyText(rawData.resuscitationDetails || "Standard ACLS protocol execute
       const invs = rawData?.investigations || [];
       const trts = rawData?.treatments || [];
       const diffs = rawData?.differentials || [];
+      const procs = Array.isArray(rawData?.procedures) ? rawData.procedures : [];
+      const reassess = Array.isArray(rawData?.reassessments) ? rawData.reassessments : [];
 
       const invSummary = rawData?.investigationResultsSummary 
         ? rawData.investigationResultsSummary 
-        : invs.map((i: any) => `${i.testName || i.name}: ${i.result || i.value} ${i.isAbnormal ? "⚠️" : ""}`).join("\n");
+        : (invs.length > 0 ? invs.map((i: any) => `${i.testName || i.name}: ${i.result || i.value} ${i.isAbnormal ? "⚠️" : ""}`).join("\n") : "No labs uploaded yet.");
 
       const isPediatric = !!rawData?.isPediatric;
       const peds = rawData?.pediatricDetails || {};
       const pedsString = isPediatric ? `
 PEDIATRIC ASSESSMENT & CONTEXT:
 - Weight: ${peds.patientWeight || peds.weight || "N/A"} kg
-- PAT (TICLS): Tone: ${peds.patAppearanceTone}, Interactivity: ${peds.patAppearanceInteractivity}, Consolability: ${peds.patAppearanceConsolability}, Look: ${peds.patAppearanceLookGaze}, Cry: ${peds.patAppearanceSpeechCry}
-- Work of Breathing: ${peds.patWorkOfBreathing} | Circulation: ${peds.patCirculation}
-- Birth History: ${peds.birthHistory} | Feeding: ${peds.feedingHistory} | Immunizations: ${peds.immunizationHistory}` : "";
+- PAT (TICLS): Tone: ${peds.patAppearanceTone || "N/A"}, Interactivity: ${peds.patAppearanceInteractivity || "N/A"}, Consolability: ${peds.patAppearanceConsolability || "N/A"}, Look: ${peds.patAppearanceLookGaze || "N/A"}, Cry: ${peds.patAppearanceSpeechCry || "N/A"}
+- Work of Breathing: ${peds.patWorkOfBreathing || "N/A"} | Circulation: ${peds.patCirculation || "N/A"}
+- Birth History: ${peds.birthHistory || "N/A"} | Feeding: ${peds.feedingHistory || "N/A"} | Immunizations: ${peds.immunizationHistory || "N/A"}` : "";
+
+      const secSurvey = rawData?.secondarySurvey || rawData?.secondaryAssessment || {};
+      let secExamText = "";
+      if (typeof secSurvey === "string" && secSurvey.trim()) {
+        secExamText = secSurvey;
+      } else if (typeof secSurvey === "object" && Object.keys(secSurvey).length > 0) {
+        const parts: string[] = [];
+        if (secSurvey.generalExam) parts.push(`General: ${secSurvey.generalExam}`);
+        if (secSurvey.headNeck) parts.push(`Head/Neck: ${secSurvey.headNeck}`);
+        if (secSurvey.chest) parts.push(`Chest/Resp: ${secSurvey.chest}`);
+        if (secSurvey.abdomen) parts.push(`Abdomen: ${secSurvey.abdomen}`);
+        if (secSurvey.pelvisGenitalia) parts.push(`Pelvis/Genitalia: ${secSurvey.pelvisGenitalia}`);
+        if (secSurvey.extremities) parts.push(`Extremities: ${secSurvey.extremities}`);
+        if (secSurvey.neurological) parts.push(`Neurological: ${secSurvey.neurological}`);
+        if (secSurvey.backSpine) parts.push(`Back/Spine: ${secSurvey.backSpine}`);
+        secExamText = parts.length > 0 ? parts.join("\n") : "General: Conscious, oriented. Systemic exams within normal limits.";
+      } else {
+        secExamText = "General: Conscious, oriented. Systemic exams within normal limits.";
+      }
+
+      const bedNumber = rawData?.bedNo || pat?.bed || "Unassigned";
+      const displayCaseId = rawData?.displayId || (rawData?.id && !rawData.id.includes("-") ? rawData.id : "ID pending");
+
+      // Check for pending unapplied Scribe dictation context
+      const pendingCtx = req.body?.pendingClinicalContext;
+      let pendingPromptSection = "";
+      if (pendingCtx && typeof pendingCtx === "object" && Object.keys(pendingCtx).length > 0) {
+        const pendingLines: string[] = [];
+        if (pendingCtx.presentingComplaint) {
+          pendingLines.push(`- Pending Chief Complaint: ${deidentifyText(pendingCtx.presentingComplaint).deidentified}`);
+        }
+        if (pendingCtx.vitals) {
+          const pv = pendingCtx.vitals;
+          pendingLines.push(`- Pending Vitals: BP ${pv.bp || 'N/A'}, HR ${pv.hr || 'N/A'}, SpO2 ${pv.spo2 || 'N/A'}, RR ${pv.rr || 'N/A'}, Temp ${pv.temp || 'N/A'}`);
+        }
+        if (pendingCtx.sampleHistory) {
+          const ps = pendingCtx.sampleHistory;
+          if (ps.symptoms) pendingLines.push(`- Pending Symptoms: ${deidentifyText(ps.symptoms).deidentified}`);
+          if (ps.allergies) pendingLines.push(`- Pending Allergies: ${deidentifyText(ps.allergies).deidentified}`);
+          if (ps.medications) pendingLines.push(`- Pending Medications: ${deidentifyText(ps.medications).deidentified}`);
+          if (ps.pastHistory) pendingLines.push(`- Pending Past History: ${deidentifyText(ps.pastHistory).deidentified}`);
+          if (ps.events) pendingLines.push(`- Pending Events: ${deidentifyText(ps.events).deidentified}`);
+        }
+        if (pendingCtx.primaryAssessment) {
+          const pa = pendingCtx.primaryAssessment;
+          pendingLines.push(`- Pending Primary Assessment: Airway ${pa.airway || '-'}, Breathing ${pa.breathing || '-'}, Circulation ${pa.circulation || '-'}, Disability ${pa.disability || '-'}`);
+        }
+        if (pendingCtx.secondarySurvey) {
+          const ss = pendingCtx.secondarySurvey;
+          const sLines: string[] = [];
+          if (ss.generalExam) sLines.push(`General: ${ss.generalExam}`);
+          if (ss.chest) sLines.push(`Chest: ${ss.chest}`);
+          if (ss.abdomen) sLines.push(`Abdomen: ${ss.abdomen}`);
+          if (ss.neurological) sLines.push(`Neuro: ${ss.neurological}`);
+          if (sLines.length > 0) pendingLines.push(`- Pending Physical Exam: ${sLines.join('; ')}`);
+        }
+        if (pendingCtx.provisionalDiagnosis || pendingCtx.provisionalPrimaryDiagnosis) {
+          pendingLines.push(`- Pending Provisional Diagnosis: ${pendingCtx.provisionalDiagnosis || pendingCtx.provisionalPrimaryDiagnosis}`);
+        }
+        if (Array.isArray(pendingCtx.treatments) && pendingCtx.treatments.length > 0) {
+          pendingLines.push(`- Pending Treatments: ${pendingCtx.treatments.map((t: any) => `${t.drugName || t.name} ${t.dose || ''}`).join(', ')}`);
+        }
+        if (Array.isArray(pendingCtx.investigations) && pendingCtx.investigations.length > 0) {
+          pendingLines.push(`- Pending Investigations: ${pendingCtx.investigations.map((i: any) => `${i.testName || i.name}: ${i.result || i.value || 'Ordered'}`).join(', ')}`);
+        }
+
+        if (pendingLines.length > 0) {
+          pendingPromptSection = `
+=== PENDING CLINICIAN DICTATION — NOT YET APPLIED TO CASE SHEET ===
+IMPORTANT NOTICE: The following clinical details were extracted from the clinician's recent Scribe dictation for this exact patient, but have NOT YET been applied or confirmed into the official Case Sheet:
+${pendingLines.join("\n")}
+RULES FOR PENDING DICTATION:
+- You may use these details conversationally to answer the doctor's questions.
+- Treat it as UNCONFIRMED DRAFT information pending clinician confirmation.
+- Do NOT claim that these pending facts are finalized legal chart documentation.
+==================================================================
+`;
+        }
+      }
 
       contextSummaryText = `
 === PATIENT CLINICAL CASE RECORD ===
 Patient Name: ${deidentifyText(pat.name || "Unidentified").deidentified}
+Bed Number: ${bedNumber} | Display Case ID: ${displayCaseId}
 Age / Sex: ${pat.age || "N/A"} years | ${pat.gender || "Unknown"}
 Chief Complaint: ${deidentifyText(pat.presentingComplaint || "Emergency presentation").deidentified}
 Triage Category: ${pat.triageCategory || "P2 (Urgent)"}
@@ -2327,16 +2409,20 @@ PRIMARY ASSESSMENT (ABCDE):
 - Exposure: ${pri.exposure || "Normal"}
 
 PHYSICAL EXAMINATION & SECONDARY ASSESSMENT:
-${deidentifyText(typeof rawData?.secondaryAssessment === 'string' ? rawData.secondaryAssessment : "General: Conscious, oriented. Systemic exams within normal limits.").deidentified}
+${deidentifyText(secExamText).deidentified}
 
 LAB INVESTIGATIONS & FINDINGS:
-${deidentifyText(invSummary || "No labs uploaded yet.").deidentified}
+${deidentifyText(invSummary).deidentified}
 
 TREATMENTS ADMINISTERED / ORDERED:
 ${trts.map((t: any) => `- ${t.drugName} ${t.dose || ""} (${t.route || "IV"})`).join("\n") || "Symptomatic ER monitoring."}
 
+PROCEDURES PERFORMED:
+${procs.map((p: any) => `- ${p.procedureName || p.name || 'Procedure'}: ${p.notes || p.outcome || 'Completed'}`).join("\n") || "None documented."}
+
 PROGRESS NOTES & ER TIMELINE:
 ${deidentifyText(rawData?.progressNotes || "No progress notes recorded.").deidentified}
+${reassess.length > 0 ? `\nREASSESSMENTS:\n${reassess.map((r: any) => `- [${r.time || 'ER'}]: ${r.notes || r.findings || ''} (BP: ${r.vitals?.bp || '-'}, HR: ${r.vitals?.hr || '-'})`).join("\n")}` : ""}
 
 DIFFERENTIAL DIAGNOSES / IMPRESSIONS:
 ${diffs.map((d: any) => `- ${typeof d === "string" ? d : d.diagnosis || d.name}`).join("\n") || "Under evaluation"}
@@ -2347,6 +2433,7 @@ DISPOSITION & TERMINAL OUTCOME:
 - Observation & ER Notes: ${deidentifyText(rawData?.dispositionDetails?.observationNotes || "N/A").deidentified}
 - Primary Diagnosis: ${rawData?.dischargeInfo?.primaryDiagnosis || rawData?.provisionalPrimaryDiagnosis || "Under evaluation"}
 - Condition at Discharge / Terminal Status: ${rawData?.dischargeInfo?.conditionAtDischarge || "N/A"}
+${pendingPromptSection}
 ===================================
 `;
     }
@@ -2452,16 +2539,16 @@ YOUR CRITICAL GUIDELINES:
     console.warn("[CaseDiscussion] Both providers unavailable or returned empty — returning controlled failure message.");
     return res.json({
       success: false,
-      response: "Clinical discussion is temporarily unavailable. Your case data is safe. Please try again shortly.",
-      reply: "Clinical discussion is temporarily unavailable. Your case data is safe. Please try again shortly.",
+      response: "I couldn't complete that response right now. Please try again.",
+      reply: "I couldn't complete that response right now. Please try again.",
       model: "unavailable"
     });
   } catch (error: any) {
     console.error("[Clinical Reasoning] Case Discussion Error:", error?.message || error);
     return res.status(503).json({
       success: false,
-      response: "Clinical discussion is temporarily unavailable. Your case data is safe. Please try again shortly.",
-      reply: "Clinical discussion is temporarily unavailable. Your case data is safe. Please try again shortly.",
+      response: "I couldn't complete that response right now. Please try again.",
+      reply: "I couldn't complete that response right now. Please try again.",
       model: "unavailable"
     });
   }
