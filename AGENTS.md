@@ -45,6 +45,28 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-08] — ErMate: Discuss Opening Concise Case Debrief
+- **Concise Factual Opening for Documented Cases (`src/utils/caseDebrief.ts`, `src/hooks/useBoundChat.ts`)**:
+  - Improved the opening message for existing documented cases in Discuss mode without returning to verbose Clinical Case Summaries, tables, or action menus.
+  - Standard format:
+    ```
+    Here’s what you’ve documented so far:
+    [2–4 concise sentences summarizing the clinically important documented facts.]
+
+    How can I help with this case?
+    ```
+  - Target length: ~40–100 words synthesized directly from the exact `ClinicalCase` (demographics, presenting complaint, vital signs, abnormal physical exam findings, investigations with results, treatments administered, working diagnosis, and disposition plan).
+- **Strict Clinical Safety & Zero-Fabrication Enforcement**:
+  - Never invents GCS 15, ABCDE normal, hemodynamically stable, symptomatic monitoring, or unadministered treatments unless explicitly documented.
+  - Minimally documented cases (e.g., triage category and case type only) output a concise 1-sentence factual statement (`"This is a P2 medical patient currently under evaluation."`) with zero missing-data audits or field audits.
+  - Empty case shells or new cases output exactly `"Ask me anything about this case."`.
+  - Rounds mode opening remains strictly `"Want to prepare before rounds? Ask."`.
+- **Legacy Session Migration Engine (`src/utils/caseDebrief.ts`, `migrateLegacySessionMessages`)**:
+  - Detects and removes legacy bootstrap messages (e.g., "Discussing Active Case", "Clinical Case Summary", "Patient Overview", "Clinical Snapshot", "Critical Gaps", "How Would You Like to Proceed") from prefix messages prior to the first user message.
+  - Seamlessly re-injects the new concise debrief while preserving 100% of genuine historical user messages and assistant responses.
+- **Verification (`verify_case_chat_opening_messages.ts` 15/15, `verify_unified_case_chat_workspace.ts` 20/20, `verify_case_discuss_workspace.ts` 25/25, `verify_regression.ts` 19/19)**:
+  - 100% test pass rate across all 15 specifications and regression suites. Clean TypeScript and production build.
+
 ### [2026-10-08] — ErMate: Simplified Discuss + Rounds Opening Messages
 - **Clean, Zero-Noise Default Opening Messages (`src/hooks/useBoundChat.ts`)**:
   - Eliminated verbose default opening content from the unified `CaseChatWorkspace` in both Discuss and Rounds modes:

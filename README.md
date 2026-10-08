@@ -235,7 +235,8 @@ ErMate employs a dynamic role-based navigation hierarchy computed from `getNorma
 | `/src/services/dutySessionService.ts` | Persisted actual duty session lifecycle & atomic session-safe termination (Patch D2) |
 | `/src/utils/roleUtils.ts` | Role normalization & dynamic navigation permissions helper (`getNormalizedRole`) |
 | `/src/components/ToolsView.tsx` | Consolidated acute clinical tools hub (Drug Guide, Peds Calculator, Pocket Mirror) |
-| `/verify_case_chat_opening_messages.ts` | Verification suite for simplified Discuss ("Ask me anything about this case.") and Rounds ("Want to prepare before rounds? Ask.") opening messages |
+| `/src/utils/caseDebrief.ts` | Concise factual case debrief synthesizer (40–100 words, 2–4 sentences) & legacy session migration engine |
+| `/verify_case_chat_opening_messages.ts` | Verification suite for concise Discuss opening debrief (ACS, Trauma, Peds, minimal, empty shell), zero-fabrication safety, and Rounds opening |
 | `/verify_dashboard_and_logo.ts` | Verification suite for Dashboard decluttering, mobile order, compact HOD overview, and official logo runtime assets |
 | `/verify_dashboard_declutter_logo_runtime.ts` | Verification suite for PWA precaching, brand asset fallbacks, and ER operations focus |
 | `/src/components/shared/ErMateLogo.tsx` | Official ErMate brand emblem with embedded vector OfficialCrossIcon (3D glossy ribbon cross + ECG pulse) |

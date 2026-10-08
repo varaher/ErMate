@@ -15,6 +15,13 @@ import {
 import { db, auth } from '../firebase';
 import { authenticatedFetch, AuthRequiredError } from '../services/authenticatedFetch';
 import { getDisplayCaseId } from '../utils/caseIdentity';
+import {
+  buildWelcomeMessage,
+  migrateLegacySessionMessages,
+  generateDiscussCaseDebrief,
+  isMeaningfulCase,
+  isMinimallyDocumentedCase
+} from '../utils/caseDebrief';
 
 export interface ChatContext {
   type: 'case' | 'handover' | 'discharge' | 'mortality_audit' | 'reference' | 'general' | 'rounds';
@@ -82,13 +89,10 @@ export function useBoundChat(context: ChatContext, initialModeOverride?: 'discus
         try {
           const parsed = JSON.parse(savedLocal);
           if (parsed && Array.isArray(parsed.messages) && parsed.messages.length > 0) {
-            // If the session only has the single initial welcome message, refresh it with the exact new simplified text
-            if (parsed.messages.length === 1 && parsed.messages[0].role === 'assistant') {
-              const freshWelcome = buildWelcomeMessage(context, mode);
-              parsed.messages[0].content = freshWelcome.content;
-            }
+            // Migrate legacy sessions (stripping old bootstrap summaries while preserving user dialogue)
+            const cleanMessages = migrateLegacySessionMessages(parsed.messages, context, mode);
             setSessionId(parsed.id || `local_${Date.now()}`);
-            setMessages(parsed.messages);
+            setMessages(cleanMessages);
             setPendingUpdates(parsed.pendingUpdates || null);
             setLoading(false);
             return;
@@ -125,11 +129,9 @@ export function useBoundChat(context: ChatContext, initialModeOverride?: 'discus
             setSessionId(sessionDoc.id);
             const data = sessionDoc.data();
             const sessionMessages = data.messages || [];
-            if (sessionMessages.length === 1 && sessionMessages[0].role === 'assistant') {
-              const freshWelcome = buildWelcomeMessage(context, mode);
-              sessionMessages[0].content = freshWelcome.content;
-            }
-            setMessages(sessionMessages);
+            // Migrate legacy sessions (stripping old bootstrap summaries while preserving user dialogue)
+            const cleanMessages = migrateLegacySessionMessages(sessionMessages, context, mode);
+            setMessages(cleanMessages);
             if (data.pendingUpdates) {
               setPendingUpdates(data.pendingUpdates);
             }
@@ -371,60 +373,10 @@ export function useBoundChat(context: ChatContext, initialModeOverride?: 'discus
   };
 }
 
-function buildWelcomeMessage(context: ChatContext, mode: 'discuss' | 'rounds' = 'discuss'): ChatMessage {
-  const d = context.data || {};
-
-  let welcomeText = '';
-
-  if (mode === 'rounds' || context.type === 'rounds') {
-    welcomeText = "Want to prepare before rounds? Ask.";
-  } else if (context.type === 'case' || mode === 'discuss') {
-    welcomeText = "Ask me anything about this case.";
-  } else {
-    switch (context.type) {
-      case 'handover':
-        welcomeText = `Discussing Handover for: **${d.patientLabel?.name || d.name || 'Patient'}** (Bed ${d.patientLabel?.bed || 'N/A'})
-
-Diagnosis: ${d.diagnosis || d.presentingComplaint || 'Under evaluation'}
-Status: **${(d.patientLabel?.status || 'unstable').toUpperCase()}**
-
-Ask about management, pending actions, or ask me to update this patient's handover card (e.g. "Add MRI Brain to pending actions").`;
-        break;
-
-      case 'discharge':
-        welcomeText = `Discussing Discharge Summary: **${d.patientInfo?.name || d.patientName || 'Patient'}**
-
-Admitted: ${d.patientInfo?.dateAdmission || 'N/A'} | Discharged: ${d.patientInfo?.dateDischarge || 'N/A'}
-Primary Diagnosis: ${d.diagnosisAtDischarge?.[0] || d.diagnosis || 'N/A'}
-
-Ask about clinical course, medication reconciliation, discharge instructions, or request summary adjustments.`;
-        break;
-
-      case 'mortality_audit':
-        welcomeText = `M&M Confidential Review: **${d.patientInfo?.name || d.patientName || 'Deceased Patient'}**
-
-Date of Death: ${d.patientInfo?.dateDeath || d.dateDeath || 'N/A'}
-Primary Cause: ${d.causeOfDeath?.underlying || d.causeOfDeath || 'Under audit'}
-
-Ask questions regarding physiological timeline, ACLS/resuscitation audit, antecedent causes, or clinical pearls for rounds.`;
-        break;
-
-      case 'reference':
-        welcomeText = `📚 **ErMate EM Reference** — Evidence-Based Emergency Medicine Handbook
-
-Ask any clinical, pharmacological, or procedural emergency question (e.g., *"How do I use Ketofol in AF?"*, *"RSI drug doses paediatric"*). 
-
-Responses are generated directly using ErMate, cited with Tintinalli's, Rosen's, UpToDate, and WikEM guidelines.`;
-        break;
-
-      default:
-        welcomeText = `Ask me anything about this case.`;
-    }
-  }
-
-  return {
-    role: 'assistant',
-    content: welcomeText,
-    timestamp: new Date().toISOString(),
-  };
-}
+export {
+  buildWelcomeMessage,
+  migrateLegacySessionMessages,
+  generateDiscussCaseDebrief,
+  isMeaningfulCase,
+  isMinimallyDocumentedCase
+};
