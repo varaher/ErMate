@@ -45,6 +45,22 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-08] — ErMate: Fix Facility Permission Error & Canonical ermate.in Team Invite Links
+- **Facility Bed Capacity Permission & Schema Fix (`firestore.rules`, `src/App.tsx`, `src/components/MoreView.tsx`)**:
+  - Resolved "Missing or insufficient permissions" when saving Facility & Bed Capacity in MoreView.
+  - Updated `hospital_shifts/{hospitalId}` rule in `firestore.rules` to permit `erPhysicalBedCapacity` with strict schema validation: must be integer, `> 0`, and `<= 1000`.
+  - Maintained strict HOD authorization via `team_members/{uid}` with `membershipVerified == true` and exact HOD role matching the hospital ID (or platform admin).
+  - Client-side write security in `handleUpdateErPhysicalBedCapacity` (`src/App.tsx`): Completely removed untrusted fallback to `profile.hospital` and fallback write to `default_er`. Fails closed with `"Your verified hospital membership could not be confirmed. Facility settings were not changed."` if canonical verified membership cannot be established.
+  - UI Authority Consistency (`src/components/MoreView.tsx`): Evaluates `canEditFacility` strictly against canonical verified HOD membership or platform admin. Non-authorized clinicians receive read-only facility details.
+- **Canonical Public Domain & Secure Random Token Team Invitations (`src/utils/publicUrl.ts`, `src/services/teamInviteService.ts`, `src/components/TeamRosterBoard.tsx`, `src/App.tsx`)**:
+  - Implemented `getPublicAppUrl()` defaulting to canonical `https://ermate.in` (configurable via `VITE_PUBLIC_APP_URL`). Permanently prevented internal preview, Studio, Cloud Run, or localhost origins from leaking into shared invite links.
+  - Removed guessable hospital slug invite URLs (`/join/{slug}?ref=team_invite`) from `TeamRosterBoard.tsx`.
+  - Team invitations now strictly use cryptographically random server-generated tokens (`inv_...`) via `/api/team/create-invite`.
+  - Copy Link and Share actions use the exact same canonical secure invite URL: `https://ermate.in/join/{token}`.
+  - Removed decorative simulated vector QR mockup (49 divs) in accordance with real QR only requirements, and disabled Show QR button pending dedicated barcode library integration.
+- **Verification (`verify_facility_permission_and_team_invites.ts` 24/24 PASS)**:
+  - 100% test pass rate across all 24 security and functional invariants. Production build and type checks pass with 0 errors.
+
 ### [2026-10-08] — ErMate: Discuss Opening Concise Case Debrief
 - **Concise Factual Opening for Documented Cases (`src/utils/caseDebrief.ts`, `src/hooks/useBoundChat.ts`)**:
   - Improved the opening message for existing documented cases in Discuss mode without returning to verbose Clinical Case Summaries, tables, or action menus.

@@ -15,7 +15,6 @@ import { getCasePendingStatus } from "../utils/caseHelper";
 import { triggerPrintWithTip } from "../utils/printWithTip";
 import { doc, updateDoc } from "firebase/firestore";
 import { db, auth } from "../firebase";
-import { createTeamInvite } from "../services/teamInviteService";
 import GoogleCalendarModal from "./GoogleCalendarModal";
 import GoogleClassroomModal from "./GoogleClassroomModal";
 import MortalityAuditModal from "./MortalityAuditModal";
@@ -253,8 +252,6 @@ export default function DashboardView({
     }))
     .filter(x => x.status.isPending);
 
-  // Active invite link generated dynamically
-  const [activeInviteLink, setActiveInviteLink] = useState<string>("");
   const [modalShiftId, setModalShiftId] = useState<string>("");
 
   React.useEffect(() => {
@@ -263,20 +260,6 @@ export default function DashboardView({
     }
   }, [showShiftCheckIn, plannedShiftId, activeDutySession?.shiftId]);
 
-
-  React.useEffect(() => {
-    let active = true;
-    if (profile?.hospital) {
-      createTeamInvite(profile.hospital, auth.currentUser?.uid || "hod", profile.name || "HOD").then(res => {
-        if (active) {
-          setActiveInviteLink(res.link);
-        }
-      });
-    } else {
-      setActiveInviteLink(`${window.location.origin}/join/general-er-invite`);
-    }
-    return () => { active = false; };
-  }, [profile?.hospital, profile?.name]);
   // Shift & Countdown Warning States
   const [showShiftWarning, setShowShiftWarning] = useState<boolean>(false);
   const [warningSeconds, setWarningSeconds] = useState<number>(300); // 5 minutes

@@ -172,40 +172,41 @@ export default function TeamRosterBoard({
     roleLower.includes("owner") ||
     userEmailLower === "varahgrp@gmail.com";
 
-  const slugify = (text: string) => {
-    return text
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/(^-|-$)+/g, "");
-  };
-
-  const currentOrigin = typeof window !== "undefined" ? window.location.origin : "https://ermate.app";
-  const [generatedLink, setGeneratedLink] = useState<string>(
-    `${currentOrigin}/join/${slugify(profile.hospital || workplaceInput || "department")}?ref=team_invite`
-  );
+  const [generatedLink, setGeneratedLink] = useState<string>("");
+  const [isGeneratingInvite, setIsGeneratingInvite] = useState<boolean>(false);
 
   const activeHospitalName = (workplaceInput || profile.workplaceName || profile.hospital || "Emergency Department").trim();
 
   useEffect(() => {
     let active = true;
     const targetHosp = profile.hospital || workplaceInput;
-    if (targetHosp) {
-      createTeamInvite(targetHosp, auth.currentUser?.uid || "hod", profile.name || "HOD").then(res => {
-        if (active) {
-          setGeneratedLink(res.link);
-        }
-      });
+    if (targetHosp && auth.currentUser) {
+      setIsGeneratingInvite(true);
+      createTeamInvite(targetHosp, auth.currentUser.uid, profile.name || "HOD")
+        .then(res => {
+          if (active && res?.link) {
+            setGeneratedLink(res.link);
+          }
+        })
+        .catch(err => {
+          console.warn("Could not auto-generate secure invite link:", err);
+        })
+        .finally(() => {
+          if (active) setIsGeneratingInvite(false);
+        });
     }
     return () => { active = false; };
   }, [profile.hospital, profile.name, workplaceInput]);
 
   const handleCopyLink = () => {
+    if (!generatedLink) return;
     navigator.clipboard.writeText(generatedLink);
     setCopiedLink(true);
     setTimeout(() => setCopiedLink(false), 2000);
   };
 
   const handleShareLink = async () => {
+    if (!generatedLink) return;
     if (typeof navigator !== "undefined" && navigator.share) {
       try {
         await navigator.share({
@@ -945,62 +946,38 @@ export default function TeamRosterBoard({
 
             <div className="flex flex-col sm:flex-row bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl p-2 items-center gap-2">
               <span className="text-[11px] font-mono text-slate-500 dark:text-slate-400 select-all truncate flex-1 px-2 w-full sm:w-auto">
-                {generatedLink}
+                {generatedLink || (isGeneratingInvite ? "Generating secure invite link..." : "Generating invitation...")}
               </span>
               <div className="flex items-center gap-1.5 w-full sm:w-auto justify-end">
                 <button
                   type="button"
                   onClick={handleCopyLink}
-                  className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-lg transition-all flex items-center gap-1 cursor-pointer shrink-0"
+                  disabled={!generatedLink}
+                  className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-bold text-xs rounded-lg transition-all flex items-center gap-1 cursor-pointer shrink-0"
                 >
                   {copiedLink ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
                   <span>{copiedLink ? "Copied" : "Copy Link"}</span>
                 </button>
                 <button
                   type="button"
-                  onClick={() => setShowQR(!showQR)}
-                  className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold text-xs rounded-lg transition-all flex items-center gap-1 cursor-pointer shrink-0"
+                  disabled
+                  title="Direct QR scanning coming soon. Please use Copy Link or Share."
+                  className="px-3 py-1.5 bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 font-bold text-xs rounded-lg transition-all flex items-center gap-1 opacity-50 cursor-not-allowed shrink-0"
                 >
                   <QrCode className="w-3.5 h-3.5" />
-                  <span>{showQR ? "Hide QR" : "Show QR"}</span>
+                  <span>Show QR</span>
                 </button>
                 <button
                   type="button"
                   onClick={handleShareLink}
-                  className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold text-xs rounded-lg transition-all flex items-center gap-1 cursor-pointer shrink-0"
+                  disabled={!generatedLink}
+                  className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 disabled:opacity-50 text-slate-700 dark:text-slate-200 font-bold text-xs rounded-lg transition-all flex items-center gap-1 cursor-pointer shrink-0"
                 >
                   <Share2 className="w-3.5 h-3.5" />
                   <span>Share</span>
                 </button>
               </div>
             </div>
-
-            {/* Simulated Vector QR Mockup */}
-            {showQR && (
-              <div className="p-4 bg-white dark:bg-slate-950 border border-dashed border-indigo-200 dark:border-indigo-900 rounded-xl flex items-center gap-4 animate-fade-in">
-                <div className="w-16 h-16 bg-slate-900 dark:bg-slate-100 rounded-xl p-1.5 shrink-0 flex flex-wrap gap-[2.5px] overflow-hidden opacity-90 relative">
-                  <div className="absolute inset-1.5 border border-indigo-500/40 animate-pulse pointer-events-none" />
-                  {Array.from({ length: 49 }).map((_, i) => (
-                    <div 
-                      key={i} 
-                      className={`w-[6px] h-[6px] rounded-xs ${
-                        (i % 3 === 0 || i % 7 === 0 || i < 12 || i > 38) 
-                          ? "bg-slate-100 dark:bg-slate-900" 
-                          : "bg-slate-900 dark:bg-slate-100"
-                      }`} 
-                    />
-                  ))}
-                </div>
-                <div className="space-y-1">
-                  <span className="text-xs font-bold text-slate-900 dark:text-white block font-mono">
-                    Scan QR on Mobile Device
-                  </span>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-normal">
-                    Colleagues can scan this during handovers or rounds to link their Google account.
-                  </p>
-                </div>
-              </div>
-            )}
           </div>
 
           {/* Pending Invitations & Join Requests */}
@@ -1784,61 +1761,38 @@ export default function TeamRosterBoard({
 
               <div className="bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl p-3 space-y-2">
                 <span className="text-[11px] font-mono text-slate-600 dark:text-slate-300 select-all break-all block">
-                  {generatedLink}
+                  {generatedLink || (isGeneratingInvite ? "Generating secure invite link..." : "Generating invitation...")}
                 </span>
                 <div className="flex items-center gap-2 pt-1">
                   <button
                     type="button"
                     onClick={handleCopyLink}
-                    className="flex-1 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
+                    disabled={!generatedLink}
+                    className="flex-1 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-extrabold text-xs rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
                   >
                     {copiedLink ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
                     <span>{copiedLink ? "Link Copied!" : "Copy Link"}</span>
                   </button>
                   <button
                     type="button"
-                    onClick={() => setShowQR(!showQR)}
-                    className="px-3 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-white font-bold text-xs rounded-xl transition-all flex items-center justify-center gap-1 cursor-pointer"
+                    disabled
+                    title="Direct QR scanning coming soon. Please use Copy Link or Share."
+                    className="px-3 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-400 dark:text-slate-500 font-bold text-xs rounded-xl transition-all flex items-center justify-center gap-1 opacity-50 cursor-not-allowed"
                   >
                     <QrCode className="w-3.5 h-3.5" />
-                    <span>{showQR ? "Hide QR" : "Show QR"}</span>
+                    <span>Show QR</span>
                   </button>
                   <button
                     type="button"
                     onClick={handleShareLink}
-                    className="px-3 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-white font-bold text-xs rounded-xl transition-all flex items-center justify-center gap-1 cursor-pointer"
+                    disabled={!generatedLink}
+                    className="px-3 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 disabled:opacity-50 text-slate-800 dark:text-white font-bold text-xs rounded-xl transition-all flex items-center justify-center gap-1 cursor-pointer"
                   >
                     <Share2 className="w-3.5 h-3.5" />
                     <span>Share</span>
                   </button>
                 </div>
               </div>
-
-              {/* QR display in modal */}
-              {showQR && (
-                <div className="p-4 bg-slate-50 dark:bg-slate-950 border border-dashed border-indigo-200 rounded-xl flex items-center gap-4 animate-fade-in">
-                  <div className="w-16 h-16 bg-slate-900 dark:bg-slate-100 rounded-xl p-1.5 shrink-0 flex flex-wrap gap-[2.5px] overflow-hidden opacity-90 relative">
-                    {Array.from({ length: 49 }).map((_, i) => (
-                      <div 
-                        key={i} 
-                        className={`w-[6px] h-[6px] rounded-xs ${
-                          (i % 3 === 0 || i % 7 === 0 || i < 12 || i > 38) 
-                            ? "bg-slate-100 dark:bg-slate-900" 
-                            : "bg-slate-900 dark:bg-slate-100"
-                        }`} 
-                      />
-                    ))}
-                  </div>
-                  <div className="space-y-1">
-                    <span className="text-xs font-bold text-slate-900 dark:text-white block font-mono">
-                      Scan QR Code
-                    </span>
-                    <p className="text-[11px] text-slate-500 leading-normal">
-                      Instant mobile browser onboarding during ER shifts.
-                    </p>
-                  </div>
-                </div>
-              )}
 
               {/* PENDING INVITATIONS IN MODAL */}
               <div className="space-y-2 pt-2 border-t border-slate-100 dark:border-slate-800">

@@ -25,6 +25,7 @@ export function generateInviteToken(): string {
 
 
 import { auth } from "../firebase";
+import { getPublicAppUrl } from "../utils/publicUrl";
 
 export async function createTeamInvite(
   hospital: string,
@@ -33,7 +34,7 @@ export async function createTeamInvite(
   facility: { hospitalAddress?: string; hospitalPhone?: string; state?: string } = {},
   maxUses: number = 10
 ): Promise<{ token: string; link: string }> {
-  const origin = typeof window !== "undefined" ? window.location.origin : "https://ermate.hospital";
+  const origin = getPublicAppUrl();
   const user = auth.currentUser;
   if (!user) throw new Error("Not authenticated");
   

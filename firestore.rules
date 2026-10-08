@@ -692,34 +692,39 @@ allow create, update, delete: if false;
    match /hospital_shifts/{hospitalId} {
   allow read: if isLoggedIn();
 
-  // Shift configuration may be created/updated only by
-  // an active, verified HOD whose canonical membership
-  // matches this hospital.
+  // Shift configuration and facility settings may be created/updated only by
+  // an active, verified HOD whose canonical membership matches this hospital
+  // (or platform admin).
   allow create, update: if isLoggedIn()
     && hospitalId is string
     && hospitalId.size() > 0
 
-    && exists(
-      /databases/$(database)/documents/team_members/$(uid())
-    )
-
-    && checkAdminMember(
-      get(
-        /databases/$(database)/documents/team_members/$(uid())
-      ).data,
-      hospitalId
+    && (
+      isPlatformAdmin()
+      || (
+        exists(
+          /databases/$(database)/documents/team_members/$(uid())
+        )
+        && checkAdminMember(
+          get(
+            /databases/$(database)/documents/team_members/$(uid())
+          ).data,
+          hospitalId
+        )
+      )
     )
 
     // The document identity must match its Firestore path.
     && incoming().id == hospitalId
     && incoming().hospitalId == hospitalId
 
-    // Only the expected shift-configuration fields may exist.
+    // Only the expected shift-configuration and facility fields may exist.
     && incoming().keys().hasOnly([
       'id',
       'hospitalId',
       'hospital',
       'shifts',
+      'erPhysicalBedCapacity',
       'updatedAt',
       'updatedByUid',
       'updatedByEmail'
@@ -727,7 +732,13 @@ allow create, update, delete: if false;
 
     // Basic field integrity.
     && incoming().hospital is string
-    && incoming().shifts is list
+    && (!('shifts' in incoming()) || incoming().shifts is list)
+    && (!('erPhysicalBedCapacity' in incoming()) || (
+      incoming().erPhysicalBedCapacity is int
+      && incoming().erPhysicalBedCapacity > 0
+      && incoming().erPhysicalBedCapacity <= 1000
+    ))
+    && (('shifts' in incoming()) || ('erPhysicalBedCapacity' in incoming()))
     && incoming().updatedAt is string
 
     // The authenticated clinician must be recorded

@@ -10,6 +10,7 @@ import { db, auth } from "../firebase";
 import { UserProfile, ClinicalCase, ApiLogItem } from "../types";
 import { SelfLearningRulesPanel } from "./SelfLearningRulesPanel";
 import AdminHodClaimReview from "./AdminHodClaimReview";
+import { getPublicAppUrl } from "../utils/publicUrl";
 
 interface AdminPanelViewProps {
   currentProfile: UserProfile;
@@ -70,7 +71,7 @@ function PlatformAdminInviteSection() {
       }
 
       const data = await res.json();
-      const origin = typeof window !== "undefined" ? window.location.origin : "https://ermate.hospital";
+      const origin = getPublicAppUrl();
       const link = `${origin}/join/${data.token}`;
       setGeneratedToken(data.token);
       setGeneratedLink(link);

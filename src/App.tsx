@@ -71,6 +71,7 @@ import {
 
 import { auth, db, handleFirestoreError, OperationType } from "./firebase";
 import { sanitizeForFirestore } from "./utils/firestoreSanitizer";
+import { getPublicAppUrl } from "./utils/publicUrl";
 import { onAuthStateChanged, signOut } from "firebase/auth";
 import {
   doc,
@@ -4928,10 +4929,7 @@ const handleCancelJoinRequest = async () => {
     const data =
       await res.json();
 
-    const origin =
-      typeof window !== "undefined"
-        ? window.location.origin
-        : "https://ermate.hospital";
+    const origin = getPublicAppUrl();
 
     const link =
       `${origin}/join/${data.token}`;
@@ -5219,29 +5217,43 @@ const handleUpdateErPhysicalBedCapacity = async (newCapacity: number) => {
     const uid = auth.currentUser.uid;
     const memberRef = doc(db, "team_members", uid);
     const memberSnap = await getDoc(memberRef);
-    let trustedHospitalId = "";
-    let hospitalLabel = "Emergency Department";
 
-    if (memberSnap.exists()) {
-      const membership = memberSnap.data() as any;
-      trustedHospitalId =
-        typeof membership.hospitalId === "string" && membership.hospitalId.trim()
-          ? membership.hospitalId.trim()
-          : (typeof membership.hospital === "string" ? membership.hospital.trim() : "");
-      hospitalLabel =
-        typeof membership.hospitalName === "string" && membership.hospitalName.trim()
-          ? membership.hospitalName.trim()
-          : (typeof membership.hospital === "string" && membership.hospital.trim() ? membership.hospital.trim() : "Emergency Department");
+    if (!memberSnap.exists()) {
+      throw new Error("Your verified hospital membership could not be confirmed. Facility settings were not changed.");
     }
 
-    if (!trustedHospitalId && profile?.hospital) {
-      trustedHospitalId = profile.hospital.trim();
-      hospitalLabel = profile.hospital.trim();
+    const membership = memberSnap.data() as any;
+    const membershipStatus = String(membership.status || "");
+    const isActive = isActiveMembershipStatus(membershipStatus);
+    const isVerified = membership.membershipVerified === true;
+
+    const userEmail = (auth.currentUser.email || "").trim().toLowerCase();
+    const isPlatformAdmin = userEmail === "varahgrp@gmail.com";
+
+    const normalizedRole = String(membership.role || "").trim().toLowerCase();
+    const isHospitalHod = [
+      "hod",
+      "hod / department lead",
+      "hod / shift lead"
+    ].includes(normalizedRole);
+
+    if (!isPlatformAdmin && (!isActive || !isVerified || !isHospitalHod)) {
+      throw new Error("Your verified hospital membership could not be confirmed. Facility settings were not changed.");
     }
+
+    const trustedHospitalId =
+      typeof membership.hospitalId === "string" && membership.hospitalId.trim()
+        ? membership.hospitalId.trim()
+        : (typeof membership.hospital === "string" && membership.hospital.trim() ? membership.hospital.trim() : "");
 
     if (!trustedHospitalId) {
-      trustedHospitalId = "default_er";
+      throw new Error("Your verified hospital membership could not be confirmed. Facility settings were not changed.");
     }
+
+    const hospitalLabel =
+      typeof membership.hospitalName === "string" && membership.hospitalName.trim()
+        ? membership.hospitalName.trim()
+        : (typeof membership.hospital === "string" && membership.hospital.trim() ? membership.hospital.trim() : "Emergency Department");
 
     await setDoc(
       doc(db, "hospital_shifts", trustedHospitalId),

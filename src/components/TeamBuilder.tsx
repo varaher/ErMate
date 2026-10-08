@@ -135,8 +135,7 @@ export default function TeamBuilder({
   const theme = getThemeClasses();
 
   // Generated Link format based on hospital & team configurations
-  const currentOrigin = typeof window !== "undefined" ? window.location.origin : "https://ermate.hospital.in";
-    const [generatedLink, setGeneratedLink] = useState<string>("");
+  const [generatedLink, setGeneratedLink] = useState<string>("");
 
   useEffect(() => {
     let active = true;

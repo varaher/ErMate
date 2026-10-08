@@ -550,7 +550,6 @@ const startRealCheckout = async (planKey: string) => {
   const medCases = cases.filter(c => c.patient?.caseType === "Medical").length;
   const traumaCases = cases.filter(c => c.patient?.caseType === "Trauma").length;
 
-    const currentOrigin = typeof window !== "undefined" ? window.location.origin : "https://ermate.hospital";
   const [preparedInviteLink, setPreparedInviteLink] = useState<string>("");
 
   useEffect(() => {

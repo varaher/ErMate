@@ -60,6 +60,20 @@ export default function MoreView({
     (m) => m.email.toLowerCase().trim() === currentEmail
   );
 
+  // Canonical verified HOD authority (strictly matches Firestore security rules)
+  const isCanonicalVerifiedHod = Boolean(
+    myMembership &&
+    isActiveMembershipStatus(myMembership.status) &&
+    myMembership.membershipVerified === true &&
+    ["hod", "hod / department lead", "hod / shift lead"].includes(
+      String(myMembership.role || "").trim().toLowerCase()
+    ) &&
+    (Boolean(myMembership.hospitalId) || Boolean(myMembership.hospital))
+  );
+
+  // The Facility editor is writable ONLY when verified canonical authority is present
+  const canEditFacility = isAdminUser || isCanonicalVerifiedHod;
+
   const isMembershipActive = myMembership
     ? isActiveMembershipStatus(myMembership.status) && myMembership.membershipVerified !== false
     : normalizedRole !== "independent" && Boolean(profile?.hospital);
@@ -135,6 +149,10 @@ export default function MoreView({
   };
 
   const handleSaveFacilitySettings = async () => {
+    if (!canEditFacility) {
+      setFacilitySavedNotice("Your verified hospital membership could not be confirmed. Facility settings were not changed.");
+      return;
+    }
     setSavingFacility(true);
     setFacilitySavedNotice(null);
     try {
@@ -385,12 +403,12 @@ export default function MoreView({
             </h2>
           </div>
           <span className="text-[10px] text-slate-400 font-mono">
-            {isHOD ? "Department Leadership Controls" : "Read-Only Department Identity"}
+            {canEditFacility ? "Department Leadership Controls" : "Read-Only Department Identity"}
           </span>
         </div>
 
         <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-xs space-y-4">
-          {isHOD ? (
+          {canEditFacility ? (
             <>
               <div className="border-b border-slate-100 dark:border-slate-800 pb-3">
                 <h3 className="text-sm font-extrabold text-slate-900 dark:text-white flex items-center gap-2">
