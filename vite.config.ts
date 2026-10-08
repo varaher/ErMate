@@ -49,7 +49,7 @@ export default defineConfig(() => {
               },
             },
           ],
-          navigateFallbackDenylist: [/^\/api\//, /^\/auth\//],
+          navigateFallbackDenylist: [/^\/api\//, /^\/auth\//, /^\/__\//],
         },
         manifest: {
           name: 'ErMate',

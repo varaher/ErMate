@@ -45,6 +45,18 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-08] — ErMate: Google Sign-In Custom Auth Domain (`ermate.in`)
+- **Firebase Auth Configuration (`firebase-applet-config.json`, `src/firebase.ts`)**:
+  - Configured `authDomain: "ermate.in"` in `firebase-applet-config.json` while strictly preserving `projectId: "ermate-e8f01"`, `appId`, `apiKey`, `firestoreDatabaseId`, and all project credentials.
+  - Initialized Firebase Auth client with `ermate.in` auth domain, targeting the standard OAuth handler at `https://ermate.in/__/auth/handler`.
+- **PWA Service Worker & Workbox Navigation Fallback Protection (`vite.config.ts`, `public/sw.js`)**:
+  - Excluded the entire Firebase reserved namespace `/^\/__\//` from PWA workbox `navigateFallbackDenylist` in `vite.config.ts`.
+  - Excluded `/__/` from runtime service worker fetch caching and SPA index fallback in `public/sw.js`.
+- **Production Server Passthrough (`server.ts`)**:
+  - Updated production Express static SPA fallback handler to skip the reserved `/__/` namespace so Firebase Hosting can handle OAuth callbacks without intercepting.
+- **Verification (`verify_custom_auth_domain.ts` 5/5 PASS)**:
+  - 100% test pass rate across all custom auth domain invariants; clean TypeScript compilation.
+
 ### [2026-10-08] — ErMate: Fix Team Invite Stuck on "Generating invitation..." & Structured Invite Contract
 - **Explicit Lifecycle State & Error Transparency (`src/components/TeamRosterBoard.tsx`)**:
   - Resolved runtime defect where the Team Invitation card and modal remained stuck showing `"Generating invitation..."` with disabled Copy/Share buttons when link generation failed.

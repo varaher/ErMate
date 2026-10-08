@@ -54,9 +54,9 @@ self.addEventListener('fetch', (event) => {
   // Only intercept standard GET requests, ignoring other methods like POST
   if (event.request.method !== 'GET') return;
 
-  // Do not intercept or cache backend API routes, auth, or firebase triggers
+  // Do not intercept or cache backend API routes, auth, /__/ namespace, or firebase triggers
   const url = event.request.url;
-  if (url.includes('/api/') || url.includes('firestore.googleapis.com') || url.includes('identitytoolkit.googleapis.com')) {
+  if (url.includes('/api/') || url.includes('/__/') || url.includes('firestore.googleapis.com') || url.includes('identitytoolkit.googleapis.com')) {
     return;
   }
 

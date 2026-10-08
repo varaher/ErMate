@@ -116,6 +116,8 @@ export async function createTeamInvite(
       const data = await res.json();
       token = data.token;
       apiSuccess = true;
+      const link = `${origin}/join/${data.token}`;
+      return { token: data.token, link };
     } else {
       const errorData = await res.json().catch(() => ({}));
       // If error is permission or role validation error, log and prepare for direct client write
