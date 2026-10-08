@@ -30,8 +30,13 @@ export function isExactHospitalAdminRole(roleStr?: string | null): boolean {
  * - If user has an active hospital team membership with exact admin role ('hod', 'hod / department lead', 'hod / shift lead') -> hod
  * - Else if user has active hospital team membership with consultant -> consultant
  * - Else if user has active hospital team membership with resident/doctor/physician/smo/cmo -> resident
- * - Else if user has no active hospital membership -> independent
+ * - Else if user has no active verified hospital membership -> independent
  * - varahgrp@gmail.com remains platform admin / HOD-equivalent for management views.
+ *
+ * CORE PRODUCT INVARIANT:
+ * PROFESSIONAL ROLE != TEAM MEMBERSHIP
+ * PROFILE HOSPITAL NAME != TEAM MEMBERSHIP
+ * Team membership exists ONLY when there is an active, verified team_members document.
  */
 export function getNormalizedRole(context: UserRoleContext): NormalizedRole {
   const email = (context.email || "").toLowerCase().trim();
@@ -39,42 +44,38 @@ export function getNormalizedRole(context: UserRoleContext): NormalizedRole {
     return "hod";
   }
 
-  const roleStr = (context.membershipRole || context.role || "").trim();
-  
-  // Determine if active hospital membership exists
-  const hasHospital = context.hasActiveHospitalMembership !== undefined
-    ? context.hasActiveHospitalMembership
-    : Boolean(context.hospital && context.hospital.trim() !== "" && context.hospital.toLowerCase() !== "independent" && context.hospital.toLowerCase() !== "none");
+  // Active hospital membership MUST be explicitly true.
+  // Never infer hospital team membership from profile.hospital or profile.role.
+  const hasActiveHospital = context.hasActiveHospitalMembership === true;
 
-  if (!hasHospital && email !== "varahgrp@gmail.com") {
+  if (!hasActiveHospital) {
     return "independent";
   }
 
-  if (isExactHospitalAdminRole(roleStr)) {
+  // Team authorization role is derived strictly from canonical membershipRole.
+  const memberRoleStr = (context.membershipRole || "").trim();
+
+  if (isExactHospitalAdminRole(memberRoleStr)) {
     return "hod";
   }
 
-  const roleLower = roleStr.toLowerCase();
+  const roleLower = memberRoleStr.toLowerCase();
   if (roleLower.includes("consultant")) {
     return "consultant";
   }
 
   if (
-    roleStr.includes("resident") ||
-    roleStr.includes("doctor") ||
-    roleStr.includes("physician") ||
-    roleStr.includes("smo") ||
-    roleStr.includes("cmo")
+    roleLower.includes("resident") ||
+    roleLower.includes("doctor") ||
+    roleLower.includes("physician") ||
+    roleLower.includes("smo") ||
+    roleLower.includes("cmo")
   ) {
     return "resident";
   }
 
-  // If user has hospital membership but raw role is undefined/unrecognized, default to resident
-  if (hasHospital) {
-    return "resident";
-  }
-
-  return "independent";
+  // Default fallback for active member with unspecified role
+  return "resident";
 }
 
 export function isHODRole(context: UserRoleContext): boolean {
@@ -94,6 +95,6 @@ export function getRoleDisplayLabel(normalizedRole: NormalizedRole, rawRole?: st
     case "resident":
       return rawRole || "EM Resident";
     case "independent":
-      return "Independent Clinician";
+      return rawRole ? `${rawRole} (Individual)` : "Independent Clinician";
   }
 }

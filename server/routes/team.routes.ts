@@ -2136,4 +2136,98 @@ router.post("/approve-hod-claim", async (req: AuthRequest, res) => {
   }
 });
 
+// ── POST /create-team (Create Hospital Workspace) ───────────────────────────
+// OPTION 1: Transition from Individual -> Team workspace.
+// Establishes canonical team_members/{uid} with verified trusted status.
+const handleCreateTeam = async (req: AuthRequest, res: any) => {
+  try {
+    const uid = req.user!.uid;
+    const userEmail = (req.user!.email || "").trim().toLowerCase();
+    const { hospitalName, hospitalId: explicitHospitalId, department } = req.body || {};
+
+    const rawHospitalName = String(hospitalName || "").trim();
+    if (!rawHospitalName || rawHospitalName.length < 2) {
+      return res.status(400).json({ error: "A valid hospital name (at least 2 characters) is required." });
+    }
+
+    const resolvedHospitalId = (
+      String(explicitHospitalId || "").trim() ||
+      rawHospitalName.toLowerCase().replace(/[^a-z0-9]/g, "_").slice(0, 32)
+    ).trim();
+
+    if (!resolvedHospitalId) {
+      return res.status(400).json({ error: "Could not resolve a valid hospital identifier." });
+    }
+
+    const memberRef = db.collection("team_members").doc(uid);
+    const userRef = db.collection("users").doc(uid);
+
+    await db.runTransaction(async (tx) => {
+      const existingSnap = await tx.get(memberRef);
+      if (existingSnap.exists) {
+        const existing = existingSnap.data()!;
+        if (existing.status === "active" && existing.membershipVerified === true) {
+          throw new Error("You already have an active hospital membership. Leave your current team before creating a new workspace.");
+        }
+      }
+
+      const now = nowIso();
+      const assignedRole = "HOD / Department Lead";
+
+      tx.set(memberRef, {
+        id: uid,
+        uid: uid,
+        email: userEmail,
+        name: req.user!.name || userEmail.split("@")[0],
+        hospitalId: resolvedHospitalId,
+        hospitalName: rawHospitalName,
+        hospital: rawHospitalName,
+        role: assignedRole,
+        department: department ? String(department).trim() : "Emergency Medicine",
+        status: "active",
+        membershipVerified: true,
+        verifiedAt: now,
+        verifiedBy: uid,
+        joinedAt: now,
+        updatedAt: now,
+        requestProvenance: "create_hospital_workspace",
+        shift: "Active"
+      });
+
+      tx.set(userRef, {
+        hospital: rawHospitalName,
+        hospitalId: resolvedHospitalId,
+        hospitalName: rawHospitalName,
+        role: assignedRole,
+        subscriptionTier: "Hospital Team Premium (Department Covered)",
+        updatedAt: now
+      }, { merge: true });
+
+      const auditRef = db.collection("teamAuditLog").doc();
+      tx.set(auditRef, {
+        action: "create_hospital_workspace",
+        actorUid: uid,
+        actorEmail: userEmail,
+        actorRole: assignedRole,
+        hospitalId: resolvedHospitalId,
+        hospitalName: rawHospitalName,
+        timestamp: now
+      });
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Hospital workspace created successfully.",
+      hospitalId: resolvedHospitalId,
+      hospitalName: rawHospitalName,
+      role: "HOD / Department Lead"
+    });
+  } catch (error: any) {
+    return res.status(400).json({ error: error.message || "Failed to create hospital workspace." });
+  }
+};
+
+router.post("/create-team", handleCreateTeam);
+router.post("/create-workspace", handleCreateTeam);
+
 export default router;

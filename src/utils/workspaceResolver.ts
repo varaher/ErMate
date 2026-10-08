@@ -8,12 +8,14 @@ export interface WorkspaceOwnership {
 }
 
 /**
- * Resolves the authoritative workspace ownership metadata for a new case.
- * Validates the user's trusted team_members document.
+ * Resolves the authoritative workspace ownership metadata for a user.
+ * Validates the user's trusted canonical team_members document.
  * 
- * If active membership -> hospital workspace
- * If inactive/no membership -> individual workspace
- * If malformed active membership -> throws error
+ * CORE PRODUCT INVARIANT:
+ * - If active AND verified membership -> hospital workspace
+ * - If inactive, unverified, or no membership -> individual workspace
+ * - Selecting professional role (HOD/Consultant/Resident) or profile hospital
+ *   does NOT create hospital/team membership.
  */
 export async function resolveWorkspaceForUser(uid: string): Promise<WorkspaceOwnership> {
   if (!uid) {
@@ -26,16 +28,20 @@ export async function resolveWorkspaceForUser(uid: string): Promise<WorkspaceOwn
 
     if (memberSnap.exists()) {
       const data = memberSnap.data();
+      const status = String(data.status || "").toLowerCase().trim();
+      const isActive = status === "active" || status === "active (joined)";
+      const isVerified = data.membershipVerified === true;
       
-      if (data.status === "active") {
-        const hospitalId = data.hospitalId || data.hospital; // Check both for safety during migration
+      if (isActive && isVerified) {
+        const rawHospitalId = data.hospitalId || data.hospital;
+        const hospitalId = typeof rawHospitalId === "string" ? rawHospitalId.trim() : "";
         
-        if (!hospitalId || hospitalId.trim() === "") {
+        if (!hospitalId) {
           throw new Error("Active membership is missing hospital ID. Cannot safely create hospital case.");
         }
 
         const validRoles = ["hod", "consultant", "resident"];
-        if (!data.role || !validRoles.includes(data.role.toLowerCase())) {
+        if (!data.role || !validRoles.includes(String(data.role).toLowerCase())) {
           console.warn(`[Administrative Warning] User ${uid} has active membership for ${hospitalId} but role '${data.role}' is malformed or missing.`);
         }
 
@@ -47,7 +53,7 @@ export async function resolveWorkspaceForUser(uid: string): Promise<WorkspaceOwn
       }
     }
 
-    // No active membership found
+    // No active, verified canonical membership found -> default to Individual workspace
     return {
       workspaceType: "individual",
       ownerUid: uid,
@@ -57,11 +63,15 @@ export async function resolveWorkspaceForUser(uid: string): Promise<WorkspaceOwn
   } catch (error: any) {
     console.error("Error resolving workspace ownership:", error);
     // If it's our malformed error, rethrow
-    if (error.message.includes("missing hospital ID")) {
+    if (error.message?.includes("missing hospital ID")) {
       throw error;
     }
     
-    // For network/permission errors, fail safe rather than misclassifying
-    throw new Error("Failed to verify membership status for workspace selection.");
+    // For network/permission errors, fail-safe to individual workspace so clinical tools continue working
+    return {
+      workspaceType: "individual",
+      ownerUid: uid,
+      hospitalId: null
+    };
   }
 }

@@ -41,9 +41,37 @@ export default function RoleChangeSection({
   const currentRole = profile.role || "EM Resident / Duty Doc";
   const userRoleLower = currentRole.toLowerCase();
   const userEmail = (profile.email || auth.currentUser?.email || "").toLowerCase().trim();
+  const isPlatformAdmin = userEmail === "varahgrp@gmail.com";
 
-  const isHOD = isExactHospitalAdminRole(currentRole) || 
-                userEmail === "varahgrp@gmail.com";
+  // CORE PRODUCT RULE: HOD authority exists only in verified canonical team_members/{uid}
+  const [isCanonicalHod, setIsCanonicalHod] = useState<boolean>(isPlatformAdmin);
+
+  useEffect(() => {
+    if (!auth.currentUser) return;
+    if (isPlatformAdmin) {
+      setIsCanonicalHod(true);
+      return;
+    }
+    const memRef = doc(db, "team_members", auth.currentUser.uid);
+    const unsub = onSnapshot(memRef, (snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        const role = String(data.role || "").trim().toLowerCase();
+        const status = String(data.status || "").toLowerCase();
+        const isActive = status === "active" || status === "active (joined)";
+        const isVerified = data.membershipVerified === true;
+        const isHodRole = ["hod", "hod / department lead", "hod / shift lead"].includes(role);
+        setIsCanonicalHod(isActive && isVerified && isHodRole);
+      } else {
+        setIsCanonicalHod(false);
+      }
+    }, () => {
+      setIsCanonicalHod(false);
+    });
+    return () => unsub();
+  }, [auth.currentUser?.uid, isPlatformAdmin]);
+
+  const isHOD = isCanonicalHod;
 
   // State for non-HOD applicants
   const [showRequestForm, setShowRequestForm] = useState(false);

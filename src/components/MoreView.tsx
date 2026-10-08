@@ -74,9 +74,13 @@ export default function MoreView({
   // The Facility editor is writable ONLY when verified canonical authority is present
   const canEditFacility = isAdminUser || isCanonicalVerifiedHod;
 
-  const isMembershipActive = myMembership
-    ? isActiveMembershipStatus(myMembership.status) && myMembership.membershipVerified !== false
-    : normalizedRole !== "independent" && Boolean(profile?.hospital);
+  const isMembershipActive = Boolean(
+    isAdminUser || (
+      myMembership &&
+      isActiveMembershipStatus(myMembership.status) &&
+      myMembership.membershipVerified === true
+    )
+  );
 
   const isMembershipPending = myMembership
     ? isPendingApprovalStatus(myMembership.status)

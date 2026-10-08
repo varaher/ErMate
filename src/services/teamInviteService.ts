@@ -203,3 +203,67 @@ export async function incrementInviteUsage(token: string): Promise<void> {
   // Deprecated: invite consumption is now handled atomically by the backend accept-invite API
   return;
 }
+
+/**
+ * OPTION 1: Transitions an authenticated user from Individual -> Team workspace
+ * by creating a new hospital team workspace.
+ */
+export async function createHospitalWorkspace(
+  hospitalName: string,
+  department?: string
+): Promise<{ success: boolean; hospitalId: string; hospitalName: string; role: string }> {
+  const user = auth.currentUser;
+  if (!user) throw new Error("Not authenticated");
+  const idToken = await user.getIdToken();
+
+  const res = await fetch("/api/team/create-team", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${idToken}`
+    },
+    body: JSON.stringify({
+      hospitalName,
+      department
+    })
+  });
+
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data.error || "Failed to create hospital workspace.");
+  }
+
+  return data;
+}
+
+/**
+ * OPTION 2: Transitions an authenticated user from Individual -> Team workspace
+ * by accepting a secure team invite.
+ */
+export async function acceptSecureTeamInvite(
+  token: string
+): Promise<{ success: boolean; message: string; hospitalId: string; hospitalName: string; role: string }> {
+  const user = auth.currentUser;
+  if (!user) throw new Error("Not authenticated");
+  const idToken = await user.getIdToken();
+
+  const cleanToken = token.trim().replace(/^.*\/join\//, "");
+
+  const res = await fetch("/api/team/accept-invite", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${idToken}`
+    },
+    body: JSON.stringify({
+      token: cleanToken
+    })
+  });
+
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data.error || "Failed to accept team invitation.");
+  }
+
+  return data;
+}

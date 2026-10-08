@@ -125,8 +125,15 @@ export default function DashboardView({
   // Operational active department cases (Patch H1)
   const activeDepartmentCases = cases.filter(c => !c.archivedAt && (c.status === "Active" || c.status === "Triage"));
 
+  // CORE PRODUCT RULE:
+  // Hospital clinician status requires canonical active verified team membership.
+  // Profile hospital name alone does NOT make a user a hospital/team workspace user.
   const isHospitalClinician = Boolean(
-    currentUserMember || (profile.hospital && profile.hospital.trim() !== "")
+    isPlatformAdmin || (
+      currentUserMember &&
+      isActiveMembershipStatus(currentUserMember.status) &&
+      currentUserMember.membershipVerified === true
+    )
   );
 
   const validActiveDutySession = Boolean(
@@ -1761,8 +1768,20 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
             })()}
           </div>
 
-        {/* 6. Compact HOD Operations Overview (HOD Clinicians Only) */}
-        {profile.role.toLowerCase().includes("hod") && (
+        {/* 6. Compact HOD Operations Overview (Verified HOD Clinicians Only) */}
+        {(() => {
+          const isCanonicalHod = Boolean(
+            isPlatformAdmin || (
+              currentUserMember &&
+              isActiveMembershipStatus(currentUserMember.status) &&
+              currentUserMember.membershipVerified === true &&
+              ["hod", "hod / department lead", "hod / shift lead"].includes(
+                String(currentUserMember.role || "").trim().toLowerCase()
+              )
+            )
+          );
+          if (!isCanonicalHod) return null;
+          return (
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 md:p-5 shadow-xs text-slate-800 dark:text-white no-print">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 dark:border-slate-800 pb-3">
               <div className="flex items-center gap-2.5">
@@ -1925,7 +1944,8 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
               <span className="text-[10px] text-slate-400">Canonical management in Team & More</span>
             </div>
           </div>
-        )}
+          );
+        })()}
 
       {/* HOD Clinician Case Explorer and Takeover Modal */}
       <AnimatePresence>

@@ -9,7 +9,7 @@ import {
 } from "lucide-react";
 import { TeamMember, UserProfile, ClinicalCase, isPendingApprovalStatus, isActiveMembershipStatus } from "../types";
 import GoogleCalendarModal from "./GoogleCalendarModal";
-import { createTeamInvite } from "../services/teamInviteService";
+import { createTeamInvite, createHospitalWorkspace, acceptSecureTeamInvite } from "../services/teamInviteService";
 import { auth, db } from "../firebase";
 import { doc, getDoc } from "firebase/firestore";
 
@@ -166,12 +166,79 @@ export default function TeamRosterBoard({
   });
 
   const userEmailLower = profile.email.toLowerCase().trim();
-  const roleLower = (profile.role || "").toLowerCase();
-  const isUserHOD =
-    roleLower.includes("hod") ||
-    roleLower.includes("head") ||
-    roleLower.includes("owner") ||
-    userEmailLower === "varahgrp@gmail.com";
+  const isPlatformAdmin = userEmailLower === "varahgrp@gmail.com";
+
+  // CORE PRODUCT RULE:
+  // Professional role != Team membership.
+  // Team authorization role exists ONLY when there is a valid, active, verified team_members document.
+  const myCanonicalMember = teamMembers.find(
+    (m) => (m.email || "").toLowerCase().trim() === userEmailLower
+  );
+
+  const isCanonicalTeamMember = isPlatformAdmin || Boolean(
+    myCanonicalMember &&
+    isActiveMembershipStatus(myCanonicalMember.status) &&
+    myCanonicalMember.membershipVerified === true
+  );
+
+  const isUserHOD = isPlatformAdmin || Boolean(
+    myCanonicalMember &&
+    isActiveMembershipStatus(myCanonicalMember.status) &&
+    myCanonicalMember.membershipVerified === true &&
+    ["hod", "hod / department lead", "hod / shift lead"].includes(
+      String(myCanonicalMember.role || "").trim().toLowerCase()
+    )
+  );
+
+  // Individual Workspace Transition States (Option 1 & Option 2)
+  const [showCreateTeamModal, setShowCreateTeamModal] = useState(false);
+  const [newHospitalName, setNewHospitalName] = useState(profile.workplaceName || profile.hospital || "");
+  const [newDepartmentName, setNewDepartmentName] = useState("Emergency & Trauma Medicine");
+  const [isCreatingTeam, setIsCreatingTeam] = useState(false);
+  const [createTeamError, setCreateTeamError] = useState<string | null>(null);
+
+  const [showJoinModal, setShowJoinModal] = useState(false);
+  const [joinTokenInput, setJoinTokenInput] = useState("");
+  const [isJoiningTeam, setIsJoiningTeam] = useState(false);
+  const [joinTeamError, setJoinTeamError] = useState<string | null>(null);
+
+  const handleCreateHospitalWorkspaceSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setCreateTeamError(null);
+    if (!newHospitalName.trim() || newHospitalName.trim().length < 2) {
+      setCreateTeamError("Please enter a valid hospital name (at least 2 characters).");
+      return;
+    }
+    setIsCreatingTeam(true);
+    try {
+      await createHospitalWorkspace(newHospitalName.trim(), newDepartmentName.trim());
+      setShowCreateTeamModal(false);
+      window.location.reload();
+    } catch (err: any) {
+      setCreateTeamError(err?.message || "Failed to create hospital workspace.");
+    } finally {
+      setIsCreatingTeam(false);
+    }
+  };
+
+  const handleAcceptInviteSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setJoinTeamError(null);
+    if (!joinTokenInput.trim()) {
+      setJoinTeamError("Please paste your invitation code or link.");
+      return;
+    }
+    setIsJoiningTeam(true);
+    try {
+      await acceptSecureTeamInvite(joinTokenInput.trim());
+      setShowJoinModal(false);
+      window.location.reload();
+    } catch (err: any) {
+      setJoinTeamError(err?.message || "Failed to accept team invitation.");
+    } finally {
+      setIsJoiningTeam(false);
+    }
+  };
 
   type InviteGenerationStatus = "idle" | "loading" | "success" | "error";
   const [inviteStatus, setInviteStatus] = useState<InviteGenerationStatus>("idle");
@@ -480,6 +547,246 @@ export default function TeamRosterBoard({
 
   const onDutyMembers = teamMembers.filter(m => m.shift && m.shift !== "off" && isActiveMembershipStatus(m.status));
   const onDutyCount = onDutyMembers.length;
+
+  if (!isCanonicalTeamMember) {
+    return (
+      <div id="team-roster-board" className="space-y-6 text-slate-800 dark:text-slate-100 max-w-4xl mx-auto text-left animate-fade-in">
+        {/* Individual Workspace Status Header */}
+        <div className="bg-gradient-to-br from-indigo-950 via-slate-900 to-slate-950 text-white rounded-3xl p-6 md:p-8 border border-indigo-900/40 shadow-xl space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <span className="text-[10px] font-black uppercase tracking-widest font-mono px-3 py-1 bg-indigo-500/20 text-indigo-300 rounded-full border border-indigo-500/30">
+              Workspace Mode: Individual Clinician
+            </span>
+            <span className="text-xs text-slate-400 font-mono">
+              Private Storage
+            </span>
+          </div>
+
+          <div className="space-y-2">
+            <h2 className="text-2xl md:text-3xl font-black tracking-tight text-white">
+              Individual Practice & Clinical Tools
+            </h2>
+            <p className="text-sm text-slate-300 leading-relaxed max-w-2xl">
+              You are currently working in an <strong>Individual Workspace</strong>. All your clinical encounters, Voice Scribe dictations, Case Sheets, Rounds learning debriefs, and Log Book entries are strictly private to your personal account.
+            </p>
+          </div>
+
+          <div className="pt-2 flex flex-wrap gap-2 text-xs font-mono text-slate-300">
+            <div className="bg-white/10 px-3 py-1.5 rounded-xl border border-white/10">
+              Doctor: <strong className="text-white">{profile.name}</strong>
+            </div>
+            <div className="bg-white/10 px-3 py-1.5 rounded-xl border border-white/10">
+              Professional Role: <strong className="text-white">{profile.role || "Clinician"}</strong> (Informational)
+            </div>
+            {profile.hospital && (
+              <div className="bg-white/10 px-3 py-1.5 rounded-xl border border-white/10">
+                Hospital Label: <strong className="text-white">{profile.hospital}</strong>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Transition to Team Workspace Card */}
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 md:p-8 space-y-6 shadow-sm">
+          <div>
+            <h3 className="text-lg font-bold text-slate-900 dark:text-white">
+              Transition to Hospital / Department Team
+            </h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+              Selecting a professional role or listing a hospital in your personal profile does not grant team access. Hospital workspace membership is established only through an explicit trusted event:
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Option 1: Create Team */}
+            <div className="p-5 rounded-2xl border border-indigo-200 dark:border-indigo-900/50 bg-indigo-50/50 dark:bg-indigo-950/20 space-y-3 flex flex-col justify-between">
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 text-indigo-600 dark:text-indigo-400 font-bold text-xs font-mono uppercase tracking-wider">
+                  <Building2 className="w-4 h-4" />
+                  <span>Option 1</span>
+                </div>
+                <h4 className="text-base font-bold text-slate-900 dark:text-white">
+                  Create Hospital Workspace
+                </h4>
+                <p className="text-xs text-slate-600 dark:text-slate-400">
+                  Establish a new verified hospital department workspace as Head of Department (HOD) to manage shifts, onboard doctors, and invite colleagues.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowCreateTeamModal(true)}
+                className="w-full py-2.5 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-xs transition-all cursor-pointer flex items-center justify-center gap-2"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Create Hospital Workspace</span>
+              </button>
+            </div>
+
+            {/* Option 2: Join Team */}
+            <div className="p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/30 space-y-3 flex flex-col justify-between">
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 text-slate-600 dark:text-slate-400 font-bold text-xs font-mono uppercase tracking-wider">
+                  <Link className="w-4 h-4" />
+                  <span>Option 2</span>
+                </div>
+                <h4 className="text-base font-bold text-slate-900 dark:text-white">
+                  Accept Secure Team Invitation
+                </h4>
+                <p className="text-xs text-slate-600 dark:text-slate-400">
+                  Have an invitation link or token from your department lead? Enter it to join your team with verified department access.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowJoinModal(true)}
+                className="w-full py-2.5 px-4 bg-slate-900 hover:bg-slate-800 dark:bg-slate-100 dark:hover:bg-white text-white dark:text-slate-950 font-bold text-xs rounded-xl shadow-xs transition-all cursor-pointer flex items-center justify-center gap-2"
+              >
+                <CheckCircle2 className="w-4 h-4" />
+                <span>Enter Invitation Code</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Modal: Create Hospital Workspace */}
+        {showCreateTeamModal && (
+          <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl max-w-md w-full p-6 space-y-4 shadow-2xl">
+              <div className="flex justify-between items-center">
+                <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                  <Building2 className="w-4 h-4 text-indigo-500" />
+                  Create Hospital Workspace
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => setShowCreateTeamModal(false)}
+                  className="p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <form onSubmit={handleCreateHospitalWorkspaceSubmit} className="space-y-4">
+                {createTeamError && (
+                  <div className="p-3 bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 text-xs rounded-xl flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 shrink-0" />
+                    <span>{createTeamError}</span>
+                  </div>
+                )}
+
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-700 dark:text-slate-300 font-mono">
+                    Hospital Name *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={newHospitalName}
+                    onChange={(e) => setNewHospitalName(e.target.value)}
+                    placeholder="e.g. Rajagiri Hospital"
+                    className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-700 dark:text-slate-300 font-mono">
+                    Department Name
+                  </label>
+                  <input
+                    type="text"
+                    value={newDepartmentName}
+                    onChange={(e) => setNewDepartmentName(e.target.value)}
+                    placeholder="e.g. Emergency & Trauma Medicine"
+                    className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+
+                <div className="flex gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowCreateTeamModal(false)}
+                    className="flex-1 py-2.5 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold text-xs rounded-xl cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isCreatingTeam}
+                    className="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-bold text-xs rounded-xl shadow-xs transition-all cursor-pointer flex items-center justify-center gap-2"
+                  >
+                    {isCreatingTeam ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
+                    <span>{isCreatingTeam ? "Creating..." : "Create Team"}</span>
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* Modal: Join Hospital Team */}
+        {showJoinModal && (
+          <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl max-w-md w-full p-6 space-y-4 shadow-2xl">
+              <div className="flex justify-between items-center">
+                <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                  <Link className="w-4 h-4 text-indigo-500" />
+                  Join Hospital Team
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => setShowJoinModal(false)}
+                  className="p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <form onSubmit={handleAcceptInviteSubmit} className="space-y-4">
+                {joinTeamError && (
+                  <div className="p-3 bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 text-xs rounded-xl flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 shrink-0" />
+                    <span>{joinTeamError}</span>
+                  </div>
+                )}
+
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-700 dark:text-slate-300 font-mono">
+                    Invitation Token or Link *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={joinTokenInput}
+                    onChange={(e) => setJoinTokenInput(e.target.value)}
+                    placeholder="Paste inv_... or https://ermate.in/join/..."
+                    className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono"
+                  />
+                </div>
+
+                <div className="flex gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowJoinModal(false)}
+                    className="flex-1 py-2.5 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold text-xs rounded-xl cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isJoiningTeam}
+                    className="flex-1 py-2.5 bg-slate-900 hover:bg-slate-800 dark:bg-slate-100 dark:hover:bg-white text-white dark:text-slate-950 font-bold text-xs rounded-xl shadow-xs transition-all cursor-pointer flex items-center justify-center gap-2"
+                  >
+                    {isJoiningTeam ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
+                    <span>{isJoiningTeam ? "Joining..." : "Join Team"}</span>
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div id="team-roster-board" className="space-y-5 text-slate-800 dark:text-slate-100 max-w-7xl mx-auto">

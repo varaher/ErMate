@@ -45,6 +45,25 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-08] — ErMate: Lock Individual-First Workspace Model & Role Separation
+- **Core Product Rule (Professional Role != Team Membership)**:
+  - Every newly authenticated user starts as an **Individual** workspace by default (`workspaceType: "individual"`, `ownerUid: uid`, `hospitalId: null`).
+  - Selecting a professional role (e.g. HOD, Consultant, Resident, Medical Officer) or typing a hospital name during sign-up or profile editing NEVER automatically creates hospital/team membership or confers team administrative privileges.
+  - Profile professional role is strictly informational; team authorization role exists solely inside canonical verified `team_members/{uid}` records (`membershipVerified === true` and status in `["active", "Active (Joined)"]`).
+- **Normalized Role & Authority Separation (`src/utils/roleUtils.ts`)**:
+  - `getNormalizedRole` strictly returns `"independent"` for users without verified canonical team membership, regardless of profile role or hospital text.
+  - Team authorization role is evaluated strictly against `membershipRole` from `team_members/{uid}`.
+  - Maintained platform admin override for `varahgrp@gmail.com`.
+- **Authoritative Workspace Ownership Resolver (`src/utils/workspaceResolver.ts`)**:
+  - `resolveWorkspaceForUser(uid)` validates the user's canonical `team_members/{uid}` document.
+  - If active and verified -> returns `{ workspaceType: "hospital", ownerUid: null, hospitalId }`.
+  - If unverified, inactive, missing, or in error -> fail-safes to `{ workspaceType: "individual", ownerUid: uid, hospitalId: null }`.
+- **Full Individual User Clinical Autonomy**:
+  - Individual clinicians have full access to Voice Scribe, New Patient Intake, Case Sheet, Case Saving, Discuss, Rounds, Discharge Summary, Investigations, Treatments, Reassessment Notes, Log Book, Clinical Tools, and MATE actions.
+  - Cases created in Individual mode are strictly bound to `ownerUid == auth.currentUser.uid`, protected under Firestore rules from unauthorized multi-tenant exposure.
+- **Verification (`verify_individual_first_workspace.ts` 13/13 PASS)**:
+  - 100% test pass rate across role normalization, team membership separation, workspace resolution, and individual ownership invariants. Clean production build and compilation.
+
 ### [2026-10-08] — ErMate: Google Sign-In Custom Auth Domain (`ermate.in`)
 - **Firebase Auth Configuration (`firebase-applet-config.json`, `src/firebase.ts`)**:
   - Configured `authDomain: "ermate.in"` in `firebase-applet-config.json` while strictly preserving `projectId: "ermate-e8f01"`, `appId`, `apiKey`, `firestoreDatabaseId`, and all project credentials.

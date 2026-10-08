@@ -976,15 +976,32 @@ useEffect(() => {
     useState<number | null>(null);
   const [hospitalSubscription, setHospitalSubscription] = useState<{ active: boolean; subscriptionTier: string } | null>(null);
 
+  // Canonical verified team membership state for the current user
+  const [selfMembership, setSelfMembership] = useState<any | null>(null);
+
   // Normalized clinical role for role-based navigation and permissions
+  // CORE PRODUCT RULE:
+  // Professional role != Team membership.
+  // A user is 'independent' workspace unless canonical team_members/{uid} is active and verified.
   const userNormalizedRole = React.useMemo(() => {
+    const isPlatformAdmin = (profile?.email || auth.currentUser?.email || "").toLowerCase().trim() === "varahgrp@gmail.com";
+    if (isPlatformAdmin) return "hod";
+
+    const hasActiveMembership = Boolean(
+      selfMembership &&
+      isActiveMembershipStatus(String(selfMembership.status || "")) &&
+      selfMembership.membershipVerified === true &&
+      (selfMembership.hospitalId || selfMembership.hospital)
+    );
+
     return getNormalizedRole({
-      email: profile?.email,
+      email: profile?.email || auth.currentUser?.email,
       role: profile?.role,
       hospital: profile?.hospital,
-      membershipRole: teamMembers.find(m => m.email.toLowerCase().trim() === (profile?.email || "").toLowerCase().trim())?.role
+      hasActiveHospitalMembership: hasActiveMembership,
+      membershipRole: hasActiveMembership ? selfMembership?.role : null
     });
-  }, [profile?.email, profile?.role, profile?.hospital, teamMembers]);
+  }, [profile?.email, profile?.role, profile?.hospital, selfMembership]);
 
 // Auth state listener with real-time UserProfile sync.
 //
@@ -1029,6 +1046,7 @@ useEffect(() => {
         if (!user) {
           setIsLoggedIn(false);
           setProfile(null as any);
+          setSelfMembership(null);
 
           setCases([]);
           setHandovers([]);
@@ -1385,12 +1403,29 @@ useEffect(() => {
     isInitialCases.current = true;
     isInitialHandovers.current = true;
 
-    const userHospital = profile.hospital || "";
-    const userHospitalLower = userHospital.trim().toLowerCase();
+    const isPlatformAdmin = (profile?.email || auth.currentUser?.email || "").toLowerCase().trim() === "varahgrp@gmail.com";
+    const hasActiveHospitalTeam = Boolean(
+      selfMembership &&
+      isActiveMembershipStatus(String(selfMembership.status || "")) &&
+      selfMembership.membershipVerified === true &&
+      (selfMembership.hospitalId || selfMembership.hospital)
+    );
+
+    const userHospital = hasActiveHospitalTeam
+      ? String(selfMembership.hospitalId || selfMembership.hospital || "").trim()
+      : (isPlatformAdmin ? (profile.hospital || "").trim() : "");
+    const userHospitalLower = userHospital.toLowerCase();
     const docName = (profile.name || "").startsWith("Dr. ") ? profile.name : `Dr. ${profile.name || "Physician"}`;
 
-    // Stream Cases
-    const casesQuery = userHospital ? query(collection(db, "cases"), where("hospital", "==", userHospital)) : (profile.email ? query(collection(db, "cases"), where("doctorEmail", "==", profile.email)) : collection(db, "cases"));
+    // Stream Cases:
+    // Hospital team members stream hospital cases.
+    // Individual users stream strictly their own personal cases (where ownerUid == currentUser.uid).
+    const casesQuery = (hasActiveHospitalTeam && userHospital)
+      ? query(collection(db, "cases"), where("hospital", "==", userHospital))
+      : (auth.currentUser
+          ? query(collection(db, "cases"), where("ownerUid", "==", auth.currentUser.uid))
+          : (profile.email ? query(collection(db, "cases"), where("doctorEmail", "==", profile.email)) : collection(db, "cases")));
+
     const unsubscribeCases = onSnapshot(casesQuery, async (snapshot) => {
       const loadedCases: ClinicalCase[] = [];
       snapshot.forEach((doc) => {
@@ -1399,6 +1434,16 @@ useEffect(() => {
       
       const filteredCases = loadedCases.filter(c => {
         if (!c || !c.id) return false;
+
+        if (!hasActiveHospitalTeam && !isPlatformAdmin) {
+          // Individual workspace: only cases owned or created by this clinician
+          const currentUid = auth.currentUser?.uid;
+          const currentEmail = (profile.email || auth.currentUser?.email || "").trim().toLowerCase();
+          return Boolean(
+            (currentUid && (c.ownerUid === currentUid || c.createdByUid === currentUid || c.lastEditedBy === currentUid)) ||
+            (currentEmail && c.doctorEmail && c.doctorEmail.trim().toLowerCase() === currentEmail)
+          );
+        }
 
         // Exact account match (UID or Email) OR exact hospital name match (no fuzzy substring matching)
         const currentEmail = (profile.email || auth.currentUser?.email || "").trim().toLowerCase();
@@ -1458,7 +1503,9 @@ useEffect(() => {
     });
 
     // Stream Handovers
-    const handoversQuery = userHospital ? query(collection(db, "handovers"), where("hospital", "==", userHospital)) : (profile.email ? query(collection(db, "handovers"), where("senderEmail", "==", profile.email)) : collection(db, "handovers"));
+    const handoversQuery = (hasActiveHospitalTeam && userHospital)
+      ? query(collection(db, "handovers"), where("hospital", "==", userHospital))
+      : (profile.email ? query(collection(db, "handovers"), where("senderEmail", "==", profile.email)) : collection(db, "handovers"));
     const unsubscribeHandovers = onSnapshot(handoversQuery, async (snapshot) => {
       const loadedHandovers: HandoverRecord[] = [];
       snapshot.forEach((doc) => {
@@ -1574,55 +1621,55 @@ useEffect(() => {
       console.error("Error streaming quick paste patients:", error);
     });
 
-   // Stream Team Members
-// READ-ONLY in the browser.
-// Membership creation, activation, removal and role authority are handled
-// only by the trusted /api/team backend.
-let unsubscribeTeam: () => void = () => {};
+    // Stream Team Members
+    // READ-ONLY in the browser.
+    // Streamed ONLY for verified hospital team members or platform admins.
+    // Individual users must never attempt to stream or enumerate hospital members.
+    let unsubscribeTeam: () => void = () => {};
 
-if (userHospital && userHospital.trim()) {
-  const teamQuery = query(
-    collection(db, "team_members"),
-    where("hospital", "==", userHospital)
-  );
-
-  unsubscribeTeam = onSnapshot(
-    teamQuery,
-    (snapshot) => {
-      const loadedTeam: TeamMember[] = [];
-
-      snapshot.forEach((docSnap) => {
-        const data = docSnap.data() as TeamMember;
-
-        loadedTeam.push({
-          ...data,
-          id: data.id || docSnap.id
-        });
-      });
-
-      const filteredTeam = loadedTeam.filter((member) => {
-        const memberHospital = (member.hospital || "")
-          .trim()
-          .toLowerCase();
-
-        return memberHospital === userHospitalLower;
-      });
-
-      setTeamMembers(filteredTeam);
-    },
-    (error) => {
-      console.warn(
-        "Team members listener unavailable:",
-        error?.message || error
+    if (hasActiveHospitalTeam && userHospital) {
+      const teamQuery = query(
+        collection(db, "team_members"),
+        where("hospital", "==", userHospital)
       );
 
+      unsubscribeTeam = onSnapshot(
+        teamQuery,
+        (snapshot) => {
+          const loadedTeam: TeamMember[] = [];
+
+          snapshot.forEach((docSnap) => {
+            const data = docSnap.data() as TeamMember;
+
+            loadedTeam.push({
+              ...data,
+              id: data.id || docSnap.id
+            });
+          });
+
+          const filteredTeam = loadedTeam.filter((member) => {
+            const memberHospital = (member.hospital || "")
+              .trim()
+              .toLowerCase();
+
+            return memberHospital === userHospitalLower;
+          });
+
+          setTeamMembers(filteredTeam);
+        },
+        (error) => {
+          console.warn(
+            "Team members listener unavailable:",
+            error?.message || error
+          );
+
+          setTeamMembers([]);
+        }
+      );
+    } else {
+      // Independent/individual users must not enumerate hospital membership records.
       setTeamMembers([]);
     }
-  );
-} else {
-  // Independent users must not enumerate hospital membership records.
-  setTeamMembers([]);
-}
 
     // Stream Hospital Subscription & Shifts Configuration
     let unsubscribeSub: () => void = () => {};
@@ -1681,7 +1728,9 @@ if (auth.currentUser) {
       unsubscribeShifts = () => {};
 
       if (!memberSnapshot.exists()) {
+        setSelfMembership(null);
         setShifts(ROTA_SHIFTS);
+        setErPhysicalBedCapacity(null);
         return;
       }
 
@@ -1711,10 +1760,13 @@ if (auth.currentUser) {
         !isVerifiedMembership ||
         !trustedHospitalId
       ) {
+        setSelfMembership(null);
         setShifts(ROTA_SHIFTS);
         setErPhysicalBedCapacity(null);
         return;
       }
+
+      setSelfMembership(membership);
 
       const shiftDocRef = doc(
         db,
@@ -1766,11 +1818,13 @@ if (auth.currentUser) {
         error?.message || error
       );
 
+      setSelfMembership(null);
       setShifts(ROTA_SHIFTS);
       setErPhysicalBedCapacity(null);
     }
   );
 } else {
+  setSelfMembership(null);
   setShifts(ROTA_SHIFTS);
   setErPhysicalBedCapacity(null);
 }
@@ -1826,7 +1880,7 @@ if (auth.currentUser) {
       unsubscribeShifts();
       unsubscribeContributions();
     };
-  }, [isLoggedIn, profile?.hospital, profile?.email, profile?.subscriptionTier]);
+  }, [isLoggedIn, profile?.hospital, profile?.email, profile?.subscriptionTier, selfMembership]);
 
   // View controllers
   const [selectedCaseId, setSelectedCaseId] = useState<string | null>(null);

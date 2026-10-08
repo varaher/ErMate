@@ -549,22 +549,37 @@ const startRealCheckout = async (planKey: string) => {
 
     const roleStr = (profile.role || "").toLowerCase();
     const emailStr = (profile.email || "").toLowerCase();
-
-    const isHOD = roleStr.includes("hod") || roleStr.includes("owner") || roleStr.includes("head") || emailStr === "varahgrp@gmail.com";
-    const isConsultant = !isHOD && roleStr.includes("consultant");
-    const isResident = !isHOD && !isConsultant;
     const isSuperAdmin = emailStr === "varahgrp@gmail.com";
 
     const currentEmail = (profile.email || "").toLowerCase().trim();
     const myMembership = teamMembers.find(
       (m) => m.email.toLowerCase().trim() === currentEmail
     );
-    const isMembershipActive = myMembership
-      ? isActiveMembershipStatus(myMembership.status) && myMembership.membershipVerified !== false
-      : Boolean(profile.hospital && profile.hospital.toLowerCase() !== "independent");
+    const isMembershipActive = Boolean(
+      isSuperAdmin || (
+        myMembership &&
+        isActiveMembershipStatus(myMembership.status) &&
+        myMembership.membershipVerified === true
+      )
+    );
     const isMembershipPending = myMembership
       ? isPendingApprovalStatus(myMembership.status)
       : false;
+
+    // Team authorization role comes strictly from canonical verified team membership
+    const isHOD = isSuperAdmin || Boolean(
+      isMembershipActive &&
+      myMembership &&
+      ["hod", "hod / department lead", "hod / shift lead"].includes(
+        String(myMembership.role || "").trim().toLowerCase()
+      )
+    );
+    const isConsultant = !isHOD && Boolean(
+      isMembershipActive &&
+      myMembership &&
+      String(myMembership.role || "").toLowerCase().includes("consultant")
+    );
+    const isResident = !isHOD && !isConsultant;
 
     const displayedRoleLabel = isHOD
       ? (profile.role && profile.role.toLowerCase().includes("hod") ? profile.role : "HOD / Department Lead")
@@ -2175,9 +2190,13 @@ const startRealCheckout = async (planKey: string) => {
       const myMembership = teamMembers.find(
         (m) => m.email.toLowerCase().trim() === currentEmail
       );
-      const isMembershipActive = myMembership
-        ? isActiveMembershipStatus(myMembership.status) && myMembership.membershipVerified !== false
-        : Boolean(profile.hospital && profile.hospital.toLowerCase() !== "independent");
+      const isMembershipActive = Boolean(
+        (profile.email || "").toLowerCase().trim() === "varahgrp@gmail.com" || (
+          myMembership &&
+          isActiveMembershipStatus(myMembership.status) &&
+          myMembership.membershipVerified === true
+        )
+      );
       const isMembershipPending = myMembership
         ? isPendingApprovalStatus(myMembership.status)
         : false;
