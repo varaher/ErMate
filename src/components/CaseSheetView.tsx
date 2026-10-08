@@ -3274,6 +3274,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                       className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg focus:outline-none"
                     >
                       <option value="">Pending / Not Documented</option>
+                      <option value="ER Observation">ER Observation</option>
                       <option value="Discharge">Discharge</option>
                       <option value="Admit">Admit to Ward / ICU</option>
                       <option value="Refer">Refer to Higher Center</option>

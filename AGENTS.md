@@ -45,6 +45,36 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-08] — ErMate: Case Sheet Residual Verification (ER Observation & Pediatric Locked Order)
+- **Item 1 — ER Observation Disposition Semantics (`src/types.ts`, `src/components/CaseSheetView.tsx`)**:
+  - Added `"ER Observation"` to the canonical `DispositionDetails.dispositionType` union in `src/types.ts`.
+  - Added `"ER Observation"` option to the disposition select dropdown in `src/components/CaseSheetView.tsx`.
+  - Clinician dictating or selecting ER observation visibly renders `Status: ER Observation` in Case Sheet Print/Preview without remaining stuck on `"Not yet determined"`, while `observationNotes` continues to hold any accompanying narrative.
+  - Absence of disposition safely defaults to blank/null (`"Pending / Not Documented"` / `"Not yet determined"` in UI).
+- **Item 2 — Pediatric Locked Section Order (`src/components/CaseSheetPrintView.tsx`)**:
+  - Re-anchored `Procedures & Interventions` in pediatric print view to follow `Differential Diagnosis`, guaranteeing the inviolable locked sequence immediately after Focused Physical Examination:
+    1. Investigations & Diagnostic Studies
+    2. Treatment Given & Emergency Orders
+    3. Provisional Diagnosis
+  - Adult Case Sheet remains strictly untouched.
+- **Verification (`verify_final_case_sheet_residual.ts`, `verify_case_preview_integrity.ts`, `verify_regression.ts`)**:
+  - 100% test pass rate across age 0, 5, 16, 17 routing, ER observation semantics, pediatric locked order, and clinical case preview integrity.
+
+### [2026-10-08] — ErMate: Workspace Resolver Fail-Closed Safety & Scribe Error Handling
+- **Workspace Resolution Fail-Closed Safety Invariant (`src/utils/workspaceResolver.ts`)**:
+  - Eliminated silent downgrade vulnerability where a verified Team clinician experiencing a transient Firestore read, network, offline, or permission failure could be silently assigned an Individual workspace and inadvertently save hospital clinical data into a personal workspace.
+  - Implemented typed `WorkspaceResolutionError` with `isWorkspaceResolutionError: true`.
+  - Inability to read `team_members/{uid}` (network failure, permission denied, offline, storage error) strictly fails closed and throws `WorkspaceResolutionError("Unable to verify your workspace right now. Please retry.", code)`.
+  - Malformed verified records (active + verified but missing `hospitalId`) fail closed with `WorkspaceResolutionError("Active membership is missing hospital ID...", "MALFORMED_MEMBERSHIP")`.
+  - Preserved normal Individual resolution when Firestore read succeeds and demonstrates absence of active, verified canonical membership.
+- **Voice Scribe Fail-Closed Clinical Protection (`src/components/VoiceScribeChatView.tsx`)**:
+  - Guarded all session initialization and lazy case creation paths against workspace verification failures (`initSession`, `ensureActiveSessionId`, `handleStartNewChat`, `onEnsureDraftCase` fast-paths).
+  - When workspace resolution fails: prevents `scribeSession` and `ClinicalCase` creation; blocks message persistence to individual storage; retains dictated text locally in UI.
+  - Displays a clean session-level alert banner at the top of the chat thread: `"Unable to verify your workspace right now. Please retry. No clinical data has been saved."` with a direct `[ Retry ]` button.
+  - Avoids duplicating error messages across individual chat bubbles.
+- **Verification (`verify_individual_first_workspace.ts`, `verify_scribe_draft_case_creation.ts`, `verify_mate_replay_safety.ts`, `verify_regression.ts`)**:
+  - 100% test pass rate across all suites; clean production build with 0 TypeScript/compilation errors.
+
 ### [2026-10-08] — ErMate: Lock Individual-First Workspace Model & Role Separation
 - **Core Product Rule (Professional Role != Team Membership)**:
   - Every newly authenticated user starts as an **Individual** workspace by default (`workspaceType: "individual"`, `ownerUid: uid`, `hospitalId: null`).

@@ -323,7 +323,7 @@ export interface ConsentTimeOut {
 }
 
 export interface DispositionDetails {
-  dispositionType: "Discharge" | "Admit" | "Refer" | "LAMA" | "Absconded" | "Death";
+  dispositionType: "Discharge" | "Admit" | "Refer" | "LAMA" | "Absconded" | "Death" | "ER Observation";
   durationInEr: string;
   residentName: string;
   consultantName: string;

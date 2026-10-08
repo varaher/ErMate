@@ -1425,6 +1425,33 @@ export default function CaseSheetPrintView({
               </Section>
             )}
 
+            {hasPedProvisionalDiagnosis && (
+              <Section>
+                <SectionHeading>Provisional Diagnosis</SectionHeading>
+                <div className="text-sm font-bold text-indigo-950 print:text-black">{data.provisionalDiagnosis || (data.pediatricDetails as LegacyPediatricDetails)?.provisionalDiagnosisDischarge}</div>
+              </Section>
+            )}
+
+            {hasPedDifferentials && (
+              <Section>
+                <SectionHeading>Differential Diagnosis</SectionHeading>
+                {data.differentials.length > 0 ? (
+                  <ul className="text-sm list-disc pl-5 mt-1 space-y-0.5">
+                    {data.differentials.map((d, i) => <li key={i}>{d.diagnosis}{d.status ? ` (${d.status})` : ""}</li>)}
+                  </ul>
+                ) : data.provisionalDifferentialDiagnoses ? (
+                  <div className="text-sm whitespace-pre-line">{data.provisionalDifferentialDiagnoses}</div>
+                ) : (data.pediatricDetails as LegacyPediatricDetails)?.differentialDiagnosis ? (
+                  <div className="text-sm">{((data.pediatricDetails as LegacyPediatricDetails)?.differentialDiagnosis)}</div>
+                ) : null}
+                {data.differentials.length > 0 && data.provisionalDifferentialDiagnoses && (
+                  <div className="text-sm whitespace-pre-line mt-2 text-slate-700 print:text-black">
+                    <span className="font-semibold">Notes / Differential Details:</span> {data.provisionalDifferentialDiagnoses}
+                  </div>
+                )}
+              </Section>
+            )}
+
             {((data.procedures.procedureNotes && data.procedures.procedureNotes.length > 0) || data.procedures.proceduresChecked.length > 0 || data.procedures.otherProcedures) && (
               <Section>
                 <SectionHeading>Procedures & Interventions</SectionHeading>
@@ -1451,33 +1478,6 @@ export default function CaseSheetPrintView({
                     <div><span className="font-bold">Procedure Details:</span> {data.procedures.otherProcedures}</div>
                   )}
                 </div>
-              </Section>
-            )}
-
-            {hasPedProvisionalDiagnosis && (
-              <Section>
-                <SectionHeading>Provisional Diagnosis</SectionHeading>
-                <div className="text-sm font-bold text-indigo-950 print:text-black">{data.provisionalDiagnosis || (data.pediatricDetails as LegacyPediatricDetails)?.provisionalDiagnosisDischarge}</div>
-              </Section>
-            )}
-
-            {hasPedDifferentials && (
-              <Section>
-                <SectionHeading>Differential Diagnosis</SectionHeading>
-                {data.differentials.length > 0 ? (
-                  <ul className="text-sm list-disc pl-5 mt-1 space-y-0.5">
-                    {data.differentials.map((d, i) => <li key={i}>{d.diagnosis}{d.status ? ` (${d.status})` : ""}</li>)}
-                  </ul>
-                ) : data.provisionalDifferentialDiagnoses ? (
-                  <div className="text-sm whitespace-pre-line">{data.provisionalDifferentialDiagnoses}</div>
-                ) : (data.pediatricDetails as LegacyPediatricDetails)?.differentialDiagnosis ? (
-                  <div className="text-sm">{((data.pediatricDetails as LegacyPediatricDetails)?.differentialDiagnosis)}</div>
-                ) : null}
-                {data.differentials.length > 0 && data.provisionalDifferentialDiagnoses && (
-                  <div className="text-sm whitespace-pre-line mt-2 text-slate-700 print:text-black">
-                    <span className="font-semibold">Notes / Differential Details:</span> {data.provisionalDifferentialDiagnoses}
-                  </div>
-                )}
               </Section>
             )}
 

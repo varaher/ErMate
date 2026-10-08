@@ -7,6 +7,19 @@ export interface WorkspaceOwnership {
   hospitalId: string | null;
 }
 
+export class WorkspaceResolutionError extends Error {
+  code: string;
+  isWorkspaceResolutionError: true;
+
+  constructor(message: string, code: string = "WORKSPACE_RESOLUTION_FAILED") {
+    super(message);
+    this.name = "WorkspaceResolutionError";
+    this.code = code;
+    this.isWorkspaceResolutionError = true;
+    Object.setPrototypeOf(this, WorkspaceResolutionError.prototype);
+  }
+}
+
 /**
  * Resolves the authoritative workspace ownership metadata for a user.
  * Validates the user's trusted canonical team_members document.
@@ -16,10 +29,14 @@ export interface WorkspaceOwnership {
  * - If inactive, unverified, or no membership -> individual workspace
  * - Selecting professional role (HOD/Consultant/Resident) or profile hospital
  *   does NOT create hospital/team membership.
+ * - CRITICAL FAIL-CLOSED SAFETY RULE:
+ *   If Firestore read fails due to network, permissions, offline, or transient error,
+ *   DO NOT assume Individual workspace. Throw WorkspaceResolutionError to prevent
+ *   silent downgrade of a verified Team clinician into a personal workspace.
  */
 export async function resolveWorkspaceForUser(uid: string): Promise<WorkspaceOwnership> {
   if (!uid) {
-    throw new Error("Cannot resolve workspace without authenticated UID.");
+    throw new WorkspaceResolutionError("Cannot resolve workspace without authenticated UID.", "MISSING_UID");
   }
 
   try {
@@ -37,7 +54,10 @@ export async function resolveWorkspaceForUser(uid: string): Promise<WorkspaceOwn
         const hospitalId = typeof rawHospitalId === "string" ? rawHospitalId.trim() : "";
         
         if (!hospitalId) {
-          throw new Error("Active membership is missing hospital ID. Cannot safely create hospital case.");
+          throw new WorkspaceResolutionError(
+            "Active membership is missing hospital ID. Cannot safely create hospital case.",
+            "MALFORMED_MEMBERSHIP"
+          );
         }
 
         const validRoles = ["hod", "consultant", "resident"];
@@ -53,7 +73,7 @@ export async function resolveWorkspaceForUser(uid: string): Promise<WorkspaceOwn
       }
     }
 
-    // No active, verified canonical membership found -> default to Individual workspace
+    // Successful read completed: No active, verified canonical membership found -> Individual workspace
     return {
       workspaceType: "individual",
       ownerUid: uid,
@@ -61,17 +81,16 @@ export async function resolveWorkspaceForUser(uid: string): Promise<WorkspaceOwn
     };
 
   } catch (error: any) {
-    console.error("Error resolving workspace ownership:", error);
-    // If it's our malformed error, rethrow
-    if (error.message?.includes("missing hospital ID")) {
+    // If it's already our WorkspaceResolutionError, rethrow directly
+    if (error instanceof WorkspaceResolutionError || error.isWorkspaceResolutionError) {
       throw error;
     }
     
-    // For network/permission errors, fail-safe to individual workspace so clinical tools continue working
-    return {
-      workspaceType: "individual",
-      ownerUid: uid,
-      hospitalId: null
-    };
+    // Fail-closed on all unexpected Firestore, network, permission, or offline read errors
+    console.error("[WorkspaceResolver] Fail-closed: unable to read team_members to verify workspace:", error);
+    throw new WorkspaceResolutionError(
+      "Unable to verify your workspace right now. Please retry.",
+      error?.code || "STORAGE_READ_ERROR"
+    );
   }
 }

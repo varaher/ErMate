@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { Send, ArrowLeft, MoreVertical, Paperclip, Sparkles, MessageSquare, Mic as MicIcon, Activity, AlertTriangle, Plus, X } from "lucide-react";
+import { Send, ArrowLeft, MoreVertical, Paperclip, Sparkles, MessageSquare, Mic as MicIcon, Activity, AlertTriangle, Plus, X, RefreshCw } from "lucide-react";
 import { doc, getDoc, setDoc } from "firebase/firestore";
 import { db, auth } from "../firebase";
 import {
@@ -853,6 +853,7 @@ export default function VoiceScribeChatView({
 
   const isEnsuringDraftCaseRef = useRef<boolean>(false);
   const [sessionAttachError, setSessionAttachError] = useState<string | null>(null);
+  const [retryInitSessionTrigger, setRetryInitSessionTrigger] = useState<number>(0);
   const [historyLoadError, setHistoryLoadError] = useState<string | null>(null);
   const [failedMessages, setFailedMessages] = useState<Map<string, { message: any; error: string }>>(new Map());
   // Pending message queue bound to session context generation
@@ -1002,6 +1003,10 @@ export default function VoiceScribeChatView({
       return newSessionId;
     } catch (err: any) {
       console.warn("[VoiceScribeChatView] Failed to ensure activeSessionId:", err);
+      const isWsError = err instanceof WorkspaceResolutionError || err?.isWorkspaceResolutionError || err?.name === "WorkspaceResolutionError";
+      if (isWsError) {
+        setSessionAttachError("Unable to verify your workspace right now. Please retry. No clinical data has been saved.");
+      }
       return null;
     }
   };
@@ -1032,7 +1037,11 @@ export default function VoiceScribeChatView({
         } catch (err: any) {
           console.error("[VoiceScribeChatView] Session resolve error for existing case:", err);
           if (isMounted) {
-            setSessionAttachError(err?.message || "Unable to attach Scribe history to this case.");
+            const isWsError = err instanceof WorkspaceResolutionError || err?.isWorkspaceResolutionError || err?.name === "WorkspaceResolutionError";
+            const message = isWsError
+              ? "Unable to verify your workspace right now. Please retry. No clinical data has been saved."
+              : (err?.message || "Unable to attach Scribe history to this case.");
+            setSessionAttachError(message);
           }
         }
         return;
@@ -1083,7 +1092,11 @@ export default function VoiceScribeChatView({
       } catch (err: any) {
         console.error("[VoiceScribeChatView] Failed to create scribeSession doc:", err);
         if (isMounted) {
-          setSessionAttachError(`Unable to initialize Scribe session: ${err?.message || "Storage error"}`);
+          const isWsError = err instanceof WorkspaceResolutionError || err?.isWorkspaceResolutionError || err?.name === "WorkspaceResolutionError";
+          const message = isWsError
+            ? "Unable to verify your workspace right now. Please retry. No clinical data has been saved."
+            : `Unable to initialize Scribe session: ${err?.message || "Storage error"}`;
+          setSessionAttachError(message);
         }
       }
     }
@@ -1092,7 +1105,7 @@ export default function VoiceScribeChatView({
     return () => {
       isMounted = false;
     };
-  }, [propCaseId, caseData?.id, propSessionId]);
+  }, [propCaseId, caseData?.id, propSessionId, retryInitSessionTrigger]);
 
   // Subscribe to real-time chat history
   useEffect(() => {
@@ -1472,7 +1485,12 @@ export default function VoiceScribeChatView({
       onNewChat?.();
     } catch (err: any) {
       console.error("Failed to start new chat session:", err);
-      setSaveError(`Failed to start new chat: ${err?.message || "Error"}`);
+      const isWsError = err instanceof WorkspaceResolutionError || err?.isWorkspaceResolutionError || err?.name === "WorkspaceResolutionError";
+      if (isWsError) {
+        setSessionAttachError("Unable to verify your workspace right now. Please retry. No clinical data has been saved.");
+      } else {
+        setSaveError(`Failed to start new chat: ${err?.message || "Error"}`);
+      }
     }
   };
 
@@ -1800,13 +1818,18 @@ export default function VoiceScribeChatView({
             onSwitchCase?.(newCaseId);
           } catch (err: any) {
             console.error("[VoiceScribeChatView] Failed to ensure draft case for new patient:", err);
-            const errMsg: Message = {
-              id: `err-${Date.now()}`,
-              sender: "ai",
-              text: `⚠️ Could not establish new case for Bed ${assignedBed}: ${err?.message || "Storage error"}`,
-              timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-            };
-            setMessages(prev => [...prev, errMsg]);
+            const isWsError = err instanceof WorkspaceResolutionError || err?.isWorkspaceResolutionError || err?.name === "WorkspaceResolutionError";
+            if (isWsError) {
+              setSessionAttachError("Unable to verify your workspace right now. Please retry. No clinical data has been saved.");
+            } else {
+              const errMsg: Message = {
+                id: `err-${Date.now()}`,
+                sender: "ai",
+                text: `⚠️ Could not establish new case for Bed ${assignedBed}: ${err?.message || "Storage error"}`,
+                timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+              };
+              setMessages(prev => [...prev, errMsg]);
+            }
           } finally {
             setIsSending(false);
           }
@@ -2371,6 +2394,10 @@ export default function VoiceScribeChatView({
             }
           } catch (ensureErr: any) {
             console.error("[VoiceScribeChatView] Failed to ensure draft case on first clinical extraction:", ensureErr);
+            const isWsError = ensureErr instanceof WorkspaceResolutionError || ensureErr?.isWorkspaceResolutionError || ensureErr?.name === "WorkspaceResolutionError";
+            if (isWsError) {
+              setSessionAttachError("Unable to verify your workspace right now. Please retry. No clinical data has been saved.");
+            }
           } finally {
             isEnsuringDraftCaseRef.current = false;
           }
@@ -2673,6 +2700,25 @@ export default function VoiceScribeChatView({
 
       {/* Chat Thread */}
       <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-slate-50/50 dark:bg-transparent min-w-0">
+        {sessionAttachError && (
+          <div className="p-3 bg-amber-500/10 border border-amber-500/30 text-amber-800 dark:text-amber-200 rounded-xl text-xs font-semibold flex items-center justify-between gap-2 shadow-sm">
+            <div className="flex items-center gap-2">
+              <AlertTriangle size={15} className="text-amber-600 dark:text-amber-400 shrink-0" />
+              <span>{sessionAttachError}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setSessionAttachError(null);
+                setRetryInitSessionTrigger(prev => prev + 1);
+              }}
+              className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-bold shrink-0 transition-all cursor-pointer flex items-center gap-1 shadow-xs"
+            >
+              <RefreshCw size={12} />
+              <span>Retry</span>
+            </button>
+          </div>
+        )}
         {historyLoadError && (
           <div className="p-3 bg-rose-500/10 border border-rose-500/30 text-rose-700 dark:text-rose-300 rounded-xl text-xs font-semibold flex items-center gap-2">
             <AlertTriangle size={15} className="text-rose-500 shrink-0" />
