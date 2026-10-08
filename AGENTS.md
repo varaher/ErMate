@@ -45,6 +45,19 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-08] — ErMate: Simplified Discuss + Rounds Opening Messages
+- **Clean, Zero-Noise Default Opening Messages (`src/hooks/useBoundChat.ts`)**:
+  - Eliminated verbose default opening content from the unified `CaseChatWorkspace` in both Discuss and Rounds modes:
+    - **Discuss Mode**: Replaced verbose clinical summary, active case announcements, and action lists with exactly `"Ask me anything about this case."`. Zero markdown headings, tables, bullets, warning blocks, or case summaries.
+    - **Rounds Mode**: Replaced verbose lens explanations, teaching framework dumps, and bullet menus with exactly `"Want to prepare before rounds? Ask."`. Zero auto-generated questions before user prompt.
+  - Automatic session restore refresh: If a cached local or Firestore session contains only the single initial assistant opening message, it is refreshed to the exact simplified message string, preventing stale verbose openings from persisting in browser cache.
+- **Empty / Minimally Documented Case Protection (`server.ts`)**:
+  - Enforced strict rules in both `/api/case-discussion` and `/api/rounds-debrief` system prompts: models must NEVER automatically complain about or generate `"Chief complaint not documented"`, `"Vitals missing"`, `"Critical gaps"`, or `"Record significantly incomplete"` unless the clinician explicitly asks (`"What is missing?"`, `"Review completeness"`, `"What should I document?"`).
+- **Preserved Core Clinical Reasoning**:
+  - Preserved full patient context delivery, Discuss reasoning with suggested record updates, Rounds 7-lens synthesis, quiz mode, consultant teaching preparation, pending Scribe context, session history isolation, inline Sarvam voice recorder, and provider failover.
+- **Verification (`verify_case_chat_opening_messages.ts` 7/7, `verify_unified_case_chat_workspace.ts` 20/20, `verify_case_discuss_workspace.ts` 25/25, `verify_regression.ts` 19/19)**:
+  - 100% test pass rate across all suites. Full production build succeeds cleanly.
+
 ### [2026-10-08] — ErMate: Dashboard Declutter + Official Logo Runtime & PWA Asset Fix
 - **Official Brand Logo Runtime Fix & Vector Cross (`src/components/shared/ErMateLogo.tsx`, `public/`, `vite.config.ts`, `public/sw.js`, `public/manifest.json`, `index.html`)**:
   - Resolved official logo rendering failure in downloaded/PWA app: Eliminated generic "EM" text fallback.

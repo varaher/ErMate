@@ -1573,6 +1573,7 @@ ${pendingPromptSection}
       • 3–6 focused, high-yield bullets
       • One targeted teaching question when appropriate to stimulate clinical reasoning
     - In "usedLenses", return a JSON string array of the clinical lenses you synthesized to produce this answer (e.g. ["First Principles", "Pathophysiology", "Guidelines"]).
+    - EMPTY / MINIMALLY DOCUMENTED CASES: Do NOT automatically generate "Chief complaint not documented", "Vitals missing", "Critical gaps", or "Record significantly incomplete" unless the clinician specifically asks ("What is missing?", "Review completeness", "What should I document?"). Focus directly on whatever clinical facts are known or the question asked.
 
     === QUIZ MODE ===
     - If the user asks "Quiz me", "Prepare me for rounds", "Ask me questions", or is answering a quiz question:
@@ -2579,6 +2580,7 @@ YOUR CRITICAL GUIDELINES:
 4. Keep answers clean, professional, and well-structured with bold terms and short bullet points.
 5. End clinical discussions with authoritative citations where appropriate (Tintinalli's, Rosen's, Harrison's, WikEM, UpToDate).
 6. PEDIATRIC CONTEXT FLAG: If the case record indicates this is a pediatric patient (age < 16), you MUST force PALS protocols, age-appropriate vital sign references, and calculate weight-based dosing strictly.
+7. EMPTY / MINIMALLY DOCUMENTED CASES: Do NOT automatically generate "Chief complaint not documented", "Vitals missing", "Critical gaps", or "Record significantly incomplete" unless the doctor specifically asks ("What is missing?", "Review completeness", "What should I document?"). Answer the doctor's specific clinical query directly based on whatever facts are known, without lecturing on missing documentation.
 `;
     }
 
