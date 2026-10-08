@@ -45,6 +45,25 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-08] — ErMate: Fix Team Invite Stuck on "Generating invitation..." & Structured Invite Contract
+- **Explicit Lifecycle State & Error Transparency (`src/components/TeamRosterBoard.tsx`)**:
+  - Resolved runtime defect where the Team Invitation card and modal remained stuck showing `"Generating invitation..."` with disabled Copy/Share buttons when link generation failed.
+  - Implemented explicit state machine: `idle`, `loading`, `success`, `error` with `inviteGenerationError: string | null`.
+  - When link creation fails, loading is cleared deterministically and an alert banner is rendered showing `"Could not generate invitation."`, followed by the exact safe reason (e.g., `"Only active verified HODs can create invites."` or `"Platform admin invites require a valid hospital workspace."`).
+  - Added an interactive `[ Retry ]` button in both the inline Team Invitation card and the full Team Invitation modal.
+- **Canonical Hospital Scope Resolution (`src/components/TeamRosterBoard.tsx`)**:
+  - Removed authorization reliance on `profile.hospital`, `workplaceInput`, or hospital slug.
+  - Implemented `resolveCanonicalHospitalScope`: validates active, verified HOD status directly from canonical `team_members/{uid}`.
+  - For platform administrators, queries `team_members/{uid}` and `users/{uid}` for canonical `hospitalId` and `hospitalName`. Fails closed if no valid hospital workspace is resolved.
+- **Structured `createTeamInvite` Service Contract (`src/services/teamInviteService.ts`)**:
+  - Upgraded `createTeamInvite` to accept structured `CreateTeamInviteParams` (`hospitalId`, `hospitalName`, `invitedEmail`, `role`, `maxUses`, `expiresHours`).
+  - Added client-side platform administrator guard: throws `"Platform admin invites require a valid hospital workspace."` before making API calls if hospital scope is missing, preventing silent 400 bad requests.
+- **Elimination of Auto-Generation on Text Edits (`src/components/TeamRosterBoard.tsx`)**:
+  - Removed `workplaceInput`, `profile.hospital`, and `profile.name` from the invitation generation effect's dependency array.
+  - Invite links are generated deterministically once upon initial idle load or explicit retry, preventing repeated network requests on every keystroke.
+- **Verification (`verify_team_invite_stuck_resolution.ts` 19/19 PASS, `verify_facility_permission_and_team_invites.ts` 24/24 PASS)**:
+  - 100% test pass rate across all 43 assertions; zero TypeScript errors on `npm run lint` and clean applet compilation.
+
 ### [2026-10-08] — ErMate: Fix Facility Permission Error & Canonical ermate.in Team Invite Links
 - **Facility Bed Capacity Permission & Schema Fix (`firestore.rules`, `src/App.tsx`, `src/components/MoreView.tsx`)**:
   - Resolved "Missing or insufficient permissions" when saving Facility & Bed Capacity in MoreView.

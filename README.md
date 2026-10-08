@@ -211,6 +211,7 @@ ErMate employs a dynamic role-based navigation hierarchy computed from `getNorma
 
 | Path | Purpose |
 | :--- | :--- |
+| `/verify_team_invite_stuck_resolution.ts` | Verification suite for Team Invitation explicit states, deterministic failure reporting, retryability, and canonical hospital scope |
 | `/verify_facility_permission_and_team_invites.ts` | Verification suite for facility bed capacity schema/permissions, fail-closed authority, and canonical ermate.in secure team invites |
 | `/src/utils/publicUrl.ts` | Canonical public app URL resolver defaulting to https://ermate.in preventing preview or Cloud Run origin leakage |
 | `/verify_scribe_draft_case_creation.ts` | Verification suite for automatic ClinicalCase shell creation on first clinical Scribe dictation & idempotency |

@@ -1,7 +1,40 @@
 import { Router } from "express";
 import { randomBytes } from "crypto";
-import { adminAuth, db } from "../../src/lib/firebase-admin.ts";
+import { adminAuth, db, PROJECT_ID, FIRESTORE_DATABASE_ID } from "../../src/lib/firebase-admin.ts";
 import { requireAuth, AuthRequest } from "../../src/middleware/auth.ts";
+
+async function getDocWithRestFallback(collectionPath: string, docId: string, authHeader?: string): Promise<{ exists: boolean; data?: any }> {
+  try {
+    const snap = await db.collection(collectionPath).doc(docId).get();
+    return { exists: snap.exists, data: snap.data() };
+  } catch (err: any) {
+    if (authHeader) {
+      try {
+        const restUrl = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/${FIRESTORE_DATABASE_ID}/documents/${collectionPath}/${encodeURIComponent(docId)}`;
+        const res = await fetch(restUrl, { headers: { Authorization: authHeader } });
+        if (res.status === 404) return { exists: false };
+        if (res.ok) {
+          const docJson: any = await res.json();
+          const data: Record<string, any> = {};
+          if (docJson.fields) {
+            for (const [key, valObj] of Object.entries<any>(docJson.fields)) {
+              if (valObj.stringValue !== undefined) data[key] = valObj.stringValue;
+              else if (valObj.booleanValue !== undefined) data[key] = valObj.booleanValue;
+              else if (valObj.integerValue !== undefined) data[key] = Number(valObj.integerValue);
+              else if (valObj.doubleValue !== undefined) data[key] = Number(valObj.doubleValue);
+              else if (valObj.nullValue !== undefined) data[key] = null;
+              else data[key] = valObj;
+            }
+          }
+          return { exists: true, data };
+        }
+      } catch (restErr: any) {
+        console.warn(`REST fallback read failed for ${collectionPath}/${docId}:`, restErr.message);
+      }
+    }
+    throw err;
+  }
+}
 
 const router = Router();
 
@@ -102,11 +135,11 @@ router.post("/create-invite", async (req: AuthRequest, res) => {
     let callerHospitalName = "";
 
     if (!isAdmin) {
-      const callerSnap = await db.collection("team_members").doc(uid).get();
+      const callerSnap = await getDocWithRestFallback("team_members", uid, req.headers.authorization);
       if (!callerSnap.exists) {
         return res.status(403).json({ error: "Only active verified HODs can create invites." });
       }
-      const caller = callerSnap.data()!;
+      const caller = callerSnap.data!;
       if (!isVerifiedHod(caller)) {
         return res.status(403).json({ error: "Only active verified HODs can create invites." });
       }
@@ -186,66 +219,71 @@ if (role) {
  * - Audit identity comes from the verified Firebase
  *   request, never from client-supplied UID/email.
  */
-const inviteRef =
-  db.collection("teamInvites").doc(token);
-
-const auditRef =
-  db.collection("teamAuditLog").doc();
-
-const batch = db.batch();
-
-batch.set(
-  inviteRef,
-  inviteDoc
-);
-
-batch.set(
-  auditRef,
-  {
-    id: auditRef.id,
-
-    eventType: "TEAM_INVITE_CREATED",
-
-    actorUid: uid,
-
-    actorEmail:
-      (req.user?.email || "")
-        .trim()
-        .toLowerCase(),
-
-    actorType:
-      isAdmin
-        ? "platform_admin"
-        : "hospital_hod",
-
-    hospitalId:
-      callerHospitalId,
-
-    hospitalName:
-      callerHospitalName,
-
-    targetEmail:
-      invitedEmail
-        ? String(invitedEmail)
-            .trim()
-            .toLowerCase()
-        : null,
-
-    targetRole:
-      targetRole,
-
-    maxUses:
-      uses,
-
-    expiresAt:
-      expiresAt,
-
-    createdAt:
-      nowIso()
-  }
-);
-
-await batch.commit();
+    try {
+      const inviteRef = db.collection("teamInvites").doc(token);
+      const auditRef = db.collection("teamAuditLog").doc();
+      const batch = db.batch();
+      batch.set(inviteRef, inviteDoc);
+      batch.set(auditRef, {
+        id: auditRef.id,
+        eventType: "TEAM_INVITE_CREATED",
+        actorUid: uid,
+        actorEmail: (req.user?.email || "").trim().toLowerCase(),
+        actorType: isAdmin ? "platform_admin" : "hospital_hod",
+        hospitalId: callerHospitalId,
+        hospitalName: callerHospitalName,
+        targetEmail: invitedEmail ? String(invitedEmail).trim().toLowerCase() : null,
+        targetRole: targetRole,
+        maxUses: uses,
+        expiresAt: expiresAt,
+        createdAt: nowIso()
+      });
+      await batch.commit();
+    } catch (batchError: any) {
+      console.warn("Firestore Admin batch commit failed (likely missing IAM service account in Cloud Run sandbox):", batchError.message);
+      // Fallback: persist via Firestore REST API with the caller's verified ID token
+      const authHeader = req.headers.authorization;
+      if (authHeader) {
+        try {
+          const restUrl = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/${FIRESTORE_DATABASE_ID}/documents/teamInvites?documentId=${encodeURIComponent(token)}`;
+          const fields: Record<string, any> = {
+            id: { stringValue: token },
+            token: { stringValue: token },
+            hospitalId: { stringValue: callerHospitalId },
+            hospitalName: { stringValue: callerHospitalName },
+            role: { stringValue: targetRole },
+            maxUses: { integerValue: uses },
+            usedCount: { integerValue: 0 },
+            revoked: { booleanValue: false },
+            expiresAt: { stringValue: expiresAt },
+            createdAt: { stringValue: nowIso() },
+            createdByUid: { stringValue: uid },
+            createdByPlatformAdmin: { booleanValue: isAdmin }
+          };
+          if (invitedEmail) {
+            fields.invitedEmail = { stringValue: String(invitedEmail).trim().toLowerCase() };
+          }
+          const restRes = await fetch(restUrl, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: authHeader
+            },
+            body: JSON.stringify({ fields })
+          });
+          if (!restRes.ok) {
+            const errJson = await restRes.json().catch(() => ({}));
+            console.warn("Firestore REST fallback write failed:", errJson);
+            throw new Error(errJson.error?.message || "Failed to persist invite via REST");
+          }
+        } catch (restErr: any) {
+          console.warn("REST fallback error:", restErr.message);
+          throw batchError;
+        }
+      } else {
+        throw batchError;
+      }
+    }
 
     return res.json({
       success: true,

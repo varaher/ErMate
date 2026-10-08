@@ -18,7 +18,6 @@ import TeamBuilder from "./TeamBuilder";
 import MortalityAuditModal from "./MortalityAuditModal";
 import { SelfLearningRulesPanel } from "./SelfLearningRulesPanel";
 import RoleChangeSection from "./RoleChangeSection";
-import { createTeamInvite } from "../services/teamInviteService";
 import { auth, db } from "../firebase";
 import { collection, query, onSnapshot } from "firebase/firestore";
 import { APP_VERSION } from "../changelog";
@@ -388,12 +387,6 @@ export default function ProfileSettingsView({
     setInvitedMembers(prev => prev.filter(m => m.id !== id));
   };
 
-  const handleCopyLink = () => {
-    navigator.clipboard.writeText(preparedInviteLink);
-    setCopiedLink(true);
-    setTimeout(() => setCopiedLink(false), 2000);
-  };
-
   const handleRefillCredits = () => {
     startRealCheckout("credits_refill_150");
   };
@@ -549,26 +542,6 @@ const startRealCheckout = async (planKey: string) => {
   const p3Cases = cases.filter(c => c.patient?.triageCategory === TriageCategory.P3).length;
   const medCases = cases.filter(c => c.patient?.caseType === "Medical").length;
   const traumaCases = cases.filter(c => c.patient?.caseType === "Trauma").length;
-
-  const [preparedInviteLink, setPreparedInviteLink] = useState<string>("");
-
-  useEffect(() => {
-    let active = true;
-    const savedHospital = (profile.hospital || "").trim();
-    const uid = auth.currentUser?.uid;
-    if (savedHospital && uid) {
-      createTeamInvite(savedHospital, uid, profile.name || "", {
-        hospitalAddress: profile.hospitalAddress,
-        hospitalPhone: profile.hospitalPhone,
-        state: profile.state
-      }).then(res => {
-        if (active) {
-          setPreparedInviteLink(res.link);
-        }
-      });
-    }
-    return () => { active = false; };
-  }, [profile.hospital]);
 
   // Menu items list component rendering
   const renderProfileMenuList = () => {

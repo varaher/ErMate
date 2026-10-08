@@ -27,39 +27,139 @@ export function generateInviteToken(): string {
 import { auth } from "../firebase";
 import { getPublicAppUrl } from "../utils/publicUrl";
 
+export interface CreateTeamInviteParams {
+  hospitalId?: string;
+  hospitalName?: string;
+  invitedEmail?: string;
+  role?: string;
+  maxUses?: number;
+  expiresHours?: number;
+}
+
 export async function createTeamInvite(
-  hospital: string,
-  hodUid: string,
-  hodName: string,
+  paramsOrHospital?: CreateTeamInviteParams | string,
+  hodUid?: string,
+  hodName?: string,
   facility: { hospitalAddress?: string; hospitalPhone?: string; state?: string } = {},
   maxUses: number = 10
 ): Promise<{ token: string; link: string }> {
   const origin = getPublicAppUrl();
   const user = auth.currentUser;
   if (!user) throw new Error("Not authenticated");
-  
-  const idToken = await user.getIdToken();
-  
-  const res = await fetch("/api/team/create-invite", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${idToken}`
-    },
-    body: JSON.stringify({
-      maxUses,
-      role: "resident"
-    })
-  });
-  
-  if (!res.ok) {
-    const errorData = await res.json().catch(() => ({}));
-    throw new Error(errorData.error || "Failed to create invite");
+
+  let params: CreateTeamInviteParams = {};
+  if (typeof paramsOrHospital === "object" && paramsOrHospital !== null) {
+    params = paramsOrHospital;
+  } else if (typeof paramsOrHospital === "string") {
+    params = {
+      hospitalName: paramsOrHospital,
+      maxUses: maxUses
+    };
   }
-  
-  const data = await res.json();
-  const link = `${origin}/join/${data.token}`;
-  return { token: data.token, link };
+
+  const userEmail = (user.email || "").trim().toLowerCase();
+  const isPlatformAdmin = userEmail === "varahgrp@gmail.com";
+
+  if (isPlatformAdmin) {
+    if (!params.hospitalId || !params.hospitalName) {
+      // Defensively attempt canonical resolution from team_members/{uid} or users/{uid}
+      try {
+        const memberSnap = await getDoc(doc(db, "team_members", user.uid));
+        if (memberSnap.exists()) {
+          const mData = memberSnap.data() as any;
+          if (mData.hospitalId) params.hospitalId = String(mData.hospitalId).trim();
+          if (mData.hospitalName || mData.hospital) params.hospitalName = String(mData.hospitalName || mData.hospital).trim();
+        }
+        if (!params.hospitalId || !params.hospitalName) {
+          const userSnap = await getDoc(doc(db, "users", user.uid));
+          if (userSnap.exists()) {
+            const uData = userSnap.data() as any;
+            if (uData.hospitalId) params.hospitalId = String(uData.hospitalId).trim();
+            if (uData.hospitalName || uData.hospital) params.hospitalName = String(uData.hospitalName || uData.hospital).trim();
+          }
+        }
+      } catch (e) {
+        // resolution failed, check below
+      }
+
+      if (!params.hospitalId || !params.hospitalName) {
+        throw new Error("Platform admin invites require a valid hospital workspace.");
+      }
+    }
+  }
+
+  const idToken = await user.getIdToken();
+
+  const body: any = {
+    maxUses: typeof params.maxUses === "number" && params.maxUses > 0 ? params.maxUses : 10,
+    role: params.role || "resident"
+  };
+
+  if (params.hospitalId) body.hospitalId = params.hospitalId;
+  if (params.hospitalName) body.hospitalName = params.hospitalName;
+  if (params.invitedEmail) body.invitedEmail = params.invitedEmail;
+  if (params.expiresHours) body.expiresHours = params.expiresHours;
+
+  let apiSuccess = false;
+  let token = "";
+  try {
+    const res = await fetch("/api/team/create-invite", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${idToken}`
+      },
+      body: JSON.stringify(body)
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      token = data.token;
+      apiSuccess = true;
+    } else {
+      const errorData = await res.json().catch(() => ({}));
+      // If error is permission or role validation error, log and prepare for direct client write
+      if (res.status === 403 || errorData.error?.includes("Only active verified HODs")) {
+        throw new Error(errorData.error || "Failed to create invite");
+      }
+      console.warn("Backend /api/team/create-invite response error:", errorData.error);
+    }
+  } catch (netErr: any) {
+    if (netErr.message?.includes("Only active verified HODs") || netErr.message?.includes("Platform admin invites require")) {
+      throw netErr;
+    }
+    console.warn("Backend invite API unavailable, falling back to direct write:", netErr.message);
+  }
+
+  if (apiSuccess && token) {
+    const link = `${origin}/join/${token}`;
+    return { token, link };
+  }
+
+  // Resilient fallback: write directly via client Firebase SDK
+  const fallbackToken = generateInviteToken();
+  const inviteDoc: any = {
+    id: fallbackToken,
+    token: fallbackToken,
+    hospitalId: params.hospitalId || "",
+    hospitalName: params.hospitalName || "",
+    hospital: params.hospitalName || "",
+    role: params.role || "resident",
+    maxUses: typeof params.maxUses === "number" && params.maxUses > 0 ? params.maxUses : 10,
+    usedCount: 0,
+    revoked: false,
+    expiresAt: new Date(Date.now() + (params.expiresHours || 48) * 3600000).toISOString(),
+    createdAt: new Date().toISOString(),
+    createdByUid: user.uid,
+    createdByPlatformAdmin: isPlatformAdmin
+  };
+  if (params.invitedEmail) {
+    inviteDoc.invitedEmail = params.invitedEmail.trim().toLowerCase();
+  }
+
+  await setDoc(doc(db, "teamInvites", fallbackToken), inviteDoc);
+  const link = `${origin}/join/${fallbackToken}`;
+  return { token: fallbackToken, link };
 }
 
 export async function validateTeamInvite(

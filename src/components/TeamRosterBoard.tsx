@@ -1,5 +1,5 @@
 import { WorkspaceRotaSyncModal } from "./shared/WorkspaceRotaSyncModal";
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { 
   Users, Plus, Trash2, Shield, Clock, Search, UserCheck, 
   UserX, ShieldAlert, CheckCircle2, Mail, Calendar, Sparkles,
@@ -10,7 +10,8 @@ import {
 import { TeamMember, UserProfile, ClinicalCase, isPendingApprovalStatus, isActiveMembershipStatus } from "../types";
 import GoogleCalendarModal from "./GoogleCalendarModal";
 import { createTeamInvite } from "../services/teamInviteService";
-import { auth } from "../firebase";
+import { auth, db } from "../firebase";
+import { doc, getDoc } from "firebase/firestore";
 
 export const ROTA_SHIFTS = [
   { id: "morning", name: "Morning", time: "08:00 - 14:00", color: "text-amber-600 bg-amber-50 border-amber-200 dark:text-amber-400 dark:bg-amber-400/10 dark:border-amber-400/20" },
@@ -172,31 +173,113 @@ export default function TeamRosterBoard({
     roleLower.includes("owner") ||
     userEmailLower === "varahgrp@gmail.com";
 
+  type InviteGenerationStatus = "idle" | "loading" | "success" | "error";
+  const [inviteStatus, setInviteStatus] = useState<InviteGenerationStatus>("idle");
+  const [inviteGenerationError, setInviteGenerationError] = useState<string | null>(null);
   const [generatedLink, setGeneratedLink] = useState<string>("");
-  const [isGeneratingInvite, setIsGeneratingInvite] = useState<boolean>(false);
 
   const activeHospitalName = (workplaceInput || profile.workplaceName || profile.hospital || "Emergency Department").trim();
 
+  const resolveCanonicalHospitalScope = useCallback(async (): Promise<{ hospitalId?: string; hospitalName?: string }> => {
+    if (!auth.currentUser) {
+      throw new Error("Not authenticated");
+    }
+
+    const user = auth.currentUser;
+    const userEmail = (user.email || "").trim().toLowerCase();
+    const isPlatformAdmin = userEmail === "varahgrp@gmail.com";
+
+    let canonicalHospitalId: string | undefined;
+    let canonicalHospitalName: string | undefined;
+
+    // 1. Resolve from canonical team_members/{uid}
+    const memberSnap = await getDoc(doc(db, "team_members", user.uid));
+    if (memberSnap.exists()) {
+      const memberData = memberSnap.data() as any;
+      const status = String(memberData.status || "");
+      const isVerified = memberData.membershipVerified === true;
+      const role = String(memberData.role || "").toLowerCase();
+      const isHod = ["hod", "hod / department lead", "hod / shift lead"].includes(role);
+
+      if (memberData.hospitalId && String(memberData.hospitalId).trim()) {
+        canonicalHospitalId = String(memberData.hospitalId).trim();
+        canonicalHospitalName = String(memberData.hospitalName || memberData.hospital || "").trim();
+      } else if (memberData.hospital && String(memberData.hospital).trim()) {
+        canonicalHospitalId = String(memberData.hospital).trim();
+        canonicalHospitalName = String(memberData.hospital).trim();
+      }
+
+      if (!isPlatformAdmin) {
+        if (!isActiveMembershipStatus(status) || !isVerified || !isHod) {
+          throw new Error("Only active verified HODs can create invites.");
+        }
+      }
+    } else if (!isPlatformAdmin) {
+      throw new Error("Only active verified HODs can create invites.");
+    }
+
+    // 2. If platform admin, resolve from users/{uid} if not found in team_members
+    if (isPlatformAdmin && (!canonicalHospitalId || !canonicalHospitalName)) {
+      const userSnap = await getDoc(doc(db, "users", user.uid));
+      if (userSnap.exists()) {
+        const userData = userSnap.data() as any;
+        if (userData.hospitalId && (userData.hospital || userData.hospitalName)) {
+          canonicalHospitalId = String(userData.hospitalId).trim();
+          canonicalHospitalName = String(userData.hospital || userData.hospitalName).trim();
+        }
+      }
+    }
+
+    if (isPlatformAdmin && (!canonicalHospitalId || !canonicalHospitalName)) {
+      throw new Error("Platform admin invites require a valid hospital workspace.");
+    }
+
+    return { hospitalId: canonicalHospitalId, hospitalName: canonicalHospitalName };
+  }, []);
+
+  const handleGenerateInvite = useCallback(async () => {
+    if (!auth.currentUser) {
+      setInviteStatus("error");
+      setInviteGenerationError("Not authenticated");
+      return;
+    }
+
+    setInviteStatus("loading");
+    setInviteGenerationError(null);
+
+    try {
+      const scope = await resolveCanonicalHospitalScope();
+      const res = await createTeamInvite({
+        hospitalId: scope.hospitalId,
+        hospitalName: scope.hospitalName,
+        role: "resident",
+        maxUses: 10
+      });
+
+      if (res?.link) {
+        setGeneratedLink(res.link);
+        setInviteStatus("success");
+        setInviteGenerationError(null);
+      } else {
+        throw new Error("Failed to generate invitation link.");
+      }
+    } catch (err: any) {
+      const message = err?.message || "Could not generate invitation.";
+      setInviteStatus("error");
+      setInviteGenerationError(message);
+      setGeneratedLink("");
+    }
+  }, [resolveCanonicalHospitalScope]);
+
   useEffect(() => {
     let active = true;
-    const targetHosp = profile.hospital || workplaceInput;
-    if (targetHosp && auth.currentUser) {
-      setIsGeneratingInvite(true);
-      createTeamInvite(targetHosp, auth.currentUser.uid, profile.name || "HOD")
-        .then(res => {
-          if (active && res?.link) {
-            setGeneratedLink(res.link);
-          }
-        })
-        .catch(err => {
-          console.warn("Could not auto-generate secure invite link:", err);
-        })
-        .finally(() => {
-          if (active) setIsGeneratingInvite(false);
-        });
+    if (auth.currentUser && inviteStatus === "idle") {
+      handleGenerateInvite();
     }
-    return () => { active = false; };
-  }, [profile.hospital, profile.name, workplaceInput]);
+    return () => {
+      active = false;
+    };
+  }, [handleGenerateInvite, inviteStatus]);
 
   const handleCopyLink = () => {
     if (!generatedLink) return;
@@ -944,40 +1027,60 @@ export default function TeamRosterBoard({
               Share this secure link with clinicians who have already been added to your team.
             </p>
 
-            <div className="flex flex-col sm:flex-row bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl p-2 items-center gap-2">
-              <span className="text-[11px] font-mono text-slate-500 dark:text-slate-400 select-all truncate flex-1 px-2 w-full sm:w-auto">
-                {generatedLink || (isGeneratingInvite ? "Generating secure invite link..." : "Generating invitation...")}
-              </span>
-              <div className="flex items-center gap-1.5 w-full sm:w-auto justify-end">
+            {inviteStatus === "error" ? (
+              <div className="bg-rose-50/80 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900/50 rounded-xl p-3.5 space-y-2">
+                <div className="flex items-center gap-2 text-rose-700 dark:text-rose-400 font-bold text-xs">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span>Could not generate invitation.</span>
+                </div>
+                <p className="text-[11px] text-slate-600 dark:text-slate-300 font-sans">
+                  {inviteGenerationError || "Only active verified HODs can create invites."}
+                </p>
                 <button
                   type="button"
-                  onClick={handleCopyLink}
-                  disabled={!generatedLink}
-                  className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-bold text-xs rounded-lg transition-all flex items-center gap-1 cursor-pointer shrink-0"
+                  onClick={handleGenerateInvite}
+                  className="px-3 py-1.5 bg-white dark:bg-slate-900 border border-rose-200 dark:border-rose-800 hover:bg-rose-50 dark:hover:bg-rose-950/50 text-rose-700 dark:text-rose-300 font-bold text-xs rounded-lg transition-all flex items-center gap-1.5 cursor-pointer shadow-2xs"
                 >
-                  {copiedLink ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                  <span>{copiedLink ? "Copied" : "Copy Link"}</span>
-                </button>
-                <button
-                  type="button"
-                  disabled
-                  title="Direct QR scanning coming soon. Please use Copy Link or Share."
-                  className="px-3 py-1.5 bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 font-bold text-xs rounded-lg transition-all flex items-center gap-1 opacity-50 cursor-not-allowed shrink-0"
-                >
-                  <QrCode className="w-3.5 h-3.5" />
-                  <span>Show QR</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={handleShareLink}
-                  disabled={!generatedLink}
-                  className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 disabled:opacity-50 text-slate-700 dark:text-slate-200 font-bold text-xs rounded-lg transition-all flex items-center gap-1 cursor-pointer shrink-0"
-                >
-                  <Share2 className="w-3.5 h-3.5" />
-                  <span>Share</span>
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span>Retry</span>
                 </button>
               </div>
-            </div>
+            ) : (
+              <div className="flex flex-col sm:flex-row bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl p-2 items-center gap-2">
+                <span className="text-[11px] font-mono text-slate-500 dark:text-slate-400 select-all truncate flex-1 px-2 w-full sm:w-auto">
+                  {generatedLink || (inviteStatus === "loading" ? "Generating secure invite link..." : "Generating invitation...")}
+                </span>
+                <div className="flex items-center gap-1.5 w-full sm:w-auto justify-end">
+                  <button
+                    type="button"
+                    onClick={handleCopyLink}
+                    disabled={!generatedLink || inviteStatus === "loading"}
+                    className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-bold text-xs rounded-lg transition-all flex items-center gap-1 cursor-pointer shrink-0"
+                  >
+                    {copiedLink ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                    <span>{copiedLink ? "Copied" : "Copy Link"}</span>
+                  </button>
+                  <button
+                    type="button"
+                    disabled
+                    title="Direct QR scanning coming soon. Please use Copy Link or Share."
+                    className="px-3 py-1.5 bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 font-bold text-xs rounded-lg transition-all flex items-center gap-1 opacity-50 cursor-not-allowed shrink-0"
+                  >
+                    <QrCode className="w-3.5 h-3.5" />
+                    <span>Show QR</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleShareLink}
+                    disabled={!generatedLink || inviteStatus === "loading"}
+                    className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 disabled:opacity-50 text-slate-700 dark:text-slate-200 font-bold text-xs rounded-lg transition-all flex items-center gap-1 cursor-pointer shrink-0"
+                  >
+                    <Share2 className="w-3.5 h-3.5" />
+                    <span>Share</span>
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Pending Invitations & Join Requests */}
@@ -1759,40 +1862,60 @@ export default function TeamRosterBoard({
                 Share this secure link with clinicians who have already been added to your team.
               </p>
 
-              <div className="bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl p-3 space-y-2">
-                <span className="text-[11px] font-mono text-slate-600 dark:text-slate-300 select-all break-all block">
-                  {generatedLink || (isGeneratingInvite ? "Generating secure invite link..." : "Generating invitation...")}
-                </span>
-                <div className="flex items-center gap-2 pt-1">
+              {inviteStatus === "error" ? (
+                <div className="bg-rose-50/80 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900/50 rounded-xl p-3.5 space-y-2">
+                  <div className="flex items-center gap-2 text-rose-700 dark:text-rose-400 font-bold text-xs">
+                    <AlertCircle className="w-4 h-4 shrink-0" />
+                    <span>Could not generate invitation.</span>
+                  </div>
+                  <p className="text-[11px] text-slate-600 dark:text-slate-300 font-sans">
+                    {inviteGenerationError || "Only active verified HODs can create invites."}
+                  </p>
                   <button
                     type="button"
-                    onClick={handleCopyLink}
-                    disabled={!generatedLink}
-                    className="flex-1 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-extrabold text-xs rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
+                    onClick={handleGenerateInvite}
+                    className="px-3 py-1.5 bg-white dark:bg-slate-900 border border-rose-200 dark:border-rose-800 hover:bg-rose-50 dark:hover:bg-rose-950/50 text-rose-700 dark:text-rose-300 font-bold text-xs rounded-xl transition-all flex items-center gap-1.5 cursor-pointer shadow-2xs"
                   >
-                    {copiedLink ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                    <span>{copiedLink ? "Link Copied!" : "Copy Link"}</span>
-                  </button>
-                  <button
-                    type="button"
-                    disabled
-                    title="Direct QR scanning coming soon. Please use Copy Link or Share."
-                    className="px-3 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-400 dark:text-slate-500 font-bold text-xs rounded-xl transition-all flex items-center justify-center gap-1 opacity-50 cursor-not-allowed"
-                  >
-                    <QrCode className="w-3.5 h-3.5" />
-                    <span>Show QR</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleShareLink}
-                    disabled={!generatedLink}
-                    className="px-3 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 disabled:opacity-50 text-slate-800 dark:text-white font-bold text-xs rounded-xl transition-all flex items-center justify-center gap-1 cursor-pointer"
-                  >
-                    <Share2 className="w-3.5 h-3.5" />
-                    <span>Share</span>
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    <span>Retry</span>
                   </button>
                 </div>
-              </div>
+              ) : (
+                <div className="bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl p-3 space-y-2">
+                  <span className="text-[11px] font-mono text-slate-600 dark:text-slate-300 select-all break-all block">
+                    {generatedLink || (inviteStatus === "loading" ? "Generating secure invite link..." : "Generating invitation...")}
+                  </span>
+                  <div className="flex items-center gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={handleCopyLink}
+                      disabled={!generatedLink || inviteStatus === "loading"}
+                      className="flex-1 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-extrabold text-xs rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
+                    >
+                      {copiedLink ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                      <span>{copiedLink ? "Link Copied!" : "Copy Link"}</span>
+                    </button>
+                    <button
+                      type="button"
+                      disabled
+                      title="Direct QR scanning coming soon. Please use Copy Link or Share."
+                      className="px-3 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-400 dark:text-slate-500 font-bold text-xs rounded-xl transition-all flex items-center justify-center gap-1 opacity-50 cursor-not-allowed"
+                    >
+                      <QrCode className="w-3.5 h-3.5" />
+                      <span>Show QR</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleShareLink}
+                      disabled={!generatedLink || inviteStatus === "loading"}
+                      className="px-3 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 disabled:opacity-50 text-slate-800 dark:text-white font-bold text-xs rounded-xl transition-all flex items-center justify-center gap-1 cursor-pointer"
+                    >
+                      <Share2 className="w-3.5 h-3.5" />
+                      <span>Share</span>
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* PENDING INVITATIONS IN MODAL */}
               <div className="space-y-2 pt-2 border-t border-slate-100 dark:border-slate-800">

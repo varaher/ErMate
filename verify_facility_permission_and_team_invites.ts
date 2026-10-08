@@ -166,14 +166,14 @@ assert(
 // 15. Generated link uses real secure invite token
 assert(
   teamRoutesTs.includes("const token = `inv_${randomBytes(24).toString(\"hex\")}`;") &&
-  teamRosterTsx.includes("createTeamInvite(targetHosp, auth.currentUser.uid, profile.name || \"HOD\")"),
+  teamRosterTsx.includes("createTeamInvite({"),
   "15. Generated link uses cryptographically random 24-byte hex token (inv_...)"
 );
 
 // 16. Copy Link uses exact canonical URL
 assert(
   teamRosterTsx.includes("navigator.clipboard.writeText(generatedLink);") &&
-  teamRosterTsx.includes("disabled={!generatedLink}"),
+  teamRosterTsx.includes("disabled={!generatedLink"),
   "16. Copy Link writes exact generatedLink and disables when no secure token is present"
 );
 
