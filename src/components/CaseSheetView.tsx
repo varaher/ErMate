@@ -7,8 +7,9 @@ import {
   User, Check, Shield, FileCheck, Users, LogOut, ChevronRight,
   Copy, Download, ChevronDown, TrendingUp, PlusCircle, Activity, Droplets, Edit3,
   Brain, Send, Award, MoreHorizontal, Pill, MessageSquare, HelpCircle, Info, Lightbulb, X, Skull,
-  BookmarkCheck, Undo2
+  BookmarkCheck, Undo2, GraduationCap
 } from "lucide-react";
+import { CaseChatWorkspace } from "./CaseChatWorkspace";
 import { 
   ClinicalCase, PatientVitals, SampleHistory, PrimaryAssessment, PrimarySurvey, getInitialPrimarySurvey,
   TreatmentItem, InvestigationItem, DifferentialDiagnosis, TriageCategory, ArrivalMode,
@@ -263,7 +264,7 @@ interface CaseSheetViewProps {
   onSaveProfile?: (updated: UserProfile) => void;
   onReturnToScribe?: (caseId?: string) => void;
   hasActiveScribeSession?: boolean;
-  onDiscussCase?: (patientCase: ClinicalCase) => void;
+  onDiscussCase?: (patientCase: ClinicalCase, mode?: "discuss" | "rounds") => void;
   isPreview?: boolean;
   onApplyPreview?: (reviewedCase: ClinicalCase) => Promise<void>;
   onDirtyChange?: (isDirty: boolean) => void;
@@ -479,45 +480,20 @@ export default function CaseSheetView({
     }
   }, [activeTab]);
 
-  // Clinical Rounds & 7-Lens Debrief States
-  const [roundsLens, setRoundsLens] = useState<
-    "first-principles" | "devils-advocate" | "pathophysiology" | "rare-but-real" | "guidelines" | "disease-snapshot" | "full-debrief" | "cause-of-death"
-  >("first-principles");
-  const [roundsContent, setRoundsContent] = useState<string>("");
-  const [roundsLoading, setRoundsLoading] = useState<boolean>(false);
-  const [roundsKeyTakeaway, setRoundsKeyTakeaway] = useState<string>("");
-  const [roundsMemoryKey, setRoundsMemoryKey] = useState<string>("");
-  const [roundsSuggestedQuestions, setRoundsSuggestedQuestions] = useState<string[]>([]);
-  const [roundsChatHistory, setRoundsChatHistory] = useState<Array<{ role: "user" | "model"; text: string }>>([]);
-  const [roundsUserMessage, setRoundsUserMessage] = useState<string>("");
-  const [roundsChatLoading, setRoundsChatLoading] = useState<boolean>(false);
-  const [showRoundsMoreMenu, setShowRoundsMoreMenu] = useState(false);
-  const roundsMoreMenuRef = useRef<HTMLDivElement>(null);
+  // Unified Case Chat Workspace states (Discuss & Rounds modes)
+  const [showInternalRoundsWorkspace, setShowInternalRoundsWorkspace] = useState<boolean>(false);
+  const [showInternalDiscussWorkspace, setShowInternalDiscussWorkspace] = useState<boolean>(false);
+  const [showSafetyModal, setShowSafetyModal] = useState<boolean>(false);
 
   useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (roundsMoreMenuRef.current && !roundsMoreMenuRef.current.contains(event.target as Node)) {
-        setShowRoundsMoreMenu(false);
+    if (initialTab === "rounds") {
+      if (onDiscussCase) {
+        onDiscussCase(currentCase, "rounds");
+      } else {
+        setShowInternalRoundsWorkspace(true);
       }
     }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
-
-  const roundsTextareaRef = useRef<HTMLTextAreaElement>(null);
-
-  // Auto-expand rounds chat textarea
-  useEffect(() => {
-    const textarea = roundsTextareaRef.current;
-    if (textarea) {
-      textarea.style.height = "auto";
-      textarea.style.height = `${Math.min(textarea.scrollHeight, 240)}px`;
-    }
-  }, [roundsUserMessage]);
-  const [roundsSavedToMemory, setRoundsSavedToMemory] = useState<boolean>(false);
-  const [roundsReflections, setRoundsReflections] = useState<string>("");
-  const [showPostSaveModal, setShowPostSaveModal] = useState<boolean>(false);
-  const [showSafetyModal, setShowSafetyModal] = useState<boolean>(false);
+  }, [initialTab]);
 
 
   const [currentCase, setCurrentCase] = useState<ClinicalCase>(initialCase);
@@ -1875,160 +1851,6 @@ Extremities: No deformity. No peripheral oedema. Peripheral pulses present.`,
     }
   };
 
-  // Clinical Rounds helper methods
-  const fetchRoundsDebrief = async (selectedLens: typeof roundsLens) => {
-    setRoundsLoading(true);
-    setRoundsLens(selectedLens);
-    setRoundsSavedToMemory(false);
-    
-    try {
-      const response = await fetch("/api/rounds-debrief", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          caseData: currentCase,
-          lens: selectedLens
-        })
-      });
-      const data = await response.json();
-      if (data.success && data.data) {
-        setRoundsContent(data.data.content);
-        setRoundsKeyTakeaway(data.data.keyTakeaway);
-        setRoundsMemoryKey(data.data.memoryKey);
-        setRoundsSuggestedQuestions(data.data.suggestedQuestions || []);
-      } else if (data.data) {
-        setRoundsContent(data.data.content);
-        setRoundsKeyTakeaway(data.data.keyTakeaway);
-        setRoundsMemoryKey(data.data.memoryKey);
-        setRoundsSuggestedQuestions(data.data.suggestedQuestions || []);
-      }
-    } catch (err) {
-      console.error("Error fetching rounds debrief:", err);
-    } finally {
-      setRoundsLoading(false);
-    }
-  };
-
-  const handleRoundsChatSend = async (customMessage?: string) => {
-    const msgToSend = customMessage || roundsUserMessage;
-    if (!msgToSend.trim()) return;
-
-    const updatedHistory = [...roundsChatHistory, { role: "user" as const, text: msgToSend }];
-    setRoundsChatHistory(updatedHistory);
-    setRoundsUserMessage("");
-    setRoundsChatLoading(true);
-
-    try {
-      const response = await fetch("/api/rounds-debrief", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          caseData: currentCase,
-          lens: "rounds-chat",
-          userMessage: msgToSend,
-          chatHistory: roundsChatHistory
-        })
-      });
-      const data = await response.json();
-      let replyContent = "";
-      if (data.success && data.data) {
-        replyContent = data.data.content;
-        if (data.data.suggestedQuestions) {
-          setRoundsSuggestedQuestions(data.data.suggestedQuestions);
-        }
-      } else if (data.data) {
-        replyContent = data.data.content;
-      }
-
-      if (replyContent) {
-        const finalHistory = [...updatedHistory, { role: "model" as const, text: replyContent }];
-        setRoundsChatHistory(finalHistory);
-
-        // Persist to Discussion format & Firestore via onSaveCase
-        try {
-          const convertedMsgs = finalHistory.map((h, idx) => ({
-            id: "rounds-" + idx + "-" + Date.now(),
-            sender: h.role === "model" ? ("ai" as const) : ("user" as const),
-            text: h.text,
-            timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-          }));
-
-          if (onSaveCase && !isPreview) {
-            onSaveCase({ ...currentCase, discussionMessages: convertedMsgs });
-          }
-        } catch (e) {
-          console.warn("Error saving rounds chat history:", e);
-        }
-      }
-    } catch (err) {
-      console.error("Error sending rounds chat message:", err);
-    } finally {
-      setRoundsChatLoading(false);
-    }
-  };
-
-  const [roundsDraftToast, setRoundsDraftToast] = useState(false);
-
-  const handleSaveRoundsDraft = () => {
-    if (!currentCase || !roundsChatHistory.length) return;
-
-    try {
-      const convertedMsgs = roundsChatHistory.map((h, idx) => ({
-        id: "rounds-" + idx + "-" + Date.now(),
-        sender: h.role === "model" ? ("ai" as const) : ("user" as const),
-        text: h.text,
-        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-      }));
-
-      if (onSaveCase && !isPreview) {
-        onSaveCase({ ...currentCase, discussionMessages: convertedMsgs });
-      }
-      setRoundsDraftToast(true);
-      setTimeout(() => setRoundsDraftToast(false), 3000);
-    } catch (err) {
-      console.error("Error saving rounds draft:", err);
-    }
-  };
-
-  const saveCaseToClinicalMemory = (customPearl?: string) => {
-    try {
-      const existingStr = localStorage.getItem("clinical_memory_log") || "[]";
-      const existing = JSON.parse(existingStr);
-      
-      const newEntry = {
-        id: "mem-" + Date.now(),
-        caseId: currentCase.id,
-        patientName: currentCase.patient.name,
-        age: currentCase.patient.age,
-        gender: currentCase.patient.gender,
-        presentingComplaint: currentCase.patient.presentingComplaint,
-        diagnosis: currentCase.provisionalPrimaryDiagnosis || currentCase.dischargeInfo?.primaryDiagnosis || "Acute presentation",
-        caseType: currentCase.patient.caseType,
-        isPediatric: currentCase.isPediatric,
-        savedAt: new Date().toISOString(),
-        memoryPearl: customPearl || roundsMemoryKey || `${currentCase.patient.name} presenting with ${currentCase.patient.presentingComplaint || "acute symptoms"} was successfully stabilized.`,
-        physicianReflections: roundsReflections
-      };
-
-      // Check if already logged for this case ID
-      const existsIdx = existing.findIndex((e: any) => e.caseId === currentCase.id);
-      if (existsIdx >= 0) {
-        existing[existsIdx] = {
-          ...existing[existsIdx],
-          memoryPearl: customPearl || roundsMemoryKey || existing[existsIdx].memoryPearl,
-          physicianReflections: roundsReflections || existing[existsIdx].physicianReflections
-        };
-      } else {
-        existing.push(newEntry);
-      }
-
-      localStorage.setItem("clinical_memory_log", JSON.stringify(existing));
-      setRoundsSavedToMemory(true);
-    } catch (err) {
-      console.error("Error saving clinical memory:", err);
-    }
-  };
-
   // Commit to backend (Save)
   
   const hasSafetyData = 
@@ -2136,10 +1958,6 @@ Extremities: No deformity. No peripheral oedema. Peripheral pulses present.`,
       
       // Auto-update discharge summary in background
       await syncDischargeSummary(caseToSave);
-
-      // Auto-populate first principles learning for the saved modal and trigger the Post-Save Debrief Nudge
-      fetchRoundsDebrief("first-principles");
-      /* setShowPostSaveModal(true) removed */;
     } catch (err) {
       console.error("Failed to save Case Sheet:", err);
       setTreatmentSaveStatus("error");
@@ -3052,12 +2870,50 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                       {isScribeSessionActive ? "Resume Scribe" : "Open Scribe"}
                     </button>
                   ) : null}
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (onDiscussCase) {
+                        onDiscussCase(currentCase, "discuss");
+                      } else {
+                        setShowInternalDiscussWorkspace(true);
+                      }
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-900 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 text-[10px] font-bold rounded-lg transition-colors cursor-pointer border border-slate-200 dark:border-slate-800"
+                    title="Discuss this patient's case"
+                  >
+                    <MessageSquare className="w-3 h-3 text-indigo-500" />
+                    <span>Discuss</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (onDiscussCase) {
+                        onDiscussCase(currentCase, "rounds");
+                      } else {
+                        setShowInternalRoundsWorkspace(true);
+                      }
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-bold rounded-lg transition-colors cursor-pointer shadow-xs"
+                    title="7-Lens Clinical Rounds teaching & debrief"
+                  >
+                    <GraduationCap className="w-3 h-3" />
+                    <span>Rounds</span>
+                  </button>
                   
                   <details className="relative group">
                     <summary className="p-1.5 text-slate-500 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg cursor-pointer list-none transition-colors [&::-webkit-details-marker]:hidden">
                       <MoreVertical className="w-4.5 h-4.5" />
                     </summary>
                     <div className="absolute right-0 mt-1 w-48 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xl z-50 py-1.5 text-xs">
+                      <button onClick={() => { if (onDiscussCase) { onDiscussCase(currentCase, "discuss"); } else { setShowInternalDiscussWorkspace(true); } }} className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 flex items-center gap-2 font-medium">
+                        <MessageSquare className="w-3.5 h-3.5 text-indigo-500" /> Case Discuss
+                      </button>
+                      <button onClick={() => { if (onDiscussCase) { onDiscussCase(currentCase, "rounds"); } else { setShowInternalRoundsWorkspace(true); } }} className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 flex items-center gap-2 font-medium">
+                        <GraduationCap className="w-3.5 h-3.5 text-indigo-500" /> 7-Lens Rounds
+                      </button>
                       <button onClick={() => onNavigateToDischarge(currentCase.id)} className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 flex items-center gap-2 font-bold text-indigo-600 dark:text-indigo-400">
                         <FileText className="w-3.5 h-3.5" /> Discharge Summary
                       </button>
@@ -3200,7 +3056,17 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                 <button
                   key={tab.id}
                   data-tab-id={tab.id}
-                  onClick={() => setActiveTab(tab.id as any)}
+                  onClick={() => {
+                    if (tab.id === "rounds") {
+                      if (onDiscussCase) {
+                        onDiscussCase(currentCase, "rounds");
+                      } else {
+                        setShowInternalRoundsWorkspace(true);
+                      }
+                    } else {
+                      setActiveTab(tab.id as any);
+                    }
+                  }}
                   className={`text-[11px] font-bold px-4 py-2 rounded-full transition-colors shrink-0 whitespace-nowrap flex items-center gap-1.5 ${
                     isActive 
                       ? "bg-blue-600 text-white shadow-sm ring-2 ring-blue-600/20" 
@@ -5384,512 +5250,55 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
           )}
 
 
-          {/* Clinical Rounds & Case Debrief Tab  */}
+          {/* Clinical Rounds & 7-Lens Case Debrief Launchpad */}
           {activeTab === "rounds" && (
             <div className="space-y-4 animate-fade-in text-xs">
-              
-              {/* Header block  */}
-              <div className="border-b pb-3.5 flex flex-col md:flex-row md:items-center justify-between gap-3">
-                <div>
-                  <h3 className="text-sm font-bold text-slate-800 dark:text-white uppercase tracking-wide flex items-center gap-2">
-                    <Sparkles className="w-4 h-4 text-indigo-500" />
-                    Unlimited Clinical Rounds & 7-Lens Case Debrief
+              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 sm:p-8 text-center space-y-4 shadow-xs">
+                <div className="w-14 h-14 bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 rounded-2xl flex items-center justify-center mx-auto shadow-xs">
+                  <GraduationCap className="w-7 h-7" />
+                </div>
+                <div className="max-w-md mx-auto space-y-1.5">
+                  <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center justify-center gap-2">
+                    <span>Clinical Rounds & 7-Lens Learning</span>
+                    <span className="text-[10px] font-mono font-bold text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/40 px-2.5 py-0.5 rounded-full border border-indigo-200 dark:border-indigo-800">
+                      Unified Case Chat
+                    </span>
                   </h3>
-                  <p className="text-[10px] text-slate-400">
-                    Challenge clinical heuristics, investigate underlying physiology, and record private career learning portfolios.
+                  <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+                    Interactive ER teaching rounds designed to challenge clinical decision making and deepen emergency medicine expertise for Bed {currentCase.bedNo || "Unassigned"} ({getDisplayCaseId(currentCase)}). Powered by the 7 clinical lenses: First Principles, Pathophysiology, Guidelines, Devil's Advocate, Rare but Real, Disease Snapshot, and Full Debrief.
                   </p>
                 </div>
-                <div className="flex items-center gap-1.5">
-                  <span className="text-[10px] font-bold text-indigo-700 bg-indigo-50 dark:bg-indigo-950/40 dark:text-indigo-400 px-2 py-0.5 rounded font-mono uppercase tracking-wider">
-                    Pedagogy Mentor Active
-                  </span>
-                </div>
-              </div>
-
-              {/* How To Use & Purpose Guide Box  */}
-              <div className="bg-indigo-50/70 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-850 rounded-2xl p-4 md:p-4 text-xs text-indigo-950 dark:text-indigo-100 space-y-3 transition-all">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <div className="p-1.5 bg-indigo-600 text-white rounded-lg shadow-xs">
-                      <Lightbulb className="w-4 h-4" />
-                    </div>
-                    <div>
-                      <h4 className="font-extrabold text-xs uppercase tracking-wide text-indigo-900 dark:text-indigo-200">
-                        How to Use Rounds & Debrief (Clinical Mentor Guide)
-                      </h4>
-                      <p className="text-[11px] text-indigo-700 dark:text-indigo-300 font-medium">
-                        Interactive ER teaching rounds designed to challenge clinical decision making and deepen emergency medicine expertise.
-                      </p>
-                    </div>
-                  </div>
+                <div className="pt-2 flex flex-col sm:flex-row items-center justify-center gap-3">
                   <button
                     type="button"
-                    onClick={() => setShowRoundsGuide(!showRoundsGuide)}
-                    className="px-2.5 py-1 text-[10px] font-bold bg-indigo-100 hover:bg-indigo-200 dark:bg-indigo-900/60 text-indigo-800 dark:text-indigo-200 rounded-lg transition-colors cursor-pointer shrink-0"
+                    onClick={() => {
+                      if (onDiscussCase) {
+                        onDiscussCase(currentCase, "rounds");
+                      } else {
+                        setShowInternalRoundsWorkspace(true);
+                      }
+                    }}
+                    className="w-full sm:w-auto px-6 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-2 cursor-pointer"
                   >
-                    {showRoundsGuide ? "Hide Instructions" : "Show Instructions"}
+                    <GraduationCap className="w-4 h-4" />
+                    <span>Launch Rounds Workspace</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (onDiscussCase) {
+                        onDiscussCase(currentCase, "discuss");
+                      } else {
+                        setShowInternalDiscussWorkspace(true);
+                      }
+                    }}
+                    className="w-full sm:w-auto px-5 py-2.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold text-xs rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer border border-slate-200 dark:border-slate-700"
+                  >
+                    <MessageSquare className="w-4 h-4 text-indigo-500" />
+                    <span>Launch Discuss Workspace</span>
                   </button>
                 </div>
-
-                {showRoundsGuide && (
-                  <div className="pt-2 border-t border-indigo-200/60 dark:border-indigo-900/60 grid grid-cols-1 md:grid-cols-2 gap-3 text-[11px] leading-relaxed">
-                    <div className="space-y-1.5 bg-white/70 dark:bg-slate-900/70 p-3 rounded-xl border border-indigo-100 dark:border-indigo-900">
-                      <span className="font-extrabold text-indigo-900 dark:text-indigo-300 flex items-center gap-1">
-                        <HelpCircle className="w-3.5 h-3.5 text-indigo-600" />
-                        What is this section for?
-                      </span>
-                      <p className="text-slate-700 dark:text-slate-300">
-                        This is an <strong>interactive AI Clinical Mentor</strong>. Instead of just taking notes, it acts like a senior Emergency Physician on rounds—helping you stress-test diagnoses, avoid missed red flags, review underlying pathophysiology, and stay updated on guidelines.
-                      </p>
-                    </div>
-
-                    <div className="space-y-1.5 bg-white/70 dark:bg-slate-900/70 p-3 rounded-xl border border-indigo-100 dark:border-indigo-900">
-                      <span className="font-extrabold text-indigo-900 dark:text-indigo-300 flex items-center gap-1">
-                        <ClipboardCheck className="w-3.5 h-3.5 text-indigo-600" />
-                        4-Step Workflow:
-                      </span>
-                      <ol className="list-decimal pl-4 space-y-1 text-slate-700 dark:text-slate-300 font-medium">
-                        <li><strong>Pick a Lens</strong> below (e.g. <em>Devil's Advocate</em> to catch biases or <em>Rare but Real</em> for mimics).</li>
-                        <li><strong>Review AI Analysis</strong> generated specifically for this patient's vitals & presentation.</li>
-                        <li><strong>Ask in Chat</strong> below to discuss alternative scenarios, drug choices, or diagnostic criteria.</li>
-                        <li><strong>Save Takeaways</strong> to preserve key clinical pearls in your personal learning log.</li>
-                      </ol>
-                    </div>
-                  </div>
-                )}
               </div>
-
-              {/* Lens Selection Bar  */}
-              <div className="flex overflow-x-auto scrollbar-thin pb-2 gap-1.5 no-print">
-                {[
-                  { id: "first-principles", label: "First Principles", icon: Brain, desc: "Fundamental physiological deconstruction" },
-                  { id: "devils-advocate", label: "Devil's Advocate", icon: ShieldAlert, desc: "Critical cognitive biases & mimics" },
-                  { id: "pathophysiology", label: "Pathophysiology", icon: Activity, desc: "Stepwise biological progression" },
-                  { id: "rare-but-real", label: "Rare but Real", icon: AlertTriangle, desc: "Life-threatening atypical mimics" },
-                  { id: "guidelines", label: "Guidelines", icon: FileCheck, desc: "Society guideline recommendations" },
-                  { id: "disease-snapshot", label: "Disease Snapshot", icon: Eye, desc: "Dense clinical cheat-sheet" },
-                  { id: "full-debrief", label: "Full Debrief", icon: Award, desc: "Comprehensive performance review" },
-                  { id: "cause-of-death", label: "Cause of Death", icon: Skull, desc: "Whole-story mortality & cause deconstruction" },
-                ].map((lens) => {
-                  const Icon = lens.icon;
-                  const isActive = roundsLens === lens.id;
-                  return (
-                    <button
-                      key={lens.id}
-                      onClick={() => fetchRoundsDebrief(lens.id as any)}
-                      className={`px-3 py-2.5 rounded-xl border text-left shrink-0 transition-all flex flex-col justify-between min-w-[130px] md:min-w-[145px] ${
-                        isActive
-                          ? "bg-indigo-600 border-indigo-600 text-white shadow-sm"
-                          : "bg-slate-50 hover:bg-slate-100 dark:bg-slate-900 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800"
-                      }`}
-                      title={lens.desc}
-                    >
-                      <div className="flex items-center gap-1.5 mb-1">
-                        <Icon className={`w-3.5 h-3.5 ${isActive ? "text-white" : "text-indigo-500"}`} />
-                        <span className="font-extrabold text-[10.5px] uppercase tracking-wide">{lens.label}</span>
-                      </div>
-                      <span className={`text-[9px] ${isActive ? "text-indigo-100" : "text-slate-400"} truncate max-w-[125px]`}>
-                        {lens.desc}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-
-              {/* Main Content Layout  */}
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-                
-                {/* Left Side: Clinical Debrief & Rounds Chat (2 Columns)  */}
-                <div className="lg:col-span-2 space-y-4">
-                  
-                  {/* Analysis Content Panel  */}
-                  <div className="bg-slate-50 dark:bg-slate-900/40 border border-slate-150 dark:border-slate-850 rounded-2xl p-4 space-y-4 shadow-xs">
-                    
-                    {roundsLoading ? (
-                      <div className="py-16 text-center space-y-3">
-                        <Brain className="w-10 h-10 text-indigo-500 animate-pulse mx-auto" />
-                        <p className="text-xs font-mono text-slate-500 animate-pulse">
-                          Emergency Medicine Educator analyzing clinical markers...
-                        </p>
-                        <div className="text-[10px] text-slate-400 font-mono flex items-center justify-center gap-1">
-                          <Clock className="w-3 h-3" /> Deconstructing through {roundsLens.replace("-", " ")} lens
-                        </div>
-                      </div>
-                    ) : roundsContent ? (
-                      <div className="space-y-4 animate-fade-in">
-                        
-                        <div className="flex items-center justify-between border-b border-slate-250 pb-2">
-                          <div className="flex items-center gap-2">
-                            <span className="w-2 h-2 rounded-full bg-indigo-500" />
-                            <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wide">
-                              Active Case Lens: {roundsLens.replace("-", " ")}
-                            </h4>
-                          </div>
-                          <span className="text-[9px] text-slate-400 font-mono">
-                            Case reference ID: {currentCase.id.slice(0, 8)}
-                          </span>
-                        </div>
-
-                        {/* Custom formatted Markdown container  */}
-                        <div className="text-xs text-slate-700 dark:text-slate-300 leading-relaxed font-sans whitespace-pre-wrap select-text">
-                          {(() => {
-                            return roundsContent.split("\n").map((line, idx) => {
-                              if (line.startsWith("###")) {
-                                return (
-                                  <h4 key={idx} className="text-xs font-bold text-slate-800 dark:text-slate-100 mt-4 mb-2 first:mt-0 font-display flex items-center gap-1.5 border-b pb-1">
-                                    {line.replace("###", "").trim()}
-                                  </h4>
-                                );
-                              }
-                              if (line.startsWith("##")) {
-                                return (
-                                  <h3 key={idx} className="text-sm font-bold text-indigo-600 dark:text-indigo-400 mt-5 mb-2 first:mt-0 font-display">
-                                    {line.replace("##", "").trim()}
-                                  </h3>
-                                );
-                              }
-                              if (line.startsWith("* **") || line.startsWith("- **")) {
-                                const content = line.replace(/^[\*\-]\s+/, "");
-                                return (
-                                  <div key={idx} className="pl-4 py-1 flex items-start gap-2">
-                                    <span className="text-indigo-500 mt-1">•</span>
-                                    <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
-                                      {content.split("**").map((part, i) => i % 2 === 1 ? <strong key={i} className="font-bold text-slate-800 dark:text-slate-100">{part}</strong> : part)}
-                                    </p>
-                                  </div>
-                                );
-                              }
-                              if (line.startsWith("*") || line.startsWith("-")) {
-                                return (
-                                  <div key={idx} className="pl-4 py-0.5 flex items-start gap-2 text-slate-600 dark:text-slate-300">
-                                    <span className="text-indigo-400 mt-1">•</span>
-                                    <p className="text-xs leading-relaxed">{line.replace(/^[\*\-]\s+/, "")}</p>
-                                  </div>
-                                );
-                              }
-                              if (line.trim() === "") {
-                                return <div key={idx} className="h-1.5" />;
-                              }
-                              return (
-                                <p key={idx} className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed py-0.5 select-text">
-                                  {line.split("**").map((part, i) => i % 2 === 1 ? <strong key={i} className="font-bold text-slate-800 dark:text-slate-100">{part}</strong> : part)}
-                                </p>
-                              );
-                            });
-                          })()}
-                        </div>
-
-                      </div>
-                    ) : (
-                      <div className="py-16 text-center space-y-4">
-                        <div className="w-12 h-12 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 rounded-full flex items-center justify-center mx-auto shadow-sm">
-                          <Brain className="w-6 h-6 animate-pulse" />
-                        </div>
-                        <div className="space-y-1">
-                          <h4 className="font-bold text-slate-700 dark:text-slate-300 text-xs uppercase tracking-wide">
-                            Initiate Emergency Medicine Clinical Rounds
-                          </h4>
-                          <p className="text-slate-400 text-[11px] max-w-sm mx-auto">
-                            Deconstruct pathophysiology, review society guidelines, and explore critical diagnostic mimics. Choose a lens above or click below to start.
-                          </p>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => fetchRoundsDebrief("first-principles")}
-                          className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl shadow-xs transition-all flex items-center gap-1.5 mx-auto"
-                        >
-                          <Sparkles className="w-3.5 h-3.5" /> Start First Principles rounds
-                        </button>
-                      </div>
-                    )}
-
-                  </div>
-
-                  {/* Interactive Rounds Mentor Chat (Unlimited)  */}
-                  <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-850 rounded-2xl p-4 space-y-4">
-                    <div className="flex items-center justify-between border-b pb-2.5">
-                      <div className="flex items-center gap-2">
-                        <Users className="w-4.5 h-4.5 text-indigo-500" />
-                        <div>
-                          <h4 className="font-bold text-slate-800 dark:text-white uppercase tracking-wide text-[11px]">
-                            Unlimited Rounds Educator Chat
-                          </h4>
-                          <p className="text-[10px] text-slate-400">Ask any case-related drug-dosing, management or physiological questions.</p>
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={handleSaveRoundsDraft}
-                        className="px-3 py-1.5 bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 dark:hover:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400 border border-emerald-200/80 dark:border-emerald-800 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
-                        title="Save rounds chat draft to patient record"
-                      >
-                        <BookmarkCheck className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
-                        <span>Save as Draft</span>
-                      </button>
-                    </div>
-
-                    {roundsDraftToast && (
-                      <div className="bg-emerald-600 text-white text-xs font-semibold px-3.5 py-2 rounded-xl flex items-center justify-between animate-fade-in shadow-sm">
-                        <span className="flex items-center gap-1.5">
-                          <Check className="w-4 h-4 text-white" />
-                          <span>Rounds chat saved as draft to patient record successfully!</span>
-                        </span>
-                        <span className="text-[9px] uppercase font-mono bg-emerald-700 px-2 py-0.5 rounded-full tracking-wider">Synced</span>
-                      </div>
-                    )}
-
-                    {/* Chat logs  */}
-                    <div className="space-y-3 max-h-80 overflow-y-auto scrollbar-thin pr-1">
-                      {roundsChatHistory.length === 0 && (
-                        <div className="py-4 text-center text-slate-400 text-[11px] bg-slate-50 dark:bg-slate-900/50 rounded-xl p-4">
-                          👨‍⚕️ Ask our attending educator for follow-ups! Tap an AI-suggested question below or type your own.
-                        </div>
-                      )}
-                      {roundsChatHistory.map((chat, idx) => (
-                        <div
-                          key={idx}
-                          className={`flex ${chat.role === "user" ? "justify-end" : "justify-start"} animate-fade-in`}
-                        >
-                          <div
-                            className={`max-w-[85%] rounded-2xl p-3.5 text-xs ${
-                              chat.role === "user"
-                                ? "bg-indigo-600 text-white font-medium rounded-tr-none shadow-xs"
-                                : "bg-slate-50 dark:bg-slate-900 border border-slate-200/60 dark:border-slate-800 text-slate-700 dark:text-slate-300 rounded-tl-none font-mono leading-relaxed whitespace-pre-wrap select-text"
-                            }`}
-                          >
-                            {chat.role === "user" ? (
-                              chat.text
-                            ) : (
-                              // Fast inline markdown renderer for chat response
-                              chat.text.split("\n").map((line, lIdx) => {
-                                if (line.startsWith("###")) {
-                                  return <strong key={lIdx} className="block text-slate-900 dark:text-white font-bold mt-2 first:mt-0">{line.replace("###", "").trim()}</strong>;
-                                }
-                                if (line.trim() === "") return <div key={lIdx} className="h-1.5" />;
-                                return (
-                                  <p key={lIdx} className="py-0.5">
-                                    {line.split("**").map((part, i) => i % 2 === 1 ? <strong key={i} className="font-bold text-slate-900 dark:text-white">{part}</strong> : part)}
-                                  </p>
-                                );
-                              })
-                            )}
-                          </div>
-                        </div>
-                      ))}
-                      {roundsChatLoading && (
-                        <div className="flex justify-start">
-                          <div className="bg-slate-50 dark:bg-slate-900 border border-slate-200/65 dark:border-slate-800 rounded-2xl rounded-tl-none p-3.5 max-w-[80%] flex items-center gap-2">
-                            <RefreshCw className="w-3.5 h-3.5 text-indigo-500 animate-spin" />
-                            <span className="text-[11px] font-mono text-slate-400">Attending formulating response...</span>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Dynamic follow-up chips generated by AI  */}
-                    {roundsSuggestedQuestions && roundsSuggestedQuestions.length > 0 && (
-                      <div className="space-y-1.5 pt-1.5">
-                        <span className="text-[9px] font-extrabold text-slate-400 uppercase tracking-wider font-mono">
-                          Suggested Rounds Follow-up Questions:
-                        </span>
-                        <div className="flex flex-col gap-1.5">
-                          {roundsSuggestedQuestions.slice(0, 3).map((q, idx) => (
-                            <button
-                              key={idx}
-                              onClick={() => {
-                                setRoundsUserMessage(q);
-                                handleRoundsChatSend(q);
-                              }}
-                              className="text-left px-3 py-2 bg-indigo-50/70 hover:bg-indigo-100/70 dark:bg-indigo-950/20 dark:hover:bg-indigo-950/45 text-indigo-700 dark:text-indigo-400 border border-indigo-100 dark:border-indigo-900/40 rounded-xl transition-all font-sans font-medium flex items-center justify-between"
-                            >
-                              <span>{q}</span>
-                              <ChevronRight className="w-3.5 h-3.5 shrink-0 ml-2" />
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Chat Input  */}
-                    <div className="relative flex items-end gap-2 bg-white dark:bg-slate-900 p-2 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xs">
-                      
-                      {/* 3-Dots Menu Button (More Actions)  */}
-                      <div className="relative" ref={roundsMoreMenuRef}>
-                        <button
-                          type="button"
-                          onClick={() => setShowRoundsMoreMenu(!showRoundsMoreMenu)}
-                          className={`p-2 rounded-lg hover:bg-slate-150 dark:hover:bg-slate-800 transition-colors flex items-center justify-center border border-slate-200 dark:border-slate-700 h-9 w-9 cursor-pointer ${showRoundsMoreMenu ? 'bg-slate-100 dark:bg-slate-800 text-indigo-600' : 'text-slate-500 dark:text-slate-400'}`}
-                          title="More Actions"
-                        >
-                          <MoreHorizontal className="w-4 h-4" />
-                        </button>
-
-                        {/* Popup Dropdown Menu  */}
-                        {showRoundsMoreMenu && (
-                          <div className="absolute left-0 bottom-full mb-2 z-50 w-56 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xl p-1.5 animate-fade-in flex flex-col space-y-0.5">
-                            <div className="px-2.5 py-1 text-[9px] font-extrabold text-slate-400 uppercase tracking-wider border-b border-slate-100 dark:border-slate-800/85 mb-1">
-                              Rounds Actions
-                            </div>
-                            
-                            <button
-                              type="button"
-                              onClick={() => {
-                                handleSaveRoundsDraft();
-                                setShowRoundsMoreMenu(false);
-                              }}
-                              className="w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-semibold text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/20 flex items-center gap-2 transition-colors cursor-pointer"
-                            >
-                              <BookmarkCheck className="w-4 h-4 text-emerald-500" />
-                              <span>Save Chat Draft</span>
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setRoundsChatHistory([]);
-                                setShowRoundsMoreMenu(false);
-                              }}
-                              className="w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-semibold text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/20 flex items-center gap-2 transition-colors cursor-pointer"
-                            >
-                              <span>Clear Conversation</span>
-                            </button>
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Main Textarea  */}
-                      <div className="flex-1">
-                        <textarea
-                          ref={roundsTextareaRef}
-                          rows={1}
-                          value={roundsUserMessage}
-                          onChange={(e) => setRoundsUserMessage(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter" && !e.shiftKey) {
-                              e.preventDefault();
-                              handleRoundsChatSend();
-                            }
-                          }}
-                          placeholder="Ask educator: 'Explain target perfusion pressure', 'Calculate weight dosage'..."
-                          className="w-full bg-transparent text-xs text-slate-900 dark:text-slate-100 focus:outline-none px-1 py-2 resize-none max-h-[160px] overflow-y-auto leading-relaxed"
-                        />
-                      </div>
-
-                      {/* Right side actions: WhatsApp-style dynamic Mic/Send toggle  */}
-                      <div className="flex items-center gap-1 shrink-0 pb-0.5">
-                        {roundsUserMessage.trim() === "" ? (
-                          <VoiceRecorder 
-                            renderMode="compact-button"
-                            onTranscript={(txt) => setRoundsUserMessage(prev => prev ? `${prev} ${txt}` : txt)} 
-                          />
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => handleRoundsChatSend()}
-                            disabled={roundsChatLoading}
-                            className="w-10 h-10 bg-indigo-600 hover:bg-indigo-700 text-white rounded-full flex items-center justify-center transition-all shadow-md active:scale-95 cursor-pointer"
-                            title="Send message"
-                          >
-                            <Send className="w-4.5 h-4.5" />
-                          </button>
-                        )}
-                      </div>
-
-                    </div>
-
-                  </div>
-
-                </div>
-
-                {/* Right Side: High-Yield Summary & Private Clinical Memory Portfolio  */}
-                <div className="space-y-4">
-                  
-                  {/* High-Yield Key Takeaway Box  */}
-                  {roundsKeyTakeaway && (
-                    <div className="bg-gradient-to-br from-amber-50 to-orange-50/50 dark:from-amber-950/15 dark:to-orange-950/5 border border-amber-200/50 dark:border-amber-900/30 p-4.5 rounded-2xl space-y-2 animate-fade-in shadow-xs">
-                      <div className="flex items-center gap-1.5">
-                        <Award className="w-4 h-4 text-amber-600 dark:text-amber-400" />
-                        <span className="text-[10px] font-extrabold text-amber-700 dark:text-amber-400 font-mono uppercase tracking-widest">
-                          High-Yield Clinical Takeaway
-                        </span>
-                      </div>
-                      <p className="text-xs font-semibold text-slate-850 dark:text-slate-200 leading-relaxed font-sans select-text">
-                        {roundsKeyTakeaway}
-                      </p>
-                    </div>
-                  )}
-
-                  {/* HIPAA Private Clinical Memory Sync  */}
-                  <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-850 rounded-2xl p-4 space-y-4">
-                    <div className="flex items-center gap-1.5 border-b pb-2">
-                      <BookOpen className="w-4 h-4 text-indigo-500" />
-                      <h4 className="font-bold text-slate-800 dark:text-white uppercase tracking-wide text-[11px]">
-                        Secure Clinical Career Memory
-                      </h4>
-                    </div>
-
-                    <p className="text-[11px] text-slate-400 leading-relaxed">
-                      Log this patient presentation's core physiological lesson to your lifelong, private learning ledger for self-reflection and professional progress logs.
-                    </p>
-
-                    {/* Core Pearl Textarea  */}
-                    <div className="space-y-1">
-                      <label className="block text-[10px] font-bold text-slate-400 font-mono uppercase tracking-wide">
-                        Core Learning Pearl (Editable)
-                      </label>
-                      <textarea
-                        rows={3}
-                        value={roundsMemoryKey}
-                        onChange={(e) => setRoundsMemoryKey(e.target.value)}
-                        placeholder="e.g. Always evaluate cardiac etiology in patients with atypical respiratory complaints."
-                        className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-xs text-slate-800 dark:text-slate-200 font-mono leading-relaxed"
-                      />
-                    </div>
-
-                    {/* Physician reflections notebooks  */}
-                    <div className="space-y-1">
-                      <label className="block text-[10px] font-bold text-slate-400 font-mono uppercase tracking-wide">
-                        Private Physician Reflections (Optional)
-                      </label>
-                      <textarea
-                        rows={3}
-                        value={roundsReflections}
-                        onChange={(e) => setRoundsReflections(e.target.value)}
-                        placeholder="Write personal takeaways: clinical pitfalls, confidence ratings, or follow-up references..."
-                        className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-xs text-slate-800 dark:text-slate-200 font-sans leading-relaxed"
-                      />
-                    </div>
-
-                    {/* Sync Action  */}
-                    <button
-                      type="button"
-                      onClick={() => saveCaseToClinicalMemory()}
-                      className={`w-full py-2.5 rounded-xl text-xs font-bold transition-all shadow-xs flex items-center justify-center gap-1.5 ${
-                        roundsSavedToMemory
-                          ? "bg-emerald-500 text-white hover:bg-emerald-600"
-                          : "bg-indigo-600 text-white hover:bg-indigo-700"
-                      }`}
-                    >
-                      {roundsSavedToMemory ? (
-                        <>
-                          <Check className="w-4 h-4 font-extrabold" /> Logged to Clinical Memory! 📓
-                        </>
-                      ) : (
-                        <>
-                          <Save className="w-3.5 h-3.5" /> Sync to Lifelong Clinical Ledger
-                        </>
-                      )}
-                    </button>
-
-                    <div className="text-[9px] font-semibold text-slate-400 text-center font-mono flex items-center justify-center gap-1">
-                      🔒 HIPAA compliant · Fully secure & stored offline
-                    </div>
-
-                  </div>
-
-                </div>
-
-              </div>
-
             </div>
           )}
 
@@ -6565,128 +5974,6 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
 
       </div>
 
-      {/* 3. Post-Save Clinical Debrief Nudge Modal  */}
-      {showPostSaveModal && (
-        <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-fade-in no-print">
-          <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-3xl w-full max-w-xl p-4 shadow-2xl space-y-4">
-            
-            {/* Success Banner  */}
-            <div className="text-center space-y-2">
-              <div className="w-12 h-12 bg-emerald-100 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 rounded-full flex items-center justify-center mx-auto shadow-sm">
-                <Check className="w-6 h-6 stroke-[3]" />
-              </div>
-              <h3 className="text-lg font-bold font-display text-slate-800 dark:text-white">
-                Case Successfully Saved & Committed! 🎉
-              </h3>
-              <p className="text-xs text-slate-500 max-w-md mx-auto">
-                Patient <strong>{currentCase.patient.name}</strong> ({currentCase.patient.age}y {currentCase.patient.gender}) has been securely logged. The discharge summary was synced in the background.
-              </p>
-            </div>
-
-            {/* Post-save nudge content  */}
-            <div className="bg-slate-50 dark:bg-slate-900/40 border border-slate-150 dark:border-slate-850 rounded-2xl p-4 space-y-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-1.5">
-                  <Sparkles className="w-4 h-4 text-indigo-500" />
-                  <span className="text-[10px] font-extrabold text-indigo-700 dark:text-indigo-400 font-mono uppercase tracking-widest">
-                    Quick Post-Save Clinical Lenses
-                  </span>
-                </div>
-                <span className="text-[9px] text-slate-400 font-mono">Select any lens for immediate debrief</span>
-              </div>
-
-              {/* Grid of 3 quick lenses  */}
-              <div className="grid grid-cols-3 gap-3">
-                {[
-                  { id: "first-principles" as const, label: "First Principles", icon: Brain, desc: "Physiologic deconstruction" },
-                  { id: "devils-advocate" as const, label: "Devil's Advocate", icon: ShieldAlert, desc: "Mimics & cognitive safety" },
-                  { id: "rare-but-real" as const, label: "Rare but Real", icon: AlertTriangle, desc: "Atypical red flags" }
-                ].map((lens) => {
-                  const Icon = lens.icon;
-                  return (
-                    <button
-                      key={lens.id}
-                      onClick={() => {
-                        fetchRoundsDebrief(lens.id);
-                        setActiveTab("rounds");
-                        setShowPostSaveModal(false);
-                      }}
-                      className="p-3 bg-white hover:bg-indigo-50/50 dark:bg-slate-950 dark:hover:bg-indigo-950/20 border border-slate-200 dark:border-slate-800 rounded-xl text-left transition-all hover:scale-[1.02] flex flex-col justify-between h-24 shadow-xs"
-                    >
-                      <div className="w-7 h-7 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-500 rounded-lg flex items-center justify-center">
-                        <Icon className="w-4 h-4" />
-                      </div>
-                      <div>
-                        <h4 className="font-extrabold text-[10px] text-slate-800 dark:text-white uppercase tracking-wide truncate">{lens.label}</h4>
-                        <p className="text-[8px] text-slate-400 line-clamp-2 mt-0.5">{lens.desc}</p>
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Quick Clinical Memory Save  */}
-            <div className="bg-gradient-to-br from-indigo-50 to-blue-50/40 dark:from-indigo-950/15 dark:to-blue-950/5 border border-indigo-150 dark:border-indigo-900/30 p-4 rounded-2xl flex items-center justify-between gap-4">
-              <div className="space-y-1">
-                <h4 className="font-bold text-indigo-950 dark:text-indigo-400 uppercase tracking-wide text-[10px]">
-                  Clinical Memory Portfolio Logging
-                </h4>
-                <p className="text-[10px] text-slate-500 leading-relaxed max-w-sm">
-                  Automatically extract this case's core medical pearl and save it to your private career diary.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  saveCaseToClinicalMemory();
-                }}
-                className={`px-4 py-2 rounded-xl text-[11px] font-bold transition-all shadow-xs shrink-0 flex items-center gap-1.5 ${
-                  roundsSavedToMemory
-                    ? "bg-emerald-500 text-white"
-                    : "bg-indigo-600 hover:bg-indigo-700 text-white"
-                }`}
-              >
-                {roundsSavedToMemory ? (
-                  <>
-                    <Check className="w-3.5 h-3.5" /> Logged! 📓
-                  </>
-                ) : (
-                  <>
-                    <BookOpen className="w-3.5 h-3.5" /> Log Case Pearl
-                  </>
-                )}
-              </button>
-            </div>
-
-            {/* Modal Actions  */}
-            <div className="flex justify-end gap-3 pt-2">
-              <button
-                type="button"
-                onClick={() => {
-                  setShowPostSaveModal(false);
-                  onBack(); // Return to cases/dashboard
-                }}
-                className="px-4 py-2.5 border border-slate-200 dark:border-slate-800 text-slate-500 hover:text-slate-800 dark:hover:text-slate-300 text-xs font-bold rounded-xl transition-all"
-              >
-                Dismiss & Exit Case
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setActiveTab("rounds");
-                  setShowPostSaveModal(false);
-                }}
-                className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl shadow-xs transition-all flex items-center gap-1.5"
-              >
-                Open 7-Lens Rounds <ChevronRight className="w-4 h-4" />
-              </button>
-            </div>
-
-          </div>
-        </div>
-      )}
-
       {/* View Case Sheet PDF Modal Preview Overlay  */}
       {showPdfModal && (
         <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 md:p-4 animate-fade-in no-print">
@@ -7301,6 +6588,47 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
         />
       )}
 
+
+      {/* Unified Case Chat Workspace (Internal Standalone Fallback) */}
+      {showInternalRoundsWorkspace && (
+        <CaseChatWorkspace
+          isOpen={showInternalRoundsWorkspace}
+          onClose={() => setShowInternalRoundsWorkspace(false)}
+          initialMode="rounds"
+          context={{
+            type: "case",
+            id: currentCase.id,
+            data: currentCase,
+            initialMode: "rounds",
+            onRecordUpdated: (updated) => {
+              setCurrentCase(prev => ({ ...prev, ...updated }));
+              if (onSaveCase && !isPreview) {
+                onSaveCase({ ...currentCase, ...updated });
+              }
+            }
+          }}
+        />
+      )}
+
+      {showInternalDiscussWorkspace && (
+        <CaseChatWorkspace
+          isOpen={showInternalDiscussWorkspace}
+          onClose={() => setShowInternalDiscussWorkspace(false)}
+          initialMode="discuss"
+          context={{
+            type: "case",
+            id: currentCase.id,
+            data: currentCase,
+            initialMode: "discuss",
+            onRecordUpdated: (updated) => {
+              setCurrentCase(prev => ({ ...prev, ...updated }));
+              if (onSaveCase && !isPreview) {
+                onSaveCase({ ...currentCase, ...updated });
+              }
+            }
+          }}
+        />
+      )}
 </div>
   );
 }

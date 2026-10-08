@@ -218,11 +218,26 @@ export async function executeRoundsDebriefWithFailover(
     const claudeResult = await callClaudePrimary(safePrompt, systemInstruction, true);
     if (claudeResult.text) {
       const parsed = parseJsonSafe(claudeResult.text);
-      if (parsed && typeof parsed === "object" && parsed.content) {
+      if (parsed && typeof parsed === "object" && (parsed.content || parsed.response)) {
+        const textContent = parsed.content || parsed.response;
         return {
           success: true,
-          response: parsed.content,
-          data: parsed,
+          response: textContent,
+          data: {
+            ...parsed,
+            content: textContent,
+            usedLenses: Array.isArray(parsed.usedLenses) ? parsed.usedLenses : []
+          },
+          provider: "anthropic"
+        };
+      } else if (claudeResult.text.trim().length > 5) {
+        return {
+          success: true,
+          response: claudeResult.text.trim(),
+          data: {
+            content: claudeResult.text.trim(),
+            usedLenses: []
+          },
           provider: "anthropic"
         };
       }
@@ -237,11 +252,26 @@ export async function executeRoundsDebriefWithFailover(
     const openAIResult = await callOpenAIFallback(safePrompt, systemInstruction, true);
     if (openAIResult.text) {
       const parsed = parseJsonSafe(openAIResult.text);
-      if (parsed && typeof parsed === "object" && parsed.content) {
+      if (parsed && typeof parsed === "object" && (parsed.content || parsed.response)) {
+        const textContent = parsed.content || parsed.response;
         return {
           success: true,
-          response: parsed.content,
-          data: parsed,
+          response: textContent,
+          data: {
+            ...parsed,
+            content: textContent,
+            usedLenses: Array.isArray(parsed.usedLenses) ? parsed.usedLenses : []
+          },
+          provider: "openai"
+        };
+      } else if (openAIResult.text.trim().length > 5) {
+        return {
+          success: true,
+          response: openAIResult.text.trim(),
+          data: {
+            content: openAIResult.text.trim(),
+            usedLenses: []
+          },
           provider: "openai"
         };
       }

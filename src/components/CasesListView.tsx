@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { ConfirmModal } from "./shared/ConfirmModal";
-import { Search, Filter, Plus, Calendar, Activity, Eye, Edit, Trash2, Clock, CheckCircle, ChevronLeft, MessageSquare, FileText, Bed, X, AlertTriangle } from "lucide-react";
+import { Search, Filter, Plus, Calendar, Activity, Eye, Edit, Trash2, Clock, CheckCircle, ChevronLeft, MessageSquare, FileText, Bed, X, AlertTriangle, GraduationCap } from "lucide-react";
 import { ClinicalCase } from "../types";
 
 interface CasesListViewProps {
@@ -12,7 +12,7 @@ interface CasesListViewProps {
   onStartFullFlow: () => void;
   onStartQuickCase: () => void;
   onNavigateToTab?: (tabId: string) => void;
-  onDiscussCase?: (patientCase: ClinicalCase) => void;
+  onDiscussCase?: (patientCase: ClinicalCase, mode?: "discuss" | "rounds") => void;
   onDeleteAllCases?: () => void;
   onAssignBed?: (caseId: string, bedInput: string) => Promise<{ success: boolean; error?: string; assignedBed?: string }>;
   physicalBedCapacity?: number;
@@ -372,12 +372,22 @@ export default function CasesListView({
                   <div className="flex items-center gap-1.5">
                     {onDiscussCase && (
                       <button
-                        onClick={() => onDiscussCase(c)}
+                        onClick={() => onDiscussCase(c, "discuss")}
                         className="px-2 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 dark:bg-blue-950/40 dark:hover:bg-blue-900/60 dark:text-blue-300 border border-blue-200 dark:border-blue-800 rounded-lg text-xs font-semibold transition-all flex items-center gap-1"
                         title="Discuss case with AI Assistant"
                       >
                         <MessageSquare className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
                         <span>Discuss</span>
+                      </button>
+                    )}
+                    {onDiscussCase && (
+                      <button
+                        onClick={() => onDiscussCase(c, "rounds")}
+                        className="px-2 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 dark:bg-indigo-950/40 dark:hover:bg-indigo-900/60 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 rounded-lg text-xs font-semibold transition-all flex items-center gap-1"
+                        title="7-Lens Clinical Rounds learning & debrief"
+                      >
+                        <GraduationCap className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+                        <span>Rounds</span>
                       </button>
                     )}
                     <button

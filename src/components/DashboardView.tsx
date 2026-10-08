@@ -57,7 +57,7 @@ interface DashboardViewProps {
   onUpdateRole?: (id: string, role: string) => Promise<void>;
   shifts?: any[];
   pendingContributionsCount?: number;
-  onDiscussCase?: (patientCase: ClinicalCase) => void;
+  onDiscussCase?: (patientCase: ClinicalCase, mode?: "discuss" | "rounds") => void;
   onStartDischargeSummary?: () => void;
   onDeleteAllCases?: () => void;
   onDeleteCase?: (caseId: string) => void;
@@ -1229,12 +1229,23 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
                   {onDiscussCase && (
                     <button
                       type="button"
-                      onClick={() => onDiscussCase(pc)}
-                      className="px-3 py-2 bg-blue-50 hover:bg-blue-100 text-blue-700 dark:bg-blue-950/40 dark:hover:bg-blue-900/60 dark:text-blue-300 border border-blue-200 dark:border-blue-800 rounded-lg text-[10.5px] font-bold transition-all flex items-center gap-1.5 shrink-0"
+                      onClick={() => onDiscussCase(pc, "discuss")}
+                      className="px-2.5 py-2 bg-blue-50 hover:bg-blue-100 text-blue-700 dark:bg-blue-950/40 dark:hover:bg-blue-900/60 dark:text-blue-300 border border-blue-200 dark:border-blue-800 rounded-lg text-[10.5px] font-bold transition-all flex items-center gap-1 shrink-0"
                       title="Discuss case with AI Assistant"
                     >
                       <MessageSquare className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
                       <span>Discuss</span>
+                    </button>
+                  )}
+                  {onDiscussCase && (
+                    <button
+                      type="button"
+                      onClick={() => onDiscussCase(pc, "rounds")}
+                      className="px-2.5 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 dark:bg-indigo-950/40 dark:hover:bg-indigo-900/60 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 rounded-lg text-[10.5px] font-bold transition-all flex items-center gap-1 shrink-0"
+                      title="7-Lens Clinical Rounds & Debrief"
+                    >
+                      <GraduationCap className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+                      <span>Rounds</span>
                     </button>
                   )}
                   <button

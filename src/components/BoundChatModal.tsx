@@ -19,9 +19,9 @@ import {
 } from 'lucide-react';
 import { useBoundChat, ChatContext } from '../hooks/useBoundChat';
 import { getDisplayCaseId } from '../utils/caseIdentity';
-import { CaseDiscussWorkspace } from './CaseDiscussWorkspace';
+import { CaseChatWorkspace, CaseDiscussWorkspace } from './CaseChatWorkspace';
 
-export { CaseDiscussWorkspace };
+export { CaseChatWorkspace, CaseDiscussWorkspace };
 
 interface BoundChatModalProps {
   context: ChatContext;
@@ -30,11 +30,12 @@ interface BoundChatModalProps {
   isOpen: boolean;
   onClose: () => void;
   title?: string;
+  initialMode?: 'discuss' | 'rounds';
 }
 
 export const BoundChatModal: React.FC<BoundChatModalProps> = (props) => {
-  if (props.context.type === 'case') {
-    return <CaseDiscussWorkspace {...props} />;
+  if (props.context.type === 'case' || props.context.type === 'rounds') {
+    return <CaseChatWorkspace {...props} initialMode={props.initialMode || props.context.initialMode} />;
   }
 
   const {

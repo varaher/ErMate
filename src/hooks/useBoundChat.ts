@@ -17,12 +17,13 @@ import { authenticatedFetch, AuthRequiredError } from '../services/authenticated
 import { getDisplayCaseId } from '../utils/caseIdentity';
 
 export interface ChatContext {
-  type: 'case' | 'handover' | 'discharge' | 'mortality_audit' | 'reference' | 'general';
+  type: 'case' | 'handover' | 'discharge' | 'mortality_audit' | 'reference' | 'general' | 'rounds';
   id: string; // parent record ID or user reference ID
   data: Record<string, any>; // full record data or reference state
   pendingClinicalContext?: Record<string, any>; // unapplied Scribe extraction for same case
   canEdit?: boolean; // can update parent?
   onRecordUpdated?: (updatedData: Record<string, any>) => void;
+  initialMode?: 'discuss' | 'rounds';
 }
 
 export interface ChatMessage {
@@ -31,9 +32,20 @@ export interface ChatMessage {
   content: string;
   timestamp: string;
   suggestedUpdate?: Record<string, any> | null;
+  usedLenses?: string[];
 }
 
-export function useBoundChat(context: ChatContext) {
+export function useBoundChat(context: ChatContext, initialModeOverride?: 'discuss' | 'rounds') {
+  const [chatMode, setChatMode] = useState<'discuss' | 'rounds'>(
+    initialModeOverride || context.initialMode || (context.type === 'rounds' ? 'rounds' : 'discuss')
+  );
+
+  useEffect(() => {
+    const desired = initialModeOverride || context.initialMode;
+    if (desired && (desired === 'discuss' || desired === 'rounds') && desired !== chatMode) {
+      setChatMode(desired);
+    }
+  }, [initialModeOverride, context.initialMode]);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
@@ -41,37 +53,62 @@ export function useBoundChat(context: ChatContext) {
   const [pendingUpdates, setPendingUpdates] = useState<Record<string, any> | null>(null);
   const [bannerNotice, setBannerNotice] = useState<string | null>(null);
 
+  const getStorageKey = (mode: 'discuss' | 'rounds') => {
+    if (context.type === 'case') {
+      return mode === 'rounds'
+        ? `ermate_chat_session_rounds_${context.id}`
+        : `ermate_chat_session_case_${context.id}`;
+    }
+    return `ermate_chat_session_${context.type}_${context.id}`;
+  };
+
   useEffect(() => {
     if (!context.id) {
       setLoading(false);
       return;
     }
-    loadOrCreateSession();
-  }, [context.id, context.type]);
+    loadOrCreateSession(chatMode);
+  }, [context.id, context.type, chatMode]);
 
-  const loadOrCreateSession = async () => {
+  const loadOrCreateSession = async (mode: 'discuss' | 'rounds') => {
     setLoading(true);
     const currentUserUid = auth.currentUser?.uid || 'guest_user';
+    const storageKey = getStorageKey(mode);
 
     try {
+      // LocalStorage check first for immediate responsiveness
+      const savedLocal = localStorage.getItem(storageKey);
+      if (savedLocal) {
+        try {
+          const parsed = JSON.parse(savedLocal);
+          if (parsed && Array.isArray(parsed.messages) && parsed.messages.length > 0) {
+            setSessionId(parsed.id || `local_${Date.now()}`);
+            setMessages(parsed.messages);
+            setPendingUpdates(parsed.pendingUpdates || null);
+            setLoading(false);
+            return;
+          }
+        } catch (e) {
+          console.warn('[BoundChat] Local parse error:', e);
+        }
+      }
+
       if (db) {
-        // Simplified query to bypass Firestore composite index requirements
         const q = query(
           collection(db, 'chatSessions'),
           where('contextId', '==', context.id)
         );
 
-        
-        const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000));
+        const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2500));
         const snap = await Promise.race([getDocs(q), timeoutPromise]).catch((e) => {
           console.warn('[BoundChat] Firestore query fallback or timeout:', e);
           return null;
         });
 
         if (snap && !(snap as any).empty) {
-          // Filter and sort client-side to avoid needing a composite index
+          const expectedContextType = mode === 'rounds' ? 'rounds' : context.type;
           const validDocs = (snap as any).docs
-            .filter(d => d.data().createdBy === currentUserUid && d.data().contextType === context.type)
+            .filter(d => d.data().createdBy === currentUserUid && (d.data().contextType === expectedContextType || d.data().chatMode === mode))
             .sort((a, b) => {
               const timeA = a.data().lastMessageAt?.toMillis?.() || new Date(a.data().createdAt || 0).getTime();
               const timeB = b.data().lastMessageAt?.toMillis?.() || new Date(b.data().createdAt || 0).getTime();
@@ -92,28 +129,11 @@ export function useBoundChat(context: ChatContext) {
         }
       }
 
-      // LocalStorage fallback
-      const localKey = `ermate_chat_session_${context.type}_${context.id}`;
-      const savedLocal = localStorage.getItem(localKey);
-      if (savedLocal) {
-        try {
-          const parsed = JSON.parse(savedLocal);
-          if (parsed && Array.isArray(parsed.messages)) {
-            setSessionId(parsed.id || `local_${Date.now()}`);
-            setMessages(parsed.messages);
-            setPendingUpdates(parsed.pendingUpdates || null);
-            setLoading(false);
-            return;
-          }
-        } catch (e) {
-          console.warn('[BoundChat] Local parse error:', e);
-        }
-      }
-
-      // Create new session
-      const welcomeMsg = buildWelcomeMessage(context);
+      // Create new session with concise opening message (Section P)
+      const welcomeMsg = buildWelcomeMessage(context, mode);
       const newSessionData = {
-        contextType: context.type,
+        contextType: mode === 'rounds' ? 'rounds' : context.type,
+        chatMode: mode,
         contextId: context.id,
         contextRef: `${context.type}s/${context.id}`,
         createdAt: new Date().toISOString(),
@@ -122,9 +142,6 @@ export function useBoundChat(context: ChatContext) {
         messages: [welcomeMsg],
         pendingUpdates: null,
       };
-
-      
-
 
       let newDocId = `session_${Date.now()}`;
       if (db) {
@@ -146,70 +163,12 @@ export function useBoundChat(context: ChatContext) {
       setSessionId(newDocId);
       setMessages([welcomeMsg]);
       localStorage.setItem(
-        `ermate_chat_session_${context.type}_${context.id}`,
+        storageKey,
         JSON.stringify({ id: newDocId, messages: [welcomeMsg] })
       );
-
-// Trigger automatic AI summary generation asynchronously
-      setTimeout(async () => {
-        try {
-          const summaryPrompt = "Please provide a concise clinical summary of this case based on the provided record, and then ask me what I would like to focus on or what follow-up queries I have.";
-          setSending(true);
-          const response = await authenticatedFetch('/api/case-discussion', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              message: summaryPrompt,
-              contextType: context.type,
-              contextData: context.data,
-              caseData: context.data,
-              history: [],
-              messages: [{ sender: 'user', text: summaryPrompt }]
-            }),
-          });
-          const data = await response.json();
-          const assistantContent = data.response || "Summary unavailable.";
-          const assistantMsg: ChatMessage = {
-            role: 'assistant',
-            content: assistantContent,
-            timestamp: new Date().toISOString()
-          };
-          
-          setMessages(prev => {
-            const newMsgs = [...prev, assistantMsg];
-            // Save local
-            localStorage.setItem(
-              `ermate_chat_session_${context.type}_${context.id}`,
-              JSON.stringify({ id: newDocId, messages: newMsgs })
-            );
-            return newMsgs;
-          });
-          
-          if (db && newDocId) {
-             updateDoc(doc(db, 'chatSessions', newDocId), {
-                messages: [welcomeMsg, assistantMsg],
-                lastMessageAt: serverTimestamp()
-             }).catch(() => {});
-          }
-        } catch (e: any) {
-          console.warn('Failed to auto-generate summary', e);
-          if (e instanceof AuthRequiredError) {
-            setMessages(prev => [
-              ...prev,
-              {
-                role: 'assistant',
-                content: 'Your session needs to be refreshed. Please sign in again.',
-                timestamp: new Date().toISOString()
-              }
-            ]);
-          }
-        } finally {
-          setSending(false);
-        }
-      }, 500);
     } catch (err) {
       console.error('[BoundChat] Initialization error:', err);
-      const welcomeMsg = buildWelcomeMessage(context);
+      const welcomeMsg = buildWelcomeMessage(context, mode);
       setMessages([welcomeMsg]);
       setSessionId(`fallback_${Date.now()}`);
     } finally {
@@ -233,40 +192,72 @@ export function useBoundChat(context: ChatContext) {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 25000);
 
+    const storageKey = getStorageKey(chatMode);
+
     try {
-      const response = await authenticatedFetch('/api/case-discussion', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        signal: controller.signal,
-        body: JSON.stringify({
-          message: userText,
-          contextType: context.type,
-          contextData: context.data,
-          caseData: context.data,
-          pendingClinicalContext: context.pendingClinicalContext || undefined,
-          history: messages,
-          messages: updatedMessages.map((m) => ({
-            sender: m.role === 'user' ? 'user' : 'ai',
-            text: m.content,
-          })),
-        }),
-      });
-      clearTimeout(timeoutId);
+      let assistantContent = "";
+      let suggestedUpdate = null;
+      let usedLenses: string[] = [];
 
-      const data = await response.json().catch(() => ({}));
+      if (chatMode === 'rounds') {
+        // ROUNDS MODE: route to /api/rounds-debrief with 7-lens synthesis
+        const response = await authenticatedFetch('/api/rounds-debrief', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          signal: controller.signal,
+          body: JSON.stringify({
+            caseData: context.data,
+            userMessage: userText,
+            message: userText,
+            lens: 'auto',
+            pendingClinicalContext: context.pendingClinicalContext || undefined,
+            chatHistory: messages,
+            messages: updatedMessages.map(m => ({ sender: m.role, text: m.content }))
+          })
+        });
+        clearTimeout(timeoutId);
 
-      const assistantContent = data.response || data.reply || (response.ok 
-        ? "I have analyzed the request based on this record's clinical context."
-        : "I couldn't complete that response right now. Please try again.");
-      const suggestedUpdate = data.suggestedUpdate || null;
+        const data = await response.json().catch(() => ({}));
+        assistantContent = data.response || data.reply || data.data?.content || (response.ok
+          ? "Rounds debrief generated based on clinical case facts."
+          : "I couldn't complete that response right now. Please try again.");
+        usedLenses = Array.isArray(data.usedLenses)
+          ? data.usedLenses
+          : (Array.isArray(data.data?.usedLenses) ? data.data.usedLenses : []);
+      } else {
+        // DISCUSS MODE: route to /api/case-discussion for practical action-oriented conversation
+        const response = await authenticatedFetch('/api/case-discussion', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          signal: controller.signal,
+          body: JSON.stringify({
+            message: userText,
+            contextType: context.type,
+            contextData: context.data,
+            caseData: context.data,
+            pendingClinicalContext: context.pendingClinicalContext || undefined,
+            history: messages,
+            messages: updatedMessages.map((m) => ({
+              sender: m.role === 'user' ? 'user' : 'ai',
+              text: m.content,
+            })),
+          }),
+        });
+        clearTimeout(timeoutId);
+
+        const data = await response.json().catch(() => ({}));
+        assistantContent = data.response || data.reply || (response.ok 
+          ? "I have analyzed the request based on this record's clinical context."
+          : "I couldn't complete that response right now. Please try again.");
+        suggestedUpdate = data.suggestedUpdate || null;
+      }
 
       const assistantMsg: ChatMessage = {
         role: 'assistant',
         content: assistantContent,
         timestamp: new Date().toISOString(),
         suggestedUpdate: suggestedUpdate,
+        usedLenses: usedLenses.length > 0 ? usedLenses : undefined
       };
 
       const finalMessages = [...updatedMessages, assistantMsg];
@@ -277,7 +268,7 @@ export function useBoundChat(context: ChatContext) {
       }
 
       localStorage.setItem(
-        `ermate_chat_session_${context.type}_${context.id}`,
+        storageKey,
         JSON.stringify({
           id: sessionId,
           messages: finalMessages,
@@ -365,36 +356,28 @@ export function useBoundChat(context: ChatContext) {
     sendMessage,
     applyUpdate,
     dismissUpdate,
+    chatMode,
+    setChatMode,
   };
 }
 
-function buildWelcomeMessage(context: ChatContext): ChatMessage {
+function buildWelcomeMessage(context: ChatContext, mode: 'discuss' | 'rounds' = 'discuss'): ChatMessage {
   const d = context.data || {};
 
   let welcomeText = '';
 
   switch (context.type) {
     case 'case': {
-      const bed = d.bedNo || d.patient?.bed;
-      const displayId = getDisplayCaseId(d);
-      const pending = context.pendingClinicalContext;
-      const savedComplaint = d.patient?.presentingComplaint || d.chiefComplaint;
-      const pendingComplaint = pending?.presentingComplaint;
+      if (mode === 'rounds') {
+        welcomeText = "Let's learn from this case. Ask anything, prepare for rounds, or say 'Quiz me'.";
+      } else {
+        welcomeText = "Ready to discuss this patient. What would you like to focus on?";
+      }
+      break;
+    }
 
-      const age = d.patient?.age ?? pending?.patient?.age;
-      const rawGender = d.patient?.gender ?? pending?.patient?.gender;
-      const gender = rawGender ? (rawGender.toUpperCase().startsWith('M') ? 'M' : rawGender.toUpperCase().startsWith('F') ? 'F' : 'O') : '';
-      const ageGender = [age !== undefined && age !== null ? `${age}` : '', gender].filter(Boolean).join(' ');
-
-      const complaintToShow = savedComplaint || pendingComplaint || d.dischargeInfo?.primaryDiagnosis || d.provisionalPrimaryDiagnosis || 'Emergency evaluation';
-      const hasPendingDetailsOnly = !savedComplaint && !!pendingComplaint;
-
-      const headerTitle = bed ? `Discussing Bed ${bed}` : `Discussing Case ${displayId}`;
-      const subtitle = [ageGender, complaintToShow].filter(Boolean).join(' • ');
-
-      welcomeText = `${headerTitle}${subtitle ? `\n${subtitle}` : ''}${hasPendingDetailsOnly ? '\n\n*Some details are still pending Case Sheet confirmation.*' : ''}
-
-Ask me anything about this patient — differentials, management questions, drug doses, investigation review, or next steps.`;
+    case 'rounds': {
+      welcomeText = "Let's learn from this case. Ask anything, prepare for rounds, or say 'Quiz me'.";
       break;
     }
 

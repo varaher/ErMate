@@ -45,6 +45,31 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-07] — ErMate: Unified Discuss + Rounds Full-Screen Case Chat (7-Lens Learning Mode Refactor)
+- **One Shared Full-Screen Case Chat Component (`src/components/CaseChatWorkspace.tsx`, `src/components/CaseDiscussWorkspace.tsx`, `src/components/BoundChatModal.tsx`)**:
+  - Replaced fragmented, cramped separate Rounds UI and Discuss modal with a single reusable, full-screen case chat shell (`CaseChatWorkspace`).
+  - Supports two seamless modes toggled via a clean segmented control in the top bar:
+    1. **DISCUSS**: Concise, practical, case-specific, action-oriented clinical assistant routing to `/api/case-discussion`. Supports suggested record updates with one-tap `[ Apply ]` action.
+    2. **ROUNDS**: Conversational 7-lens learning experience routing to `/api/rounds-debrief`. READ-ONLY LEARNING mode: never mutates or suggests edits to the clinical record.
+  - Shared visual architecture: Patient header (`Bed 14A • 261007001`), expandable read-only patient context summary (demographics, vitals, SAMPLE, ABCDE, focused exam, labs, treatments, procedures, progress notes, differentials, disposition), sticky bottom composer with inline Sarvam voice recorder (`renderMode="inline-composer"`), and mobile-responsive viewport (`fixed inset-0 z-50 w-screen h-screen` on mobile, `max-w-5xl mx-auto` on desktop).
+- **Conversational 7-Lens Pedagogy & Automatic Synthesis (`server.ts`, `server/aiProviderFailover.ts`, `src/hooks/useBoundChat.ts`)**:
+  - Eliminated the requirement to manually choose a lens first or navigate across 7 large separate UI panels. ErMate automatically synthesizes relevant lenses (First Principles, Pathophysiology, Guidelines, Devil's Advocate, Rare but Real, Disease Snapshot, Full Debrief) into one coherent teaching answer.
+  - Response style: Short direct explanation, 3–6 focused high-yield bullets, and one targeted clinical question.
+  - Informational subtle indicator line (`Used: First Principles · Pathophysiology · Guidelines`) rendered cleanly below assistant responses when `usedLenses` are returned.
+  - Explicit lens requests (e.g. "Explain from First Principles", "Use Devil's Advocate") are honored and prioritized.
+  - Interactive **Quiz Mode**: When the user requests ("Quiz me", "Prepare me for rounds", "Ask me questions"), ErMate asks exactly ONE focused question at a time, evaluates the resident's response, affirms correct reasoning, points out missed traps, and poses the next question.
+  - **Consultant Teaching Preparation**: When asked ("Prepare teaching rounds for this patient"), returns key teaching objectives, high-yield questions with expected answers, and common cognitive traps.
+- **Strict Session Isolation & Parity (`src/hooks/useBoundChat.ts`)**:
+  - Storage keys are strictly separated per patient: `ermate_chat_session_case_${caseId}` for Discuss and `ermate_chat_session_rounds_${caseId}` for Rounds, permanently preventing history cross-contamination.
+  - Passes identical selected-case context to both `/api/case-discussion` and `/api/rounds-debrief`.
+  - Same-case pending Scribe dictation extraction is delivered to both modes as tentative conversational context without mutating canonical `ClinicalCase`.
+- **Case Sheet Integration & Elimination of Legacy Multi-Panel UI (`src/components/CaseSheetView.tsx`)**:
+  - Removed over 32KB of legacy multi-lens tabbed UI, manual 8-lens card grids, separate rounds chat, and clinical memory pearl inputs from `CaseSheetView.tsx`.
+  - Clicking the "Rounds" tab button or top action bar "Rounds" button directly opens the full-screen `CaseChatWorkspace` in Rounds mode.
+  - Direct 1-tap "Discuss" and "Rounds" buttons added to the Case Sheet top action bar, Dashboard patient cards, and Cases list view.
+- **Verification (`verify_unified_case_chat_workspace.ts` — 20 / 20 PASS)**:
+  - 100% test pass rate across all 20 unified chat specifications, with 0 regressions in case discuss (25/25), inline voice recorder (18/18), header refresh/notifications (16/16), more profile restructure (10/10), clinical narrative quality (20/20), discharge preview integrity (20/20), and documentation regression (19/19) suites. Production build succeeds with 0 errors.
+
 ### [2026-10-07] — ErMate: Course in Hospital Narrative Format Correction (Pure Chronological Clinical Narrative)
 - **Elimination of Fixed 9-Section Structured Headings (`server/dischargeSummary.ts`, `server.ts`, `server/aiDiagnosis.ts`, `src/utils/dischargeSyncEngine.ts`)**:
   - Replaced the rigid multi-section structure ("Presentation:", "Events Leading to Presentation:", "Initial Assessment:", "Investigations:", "Treatment Given:", "Procedures:", "Clinical Course:", "Disposition:") with ONE coherent, chronological clinical narrative describing what happened during the ER encounter.

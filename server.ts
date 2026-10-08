@@ -1382,13 +1382,16 @@ app.post("/api/ai-discharge", async (req, res) => {
   }
 });
 
-// 5.5. Unlimited Clinical Rounds & 7-Lens Case Debrief API (Locked to Claude Sonnet)
+// 5.5. Unified Clinical Rounds & 7-Lens Case Debrief API (Locked to Claude Sonnet)
 app.post("/api/rounds-debrief", requireAuth, async (req: AuthRequest, res) => {
-  const { caseData, lens, userMessage, chatHistory } = req.body;
+  const { caseData, lens, userMessage, message, chatHistory, messages, pendingClinicalContext } = req.body;
 
   if (!caseData) {
     return res.status(400).json({ error: "Patient case data is required" });
   }
+
+  const effectiveUserMessage = userMessage || message || "";
+  const effectiveHistory = chatHistory || messages || [];
 
   // DPDP Act 2023 Server-side De-identification (Rule 4)
   const safeName = deidentifyText(caseData.patient?.name || "Anonymous Patient").deidentified;
@@ -1449,6 +1452,74 @@ Secondary Diagnosis: ${dischargeInfo.secondaryDiagnosis || "N/A"}
 Condition at Discharge/Terminal: ${dischargeInfo.conditionAtDischarge || "N/A"}
 Follow-Up / Summary: ${deidentifyText(dischargeInfo.followUpPlan || "N/A").deidentified}`;
 
+  // Check for pending unapplied Scribe dictation context (Patch Discuss/Rounds Parity)
+  const pendingCtx = pendingClinicalContext || req.body?.pendingClinicalContext;
+  let pendingPromptSection = "";
+  if (pendingCtx && typeof pendingCtx === "object" && Object.keys(pendingCtx).length > 0) {
+    const pendingLines: string[] = [];
+    if (pendingCtx.presentingComplaint) {
+      pendingLines.push(`- Pending Chief Complaint: ${deidentifyText(pendingCtx.presentingComplaint).deidentified}`);
+    }
+    if (pendingCtx.vitals) {
+      const pv = pendingCtx.vitals;
+      pendingLines.push(`- Pending Vitals: BP ${pv.bp || 'N/A'}, HR ${pv.hr || 'N/A'}, SpO2 ${pv.spo2 || 'N/A'}, RR ${pv.rr || 'N/A'}, Temp ${pv.temp || 'N/A'}`);
+    }
+    if (pendingCtx.sampleHistory) {
+      const ps = pendingCtx.sampleHistory;
+      if (ps.symptoms) pendingLines.push(`- Pending Symptoms: ${deidentifyText(ps.symptoms).deidentified}`);
+      if (ps.allergies) pendingLines.push(`- Pending Allergies: ${deidentifyText(ps.allergies).deidentified}`);
+      if (ps.medications) pendingLines.push(`- Pending Medications: ${deidentifyText(ps.medications).deidentified}`);
+      if (ps.pastHistory) pendingLines.push(`- Pending Past History: ${deidentifyText(ps.pastHistory).deidentified}`);
+      if (ps.events) pendingLines.push(`- Pending Events: ${deidentifyText(ps.events).deidentified}`);
+    }
+    if (pendingCtx.primaryAssessment) {
+      const pa = pendingCtx.primaryAssessment;
+      pendingLines.push(`- Pending Primary Assessment: Airway ${pa.airway || '-'}, Breathing ${pa.breathing || '-'}, Circulation ${pa.circulation || '-'}, Disability ${pa.disability || '-'}`);
+    }
+    if (pendingCtx.secondarySurvey) {
+      const ss = pendingCtx.secondarySurvey;
+      const sLines: string[] = [];
+      if (ss.generalExam) sLines.push(`General: ${ss.generalExam}`);
+      if (ss.chest) sLines.push(`Chest: ${ss.chest}`);
+      if (ss.abdomen) sLines.push(`Abdomen: ${ss.abdomen}`);
+      if (ss.neurological) sLines.push(`Neuro: ${ss.neurological}`);
+      if (sLines.length > 0) pendingLines.push(`- Pending Physical Exam: ${sLines.join('; ')}`);
+    }
+    if (pendingCtx.provisionalDiagnosis || pendingCtx.provisionalPrimaryDiagnosis) {
+      pendingLines.push(`- Pending Provisional Diagnosis: ${pendingCtx.provisionalDiagnosis || pendingCtx.provisionalPrimaryDiagnosis}`);
+    }
+    if (Array.isArray(pendingCtx.treatments) && pendingCtx.treatments.length > 0) {
+      pendingLines.push(`- Pending Treatments: ${pendingCtx.treatments.map((t: any) => `${t.drugName || t.name} ${t.dose || ''}`).join(', ')}`);
+    }
+    if (Array.isArray(pendingCtx.investigations) && pendingCtx.investigations.length > 0) {
+      pendingLines.push(`- Pending Investigations: ${pendingCtx.investigations.map((i: any) => `${i.testName || i.name}: ${i.result || i.value || 'Ordered'}`).join(', ')}`);
+    }
+
+    if (pendingLines.length > 0) {
+      pendingPromptSection = `
+=== PENDING CLINICIAN DICTATION — NOT YET APPLIED TO CASE SHEET ===
+IMPORTANT NOTICE: The following clinical details were extracted from the clinician's recent Scribe dictation for this exact patient, but have NOT YET been applied or confirmed into the official Case Sheet:
+${pendingLines.join("\n")}
+Treat these details as tentative clinical context from the current encounter. You may discuss them conversationally, but acknowledge they are unconfirmed if asked.
+==================================================================
+`;
+    }
+  }
+
+  // Detect explicit lens from message or parameter
+  const lowerMsg = effectiveUserMessage.toLowerCase();
+  let requestedLens = lens;
+  if (!requestedLens || requestedLens === "auto" || requestedLens === "rounds-chat") {
+    if (lowerMsg.includes("first principles")) requestedLens = "first-principles";
+    else if (lowerMsg.includes("devil's advocate") || lowerMsg.includes("devils advocate")) requestedLens = "devils-advocate";
+    else if (lowerMsg.includes("pathophysiology") || lowerMsg.includes("pathology")) requestedLens = "pathophysiology";
+    else if (lowerMsg.includes("rare but real") || lowerMsg.includes("atypical")) requestedLens = "rare-but-real";
+    else if (lowerMsg.includes("guideline")) requestedLens = "guidelines";
+    else if (lowerMsg.includes("disease snapshot") || lowerMsg.includes("cheat sheet")) requestedLens = "disease-snapshot";
+    else if (lowerMsg.includes("cause of death") || lowerMsg.includes("mortality")) requestedLens = "cause-of-death";
+    else if (lowerMsg.includes("full debrief")) requestedLens = "full-debrief";
+  }
+
   const prompt = `
     You are a world-class Emergency Medicine Clinical Educator leading Clinical Rounds for an attending physician or medical resident (Claude Sonnet).
     We are analyzing this active ER patient case:
@@ -1477,58 +1548,68 @@ Follow-Up / Summary: ${deidentifyText(dischargeInfo.followUpPlan || "N/A").deide
     - Disposition & Outcome Details:
       ${dispositionText}
       ${dischargeText}
+${pendingPromptSection}
 
-    Analyze this case deeply through the lens: "${lens}".
+    Conversation history so far:
+    ${JSON.stringify(effectiveHistory)}
 
-    SPECIAL CAUSE OF DEATH & MORTALITY REVIEW GUIDELINES:
-    If the lens is "cause-of-death" OR if the patient's disposition is "Death" or "Brought Dead" or if death/mortality is discussed:
-    You MUST perform a rigorous, structured MORTALITY & CAUSE OF DEATH DECONSTRUCTION by interpreting the WHOLE CLINICAL STORY (from onset of symptoms, pre-hospital story, past risk factors, presentation vitals, physical findings, labs/ECG/imaging, serial vital trends, ER treatment response, resuscitation efforts/CPR, to the terminal event).
-    Structure the "content" with clear, bold markdown sections:
-    1. 📖 **Whole Clinical Story Chronology**: Synthesize the full trajectory from first symptom through ER course to final outcome into a cohesive clinical narrative.
-    2. 💀 **Immediate Cause of Death (Part I Top Line)**: State the exact final disease, condition, or physiological mechanism directly causing death (e.g., Refractory Septic Shock with Multiorgan Dysfunction, Ventricular Fibrillation, Acute Severe Hypoxic Respiratory Failure).
-    3. 🩸 **Antecedent Causes (Part I Subsequent Lines)**: Detail the intermediate conditions leading directly to the immediate cause (e.g., Severe Community-Acquired Pneumonia with Bacteremia, Acute Anterior Wall STEMI with Cardiogenic Shock).
-    4. 🏥 **Underlying Cause of Death**: State the fundamental primary disease or injury that initiated the chain of pathological events leading to death.
-    5. ⚡ **Contributing Comorbidities & Factors (Part II)**: Other significant pre-existing or co-occurring conditions contributing to mortality (e.g., Decompensated Diabetes Mellitus, CKD Stage 4, Severe CAD, delayed ER presentation).
-    6. 🫀 **Resuscitation & ER Intervention Audit**: Objective clinical audit of airway management, circulation support, pressors, ACLS protocols, CPR duration, defibrillation, and therapeutic responses.
-    7. 🎓 **High-Yield Rounds Debrief Lessons**: Key clinical red flags, subtle warning markers, diagnostic pitfalls, and actionable takeaways for future ER resuscitation.
+    Clinician's current prompt/query:
+    "${effectiveUserMessage || (requestedLens ? `Debrief through ${requestedLens} lens` : "Prepare me for rounds.")}"
 
-    Requirements for other lenses:
-    1. "first-principles": Deconstruct the presentation starting from absolute physiological and physical truths.
-    2. "devils-advocate": Act as a hyper-critical medical examiner. Challenge assumptions, cognitive biases, and missed diagnoses.
-    3. "pathophysiology": Outline a detailed mechanical, cellular, and immunologic timeline of the disease's underlying biology in this patient.
-    4. "rare-but-real": Spotlight 3-4 rare, critical, or life-threatening mimics and complications of this presentation that must not be missed.
-    5. "guidelines": Detail the gold-standard society recommendations (e.g., ACC/AHA, GINA, GOLD, KDIGO, Surviving Sepsis, NICE).
-    6. "disease-snapshot": A super-dense clinical cheat-sheet for the primary suspected diagnosis.
-    7. "full-debrief": Comprehensive all-lens integrated debrief synthesizing all 7 clinical perspectives in structured Markdown sections:
-       1. 🏛️ First Principles: Core physiological and biophysical fundamentals — what is happening and why.
-       2. ⚖️ Devil's Advocate: Challenge working assumptions, identify cognitive bias (anchoring/premature closure), and evaluate plausible alternatives.
-       3. ⚡ Rare but Real: Critical uncommon mimics and life-threatening complications that must not be missed.
-       4. 🔬 Pathophysiology: Mechanistic cellular and organ-system disease progression specific to THIS patient's presentation.
-       5. 📋 Guidelines: Compare management with current accepted emergency guidance; identify concordance and gaps.
-       6. 📸 Disease Snapshot: Concise bedside summary of emergency priorities, classic presentation, and major clinical pitfall.
-       7. 🎯 Integrated Full Debrief: What was managed well, what should be reconsidered, immediate emergency priorities, and key learning points.
-       (If the patient died or terminal CPR was required, integrate a dedicated Cause of Death & Resuscitation Audit).
-    8. "cause-of-death": Deep mortality cause deconstruction analyzing the full story as detailed above.
-    9. "rounds-chat": Engage in interactive clinical rounds discussion. Answer this custom query: "${userMessage || ""}" specifically in the context of this case's whole story.
+    === 7-LENS REASONING ENGINE GUIDELINES ===
+    The 7 clinical lenses underpinning Rounds are:
+    1. First Principles: Core physiological and biophysical fundamentals (what is failing and why).
+    2. Pathophysiology: Cellular and organ-system disease progression specific to this case.
+    3. Guidelines: Evidence-based emergency guidance (ACLS, ATLS, Surviving Sepsis, ACC/AHA, etc.).
+    4. Devil's Advocate: Cognitive bias challenge (anchoring, premature closure, mimics).
+    5. Rare but Real: Critical atypical mimics and life-threatening complications.
+    6. Disease Snapshot: Bedside pearls, immediate emergency priorities, classic pitfalls.
+    7. Full Debrief / Cause of Death: Comprehensive synthesis or mortality audit.
 
-    If this is "rounds-chat", also reference this previous rounds chat conversation history:
-    ${JSON.stringify(chatHistory || [])}
+    === RESPONSE STYLE (CONVERSATIONAL TEACHING) ===
+    - Do NOT generate giant, dense, report-like dumps unless explicitly asked for a full written debrief.
+    - Default to clean, engaging conversational teaching:
+      • Short direct explanation of the core clinical issue
+      • 3–6 focused, high-yield bullets
+      • One targeted teaching question when appropriate to stimulate clinical reasoning
+    - In "usedLenses", return a JSON string array of the clinical lenses you synthesized to produce this answer (e.g. ["First Principles", "Pathophysiology", "Guidelines"]).
 
-    Format your response strictly as JSON with keys:
-    - "content": Detailed clinical analysis in Markdown format using clear headings and bullet points.
-    - "keyTakeaway": One-sentence punchy high-yield clinical learning pearl.
-    - "memoryKey": Short, permanent clinical memory entry.
-    - "suggestedQuestions": Array of 3 strings containing relevant follow-up questions.
+    === QUIZ MODE ===
+    - If the user asks "Quiz me", "Prepare me for rounds", "Ask me questions", or is answering a quiz question:
+      • If they are answering: evaluate their answer (briefly affirm what was right, point out what was missed).
+      • Then ask exactly ONE focused question testing their emergency priorities or diagnostic reasoning.
+      • Set "usedLenses" to the lens tested (e.g. ["Guidelines"] or ["First Principles"]).
+
+    === CONSULTANT TEACHING PREPARATION ===
+    - If the user asks to prepare teaching rounds (e.g. "Prepare teaching rounds for this patient", "Consultant questions"):
+      • Return: Key Teaching Objectives, 5–10 high-yield questions with expected answers and common mistakes, and advanced follow-up questions.
+
+    === EXPLICIT LENS REQUEST ===
+    - If a specific lens was requested ("${requestedLens || "auto"}"):
+      • Focus deeply on that perspective and include it in "usedLenses".
+
+    Respond strictly in valid JSON matching this schema:
+    {
+      "content": "Conversational teaching response formatted with clean markdown.",
+      "usedLenses": ["First Principles", "Pathophysiology", "Guidelines"],
+      "keyTakeaway": "One-sentence high-yield takeaway",
+      "suggestedQuestions": ["Follow-up question 1", "Follow-up question 2"]
+    }
   `;
 
   try {
-    const sysInstruction = "You are an expert Emergency Medicine Clinical Mentor with zero fluff. Keep responses dense, clinical, and precise. Return strictly valid JSON.";
+    const sysInstruction = "You are an expert Emergency Medicine Clinical Educator leading rounds with zero fluff. Keep responses dense, clinical, and precise. Return strictly valid JSON.";
     const failoverResult = await executeRoundsDebriefWithFailover(prompt, sysInstruction);
 
     if (failoverResult.success && failoverResult.data) {
+      const dataPayload = failoverResult.data;
+      const content = dataPayload.content || dataPayload.response || failoverResult.response || "";
       return res.json({
         success: true,
-        data: failoverResult.data,
+        data: dataPayload,
+        response: content,
+        reply: content,
+        usedLenses: dataPayload.usedLenses || [],
         provider: failoverResult.provider,
         model: failoverResult.provider === "openai" ? "gpt-4o" : "claude-3-5-sonnet"
       });
@@ -1537,14 +1618,16 @@ Follow-Up / Summary: ${deidentifyText(dischargeInfo.followUpPlan || "N/A").deide
     return res.json({
       success: false,
       error: "Clinical rounds mentor is temporarily unavailable. Your case data is safe. Please try again shortly.",
-      reply: "Clinical rounds mentor is temporarily unavailable. Your case data is safe. Please try again shortly."
+      reply: "Clinical rounds mentor is temporarily unavailable. Your case data is safe. Please try again shortly.",
+      response: "Clinical rounds mentor is temporarily unavailable. Your case data is safe. Please try again shortly."
     });
   } catch (error: any) {
     console.error("[Clinical Reasoning] Rounds Debrief Error:", error?.message || error);
     return res.json({
       success: false,
       error: "Clinical rounds mentor is temporarily unavailable. Your case data is safe. Please try again shortly.",
-      reply: "Clinical rounds mentor is temporarily unavailable. Your case data is safe. Please try again shortly."
+      reply: "Clinical rounds mentor is temporarily unavailable. Your case data is safe. Please try again shortly.",
+      response: "Clinical rounds mentor is temporarily unavailable. Your case data is safe. Please try again shortly."
     });
   }
 });

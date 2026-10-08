@@ -480,6 +480,12 @@ useEffect(() => {
     "dashboard" | "analytics" | "admin" | "handover" | "cases" | "learn" | "profile" | "emdrugs" | "directory" | "mlc" | "tools" | "more" | "team" | "logbook"
   >("dashboard");
   const [discussionModalCase, setDiscussionModalCase] = useState<ClinicalCase | null>(null);
+  const [caseChatInitialMode, setCaseChatInitialMode] = useState<"discuss" | "rounds">("discuss");
+
+  const handleOpenCaseChat = (c: ClinicalCase, mode: "discuss" | "rounds" = "discuss") => {
+    setCaseChatInitialMode(mode);
+    setDiscussionModalCase(c);
+  };
 
   const handleSaveDiscussionHistory = (caseId: string, messages: any[]) => {
     setCases(prev => prev.map(c => c.id === caseId ? { ...c, discussionMessages: messages } : c));
@@ -6281,7 +6287,7 @@ const handleSignOut = async () => {
                     setShowVoiceScribeChat(true);
                   }}
                   hasActiveScribeSession={Boolean((selectedCaseId && voiceScribeCaseId === selectedCaseId) || scribeMessages.length > 1)}
-                  onDiscussCase={(c) => setDiscussionModalCase(c)}
+                  onDiscussCase={(c, mode) => handleOpenCaseChat(c, mode || "discuss")}
                   isPreview={isPreviewMode}
                   onApplyPreview={handleApplyPreviewCase}
                   onDirtyChange={setIsCaseSheetDirty}
@@ -6376,7 +6382,7 @@ const handleSignOut = async () => {
                   profile={profile}
                   cases={cases}
                   pendingContributionsCount={pendingContributionsCount}
-                  onDiscussCase={(c) => setDiscussionModalCase(c)}
+                  onDiscussCase={(c, mode) => handleOpenCaseChat(c, mode || "discuss")}
                   onStartFullFlow={() => setShowEntryMenu(true)}
                   onStartQuickCase={() => setActiveFormMode("quick")}
                   onSelectCase={handleSelectCase}
@@ -6496,7 +6502,7 @@ const handleSignOut = async () => {
                   onNavigateToTab={navigateToTab}
                   onDeleteCase={handleDeleteCase}
                   onDeleteAllCases={handleDeleteAllCases}
-                  onDiscussCase={(c) => setDiscussionModalCase(c)}
+                  onDiscussCase={(c, mode) => handleOpenCaseChat(c, mode || "discuss")}
                   onAssignBed={handleAssignBedToCase}
                   physicalBedCapacity={erPhysicalBedCapacity || 30}
                   isIndependent={userNormalizedRole === "independent"}
@@ -7497,14 +7503,16 @@ const handleSignOut = async () => {
         ))}
       </div>
 
-      {/* Patient Case Discussion Modal - Context-Bound Chat */}
+      {/* Patient Case Discussion / Rounds Modal - Unified Case Chat Workspace */}
       {discussionModalCase && (
         <BoundChatModal
+          initialMode={caseChatInitialMode}
           context={{
             type: 'case',
             id: discussionModalCase.id,
             data: discussionModalCase,
             canEdit: true,
+            initialMode: caseChatInitialMode,
             pendingClinicalContext: (voiceScribeCaseId === discussionModalCase.id)
               ? getMergedUnappliedExtraction(scribeMessages)
               : undefined,
