@@ -678,149 +678,8 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
   const pendingMembers = (teamMembers || []).filter(m => isPendingApprovalStatus(m.status));
 
   return (
-    <div className="space-y-6" id="dashboard-container">
-      {/* PEER REVIEW PIPELINE BANNER */}
-      {pendingContributionsCount > 0 && (
-        <div className="bg-gradient-to-r from-amber-500 via-orange-500 to-purple-600 rounded-3xl p-5 md:p-6 text-white shadow-lg space-y-3 border border-amber-400/30 no-print animate-fade-in">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <div className="p-2.5 bg-white/15 border border-white/20 rounded-2xl shrink-0">
-                <Lightbulb className="w-6 h-6 text-amber-200 animate-pulse" />
-              </div>
-              <div>
-                <span className="bg-white/20 border border-white/25 text-[10px] font-black uppercase tracking-widest px-2.5 py-0.5 rounded-full font-mono">
-                  iMnemonic Peer Review Pipeline
-                </span>
-                <h3 className="text-sm md:text-base font-extrabold font-display tracking-tight mt-1 flex items-center gap-2">
-                  {pendingContributionsCount} CLINICAL MNEMONIC{pendingContributionsCount > 1 ? "S" : ""} AWAITING REVIEW
-                </h3>
-                <p className="text-xs text-amber-100 font-sans leading-relaxed mt-0.5">
-                  New clinical mnemonics submitted by peer clinicians are waiting for review & approval before publishing to the global directory.
-                </p>
-              </div>
-            </div>
-            <button
-              onClick={() => onNavigateToTab("learn")}
-              className="bg-white text-slate-900 hover:bg-amber-50 font-black text-xs px-4 py-2.5 rounded-xl shadow-md transition-all cursor-pointer flex items-center justify-center gap-1.5 shrink-0 uppercase tracking-wider active:scale-95"
-            >
-              <BookOpen className="w-4 h-4 text-purple-600" />
-              <span>Review & Publish</span>
-              <ChevronRight className="w-4 h-4 text-slate-400" />
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* VERIFICATION & APPROVALS HUB (HOD ONLY) */}
-      {profile.role.toLowerCase().includes("hod") && pendingMembers.length > 0 && (
-        <div className="bg-gradient-to-r from-purple-600 via-indigo-600 to-violet-600 rounded-3xl p-5 md:p-6 text-white shadow-xl space-y-4 border border-indigo-500/30 no-print">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <span className="relative flex h-3.5 w-3.5">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-pink-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-pink-500"></span>
-              </span>
-              <div>
-                <span className="bg-purple-500/30 border border-purple-400/20 text-[10px] font-black uppercase tracking-widest px-2.5 py-0.5 rounded-full font-mono">
-                  Verification & Approvals Hub
-                </span>
-                <h2 className="text-sm md:text-base font-extrabold font-display tracking-tight mt-1 flex items-center gap-2">
-                  <ShieldAlert className="w-5 h-5 text-pink-300" />
-                  {pendingMembers.length} CLINICIAN REGISTRATION{pendingMembers.length > 1 ? "S" : ""} AWAITING HOD VERIFICATION
-                </h2>
-                <p className="text-xs text-indigo-100 leading-relaxed mt-0.5 font-sans">
-                  Review designation choices and approve team members to active shift status.
-                </p>
-              </div>
-            </div>
-
-            <button
-              onClick={() => setIsApprovalsHubExpanded(!isApprovalsHubExpanded)}
-              className="bg-white/10 hover:bg-white/15 text-white border border-white/20 font-black text-xs px-4 py-2 rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5 self-start md:self-center uppercase tracking-wider"
-            >
-              {isApprovalsHubExpanded ? "Collapse Review" : "Expand & Review"}
-              <ChevronRight className={`w-4 h-4 transition-transform ${isApprovalsHubExpanded ? 'rotate-90' : ''}`} />
-            </button>
-          </div>
-
-          <AnimatePresence>
-            {isApprovalsHubExpanded && (
-              <motion.div
-                initial={{ opacity: 0, height: 0 }}
-                animate={{ opacity: 1, height: "auto" }}
-                exit={{ opacity: 0, height: 0 }}
-                className="overflow-hidden pt-4 border-t border-white/10 space-y-3"
-              >
-                {pendingMembers.map((member) => (
-                  <div
-                    key={member.id}
-                    className="bg-white/5 border border-white/10 hover:bg-white/8 transition-all p-4 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-4"
-                  >
-                    <div className="space-y-1 text-left">
-                      <div className="flex flex-wrap items-center gap-2.5">
-                        <strong className="text-sm font-bold text-white font-sans">{member.name || member.email.split("@")[0]}</strong>
-                        
-                        <div className="flex items-center gap-1.5 bg-indigo-950/40 border border-indigo-500/30 rounded-lg px-2 py-0.5">
-                          <span className="text-[10px] text-indigo-300 font-bold uppercase">Designation:</span>
-                          <select
-                            value={member.role}
-                            onChange={async (e) => {
-                              try {
-                                if (onUpdateRole) {
-                                  await onUpdateRole(member.id, e.target.value);
-                                }
-                              } catch (err) {
-                                console.error("Error updating role:", err);
-                              }
-                            }}
-                            className="bg-transparent text-xs font-bold text-indigo-200 focus:outline-none cursor-pointer uppercase font-mono"
-                          >
-                            <option value="Senior Consultant" className="bg-slate-900 text-white">Senior Consultant</option>
-                            <option value="EM Resident" className="bg-slate-900 text-white">EM Resident</option>
-                            <option value="HOD / Shift Lead" className="bg-slate-900 text-white">HOD / Shift Lead</option>
-                          </select>
-                        </div>
-                      </div>
-                      
-                      <div className="text-xs text-indigo-200 font-mono flex items-center gap-1">
-                        <span>Email:</span>
-                        <span className="text-white underline">{member.email}</span>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-2 self-end sm:self-center">
-                      <button
-                        type="button"
-                        onClick={async () => {
-                          if (onDeclineMember) {
-                            await onDeclineMember(member.id);
-                          }
-                        }}
-                        className="px-3.5 py-2 bg-white/10 hover:bg-rose-600/30 border border-white/10 hover:border-rose-500/50 text-white hover:text-rose-200 font-bold text-xs rounded-xl transition-all cursor-pointer"
-                      >
-                        Decline ✗
-                      </button>
-                      <button
-                        type="button"
-                        onClick={async () => {
-                          if (onApproveMember) {
-                            await onApproveMember(member.id);
-                          }
-                        }}
-                        className="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-white border border-emerald-400/30 font-bold text-xs rounded-xl transition-all shadow-md shadow-emerald-500/20 cursor-pointer flex items-center gap-1"
-                      >
-                        <ShieldCheck className="w-4 h-4" />
-                        <span>Verify & Approve ✓</span>
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
-      )}
-      {/* Shift Banner & Controls */}
+    <div className="space-y-6 pb-28" id="dashboard-container">
+      {/* 1. Shift Status Banner & Controls */}
       {isOnShift ? (
         <div className="bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900/60 rounded-xl p-4 flex flex-col sm:flex-row items-center justify-between gap-3 shadow-xs">
           <div className="flex items-center gap-3">
@@ -1008,8 +867,8 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
           </div>
         </div>
       )}
-      
-      {/* 1. Welcome Banner */}
+
+      {/* 2. Welcome Banner */}
       <div className={`bg-gradient-to-r ${isDarkMode ? 'from-emerald-950 via-slate-900 to-purple-950 text-white border-emerald-500/20' : 'from-emerald-600 via-teal-500 to-indigo-600 text-white border-transparent'} rounded-2xl p-4 md:p-8 shadow-md relative overflow-hidden no-print border`}>
         <div className="absolute right-0 top-0 w-64 h-64 bg-purple-500/10 rounded-full blur-2xl -mr-20 -mt-20 pointer-events-none" />
         <div className="absolute left-1/3 bottom-0 w-48 h-48 bg-emerald-500/10 rounded-full blur-xl -mb-10 pointer-events-none" />
@@ -1060,7 +919,7 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
           </div>
           
           <div className="flex gap-2 shrink-0 w-full md:w-auto">
-                        <button
+            <button
               onClick={() => onOpenPediatricCalculator()}
               className={`hidden md:flex flex-1 md:flex-none px-3 py-1.5 border font-bold rounded-xl text-[10px] md:text-[11px] transition-all items-center justify-center gap-1.5 cursor-pointer ${
                 isDarkMode 
@@ -1078,10 +937,68 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
               <Users className="w-3.5 h-3.5 text-purple-100" />
               Handover
             </button>
-
           </div>
         </div>
       </div>
+
+      {/* 3. Important Clinical & Leadership Alerts */}
+      {/* PEER REVIEW PIPELINE BANNER */}
+      {pendingContributionsCount > 0 && (
+        <div className="bg-gradient-to-r from-amber-500 via-orange-500 to-purple-600 rounded-3xl p-5 md:p-6 text-white shadow-lg space-y-3 border border-amber-400/30 no-print animate-fade-in">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 bg-white/15 border border-white/20 rounded-2xl shrink-0">
+                <Lightbulb className="w-6 h-6 text-amber-200 animate-pulse" />
+              </div>
+              <div>
+                <span className="bg-white/20 border border-white/25 text-[10px] font-black uppercase tracking-widest px-2.5 py-0.5 rounded-full font-mono">
+                  iMnemonic Peer Review Pipeline
+                </span>
+                <h3 className="text-sm md:text-base font-extrabold font-display tracking-tight mt-1 flex items-center gap-2">
+                  {pendingContributionsCount} CLINICAL MNEMONIC{pendingContributionsCount > 1 ? "S" : ""} AWAITING REVIEW
+                </h3>
+                <p className="text-xs text-amber-100 font-sans leading-relaxed mt-0.5">
+                  New clinical mnemonics submitted by peer clinicians are waiting for review & approval before publishing to the global directory.
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => onNavigateToTab("learn")}
+              className="bg-white text-slate-900 hover:bg-amber-50 font-black text-xs px-4 py-2.5 rounded-xl shadow-md transition-all cursor-pointer flex items-center justify-center gap-1.5 shrink-0 uppercase tracking-wider active:scale-95"
+            >
+              <BookOpen className="w-4 h-4 text-purple-600" />
+              <span>Review & Publish</span>
+              <ChevronRight className="w-4 h-4 text-slate-400" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Important Alert: Pending Clinician Registrations (HOD Only) */}
+      {profile.role.toLowerCase().includes("hod") && pendingMembers.length > 0 && (
+        <div className="bg-gradient-to-r from-purple-900/60 via-indigo-900/50 to-purple-900/60 border border-purple-500/30 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-white shadow-md no-print">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-pink-500/20 text-pink-300 rounded-xl shrink-0 border border-pink-500/30">
+              <ShieldAlert className="w-5 h-5 text-pink-400 animate-pulse" />
+            </div>
+            <div>
+              <p className="text-[10px] font-bold text-pink-300 uppercase tracking-wider font-mono">HOD Verification Pending</p>
+              <h3 className="text-sm font-extrabold text-white mt-0.5">
+                {pendingMembers.length} Clinician Registration{pendingMembers.length > 1 ? "s" : ""} Awaiting Verification
+              </h3>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => onNavigateToTab("team")}
+            className="px-3.5 py-2 bg-white/10 hover:bg-white/20 text-white border border-white/20 text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-1.5 shrink-0 cursor-pointer"
+          >
+            <Users className="w-3.5 h-3.5" />
+            <span>Review & Approve in Team</span>
+            <ChevronRight className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
 
       {/* Pending Cases Alert Board */}
       {pendingCases.length > 0 && (
@@ -1263,929 +1180,154 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
         </div>
       )}
 
-      {/* Desktop side-by-side layout wrapper */}
-      <div className="flex flex-col lg:flex-row lg:items-start gap-6 w-full">
-        {/* Left Column: Workflows & Stats */}
-        <div className="flex-1 space-y-6 min-w-0 w-full">
-          {/* Primary Simplified Workflows Entry Section */}
+      {/* 3. Clinical Tools & Active Workflows */}
       <div className="space-y-3 no-print">
-        <h2 className="text-xs font-black text-slate-400 uppercase tracking-widest font-mono">
-          Clinical Tools & Active Workflows
-        </h2>
+        <div className="flex items-center justify-between">
+          <h2 className="text-xs font-black text-slate-400 uppercase tracking-widest font-mono">
+            Clinical Tools & Active Workflows
+          </h2>
+          <span className="text-[10px] font-mono text-slate-400 dark:text-slate-500">
+            Rapid ER Actions
+          </span>
+        </div>
 
-                {/* Mobile Minimalist Action Pad (Visible on Mobile only) */}
-        <div className="grid grid-cols-2 gap-3 md:hidden">
-          {/* Card 3: Voice Scribe Desk */}
+        {/* Unified Responsive Tool Action Pad */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+          {/* Card 1: Voice Scribe Desk */}
           <button 
+            type="button"
             onClick={() => { if (!isOnShift) setShowShiftCheckIn(true); else onStartVoiceScribe(); }}
-            className="flex flex-col justify-between p-3 bg-purple-500/10 dark:bg-purple-950/20 border border-purple-500/20 rounded-xl text-left hover:bg-purple-500/15 transition-all shadow-xs h-[88px] w-full"
+            className="flex flex-col justify-between p-3.5 bg-purple-500/10 dark:bg-purple-950/20 border border-purple-500/20 hover:border-purple-500/40 rounded-2xl text-left transition-all shadow-xs hover:shadow-md cursor-pointer group min-h-[110px]"
           >
-            <div className="w-7 h-7 bg-purple-500/20 text-purple-600 dark:text-purple-400 rounded-lg flex items-center justify-center">
+            <div className="w-8 h-8 bg-purple-500/20 text-purple-600 dark:text-purple-400 rounded-xl flex items-center justify-center group-hover:scale-105 transition-transform">
               <Mic className="w-4.5 h-4.5" />
             </div>
             <div>
               <span className="block font-black text-xs text-slate-800 dark:text-purple-300">Voice Scribe</span>
-              <span className="block text-[8px] text-slate-400 font-medium leading-tight mt-0.5">Dictate in native language or discuss any complex case</span>
+              <span className="block text-[9.5px] text-slate-500 dark:text-slate-400 font-medium leading-tight mt-0.5">
+                Dictate in native language
+              </span>
             </div>
           </button>
 
-          {/* Card 1: New Patient Intake */}
+          {/* Card 2: New Patient Intake */}
           <button 
+            type="button"
             onClick={() => { if (!isOnShift) setShowShiftCheckIn(true); else onStartFullFlow(); }}
-            className="flex flex-col justify-between p-3 bg-emerald-500/10 dark:bg-emerald-950/20 border border-emerald-500/20 rounded-xl text-left hover:bg-emerald-500/15 transition-all shadow-xs h-[88px] w-full"
+            className="flex flex-col justify-between p-3.5 bg-emerald-500/10 dark:bg-emerald-950/20 border border-emerald-500/25 hover:border-emerald-500/40 rounded-2xl text-left transition-all shadow-xs hover:shadow-md cursor-pointer group min-h-[110px]"
           >
-            <div className="w-7 h-7 bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 rounded-lg flex items-center justify-center">
+            <div className="w-8 h-8 bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 rounded-xl flex items-center justify-center group-hover:scale-105 transition-transform">
               <PlusCircle className="w-4.5 h-4.5" />
             </div>
             <div>
               <span className="block font-black text-xs text-slate-800 dark:text-emerald-300">New Patient</span>
-              <span className="block text-[8px] text-slate-400 font-medium">AI triage intake</span>
+              <span className="block text-[9.5px] text-slate-500 dark:text-slate-400 font-medium leading-tight mt-0.5">
+                AI Triage & Intake
+              </span>
             </div>
           </button>
 
-          {/* Card 4: Shift Handover */}
+          {/* Card 3: Shift Handover */}
           <button 
+            type="button"
             onClick={() => { if (!isOnShift) setShowShiftCheckIn(true); else onStartHandoverChat(); }}
-            className="flex flex-col justify-between p-3 bg-indigo-500/10 dark:bg-indigo-950/20 border border-indigo-500/20 rounded-xl text-left hover:bg-indigo-500/15 transition-all shadow-xs h-[88px] w-full"
+            className="flex flex-col justify-between p-3.5 bg-indigo-500/10 dark:bg-indigo-950/20 border border-indigo-500/20 hover:border-indigo-500/40 rounded-2xl text-left transition-all shadow-xs hover:shadow-md cursor-pointer group min-h-[110px]"
           >
-            <div className="w-7 h-7 bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 rounded-lg flex items-center justify-center">
+            <div className="w-8 h-8 bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 rounded-xl flex items-center justify-center group-hover:scale-105 transition-transform">
               <Users className="w-4.5 h-4.5" />
             </div>
             <div>
               <span className="block font-black text-xs text-slate-800 dark:text-indigo-300">Shift Handover</span>
-              <span className="block text-[8px] text-slate-400 font-medium">AI SBAR builder</span>
+              <span className="block text-[9.5px] text-slate-500 dark:text-slate-400 font-medium leading-tight mt-0.5">
+                Synthesize SBAR Cards
+              </span>
             </div>
           </button>
 
-          {/* Card 2: Pediatric Dosing (Mobile) */}
+          {/* Card 4: Pediatric Dosing */}
           <button 
+            type="button"
             onClick={() => onOpenPediatricCalculator()}
-            className="flex flex-col justify-between p-3 bg-sky-500/10 dark:bg-sky-950/20 border border-sky-500/20 rounded-xl text-left hover:bg-sky-500/15 transition-all shadow-xs h-[88px] w-full"
+            className="flex flex-col justify-between p-3.5 bg-sky-500/10 dark:bg-sky-950/20 border border-sky-500/20 hover:border-sky-500/40 rounded-2xl text-left transition-all shadow-xs hover:shadow-md cursor-pointer group min-h-[110px]"
           >
-            <div className="w-7 h-7 bg-sky-500/20 text-sky-600 dark:text-sky-400 rounded-lg flex items-center justify-center">
-              <Calculator className="w-4.5 h-4.5 text-sky-500" />
+            <div className="w-8 h-8 bg-sky-500/20 text-sky-600 dark:text-sky-400 rounded-xl flex items-center justify-center group-hover:scale-105 transition-transform">
+              <Calculator className="w-4.5 h-4.5" />
             </div>
             <div>
               <span className="block font-black text-xs text-slate-800 dark:text-sky-300 truncate">Pediatric Dosing</span>
-              <span className="block text-[8px] text-slate-400 font-medium leading-tight mt-0.5">Weight-based reference</span>
-            </div>
-          </button>
-
-          {/* Card 5: iPhone Pocket Mirror */}
-          <button 
-            onClick={() => onOpenPocketMirror()}
-            className="col-span-2 flex items-center justify-between p-3 bg-rose-500/10 dark:bg-rose-950/20 border border-rose-500/20 rounded-xl text-left hover:bg-rose-500/15 transition-all shadow-xs h-[64px] w-full"
-          >
-            <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 bg-rose-500/20 text-rose-600 dark:text-rose-400 rounded-lg flex items-center justify-center">
-                <Camera className="w-4 h-4 text-rose-500" />
-              </div>
-              <div>
-                <span className="block font-black text-xs text-slate-800 dark:text-rose-300">iPhone Pocket Mirror</span>
-                <span className="block text-[8px] text-slate-400 font-medium">Diagnostic eye & throat mirror</span>
-              </div>
-            </div>
-            <span className="text-[8px] font-mono text-emerald-500 font-bold bg-emerald-500/10 px-1.5 py-0.5 rounded uppercase">NEW</span>
-          </button>
-
-          {/* Card 6: EM Drugs & Procedures (Mobile) */}
-          <button 
-            onClick={() => onNavigateToTab("emdrugs")}
-            className="col-span-2 flex items-center justify-between p-3 bg-red-500/10 dark:bg-red-950/20 border border-red-500/20 rounded-xl text-left hover:bg-red-500/15 transition-all shadow-xs h-[64px] w-full"
-          >
-            <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 bg-red-500/20 text-red-600 dark:text-red-400 rounded-lg flex items-center justify-center">
-                <ShieldAlert className="w-4 h-4 text-red-500" />
-              </div>
-              <div>
-                <span className="block font-black text-xs text-slate-800 dark:text-red-300">EM Drugs & Procedures</span>
-                <span className="block text-[8px] text-slate-400 font-medium">RSI, Sedation, Vents, Lines</span>
-              </div>
-            </div>
-            <span className="text-[8px] font-mono text-red-500 font-bold bg-red-500/10 px-1.5 py-0.5 rounded uppercase font-black">CRITICAL</span>
-          </button>
-        </div>
-
-        {/* Desktop Detailed Grid (Visible on Desktop only) */}
-        <div className="hidden md:grid md:grid-cols-2 lg:grid-cols-3 gap-5">
-          {/* Card 3: Voice Scribe Desk */}
-          <div 
-            onClick={() => { if (!isOnShift) setShowShiftCheckIn(true); else onStartVoiceScribe(); }}
-            className="group relative bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 hover:border-purple-500 dark:hover:border-purple-600 cursor-pointer shadow-xs hover:shadow-md transition-all duration-200 flex flex-col justify-between h-48"
-          >
-            <div className="absolute right-4 top-4 p-2 bg-purple-50 dark:bg-purple-950/40 text-purple-600 dark:text-purple-400 rounded-xl group-hover:scale-110 transition-transform">
-              <Mic className="w-5.5 h-5.5" />
-            </div>
-            
-            <div className="space-y-1.5 max-w-[85%]">
-              <h3 className="text-sm font-extrabold text-slate-900 dark:text-white flex items-center gap-1.5">
-                Voice Scribe
-              </h3>
-              <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
-                Dictate in native language or discuss any complex case.
-              </p>
-            </div>
-
-            <div className="mt-4 flex items-center justify-between text-xs font-bold text-purple-600 dark:text-purple-400 border-t border-slate-100 dark:border-slate-800/60 pt-3">
-              <span>Open Voice Scribe</span>
-              <ChevronRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
-            </div>
-          </div>
-
-          {/* Card 1: New Patient Intake */}
-          <div 
-            onClick={() => { if (!isOnShift) setShowShiftCheckIn(true); else onStartFullFlow(); }}
-            className="group relative bg-emerald-500/10 dark:bg-emerald-950/20 border border-emerald-500/25 dark:border-emerald-500/10 rounded-2xl p-5 hover:border-emerald-500 dark:hover:border-emerald-500 cursor-pointer shadow-xs hover:shadow-md transition-all duration-200 flex flex-col justify-between h-48"
-          >
-            <div className="absolute right-4 top-4 p-2 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 rounded-xl group-hover:scale-110 transition-transform">
-              <PlusCircle className="w-5.5 h-5.5" />
-            </div>
-            
-            <div className="space-y-1.5 max-w-[85%]">
-              <h3 className="text-sm font-extrabold text-slate-900 dark:text-white flex items-center gap-1.5">
-                New Patient
-              </h3>
-              <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
-                Speak your case — ErMate fills the case sheet. Dynamic triage scaling, voice dictation, and medical codes.
-              </p>
-            </div>
-
-            <div className="mt-4 flex items-center justify-between text-xs font-bold text-emerald-600 dark:text-emerald-400 border-t border-emerald-500/10 pt-3">
-              <span>Start Intake Scribe</span>
-              <ChevronRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
-            </div>
-          </div>
-
-          {/* Card 4: Shift Handover */}
-          <div 
-            onClick={() => { if (!isOnShift) setShowShiftCheckIn(true); else onStartHandoverChat(); }}
-            className="group relative bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 hover:border-indigo-500 dark:hover:border-indigo-600 cursor-pointer shadow-xs hover:shadow-md transition-all duration-200 flex flex-col justify-between h-48"
-          >
-            <div className="absolute right-4 top-4 p-2 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 rounded-xl group-hover:scale-110 transition-transform">
-              <Users className="w-5.5 h-5.5" />
-            </div>
-            
-            <div className="space-y-1.5 max-w-[85%]">
-              <h3 className="text-sm font-extrabold text-slate-900 dark:text-white flex items-center gap-1.5">
-                Shift Handover
-              </h3>
-              <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
-                Start a new handover, build AI SBAR cards, or generate printable PDF/Word handover reports for active cases.
-              </p>
-            </div>
-
-            <div className="mt-4 flex items-center justify-between text-xs font-bold text-indigo-600 dark:text-indigo-400 border-t border-slate-100 dark:border-slate-800/60 pt-3">
-              <span>Start Handover & Sheets</span>
-              <ChevronRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
-            </div>
-          </div>
-
-          {/* Card 6: iPhone Pocket Mirror */}
-          <div 
-            onClick={() => onOpenPocketMirror()}
-            className="group relative bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 hover:border-rose-500 dark:hover:border-rose-600 cursor-pointer shadow-xs hover:shadow-md transition-all duration-200 flex flex-col justify-between h-48"
-          >
-            <div className="absolute right-4 top-4 p-2 bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 rounded-xl group-hover:scale-110 transition-transform">
-              <Camera className="w-5.5 h-5.5" />
-            </div>
-            
-            <div className="space-y-1.5 max-w-[85%]">
-              <div className="flex items-center gap-1.5">
-                <h3 className="text-sm font-extrabold text-slate-900 dark:text-white">
-                  iPhone Pocket Mirror
-                </h3>
-                <span className="text-[8px] font-mono text-emerald-500 font-bold bg-emerald-500/10 px-1.5 py-0.5 rounded uppercase">NEW</span>
-              </div>
-              <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
-                Horizontal reflected clinical camera feed. Includes a mm pupil size comparator gauge and Mallampati airway classification checklists.
-              </p>
-            </div>
-
-            <div className="mt-4 flex items-center justify-between text-xs font-bold text-rose-600 dark:text-rose-400 border-t border-slate-100 dark:border-slate-800/60 pt-3">
-              <span>Open Mirror Cam</span>
-              <ChevronRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
-            </div>
-          </div>
-
-          {/* Card 7: EM Drugs & Procedures (Desktop) */}
-          <div 
-            onClick={() => onNavigateToTab("emdrugs")}
-            className="group relative bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 hover:border-red-500 dark:hover:border-red-600 cursor-pointer shadow-xs hover:shadow-md transition-all duration-200 flex flex-col justify-between h-48"
-          >
-            <div className="absolute right-4 top-4 p-2 bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400 rounded-xl group-hover:scale-110 transition-transform">
-              <ShieldAlert className="w-5.5 h-5.5" />
-            </div>
-            
-            <div className="space-y-1.5 max-w-[85%]">
-              <div className="flex items-center gap-1.5">
-                <h3 className="text-sm font-extrabold text-slate-900 dark:text-white">
-                  EM Drugs & Procedures
-                </h3>
-                <span className="text-[8px] font-mono text-red-500 font-bold bg-red-500/10 px-1.5 py-0.5 rounded uppercase">CRITICAL</span>
-              </div>
-              <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
-                RSI 7 Ps timeline & drug estimators, sedation agent dose calculators, predicted Tidal Volume (lung protective) models, and Seldinger CVC guidelines.
-              </p>
-            </div>
-
-            <div className="mt-4 flex items-center justify-between text-xs font-bold text-red-600 dark:text-red-400 border-t border-slate-100 dark:border-slate-800/60 pt-3">
-              <span>Open EM Reference</span>
-              <ChevronRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* 2. Stats Cards Row */}
-      <div className="grid grid-cols-3 md:grid-cols-3 gap-2 md:gap-4 no-print">
-        {/* Active Cases */}
-        <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl p-2.5 md:p-5 shadow-xs flex flex-col md:flex-row items-center md:items-start text-center md:text-left gap-1 md:gap-4 min-w-0">
-          <div className="p-1.5 md:p-3 bg-indigo-50 dark:bg-indigo-950/40 rounded-lg md:rounded-xl text-indigo-600 dark:text-indigo-400 shrink-0">
-            <Activity className="w-4 h-4 md:w-6 md:h-6" />
-          </div>
-          <div className="min-w-0 w-full">
-            <p className="text-[7.5px] md:text-[10px] font-black text-slate-400 uppercase tracking-wider truncate">Active cases</p>
-            <h3 className="text-xs md:text-xl font-black text-slate-800 dark:text-white mt-0.5">{activeCasesCount}</h3>
-            <p className="hidden md:block text-[9px] text-slate-400 mt-0.5 font-mono">Immediate clinical triage active</p>
-          </div>
-        </div>
-
-        {/* Weekly Cases */}
-        <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl p-2.5 md:p-5 shadow-xs flex flex-col md:flex-row items-center md:items-start text-center md:text-left gap-1 md:gap-4 min-w-0">
-          <div className="p-1.5 md:p-3 bg-emerald-50 dark:bg-emerald-950/40 rounded-lg md:rounded-xl text-emerald-600 dark:text-emerald-400 shrink-0">
-            <Calendar className="w-4 h-4 md:w-6 md:h-6" />
-          </div>
-          <div className="min-w-0 w-full">
-            <p className="text-[7.5px] md:text-[10px] font-black text-slate-400 uppercase tracking-wider truncate">Admissions</p>
-            <h3 className="text-xs md:text-xl font-black text-slate-800 dark:text-white mt-0.5">{casesThisWeekCount}</h3>
-            <p className="hidden md:block text-[9px] text-slate-400 mt-0.5 font-mono">Total cases registered</p>
-          </div>
-        </div>
-
-        {/* Clinical Facility */}
-        <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl p-2.5 md:p-5 shadow-xs flex flex-col md:flex-row items-center md:items-start text-center md:text-left gap-1 md:gap-4 min-w-0">
-          <div className="p-1.5 md:p-3 bg-blue-50 dark:bg-blue-950/40 rounded-lg md:rounded-xl text-blue-600 dark:text-blue-400 shrink-0">
-            <Users className="w-4 h-4 md:w-6 md:h-6" />
-          </div>
-          <div className="min-w-0 w-full">
-            <p className="text-[7.5px] md:text-[10px] font-black text-slate-400 uppercase tracking-wider truncate">Facility</p>
-            <h3 className="text-xs md:text-sm font-black text-slate-800 dark:text-white mt-0.5 truncate">
-              {profile.hospital.split(" ")[0]}
-            </h3>
-            <p className="hidden md:block text-[9px] text-slate-400 mt-0.5 font-mono">Emergency Department Active</p>
-          </div>
-        </div>
-      </div>
-
-      {/* HOD / Shift Lead Department Control Center */}
-      {profile.role.toLowerCase().includes("hod") && (
-        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 md:p-6 shadow-md dark:shadow-xl space-y-4 md:space-y-6 text-slate-800 dark:text-white no-print">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-800 pb-4">
-            <div className="flex items-center justify-between w-full md:w-auto">
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="bg-purple-100 dark:bg-purple-500/20 text-purple-700 dark:text-purple-300 text-[8px] md:text-[9px] px-2 py-0.5 rounded-full font-mono font-extrabold uppercase border border-purple-200 dark:border-purple-500/30 animate-pulse">
-                    Department Admin Active
-                  </span>
-                </div>
-                <h2 className="text-base md:text-lg font-black font-display tracking-tight text-slate-900 dark:text-white flex items-center gap-2 mt-1">
-                  <Users className="w-4.5 h-4.5 md:w-5 md:h-5 text-purple-500 dark:text-purple-400" />
-                  HOD Control Center
-                </h2>
-                <p className="hidden md:block text-xs text-slate-550 dark:text-slate-400">
-                  City Emergency Department · {profile.hospital}
-                </p>
-              </div>
-
-              {/* Mobile Toggle Button */}
-              <button
-                onClick={() => setIsHodPanelExpanded(!isHodPanelExpanded)}
-                className="md:hidden px-3 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-[10px] font-bold rounded-lg flex items-center gap-1.5 transition-colors border border-slate-200 dark:border-slate-700"
-              >
-                {isHodPanelExpanded ? "Minimize" : "Expand Admin"}
-                <ChevronRight className={`w-3.5 h-3.5 transition-transform ${isHodPanelExpanded ? 'rotate-90' : ''}`} />
-              </button>
-            </div>
-            
-            <div className={`flex-wrap gap-2 ${isHodPanelExpanded ? 'flex w-full md:w-auto' : 'hidden md:flex'}`}>
-              <button
-                onClick={() => setIsCalendarModalOpen(true)}
-                className="flex-1 md:flex-none px-3.5 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-1.5 shadow-sm cursor-pointer"
-                title="Sync duty rotas, M&M audits, and handover events with Google Calendar"
-              >
-                <Calendar className="w-3.5 h-3.5 text-white" />
-                Sync Google Calendar
-              </button>
-              <button
-                onClick={() => setIsClassroomModalOpen(true)}
-                className="flex-1 md:flex-none px-3.5 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-1.5 shadow-sm cursor-pointer"
-                title="Manage residency courses, coursework assignments, and announcements on Google Classroom"
-              >
-                <GraduationCap className="w-3.5 h-3.5 text-white" />
-                Google Classroom
-              </button>
-              <button
-                onClick={() => onNavigateToTab("handover")}
-                className="flex-1 md:flex-none px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-1.5 shadow-sm"
-              >
-                <FileText className="w-3.5 h-3.5" />
-                Generate Handover Sheet
-              </button>
-              <button
-                onClick={() => {
-                  triggerPrintWithTip();
-                }}
-                className="flex-1 md:flex-none px-3.5 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-1.5"
-              >
-                <Download className="w-3.5 h-3.5" />
-                Print Registry Cases
-              </button>
-            </div>
-          </div>
-
-          <div className={`grid grid-cols-1 lg:grid-cols-2 gap-6 ${isHodPanelExpanded ? 'grid' : 'hidden md:grid'}`}>
-            {/* Active shifts list */}
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-550 dark:text-slate-400">
-                  Active Doctors on Shift (Clinical Roster)
-                </h3>
-                <span className="text-[10px] bg-emerald-100 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 px-2 py-0.5 rounded-full border border-emerald-200 dark:border-emerald-500/20 font-mono">
-                  {activeShiftDoctors.length} Clinicians Active
-                </span>
-              </div>
-
-              {activeShiftDoctors.length === 0 ? (
-                <div className="bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-850 rounded-xl p-6 text-center text-slate-450 dark:text-slate-500 text-xs">
-                  No active clinicians found. All doctors checked out of shift.
-                </div>
-              ) : (
-                <div className="space-y-2.5">
-                  {activeShiftDoctors.map((doc) => (
-                    <div
-                      key={doc.id}
-                      className="bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-850 p-4 rounded-xl flex items-center justify-between gap-4 transition-all hover:border-slate-300 dark:hover:border-slate-800"
-                    >
-                      <div className="space-y-1">
-                        <p 
-                          className="text-sm font-extrabold text-slate-900 dark:text-white cursor-pointer hover:text-indigo-600 dark:hover:text-indigo-400 flex items-center gap-1.5 group/shiftname"
-                          onClick={() => {
-                            const member = teamMembers.find(m => m.name.toLowerCase() === doc.name.toLowerCase()) || {
-                              id: doc.id,
-                              name: doc.name,
-                              email: doc.name.toLowerCase().replace(/\s+/g, "") + "@hospital.com",
-                              role: doc.role,
-                              status: "Active (Joined)",
-                              shift: "morning"
-                            };
-                            setSelectedClinicianForCases(member);
-                            const clinicianCases = cases.filter(c => 
-                              (c.doctorEmail && member.email && c.doctorEmail.trim().toLowerCase() === member.email.trim().toLowerCase()) ||
-                              (c.doctorName && member.name && c.doctorName.trim().toLowerCase().includes(member.name.trim().toLowerCase()))
-                            );
-                            const activeIds = clinicianCases.filter(c => !c.archivedAt && (c.status === "Active" || c.status === "Triage")).map(c => c.id);
-                            setSelectedClinicianCaseIds(activeIds);
-                          }}
-                          title="Click to inspect & takeover cases"
-                        >
-                          {doc.name}
-                          <Eye className="w-3.5 h-3.5 opacity-60 group-hover/shiftname:opacity-100 transition-opacity text-indigo-500" />
-                        </p>
-                        <div className="flex gap-2 text-[10px] text-slate-500 dark:text-slate-400 font-mono">
-                          <span>{doc.role}</span>
-                          <span>•</span>
-                          <span className="text-indigo-600 dark:text-indigo-400 font-semibold">{doc.caseCount} patients</span>
-                          <span>•</span>
-                          <span>On Duty: {doc.timeOnShift}</span>
-                        </div>
-                      </div>
-                      
-                      <button
-                        onClick={() => {
-                          setActiveShiftDoctors(prev => prev.filter(d => d.id !== doc.id));
-                        }}
-                        className="px-2.5 py-1 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-900/60 border border-rose-200 dark:border-rose-900/40 text-rose-600 dark:text-rose-300 font-bold rounded-lg text-[10px] transition-all"
-                      >
-                        End Shift
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* Handover Acknowledgement Trail */}
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-550 dark:text-slate-400">
-                  Recent Handover Acknowledgements
-                </h3>
-                <span className="text-[10px] bg-purple-100 dark:bg-purple-500/15 text-purple-700 dark:text-purple-400 px-2 py-0.5 rounded-full border border-purple-200 dark:border-purple-500/20 font-mono">
-                  Audit Trail
-                </span>
-              </div>
-
-              <div className="space-y-2.5">
-                {handovers.map((hand) => {
-                  const isAck = !!hand.acknowledgedBy;
-                  return (
-                    <div
-                      key={hand.id}
-                      className="bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-850 p-4 rounded-xl space-y-2"
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
-                          {hand.senderName} (Handover {hand.id})
-                        </span>
-                        {isAck ? (
-                          <span className="bg-emerald-100 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 text-[9px] px-2 py-0.5 rounded-full border border-emerald-250 dark:border-emerald-500/20 font-bold uppercase tracking-wider flex items-center gap-1">
-                            <Check className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
-                            ACKNOWLEDGED
-                          </span>
-                        ) : (
-                          <span className="bg-amber-100 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 text-[9px] px-2 py-0.5 rounded-full border border-amber-250 dark:border-amber-500/20 font-bold uppercase tracking-wider animate-pulse">
-                            PENDING ACK
-                          </span>
-                        )}
-                      </div>
-                      
-                      <p className="text-[11px] text-slate-500 dark:text-slate-400 line-clamp-1 italic">
-                        "{hand.patientsText}"
-                      </p>
-
-                      <div className="flex items-center justify-between gap-4 pt-1.5 border-t border-slate-200 dark:border-slate-900 text-[10px] font-mono text-slate-450 dark:text-slate-500">
-                        <span>Sent: {hand.timestamp}</span>
-                        {isAck ? (
-                          <span className="text-emerald-600 dark:text-emerald-500 font-bold">
-                            Ack'd by {hand.acknowledgedBy} ({hand.acknowledgedTime?.split("|")[0]})
-                          </span>
-                        ) : (
-                          <button
-                            onClick={() => {
-                              setHandovers(prev => prev.map(h => h.id === hand.id ? {
-                                ...h,
-                                acknowledgedBy: profile.name,
-                                acknowledgedTime: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + " | Today"
-                              } : h));
-                            }}
-                            className="text-indigo-600 dark:text-indigo-400 hover:text-indigo-500 dark:hover:text-indigo-300 font-bold hover:underline"
-                          >
-                            Force Acknowledge Receipt
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-
-          {/* QUALITY & COMPLIANCE SECTION */}
-          <div className="space-y-3 pt-6 border-t border-slate-200 dark:border-slate-800">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 flex items-center gap-2">
-                  <ShieldCheck className="w-4 h-4 text-rose-500" />
-                  Quality & Clinical Compliance Suite
-                </h3>
-                <p className="text-[11px] text-slate-500">M&M Reviews, Clinical Audits & NABH Protocol Tracking</p>
-              </div>
-              <span className="text-[10px] bg-rose-100 dark:bg-rose-950/80 text-rose-700 dark:text-rose-300 px-2.5 py-0.5 rounded-full border border-rose-200 dark:border-rose-800 font-bold uppercase tracking-wider">
-                Confidential HOD Suite
+              <span className="block text-[9.5px] text-slate-500 dark:text-slate-400 font-medium leading-tight mt-0.5">
+                Weight-based drug reference
               </span>
             </div>
+          </button>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {/* Mortality & Morbidity Audit Card */}
-              <div 
-                onClick={() => setIsMortalityModalOpen(true)}
-                className="bg-gradient-to-br from-rose-50 to-white dark:from-slate-900 dark:to-slate-950 border border-rose-200/80 dark:border-rose-900/40 p-4 rounded-xl space-y-3 cursor-pointer hover:border-rose-400 dark:hover:border-rose-700 transition-all group shadow-sm"
-              >
-                <div className="flex items-center justify-between">
-                  <div className="p-2 bg-rose-100 dark:bg-rose-950 text-rose-600 dark:text-rose-400 rounded-lg group-hover:scale-105 transition-transform">
-                    <ShieldAlert className="w-4 h-4" />
-                  </div>
-                  <span className="text-[10px] bg-rose-200/60 dark:bg-rose-900/60 text-rose-800 dark:text-rose-300 font-bold px-2 py-0.5 rounded">
-                    M&M Audit
-                  </span>
-                </div>
-                <div>
-                  <h4 className="text-xs font-bold text-slate-900 dark:text-white group-hover:text-rose-600 dark:group-hover:text-rose-400 transition-colors">
-                    Mortality & Morbidity Audit
-                  </h4>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 line-clamp-2">
-                    Formal medico-legal review & cause-of-death deconstruction with clinical intelligence.
-                  </p>
-                </div>
-                <div className="pt-2 border-t border-rose-100 dark:border-slate-800/80 flex items-center justify-between text-[10px] font-semibold text-rose-600 dark:text-rose-400">
-                  <span>Last Audit: Today</span>
-                  <span className="flex items-center gap-0.5 group-hover:translate-x-0.5 transition-transform">
-                    Launch M&M Engine →
-                  </span>
-                </div>
+          {/* Card 5: EM Drugs & Procedures (Critical) */}
+          <button 
+            type="button"
+            onClick={() => onNavigateToTab("emdrugs")}
+            className="col-span-2 sm:col-span-1 flex flex-col justify-between p-3.5 bg-rose-500/10 dark:bg-rose-950/20 border border-rose-500/25 hover:border-rose-500/40 rounded-2xl text-left transition-all shadow-xs hover:shadow-md cursor-pointer group min-h-[110px]"
+          >
+            <div className="flex items-center justify-between w-full">
+              <div className="w-8 h-8 bg-rose-500/20 text-rose-600 dark:text-rose-400 rounded-xl flex items-center justify-center group-hover:scale-105 transition-transform">
+                <ShieldAlert className="w-4.5 h-4.5 text-rose-500" />
               </div>
-
-              {/* Department Statistics Card */}
-              <div className="bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-850 p-4 rounded-xl space-y-3 shadow-sm">
-                <div className="flex items-center justify-between">
-                  <div className="p-2 bg-blue-100 dark:bg-blue-950 text-blue-600 dark:text-blue-400 rounded-lg">
-                    <Activity className="w-4 h-4" />
-                  </div>
-                  <span className="text-[10px] bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 font-bold px-2 py-0.5 rounded">
-                    Analytics
-                  </span>
-                </div>
-                <div>
-                  <h4 className="text-xs font-bold text-slate-900 dark:text-white">
-                    Department Statistics
-                  </h4>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
-                    Turnaround time, bed occupancy, resus volume, and clinical workload distributions.
-                  </p>
-                </div>
-                <div className="pt-2 border-t border-slate-200 dark:border-slate-850 flex items-center justify-between text-[10px] font-semibold text-blue-600 dark:text-blue-400">
-                  <span>24 Active Cases</span>
-                  <button onClick={() => onNavigateToTab("analytics")} className="hover:underline cursor-pointer">
-                    View Analytics →
-                  </button>
-                </div>
-              </div>
-
-              {/* Shift Reports & Logs Card */}
-              <div className="bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-850 p-4 rounded-xl space-y-3 shadow-sm">
-                <div className="flex items-center justify-between">
-                  <div className="p-2 bg-purple-100 dark:bg-purple-950 text-purple-600 dark:text-purple-400 rounded-lg">
-                    <FileText className="w-4 h-4" />
-                  </div>
-                  <span className="text-[10px] bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300 font-bold px-2 py-0.5 rounded">
-                    Duty Rotas
-                  </span>
-                </div>
-                <div>
-                  <h4 className="text-xs font-bold text-slate-900 dark:text-white">
-                    Shift Reports & Roster Sync
-                  </h4>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
-                    Manage duty shifts, consultant on-call rotas, and sync events to Google Calendar.
-                  </p>
-                </div>
-                <div className="pt-2 border-t border-slate-200 dark:border-slate-850 flex items-center justify-between text-[10px] font-semibold text-purple-600 dark:text-purple-400">
-                  <span>Shift Sync Active</span>
-                  <button onClick={() => onNavigateToTab("roster")} className="hover:underline cursor-pointer">
-                    Open Roster Board →
-                  </button>
-                </div>
-              </div>
-
+              <span className="text-[8px] font-mono font-black text-rose-600 dark:text-rose-400 bg-rose-500/15 px-1.5 py-0.5 rounded uppercase">
+                CRITICAL
+              </span>
             </div>
+            <div>
+              <span className="block font-black text-xs text-slate-800 dark:text-rose-300 truncate">EM Drugs & Guide</span>
+              <span className="block text-[9.5px] text-slate-500 dark:text-slate-400 font-medium leading-tight mt-0.5">
+                RSI, Sedation & Resus
+              </span>
+            </div>
+          </button>
+        </div>
+      </div>
+
+      {/* 4. ER Snapshot (Stats Row) */}
+      <div className="grid grid-cols-3 gap-2.5 md:gap-4 no-print">
+        {/* Active Cases */}
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-3 md:p-4 shadow-xs flex flex-col md:flex-row items-center md:items-start text-center md:text-left gap-2 md:gap-3.5 min-w-0">
+          <div className="p-2 md:p-2.5 bg-indigo-50 dark:bg-indigo-950/40 rounded-xl text-indigo-600 dark:text-indigo-400 shrink-0">
+            <Activity className="w-4 h-4 md:w-5 md:h-5" />
           </div>
-
-          {/* Section Divider */}
-          <div className="border-t border-slate-200 dark:border-slate-800 pt-6 mt-6 no-print" />
-
-          {/* HOD Department Administration Panel */}
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 pt-2 pb-2 no-print">
-            
-            {/* Left Column: Team Member Roster & Whitelisting Form (8 Cols) */}
-            <div className="lg:col-span-8 space-y-6">
-              
-              {/* Whitelist New Team Member Card */}
-              <div className="bg-slate-50 dark:bg-slate-950/40 border border-slate-200 dark:border-slate-850 p-5 rounded-2xl space-y-4">
-                <div className="flex items-center gap-2">
-                  <UserPlus className="w-4.5 h-4.5 text-indigo-500" />
-                  <h3 className="text-xs font-black uppercase tracking-wider text-slate-700 dark:text-slate-350">
-                    Whitelist & Onboard Team Clinician
-                  </h3>
-                </div>
-                
-                <form onSubmit={handleLocalAddMember} className="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
-                  <div className="space-y-1">
-                    <label className="block text-[9px] font-bold uppercase tracking-wider text-slate-550 dark:text-slate-400 font-mono">
-                      Clinician Full Name
-                    </label>
-                    <input
-                      type="text"
-                      value={addName}
-                      onChange={(e) => setAddName(e.target.value)}
-                      placeholder="Dr. Shreya Patel"
-                      className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-200 block w-full px-3 py-2 text-xs rounded-lg font-sans font-semibold focus:outline-none focus:ring-1 focus:ring-purple-500"
-                      required
-                    />
-                  </div>
-
-                  <div className="space-y-1">
-                    <label className="block text-[9px] font-bold uppercase tracking-wider text-slate-550 dark:text-slate-400 font-mono">
-                      Verified Gmail Address
-                    </label>
-                    <input
-                      type="email"
-                      value={addEmail}
-                      onChange={(e) => setAddEmail(e.target.value)}
-                      placeholder="shreya@gmail.com"
-                      className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-200 block w-full px-3 py-2 text-xs rounded-lg font-mono focus:outline-none focus:ring-1 focus:ring-purple-500"
-                      required
-                    />
-                  </div>
-
-                  <div className="space-y-1">
-                    <label className="block text-[9px] font-bold uppercase tracking-wider text-slate-550 dark:text-slate-400 font-mono">
-                      Designation Role
-                    </label>
-                    <select
-                      value={addRole}
-                      onChange={(e) => setAddRole(e.target.value)}
-                      className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-200 block w-full px-2 py-2 text-xs rounded-lg font-bold focus:outline-none focus:ring-1 focus:ring-purple-500"
-                    >
-                      <option value="Resident">EM Resident</option>
-                      <option value="Consultant">Senior Consultant</option>
-                      <option value="HOD">HOD / Shift Lead</option>
-                    </select>
-                  </div>
-
-                  <button
-                    type="submit"
-                    disabled={isAddingMember}
-                    className="w-full py-2 bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-lg text-xs transition-all flex items-center justify-center gap-1.5 shadow-xs cursor-pointer"
-                  >
-                    <PlusCircle className="w-4 h-4" />
-                    <span>Onboard Doctor</span>
-                  </button>
-                </form>
-
-                {addSuccessMessage && (
-                  <div className="p-2.5 bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-xs rounded-lg font-mono flex items-center gap-2">
-                    <CheckCircle className="w-3.5 h-3.5" />
-                    <span>{addSuccessMessage}</span>
-                  </div>
-                )}
-              </div>
-
-              {/* Active Team Roster List */}
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-550 dark:text-slate-400">
-                    Clinical Department Team Roster
-                  </h3>
-                  <span className="text-[10px] bg-indigo-50 dark:bg-indigo-500/15 text-indigo-700 dark:text-indigo-400 px-2.5 py-0.5 rounded-full border border-indigo-150 dark:border-indigo-500/20 font-mono">
-                    {teamMembers.length} Registered Clinicians
-                  </span>
-                </div>
-
-                {teamMembers.length === 0 ? (
-                  <div className="bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-850 rounded-xl p-8 text-center text-slate-450 dark:text-slate-500 text-xs leading-relaxed">
-                    No registered team members found. Share the invitation link below to populate your clinician roster in real-time.
-                  </div>
-                ) : (
-                  <div className="border border-slate-200 dark:border-slate-850 rounded-2xl overflow-hidden bg-white dark:bg-slate-950">
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-left border-collapse">
-                        <thead>
-                          <tr className="bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-850 text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 font-mono">
-                            <th className="p-3.5">Clinician</th>
-                            <th className="p-3.5">Post</th>
-                            <th className="p-3.5">Sync Status</th>
-                            <th className="p-3.5">Active Duty</th>
-                            <th className="p-3.5 text-right">Actions</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100 dark:divide-slate-900">
-                          {teamMembers.map((member) => (
-                            <tr key={member.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-900/30 transition-colors">
-                              <td className="p-3.5">
-                                <div 
-                                  className="flex items-center gap-2.5 cursor-pointer group/rostername"
-                                  onClick={() => {
-                                    setSelectedClinicianForCases(member);
-                                    const clinicianCases = cases.filter(c => 
-                                      (c.doctorEmail && member.email && c.doctorEmail.trim().toLowerCase() === member.email.trim().toLowerCase()) ||
-                                      (c.doctorName && member.name && c.doctorName.trim().toLowerCase().includes(member.name.trim().toLowerCase()))
-                                    );
-                                    const activeIds = clinicianCases.filter(c => c.status === "Active" || c.status === "Triage").map(c => c.id);
-                                    setSelectedClinicianCaseIds(activeIds);
-                                  }}
-                                  title="Click to view & takeover clinical cases"
-                                >
-                                  <div className="h-7 w-7 rounded-lg bg-indigo-100 dark:bg-indigo-500/10 text-indigo-700 dark:text-indigo-400 flex items-center justify-center text-xs font-black uppercase font-display group-hover/rostername:bg-indigo-600 group-hover/rostername:text-white transition-all">
-                                    {member.name.replace("Dr. ", "").slice(0, 2)}
-                                  </div>
-                                  <div>
-                                    <p className="text-xs font-black text-slate-900 dark:text-slate-100 group-hover/rostername:text-indigo-600 dark:group-hover/rostername:text-indigo-400 transition-colors flex items-center gap-1">
-                                      {member.name}
-                                      <Eye className="w-3 h-3 opacity-0 group-hover/rostername:opacity-100 transition-opacity text-indigo-500" />
-                                    </p>
-                                    <p className="text-[10px] text-slate-450 dark:text-slate-500 font-mono">{member.email}</p>
-                                  </div>
-                                </div>
-                              </td>
-                              
-                              <td className="p-3.5">
-                                <span className={`text-[9.5px] px-2 py-0.5 rounded-md font-mono font-bold ${
-                                  member.role.includes("HOD") 
-                                    ? "bg-purple-100 dark:bg-purple-500/15 text-purple-700 dark:text-purple-400 border border-purple-200/50" 
-                                    : member.role.includes("Consultant")
-                                    ? "bg-indigo-100 dark:bg-indigo-500/15 text-indigo-700 dark:text-indigo-400 border border-indigo-200/50"
-                                    : "bg-blue-100 dark:bg-blue-500/15 text-blue-700 dark:text-blue-400 border border-blue-200/50"
-                                }`}>
-                                  {member.role}
-                                </span>
-                              </td>
-
-                              <td className="p-3.5">
-                                {isActiveMembershipStatus(member.status) ? (
-                                  <span className="inline-flex items-center gap-1 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 text-[10px] px-2 py-0.5 rounded-full border border-emerald-200 dark:border-emerald-500/20 font-bold font-sans">
-                                    <ShieldCheck className="w-3.5 h-3.5" />
-                                    Active (Joined)
-                                  </span>
-                                ) : (
-                                  <span className="inline-flex items-center gap-1 bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 text-[10px] px-2 py-0.5 rounded-full border border-amber-200 dark:border-amber-500/20 font-bold font-sans">
-                                    <Clock className="w-3 h-3" />
-                                    {isPendingApprovalStatus(member.status) ? "Pending Approval" : "Claim Pending"}
-                                  </span>
-                                )}
-                              </td>
-
-                              <td className="p-3.5">
-                                <select
-                                  value={member.shift || "off"}
-                                  onChange={(e) => onUpdateShift(member.id, e.target.value)}
-                                  className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-200 text-[11px] font-semibold rounded-md px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                                >
-                                  <option value="morning">Morning Shift</option>
-                                  <option value="evening">Evening Shift</option>
-                                  <option value="night">Night Shift</option>
-                                  <option value="off">Off Duty</option>
-                                </select>
-                              </td>
-
-                              <td className="p-3.5 text-right">
-                                {pendingDeleteMemberId === member.id ? (
-                                  <div className="flex items-center justify-end gap-1.5 animate-fade-in">
-                                    <button
-                                      onClick={() => setPendingDeleteMemberId(null)}
-                                      className="px-2 py-1 text-[9px] font-bold bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-350 rounded-md transition-colors"
-                                    >
-                                      Cancel
-                                    </button>
-                                    <button
-                                      onClick={async () => {
-                                        await onRemoveMember(member.id);
-                                        setPendingDeleteMemberId(null);
-                                      }}
-                                      className="px-2 py-1 text-[9px] font-black bg-rose-600 text-white rounded-md transition-all shadow-xs"
-                                    >
-                                      Confirm
-                                    </button>
-                                  </div>
-                                ) : (
-                                  <button
-                                    onClick={() => setPendingDeleteMemberId(member.id)}
-                                    className="p-1.5 text-slate-400 hover:text-rose-500 rounded-lg hover:bg-rose-500/10 transition-colors cursor-pointer inline-flex items-center justify-center"
-                                    title="Revoke and Remove Clinician Access"
-                                  >
-                                    <Trash2 className="w-3.5 h-3.5" />
-                                  </button>
-                                )}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Right Column: Hospital Department Profile & Invite Links (4 Cols) */}
-            <div className="lg:col-span-4 space-y-6">
-              
-              {/* Profile Card */}
-              <div className="bg-slate-50 dark:bg-slate-950/40 border border-slate-200 dark:border-slate-850 p-5 rounded-2xl space-y-4">
-                <div className="flex items-center gap-2">
-                  <Building className="w-4.5 h-4.5 text-purple-500" />
-                  <h3 className="text-xs font-black uppercase tracking-wider text-slate-700 dark:text-slate-350">
-                    Institution Profile Details
-                  </h3>
-                </div>
-
-                <div className="space-y-3 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-850 p-4 rounded-xl">
-                  <div className="space-y-1.5">
-                    <span className="block text-[9px] font-bold uppercase tracking-wider text-slate-450 dark:text-slate-500 font-mono">
-                      Affiliated Hospital Network
-                    </span>
-                    
-                    {isEditingHospital ? (
-                      <div className="space-y-2 animate-fade-in">
-                        <input
-                          type="text"
-                          value={tempHospital}
-                          onChange={(e) => setTempHospital(e.target.value)}
-                          className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-200 block w-full px-3 py-1.5 text-xs rounded-lg font-sans font-semibold focus:outline-none focus:ring-1 focus:ring-purple-500"
-                        />
-                        <div className="flex items-center gap-2 justify-end">
-                          <button
-                            onClick={() => {
-                              setTempHospital(profile.hospital);
-                              setIsEditingHospital(false);
-                            }}
-                            className="px-2.5 py-1 text-[10px] font-bold text-slate-500 hover:text-slate-700 dark:hover:text-white"
-                          >
-                            Cancel
-                          </button>
-                          <button
-                            onClick={handleSaveHospitalLocal}
-                            className="px-2.5 py-1 text-[10px] font-bold bg-indigo-600 text-white rounded-md"
-                          >
-                            Save
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="flex items-center justify-between gap-3">
-                        <p className="text-sm font-black text-slate-800 dark:text-white leading-tight">
-                          {profile.hospital || "General Emergency Department"}
-                        </p>
-                        <button
-                          onClick={() => {
-                            setTempHospital(profile.hospital);
-                            setIsEditingHospital(true);
-                          }}
-                          className="p-1 text-slate-450 hover:text-slate-850 dark:hover:text-white rounded transition-colors"
-                          title="Rename Institution"
-                        >
-                          <Edit className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="border-t border-slate-100 dark:border-slate-900 pt-3 flex items-center justify-between text-[10px] text-slate-500 dark:text-slate-400 font-mono">
-                    <span>Clinical Scribe Node:</span>
-                    <span className="text-slate-750 dark:text-slate-300 font-bold">Standard ISO-27001</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Share Invite Referral Link Card */}
-              <div className="bg-gradient-to-br from-indigo-50/50 to-purple-50/30 dark:from-slate-950/40 dark:to-slate-950/10 border border-indigo-100 dark:border-slate-850 p-5 rounded-2xl space-y-4">
-                <div className="flex items-center gap-2">
-                  <Share2 className="w-4 h-4 text-indigo-500" />
-                  <h3 className="text-xs font-black uppercase tracking-wider text-slate-700 dark:text-slate-350">
-                    Share Invitation Link
-                  </h3>
-                </div>
-
-                <p className="text-[11px] leading-relaxed text-slate-500 dark:text-slate-400 font-medium">
-                  Provide this secure link to your clinical team members. Opening this link prompts colleagues to register and accept your department's roster sync automatically.
-                </p>
-
-                <div className="space-y-2">
-                  <div className="flex items-center gap-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-2 rounded-xl">
-                    <input
-                      type="text"
-                      readOnly
-                      value={activeInviteLink || `${window.location.origin}/join/${(profile.hospital || "").toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)+/g, "")}?ref=team_invite`}
-                      className="bg-transparent text-slate-600 dark:text-slate-300 text-[10.5px] font-mono font-medium block w-full focus:outline-none select-all truncate"
-                    />
-                    <button
-                      onClick={() => {
-                        const linkToCopy = activeInviteLink || `${window.location.origin}/join/${(profile.hospital || "").toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)+/g, "")}?ref=team_invite`;
-                        navigator.clipboard.writeText(linkToCopy);
-                        setCopiedInvite(true);
-                        setTimeout(() => setCopiedInvite(false), 2000);
-                      }}
-                      className={`p-1.5 rounded-lg transition-all flex items-center justify-center cursor-pointer ${
-                        copiedInvite
-                          ? "bg-emerald-500/10 text-emerald-500 border border-emerald-500/20"
-                          : "bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300"
-                      }`}
-                    >
-                      {copiedInvite ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                    </button>
-                  </div>
-
-                  {copiedInvite && (
-                    <p className="text-[10px] font-bold font-mono text-emerald-600 dark:text-emerald-400 animate-pulse text-right">
-                      ✓ Copied invitation to clipboard!
-                    </p>
-                  )}
-                </div>
-              </div>
-
-            </div>
+          <div className="min-w-0 w-full">
+            <p className="text-[8.5px] md:text-[10px] font-black text-slate-400 uppercase tracking-wider truncate">Active Cases</p>
+            <h3 className="text-sm md:text-xl font-black text-slate-800 dark:text-white mt-0.5">{activeCasesCount}</h3>
+            <p className="hidden md:block text-[9px] text-slate-400 mt-0.5 font-mono">Immediate clinical triage</p>
           </div>
         </div>
-      )}
 
-        </div> {/* End Left Column */}
+        {/* Admissions */}
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-3 md:p-4 shadow-xs flex flex-col md:flex-row items-center md:items-start text-center md:text-left gap-2 md:gap-3.5 min-w-0">
+          <div className="p-2 md:p-2.5 bg-emerald-50 dark:bg-emerald-950/40 rounded-xl text-emerald-600 dark:text-emerald-400 shrink-0">
+            <Calendar className="w-4 h-4 md:w-5 md:h-5" />
+          </div>
+          <div className="min-w-0 w-full">
+            <p className="text-[8.5px] md:text-[10px] font-black text-slate-400 uppercase tracking-wider truncate">Admissions</p>
+            <h3 className="text-sm md:text-xl font-black text-slate-800 dark:text-white mt-0.5">{casesThisWeekCount}</h3>
+            <p className="hidden md:block text-[9px] text-slate-400 mt-0.5 font-mono">Today's patient intake</p>
+          </div>
+        </div>
 
-        {/* Right Column: Registry */}
-        <div className="w-full lg:w-[360px] xl:w-[420px] shrink-0">
-          {/* 3. Main Content Area */}
-          <div className="space-y-6">
-          
-          <div className="space-y-4 no-print">
+        {/* Bed Capacity / Facility */}
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-3 md:p-4 shadow-xs flex flex-col md:flex-row items-center md:items-start text-center md:text-left gap-2 md:gap-3.5 min-w-0">
+          <div className="p-2 md:p-2.5 bg-blue-50 dark:bg-blue-950/40 rounded-xl text-blue-600 dark:text-blue-400 shrink-0">
+            <Bed className="w-4 h-4 md:w-5 md:h-5" />
+          </div>
+          <div className="min-w-0 w-full">
+            <p className="text-[8.5px] md:text-[10px] font-black text-slate-400 uppercase tracking-wider truncate">Occupancy</p>
+            <h3 className="text-sm md:text-xl font-black text-slate-800 dark:text-white mt-0.5 truncate">
+              {activeCasesCount} / {physicalBedCapacity || 30}
+            </h3>
+            <p className="hidden md:block text-[9px] text-slate-400 mt-0.5 font-mono truncate">{profile.hospital || "Emergency Dept"}</p>
+          </div>
+        </div>
+      </div>
+
+      {/* 5. Today's ER Patient Registry (Full Width Operational Centerpiece) */}
+      <div className="space-y-4 no-print">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-slate-200 dark:border-slate-800 pb-3">
               <div>
                 <h2 className="text-base font-extrabold font-display text-slate-800 dark:text-white flex items-center gap-2">
@@ -2635,9 +1777,172 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
               );
             })()}
           </div>
-        </div>
-        </div> {/* End Right Column */}
-      </div> {/* End Desktop Layout Wrapper */}
+
+        {/* 6. Compact HOD Operations Overview (HOD Clinicians Only) */}
+        {profile.role.toLowerCase().includes("hod") && (
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 md:p-5 shadow-xs text-slate-800 dark:text-white no-print">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 dark:border-slate-800 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-purple-500/10 text-purple-600 dark:text-purple-400 flex items-center justify-center font-bold">
+                  👑
+                </div>
+                <div>
+                  <h3 className="text-sm font-extrabold font-display text-slate-900 dark:text-white flex items-center gap-2">
+                    HOD Operations Overview
+                    <span className="text-[9px] font-mono font-bold bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 px-2 py-0.5 rounded-full border border-purple-200 dark:border-purple-800 uppercase">
+                      Leadership
+                    </span>
+                  </h3>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                    Real-time department oversight • {profile.hospital || "Emergency Department"}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => onNavigateToTab("team")}
+                  className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 dark:bg-indigo-950/40 dark:hover:bg-indigo-900/60 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
+                  title="Manage team clinicians, roster, and invitations"
+                >
+                  <Users className="w-3.5 h-3.5" />
+                  <span>Open Team</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onNavigateToTab("analytics")}
+                  className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-slate-200 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
+                  title="View department turnaround, census, and metrics"
+                >
+                  <Activity className="w-3.5 h-3.5" />
+                  <span>View Analytics</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsMortalityModalOpen(true)}
+                  className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 dark:bg-rose-950/40 dark:hover:bg-rose-900/60 dark:text-rose-300 border border-rose-200 dark:border-rose-900/40 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
+                  title="Open Mortality & Morbidity Audit Engine"
+                >
+                  <ShieldAlert className="w-3.5 h-3.5" />
+                  <span>M&M Audit</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onNavigateToTab("roster")}
+                  className="px-3 py-1.5 bg-purple-50 hover:bg-purple-100 text-purple-700 dark:bg-purple-950/40 dark:hover:bg-purple-900/60 dark:text-purple-300 border border-purple-200 dark:border-purple-800 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
+                  title="Duty Rota Board & Google Calendar Sync"
+                >
+                  <Calendar className="w-3.5 h-3.5" />
+                  <span>Duty Rota</span>
+                </button>
+              </div>
+            </div>
+
+            {/* 4 Compact Metric Cards */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-3">
+              <div 
+                onClick={() => onNavigateToTab("team")}
+                className="p-3 bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 rounded-xl cursor-pointer hover:border-purple-300 dark:hover:border-purple-700 transition-all"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 font-mono">
+                    Pending Approvals
+                  </span>
+                  {pendingMembers.length > 0 && (
+                    <span className="w-2 h-2 rounded-full bg-pink-500 animate-ping" />
+                  )}
+                </div>
+                <div className="mt-1 flex items-baseline gap-1.5">
+                  <span className="text-lg font-black text-slate-900 dark:text-white">
+                    {pendingMembers.length}
+                  </span>
+                  <span className="text-[10px] text-slate-400">clinicians</span>
+                </div>
+              </div>
+
+              <div 
+                onClick={() => onNavigateToTab("roster")}
+                className="p-3 bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 rounded-xl cursor-pointer hover:border-emerald-300 dark:hover:border-emerald-700 transition-all"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 font-mono">
+                    On Duty Now
+                  </span>
+                  <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                </div>
+                <div className="mt-1 flex items-baseline gap-1.5">
+                  <span className="text-lg font-black text-slate-900 dark:text-white">
+                    {activeShiftDoctors.length}
+                  </span>
+                  <span className="text-[10px] text-slate-400">doctors active</span>
+                </div>
+              </div>
+
+              <div 
+                onClick={() => onNavigateToTab("handover")}
+                className="p-3 bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 rounded-xl cursor-pointer hover:border-amber-300 dark:hover:border-amber-700 transition-all"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 font-mono">
+                    Pending Handovers
+                  </span>
+                  {handovers.filter(h => !h.acknowledgedBy).length > 0 && (
+                    <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+                  )}
+                </div>
+                <div className="mt-1 flex items-baseline gap-1.5">
+                  <span className="text-lg font-black text-slate-900 dark:text-white">
+                    {handovers.filter(h => !h.acknowledgedBy).length}
+                  </span>
+                  <span className="text-[10px] text-slate-400">unacknowledged</span>
+                </div>
+              </div>
+
+              <div 
+                onClick={() => setIsMortalityModalOpen(true)}
+                className="p-3 bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 rounded-xl cursor-pointer hover:border-rose-300 dark:hover:border-rose-700 transition-all"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 font-mono">
+                    M&M Review Queue
+                  </span>
+                  <span className="w-2 h-2 rounded-full bg-rose-500" />
+                </div>
+                <div className="mt-1 flex items-baseline gap-1.5">
+                  <span className="text-lg font-black text-slate-900 dark:text-white">
+                    {cases.filter(c => c.dispositionDetails?.dispositionType === "Death" || c.dispositionAndPlan?.dispositionStatus?.toLowerCase().includes("death") || c.dispositionAndPlan?.dispositionStatus?.toLowerCase().includes("mortality")).length}
+                  </span>
+                  <span className="text-[10px] text-slate-400">cases queued</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Direct Links to Canonical Hubs */}
+            <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800/80 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500 dark:text-slate-400 font-mono">
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => onNavigateToTab("team")}
+                  className="hover:text-indigo-600 dark:hover:text-indigo-400 flex items-center gap-1 cursor-pointer transition-colors"
+                >
+                  <UserPlus className="w-3 h-3 text-indigo-500" />
+                  <span>Onboard & Invite Clinicians →</span>
+                </button>
+                <span>•</span>
+                <button
+                  type="button"
+                  onClick={() => onNavigateToTab("more")}
+                  className="hover:text-purple-600 dark:hover:text-purple-400 flex items-center gap-1 cursor-pointer transition-colors"
+                >
+                  <Building className="w-3 h-3 text-purple-500" />
+                  <span>Hospital & ER Setup →</span>
+                </button>
+              </div>
+              <span className="text-[10px] text-slate-400">Canonical management in Team & More</span>
+            </div>
+          </div>
+        )}
 
       {/* HOD Clinician Case Explorer and Takeover Modal */}
       <AnimatePresence>

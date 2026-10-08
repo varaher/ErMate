@@ -45,6 +45,27 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-08] — ErMate: Dashboard Declutter + Official Logo Runtime & PWA Asset Fix
+- **Official Brand Logo Runtime Fix & Vector Cross (`src/components/shared/ErMateLogo.tsx`, `public/`, `vite.config.ts`, `public/sw.js`, `public/manifest.json`, `index.html`)**:
+  - Resolved official logo rendering failure in downloaded/PWA app: Eliminated generic "EM" text fallback.
+  - Embedded pure bundled vector `OfficialCrossIcon` inside `ErMateLogo.tsx` replicating the official glossy 3D ribbon medical cross, crisp white ECG heartbeat pulse line, and teal/cyan/blue/purple gradient stops. Provides 100% deterministic rendering with zero network or loading failure risk.
+  - Fixed PWA asset paths: Ensured both `/icon-192.png` and `/icons/icon-192.png`, `/icon-512.png` and `/icons/icon-512.png`, `public/icon.svg`, and `public/favicon.png` are present.
+  - Bumped Service Worker cache to `ermate-cache-v3` with cache invalidation of prior caches on activation, and added cache-busting version query string to runtime image URLs in `ErMateLogo.tsx`.
+  - Configured VitePWA `includeAssets` in `vite.config.ts` to guarantee precaching of all brand icon and logo assets.
+- **Dashboard Declutter & Active ER Operations Focus (`src/components/DashboardView.tsx`)**:
+  - Removed duplicated legacy administration cards and forms from the Dashboard: "Whitelist & Onboard Team Clinician", "Clinical Department Team Roster" table, "Institution Profile Details" form, "Share Invitation Link", and duplicate "Shift Reports & Roster Sync" card. Canonical destinations are preserved in Team and More tabs.
+  - Reorganized Dashboard into clean operational flow answering "What is happening in my ER right now?":
+    1. **Shift Status Banner & Controls**: Active duty session info, shift time window, active doctor count, simulate shift end, check-in dialog when off-shift.
+    2. **Welcome Banner**: Clinician context, hospital department name, tier, quick pediatric dosing and handover actions.
+    3. **Important Alerts**: Incomplete cases alert board, pending contributions review, and pending clinician registrations (HOD only).
+    4. **Clinical Tools & Rapid ER Actions**: 5 high-frequency tools: Voice Scribe, New Patient Intake, Shift Handover, Pediatric Dosing, and EM Drugs & Guide. Moved "iPhone Pocket Mirror" out of Dashboard to Tools tab.
+    5. **ER Snapshot**: Active Cases, Admissions, Bed Occupancy statistics.
+    6. **Today's ER Patient Registry**: Full-width operational centerpiece with segmented control tabs, search, triage indicators, and expandable quick action drawers.
+    7. **Compact HOD Operations Overview** (HOD only): 4 compact metric cards (Pending Approvals, On Duty Now, Pending Handovers, M&M Review Queue) and direct action buttons (Open Team, View Analytics, M&M Audit, Duty Rota).
+  - Maintained `pb-28` bottom padding to guarantee floating MATE button never obscures clinical content.
+- **Verification (`verify_dashboard_and_logo.ts` 36/36, `verify_dashboard_declutter_logo_runtime.ts` 38/38)**:
+  - 100% pass across all assertions with zero regressions in header refresh/notifications (16/16) and profile restructure (10/10). Production build and lint succeed cleanly.
+
 ### [2026-10-07] — ErMate: Unified Discuss + Rounds Full-Screen Case Chat (7-Lens Learning Mode Refactor)
 - **One Shared Full-Screen Case Chat Component (`src/components/CaseChatWorkspace.tsx`, `src/components/CaseDiscussWorkspace.tsx`, `src/components/BoundChatModal.tsx`)**:
   - Replaced fragmented, cramped separate Rounds UI and Discuss modal with a single reusable, full-screen case chat shell (`CaseChatWorkspace`).

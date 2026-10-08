@@ -12,6 +12,7 @@ export default defineConfig(() => {
       VitePWA({
         registerType: 'autoUpdate',
         injectRegister: 'auto',
+        includeAssets: ['favicon.png', 'icon.svg', 'icon-192.png', 'icon-512.png', 'logo.png'],
         workbox: {
           maximumFileSizeToCacheInBytes: 6 * 1024 * 1024, // 6 MiB limit for precaching main bundle
           navigateFallback: 'index.html',
@@ -61,14 +62,34 @@ export default defineConfig(() => {
           start_url: '/',
           icons: [
             {
+              src: '/icon-192.png',
+              sizes: '192x192',
+              type: 'image/png',
+              purpose: 'any',
+            },
+            {
+              src: '/icon-512.png',
+              sizes: '512x512',
+              type: 'image/png',
+              purpose: 'any',
+            },
+            {
               src: '/icons/icon-192.png',
               sizes: '192x192',
               type: 'image/png',
+              purpose: 'any',
             },
             {
               src: '/icons/icon-512.png',
               sizes: '512x512',
               type: 'image/png',
+              purpose: 'any',
+            },
+            {
+              src: '/icon.svg',
+              sizes: 'any',
+              type: 'image/svg+xml',
+              purpose: 'any',
             },
           ],
         },

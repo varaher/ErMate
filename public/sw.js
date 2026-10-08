@@ -1,11 +1,15 @@
-const CACHE_NAME = 'ermate-cache-v2';
+const CACHE_NAME = 'ermate-cache-v3';
 const ASSETS_TO_CACHE = [
   '/',
   '/index.html',
   '/manifest.json',
+  '/favicon.png',
   '/icon.svg',
   '/icon-192.png',
-  '/icon-512.png'
+  '/icon-512.png',
+  '/logo.png',
+  '/icons/icon-192.png',
+  '/icons/icon-512.png'
 ];
 
 // On install, pre-cache core layout assets

@@ -833,16 +833,6 @@ export default function CaseSheetView({
     setActiveTab("complaints");
     setPediatricWeight("");
 
-    // Sync rounds and discussion chat history
-    if (initialCase.discussionMessages && Array.isArray(initialCase.discussionMessages) && initialCase.discussionMessages.length > 0) {
-      const converted = initialCase.discussionMessages.map((m: any) => ({
-        role: m.sender === "ai" ? ("model" as const) : ("user" as const),
-        text: m.text
-      }));
-      setRoundsChatHistory(converted);
-    } else {
-      setRoundsChatHistory([]);
-    }
   }, [initialCase.id]);
 
   const getPalsNormalParameters = (age: number | null) => {
