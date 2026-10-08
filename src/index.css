@@ -9,12 +9,144 @@
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
 }
 
+/* ══════════════════════════════════════════════════════════════════
+   ERMATE SEMANTIC DESIGN TOKENS & SYSTEM VARIABLES
+   Light & Dark mode cross-platform tokens
+   ══════════════════════════════════════════════════════════════════ */
+:root {
+  /* Brand Direction */
+  --ermate-brand-primary: #4f46e5;    /* Indigo 600 */
+  --ermate-brand-primary-hover: #4338ca; /* Indigo 700 */
+  --ermate-brand-secondary: #0ea5e9;  /* Sky 500 */
+  --ermate-brand-accent: #8b5cf6;     /* Violet 500 */
+
+  /* Neutral Surface System (Light) */
+  --ermate-bg: #f8fafc;              /* Slate 50 */
+  --ermate-surface: #ffffff;
+  --ermate-surface-raised: #f1f5f9;       /* Slate 100 */
+  --ermate-surface-muted: #e2e8f0;        /* Slate 200 */
+
+  /* Typography / Text (Light) */
+  --ermate-text-primary: #0f172a;    /* Slate 900 */
+  --ermate-text-secondary: #334155;  /* Slate 700 */
+  --ermate-text-muted: #64748b;      /* Slate 500 */
+
+  /* Borders & Dividers (Light) */
+  --ermate-border: #e2e8f0;          /* Slate 200 */
+  --ermate-border-strong: #cbd5e1;   /* Slate 300 */
+
+  /* Semantic Clinical State Colors */
+  --ermate-success: #059669;         /* Emerald 600 */
+  --ermate-success-bg: #ecfdf5;      /* Emerald 50 */
+  --ermate-warning: #d97706;         /* Amber 600 */
+  --ermate-warning-bg: #fffbeb;      /* Amber 50 */
+  --ermate-danger: #dc2626;          /* Red 600 */
+  --ermate-danger-bg: #fef2f2;       /* Red 50 */
+  --ermate-info: #2563eb;            /* Blue 600 */
+  --ermate-info-bg: #eff6ff;         /* Blue 50 */
+
+  --ermate-pending: #f59e0b;         /* Amber 500 */
+  --ermate-saved: #10b981;           /* Emerald 500 */
+  --ermate-active: #10b981;          /* Emerald 500 */
+
+  /* Consistent Radius Scale */
+  --ermate-radius-sm: 8px;
+  --ermate-radius-md: 12px;
+  --ermate-radius-lg: 16px;
+  --ermate-radius-xl: 22px;
+
+  /* Touch & Layout Metrics */
+  --ermate-touch-min: 44px;
+  --ermate-header-height: 54px;
+  --ermate-subheader-height: 48px;
+  --ermate-bottom-nav-height: 64px;
+}
+
+.dark {
+  /* Brand Direction (Dark) */
+  --ermate-brand-primary: #6366f1;    /* Indigo 500 */
+  --ermate-brand-primary-hover: #818cf8; /* Indigo 400 */
+  --ermate-brand-secondary: #38bdf8;  /* Sky 400 */
+  --ermate-brand-accent: #a78bfa;     /* Violet 400 */
+
+  /* Neutral Surface System (Dark) */
+  --ermate-bg: #090d16;
+  --ermate-surface: #0f172a;         /* Slate 900 */
+  --ermate-surface-raised: #1e293b;  /* Slate 800 */
+  --ermate-surface-muted: #334155;   /* Slate 700 */
+
+  /* Typography / Text (Dark) */
+  --ermate-text-primary: #f8fafc;    /* Slate 50 */
+  --ermate-text-secondary: #cbd5e1;  /* Slate 300 */
+  --ermate-text-muted: #94a3b8;      /* Slate 400 */
+
+  /* Borders & Dividers (Dark) */
+  --ermate-border: #1e293b;          /* Slate 800 */
+  --ermate-border-strong: #334155;   /* Slate 700 */
+
+  /* Semantic Clinical State Colors (Dark) */
+  --ermate-success: #10b981;
+  --ermate-success-bg: rgba(6, 78, 59, 0.4);
+  --ermate-warning: #f59e0b;
+  --ermate-warning-bg: rgba(120, 53, 15, 0.4);
+  --ermate-danger: #ef4444;
+  --ermate-danger-bg: rgba(127, 29, 29, 0.4);
+  --ermate-info: #3b82f6;
+  --ermate-info-bg: rgba(30, 58, 138, 0.4);
+
+  --ermate-pending: #fbbf24;
+  --ermate-saved: #34d399;
+  --ermate-active: #34d399;
+}
+
+/* Safe Area Inset Support */
+.pt-safe {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+.pl-safe {
+  padding-left: env(safe-area-inset-left, 0px);
+}
+.pr-safe {
+  padding-right: env(safe-area-inset-right, 0px);
+}
+
+/* Modern Viewport Height Helpers */
+.h-dvh {
+  height: 100dvh;
+}
+.min-h-dvh {
+  min-height: 100dvh;
+}
+.max-h-dvh {
+  max-height: 100dvh;
+}
+
 /* Base style overrides */
 body {
   font-family: var(--font-sans);
-  background-color: #f8fafc;
-  color: #0f172a;
+  background-color: var(--ermate-bg);
+  color: var(--ermate-text-primary);
   -webkit-font-smoothing: antialiased;
+  overscroll-behavior-y: none;
+}
+
+/* Accessible focus ring */
+*:focus-visible {
+  outline: 2px solid var(--ermate-brand-primary);
+  outline-offset: 2px;
+}
+
+/* Reduce motion for accessibility */
+@media (prefers-reduced-motion: reduce) {
+  *, ::before, ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 /* Animations for simulated features */
