@@ -25,6 +25,8 @@ export interface ErMateLogoProps {
   subtitleText?: string;
   className?: string;
   altText?: string;
+  /** Optional click handler for universal Home navigation */
+  onClick?: (e: React.MouseEvent) => void;
 }
 
 /**
@@ -203,6 +205,7 @@ export const ErMateLogo: React.FC<ErMateLogoProps> = ({
   subtitleText = "The Scribe Companion for ER",
   className = "",
   altText = "ErMate Clinical AI",
+  onClick,
 }) => {
   const [imageError, setImageError] = useState(false);
 
@@ -222,7 +225,7 @@ export const ErMateLogo: React.FC<ErMateLogoProps> = ({
   const logoSrc = `${baseUrl.replace(/\/$/, "")}/logo.png?v=3`;
 
   if (variant === "icon") {
-    return (
+    const iconContent = (
       <div
         className={`relative inline-flex items-center justify-center shrink-0 rounded-xl overflow-hidden shadow-xs ${className}`}
         style={{ width: px, height: px }}
@@ -239,10 +242,25 @@ export const ErMateLogo: React.FC<ErMateLogoProps> = ({
         )}
       </div>
     );
+
+    if (onClick) {
+      return (
+        <button
+          type="button"
+          onClick={onClick}
+          className="inline-flex items-center justify-center cursor-pointer p-0 bg-transparent border-0 rounded-xl focus-visible:outline-2 focus-visible:outline-indigo-500 active:scale-95 transition-transform"
+          aria-label="Go to Dashboard"
+          title="Home"
+        >
+          {iconContent}
+        </button>
+      );
+    }
+    return iconContent;
   }
 
   if (variant === "full") {
-    return (
+    const fullContent = (
       <div className={`flex flex-col items-center justify-center text-center ${className}`}>
         <div
           className="relative inline-flex items-center justify-center shrink-0 rounded-2xl overflow-hidden shadow-md bg-white p-1"
@@ -271,10 +289,25 @@ export const ErMateLogo: React.FC<ErMateLogoProps> = ({
         </div>
       </div>
     );
+
+    if (onClick) {
+      return (
+        <button
+          type="button"
+          onClick={onClick}
+          className="inline-flex flex-col items-center justify-center cursor-pointer p-0 bg-transparent border-0 rounded-2xl focus-visible:outline-2 focus-visible:outline-indigo-500 active:scale-95 transition-transform"
+          aria-label="Go to Dashboard"
+          title="Home"
+        >
+          {fullContent}
+        </button>
+      );
+    }
+    return fullContent;
   }
 
   // Variant: 'header' (Compact Horizontal Layout)
-  return (
+  const headerContent = (
     <div className={`flex items-center gap-2.5 shrink-0 ${className}`}>
       <div
         className="relative inline-flex items-center justify-center shrink-0 rounded-xl overflow-hidden shadow-xs bg-white/90 dark:bg-slate-900 ring-1 ring-slate-200/60 dark:ring-slate-800"
@@ -306,6 +339,22 @@ export const ErMateLogo: React.FC<ErMateLogoProps> = ({
       </div>
     </div>
   );
+
+  if (onClick) {
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        aria-label="Go to Dashboard"
+        title="Home"
+        className="min-h-[44px] min-w-[44px] -ml-1 sm:ml-0 px-1 py-1 rounded-xl flex items-center cursor-pointer text-left focus-visible:outline-2 focus-visible:outline-indigo-500 active:scale-95 transition-all group"
+      >
+        {headerContent}
+      </button>
+    );
+  }
+
+  return headerContent;
 };
 
 export default ErMateLogo;

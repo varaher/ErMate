@@ -701,46 +701,46 @@ export default function MoreView({
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {/* 1. Clinician Directory */}
+          {/* 1. Clinical Knowledge & Learn */}
           <div
-            onClick={() => onNavigateToTab("directory")}
-            className="group bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 hover:border-amber-500 rounded-2xl p-4.5 cursor-pointer shadow-xs hover:shadow-md transition-all flex flex-col justify-between"
+            onClick={() => onNavigateToTab("learn")}
+            className="group bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 hover:border-purple-500 rounded-2xl p-4.5 cursor-pointer shadow-xs hover:shadow-md transition-all flex flex-col justify-between"
           >
             <div>
-              <div className="w-9 h-9 rounded-xl bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 flex items-center justify-center mb-2.5 group-hover:scale-105 transition-transform">
-                <Building2 className="w-4.5 h-4.5" />
+              <div className="w-9 h-9 rounded-xl bg-purple-50 dark:bg-purple-950/40 text-purple-600 dark:text-purple-400 flex items-center justify-center mb-2.5 group-hover:scale-105 transition-transform">
+                <BookOpen className="w-4.5 h-4.5" />
               </div>
               <h3 className="text-sm font-extrabold text-slate-900 dark:text-white mb-1">
-                Clinician Directory
+                Clinical Learn & Protocols
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-                Find and connect with verified emergency physicians across state departments.
+                Evidence-based emergency algorithms, ATLS resuscitation guides, and reference material.
               </p>
             </div>
-            <div className="mt-4 flex items-center justify-between text-xs font-bold text-amber-600 dark:text-amber-400 border-t border-slate-100 dark:border-slate-800 pt-2.5">
-              <span>Open Directory</span>
+            <div className="mt-4 flex items-center justify-between text-xs font-bold text-purple-600 dark:text-purple-400 border-t border-slate-100 dark:border-slate-800 pt-2.5">
+              <span>Open Learn Hub</span>
               <ChevronRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
             </div>
           </div>
 
-          {/* 2. Medico-Legal (MLC) Certificates */}
+          {/* 2. Emergency Tools & Calculators */}
           <div
-            onClick={() => onNavigateToTab("mlc")}
-            className="group bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 hover:border-orange-500 rounded-2xl p-4.5 cursor-pointer shadow-xs hover:shadow-md transition-all flex flex-col justify-between"
+            onClick={() => onNavigateToTab("tools")}
+            className="group bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 hover:border-teal-500 rounded-2xl p-4.5 cursor-pointer shadow-xs hover:shadow-md transition-all flex flex-col justify-between"
           >
             <div>
-              <div className="w-9 h-9 rounded-xl bg-orange-50 dark:bg-orange-950/40 text-orange-600 dark:text-orange-400 flex items-center justify-center mb-2.5 group-hover:scale-105 transition-transform">
-                <FileWarning className="w-4.5 h-4.5" />
+              <div className="w-9 h-9 rounded-xl bg-teal-50 dark:bg-teal-950/40 text-teal-600 dark:text-teal-400 flex items-center justify-center mb-2.5 group-hover:scale-105 transition-transform">
+                <Wrench className="w-4.5 h-4.5" />
               </div>
               <h3 className="text-sm font-extrabold text-slate-900 dark:text-white mb-1">
-                Medico-Legal (MLC) Certificates
+                Emergency Tools & Calculators
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-                Draft, sign, and print Medico-Legal case certificates & police intimations.
+                Pediatric weight-based dosing, clinical scores (GCS, Wells, HEART, NIHSS), and resuscitation aids.
               </p>
             </div>
-            <div className="mt-4 flex items-center justify-between text-xs font-bold text-orange-600 dark:text-orange-400 border-t border-slate-100 dark:border-slate-800 pt-2.5">
-              <span>Open MLC Registry</span>
+            <div className="mt-4 flex items-center justify-between text-xs font-bold text-teal-600 dark:text-teal-400 border-t border-slate-100 dark:border-slate-800 pt-2.5">
+              <span>Open Tools</span>
               <ChevronRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
             </div>
           </div>
@@ -752,7 +752,7 @@ export default function MoreView({
           >
             <div>
               <div className="w-9 h-9 rounded-xl bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 flex items-center justify-center mb-2.5 group-hover:scale-105 transition-transform">
-                <BookOpen className="w-4.5 h-4.5" />
+                <Award className="w-4.5 h-4.5" />
               </div>
               <h3 className="text-sm font-extrabold text-slate-900 dark:text-white mb-1">
                 My Log Book
@@ -807,6 +807,50 @@ export default function MoreView({
             </div>
             <div className="mt-4 flex items-center justify-between text-xs font-bold text-blue-600 dark:text-blue-400 border-t border-slate-100 dark:border-slate-800 pt-2.5">
               <span>View Handovers ({handovers.length})</span>
+              <ChevronRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+            </div>
+          </div>
+
+          {/* 6. Medico-Legal (MLC) Certificates */}
+          <div
+            onClick={() => onNavigateToTab("mlc")}
+            className="group bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 hover:border-orange-500 rounded-2xl p-4.5 cursor-pointer shadow-xs hover:shadow-md transition-all flex flex-col justify-between"
+          >
+            <div>
+              <div className="w-9 h-9 rounded-xl bg-orange-50 dark:bg-orange-950/40 text-orange-600 dark:text-orange-400 flex items-center justify-center mb-2.5 group-hover:scale-105 transition-transform">
+                <FileWarning className="w-4.5 h-4.5" />
+              </div>
+              <h3 className="text-sm font-extrabold text-slate-900 dark:text-white mb-1">
+                Medico-Legal (MLC) Certificates
+              </h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+                Draft, sign, and print Medico-Legal case certificates & police intimations.
+              </p>
+            </div>
+            <div className="mt-4 flex items-center justify-between text-xs font-bold text-orange-600 dark:text-orange-400 border-t border-slate-100 dark:border-slate-800 pt-2.5">
+              <span>Open MLC Registry</span>
+              <ChevronRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+            </div>
+          </div>
+
+          {/* 7. Clinician Directory */}
+          <div
+            onClick={() => onNavigateToTab("directory")}
+            className="group bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 hover:border-amber-500 rounded-2xl p-4.5 cursor-pointer shadow-xs hover:shadow-md transition-all flex flex-col justify-between"
+          >
+            <div>
+              <div className="w-9 h-9 rounded-xl bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 flex items-center justify-center mb-2.5 group-hover:scale-105 transition-transform">
+                <Building2 className="w-4.5 h-4.5" />
+              </div>
+              <h3 className="text-sm font-extrabold text-slate-900 dark:text-white mb-1">
+                Clinician Directory
+              </h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+                Find and connect with verified emergency physicians across state departments.
+              </p>
+            </div>
+            <div className="mt-4 flex items-center justify-between text-xs font-bold text-amber-600 dark:text-amber-400 border-t border-slate-100 dark:border-slate-800 pt-2.5">
+              <span>Open Directory</span>
               <ChevronRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
             </div>
           </div>
@@ -909,7 +953,22 @@ export default function MoreView({
           </div>
 
           {/* Quick Support & Guide Rows */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-2">
+            <button
+              type="button"
+              onClick={() => setActiveModal("notifications")}
+              className="p-3 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-left hover:border-indigo-500 transition-all cursor-pointer flex items-center justify-between"
+            >
+              <div className="flex items-center gap-2.5">
+                <Bell className="w-4 h-4 text-amber-500 shrink-0" />
+                <div>
+                  <strong className="text-xs font-bold text-slate-900 dark:text-white block">Notifications</strong>
+                  <span className="text-[10px] text-slate-400 font-mono">Alert preferences</span>
+                </div>
+              </div>
+              <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
+            </button>
+
             <button
               type="button"
               onClick={onOpenUpdatesModal}
@@ -949,7 +1008,7 @@ export default function MoreView({
                 <Info className="w-4 h-4 text-indigo-500 shrink-0" />
                 <div>
                   <strong className="text-xs font-bold text-slate-900 dark:text-white block">About ErMate</strong>
-                  <span className="text-[10px] text-slate-400 font-mono">ErMate v{APP_VERSION} • Standards & DPDP</span>
+                  <span className="text-[10px] text-slate-400 font-mono">ErMate v{APP_VERSION}</span>
                 </div>
               </div>
               <ChevronRight className="w-3.5 h-3.5 text-slate-400" />

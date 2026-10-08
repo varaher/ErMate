@@ -2436,7 +2436,7 @@ const startRealCheckout = async (planKey: string) => {
     return (
       <div className="space-y-5 animate-fade-in">
         {/* Back navigation header */}
-        <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-200 dark:border-slate-800 pb-4 mb-2">
+        <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3 mb-2 min-h-[48px]">
           <div className="flex items-center gap-2">
             <button 
               type="button"
@@ -2447,9 +2447,11 @@ const startRealCheckout = async (planKey: string) => {
                   setSelectedSubSection(null);
                 }
               }} 
-              className="p-1.5 bg-slate-100 dark:bg-slate-800/80 hover:bg-slate-200 dark:hover:bg-slate-700/80 text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white rounded-xl transition-all flex items-center gap-1 text-[11px] font-bold cursor-pointer"
+              aria-label={initialSubSection ? "Back to Dashboard" : "Go back"}
+              className="min-w-[44px] min-h-[44px] px-2.5 py-2 bg-slate-100 dark:bg-slate-800/80 hover:bg-slate-200 dark:hover:bg-slate-700/80 text-slate-700 hover:text-slate-900 dark:text-slate-200 dark:hover:text-white rounded-xl transition-all flex items-center justify-center gap-1.5 text-xs font-bold cursor-pointer active:scale-95"
             >
-              <ChevronLeft className="w-4 h-4" /> {initialSubSection ? "Back to Dashboard" : "Back"}
+              <ChevronLeft className="w-4.5 h-4.5 shrink-0" />
+              <span>{initialSubSection ? "Back to Dashboard" : "Back"}</span>
             </button>
             <h3 className="text-sm font-black text-slate-800 dark:text-white tracking-tight uppercase font-mono">{title}</h3>
           </div>

@@ -703,20 +703,22 @@ export default function DischargeSummaryView({
   return (
     <div className="max-w-7xl mx-auto space-y-6" id="discharge-summary-container">
       {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-4 no-print">
-        <div className="flex items-center gap-3">
+      <div className="sticky top-[var(--ermate-header-height,50px)] z-20 bg-white/95 dark:bg-slate-950/95 backdrop-blur-md -mx-4 px-4 py-2.5 sm:py-3 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3 mb-4 shadow-2xs no-print">
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0">
           <button
+            type="button"
             onClick={onBack}
-            className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-all"
+            aria-label="Go back"
+            className="min-w-[44px] min-h-[44px] -ml-1 p-2.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl text-slate-700 dark:text-slate-200 transition-all flex items-center justify-center active:scale-95 cursor-pointer shrink-0"
             id="back-btn-discharge"
           >
-            <ArrowLeft className="w-5 h-5 text-slate-600 dark:text-slate-400" />
+            <ArrowLeft className="w-5 h-5 text-slate-600 dark:text-slate-300" />
           </button>
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-xl md:text-2xl font-bold font-display text-slate-900 dark:text-white flex items-center gap-2">
-                <FileText className="w-5 h-5 text-blue-600 animate-pulse" />
-                Discharge Card Scribe
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <h1 className="text-base sm:text-lg md:text-xl font-bold font-display text-slate-900 dark:text-white flex items-center gap-2 truncate">
+                <FileText className="w-4 h-4 sm:w-5 sm:h-5 text-blue-600 shrink-0" />
+                <span>Discharge Card Scribe</span>
               </h1>
               {/* Status Badge */}
               <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider ${
@@ -1659,7 +1661,7 @@ export default function DischargeSummaryView({
         </div>
 
         {/* Live Printable Paper Preview Sheet (7 Cols) */}
-        <div className="lg:col-span-7 bg-white text-slate-900 border border-slate-300 rounded-2xl shadow-lg overflow-hidden print:overflow-visible h-[calc(100vh-140px)] print:h-auto flex flex-col print:border-0 print:shadow-none print:rounded-none print:col-span-12 print:w-full print:p-0 print:m-0">
+        <div className="lg:col-span-7 bg-white text-slate-900 border border-slate-300 rounded-2xl shadow-lg overflow-hidden print:overflow-visible h-[calc(100dvh-130px)] print:h-auto flex flex-col print:border-0 print:shadow-none print:rounded-none print:col-span-12 print:w-full print:p-0 print:m-0">
           
           {/* Top Banner (No Print) */}
           <div className="bg-slate-100 dark:bg-slate-900 border-b p-3 px-4 flex items-center justify-between text-xs text-slate-600 dark:text-slate-400 no-print">

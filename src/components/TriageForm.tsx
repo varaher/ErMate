@@ -158,19 +158,21 @@ export default function TriageForm({ onBack, onSubmit, initialMode, activeCases 
   return (
     <div className="max-w-3xl mx-auto space-y-6" id="triage-form-container">
       {/* Header */}
-      <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-4">
-        <div className="flex items-center gap-3">
+      <div className="sticky top-[var(--ermate-header-height,50px)] z-20 bg-white/95 dark:bg-slate-950/95 backdrop-blur-md -mx-4 px-4 py-2.5 sm:py-3 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between mb-4 shadow-2xs">
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0">
           <button
+            type="button"
             onClick={onBack}
-            className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-all"
+            aria-label="Go back"
+            className="min-w-[44px] min-h-[44px] -ml-1 p-2.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl text-slate-700 dark:text-slate-200 transition-all flex items-center justify-center active:scale-95 cursor-pointer"
           >
-            <ArrowLeft className="w-5 h-5 text-slate-600 dark:text-slate-400" />
+            <ArrowLeft className="w-5 h-5 text-slate-600 dark:text-slate-300" />
           </button>
-          <div>
-            <h1 className="text-xl md:text-2xl font-bold font-display text-slate-900 dark:text-white">
+          <div className="min-w-0">
+            <h1 className="text-base sm:text-lg md:text-xl font-bold font-display text-slate-900 dark:text-white truncate">
               {initialMode === "quick" ? "Quick Case Registration" : "Standard Triage Registration"}
             </h1>
-            <p className="text-xs text-slate-400">
+            <p className="text-[11px] text-slate-400 truncate hidden xs:block">
               {initialMode === "quick" 
                 ? "Bypass complete triage inputs for critical patients" 
                 : "Register full patient demographics, identifiers, and baseline vitals"}

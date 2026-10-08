@@ -167,10 +167,11 @@ export const CaseChatWorkspace: React.FC<CaseChatWorkspaceProps> = ({
             <button
               type="button"
               onClick={handleSafeClose}
-              className="p-1.5 sm:p-2 -ml-1 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-colors cursor-pointer flex items-center gap-1 shrink-0"
+              aria-label="Back to ER workspace"
+              className="min-w-[44px] min-h-[44px] -ml-1 p-2 text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5 shrink-0 active:scale-95 select-none"
               title="Back to ER workspace"
             >
-              <ArrowLeft className="w-5 h-5" />
+              <ArrowLeft className="w-5 h-5 shrink-0 text-slate-600 dark:text-slate-300" />
               <span className="text-xs font-bold hidden md:inline">Back</span>
             </button>
 

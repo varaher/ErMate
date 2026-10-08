@@ -45,6 +45,39 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-08] — ErMate: Responsive Navigation & Tab UX Refinement
+- **Responsive 3-Mode Navigation Architecture**:
+  - **Mobile (< 768px)**: Clean bottom navigation strictly displaying the 5 primary clinical destinations: `Dashboard`, `Cases`, `Scribe`, `Handover`, and `More`. Eliminated horizontal scrolling in mobile navigation (`grid-cols-5`, `w-full max-w-md overflow-hidden`). Ensured touch targets meet $\ge 48$px with `aria-label` accessibility.
+  - **Tablet (768px–1199px)**: Eliminated clinical workspace squeezing. Removed `md:mr-[420px]` and `lg:mr-[440px]` from `<main>`. MATE opens as a slide-over drawer with overlay backdrop (`bg-slate-950/40 backdrop-blur-xs z-45 xl:hidden`) that dismisses on tap, ensuring the primary workspace retains 100% comfortable width without squishing.
+  - **Large Desktop (>= 1200px / xl:)**: MATE docks as a side panel (`xl:w-[420px] 2xl:w-[440px]`) with `<main>` retaining comfortable clinical workspace margin (`xl:mr-[420px] 2xl:mr-[440px]`), ensuring minimum clinical workspace width $\ge 860$–$1100$px+.
+- **Unified Tab Visual Design & Token Discipline**:
+  - Replaced saturated rainbow solid blocks (`bg-emerald-600 text-white`, etc.) with calm ErMate design tokens (`bg-indigo-50/90 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200/80 dark:border-indigo-800/80 font-bold shadow-2xs`).
+  - Active mobile indicators use subtle primary surface icon containers rather than giant pills across the full button width.
+- **Scribe Tab Behavioral Integration**:
+  - Direct 1-tap activation of Voice Scribe / MATE from mobile bottom navigation (`setShowVoiceScribeChat(true)`), with active indicator bound to `showVoiceScribeChat`.
+  - Tapping non-Scribe destinations seamlessly closes mobile full-screen Voice Scribe and navigates to the target screen.
+- **More Screen as Canonical Secondary Navigation Hub (`src/components/MoreView.tsx`)**:
+  - Clean grouping into 4 canonical sections: `ACCOUNT` (Profile, Plan, Security, Privacy), `TEAM & WORKPLACE` (Roster, Facility, Invitations), `MY WORK & CLINICAL TOOLS` (Analytics, Log Book, Learn, Tools, MLC, Directory, Handover, M&M Audit, Self-Learning Rules), and `HELP & APP SETTINGS` (Notifications, Display Mode, Changelog, Support, About, Logout).
+  - 100% destination retention with zero route removal and zero content duplication.
+- **Verification (`verify_responsive_navigation.ts` 10/10 PASS, `verify_mobile_ux_design_system.ts` 12/12 PASS, `verify_regression.ts` 19/19 PASS)**:
+  - 100% test pass rate across all suites; clean TypeScript compilation (`tsc --noEmit`) and successful applet build.
+
+### [2026-10-08] — ErMate: Mobile UX & Professional Design System Patch
+- **Root Cause of Mobile Back Navigation Overlap Resolved**:
+  - Global header was fixed/sticky with `top-0 z-40` while nested workspace headers (CaseSheetView, CaseSheetPrintView, TriageForm, DischargeSummaryView, Tools, Quick Intake) were also configured with `sticky top-0`, causing the secondary subheader and Back control to slide directly beneath the sticky Global Header on scroll or small screens.
+  - Resolved with clean two-layer architecture: Global App Header measures its runtime height and sets `--ermate-header-height` dynamically on `:root`, while all nested screen subheaders stick to `top-[var(--ermate-header-height,50px)] z-20/z-30`.
+- **Accessible Minimum 44px Touch Targets**:
+  - Upgraded all primary Back, close, exit, discard, cancel, and bottom tab controls to minimum `44px x 44px` touch targets with explicit `aria-label="Go back"` / accessible labels, active tap scale feedback, and high contrast.
+- **Modern Viewport & PWA Safe Area Integration**:
+  - Cleaned duplicate Tailwind classes in `App.tsx` and introduced `min-h-dvh` / `100dvh` support across all full-height views (VoiceScribe, DischargeSummary, MlcCertificates, App root) preventing address bar expansion collapse layout jitter.
+  - Enforced `pt-safe` on Global Header, `pb-safe` on mobile bottom navigation bar and composer input bars, respecting notched devices and Android navigation gesture areas.
+- **ErMate Semantic Design Tokens & Professional System (`src/index.css`)**:
+  - Standardized color system: Primary Indigo/Violet, Secondary Sky/Blue, Semantic Emerald (Saved/Success), Amber (Pending/Warning), Red (Danger/Critical), Blue (Info).
+  - Calm, clinical neutral surfaces with high-contrast text (`--ermate-bg`, `--ermate-surface`, `--ermate-text-primary`) eliminating loud gradients behind clinical dictations.
+  - Consistent border radii scale (8px, 12px, 16px, 22px) and 150–250ms transitions respecting `prefers-reduced-motion`.
+- **Verification (`verify_mobile_ux_design_system.ts` 12/12 PASS, `verify_regression.ts` 19/19 PASS, `verify_final_case_sheet_residual.ts` 8/8 PASS)**:
+  - 100% test pass rate across all suites; clean production build with 0 TypeScript/compilation errors.
+
 ### [2026-10-08] — ErMate: Case Sheet Residual Verification (ER Observation & Pediatric Locked Order)
 - **Item 1 — ER Observation Disposition Semantics (`src/types.ts`, `src/components/CaseSheetView.tsx`)**:
   - Added `"ER Observation"` to the canonical `DispositionDetails.dispositionType` union in `src/types.ts`.

@@ -451,12 +451,17 @@ export default function QuickDischargeIntake({
 
   return (
     <div className="min-h-screen bg-slate-950 text-white flex flex-col">
-      <div className="px-4 py-4 border-b border-slate-800 flex items-center justify-between">
+      <div className="sticky top-[var(--ermate-header-height,50px)] z-20 bg-slate-950/95 backdrop-blur-md px-4 py-2.5 sm:py-3 border-b border-slate-800 flex items-center justify-between shadow-2xs">
         <div>
-          <h1 className="text-lg font-extrabold">Quick Discharge</h1>
-          <p className="text-xs text-slate-400">Paste, dictate, or photograph — no case documentation needed. Always free.</p>
+          <h1 className="text-base sm:text-lg font-extrabold truncate">Quick Discharge</h1>
+          <p className="text-[11px] text-slate-400 truncate hidden xs:block">Paste, dictate, or photograph — no case documentation needed. Always free.</p>
         </div>
-        <button onClick={onCancel} className="text-slate-400 hover:text-white text-sm font-bold cursor-pointer">
+        <button
+          type="button"
+          onClick={onCancel}
+          aria-label="Cancel quick discharge"
+          className="min-w-[44px] min-h-[44px] px-3 py-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-900 active:scale-95 text-xs font-bold cursor-pointer transition-all flex items-center justify-center select-none"
+        >
           Cancel
         </button>
       </div>

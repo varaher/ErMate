@@ -408,29 +408,32 @@ export default function ErGuideView({ onBack, isDarkMode }: EMDrugsViewProps) {
     <div className="bg-slate-50 dark:bg-slate-900 min-h-screen text-slate-800 dark:text-slate-100 p-4 md:p-6 pb-20 font-sans" id="em-drugs-and-procedures-view">
       
       {/* 1. Header Area */}
-      <div className="max-w-6xl mx-auto flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-800 pb-4 mb-5">
-        <div className="flex items-center gap-3">
-          <button 
-            onClick={onBack}
-            className="p-2.5 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-850 rounded-xl text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white shadow-xs transition-all flex items-center justify-center"
-            title="Return to Dashboard"
-          >
-            <ArrowLeft className="w-4 h-4" />
-          </button>
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-xl md:text-2xl font-black font-display tracking-tight text-slate-900 dark:text-white">
-                Er Guide
-              </h1>
-              <span className="text-[10px] bg-red-500/10 dark:bg-red-500/15 text-red-600 dark:text-red-400 font-extrabold px-2 py-0.5 rounded border border-red-500/20 uppercase tracking-wide">
-                Critical Care
-              </span>
+      <div className="sticky top-[var(--ermate-header-height,50px)] z-20 bg-white/95 dark:bg-slate-950/95 backdrop-blur-md -mx-4 md:-mx-6 px-4 md:px-6 py-2.5 sm:py-3 border-b border-slate-200 dark:border-slate-800 mb-5 shadow-2xs">
+        <div className="max-w-6xl mx-auto flex flex-col md:flex-row md:items-center justify-between gap-3">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+            <button 
+              type="button"
+              onClick={onBack}
+              aria-label="Go back"
+              className="min-w-[44px] min-h-[44px] -ml-1 p-2.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-xl text-slate-700 dark:text-slate-200 shadow-2xs transition-all flex items-center justify-center active:scale-95 cursor-pointer shrink-0"
+              title="Return to Dashboard"
+            >
+              <ArrowLeft className="w-4.5 h-4.5" />
+            </button>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <h1 className="text-base sm:text-lg md:text-xl font-black font-display tracking-tight text-slate-900 dark:text-white truncate">
+                  Er Guide
+                </h1>
+                <span className="text-[10px] bg-red-500/10 dark:bg-red-500/15 text-red-600 dark:text-red-400 font-extrabold px-2 py-0.5 rounded border border-red-500/20 uppercase tracking-wide shrink-0">
+                  Critical Care
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400 font-mono mt-0.5 truncate hidden sm:block">
+                Standardized reference protocols based on Rosens Emergency Medicine & Life in the Fast Lane
+              </p>
             </div>
-            <p className="text-xs text-slate-500 dark:text-slate-400 font-mono mt-0.5">
-              Standardized reference protocols based on Rosens Emergency Medicine & Life in the Fast Lane
-            </p>
           </div>
-        </div>
  
         {/* Global Warning Badge */}
         <div className="flex items-center gap-2 p-2.5 bg-amber-500/10 border border-amber-500/20 rounded-xl text-xs max-w-md">
@@ -439,6 +442,7 @@ export default function ErGuideView({ onBack, isDarkMode }: EMDrugsViewProps) {
             <strong>Clinical Support Tool:</strong> Dosing formulas and recommendations require independent expert validation before administration.
           </span>
         </div>
+      </div>
       </div>
  
       <div className="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-12 gap-6">

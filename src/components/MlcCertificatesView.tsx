@@ -19,7 +19,7 @@ export function MlcCertificatesView({ cases, profile, onSelectCase }: MlcCertifi
 
   if (!selectedCase) {
     return (
-      <div className="flex h-[calc(100vh-64px)] bg-slate-50 dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800">
+      <div className="flex h-[calc(100dvh-64px)] bg-slate-50 dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800">
         <div className="w-80 bg-white dark:bg-slate-950 border-r border-slate-200 dark:border-slate-800 flex flex-col h-full">
           <div className="p-4 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 shrink-0">
             <h2 className="font-extrabold text-slate-800 dark:text-slate-200 flex items-center gap-2">
@@ -59,7 +59,7 @@ export function MlcCertificatesView({ cases, profile, onSelectCase }: MlcCertifi
   }
 
   return (
-    <div className="flex h-[calc(100vh-64px)] bg-slate-50 dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800">
+    <div className="flex h-[calc(100dvh-64px)] bg-slate-50 dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800">
       <MlcDetailPanel 
         clinicalCase={selectedCase} 
         onBack={() => setSelectedCaseId(null)}
@@ -75,13 +75,18 @@ function MlcDetailPanel({ clinicalCase, onBack, profile }: { clinicalCase: Clini
   return (
     <div className="flex-1 flex flex-col h-full overflow-hidden relative">
       {/* Header */}
-      <div className="h-16 shrink-0 bg-white dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between px-4 sticky top-0 z-10 shadow-sm">
-        <div className="flex items-center gap-4">
-          <button onClick={onBack} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-900 rounded-full text-slate-500 transition-colors">
-            <ArrowLeft className="w-5 h-5" />
+      <div className="min-h-[52px] shrink-0 bg-white/95 dark:bg-slate-950/95 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 flex items-center justify-between px-3 sm:px-4 sticky top-[var(--ermate-header-height,50px)] z-20 shadow-2xs">
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={onBack}
+            aria-label="Go back"
+            className="min-w-[44px] min-h-[44px] -ml-1 p-2.5 hover:bg-slate-100 dark:hover:bg-slate-900 rounded-xl text-slate-700 dark:text-slate-200 transition-colors flex items-center justify-center active:scale-95 cursor-pointer"
+          >
+            <ArrowLeft className="w-5 h-5 text-slate-600 dark:text-slate-300" />
           </button>
           <div>
-            <h1 className="font-extrabold text-slate-800 dark:text-slate-100 flex items-center gap-2">
+            <h1 className="font-extrabold text-slate-800 dark:text-slate-100 flex items-center gap-2 text-sm sm:text-base">
               {clinicalCase.patient.name} <span className="text-slate-400 font-normal text-sm">({clinicalCase.patient.age}y / {clinicalCase.patient.gender})</span>
             </h1>
             <div className="text-xs text-orange-600 dark:text-orange-400 font-mono font-bold flex items-center gap-1 mt-0.5">

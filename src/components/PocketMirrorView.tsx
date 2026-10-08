@@ -304,25 +304,27 @@ export default function PocketMirrorView({ onBack }: PocketMirrorViewProps) {
     <div className={`space-y-6 pb-24 text-left ${lightBoost ? "bg-white p-4 rounded-3xl text-slate-900 shadow-2xl transition-all duration-300" : "transition-all duration-300"}`}>
       
       {/* Dynamic light header when boost is on */}
-      <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-4 no-print">
-        <div className="flex items-center gap-3">
+      <div className="sticky top-[var(--ermate-header-height,50px)] z-20 bg-white/95 dark:bg-slate-950/95 backdrop-blur-md -mx-4 px-4 py-2.5 sm:py-3 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between shadow-2xs no-print">
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0">
           <button 
             type="button"
             onClick={onBack} 
-            className={`p-1.5 rounded-xl transition-all flex items-center gap-1 text-[11px] font-bold cursor-pointer ${
+            aria-label="Exit Mirror"
+            className={`min-w-[44px] min-h-[44px] -ml-1 p-2.5 rounded-xl transition-all flex items-center justify-center gap-1.5 text-xs font-bold cursor-pointer active:scale-95 shrink-0 ${
               lightBoost 
                 ? "bg-slate-100 hover:bg-slate-200 text-slate-700" 
                 : "bg-slate-800/80 hover:bg-slate-700/80 text-slate-300 hover:text-white"
             }`}
           >
-            <ChevronLeft className="w-4 h-4" /> Exit Mirror
+            <ChevronLeft className="w-4.5 h-4.5 shrink-0" />
+            <span className="hidden xs:inline">Exit Mirror</span>
           </button>
-          <div>
-            <h1 className={`text-base font-black tracking-tight flex items-center gap-1.5 font-display ${lightBoost ? "text-slate-950" : "text-white"}`}>
-              <Camera className="w-4.5 h-4.5 text-indigo-500 animate-pulse" />
-              iPhone Mirror Cam & Pupil Scale
+          <div className="min-w-0">
+            <h1 className={`text-base font-black tracking-tight flex items-center gap-1.5 font-display truncate ${lightBoost ? "text-slate-950" : "text-white"}`}>
+              <Camera className="w-4.5 h-4.5 text-indigo-500 animate-pulse shrink-0" />
+              <span className="truncate">Mirror Cam & Pupil Scale</span>
             </h1>
-            <p className={`text-[10px] ${lightBoost ? "text-slate-500" : "text-slate-400"} font-mono`}>
+            <p className={`text-[10px] ${lightBoost ? "text-slate-500" : "text-slate-400"} font-mono truncate hidden sm:block`}>
               Clinical Front-Facing Diagnostic Mirror • Horizontal Reflected Stream
             </p>
           </div>

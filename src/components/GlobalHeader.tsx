@@ -114,6 +114,20 @@ export const GlobalHeader: React.FC<GlobalHeaderProps> = ({
 
   const notificationsRef = useRef<HTMLDivElement>(null);
   const profileMenuRef = useRef<HTMLDivElement>(null);
+  const headerRef = useRef<HTMLElement>(null);
+
+  // Synchronize exact runtime header height to CSS variable for child subheaders & safe positioning
+  useEffect(() => {
+    const updateHeaderHeight = () => {
+      if (headerRef.current) {
+        const height = headerRef.current.offsetHeight;
+        document.documentElement.style.setProperty("--ermate-header-height", `${height}px`);
+      }
+    };
+    updateHeaderHeight();
+    window.addEventListener("resize", updateHeaderHeight);
+    return () => window.removeEventListener("resize", updateHeaderHeight);
+  }, []);
 
   // Close menus on outside click
   useEffect(() => {
@@ -210,7 +224,7 @@ export const GlobalHeader: React.FC<GlobalHeaderProps> = ({
   };
 
   return (
-    <header className="bg-white/95 dark:bg-slate-950/95 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 pt-safe px-3 md:px-6 shadow-xs sticky top-0 z-40 no-print relative select-none">
+    <header ref={headerRef} className="bg-white/95 dark:bg-slate-950/95 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 pt-safe px-3 md:px-6 shadow-xs sticky top-0 z-40 no-print relative select-none">
       {/* Top accent gradient border line */}
       <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-emerald-500 via-teal-400 to-indigo-600" />
 
@@ -218,7 +232,11 @@ export const GlobalHeader: React.FC<GlobalHeaderProps> = ({
       <div className="max-w-7xl mx-auto flex items-center justify-between gap-2 sm:gap-3 min-h-[50px] py-1.5 sm:py-2">
         {/* LEFT: ErMate Logo & Branding */}
         <div className="flex items-center gap-2 sm:gap-3 shrink-0">
-          <ErMateLogo variant="header" size="sm" />
+          <ErMateLogo 
+            variant="header" 
+            size="sm" 
+            onClick={() => onNavigateToTab("dashboard")}
+          />
 
           {/* CONTEXT: Current Workplace / Department (Desktop Only) */}
           <div

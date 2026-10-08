@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { Send, ArrowLeft, MoreVertical, Paperclip, Sparkles, MessageSquare, Mic as MicIcon, Activity, AlertTriangle, Plus, X, RefreshCw } from "lucide-react";
+import { Send, ArrowLeft, MoreVertical, Paperclip, Sparkles, MessageSquare, Mic as MicIcon, Activity, AlertTriangle, Plus, X, RefreshCw, Maximize2, Minimize2 } from "lucide-react";
 import { doc, getDoc, setDoc } from "firebase/firestore";
 import { db, auth } from "../firebase";
 import {
@@ -15,7 +15,7 @@ import {
   getChatHistory,
   getDiscussionHistory,
 } from "../services/scribeChatStorage";
-import { resolveWorkspaceForUser } from "../utils/workspaceResolver";
+import { resolveWorkspaceForUser, WorkspaceResolutionError } from "../utils/workspaceResolver";
 import VoiceRecorder, { isGlobalVoiceRecordingActive } from "./shared/VoiceRecorder";
 import Markdown from "react-markdown";
 import { getChecklistForKind, type CaseSheetKind } from "../../server/caseSheetChecklist";
@@ -114,6 +114,8 @@ interface VoiceScribeChatViewProps {
   onSwitchCase?: (caseId: string) => void;
   onEnsureDraftCase?: (sessionId: string, options?: { bedNo?: string }) => Promise<string>;
   isSidecar?: boolean;
+  isSidecarExpanded?: boolean;
+  onToggleSidecarExpand?: () => void;
 }
 
 const LENSES: { id: string; label: string }[] = [
@@ -775,6 +777,8 @@ export default function VoiceScribeChatView({
   onSwitchCase,
   onEnsureDraftCase,
   isSidecar = false,
+  isSidecarExpanded = false,
+  onToggleSidecarExpand,
 }: VoiceScribeChatViewProps) {
   const processingActionRef = useRef(false);
   // Session context generation guard against stale late async responses
@@ -2544,7 +2548,7 @@ export default function VoiceScribeChatView({
       : "Dictate the case in your native language, or ask a clinical question";
 
   return (
-    <div className={`flex flex-col h-full w-full bg-white dark:bg-slate-950 overflow-hidden ${isSidecar ? '' : 'h-[calc(100vh-140px)] min-h-[500px] max-w-5xl mx-auto rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xl'}`}>
+    <div className={`flex flex-col h-full w-full bg-white dark:bg-slate-950 overflow-hidden ${isSidecar ? '' : 'h-[calc(100dvh-130px)] min-h-[500px] max-w-5xl mx-auto rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xl'}`}>
       <div className={`bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2 shrink-0 ${isSidecar ? 'px-3.5 py-2.5' : 'px-4 py-3'}`}>
         {isSidecar ? (
           <div className="flex items-center gap-2 min-w-0">
@@ -2568,18 +2572,24 @@ export default function VoiceScribeChatView({
             </div>
           </div>
         ) : (
-          <div className="flex items-center gap-2.5">
-            <button onClick={handleSafeBack} className="p-1.5 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-lg text-slate-500 font-bold flex items-center gap-1 cursor-pointer">
-              <ArrowLeft size={16} /> Back
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleSafeBack}
+              aria-label="Go back"
+              className="min-w-[44px] min-h-[44px] -ml-1 px-2.5 py-2 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-xl text-slate-700 dark:text-slate-200 font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer active:scale-95 transition-all select-none"
+            >
+              <ArrowLeft size={18} className="shrink-0 text-slate-600 dark:text-slate-300" />
+              <span>Back</span>
             </button>
-            <div>
+            <div className="min-w-0">
               <div className="flex items-center gap-2">
-                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
-                <h2 className="text-xs font-black text-slate-900 dark:text-white uppercase tracking-wider">
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+                <h2 className="text-xs font-black text-slate-900 dark:text-white uppercase tracking-wider truncate">
                   {headerTitle}
                 </h2>
               </div>
-              <p className="text-[10px] text-slate-500 dark:text-slate-400">{headerSubtitle}</p>
+              <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate">{headerSubtitle}</p>
             </div>
           </div>
         )}
@@ -2605,15 +2615,28 @@ export default function VoiceScribeChatView({
           )}
 
           {isSidecar ? (
-            <button
-              type="button"
-              onClick={handleSafeBack}
-              className="p-1.5 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-lg text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 transition-all cursor-pointer"
-              title="Close MATE"
-              aria-label="Close"
-            >
-              <X size={18} />
-            </button>
+            <div className="flex items-center gap-1">
+              {onToggleSidecarExpand && (
+                <button
+                  type="button"
+                  onClick={onToggleSidecarExpand}
+                  className="min-w-[44px] min-h-[44px] p-2.5 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-xl text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 transition-all cursor-pointer flex items-center justify-center active:scale-95"
+                  title={isSidecarExpanded ? "Collapse MATE" : "Expand MATE"}
+                  aria-label={isSidecarExpanded ? "Collapse MATE" : "Expand MATE"}
+                >
+                  {isSidecarExpanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={handleSafeBack}
+                className="min-w-[44px] min-h-[44px] -mr-1 p-2.5 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-xl text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 transition-all cursor-pointer flex items-center justify-center active:scale-95"
+                title="Close MATE"
+                aria-label="Close MATE"
+              >
+                <X size={20} />
+              </button>
+            </div>
           ) : (
             onOpenCaseSheet && !isDiscussionOnly && (
               <button

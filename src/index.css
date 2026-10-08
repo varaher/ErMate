@@ -57,7 +57,7 @@
 
   /* Touch & Layout Metrics */
   --ermate-touch-min: 44px;
-  --ermate-header-height: 54px;
+  --ermate-header-height: 50px;
   --ermate-subheader-height: 48px;
   --ermate-bottom-nav-height: 64px;
 }

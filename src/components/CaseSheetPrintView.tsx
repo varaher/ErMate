@@ -1131,7 +1131,7 @@ export default function CaseSheetPrintView({
   return (
     <div className="min-h-screen bg-slate-100 dark:bg-slate-900 print:bg-white text-slate-900 dark:text-slate-100 font-sans">
       {/* Sticky Header with Banner & Toolbar for Preview / Print */}
-      <div className="no-print sticky top-0 z-30 shadow-sm">
+      <div className="no-print sticky top-[var(--ermate-header-height,50px)] z-30 shadow-sm">
         {isPreview && (
           <div
             id="case-sheet-preview-banner"
@@ -1153,16 +1153,18 @@ export default function CaseSheetPrintView({
           </div>
         )}
 
-        <div className="bg-white dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 px-2 sm:px-4 py-2 sm:py-3 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+        <div className="bg-white/95 dark:bg-slate-950/95 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 px-2 sm:px-4 py-2 sm:py-2.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
           <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto justify-between sm:justify-start">
             <div className="flex items-center gap-2">
               {onBack && (
                 <button
+                  type="button"
                   onClick={onBack}
                   id="preview-back-button"
-                  className="flex items-center gap-1.5 px-2.5 py-1.5 sm:px-3 sm:py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-lg text-xs font-bold transition-all cursor-pointer"
+                  aria-label={isPreview ? "Back to Scribe" : "Back to Cases"}
+                  className="min-w-[44px] min-h-[44px] flex items-center gap-1.5 px-3 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-bold transition-all cursor-pointer active:scale-95 select-none"
                 >
-                  <ArrowLeft className="w-3.5 h-3.5" />
+                  <ArrowLeft className="w-4 h-4 shrink-0 text-slate-600 dark:text-slate-300" />
                   <span>{isPreview ? "Back to Scribe" : "Back"}</span>
                 </button>
               )}

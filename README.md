@@ -211,6 +211,7 @@ ErMate employs a dynamic role-based navigation hierarchy computed from `getNorma
 
 | Path | Purpose |
 | :--- | :--- |
+| `/verify_responsive_navigation.ts` | Verification suite for 3-mode responsive navigation, 5-item mobile bottom nav, tablet overlay MATE drawer, and ErMate token discipline |
 | `/verify_individual_first_workspace.ts` | Verification suite for Individual-first workspace model, role separation from team membership, and canonical workspace resolution |
 | `/src/utils/workspaceResolver.ts` | Authoritative workspace ownership resolver enforcing Individual default and verified team_members validation |
 | `/verify_team_invite_stuck_resolution.ts` | Verification suite for Team Invitation explicit states, deterministic failure reporting, retryability, and canonical hospital scope |

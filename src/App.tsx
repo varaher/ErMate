@@ -493,6 +493,7 @@ useEffect(() => {
     setDiscussionModalCase(prev => prev && prev.id === caseId ? { ...prev, discussionMessages: messages } : prev);
   };
   const [showVoiceScribeChat, setShowVoiceScribeChat] = useState<boolean>(false);
+  const [isMateExpanded, setIsMateExpanded] = useState<boolean>(false);
   const [voiceScribeCaseId, setVoiceScribeCaseId] = useState<string | null>(null);
   const [voiceScribeSessionId, setVoiceScribeSessionId] = useState<string | null>(null);
   // NEW — entry-choice popup and discussion-mode flag for the merged
@@ -5983,7 +5984,7 @@ const handleSignOut = async () => {
     : [];
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-50 dark:bg-slate-900 text-slate-850 dark:text-slate-100 flex flex-col font-sans transition-colors duration-200">
+    <div className="min-h-screen min-h-dvh bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 flex flex-col font-sans transition-colors duration-200">
       <PWABadge />
       
       {/* Upper Navigation & Branding Header */}
@@ -6019,61 +6020,61 @@ const handleSignOut = async () => {
         onSignOut={handleSignOut}
       />
 
-      {/* Primary Tab Navigation bar (Desktop Only) */}
-      <nav className="hidden md:block bg-white dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 py-1 px-4 overflow-x-auto scrollbar-none no-print">
-        <div className="max-w-7xl mx-auto flex gap-1">
+      {/* Primary Tab Navigation bar (Desktop & Tablet) */}
+      <nav className="hidden md:block bg-white dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 py-1.5 px-4 overflow-x-auto scrollbar-none no-print">
+        <div className="max-w-7xl mx-auto flex items-center gap-1.5">
           {(() => {
             const isAdminUser = profile?.email?.toLowerCase().trim() === "varahgrp@gmail.com" || auth.currentUser?.email?.toLowerCase().trim() === "varahgrp@gmail.com";
             
-            // Dynamic role-based navigation tabs
+            // Dynamic role-based navigation tabs with concise labels & ErMate design tokens
             const getRoleNavTabs = () => {
               switch (userNormalizedRole) {
                 case "resident":
                   return [
-                    { id: "dashboard", label: "Dashboard", mobileLabel: "Dashboard", icon: Activity, activeClass: "bg-emerald-600 text-white shadow-sm shadow-emerald-600/15" },
-                    { id: "handover", label: "Handover", mobileLabel: "Handover", icon: Users, activeClass: "bg-blue-600 text-white shadow-sm shadow-blue-600/15" },
-                    { id: "logbook", label: "My Log Book", mobileLabel: "Log Book", icon: Award, activeClass: "bg-amber-600 text-white shadow-sm shadow-amber-600/15" },
-                    { id: "learn", label: "Learn", mobileLabel: "Learn", icon: BookOpen, activeClass: "bg-purple-600 text-white shadow-sm shadow-purple-600/15" },
-                    { id: "tools", label: "Tools", mobileLabel: "Tools", icon: Wrench, activeClass: "bg-teal-600 text-white shadow-sm shadow-teal-600/15" },
-                    { id: "more", label: "More", mobileLabel: "More", icon: MoreHorizontal, activeClass: "bg-slate-700 text-white shadow-sm shadow-slate-700/15" },
+                    { id: "dashboard", label: "Dashboard", icon: Activity },
+                    { id: "handover", label: "Handover", icon: Users },
+                    { id: "logbook", label: "Log Book", icon: Award },
+                    { id: "learn", label: "Learn", icon: BookOpen },
+                    { id: "tools", label: "Tools", icon: Wrench },
+                    { id: "more", label: "More", icon: MoreHorizontal },
                   ];
                 case "consultant":
                   return [
-                    { id: "dashboard", label: "Dashboard", mobileLabel: "Dashboard", icon: Activity, activeClass: "bg-emerald-600 text-white shadow-sm shadow-emerald-600/15" },
-                    { id: "cases", label: "Cases", mobileLabel: "Cases", icon: ClipboardList, activeClass: "bg-teal-600 text-white shadow-sm shadow-teal-600/15" },
-                    { id: "handover", label: "Handover", mobileLabel: "Handover", icon: Users, activeClass: "bg-blue-600 text-white shadow-sm shadow-blue-600/15" },
-                    { id: "logbook", label: "My Log Book", mobileLabel: "Log Book", icon: Award, activeClass: "bg-amber-600 text-white shadow-sm shadow-amber-600/15" },
-                    { id: "learn", label: "Learn", mobileLabel: "Learn", icon: BookOpen, activeClass: "bg-purple-600 text-white shadow-sm shadow-purple-600/15" },
-                    { id: "tools", label: "Tools", mobileLabel: "Tools", icon: Wrench, activeClass: "bg-teal-600 text-white shadow-sm shadow-teal-600/15" },
-                    { id: "more", label: "More", mobileLabel: "More", icon: MoreHorizontal, activeClass: "bg-slate-700 text-white shadow-sm shadow-slate-700/15" },
+                    { id: "dashboard", label: "Dashboard", icon: Activity },
+                    { id: "cases", label: "Cases", icon: ClipboardList },
+                    { id: "handover", label: "Handover", icon: Users },
+                    { id: "logbook", label: "Log Book", icon: Award },
+                    { id: "learn", label: "Learn", icon: BookOpen },
+                    { id: "tools", label: "Tools", icon: Wrench },
+                    { id: "more", label: "More", icon: MoreHorizontal },
                   ];
                 case "hod":
                   return [
-                    { id: "dashboard", label: "Dashboard", mobileLabel: "Dashboard", icon: Activity, activeClass: "bg-emerald-600 text-white shadow-sm shadow-emerald-600/15" },
-                    { id: "cases", label: "Cases", mobileLabel: "Cases", icon: ClipboardList, activeClass: "bg-teal-600 text-white shadow-sm shadow-teal-600/15" },
-                    { id: "handover", label: "Handover", mobileLabel: "Handover", icon: Users, activeClass: "bg-blue-600 text-white shadow-sm shadow-blue-600/15" },
-                    { id: "team", label: "Department Team", mobileLabel: "Team", icon: Building2, activeClass: "bg-indigo-600 text-white shadow-sm shadow-indigo-600/15" },
-                    { id: "analytics", label: "Analytics", mobileLabel: "Analytics", icon: TrendingUp, activeClass: "bg-rose-600 text-white shadow-sm shadow-rose-600/15" },
-                    { id: "logbook", label: "My Log Book", mobileLabel: "Log Book", icon: Award, activeClass: "bg-amber-600 text-white shadow-sm shadow-amber-600/15" },
-                    { id: "learn", label: "Learn", mobileLabel: "Learn", icon: BookOpen, activeClass: "bg-purple-600 text-white shadow-sm shadow-purple-600/15" },
-                    { id: "more", label: "More", mobileLabel: "More", icon: MoreHorizontal, activeClass: "bg-slate-700 text-white shadow-sm shadow-slate-700/15" },
+                    { id: "dashboard", label: "Dashboard", icon: Activity },
+                    { id: "cases", label: "Cases", icon: ClipboardList },
+                    { id: "handover", label: "Handover", icon: Users },
+                    { id: "team", label: "Team", icon: Building2 },
+                    { id: "analytics", label: "Analytics", icon: TrendingUp },
+                    { id: "logbook", label: "Log Book", icon: Award },
+                    { id: "learn", label: "Learn", icon: BookOpen },
+                    { id: "more", label: "More", icon: MoreHorizontal },
                   ];
                 case "independent":
                 default:
                   return [
-                    { id: "dashboard", label: "Dashboard", mobileLabel: "Dashboard", icon: Activity, activeClass: "bg-emerald-600 text-white shadow-sm shadow-emerald-600/15" },
-                    { id: "cases", label: "My Cases", mobileLabel: "My Cases", icon: ClipboardList, activeClass: "bg-teal-600 text-white shadow-sm shadow-teal-600/15" },
-                    { id: "logbook", label: "My Log Book", mobileLabel: "Log Book", icon: Award, activeClass: "bg-amber-600 text-white shadow-sm shadow-amber-600/15" },
-                    { id: "learn", label: "Learn", mobileLabel: "Learn", icon: BookOpen, activeClass: "bg-purple-600 text-white shadow-sm shadow-purple-600/15" },
-                    { id: "tools", label: "Tools", mobileLabel: "Tools", icon: Wrench, activeClass: "bg-teal-600 text-white shadow-sm shadow-teal-600/15" },
-                    { id: "more", label: "More", mobileLabel: "More", icon: MoreHorizontal, activeClass: "bg-slate-700 text-white shadow-sm shadow-slate-700/15" },
+                    { id: "dashboard", label: "Dashboard", icon: Activity },
+                    { id: "cases", label: "My Cases", icon: ClipboardList },
+                    { id: "logbook", label: "Log Book", icon: Award },
+                    { id: "learn", label: "Learn", icon: BookOpen },
+                    { id: "tools", label: "Tools", icon: Wrench },
+                    { id: "more", label: "More", icon: MoreHorizontal },
                   ];
               }
             };
 
             const baseTabs = getRoleNavTabs();
             return isAdminUser 
-              ? [...baseTabs, { id: "admin", label: "Admin Panel", mobileLabel: "Admin", icon: ShieldCheck, activeClass: "bg-slate-900 text-white shadow-sm shadow-slate-900/15" }]
+              ? [...baseTabs, { id: "admin", label: "Admin Panel", icon: ShieldCheck }]
               : baseTabs;
           })().map((tab) => {
             const Icon = tab.icon;
@@ -6087,96 +6088,79 @@ const handleSignOut = async () => {
               <button
                 key={tab.id}
                 onClick={() => navigateToTab(tab.id)}
-                className={`text-xs px-4 py-2.5 font-bold rounded-lg transition-all flex items-center gap-2 shrink-0 cursor-pointer ${
+                className={`text-xs px-3.5 py-2 rounded-xl transition-all flex items-center gap-2 shrink-0 cursor-pointer min-h-[38px] active:scale-95 ${
                   active
-                    ? tab.activeClass
-                    : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-900"
+                    ? "bg-indigo-50/90 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200/80 dark:border-indigo-800/80 font-bold shadow-2xs"
+                    : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-100/70 dark:hover:bg-slate-800/50 border border-transparent font-medium"
                 }`}
               >
-                <Icon className="w-4 h-4" />
-                {tab.label}
+                <Icon className={`w-4 h-4 ${active ? "text-indigo-600 dark:text-indigo-400" : "text-slate-500 dark:text-slate-400"}`} />
+                <span>{tab.label}</span>
               </button>
             );
           })}
         </div>
       </nav>
 
-      {/* Mobile-Optimized Bottom Navigation Bar */}
+      {/* Mobile-Optimized Bottom Navigation Bar (5 Primary Clinical Destinations) */}
       <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white/95 dark:bg-slate-950/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800/80 pb-safe z-40 no-print shadow-lg">
-        <div className="flex justify-around items-center h-16 max-w-lg mx-auto px-1 overflow-x-auto scrollbar-none">
-          {(() => {
-            const isAdminUser = profile?.email?.toLowerCase().trim() === "varahgrp@gmail.com" || auth.currentUser?.email?.toLowerCase().trim() === "varahgrp@gmail.com";
-            const getRoleNavTabs = () => {
-              switch (userNormalizedRole) {
-                case "resident":
-                  return [
-                    { id: "dashboard", label: "Dashboard", mobileLabel: "Dashboard", icon: Activity },
-                    { id: "handover", label: "Handover", mobileLabel: "Handover", icon: Users },
-                    { id: "logbook", label: "My Log Book", mobileLabel: "Log Book", icon: Award },
-                    { id: "learn", label: "Learn", mobileLabel: "Learn", icon: BookOpen },
-                    { id: "tools", label: "Tools", mobileLabel: "Tools", icon: Wrench },
-                    { id: "more", label: "More", mobileLabel: "More", icon: MoreHorizontal },
-                  ];
-                case "consultant":
-                  return [
-                    { id: "dashboard", label: "Dashboard", mobileLabel: "Dashboard", icon: Activity },
-                    { id: "cases", label: "Cases", mobileLabel: "Cases", icon: ClipboardList },
-                    { id: "handover", label: "Handover", mobileLabel: "Handover", icon: Users },
-                    { id: "logbook", label: "My Log Book", mobileLabel: "Log Book", icon: Award },
-                    { id: "learn", label: "Learn", mobileLabel: "Learn", icon: BookOpen },
-                    { id: "tools", label: "Tools", mobileLabel: "Tools", icon: Wrench },
-                    { id: "more", label: "More", mobileLabel: "More", icon: MoreHorizontal },
-                  ];
-                case "hod":
-                  return [
-                    { id: "dashboard", label: "Dashboard", mobileLabel: "Dashboard", icon: Activity },
-                    { id: "cases", label: "Cases", mobileLabel: "Cases", icon: ClipboardList },
-                    { id: "handover", label: "Handover", mobileLabel: "Handover", icon: Users },
-                    { id: "team", label: "Department Team", mobileLabel: "Team", icon: Building2 },
-                    { id: "analytics", label: "Analytics", mobileLabel: "Analytics", icon: TrendingUp },
-                    { id: "logbook", label: "My Log Book", mobileLabel: "Log Book", icon: Award },
-                    { id: "learn", label: "Learn", mobileLabel: "Learn", icon: BookOpen },
-                    { id: "more", label: "More", mobileLabel: "More", icon: MoreHorizontal },
-                  ];
-                case "independent":
-                default:
-                  return [
-                    { id: "dashboard", label: "Dashboard", mobileLabel: "Dashboard", icon: Activity },
-                    { id: "cases", label: "My Cases", mobileLabel: "My Cases", icon: ClipboardList },
-                    { id: "logbook", label: "My Log Book", mobileLabel: "Log Book", icon: Award },
-                    { id: "learn", label: "Learn", mobileLabel: "Learn", icon: BookOpen },
-                    { id: "tools", label: "Tools", mobileLabel: "Tools", icon: Wrench },
-                    { id: "more", label: "More", mobileLabel: "More", icon: MoreHorizontal },
-                  ];
-              }
-            };
-            const baseTabs = getRoleNavTabs();
-            return isAdminUser 
-              ? [...baseTabs, { id: "admin", label: "Admin Panel", mobileLabel: "Admin", icon: ShieldCheck }]
-              : baseTabs;
-          })().map((tab) => {
+        <div className="grid grid-cols-5 items-stretch h-16 max-w-md mx-auto px-1 w-full overflow-hidden">
+          {[
+            { id: "dashboard", label: "Dashboard", icon: Activity },
+            { id: "cases", label: "Cases", icon: ClipboardList },
+            { id: "scribe", label: "Scribe", icon: Sparkles },
+            { id: "handover", label: "Handover", icon: Users },
+            { id: "more", label: "More", icon: MoreHorizontal },
+          ].map((tab) => {
             const Icon = tab.icon;
             const isAnyModalActive = Boolean(selectedCaseId || viewCaseSheetPrintId || activeFormMode || showDischargeSummaryId || showPediatricCalculator || showPocketMirror || showQuickDischarge);
-            const active = !isAnyModalActive && (
-              activeTab === tab.id ||
-              (tab.id === "tools" && ["tools", "emdrugs"].includes(activeTab)) ||
-              (tab.id === "more" && ["more", "profile", "directory", "mlc"].includes(activeTab))
-            );
+            const isScribeActive = showVoiceScribeChat;
+            const active = (() => {
+              if (isAnyModalActive) return false;
+              if (tab.id === "scribe") return isScribeActive;
+              if (isScribeActive) return false;
+              if (tab.id === "dashboard") return activeTab === "dashboard";
+              if (tab.id === "cases") return activeTab === "cases";
+              if (tab.id === "handover") return activeTab === "handover";
+              if (tab.id === "more") {
+                return activeTab === "more" || ["profile", "directory", "mlc", "team", "analytics", "logbook", "learn", "tools", "emdrugs", "admin"].includes(activeTab);
+              }
+              return false;
+            })();
+
             return (
               <button
                 key={tab.id}
-                onClick={() => navigateToTab(tab.id)}
-                className={`flex flex-col items-center justify-center flex-1 min-w-[48px] h-full py-2 transition-all relative select-none cursor-pointer ${
+                type="button"
+                aria-label={tab.label}
+                onClick={() => {
+                  if (tab.id === "scribe") {
+                    setShowVoiceScribeChat(true);
+                  } else {
+                    if (showVoiceScribeChat) {
+                      setShowVoiceScribeChat(false);
+                    }
+                    navigateToTab(tab.id);
+                  }
+                }}
+                className={`flex flex-col items-center justify-center min-w-[48px] min-h-[48px] py-1 px-0.5 rounded-xl transition-all relative select-none cursor-pointer active:scale-95 ${
                   active 
-                    ? "text-indigo-600 dark:text-indigo-400 font-extrabold" 
-                    : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-400"
+                    ? "text-indigo-600 dark:text-indigo-400 font-bold" 
+                    : "text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 font-medium"
                 }`}
               >
-                {active && (
-                  <span className="absolute top-1 w-1.5 h-1.5 rounded-full bg-indigo-600 dark:bg-indigo-400" />
-                )}
-                <Icon className={`w-4.5 h-4.5 ${active ? "scale-105" : ""} transition-transform`} />
-                <span className="text-[9.5px] mt-1 font-sans truncate max-w-[56px] text-center leading-tight">{tab.mobileLabel}</span>
+                <div className={`p-1 rounded-lg transition-colors flex items-center justify-center ${
+                  active 
+                    ? "bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400" 
+                    : "text-slate-500 dark:text-slate-400"
+                }`}>
+                  <Icon className={`w-4.5 h-4.5 ${active ? "scale-105" : ""} transition-transform`} />
+                </div>
+                <span className={`text-[10px] mt-0.5 tracking-tight truncate max-w-full text-center leading-tight font-sans ${
+                  active ? "font-bold text-indigo-600 dark:text-indigo-400" : "font-medium text-slate-500 dark:text-slate-400"
+                }`}>
+                  {tab.label}
+                </span>
               </button>
             );
           })}
@@ -6184,7 +6168,7 @@ const handleSignOut = async () => {
       </nav>
 
       {/* Main Content Render Space */}
-      <main className={`flex-1 p-4 md:p-6 pb-24 md:pb-6 transition-all duration-200 ${showVoiceScribeChat ? "md:mr-[420px] lg:mr-[440px]" : ""}`}>
+      <main className={`flex-1 p-4 md:p-6 pb-24 md:pb-6 transition-all duration-200 ${showVoiceScribeChat ? "xl:mr-[420px] 2xl:mr-[440px]" : ""}`}>
         <div className="max-w-7xl mx-auto">
 
         <Suspense fallback={
@@ -6761,11 +6745,20 @@ const handleSignOut = async () => {
         </button>
       )}
 
+      {/* Tablet & Mobile Slide-over Overlay Backdrop */}
+      {showVoiceScribeChat && (
+        <div
+          className="fixed inset-0 bg-slate-950/40 backdrop-blur-xs z-45 xl:hidden no-print"
+          onClick={() => setShowVoiceScribeChat(false)}
+          aria-label="Close MATE assistant"
+        />
+      )}
+
       {/* Persistent Floating MATE Sidecar Drawer */}
       {showVoiceScribeChat && (
         <aside
           aria-label="MATE Assistant Drawer"
-          className="fixed top-0 left-0 right-0 bottom-16 md:bottom-0 md:left-auto md:w-[420px] lg:w-[440px] z-30 md:z-50 bg-white dark:bg-slate-950 border-t md:border-t-0 md:border-l border-slate-200 dark:border-slate-800 shadow-2xl flex flex-col overflow-hidden animate-in slide-in-from-right duration-200 no-print"
+          className="fixed inset-0 md:inset-y-0 md:left-auto md:right-0 md:w-[420px] lg:w-[440px] xl:w-[420px] 2xl:w-[440px] z-50 xl:z-40 bg-white dark:bg-slate-950 border-l border-slate-200 dark:border-slate-800 shadow-2xl flex flex-col overflow-hidden animate-in slide-in-from-right duration-200 no-print"
         >
           <VoiceScribeChatView
             isSidecar={true}
