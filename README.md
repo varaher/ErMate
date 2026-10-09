@@ -212,6 +212,9 @@ ErMate employs a dynamic role-based navigation hierarchy computed from `getNorma
 
 | Path | Purpose |
 | :--- | :--- |
+| `/verify_onboarding_and_trial_flow.ts` | Verification suite for new user onboarding, profile completeness (5 required fields), trial mode save gate, in-memory data preservation, and optional team creation |
+| `/src/components/OnboardingProfileView.tsx` | Dedicated onboarding view for newly registered/first login clinicians, post-profile team creation question, and canonical team invite sharing |
+| `/src/utils/profileCompleteness.ts` | Deterministic profile completeness helper (isClinicalProfileComplete) and centralized clinical save gate (canPersistClinicalData) |
 | `/verify_scribe_persistence_runtime.ts` | P0 runtime integrity test suite for Scribe persistence, dual Individual/Hospital workspace lifecycle, two-sided linking, and rules compliance |
 | `/verify_responsive_navigation.ts` | Verification suite for 3-mode responsive navigation, 5-item mobile bottom nav, tablet overlay MATE drawer, and ErMate token discipline |
 | `/verify_individual_first_workspace.ts` | Verification suite for Individual-first workspace model, role separation from team membership, and canonical workspace resolution |

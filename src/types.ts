@@ -672,6 +672,9 @@ export interface UserProfile {
   department?: string;
   teamColor?: "emerald" | "blue" | "indigo" | "violet";
   hasConsentedToLearning?: boolean;
+  erPhysicalBedCapacity?: number;
+  onboardingComplete?: boolean;
+  onboardingTeamPromptDismissed?: boolean;
 }
 
 export interface HodClaimRequest {

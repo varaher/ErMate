@@ -2143,7 +2143,7 @@ const handleCreateTeam = async (req: AuthRequest, res: any) => {
   try {
     const uid = req.user!.uid;
     const userEmail = (req.user!.email || "").trim().toLowerCase();
-    const { hospitalName, hospitalId: explicitHospitalId, department } = req.body || {};
+    const { hospitalName, hospitalId: explicitHospitalId, department, erPhysicalBedCapacity } = req.body || {};
 
     const rawHospitalName = String(hospitalName || "").trim();
     if (!rawHospitalName || rawHospitalName.length < 2) {
@@ -2161,6 +2161,14 @@ const handleCreateTeam = async (req: AuthRequest, res: any) => {
 
     const memberRef = db.collection("team_members").doc(uid);
     const userRef = db.collection("users").doc(uid);
+    const shiftRef = db.collection("hospital_shifts").doc(resolvedHospitalId);
+
+    const parsedBedCapacity =
+      typeof erPhysicalBedCapacity === "number" && Number.isInteger(erPhysicalBedCapacity) && erPhysicalBedCapacity > 0 && erPhysicalBedCapacity <= 1000
+        ? erPhysicalBedCapacity
+        : typeof erPhysicalBedCapacity === "string" && !isNaN(parseInt(erPhysicalBedCapacity, 10)) && parseInt(erPhysicalBedCapacity, 10) > 0 && parseInt(erPhysicalBedCapacity, 10) <= 1000
+        ? parseInt(erPhysicalBedCapacity, 10)
+        : null;
 
     await db.runTransaction(async (tx) => {
       const existingSnap = await tx.get(memberRef);
@@ -2194,14 +2202,31 @@ const handleCreateTeam = async (req: AuthRequest, res: any) => {
         shift: "Active"
       });
 
-      tx.set(userRef, {
+      const userUpdate: any = {
         hospital: rawHospitalName,
         hospitalId: resolvedHospitalId,
         hospitalName: rawHospitalName,
         role: assignedRole,
         subscriptionTier: "Hospital Team Premium (Department Covered)",
         updatedAt: now
-      }, { merge: true });
+      };
+      if (parsedBedCapacity) {
+        userUpdate.erPhysicalBedCapacity = parsedBedCapacity;
+      }
+      tx.set(userRef, userUpdate, { merge: true });
+
+      // Carry forward the profile ER physical bed capacity into canonical hospital_shifts
+      if (parsedBedCapacity) {
+        tx.set(shiftRef, {
+          id: resolvedHospitalId,
+          hospitalId: resolvedHospitalId,
+          hospital: rawHospitalName,
+          erPhysicalBedCapacity: parsedBedCapacity,
+          updatedAt: now,
+          updatedByUid: uid,
+          updatedByEmail: userEmail
+        }, { merge: true });
+      }
 
       const auditRef = db.collection("teamAuditLog").doc();
       tx.set(auditRef, {

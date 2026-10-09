@@ -120,6 +120,16 @@ export default function MoreView({
 
   // Profile Edit Local State
   const [editName, setEditName] = useState<string>(profile?.name || "");
+  const [editRole, setEditRole] = useState<string>(profile?.role || "EM Resident");
+  const [editHospital, setEditHospital] = useState<string>(profile?.workplaceName || profile?.hospital || profile?.hospitalLabel || "");
+  const [editDepartment, setEditDepartment] = useState<string>(profile?.department || "Emergency & Trauma Medicine");
+  const [editBedCapacity, setEditBedCapacity] = useState<number>(
+    typeof erPhysicalBedCapacity === "number" && erPhysicalBedCapacity > 0
+      ? erPhysicalBedCapacity
+      : typeof (profile as any)?.erPhysicalBedCapacity === "number" && (profile as any).erPhysicalBedCapacity > 0
+      ? (profile as any).erPhysicalBedCapacity
+      : 30
+  );
   const [editQualifications, setEditQualifications] = useState<string>(profile?.qualifications || "MBBS, MD Emergency Medicine");
   const [editRegNo, setEditRegNo] = useState<string>(profile?.regNo || "");
   const [editPhone, setEditPhone] = useState<string>(profile?.phone || "");
@@ -188,6 +198,11 @@ export default function MoreView({
     onSaveProfile({
       ...profile,
       name: editName.trim() || profile.name,
+      role: editRole.trim() || profile.role,
+      hospital: editHospital.trim() || profile.hospital,
+      workplaceName: editHospital.trim() || profile.workplaceName,
+      department: editDepartment.trim() || profile.department,
+      erPhysicalBedCapacity: Math.max(1, Math.floor(Number(editBedCapacity))) || 30,
       qualifications: editQualifications.trim() || profile.qualifications,
       regNo: editRegNo.trim() || profile.regNo,
       phone: editPhone.trim() || profile.phone,
@@ -1056,13 +1071,73 @@ export default function MoreView({
               </button>
             </div>
 
-            <form onSubmit={handleSaveProfileDetails} className="space-y-3.5">
+            <form onSubmit={handleSaveProfileDetails} className="space-y-3.5 max-h-[75vh] overflow-y-auto pr-1">
               <div className="space-y-1">
-                <label className="text-[11px] font-bold text-slate-500 uppercase font-mono">Doctor Name</label>
+                <label className="text-[11px] font-bold text-slate-500 uppercase font-mono">Doctor Name *</label>
                 <input
                   type="text"
                   value={editName}
                   onChange={(e) => setEditName(e.target.value)}
+                  className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2 text-xs font-bold text-slate-900 dark:text-white"
+                  required
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[11px] font-bold text-slate-500 uppercase font-mono">Professional Role *</label>
+                <select
+                  value={editRole}
+                  onChange={(e) => setEditRole(e.target.value)}
+                  className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2 text-xs font-bold text-slate-900 dark:text-white"
+                  required
+                >
+                  <option value="EM Resident">EM Resident</option>
+                  <option value="Consultant">Consultant</option>
+                  <option value="Senior Consultant">Senior Consultant</option>
+                  <option value="Medical Officer">Medical Officer</option>
+                  <option value="Emergency Physician">Emergency Physician</option>
+                  <option value="EM Intern">EM Intern</option>
+                  <option value="Fellow">Fellow</option>
+                  <option value="HOD / Department Lead">HOD / Department Lead</option>
+                  <option value="Staff Nurse">Staff Nurse</option>
+                </select>
+                <span className="text-[10px] text-slate-400 block font-mono">Informational profile credential.</span>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[11px] font-bold text-slate-500 uppercase font-mono">Hospital / Workplace Name *</label>
+                <input
+                  type="text"
+                  value={editHospital}
+                  onChange={(e) => setEditHospital(e.target.value)}
+                  placeholder="e.g. City General Hospital"
+                  className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2 text-xs font-bold text-slate-900 dark:text-white"
+                  required
+                />
+                <span className="text-[10px] text-slate-400 block font-mono">Personal workplace metadata.</span>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[11px] font-bold text-slate-500 uppercase font-mono">Department *</label>
+                <input
+                  type="text"
+                  value={editDepartment}
+                  onChange={(e) => setEditDepartment(e.target.value)}
+                  placeholder="e.g. Emergency & Trauma Medicine"
+                  className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2 text-xs font-bold text-slate-900 dark:text-white"
+                  required
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[11px] font-bold text-slate-500 uppercase font-mono">ER Physical Bed Capacity *</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={1000}
+                  value={editBedCapacity}
+                  onChange={(e) => setEditBedCapacity(parseInt(e.target.value, 10) || 0)}
+                  placeholder="e.g. 30"
                   className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2 text-xs font-bold text-slate-900 dark:text-white"
                   required
                 />

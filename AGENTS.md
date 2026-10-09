@@ -45,6 +45,25 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-09] — ErMate: New User Onboarding, Profile Completeness, & Optional Team Workspace Flow
+- **New User Onboarding Flow (`src/components/OnboardingProfileView.tsx`, `src/App.tsx`, `src/utils/profileCompleteness.ts`)**:
+  - Implemented dedicated "Complete Your ErMate Profile" view for newly registered and first-time clinicians whose required profile setup is incomplete.
+  - Eliminated dropping unconfigured users into a confusing dashboard: routes them directly to complete clinical credentials before permanent case saving is enabled.
+  - Required 5 canonical profile fields: Doctor Name, Professional Role, Hospital / Workplace Name, Department, and ER Physical Bed Capacity (positive integer 1..1000).
+  - Preserved Individual-First Security Invariant: Profile role, hospital name, and department are informational only and never establish team authorization. Team authority derives strictly from canonical verified `team_members/{uid}` records.
+- **Trial Case In-Memory Exploration & Save Gate (`src/utils/profileCompleteness.ts`, `src/App.tsx`)**:
+  - Clinicians with incomplete profiles are granted full trial exploration of ErMate: can access Dashboard, MATE, Voice Scribe demo/trial, Clinical Tools, Learn, and calculators.
+  - In-memory trial dictations and case creations operate with ZERO permanent Firestore writes (preventing spurious draft cases in database).
+  - Attempting to Save Case, Apply Case Sheet, or Create Persistent Patient displays the designated prompt: `"Complete your profile to save this case permanently."` with CTAs `[ Complete Profile ]` and `[ Continue in Trial Mode ]`.
+  - Zero Data Loss: Trial cases are preserved in memory during onboarding transition. Once profile is completed, the trial case converts cleanly to a persistent Individual case with canonical display sequence ID and two-sided Scribe linkage.
+- **Post-Profile Optional Team Creation & Invite Sharing (`src/components/OnboardingProfileView.tsx`, `src/services/teamInviteService.ts`)**:
+  - Immediately following first-time profile completion, displays optional modal: `"Work with a team? Create a shared Emergency Department workspace for your clinicians, cases, handovers, rota and team workflows."` with `[ Create Team Workspace ]` and `[ Not Now ]`.
+  - Choosing `[ Not Now ]` safely persists full Individual workspace clinical use without re-prompting.
+  - Choosing `[ Create Team Workspace ]` pre-fills hospital name, department, and bed capacity from profile, provisions hospital team via `/api/team/create-workspace`, establishes creator as active verified HOD in `team_members/{uid}`, and transitions workspace to `workspaceType: "hospital"`.
+  - Automatically generates canonical `https://ermate.in/invite/...` link with 1-tap Copy and Web Share actions.
+- **Verification (`verify_onboarding_and_trial_flow.ts` 38/38 PASS, `verify_individual_first_workspace.ts` 10/10 PASS, `verify_regression.ts` 19/19 PASS)**:
+  - 100% test pass rate across profile completeness, role separation, save gating, trial preservation, team creation, and full clinical regression suites; zero TypeScript compilation errors.
+
 ### [2026-10-08] — ErMate: Secondary Survey Normal Template & Disposition Preview CTA Audit
 - **Secondary Survey "Mark All Examination Normal" Template Audit & Verification (`src/components/CaseSheetView.tsx`, `src/types.ts`)**:
   - Audited `markSecondarySurveyNormal` and the presets under Secondary Survey / Examination.

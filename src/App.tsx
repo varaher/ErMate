@@ -5,7 +5,7 @@ import {
   Settings, HelpCircle, FileWarning,  Trophy, ClipboardList, Zap, Moon, Sun, Users,
   Search, X, TrendingUp, Bell, BellRing, Trash2, Check, Mic, ShieldCheck, RefreshCw,
   Download, Smartphone, Building2, UserCheck, CheckCircle2, Terminal, MessageSquare,
-  MoreHorizontal, Wrench, Award
+  MoreHorizontal, Wrench, Award, AlertCircle
 } from "lucide-react";
 
 import { 
@@ -17,6 +17,8 @@ import { isCaseEligibleFor24hArchive, filterActiveNonArchivedCases, isCaseArchiv
 import { saveHandoverPatient } from "./utils/handoverUtils";
 import { triggerPrintWithTip } from "./utils/printWithTip";
 import { getNormalizedRole } from "./utils/roleUtils";
+import { isClinicalProfileComplete, canPersistClinicalData } from "./utils/profileCompleteness";
+import OnboardingProfileView from "./components/OnboardingProfileView";
 
 import DashboardView from "./components/DashboardView";
 const CasesListView = React.lazy(() => import("./components/CasesListView"));
@@ -1004,6 +1006,21 @@ useEffect(() => {
     });
   }, [profile?.email, profile?.role, profile?.hospital, selfMembership]);
 
+  // Onboarding & Trial Mode states
+  const [exploreInTrialMode, setExploreInTrialMode] = useState<boolean>(false);
+  const [showOnboardingProfile, setShowOnboardingProfile] = useState<boolean>(false);
+  const [showTrialSaveModal, setShowTrialSaveModal] = useState<boolean>(false);
+  const [activeTrialCase, setActiveTrialCase] = useState<ClinicalCase | null>(null);
+
+  const isVerifiedTeamUser = Boolean(
+    selfMembership &&
+    isActiveMembershipStatus(String(selfMembership.status || "")) &&
+    selfMembership.membershipVerified === true &&
+    (selfMembership.hospitalId || selfMembership.hospital)
+  );
+
+  const isProfileComplete = isClinicalProfileComplete(profile, erPhysicalBedCapacity);
+
 // Auth state listener with real-time UserProfile sync.
 //
 // SECURITY:
@@ -1289,6 +1306,12 @@ useEffect(() => {
               }
 
               setProfile(data);
+              if (
+                typeof (data as any)?.erPhysicalBedCapacity === "number" &&
+                (data as any).erPhysicalBedCapacity > 0
+              ) {
+                setErPhysicalBedCapacity(prev => prev ?? (data as any).erPhysicalBedCapacity);
+              }
             },
 
             (error) => {
@@ -2297,6 +2320,25 @@ const handleDeleteAllCases = async () => {
     };
 
     try {
+      const gate = canPersistClinicalData({
+        user: auth.currentUser,
+        profile,
+        canonicalMembership: selfMembership,
+        erPhysicalBedCapacity,
+        hasExistingCase: false,
+      });
+
+      if (!gate.canSave) {
+        newCase.id = "trial-" + Date.now();
+        newCase.displayId = "TRIAL-" + (newCase.bedNo ? "B" + newCase.bedNo : "1");
+        setCases(prev => [newCase, ...prev.filter(c => c.id !== newCase.id)]);
+        setSelectedCaseId(newCase.id);
+        setActiveTrialCase(newCase);
+        setActiveFormMode(null);
+        setShowTrialSaveModal(true);
+        return;
+      }
+
       await setDoc(doc(db, "cases", newCase.id), sanitizeForFirestore(newCase), { merge: true });
     } catch (err: any) {
       console.error("Error saving triaged case:", err);
@@ -2311,9 +2353,80 @@ const handleDeleteAllCases = async () => {
     checkConsentOnCaseSaved();
   };
 
+  // Save active trial case permanently to Firestore once profile is complete
+  const handleSaveActiveTrialCase = async () => {
+    if (!activeTrialCase || !auth.currentUser) return;
+    const user = auth.currentUser;
+    const workspace = await resolveWorkspaceForUser(user.uid);
+
+    let displayCaseId: string | undefined = undefined;
+    try {
+      const reserved = await reserveNextDisplaySequence(db);
+      displayCaseId = reserved.displayId;
+    } catch (e) {
+      console.warn("Could not reserve display sequence:", e);
+    }
+
+    const realCaseId = generateInternalCaseId();
+    const oldTrialId = activeTrialCase.id;
+
+    const caseToSave: ClinicalCase = {
+      ...activeTrialCase,
+      id: realCaseId,
+      displayId: displayCaseId || activeTrialCase.displayId,
+      workspaceType: workspace.workspaceType,
+      ownerUid: workspace.ownerUid,
+      hospitalId: workspace.hospitalId,
+      hospital: profile.hospital,
+      doctorEmail: profile.email,
+      doctorName: profile.name || "Emergency Doctor",
+      createdBy: user.uid,
+      createdByUid: user.uid,
+      lastEditedBy: user.uid,
+      lastEditedAt: new Date().toISOString(),
+    };
+
+    const clean = sanitizeForFirestore(caseToSave);
+    await setDoc(doc(db, "cases", realCaseId), clean, { merge: true });
+
+    if (caseToSave.scribeSessionId) {
+      await linkScribeSessionAndCase(caseToSave.scribeSessionId, realCaseId).catch(() => {});
+    }
+
+    setCases(prev => [caseToSave, ...prev.filter(c => c.id !== oldTrialId && c.id !== realCaseId)]);
+    setSelectedCaseId(realCaseId);
+    setVoiceScribeCaseId(realCaseId);
+    setActiveTrialCase(null);
+    triggerNotification("Case Saved", "Your trial case has been permanently saved.", "success");
+  };
+
   // Save changes inside Case Sheet View
   const handleSaveCase = async (updatedCase: ClinicalCase) => {
     const previousCase = cases.find(c => c.id === updatedCase.id);
+    const isExistingPersistentCase = Boolean(previousCase && !previousCase.id.startsWith("trial-"));
+
+    const gate = canPersistClinicalData({
+      user: auth.currentUser,
+      profile,
+      canonicalMembership: selfMembership,
+      erPhysicalBedCapacity,
+      hasExistingCase: isExistingPersistentCase,
+    });
+
+    if (!gate.canSave) {
+      setActiveTrialCase(updatedCase);
+      setCases(prev => {
+        const idx = prev.findIndex(c => c.id === updatedCase.id);
+        if (idx >= 0) {
+          const next = [...prev];
+          next[idx] = updatedCase;
+          return next;
+        }
+        return [updatedCase, ...prev];
+      });
+      setShowTrialSaveModal(true);
+      return;
+    }
     
     // Phase 2: If this is a brand new case (like from Quick Discharge), resolve workspace securely.
     // If it's an existing case, preserve its existing ownership metadata.
@@ -3865,6 +3978,44 @@ const handleDeleteAllCases = async () => {
     /*
      * 5. Brand new intake: create minimal ClinicalCase shell using buildExtractedCaseDraft
      */
+    const gate = canPersistClinicalData({
+      user,
+      profile,
+      canonicalMembership: selfMembership,
+      erPhysicalBedCapacity,
+      hasExistingCase: false,
+    });
+
+    if (!gate.canSave) {
+      const trialId = "trial-" + Date.now();
+      const trialDisplayId = "TRIAL-" + (requestedBedNo ? "B" + requestedBedNo : "1");
+      const draftCase = buildExtractedCaseDraft(null, {
+        bedNo: requestedBedNo || "",
+        displayId: trialDisplayId,
+      }, {
+        caseId: trialId,
+        displayId: trialDisplayId,
+        workspaceMetadata: {
+          workspaceType: "individual",
+          ownerUid: user.uid,
+          hospitalId: null,
+        },
+        profile,
+        currentUser: user,
+        teamMembers,
+      });
+
+      draftCase.id = trialId;
+      draftCase.scribeSessionId = sessionId;
+      draftCase.bedNo = requestedBedNo || draftCase.bedNo || "";
+      draftCase.displayId = trialDisplayId;
+
+      upsertCaseLocally(draftCase);
+      setActiveTrialCase(draftCase);
+      setVoiceScribeCaseId(trialId);
+      return trialId;
+    }
+
     const workspace = await resolveWorkspaceForUser(user.uid);
     const newCaseId = generateInternalCaseId();
     let displayCaseId: string | undefined = undefined;
@@ -4261,6 +4412,38 @@ const handleDeleteAllCases = async () => {
         caseUpdatedAfterPreparation: true
       } : null
     };
+
+    const isExistingPersistentCase = Boolean(existingCase && !existingCase.id.startsWith("trial-"));
+
+    const gate = canPersistClinicalData({
+      user: auth.currentUser,
+      profile,
+      canonicalMembership: selfMembership,
+      erPhysicalBedCapacity,
+      hasExistingCase: isExistingPersistentCase,
+    });
+
+    if (!gate.canSave) {
+      if (!caseToPersist.id || caseToPersist.id.startsWith("trial-")) {
+        caseToPersist.id = caseToPersist.id || "trial-" + Date.now();
+        caseToPersist.displayId = caseToPersist.displayId || "TRIAL-1";
+      }
+      setCases(prev => {
+        const idx = prev.findIndex(c => c.id === caseToPersist.id);
+        if (idx >= 0) {
+          const next = [...prev];
+          next[idx] = caseToPersist;
+          return next;
+        }
+        return [caseToPersist, ...prev];
+      });
+      setSelectedCaseId(caseToPersist.id);
+      setActiveTrialCase(caseToPersist);
+      setVoiceScribeCaseId(caseToPersist.id);
+      setShowVoiceScribeChat(false);
+      setShowTrialSaveModal(true);
+      return;
+    }
 
     if (!existingCase && (!caseToPersist.displayId || !/^[0-9]{9}$/.test(caseToPersist.displayId))) {
       try {
@@ -5372,7 +5555,8 @@ const handleUpdateErPhysicalBedCapacity = async (newCapacity: number) => {
 
   // Handle user profile save to Firestore
 // Protected authority/billing fields cannot be changed from profile editing.
-const handleSaveProfile = async (newProfile: UserProfile) => {
+// Personal workplace metadata & professional role are informational and stored cleanly.
+const handleSaveProfile = async (newProfile: UserProfile, explicitCapacity?: number | null) => {
   if (!auth.currentUser) {
     triggerNotification(
       "Save Failed",
@@ -5381,6 +5565,15 @@ const handleSaveProfile = async (newProfile: UserProfile) => {
     );
     return;
   }
+
+  const resolvedCapacity =
+    typeof explicitCapacity === "number" && explicitCapacity > 0
+      ? explicitCapacity
+      : typeof newProfile.erPhysicalBedCapacity === "number" && newProfile.erPhysicalBedCapacity > 0
+      ? newProfile.erPhysicalBedCapacity
+      : typeof (profile as any)?.erPhysicalBedCapacity === "number" && (profile as any).erPhysicalBedCapacity > 0
+      ? (profile as any).erPhysicalBedCapacity
+      : erPhysicalBedCapacity;
 
   // Preserve all protected values from the currently trusted profile.
   // Role changes happen through /api/team/update-role.
@@ -5395,17 +5588,39 @@ const handleSaveProfile = async (newProfile: UserProfile) => {
       newProfile.email,
 
     hospital:
-      profile.hospital || "",
+      newProfile.hospital ||
+      newProfile.workplaceName ||
+      profile.hospital ||
+      "",
+
+    workplaceName:
+      newProfile.workplaceName ||
+      newProfile.hospital ||
+      profile.workplaceName ||
+      "",
 
     hospitalLabel:
       newProfile.hospitalLabel ||
+      newProfile.hospital ||
       newProfile.workplaceName ||
       profile.hospitalLabel ||
       profile.hospital ||
       "",
 
+    department:
+      newProfile.department ||
+      profile.department ||
+      "Emergency & Trauma Medicine",
+
     role:
-      profile.role || "EM Resident",
+      newProfile.role ||
+      profile.role ||
+      "EM Resident",
+
+    erPhysicalBedCapacity:
+      resolvedCapacity || undefined,
+
+    onboardingComplete: true,
 
     aiCredits:
       profile.aiCredits,
@@ -5426,6 +5641,9 @@ const handleSaveProfile = async (newProfile: UserProfile) => {
 
     // Update local UI only after Firestore save succeeds.
     setProfile(profileToSave);
+    if (resolvedCapacity && Number.isInteger(resolvedCapacity) && resolvedCapacity > 0) {
+      setErPhysicalBedCapacity(resolvedCapacity);
+    }
 
     // Optional Cloud SQL mirror.
     // Only send the already-protected values, never raw newProfile authority fields.
@@ -5818,6 +6036,42 @@ const handleSignOut = async () => {
     );
   }
 
+  // Dedicated "Complete Your ErMate Profile" screen on first login / new registration
+  if (
+    isLoggedIn &&
+    ((!isVerifiedTeamUser && !isProfileComplete && !exploreInTrialMode) || showOnboardingProfile)
+  ) {
+    return (
+      <OnboardingProfileView
+        profile={profile}
+        erPhysicalBedCapacity={erPhysicalBedCapacity}
+        onSaveProfile={async (updatedProfile, capacity) => {
+          await handleSaveProfile(updatedProfile, capacity);
+          setShowOnboardingProfile(false);
+          setExploreInTrialMode(false);
+          if (activeTrialCase) {
+            await handleSaveActiveTrialCase();
+          }
+        }}
+        onSkipToTrial={() => {
+          setExploreInTrialMode(true);
+          setShowOnboardingProfile(false);
+        }}
+        onTeamCreated={(hospitalId, hospitalName) => {
+          setExploreInTrialMode(false);
+          setShowOnboardingProfile(false);
+          triggerNotification(
+            "Team Created",
+            `Created ${hospitalName} workspace as Department Lead (HOD).`,
+            "success"
+          );
+        }}
+        hasActiveTrialCase={Boolean(activeTrialCase)}
+        onSaveActiveTrialCase={handleSaveActiveTrialCase}
+      />
+    );
+  }
+
   // Manual View-Specific Data Refresh handler
   const handleManualRefresh = async () => {
     // Deterministic 6-second timeout safety guard
@@ -6047,6 +6301,23 @@ const handleSignOut = async () => {
         onNavigateToTab={navigateToTab}
         onSignOut={handleSignOut}
       />
+
+      {/* Persistent non-obnoxious banner when profile is incomplete */}
+      {!isVerifiedTeamUser && !isProfileComplete && (
+        <div className="bg-amber-500/10 dark:bg-amber-950/40 border-b border-amber-500/20 px-4 py-2 flex items-center justify-between text-xs font-medium text-amber-800 dark:text-amber-300 z-30">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-amber-500 shrink-0" />
+            <span>Complete your profile to enable permanent case saving.</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowOnboardingProfile(true)}
+            className="px-3 py-1 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-lg text-[11px] transition-all shadow-xs cursor-pointer shrink-0"
+          >
+            Complete Profile
+          </button>
+        </div>
+      )}
 
       {/* Primary Tab Navigation bar (Desktop & Tablet) */}
       <nav className="hidden md:block bg-white dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 py-1.5 px-4 overflow-x-auto scrollbar-none no-print">
@@ -7648,6 +7919,47 @@ const handleSignOut = async () => {
           isOpen={!!discussionModalCase}
           onClose={() => setDiscussionModalCase(null)}
         />
+      )}
+
+      {/* Trial Mode Save Attempt Modal */}
+      {showTrialSaveModal && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl max-w-sm w-full p-6 shadow-2xl text-center space-y-4">
+            <div className="w-12 h-12 rounded-2xl bg-amber-50 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 flex items-center justify-center mx-auto">
+              <AlertCircle className="w-6 h-6" />
+            </div>
+            <div className="space-y-1.5">
+              <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                Trial Mode
+              </h3>
+              <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
+                Complete your profile to save this case permanently.
+              </p>
+            </div>
+            <div className="space-y-2 pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowTrialSaveModal(false);
+                  setShowOnboardingProfile(true);
+                }}
+                className="w-full min-h-[44px] py-2 px-4 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition-all shadow-md active:scale-98 cursor-pointer"
+              >
+                Complete Profile
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowTrialSaveModal(false);
+                  triggerNotification("Trial Mode", "Case retained in memory for exploration.", "info");
+                }}
+                className="w-full min-h-[38px] py-2 px-4 border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-400 text-xs font-bold rounded-xl cursor-pointer"
+              >
+                Continue in Trial Mode
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
     </div>

@@ -210,11 +210,20 @@ export async function incrementInviteUsage(token: string): Promise<void> {
  */
 export async function createHospitalWorkspace(
   hospitalName: string,
-  department?: string
+  department?: string,
+  erPhysicalBedCapacity?: number | null
 ): Promise<{ success: boolean; hospitalId: string; hospitalName: string; role: string }> {
   const user = auth.currentUser;
   if (!user) throw new Error("Not authenticated");
   const idToken = await user.getIdToken();
+
+  const payload: any = {
+    hospitalName,
+    department
+  };
+  if (typeof erPhysicalBedCapacity === "number" && erPhysicalBedCapacity > 0) {
+    payload.erPhysicalBedCapacity = erPhysicalBedCapacity;
+  }
 
   const res = await fetch("/api/team/create-team", {
     method: "POST",
@@ -222,10 +231,7 @@ export async function createHospitalWorkspace(
       "Content-Type": "application/json",
       Authorization: `Bearer ${idToken}`
     },
-    body: JSON.stringify({
-      hospitalName,
-      department
-    })
+    body: JSON.stringify(payload)
   });
 
   const data = await res.json().catch(() => ({}));
