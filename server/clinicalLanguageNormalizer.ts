@@ -62,38 +62,30 @@ export interface ClinicalNormalcyDetection {
 
  
 
+export const NORMAL_PRIMARY_SURVEY_TEMPLATES = {
+  airway: "Airway patent. No stridor or obstruction.",
+  breathing: "Equal chest expansion. Vesicular breath sounds bilaterally. No added sounds.",
+  circulation: "Warm peripheries. CRT < 2 seconds. Pulses palpable bilaterally.",
+  disability: "GCS 15/15. Pupils equal and reactive to light. No focal neurological deficit.",
+  exposure: "No external injuries or significant findings.",
+} as const;
+
 export const NORMAL_EXAM_TEMPLATES = {
-
-  airway: "Patent",
-
+  airway: "Airway patent. No stridor or obstruction.",
   generalExamination:
-
-    "No pallor, icterus, cyanosis, clubbing, lymphadenopathy, or pedal edema.",
-
+    "Conscious, alert, and oriented. No pallor, no icterus, no cyanosis, no clubbing, no lymphadenopathy, no edema.",
   cvsExamination:
-
-    "S1 S2 heard. No murmurs. Peripheral pulses normal.",
-
+    "S1 and S2 heard, normal intensity. Regular pulse. Normal apex beat, no precordial heave. No murmurs, no gallops or rubs. JVP not elevated. Peripheral pulses well felt bilaterally.",
   respiratoryExamination:
-
-    "Air entry bilaterally equal. Normal vesicular breath sounds. No added sounds.",
-
+    "Equal chest expansion. Bilateral equal air entry. Vesicular breath sounds. Resonant percussion. Normal vocal resonance. No wheeze, no crackles, no rhonchi.",
   abdomenExamination:
-
-    "Soft, non-tender. No distension. No organomegaly. Bowel sounds present.",
-
+    "Soft, non-distended, non-tender. No guarding or rigidity. No organomegaly. Tympanic percussion. Bowel sounds present and normal. Normal umbilicus, normal external genitalia, normal hernial orifices.",
   cnsExamination:
-
-    "Moving all four limbs. No focal neurological deficit.",
-
+    "Conscious and oriented to time, place, and person. GCS 15/15. Higher mental functions intact. Cranial nerves intact. Pupils: BERL. Sensory system intact. Motor system normal. Motor power 5/5 in all limbs. Reflexes normal. Romberg sign negative. Cerebellar examination normal.",
   extremitiesExamination:
-
-    "No visible abnormality.",
-
+    "Peripheral pulses present and well felt. No edema. No cyanosis or clubbing. No deformity. No swelling. Full range of motion.",
   psychologicalAssessment:
-
     "No features of depression, anxiety, psychosis, agitation, suicidal ideation, or substance use.",
-
 } as const;
 
  
@@ -151,11 +143,8 @@ export function detectClinicalNormalcy(text: string): ClinicalNormalcyDetection 
  
 
   const systemicNormal =
-
-    /\b(?:secondary(?:\s+(?:survey|assessment|exam(?:ination)?))?|systemic(?:\s+(?:exam|examination))?|general\s+and\s+systemic\s+(?:exam|examination)|all\s+systems?)\b[^.;\n]{0,55}\b(?:normal|wnl|nad|unremarkable|fine|okay|ok|all\s+good|no\s+abnormalit(?:y|ies)|nothing\s+significant)\b/i.test(t) ||
-
-    /\b(?:normal|wnl|nad|unremarkable|fine|okay|ok|all\s+good)\b[^.;\n]{0,25}\b(?:secondary(?:\s+(?:survey|assessment|exam(?:ination)?))?|systemic(?:\s+(?:exam|examination))?|all\s+systems?)\b/i.test(t) ||
-
+    /\b(?:secondary(?:\s+(?:survey|assessment|exam(?:ination)?))?|systemic(?:\s+(?:exam|examination))?|general\s+and\s+systemic\s+(?:exam|examination)|all\s+systems?|clinical\s+examinations?)\b[^.;\n]{0,55}\b(?:normal|wnl|nad|unremarkable|fine|okay|ok|all\s+good|no\s+abnormalit(?:y|ies)|nothing\s+significant|everything\s+(?:as\s+)?normal)\b/i.test(t) ||
+    /\b(?:normal|wnl|nad|unremarkable|fine|okay|ok|all\s+good)\b[^.;\n]{0,25}\b(?:secondary(?:\s+(?:survey|assessment|exam(?:ination)?))?|systemic(?:\s+(?:exam|examination))?|all\s+systems?|clinical\s+examinations?)\b/i.test(t) ||
     /\bnothing\s+significant\s+on\s+(?:systemic\s+|secondary\s+)?exam(?:ination)?\b/i.test(t);
 
  
