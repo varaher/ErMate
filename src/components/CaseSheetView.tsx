@@ -14,7 +14,7 @@ import {
   ClinicalCase, PatientVitals, SampleHistory, PrimaryAssessment, PrimarySurvey, getInitialPrimarySurvey,
   TreatmentItem, InvestigationItem, DifferentialDiagnosis, TriageCategory, ArrivalMode,
   IpsgChecklist, VulnerableAssessment, ConsentTimeOut, DispositionDetails, MlcDetails, VitalsRecord,
-  UserProfile, PediatricDetails, DischargeInfo
+  UserProfile, PediatricDetails, DischargeInfo, SecondarySurvey
 } from "../types";
 import { 
   PediatricAirwaySection,
@@ -1411,12 +1411,12 @@ export default function CaseSheetView({
       exposure: 'No obvious injuries or rashes.',
       exposureStatus: 'Normal' as const,
     },
-    secondarySurvey: `General: No pallor, icterus, cyanosis, clubbing, lymphadenopathy, or pedal edema.
-CVS: S1 S2 heard. No murmurs. JVP normal.
-Chest / RS: Normal chest expansion. Air entry bilaterally equal. Normal vesicular breath sounds. No added sounds.
-Abdomen: Abdomen soft. Non-tender. No distension. No organomegaly. Bowel sounds present.
-CNS: Conscious and oriented. Moving all four limbs. No focal neurological deficit.
-Extremities: No deformity. No peripheral oedema. Peripheral pulses present.`,
+    secondarySurvey: `General: Conscious, alert, and oriented. No pallor, no icterus, no cyanosis, no clubbing, no lymphadenopathy, no edema.
+CVS: S1 and S2 heard, normal intensity. Regular pulse. Normal apex beat, no precordial heave. No murmurs, no gallops or rubs. JVP not elevated. Peripheral pulses well felt bilaterally.
+Chest / RS: Equal chest expansion. Bilateral equal air entry. Vesicular breath sounds. Resonant percussion. Normal vocal resonance. No wheeze, no crackles, no rhonchi.
+Abdomen: Soft, non-distended, non-tender. No guarding or rigidity. No organomegaly. Tympanic percussion. Bowel sounds present and normal. Normal umbilicus, normal external genitalia, normal hernial orifices.
+CNS: Conscious and oriented to time, place, and person. GCS 15/15. Higher mental functions intact. Cranial nerves intact. Pupils: BERL. Sensory system intact. Motor system normal. Motor power 5/5 in all limbs. Reflexes normal. Romberg sign negative. Cerebellar examination normal.
+Extremities: Peripheral pulses present and well felt. No edema. No cyanosis or clubbing. No deformity. No swelling. Full range of motion.`,
     psychological: 'No features of depression, anxiety, psychosis, agitation, suicidal ideation, or substance use. Behaviour appropriate.'
   };
 
@@ -1733,11 +1733,83 @@ Extremities: No deformity. No peripheral oedema. Peripheral pulses present.`,
     setTimeout(() => setNormalMarkedBanner(false), 4000);
   };
 
-  const markSecondarySurveyNormal = () => {
+  const markSecondarySurveyNormal = (forceOverwrite = false) => {
+    // Check if examination already contains non-empty findings
+    const sec = currentCase.secondarySurvey || {};
+    const hasExisting = Boolean(
+      (sec.general && sec.general.trim()) ||
+      (sec.cvs && sec.cvs.trim()) ||
+      (sec.respiratory && sec.respiratory.trim()) ||
+      (sec.abdomen && sec.abdomen.trim()) ||
+      (sec.cns && sec.cns.trim()) ||
+      (sec.extremities && sec.extremities.trim()) ||
+      (currentCase.secondaryAssessment && currentCase.secondaryAssessment.trim())
+    );
+
+    if (hasExisting && !forceOverwrite) {
+      const confirmed = window.confirm(
+        "Some examination findings are already documented. Replace them with the normal template?"
+      );
+      if (!confirmed) {
+        return;
+      }
+    }
+
+    // GCS Consistency: check whether an already documented GCS elsewhere in Case Sheet conflicts
+    const getDocumentedGcs = (c: ClinicalCase): number | null => {
+      const vGcs = c.vitals?.gcs ? parseInt(String(c.vitals.gcs).trim(), 10) : NaN;
+      if (!isNaN(vGcs) && vGcs >= 3 && vGcs <= 15) return vGcs;
+
+      const sGcs = c.primaryAssessment?.survey?.disability?.gcsTotal;
+      const numSGcs = sGcs !== undefined && sGcs !== null ? parseInt(String(sGcs).trim(), 10) : NaN;
+      if (!isNaN(numSGcs) && numSGcs >= 3 && numSGcs <= 15) return numSGcs;
+
+      if (c.primaryAssessment?.disability) {
+        const match = c.primaryAssessment.disability.match(/GCS[:\s]*(\d+)/i);
+        if (match && match[1]) {
+          const parsed = parseInt(match[1], 10);
+          if (!isNaN(parsed) && parsed >= 3 && parsed <= 15) return parsed;
+        }
+      }
+
+      return null;
+    };
+
+    const documentedGcs = getDocumentedGcs(currentCase);
+    const effectiveGcs = documentedGcs !== null ? documentedGcs : 15;
+
+    // Approved Normal Template
+    const normalGeneral = "Conscious, alert, and oriented. No pallor, no icterus, no cyanosis, no clubbing, no lymphadenopathy, no edema.";
+    const normalCvs = "S1 and S2 heard, normal intensity. Regular pulse. Normal apex beat, no precordial heave. No murmurs, no gallops or rubs. JVP not elevated. Peripheral pulses well felt bilaterally.";
+    const normalRs = "Equal chest expansion. Bilateral equal air entry. Vesicular breath sounds. Resonant percussion. Normal vocal resonance. No wheeze, no crackles, no rhonchi.";
+    const normalPa = "Soft, non-distended, non-tender. No guarding or rigidity. No organomegaly. Tympanic percussion. Bowel sounds present and normal. Normal umbilicus, normal external genitalia, normal hernial orifices.";
+    const normalCns = `Conscious and oriented to time, place, and person. GCS ${effectiveGcs}/15. Higher mental functions intact. Cranial nerves intact. Pupils: BERL. Sensory system intact. Motor system normal. Motor power 5/5 in all limbs. Reflexes normal. Romberg sign negative. Cerebellar examination normal.`;
+    const normalExt = "Peripheral pulses present and well felt. No edema. No cyanosis or clubbing. No deformity. No swelling. Full range of motion.";
+
+    const normalSecondarySurvey: SecondarySurvey = {
+      general: normalGeneral,
+      cvs: normalCvs,
+      respiratory: normalRs,
+      abdomen: normalPa,
+      cns: normalCns,
+      extremities: normalExt,
+    };
+
+    const normalSecondaryAssessment = [
+      `General: ${normalGeneral}`,
+      `CVS: ${normalCvs}`,
+      `RS: ${normalRs}`,
+      `PA: ${normalPa}`,
+      `CNS: ${normalCns}`,
+      `Extremities: ${normalExt}`,
+    ].join("\n");
+
     setCurrentCase(prev => ({
       ...prev,
-      secondaryAssessment: SECTION_NORMALS.secondarySurvey
+      secondarySurvey: normalSecondarySurvey,
+      secondaryAssessment: normalSecondaryAssessment,
     }));
+
     setNormalMarkedBanner(true);
     setTimeout(() => setNormalMarkedBanner(false), 4000);
   };
@@ -3403,20 +3475,22 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                     </div>
                   </div>
 
-                  <div className="flex flex-wrap items-center gap-3 pt-2">
+                  <div className="flex flex-col sm:flex-row flex-wrap items-stretch sm:items-center gap-3 pt-2">
                     <button
                       type="button"
                       onClick={() => onNavigateToDischarge(currentCase.id)}
-                      className="px-5 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white text-xs font-bold rounded-lg shadow-sm transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                      className="px-5 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white text-xs font-bold rounded-xl shadow-xs transition-all flex items-center justify-center gap-2 cursor-pointer min-h-[44px] w-full sm:w-auto active:scale-98"
                     >
                       <FileText className="w-4 h-4" /> Generate Discharge Summary
                     </button>
                     <button
                       type="button"
                       onClick={() => setShowPdfModal(true)}
-                      className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-lg shadow-sm transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                      aria-label="Preview Case Sheet"
+                      title="Preview complete clinical case sheet in print-ready layout"
+                      className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-extrabold rounded-xl shadow-xs hover:shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer min-h-[44px] w-full sm:w-auto active:scale-98"
                     >
-                      <Eye className="w-4 h-4" /> View Case Sheet PDF
+                      <Eye className="w-4 h-4" /> Preview Case Sheet
                     </button>
                   </div>
                 </div>
@@ -4238,38 +4312,52 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                     <div className="flex flex-wrap gap-2">
                       {[
                         {
-                          label: "Normal CNS",
-                          text: "CNS: Higher Mental Functions: Normal, alert and oriented; Cranial Nerves: Intact (I-XII); Sensory System: Normal, intact to light touch, pain, and temperature; Motor System: Normal muscle tone, strength 5/5 in all limbs; Reflexes: Normal deep tendon reflexes (2+), no pathological reflexes; Romberg Sign: Negative; Cerebellar Signs: Normal."
+                          label: "General Examination",
+                          key: "general",
+                          text: "General: Conscious, alert, and oriented. No pallor, no icterus, no cyanosis, no clubbing, no lymphadenopathy, no edema."
                         },
                         {
                           label: "Normal CVS",
-                          text: "CVS: S1 S2 heard, no murmurs, no gallops, peripheral pulses felt equally bilateral."
+                          key: "cvs",
+                          text: "CVS: S1 and S2 heard, normal intensity. Regular pulse. Normal apex beat, no precordial heave. No murmurs, no gallops or rubs. JVP not elevated. Peripheral pulses well felt bilaterally."
                         },
                         {
                           label: "Normal Respiratory (RS)",
-                          text: "RS: Bilateral normal vesicular breath sounds, chest symmetrical, no added sounds (wheeze/crepitations)."
+                          key: "respiratory",
+                          text: "RS: Equal chest expansion. Bilateral equal air entry. Vesicular breath sounds. Resonant percussion. Normal vocal resonance. No wheeze, no crackles, no rhonchi."
                         },
                         {
                           label: "Normal P/A (Abdomen)",
-                          text: "P/A: Soft, non-tender, non-distended, no organomegaly, bowel sounds present."
+                          key: "abdomen",
+                          text: "P/A: Soft, non-distended, non-tender. No guarding or rigidity. No organomegaly. Tympanic percussion. Bowel sounds present and normal. Normal umbilicus, normal external genitalia, normal hernial orifices."
+                        },
+                        {
+                          label: "Normal CNS",
+                          key: "cns",
+                          text: "CNS: Conscious and oriented to time, place, and person. GCS 15/15. Higher mental functions intact. Cranial nerves intact. Pupils: BERL. Sensory system intact. Motor system normal. Motor power 5/5 in all limbs. Reflexes normal. Romberg sign negative. Cerebellar examination normal."
                         },
                         {
                           label: "Normal Extremities",
-                          text: "Extremities: No clubbing, cyanosis, edema. Normal range of motion, peripheral pulses 2+ and symmetric."
-                        },
-                        {
-                          label: "General Examination",
-                          text: "General: Patient is conscious, cooperative, comfortably seated. No pallor, icterus, cyanosis, clubbing, lymphadenopathy, or pedal edema."
+                          key: "extremities",
+                          text: "Extremities: Peripheral pulses present and well felt. No edema. No cyanosis or clubbing. No deformity. No swelling. Full range of motion."
                         }
                       ].map((preset, idx) => (
                         <button
                           key={idx}
                           type="button"
                           onClick={() => {
-                            setCurrentCase(prev => ({
-                              ...prev,
-                              secondaryAssessment: (prev.secondaryAssessment || "") + "\n\n" + preset.text
-                            }));
+                            setCurrentCase(prev => {
+                              const cleanText = preset.text.replace(/^[^:]+:\s*/, "");
+                              const updatedSurvey = {
+                                ...(prev.secondarySurvey || {}),
+                                [preset.key]: cleanText
+                              };
+                              return {
+                                ...prev,
+                                secondarySurvey: updatedSurvey,
+                                secondaryAssessment: (prev.secondaryAssessment || "") + (prev.secondaryAssessment ? "\n\n" : "") + preset.text
+                              };
+                            });
                           }}
                           className="px-2.5 py-1.5 bg-slate-200 hover:bg-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded transition-colors"
                         >
@@ -4278,18 +4366,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                       ))}
                       <button
                         type="button"
-                        onClick={() => {
-                           const cns = "CNS: Higher Mental Functions: Normal, alert and oriented; Cranial Nerves: Intact (I-XII); Sensory System: Normal, intact to light touch, pain, and temperature; Motor System: Normal muscle tone, strength 5/5 in all limbs; Reflexes: Normal deep tendon reflexes (2+), no pathological reflexes; Romberg Sign: Negative; Cerebellar Signs: Normal.";
-                           const cvs = "CVS: S1 S2 heard, no murmurs, no gallops, peripheral pulses felt equally bilateral.";
-                           const rs = "RS: Bilateral normal vesicular breath sounds, chest symmetrical, no added sounds (wheeze/crepitations).";
-                           const pa = "P/A: Soft, non-tender, non-distended, no organomegaly, bowel sounds present.";
-                           const ext = "Extremities: No clubbing, cyanosis, edema. Normal range of motion, peripheral pulses 2+ and symmetric.";
-                           const gen = "General: Patient is conscious, cooperative, comfortably seated. No pallor, icterus, cyanosis, clubbing, lymphadenopathy, or pedal edema.";
-                           setCurrentCase(prev => ({
-                              ...prev,
-                              secondaryAssessment: [gen, cns, cvs, rs, pa, ext].join("\n\n")
-                           }));
-                        }}
+                        onClick={() => markSecondarySurveyNormal(true)}
                         className="px-3 py-1.5 bg-emerald-100 hover:bg-emerald-200 dark:bg-emerald-900/30 dark:hover:bg-emerald-800/50 text-emerald-700 dark:text-emerald-400 font-medium rounded transition-colors"
                       >
                         🚀 Fill All Normal Findings

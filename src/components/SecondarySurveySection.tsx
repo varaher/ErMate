@@ -149,10 +149,12 @@ export function SecondarySurveySection({
         <button
           type="button"
           onClick={onMarkNormal}
-          className="text-xs font-bold px-3 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 dark:bg-emerald-950/30 dark:text-emerald-300 dark:border-emerald-800 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer"
+          aria-label="Mark All Examination Normal"
+          title="Fill approved normal template for General and Systemic Examination"
+          className="text-xs font-bold px-3 py-1.5 bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 dark:bg-emerald-950/30 dark:text-emerald-300 dark:border-emerald-800 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer min-h-[36px]"
         >
           <CheckCircle className="w-3.5 h-3.5 text-emerald-600" />
-          Mark Normal
+          Mark All Examination Normal
         </button>
       </div>
       

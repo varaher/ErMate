@@ -45,6 +45,49 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-08] — ErMate: Secondary Survey Normal Template & Disposition Preview CTA Audit
+- **Secondary Survey "Mark All Examination Normal" Template Audit & Verification (`src/components/CaseSheetView.tsx`, `src/types.ts`)**:
+  - Audited `markSecondarySurveyNormal` and the presets under Secondary Survey / Examination.
+  - Verified populating the complete approved normal General + Systemic Examination template:
+    - **General Examination**: `"Conscious, alert, and oriented. No pallor, no icterus, no cyanosis, no clubbing, no lymphadenopathy, no edema."`
+    - **Cardiovascular System (CVS)**: `"S1 and S2 heard, normal intensity. Regular pulse. Normal apex beat, no precordial heave. No murmurs, no gallops or rubs. JVP not elevated. Peripheral pulses well felt bilaterally."`
+    - **Respiratory System (RS)**: `"Equal chest expansion. Bilateral equal air entry. Vesicular breath sounds. Resonant percussion. Normal vocal resonance. No wheeze, no crackles, no rhonchi."`
+    - **Abdomen (PA)**: `"Soft, non-distended, non-tender. No guarding or rigidity. No organomegaly. Tympanic percussion. Bowel sounds present and normal. Normal umbilicus, normal external genitalia, normal hernial orifices."`
+    - **Central Nervous System (CNS)**: `"Conscious and oriented to time, place, and person. GCS [documented]/15. Higher mental functions intact. Cranial nerves intact. Pupils: BERL. Sensory system intact. Motor system normal. Motor power 5/5 in all limbs. Reflexes normal. Romberg sign negative. Cerebellar examination normal."` (Preserving exact approved "BERL" abbreviation and adhering to documented GCS).
+    - **Extremities**: `"Peripheral pulses present and well felt. No edema. No cyanosis or clubbing. No deformity. No swelling. Full range of motion."`
+  - Inviolable Clinical Safety: Per-rectal (PR) and per-vaginal (PV) examinations remain completely untouched and blank (zero auto-population of "PR normal", "NAD", or "not done").
+  - Documented Finding Protection: Prompts for confirmation when non-empty examination findings already exist before overwriting.
+  - TypeScript strict typing: Imported canonical `SecondarySurvey` interface into `CaseSheetView.tsx`.
+- **Disposition Section "Preview Case Sheet" CTA Review (`src/components/CaseSheetView.tsx`)**:
+  - Audited the "Preview Case Sheet" button in the Disposition tab against the consolidated print/preview architecture.
+  - Button correctly opens the print-ready PDF/Print preview overlay modal (`setShowPdfModal(true)`) with full accessibility styling (`min-h-[44px]`, `active:scale-98`), consistent with the top header actions and canonical print conversion.
+- **Verification (`verify_secondary_normal_and_cta.ts` 3/3 PASS, `verify_scribe_persistence_runtime.ts` 28/28 PASS, `verify_regression.ts` 19/19 PASS)**:
+  - 100% test pass rate across all suites; clean TypeScript compilation (`tsc --noEmit`) and successful applet build.
+
+### [2026-10-08] — ErMate: P0 Scribe Persistence Runtime Integrity Re-Test & Manual Refresh Fix
+- **P0 Scribe Persistence & Dual-Workspace Runtime Integrity Verification (`verify_scribe_persistence_runtime.ts` 28/28 PASS)**:
+  - Verified full end-to-end trace from `auth.currentUser.uid` → `team_members/{uid}` → `resolveWorkspaceForUser()` → `createScribeSession()` → `scribeSessions/{sessionId}` → draft `ClinicalCase` creation → `cases/{caseId}`.
+  - **Individual Users**:
+    - Users without active verified canonical team membership cleanly resolve to `{ workspaceType: "individual", ownerUid: uid, hospitalId: null }` regardless of profile role (HOD/Consultant/Resident).
+    - Unlinked Scribe session created with `workspaceType = "individual"`, `ownerUid = uid`, `hospitalId = null`.
+    - First dictation creates draft `ClinicalCase` with `workspaceType = "individual"`, `ownerUid = uid`, `createdByUid = uid`, `hospitalId = null`.
+    - Two-sided atomic linkage verified: `scribeSessions/{sessionId}.linkedCaseId == caseId` and `cases/{caseId}.scribeSessionId == sessionId`.
+    - Case updates and saves pass Firestore security rules; case is visible in private individual census and protected from cross-tenant access.
+    - Scribe session resumes seamlessly on existing cases with previous message history intact.
+  - **Verified Team Users**:
+    - Active verified members (`team_members/{uid}` with `status = "active"`, `membershipVerified = true`, `hospitalId`) cleanly resolve to `{ workspaceType: "hospital", ownerUid: null, hospitalId }`.
+    - Scribe session created with `workspaceType = "hospital"`, `ownerUid = uid`, `hospitalId = teamHospitalId`.
+    - ClinicalCase created with `workspaceType = "hospital"`, `ownerUid = null`, `createdByUid = uid`, `hospitalId = teamHospitalId`.
+    - Two-sided linkage and case saving succeed under hospital workspace rules; case is visible in shared department census.
+  - **Security & Boundary Guards**:
+    - Cross-workspace linkage strictly prevented (individual session cannot link to hospital case and vice versa).
+    - Client cannot mutate immutable workspace metadata (`workspaceType`, `hospitalId`, `ownerUid`, `createdByUid`).
+    - Attempted secondary department writes restricted to hospital workspace cases only (`newCase.workspaceType === "hospital" && newCase.departmentId`), eliminating unauthorized department writes for individual clinicians.
+- **Manual Data Refresh Query Fix (`src/App.tsx`)**:
+  - Resolved potential permission failure during manual refresh for individual clinicians with display hospital strings: aligned manual refresh in sections 5 & 6 with live `onSnapshot` query pattern (`hasActiveHospitalTeam && userHospital` vs `where("ownerUid", "==", auth.currentUser.uid)`).
+- **Regression & Suite Status (77/77 PASS)**:
+  - `verify_scribe_persistence_runtime.ts` (28/28), `verify_scribe_draft_case_creation.ts` (20/20), `verify_individual_first_workspace.ts` (10/10), `verify_regression.ts` (19/19) all passing; 0 TypeScript errors on `npm run lint` and clean applet compilation.
+
 ### [2026-10-08] — ErMate: Responsive Navigation & Tab UX Refinement
 - **Responsive 3-Mode Navigation Architecture**:
   - **Mobile (< 768px)**: Clean bottom navigation strictly displaying the 5 primary clinical destinations: `Dashboard`, `Cases`, `Scribe`, `Handover`, and `More`. Eliminated horizontal scrolling in mobile navigation (`grid-cols-5`, `w-full max-w-md overflow-hidden`). Ensured touch targets meet $\ge 48$px with `aria-label` accessibility.

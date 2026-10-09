@@ -3582,7 +3582,7 @@ const handleDeleteAllCases = async () => {
     try {
       const cleanCase = sanitizeForFirestore(newCase);
       await setDoc(doc(db, "cases", newCase.id), cleanCase, { merge: true });
-      if (newCase.departmentId) {
+      if (newCase.workspaceType === "hospital" && newCase.departmentId) {
         try {
           await setDoc(doc(db, "departments", newCase.departmentId, "cases", newCase.id), cleanCase, { merge: true });
         } catch (deptErr) {
@@ -5883,7 +5883,16 @@ const handleSignOut = async () => {
       // 5. Shift Handover View
       if (activeTab === "handover") {
         try {
-          const userHospital = profile?.hospital || "";
+          const hasActiveHospitalTeam = Boolean(
+            selfMembership &&
+            isActiveMembershipStatus(String(selfMembership.status || "")) &&
+            selfMembership.membershipVerified === true &&
+            (selfMembership.hospitalId || selfMembership.hospital)
+          );
+          const isPlatformAdmin = (profile?.email || auth.currentUser?.email || "").toLowerCase().trim() === "varahgrp@gmail.com";
+          const userHospital = hasActiveHospitalTeam
+            ? String(selfMembership.hospitalId || selfMembership.hospital || "").trim()
+            : (isPlatformAdmin ? (profile?.hospital || "").trim() : "");
           const userHospitalLower = userHospital.trim().toLowerCase();
           const handoversQuery = userHospital
             ? query(collection(db, "handovers"), where("hospital", "==", userHospital))
@@ -5909,11 +5918,22 @@ const handleSignOut = async () => {
 
       // 6. Default: All other views (Dashboard, Cases, Logbook, Analytics, Tools, Team, etc.)
       try {
-        const userHospital = profile?.hospital || "";
+        const hasActiveHospitalTeam = Boolean(
+          selfMembership &&
+          isActiveMembershipStatus(String(selfMembership.status || "")) &&
+          selfMembership.membershipVerified === true &&
+          (selfMembership.hospitalId || selfMembership.hospital)
+        );
+        const isPlatformAdmin = (profile?.email || auth.currentUser?.email || "").toLowerCase().trim() === "varahgrp@gmail.com";
+        const userHospital = hasActiveHospitalTeam
+          ? String(selfMembership.hospitalId || selfMembership.hospital || "").trim()
+          : (isPlatformAdmin ? (profile?.hospital || "").trim() : "");
         const userHospitalLower = userHospital.trim().toLowerCase();
-        const casesQuery = userHospital
+        const casesQuery = (hasActiveHospitalTeam && userHospital)
           ? query(collection(db, "cases"), where("hospital", "==", userHospital))
-          : (profile?.email ? query(collection(db, "cases"), where("doctorEmail", "==", profile.email)) : collection(db, "cases"));
+          : (auth.currentUser
+              ? query(collection(db, "cases"), where("ownerUid", "==", auth.currentUser.uid))
+              : (profile?.email ? query(collection(db, "cases"), where("doctorEmail", "==", profile.email)) : collection(db, "cases")));
         const snapshot = await getDocs(casesQuery);
         const loadedCases: ClinicalCase[] = [];
         snapshot.forEach((d) => {
@@ -5921,6 +5941,14 @@ const handleSignOut = async () => {
         });
         const filteredCases = loadedCases.filter(c => {
           if (!c || !c.id) return false;
+          if (!hasActiveHospitalTeam && !isPlatformAdmin) {
+            const currentUid = auth.currentUser?.uid;
+            const currentEmail = (profile?.email || auth.currentUser?.email || "").trim().toLowerCase();
+            return Boolean(
+              (currentUid && (c.ownerUid === currentUid || c.createdByUid === currentUid || c.lastEditedBy === currentUid)) ||
+              (currentEmail && c.doctorEmail && c.doctorEmail.trim().toLowerCase() === currentEmail)
+            );
+          }
           const currentEmail = (profile?.email || auth.currentUser?.email || "").trim().toLowerCase();
           const currentUid = auth.currentUser?.uid;
           const isMyCase = Boolean(
