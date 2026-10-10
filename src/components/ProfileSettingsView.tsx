@@ -1710,7 +1710,14 @@ const startRealCheckout = async (planKey: string) => {
         return list;
       };
 
-      const legacyCases = cases.filter(c => c.doctorEmail?.toLowerCase().trim() === profile.email.toLowerCase().trim());
+      const userEmailLower = profile.email?.toLowerCase().trim();
+      const currentUid = auth.currentUser?.uid;
+      const legacyCases = cases.filter(c => 
+        (userEmailLower && c.doctorEmail?.toLowerCase().trim() === userEmailLower) ||
+        (userEmailLower && c.currentAssigneeEmail?.toLowerCase().trim() === userEmailLower) ||
+        (currentUid && c.ownerUid === currentUid) ||
+        (currentUid && (c as any).createdByUid === currentUid)
+      );
       
       const unifiedLogs = [];
       const seenSourceIds = new Set();

@@ -209,7 +209,11 @@ export default function DashboardView({
       (auth.currentUser?.uid && (c as any).createdByUid === auth.currentUser.uid)
     );
     if (!isOwnedOrAssigned) return false;
-    return isCaseCreatedOnLocalDay(c, todayLocalKey);
+    return (
+      isCaseCreatedOnLocalDay(c, todayLocalKey) ||
+      Boolean(c.bedNo || c.patient?.bed) ||
+      (c.lastEditedAt && isCaseCreatedOnLocalDay({ ...c, createdAt: c.lastEditedAt }, todayLocalKey))
+    );
   });
 
   const myCases = isHospitalClinician ? myCurrentDutyCases : myIndependentCases;
@@ -1393,7 +1397,7 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
               const displayedCases = [
                 ...(isHospitalClinician
                   ? (isResident || activeCasesTab === "my" ? myCases : activeDepartmentCases)
-                  : myCases)
+                  : (activeCasesTab === "all" ? activeDepartmentCases : myCases))
               ]
                 .sort((a, b) => {
                   const getNumTime = (str: string) => {
@@ -1424,7 +1428,9 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
                                 ? "You don't have any patients assigned to your active duty session right now. Select 'All ER Admissions' above to browse department cases or click 'Triage/Quick Register' to admit a new patient."
                                 : "You are currently off-shift or your duty session has ended. Start your shift or check in to assume care of patients and view assigned cases.")
                             : "No active or registered admissions found in the ER department today.")
-                        : "No active patients registered today. Click 'Triage/Quick Register' to admit a new patient."}
+                        : (activeCasesTab === "all"
+                            ? "No active admissions found in your registry."
+                            : "No active patients registered today. Click 'All Active Cases' above to browse all ongoing admissions, or 'Triage/Quick Register' to admit a new patient.")}
                     </p>
                   </div>
                 );

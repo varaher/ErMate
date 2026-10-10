@@ -45,6 +45,16 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-10] — ErMate: Individual Profile Final Stabilization (P0)
+- **Current Cases & Bed Visibility Hardening (`src/components/DashboardView.tsx`)**:
+  - Resolved `activeCasesTab === "all"` display disconnect for independent clinicians: clicking "All Active Cases" cleanly renders `activeDepartmentCases` instead of being forcibly restricted to `myCases`.
+  - Upgraded `myIndependentCases` date filter to safely retain active ongoing admissions with assigned ER beds (`Boolean(c.bedNo || c.patient?.bed)`) and cases updated today across midnight transitions, preventing active bedside patients from disappearing from the doctor's active roster.
+  - Enhanced empty state message when registry has zero active admissions with actionable guidance.
+- **Official Clinical Log Book Completeness (`src/components/ProfileSettingsView.tsx`)**:
+  - Broadened case attribution in Log Book to check `ownerUid` and `createdByUid` matching current user in addition to email, ensuring all individual cases created by the doctor appear in their unified logbook.
+- **Verification (`verify_individual_profile_stabilization.ts` 13/13 PASS, `verify_mate_cross_platform_parity.ts` 22/22 PASS)**:
+  - 100% test pass rate across authentication, multi-tenant boundaries, MATE bed allocation, Current Cases persistence across midnight, Case Sheet & Discharge integrity, Log Book attribution, and Sarvam STT. Zero compilation errors.
+
 ### [2026-10-10] — ErMate: Critical MATE Cross-Platform Parity Edge-Case Audit & Hardening
 - **MATE History & Popstate Lifecycle Hardening (`src/App.tsx`)**:
   - Implemented tracked overlay ID (`mateOverlayIdRef`) and consumed popstate flag (`closedViaPopstateRef`) state machine for MATE drawer navigation.
