@@ -45,6 +45,22 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-10] — ErMate: P0 Restore Lost Safety Features & Preserve Firestore Listener Fixes
+- **Selective Restoration of Safety Fixes (Commit `16b0253`)**:
+  - `isSavingTrialCaseRef`: Concurrency protection guard in `App.tsx` prevents duplicate trial-case saves from rapid double-taps.
+  - Stable `allocatedCaseId` & `allocatedDisplayId`: Preserved on active trial case across retries so network or transient errors do not generate duplicate patient records or exhaust display sequence numbers.
+  - Doctor Identity Fresh Attribution: `handleSaveActiveTrialCase(updatedProfile)` passes the freshly saved user profile rather than stale React state snapshots.
+  - Narrow `updateDoc` for Existing Profiles: `handleSaveProfile` uses explicit allowlisted `updateDoc` on `users/{uid}`, never rewriting protected `role`, `hospital`, `aiCredits`, `streak`, or `subscriptionTier`.
+  - Narrow `handleConsentChoice`: Completely decoupled from `handleSaveProfile`; issues a narrow `updateDoc` updating ONLY `hasConsentedToLearning`.
+  - Consent Error Handling & Retries: `ConsentModal.tsx` supports async consent persistence with `saving` states, error banner display, and retry capabilities.
+  - Non-blocking Trial-Case Navigation Guard: `handleContinueToDashboard` halts navigation and renders actionable error banners if trial case persistence fails, keeping trial data safely in memory.
+  - Fractional Bed Capacity Rejection: Replaced lossy `Math.floor` truncations with strict integer validation (`Number.isInteger(rawCap)` between 1 and 1000) across `OnboardingProfileView.tsx`, `MoreView.tsx`, `TeamRosterBoard.tsx`, and `App.tsx`.
+- **Preserved Firestore Listener Optimization**:
+  - Retained primitive dependency array (`isLoggedIn`, `profile?.hospital`, `profile?.email`, `profile?.subscriptionTier`, `selfMembership?.hospitalId`, `selfMembership?.hospital`, `selfMembership?.status`, `selfMembership?.membershipVerified`).
+  - Retained conditional `setSelfMembership` updates preventing redundant re-renders on unchanged snapshots.
+  - Retained `activeShiftsHospitalId` cache preventing unnecessary shift listener unsubscriptions/resubscriptions.
+  - Retained development-only `listenerDiagnostics` tracking subscriptions, unsubscriptions, and active listener counts.
+
 ### [2026-10-10] — ErMate: P0 Consolidated Profile Save, Firestore Security & Trial Case Stabilization
 - **Root Cause Identified & Resolved**:
   - **Firestore Authorization Conflict**: `firestore.rules` enforces that `users/{uid}` updates cannot modify authorized `role` (`incoming().role == existing().role`), authorized `hospital` (`incoming().hospital == existing().hospital`), `aiCredits`, or `subscriptionTier`. On create, `hospital` must be empty string `""` and `role` must be in a predefined allowlist.

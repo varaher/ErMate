@@ -6,28 +6,48 @@ import { UserProfile } from "../types";
 interface ConsentModalProps {
   isOpen: boolean;
   profile: UserProfile;
-  onConsent: (consent: boolean) => void;
+  onConsent: (consent: boolean) => Promise<void> | void;
   onClose: () => void;
   isFirstCaseTrigger?: boolean;
 }
 
 export default function ConsentModal({ isOpen, profile, onConsent, onClose, isFirstCaseTrigger = false }: ConsentModalProps) {
   const [screen, setScreen] = useState<"consent" | "learn-more" | "post-consent">("consent");
+  const [saving, setSaving] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
 
   if (!isOpen) return null;
 
-  const handleConsentChoice = (agreed: boolean) => {
+  const handleConsentChoice = async (agreed: boolean) => {
     if (agreed) {
       setScreen("post-consent");
     } else {
-      onConsent(false);
-      onClose();
+      setSaving(true);
+      setError(null);
+      try {
+        await onConsent(false);
+        onClose();
+      } catch (err: any) {
+        console.error("Consent save failed:", err);
+        setError(err?.message || "Failed to save preference. Please check your connection and retry.");
+      } finally {
+        setSaving(false);
+      }
     }
   };
 
-  const handlePostConsentConfirm = () => {
-    onConsent(true);
-    onClose();
+  const handlePostConsentConfirm = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      await onConsent(true);
+      onClose();
+    } catch (err: any) {
+      console.error("Consent save failed:", err);
+      setError(err?.message || "Failed to save preference. Please check your connection and retry.");
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -134,19 +154,29 @@ export default function ConsentModal({ isOpen, profile, onConsent, onClose, isFi
                   </button>
                 </div>
 
+                {/* Error Banner */}
+                {error && (
+                  <div className="p-3 bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900/50 rounded-2xl text-xs text-rose-700 dark:text-rose-300 flex items-center gap-2 text-left">
+                    <AlertCircle className="w-4 h-4 text-rose-500 shrink-0" />
+                    <span>{error}</span>
+                  </div>
+                )}
+
                 {/* Actions */}
                 <div className="space-y-2 pt-2">
                   <button
                     type="button"
+                    disabled={saving}
                     onClick={() => handleConsentChoice(true)}
-                    className="w-full py-3.5 px-4 bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-xs md:text-sm rounded-2xl transition-all cursor-pointer shadow-lg shadow-emerald-500/15"
+                    className="w-full py-3.5 px-4 bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-white font-bold text-xs md:text-sm rounded-2xl transition-all cursor-pointer shadow-lg shadow-emerald-500/15"
                   >
-                    Yes — I'll help build ErMate
+                    {saving ? "Saving preference..." : "Yes — I'll help build ErMate"}
                   </button>
                   <button
                     type="button"
+                    disabled={saving}
                     onClick={() => handleConsentChoice(false)}
-                    className="w-full py-2.5 px-4 hover:bg-slate-50 dark:hover:bg-slate-800/40 text-slate-500 dark:text-slate-400 font-bold text-xs md:text-sm rounded-2xl transition-all cursor-pointer border border-transparent hover:border-slate-200 dark:hover:border-slate-800"
+                    className="w-full py-2.5 px-4 hover:bg-slate-50 dark:hover:bg-slate-800/40 disabled:opacity-50 text-slate-500 dark:text-slate-400 font-bold text-xs md:text-sm rounded-2xl transition-all cursor-pointer border border-transparent hover:border-slate-200 dark:hover:border-slate-800"
                   >
                     Not right now
                   </button>
@@ -287,13 +317,21 @@ export default function ConsentModal({ isOpen, profile, onConsent, onClose, isFi
                   </p>
                 </div>
 
+                {error && (
+                  <div className="p-3 bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900/50 rounded-2xl text-xs text-rose-700 dark:text-rose-300 flex items-center gap-2 text-left mb-2">
+                    <AlertCircle className="w-4 h-4 text-rose-500 shrink-0" />
+                    <span>{error}</span>
+                  </div>
+                )}
+
                 <div className="pt-4 max-w-xs mx-auto">
                   <button
                     type="button"
+                    disabled={saving}
                     onClick={handlePostConsentConfirm}
-                    className="w-full py-3.5 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs md:text-sm rounded-2xl transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-indigo-600/10"
+                    className="w-full py-3.5 px-4 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-bold text-xs md:text-sm rounded-2xl transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-indigo-600/10"
                   >
-                    <span>Start your shift</span> <ArrowRight className="w-4 h-4 animate-pulse" />
+                    <span>{saving ? "Saving..." : "Start your shift"}</span> {!saving && <ArrowRight className="w-4 h-4 animate-pulse" />}
                   </button>
                 </div>
               </div>

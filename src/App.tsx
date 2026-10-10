@@ -1067,6 +1067,7 @@ useEffect(() => {
   const [showOnboardingProfile, setShowOnboardingProfile] = useState<boolean>(false);
   const [showTrialSaveModal, setShowTrialSaveModal] = useState<boolean>(false);
   const [activeTrialCase, setActiveTrialCase] = useState<ClinicalCase | null>(null);
+  const isSavingTrialCaseRef = useRef<boolean>(false);
 
   const isVerifiedTeamUser = Boolean(
     selfMembership &&
@@ -2498,55 +2499,81 @@ const handleDeleteAllCases = async () => {
   };
 
   // Save active trial case permanently to Firestore once profile is complete
-  const handleSaveActiveTrialCase = async () => {
+  // Guarantees stable internal case ID, single display sequence allocation across retries,
+  // fresh profile attribution, and concurrent double-tap protection.
+  const handleSaveActiveTrialCase = async (freshProfile?: UserProfile) => {
     if (!activeTrialCase || !auth.currentUser) return;
-    const user = auth.currentUser;
-    const workspace = await resolveWorkspaceForUser(user.uid);
-
-    let displayCaseId: string | undefined = undefined;
+    if (isSavingTrialCaseRef.current) {
+      console.warn("handleSaveActiveTrialCase: Save already in progress, ignoring duplicate call.");
+      return;
+    }
+    isSavingTrialCaseRef.current = true;
     try {
-      const reserved = await reserveNextDisplaySequence(db);
-      displayCaseId = reserved.displayId;
-    } catch (e) {
-      console.warn("Could not reserve display sequence:", e);
+      const user = auth.currentUser;
+      const workspace = await resolveWorkspaceForUser(user.uid);
+      const currentTrial = activeTrialCase;
+      const effectiveProfile = freshProfile || profile;
+
+      // 1. Stable internal ClinicalCase ID allocated once per trial case
+      let realCaseId = (currentTrial as any).allocatedCaseId;
+      if (!realCaseId) {
+        realCaseId = generateInternalCaseId();
+        (currentTrial as any).allocatedCaseId = realCaseId;
+      }
+
+      // 2. Stable display sequence reserved once per trial case
+      let displayCaseId = (currentTrial as any).allocatedDisplayId;
+      if (!displayCaseId) {
+        const reserved = await reserveNextDisplaySequence(db);
+        displayCaseId = reserved.displayId;
+        (currentTrial as any).allocatedDisplayId = displayCaseId;
+      }
+
+      const oldTrialId = currentTrial.id;
+
+      const caseToSave: ClinicalCase = {
+        ...currentTrial,
+        id: realCaseId,
+        displayId: displayCaseId || currentTrial.displayId,
+        workspaceType: workspace.workspaceType,
+        ownerUid: workspace.ownerUid,
+        hospitalId: workspace.hospitalId,
+        hospital: workspace.workspaceType === "hospital" ? (selfMembership?.hospitalId || workspace.hospitalId || "") : "",
+        doctorEmail: user.email || effectiveProfile?.email || "",
+        doctorName: effectiveProfile?.name || user.displayName || "Emergency Doctor",
+        createdBy: user.uid,
+        createdByUid: user.uid,
+        lastEditedBy: user.uid,
+        lastEditedAt: new Date().toISOString(),
+      };
+
+      // Remove trial and local-only markers so it becomes a canonical persisted case
+      delete (caseToSave as any).isTrial;
+      delete (caseToSave as any).syncStatus;
+      delete (caseToSave as any).persistenceStatus;
+      delete (caseToSave as any).allocatedCaseId;
+      delete (caseToSave as any).allocatedDisplayId;
+
+      const clean = sanitizeForFirestore(caseToSave);
+      await setDoc(doc(db, "cases", realCaseId), clean, { merge: true });
+
+      if (caseToSave.scribeSessionId) {
+        await linkScribeSessionAndCase(caseToSave.scribeSessionId, realCaseId).catch((linkErr) => {
+          console.warn("Could not link scribe session with case:", linkErr);
+        });
+      }
+
+      setCases(prev => [caseToSave, ...prev.filter(c => c.id !== oldTrialId && c.id !== realCaseId)]);
+      setSelectedCaseId(realCaseId);
+      setVoiceScribeCaseId(realCaseId);
+      setActiveTrialCase(null);
+      triggerNotification("Case Saved", "Your trial case has been permanently saved.", "success");
+    } catch (err: any) {
+      console.error("Error saving active trial case to Firestore:", err);
+      throw err;
+    } finally {
+      isSavingTrialCaseRef.current = false;
     }
-
-    const realCaseId = generateInternalCaseId();
-    const oldTrialId = activeTrialCase.id;
-
-    const caseToSave: ClinicalCase = {
-      ...activeTrialCase,
-      id: realCaseId,
-      displayId: displayCaseId || activeTrialCase.displayId,
-      workspaceType: workspace.workspaceType,
-      ownerUid: workspace.ownerUid,
-      hospitalId: workspace.hospitalId,
-      hospital: profile.hospital,
-      doctorEmail: profile.email,
-      doctorName: profile.name || "Emergency Doctor",
-      createdBy: user.uid,
-      createdByUid: user.uid,
-      lastEditedBy: user.uid,
-      lastEditedAt: new Date().toISOString(),
-    };
-
-    // Remove trial and local-only markers so it becomes a canonical persisted case
-    delete (caseToSave as any).isTrial;
-    delete (caseToSave as any).syncStatus;
-    delete (caseToSave as any).persistenceStatus;
-
-    const clean = sanitizeForFirestore(caseToSave);
-    await setDoc(doc(db, "cases", realCaseId), clean, { merge: true });
-
-    if (caseToSave.scribeSessionId) {
-      await linkScribeSessionAndCase(caseToSave.scribeSessionId, realCaseId).catch(() => {});
-    }
-
-    setCases(prev => [caseToSave, ...prev.filter(c => c.id !== oldTrialId && c.id !== realCaseId)]);
-    setSelectedCaseId(realCaseId);
-    setVoiceScribeCaseId(realCaseId);
-    setActiveTrialCase(null);
-    triggerNotification("Case Saved", "Your trial case has been permanently saved.", "success");
   };
 
   // Save changes inside Case Sheet View
@@ -5752,8 +5779,9 @@ const handleSaveProfile = async (newProfile: UserProfile, explicitCapacity?: num
   if (!cleanDept || cleanDept.length < 2) {
     throw new Error("Department must be at least 2 characters.");
   }
-  if (!resolvedCapacity || !Number.isInteger(resolvedCapacity) || resolvedCapacity <= 0 || resolvedCapacity > 1000) {
-    throw new Error("ER physical bed capacity must be a positive integer between 1 and 1000.");
+  const numResolvedCap = Number(resolvedCapacity);
+  if (isNaN(numResolvedCap) || !Number.isInteger(numResolvedCap) || numResolvedCap < 1 || numResolvedCap > 1000) {
+    throw new Error("Bed capacity must be a whole number between 1 and 1000.");
   }
 
   // Safe string length capping to respect firestore.rules size bounds (<= 100)
@@ -5771,70 +5799,37 @@ const handleSaveProfile = async (newProfile: UserProfile, explicitCapacity?: num
     if (userDocSnap.exists()) {
       const existingData = userDocSnap.data() || {};
 
-      // Strictly preserve protected authorization and entitlement fields from Firestore
-      const preservedRole = typeof existingData.role === "string" && existingData.role.length > 0
-        ? existingData.role
-        : (profile?.role || "EM Resident");
-
-      const preservedHospital = typeof existingData.hospital === "string"
-        ? existingData.hospital
-        : (profile?.hospital || "");
-
-      const preservedAiCredits = typeof existingData.aiCredits === "number"
-        ? existingData.aiCredits
-        : (profile?.aiCredits ?? 100);
-
-      const preservedStreak = typeof existingData.streak === "number"
-        ? existingData.streak
-        : (profile?.streak ?? 1);
-
-      const preservedTier = typeof existingData.subscriptionTier === "string" && existingData.subscriptionTier.length > 0
-        ? existingData.subscriptionTier
-        : (profile?.subscriptionTier || "Free Standard");
-
-      const email = (auth.currentUser.email || existingData.email || profile?.email || "").slice(0, 100);
-
-      const payloadToSave: Record<string, any> = {
+      // EXPLICIT ALLOWLISTED UPDATE FOR EXISTING USERS:
+      // Only write clinician-editable profile fields.
+      // NEVER rewrite protected authorization or entitlement fields:
+      // role, hospital, aiCredits, streak, subscriptionTier
+      const updatePayload: Record<string, any> = {
         name: cappedName,
-        email: email,
-        role: preservedRole,
-        hospital: preservedHospital,
-        hospitalLabel: cappedWorkplace,
-        workplaceName: cappedWorkplace,
         displayRole: cappedDisplayRole,
+        workplaceName: cappedWorkplace,
+        hospitalLabel: cappedWorkplace,
         department: cappedDept,
         erPhysicalBedCapacity: resolvedCapacity,
         onboardingComplete: true,
-        aiCredits: preservedAiCredits,
-        streak: preservedStreak,
-        subscriptionTier: preservedTier,
       };
 
       if (newProfile.hasConsentedToLearning !== undefined) {
-        payloadToSave.hasConsentedToLearning = newProfile.hasConsentedToLearning;
-      } else if (existingData.hasConsentedToLearning !== undefined) {
-        payloadToSave.hasConsentedToLearning = existingData.hasConsentedToLearning;
+        updatePayload.hasConsentedToLearning = newProfile.hasConsentedToLearning;
       }
 
-      if (newProfile.phone) payloadToSave.phone = newProfile.phone.slice(0, 50);
-      else if (existingData.phone) payloadToSave.phone = existingData.phone;
+      if (newProfile.phone !== undefined) updatePayload.phone = (newProfile.phone || "").slice(0, 50);
+      if (newProfile.regNo !== undefined) updatePayload.regNo = (newProfile.regNo || "").slice(0, 50);
+      if (newProfile.qualifications !== undefined) updatePayload.qualifications = (newProfile.qualifications || "").slice(0, 100);
+      if (newProfile.place !== undefined) updatePayload.place = (newProfile.place || "").slice(0, 100);
+      if (newProfile.state !== undefined) updatePayload.state = (newProfile.state || "").slice(0, 100);
+      if (newProfile.pincode !== undefined) updatePayload.pincode = (newProfile.pincode || "").slice(0, 20);
 
-      if (newProfile.regNo) payloadToSave.regNo = newProfile.regNo.slice(0, 50);
-      else if (existingData.regNo) payloadToSave.regNo = existingData.regNo;
-
-      if (newProfile.qualifications) payloadToSave.qualifications = newProfile.qualifications.slice(0, 100);
-      else if (existingData.qualifications) payloadToSave.qualifications = existingData.qualifications;
-
-      if (newProfile.place) payloadToSave.place = newProfile.place.slice(0, 100);
-      if (newProfile.state) payloadToSave.state = newProfile.state.slice(0, 100);
-      if (newProfile.pincode) payloadToSave.pincode = newProfile.pincode.slice(0, 20);
-
-      await setDoc(userDocRef, sanitizeForFirestore(payloadToSave), { merge: true });
+      await updateDoc(userDocRef, sanitizeForFirestore(updatePayload));
 
       updatedProfileState = {
         ...(profile || {}),
         ...existingData,
-        ...payloadToSave,
+        ...updatePayload,
       } as UserProfile;
     } else {
       // Missing document: construct compliant initial document conforming to create rules in firestore.rules
@@ -5920,15 +5915,45 @@ const handleSaveProfile = async (newProfile: UserProfile, explicitCapacity?: num
 };
 
   // Process user's consent choice (Yes or Not right now)
+  // Persists ONLY hasConsentedToLearning without calling handleSaveProfile or rewriting protected fields
   const handleConsentChoice = async (consented: boolean) => {
-    if (profile) {
-      const updatedProfile = {
-        ...profile,
-        hasConsentedToLearning: consented
-      };
-      await handleSaveProfile(updatedProfile);
+    if (!auth.currentUser) return;
+    const userDocRef = doc(db, "users", auth.currentUser.uid);
+    try {
+      const userDocSnap = await getDoc(userDocRef);
+      if (userDocSnap.exists()) {
+        // Narrow update: strictly hasConsentedToLearning
+        await updateDoc(userDocRef, {
+          hasConsentedToLearning: consented
+        });
+      } else {
+        // Missing user doc: CREATE-rule compliant initial doc without marking onboarding complete
+        const email = (auth.currentUser.email || "").slice(0, 100);
+        const initialPayload: Record<string, any> = {
+          name: auth.currentUser.displayName || "Dr. Clinician",
+          email: email,
+          role: "EM Resident",
+          hospital: "",
+          hospitalLabel: "",
+          workplaceName: "",
+          displayRole: "EM Resident",
+          department: "Emergency & Trauma Medicine",
+          erPhysicalBedCapacity: 30,
+          onboardingComplete: false,
+          aiCredits: 100,
+          streak: 1,
+          subscriptionTier: "Free Standard",
+          hasConsentedToLearning: consented
+        };
+        await setDoc(userDocRef, sanitizeForFirestore(initialPayload));
+      }
+      setProfile(prev => prev ? { ...prev, hasConsentedToLearning: consented } : prev);
+      setShowConsentModal(false);
+    } catch (err: any) {
+      console.error("Failed to persist consent choice:", err);
+      triggerNotification("Consent Save Failed", err?.message || "Could not save your learning preference.", "warning");
+      throw err;
     }
-    setShowConsentModal(false);
   };
 
   // Intercept and persist handovers to Firestore
@@ -6271,7 +6296,7 @@ const handleSignOut = async () => {
           // Keep OnboardingProfileView visible so the user sees the SAVED state and Edit Profile CTA
           setShowOnboardingProfile(true);
           if (activeTrialCase) {
-            await handleSaveActiveTrialCase();
+            await handleSaveActiveTrialCase(updatedProfile);
           }
         }}
         onContinueToDashboard={() => {

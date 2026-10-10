@@ -126,6 +126,8 @@ export default function OnboardingProfileView({
   const [teamBedCapacity, setTeamBedCapacity] = useState<number>(30);
   const [creatingTeam, setCreatingTeam] = useState<boolean>(false);
   const [teamError, setTeamError] = useState<string | null>(null);
+  const [trialSaveError, setTrialSaveError] = useState<string | null>(null);
+  const [isContinuing, setIsContinuing] = useState<boolean>(false);
 
   // Invite share state
   const [inviteLink, setInviteLink] = useState<string>("");
@@ -140,7 +142,12 @@ export default function OnboardingProfileView({
     const cleanRole = role.trim();
     const cleanHospital = hospital.trim();
     const cleanDept = department.trim();
-    const parsedCapacity = Math.floor(Number(bedCapacity));
+    const rawCapacity = Number(bedCapacity);
+    if (isNaN(rawCapacity) || !Number.isInteger(rawCapacity) || rawCapacity < 1 || rawCapacity > 1000) {
+      setErrorMsg("ER Physical Bed Capacity must be a whole number between 1 and 1000.");
+      return;
+    }
+    const parsedCapacity = rawCapacity;
 
     if (!cleanName || cleanName.length < 2) {
       setErrorMsg("Please enter your doctor name (at least 2 characters).");
@@ -156,10 +163,6 @@ export default function OnboardingProfileView({
     }
     if (!cleanDept || cleanDept.length < 2) {
       setErrorMsg("Please specify your department.");
-      return;
-    }
-    if (!Number.isInteger(parsedCapacity) || parsedCapacity <= 0 || parsedCapacity > 1000) {
-      setErrorMsg("ER Physical Bed Capacity must be a positive integer between 1 and 1000.");
       return;
     }
 
@@ -233,13 +236,20 @@ export default function OnboardingProfileView({
     setProfileMode("SAVED");
   };
 
-  // Continue to Dashboard
+  // Continue to Dashboard (safely persists active trial case, reports errors, does not navigate away on failure)
   const handleContinueToDashboard = async () => {
+    setTrialSaveError(null);
     if (hasActiveTrialCase && onSaveActiveTrialCase) {
+      setIsContinuing(true);
       try {
         await onSaveActiveTrialCase();
-      } catch (err) {
-        console.warn("Could not save active trial case:", err);
+      } catch (err: any) {
+        console.error("Trial case save failed during continue:", err);
+        setTrialSaveError(err?.message || "Failed to save your trial case permanently. Your profile is saved, but the case could not be synchronized yet. Please retry.");
+        setIsContinuing(false);
+        return; // BLOCK navigation on trial-case save failure
+      } finally {
+        setIsContinuing(false);
       }
     }
     if (onContinueToDashboard) {
@@ -257,16 +267,17 @@ export default function OnboardingProfileView({
     const cleanHospital = teamHospitalName.trim();
     const cleanTeam = teamCustomName.trim() || `${cleanHospital} ER Team`;
     const cleanDept = teamDepartment.trim() || "Emergency Medicine";
-    const parsedCap = Math.floor(Number(teamBedCapacity));
+    const rawCap = Number(teamBedCapacity);
 
     if (!cleanHospital || cleanHospital.length < 2) {
       setTeamError("Please enter a valid hospital or workplace name.");
       return;
     }
-    if (!Number.isInteger(parsedCap) || parsedCap <= 0 || parsedCap > 1000) {
-      setTeamError("Bed capacity must be a positive integer between 1 and 1000.");
+    if (isNaN(rawCap) || !Number.isInteger(rawCap) || rawCap < 1 || rawCap > 1000) {
+      setTeamError("Bed capacity must be a whole number between 1 and 1000.");
       return;
     }
+    const parsedCap = rawCap;
 
     setCreatingTeam(true);
     try {
@@ -418,12 +429,24 @@ export default function OnboardingProfileView({
             </div>
           </div>
 
+          {/* Trial Save Failure Error (Separate from Profile Save Success) */}
+          {trialSaveError && (
+            <div className="p-3.5 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 rounded-xl text-xs text-red-600 dark:text-red-400 font-medium flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-red-500" />
+              <div className="flex-1">
+                <strong className="font-bold block">Case Synchronization Error</strong>
+                <span>{trialSaveError}</span>
+              </div>
+            </div>
+          )}
+
           {/* CTAs: Primary "Edit Profile", Secondary "Continue to Dashboard" */}
           <div className="space-y-2.5 pt-1">
             <button
               type="button"
+              disabled={isContinuing}
               onClick={handleStartEdit}
-              className="w-full min-h-[46px] py-2.5 px-4 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition-all shadow-md active:scale-98 flex items-center justify-center gap-2 cursor-pointer"
+              className="w-full min-h-[46px] py-2.5 px-4 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition-all shadow-md active:scale-98 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
             >
               <Edit3 className="w-4 h-4" />
               <span>Edit Profile</span>
@@ -431,11 +454,21 @@ export default function OnboardingProfileView({
 
             <button
               type="button"
+              disabled={isContinuing}
               onClick={handleContinueToDashboard}
-              className="w-full min-h-[44px] py-2.5 px-4 bg-slate-900 hover:bg-slate-800 dark:bg-slate-800 dark:hover:bg-slate-700 text-white text-xs font-bold rounded-xl transition-all shadow-sm active:scale-98 flex items-center justify-center gap-2 cursor-pointer"
+              className="w-full min-h-[44px] py-2.5 px-4 bg-slate-900 hover:bg-slate-800 dark:bg-slate-800 dark:hover:bg-slate-700 text-white text-xs font-bold rounded-xl transition-all shadow-sm active:scale-98 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
             >
-              <span>Continue to Dashboard</span>
-              <ArrowRight className="w-4 h-4" />
+              {isContinuing ? (
+                <>
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  <span>Saving Trial Case...</span>
+                </>
+              ) : (
+                <>
+                  <span>Continue to Dashboard</span>
+                  <ArrowRight className="w-4 h-4" />
+                </>
+              )}
             </button>
           </div>
 
@@ -605,8 +638,12 @@ export default function OnboardingProfileView({
                 disabled={saving}
                 min={1}
                 max={1000}
+                step="1"
                 value={bedCapacity}
-                onChange={(e) => setBedCapacity(parseInt(e.target.value, 10) || 0)}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setBedCapacity(val === '' ? ('' as any) : Number(val));
+                }}
                 placeholder="e.g. 30"
                 className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-2.5 text-xs font-bold text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-hidden focus:ring-2 focus:ring-indigo-500/30 disabled:opacity-60"
                 required
@@ -759,8 +796,12 @@ export default function OnboardingProfileView({
                 type="number"
                 min={1}
                 max={1000}
+                step="1"
                 value={teamBedCapacity}
-                onChange={(e) => setTeamBedCapacity(parseInt(e.target.value, 10) || 0)}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setTeamBedCapacity(val === '' ? ('' as any) : Number(val));
+                }}
                 className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-2.5 text-xs font-bold text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-indigo-500/30"
                 required
               />
