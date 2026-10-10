@@ -5625,8 +5625,13 @@ const handleSaveProfile = async (newProfile: UserProfile, explicitCapacity?: num
       "You must be signed in to update your profile.",
       "warning"
     );
-    return;
+    throw new Error("You must be signed in to update your profile.");
   }
+
+  const cleanName = (newProfile.name || "").trim();
+  const cleanRole = (newProfile.role || "").trim();
+  const cleanHospital = (newProfile.hospital || newProfile.workplaceName || newProfile.hospitalLabel || "").trim();
+  const cleanDept = (newProfile.department || "").trim();
 
   const resolvedCapacity =
     typeof explicitCapacity === "number" && explicitCapacity > 0
@@ -5637,61 +5642,48 @@ const handleSaveProfile = async (newProfile: UserProfile, explicitCapacity?: num
       ? (profile as any).erPhysicalBedCapacity
       : erPhysicalBedCapacity;
 
+  if (!cleanName || cleanName.length < 2) {
+    throw new Error("Doctor name must be at least 2 characters.");
+  }
+  if (!cleanRole) {
+    throw new Error("Professional role is required.");
+  }
+  if (!cleanHospital || cleanHospital.length < 2) {
+    throw new Error("Hospital or workplace name must be at least 2 characters.");
+  }
+  if (!cleanDept || cleanDept.length < 2) {
+    throw new Error("Department must be at least 2 characters.");
+  }
+  if (!resolvedCapacity || !Number.isInteger(resolvedCapacity) || resolvedCapacity <= 0 || resolvedCapacity > 1000) {
+    throw new Error("ER physical bed capacity must be a positive integer between 1 and 1000.");
+  }
+
   // Preserve all protected values from the currently trusted profile.
   // Role changes happen through /api/team/update-role.
   // Hospital assignment happens through trusted membership workflows.
   // Credits/subscription are never self-edited here.
   const profileToSave: UserProfile = {
+    ...(profile || {}),
     ...newProfile,
 
     email:
       auth.currentUser.email ||
-      profile.email ||
-      newProfile.email,
-
-    hospital:
-      newProfile.hospital ||
-      newProfile.workplaceName ||
-      profile.hospital ||
+      profile?.email ||
+      newProfile.email ||
       "",
 
-    workplaceName:
-      newProfile.workplaceName ||
-      newProfile.hospital ||
-      profile.workplaceName ||
-      "",
-
-    hospitalLabel:
-      newProfile.hospitalLabel ||
-      newProfile.hospital ||
-      newProfile.workplaceName ||
-      profile.hospitalLabel ||
-      profile.hospital ||
-      "",
-
-    department:
-      newProfile.department ||
-      profile.department ||
-      "Emergency & Trauma Medicine",
-
-    role:
-      newProfile.role ||
-      profile.role ||
-      "EM Resident",
-
-    erPhysicalBedCapacity:
-      resolvedCapacity || undefined,
-
+    name: cleanName,
+    role: cleanRole || profile?.role || "EM Resident",
+    hospital: cleanHospital,
+    workplaceName: cleanHospital,
+    hospitalLabel: cleanHospital,
+    department: cleanDept,
+    erPhysicalBedCapacity: resolvedCapacity,
     onboardingComplete: true,
 
-    aiCredits:
-      profile.aiCredits,
-
-    subscriptionTier:
-      profile.subscriptionTier || "Free Standard",
-
-    streak:
-      profile.streak
+    aiCredits: profile?.aiCredits ?? 100,
+    subscriptionTier: profile?.subscriptionTier || "Free Standard",
+    streak: profile?.streak ?? 1,
   };
 
   try {
@@ -5708,7 +5700,7 @@ const handleSaveProfile = async (newProfile: UserProfile, explicitCapacity?: num
     }
 
     // Optional Cloud SQL mirror.
-    // Only send the already-protected values, never raw newProfile authority fields.
+    // Failure does not invalidate a successful Firestore write.
     try {
       const idToken =
         await auth.currentUser.getIdToken(true);
@@ -5741,7 +5733,7 @@ const handleSaveProfile = async (newProfile: UserProfile, explicitCapacity?: num
         );
       }
     } catch (syncErr) {
-      // Firestore remains source for this profile save.
+      // Firestore remains authoritative source for this profile save.
       console.warn(
         "Failed to sync profile change with Cloud SQL:",
         syncErr
@@ -5755,9 +5747,10 @@ const handleSaveProfile = async (newProfile: UserProfile, explicitCapacity?: num
 
     triggerNotification(
       "Save Failed",
-      "Your profile changes could not be saved.",
+      err?.message || "Your profile changes could not be saved.",
       "warning"
     );
+    throw err;
   }
 };
 
@@ -6109,11 +6102,16 @@ const handleSignOut = async () => {
         erPhysicalBedCapacity={erPhysicalBedCapacity}
         onSaveProfile={async (updatedProfile, capacity) => {
           await handleSaveProfile(updatedProfile, capacity);
-          setShowOnboardingProfile(false);
           setExploreInTrialMode(false);
+          // Keep OnboardingProfileView visible so the user sees the SAVED state and Edit Profile CTA
+          setShowOnboardingProfile(true);
           if (activeTrialCase) {
             await handleSaveActiveTrialCase();
           }
+        }}
+        onContinueToDashboard={() => {
+          setShowOnboardingProfile(false);
+          setExploreInTrialMode(false);
         }}
         onSkipToTrial={() => {
           setExploreInTrialMode(true);
@@ -6362,6 +6360,7 @@ const handleSignOut = async () => {
         onInstallApp={handleInstallApp}
         onNavigateToTab={navigateToTab}
         onSignOut={handleSignOut}
+        onOpenProfile={() => setShowOnboardingProfile(true)}
       />
 
       {/* Persistent non-obnoxious banner when profile is incomplete */}
@@ -7058,6 +7057,7 @@ const handleSignOut = async () => {
                   cases={cases}
                   hospitalSubscription={hospitalSubscription}
                   handovers={handovers}
+                  onOpenProfile={() => setShowOnboardingProfile(true)}
                 />
               )}
             </>

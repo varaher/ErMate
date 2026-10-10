@@ -212,6 +212,7 @@ ErMate employs a dynamic role-based navigation hierarchy computed from `getNorma
 
 | Path | Purpose |
 | :--- | :--- |
+| `/verify_individual_profile_save_cta.ts` | P0 regression suite for Individual Profile save object construction, Firestore persistence, state machine (INCOMPLETE -> SAVING -> SAVED -> EDITING -> SAVE FAILED), refresh/login retention, edit/cancel workflows, and CTA transitions |
 | `/verify_individual_profile_data_integrity.ts` | Final data integrity verification suite for Individual Profile: active cases across midnight, exclusion of inactive cases with populated bedNo, ownership isolation, and logbook deduplication |
 | `/verify_team_creation_and_invitations.ts` | Verification suite for WhatsApp-style team creation, Team Admin role retention, 7-day hashed token invites, WhatsApp/Web sharing, and join approval workflow |
 | `/verify_onboarding_and_trial_flow.ts` | Verification suite for new user onboarding, profile completeness (5 required fields), trial mode save gate, in-memory data preservation, and optional team creation |

@@ -25,7 +25,8 @@ interface MoreViewProps {
   teamMembers?: TeamMember[];
   erPhysicalBedCapacity?: number | null;
   onUpdateBedCapacity?: (newCapacity: number) => Promise<void> | void;
-  onSaveProfile?: (updatedProfile: UserProfile) => void;
+  onSaveProfile?: (updatedProfile: UserProfile, explicitCapacity?: number | null) => Promise<void>;
+  onOpenProfile?: () => void;
   onSignOut?: () => void;
   onDeleteAllCases?: () => void;
   cases?: ClinicalCase[];
@@ -43,6 +44,7 @@ export default function MoreView({
   erPhysicalBedCapacity = 30,
   onUpdateBedCapacity,
   onSaveProfile,
+  onOpenProfile,
   onSignOut,
   onDeleteAllCases,
   cases = [],
@@ -134,6 +136,8 @@ export default function MoreView({
   const [editRegNo, setEditRegNo] = useState<string>(profile?.regNo || "");
   const [editPhone, setEditPhone] = useState<string>(profile?.phone || "");
   const [profileSavedNotice, setProfileSavedNotice] = useState<boolean>(false);
+  const [profileSaving, setProfileSaving] = useState<boolean>(false);
+  const [profileSaveError, setProfileSaveError] = useState<string | null>(null);
 
   // Security & Notification Preferences
   const [pinEnabled, setPinEnabled] = useState<boolean>(true);
@@ -192,26 +196,37 @@ export default function MoreView({
     }
   };
 
-  const handleSaveProfileDetails = (e: React.FormEvent) => {
+  const handleSaveProfileDetails = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!profile || !onSaveProfile) return;
-    onSaveProfile({
-      ...profile,
-      name: editName.trim() || profile.name,
-      role: editRole.trim() || profile.role,
-      hospital: editHospital.trim() || profile.hospital,
-      workplaceName: editHospital.trim() || profile.workplaceName,
-      department: editDepartment.trim() || profile.department,
-      erPhysicalBedCapacity: Math.max(1, Math.floor(Number(editBedCapacity))) || 30,
-      qualifications: editQualifications.trim() || profile.qualifications,
-      regNo: editRegNo.trim() || profile.regNo,
-      phone: editPhone.trim() || profile.phone,
-    });
-    setProfileSavedNotice(true);
-    setTimeout(() => {
-      setProfileSavedNotice(false);
-      setActiveModal(null);
-    }, 1500);
+    setProfileSaving(true);
+    setProfileSaveError(null);
+    try {
+      const parsedCapacity = Math.max(1, Math.floor(Number(editBedCapacity))) || 30;
+      await onSaveProfile({
+        ...profile,
+        name: editName.trim() || profile.name,
+        role: editRole.trim() || profile.role,
+        hospital: editHospital.trim() || profile.hospital,
+        workplaceName: editHospital.trim() || profile.workplaceName,
+        hospitalLabel: editHospital.trim() || profile.hospital,
+        department: editDepartment.trim() || profile.department,
+        erPhysicalBedCapacity: parsedCapacity,
+        qualifications: editQualifications.trim() || profile.qualifications,
+        regNo: editRegNo.trim() || profile.regNo,
+        phone: editPhone.trim() || profile.phone,
+      }, parsedCapacity);
+      setProfileSavedNotice(true);
+      setTimeout(() => {
+        setProfileSavedNotice(false);
+        setActiveModal(null);
+      }, 1500);
+    } catch (err: any) {
+      console.error("Failed to save profile details:", err);
+      setProfileSaveError(err?.message || "Failed to save profile changes.");
+    } finally {
+      setProfileSaving(false);
+    }
   };
 
   const handleDeleteAllCasesSecure = () => {
@@ -302,7 +317,13 @@ export default function MoreView({
         <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden divide-y divide-slate-100 dark:divide-slate-800 shadow-xs">
           {/* 1. Profile */}
           <div 
-            onClick={() => setActiveModal("profile")}
+            onClick={() => {
+              if (onOpenProfile) {
+                onOpenProfile();
+              } else {
+                setActiveModal("profile");
+              }
+            }}
             className="p-4 flex items-center justify-between gap-3 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
           >
             <div className="flex items-center gap-3">
@@ -316,10 +337,21 @@ export default function MoreView({
                 </span>
               </div>
             </div>
-            <div className="flex items-center gap-1 text-xs text-indigo-600 dark:text-indigo-400 font-bold shrink-0">
-              <span>Edit</span>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (onOpenProfile) {
+                  onOpenProfile();
+                } else {
+                  setActiveModal("profile");
+                }
+              }}
+              className="flex items-center gap-1 text-xs text-indigo-600 dark:text-indigo-400 font-bold shrink-0 hover:underline cursor-pointer"
+            >
+              <span>Edit Profile</span>
               <ChevronRight className="w-4 h-4" />
-            </div>
+            </button>
           </div>
 
           {/* 2. Role & Workplace */}
@@ -1176,6 +1208,12 @@ export default function MoreView({
                 />
               </div>
 
+              {profileSaveError && (
+                <p className="text-xs font-bold text-red-600 bg-red-50 dark:bg-red-950/40 p-2 rounded-xl text-center">
+                  ⚠️ {profileSaveError}
+                </p>
+              )}
+
               {profileSavedNotice && (
                 <p className="text-xs font-bold text-emerald-600 bg-emerald-50 dark:bg-emerald-950/40 p-2 rounded-xl text-center">
                   ✓ Profile updated successfully!
@@ -1185,16 +1223,27 @@ export default function MoreView({
               <div className="pt-2 flex justify-end gap-2">
                 <button
                   type="button"
-                  onClick={() => setActiveModal(null)}
+                  onClick={() => {
+                    setProfileSaveError(null);
+                    setActiveModal(null);
+                  }}
                   className="px-4 py-2 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 text-xs font-bold rounded-xl cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl shadow-xs cursor-pointer"
+                  disabled={profileSaving}
+                  className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-bold rounded-xl shadow-xs cursor-pointer flex items-center gap-1.5"
                 >
-                  Save Profile
+                  {profileSaving ? (
+                    <>
+                      <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      <span>Saving...</span>
+                    </>
+                  ) : (
+                    <span>Save Changes</span>
+                  )}
                 </button>
               </div>
             </form>

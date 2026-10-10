@@ -45,6 +45,23 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-10] — ErMate: P0 Individual Profile Save & Edit CTA Correction
+- **Root Causes Identified & Resolved**:
+  - **Defect 1 (`src/components/OnboardingProfileView.tsx`)**: Resolved profile object construction precedence by placing `...(profile || {})` first and explicitly overriding with cleaned entered values (`name`, `role`, `hospital`, `workplaceName`, `hospitalLabel`, `department`, `erPhysicalBedCapacity`, `onboardingComplete: true`).
+  - **Defect 2 (`src/App.tsx`)**: Hardened `handleSaveProfile()` to validate authenticated user UID and required fields, await Firestore `users/{uid}` persistence, preserve trusted platform and subscription authority fields (`aiCredits`, `subscriptionTier`, `streak`, `isTeamAdmin`), isolate Cloud SQL sync errors in an inner try-catch, and rethrow Firestore errors so callers receive rejection rather than treating failure as success.
+  - **Defect 3 (`src/components/ProfileSettingsView.tsx`)**: Made `handleSaveProfileForm()` async, updated `onSaveProfile` prop contract to `Promise<void>`, awaited Firestore persistence before displaying success notice, and added actionable error display when persistence fails.
+  - **Defect 4 (`src/App.tsx`, `src/components/OnboardingProfileView.tsx`)**: Resolved premature unmounting of onboarding upon profile completion. Kept `OnboardingProfileView` mounted in `SAVED` state (`setShowOnboardingProfile(true)`) after successful profile save, presenting the read-only summary card with primary CTA "Edit Profile" and secondary CTA "Continue to Dashboard" instead of abruptly kicking the clinician to Dashboard or forcing team creation questions.
+- **State Machine Implementation (INCOMPLETE -> SAVING -> SAVED -> EDITING -> SAVE FAILED)**:
+  - **INCOMPLETE**: Editable form with primary CTA "Complete Profile & Save".
+  - **SAVING**: Disables double submission with spinner and "Saving..." indicator.
+  - **SAVED**: Read-only clinical card showing Doctor Name, Professional Role, Hospital/Workplace, Department, and ER Bed Capacity. Primary CTA: "Edit Profile", Secondary CTA: "Continue to Dashboard".
+  - **EDITING**: Populates fields from saved Firestore values. Primary CTA: "Save Changes", Secondary CTA: "Cancel" (restores previous snapshot).
+  - **SAVE FAILED**: Preserves user input, emits actionable error banner, offers Retry, and never transitions to SAVED.
+- **Header & Navigation Wiring (`src/components/GlobalHeader.tsx`, `src/components/MoreView.tsx`)**:
+  - Added "Edit Clinical Profile" link to profile avatar dropdown in `GlobalHeader.tsx` and "Edit Profile" button to Section A in `MoreView.tsx`, opening canonical profile view directly in `SAVED` state.
+- **Verification (`verify_individual_profile_save_cta.ts` 13/13 PASS)**:
+  - 100% test pass rate across profile construction, Firestore persistence, state transitions, refresh/login retention, downloaded app consistency, edit/cancel workflows, permission/network failure handling, document uniqueness, MATE case saving enablement, and team governance invariants. Clean compilation with 0 TypeScript errors.
+
 ### [2026-10-10] — ErMate: Individual Profile Final Data-Integrity Check (P0)
 - **Active Case Retention vs Inactive Cases Filter Hardening (`src/components/DashboardView.tsx`, `src/App.tsx`)**:
   - Implemented `isCaseOperationallyActive(c: ClinicalCase)` in `DashboardView.tsx`: strictly filters out cases marked as "Discharged", "Transferred", "Completed", or "Archived", as well as cases with finalized discharge summaries (`c.dischargeInfo?.summaryStatus === "FINALIZED"`) or departure dispositions ("Discharge", "Admit", "Refer", "LAMA", "Absconded", "Death").

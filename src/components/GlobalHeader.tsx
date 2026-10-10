@@ -74,6 +74,7 @@ export interface GlobalHeaderProps {
   // Navigation & Actions
   onNavigateToTab: (tabId: string) => void;
   onSignOut: () => void;
+  onOpenProfile?: () => void;
 }
 
 export const GlobalHeader: React.FC<GlobalHeaderProps> = ({
@@ -106,6 +107,7 @@ export const GlobalHeader: React.FC<GlobalHeaderProps> = ({
   onInstallApp,
   onNavigateToTab,
   onSignOut,
+  onOpenProfile,
 }) => {
   const [showNotificationsDropdown, setShowNotificationsDropdown] = useState(false);
   const [notificationsTab, setNotificationsTab] = useState<"active" | "history">("active");
@@ -730,6 +732,23 @@ export const GlobalHeader: React.FC<GlobalHeaderProps> = ({
                       {isDarkMode ? "Dark" : "Light"}
                     </button>
                   </div>
+
+                  {/* Edit Clinical Profile Link */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (onOpenProfile) onOpenProfile();
+                      else onNavigateToTab("profile");
+                      setShowProfileMenu(false);
+                    }}
+                    className="w-full flex items-center justify-between p-2 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 transition-colors cursor-pointer text-left"
+                  >
+                    <div className="flex items-center gap-2">
+                      <User className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                      <span>Edit Clinical Profile</span>
+                    </div>
+                    <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
+                  </button>
 
                   {/* Account & Settings Link */}
                   <button
