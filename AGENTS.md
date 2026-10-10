@@ -45,6 +45,32 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-10] — ErMate: P0 Final Profile Save & Trial-Case Safety Stabilization (Branch: fix/trial-case-safety)
+- **Protected Authority & Allowlisted Profile Persistence (`src/App.tsx`)**:
+  - `handleSaveProfile`: Uses an explicit allowlist update (`updateDoc`) for existing `users/{uid}` documents.
+  - User-editable fields written: `name`, `displayRole`, `workplaceName`, `hospitalLabel`, `department`, `erPhysicalBedCapacity`, `phone`, `regNo`, `qualifications`, `place`, `state`, `pincode`, and `onboardingComplete`.
+  - Protected fields NEVER rewritten: `role`, `hospital`, `aiCredits`, `subscriptionTier`, and `streak`. Eliminates race conditions with background credits/tier updates.
+  - Missing-document path: Creates compliant initial user record conforming strictly to Firestore CREATE rules (`role: "EM Resident"`, `hospital: ""`, `aiCredits: 100`, `streak: 1`, `subscriptionTier: "Free Standard"`).
+- **Consent Decoupling (`src/App.tsx`, `src/components/ConsentModal.tsx`)**:
+  - `handleConsentChoice`: Completely decoupled from `handleSaveProfile`. For existing users, issues a narrow `updateDoc` updating ONLY `hasConsentedToLearning`.
+  - For missing users, initializes user doc without marking `onboardingComplete: true`.
+  - In `ConsentModal.tsx`, error handling preserves modal visibility and provides actionable retry without silent failures.
+- **Stable Trial-Case Identity & Single Display Reservation (`src/App.tsx`)**:
+  - `handleSaveActiveTrialCase`: Trial case maintains stable internal `allocatedCaseId` and single reserved `allocatedDisplayId` across retries.
+  - Retries re-target the same document ID without generating duplicate patient records or burning additional display IDs.
+  - In-flight execution guard (`isSavingTrialCaseRef`) blocks duplicate saves from rapid taps.
+  - Doctor attribution receives fresh saved profile explicitly (`handleSaveActiveTrialCase(updatedProfile)`) avoiding stale React state snapshots.
+- **Strict Integer Bed Capacity Validation (`OnboardingProfileView.tsx`, `MoreView.tsx`, `TeamRosterBoard.tsx`, `App.tsx`)**:
+  - Replaced silent rounding (`Math.floor(Number(...))`) with strict whole-number validation (`Number.isInteger(rawVal)` within 1..1000). Decimals like `10.5` are rejected with clear error messages.
+  - Inputs preserve raw numerical input across typing without pre-truncating via `parseInt`.
+- **Separated Profile vs Trial-Case Failures & Mandatory Safety Warnings (`OnboardingProfileView.tsx`)**:
+  - `handleContinueToDashboard`: Halts navigation if trial case persistence fails, displays actionable banner, and allows retry without masking profile save success.
+  - Mandatory prominent warning displayed in INCOMPLETE state whenever an active trial draft exists in memory.
+  - Confirmation modal displayed if clinician attempts to skip to trial mode with an unsaved trial case, preventing accidental loss of dictation data.
+- **Git Safety Protocol**:
+  - Working on required branch `fix/trial-case-safety`.
+  - Automatic push to main and automated deployments strictly prohibited. Clean local verification and production compile.
+
 ### [2026-10-10] — ErMate: P0 Consolidated Profile Save, Firestore Security & Trial Case Stabilization
 - **Root Cause Identified & Resolved**:
   - **Firestore Authorization Conflict**: `firestore.rules` enforces that `users/{uid}` updates cannot modify authorized `role` (`incoming().role == existing().role`), authorized `hospital` (`incoming().hospital == existing().hospital`), `aiCredits`, or `subscriptionTier`. On create, `hospital` must be empty string `""` and `role` must be in a predefined allowlist.
