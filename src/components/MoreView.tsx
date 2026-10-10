@@ -1048,7 +1048,7 @@ export default function MoreView({
 
       {/* FOOTER */}
       <div className="text-center pt-2 font-mono text-[11px] text-slate-400">
-        ErMate v3.0 • Certified ATLS Protocol Engine • DPDP Act 2023 Compliant • End-to-End Encrypted
+        ErMate v{APP_VERSION} • Certified ATLS Protocol Engine • DPDP Act 2023 Compliant • End-to-End Encrypted
       </div>
 
       {/* ----------------- SUBSECTION MODALS ----------------- */}

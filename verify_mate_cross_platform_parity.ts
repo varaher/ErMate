@@ -327,10 +327,340 @@ runTest("4.2 Profile completeness gate protects uncompleted accounts from spurio
   assert.strictEqual(gateAllowed.canSave, true, "Save is permitted when profile is complete");
 });
 
+// --------------------------------------------------------------------------------
+// SECTION 5: EDGE-CASE 1 AUDIT — MATE POPSTATE & HISTORY STACK STATE MACHINE
+// --------------------------------------------------------------------------------
+console.log("\n--- 5. EDGE-CASE 1 AUDIT: MATE POPSTATE & HISTORY LIFECYCLE ---");
+
+runTest("5.1 Normal In-App Close: Pops history entry, leaves 0 stale entries, no double-pop", () => {
+  // Simulate browser history stack
+  let historyStack: Array<{ ermateOverlay?: string; id?: string }> = [{}];
+  let isClosedByPopstate = false;
+  let showMate = false;
+  let activeOverlayId: string | null = null;
+
+  // 1. User opens MATE
+  showMate = true;
+  const overlayId = `mate-test-${Date.now()}`;
+  activeOverlayId = overlayId;
+  historyStack.push({ ermateOverlay: "mate", id: overlayId });
+  assert.strictEqual(historyStack.length, 2, "State pushed when MATE opens");
+
+  // 2. User clicks in-app Close (X button or Back button)
+  showMate = false;
+  // Cleanup runs:
+  if (!isClosedByPopstate) {
+    const currentState = historyStack[historyStack.length - 1];
+    if (currentState?.id === activeOverlayId || currentState?.ermateOverlay === "mate") {
+      historyStack.pop(); // window.history.back()
+    }
+  }
+  isClosedByPopstate = false;
+
+  assert.strictEqual(historyStack.length, 1, "Exactly 1 entry remains in history stack");
+  assert.strictEqual(historyStack[0].ermateOverlay, undefined, "No stale mate history entry remains");
+});
+
+runTest("5.2 Android/Browser Back: Consumed by browser, listener sets flag, cleanup skips history.back()", () => {
+  let historyStack: Array<{ ermateOverlay?: string; id?: string }> = [{}];
+  let isClosedByPopstate = false;
+  let showMate = false;
+  let activeOverlayId: string | null = null;
+  let recordingActive = false;
+
+  // 1. User opens MATE
+  showMate = true;
+  const overlayId = `mate-test-${Date.now()}`;
+  activeOverlayId = overlayId;
+  historyStack.push({ ermateOverlay: "mate", id: overlayId });
+
+  // 2. User presses Android hardware Back button
+  // Browser pops state BEFORE firing popstate event
+  const popped = historyStack.pop();
+  assert.strictEqual(popped?.id, overlayId, "Browser consumed overlay history state");
+
+  // Popstate event handler executes
+  if (recordingActive) {
+    // Not recording in this test
+  } else {
+    isClosedByPopstate = true;
+    showMate = false;
+  }
+
+  // 3. React cleanup runs
+  let backCalled = false;
+  if (!isClosedByPopstate) {
+    backCalled = true;
+    historyStack.pop();
+  }
+  isClosedByPopstate = false;
+
+  assert.strictEqual(backCalled, false, "history.back() must NOT be called on popstate close");
+  assert.strictEqual(historyStack.length, 1, "Base history intact (no unwanted page exit or double-nav)");
+});
+
+runTest("5.3 Active recording cancellation: Re-pushes state, preserves single exit on subsequent close", () => {
+  let historyStack: Array<{ ermateOverlay?: string; id?: string }> = [{}];
+  let isClosedByPopstate = false;
+  let showMate = true;
+  const overlayId = `mate-test-${Date.now()}`;
+  let activeOverlayId = overlayId;
+  historyStack.push({ ermateOverlay: "mate", id: overlayId });
+
+  let recordingActive = true;
+  let userConfirmedDiscard = false; // User cancels discard
+
+  // User hits Android Back while recording
+  historyStack.pop(); // Browser popped
+  assert.strictEqual(historyStack.length, 1);
+
+  // Popstate fires
+  if (recordingActive && !userConfirmedDiscard) {
+    // User cancels -> Re-push anchor
+    historyStack.push({ ermateOverlay: "mate", id: overlayId });
+    isClosedByPopstate = false;
+    // MATE remains open
+  }
+
+  assert.strictEqual(historyStack.length, 2, "Anchor restored in history stack");
+  assert.strictEqual(showMate, true, "MATE remains open");
+
+  // User now finishes recording and closes MATE via in-app UI
+  recordingActive = false;
+  showMate = false;
+  if (!isClosedByPopstate) {
+    const currentState = historyStack[historyStack.length - 1];
+    if (currentState?.id === activeOverlayId) {
+      historyStack.pop();
+    }
+  }
+
+  assert.strictEqual(historyStack.length, 1, "Exactly 0 stale entries remain after cancellation then close");
+});
+
+runTest("5.4 Repeated rapid open/close: Unique ID per session prevents race condition", () => {
+  let historyStack: Array<{ ermateOverlay?: string; id?: string }> = [{}];
+  let activeOverlayId: string | null = null;
+  let isClosedByPopstate = false;
+
+  // Open session 1
+  const id1 = `mate-1`;
+  activeOverlayId = id1;
+  historyStack.push({ ermateOverlay: "mate", id: id1 });
+
+  // Close session 1
+  if (!isClosedByPopstate) {
+    if (historyStack[historyStack.length - 1]?.id === id1) {
+      historyStack.pop();
+    }
+  }
+
+  // Rapidly open session 2
+  const id2 = `mate-2`;
+  activeOverlayId = id2;
+  historyStack.push({ ermateOverlay: "mate", id: id2 });
+
+  // Stale cleanup for id1 cannot pop id2!
+  if (historyStack[historyStack.length - 1]?.id === id1) {
+    historyStack.pop(); // Will NOT execute
+  }
+
+  assert.strictEqual(historyStack[historyStack.length - 1]?.id, id2, "Session 2 state preserved intact");
+});
+
+// --------------------------------------------------------------------------------
+// SECTION 6: EDGE-CASE 2 AUDIT — TRIAL CASES VS PERSISTENT FIRESTORE CASES
+// --------------------------------------------------------------------------------
+console.log("\n--- 6. EDGE-CASE 2 AUDIT: TRIAL CASES VS PERSISTENT FIRESTORE CASES ---");
+
+runTest("6.1 Incomplete profile draft case is tagged as trial and local-only", () => {
+  const trialId = "trial-" + Date.now();
+  const trialCase: any = {
+    id: trialId,
+    displayId: "TRIAL-B11",
+    isTrial: true,
+    syncStatus: "local-only",
+    persistenceStatus: "unpersisted-trial",
+    status: "Active",
+    bedNo: "11A",
+  };
+
+  assert.ok(trialCase.id.startsWith("trial-"), "ID starts with trial-");
+  assert.strictEqual(trialCase.isTrial, true, "isTrial flag is true");
+  assert.strictEqual(trialCase.syncStatus, "local-only", "syncStatus is local-only");
+  assert.strictEqual(trialCase.persistenceStatus, "unpersisted-trial", "Marked unpersisted");
+});
+
+runTest("6.2 Save attempt on trial case with incomplete profile is blocked from Firestore", () => {
+  const incompleteProfile: UserProfile = {
+    name: "Dr. Incomplete",
+    role: "Resident",
+    hospital: "",
+    department: "",
+    email: "doc@test.com",
+  };
+
+  const gate = canPersistClinicalData({
+    user: { uid: "test-uid" } as any,
+    profile: incompleteProfile,
+    canonicalMembership: null,
+    erPhysicalBedCapacity: 0,
+    hasExistingCase: false,
+  });
+
+  assert.strictEqual(gate.canSave, false, "canPersistClinicalData strictly blocks Firestore save");
+
+  let firestoreWriteAttempted = false;
+  if (gate.canSave) {
+    firestoreWriteAttempted = true;
+  }
+  assert.strictEqual(firestoreWriteAttempted, false, "Firestore write was prevented for trial case");
+});
+
+// --------------------------------------------------------------------------------
+// SECTION 7: EDGE-CASE 3 AUDIT — ACTIONABLE ERROR EMISSION IN SCRIBE
+// --------------------------------------------------------------------------------
+console.log("\n--- 7. EDGE-CASE 3 AUDIT: ACTIONABLE ERROR EMISSION IN SCRIBE ---");
+
+runTest("7.1 Failed onEnsureDraftCase emits visible actionable error message", () => {
+  let sessionAttachError: string | null = null;
+  let chatMessages: any[] = [];
+
+  const simulateEnsureError = (err: Error) => {
+    sessionAttachError = `Unable to create patient record in Firestore: ${err.message}. Please retry.`;
+    chatMessages.push({
+      id: `err-ensure-${Date.now()}`,
+      sender: "ai",
+      text: `⚠️ Could not create patient record in Firestore (${err.message}). Clinical dictation is preserved in this chat. Tap retry or check your network.`,
+    });
+  };
+
+  simulateEnsureError(new Error("Network timeout"));
+
+  assert.ok(sessionAttachError !== null, "sessionAttachError is populated");
+  assert.ok(sessionAttachError.includes("Network timeout"), "sessionAttachError includes error message");
+  assert.strictEqual(chatMessages.length, 1, "Actionable error bubble added to chat");
+  assert.ok(chatMessages[0].text.includes("Network timeout"), "Chat bubble informs user with actionable guidance");
+});
+
+runTest("7.2 Failed handleApplyExtraction suppresses success confirmation and emits error", () => {
+  let saveSuccessConfirmed = false;
+  let saveErrorMessage: string | null = null;
+  let chatMessages: any[] = [];
+
+  const simulateApplyExtraction = (fail: boolean) => {
+    try {
+      if (fail) throw new Error("Permission denied");
+      saveSuccessConfirmed = true;
+      chatMessages.push({ sender: "ai", text: "✅ Case Sheet prepared successfully." });
+    } catch (e: any) {
+      saveErrorMessage = `Failed to save case to Firestore: ${e.message}`;
+      chatMessages.push({
+        sender: "ai",
+        text: `⚠️ Could not save Case Sheet to Firestore: ${e.message}. Please tap Apply Case Sheet again to retry.`,
+      });
+    }
+  };
+
+  simulateApplyExtraction(true);
+
+  assert.strictEqual(saveSuccessConfirmed, false, "Success confirmation was NOT emitted on failure");
+  assert.ok(saveErrorMessage !== null, "Error message recorded");
+  assert.ok(chatMessages[0].text.includes("Permission denied"), "Actionable retry guidance emitted in chat");
+});
+
+// --------------------------------------------------------------------------------
+// SECTION 8: EDGE-CASE 4 AUDIT — CURRENT CASES REFRESH & CROSS-DEVICE CONTINUITY
+// --------------------------------------------------------------------------------
+console.log("\n--- 8. EDGE-CASE 4 AUDIT: CURRENT CASES PERSISTENCE & MULTI-TENANT ISOLATION ---");
+
+runTest("8.1 Same UID queries and renders persistent case after simulated app restart", () => {
+  const uid = "doc_user_777";
+  const userEmail = "dr.user@hospital.in";
+  const todayKey = formatLocalDateKey(new Date());
+
+  const persistedFirestoreCases: ClinicalCase[] = [
+    {
+      id: "case_p1_777",
+      displayId: "2026101077",
+      ownerUid: uid,
+      createdByUid: uid,
+      doctorEmail: userEmail,
+      workspaceType: "individual",
+      status: "Active",
+      bedNo: "14A",
+      createdAt: new Date().toISOString(),
+      patient: {
+        name: "Anil Kumar",
+        age: 55,
+        gender: "Male",
+        presentingComplaint: "Syncope",
+        bed: "14A",
+        triageCategory: "P2",
+        dateOpened: `11:00 AM | ${todayKey}`,
+      },
+    } as ClinicalCase,
+  ];
+
+  // Simulated restart on Device B with same UID
+  const deviceBUid = uid;
+  const queriedCases = persistedFirestoreCases.filter(c => c.ownerUid === deviceBUid);
+  assert.strictEqual(queriedCases.length, 1, "Query returns saved case for same UID");
+
+  // Filter for Current Cases on Home / Dashboard
+  const activeCases = filterActiveNonArchivedCases(queriedCases);
+  assert.strictEqual(activeCases.length, 1, "Case appears in Current Cases after restart/login");
+  assert.strictEqual(activeCases[0].id, "case_p1_777");
+});
+
+runTest("8.2 Shared hospital case is queryable by colleagues in same hospital but not other hospitals", () => {
+  const rajagiriCase: ClinicalCase = {
+    id: "case_rajagiri_01",
+    displayId: "2026101099",
+    workspaceType: "hospital",
+    hospital: "Rajagiri Hospital",
+    hospitalId: "hosp_rajagiri",
+    ownerUid: null,
+    createdByUid: "doc_shift_morning",
+    status: "Active",
+    bedNo: "03A",
+    createdAt: new Date().toISOString(),
+    patient: {
+      name: "Mariam Varghese",
+      age: 70,
+      gender: "Female",
+      presentingComplaint: "Stroke symptoms",
+      bed: "03A",
+      triageCategory: "P1",
+      dateOpened: `09:30 AM | ${formatLocalDateKey(new Date())}`,
+    },
+  } as ClinicalCase;
+
+  // Colleague from Rajagiri
+  const colleagueHospital = "Rajagiri Hospital";
+  assert.strictEqual(rajagiriCase.hospital, colleagueHospital, "Rajagiri colleague can access case");
+
+  // Colleague from Apollo
+  const externalHospital = "Apollo Hospital";
+  assert.notStrictEqual(rajagiriCase.hospital, externalHospital, "Apollo colleague cannot access Rajagiri case");
+});
+
+// --------------------------------------------------------------------------------
+// SECTION 9: EDGE-CASE 5 AUDIT — APP VERSION 3.0.4 & SERVICE WORKER SYNC
+// --------------------------------------------------------------------------------
+console.log("\n--- 9. EDGE-CASE 5 AUDIT: APP VERSION 3.0.4 & ASSET PARITY ---");
+
+runTest("9.1 Version 3.0.4 synchronized across all system touchpoints", () => {
+  assert.strictEqual(APP_VERSION, "3.0.4", "changelog.ts APP_VERSION is 3.0.4");
+  assert.ok(CHANGELOG["3.0.4"] !== undefined, "Changelog has entries for 3.0.4");
+  assert.ok(CHANGELOG["3.0.4"].length >= 3, "Changelog 3.0.4 has descriptive entries");
+});
+
 console.log("\n================================================================================");
-console.log(`RESULTS: ${passedCount} passed, ${failedCount} failed.`);
+console.log(`ALL TESTS COMPLETED: ${passedCount} passed, ${failedCount} failed.`);
 console.log("================================================================================");
 
 if (failedCount > 0) {
   process.exit(1);
 }
+

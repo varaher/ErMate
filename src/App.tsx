@@ -1,5 +1,5 @@
 import { resolveWorkspaceForUser } from "./utils/workspaceResolver";
-import React, { useState, useEffect, useRef, Suspense } from "react";
+import React, { useState, useEffect, useRef, useCallback, Suspense } from "react";
 import { 
   Activity, Sparkles, BookOpen, User, Clock, ShieldAlert, 
   Settings, HelpCircle, FileWarning,  Trophy, ClipboardList, Zap, Moon, Sun, Users,
@@ -592,32 +592,54 @@ useEffect(() => {
 
   // Popstate / System Back Interceptor for MATE Drawer & Overlays
   // Ensures Android system Back, browser Back, and PWA navigation close MATE before navigating out of ErMate
+  const mateOverlayIdRef = useRef<string | null>(null);
+  const closedViaPopstateRef = useRef<boolean>(false);
+
+  const handleSafeCloseMate = useCallback((): boolean => {
+    if (isGlobalVoiceRecordingActive()) {
+      if (!window.confirm("Dictation is still recording. Discard it and leave?")) {
+        return false;
+      }
+    }
+    setShowVoiceScribeChat(false);
+    return true;
+  }, []);
+
   useEffect(() => {
     if (!showVoiceScribeChat) return;
 
-    // Push a mate state anchor so the browser/system back button consumes this state first
-    const mateHistoryState = { ermateOverlay: "mate" };
+    const overlayId = `mate-${Date.now()}`;
+    mateOverlayIdRef.current = overlayId;
+    closedViaPopstateRef.current = false;
+
+    // Push a mate state anchor with unique ID so the browser/system back button consumes this state first
+    const mateHistoryState = { ermateOverlay: "mate", id: overlayId };
     window.history.pushState(mateHistoryState, "");
 
     const handlePopState = (event: PopStateEvent) => {
       // Check if voice recording is active before closing
       if (isGlobalVoiceRecordingActive()) {
         if (!window.confirm("Dictation is still recording. Discard it and leave?")) {
-          // Re-push state so back didn't navigate away
-          window.history.pushState(mateHistoryState, "");
+          // Re-push state so back didn't navigate away; preserve same overlayId
+          window.history.pushState({ ermateOverlay: "mate", id: overlayId }, "");
+          closedViaPopstateRef.current = false;
           return;
         }
       }
+      closedViaPopstateRef.current = true;
       setShowVoiceScribeChat(false);
     };
 
     window.addEventListener("popstate", handlePopState);
     return () => {
       window.removeEventListener("popstate", handlePopState);
-      // Clean up the history state if MATE was closed via in-app UI instead of popstate
-      if (window.history.state?.ermateOverlay === "mate") {
-        window.history.back();
+      // Clean up the history state ONLY if MATE was closed via in-app UI (not already popped by browser/popstate)
+      if (!closedViaPopstateRef.current) {
+        if (window.history.state?.id === overlayId || window.history.state?.ermateOverlay === "mate") {
+          window.history.back();
+        }
       }
+      closedViaPopstateRef.current = false;
     };
   }, [showVoiceScribeChat]);
 
@@ -3722,6 +3744,35 @@ const handleDeleteAllCases = async () => {
       teamMembers,
     });
 
+    const isExistingPersistent = Boolean(existingMatch && !existingMatch.id.startsWith("trial-"));
+    const gate = canPersistClinicalData({
+      user: auth.currentUser,
+      profile,
+      canonicalMembership: selfMembership,
+      erPhysicalBedCapacity,
+      hasExistingCase: isExistingPersistent,
+    });
+
+    if (!gate.canSave) {
+      newCase.id = newCase.id || "trial-" + Date.now();
+      newCase.displayId = newCase.displayId || "TRIAL-1";
+      (newCase as any).isTrial = true;
+      (newCase as any).syncStatus = "local-only";
+      (newCase as any).persistenceStatus = "unpersisted-trial";
+      setCases(prev => [newCase, ...prev.filter(c => c.id !== newCase.id)]);
+      setSelectedCaseId(newCase.id);
+      setActiveTrialCase(newCase);
+      setVoiceScribeCaseId(newCase.id);
+      setShowVoiceScribeChat(false);
+      setShowTrialSaveModal(true);
+      triggerNotification(
+        "Trial Mode (Local Only)",
+        "Complete your profile to save permanently. Case is stored in local memory only.",
+        "warning"
+      );
+      return newCase.id;
+    }
+
     try {
       const cleanCase = sanitizeForFirestore(newCase);
       await setDoc(doc(db, "cases", newCase.id), cleanCase, { merge: true });
@@ -4039,10 +4090,18 @@ const handleDeleteAllCases = async () => {
       draftCase.scribeSessionId = sessionId;
       draftCase.bedNo = requestedBedNo || draftCase.bedNo || "";
       draftCase.displayId = trialDisplayId;
+      (draftCase as any).isTrial = true;
+      (draftCase as any).syncStatus = "local-only";
+      (draftCase as any).persistenceStatus = "unpersisted-trial";
 
       upsertCaseLocally(draftCase);
       setActiveTrialCase(draftCase);
       setVoiceScribeCaseId(trialId);
+      triggerNotification(
+        "Trial Mode Active",
+        "Case created in local memory only. Complete your profile to enable cloud synchronization across devices.",
+        "warning"
+      );
       return trialId;
     }
 
@@ -6439,7 +6498,7 @@ const handleSignOut = async () => {
                     setShowVoiceScribeChat(true);
                   } else {
                     if (showVoiceScribeChat) {
-                      setShowVoiceScribeChat(false);
+                      if (!handleSafeCloseMate()) return;
                     }
                     navigateToTab(tab.id);
                   }
@@ -7032,7 +7091,7 @@ const handleSignOut = async () => {
       {showVoiceScribeChat && (
         <div
           className="fixed inset-0 bg-slate-950/40 backdrop-blur-xs z-45 xl:hidden no-print"
-          onClick={() => setShowVoiceScribeChat(false)}
+          onClick={handleSafeCloseMate}
           aria-label="Close MATE assistant"
         />
       )}
@@ -7070,9 +7129,7 @@ const handleSignOut = async () => {
             initialEntryMode={voiceScribeDiscussionMode ? "discussion" : "case"}
             refreshTrigger={scribeRefreshTrigger}
             onBusyChange={setIsScribeBusy}
-            onBack={() => {
-              setShowVoiceScribeChat(false);
-            }}
+            onBack={handleSafeCloseMate}
             onOpenCaseSheet={(cId) => {
               setVoiceScribeDiscussionMode(false);
               setIsPreviewMode(false);

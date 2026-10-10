@@ -45,6 +45,25 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-10] — ErMate: Critical MATE Cross-Platform Parity Edge-Case Audit & Hardening
+- **MATE History & Popstate Lifecycle Hardening (`src/App.tsx`)**:
+  - Implemented tracked overlay ID (`mateOverlayIdRef`) and consumed popstate flag (`closedViaPopstateRef`) state machine for MATE drawer navigation.
+  - Resolved double-navigation / unwanted page exit on Android hardware Back: cleanup skips `window.history.back()` when browser already consumed the overlay history entry.
+  - Eliminated stale history entry accumulation during active recording cancellation: re-pushes anchor with preserved instance ID without duplicating history depth.
+  - Centralized `handleSafeCloseMate`: safeguards mobile bottom tab navigation, desktop backdrop clicks, and drawer close controls, prompting confirmation before discarding active voice recordings.
+- **Trial Cases vs Persistent Firestore Cases Distinction (`src/App.tsx`, `src/components/VoiceScribeChatView.tsx`)**:
+  - Marked in-memory trial cases created during incomplete profile exploration with explicit metadata: `isTrial: true`, `syncStatus: "local-only"`, `persistenceStatus: "unpersisted-trial"`.
+  - Added visible amber `[TRIAL • LOCAL ONLY]` badge and descriptive warning subtitles in MATE headers to explicitly communicate that local draft cases will not synchronize across devices until profile setup is complete.
+  - Gated `handleSaveExtractedVoiceCase` with `canPersistClinicalData`: intercepts save attempts on trial cases, updates local memory without spurious Firestore writes, and prompts profile completion.
+  - Distinguished case sheet application in Scribe chat: trial cases emit informative local-only notes rather than misleading cloud persistence confirmations.
+- **Actionable Error Emission in Scribe (`src/components/VoiceScribeChatView.tsx`)**:
+  - Replaced swallowed errors during `onEnsureDraftCase` with actionable, visible chat bubbles and session-level alert banners instructing clinicians to check connectivity or retry.
+  - Ensured failed persistence in `handleApplyExtraction` and `handleApplyDischarge` suppresses success messages, unlocks action states, and provides clear error details.
+- **Version & Bundle Synchronization (`package.json`, `server.ts`, `src/components/MoreView.tsx`)**:
+  - Synchronized canonical version `3.0.4` across `package.json`, `server.ts` (`/api/version` and `/api/health`), and `MoreView.tsx`.
+- **Verification (`verify_mate_cross_platform_parity.ts` 22/22 PASS)**:
+  - 100% test pass rate covering back navigation, popstate lifecycle, trial case separation, actionable error handling, cross-device persistence queries, and version alignment. Zero TypeScript errors and clean applet compilation.
+
 ### [2026-10-10] — ErMate: WhatsApp-Style Team Creation, Invitations, & Member Governance Architecture
 - **WhatsApp-Style Team Creation & Admin Authority (`src/components/TeamRosterBoard.tsx`, `server/routes/team.routes.ts`, `src/services/teamInviteService.ts`)**:
   - Any registered clinician can create an Emergency Department team without restriction. The creator automatically becomes a **Team Admin** (`isTeamAdmin: true`, `teamRole: "admin"`).

@@ -1318,11 +1318,14 @@ export default function VoiceScribeChatView({
       }
       setMessages(prev => prev.map(m => m.id === msgId ? { ...m, extractionApplied: true } : m));
       
+      const isTrial = Boolean(activeCaseId?.startsWith("trial-") || (caseData as any)?.isTrial);
       const confirmationId = `${msgId}-case-sheet-prepared`;
       const confirmationMsg: Message = {
         id: confirmationId,
         sender: "ai",
-        text: "✅ Case Sheet prepared successfully.",
+        text: isTrial
+          ? "⚠️ Case Sheet updated in Trial Mode (local memory only). Complete your profile to persist this case permanently to Firestore."
+          : "✅ Case Sheet prepared successfully.",
         timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
         mode: "dictation",
       };
@@ -1334,9 +1337,18 @@ export default function VoiceScribeChatView({
       persistMessage(confirmationMsg);
 
       // Note: we don't clear processingAction on success because we want the UI locked while navigating
-    } catch (e) {
+    } catch (e: any) {
       console.warn("Failed to apply extraction", e);
-      setSaveError("Unable to save the case. Please try again.");
+      const errorText = e?.message ? `Failed to save case to Firestore: ${e.message}` : "Unable to save the case to Firestore. Please retry.";
+      setSaveError(errorText);
+      const errBubble: Message = {
+        id: `err-save-${Date.now()}`,
+        sender: "ai",
+        text: `⚠️ Could not save Case Sheet to Firestore: ${e?.message || "Database write error"}. Please tap Apply Case Sheet again to retry.`,
+        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        mode: "dictation",
+      };
+      setMessages(prev => [...prev, errBubble]);
       setProcessingAction(null);
       processingActionRef.current = false;
     }
@@ -1375,9 +1387,18 @@ export default function VoiceScribeChatView({
       persistMessage(confirmationMsg);
 
       // Note: we don't clear processingAction on success because we want the UI locked while navigating
-    } catch (e) {
+    } catch (e: any) {
       console.warn("Failed to apply discharge summary", e);
-      setSaveError("Unable to prepare the discharge summary. Please try again.");
+      const errorText = e?.message ? `Discharge failed: ${e.message}` : "Unable to prepare the discharge summary. Please try again.";
+      setSaveError(errorText);
+      const errBubble: Message = {
+        id: `err-discharge-${Date.now()}`,
+        sender: "ai",
+        text: `⚠️ Could not persist Discharge Summary to Firestore: ${e?.message || "Database write error"}. Please try again.`,
+        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        mode: "dictation",
+      };
+      setMessages(prev => [...prev, errBubble]);
       setProcessingAction(null);
       processingActionRef.current = false;
     }
@@ -2401,6 +2422,16 @@ export default function VoiceScribeChatView({
             const isWsError = ensureErr instanceof WorkspaceResolutionError || ensureErr?.isWorkspaceResolutionError || ensureErr?.name === "WorkspaceResolutionError";
             if (isWsError) {
               setSessionAttachError("Unable to verify your workspace right now. Please retry. No clinical data has been saved.");
+            } else {
+              setSessionAttachError(`Unable to create patient record in Firestore: ${ensureErr?.message || "Storage error"}. Please retry.`);
+              const errBubble: Message = {
+                id: `err-ensure-${Date.now()}`,
+                sender: "ai",
+                text: `⚠️ Could not create patient record in Firestore (${ensureErr?.message || "Connection or write error"}). Clinical dictation is preserved in this chat. Tap retry or check your network.`,
+                timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+                mode: "dictation",
+              };
+              setMessages((prev) => [...prev, errBubble]);
             }
           } finally {
             isEnsuringDraftCaseRef.current = false;
@@ -2538,14 +2569,20 @@ export default function VoiceScribeChatView({
     }
   };
 
+  const isTrialCase = Boolean(
+    (caseData && (caseData.id?.startsWith("trial-") || (caseData as any).isTrial)) ||
+    (activeCaseId && activeCaseId.startsWith("trial-"))
+  );
   const headerTitle = "ErMate Assistant";
   const headerSubtitle = isDiscussionOnly
     ? "Discuss any case — no patient record required"
-    : caseData
-      ? (caseData.bedNo || caseData.patient?.bed
-          ? `Current context: Bed ${caseData.bedNo || caseData.patient?.bed} / ${caseData.patient?.name || "Patient"}`
-          : `Current context: ${caseData.displayId || caseData.id} / ${caseData.patient?.age !== null && caseData.patient?.age !== undefined ? `${caseData.patient.age}${caseData.patient.gender?.charAt(0) || ""}` : (caseData.patient?.name || "Patient")} • Bed: Unassigned`)
-      : "Dictate the case in your native language, or ask a clinical question";
+    : isTrialCase
+      ? `Trial Mode: Stored locally only (Bed ${caseData?.bedNo || caseData?.patient?.bed || "Unassigned"}) • Will not sync across devices`
+      : caseData
+        ? (caseData.bedNo || caseData.patient?.bed
+            ? `Current context: Bed ${caseData.bedNo || caseData.patient?.bed} / ${caseData.patient?.name || "Patient"}`
+            : `Current context: ${caseData.displayId || caseData.id} / ${caseData.patient?.age !== null && caseData.patient?.age !== undefined ? `${caseData.patient.age}${caseData.patient.gender?.charAt(0) || ""}` : (caseData.patient?.name || "Patient")} • Bed: Unassigned`)
+        : "Dictate the case in your native language, or ask a clinical question";
 
   return (
     <div className={`flex flex-col h-full w-full bg-white dark:bg-slate-950 overflow-hidden ${isSidecar ? '' : 'h-[calc(100dvh-130px)] min-h-[500px] max-w-5xl mx-auto rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xl'}`}>
@@ -2566,11 +2603,16 @@ export default function VoiceScribeChatView({
               <Sparkles size={16} />
             </div>
             <div className="min-w-0">
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-1.5 flex-wrap">
                 <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0" />
                 <h2 className="text-xs font-black text-slate-900 dark:text-white uppercase tracking-wider font-mono">
                   MATE
                 </h2>
+                {isTrialCase && (
+                  <span className="px-1.5 py-0.5 bg-amber-500/20 text-amber-700 dark:text-amber-400 border border-amber-500/30 rounded text-[9px] font-bold uppercase tracking-wider font-mono shrink-0">
+                    TRIAL • LOCAL ONLY
+                  </span>
+                )}
               </div>
               <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate font-mono">
                 {caseData
@@ -2593,11 +2635,16 @@ export default function VoiceScribeChatView({
               <span>Back</span>
             </button>
             <div className="min-w-0">
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
                 <h2 className="text-xs font-black text-slate-900 dark:text-white uppercase tracking-wider truncate">
                   {headerTitle}
                 </h2>
+                {isTrialCase && (
+                  <span className="px-1.5 py-0.5 bg-amber-500/20 text-amber-700 dark:text-amber-400 border border-amber-500/30 rounded text-[9px] font-bold uppercase tracking-wider font-mono shrink-0">
+                    TRIAL • LOCAL ONLY
+                  </span>
+                )}
               </div>
               <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate">{headerSubtitle}</p>
             </div>

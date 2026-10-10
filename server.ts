@@ -316,7 +316,7 @@ app.get("/api/version", (req, res) => {
     version: APP_VERSION,
     buildTime: BUILD_TIMESTAMP,
     updatedAt: BUILD_TIMESTAMP,
-    releaseNotes: "ErMate v3.0.3: ffmpeg production fix, responsive chat composer layout.",
+    releaseNotes: "ErMate v3.0.4: P0 Scribe persistence & cross-platform parity.",
     ffmpegAvailable: checkFfmpeg()
   });
 });
