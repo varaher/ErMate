@@ -590,6 +590,37 @@ useEffect(() => {
     };
   }, []);
 
+  // Popstate / System Back Interceptor for MATE Drawer & Overlays
+  // Ensures Android system Back, browser Back, and PWA navigation close MATE before navigating out of ErMate
+  useEffect(() => {
+    if (!showVoiceScribeChat) return;
+
+    // Push a mate state anchor so the browser/system back button consumes this state first
+    const mateHistoryState = { ermateOverlay: "mate" };
+    window.history.pushState(mateHistoryState, "");
+
+    const handlePopState = (event: PopStateEvent) => {
+      // Check if voice recording is active before closing
+      if (isGlobalVoiceRecordingActive()) {
+        if (!window.confirm("Dictation is still recording. Discard it and leave?")) {
+          // Re-push state so back didn't navigate away
+          window.history.pushState(mateHistoryState, "");
+          return;
+        }
+      }
+      setShowVoiceScribeChat(false);
+    };
+
+    window.addEventListener("popstate", handlePopState);
+    return () => {
+      window.removeEventListener("popstate", handlePopState);
+      // Clean up the history state if MATE was closed via in-app UI instead of popstate
+      if (window.history.state?.ermateOverlay === "mate") {
+        window.history.back();
+      }
+    };
+  }, [showVoiceScribeChat]);
+
   const handleInstallApp = async () => {
     if (deferredPrompt) {
       deferredPrompt.prompt();

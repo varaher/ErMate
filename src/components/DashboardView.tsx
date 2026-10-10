@@ -1365,13 +1365,13 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
                         : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
                     }`}
                   >
-                    {isHospitalClinician ? "All ER Admissions" : "Today's Admissions"}
+                    {isHospitalClinician ? "All ER Admissions" : "All Active Cases"}
                     <span className={`text-[10px] px-1.5 py-0.2 rounded-full ${
                       activeCasesTab === "all"
                         ? "bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400"
                         : "bg-slate-200 dark:bg-slate-855 text-slate-600"
                     }`}>
-                      {isHospitalClinician ? activeDepartmentCases.length : myCases.length}
+                      {activeDepartmentCases.length}
                     </span>
                   </button>
                 </div>

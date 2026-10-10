@@ -2551,7 +2551,17 @@ export default function VoiceScribeChatView({
     <div className={`flex flex-col h-full w-full bg-white dark:bg-slate-950 overflow-hidden ${isSidecar ? '' : 'h-[calc(100dvh-130px)] min-h-[500px] max-w-5xl mx-auto rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xl'}`}>
       <div className={`bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2 shrink-0 ${isSidecar ? 'px-3.5 py-2.5' : 'px-4 py-3'}`}>
         {isSidecar ? (
-          <div className="flex items-center gap-2 min-w-0">
+          <div className="flex items-center gap-1.5 min-w-0">
+            <button
+              type="button"
+              onClick={handleSafeBack}
+              aria-label="Go back"
+              title="Back"
+              className="min-w-[44px] min-h-[44px] -ml-1 px-2 py-2 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-xl text-slate-700 dark:text-slate-200 font-bold text-xs flex items-center justify-center gap-1 cursor-pointer active:scale-95 transition-all select-none shrink-0"
+            >
+              <ArrowLeft size={18} className="shrink-0 text-slate-600 dark:text-slate-300" />
+              <span className="hidden sm:inline">Back</span>
+            </button>
             <div className="p-1.5 bg-indigo-500/10 dark:bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 rounded-lg shrink-0">
               <Sparkles size={16} />
             </div>
