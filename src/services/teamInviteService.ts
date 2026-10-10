@@ -150,7 +150,7 @@ export async function createTeamInvite(
     maxUses: typeof params.maxUses === "number" && params.maxUses > 0 ? params.maxUses : 10,
     usedCount: 0,
     revoked: false,
-    expiresAt: new Date(Date.now() + (params.expiresHours || 48) * 3600000).toISOString(),
+    expiresAt: new Date(Date.now() + 6 * 3600000).toISOString(),
     createdAt: new Date().toISOString(),
     createdByUid: user.uid,
     createdByPlatformAdmin: isPlatformAdmin
@@ -551,7 +551,7 @@ export async function regenerateTeamInvite(
     body: JSON.stringify({
       hospitalId,
       role: role || "resident",
-      expiresHours: expiresHours || 168
+      expiresHours: 6
     })
   });
 
