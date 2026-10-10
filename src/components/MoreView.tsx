@@ -202,13 +202,7 @@ export default function MoreView({
     setProfileSaving(true);
     setProfileSaveError(null);
     try {
-      const rawCapacity = Number(editBedCapacity);
-      if (isNaN(rawCapacity) || !Number.isInteger(rawCapacity) || rawCapacity < 1 || rawCapacity > 1000) {
-        setProfileSaveError("ER physical bed capacity must be a whole number between 1 and 1000.");
-        setProfileSaving(false);
-        return;
-      }
-      const parsedCapacity = rawCapacity;
+      const parsedCapacity = Math.max(1, Math.floor(Number(editBedCapacity))) || 30;
       await onSaveProfile({
         ...profile,
         name: editName.trim() || profile.name,
@@ -1174,12 +1168,8 @@ export default function MoreView({
                   type="number"
                   min={1}
                   max={1000}
-                  step="1"
                   value={editBedCapacity}
-                  onChange={(e) => {
-                    const val = e.target.value;
-                    setEditBedCapacity(val === '' ? ('' as any) : Number(val));
-                  }}
+                  onChange={(e) => setEditBedCapacity(parseInt(e.target.value, 10) || 0)}
                   placeholder="e.g. 30"
                   className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2 text-xs font-bold text-slate-900 dark:text-white"
                   required

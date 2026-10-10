@@ -74,6 +74,7 @@ import {
 import { auth, db, handleFirestoreError, OperationType } from "./firebase";
 import { sanitizeForFirestore } from "./utils/firestoreSanitizer";
 import { getPublicAppUrl } from "./utils/publicUrl";
+import { listenerDiagnostics } from "./utils/listenerDiagnostics";
 import { onAuthStateChanged, signOut } from "firebase/auth";
 import {
   doc,
@@ -383,6 +384,7 @@ useEffect(() => {
     const interval = setInterval(checkVersion, 60000);
 
     // Optional Firestore real-time version check for team / HOD pushed updates
+    listenerDiagnostics.trackSubscribe("app_config_version");
     const unsubFirestoreVersion = onSnapshot(
       doc(db, "app_config", "version"),
       (docSnap) => {
@@ -410,6 +412,7 @@ useEffect(() => {
     return () => {
       isMounted = false;
       clearInterval(interval);
+      listenerDiagnostics.trackUnsubscribe("app_config_version");
       unsubFirestoreVersion();
     };
   }, []);
@@ -1064,7 +1067,6 @@ useEffect(() => {
   const [showOnboardingProfile, setShowOnboardingProfile] = useState<boolean>(false);
   const [showTrialSaveModal, setShowTrialSaveModal] = useState<boolean>(false);
   const [activeTrialCase, setActiveTrialCase] = useState<ClinicalCase | null>(null);
-  const isSavingTrialCaseRef = useRef<boolean>(false);
 
   const isVerifiedTeamUser = Boolean(
     selfMembership &&
@@ -1106,6 +1108,7 @@ useEffect(() => {
          * previously authenticated user.
          */
         if (unsubscribeProfile) {
+          listenerDiagnostics.trackUnsubscribe("user_profile");
           unsubscribeProfile();
           unsubscribeProfile = null;
         }
@@ -1299,6 +1302,7 @@ useEffect(() => {
         /*
          * Real-time UserProfile listener.
          */
+        listenerDiagnostics.trackSubscribe("user_profile");
         unsubscribeProfile =
           onSnapshot(
             profileDocRef,
@@ -1394,6 +1398,7 @@ useEffect(() => {
     unsubscribeAuth();
 
     if (unsubscribeProfile) {
+      listenerDiagnostics.trackUnsubscribe("user_profile");
       unsubscribeProfile();
       unsubscribeProfile = null;
     }
@@ -1504,6 +1509,7 @@ useEffect(() => {
           ? query(collection(db, "cases"), where("ownerUid", "==", auth.currentUser.uid))
           : (profile.email ? query(collection(db, "cases"), where("doctorEmail", "==", profile.email)) : collection(db, "cases")));
 
+    listenerDiagnostics.trackSubscribe("cases");
     const unsubscribeCases = onSnapshot(casesQuery, async (snapshot) => {
       const loadedCases: ClinicalCase[] = [];
       snapshot.forEach((doc) => {
@@ -1584,6 +1590,7 @@ useEffect(() => {
     const handoversQuery = (hasActiveHospitalTeam && userHospital)
       ? query(collection(db, "handovers"), where("hospital", "==", userHospital))
       : (profile.email ? query(collection(db, "handovers"), where("senderEmail", "==", profile.email)) : collection(db, "handovers"));
+    listenerDiagnostics.trackSubscribe("handovers");
     const unsubscribeHandovers = onSnapshot(handoversQuery, async (snapshot) => {
       const loadedHandovers: HandoverRecord[] = [];
       snapshot.forEach((doc) => {
@@ -1638,6 +1645,7 @@ useEffect(() => {
 
     // Stream Quick Paste Patients (Synced Handover Roster across Desktop and Mobile)
     const quickPasteQuery = userHospital ? query(collection(db, "quick_paste_patients"), where("hospital", "==", userHospital)) : (profile.email ? query(collection(db, "quick_paste_patients"), where("createdByEmail", "==", profile.email)) : collection(db, "quick_paste_patients"));
+    listenerDiagnostics.trackSubscribe("quick_paste_patients");
     const unsubscribeQuickPaste = onSnapshot(quickPasteQuery, async (snapshot) => {
       const loadedQuickPaste: QuickPastePatient[] = [];
       snapshot.forEach((docSnap) => {
@@ -1711,7 +1719,8 @@ useEffect(() => {
         where("hospital", "==", userHospital)
       );
 
-      unsubscribeTeam = onSnapshot(
+      listenerDiagnostics.trackSubscribe("team_members");
+      const unsub = onSnapshot(
         teamQuery,
         (snapshot) => {
           const loadedTeam: TeamMember[] = [];
@@ -1744,6 +1753,10 @@ useEffect(() => {
           setTeamMembers([]);
         }
       );
+      unsubscribeTeam = () => {
+        listenerDiagnostics.trackUnsubscribe("team_members");
+        unsub();
+      };
     } else {
       // Independent/individual users must not enumerate hospital membership records.
       setTeamMembers([]);
@@ -1751,162 +1764,207 @@ useEffect(() => {
 
     // Stream Hospital Subscription & Shifts Configuration
     let unsubscribeSub: () => void = () => {};
-let unsubscribeShifts: () => void = () => {};
-let unsubscribeShiftMembership: () => void = () => {};
+    let unsubscribeShifts: () => void = () => {};
+    let unsubscribeShiftMembership: () => void = () => {};
 
     const hospitalSlug = userHospitalLower.replace(/[^a-z0-9]/g, "-").replace(/^-+|-+$/g, "");
     if (hospitalSlug && hospitalSlug.trim().length > 0) {
       const subDocRef = doc(db, "hospital_subscriptions", hospitalSlug);
-    unsubscribeSub = onSnapshot(
-  subDocRef,
-  (snapshot) => {
-    if (snapshot.exists()) {
-      const data = snapshot.data();
+      listenerDiagnostics.trackSubscribe("hospital_subscriptions");
+      const unsub = onSnapshot(
+        subDocRef,
+        (snapshot) => {
+          if (snapshot.exists()) {
+            const data = snapshot.data();
 
-      setHospitalSubscription({
-        active: data.active === true,
-        subscriptionTier:
-          data.subscriptionTier || "Free Standard"
-      });
+            setHospitalSubscription({
+              active: data.active === true,
+              subscriptionTier:
+                data.subscriptionTier || "Free Standard"
+            });
+          } else {
+            // READ-ONLY client:
+            // Hospital subscriptions are created/activated only by trusted
+            // backend/admin workflows. The browser must never self-create one.
+            setHospitalSubscription(null);
+          }
+        },
+        (error) => {
+          console.warn(
+            "Subscription onSnapshot unavailable:",
+            error?.message || error
+          );
+
+          setHospitalSubscription(null);
+        }
+      );
+      unsubscribeSub = () => {
+        listenerDiagnostics.trackUnsubscribe("hospital_subscriptions");
+        unsub();
+      };
     } else {
-      // READ-ONLY client:
-      // Hospital subscriptions are created/activated only by trusted
-      // backend/admin workflows. The browser must never self-create one.
       setHospitalSubscription(null);
     }
-  },
-  (error) => {
-    console.warn(
-      "Subscription onSnapshot unavailable:",
-      error?.message || error
-    );
 
-    setHospitalSubscription(null);
-  }
-);
-     
-    } else {
-      setHospitalSubscription(null);
-     
-    }
-// Hospital shift configuration must follow the canonical
-// team_members/{uid} membership, never users/{uid}.hospital.
-if (auth.currentUser) {
-  const selfMembershipRef = doc(
-    db,
-    "team_members",
-    auth.currentUser.uid
-  );
-
-  unsubscribeShiftMembership = onSnapshot(
-    selfMembershipRef,
-    (memberSnapshot) => {
-      // Stop listening to any previous hospital shift document.
-      unsubscribeShifts();
-      unsubscribeShifts = () => {};
-
-      if (!memberSnapshot.exists()) {
-        setSelfMembership(null);
-        setShifts(ROTA_SHIFTS);
-        setErPhysicalBedCapacity(null);
-        return;
-      }
-
-      const membership = memberSnapshot.data() as any;
-
-      const membershipStatus =
-        String(membership.status || "");
-
-      const isActiveMembership =
-        isActiveMembershipStatus(membershipStatus);
-
-      const isVerifiedMembership =
-        membership.membershipVerified === true;
-
-      const trustedHospitalId =
-        typeof membership.hospitalId === "string" &&
-        membership.hospitalId.trim()
-          ? membership.hospitalId.trim()
-          : (
-              typeof membership.hospital === "string"
-                ? membership.hospital.trim()
-                : ""
-            );
-
-      if (
-        !isActiveMembership ||
-        !trustedHospitalId
-      ) {
-        setSelfMembership(null);
-        setShifts(ROTA_SHIFTS);
-        setErPhysicalBedCapacity(null);
-        return;
-      }
-
-      setSelfMembership(membership);
-
-      const shiftDocRef = doc(
+    // Hospital shift configuration must follow the canonical
+    // team_members/{uid} membership, never users/{uid}.hospital.
+    if (auth.currentUser) {
+      const selfMembershipRef = doc(
         db,
-        "hospital_shifts",
-        trustedHospitalId
+        "team_members",
+        auth.currentUser.uid
       );
 
-      unsubscribeShifts = onSnapshot(
-        shiftDocRef,
-        (snapshot) => {
-          if (!snapshot.exists()) {
+      listenerDiagnostics.trackSubscribe("team_members_self");
+      const unsubShiftMembership = onSnapshot(
+        selfMembershipRef,
+        (memberSnapshot) => {
+          // Stop listening to any previous hospital shift document.
+          unsubscribeShifts();
+          unsubscribeShifts = () => {};
+
+          if (!memberSnapshot.exists()) {
+            setSelfMembership((prev: any) => (prev === null ? prev : null));
             setShifts(ROTA_SHIFTS);
             setErPhysicalBedCapacity(null);
             return;
           }
 
-          const data = snapshot.data();
+          const membership = memberSnapshot.data() as any;
 
-          if (Array.isArray(data.shifts)) {
-            setShifts(data.shifts);
-          } else {
-            setShifts(ROTA_SHIFTS);
-          }
+          const membershipStatus =
+            String(membership.status || "");
 
-          const storedCapacity = Number(data.erPhysicalBedCapacity);
+          const isActiveMembership =
+            isActiveMembershipStatus(membershipStatus);
+
+          const isVerifiedMembership =
+            membership.membershipVerified === true;
+
+          const trustedHospitalId =
+            typeof membership.hospitalId === "string" &&
+            membership.hospitalId.trim()
+              ? membership.hospitalId.trim()
+              : (
+                  typeof membership.hospital === "string"
+                    ? membership.hospital.trim()
+                    : ""
+                );
+
           if (
-            Number.isInteger(storedCapacity) &&
-            storedCapacity > 0
+            !isActiveMembership ||
+            !trustedHospitalId
           ) {
-            setErPhysicalBedCapacity(storedCapacity);
-          } else {
+            setSelfMembership((prev: any) => (prev === null ? prev : null));
+            setShifts(ROTA_SHIFTS);
             setErPhysicalBedCapacity(null);
+            return;
           }
-        },
-        (error) => {
-          console.error(
-            "Error fetching hospital shifts:",
-            error
+
+          setSelfMembership((prev: any) => {
+            if (!prev) return membership;
+            const prevHospitalId = typeof prev.hospitalId === "string" ? prev.hospitalId.trim() : "";
+            const nextHospitalId = typeof membership.hospitalId === "string" ? membership.hospitalId.trim() : "";
+            const prevHospital = typeof prev.hospital === "string" ? prev.hospital.trim() : "";
+            const nextHospital = typeof membership.hospital === "string" ? membership.hospital.trim() : "";
+            const prevStatus = String(prev.status || "");
+            const nextStatus = String(membership.status || "");
+            const prevVerified = prev.membershipVerified === true;
+            const nextVerified = membership.membershipVerified === true;
+            const prevRole = prev.role || null;
+            const nextRole = membership.role || null;
+            const prevIsAdmin = prev.isTeamAdmin === true;
+            const nextIsAdmin = membership.isTeamAdmin === true;
+            const prevDept = prev.department || "";
+            const nextDept = membership.department || "";
+
+            if (
+              prevHospitalId === nextHospitalId &&
+              prevHospital === nextHospital &&
+              prevStatus === nextStatus &&
+              prevVerified === nextVerified &&
+              prevRole === nextRole &&
+              prevIsAdmin === nextIsAdmin &&
+              prevDept === nextDept
+            ) {
+              return prev;
+            }
+            return membership;
+          });
+
+          const shiftDocRef = doc(
+            db,
+            "hospital_shifts",
+            trustedHospitalId
           );
 
+          listenerDiagnostics.trackSubscribe("hospital_shifts");
+          const unsubShiftsInner = onSnapshot(
+            shiftDocRef,
+            (snapshot) => {
+              if (!snapshot.exists()) {
+                setShifts(ROTA_SHIFTS);
+                setErPhysicalBedCapacity(null);
+                return;
+              }
+
+              const data = snapshot.data();
+
+              if (Array.isArray(data.shifts)) {
+                setShifts(data.shifts);
+              } else {
+                setShifts(ROTA_SHIFTS);
+              }
+
+              const storedCapacity = Number(data.erPhysicalBedCapacity);
+              if (
+                Number.isInteger(storedCapacity) &&
+                storedCapacity > 0
+              ) {
+                setErPhysicalBedCapacity(storedCapacity);
+              } else {
+                setErPhysicalBedCapacity(null);
+              }
+            },
+            (error) => {
+              console.error(
+                "Error fetching hospital shifts:",
+                error
+              );
+
+              setShifts(ROTA_SHIFTS);
+              setErPhysicalBedCapacity(null);
+            }
+          );
+          unsubscribeShifts = () => {
+            listenerDiagnostics.trackUnsubscribe("hospital_shifts");
+            unsubShiftsInner();
+          };
+        },
+        (error) => {
+          console.warn(
+            "Trusted membership unavailable for shifts:",
+            error?.message || error
+          );
+
+          setSelfMembership((prev: any) => (prev === null ? prev : null));
           setShifts(ROTA_SHIFTS);
           setErPhysicalBedCapacity(null);
         }
       );
-    },
-    (error) => {
-      console.warn(
-        "Trusted membership unavailable for shifts:",
-        error?.message || error
-      );
-
-      setSelfMembership(null);
+      unsubscribeShiftMembership = () => {
+        listenerDiagnostics.trackUnsubscribe("team_members_self");
+        unsubShiftMembership();
+      };
+    } else {
+      setSelfMembership((prev: any) => (prev === null ? prev : null));
       setShifts(ROTA_SHIFTS);
       setErPhysicalBedCapacity(null);
     }
-  );
-} else {
-  setSelfMembership(null);
-  setShifts(ROTA_SHIFTS);
-  setErPhysicalBedCapacity(null);
-}
+
     // Stream Clinical Contributions for Peer Review Notifications
     const contributionsQuery = userHospital ? query(collection(db, "contributions"), where("hospital", "==", userHospital)) : collection(db, "contributions");
+    listenerDiagnostics.trackSubscribe("contributions");
     const unsubscribeContributions = onSnapshot(contributionsQuery, (snapshot) => {
       const loadedContributions: any[] = [];
       snapshot.forEach((docSnap) => {
@@ -1948,16 +2006,29 @@ if (auth.currentUser) {
     });
 
     return () => {
+      listenerDiagnostics.trackUnsubscribe("cases");
       unsubscribeCases();
+      listenerDiagnostics.trackUnsubscribe("handovers");
       unsubscribeHandovers();
+      listenerDiagnostics.trackUnsubscribe("quick_paste_patients");
       unsubscribeQuickPaste();
       unsubscribeTeam();
       unsubscribeSub();
       unsubscribeShiftMembership();
       unsubscribeShifts();
+      listenerDiagnostics.trackUnsubscribe("contributions");
       unsubscribeContributions();
     };
-  }, [isLoggedIn, profile?.hospital, profile?.email, profile?.subscriptionTier, selfMembership]);
+  }, [
+    isLoggedIn,
+    profile?.hospital,
+    profile?.email,
+    profile?.subscriptionTier,
+    selfMembership?.hospitalId,
+    selfMembership?.hospital,
+    selfMembership?.status,
+    selfMembership?.membershipVerified
+  ]);
 
   // View controllers
   const [selectedCaseId, setSelectedCaseId] = useState<string | null>(null);
@@ -2407,81 +2478,55 @@ const handleDeleteAllCases = async () => {
   };
 
   // Save active trial case permanently to Firestore once profile is complete
-  // Guarantees stable internal case ID, single display sequence allocation across retries,
-  // fresh profile attribution, and concurrent double-tap protection.
-  const handleSaveActiveTrialCase = async (freshProfile?: UserProfile) => {
+  const handleSaveActiveTrialCase = async () => {
     if (!activeTrialCase || !auth.currentUser) return;
-    if (isSavingTrialCaseRef.current) {
-      console.warn("handleSaveActiveTrialCase: Save already in progress, ignoring duplicate call.");
-      return;
-    }
-    isSavingTrialCaseRef.current = true;
+    const user = auth.currentUser;
+    const workspace = await resolveWorkspaceForUser(user.uid);
+
+    let displayCaseId: string | undefined = undefined;
     try {
-      const user = auth.currentUser;
-      const workspace = await resolveWorkspaceForUser(user.uid);
-      const currentTrial = activeTrialCase;
-      const effectiveProfile = freshProfile || profile;
-
-      // 1. Stable internal ClinicalCase ID allocated once per trial case
-      let realCaseId = (currentTrial as any).allocatedCaseId;
-      if (!realCaseId) {
-        realCaseId = generateInternalCaseId();
-        (currentTrial as any).allocatedCaseId = realCaseId;
-      }
-
-      // 2. Stable display sequence reserved once per trial case
-      let displayCaseId = (currentTrial as any).allocatedDisplayId;
-      if (!displayCaseId) {
-        const reserved = await reserveNextDisplaySequence(db);
-        displayCaseId = reserved.displayId;
-        (currentTrial as any).allocatedDisplayId = displayCaseId;
-      }
-
-      const oldTrialId = currentTrial.id;
-
-      const caseToSave: ClinicalCase = {
-        ...currentTrial,
-        id: realCaseId,
-        displayId: displayCaseId || currentTrial.displayId,
-        workspaceType: workspace.workspaceType,
-        ownerUid: workspace.ownerUid,
-        hospitalId: workspace.hospitalId,
-        hospital: workspace.workspaceType === "hospital" ? (selfMembership?.hospitalId || workspace.hospitalId || "") : "",
-        doctorEmail: user.email || effectiveProfile?.email || "",
-        doctorName: effectiveProfile?.name || user.displayName || "Emergency Doctor",
-        createdBy: user.uid,
-        createdByUid: user.uid,
-        lastEditedBy: user.uid,
-        lastEditedAt: new Date().toISOString(),
-      };
-
-      // Remove trial and local-only markers so it becomes a canonical persisted case
-      delete (caseToSave as any).isTrial;
-      delete (caseToSave as any).syncStatus;
-      delete (caseToSave as any).persistenceStatus;
-      delete (caseToSave as any).allocatedCaseId;
-      delete (caseToSave as any).allocatedDisplayId;
-
-      const clean = sanitizeForFirestore(caseToSave);
-      await setDoc(doc(db, "cases", realCaseId), clean, { merge: true });
-
-      if (caseToSave.scribeSessionId) {
-        await linkScribeSessionAndCase(caseToSave.scribeSessionId, realCaseId).catch((linkErr) => {
-          console.warn("Could not link scribe session with case:", linkErr);
-        });
-      }
-
-      setCases(prev => [caseToSave, ...prev.filter(c => c.id !== oldTrialId && c.id !== realCaseId)]);
-      setSelectedCaseId(realCaseId);
-      setVoiceScribeCaseId(realCaseId);
-      setActiveTrialCase(null);
-      triggerNotification("Case Saved", "Your trial case has been permanently saved.", "success");
-    } catch (err: any) {
-      console.error("Error saving active trial case to Firestore:", err);
-      throw err;
-    } finally {
-      isSavingTrialCaseRef.current = false;
+      const reserved = await reserveNextDisplaySequence(db);
+      displayCaseId = reserved.displayId;
+    } catch (e) {
+      console.warn("Could not reserve display sequence:", e);
     }
+
+    const realCaseId = generateInternalCaseId();
+    const oldTrialId = activeTrialCase.id;
+
+    const caseToSave: ClinicalCase = {
+      ...activeTrialCase,
+      id: realCaseId,
+      displayId: displayCaseId || activeTrialCase.displayId,
+      workspaceType: workspace.workspaceType,
+      ownerUid: workspace.ownerUid,
+      hospitalId: workspace.hospitalId,
+      hospital: profile.hospital,
+      doctorEmail: profile.email,
+      doctorName: profile.name || "Emergency Doctor",
+      createdBy: user.uid,
+      createdByUid: user.uid,
+      lastEditedBy: user.uid,
+      lastEditedAt: new Date().toISOString(),
+    };
+
+    // Remove trial and local-only markers so it becomes a canonical persisted case
+    delete (caseToSave as any).isTrial;
+    delete (caseToSave as any).syncStatus;
+    delete (caseToSave as any).persistenceStatus;
+
+    const clean = sanitizeForFirestore(caseToSave);
+    await setDoc(doc(db, "cases", realCaseId), clean, { merge: true });
+
+    if (caseToSave.scribeSessionId) {
+      await linkScribeSessionAndCase(caseToSave.scribeSessionId, realCaseId).catch(() => {});
+    }
+
+    setCases(prev => [caseToSave, ...prev.filter(c => c.id !== oldTrialId && c.id !== realCaseId)]);
+    setSelectedCaseId(realCaseId);
+    setVoiceScribeCaseId(realCaseId);
+    setActiveTrialCase(null);
+    triggerNotification("Case Saved", "Your trial case has been permanently saved.", "success");
   };
 
   // Save changes inside Case Sheet View
@@ -5687,9 +5732,8 @@ const handleSaveProfile = async (newProfile: UserProfile, explicitCapacity?: num
   if (!cleanDept || cleanDept.length < 2) {
     throw new Error("Department must be at least 2 characters.");
   }
-  const numResolvedCap = Number(resolvedCapacity);
-  if (isNaN(numResolvedCap) || !Number.isInteger(numResolvedCap) || numResolvedCap < 1 || numResolvedCap > 1000) {
-    throw new Error("Bed capacity must be a whole number between 1 and 1000.");
+  if (!resolvedCapacity || !Number.isInteger(resolvedCapacity) || resolvedCapacity <= 0 || resolvedCapacity > 1000) {
+    throw new Error("ER physical bed capacity must be a positive integer between 1 and 1000.");
   }
 
   // Safe string length capping to respect firestore.rules size bounds (<= 100)
@@ -5707,33 +5751,70 @@ const handleSaveProfile = async (newProfile: UserProfile, explicitCapacity?: num
     if (userDocSnap.exists()) {
       const existingData = userDocSnap.data() || {};
 
-      // EXPLICIT ALLOWLISTED UPDATE FOR EXISTING USERS:
-      // Only write clinician-editable profile fields.
-      // NEVER rewrite protected authorization or entitlement fields:
-      // role, hospital, aiCredits, streak, subscriptionTier
-      const updatePayload: Record<string, any> = {
+      // Strictly preserve protected authorization and entitlement fields from Firestore
+      const preservedRole = typeof existingData.role === "string" && existingData.role.length > 0
+        ? existingData.role
+        : (profile?.role || "EM Resident");
+
+      const preservedHospital = typeof existingData.hospital === "string"
+        ? existingData.hospital
+        : (profile?.hospital || "");
+
+      const preservedAiCredits = typeof existingData.aiCredits === "number"
+        ? existingData.aiCredits
+        : (profile?.aiCredits ?? 100);
+
+      const preservedStreak = typeof existingData.streak === "number"
+        ? existingData.streak
+        : (profile?.streak ?? 1);
+
+      const preservedTier = typeof existingData.subscriptionTier === "string" && existingData.subscriptionTier.length > 0
+        ? existingData.subscriptionTier
+        : (profile?.subscriptionTier || "Free Standard");
+
+      const email = (auth.currentUser.email || existingData.email || profile?.email || "").slice(0, 100);
+
+      const payloadToSave: Record<string, any> = {
         name: cappedName,
-        displayRole: cappedDisplayRole,
-        workplaceName: cappedWorkplace,
+        email: email,
+        role: preservedRole,
+        hospital: preservedHospital,
         hospitalLabel: cappedWorkplace,
+        workplaceName: cappedWorkplace,
+        displayRole: cappedDisplayRole,
         department: cappedDept,
         erPhysicalBedCapacity: resolvedCapacity,
         onboardingComplete: true,
+        aiCredits: preservedAiCredits,
+        streak: preservedStreak,
+        subscriptionTier: preservedTier,
       };
 
-      if (newProfile.phone !== undefined) updatePayload.phone = (newProfile.phone || "").slice(0, 50);
-      if (newProfile.regNo !== undefined) updatePayload.regNo = (newProfile.regNo || "").slice(0, 50);
-      if (newProfile.qualifications !== undefined) updatePayload.qualifications = (newProfile.qualifications || "").slice(0, 100);
-      if (newProfile.place !== undefined) updatePayload.place = (newProfile.place || "").slice(0, 100);
-      if (newProfile.state !== undefined) updatePayload.state = (newProfile.state || "").slice(0, 100);
-      if (newProfile.pincode !== undefined) updatePayload.pincode = (newProfile.pincode || "").slice(0, 20);
+      if (newProfile.hasConsentedToLearning !== undefined) {
+        payloadToSave.hasConsentedToLearning = newProfile.hasConsentedToLearning;
+      } else if (existingData.hasConsentedToLearning !== undefined) {
+        payloadToSave.hasConsentedToLearning = existingData.hasConsentedToLearning;
+      }
 
-      await updateDoc(userDocRef, sanitizeForFirestore(updatePayload));
+      if (newProfile.phone) payloadToSave.phone = newProfile.phone.slice(0, 50);
+      else if (existingData.phone) payloadToSave.phone = existingData.phone;
+
+      if (newProfile.regNo) payloadToSave.regNo = newProfile.regNo.slice(0, 50);
+      else if (existingData.regNo) payloadToSave.regNo = existingData.regNo;
+
+      if (newProfile.qualifications) payloadToSave.qualifications = newProfile.qualifications.slice(0, 100);
+      else if (existingData.qualifications) payloadToSave.qualifications = existingData.qualifications;
+
+      if (newProfile.place) payloadToSave.place = newProfile.place.slice(0, 100);
+      if (newProfile.state) payloadToSave.state = newProfile.state.slice(0, 100);
+      if (newProfile.pincode) payloadToSave.pincode = newProfile.pincode.slice(0, 20);
+
+      await setDoc(userDocRef, sanitizeForFirestore(payloadToSave), { merge: true });
 
       updatedProfileState = {
         ...(profile || {}),
         ...existingData,
-        ...updatePayload,
+        ...payloadToSave,
       } as UserProfile;
     } else {
       // Missing document: construct compliant initial document conforming to create rules in firestore.rules
@@ -5755,6 +5836,9 @@ const handleSaveProfile = async (newProfile: UserProfile, explicitCapacity?: num
         subscriptionTier: "Free Standard",
       };
 
+      if (newProfile.hasConsentedToLearning !== undefined) {
+        initialPayload.hasConsentedToLearning = newProfile.hasConsentedToLearning;
+      }
       if (newProfile.phone) initialPayload.phone = newProfile.phone.slice(0, 50);
       if (newProfile.regNo) initialPayload.regNo = newProfile.regNo.slice(0, 50);
       if (newProfile.qualifications) initialPayload.qualifications = newProfile.qualifications.slice(0, 100);
@@ -5816,45 +5900,15 @@ const handleSaveProfile = async (newProfile: UserProfile, explicitCapacity?: num
 };
 
   // Process user's consent choice (Yes or Not right now)
-  // Persists ONLY hasConsentedToLearning without calling handleSaveProfile or rewriting protected fields
   const handleConsentChoice = async (consented: boolean) => {
-    if (!auth.currentUser) return;
-    const userDocRef = doc(db, "users", auth.currentUser.uid);
-    try {
-      const userDocSnap = await getDoc(userDocRef);
-      if (userDocSnap.exists()) {
-        // Narrow update: strictly hasConsentedToLearning
-        await updateDoc(userDocRef, {
-          hasConsentedToLearning: consented
-        });
-      } else {
-        // Missing user doc: CREATE-rule compliant initial doc without marking onboarding complete
-        const email = (auth.currentUser.email || "").slice(0, 100);
-        const initialPayload: Record<string, any> = {
-          name: auth.currentUser.displayName || "Dr. Clinician",
-          email: email,
-          role: "EM Resident",
-          hospital: "",
-          hospitalLabel: "",
-          workplaceName: "",
-          displayRole: "EM Resident",
-          department: "Emergency & Trauma Medicine",
-          erPhysicalBedCapacity: 30,
-          onboardingComplete: false,
-          aiCredits: 100,
-          streak: 1,
-          subscriptionTier: "Free Standard",
-          hasConsentedToLearning: consented
-        };
-        await setDoc(userDocRef, sanitizeForFirestore(initialPayload));
-      }
-      setProfile(prev => prev ? { ...prev, hasConsentedToLearning: consented } : prev);
-      setShowConsentModal(false);
-    } catch (err: any) {
-      console.error("Failed to persist consent choice:", err);
-      triggerNotification("Consent Save Failed", err?.message || "Could not save your learning preference.", "warning");
-      throw err;
+    if (profile) {
+      const updatedProfile = {
+        ...profile,
+        hasConsentedToLearning: consented
+      };
+      await handleSaveProfile(updatedProfile);
     }
+    setShowConsentModal(false);
   };
 
   // Intercept and persist handovers to Firestore
@@ -6197,7 +6251,7 @@ const handleSignOut = async () => {
           // Keep OnboardingProfileView visible so the user sees the SAVED state and Edit Profile CTA
           setShowOnboardingProfile(true);
           if (activeTrialCase) {
-            await handleSaveActiveTrialCase(updatedProfile);
+            await handleSaveActiveTrialCase();
           }
         }}
         onContinueToDashboard={() => {

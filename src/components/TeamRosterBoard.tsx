@@ -245,12 +245,11 @@ export default function TeamRosterBoard({
     }
     const cleanTeam = newTeamName.trim() || `${cleanHospital} Emergency Team`;
     const cleanDept = newDepartmentName.trim() || "Emergency Medicine";
-    const rawCap = Number(newBedCapacity);
-    if (isNaN(rawCap) || !Number.isInteger(rawCap) || rawCap < 1 || rawCap > 1000) {
-      setCreateTeamError("ER Physical Bed Capacity must be a whole number between 1 and 1000.");
+    const cap = Math.floor(Number(newBedCapacity));
+    if (!Number.isInteger(cap) || cap <= 0 || cap > 1000) {
+      setCreateTeamError("ER Physical Bed Capacity must be a positive integer between 1 and 1000.");
       return;
     }
-    const cap = rawCap;
 
     setIsCreatingTeam(true);
     try {
@@ -839,13 +838,9 @@ export default function TeamRosterBoard({
                     type="number"
                     min="1"
                     max="1000"
-                    step="1"
                     required
                     value={newBedCapacity}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      setNewBedCapacity(val === '' ? ('' as any) : Number(val));
-                    }}
+                    onChange={(e) => setNewBedCapacity(parseInt(e.target.value, 10) || 1)}
                     className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono"
                   />
                   <p className="text-[10px] text-slate-400 dark:text-slate-500">
