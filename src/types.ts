@@ -650,6 +650,7 @@ export interface UserProfile {
   name: string;
   email: string;
   role: string;
+  displayRole?: string;
   hospital: string;
   hospitalLabel?: string;
   workplaceName?: string;

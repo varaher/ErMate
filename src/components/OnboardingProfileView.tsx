@@ -60,9 +60,9 @@ export default function OnboardingProfileView({
 
   // 1. Initial field values
   const [name, setName] = useState<string>(profile?.name || "Dr. ");
-  const [role, setRole] = useState<string>(profile?.role || "EM Resident");
+  const [role, setRole] = useState<string>(profile?.displayRole || profile?.role || "EM Resident");
   const [hospital, setHospital] = useState<string>(
-    profile?.workplaceName || profile?.hospital || profile?.hospitalLabel || ""
+    profile?.workplaceName || profile?.hospitalLabel || profile?.hospital || ""
   );
   const [department, setDepartment] = useState<string>(
     profile?.department || "Emergency & Trauma Medicine"
@@ -78,8 +78,8 @@ export default function OnboardingProfileView({
     bedCapacity: number;
   }>({
     name: profile?.name || "",
-    role: profile?.role || "EM Resident",
-    hospital: profile?.workplaceName || profile?.hospital || profile?.hospitalLabel || "",
+    role: profile?.displayRole || profile?.role || "EM Resident",
+    hospital: profile?.workplaceName || profile?.hospitalLabel || profile?.hospital || "",
     department: profile?.department || "Emergency & Trauma Medicine",
     bedCapacity: initialCap,
   });
@@ -108,8 +108,8 @@ export default function OnboardingProfileView({
           : 30;
       setSavedData({
         name: profile.name || "",
-        role: profile.role || "EM Resident",
-        hospital: profile.workplaceName || profile.hospital || profile.hospitalLabel || "",
+        role: profile.displayRole || profile.role || "EM Resident",
+        hospital: profile.workplaceName || profile.hospitalLabel || profile.hospital || "",
         department: profile.department || "Emergency & Trauma Medicine",
         bedCapacity: cap,
       });
@@ -172,8 +172,9 @@ export default function OnboardingProfileView({
         streak: profile?.streak ?? 1,
         subscriptionTier: profile?.subscriptionTier || "Free Standard",
         name: cleanName,
-        role: cleanRole,
-        hospital: cleanHospital,
+        role: profile?.role || "EM Resident",
+        displayRole: cleanRole,
+        hospital: profile?.hospital || "",
         workplaceName: cleanHospital,
         hospitalLabel: cleanHospital,
         department: cleanDept,

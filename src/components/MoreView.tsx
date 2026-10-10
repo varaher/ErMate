@@ -122,8 +122,8 @@ export default function MoreView({
 
   // Profile Edit Local State
   const [editName, setEditName] = useState<string>(profile?.name || "");
-  const [editRole, setEditRole] = useState<string>(profile?.role || "EM Resident");
-  const [editHospital, setEditHospital] = useState<string>(profile?.workplaceName || profile?.hospital || profile?.hospitalLabel || "");
+  const [editRole, setEditRole] = useState<string>(profile?.displayRole || profile?.role || "EM Resident");
+  const [editHospital, setEditHospital] = useState<string>(profile?.workplaceName || profile?.hospitalLabel || profile?.hospital || "");
   const [editDepartment, setEditDepartment] = useState<string>(profile?.department || "Emergency & Trauma Medicine");
   const [editBedCapacity, setEditBedCapacity] = useState<number>(
     typeof erPhysicalBedCapacity === "number" && erPhysicalBedCapacity > 0
@@ -181,7 +181,7 @@ export default function MoreView({
       if (onSaveProfile && profile) {
         onSaveProfile({
           ...profile,
-          hospital: facilityHospitalName,
+          hospital: profile.hospital,
           hospitalLabel: facilityHospitalName,
           workplaceName: facilityHospitalName,
           department: facilityDepartment,
@@ -206,10 +206,11 @@ export default function MoreView({
       await onSaveProfile({
         ...profile,
         name: editName.trim() || profile.name,
-        role: editRole.trim() || profile.role,
-        hospital: editHospital.trim() || profile.hospital,
-        workplaceName: editHospital.trim() || profile.workplaceName,
-        hospitalLabel: editHospital.trim() || profile.hospital,
+        role: profile.role,
+        displayRole: editRole.trim() || profile.displayRole || profile.role,
+        hospital: profile.hospital,
+        workplaceName: editHospital.trim() || profile.workplaceName || "",
+        hospitalLabel: editHospital.trim() || profile.hospitalLabel || "",
         department: editDepartment.trim() || profile.department,
         erPhysicalBedCapacity: parsedCapacity,
         qualifications: editQualifications.trim() || profile.qualifications,

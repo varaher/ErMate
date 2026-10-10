@@ -2438,6 +2438,11 @@ const handleDeleteAllCases = async () => {
       lastEditedAt: new Date().toISOString(),
     };
 
+    // Remove trial and local-only markers so it becomes a canonical persisted case
+    delete (caseToSave as any).isTrial;
+    delete (caseToSave as any).syncStatus;
+    delete (caseToSave as any).persistenceStatus;
+
     const clean = sanitizeForFirestore(caseToSave);
     await setDoc(doc(db, "cases", realCaseId), clean, { merge: true });
 
@@ -5618,6 +5623,7 @@ const handleUpdateErPhysicalBedCapacity = async (newCapacity: number) => {
   // Handle user profile save to Firestore
 // Protected authority/billing fields cannot be changed from profile editing.
 // Personal workplace metadata & professional role are informational and stored cleanly.
+// Protected system authority fields (role, hospital, aiCredits, subscriptionTier, streak) are strictly preserved.
 const handleSaveProfile = async (newProfile: UserProfile, explicitCapacity?: number | null) => {
   if (!auth.currentUser) {
     triggerNotification(
@@ -5629,8 +5635,8 @@ const handleSaveProfile = async (newProfile: UserProfile, explicitCapacity?: num
   }
 
   const cleanName = (newProfile.name || "").trim();
-  const cleanRole = (newProfile.role || "").trim();
-  const cleanHospital = (newProfile.hospital || newProfile.workplaceName || newProfile.hospitalLabel || "").trim();
+  const cleanDisplayRole = (newProfile.displayRole || newProfile.role || "").trim();
+  const cleanHospital = (newProfile.workplaceName || newProfile.hospitalLabel || newProfile.hospital || "").trim();
   const cleanDept = (newProfile.department || "").trim();
 
   const resolvedCapacity =
@@ -5645,7 +5651,7 @@ const handleSaveProfile = async (newProfile: UserProfile, explicitCapacity?: num
   if (!cleanName || cleanName.length < 2) {
     throw new Error("Doctor name must be at least 2 characters.");
   }
-  if (!cleanRole) {
+  if (!cleanDisplayRole) {
     throw new Error("Professional role is required.");
   }
   if (!cleanHospital || cleanHospital.length < 2) {
@@ -5658,53 +5664,133 @@ const handleSaveProfile = async (newProfile: UserProfile, explicitCapacity?: num
     throw new Error("ER physical bed capacity must be a positive integer between 1 and 1000.");
   }
 
-  // Preserve all protected values from the currently trusted profile.
-  // Role changes happen through /api/team/update-role.
-  // Hospital assignment happens through trusted membership workflows.
-  // Credits/subscription are never self-edited here.
-  const profileToSave: UserProfile = {
-    ...(profile || {}),
-    ...newProfile,
+  // Safe string length capping to respect firestore.rules size bounds (<= 100)
+  const cappedName = cleanName.slice(0, 100);
+  const cappedWorkplace = cleanHospital.slice(0, 100);
+  const cappedDisplayRole = cleanDisplayRole.slice(0, 100);
+  const cappedDept = cleanDept.slice(0, 100);
 
-    email:
-      auth.currentUser.email ||
-      profile?.email ||
-      newProfile.email ||
-      "",
-
-    name: cleanName,
-    role: cleanRole || profile?.role || "EM Resident",
-    hospital: cleanHospital,
-    workplaceName: cleanHospital,
-    hospitalLabel: cleanHospital,
-    department: cleanDept,
-    erPhysicalBedCapacity: resolvedCapacity,
-    onboardingComplete: true,
-
-    aiCredits: profile?.aiCredits ?? 100,
-    subscriptionTier: profile?.subscriptionTier || "Free Standard",
-    streak: profile?.streak ?? 1,
-  };
+  const userDocRef = doc(db, "users", auth.currentUser.uid);
+  let updatedProfileState: UserProfile;
 
   try {
-    await setDoc(
-      doc(db, "users", auth.currentUser.uid),
-      sanitizeForFirestore(profileToSave),
-      { merge: true }
-    );
+    const userDocSnap = await getDoc(userDocRef);
 
-    // Update local UI only after Firestore save succeeds.
-    setProfile(profileToSave);
+    if (userDocSnap.exists()) {
+      const existingData = userDocSnap.data() || {};
+
+      // Strictly preserve protected authorization and entitlement fields from Firestore
+      const preservedRole = typeof existingData.role === "string" && existingData.role.length > 0
+        ? existingData.role
+        : (profile?.role || "EM Resident");
+
+      const preservedHospital = typeof existingData.hospital === "string"
+        ? existingData.hospital
+        : (profile?.hospital || "");
+
+      const preservedAiCredits = typeof existingData.aiCredits === "number"
+        ? existingData.aiCredits
+        : (profile?.aiCredits ?? 100);
+
+      const preservedStreak = typeof existingData.streak === "number"
+        ? existingData.streak
+        : (profile?.streak ?? 1);
+
+      const preservedTier = typeof existingData.subscriptionTier === "string" && existingData.subscriptionTier.length > 0
+        ? existingData.subscriptionTier
+        : (profile?.subscriptionTier || "Free Standard");
+
+      const email = (auth.currentUser.email || existingData.email || profile?.email || "").slice(0, 100);
+
+      const payloadToSave: Record<string, any> = {
+        name: cappedName,
+        email: email,
+        role: preservedRole,
+        hospital: preservedHospital,
+        hospitalLabel: cappedWorkplace,
+        workplaceName: cappedWorkplace,
+        displayRole: cappedDisplayRole,
+        department: cappedDept,
+        erPhysicalBedCapacity: resolvedCapacity,
+        onboardingComplete: true,
+        aiCredits: preservedAiCredits,
+        streak: preservedStreak,
+        subscriptionTier: preservedTier,
+      };
+
+      if (newProfile.hasConsentedToLearning !== undefined) {
+        payloadToSave.hasConsentedToLearning = newProfile.hasConsentedToLearning;
+      } else if (existingData.hasConsentedToLearning !== undefined) {
+        payloadToSave.hasConsentedToLearning = existingData.hasConsentedToLearning;
+      }
+
+      if (newProfile.phone) payloadToSave.phone = newProfile.phone.slice(0, 50);
+      else if (existingData.phone) payloadToSave.phone = existingData.phone;
+
+      if (newProfile.regNo) payloadToSave.regNo = newProfile.regNo.slice(0, 50);
+      else if (existingData.regNo) payloadToSave.regNo = existingData.regNo;
+
+      if (newProfile.qualifications) payloadToSave.qualifications = newProfile.qualifications.slice(0, 100);
+      else if (existingData.qualifications) payloadToSave.qualifications = existingData.qualifications;
+
+      if (newProfile.place) payloadToSave.place = newProfile.place.slice(0, 100);
+      if (newProfile.state) payloadToSave.state = newProfile.state.slice(0, 100);
+      if (newProfile.pincode) payloadToSave.pincode = newProfile.pincode.slice(0, 20);
+
+      await setDoc(userDocRef, sanitizeForFirestore(payloadToSave), { merge: true });
+
+      updatedProfileState = {
+        ...(profile || {}),
+        ...existingData,
+        ...payloadToSave,
+      } as UserProfile;
+    } else {
+      // Missing document: construct compliant initial document conforming to create rules in firestore.rules
+      const email = (auth.currentUser.email || newProfile.email || "").slice(0, 100);
+
+      const initialPayload: Record<string, any> = {
+        name: cappedName,
+        email: email,
+        role: "EM Resident",
+        hospital: "",
+        hospitalLabel: cappedWorkplace,
+        workplaceName: cappedWorkplace,
+        displayRole: cappedDisplayRole,
+        department: cappedDept,
+        erPhysicalBedCapacity: resolvedCapacity,
+        onboardingComplete: true,
+        aiCredits: 100,
+        streak: 1,
+        subscriptionTier: "Free Standard",
+      };
+
+      if (newProfile.hasConsentedToLearning !== undefined) {
+        initialPayload.hasConsentedToLearning = newProfile.hasConsentedToLearning;
+      }
+      if (newProfile.phone) initialPayload.phone = newProfile.phone.slice(0, 50);
+      if (newProfile.regNo) initialPayload.regNo = newProfile.regNo.slice(0, 50);
+      if (newProfile.qualifications) initialPayload.qualifications = newProfile.qualifications.slice(0, 100);
+      if (newProfile.place) initialPayload.place = newProfile.place.slice(0, 100);
+      if (newProfile.state) initialPayload.state = newProfile.state.slice(0, 100);
+      if (newProfile.pincode) initialPayload.pincode = newProfile.pincode.slice(0, 20);
+
+      await setDoc(userDocRef, sanitizeForFirestore(initialPayload));
+
+      updatedProfileState = {
+        ...(profile || {}),
+        ...initialPayload,
+      } as UserProfile;
+    }
+
+    // Update local UI only after Firestore save succeeds
+    setProfile(updatedProfileState);
     if (resolvedCapacity && Number.isInteger(resolvedCapacity) && resolvedCapacity > 0) {
       setErPhysicalBedCapacity(resolvedCapacity);
     }
 
-    // Optional Cloud SQL mirror.
-    // Failure does not invalidate a successful Firestore write.
+    // Optional Cloud SQL mirror (failure does not block or invalidate Firestore write)
     try {
-      const idToken =
-        await auth.currentUser.getIdToken(true);
-
+      const idToken = await auth.currentUser.getIdToken(true);
       const res = await fetch("/api/sql/sync-user", {
         method: "POST",
         headers: {
@@ -5713,38 +5799,25 @@ const handleSaveProfile = async (newProfile: UserProfile, explicitCapacity?: num
         },
         body: JSON.stringify({
           uid: auth.currentUser.uid,
-          email: profileToSave.email,
-          name: profileToSave.name,
-          role: profileToSave.role,
-          hospital: profileToSave.hospital,
-          aiCredits: profileToSave.aiCredits,
-          streak: profileToSave.streak,
-          subscriptionTier:
-            profileToSave.subscriptionTier,
-          hasConsentedToLearning:
-            profileToSave.hasConsentedToLearning
+          email: updatedProfileState.email,
+          name: updatedProfileState.name,
+          role: updatedProfileState.role,
+          hospital: updatedProfileState.hospital,
+          aiCredits: updatedProfileState.aiCredits,
+          streak: updatedProfileState.streak,
+          subscriptionTier: updatedProfileState.subscriptionTier,
+          hasConsentedToLearning: updatedProfileState.hasConsentedToLearning
         })
       });
 
       if (!res.ok) {
-        console.warn(
-          "Cloud SQL profile mirror returned:",
-          res.status
-        );
+        console.warn("Cloud SQL profile mirror returned:", res.status);
       }
     } catch (syncErr) {
-      // Firestore remains authoritative source for this profile save.
-      console.warn(
-        "Failed to sync profile change with Cloud SQL:",
-        syncErr
-      );
+      console.warn("Failed to sync profile change with Cloud SQL:", syncErr);
     }
   } catch (err: any) {
-    console.error(
-      "Error saving profile to Firestore:",
-      err
-    );
-
+    console.error("Error saving profile to Firestore:", err);
     triggerNotification(
       "Save Failed",
       err?.message || "Your profile changes could not be saved.",

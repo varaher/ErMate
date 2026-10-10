@@ -57,8 +57,9 @@ async function runAllTests() {
       streak: initialProfile?.streak ?? 1,
       subscriptionTier: initialProfile?.subscriptionTier || "Free Standard",
       name: cleanName,
-      role: cleanRole,
-      hospital: cleanHospital,
+      role: initialProfile?.role || "EM Resident",
+      displayRole: cleanRole,
+      hospital: initialProfile?.hospital || "",
       workplaceName: cleanHospital,
       hospitalLabel: cleanHospital,
       department: cleanDept,
@@ -67,7 +68,7 @@ async function runAllTests() {
     };
 
     assert.strictEqual(updated.name, "Dr. Sarah Rao");
-    assert.strictEqual(updated.hospital, "City General Hospital");
+    assert.strictEqual(updated.displayRole, "EM Resident");
     assert.strictEqual(updated.workplaceName, "City General Hospital");
     assert.strictEqual(updated.hospitalLabel, "City General Hospital");
     assert.strictEqual(updated.department, "Emergency & Trauma Medicine");
@@ -112,8 +113,8 @@ async function runAllTests() {
     }
 
     const cleanName = (newProfile.name || "").trim();
-    const cleanRole = (newProfile.role || "").trim();
-    const cleanHospital = (newProfile.hospital || newProfile.workplaceName || newProfile.hospitalLabel || "").trim();
+    const cleanRole = (newProfile.displayRole || newProfile.role || "").trim();
+    const cleanHospital = (newProfile.workplaceName || newProfile.hospitalLabel || newProfile.hospital || "").trim();
     const cleanDept = (newProfile.department || "").trim();
 
     const resolvedCapacity =
@@ -144,8 +145,9 @@ async function runAllTests() {
       ...newProfile,
       email: currentAuthUser.email,
       name: cleanName,
-      role: cleanRole,
-      hospital: cleanHospital,
+      role: currentProfileState?.role || "EM Resident",
+      displayRole: cleanRole,
+      hospital: currentProfileState?.hospital || "",
       workplaceName: cleanHospital,
       hospitalLabel: cleanHospital,
       department: cleanDept,
@@ -171,8 +173,10 @@ async function runAllTests() {
       name: "Dr. Sarah Rao",
       email: "doctor.sarah@gmail.com",
       role: "EM Resident",
-      hospital: "City General Hospital",
+      displayRole: "Senior Emergency Physician",
+      hospital: "",
       workplaceName: "City General Hospital",
+      hospitalLabel: "City General Hospital",
       department: "Emergency & Trauma Medicine",
       erPhysicalBedCapacity: 30,
       aiCredits: 100,
@@ -187,7 +191,8 @@ async function runAllTests() {
     assert(doc !== null);
     assert.strictEqual(doc.name, "Dr. Sarah Rao");
     assert.strictEqual(doc.workplaceName, "City General Hospital");
-    assert.strictEqual(doc.hospital, "City General Hospital");
+    assert.strictEqual(doc.hospitalLabel, "City General Hospital");
+    assert.strictEqual(doc.displayRole, "Senior Emergency Physician");
     assert.strictEqual(doc.department, "Emergency & Trauma Medicine");
     assert.strictEqual(doc.erPhysicalBedCapacity, 30);
     assert.strictEqual(doc.onboardingComplete, true);
@@ -238,7 +243,7 @@ async function runAllTests() {
     localProfile = await mockDb.getDoc(`users/uid_doctor_123`);
     assert(localProfile !== null);
     assert.strictEqual(localProfile.name, "Dr. Sarah Rao");
-    assert.strictEqual(localProfile.hospital, "City General Hospital");
+    assert.strictEqual(localProfile.workplaceName, "City General Hospital");
     assert.strictEqual(localProfile.erPhysicalBedCapacity, 30);
   });
 
@@ -265,7 +270,7 @@ async function runAllTests() {
     // User edits hospital and bed capacity
     const editedInput: UserProfile = {
       ...currentProfileState!,
-      hospital: "Apex Trauma Institute",
+      hospital: "",
       workplaceName: "Apex Trauma Institute",
       hospitalLabel: "Apex Trauma Institute",
       erPhysicalBedCapacity: 45,
@@ -276,8 +281,8 @@ async function runAllTests() {
 
     // Verify stored values
     const doc = await mockDb.getDoc(`users/uid_doctor_123`);
-    assert.strictEqual(doc.hospital, "Apex Trauma Institute");
     assert.strictEqual(doc.workplaceName, "Apex Trauma Institute");
+    assert.strictEqual(doc.hospitalLabel, "Apex Trauma Institute");
     assert.strictEqual(doc.erPhysicalBedCapacity, 45);
     assert.strictEqual(doc.name, "Dr. Sarah Rao"); // Preserved
   });
@@ -285,7 +290,7 @@ async function runAllTests() {
   await test("8. Cancel restores previous saved values without overwriting Firestore", async () => {
     let savedSnapshot = {
       name: "Dr. Sarah Rao",
-      hospital: "Apex Trauma Institute",
+      workplaceName: "Apex Trauma Institute",
       department: "Emergency & Trauma Medicine",
       capacity: 45
     };
@@ -295,7 +300,7 @@ async function runAllTests() {
     let draftHospital = "Temporary Accidental Typing Hospital";
 
     // User clicks Cancel
-    draftHospital = savedSnapshot.hospital;
+    draftHospital = savedSnapshot.workplaceName;
     profileMode = "SAVED";
 
     assert.strictEqual(draftHospital, "Apex Trauma Institute");
@@ -303,7 +308,7 @@ async function runAllTests() {
 
     // Firestore was not modified
     const doc = await mockDb.getDoc(`users/uid_doctor_123`);
-    assert.strictEqual(doc.hospital, "Apex Trauma Institute");
+    assert.strictEqual(doc.workplaceName, "Apex Trauma Institute");
   });
 
   console.log("\n--- TEST SECTION D: ERROR PROPAGATION & RESILIENCE ---");

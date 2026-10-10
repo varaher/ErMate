@@ -161,7 +161,7 @@ export const GlobalHeader: React.FC<GlobalHeaderProps> = ({
 
   // Format single-line workplace context
   const workplaceText = (() => {
-    const hosp = profile?.hospital?.trim();
+    const hosp = (profile?.workplaceName || profile?.hospitalLabel || profile?.hospital || "").trim();
     const dept = profile?.department?.trim();
     if (hosp && dept) {
       // If hosp already includes dept name, avoid duplication
@@ -680,7 +680,7 @@ export const GlobalHeader: React.FC<GlobalHeaderProps> = ({
                     </strong>
                     <div className="flex items-center gap-1.5 mt-0.5">
                       <span className="text-[10px] font-semibold text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/60 px-1.5 py-0.5 rounded">
-                        {profile?.role || "Emergency Physician"}
+                        {profile?.displayRole || profile?.role || "Emergency Physician"}
                       </span>
                     </div>
                     {profile?.email && (

@@ -144,6 +144,8 @@ service cloud.firestore {
           && checkAdminMember(get(/databases/$(database)/documents/team_members/$(uid())).data, hospId)
         )
       );
+    }
+
     function checkRotaManagerMember(m, hospId) {
       return m.get('status', '') in ['active', 'Active (Joined)']
         && (

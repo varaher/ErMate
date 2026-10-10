@@ -41,13 +41,13 @@ export function getProfileCompletenessDetails(
   }
 
   // 2. Professional Role
-  const role = String(profile.role || "").trim();
+  const role = String(profile.displayRole || profile.role || "").trim();
   if (!role || role.length < 2) {
     missing.push("Professional Role");
   }
 
   // 3. Hospital / Workplace Name (personal workplace metadata only)
-  const workplace = String(profile.workplaceName || profile.hospital || profile.hospitalLabel || "").trim();
+  const workplace = String(profile.workplaceName || profile.hospitalLabel || profile.hospital || "").trim();
   if (!workplace || workplace.length < 2) {
     missing.push("Hospital / Workplace Name");
   }

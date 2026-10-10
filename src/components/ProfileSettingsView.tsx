@@ -174,7 +174,7 @@ export default function ProfileSettingsView({
     return () => unsubscribe();
   }, []);
 
-  const [workplaceName, setWorkplaceName] = useState<string>(profile.workplaceName || profile.hospital || "");
+  const [workplaceName, setWorkplaceName] = useState<string>(profile.workplaceName || profile.hospitalLabel || profile.hospital || "");
   const [departmentName, setDepartmentName] = useState<string>("Emergency Medicine Department");
   const [newMemberEmail, setNewMemberEmail] = useState<string>("");
   const [newMemberRole, setNewMemberRole] = useState<string>("EM Resident");
@@ -201,7 +201,7 @@ export default function ProfileSettingsView({
   const [editName, setEditName] = useState<string>(profile.name);
   const [editEmail, setEditEmail] = useState<string>(profile.email);
   const [editAge, setEditAge] = useState<number>(profile.age || 34);
-  const [editRole, setEditRole] = useState<string>(profile.role || "Senior Consultant");
+  const [editRole, setEditRole] = useState<string>(profile.displayRole || profile.role || "Senior Consultant");
   const [editState, setEditState] = useState<string>(profile.state || "");
   const [editHospitalAddress, setEditHospitalAddress] = useState<string>(profile.hospitalAddress || "");
   const [editHospitalPhone, setEditHospitalPhone] = useState<string>(profile.hospitalPhone || "");
@@ -213,7 +213,8 @@ export default function ProfileSettingsView({
     setEditName(profile.name || "");
     setEditEmail(profile.email || "");
     setEditAge(profile.age || 34);
-    setEditRole(profile.role || "Senior Consultant");
+    setEditRole(profile.displayRole || profile.role || "Senior Consultant");
+    setWorkplaceName(profile.workplaceName || profile.hospitalLabel || profile.hospital || "");
     setEditState(profile.state || "");
     setEditHospitalAddress(profile.hospitalAddress || "");
     setEditHospitalPhone(profile.hospitalPhone || "");
@@ -508,9 +509,10 @@ const startRealCheckout = async (planKey: string) => {
         email: editEmail.trim(),
         age: editAge,
         role: profile.role, // Preserved; role changes require HOD approval workflow (ErMate Rule 10)
-        hospital: cleanWorkplace || profile.hospital,
-        hospitalLabel: cleanWorkplace || profile.hospitalLabel,
-        workplaceName: cleanWorkplace || profile.workplaceName,
+        displayRole: editRole.trim() || profile.displayRole || profile.role,
+        hospital: profile.hospital,
+        hospitalLabel: cleanWorkplace || profile.hospitalLabel || "",
+        workplaceName: cleanWorkplace || profile.workplaceName || "",
         state: editState,
         hospitalAddress: editHospitalAddress,
         hospitalPhone: editHospitalPhone

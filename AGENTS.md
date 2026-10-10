@@ -45,6 +45,33 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-10] — ErMate: P0 Consolidated Profile Save, Firestore Security & Trial Case Stabilization
+- **Root Cause Identified & Resolved**:
+  - **Firestore Authorization Conflict**: `firestore.rules` enforces that `users/{uid}` updates cannot modify authorized `role` (`incoming().role == existing().role`), authorized `hospital` (`incoming().hospital == existing().hospital`), `aiCredits`, or `subscriptionTier`. On create, `hospital` must be empty string `""` and `role` must be in a predefined allowlist.
+  - **Previous Flaw in Frontend**: `App.tsx` and profile forms previously attempted to write clinician-entered workplace names and professional titles directly into `hospital` and `role` in `users/{uid}`. Because independent clinicians start with `hospital == ""` and `role == "EM Resident"`, entering their actual workplace (e.g. "Apollo Hospitals") or title (e.g. "Senior Consultant") triggered permission-denied errors from Firestore security rules.
+- **Architectural Separation of Authorization vs Informational Profile Data**:
+  - **Protected System Authority**: `users.role` and `users.hospital` strictly represent system authorization and team membership. They are never self-modified through user profile forms.
+  - **Informational Profile Fields**: Added `displayRole` (clinician's informational professional title), `workplaceName` (informational workplace/hospital name), and `hospitalLabel` (informational display label) to `UserProfile` and profile editing workflows.
+  - **Allowlisted Profile Persistence (`src/App.tsx`)**: In `handleSaveProfile`, Firestore document existence is determined first via `getDoc()`.
+    - If document exists: strictly preserves trusted `role`, `hospital`, `aiCredits`, `streak`, and `subscriptionTier` from Firestore, while saving entered values into `displayRole`, `workplaceName`, and `hospitalLabel`.
+    - If document is missing: creates compliant initial user record conforming to create rules (`role: "EM Resident"`, `hospital: ""`, `aiCredits: 100`, `streak: 1`, `subscriptionTier: "Free Standard"`) alongside entered `displayRole`, `workplaceName`, and `hospitalLabel`.
+- **Profile Completeness & UI Display Integration**:
+  - `src/utils/profileCompleteness.ts`: Professional role check accepts `profile.displayRole || profile.role`. Workplace check accepts `profile.workplaceName || profile.hospitalLabel || profile.hospital`.
+  - `src/components/OnboardingProfileView.tsx`, `ProfileSettingsView.tsx`, `MoreView.tsx`: Forms prioritize `displayRole` and `workplaceName`/`hospitalLabel` for display and editing while preserving authorized `role` and `hospital` on save.
+  - `src/components/GlobalHeader.tsx`: Dropdown displays `displayRole || role` and `workplaceName || hospitalLabel || hospital`.
+- **Active Trial Case Conversion**:
+  - `handleSaveActiveTrialCase` in `src/App.tsx` cleanses temporary trial flags (`isTrial`, `syncStatus`, `persistenceStatus`), generates canonical case ID and sequence display ID, and persists directly to Firestore as an authorized individual case.
+- **Full Verification**:
+  - 10/10 test pass rate in `test_profile_p0_rules.cjs` executing against the live Firestore emulator with real `firestore.rules`.
+  - 13/13 test pass rate in `verify_individual_profile_save_cta.ts`.
+  - 24/24 test pass rate in `verify_individual_profile_data_integrity.ts`.
+  - 13/13 test pass rate in `verify_individual_profile_stabilization.ts`.
+  - 38/38 test pass rate in `verify_onboarding_and_trial_flow.ts`.
+  - 14/14 test pass rate in `verify_team_creation_and_invitations.ts`.
+  - 19/19 test pass rate in `verify_regression.ts`.
+  - 79/79 test pass rate in `test_phase3_rules.cjs`.
+  - Zero TypeScript compilation errors (`tsc --noEmit`). Clean production applet build (`npm run build`).
+
 ### [2026-10-10] — ErMate: P0 Individual Profile Save & Edit CTA Correction
 - **Root Causes Identified & Resolved**:
   - **Defect 1 (`src/components/OnboardingProfileView.tsx`)**: Resolved profile object construction precedence by placing `...(profile || {})` first and explicitly overriding with cleaned entered values (`name`, `role`, `hospital`, `workplaceName`, `hospitalLabel`, `department`, `erPhysicalBedCapacity`, `onboardingComplete: true`).
