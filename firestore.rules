@@ -144,6 +144,36 @@ service cloud.firestore {
           && checkAdminMember(get(/databases/$(database)/documents/team_members/$(uid())).data, hospId)
         )
       );
+    function checkRotaManagerMember(m, hospId) {
+      return m.get('status', '') in ['active', 'Active (Joined)']
+        && (
+          m.get('isRotaManager', false) == true
+          || m.get('rotaManager', false) == true
+          || (m.get('membershipVerified', false) == true && isExactAdminRole(m.get('role', '')))
+          || m.get('isTeamAdmin', false) == true
+          || m.get('teamRole', '') == 'admin'
+        )
+        && (
+          m.get('hospitalId', '') == hospId
+          || m.get('hospital', '') == hospId
+          || m.get('hospitalName', '') == hospId
+          || (
+            m.get('legacyHospitalNames', null) is list
+            && hospId in m.get('legacyHospitalNames', [])
+          )
+        );
+    }
+
+    function isRotaManagerFor(hospId) {
+      return isLoggedIn() && (
+        isPlatformAdmin()
+        || (
+          hospId is string
+          && hospId.size() > 0
+          && exists(/databases/$(database)/documents/team_members/$(uid()))
+          && checkRotaManagerMember(get(/databases/$(database)/documents/team_members/$(uid())).data, hospId)
+        )
+      );
     }
 
     function isValidHospitalCaseCreate(data) {
@@ -673,7 +703,7 @@ match /teams/{teamId} {
           && (!('updatedAt' in incoming()) || incoming().updatedAt is string)
           && (
             memberId == uid()
-            || isHospitalAdminFor(existing().get('hospitalId', existing().get('hospital', '')))
+            || isRotaManagerFor(existing().get('hospitalId', existing().get('hospital', '')))
           )
         );
     }
@@ -685,50 +715,26 @@ match /teams/{teamId} {
       allow create, update, delete: if false;
     }
 
-    // ── Team Invites — backend only (preview/create/accept via API) ──
+    // ── Team Invites — trusted backend only (creation, revocation, regeneration via API) ──
 
     match /teamInvites/{token} {
       allow read: if isLoggedIn();
-      allow create: if isLoggedIn()
-        && (
-          isPlatformAdmin()
-          || (
-            exists(/databases/$(database)/documents/team_members/$(uid()))
-            && checkAdminMember(get(/databases/$(database)/documents/team_members/$(uid())).data, incoming().hospitalId)
-          )
-        )
-        && incoming().id == token
-        && incoming().token == token
-        && incoming().createdByUid == uid();
-      allow update: if isLoggedIn();
-      allow delete: if isPlatformAdmin();
+      allow create, update, delete: if isPlatformAdmin();
     }
 
-    // ── Hospital shift configuration — readable by all, editable by HOD ──
+    // ── Hospital shift configuration — readable by all, editable by authorized Rota Managers and HODs ──
 
    match /hospital_shifts/{hospitalId} {
   allow read: if isLoggedIn();
 
-  // Shift configuration and facility settings may be created/updated only by
-  // an active, verified HOD whose canonical membership matches this hospital
-  // (or platform admin).
+  // Shift configuration and facility settings may be created/updated by
+  // an authorized Rota Manager, active verified HOD, or platform admin.
   allow create, update: if isLoggedIn()
     && hospitalId is string
     && hospitalId.size() > 0
-
     && (
       isPlatformAdmin()
-      || (
-        exists(
-          /databases/$(database)/documents/team_members/$(uid())
-        )
-        && checkAdminMember(
-          get(
-            /databases/$(database)/documents/team_members/$(uid())
-          ).data,
-          hospitalId
-        )
-      )
+      || isRotaManagerFor(hospitalId)
     )
 
     // The document identity must match its Firestore path.

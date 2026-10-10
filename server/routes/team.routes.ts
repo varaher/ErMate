@@ -1,7 +1,11 @@
 import { Router } from "express";
-import { randomBytes } from "crypto";
+import { randomBytes, createHash } from "crypto";
 import { adminAuth, db, PROJECT_ID, FIRESTORE_DATABASE_ID } from "../../src/lib/firebase-admin.ts";
 import { requireAuth, AuthRequest } from "../../src/middleware/auth.ts";
+
+export function hashInviteToken(token: string): string {
+  return createHash("sha256").update(token.trim()).digest("hex");
+}
 
 async function getDocWithRestFallback(collectionPath: string, docId: string, authHeader?: string): Promise<{ exists: boolean; data?: any }> {
   try {
@@ -111,7 +115,12 @@ router.get("/invite-preview/:token", async (req, res) => {
     const { token } = req.params;
     if (!token) return res.status(400).json({ error: "Token is required." });
 
-    const inviteDoc = await db.collection("teamInvites").doc(token).get();
+    const cleanToken = String(token).trim();
+    const tokenHash = hashInviteToken(cleanToken);
+    let inviteDoc = await db.collection("teamInvites").doc(tokenHash).get();
+    if (!inviteDoc.exists) {
+      inviteDoc = await db.collection("teamInvites").doc(cleanToken).get();
+    }
     if (!inviteDoc.exists) {
       return res.status(404).json({ error: "Invite not found or expired." });
     }
@@ -196,14 +205,16 @@ router.post("/create-invite", async (req: AuthRequest, res) => {
     }
 
     const token = `inv_${randomBytes(16).toString("hex")}`;
-    // Default expiry: 7 days (168 hours)
-    const hours = typeof expiresHours === "number" && expiresHours > 0 ? expiresHours : 168;
+    const tokenHash = hashInviteToken(token);
+    // Requirement A.5 & G.4: Invitation link valid for exactly six hours (6 hours)
+    const hours = 6;
     const expiresAt = new Date(Date.now() + hours * 3600000).toISOString();
     const uses = typeof maxUses === "number" && maxUses > 0 ? maxUses : null;
 
+    // Requirement G.2: Replace plaintext token persistence with securely hashed token storage
     const inviteDoc: any = {
-      id: token,
-      token,
+      id: tokenHash,
+      tokenHash,
       teamId: callerHospitalId,
       hospitalId: callerHospitalId,
       hospitalName: callerHospitalName,
@@ -222,14 +233,14 @@ router.post("/create-invite", async (req: AuthRequest, res) => {
     };
 
     try {
-      const inviteRef = db.collection("teamInvites").doc(token);
+      const inviteRef = db.collection("teamInvites").doc(tokenHash);
       const auditRef = db.collection("teamAuditLog").doc();
       const teamRef = db.collection("teams").doc(callerHospitalId);
 
       const batch = db.batch();
       batch.set(inviteRef, inviteDoc);
       batch.set(teamRef, {
-        activeInviteToken: token,
+        activeInviteTokenHash: tokenHash,
         activeInviteExpiresAt: expiresAt,
         updatedAt: nowIso()
       }, { merge: true });
@@ -252,7 +263,7 @@ router.post("/create-invite", async (req: AuthRequest, res) => {
     } catch (batchError: any) {
       console.warn("Batch commit fallback:", batchError.message);
       // Fallback: write doc directly
-      await db.collection("teamInvites").doc(token).set(inviteDoc);
+      await db.collection("teamInvites").doc(tokenHash).set(inviteDoc);
     }
 
     return res.json({
@@ -280,8 +291,14 @@ router.post("/revoke-invite", async (req: AuthRequest, res) => {
       return res.status(400).json({ error: "Token is required." });
     }
 
-    const inviteRef = db.collection("teamInvites").doc(String(token).trim());
-    const inviteSnap = await inviteRef.get();
+    const rawToken = String(token).trim();
+    const tokenHash = hashInviteToken(rawToken);
+    let inviteRef = db.collection("teamInvites").doc(tokenHash);
+    let inviteSnap = await inviteRef.get();
+    if (!inviteSnap.exists) {
+      inviteRef = db.collection("teamInvites").doc(rawToken);
+      inviteSnap = await inviteRef.get();
+    }
     if (!inviteSnap.exists) {
       return res.status(404).json({ error: "Invitation not found." });
     }
@@ -309,6 +326,7 @@ router.post("/revoke-invite", async (req: AuthRequest, res) => {
       const teamRef = db.collection("teams").doc(invite.hospitalId);
       await teamRef.set({
         activeInviteToken: null,
+        activeInviteTokenHash: null,
         activeInviteExpiresAt: null,
         updatedAt: nowIso()
       }, { merge: true }).catch(() => {});
@@ -336,7 +354,7 @@ router.post("/regenerate-invite", async (req: AuthRequest, res) => {
   try {
     const uid = req.user!.uid;
     const isAdmin = isPlatformAdminReq(req);
-    const { hospitalId, role, expiresHours } = req.body || {};
+    const { hospitalId, role } = req.body || {};
 
     let callerHospitalId = "";
     let callerHospitalName = "";
@@ -381,7 +399,15 @@ router.post("/regenerate-invite", async (req: AuthRequest, res) => {
     const teamRef = db.collection("teams").doc(callerHospitalId);
     const teamSnap = await teamRef.get();
     if (teamSnap.exists) {
+      const oldHash = teamSnap.data()?.activeInviteTokenHash;
       const oldToken = teamSnap.data()?.activeInviteToken;
+      if (oldHash) {
+        await db.collection("teamInvites").doc(oldHash).update({
+          revoked: true,
+          revokedAt: nowIso(),
+          revokedByUid: uid
+        }).catch(() => {});
+      }
       if (oldToken) {
         await db.collection("teamInvites").doc(oldToken).update({
           revoked: true,
@@ -391,15 +417,17 @@ router.post("/regenerate-invite", async (req: AuthRequest, res) => {
       }
     }
 
-    // 2. Generate new secure 7-day token
+    // 2. Generate new secure 6-hour token (Requirement A.5 & G.4)
     const token = `inv_${randomBytes(16).toString("hex")}`;
-    const hours = typeof expiresHours === "number" && expiresHours > 0 ? expiresHours : 168;
+    const tokenHash = hashInviteToken(token);
+    const hours = 6;
     const expiresAt = new Date(Date.now() + hours * 3600000).toISOString();
     const now = nowIso();
 
+    // Requirement G.2: Replace plaintext token persistence with securely hashed token storage
     const inviteDoc: any = {
-      id: token,
-      token,
+      id: tokenHash,
+      tokenHash,
       teamId: callerHospitalId,
       hospitalId: callerHospitalId,
       hospitalName: callerHospitalName,
@@ -416,13 +444,13 @@ router.post("/regenerate-invite", async (req: AuthRequest, res) => {
       createdByPlatformAdmin: isAdmin
     };
 
-    const inviteRef = db.collection("teamInvites").doc(token);
+    const inviteRef = db.collection("teamInvites").doc(tokenHash);
     const auditRef = db.collection("teamAuditLog").doc();
 
     const batch = db.batch();
     batch.set(inviteRef, inviteDoc);
     batch.set(teamRef, {
-      activeInviteToken: token,
+      activeInviteTokenHash: tokenHash,
       activeInviteExpiresAt: expiresAt,
       updatedAt: now
     }, { merge: true });
@@ -464,8 +492,14 @@ router.post("/accept-invite", async (req: AuthRequest, res) => {
 
     if (!token) return res.status(400).json({ error: "Invite token is required." });
 
-    const inviteRef = db.collection("teamInvites").doc(token);
-    const inviteSnap = await inviteRef.get();
+    const rawToken = String(token).trim();
+    const tokenHash = hashInviteToken(rawToken);
+    let inviteRef = db.collection("teamInvites").doc(tokenHash);
+    let inviteSnap = await inviteRef.get();
+    if (!inviteSnap.exists) {
+      inviteRef = db.collection("teamInvites").doc(rawToken);
+      inviteSnap = await inviteRef.get();
+    }
 
     if (!inviteSnap.exists) {
       return res.status(400).json({ error: "Invalid invite token." });
@@ -664,7 +698,11 @@ router.post("/request-join", async (req: AuthRequest, res) => {
 
     if (token) {
       const cleanToken = String(token).trim();
-      const inviteSnap = await db.collection("teamInvites").doc(cleanToken).get();
+      const tokenHash = hashInviteToken(cleanToken);
+      let inviteSnap = await db.collection("teamInvites").doc(tokenHash).get();
+      if (!inviteSnap.exists) {
+        inviteSnap = await db.collection("teamInvites").doc(cleanToken).get();
+      }
       if (!inviteSnap.exists) {
         return res.status(400).json({ error: "Invalid or expired invitation token." });
       }
@@ -2530,6 +2568,69 @@ router.post("/appoint-admin", async (req: any, res: any) => {
   return (router as any).handle(req, res);
 });
 
+// ── POST /set-rota-manager (Appoint or Revoke Rota Manager — Team Admin / HOD / Platform Admin) ──
+router.post("/set-rota-manager", async (req: AuthRequest, res) => {
+  try {
+    const uid = req.user!.uid;
+    const isAdmin = isPlatformAdminReq(req);
+    const { memberId, isRotaManager } = req.body || {};
+
+    if (!memberId) {
+      return res.status(400).json({ error: "memberId is required." });
+    }
+
+    const callerSnap = await getDocWithRestFallback("team_members", uid, req.headers.authorization);
+    if (!isAdmin) {
+      if (!callerSnap.exists) {
+        return res.status(403).json({ error: "Only Team Admins or HODs can assign Rota Manager permissions." });
+      }
+      const caller = callerSnap.data!;
+      if (!isTeamAdmin(caller)) {
+        return res.status(403).json({ error: "Only Team Admins or HODs can assign Rota Manager permissions." });
+      }
+    }
+
+    const targetRef = db.collection("team_members").doc(String(memberId));
+    const targetSnap = await targetRef.get();
+    if (!targetSnap.exists) {
+      return res.status(404).json({ error: "Team member not found." });
+    }
+
+    const willBeRotaManager = isRotaManager === true;
+    await targetRef.update({
+      isRotaManager: willBeRotaManager,
+      rotaManager: willBeRotaManager,
+      updatedAt: nowIso()
+    });
+
+    const userRef = db.collection("users").doc(String(memberId));
+    await userRef.set({
+      isRotaManager: willBeRotaManager,
+      rotaManager: willBeRotaManager,
+      updatedAt: nowIso()
+    }, { merge: true }).catch(() => {});
+
+    const auditRef = db.collection("teamAuditLog").doc();
+    await auditRef.set({
+      id: auditRef.id,
+      eventType: willBeRotaManager ? "ROTA_MANAGER_APPOINTED" : "ROTA_MANAGER_REVOKED",
+      actorUid: uid,
+      actorEmail: (req.user?.email || "").trim().toLowerCase(),
+      targetUid: String(memberId),
+      createdAt: nowIso()
+    }).catch(() => {});
+
+    return res.json({
+      success: true,
+      message: willBeRotaManager ? "Member appointed as Rota Manager." : "Rota Manager permission revoked.",
+      isRotaManager: willBeRotaManager
+    });
+  } catch (error: any) {
+    console.error("Error setting rota manager:", error);
+    return res.status(400).json({ error: error.message || "Failed to update rota manager role." });
+  }
+});
+
 // ── POST /verify-team (Institutional Verification — Platform Admin only) ─────
 router.post("/verify-team", async (req: AuthRequest, res) => {
   try {
@@ -2605,12 +2706,14 @@ const handleCreateTeam = async (req: AuthRequest, res: any) => {
     const cleanTeamName = String(teamName || "").trim() || `${rawHospitalName} ER Team`;
     const cleanDepartment = String(department || "").trim() || "Emergency Medicine";
 
-    const parsedBedCapacity =
-      typeof erPhysicalBedCapacity === "number" && Number.isInteger(erPhysicalBedCapacity) && erPhysicalBedCapacity > 0 && erPhysicalBedCapacity <= 1000
-        ? erPhysicalBedCapacity
-        : typeof erPhysicalBedCapacity === "string" && !isNaN(parseInt(erPhysicalBedCapacity, 10)) && parseInt(erPhysicalBedCapacity, 10) > 0 && parseInt(erPhysicalBedCapacity, 10) <= 1000
-        ? parseInt(erPhysicalBedCapacity, 10)
-        : 30;
+    let parsedBedCapacity = 30;
+    if (erPhysicalBedCapacity !== undefined && erPhysicalBedCapacity !== null && String(erPhysicalBedCapacity).trim() !== "") {
+      const cap = Number(erPhysicalBedCapacity);
+      if (!Number.isInteger(cap) || cap < 1 || cap > 1000) {
+        return res.status(400).json({ error: "ER Physical Bed Capacity must be a strict integer between 1 and 1000." });
+      }
+      parsedBedCapacity = cap;
+    }
 
     // Secure unique team identifier generated on trusted backend
     const prefix = rawHospitalName.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 16) || "team";
@@ -2637,8 +2740,12 @@ const handleCreateTeam = async (req: AuthRequest, res: any) => {
       const existingSnap = await tx.get(memberRef);
       if (existingSnap.exists) {
         const existing = existingSnap.data()!;
-        if (existing.status === "active" && existing.membershipVerified === true) {
-          throw new Error("You already have an active verified hospital membership. Leave your current team before creating a new workspace.");
+        // Requirement G.7: Protect team creation against overwriting existing memberships
+        if (existing.status === "active") {
+          throw new Error("You already have an active hospital team membership. Leave your current team before creating a new workspace.");
+        }
+        if (existing.status === "pending_approval") {
+          throw new Error("You currently have a pending join request for another team. Cancel that request before creating a new workspace.");
         }
       }
 

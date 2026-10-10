@@ -9,7 +9,7 @@ import {
 } from "lucide-react";
 import { TeamMember, UserProfile, ClinicalCase, isPendingApprovalStatus, isActiveMembershipStatus } from "../types";
 import GoogleCalendarModal from "./GoogleCalendarModal";
-import { createTeamInvite, createHospitalWorkspace, acceptSecureTeamInvite, regenerateTeamInvite, revokeTeamInvite, verifyTeamInstitution, requestToJoinTeam, setTeamAdminRole } from "../services/teamInviteService";
+import { createTeamInvite, createHospitalWorkspace, acceptSecureTeamInvite, regenerateTeamInvite, revokeTeamInvite, verifyTeamInstitution, requestToJoinTeam, setTeamAdminRole, setTeamRotaManagerRole } from "../services/teamInviteService";
 import { auth, db } from "../firebase";
 import { doc, getDoc } from "firebase/firestore";
 
@@ -197,6 +197,17 @@ export default function TeamRosterBoard({
 
   const isCanonicalTeamMember = isTeamMember;
   const isUserHOD = isUserTeamAdmin;
+
+  // Requirement E: Rota manager is a separate permission from HOD and Team Admin
+  const isRotaManager = isPlatformAdmin || Boolean(
+    myCanonicalMember &&
+    isActiveMembershipStatus(myCanonicalMember.status) &&
+    (
+      myCanonicalMember.isRotaManager === true ||
+      myCanonicalMember.rotaManager === true ||
+      isUserTeamAdmin
+    )
+  );
 
   const isInstitutionalVerified = Boolean(
     myCanonicalMember &&
@@ -1562,7 +1573,7 @@ export default function TeamRosterBoard({
                 {isUserTeamAdmin && generatedLink && (
                   <div className="flex items-center justify-between pt-1 px-1">
                     <span className="text-[10.5px] text-slate-500 dark:text-slate-400 font-mono">
-                      Token is secured & expires in 7 days.
+                      Token is secured & expires in 6 hours.
                     </span>
                     <div className="flex items-center gap-2">
                       <button

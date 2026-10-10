@@ -10,7 +10,7 @@ export interface TeamInvite {
   createdByUid: string;
   createdByName: string;
   createdAt: string;
-  expiresAt: string; // ISO date string (7 days)
+  expiresAt: string; // ISO date string (6 hours)
   maxUses: number;
   usedCount: number;
   revoked: boolean;
@@ -98,70 +98,24 @@ export async function createTeamInvite(
   if (params.hospitalId) body.hospitalId = params.hospitalId;
   if (params.hospitalName) body.hospitalName = params.hospitalName;
   if (params.invitedEmail) body.invitedEmail = params.invitedEmail;
-  if (params.expiresHours) body.expiresHours = params.expiresHours;
+  body.expiresHours = 6; // Requirement A.5 & G.4: Invitation link valid for exactly six hours
 
-  let apiSuccess = false;
-  let token = "";
-  try {
-    const res = await fetch("/api/team/create-invite", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${idToken}`
-      },
-      body: JSON.stringify(body)
-    });
+  const res = await fetch("/api/team/create-invite", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${idToken}`
+    },
+    body: JSON.stringify(body)
+  });
 
-    if (res.ok) {
-      const data = await res.json();
-      token = data.token;
-      apiSuccess = true;
-      const link = `${origin}/join/${data.token}`;
-      return { token: data.token, link };
-    } else {
-      const errorData = await res.json().catch(() => ({}));
-      // If error is permission or role validation error, log and prepare for direct client write
-      if (res.status === 403 || errorData.error?.includes("Only active verified HODs")) {
-        throw new Error(errorData.error || "Failed to create invite");
-      }
-      console.warn("Backend /api/team/create-invite response error:", errorData.error);
-    }
-  } catch (netErr: any) {
-    if (netErr.message?.includes("Only active verified HODs") || netErr.message?.includes("Platform admin invites require")) {
-      throw netErr;
-    }
-    console.warn("Backend invite API unavailable, falling back to direct write:", netErr.message);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data.error || "Failed to create invitation link.");
   }
 
-  if (apiSuccess && token) {
-    const link = `${origin}/join/${token}`;
-    return { token, link };
-  }
-
-  // Resilient fallback: write directly via client Firebase SDK
-  const fallbackToken = generateInviteToken();
-  const inviteDoc: any = {
-    id: fallbackToken,
-    token: fallbackToken,
-    hospitalId: params.hospitalId || "",
-    hospitalName: params.hospitalName || "",
-    hospital: params.hospitalName || "",
-    role: params.role || "resident",
-    maxUses: typeof params.maxUses === "number" && params.maxUses > 0 ? params.maxUses : 10,
-    usedCount: 0,
-    revoked: false,
-    expiresAt: new Date(Date.now() + (params.expiresHours || 48) * 3600000).toISOString(),
-    createdAt: new Date().toISOString(),
-    createdByUid: user.uid,
-    createdByPlatformAdmin: isPlatformAdmin
-  };
-  if (params.invitedEmail) {
-    inviteDoc.invitedEmail = params.invitedEmail.trim().toLowerCase();
-  }
-
-  await setDoc(doc(db, "teamInvites", fallbackToken), inviteDoc);
-  const link = `${origin}/join/${fallbackToken}`;
-  return { token: fallbackToken, link };
+  const link = `${origin}/join/${data.token}`;
+  return { token: data.token, link };
 }
 
 export async function validateTeamInvite(
@@ -551,7 +505,7 @@ export async function regenerateTeamInvite(
     body: JSON.stringify({
       hospitalId,
       role: role || "resident",
-      expiresHours: expiresHours || 168
+      expiresHours: 6 // Requirement A.5 & G.4: Six-hour expiry
     })
   });
 
@@ -562,4 +516,32 @@ export async function regenerateTeamInvite(
 
   const link = `${origin}/join/${data.token}`;
   return { ...data, link };
+}
+
+/**
+ * Team Admin or HOD action: Appoint or revoke a team member as Rota Manager.
+ */
+export async function setTeamRotaManagerRole(
+  memberId: string,
+  isRotaManager: boolean
+): Promise<{ success: boolean; isRotaManager: boolean; message: string }> {
+  const user = auth.currentUser;
+  if (!user) throw new Error("Not authenticated");
+  const idToken = await user.getIdToken();
+
+  const res = await fetch("/api/team/set-rota-manager", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${idToken}`
+    },
+    body: JSON.stringify({ memberId, isRotaManager })
+  });
+
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data.error || "Failed to update Rota Manager role.");
+  }
+
+  return data;
 }
