@@ -212,6 +212,7 @@ ErMate employs a dynamic role-based navigation hierarchy computed from `getNorma
 
 | Path | Purpose |
 | :--- | :--- |
+| `/verify_team_creation_and_invitations.ts` | Verification suite for WhatsApp-style team creation, Team Admin role retention, 7-day hashed token invites, WhatsApp/Web sharing, and join approval workflow |
 | `/verify_onboarding_and_trial_flow.ts` | Verification suite for new user onboarding, profile completeness (5 required fields), trial mode save gate, in-memory data preservation, and optional team creation |
 | `/src/components/OnboardingProfileView.tsx` | Dedicated onboarding view for newly registered/first login clinicians, post-profile team creation question, and canonical team invite sharing |
 | `/src/utils/profileCompleteness.ts` | Deterministic profile completeness helper (isClinicalProfileComplete) and centralized clinical save gate (canPersistClinicalData) |

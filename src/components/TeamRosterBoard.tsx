@@ -9,7 +9,7 @@ import {
 } from "lucide-react";
 import { TeamMember, UserProfile, ClinicalCase, isPendingApprovalStatus, isActiveMembershipStatus } from "../types";
 import GoogleCalendarModal from "./GoogleCalendarModal";
-import { createTeamInvite, createHospitalWorkspace, acceptSecureTeamInvite } from "../services/teamInviteService";
+import { createTeamInvite, createHospitalWorkspace, acceptSecureTeamInvite, regenerateTeamInvite, revokeTeamInvite, verifyTeamInstitution, requestToJoinTeam, setTeamAdminRole } from "../services/teamInviteService";
 import { auth, db } from "../firebase";
 import { doc, getDoc } from "firebase/firestore";
 
@@ -45,7 +45,7 @@ export interface TeamRosterBoardProps {
   onAddMember: (name: string, email: string, role: string, shift: string) => Promise<void> | void;
   onRemoveMember: (id: string) => Promise<void> | void;
   onUpdateShift: (id: string, shift: string) => Promise<void> | void;
-  onApproveMember?: (id: string) => Promise<void> | void;
+  onApproveMember?: (id: string, role?: string, isTeamAdmin?: boolean) => Promise<void> | void;
   onDeclineMember?: (id: string) => Promise<void> | void;
   onUpdateRole?: (id: string, role: string) => Promise<void> | void;
   hospitalSubscriptionActive?: boolean;
@@ -172,30 +172,52 @@ export default function TeamRosterBoard({
   // Professional role != Team membership.
   // Team authorization role exists ONLY when there is a valid, active, verified team_members document.
   const myCanonicalMember = teamMembers.find(
-    (m) => (m.email || "").toLowerCase().trim() === userEmailLower
+    (m) =>
+      (m.email || "").toLowerCase().trim() === userEmailLower ||
+      (auth.currentUser && (m.uid === auth.currentUser.uid || m.id === auth.currentUser.uid))
   );
 
-  const isCanonicalTeamMember = isPlatformAdmin || Boolean(
+  const isTeamMember = isPlatformAdmin || Boolean(
     myCanonicalMember &&
-    isActiveMembershipStatus(myCanonicalMember.status) &&
-    myCanonicalMember.membershipVerified === true
+    isActiveMembershipStatus(myCanonicalMember.status)
   );
 
-  const isUserHOD = isPlatformAdmin || Boolean(
+  const isUserTeamAdmin = isPlatformAdmin || Boolean(
     myCanonicalMember &&
     isActiveMembershipStatus(myCanonicalMember.status) &&
-    myCanonicalMember.membershipVerified === true &&
-    ["hod", "hod / department lead", "hod / shift lead"].includes(
-      String(myCanonicalMember.role || "").trim().toLowerCase()
+    (
+      myCanonicalMember.isTeamAdmin === true ||
+      myCanonicalMember.teamRole === "admin" ||
+      myCanonicalMember.isAdmin === true ||
+      (myCanonicalMember.membershipVerified === true && ["hod", "hod / department lead", "hod / shift lead"].includes(
+        String(myCanonicalMember.role || "").trim().toLowerCase()
+      ))
     )
+  );
+
+  const isCanonicalTeamMember = isTeamMember;
+  const isUserHOD = isUserTeamAdmin;
+
+  const isInstitutionalVerified = Boolean(
+    myCanonicalMember &&
+    myCanonicalMember.membershipVerified === true &&
+    myCanonicalMember.verificationStatus === "verified"
   );
 
   // Individual Workspace Transition States (Option 1 & Option 2)
   const [showCreateTeamModal, setShowCreateTeamModal] = useState(false);
+  const [newTeamName, setNewTeamName] = useState(profile.workplaceName ? `${profile.workplaceName} Emergency Team` : "");
   const [newHospitalName, setNewHospitalName] = useState(profile.workplaceName || profile.hospital || "");
-  const [newDepartmentName, setNewDepartmentName] = useState("Emergency & Trauma Medicine");
+  const [newDepartmentName, setNewDepartmentName] = useState(profile.department || "Emergency Medicine");
+  const [newBedCapacity, setNewBedCapacity] = useState<number>(
+    typeof erPhysicalBedCapacity === "number" && erPhysicalBedCapacity > 0 ? erPhysicalBedCapacity : 30
+  );
   const [isCreatingTeam, setIsCreatingTeam] = useState(false);
   const [createTeamError, setCreateTeamError] = useState<string | null>(null);
+  const [teamCreatedSuccessNotice, setTeamCreatedSuccessNotice] = useState<string | null>(null);
+  const [inviteCopiedNotice, setInviteCopiedNotice] = useState<string | null>(null);
+  const [approvalRoles, setApprovalRoles] = useState<Record<string, string>>({});
+  const [approvalAdminStatus, setApprovalAdminStatus] = useState<Record<string, boolean>>({});
 
   const [showJoinModal, setShowJoinModal] = useState(false);
   const [joinTokenInput, setJoinTokenInput] = useState("");
@@ -205,17 +227,34 @@ export default function TeamRosterBoard({
   const handleCreateHospitalWorkspaceSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setCreateTeamError(null);
-    if (!newHospitalName.trim() || newHospitalName.trim().length < 2) {
-      setCreateTeamError("Please enter a valid hospital name (at least 2 characters).");
+    const cleanHospital = newHospitalName.trim();
+    if (!cleanHospital || cleanHospital.length < 2) {
+      setCreateTeamError("Please enter a valid hospital or workplace name (at least 2 characters).");
       return;
     }
+    const cleanTeam = newTeamName.trim() || `${cleanHospital} Emergency Team`;
+    const cleanDept = newDepartmentName.trim() || "Emergency Medicine";
+    const cap = Math.floor(Number(newBedCapacity));
+    if (!Number.isInteger(cap) || cap <= 0 || cap > 1000) {
+      setCreateTeamError("ER Physical Bed Capacity must be a positive integer between 1 and 1000.");
+      return;
+    }
+
     setIsCreatingTeam(true);
     try {
-      await createHospitalWorkspace(newHospitalName.trim(), newDepartmentName.trim());
+      await createHospitalWorkspace(
+        cleanHospital,
+        cleanDept,
+        cap,
+        cleanTeam,
+        profile.role
+      );
       setShowCreateTeamModal(false);
+      setTeamCreatedSuccessNotice("Your team has been created.");
+      setTimeout(() => setTeamCreatedSuccessNotice(null), 5000);
       window.location.reload();
     } catch (err: any) {
-      setCreateTeamError(err?.message || "Failed to create hospital workspace.");
+      setCreateTeamError(err?.message || "Failed to create team workspace.");
     } finally {
       setIsCreatingTeam(false);
     }
@@ -225,18 +264,32 @@ export default function TeamRosterBoard({
     e.preventDefault();
     setJoinTeamError(null);
     if (!joinTokenInput.trim()) {
-      setJoinTeamError("Please paste your invitation code or link.");
+      setJoinTeamError("Please enter a valid invitation code or link.");
       return;
     }
     setIsJoiningTeam(true);
     try {
-      await acceptSecureTeamInvite(joinTokenInput.trim());
+      const res = await requestToJoinTeam(joinTokenInput.trim(), profile.role);
       setShowJoinModal(false);
+      alert(res.message || "Join request sent. Waiting for Admin approval.");
       window.location.reload();
     } catch (err: any) {
-      setJoinTeamError(err?.message || "Failed to accept team invitation.");
+      setJoinTeamError(err?.message || "Failed to submit join request.");
     } finally {
       setIsJoiningTeam(false);
+    }
+  };
+
+  const handleVerifyTeamInstitution = async () => {
+    if (!isPlatformAdmin) return;
+    const teamId = myCanonicalMember?.teamId || myCanonicalMember?.hospitalId || workplaceInput;
+    if (!teamId) return;
+    try {
+      const res = await verifyTeamInstitution(teamId, true);
+      alert(res.message || "Team has been institutionally verified.");
+      window.location.reload();
+    } catch (e: any) {
+      alert(e.message || "Failed to verify institution.");
     }
   };
 
@@ -264,11 +317,12 @@ export default function TeamRosterBoard({
     if (memberSnap.exists()) {
       const memberData = memberSnap.data() as any;
       const status = String(memberData.status || "");
-      const isVerified = memberData.membershipVerified === true;
-      const role = String(memberData.role || "").toLowerCase();
-      const isHod = ["hod", "hod / department lead", "hod / shift lead"].includes(role);
+      const isMemberAdmin = memberData.isTeamAdmin === true || memberData.teamRole === "admin" || memberData.isAdmin === true || ["hod", "hod / department lead", "hod / shift lead"].includes(String(memberData.role || "").toLowerCase());
 
-      if (memberData.hospitalId && String(memberData.hospitalId).trim()) {
+      if (memberData.teamId && String(memberData.teamId).trim()) {
+        canonicalHospitalId = String(memberData.teamId).trim();
+        canonicalHospitalName = String(memberData.teamName || memberData.hospitalName || memberData.hospital || "").trim();
+      } else if (memberData.hospitalId && String(memberData.hospitalId).trim()) {
         canonicalHospitalId = String(memberData.hospitalId).trim();
         canonicalHospitalName = String(memberData.hospitalName || memberData.hospital || "").trim();
       } else if (memberData.hospital && String(memberData.hospital).trim()) {
@@ -277,12 +331,12 @@ export default function TeamRosterBoard({
       }
 
       if (!isPlatformAdmin) {
-        if (!isActiveMembershipStatus(status) || !isVerified || !isHod) {
-          throw new Error("Only active verified HODs can create invites.");
+        if (!isActiveMembershipStatus(status) || !isMemberAdmin) {
+          throw new Error("Only Team Admins can generate invitations.");
         }
       }
     } else if (!isPlatformAdmin) {
-      throw new Error("Only active verified HODs can create invites.");
+      throw new Error("Only Team Admins can generate invitations.");
     }
 
     // 2. If platform admin, resolve from users/{uid} if not found in team_members
@@ -352,7 +406,40 @@ export default function TeamRosterBoard({
     if (!generatedLink) return;
     navigator.clipboard.writeText(generatedLink);
     setCopiedLink(true);
-    setTimeout(() => setCopiedLink(false), 2000);
+    setInviteCopiedNotice("Invitation link copied.");
+    setTimeout(() => {
+      setCopiedLink(false);
+      setInviteCopiedNotice(null);
+    }, 3000);
+  };
+
+  const handleRegenerateInvite = async () => {
+    if (!auth.currentUser) return;
+    setInviteStatus("loading");
+    setInviteGenerationError(null);
+    try {
+      const scope = await resolveCanonicalHospitalScope();
+      const res = await regenerateTeamInvite(scope.hospitalId);
+      if (res?.link) {
+        setGeneratedLink(res.link);
+        setInviteStatus("success");
+      }
+    } catch (err: any) {
+      setInviteStatus("error");
+      setInviteGenerationError(err?.message || "Failed to regenerate invitation link.");
+    }
+  };
+
+  const handleRevokeInvite = async () => {
+    if (!generatedLink) return;
+    const token = generatedLink.replace(/^.*\/join\//, "").replace(/^.*\/invite\//, "");
+    try {
+      await revokeTeamInvite(token);
+      setGeneratedLink("");
+      setInviteStatus("idle");
+    } catch (err: any) {
+      alert(err?.message || "Failed to revoke invitation link.");
+    }
   };
 
   const handleShareLink = async () => {
@@ -370,6 +457,13 @@ export default function TeamRosterBoard({
       }
     }
     handleCopyLink();
+  };
+
+  const handleWhatsAppShare = () => {
+    if (!generatedLink) return;
+    const shareText = `Join the Emergency Department team at ${activeHospitalName} on ErMate: ${generatedLink}`;
+    const waUrl = `https://api.whatsapp.com/send?text=${encodeURIComponent(shareText)}`;
+    window.open(waUrl, "_blank", "noopener,noreferrer");
   };
 
   // Add Clinician Submit
@@ -606,10 +700,10 @@ export default function TeamRosterBoard({
                   <span>Option 1</span>
                 </div>
                 <h4 className="text-base font-bold text-slate-900 dark:text-white">
-                  Create Hospital Workspace
+                  Create Team Workspace
                 </h4>
                 <p className="text-xs text-slate-600 dark:text-slate-400">
-                  Establish a new verified hospital department workspace as Head of Department (HOD) to manage shifts, onboard doctors, and invite colleagues.
+                  Establish a shared Emergency Department workspace for your team. You will become Team Admin to manage shifts and invite colleagues, while preserving your clinical role.
                 </p>
               </div>
               <button
@@ -618,7 +712,7 @@ export default function TeamRosterBoard({
                 className="w-full py-2.5 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-xs transition-all cursor-pointer flex items-center justify-center gap-2"
               >
                 <Plus className="w-4 h-4" />
-                <span>Create Hospital Workspace</span>
+                <span>Create Team Workspace</span>
               </button>
             </div>
 
@@ -648,14 +742,14 @@ export default function TeamRosterBoard({
           </div>
         </div>
 
-        {/* Modal: Create Hospital Workspace */}
+        {/* Modal: Create Team Workspace */}
         {showCreateTeamModal && (
           <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
             <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl max-w-md w-full p-6 space-y-4 shadow-2xl">
               <div className="flex justify-between items-center">
                 <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
                   <Building2 className="w-4 h-4 text-indigo-500" />
-                  Create Hospital Workspace
+                  Create Team Workspace
                 </h3>
                 <button
                   type="button"
@@ -666,7 +760,7 @@ export default function TeamRosterBoard({
                 </button>
               </div>
 
-              <form onSubmit={handleCreateHospitalWorkspaceSubmit} className="space-y-4">
+              <form onSubmit={handleCreateHospitalWorkspaceSubmit} className="space-y-3.5">
                 {createTeamError && (
                   <div className="p-3 bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 text-xs rounded-xl flex items-center gap-2">
                     <AlertCircle className="w-4 h-4 shrink-0" />
@@ -676,21 +770,40 @@ export default function TeamRosterBoard({
 
                 <div className="space-y-1">
                   <label className="text-xs font-bold text-slate-700 dark:text-slate-300 font-mono">
-                    Hospital Name *
+                    Hospital or Workplace Name *
                   </label>
                   <input
                     type="text"
                     required
                     value={newHospitalName}
-                    onChange={(e) => setNewHospitalName(e.target.value)}
-                    placeholder="e.g. Rajagiri Hospital"
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setNewHospitalName(val);
+                      if (!newTeamName || newTeamName.endsWith("Emergency Team")) {
+                        setNewTeamName(val ? `${val} Emergency Team` : "");
+                      }
+                    }}
+                    placeholder="e.g. City General Hospital"
                     className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
                   />
                 </div>
 
                 <div className="space-y-1">
                   <label className="text-xs font-bold text-slate-700 dark:text-slate-300 font-mono">
-                    Department Name
+                    Team Name (Display Name)
+                  </label>
+                  <input
+                    type="text"
+                    value={newTeamName}
+                    onChange={(e) => setNewTeamName(e.target.value)}
+                    placeholder="e.g. City General ER Team"
+                    className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-700 dark:text-slate-300 font-mono">
+                    Department
                   </label>
                   <input
                     type="text"
@@ -699,6 +812,29 @@ export default function TeamRosterBoard({
                     placeholder="e.g. Emergency & Trauma Medicine"
                     className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
                   />
+                </div>
+
+                <div className="space-y-1">
+                  <div className="flex justify-between items-center">
+                    <label className="text-xs font-bold text-slate-700 dark:text-slate-300 font-mono">
+                      ER Physical Bed Capacity (1-1000) *
+                    </label>
+                    <span className="text-[10px] font-mono text-emerald-600 dark:text-emerald-400 font-bold">
+                      Canonical MATE Bed Limit
+                    </span>
+                  </div>
+                  <input
+                    type="number"
+                    min="1"
+                    max="1000"
+                    required
+                    value={newBedCapacity}
+                    onChange={(e) => setNewBedCapacity(parseInt(e.target.value, 10) || 1)}
+                    className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono"
+                  />
+                  <p className="text-[10px] text-slate-400 dark:text-slate-500">
+                    Used by MATE for bed availability and active department census.
+                  </p>
                 </div>
 
                 <div className="flex gap-2 pt-2">
@@ -791,6 +927,40 @@ export default function TeamRosterBoard({
   return (
     <div id="team-roster-board" className="space-y-5 text-slate-800 dark:text-slate-100 max-w-7xl mx-auto">
       
+      {/* Unverified Team Status Banner */}
+      {!isInstitutionalVerified && (
+        <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/80 rounded-2xl p-4 md:p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3.5 text-amber-800 dark:text-amber-200 animate-fade-in shadow-xs" id="unverified-team-banner">
+          <div className="flex items-start gap-3">
+            <div className="p-2 bg-amber-100 dark:bg-amber-900/50 text-amber-600 dark:text-amber-400 rounded-xl shrink-0 mt-0.5">
+              <ShieldAlert className="w-5 h-5" />
+            </div>
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] bg-amber-200/80 dark:bg-amber-900 text-amber-800 dark:text-amber-200 font-bold px-2 py-0.5 rounded-full font-mono uppercase tracking-wider">
+                  Unverified Team Workspace
+                </span>
+              </div>
+              <h4 className="text-xs font-bold text-amber-900 dark:text-amber-100">
+                Awaiting Institutional Verification
+              </h4>
+              <p className="text-xs text-amber-800/90 dark:text-amber-300/90 leading-relaxed max-w-3xl">
+                Your team workspace is active for shifts, roster scheduling, and team management. Real patient clinical records remain protected in your private individual workspace until institutional verification is completed by the platform administrator.
+              </p>
+            </div>
+          </div>
+          {isPlatformAdmin && (
+            <button
+              type="button"
+              onClick={handleVerifyTeamInstitution}
+              className="px-3.5 py-2 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold rounded-xl shadow-xs transition-all shrink-0 cursor-pointer flex items-center gap-1.5 self-end sm:self-center"
+            >
+              <CheckCircle2 className="w-3.5 h-3.5" />
+              <span>Verify Institution</span>
+            </button>
+          )}
+        </div>
+      )}
+
       {/* ======================================================== */}
       {/* TOP-LEVEL 4-SECTION NAVIGATION BAR (MOBILE-FIRST)        */}
       {/* 1. OVERVIEW  2. MEMBERS  3. ROTA  4. SETTINGS            */}
@@ -1326,12 +1496,12 @@ export default function TeamRosterBoard({
                 </h3>
               </div>
               <span className="text-[10px] bg-indigo-100 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 font-bold px-2 py-0.5 rounded-full font-mono">
-                Canonical Link
+                Active 7-Day Link
               </span>
             </div>
 
             <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
-              Share this secure link with clinicians who have already been added to your team.
+              Share this reusable invite link with your emergency team. Anyone with the link can request to join, and Team Admins will approve their role.
             </p>
 
             {inviteStatus === "error" ? (
@@ -1341,7 +1511,7 @@ export default function TeamRosterBoard({
                   <span>Could not generate invitation.</span>
                 </div>
                 <p className="text-[11px] text-slate-600 dark:text-slate-300 font-sans">
-                  {inviteGenerationError || "Only active verified HODs can create invites."}
+                  {inviteGenerationError || "Only active Team Admins can manage team invites."}
                 </p>
                 <button
                   type="button"
@@ -1353,39 +1523,68 @@ export default function TeamRosterBoard({
                 </button>
               </div>
             ) : (
-              <div className="flex flex-col sm:flex-row bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl p-2 items-center gap-2">
-                <span className="text-[11px] font-mono text-slate-500 dark:text-slate-400 select-all truncate flex-1 px-2 w-full sm:w-auto">
-                  {generatedLink || (inviteStatus === "loading" ? "Generating secure invite link..." : "Generating invitation...")}
-                </span>
-                <div className="flex items-center gap-1.5 w-full sm:w-auto justify-end">
-                  <button
-                    type="button"
-                    onClick={handleCopyLink}
-                    disabled={!generatedLink || inviteStatus === "loading"}
-                    className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-bold text-xs rounded-lg transition-all flex items-center gap-1 cursor-pointer shrink-0"
-                  >
-                    {copiedLink ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                    <span>{copiedLink ? "Copied" : "Copy Link"}</span>
-                  </button>
-                  <button
-                    type="button"
-                    disabled
-                    title="Direct QR scanning coming soon. Please use Copy Link or Share."
-                    className="px-3 py-1.5 bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 font-bold text-xs rounded-lg transition-all flex items-center gap-1 opacity-50 cursor-not-allowed shrink-0"
-                  >
-                    <QrCode className="w-3.5 h-3.5" />
-                    <span>Show QR</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleShareLink}
-                    disabled={!generatedLink || inviteStatus === "loading"}
-                    className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 disabled:opacity-50 text-slate-700 dark:text-slate-200 font-bold text-xs rounded-lg transition-all flex items-center gap-1 cursor-pointer shrink-0"
-                  >
-                    <Share2 className="w-3.5 h-3.5" />
-                    <span>Share</span>
-                  </button>
+              <div className="space-y-2">
+                <div className="flex flex-col sm:flex-row bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl p-2 items-center gap-2">
+                  <span className="text-[11px] font-mono text-slate-500 dark:text-slate-400 select-all truncate flex-1 px-2 w-full sm:w-auto">
+                    {generatedLink || (inviteStatus === "loading" ? "Generating secure invite link..." : "Generating invitation...")}
+                  </span>
+                  <div className="flex flex-wrap items-center gap-1.5 w-full sm:w-auto justify-end">
+                    <button
+                      type="button"
+                      onClick={handleCopyLink}
+                      disabled={!generatedLink || inviteStatus === "loading"}
+                      className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-bold text-xs rounded-lg transition-all flex items-center gap-1 cursor-pointer shrink-0"
+                    >
+                      {copiedLink ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                      <span>{copiedLink ? "Copied" : "Copy Link"}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleWhatsAppShare}
+                      disabled={!generatedLink || inviteStatus === "loading"}
+                      className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold text-xs rounded-lg transition-all flex items-center gap-1 cursor-pointer shrink-0"
+                    >
+                      <Share2 className="w-3.5 h-3.5" />
+                      <span>WhatsApp</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleShareLink}
+                      disabled={!generatedLink || inviteStatus === "loading"}
+                      className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 disabled:opacity-50 text-slate-700 dark:text-slate-200 font-bold text-xs rounded-lg transition-all flex items-center gap-1 cursor-pointer shrink-0"
+                    >
+                      <Share2 className="w-3.5 h-3.5" />
+                      <span>Share</span>
+                    </button>
+                  </div>
                 </div>
+
+                {isUserTeamAdmin && generatedLink && (
+                  <div className="flex items-center justify-between pt-1 px-1">
+                    <span className="text-[10.5px] text-slate-500 dark:text-slate-400 font-mono">
+                      Token is secured & expires in 7 days.
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={handleRegenerateInvite}
+                        disabled={inviteStatus === "loading"}
+                        className="text-[11px] font-bold text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1 cursor-pointer"
+                      >
+                        <RefreshCw className="w-3 h-3" />
+                        <span>Regenerate Link</span>
+                      </button>
+                      <span className="text-slate-300 dark:text-slate-700">•</span>
+                      <button
+                        type="button"
+                        onClick={handleRevokeInvite}
+                        className="text-[11px] font-bold text-rose-500 hover:underline cursor-pointer"
+                      >
+                        Revoke
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -1401,41 +1600,80 @@ export default function TeamRosterBoard({
               </div>
 
               <div className="space-y-2.5">
-                {/* Pending HOD Approvals */}
-                {pendingApprovals.map(req => (
-                  <div key={req.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white dark:bg-slate-900 border border-amber-200 dark:border-amber-900/40 p-3.5 rounded-xl">
-                    <div className="space-y-0.5">
-                      <div className="flex items-center gap-2">
-                        <strong className="text-xs font-bold text-slate-900 dark:text-white">Dr {req.name}</strong>
-                        <span className="text-[9px] bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 px-2 py-0.2 rounded-full font-bold uppercase font-mono animate-pulse">
-                          Awaiting Approval
-                        </span>
-                      </div>
-                      <p className="text-[11px] text-slate-500 dark:text-slate-400 font-mono">
-                        {req.email} • {req.role}
-                      </p>
-                    </div>
+                {/* Pending Team Admin Approvals */}
+                {pendingApprovals.map(req => {
+                  const selectedRole = approvalRoles[req.id] || req.role || "Resident";
+                  const isMakeAdmin = approvalAdminStatus[req.id] === true;
 
-                    {isUserHOD && (
-                      <div className="flex items-center gap-2 self-end sm:self-center">
-                        <button
-                          type="button"
-                          onClick={() => onDeclineMember && onDeclineMember(req.id)}
-                          className="px-3 py-1.5 border border-slate-200 dark:border-slate-800 hover:bg-slate-50 text-slate-600 dark:text-slate-400 text-xs font-bold rounded-xl cursor-pointer"
-                        >
-                          Decline
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => onApproveMember && onApproveMember(req.id)}
-                          className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-xs cursor-pointer"
-                        >
-                          Approve ✓
-                        </button>
+                  return (
+                    <div key={req.id} className="flex flex-col md:flex-row md:items-center justify-between gap-3 bg-white dark:bg-slate-900 border border-amber-200 dark:border-amber-900/40 p-3.5 rounded-xl">
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <strong className="text-xs font-bold text-slate-900 dark:text-white">Dr {req.name}</strong>
+                          <span className="text-[9px] bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 px-2 py-0.2 rounded-full font-bold uppercase font-mono animate-pulse">
+                            Awaiting Approval
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-500 dark:text-slate-400 font-mono">
+                          {req.email} • Requested: <span className="font-semibold text-slate-700 dark:text-slate-300">{req.role || "Resident"}</span>
+                        </p>
                       </div>
-                    )}
-                  </div>
-                ))}
+
+                      {isUserHOD && (
+                        <div className="flex flex-wrap items-center gap-2.5 self-end md:self-center">
+                          {/* Role selector */}
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[10px] font-mono text-slate-400">Role:</span>
+                            <select
+                              value={selectedRole}
+                              onChange={(e) => setApprovalRoles(prev => ({ ...prev, [req.id]: e.target.value }))}
+                              className="text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1 text-slate-900 dark:text-slate-100 font-semibold focus:outline-none"
+                            >
+                              <option value="Resident">Resident</option>
+                              <option value="Senior Resident">Senior Resident</option>
+                              <option value="Consultant">Consultant</option>
+                              <option value="Senior Consultant">Senior Consultant</option>
+                              <option value="Medical Officer">Medical Officer</option>
+                              <option value="Fellow">Fellow</option>
+                              <option value="Emergency Physician">Emergency Physician</option>
+                              <option value="Staff Nurse">Staff Nurse</option>
+                              <option value="Clinical Pharmacist">Clinical Pharmacist</option>
+                            </select>
+                          </div>
+
+                          {/* Appoint as Admin toggle */}
+                          <label className="flex items-center gap-1.5 text-[11px] font-mono text-slate-600 dark:text-slate-300 cursor-pointer select-none">
+                            <input
+                              type="checkbox"
+                              checked={isMakeAdmin}
+                              onChange={(e) => setApprovalAdminStatus(prev => ({ ...prev, [req.id]: e.target.checked }))}
+                              className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 w-3.5 h-3.5"
+                            />
+                            <span>Team Admin</span>
+                          </label>
+
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => onDeclineMember && onDeclineMember(req.id)}
+                              className="px-3 py-1.5 border border-slate-200 dark:border-slate-800 hover:bg-slate-50 text-slate-600 dark:text-slate-400 text-xs font-bold rounded-xl cursor-pointer"
+                            >
+                              Decline
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => onApproveMember && onApproveMember(req.id, selectedRole, isMakeAdmin)}
+                              className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-xs cursor-pointer flex items-center gap-1"
+                            >
+                              <span>Approve</span>
+                              <Check className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
 
                 {/* Pending Link Clicks */}
                 {pendingInvites.map(inv => (
@@ -1508,6 +1746,11 @@ export default function TeamRosterBoard({
                               You
                             </span>
                           )}
+                          {(member.isTeamAdmin === true || member.teamRole === "admin" || (member.membershipVerified === true && ["hod", "hod / department lead", "hod / shift lead"].includes(String(member.role || "").trim().toLowerCase()))) && (
+                            <span className="text-[8.5px] bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 font-mono font-bold px-1.5 py-0.2 rounded border border-purple-200 dark:border-purple-800">
+                              Team Admin
+                            </span>
+                          )}
                         </div>
                         <p className="text-[11px] text-slate-500 dark:text-slate-400 font-mono mt-0.5">
                           {member.email}
@@ -1540,7 +1783,10 @@ export default function TeamRosterBoard({
                             className="bg-transparent text-xs font-bold text-slate-800 dark:text-slate-200 focus:outline-none cursor-pointer"
                           >
                             <option value="Senior Consultant">Senior Consultant</option>
+                            <option value="Consultant">Consultant</option>
+                            <option value="Senior Resident">Senior Resident</option>
                             <option value="EM Resident">EM Resident</option>
+                            <option value="Medical Officer">Medical Officer</option>
                             <option value="HOD / Shift Lead">HOD / Shift Lead</option>
                             <option value="Scribe Specialist">Scribe Specialist</option>
                             <option value="EM Intern">EM Intern</option>
@@ -1571,37 +1817,57 @@ export default function TeamRosterBoard({
                     {/* Actions */}
                     <div className="flex items-center justify-between pt-2 border-t border-slate-150 dark:border-slate-800/60 text-xs">
                       {isUserHOD && !isSelf ? (
-                        pendingDeleteId === member.id ? (
-                          <div className="flex items-center gap-1.5">
-                            <button
-                              type="button"
-                              onClick={async () => {
-                                await onRemoveMember(member.id);
-                                setPendingDeleteId(null);
-                              }}
-                              className="px-2 py-1 bg-rose-600 text-white font-bold rounded-lg text-[10px] cursor-pointer"
-                            >
-                              Confirm
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setPendingDeleteId(null)}
-                              className="px-2 py-1 bg-slate-200 text-slate-700 font-bold rounded-lg text-[10px] cursor-pointer"
-                            >
-                              Cancel
-                            </button>
-                          </div>
-                        ) : (
+                        <div className="flex items-center gap-2">
                           <button
                             type="button"
-                            onClick={() => setPendingDeleteId(member.id)}
-                            className="text-slate-400 hover:text-rose-600 text-[11px] font-bold cursor-pointer"
+                            onClick={async () => {
+                              try {
+                                const currentIsAdmin = member.isTeamAdmin === true || member.teamRole === "admin";
+                                await setTeamAdminRole(member.id, !currentIsAdmin);
+                                window.location.reload();
+                              } catch (e: any) {
+                                alert(e.message || "Failed to update admin role.");
+                              }
+                            }}
+                            className="text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400 text-[11px] font-bold cursor-pointer"
                           >
-                            Remove
+                            {(member.isTeamAdmin === true || member.teamRole === "admin") ? "Revoke Admin" : "Make Admin"}
                           </button>
-                        )
+                          <span className="text-slate-300 dark:text-slate-700">•</span>
+                          {pendingDeleteId === member.id ? (
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  await onRemoveMember(member.id);
+                                  setPendingDeleteId(null);
+                                }}
+                                className="px-2 py-1 bg-rose-600 text-white font-bold rounded-lg text-[10px] cursor-pointer"
+                              >
+                                Confirm
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setPendingDeleteId(null)}
+                                className="px-2 py-1 bg-slate-200 text-slate-700 font-bold rounded-lg text-[10px] cursor-pointer"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => setPendingDeleteId(member.id)}
+                              className="text-slate-400 hover:text-rose-600 text-[11px] font-bold cursor-pointer"
+                            >
+                              Remove
+                            </button>
+                          )}
+                        </div>
                       ) : (
-                        <span className="text-[10px] text-slate-400 font-mono">Verified Doctor</span>
+                        <span className="text-[10px] text-slate-400 font-mono">
+                          {isSelf ? "My Profile" : "Verified Doctor"}
+                        </span>
                       )}
 
                       <button
@@ -2031,24 +2297,50 @@ export default function TeamRosterBoard({
             {/* Right: Leadership & Subscription */}
             <div className="space-y-6">
               
-              {/* Department Leadership / HOD Card */}
+              {/* Department Leadership / Team Admins Card */}
               <div className="bg-gradient-to-r from-amber-500/15 via-amber-500/5 to-indigo-500/15 border border-amber-500/30 rounded-2xl p-5 shadow-xs space-y-3">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-amber-500/20 text-amber-500 border border-amber-500/30 flex items-center justify-center shrink-0">
-                    <ShieldAlert className="w-5 h-5 text-amber-500" />
-                  </div>
-                  <div>
-                    <span className="text-[10px] font-black uppercase tracking-widest text-amber-600 dark:text-amber-400 font-mono">
-                      👑 Head of Department (HOD)
-                    </span>
-                    <h3 className="text-sm font-black text-slate-900 dark:text-white">
-                      Dr {profile.name}
-                    </h3>
-                    <p className="text-[11px] text-slate-500 font-mono">
-                      {profile.email} • {activeHospitalName}
-                    </p>
-                  </div>
-                </div>
+                {(() => {
+                  const admins = teamMembers.filter(
+                    m => m.isTeamAdmin === true || m.teamRole === "admin" || (m.membershipVerified === true && ["hod", "hod / department lead", "hod / shift lead"].includes(String(m.role || "").trim().toLowerCase()))
+                  );
+                  const primaryLeader = admins.length > 0 ? admins[0] : null;
+
+                  return (
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-xl bg-amber-500/20 text-amber-500 border border-amber-500/30 flex items-center justify-center shrink-0">
+                          <ShieldAlert className="w-5 h-5 text-amber-500" />
+                        </div>
+                        <div>
+                          <span className="text-[10px] font-black uppercase tracking-widest text-amber-600 dark:text-amber-400 font-mono">
+                            👑 Team Administration & Leadership
+                          </span>
+                          <h3 className="text-sm font-black text-slate-900 dark:text-white">
+                            {primaryLeader ? `Dr. ${primaryLeader.name}` : `Dr. ${profile.name}`}
+                          </h3>
+                          <p className="text-[11px] text-slate-500 font-mono">
+                            {primaryLeader?.email || profile.email} • {primaryLeader?.role || "Team Admin"}
+                          </p>
+                        </div>
+                      </div>
+
+                      {admins.length > 1 && (
+                        <div className="pt-2 border-t border-amber-500/20 text-xs">
+                          <span className="text-[10px] font-mono font-bold text-amber-800 dark:text-amber-300 block mb-1">
+                            Additional Team Admins:
+                          </span>
+                          <div className="flex flex-wrap gap-1.5">
+                            {admins.slice(1).map(adm => (
+                              <span key={adm.id} className="text-[11px] bg-white/60 dark:bg-slate-900/60 px-2 py-0.5 rounded-lg border border-amber-200 dark:border-amber-900/40 text-slate-800 dark:text-slate-200 font-medium">
+                                Dr. {adm.name} ({adm.role || "Admin"})
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
 
               {/* Hospital License / Subscription Status */}
@@ -2165,8 +2457,8 @@ export default function TeamRosterBoard({
             </div>
 
             <div className="p-5 space-y-4 text-xs">
-              <p className="text-slate-600 dark:text-slate-300 leading-relaxed font-sans">
-                Share this secure link with clinicians who have already been added to your team.
+              <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed font-sans">
+                Share this reusable invite link with your emergency team. Anyone with the link can request to join, and Team Admins will approve their role.
               </p>
 
               {inviteStatus === "error" ? (
@@ -2176,7 +2468,7 @@ export default function TeamRosterBoard({
                     <span>Could not generate invitation.</span>
                   </div>
                   <p className="text-[11px] text-slate-600 dark:text-slate-300 font-sans">
-                    {inviteGenerationError || "Only active verified HODs can create invites."}
+                    {inviteGenerationError || "Only active Team Admins can manage team invites."}
                   </p>
                   <button
                     type="button"
@@ -2188,28 +2480,28 @@ export default function TeamRosterBoard({
                   </button>
                 </div>
               ) : (
-                <div className="bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl p-3 space-y-2">
+                <div className="bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl p-3 space-y-2.5">
                   <span className="text-[11px] font-mono text-slate-600 dark:text-slate-300 select-all break-all block">
                     {generatedLink || (inviteStatus === "loading" ? "Generating secure invite link..." : "Generating invitation...")}
                   </span>
-                  <div className="flex items-center gap-2 pt-1">
+                  <div className="flex flex-wrap items-center gap-2 pt-1">
                     <button
                       type="button"
                       onClick={handleCopyLink}
                       disabled={!generatedLink || inviteStatus === "loading"}
-                      className="flex-1 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-extrabold text-xs rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
+                      className="flex-1 min-w-[120px] py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-extrabold text-xs rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
                     >
                       {copiedLink ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
                       <span>{copiedLink ? "Link Copied!" : "Copy Link"}</span>
                     </button>
                     <button
                       type="button"
-                      disabled
-                      title="Direct QR scanning coming soon. Please use Copy Link or Share."
-                      className="px-3 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-400 dark:text-slate-500 font-bold text-xs rounded-xl transition-all flex items-center justify-center gap-1 opacity-50 cursor-not-allowed"
+                      onClick={handleWhatsAppShare}
+                      disabled={!generatedLink || inviteStatus === "loading"}
+                      className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold text-xs rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
                     >
-                      <QrCode className="w-3.5 h-3.5" />
-                      <span>Show QR</span>
+                      <Share2 className="w-3.5 h-3.5" />
+                      <span>WhatsApp</span>
                     </button>
                     <button
                       type="button"
@@ -2221,6 +2513,31 @@ export default function TeamRosterBoard({
                       <span>Share</span>
                     </button>
                   </div>
+
+                  {isUserTeamAdmin && generatedLink && (
+                    <div className="flex items-center justify-between pt-2 border-t border-slate-200 dark:border-slate-800 text-[11px]">
+                      <span className="text-slate-400 font-mono">Reusable 7-day token</span>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={handleRegenerateInvite}
+                          disabled={inviteStatus === "loading"}
+                          className="text-indigo-600 dark:text-indigo-400 font-bold hover:underline cursor-pointer flex items-center gap-1"
+                        >
+                          <RefreshCw className="w-3 h-3" />
+                          <span>Regenerate</span>
+                        </button>
+                        <span className="text-slate-300 dark:text-slate-700">•</span>
+                        <button
+                          type="button"
+                          onClick={handleRevokeInvite}
+                          className="text-rose-500 font-bold hover:underline cursor-pointer"
+                        >
+                          Revoke
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 

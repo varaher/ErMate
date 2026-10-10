@@ -75,6 +75,7 @@ export default function OnboardingProfileView({
   );
 
   // Team creation local state
+  const [teamCustomName, setTeamCustomName] = useState<string>("");
   const [teamHospitalName, setTeamHospitalName] = useState<string>("");
   const [teamDepartment, setTeamDepartment] = useState<string>("");
   const [teamBedCapacity, setTeamBedCapacity] = useState<number>(30);
@@ -137,6 +138,7 @@ export default function OnboardingProfileView({
       await onSaveProfile(updated, parsedCapacity);
 
       // Pre-fill team creation defaults from newly completed profile
+      setTeamCustomName(cleanHospital ? `${cleanHospital} ER Team` : "Emergency Team");
       setTeamHospitalName(cleanHospital);
       setTeamDepartment(cleanDept);
       setTeamBedCapacity(parsedCapacity);
@@ -156,12 +158,13 @@ export default function OnboardingProfileView({
     e.preventDefault();
     setTeamError(null);
 
-    const cleanTeamName = teamHospitalName.trim();
-    const cleanDept = teamDepartment.trim();
+    const cleanHospital = teamHospitalName.trim();
+    const cleanTeam = teamCustomName.trim() || `${cleanHospital} ER Team`;
+    const cleanDept = teamDepartment.trim() || "Emergency Medicine";
     const parsedCap = Math.floor(Number(teamBedCapacity));
 
-    if (!cleanTeamName || cleanTeamName.length < 2) {
-      setTeamError("Please enter a valid hospital or workspace name.");
+    if (!cleanHospital || cleanHospital.length < 2) {
+      setTeamError("Please enter a valid hospital or workplace name.");
       return;
     }
     if (!Number.isInteger(parsedCap) || parsedCap <= 0 || parsedCap > 1000) {
@@ -171,7 +174,7 @@ export default function OnboardingProfileView({
 
     setCreatingTeam(true);
     try {
-      const result = await createHospitalWorkspace(cleanTeamName, cleanDept, parsedCap);
+      const result = await createHospitalWorkspace(cleanHospital, cleanDept, parsedCap, cleanTeam, role);
       onTeamCreated?.(result.hospitalId, result.hospitalName);
 
       // Generate canonical invite link to share immediately
@@ -465,10 +468,10 @@ export default function OnboardingProfileView({
               <Building2 className="w-6 h-6" />
             </div>
             <h2 className="text-xl font-black text-slate-900 dark:text-white">
-              Create Hospital Workspace
+              Create Team Workspace
             </h2>
             <p className="text-xs text-slate-600 dark:text-slate-400">
-              You will be registered as the verified department lead (HOD) for this workspace.
+              You will become the first Team Admin for this workspace while preserving your professional clinical designation.
             </p>
           </div>
 
@@ -481,13 +484,27 @@ export default function OnboardingProfileView({
           <form onSubmit={handleCreateTeamSubmit} className="space-y-4">
             <div className="space-y-1.5">
               <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 uppercase font-mono">
-                Team / Hospital Workspace Name *
+                Team Name *
+              </label>
+              <input
+                type="text"
+                value={teamCustomName}
+                onChange={(e) => setTeamCustomName(e.target.value)}
+                placeholder="e.g. Rajagiri Emergency Team"
+                className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-2.5 text-xs font-bold text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-indigo-500/30"
+                required
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 uppercase font-mono">
+                Hospital or Workplace Name *
               </label>
               <input
                 type="text"
                 value={teamHospitalName}
                 onChange={(e) => setTeamHospitalName(e.target.value)}
-                placeholder="e.g. City General Hospital"
+                placeholder="e.g. Rajagiri Hospital"
                 className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-2.5 text-xs font-bold text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-indigo-500/30"
                 required
               />
@@ -508,7 +525,7 @@ export default function OnboardingProfileView({
 
             <div className="space-y-1.5">
               <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 uppercase font-mono">
-                Bed Capacity
+                ER Physical Bed Capacity (1–1000) *
               </label>
               <input
                 type="number"

@@ -748,6 +748,24 @@ export function isActiveMembershipStatus(status?: string): boolean {
   return s === "active" || s === "active (joined)";
 }
 
+export interface TeamWorkspace {
+  id: string;
+  teamName: string;
+  hospitalName: string;
+  department: string;
+  erPhysicalBedCapacity: number;
+  createdByUid: string;
+  createdByEmail: string;
+  createdAt: string;
+  updatedAt: string;
+  verificationStatus: "unverified" | "verified";
+  isInstitutionallyVerified?: boolean;
+  verifiedAt?: string | null;
+  verifiedBy?: string | null;
+  activeInviteToken?: string | null;
+  activeInviteExpiresAt?: string | null;
+}
+
 export interface TeamMember {
   id: string;
   uid?: string;
@@ -759,6 +777,14 @@ export interface TeamMember {
   hospital?: string;
   hospitalId?: string;
   hospitalName?: string;
+  teamId?: string;
+  teamName?: string;
+  department?: string;
+  isTeamAdmin?: boolean;
+  isAdmin?: boolean;
+  teamRole?: "admin" | "member";
+  verificationStatus?: "unverified" | "verified";
+  isInstitutionallyVerified?: boolean;
   assignedBy?: string;
   updatedAt?: string;
   membershipVerified?: boolean;

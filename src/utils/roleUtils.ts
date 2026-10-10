@@ -98,3 +98,28 @@ export function getRoleDisplayLabel(normalizedRole: NormalizedRole, rawRole?: st
       return rawRole ? `${rawRole} (Individual)` : "Independent Clinician";
   }
 }
+
+/**
+ * Determines whether a member has Team Admin privileges.
+ * 
+ * CORE PRODUCT RULE:
+ * Being an HOD is NOT required to administer a team.
+ * Any registered user who creates a team automatically becomes Team Admin.
+ * Professional designations (HOD, Consultant, Resident, etc.) are separate from
+ * administrative privileges.
+ */
+export function isUserTeamAdmin(member?: any): boolean {
+  if (!member) return false;
+  if (member.isTeamAdmin === true || member.teamRole === "admin" || member.isAdmin === true) {
+    return true;
+  }
+  // Platform admin is always team admin
+  if (isPlatformAdmin(member.email)) {
+    return true;
+  }
+  // Backward compatibility for legacy verified HOD records
+  if (member.membershipVerified === true && isExactHospitalAdminRole(member.role)) {
+    return true;
+  }
+  return false;
+}

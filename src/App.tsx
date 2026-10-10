@@ -286,8 +286,8 @@ useEffect(() => {
     if (typeof window === "undefined") return;
     const path = window.location.pathname;
     
-    if (path.includes("/join/")) {
-      const token = path.split("/join/")[1]?.split("?")[0]?.replace(/\/+$/, "");
+    if (path.includes("/join/") || path.includes("/invite/")) {
+      const token = (path.includes("/join/") ? path.split("/join/")[1] : path.split("/invite/")[1])?.split("?")[0]?.replace(/\/+$/, "");
       if (token) {
         validateTeamInvite(token).then(result => {
           if (result.valid && result.hospital) {
@@ -305,7 +305,7 @@ useEffect(() => {
           }
         });
       }
-    } else if (path.endsWith("/join")) {
+    } else if (path.endsWith("/join") || path.endsWith("/invite")) {
       setLoginScreenMode("signup");
     }
   }, []);
@@ -1781,7 +1781,6 @@ if (auth.currentUser) {
 
       if (
         !isActiveMembership ||
-        !isVerifiedMembership ||
         !trustedHospitalId
       ) {
         setSelfMembership(null);
@@ -4741,9 +4740,9 @@ const handleRoleSelectionSubmit = async () => {
     setShowRoleSelectionModal(false);
 
     triggerNotification(
-      "Joined Department",
-      `Successfully joined ${initialHospital}.`,
-      "success"
+      "Join Request Sent",
+      "Join request sent. Waiting for Admin approval.",
+      "info"
     );
   } catch (err: any) {
     console.error(
@@ -4758,7 +4757,7 @@ const handleRoleSelectionSubmit = async () => {
   }
 };
 
- const handleApproveTeamMember = async (memberId: string) => {
+ const handleApproveTeamMember = async (memberId: string, role?: string, isTeamAdmin?: boolean) => {
   try {
     if (!auth.currentUser) {
       throw new Error("Not authenticated");
@@ -4776,8 +4775,12 @@ const handleRoleSelectionSubmit = async () => {
       memberId: string;
       hospitalId?: string;
       hospitalName?: string;
+      role?: string;
+      isTeamAdmin?: boolean;
     } = {
-      memberId
+      memberId,
+      ...(role ? { role } : {}),
+      ...(typeof isTeamAdmin === "boolean" ? { isTeamAdmin } : {})
     };
 
     /*
@@ -6477,51 +6480,39 @@ const handleSignOut = async () => {
           </div>
         }>
           
-          {/* Verification Pending Block Screen */}
+          {/* Non-blocking Join Request Pending Alert Banner */}
           {(() => {
             const myTeamMember = teamMembers.find(
               m => m.email.toLowerCase().trim() === (profile?.email || "").toLowerCase().trim()
             );
             const isPendingApproval = myTeamMember && isPendingApprovalStatus(myTeamMember.status);
 
-            if (isPendingApproval && activeTab !== "profile") {
-              const departmentHOD = teamMembers.find(m => m.role?.toLowerCase().includes("hod") || m.role?.toLowerCase().includes("lead"));
-              const hodName = departmentHOD ? `Dr. ${departmentHOD.name}` : "the Clinical HOD";
+            if (isPendingApproval) {
               return (
-                <div className="bg-white dark:bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-8 md:p-12 text-center max-w-2xl mx-auto shadow-xl space-y-6 my-12 animate-fade-in" id="pending-approval-overlay">
-                  <div className="w-16 h-16 bg-amber-500/10 text-amber-500 rounded-full flex items-center justify-center mx-auto mb-4 animate-pulse">
-                    <Clock className="w-8 h-8" />
+                <div className="mb-4 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/80 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-amber-800 dark:text-amber-200 animate-fade-in" id="pending-approval-banner">
+                  <div className="flex items-center gap-3">
+                    <Clock className="w-5 h-5 shrink-0 text-amber-600 dark:text-amber-400" />
+                    <div>
+                      <strong className="text-xs font-bold block">Join request sent. Waiting for Admin approval.</strong>
+                      <span className="text-xs opacity-90">
+                        Your request to join {profile?.hospital || "the department team"} is pending review by the Team Admin. You can continue using your Individual Workspace in the meantime.
+                      </span>
+                    </div>
                   </div>
-                  <div className="space-y-2">
-                    <h2 className="text-xl font-extrabold text-slate-900 dark:text-white tracking-tight">
-                      Verification Pending
-                    </h2>
-                    <p className="text-xs text-slate-500 dark:text-slate-400 font-mono">
-                      Hospital Team: <span className="text-indigo-600 dark:text-indigo-400 font-bold font-sans">{profile?.hospital || "General Emergency Department"}</span>
-                    </p>
-                  </div>
-                  <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed max-w-md mx-auto">
-                    Your credentials have been submitted and are currently waiting for onboarding verification by the Department HOD. Once approved, your profile will link, and your clinical shifts will sync immediately.
-                  </p>
-                  
-                  <div className="bg-slate-50 dark:bg-slate-950/45 border border-slate-150 dark:border-slate-850 p-4 rounded-2xl text-[11px] text-slate-500 dark:text-slate-400 max-w-sm mx-auto font-mono">
-                    📬 Request routed to <strong className="text-slate-700 dark:text-slate-200 font-sans">{hodName}</strong>. You will be notified when approved.
-                  </div>
-
-                  <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-4">
+                  <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
                     <button
                       type="button"
                       onClick={handleCancelJoinRequest}
-                      className="w-full sm:w-auto px-5 py-2.5 border border-slate-200 hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-850 text-slate-700 dark:text-slate-300 text-xs font-bold rounded-xl transition-all cursor-pointer bg-transparent"
+                      className="px-3 py-1.5 border border-amber-300 dark:border-amber-700 hover:bg-amber-100 dark:hover:bg-amber-900/50 text-amber-800 dark:text-amber-200 text-xs font-bold rounded-xl transition-all cursor-pointer"
                     >
                       Cancel Request
                     </button>
                     <button
                       type="button"
-                      onClick={() => navigateToTab("profile")}
-                      className="w-full sm:w-auto px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-black rounded-xl transition-all shadow-md shadow-indigo-600/15 cursor-pointer"
+                      onClick={() => navigateToTab("team")}
+                      className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold rounded-xl transition-all shadow-xs cursor-pointer"
                     >
-                      View Team Directory
+                      View Team Status
                     </button>
                   </div>
                 </div>
@@ -6530,14 +6521,8 @@ const handleSignOut = async () => {
             return null;
           })()}
 
-          {/* Render Normal Workspace Views only if not pending approval (or if on profile page) */}
+          {/* Render Normal Workspace Views */}
           {(() => {
-            const myTeamMember = teamMembers.find(
-              m => m.email.toLowerCase().trim() === (profile?.email || "").toLowerCase().trim()
-            );
-            const isPendingApproval = myTeamMember && isPendingApprovalStatus(myTeamMember.status);
-            if (isPendingApproval && activeTab !== "profile") return null;
-
             return (
               <>
                 {/* Pending Joining Offer Invite Banner */}
@@ -6546,14 +6531,14 @@ const handleSignOut = async () => {
               <div className="space-y-1.5 flex-1">
                 <div className="flex items-center gap-2">
                   <span className="text-xs bg-indigo-600 text-white px-2.5 py-0.5 rounded-full font-bold font-mono tracking-wider">
-                    PENDING JOINING OFFER
+                    TEAM INVITATION
                   </span>
                 </div>
                 <h3 className="text-sm font-black text-slate-800 dark:text-slate-100 font-display">
-                  You've been invited to join the medical team at {initialHospital}
+                  You've been invited to join the team at {initialHospital}
                 </h3>
                 <p className="text-xs leading-relaxed text-slate-550 dark:text-slate-400 font-medium max-w-3xl">
-                  Accepting this offer will link your ErMate profile, synchronize your shifts with their central clinical roster, and cover your account under their shared department team license.
+                  Submit a request to join this department workspace. Once approved by the Team Admin, you will become a team member.
                 </p>
               </div>
               <div className="flex items-center gap-2.5 self-end md:self-center">
@@ -6574,7 +6559,7 @@ const handleSignOut = async () => {
                   onClick={handleAcceptJoinOffer}
                   className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-black rounded-xl transition-all shadow-md shadow-indigo-600/10 cursor-pointer flex items-center gap-1.5"
                 >
-                  Accept Joining Offer
+                  Request to Join
                 </button>
               </div>
             </div>

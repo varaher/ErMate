@@ -506,8 +506,13 @@ service cloud.firestore {
 // security audit records.
 match /teamAuditLog/{logId} {
   allow read: if isPlatformAdmin();
-  allow create: if isLoggedIn() && incoming().actorUid == uid();
-  allow update, delete: if false;
+  allow write: if false;
+}
+
+// ── Teams / Workspaces — trusted backend only ──────────
+match /teams/{teamId} {
+  allow read: if isLoggedIn();
+  allow write: if false;
 }
     // ── HOD Claim Requests (bootstrapping gate) ───────────────
 

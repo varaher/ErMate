@@ -53,14 +53,18 @@ const INVITE_ALLOWED_ROLES = new Set([
   "em resident",
   "em intern",
   "em_physician",
+  "emergency physician",
   "nurse",
   "doctor",
   "fellow",
   "medical_officer",
+  "medical officer",
   "scribe specialist",
   "hod",
   "hod / department lead",
-  "hod / shift lead"
+  "hod / shift lead",
+  "emt",
+  "other"
 ]);
 
 function isExactHospitalAdminRole(role?: string): boolean {
@@ -76,6 +80,20 @@ function isVerifiedHod(member: any): boolean {
     isExactHospitalAdminRole(member.role) &&
     !!member.hospitalId
   );
+}
+
+function isTeamAdmin(member: any): boolean {
+  if (!member) return false;
+  const status = String(member.status || "").trim().toLowerCase();
+  if (status !== "active" && status !== "active (joined)") return false;
+  if (member.isTeamAdmin === true || member.teamRole === "admin" || member.isAdmin === true) {
+    return true;
+  }
+  // Backward compatibility: existing active verified HODs are also team admins
+  if (member.membershipVerified === true && isExactHospitalAdminRole(member.role)) {
+    return true;
+  }
+  return false;
 }
 
 function isPlatformAdminReq(req: AuthRequest): boolean {
@@ -111,7 +129,10 @@ router.get("/invite-preview/:token", async (req, res) => {
 
     return res.json({
       valid: true,
+      teamId: data.teamId || data.hospitalId || "",
+      teamName: data.teamName || data.hospitalName || "",
       hospitalName: data.hospitalName || "",
+      department: data.department || "Emergency Medicine",
       role: data.role || "resident",
       expiresAt: data.expiresAt
     });
@@ -124,7 +145,6 @@ router.get("/invite-preview/:token", async (req, res) => {
 // All subsequent routes require authentication
 router.use(requireAuth);
 
-// ── POST /create-invite ─────────────────────────────────────────────────────
 router.post("/create-invite", async (req: AuthRequest, res) => {
   try {
     const { invitedEmail, role, maxUses, expiresHours, hospitalId, hospitalName } = req.body || {};
@@ -133,156 +153,106 @@ router.post("/create-invite", async (req: AuthRequest, res) => {
 
     let callerHospitalId = "";
     let callerHospitalName = "";
+    let callerTeamName = "";
+    let callerDepartment = "Emergency Medicine";
 
     if (!isAdmin) {
       const callerSnap = await getDocWithRestFallback("team_members", uid, req.headers.authorization);
       if (!callerSnap.exists) {
-        return res.status(403).json({ error: "Only active verified HODs can create invites." });
+        return res.status(403).json({ error: "Only Team Admins can create invites." });
       }
       const caller = callerSnap.data!;
-      if (!isVerifiedHod(caller)) {
-        return res.status(403).json({ error: "Only active verified HODs can create invites." });
+      if (!isTeamAdmin(caller)) {
+        return res.status(403).json({ error: "Only Team Admins can create invites." });
       }
       callerHospitalId = caller.hospitalId;
       callerHospitalName = caller.hospitalName || caller.hospital || "";
+      callerTeamName = caller.teamName || callerHospitalName;
+      callerDepartment = caller.department || "Emergency Medicine";
     } else {
-  const requestedHospitalId =
-    String(hospitalId || "").trim();
+      const requestedHospitalId = String(hospitalId || "").trim();
+      const requestedHospitalName = String(hospitalName || "").trim();
 
-  const requestedHospitalName =
-    String(hospitalName || "").trim();
+      if (!requestedHospitalId || !requestedHospitalName) {
+        return res.status(400).json({
+          error: "Platform admin invites require both hospitalId and hospitalName."
+        });
+      }
 
-  if (!requestedHospitalId || !requestedHospitalName) {
-    return res.status(400).json({
-      error:
-        "Platform admin invites require both hospitalId and hospitalName."
-    });
-  }
-
-  callerHospitalId = requestedHospitalId;
-  callerHospitalName = requestedHospitalName;
-}
-    
+      callerHospitalId = requestedHospitalId;
+      callerHospitalName = requestedHospitalName;
+      callerTeamName = requestedHospitalName;
+    }
 
     let targetRole = "resident";
+    if (role) {
+      const normRole = String(role).trim().toLowerCase();
+      if (!INVITE_ALLOWED_ROLES.has(normRole)) {
+        return res.status(400).json({
+          error: `Role "${role}" is not permitted for invitation.`
+        });
+      }
+      targetRole = normRole;
+    }
 
-if (role) {
-  const normRole =
-    String(role).trim().toLowerCase();
-
-  if (!INVITE_ALLOWED_ROLES.has(normRole)) {
-    return res.status(400).json({
-      error:
-        `Role "${role}" is not permitted for invitation.`
-    });
-  }
-
-  if (
-    isExactHospitalAdminRole(normRole) &&
-    !isAdmin
-  ) {
-    return res.status(403).json({
-      error:
-        "Only the platform administrator can create an invitation for an HOD or leadership role."
-    });
-  }
-
-  targetRole = normRole;
-}
-   const token = `inv_${randomBytes(24).toString("hex")}`;
-    const hours = typeof expiresHours === "number" && expiresHours > 0 ? expiresHours : 48;
+    const token = `inv_${randomBytes(16).toString("hex")}`;
+    // Default expiry: 7 days (168 hours)
+    const hours = typeof expiresHours === "number" && expiresHours > 0 ? expiresHours : 168;
     const expiresAt = new Date(Date.now() + hours * 3600000).toISOString();
-    const uses = typeof maxUses === "number" && maxUses > 0 ? maxUses : 1;
+    const uses = typeof maxUses === "number" && maxUses > 0 ? maxUses : null;
 
-    const inviteDoc = {
+    const inviteDoc: any = {
       id: token,
       token,
+      teamId: callerHospitalId,
       hospitalId: callerHospitalId,
       hospitalName: callerHospitalName,
+      teamName: callerTeamName,
+      department: callerDepartment,
       role: targetRole,
       invitedEmail: invitedEmail ? String(invitedEmail).trim().toLowerCase() : null,
       maxUses: uses,
       usedCount: 0,
       revoked: false,
+      isReusable: true,
       expiresAt,
       createdAt: nowIso(),
       createdByUid: uid,
       createdByPlatformAdmin: isAdmin
     };
 
-    /*
- * Create the invitation and its security audit event
- * atomically.
- *
- * IMPORTANT:
- * - Never write the invitation token into the audit log.
- * - Audit identity comes from the verified Firebase
- *   request, never from client-supplied UID/email.
- */
     try {
       const inviteRef = db.collection("teamInvites").doc(token);
       const auditRef = db.collection("teamAuditLog").doc();
+      const teamRef = db.collection("teams").doc(callerHospitalId);
+
       const batch = db.batch();
       batch.set(inviteRef, inviteDoc);
+      batch.set(teamRef, {
+        activeInviteToken: token,
+        activeInviteExpiresAt: expiresAt,
+        updatedAt: nowIso()
+      }, { merge: true });
+
+      // Security requirement: Never place raw invitation tokens in audit logs!
       batch.set(auditRef, {
         id: auditRef.id,
         eventType: "TEAM_INVITE_CREATED",
         actorUid: uid,
         actorEmail: (req.user?.email || "").trim().toLowerCase(),
-        actorType: isAdmin ? "platform_admin" : "hospital_hod",
+        actorType: isAdmin ? "platform_admin" : "team_admin",
         hospitalId: callerHospitalId,
         hospitalName: callerHospitalName,
         targetEmail: invitedEmail ? String(invitedEmail).trim().toLowerCase() : null,
         targetRole: targetRole,
-        maxUses: uses,
         expiresAt: expiresAt,
         createdAt: nowIso()
       });
       await batch.commit();
     } catch (batchError: any) {
-      console.warn("Firestore Admin batch commit failed (likely missing IAM service account in Cloud Run sandbox):", batchError.message);
-      // Fallback: persist via Firestore REST API with the caller's verified ID token
-      const authHeader = req.headers.authorization;
-      if (authHeader) {
-        try {
-          const restUrl = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/${FIRESTORE_DATABASE_ID}/documents/teamInvites?documentId=${encodeURIComponent(token)}`;
-          const fields: Record<string, any> = {
-            id: { stringValue: token },
-            token: { stringValue: token },
-            hospitalId: { stringValue: callerHospitalId },
-            hospitalName: { stringValue: callerHospitalName },
-            role: { stringValue: targetRole },
-            maxUses: { integerValue: uses },
-            usedCount: { integerValue: 0 },
-            revoked: { booleanValue: false },
-            expiresAt: { stringValue: expiresAt },
-            createdAt: { stringValue: nowIso() },
-            createdByUid: { stringValue: uid },
-            createdByPlatformAdmin: { booleanValue: isAdmin }
-          };
-          if (invitedEmail) {
-            fields.invitedEmail = { stringValue: String(invitedEmail).trim().toLowerCase() };
-          }
-          const restRes = await fetch(restUrl, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: authHeader
-            },
-            body: JSON.stringify({ fields })
-          });
-          if (!restRes.ok) {
-            const errJson = await restRes.json().catch(() => ({}));
-            console.warn("Firestore REST fallback write failed:", errJson);
-            throw new Error(errJson.error?.message || "Failed to persist invite via REST");
-          }
-        } catch (restErr: any) {
-          console.warn("REST fallback error:", restErr.message);
-          throw batchError;
-        }
-      } else {
-        throw batchError;
-      }
+      console.warn("Batch commit fallback:", batchError.message);
+      // Fallback: write doc directly
+      await db.collection("teamInvites").doc(token).set(inviteDoc);
     }
 
     return res.json({
@@ -290,11 +260,198 @@ if (role) {
       token,
       expiresAt,
       role: targetRole,
-      hospitalName: callerHospitalName
+      hospitalName: callerHospitalName,
+      teamName: callerTeamName
     });
   } catch (error: any) {
     console.error("Error creating invite:", error);
     return res.status(400).json({ error: error.message || "Failed to create invite." });
+  }
+});
+
+// ── POST /revoke-invite ─────────────────────────────────────────────────────
+router.post("/revoke-invite", async (req: AuthRequest, res) => {
+  try {
+    const { token } = req.body || {};
+    const uid = req.user!.uid;
+    const isAdmin = isPlatformAdminReq(req);
+
+    if (!token) {
+      return res.status(400).json({ error: "Token is required." });
+    }
+
+    const inviteRef = db.collection("teamInvites").doc(String(token).trim());
+    const inviteSnap = await inviteRef.get();
+    if (!inviteSnap.exists) {
+      return res.status(404).json({ error: "Invitation not found." });
+    }
+
+    const invite = inviteSnap.data()!;
+    if (!isAdmin) {
+      const callerSnap = await getDocWithRestFallback("team_members", uid, req.headers.authorization);
+      if (!callerSnap.exists) {
+        return res.status(403).json({ error: "Only Team Admins can revoke invites." });
+      }
+      const caller = callerSnap.data!;
+      const callerTeamId = caller.teamId || caller.hospitalId;
+      if (!isTeamAdmin(caller) || callerTeamId !== invite.hospitalId) {
+        return res.status(403).json({ error: "You are not authorized to revoke invites for this team." });
+      }
+    }
+
+    await inviteRef.update({
+      revoked: true,
+      revokedAt: nowIso(),
+      revokedByUid: uid
+    });
+
+    if (invite.hospitalId) {
+      const teamRef = db.collection("teams").doc(invite.hospitalId);
+      await teamRef.set({
+        activeInviteToken: null,
+        activeInviteExpiresAt: null,
+        updatedAt: nowIso()
+      }, { merge: true }).catch(() => {});
+    }
+
+    const auditRef = db.collection("teamAuditLog").doc();
+    await auditRef.set({
+      id: auditRef.id,
+      eventType: "TEAM_INVITE_REVOKED",
+      actorUid: uid,
+      actorEmail: (req.user?.email || "").trim().toLowerCase(),
+      hospitalId: invite.hospitalId,
+      createdAt: nowIso()
+    }).catch(() => {});
+
+    return res.json({ success: true, message: "Invitation link revoked successfully." });
+  } catch (error: any) {
+    console.error("Error revoking invite:", error);
+    return res.status(400).json({ error: error.message || "Failed to revoke invitation." });
+  }
+});
+
+// ── POST /regenerate-invite ─────────────────────────────────────────────────
+router.post("/regenerate-invite", async (req: AuthRequest, res) => {
+  try {
+    const uid = req.user!.uid;
+    const isAdmin = isPlatformAdminReq(req);
+    const { hospitalId, role, expiresHours } = req.body || {};
+
+    let callerHospitalId = "";
+    let callerHospitalName = "";
+    let callerTeamName = "";
+    let callerDepartment = "Emergency Medicine";
+
+    if (!isAdmin) {
+      const callerSnap = await getDocWithRestFallback("team_members", uid, req.headers.authorization);
+      if (!callerSnap.exists) {
+        return res.status(403).json({ error: "Only Team Admins can regenerate invites." });
+      }
+      const caller = callerSnap.data!;
+      if (!isTeamAdmin(caller)) {
+        return res.status(403).json({ error: "Only Team Admins can regenerate invites." });
+      }
+      callerHospitalId = caller.teamId || caller.hospitalId;
+      callerHospitalName = caller.hospitalName || caller.hospital || "";
+      callerTeamName = caller.teamName || callerHospitalName;
+      callerDepartment = caller.department || "Emergency Medicine";
+    } else {
+      callerHospitalId = String(hospitalId || "").trim();
+      if (!callerHospitalId) {
+        return res.status(400).json({ error: "hospitalId is required." });
+      }
+      const teamSnap = await db.collection("teams").doc(callerHospitalId).get();
+      if (teamSnap.exists) {
+        const tData = teamSnap.data()!;
+        callerHospitalName = tData.hospitalName || callerHospitalId;
+        callerTeamName = tData.teamName || callerHospitalName;
+        callerDepartment = tData.department || "Emergency Medicine";
+      } else {
+        callerHospitalName = callerHospitalId;
+        callerTeamName = callerHospitalId;
+      }
+    }
+
+    if (!callerHospitalId) {
+      return res.status(400).json({ error: "Could not resolve team ID for invitation regeneration." });
+    }
+
+    // 1. Revoke existing active invite for this team
+    const teamRef = db.collection("teams").doc(callerHospitalId);
+    const teamSnap = await teamRef.get();
+    if (teamSnap.exists) {
+      const oldToken = teamSnap.data()?.activeInviteToken;
+      if (oldToken) {
+        await db.collection("teamInvites").doc(oldToken).update({
+          revoked: true,
+          revokedAt: nowIso(),
+          revokedByUid: uid
+        }).catch(() => {});
+      }
+    }
+
+    // 2. Generate new secure 7-day token
+    const token = `inv_${randomBytes(16).toString("hex")}`;
+    const hours = typeof expiresHours === "number" && expiresHours > 0 ? expiresHours : 168;
+    const expiresAt = new Date(Date.now() + hours * 3600000).toISOString();
+    const now = nowIso();
+
+    const inviteDoc: any = {
+      id: token,
+      token,
+      teamId: callerHospitalId,
+      hospitalId: callerHospitalId,
+      hospitalName: callerHospitalName,
+      teamName: callerTeamName,
+      department: callerDepartment,
+      role: role || "resident",
+      maxUses: null,
+      usedCount: 0,
+      revoked: false,
+      isReusable: true,
+      expiresAt,
+      createdAt: now,
+      createdByUid: uid,
+      createdByPlatformAdmin: isAdmin
+    };
+
+    const inviteRef = db.collection("teamInvites").doc(token);
+    const auditRef = db.collection("teamAuditLog").doc();
+
+    const batch = db.batch();
+    batch.set(inviteRef, inviteDoc);
+    batch.set(teamRef, {
+      activeInviteToken: token,
+      activeInviteExpiresAt: expiresAt,
+      updatedAt: now
+    }, { merge: true });
+
+    // Security: Never place raw token in audit log
+    batch.set(auditRef, {
+      id: auditRef.id,
+      eventType: "TEAM_INVITE_REGENERATED",
+      actorUid: uid,
+      actorEmail: (req.user?.email || "").trim().toLowerCase(),
+      actorType: isAdmin ? "platform_admin" : "team_admin",
+      hospitalId: callerHospitalId,
+      expiresAt,
+      createdAt: now
+    });
+
+    await batch.commit();
+
+    return res.json({
+      success: true,
+      token,
+      expiresAt,
+      hospitalName: callerHospitalName,
+      teamName: callerTeamName,
+      message: "New invitation link generated successfully."
+    });
+  } catch (error: any) {
+    console.error("Error regenerating invite:", error);
+    return res.status(400).json({ error: error.message || "Failed to regenerate invitation." });
   }
 });
 
@@ -378,17 +535,16 @@ router.post("/accept-invite", async (req: AuthRequest, res) => {
         return res.status(400).json({ error: "Invite creator membership not found." });
       }
       const creator = creatorSnap.data()!;
-      if (creator.status !== "active") {
+      const creatorStatus = String(creator.status || "").trim().toLowerCase();
+      if (creatorStatus !== "active" && creatorStatus !== "active (joined)") {
         return res.status(400).json({ error: "Invite creator is not active." });
       }
-      if (creator.membershipVerified !== true) {
-        return res.status(400).json({ error: "Invite creator membership is not verified." });
+      if (!isTeamAdmin(creator)) {
+        return res.status(400).json({ error: "Invite creator does not have Team Admin role." });
       }
-      if (!isExactHospitalAdminRole(creator.role)) {
-        return res.status(400).json({ error: "Invite creator does not have verified HOD role." });
-      }
-      if (!creator.hospitalId || creator.hospitalId !== invite.hospitalId) {
-        return res.status(400).json({ error: "Invite creator does not belong to the invited hospital." });
+      const creatorTeamId = creator.teamId || creator.hospitalId;
+      if (!creatorTeamId || creatorTeamId !== invite.hospitalId) {
+        return res.status(400).json({ error: "Invite creator does not belong to the invited team." });
       }
     }
 
@@ -401,81 +557,38 @@ router.post("/accept-invite", async (req: AuthRequest, res) => {
       if (typeof currentInv.maxUses === "number" && (currentInv.usedCount || 0) >= currentInv.maxUses) {
         throw new Error("Invite usage limit reached.");
       }
-      /*
- * Re-check email restriction using the invitation
- * snapshot read inside this transaction.
- *
- * This prevents the pre-transaction validation
- * from being the only identity check.
- */
-if (currentInv.invitedEmail) {
-  const currentTargetEmail =
-    String(currentInv.invitedEmail)
-      .trim()
-      .toLowerCase();
 
-  if (req.user!.email_verified !== true) {
-    throw new Error(
-      "Please verify your email address before accepting this department invitation."
-    );
-  }
+      if (currentInv.invitedEmail) {
+        const currentTargetEmail = String(currentInv.invitedEmail).trim().toLowerCase();
+        if (req.user!.email_verified !== true) {
+          throw new Error("Please verify your email address before accepting this department invitation.");
+        }
+        if (currentTargetEmail !== userEmail) {
+          throw new Error("This invite is restricted to a different email address.");
+        }
+      }
 
-  if (currentTargetEmail !== userEmail) {
-    throw new Error(
-      "This invite is restricted to a different email address."
-    );
-  }
-}
-// Validate the role from the invite snapshot
-// read inside this transaction.
-const normalizedInviteRole =
-  String(currentInv.role || "resident")
-    .trim()
-    .toLowerCase();
+      const normalizedInviteRole = String(currentInv.role || "resident").trim().toLowerCase();
 
-if (
-  !INVITE_ALLOWED_ROLES.has(
-    normalizedInviteRole
-  )
-) {
-  throw new Error(
-    "Invitation contains an invalid clinical role."
-  );
-}
-if (
-  isExactHospitalAdminRole(normalizedInviteRole) &&
-  currentInv.createdByPlatformAdmin !== true
-) {
-  throw new Error(
-    "HOD or leadership invitations may only be issued by the platform administrator."
-  );
-}
       const memberRef = db.collection("team_members").doc(uid);
-      const userRef = db.collection("users").doc(uid);
       const existingMemberSnap = await tx.get(memberRef);
 
-if (existingMemberSnap.exists) {
-  const existingMember = existingMemberSnap.data()!;
+      if (existingMemberSnap.exists) {
+        const existingMember = existingMemberSnap.data()!;
+        if (existingMember.status === "active" && existingMember.membershipVerified === true) {
+          throw new Error("You already have an active hospital membership. Leave your current team before requesting to join another team.");
+        }
+        if (existingMember.status === "pending_approval") {
+          return;
+        }
 
-  if (
-    existingMember.status === "active" &&
-    existingMember.membershipVerified === true
-  ) {
-    throw new Error(
-      "You already have an active hospital membership. Leave your current team before accepting another invitation."
-    );
-  }
-
-  const historyRef =
-    memberRef.collection("history").doc();
-
-  tx.set(historyRef, {
-    ...existingMember,
-    archivedAt: nowIso(),
-    archivedReason: "replaced_by_invite"
-  });
-}
-
+        const historyRef = memberRef.collection("history").doc();
+        tx.set(historyRef, {
+          ...existingMember,
+          archivedAt: nowIso(),
+          archivedReason: "replaced_by_invite"
+        });
+      }
 
       tx.update(inviteRef, {
         usedCount: (currentInv.usedCount || 0) + 1,
@@ -483,161 +596,152 @@ if (existingMemberSnap.exists) {
         updatedAt: nowIso()
       });
 
+      // Opening/accepting link sets status to pending_approval. Admin approval required!
       tx.set(memberRef, {
         id: uid,
         uid: uid,
         email: userEmail,
         name: req.user!.name || userEmail.split("@")[0],
-   hospitalId: currentInv.hospitalId,
-hospitalName: currentInv.hospitalName || "",
-hospital: currentInv.hospitalName || "",
-role: normalizedInviteRole,
-        status: "active",
-        membershipVerified: true,
-        joinedAt: nowIso(),
+        teamId: currentInv.teamId || currentInv.hospitalId,
+        hospitalId: currentInv.hospitalId,
+        hospitalName: currentInv.hospitalName || "",
+        hospital: currentInv.hospitalName || "",
+        teamName: currentInv.teamName || currentInv.hospitalName || "",
+        department: currentInv.department || "Emergency Medicine",
+        role: normalizedInviteRole,
+        isTeamAdmin: false,
+        teamRole: "member",
+        status: "pending_approval",
+        requestProvenance: "authenticated_join_request",
+        membershipVerified: false,
+        requestedAt: nowIso(),
         updatedAt: nowIso(),
         inviteToken: token,
         invitedByUid: currentInv.createdByUid || null
       });
 
-      tx.set(
-        userRef,
-        {
-          hospital: currentInv.hospitalName || "",
-          hospitalId: currentInv.hospitalId,
-          subscriptionTier: "Hospital Team Premium (Department Covered)"
-        },
-        { merge: true }
-      );
-
-      /*
-       * Security audit:
-       * Record successful invitation acceptance in the
-       * SAME transaction as membership activation.
-       *
-       * Do not store the invitation token in the audit log.
-       */
+      // Never elevate subscription automatically upon accepting invitation
       const acceptanceAuditRef = db.collection("teamAuditLog").doc();
-
-      tx.set(
-        acceptanceAuditRef,
-        {
-          id: acceptanceAuditRef.id,
-          eventType: "TEAM_INVITE_ACCEPTED",
-          actorUid: uid,
-          actorEmail: userEmail,
-          actorType: "invited_user",
-          hospitalId: currentInv.hospitalId,
-          hospitalName: currentInv.hospitalName || "",
-          targetUid: uid,
-          targetEmail: userEmail,
-          targetRole: normalizedInviteRole,
-          invitedByUid: currentInv.createdByUid || null,
-          inviteCreatedByPlatformAdmin: currentInv.createdByPlatformAdmin === true,
-          membershipVerified: true,
-          previousMembershipArchived: existingMemberSnap.exists,
-          createdAt: nowIso()
-        }
-      );
+      tx.set(acceptanceAuditRef, {
+        id: acceptanceAuditRef.id,
+        eventType: "TEAM_JOIN_REQUESTED",
+        actorUid: uid,
+        actorEmail: userEmail,
+        actorType: "applicant",
+        hospitalId: currentInv.hospitalId,
+        hospitalName: currentInv.hospitalName || "",
+        targetUid: uid,
+        targetEmail: userEmail,
+        targetRole: normalizedInviteRole,
+        invitedByUid: currentInv.createdByUid || null,
+        membershipVerified: false,
+        createdAt: nowIso()
+      });
     });
 
     return res.json({
       success: true,
-      
+      message: "Join request submitted. Waiting for Admin approval.",
+      status: "pending_approval"
     });
   } catch (error: any) {
     console.error("Error accepting invite:", error);
-    return res.status(400).json({ error: error.message || "Failed to accept invite." });
+    return res.status(400).json({ error: error.message || "Failed to submit join request." });
   }
 });
 
 // ── POST /request-join ───────────────────────────────────────────────────────
 router.post("/request-join", async (req: AuthRequest, res) => {
   try {
-    const { hospitalId, hospitalName, role } = req.body || {};
+    const { hospitalId, hospitalName, role, token } = req.body || {};
     const uid = req.user!.uid;
     const email = (req.user!.email || "").trim().toLowerCase();
-    const requestedHospitalId = String(hospitalId || "").trim();
-    const requestedHospitalName = String(hospitalName || "").trim();
-if (!requestedHospitalId) {
-  return res.status(400).json({
-    error: "Hospital ID is required."
-  });
-}
+
+    let requestedHospitalId = String(hospitalId || "").trim();
+    let requestedHospitalName = String(hospitalName || "").trim();
+    let requestedTeamName = requestedHospitalName;
+    let requestedDepartment = "Emergency Medicine";
+
+    if (token) {
+      const cleanToken = String(token).trim();
+      const inviteSnap = await db.collection("teamInvites").doc(cleanToken).get();
+      if (!inviteSnap.exists) {
+        return res.status(400).json({ error: "Invalid or expired invitation token." });
+      }
+      const invite = inviteSnap.data()!;
+      if (invite.revoked) return res.status(400).json({ error: "Invitation was revoked." });
+      if (invite.expiresAt && new Date(invite.expiresAt) <= new Date()) {
+        return res.status(400).json({ error: "Invitation has expired." });
+      }
+      requestedHospitalId = invite.hospitalId;
+      requestedHospitalName = invite.hospitalName || "";
+      requestedTeamName = invite.teamName || invite.hospitalName || "";
+      requestedDepartment = invite.department || "Emergency Medicine";
+    }
+
+    if (!requestedHospitalId) {
+      return res.status(400).json({
+        error: "Hospital ID or invitation token is required."
+      });
+    }
 
     const memberRef = db.collection("team_members").doc(uid);
-   
 
     let safeRole = "resident";
     if (role) {
       const normRole = String(role).trim().toLowerCase();
-     if (
-  !isExactHospitalAdminRole(normRole) &&
-  INVITE_ALLOWED_ROLES.has(normRole)
-) {
-  safeRole = normRole;
-}
-    }
-await db.runTransaction(async (tx) => {
-  const currentSnap = await tx.get(memberRef);
-
-  if (currentSnap.exists) {
-    const current = currentSnap.data()!;
-
-    if (
-      current.status === "active" &&
-      current.membershipVerified === true
-    ) {
-      throw new Error(
-        "You already have an active verified hospital membership."
-      );
+      if (INVITE_ALLOWED_ROLES.has(normRole)) {
+        safeRole = normRole;
+      }
     }
 
-    if (current.status === "pending_approval") {
-      throw new Error(
-        "A join request is already pending approval."
-      );
-    }
+    await db.runTransaction(async (tx) => {
+      const currentSnap = await tx.get(memberRef);
 
-    /*
-     * Preserve the previous canonical membership/request
-     * before replacing it with a new join request.
-     *
-     * This keeps cancelled, rejected, inactive, or other
-     * non-current states available for audit/history.
-     */
-    const historyRef =
-      memberRef.collection("history").doc();
+      if (currentSnap.exists) {
+        const current = currentSnap.data()!;
 
-    tx.set(historyRef, {
-      ...current,
-      archivedAt: nowIso(),
-      archivedReason: "replaced_by_join_request"
-    });
-  }
+        if (
+          current.status === "active" &&
+          current.membershipVerified === true
+        ) {
+          throw new Error(
+            "You already have an active verified hospital membership. Leave your current team first."
+          );
+        }
 
-  tx.set(memberRef, {
-    id: uid,
-    uid: uid,
-    email,
-    name:
-      req.user!.name ||
-      email.split("@")[0],
+        if (current.status === "pending_approval") {
+          return;
+        }
 
-    hospitalId: requestedHospitalId,
-    hospitalName: requestedHospitalName,
-    hospital: requestedHospitalName,
+        const historyRef = memberRef.collection("history").doc();
+        tx.set(historyRef, {
+          ...current,
+          archivedAt: nowIso(),
+          archivedReason: "replaced_by_join_request"
+        });
+      }
 
-    role: safeRole,
-
-    status: "pending_approval",
-    requestProvenance:
-      "authenticated_join_request",
-    membershipVerified: false,
-
-    requestedAt: nowIso(),
-    updatedAt: nowIso()
-  });
+      tx.set(memberRef, {
+        id: uid,
+        uid: uid,
+        email,
+        name: req.user!.name || email.split("@")[0],
+        teamId: requestedHospitalId,
+        hospitalId: requestedHospitalId,
+        hospitalName: requestedHospitalName,
+        hospital: requestedHospitalName,
+        teamName: requestedTeamName,
+        department: requestedDepartment,
+        role: safeRole,
+        isTeamAdmin: false,
+        teamRole: "member",
+        status: "pending_approval",
+        requestProvenance: "authenticated_join_request",
+        membershipVerified: false,
+        requestedAt: nowIso(),
+        updatedAt: nowIso()
+      });
   /*
  * Security audit:
  * Record the authenticated clinician's department
@@ -829,6 +933,12 @@ router.post("/approve-member", async (req: AuthRequest, res) => {
     if (!memberId) {
       return res.status(400).json({
         error: "memberId is required."
+      });
+    }
+
+    if (callerUid === String(memberId)) {
+      return res.status(400).json({
+        error: "Applicants cannot approve their own request."
       });
     }
 
@@ -1027,30 +1137,32 @@ router.post("/approve-member", async (req: AuthRequest, res) => {
 
         if (!callerSnap.exists) {
           throw new Error(
-            "Only active verified HODs can approve members."
+            "Only Team Admins can approve members."
           );
         }
 
         const caller =
           callerSnap.data()!;
 
-        if (!isVerifiedHod(caller)) {
+        if (!isTeamAdmin(caller)) {
           throw new Error(
-            "Only active verified HODs can approve members."
+            "Only Team Admins can approve members."
           );
         }
 
+        const callerTeamId = caller.teamId || caller.hospitalId;
+        const targetTeamId = latestTarget.teamId || latestTarget.hospitalId;
         if (
-          !caller.hospitalId ||
-          caller.hospitalId !== latestTarget.hospitalId
+          !callerTeamId ||
+          callerTeamId !== targetTeamId
         ) {
           throw new Error(
-            "Target member is not in your hospital."
+            "Target member is not in your team."
           );
         }
 
         finalHospitalId =
-          caller.hospitalId;
+          callerTeamId;
 
         finalHospitalName =
           caller.hospitalName ||
@@ -1068,17 +1180,30 @@ router.post("/approve-member", async (req: AuthRequest, res) => {
             : [];
       }
 
+      const approvedRole = req.body.role ? String(req.body.role).trim() : (latestTarget.role || "Resident");
+      const isAppointedAdmin = req.body.isTeamAdmin === true || req.body.teamRole === "admin";
+
+      // Check if the team is institutionally verified
+      let isInstVerified = false;
+      const teamSnap = await tx.get(db.collection("teams").doc(finalHospitalId));
+      if (teamSnap.exists && teamSnap.data()?.verificationStatus === "verified") {
+        isInstVerified = true;
+      }
+
       const userRef =
         db.collection("users").doc(latestTarget.uid);
 
       tx.update(targetRef, {
         status: "active",
-        membershipVerified: true,
-
+        membershipVerified: isInstVerified,
+        verificationStatus: isInstVerified ? "verified" : "unverified",
+        role: approvedRole,
+        isTeamAdmin: isAppointedAdmin,
+        teamRole: isAppointedAdmin ? "admin" : "member",
+        teamId: finalHospitalId,
         hospitalId: finalHospitalId,
         hospitalName: finalHospitalName,
         hospital: finalHospital,
-
         legacyHospitalNames:
           finalLegacyHospitalNames,
 
@@ -1092,8 +1217,12 @@ router.post("/approve-member", async (req: AuthRequest, res) => {
         {
           hospital: finalHospital,
           hospitalId: finalHospitalId,
-          subscriptionTier:
-            "Hospital Team Premium (Department Covered)"
+          hospitalName: finalHospitalName,
+          teamId: finalHospitalId,
+          role: approvedRole,
+          isTeamAdmin: isAppointedAdmin,
+          teamRole: isAppointedAdmin ? "admin" : "member",
+          updatedAt: nowIso()
         },
         { merge: true }
       );
@@ -1231,18 +1360,6 @@ router.post("/update-role", async (req: AuthRequest, res) => {
       });
     }
 
-    // HOD / leadership roles may only be assigned
-    // by the configured platform administrator.
-    if (
-      isExactHospitalAdminRole(normalizedRole) &&
-      !isAdmin
-    ) {
-      return res.status(403).json({
-        error:
-          "Only the platform administrator can assign an HOD or leadership role."
-      });
-    }
-
     const targetRef =
       db.collection("team_members").doc(String(memberId));
 
@@ -1271,11 +1388,11 @@ router.post("/update-role", async (req: AuthRequest, res) => {
       }
 
       if (
-        target.status !== "active" ||
-        target.membershipVerified !== true
+        target.status !== "active" &&
+        target.status !== "active (joined)"
       ) {
         throw new Error(
-          "Only active verified members can have their role changed."
+          "Only active members can have their role changed."
         );
       }
 
@@ -1289,24 +1406,26 @@ router.post("/update-role", async (req: AuthRequest, res) => {
 
         if (!callerSnap.exists) {
           throw new Error(
-            "Only active verified HODs can change roles."
+            "Only Team Admins can change roles."
           );
         }
 
         caller = callerSnap.data()!;
 
-        if (!isVerifiedHod(caller)) {
+        if (!isTeamAdmin(caller)) {
           throw new Error(
-            "Only active verified HODs can change roles."
+            "Only Team Admins can change roles."
           );
         }
 
+        const callerTeamId = caller.teamId || caller.hospitalId;
+        const targetTeamId = target.teamId || target.hospitalId;
         if (
-          !caller.hospitalId ||
-          caller.hospitalId !== target.hospitalId
+          !callerTeamId ||
+          callerTeamId !== targetTeamId
         ) {
           throw new Error(
-            "Target member is not in your hospital."
+            "Target member is not in your team."
           );
         }
       }
@@ -1314,48 +1433,51 @@ router.post("/update-role", async (req: AuthRequest, res) => {
       const previousRole =
         String(target.role || "").trim().toLowerCase();
 
-      if (previousRole === normalizedRole) {
-        throw new Error(
-          "Member already has this role."
-        );
-      }
-
-      // Never leave a hospital without an active verified HOD.
-      if (
-        isVerifiedHod(target) &&
-        !isExactHospitalAdminRole(normalizedRole)
-      ) {
-        const hodsSnap = await tx.get(
+      // If updating admin status, ensure hospital is never left without an admin
+      if (req.body.isTeamAdmin === false && isTeamAdmin(target)) {
+        const membersSnap = await tx.get(
           db
             .collection("team_members")
             .where("hospitalId", "==", target.hospitalId)
         );
 
-        const otherHods = hodsSnap.docs.filter(
+        const otherAdmins = membersSnap.docs.filter(
           (docSnap) =>
             docSnap.id !== targetRef.id &&
-            isVerifiedHod(docSnap.data())
+            isTeamAdmin(docSnap.data())
         );
 
-        if (otherHods.length === 0) {
+        if (otherAdmins.length === 0) {
           throw new Error(
-            "Cannot change the role of the only active verified HOD. Assign another HOD first."
+            "Cannot remove the only Team Admin. Appoint another Team Admin first."
           );
         }
       }
 
-      tx.update(targetRef, {
-        role: normalizedRole,
+      const updates: any = {
         updatedAt: nowIso()
-      });
+      };
 
-      tx.set(
-        userRef,
-        {
-          role: normalizedRole
-        },
-        { merge: true }
-      );
+      if (normalizedRole) {
+        updates.role = normalizedRole;
+      }
+
+      if (req.body.isTeamAdmin !== undefined) {
+        updates.isTeamAdmin = Boolean(req.body.isTeamAdmin);
+        updates.teamRole = req.body.isTeamAdmin ? "admin" : "member";
+      }
+
+      tx.update(targetRef, updates);
+
+      if (normalizedRole) {
+        tx.set(
+          userRef,
+          {
+            role: normalizedRole
+          },
+          { merge: true }
+        );
+      }
 
       tx.set(logRef, {
         targetUid: String(memberId),
@@ -1501,14 +1623,16 @@ if (
     if (!isAdmin) {
       const callerSnap = await db.collection("team_members").doc(callerUid).get();
       if (!callerSnap.exists) {
-        return res.status(403).json({ error: "Only active verified HODs can decline members." });
+        return res.status(403).json({ error: "Only Team Admins can decline members." });
       }
       const caller = callerSnap.data()!;
-      if (!isVerifiedHod(caller)) {
-        return res.status(403).json({ error: "Only active verified HODs can decline members." });
+      if (!isTeamAdmin(caller)) {
+        return res.status(403).json({ error: "Only Team Admins can decline members." });
       }
-      if (caller.hospitalId !== target.hospitalId) {
-        return res.status(403).json({ error: "Target member is not in your hospital." });
+      const callerTeamId = caller.teamId || caller.hospitalId;
+      const targetTeamId = target.teamId || target.hospitalId;
+      if (!callerTeamId || callerTeamId !== targetTeamId) {
+        return res.status(403).json({ error: "Target member is not in your team." });
       }
     }
 
@@ -1677,18 +1801,15 @@ router.post("/remove-member", async (req: AuthRequest, res) => {
       }
 
       /*
-       * /remove-member is for an existing active,
-       * verified team member.
-       *
-       * Pending join requests must use
-       * /decline-member instead.
+       * /remove-member is for an existing active team member.
+       * Pending join requests must use /decline-member instead.
        */
       if (
-        target.status !== "active" ||
-        target.membershipVerified !== true
+        target.status !== "active" &&
+        target.status !== "active (joined)"
       ) {
         throw new Error(
-          "Only active verified members can be removed."
+          "Only active members can be removed."
         );
       }
 
@@ -1701,55 +1822,58 @@ router.post("/remove-member", async (req: AuthRequest, res) => {
 
         if (!callerSnap.exists) {
           throw new Error(
-            "Only active verified HODs can remove members."
+            "Only Team Admins can remove members."
           );
         }
 
         const caller =
           callerSnap.data()!;
 
-        if (!isVerifiedHod(caller)) {
+        if (!isTeamAdmin(caller)) {
           throw new Error(
-            "Only active verified HODs can remove members."
+            "Only Team Admins can remove members."
           );
         }
 
+        const callerTeamId = caller.teamId || caller.hospitalId;
+        const targetTeamId = target.teamId || target.hospitalId;
         if (
-          !caller.hospitalId ||
-          caller.hospitalId !== target.hospitalId
+          !callerTeamId ||
+          callerTeamId !== targetTeamId
         ) {
           throw new Error(
-            "Target member is not in your hospital."
+            "Target member is not in your team."
           );
         }
       }
 
       /*
-       * Never leave a hospital without
-       * an active verified HOD.
+       * Never leave a team without an active Team Admin.
        */
-      if (isVerifiedHod(target)) {
-        const hodsSnap =
+      if (isTeamAdmin(target)) {
+        const targetTeamId = target.teamId || target.hospitalId;
+        const adminsSnap =
           await tx.get(
             db
               .collection("team_members")
               .where(
                 "hospitalId",
                 "==",
-                target.hospitalId
+                targetTeamId
               )
           );
 
-        const otherHods =
-          hodsSnap.docs.filter(
+        const otherAdmins =
+          adminsSnap.docs.filter(
             (docSnap) =>
               docSnap.id !== targetUid &&
-              isVerifiedHod(docSnap.data())
+              docSnap.data().status === "active" &&
+              isTeamAdmin(docSnap.data())
           );
 
-        if (otherHods.length === 0) {
+        if (otherAdmins.length === 0) {
           throw new Error(
-            "Cannot remove the only active verified HOD of this hospital. Assign another HOD first."
+            "Cannot remove the only Team Admin of this team. Appoint another Team Admin first."
           );
         }
       }
@@ -1891,25 +2015,18 @@ const memSnap = await tx.get(memRef);
 
       if (!memSnap.exists) throw new Error("No active membership to leave.");
       const me = memSnap.data()!;
-if (
-  me.status !== "active" ||
-  me.membershipVerified !== true
-) {
-  throw new Error(
-    "No active verified membership to leave."
-  );
-}
-      if (isExactHospitalAdminRole(me.role)) {
-       if (!isVerifiedHod(me)) {
-          throw new Error("Only an active verified HOD can leave a leadership role.");
-        }
-
-        const hodsSnap = await tx.get(
-          db.collection("team_members").where("hospitalId", "==", me.hospitalId)
+      if (me.status !== "active" && me.status !== "active (joined)") {
+        throw new Error("No active membership to leave.");
+      }
+      if (isTeamAdmin(me)) {
+        const teamId = me.teamId || me.hospitalId;
+        const membersSnap = await tx.get(
+          db.collection("team_members").where("hospitalId", "==", teamId)
         );
-        const otherHods = hodsSnap.docs.filter((d) => d.id !== uid && isVerifiedHod(d.data()));
-        if (otherHods.length === 0) {
-          throw new Error("Cannot leave department: You are the sole active verified HOD for this hospital. Please assign another HOD first.");
+        const activeMembers = membersSnap.docs.filter((d) => d.data().status === "active");
+        const otherAdmins = activeMembers.filter((d) => d.id !== uid && isTeamAdmin(d.data()));
+        if (activeMembers.length > 1 && otherAdmins.length === 0) {
+          throw new Error("Cannot leave team: You are the sole active Team Admin. Please appoint another Team Admin first.");
         }
       }
 
@@ -2136,119 +2253,496 @@ router.post("/approve-hod-claim", async (req: AuthRequest, res) => {
   }
 });
 
-// ── POST /create-team (Create Hospital Workspace) ───────────────────────────
-// OPTION 1: Transition from Individual -> Team workspace.
-// Establishes canonical team_members/{uid} with verified trusted status.
+// ── GET /my-team ────────────────────────────────────────────────────────────
+router.get("/my-team", async (req: AuthRequest, res) => {
+  try {
+    const uid = req.user!.uid;
+    const memberSnap = await getDocWithRestFallback("team_members", uid, req.headers.authorization);
+
+    if (!memberSnap.exists) {
+      return res.json({ hasTeam: false });
+    }
+
+    const member = memberSnap.data!;
+    const status = String(member.status || "").trim().toLowerCase();
+
+    if (status === "pending_approval") {
+      return res.json({
+        hasTeam: false,
+        pendingRequest: {
+          teamId: member.teamId || member.hospitalId,
+          hospitalName: member.hospitalName || member.hospital,
+          teamName: member.teamName || member.hospitalName || member.hospital,
+          department: member.department || "Emergency Medicine",
+          status: "pending_approval",
+          requestedAt: member.requestedAt || member.createdAt
+        }
+      });
+    }
+
+    if (status !== "active" && status !== "active (joined)") {
+      return res.json({ hasTeam: false });
+    }
+
+    const teamId = member.teamId || member.hospitalId || member.hospital;
+    if (!teamId) {
+      return res.json({ hasTeam: false });
+    }
+
+    // Load team document
+    let teamData: any = null;
+    const teamSnap = await getDocWithRestFallback("teams", teamId, req.headers.authorization);
+    if (teamSnap.exists) {
+      teamData = teamSnap.data!;
+    } else {
+      teamData = {
+        id: teamId,
+        teamName: member.teamName || member.hospitalName || member.hospital || "Emergency Team",
+        hospitalName: member.hospitalName || member.hospital || "Hospital",
+        department: member.department || "Emergency Medicine",
+        erPhysicalBedCapacity: 30,
+        verificationStatus: member.membershipVerified ? "verified" : "unverified",
+        isInstitutionallyVerified: member.membershipVerified || false
+      };
+    }
+
+    const callerIsAdmin = isTeamAdmin(member) || isPlatformAdminReq(req);
+
+    // Fetch team members
+    const membersSnap = await db.collection("team_members")
+      .where("hospitalId", "==", teamId)
+      .get()
+      .catch(async () => {
+        return db.collection("team_members").where("hospital", "==", member.hospital || teamId).get();
+      });
+
+    const members: any[] = [];
+    const pendingRequests: any[] = [];
+
+    membersSnap.docs.forEach((docSnap) => {
+      const data = docSnap.data();
+      const mStatus = String(data.status || "").trim().toLowerCase();
+      const item = {
+        id: docSnap.id,
+        uid: data.uid || docSnap.id,
+        name: data.name || (data.email ? data.email.split("@")[0] : "Clinician"),
+        email: data.email || "",
+        role: data.role || "Resident",
+        status: data.status || "active",
+        isTeamAdmin: isTeamAdmin(data),
+        teamRole: isTeamAdmin(data) ? "admin" : "member",
+        verificationStatus: data.verificationStatus || (data.membershipVerified ? "verified" : "unverified"),
+        shift: data.shift || "Active",
+        joinedAt: data.joinedAt || data.createdAt
+      };
+
+      if (mStatus === "active" || mStatus === "active (joined)") {
+        members.push(item);
+      } else if (mStatus === "pending_approval" && callerIsAdmin) {
+        pendingRequests.push(item);
+      }
+    });
+
+    return res.json({
+      hasTeam: true,
+      team: {
+        id: teamId,
+        teamName: teamData.teamName || member.teamName || member.hospitalName || teamId,
+        hospitalName: teamData.hospitalName || member.hospitalName || member.hospital || teamId,
+        department: teamData.department || member.department || "Emergency Medicine",
+        erPhysicalBedCapacity: teamData.erPhysicalBedCapacity || 30,
+        verificationStatus: teamData.verificationStatus || (member.membershipVerified ? "verified" : "unverified"),
+        isInstitutionallyVerified: teamData.isInstitutionallyVerified || member.membershipVerified || false,
+        activeInviteToken: callerIsAdmin ? (teamData.activeInviteToken || null) : null,
+        activeInviteExpiresAt: callerIsAdmin ? (teamData.activeInviteExpiresAt || null) : null
+      },
+      members,
+      pendingRequests: callerIsAdmin ? pendingRequests : [],
+      isTeamAdmin: callerIsAdmin,
+      myRole: member.role || "Resident",
+      verificationStatus: teamData.verificationStatus || (member.membershipVerified ? "verified" : "unverified")
+    });
+  } catch (error: any) {
+    console.error("Error loading my team:", error);
+    return res.status(500).json({ error: error.message || "Failed to load team data." });
+  }
+});
+
+// ── POST /update-team ───────────────────────────────────────────────────────
+router.post("/update-team", async (req: AuthRequest, res) => {
+  try {
+    const uid = req.user!.uid;
+    const isAdmin = isPlatformAdminReq(req);
+    const { teamId, teamName, hospitalName, department, erPhysicalBedCapacity } = req.body || {};
+
+    if (!teamId) {
+      return res.status(400).json({ error: "teamId is required." });
+    }
+
+    if (!isAdmin) {
+      const callerSnap = await getDocWithRestFallback("team_members", uid, req.headers.authorization);
+      if (!callerSnap.exists) {
+        return res.status(403).json({ error: "Only Team Admins can update team settings." });
+      }
+      const caller = callerSnap.data!;
+      if (!isTeamAdmin(caller)) {
+        return res.status(403).json({ error: "Only Team Admins can update team settings." });
+      }
+      const callerTeamId = caller.teamId || caller.hospitalId;
+      if (callerTeamId !== teamId) {
+        return res.status(403).json({ error: "You are not an admin of this team." });
+      }
+    }
+
+    const updates: any = { updatedAt: nowIso() };
+    if (teamName && String(teamName).trim().length >= 2) {
+      updates.teamName = String(teamName).trim();
+    }
+    if (hospitalName && String(hospitalName).trim().length >= 2) {
+      updates.hospitalName = String(hospitalName).trim();
+    }
+    if (department && String(department).trim().length >= 2) {
+      updates.department = String(department).trim();
+    }
+    const parsedCap = typeof erPhysicalBedCapacity === "number" && erPhysicalBedCapacity > 0 && erPhysicalBedCapacity <= 1000
+      ? erPhysicalBedCapacity
+      : parseInt(erPhysicalBedCapacity, 10);
+    if (Number.isInteger(parsedCap) && parsedCap > 0 && parsedCap <= 1000) {
+      updates.erPhysicalBedCapacity = parsedCap;
+    }
+
+    const teamRef = db.collection("teams").doc(teamId);
+    await teamRef.set(updates, { merge: true });
+
+    if (updates.erPhysicalBedCapacity || updates.teamName || updates.hospitalName) {
+      const shiftRef = db.collection("hospital_shifts").doc(teamId);
+      const shiftUpdates: any = { updatedAt: nowIso() };
+      if (updates.erPhysicalBedCapacity) shiftUpdates.erPhysicalBedCapacity = updates.erPhysicalBedCapacity;
+      if (updates.teamName) shiftUpdates.teamName = updates.teamName;
+      if (updates.hospitalName) shiftUpdates.hospital = updates.hospitalName;
+      await shiftRef.set(shiftUpdates, { merge: true }).catch(() => {});
+    }
+
+    const auditRef = db.collection("teamAuditLog").doc();
+    await auditRef.set({
+      id: auditRef.id,
+      eventType: "TEAM_UPDATED",
+      actorUid: uid,
+      actorEmail: (req.user?.email || "").trim().toLowerCase(),
+      teamId,
+      updates,
+      createdAt: nowIso()
+    }).catch(() => {});
+
+    return res.json({ success: true, message: "Team settings updated successfully.", team: updates });
+  } catch (error: any) {
+    console.error("Error updating team:", error);
+    return res.status(400).json({ error: error.message || "Failed to update team settings." });
+  }
+});
+
+// ── POST /set-team-admin ────────────────────────────────────────────────────
+router.post("/set-team-admin", async (req: AuthRequest, res) => {
+  try {
+    const uid = req.user!.uid;
+    const isAdmin = isPlatformAdminReq(req);
+    const { memberId, isTeamAdmin: targetIsAdmin } = req.body || {};
+
+    if (!memberId) {
+      return res.status(400).json({ error: "memberId is required." });
+    }
+
+    const targetRef = db.collection("team_members").doc(String(memberId));
+    const targetSnap = await targetRef.get();
+    if (!targetSnap.exists) {
+      return res.status(404).json({ error: "Member not found." });
+    }
+    const target = targetSnap.data()!;
+
+    if (!isAdmin) {
+      const callerSnap = await getDocWithRestFallback("team_members", uid, req.headers.authorization);
+      if (!callerSnap.exists) {
+        return res.status(403).json({ error: "Only Team Admins can appoint admins." });
+      }
+      const caller = callerSnap.data!;
+      if (!isTeamAdmin(caller)) {
+        return res.status(403).json({ error: "Only Team Admins can appoint admins." });
+      }
+      const callerTeamId = caller.teamId || caller.hospitalId;
+      const targetTeamId = target.teamId || target.hospitalId;
+      if (callerTeamId !== targetTeamId) {
+        return res.status(403).json({ error: "Target member is not in your team." });
+      }
+    }
+
+    const willBeAdmin = Boolean(targetIsAdmin);
+
+    // If revoking admin, ensure at least one admin remains
+    if (!willBeAdmin && isTeamAdmin(target)) {
+      const teamId = target.teamId || target.hospitalId;
+      const membersSnap = await db.collection("team_members").where("hospitalId", "==", teamId).get();
+      const otherAdmins = membersSnap.docs.filter(
+        d => d.id !== String(memberId) && d.data().status === "active" && isTeamAdmin(d.data())
+      );
+      if (otherAdmins.length === 0) {
+        return res.status(400).json({ error: "Cannot remove the only Team Admin. Appoint another Admin first." });
+      }
+    }
+
+    await targetRef.update({
+      isTeamAdmin: willBeAdmin,
+      teamRole: willBeAdmin ? "admin" : "member",
+      updatedAt: nowIso()
+    });
+
+    const userRef = db.collection("users").doc(String(memberId));
+    await userRef.set({
+      isTeamAdmin: willBeAdmin,
+      teamRole: willBeAdmin ? "admin" : "member",
+      updatedAt: nowIso()
+    }, { merge: true }).catch(() => {});
+
+    const auditRef = db.collection("teamAuditLog").doc();
+    await auditRef.set({
+      id: auditRef.id,
+      eventType: willBeAdmin ? "TEAM_ADMIN_APPOINTED" : "TEAM_ADMIN_REVOKED",
+      actorUid: uid,
+      actorEmail: (req.user?.email || "").trim().toLowerCase(),
+      targetUid: String(memberId),
+      targetEmail: target.email || "",
+      teamId: target.teamId || target.hospitalId,
+      createdAt: nowIso()
+    }).catch(() => {});
+
+    return res.json({
+      success: true,
+      message: willBeAdmin ? "Member appointed as Team Admin." : "Team Admin status revoked.",
+      isTeamAdmin: willBeAdmin
+    });
+  } catch (error: any) {
+    console.error("Error setting team admin:", error);
+    return res.status(400).json({ error: error.message || "Failed to update admin role." });
+  }
+});
+
+router.post("/appoint-admin", async (req: any, res: any) => {
+  req.body.isTeamAdmin = true;
+  return (router as any).handle(req, res);
+});
+
+// ── POST /verify-team (Institutional Verification — Platform Admin only) ─────
+router.post("/verify-team", async (req: AuthRequest, res) => {
+  try {
+    if (!isPlatformAdminReq(req)) {
+      return res.status(403).json({ error: "Only the platform administrator (varahgrp@gmail.com) can perform institutional verification." });
+    }
+
+    const { teamId, verify } = req.body || {};
+    if (!teamId) {
+      return res.status(400).json({ error: "teamId is required." });
+    }
+
+    const isVerified = verify !== false;
+    const now = nowIso();
+
+    const teamRef = db.collection("teams").doc(String(teamId));
+    await teamRef.set({
+      verificationStatus: isVerified ? "verified" : "unverified",
+      isInstitutionallyVerified: isVerified,
+      verifiedAt: isVerified ? now : null,
+      verifiedBy: isVerified ? req.user!.uid : null,
+      updatedAt: now
+    }, { merge: true });
+
+    // Update active members in the team
+    const membersSnap = await db.collection("team_members").where("hospitalId", "==", String(teamId)).get();
+    const batch = db.batch();
+    membersSnap.docs.forEach((docSnap) => {
+      const data = docSnap.data();
+      if (data.status === "active" || data.status === "active (joined)") {
+        batch.update(docSnap.ref, {
+          verificationStatus: isVerified ? "verified" : "unverified",
+          membershipVerified: isVerified,
+          updatedAt: now
+        });
+      }
+    });
+    await batch.commit();
+
+    const auditRef = db.collection("teamAuditLog").doc();
+    await auditRef.set({
+      id: auditRef.id,
+      eventType: isVerified ? "TEAM_INSTITUTIONALLY_VERIFIED" : "TEAM_VERIFICATION_REVOKED",
+      actorUid: req.user!.uid,
+      actorEmail: PLATFORM_ADMIN_EMAIL,
+      teamId: String(teamId),
+      createdAt: now
+    }).catch(() => {});
+
+    return res.json({
+      success: true,
+      message: isVerified ? "Team has been institutionally verified." : "Team institutional verification revoked.",
+      verificationStatus: isVerified ? "verified" : "unverified"
+    });
+  } catch (error: any) {
+    console.error("Error verifying team:", error);
+    return res.status(400).json({ error: error.message || "Failed to verify team." });
+  }
+});
+
+// ── POST /create-team (WhatsApp-Style Team Creation) ────────────────────────
 const handleCreateTeam = async (req: AuthRequest, res: any) => {
   try {
     const uid = req.user!.uid;
     const userEmail = (req.user!.email || "").trim().toLowerCase();
-    const { hospitalName, hospitalId: explicitHospitalId, department, erPhysicalBedCapacity } = req.body || {};
+    const { teamName, hospitalName, workplaceName, department, erPhysicalBedCapacity, professionalRole } = req.body || {};
 
-    const rawHospitalName = String(hospitalName || "").trim();
+    const rawHospitalName = String(hospitalName || workplaceName || "").trim();
     if (!rawHospitalName || rawHospitalName.length < 2) {
-      return res.status(400).json({ error: "A valid hospital name (at least 2 characters) is required." });
+      return res.status(400).json({ error: "A valid hospital or workplace name (at least 2 characters) is required." });
     }
 
-    const resolvedHospitalId = (
-      String(explicitHospitalId || "").trim() ||
-      rawHospitalName.toLowerCase().replace(/[^a-z0-9]/g, "_").slice(0, 32)
-    ).trim();
-
-    if (!resolvedHospitalId) {
-      return res.status(400).json({ error: "Could not resolve a valid hospital identifier." });
-    }
-
-    const memberRef = db.collection("team_members").doc(uid);
-    const userRef = db.collection("users").doc(uid);
-    const shiftRef = db.collection("hospital_shifts").doc(resolvedHospitalId);
+    const cleanTeamName = String(teamName || "").trim() || `${rawHospitalName} ER Team`;
+    const cleanDepartment = String(department || "").trim() || "Emergency Medicine";
 
     const parsedBedCapacity =
       typeof erPhysicalBedCapacity === "number" && Number.isInteger(erPhysicalBedCapacity) && erPhysicalBedCapacity > 0 && erPhysicalBedCapacity <= 1000
         ? erPhysicalBedCapacity
         : typeof erPhysicalBedCapacity === "string" && !isNaN(parseInt(erPhysicalBedCapacity, 10)) && parseInt(erPhysicalBedCapacity, 10) > 0 && parseInt(erPhysicalBedCapacity, 10) <= 1000
         ? parseInt(erPhysicalBedCapacity, 10)
-        : null;
+        : 30;
+
+    // Secure unique team identifier generated on trusted backend
+    const prefix = rawHospitalName.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 16) || "team";
+    const uniqueTeamId = `team_${prefix}_${Date.now()}_${randomBytes(4).toString("hex")}`;
+
+    const memberRef = db.collection("team_members").doc(uid);
+    const userRef = db.collection("users").doc(uid);
+    const teamRef = db.collection("teams").doc(uniqueTeamId);
+    const shiftRef = db.collection("hospital_shifts").doc(uniqueTeamId);
+
+    // Resolve creator's professional designation (NEVER automatically forced to HOD!)
+    let creatorClinicalRole = "Emergency Physician";
+    if (professionalRole && typeof professionalRole === "string" && professionalRole.trim()) {
+      creatorClinicalRole = professionalRole.trim();
+    } else {
+      const existingUserSnap = await userRef.get().catch(() => null);
+      if (existingUserSnap && existingUserSnap.exists) {
+        const uData = existingUserSnap.data()!;
+        if (uData.role) creatorClinicalRole = uData.role;
+      }
+    }
 
     await db.runTransaction(async (tx) => {
       const existingSnap = await tx.get(memberRef);
       if (existingSnap.exists) {
         const existing = existingSnap.data()!;
         if (existing.status === "active" && existing.membershipVerified === true) {
-          throw new Error("You already have an active hospital membership. Leave your current team before creating a new workspace.");
+          throw new Error("You already have an active verified hospital membership. Leave your current team before creating a new workspace.");
         }
       }
 
       const now = nowIso();
-      const assignedRole = "HOD / Department Lead";
 
+      // 1. Canonical team/workspace record (unverified by default)
+      tx.set(teamRef, {
+        id: uniqueTeamId,
+        teamName: cleanTeamName,
+        hospitalName: rawHospitalName,
+        department: cleanDepartment,
+        erPhysicalBedCapacity: parsedBedCapacity,
+        createdByUid: uid,
+        createdByEmail: userEmail,
+        createdAt: now,
+        updatedAt: now,
+        verificationStatus: "unverified",
+        isInstitutionallyVerified: false,
+        activeInviteToken: null,
+        activeInviteExpiresAt: null
+      });
+
+      // 2. Creator becomes first Team Admin while preserving their professional role!
       tx.set(memberRef, {
         id: uid,
         uid: uid,
         email: userEmail,
         name: req.user!.name || userEmail.split("@")[0],
-        hospitalId: resolvedHospitalId,
+        teamId: uniqueTeamId,
+        hospitalId: uniqueTeamId,
         hospitalName: rawHospitalName,
         hospital: rawHospitalName,
-        role: assignedRole,
-        department: department ? String(department).trim() : "Emergency Medicine",
+        teamName: cleanTeamName,
+        department: cleanDepartment,
+        role: creatorClinicalRole,
+        isTeamAdmin: true,
+        teamRole: "admin",
         status: "active",
-        membershipVerified: true,
-        verifiedAt: now,
-        verifiedBy: uid,
+        verificationStatus: "unverified",
+        membershipVerified: false,
         joinedAt: now,
+        createdAt: now,
         updatedAt: now,
-        requestProvenance: "create_hospital_workspace",
+        requestProvenance: "create_team",
         shift: "Active"
       });
 
-      const userUpdate: any = {
+      // 3. User document update (do not elevate to hospital team premium!)
+      tx.set(userRef, {
         hospital: rawHospitalName,
-        hospitalId: resolvedHospitalId,
+        hospitalId: uniqueTeamId,
         hospitalName: rawHospitalName,
-        role: assignedRole,
-        subscriptionTier: "Hospital Team Premium (Department Covered)",
+        teamId: uniqueTeamId,
+        teamName: cleanTeamName,
+        department: cleanDepartment,
+        erPhysicalBedCapacity: parsedBedCapacity,
+        isTeamAdmin: true,
+        teamRole: "admin",
         updatedAt: now
-      };
-      if (parsedBedCapacity) {
-        userUpdate.erPhysicalBedCapacity = parsedBedCapacity;
-      }
-      tx.set(userRef, userUpdate, { merge: true });
+      }, { merge: true });
 
-      // Carry forward the profile ER physical bed capacity into canonical hospital_shifts
-      if (parsedBedCapacity) {
-        tx.set(shiftRef, {
-          id: resolvedHospitalId,
-          hospitalId: resolvedHospitalId,
-          hospital: rawHospitalName,
-          erPhysicalBedCapacity: parsedBedCapacity,
-          updatedAt: now,
-          updatedByUid: uid,
-          updatedByEmail: userEmail
-        }, { merge: true });
-      }
+      // 4. Initial bed capacity in hospital_shifts
+      tx.set(shiftRef, {
+        id: uniqueTeamId,
+        hospitalId: uniqueTeamId,
+        hospital: rawHospitalName,
+        teamName: cleanTeamName,
+        erPhysicalBedCapacity: parsedBedCapacity,
+        updatedAt: now,
+        updatedByUid: uid,
+        updatedByEmail: userEmail
+      }, { merge: true });
 
+      // 5. Audit log
       const auditRef = db.collection("teamAuditLog").doc();
       tx.set(auditRef, {
-        action: "create_hospital_workspace",
+        id: auditRef.id,
+        eventType: "TEAM_CREATED",
         actorUid: uid,
         actorEmail: userEmail,
-        actorRole: assignedRole,
-        hospitalId: resolvedHospitalId,
+        actorRole: creatorClinicalRole,
+        isTeamAdmin: true,
+        teamId: uniqueTeamId,
+        hospitalId: uniqueTeamId,
         hospitalName: rawHospitalName,
-        timestamp: now
+        teamName: cleanTeamName,
+        createdAt: now
       });
     });
 
     return res.status(200).json({
       success: true,
-      message: "Hospital workspace created successfully.",
-      hospitalId: resolvedHospitalId,
+      message: "Your team has been created.",
+      teamId: uniqueTeamId,
+      hospitalId: uniqueTeamId,
       hospitalName: rawHospitalName,
-      role: "HOD / Department Lead"
+      teamName: cleanTeamName,
+      department: cleanDepartment,
+      role: creatorClinicalRole,
+      isTeamAdmin: true,
+      verificationStatus: "unverified"
     });
   } catch (error: any) {
-    return res.status(400).json({ error: error.message || "Failed to create hospital workspace." });
+    return res.status(400).json({ error: error.message || "Failed to create team workspace." });
   }
 };
 

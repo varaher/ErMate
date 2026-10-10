@@ -211,18 +211,24 @@ export async function incrementInviteUsage(token: string): Promise<void> {
 export async function createHospitalWorkspace(
   hospitalName: string,
   department?: string,
-  erPhysicalBedCapacity?: number | null
-): Promise<{ success: boolean; hospitalId: string; hospitalName: string; role: string }> {
+  erPhysicalBedCapacity?: number | null,
+  teamName?: string,
+  professionalRole?: string
+): Promise<{ success: boolean; teamId: string; hospitalId: string; hospitalName: string; teamName: string; role: string; isTeamAdmin: boolean; verificationStatus: string }> {
   const user = auth.currentUser;
   if (!user) throw new Error("Not authenticated");
   const idToken = await user.getIdToken();
 
   const payload: any = {
     hospitalName,
-    department
+    department,
+    teamName: teamName || hospitalName
   };
   if (typeof erPhysicalBedCapacity === "number" && erPhysicalBedCapacity > 0) {
     payload.erPhysicalBedCapacity = erPhysicalBedCapacity;
+  }
+  if (professionalRole) {
+    payload.professionalRole = professionalRole;
   }
 
   const res = await fetch("/api/team/create-team", {
@@ -242,9 +248,122 @@ export async function createHospitalWorkspace(
   return data;
 }
 
+export const createTeamWorkspace = createHospitalWorkspace;
+
+/**
+ * Fetches the caller's team workspace details, members, and pending requests from trusted backend.
+ */
+export async function getMyTeam(): Promise<{
+  hasTeam: boolean;
+  team?: any;
+  members?: any[];
+  pendingRequests?: any[];
+  isTeamAdmin?: boolean;
+  myRole?: string;
+  verificationStatus?: string;
+  pendingRequest?: any;
+}> {
+  const user = auth.currentUser;
+  if (!user) return { hasTeam: false };
+  try {
+    const idToken = await user.getIdToken();
+    const res = await fetch("/api/team/my-team", {
+      headers: { Authorization: `Bearer ${idToken}` }
+    });
+    if (!res.ok) return { hasTeam: false };
+    return await res.json();
+  } catch (e) {
+    return { hasTeam: false };
+  }
+}
+
+/**
+ * Updates team workspace display configuration.
+ */
+export async function updateTeamWorkspace(
+  teamId: string,
+  updates: { teamName?: string; hospitalName?: string; department?: string; erPhysicalBedCapacity?: number }
+): Promise<{ success: boolean; message: string; team?: any }> {
+  const user = auth.currentUser;
+  if (!user) throw new Error("Not authenticated");
+  const idToken = await user.getIdToken();
+  const res = await fetch("/api/team/update-team", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${idToken}`
+    },
+    body: JSON.stringify({ teamId, ...updates })
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data.error || "Failed to update team settings.");
+  }
+  return data;
+}
+
+/**
+ * Platform Admin action (varahgrp@gmail.com): Institutionally verifies a team.
+ */
+export async function verifyTeamInstitution(
+  teamId: string,
+  verify: boolean = true
+): Promise<{ success: boolean; message: string; verificationStatus: string }> {
+  const user = auth.currentUser;
+  if (!user) throw new Error("Not authenticated");
+  const idToken = await user.getIdToken();
+  const res = await fetch("/api/team/verify-team", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${idToken}`
+    },
+    body: JSON.stringify({ teamId, verify })
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data.error || "Failed to verify team.");
+  }
+  return data;
+}
+
+/**
+ * Submits an authenticated join request to a team using an invite token.
+ * Never activates membership automatically; awaits Team Admin approval.
+ */
+export async function requestToJoinTeam(
+  token: string,
+  role?: string
+): Promise<{ success: boolean; message: string; status: string }> {
+  const user = auth.currentUser;
+  if (!user) throw new Error("Not authenticated");
+  const idToken = await user.getIdToken();
+
+  const cleanToken = token.trim().replace(/^.*\/join\//, "");
+
+  const res = await fetch("/api/team/request-join", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${idToken}`
+    },
+    body: JSON.stringify({
+      token: cleanToken,
+      role
+    })
+  });
+
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data.error || "Failed to submit join request.");
+  }
+
+  return data;
+}
+
 /**
  * OPTION 2: Transitions an authenticated user from Individual -> Team workspace
- * by accepting a secure team invite.
+ * by submitting a join request for admin approval.
  */
 export async function acceptSecureTeamInvite(
   token: string
@@ -272,4 +391,175 @@ export async function acceptSecureTeamInvite(
   }
 
   return data;
+}
+
+/**
+ * Team Admin action: Approve a pending membership request and assign professional role.
+ */
+export async function approveTeamMember(
+  memberId: string,
+  role?: string,
+  isTeamAdmin?: boolean
+): Promise<{ success: boolean; message: string }> {
+  const user = auth.currentUser;
+  if (!user) throw new Error("Not authenticated");
+  const idToken = await user.getIdToken();
+
+  const res = await fetch("/api/team/approve-member", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${idToken}`
+    },
+    body: JSON.stringify({
+      memberId,
+      role,
+      isTeamAdmin
+    })
+  });
+
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data.error || "Failed to approve member.");
+  }
+
+  return data;
+}
+
+/**
+ * Team Admin action: Decline a pending membership request.
+ */
+export async function declineTeamMember(memberId: string): Promise<{ success: boolean }> {
+  const user = auth.currentUser;
+  if (!user) throw new Error("Not authenticated");
+  const idToken = await user.getIdToken();
+
+  const res = await fetch("/api/team/decline-member", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${idToken}`
+    },
+    body: JSON.stringify({ memberId })
+  });
+
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data.error || "Failed to decline member.");
+  }
+
+  return data;
+}
+
+/**
+ * Team Admin action: Remove an existing team member.
+ */
+export async function removeTeamMember(memberId: string): Promise<{ success: boolean }> {
+  const user = auth.currentUser;
+  if (!user) throw new Error("Not authenticated");
+  const idToken = await user.getIdToken();
+
+  const res = await fetch("/api/team/remove-member", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${idToken}`
+    },
+    body: JSON.stringify({ memberId })
+  });
+
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data.error || "Failed to remove member.");
+  }
+
+  return data;
+}
+
+/**
+ * Team Admin action: Appoint or revoke Team Admin status for a member.
+ */
+export async function setTeamAdminRole(
+  memberId: string,
+  isTeamAdmin: boolean
+): Promise<{ success: boolean }> {
+  const user = auth.currentUser;
+  if (!user) throw new Error("Not authenticated");
+  const idToken = await user.getIdToken();
+
+  const res = await fetch("/api/team/set-team-admin", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${idToken}`
+    },
+    body: JSON.stringify({ memberId, isTeamAdmin })
+  });
+
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data.error || "Failed to update admin role.");
+  }
+
+  return data;
+}
+
+/**
+ * Team Admin action: Revoke an active team invite link.
+ */
+export async function revokeTeamInvite(token: string): Promise<{ success: boolean }> {
+  const user = auth.currentUser;
+  if (!user) throw new Error("Not authenticated");
+  const idToken = await user.getIdToken();
+
+  const res = await fetch("/api/team/revoke-invite", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${idToken}`
+    },
+    body: JSON.stringify({ token })
+  });
+
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data.error || "Failed to revoke invitation.");
+  }
+
+  return data;
+}
+
+/**
+ * Team Admin action: Regenerate the active team invite link (revoking the prior one and issuing a new 7-day token).
+ */
+export async function regenerateTeamInvite(
+  hospitalId?: string,
+  role?: string,
+  expiresHours?: number
+): Promise<{ success: boolean; token: string; link: string; expiresAt: string; message: string }> {
+  const origin = getPublicAppUrl();
+  const user = auth.currentUser;
+  if (!user) throw new Error("Not authenticated");
+  const idToken = await user.getIdToken();
+
+  const res = await fetch("/api/team/regenerate-invite", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${idToken}`
+    },
+    body: JSON.stringify({
+      hospitalId,
+      role: role || "resident",
+      expiresHours: expiresHours || 168
+    })
+  });
+
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data.error || "Failed to regenerate invitation link.");
+  }
+
+  const link = `${origin}/join/${data.token}`;
+  return { ...data, link };
 }

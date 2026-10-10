@@ -50,6 +50,18 @@ export async function resolveWorkspaceForUser(uid: string): Promise<WorkspaceOwn
       const isVerified = data.membershipVerified === true;
       
       if (isActive && isVerified) {
+        // Institutional Verification (Option A):
+        // Unverified teams must NOT save real patient records in a shared hospital workspace.
+        // Individual clinical use continues under Individual workspace permissions.
+        const isUnverified = data.verificationStatus === "unverified" || data.isInstitutionallyVerified === false;
+        if (isUnverified) {
+          return {
+            workspaceType: "individual",
+            ownerUid: uid,
+            hospitalId: null
+          };
+        }
+
         const rawHospitalId = data.hospitalId || data.hospital;
         const hospitalId = typeof rawHospitalId === "string" ? rawHospitalId.trim() : "";
         

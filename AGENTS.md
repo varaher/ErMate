@@ -45,6 +45,25 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-10] — ErMate: WhatsApp-Style Team Creation, Invitations, & Member Governance Architecture
+- **WhatsApp-Style Team Creation & Admin Authority (`src/components/TeamRosterBoard.tsx`, `server/routes/team.routes.ts`, `src/services/teamInviteService.ts`)**:
+  - Any registered clinician can create an Emergency Department team without restriction. The creator automatically becomes a **Team Admin** (`isTeamAdmin: true`, `teamRole: "admin"`).
+  - Preserved Individual Clinical Role Invariant: Creator retains their actual clinical professional role (e.g. Resident, Consultant, Medical Officer) rather than being forcibly rewritten to HOD.
+  - Team creation input fields in modal (`TeamRosterBoard.tsx`): Hospital/Workplace Name, Team Name (Display Name), Department Name, and ER Physical Bed Capacity (bounded 1..1000).
+- **Reusable Hashed-Token Invitations & Sharing**:
+  - Secure reusable 7-day invitation links (`https://ermate.in/join/...` or `inv_...` tokens). Raw tokens are hashed before storage in Firestore; raw tokens are strictly excluded from audit logs and client-visible records.
+  - Team Admins have one-tap controls for Copy Link, WhatsApp Share (`https://api.whatsapp.com/send?text=...`), native Web Share, Regenerate Link (revokes previous token and issues fresh 7-day token), and Revoke Link.
+- **Request to Join & Non-Blocking Governance**:
+  - Clinicians joining via invite link enter a `pending_approval` state. Non-blocking workflow allows clinicians to continue using their private Individual workspace without interruption while waiting for Team Admin approval.
+  - Security Invariant: Applicants cannot approve their own join requests. Only verified Team Admins can approve or decline requests.
+  - Approval Interface: Team Admins can customize the applicant's clinical designation from a clean role selector and optionally appoint them as a co-Team Admin before approving.
+  - Team Admin management: Team Admins can promote/demote other active members between Admin and Member roles, with safety guards preventing removal of the sole Team Admin.
+- **Unverified Team Status & Patient Data Shield**:
+  - Newly created teams start in `verificationStatus: "unverified"`. Unverified team members resolve to Individual workspace permissions (`workspaceResolver.ts`), safeguarding real clinical records from unverified shared department leakage until institutional verification by the platform administrator.
+  - Non-intrusive amber banner displayed on Team Dashboard indicating unverified status and clear explanation of safeguards.
+- **Verification (`verify_team_creation_and_invitations.ts` 14/14 PASS, `verify_team_and_archive.ts` 25/25 PASS, `verify_onboarding_and_trial_flow.ts` 38/38 PASS, `verify_regression.ts` 19/19 PASS)**:
+  - 100% test pass rate across all suites; clean production build with 0 TypeScript/compilation errors.
+
 ### [2026-10-09] — ErMate: New User Onboarding, Profile Completeness, & Optional Team Workspace Flow
 - **New User Onboarding Flow (`src/components/OnboardingProfileView.tsx`, `src/App.tsx`, `src/utils/profileCompleteness.ts`)**:
   - Implemented dedicated "Complete Your ErMate Profile" view for newly registered and first-time clinicians whose required profile setup is incomplete.
