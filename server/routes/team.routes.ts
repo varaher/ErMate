@@ -196,8 +196,8 @@ router.post("/create-invite", async (req: AuthRequest, res) => {
     }
 
     const token = `inv_${randomBytes(16).toString("hex")}`;
-    // Default expiry: 7 days (168 hours)
-    const hours = typeof expiresHours === "number" && expiresHours > 0 ? expiresHours : 168;
+    // Team invitation links expire exactly six hours after issuance.
+    const hours = 6;
     const expiresAt = new Date(Date.now() + hours * 3600000).toISOString();
     const uses = typeof maxUses === "number" && maxUses > 0 ? maxUses : null;
 
@@ -391,9 +391,9 @@ router.post("/regenerate-invite", async (req: AuthRequest, res) => {
       }
     }
 
-    // 2. Generate new secure 7-day token
+    // 2. Generate new six-hour invitation token
     const token = `inv_${randomBytes(16).toString("hex")}`;
-    const hours = typeof expiresHours === "number" && expiresHours > 0 ? expiresHours : 168;
+    const hours = 6;
     const expiresAt = new Date(Date.now() + hours * 3600000).toISOString();
     const now = nowIso();
 
