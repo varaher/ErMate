@@ -87,7 +87,7 @@ class TeamServiceSimulator {
     const cap = Number(params.erPhysicalBedCapacity);
     const validCap = Number.isInteger(cap) && cap > 0 && cap <= 1000 ? cap : 30;
 
-    const teamId = `team_${Date.now()}`;
+    const teamId = `team_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
     const clinicalRole = params.professionalRole || user.role || "Emergency Physician";
 
     const team: MockTeam = {

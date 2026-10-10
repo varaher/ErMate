@@ -782,6 +782,8 @@ export interface TeamMember {
   department?: string;
   isTeamAdmin?: boolean;
   isAdmin?: boolean;
+  isRotaManager?: boolean;
+  rotaManager?: boolean;
   teamRole?: "admin" | "member";
   verificationStatus?: "unverified" | "verified";
   isInstitutionallyVerified?: boolean;
