@@ -1766,6 +1766,7 @@ useEffect(() => {
     let unsubscribeSub: () => void = () => {};
     let unsubscribeShifts: () => void = () => {};
     let unsubscribeShiftMembership: () => void = () => {};
+    let activeShiftsHospitalId: string | null = null;
 
     const hospitalSlug = userHospitalLower.replace(/[^a-z0-9]/g, "-").replace(/^-+|-+$/g, "");
     if (hospitalSlug && hospitalSlug.trim().length > 0) {
@@ -1819,11 +1820,10 @@ useEffect(() => {
       const unsubShiftMembership = onSnapshot(
         selfMembershipRef,
         (memberSnapshot) => {
-          // Stop listening to any previous hospital shift document.
-          unsubscribeShifts();
-          unsubscribeShifts = () => {};
-
           if (!memberSnapshot.exists()) {
+            activeShiftsHospitalId = null;
+            unsubscribeShifts();
+            unsubscribeShifts = () => {};
             setSelfMembership((prev: any) => (prev === null ? prev : null));
             setShifts(ROTA_SHIFTS);
             setErPhysicalBedCapacity(null);
@@ -1855,6 +1855,9 @@ useEffect(() => {
             !isActiveMembership ||
             !trustedHospitalId
           ) {
+            activeShiftsHospitalId = null;
+            unsubscribeShifts();
+            unsubscribeShifts = () => {};
             setSelfMembership((prev: any) => (prev === null ? prev : null));
             setShifts(ROTA_SHIFTS);
             setErPhysicalBedCapacity(null);
@@ -1892,54 +1895,62 @@ useEffect(() => {
             return membership;
           });
 
-          const shiftDocRef = doc(
-            db,
-            "hospital_shifts",
-            trustedHospitalId
-          );
+          // Only unsubscribe and resubscribe if effective trusted hospital ID changed
+          if (activeShiftsHospitalId !== trustedHospitalId) {
+            activeShiftsHospitalId = trustedHospitalId;
+            unsubscribeShifts();
+            unsubscribeShifts = () => {};
 
-          listenerDiagnostics.trackSubscribe("hospital_shifts");
-          const unsubShiftsInner = onSnapshot(
-            shiftDocRef,
-            (snapshot) => {
-              if (!snapshot.exists()) {
+            const shiftDocRef = doc(
+              db,
+              "hospital_shifts",
+              trustedHospitalId
+            );
+
+            listenerDiagnostics.trackSubscribe("hospital_shifts");
+            const unsubShiftsInner = onSnapshot(
+              shiftDocRef,
+              (snapshot) => {
+                if (!snapshot.exists()) {
+                  setShifts(ROTA_SHIFTS);
+                  setErPhysicalBedCapacity(null);
+                  return;
+                }
+
+                const data = snapshot.data();
+
+                if (Array.isArray(data.shifts)) {
+                  setShifts(data.shifts);
+                } else {
+                  setShifts(ROTA_SHIFTS);
+                }
+
+                const storedCapacity = Number(data.erPhysicalBedCapacity);
+                if (
+                  Number.isInteger(storedCapacity) &&
+                  storedCapacity > 0
+                ) {
+                  setErPhysicalBedCapacity(storedCapacity);
+                } else {
+                  setErPhysicalBedCapacity(null);
+                }
+              },
+              (error) => {
+                console.error(
+                  "Error fetching hospital shifts:",
+                  error
+                );
+
                 setShifts(ROTA_SHIFTS);
                 setErPhysicalBedCapacity(null);
-                return;
               }
-
-              const data = snapshot.data();
-
-              if (Array.isArray(data.shifts)) {
-                setShifts(data.shifts);
-              } else {
-                setShifts(ROTA_SHIFTS);
-              }
-
-              const storedCapacity = Number(data.erPhysicalBedCapacity);
-              if (
-                Number.isInteger(storedCapacity) &&
-                storedCapacity > 0
-              ) {
-                setErPhysicalBedCapacity(storedCapacity);
-              } else {
-                setErPhysicalBedCapacity(null);
-              }
-            },
-            (error) => {
-              console.error(
-                "Error fetching hospital shifts:",
-                error
-              );
-
-              setShifts(ROTA_SHIFTS);
-              setErPhysicalBedCapacity(null);
-            }
-          );
-          unsubscribeShifts = () => {
-            listenerDiagnostics.trackUnsubscribe("hospital_shifts");
-            unsubShiftsInner();
-          };
+            );
+            unsubscribeShifts = () => {
+              activeShiftsHospitalId = null;
+              listenerDiagnostics.trackUnsubscribe("hospital_shifts");
+              unsubShiftsInner();
+            };
+          }
         },
         (error) => {
           console.warn(
@@ -1947,6 +1958,9 @@ useEffect(() => {
             error?.message || error
           );
 
+          activeShiftsHospitalId = null;
+          unsubscribeShifts();
+          unsubscribeShifts = () => {};
           setSelfMembership((prev: any) => (prev === null ? prev : null));
           setShifts(ROTA_SHIFTS);
           setErPhysicalBedCapacity(null);
@@ -1955,8 +1969,14 @@ useEffect(() => {
       unsubscribeShiftMembership = () => {
         listenerDiagnostics.trackUnsubscribe("team_members_self");
         unsubShiftMembership();
+        activeShiftsHospitalId = null;
+        unsubscribeShifts();
+        unsubscribeShifts = () => {};
       };
     } else {
+      activeShiftsHospitalId = null;
+      unsubscribeShifts();
+      unsubscribeShifts = () => {};
       setSelfMembership((prev: any) => (prev === null ? prev : null));
       setShifts(ROTA_SHIFTS);
       setErPhysicalBedCapacity(null);

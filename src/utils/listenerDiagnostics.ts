@@ -31,6 +31,7 @@ export const listenerDiagnostics = {
     }
     this.counts[name].subscriptions += 1;
     this.counts[name].active += 1;
+    console.log(`[Firestore Listener] Subscribed: "${name}" (active: ${this.counts[name].active})`);
   },
 
   trackUnsubscribe(name: string): void {
@@ -40,6 +41,7 @@ export const listenerDiagnostics = {
     }
     this.counts[name].unsubscriptions += 1;
     this.counts[name].active = Math.max(0, this.counts[name].active - 1);
+    console.log(`[Firestore Listener] Unsubscribed: "${name}" (active: ${this.counts[name].active})`);
   },
 
   getReport(): Record<string, ListenerDiagnosticsRecord> {
