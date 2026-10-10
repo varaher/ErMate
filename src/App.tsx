@@ -2821,11 +2821,12 @@ const handleDeleteAllCases = async () => {
     const editUid = auth.currentUser?.uid || "uid_priya";
     const editName = (profile.name || "").startsWith("Dr. ") ? profile.name : "Dr. " + (profile.name || "Doctor");
 
-    // Preserve patient operational status - Discharge Summary finalization must not alter ClinicalCase.status
+    // Discharge Summary finalization transitions case status to Discharged
+    const isFinalized = dischargeInfo.summaryStatus === "FINALIZED";
     const updated: ClinicalCase = {
       ...targetCase,
       dischargeInfo,
-      status: targetCase.status,
+      status: isFinalized ? "Discharged" : targetCase.status,
       hospital: targetCase.hospital || profile.hospital,
       lastEditedBy: editUid,
       lastEditedByName: editName,

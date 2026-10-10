@@ -122,8 +122,23 @@ export default function DashboardView({
   // PLANNED DUTY: Shared rota / team shift (suggestion only)
   const plannedShiftId = currentUserMember?.shift || "morning";
 
-  // Operational active department cases (Patch H1)
-  const activeDepartmentCases = cases.filter(c => !c.archivedAt && (c.status === "Active" || c.status === "Triage"));
+  // Operational active department cases (Patch H1 & Final Data Integrity Check)
+  // Strictly excludes discharged, transferred, completed, archived, and finalized records,
+  // preventing inactive patients from remaining in Current Cases solely because bedNo is populated.
+  const isCaseOperationallyActive = (c: ClinicalCase): boolean => {
+    if (!c || !c.id) return false;
+    if (c.archivedAt || (c as any).isArchived) return false;
+    if (c.status === "Discharged" || (c.status as string) === "Transferred" || (c.status as string) === "Completed" || (c.status as string) === "Archived") return false;
+    if (c.status !== "Active" && c.status !== "Triage") return false;
+    if (c.dischargeInfo?.summaryStatus === "FINALIZED") return false;
+    const dispType = c.dispositionDetails?.dispositionType;
+    if (dispType && ["Discharge", "Admit", "Refer", "LAMA", "Absconded", "Death"].includes(dispType)) {
+      return false;
+    }
+    return true;
+  };
+
+  const activeDepartmentCases = cases.filter(isCaseOperationallyActive);
 
   // CORE PRODUCT RULE:
   // Hospital clinician status requires canonical active verified team membership.

@@ -45,6 +45,17 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-10] — ErMate: Individual Profile Final Data-Integrity Check (P0)
+- **Active Case Retention vs Inactive Cases Filter Hardening (`src/components/DashboardView.tsx`, `src/App.tsx`)**:
+  - Implemented `isCaseOperationallyActive(c: ClinicalCase)` in `DashboardView.tsx`: strictly filters out cases marked as "Discharged", "Transferred", "Completed", or "Archived", as well as cases with finalized discharge summaries (`c.dischargeInfo?.summaryStatus === "FINALIZED"`) or departure dispositions ("Discharge", "Admit", "Refer", "LAMA", "Absconded", "Death").
+  - Fixed edge case where discharged, transferred, or completed patients could remain in Current Cases solely because `bedNo` was populated.
+  - Updated `persistDischargeInfo` in `src/App.tsx` to automatically set `status: "Discharged"` when `dischargeInfo.summaryStatus === "FINALIZED"`, keeping Firestore record status in sync with clinical discharge card finalization.
+- **Personal Logbook Deduplication & Privacy Guard (`src/components/ProfileSettingsView.tsx`)**:
+  - Hardened logbook deduplication by tracking both `entryId` and `sourceCaseId` in `seenSourceIds` Set, and explicitly adding `seenSourceIds.add(c.id)` during legacy cases iteration to guarantee zero duplicate rows.
+  - Verified multi-tenant privacy: logbook records strictly resolve to authenticated user UID (`users/{uid}/logbook` and cases where `ownerUid === uid`).
+- **Targeted Regression Suite (`verify_individual_profile_data_integrity.ts` 24/24 PASS)**:
+  - 100% test pass rate across active midnight cases, inactive bed exclusion, My Cases vs All Active Cases ownership, Logbook deduplication, MATE restart continuity, trial mode separation, case ID preservation, and real-device coverage audit.
+
 ### [2026-10-10] — ErMate: Individual Profile Final Stabilization (P0)
 - **Current Cases & Bed Visibility Hardening (`src/components/DashboardView.tsx`)**:
   - Resolved `activeCasesTab === "all"` display disconnect for independent clinicians: clicking "All Active Cases" cleanly renders `activeDepartmentCases` instead of being forcibly restricted to `myCases`.

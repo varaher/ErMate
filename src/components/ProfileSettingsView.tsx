@@ -1720,24 +1720,27 @@ const startRealCheckout = async (planKey: string) => {
       );
       
       const unifiedLogs = [];
-      const seenSourceIds = new Set();
+      const seenSourceIds = new Set<string>();
       
       logbookEntries.forEach(entry => {
-        unifiedLogs.push({
-          id: entry.entryId,
-          isSnapshot: true,
-          dateSeen: entry.dateSeen || entry.createdAt.split('T')[0],
-          ageGroup: entry.ageGroup || null,
-          gender: entry.gender || null,
-          triageCategory: entry.triageCategory || null,
-          caseCategory: entry.caseCategory || null,
-          procedures: entry.proceduresPerformed || [],
-          skills: entry.skills || [],
-          learningPoints: entry.learningPoints || null,
-          hospitalNameAtTime: entry.hospitalNameAtTime || null,
-          sourceCaseId: entry.sourceCaseId || null
-        });
-        if (entry.sourceCaseId) seenSourceIds.add(entry.sourceCaseId);
+        if (!entry.entryId || !seenSourceIds.has(entry.entryId)) {
+          unifiedLogs.push({
+            id: entry.entryId,
+            isSnapshot: true,
+            dateSeen: entry.dateSeen || entry.createdAt.split('T')[0],
+            ageGroup: entry.ageGroup || null,
+            gender: entry.gender || null,
+            triageCategory: entry.triageCategory || null,
+            caseCategory: entry.caseCategory || null,
+            procedures: entry.proceduresPerformed || [],
+            skills: entry.skills || [],
+            learningPoints: entry.learningPoints || null,
+            hospitalNameAtTime: entry.hospitalNameAtTime || null,
+            sourceCaseId: entry.sourceCaseId || null
+          });
+          if (entry.entryId) seenSourceIds.add(entry.entryId);
+          if (entry.sourceCaseId) seenSourceIds.add(entry.sourceCaseId);
+        }
       });
       
       legacyCases.forEach(c => {
@@ -1754,6 +1757,7 @@ const startRealCheckout = async (planKey: string) => {
              hospitalNameAtTime: c.hospital || null,
              sourceCaseId: c.id
            });
+           seenSourceIds.add(c.id);
         }
       });
       
