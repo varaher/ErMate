@@ -31,7 +31,7 @@ import {
 import { PrimarySurveySection } from "./PrimarySurveySection";
 import { PediatricAssessmentTriangle } from "./PediatricCaseSheetFields";
 import { SecondarySurveySection } from "./SecondarySurveySection";
-import CaseSheetPrintView from "./CaseSheetPrintView";
+import CaseSheetPrintView, { convertClinicalCaseToCaseSheetData, formatCaseSheetText } from "./CaseSheetPrintView";
 import { triggerPrintWithTip } from "../utils/printWithTip";
 import { 
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend
@@ -255,7 +255,7 @@ interface CaseSheetViewProps {
   initialCase: ClinicalCase;
   allCases?: ClinicalCase[];
   onSelectCase?: (caseId: string) => void;
-  onViewPrintSheet?: (caseId: string) => void;
+  onViewPrintSheet?: (caseId: string, unsavedCase?: ClinicalCase) => void;
   onBack: () => void;
   onSaveCase: (updatedCase: ClinicalCase) => Promise<void> | void;
   onNavigateToDischarge: (caseId: string) => void;
@@ -2716,7 +2716,8 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
   };
 
   const handleCopyCaseSheet = () => {
-    const plainText = getFormattedCaseSheetText();
+    const sheetData = convertClinicalCaseToCaseSheetData(currentCase);
+    const plainText = formatCaseSheetText(sheetData);
     const htmlText = getFormattedCaseSheetHtml();
 
     try {
@@ -2751,7 +2752,8 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
   };
 
   const handleDownloadCaseSheet = () => {
-    const text = getFormattedCaseSheetText();
+    const sheetData = convertClinicalCaseToCaseSheetData(currentCase);
+    const text = formatCaseSheetText(sheetData);
     const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -2859,7 +2861,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
   }
 
   return (
-    <div className="w-full pb-28 sm:pb-36">
+    <div className="w-full pb-28 sm:pb-36 no-print">
       {/* COMPACT MOBILE HEADER & NAV RAIL */}
       <div className="flex flex-col gap-4 max-w-7xl mx-auto no-print" id="case-sheet-container">
         
@@ -2989,13 +2991,13 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                       <button onClick={handleCopyCaseSheet} className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 flex items-center gap-2">
                         <Copy className="w-3.5 h-3.5" /> Copy to EMR
                       </button>
-                      <button onClick={() => onViewPrintSheet ? onViewPrintSheet(currentCase.id) : setShowPdfModal(true)} className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 flex items-center gap-2">
+                      <button onClick={() => onViewPrintSheet ? onViewPrintSheet(currentCase.id, currentCase) : setShowPdfModal(true)} className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 flex items-center gap-2">
                         <Printer className="w-3.5 h-3.5" /> View PDF
                       </button>
                       <button onClick={handleDownloadCaseSheet} className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 flex items-center gap-2">
                         <Download className="w-3.5 h-3.5" /> Download
                       </button>
-                      <button onClick={() => triggerPrintWithTip()} className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 flex items-center gap-2">
+                      <button onClick={() => onViewPrintSheet ? onViewPrintSheet(currentCase.id, currentCase) : triggerPrintWithTip()} className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 flex items-center gap-2">
                         <Printer className="w-3.5 h-3.5" /> Print
                       </button>
                       <div className="h-px bg-slate-100 dark:bg-slate-800 my-1.5" />
@@ -5514,746 +5516,26 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
       {/* Interactive UI Screen Close  */}
       </div>
 
-      {/* Printable Document - Hidden on screen, shown only when printing  */}
-      <div className="hidden print:block p-4 md:p-10 font-sans leading-relaxed text-[11px] text-slate-900 bg-white space-y-5 select-text max-w-full print:p-0">
-        
-        {currentCase.isPediatric ? (
-          // BEAUTIFUL PEDIATRIC PRINT RECORD
-          <div className="space-y-4">
-            {/* Header section matching clinical template layout  */}
-            <div className="border-b-4 border-double border-slate-800 pb-3 text-center space-y-1">
-              <h2 className="text-sm md:text-base font-extrabold tracking-wide uppercase font-serif text-slate-950">
-                <strong>{displayHospitalName}</strong>
-              </h2>
-              <p className="text-[10px] text-slate-600 tracking-wide uppercase font-semibold">
-                <strong>Clinical Department of Emergency Medicine & Pediatrics Division</strong>
-              </p>
-              <div className="text-[9px] text-slate-500 font-mono flex flex-wrap justify-center gap-x-4 gap-y-1">
-                <span><strong>{displayHospitalAddress}</strong></span>
-                <span>•</span>
-                <span><strong>24x7 ER Hotline Available</strong></span>
-              </div>
-              <h1 className="text-xs font-black uppercase tracking-widest bg-slate-950 text-white py-1 px-4 rounded-md inline-block mt-2">
-                <strong>PEDIATRIC INITIAL ASSESSMENT AND EMERGENCY DEPARTMENT RECORD</strong>
-              </h1>
-            </div>
-
-            {/* Demographics  */}
-            <div className="grid grid-cols-2 gap-y-2 gap-x-4 border border-slate-300 p-3 rounded-xl bg-slate-50/40 text-[10px]">
-              <div className="space-y-1">
-                <p className="flex justify-between border-b border-slate-100 pb-0.5">
-                  <span className="font-extrabold text-slate-500 uppercase"><strong>Patient Name:</strong></span>
-                  <span className="font-bold text-slate-950 uppercase"><strong>{currentCase.patient.name}</strong></span>
-                </p>
-                <p className="flex justify-between border-b border-slate-100 pb-0.5">
-                  <span className="font-extrabold text-slate-500 uppercase"><strong>Age/Sex:</strong></span>
-                  <span className="font-bold text-slate-850"><strong>{currentCase.patient.age || "N/A"} Years / {currentCase.patient.gender}</strong></span>
-                </p>
-                <p className="flex justify-between border-b border-slate-100 pb-0.5">
-                  <span className="font-extrabold text-slate-500 uppercase"><strong>Weight:</strong></span>
-                  <span className="font-bold text-slate-950"><strong>{pediatricWeight === "" ? getAPLSEstimate(currentCase.patient.age) : pediatricWeight} kg</strong></span>
-                </p>
-                <p className="flex justify-between border-b border-slate-100 pb-0.5">
-                  <span className="font-extrabold text-slate-500 uppercase"><strong>Address:</strong></span>
-                  <span className="font-semibold text-slate-850 text-right text-[9px]"><strong>{currentCase.patient.address || "Chunangamvely, Aluva, Ernakulam, Kerala - 683 112"}</strong></span>
-                </p>
-                <p className="flex justify-between">
-                  <span className="font-extrabold text-slate-500 uppercase"><strong>Identification Mark:</strong></span>
-                  <span className="font-bold text-slate-950"><strong>{currentCase.patient.mlcDetails?.identificationMark || "None"}</strong></span>
-                </p>
-              </div>
-
-              <div className="space-y-1 border-l pl-4">
-                <p className="flex justify-between border-b border-slate-100 pb-0.5">
-                  <span className="font-extrabold text-slate-500 uppercase"><strong>Date & Time of Arrival:</strong></span>
-                  <span className="font-semibold text-slate-850 font-mono"><strong>{currentCase.patient.dateOpened}</strong></span>
-                </p>
-                <p className="flex justify-between border-b border-slate-100 pb-0.5">
-                  <span className="font-extrabold text-slate-500 uppercase"><strong>Date & Time of Incident:</strong></span>
-                  <span className="font-semibold text-slate-850 font-mono"><strong>{currentCase.patient.mlcDetails?.dateTimeOfIncident || "N/A"}</strong></span>
-                </p>
-                <p className="flex justify-between border-b border-slate-100 pb-0.5">
-                  <span className="font-extrabold text-slate-500 uppercase"><strong>Place of Incident:</strong></span>
-                  <span className="font-semibold text-slate-850"><strong>{currentCase.patient.mlcDetails?.placeOfIncident || "N/A"}</strong></span>
-                </p>
-                <p className="flex justify-between border-b border-slate-100 pb-0.5">
-                  <span className="font-extrabold text-slate-500 uppercase"><strong>Nature / Mechanism:</strong></span>
-                  <span className="font-semibold text-slate-850"><strong>{currentCase.patient.mlcDetails?.natureOfIncident || "N/A"}</strong></span>
-                </p>
-                <p className="flex justify-between">
-                  <span className="font-extrabold text-slate-500 uppercase"><strong>Brought By / Informant:</strong></span>
-                  <span className="font-semibold text-slate-850"><strong>{currentCase.pediatricDetails?.broughtBy || "N/A"} / {currentCase.pediatricDetails?.informant || "N/A"}</strong></span>
-                </p>
-              </div>
-            </div>
-
-            {/* Presenting Complaints  */}
-            <div className="space-y-1 text-[10px]">
-              <span className="font-black text-slate-950 block uppercase tracking-wide border-b pb-0.5 border-slate-300">
-                <strong>Presenting Complaints</strong>
-              </span>
-              <p className="p-2 bg-slate-50 rounded whitespace-pre-wrap text-[10px]">
-                {currentCase.patient.presentingComplaint || "None reported"}
-              </p>
-            </div>
-
-            {/* Primary Assessment Triangle (PAT)  */}
-            <div className="space-y-1.5 text-[10px]">
-              <span className="font-black text-slate-950 block uppercase tracking-wide border-b pb-0.5 border-slate-300">
-                <strong>Pediatric Assessment Triangle (PAT)</strong>
-              </span>
-              <div className="border border-slate-300 rounded-xl p-3 bg-slate-50/20 space-y-2 text-[10px]">
-                <div>
-                  <strong className="text-slate-700 block mb-1 underline">Appearance (TICLS)</strong>
-                  <div className="grid grid-cols-2 gap-2">
-                    <p><strong>Tone:</strong> {currentCase.pediatricDetails?.patAppearanceTone || "Not documented"}</p>
-                    <p><strong>Interactivity:</strong> {currentCase.pediatricDetails?.patAppearanceInteractivity || "Not documented"}</p>
-                    <p><strong>Consolability:</strong> {currentCase.pediatricDetails?.patAppearanceConsolability || "Not documented"}</p>
-                    <p><strong>Look/Gaze:</strong> {currentCase.pediatricDetails?.patAppearanceLookGaze || "Not documented"}</p>
-                    <p className="col-span-2"><strong>Speech/Cry:</strong> {currentCase.pediatricDetails?.patAppearanceSpeechCry || "Not documented"}</p>
-                  </div>
-                </div>
-                <div>
-                  <strong className="text-orange-700 block mb-1 underline">Work of Breathing</strong>
-                  <p>{currentCase.pediatricDetails?.patWorkOfBreathing || "Not documented"}</p>
-                </div>
-                <div>
-                  <strong className="text-red-700 block mb-1 underline">Circulation to Skin</strong>
-                  <p>{currentCase.pediatricDetails?.patCirculation || "Not documented"}</p>
-                </div>
-              </div>
-            </div>
-
-            {/* ABCD Vital Assessment  */}
-            <div className="space-y-1.5 text-[10px]">
-              <span className="font-black text-slate-950 block uppercase tracking-wide border-b pb-0.5 border-slate-300">
-                <strong>Primary Survey (Airway, Breathing, Circulation, Disability, Exposure)</strong>
-              </span>
-              <div className="border border-slate-300 rounded-xl p-3 bg-slate-50/20 space-y-1.5 text-[10px]">
-                <p>
-                  <strong>Airway Status:</strong> {currentCase.pediatricDetails?.airwayStatus || currentCase.primaryAssessment.airway || "Not documented"} | 
-                  <strong> Cry Quality:</strong> {currentCase.pediatricDetails?.airwayCry || "Not documented"} | 
-                  <strong> Intervention:</strong> {currentCase.pediatricDetails?.airwayIntervention || currentCase.primaryAssessment.survey?.airway?.intervention || "None documented"}
-                </p>
-                <p>
-                  <strong>Breathing (RR- {currentCase.vitals.rr ? `${currentCase.vitals.rr} /min` : "Not documented"} | SpO2- {displaySpo2(currentCase.vitals.spo2)}):</strong> 
-                  Work of Breathing: {currentCase.pediatricDetails?.breathingWob || currentCase.primaryAssessment.breathing || "Not documented"} | 
-                  Abnormal Positioning: {currentCase.pediatricDetails?.breathingAbnormalPositioning || "Not documented"} | 
-                  Air Entry: {currentCase.pediatricDetails?.breathingAirEntry || "Not documented"} | 
-                  Subcutaneous Emphysema: {currentCase.pediatricDetails?.breathingSubcutaneousEmphysema || "Not documented"} | 
-                  Intervention: {currentCase.pediatricDetails?.breathingIntervention || "None documented"}
-                </p>
-                <p>
-                  <strong>Circulation (HR- {currentCase.vitals.hr ? `${currentCase.vitals.hr} bpm` : "Not documented"} | BP- {currentCase.vitals.bp ? `${currentCase.vitals.bp} mmHg` : "Not documented"}):</strong> 
-                  CRT: {currentCase.pediatricDetails?.circulationCrt || "Not documented"} | 
-                  Distended Neck Veins: {currentCase.pediatricDetails?.circulationDistendedNeckVeins || "Not documented"} | 
-                  Skin Color/Temp: {currentCase.pediatricDetails?.circulationSkinColorTemp || "Not documented"} | 
-                  Intervention: {currentCase.pediatricDetails?.circulationIntervention || "None documented"}
-                </p>
-                <p>
-                  <strong>Disability & Neurological:</strong> 
-                  AVPU/GCS: {currentCase.pediatricDetails?.disabilityAvpuGcs || gcsDisplay} | 
-                  Pupils: {currentCase.pediatricDetails?.disabilityPupils || pupilsDisplay} | 
-                  Abnormal Responses: {currentCase.pediatricDetails?.disabilityAbnormalResponses || "Not documented"} | 
-                  GRBS: {displayGrbs(currentCase.vitals?.grbs || currentCase.pediatricDetails?.disabilityGrbs)}
-                </p>
-                <p>
-                  <strong>Exposure & Spine Check:</strong> 
-                  Temp: {displayTemperature(currentCase.vitals.temp)} | 
-                  Trauma Survey (Logroll): {currentCase.pediatricDetails?.exposureTraumaLogroll || "Not documented"} | 
-                  Signs of Trauma: {currentCase.pediatricDetails?.exposureSignsOfTrauma || "Not documented"} | 
-                  Evidence of Infection/Bleeding: {currentCase.pediatricDetails?.exposureEvidenceInfectionBleeding || "Not documented"} | 
-                  Deformities: {currentCase.pediatricDetails?.exposureLongBoneDeformities || "Not documented"} | 
-                  Extremities: {currentCase.pediatricDetails?.exposureExtremitiesCheck || "Not documented"} | 
-                  Immobilize: {currentCase.pediatricDetails?.exposureImmobilizeInjuredLimbs || "Not documented"}
-                </p>
-                <p>
-                  <strong>Adjuvant / EFAST Ultrasound:</strong> 
-                  Heart: {currentCase.pediatricDetails?.adjuvantEfastHeart || "Not documented"} | 
-                  Abdomen: {currentCase.pediatricDetails?.adjuvantEfastAbdomen || "Not documented"} | 
-                  Lungs: {currentCase.pediatricDetails?.adjuvantEfastLungs || "Not documented"} | 
-                  Pelvis: {currentCase.pediatricDetails?.adjuvantEfastPelvis || "Not documented"}
-                </p>
-              </div>
-            </div>
-
-            {/* Secondary Survey History & Examination  */}
-            <div className="space-y-1.5 text-[10px]">
-              <span className="font-black text-slate-950 block uppercase tracking-wide border-b pb-0.5 border-slate-300">
-                <strong>Secondary Assessment (Focused Pediatric History & Examination)</strong>
-              </span>
-              <div className="border border-slate-300 rounded-xl p-3 bg-slate-50/20 space-y-2 text-[10px]">
-                <p><strong>Signs & Symptoms:</strong> {currentCase.sampleHistory?.symptoms || "Not documented"}</p>
-                <p><strong>Allergies:</strong> {currentCase.sampleHistory?.allergies || "Not documented"}</p>
-                <p><strong>Medications:</strong> {currentCase.sampleHistory?.medications || "Not documented"}</p>
-                <p><strong>Past Medical History:</strong> {currentCase.sampleHistory?.pastHistory || "Not documented"}</p>
-                <p><strong>Last Meal:</strong> {currentCase.sampleHistory?.lastMeal || "Not documented"}</p>
-                {(currentCase.sampleHistory?.events &&
-                   currentCase.sampleHistory.events.trim() &&
-                   !["none", "n/a", "nil", "refer to complaints"].includes(currentCase.sampleHistory.events.trim().toLowerCase())) && (
-                  <p><strong>Preceding Events / Trauma:</strong> {currentCase.sampleHistory?.events}</p>
-                )}
-                <p className="border-t pt-1.5 mt-1"><strong>HEENT:</strong> {currentCase.pediatricDetails?.examHeent || "Not documented"}</p>
-                <p><strong>Respiratory:</strong> {currentCase.pediatricDetails?.focusedRespiratory || "Not documented"}</p>
-                <p><strong>Cardiovascular:</strong> {currentCase.pediatricDetails?.focusedCardiovascular || "Not documented"}</p>
-                <p><strong>Abdomen:</strong> {currentCase.pediatricDetails?.focusedAbdomen || "Not documented"}</p>
-                <p><strong>Back / Spine:</strong> {currentCase.pediatricDetails?.focusedBack || "Not documented"}</p>
-                <p><strong>Extremities:</strong> {currentCase.pediatricDetails?.focusedExtremities || "Not documented"}</p>
-              </div>
-            </div>
-
-            {/* Course, Diagnosis & Disposition  */}
-            <div className="space-y-1.5 text-[10px]">
-              <span className="font-black text-slate-950 block uppercase tracking-wide border-b pb-0.5 border-slate-300">
-                <strong>Course, Treatment, & Provisional Diagnosis</strong>
-              </span>
-              <div className="border border-slate-300 rounded-xl p-3 bg-slate-50/20 space-y-1.5 text-[10px]">
-                <p><strong>Hospital Clinical Course:</strong> {currentCase.progressNotes || "Not documented"}</p>
-                <p><strong>Treatment Given in Hospital:</strong> {currentCase.treatmentNotes || "Not documented"}</p>
-                <p><strong>Provisional Diagnosis at Discharge/Shift:</strong> <strong>{currentCase.provisionalPrimaryDiagnosis || currentCase.pediatricDetails?.dispositionProvisionalDiagnosis || "Not documented"}</strong></p>
-                <p><strong>Differential Diagnosis:</strong> {currentCase.differentials?.map(d => d.diagnosis).join(", ") || (currentCase.provisionalDifferentialDiagnoses ? currentCase.provisionalDifferentialDiagnoses : "None recorded")}</p>
-              </div>
-            </div>
-
-            {/* Disposition & Clinicians  */}
-            <div className="grid grid-cols-3 gap-4 border border-slate-300 p-3 rounded-xl bg-slate-50/40 text-[10px] mt-4">
-              <div>
-                <strong>Disposition / Condition:</strong> {currentCase.dispositionDetails?.dispositionType || "Not yet determined"} / {currentCase.conditionAtShift || currentCase.pediatricDetails?.dispositionConditionAtShift || "Not documented"}
-              </div>
-              <div>
-                <strong>EM Resident:</strong> {(currentCase.dispositionDetails?.residentName || currentCase.pediatricDetails?.dispositionEmResident || currentCase.doctorName) ? formatDoctorName(currentCase.dispositionDetails?.residentName || currentCase.pediatricDetails?.dispositionEmResident || currentCase.doctorName) : "Not documented"}
-              </div>
-              <div>
-                <strong>EM Consultant:</strong> {(currentCase.dispositionDetails?.consultantName || currentCase.pediatricDetails?.dispositionEmConsultant) ? formatDoctorName(currentCase.dispositionDetails?.consultantName || currentCase.pediatricDetails?.dispositionEmConsultant) : "Not documented"}
-              </div>
-            </div>
-          </div>
-        ) : (
-          // STANDARD ADULT PRINT RECORD
-          <>
-            {/* Header section matching clinical template layout  */}
-            <div className="border-b-4 border-double border-slate-800 pb-3 text-center space-y-1">
-              <h2 className="text-sm md:text-base font-extrabold tracking-wide uppercase font-serif text-slate-950">
-                <strong>{displayHospitalName}</strong>
-              </h2>
-              <p className="text-[10px] text-slate-600 tracking-wide uppercase font-semibold">
-                <strong>Clinical Department of Emergency Medicine & Trauma Services</strong>
-              </p>
-              <div className="text-[9px] text-slate-500 font-mono flex flex-wrap justify-center gap-x-4 gap-y-1">
-                <span><strong>{displayHospitalAddress}</strong></span>
-                <span>•</span>
-                <span><strong>24x7 ER Hotline Available</strong></span>
-              </div>
-              <h1 className="text-xs font-black uppercase tracking-widest bg-slate-950 text-white py-1 px-4 rounded-md inline-block mt-2">
-                <strong>INITIAL ASSESSMENT AND EMERGENCY DEPARTMENT CASE RECORD</strong>
-              </h1>
-            </div>
-
-            {/* Patient Demographics & MLC info  */}
-            <div className="grid grid-cols-2 gap-y-2 gap-x-4 border border-slate-300 p-3.5 rounded-xl bg-slate-50/40 text-[10px]">
-              <div className="space-y-1">
-                <p className="flex justify-between border-b border-slate-100 pb-0.5">
-                  <span className="font-extrabold text-slate-500 uppercase"><strong>Patient Name:</strong></span>
-                  <span className="font-bold text-slate-950 uppercase"><strong>{currentCase.patient.name}</strong></span>
-                </p>
-                <p className="flex justify-between border-b border-slate-100 pb-0.5">
-                  <span className="font-extrabold text-slate-500 uppercase"><strong>Age/Sex:</strong></span>
-                  <span className="font-bold text-slate-850"><strong>{currentCase.patient.age || "N/A"} Years / {currentCase.patient.gender}</strong></span>
-                </p>
-                <p className="flex justify-between border-b border-slate-100 pb-0.5">
-                  <span className="font-extrabold text-slate-500 uppercase"><strong>Address:</strong></span>
-                  <span className="font-semibold text-slate-850 text-right"><strong>Chunangamvely, Aluva, Ernakulam, Kerala - 683 112</strong></span>
-                </p>
-                <p className="flex justify-between">
-                  <span className="font-extrabold text-slate-500 uppercase"><strong>Phone Number:</strong></span>
-                  <span className="font-bold font-mono text-slate-950"><strong>{currentCase.patient.phone || "Not Provided"}</strong></span>
-                </p>
-              </div>
-              <div className="space-y-1 border-l pl-4">
-                <p className="flex justify-between border-b border-slate-100 pb-0.5">
-                  <span className="font-extrabold text-slate-500 uppercase"><strong>Date & Time of Arrival:</strong></span>
-                  <span className="font-semibold text-slate-850"><strong>{currentCase.patient.dateOpened}</strong></span>
-                </p>
-                <p className="flex justify-between border-b border-slate-100 pb-0.5">
-                  <span className="font-extrabold text-slate-500 uppercase"><strong>Date & Time of Accident:</strong></span>
-                  <span className="font-semibold text-slate-850"><strong>{currentCase.patient.mlcDetails?.dateTimeOfIncident || "N/A"}</strong></span>
-                </p>
-                <p className="flex justify-between border-b border-slate-100 pb-0.5">
-                  <span className="font-extrabold text-slate-500 uppercase"><strong>Place of Accident:</strong></span>
-                  <span className="font-semibold text-slate-850"><strong>{currentCase.patient.mlcDetails?.placeOfIncident || "N/A"}</strong></span>
-                </p>
-                <p className="flex justify-between border-b border-slate-100 pb-0.5">
-                  <span className="font-extrabold text-slate-500 uppercase"><strong>Nature of Accident:</strong></span>
-                  <span className="font-semibold text-slate-850"><strong>{currentCase.patient.mlcDetails?.natureOfIncident || "N/A"}</strong></span>
-                </p>
-                <p className="flex justify-between border-b border-slate-100 pb-0.5">
-                  <span className="font-extrabold text-slate-500 uppercase"><strong>Mechanism of Injury:</strong></span>
-                  <span className="font-semibold text-slate-850"><strong>{currentCase.patient.mlcDetails?.natureOfIncident || "N/A"}</strong></span>
-                </p>
-                <p className="flex justify-between border-b border-slate-100 pb-0.5">
-                  <span className="font-extrabold text-slate-500 uppercase"><strong>Brought By:</strong></span>
-                  <span className="font-semibold text-slate-850"><strong>{currentCase.patient.mlcDetails?.informantBroughtBy || "Self"}</strong></span>
-                </p>
-                <p className="flex justify-between border-b border-slate-100 pb-0.5">
-                  <span className="font-extrabold text-slate-500 uppercase"><strong>Informant:</strong></span>
-                  <span className="font-semibold text-slate-850"><strong>{currentCase.patient.mlcDetails?.informantBroughtBy || "Self"}</strong></span>
-                </p>
-                <p className="flex justify-between">
-                  <span className="font-extrabold text-slate-500 uppercase"><strong>Identification Mark:</strong></span>
-                  <span className="font-bold text-slate-850"><strong>{currentCase.patient.mlcDetails?.identificationMark || "Black mole over face/neck"}</strong></span>
-                </p>
-              </div>
-            </div>
-
-            {/* Presenting Complaint  */}
-            <div className="space-y-1">
-              <span className="font-black text-[10px] text-slate-900 block uppercase tracking-wide border-b pb-0.5 border-slate-300">
-                <strong>Presenting Complaint</strong>
-              </span>
-              <p className="p-2 bg-slate-50 rounded whitespace-pre-wrap text-[10px]">
-                {currentCase.patient.presentingComplaint || "None"}
-              </p>
-            </div>
-
-            {/* Primary Assessment  */}
-            <div className="space-y-1.5">
-              <span className="font-black text-slate-950 block uppercase text-[10px] tracking-wide border-b pb-0.5 border-slate-400">
-                <strong>Primary Assessment</strong>
-              </span>
-              <div className="border border-slate-300 rounded-xl p-3 bg-slate-50/20 space-y-1.5 text-[10px]">
-                <p><strong>Airway</strong> → {toPlainText(buildExportPrimarySurvey(currentCase).md.airway)}</p>
-                <p><strong>Breathing</strong> → {toPlainText(buildExportPrimarySurvey(currentCase).md.breathing)}</p>
-                <p><strong>Circulation</strong> → {toPlainText(buildExportPrimarySurvey(currentCase).md.circulation)}</p>
-                <p><strong>Disability</strong> → {toPlainText(buildExportPrimarySurvey(currentCase).md.disability)}</p>
-                <p><strong>Exposure</strong> → {toPlainText(buildExportPrimarySurvey(currentCase).md.exposure)}</p>
-              </div>
-            </div>
-
-            {/* Adjuvants to Primary  */}
-            <div className="space-y-1.5">
-              <span className="font-black text-slate-950 block uppercase text-[10px] tracking-wide border-b pb-0.5 border-slate-400">
-                <strong>Adjuvants to Primary</strong>
-              </span>
-              <div className="border border-slate-300 rounded-xl p-3 bg-slate-50/20 space-y-1 text-[10px]">
-                <p><strong>ECG:</strong> {(() => {
-                  const ecgStatus = currentCase.primaryAssessment.survey?.adjuncts?.ecgStatus;
-                  const ecgNotes = currentCase.primaryAssessment.survey?.adjuncts?.ecgNotes || currentCase.primaryAssessment.survey?.circulation?.ecg || currentCase.adjuncts?.ecgNotes || currentCase.adjuncts?.ecgFindings;
-                  const parts = [ecgStatus && ecgStatus !== "Not done" ? ecgStatus : null, ecgNotes].filter(Boolean);
-                  if (parts.length > 0) return parts.join(" — ");
-                  return ecgStatus === "Not done" ? "Not done" : "Not documented";
-                })()}</p>
-                <p><strong>VBG/ABG:</strong> {(() => {
-                  const abg = currentCase.primaryAssessment.survey?.adjuncts?.abg;
-                  const topAdj = currentCase.adjuncts;
-                  const vals: string[] = [];
-                  const ph = abg?.ph || topAdj?.abgPh;
-                  if (ph) vals.push(`pH: ${ph}`);
-                  const pco2 = abg?.pco2 || topAdj?.abgPco2;
-                  if (pco2) vals.push(`pCO2: ${pco2}`);
-                  const hco3 = abg?.hco3 || topAdj?.abgHco3;
-                  if (hco3) vals.push(`HCO3: ${hco3}`);
-                  const lac = abg?.lactate || topAdj?.abgLactate;
-                  if (lac) vals.push(`Lactate: ${lac}`);
-                  const interp = abg?.clinicalInterpretation || abg?.finalDiagnosis || abg?.interpretation;
-                  if (vals.length > 0 || interp) {
-                    const prefix = abg?.sampleType || (topAdj?.abgSampleType ? topAdj.abgSampleType : "ABG/VBG");
-                    return `${prefix}: ${vals.join(", ")}${interp ? ` — ${interp}` : ""}`;
-                  }
-                  return "Not documented";
-                })()}</p>
-                <p><strong>Bed side Screening Echo / EFAST:</strong> {(() => {
-                  const efastStatus = currentCase.primaryAssessment.survey?.adjuncts?.efastStatus;
-                  const efastNotes = currentCase.primaryAssessment.survey?.adjuncts?.efastNotes || currentCase.adjuncts?.efastNotes;
-                  const echoStatus = currentCase.primaryAssessment.survey?.adjuncts?.echoStatus;
-                  const echoNotes = currentCase.primaryAssessment.survey?.adjuncts?.echoNotes || currentCase.primaryAssessment.survey?.adjuncts?.echoFindings || currentCase.adjuncts?.echoNotes || currentCase.adjuncts?.echoFindings;
-                  const efastObj = currentCase.primaryAssessment.survey?.circulation?.efast;
-                  const results: string[] = [];
-                  const efastRes = formatEfastAdjunct(efastStatus, efastNotes, efastObj);
-                  if (efastRes) results.push(efastRes);
-                  if (echoStatus && echoStatus !== "Not done") {
-                    results.push(`Echo: ${echoStatus}${echoNotes ? ` (${echoNotes})` : ""}`);
-                  } else if (echoNotes) {
-                    results.push(`Echo: ${echoNotes}`);
-                  }
-                  return results.length > 0 ? results.join(" | ") : "Not documented";
-                })()}</p>
-              </div>
-            </div>
-
-            {/* History of Present Illness  */}
-            <div className="space-y-1">
-              <span className="font-black text-slate-950 block uppercase text-[10px] tracking-wide border-b pb-0.5 border-slate-400">
-                <strong>History of Present Illness</strong>
-              </span>
-              <p className="p-2 bg-slate-50 rounded whitespace-pre-wrap text-[10px]">
-                {currentCase.sampleHistory.symptoms || currentCase.patient.presentingComplaint || "None reported"}
-              </p>
-            </div>
-
-            {/* Secondary Survey  */}
-            <div className="space-y-1.5">
-              <span className="font-black text-slate-950 block uppercase text-[10px] tracking-wide border-b pb-0.5 border-slate-400">
-                <strong>Secondary Survey</strong>
-              </span>
-              <div className="border border-slate-300 rounded-xl p-3 bg-slate-50/20 space-y-1 text-[10px]">
-                <p><strong>Signs and Symptoms:</strong> {currentCase.sampleHistory.symptoms || "Not documented"}</p>
-                <p><strong>Past medical history:</strong> {currentCase.sampleHistory.pastHistory || "Not documented"}</p>
-                {currentCase.sampleHistory.events && currentCase.sampleHistory.events.trim() && !["none", "n/a", "nil"].includes(currentCase.sampleHistory.events.trim().toLowerCase()) && (
-                  <p><strong>Preceding Events / Trauma:</strong> {currentCase.sampleHistory.events}</p>
-                )}
-                <p><strong>Family / Gynae History:</strong> {currentCase.sampleHistory.familyHistory || "Not documented"}</p>
-                <p><strong>LMP:</strong> {currentCase.isPediatric ? "N/A" : ((currentCase.sampleHistory as any).lmp || "Not documented")}</p>
-                <p><strong>Allergies:</strong> {currentCase.sampleHistory.allergies || "Not documented"}</p>
-              </div>
-            </div>
-
-            {/* General Examination & Systemic Examination  */}
-            {(() => {
-              const sec = parseSecondaryAssessment(currentCase.secondaryAssessment || "");
-              return (
-                <>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-1.5">
-                      <span className="font-black text-slate-950 block uppercase text-[10px] tracking-wide border-b pb-0.5 border-slate-400">
-                        <strong>General Examination</strong>
-                      </span>
-                      <p className="p-2 bg-slate-50 rounded text-[10px] leading-relaxed">
-                        {sec.General || "Not documented"}
-                      </p>
-                    </div>
-                    <div className="space-y-1.5">
-                      <span className="font-black text-slate-950 block uppercase text-[10px] tracking-wide border-b pb-0.5 border-slate-400">
-                        <strong>Extremities and Back</strong>
-                      </span>
-                      <p className="p-2 bg-slate-50 rounded text-[10px] leading-relaxed">
-                        {sec.Extremities || "Not documented"}
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Systemic Examination  */}
-                  <div className="space-y-1.5">
-                    <span className="font-black text-slate-950 block uppercase text-[10px] tracking-wide border-b pb-0.5 border-slate-400">
-                      <strong>Systemic Examination</strong>
-                    </span>
-                    <div className="border border-slate-300 rounded-xl p-3 bg-slate-50/20 space-y-1.5 text-[10px]">
-                      <p><strong>CVS:</strong> {sec.CVS || "Not documented"}</p>
-                      <p><strong>CHEST / RS:</strong> {sec.RS || "Not documented"}</p>
-                      <p><strong>Abdomen (PA):</strong> {sec.PA || "Not documented"}</p>
-                      <p><strong>CNS:</strong> {sec.CNS || "Not documented"}</p>
-                    </div>
-                  </div>
-                </>
-              );
-            })()}
-
-            {/* Psychological Assessment  */}
-            <div className="space-y-1.5">
-              <span className="font-black text-slate-950 block uppercase text-[10px] tracking-wide border-b pb-0.5 border-slate-400">
-                <strong>Psychological Assessment</strong>
-              </span>
-              <div className="border border-slate-300 rounded-xl p-3 bg-slate-50/20 space-y-1 text-[10px]">
-                <p>1. <strong>Have you been feeling persistently low, excessively worried, angry, or finding it hard to focus lately?:</strong> No.</p>
-                <p>2. <strong>Have you noticed hearing or seeing things that others don't, or feeling unusually energetic or restless for long periods?:</strong> No.</p>
-                <p>3. <strong>Do you regularly use alcohol, tobacco, or any other substances (including recreational or non-prescribed drugs)?:</strong> No.</p>
-                <p>4. <strong>Is the individual currently feeling confused or agitated?:</strong> No.</p>
-                <p>5. <strong>Have you ever had thoughts of ending your life, or have you ever attempted to harm yourself?:</strong> No.</p>
-                <p>6. <strong>Have you ever received treatment or support for mental health, psychological issues, or substance use problems?:</strong> No.</p>
-                <p>7. <strong>Additional Observations:</strong> Nil</p>
-              </div>
-            </div>
-
-            {/* Investigations  */}
-            <div className="space-y-1.5">
-              <span className="font-black text-slate-950 block uppercase text-[10px] tracking-wide border-b pb-0.5 border-slate-400">
-                <strong>Investigations</strong>
-              </span>
-              <div className="grid grid-cols-2 gap-4 text-[9px] font-mono">
-                <div className="border border-slate-200 p-2 rounded bg-slate-50/50">
-                  <p><strong>ER BASIC:</strong> CBC, URE</p>
-                  <p><strong>ER ADVANCE:</strong> CBC, CRP, RFT, LFT, URE, S.ELECTROLYTES</p>
-                  <p><strong>NSTEMI PANEL:</strong> CBC, CRP, RFT, S.ELECTROLYTES, URE</p>
-                  <p><strong>ACUTE STROKE CODE 7:</strong> CBC, BLOOD GROUPING WITH ANTIBODY SCREENING, LFT, S.ELECTROLYTES, PT INR, URE, CT ANGIOGRAM, MRI SINGLE SEQUENCE, X RAY CHEST AP, HIV ANTIGEN AND ANTIBODY, HBSAG, ANTI HCV</p>
-                  <p><strong>STEMI PANEL:</strong> CBC, CRP, RFT, LFT, S.ELECTROLYTES, URE, BLOOD GROUPING WITH ANTIBODY SCREENING, HBSAG, ANTI HCV, HIV ANTIGEN AND ANTIBODY</p>
-                </div>
-                <div className="border border-slate-200 p-2 rounded bg-slate-50/50">
-                  <p><strong>PA PANEL EMERGENCY:</strong> LFT, CBC, CRP, RFT, S.ELECTROLYTES, PT INR, BLOOD GROUPING WITH ANTIBODY SCREENING, ANTI HCV, HBSAG, X RAY CHEST AP</p>
-                  <p><strong>ADULT SEIZURE PANEL:</strong> CBC, CRP, LFT, RFT, S.ELECTROLYTES, URE, CALCIUM, MAGNESIUM, PHOSPHORUS</p>
-                  <p><strong>PEDIA MINI PANEL:</strong> CBC, CRP, CREATININE, LFT MINI, S.ELECTROLYTES</p>
-                  <p><strong>PA PANEL PEDIATRICS SURGERY:</strong> CBC, CRP, RFT, HIV ANTIGEN AND ANTIBODY, HBSAG, ANTI HCV, LFT MINI PANEL</p>
-                  <p><strong>PEDIATRIC FEBRILE SEIZURE PANEL:</strong> CBC, CRP, RFT, LFT, S.ELECTROLYTES, URE, CALCIUM, PHOSPHORUS, MAGNESIUM, ESR, CULTURE AND SENSITIVITY BLOOD</p>
-                </div>
-              </div>
-            </div>
-
-            {/* Treatment Plan & Active Meds  */}
-            <div className="grid grid-cols-2 gap-4 text-[10px]">
-              <div className="space-y-1">
-                <span className="font-black text-slate-950 block uppercase text-[10px] tracking-wide border-b pb-0.5 border-slate-400">
-                  <strong>Treatment Plan - Medications & Infusions</strong>
-                </span>
-                <div className="p-2 border rounded whitespace-pre-wrap font-mono">
-                  <strong>Active Medications Given:</strong>{"\n"}{currentCase.treatments.map((t, idx) => `${idx + 1}. ${t.drugName} ${t.dose} (${t.route})`).join("\n") || "None logged"}
-                  {"\n\n"}<strong>Active Infusions:</strong>{"\n"}{currentCase.infusions?.map((inf, idx) => `${idx + 1}. ${inf.fluidName} - Dose: ${inf.dose}, Dilution: ${inf.dilution}, Rate: ${inf.rate}`).join("\n") || "None logged"}
-                </div>
-              </div>
-              <div className="space-y-1">
-                <span className="font-black text-slate-950 block uppercase text-[10px] tracking-wide border-b pb-0.5 border-slate-400">
-                  <strong>Procedures Checked / Performed</strong>
-                </span>
-                <div className="p-2 border rounded font-mono">
-                  <strong>Procedures Done:</strong> {[
-                    ...(currentCase.proceduresChecked || []).map(p => {
-                      if (p === 'foleys') return "Foley's Catheterization";
-                      if (p === 'ng_tube') return "NG Tube Insertion";
-                      if (p === 'gastric_lavage') return "Gastric Lavage";
-                      if (p === 'suturing') return "Wound Suturing/Closure";
-                      if (p === 'irrigation') return "Wound Irrigation";
-                      if (p === 'splinting') return "Fracture Splinting";
-                      if (p === 'reduction') return "Joint Reduction";
-                      return p;
-                    }),
-                    currentCase.otherProcedures ? `Other Procedures: ${currentCase.otherProcedures}` : ""
-                  ].filter(Boolean).join(", ") || 'No procedures performed.'}
-                </div>
-              </div>
-            </div>
-
-            {/* Progress Notes  */}
-            <div className="space-y-1">
-              <span className="font-black text-slate-950 block uppercase text-[10px] tracking-wide border-b pb-0.5 border-slate-400">
-                <strong>Continuous Progress Notes Log</strong>
-              </span>
-              <p className="p-2 bg-slate-50 rounded whitespace-pre-wrap text-[10px]">
-                {currentCase.progressNotes || "No progress notes recorded."}
-              </p>
-            </div>
-
-            {/* Disposition & Clinicians  */}
-            <div className="grid grid-cols-3 gap-4 border border-slate-300 p-3.5 rounded-xl bg-slate-50/40 text-[10px] mt-4">
-              <div>
-                <strong>Disposition:</strong> {currentCase.dispositionDetails?.dispositionType || "Not yet determined"}
-                <p className="text-[9px] text-slate-500 mt-0.5">(ICU, Room, Ward, Referral, DAMA)</p>
-              </div>
-              <div>
-                <strong>EM Resident:</strong> {(currentCase.dispositionDetails?.residentName || currentCase.doctorName) ? formatDoctorName(currentCase.dispositionDetails?.residentName || currentCase.doctorName) : "Not documented"}
-              </div>
-              <div>
-                <strong>EM Consultant:</strong> {(currentCase.dispositionDetails?.consultantName || currentCase.consultantName) ? formatDoctorName(currentCase.dispositionDetails?.consultantName || currentCase.consultantName) : "Not documented"}
-              </div>
-            </div>
-          </>
-        )}
-
+      {/* Canonical Printable Document - Hidden on screen, rendered on print */}
+      <div className="hidden print:block">
+        <CaseSheetPrintView clinicalCase={currentCase} />
       </div>
 
-      {/* View Case Sheet PDF Modal Preview Overlay  */}
+      {/* View Case Sheet PDF / Universal Document Modal */}
       {showPdfModal && (
-        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 md:p-4 animate-fade-in no-print">
-          <div className="bg-white dark:bg-slate-900 w-full max-w-4xl h-[92vh] rounded-2xl shadow-2xl overflow-hidden flex flex-col border border-slate-200 dark:border-slate-800">
-            {/* Modal Top Control Header  */}
-            <div className="px-5 py-3.5 bg-slate-900 text-white flex items-center justify-between shrink-0 border-b border-slate-800">
-              <div className="flex items-center gap-2.5">
-                <div className="p-2 bg-indigo-600/30 border border-indigo-500/40 rounded-xl text-indigo-400">
-                  <FileText className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="font-extrabold text-sm text-white">Clinical Case Sheet PDF Preview</h3>
-                  <p className="text-[10px] text-slate-400 font-mono">
-                    {currentCase.patient.name} · UHID: {currentCase.patient.uhid || "N/A"} · Case ID: {getDisplayCaseId(currentCase)}
-                  </p>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={handleDownloadCaseSheet}
-                  className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer"
-                  title="Download raw case sheet text"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  Download Text
-                </button>
-                <button
-                  type="button"
-                  onClick={() => triggerPrintWithTip()}
-                  className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-extrabold rounded-lg transition-colors flex items-center gap-1.5 shadow-xs cursor-pointer"
-                  title="Print / Save as PDF document"
-                >
-                  <Printer className="w-3.5 h-3.5" />
-                  Print / Save PDF
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowPdfModal(false)}
-                  className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
-                  title="Close Modal"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-            </div>
-
-            {/* Modal Document Container  */}
-            <div className="flex-1 overflow-y-auto p-4 md:p-4 bg-slate-100 dark:bg-slate-950 flex justify-center">
-              <div className="bg-white text-slate-900 p-4 md:p-10 rounded-xl shadow-lg border border-slate-200 w-full max-w-3xl font-sans text-[11px] leading-relaxed space-y-5 select-text">
-                {/* Header section matching clinical template layout  */}
-                <div className="border-b-4 border-double border-slate-800 pb-3 text-center space-y-1">
-                  <h2 className="text-sm md:text-base font-extrabold tracking-wide uppercase font-serif text-slate-950">
-                    <strong>{displayHospitalName}</strong>
-                  </h2>
-                  <p className="text-[10px] text-slate-600 tracking-wide uppercase font-semibold">
-                    <strong>Clinical Department of Emergency Medicine & Trauma Center</strong>
-                  </p>
-                  <div className="text-[9px] text-slate-500 font-mono flex flex-wrap justify-center gap-x-4 gap-y-1">
-                    <span><strong>{displayHospitalAddress}</strong></span>
-                    <span>•</span>
-                    <span><strong>24x7 ER Hotline Available</strong></span>
-                  </div>
-                  <h1 className="text-xs font-black uppercase tracking-widest bg-slate-950 text-white py-1 px-4 rounded-md inline-block mt-2">
-                    <strong>EMERGENCY DEPARTMENT INITIAL ASSESSMENT & CASE RECORD</strong>
-                  </h1>
-                </div>
-
-                {/* Patient Demographics Box  */}
-                <div className="grid grid-cols-2 gap-y-2 gap-x-4 border border-slate-300 p-3 rounded-xl bg-slate-50/40 text-[10px]">
-                  <div className="space-y-1">
-                    <p className="flex justify-between border-b border-slate-100 pb-0.5">
-                      <span className="font-extrabold text-slate-500 uppercase">Patient Name:</span>
-                      <span className="font-bold text-slate-950 uppercase">{currentCase.patient.name}</span>
-                    </p>
-                    <p className="flex justify-between border-b border-slate-100 pb-0.5">
-                      <span className="font-extrabold text-slate-500 uppercase">Age/Sex:</span>
-                      <span className="font-bold text-slate-850">{currentCase.patient.age || "N/A"} Yrs / {currentCase.patient.gender}</span>
-                    </p>
-                    <p className="flex justify-between border-b border-slate-100 pb-0.5">
-                      <span className="font-extrabold text-slate-500 uppercase">UHID:</span>
-                      <span className="font-mono font-bold text-slate-900">{currentCase.patient.uhid || "N/A"}</span>
-                    </p>
-                    <p className="flex justify-between">
-                      <span className="font-extrabold text-slate-500 uppercase">Triage Category:</span>
-                      <span className="font-bold text-indigo-700">{currentCase.patient.triageCategory}</span>
-                    </p>
-                  </div>
-                  <div className="space-y-1 border-l pl-4">
-                    <p className="flex justify-between border-b border-slate-100 pb-0.5">
-                      <span className="font-extrabold text-slate-500 uppercase">Date/Time Opened:</span>
-                      <span className="font-semibold text-slate-850 font-mono">{currentCase.patient.dateOpened}</span>
-                    </p>
-                    <p className="flex justify-between border-b border-slate-100 pb-0.5">
-                      <span className="font-extrabold text-slate-500 uppercase">Case Type:</span>
-                      <span className="font-semibold text-slate-850">{currentCase.patient.caseType}</span>
-                    </p>
-                    <p className="flex justify-between border-b border-slate-100 pb-0.5">
-                      <span className="font-extrabold text-slate-500 uppercase">Doctor On Duty:</span>
-                      <span className="font-bold text-slate-900">{formatDoctorName(currentCase.doctorName)}</span>
-                    </p>
-                    <p className="flex justify-between">
-                      <span className="font-extrabold text-slate-500 uppercase">MLC Status:</span>
-                      <span className="font-bold text-slate-850">{currentCase.patient.isMlc ? "YES (MLC Registered)" : "NO"}</span>
-                    </p>
-                  </div>
-                </div>
-
-                {/* Presenting Complaints & Vitals  */}
-                <div className="space-y-2">
-                  <h4 className="font-black text-slate-900 uppercase border-b border-slate-300 pb-0.5 text-[10px]">
-                    Presenting Complaint & Initial Vitals
-                  </h4>
-                  <p className="p-2 bg-slate-50 rounded text-slate-800">
-                    {currentCase.patient.presentingComplaint || "No complaint recorded."}
-                  </p>
-                  <div className="grid grid-cols-5 gap-2 p-2 bg-slate-100/60 rounded text-center text-[10px] font-mono">
-                    <div><span className="text-slate-500 block text-[8px] uppercase">BP</span><strong>{currentCase.vitals.bp || "N/A"}</strong></div>
-                    <div><span className="text-slate-500 block text-[8px] uppercase">HR</span><strong>{currentCase.vitals.hr || "N/A"} bpm</strong></div>
-                    <div><span className="text-slate-500 block text-[8px] uppercase">SpO2</span><strong>{displaySpo2(currentCase.vitals.spo2)}</strong></div>
-                    <div><span className="text-slate-500 block text-[8px] uppercase">RR</span><strong>{currentCase.vitals.rr || "N/A"}/m</strong></div>
-                    <div><span className="text-slate-500 block text-[8px] uppercase">Temp</span><strong>{formatTemperature(currentCase.vitals.temp)}</strong></div>
-                  </div>
-                </div>
-
-                {/* Primary Survey (ABCDE)  */}
-                <div className="space-y-1">
-                  <h4 className="font-black text-slate-900 uppercase border-b border-slate-300 pb-0.5 text-[10px]">
-                    Primary Survey (ABCDE Assessment)
-                  </h4>
-                  <div className="space-y-1 text-[10px] bg-slate-50 p-2.5 rounded border border-slate-200">
-                    <p><strong>Airway:</strong> {currentCase.primaryAssessment.airway || "Not documented"}</p>
-                    <p><strong>Breathing:</strong> {currentCase.primaryAssessment.breathing || "Not documented"}</p>
-                    <p><strong>Circulation:</strong> {currentCase.primaryAssessment.circulation || "Not documented"}</p>
-                    <p><strong>Disability:</strong> {formatDisabilityAssessment(currentCase.primaryAssessment.disability, currentCase.vitals?.gcs || currentCase.primaryAssessment.survey?.disability?.gcsTotal, currentCase.vitals?.grbs || currentCase.primaryAssessment.survey?.disability?.grbs)}</p>
-                    <p><strong>Exposure:</strong> {currentCase.primaryAssessment.exposure || "Not documented"}</p>
-                  </div>
-                </div>
-
-                {/* SAMPLE History  */}
-                <div className="space-y-1">
-                  <h4 className="font-black text-slate-900 uppercase border-b border-slate-300 pb-0.5 text-[10px]">
-                    SAMPLE History & Clinical Evolution
-                  </h4>
-                  <div className="grid grid-cols-2 gap-2 text-[10px] bg-slate-50 p-2.5 rounded border border-slate-200">
-                    <p><strong>Symptoms:</strong> {currentCase.sampleHistory.symptoms || "Not documented"}</p>
-                    <p><strong>Allergies:</strong> {currentCase.sampleHistory.allergies || "Not documented"}</p>
-                    <p><strong>Medications:</strong> {currentCase.sampleHistory.medications || "Not documented"}</p>
-                    <p><strong>Past Medical History:</strong> {currentCase.sampleHistory.pastHistory || "Not documented"}</p>
-                    <p className="col-span-2"><strong>Events & Course:</strong> {currentCase.sampleHistory.events || "Not documented"}</p>
-                  </div>
-                </div>
-
-                {/* Treatments Administered  */}
-                {currentCase.treatments && currentCase.treatments.length > 0 && (
-                  <div className="space-y-1">
-                    <h4 className="font-black text-slate-900 uppercase border-b border-slate-300 pb-0.5 text-[10px]">
-                      Emergency Treatments & Medications Given
-                    </h4>
-                    <table className="w-full border-collapse border border-slate-200 text-[10px] text-left">
-                      <thead>
-                        <tr className="bg-slate-100 text-slate-700 font-bold">
-                          <th className="p-1.5 border border-slate-200">Medication / Procedure</th>
-                          <th className="p-1.5 border border-slate-200">Dose</th>
-                          <th className="p-1.5 border border-slate-200">Route</th>
-                          <th className="p-1.5 border border-slate-200">Time Given</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {deduplicateMeds(currentCase.treatments).map((t, idx) => (
-                          <tr key={idx} className="border-b border-slate-200">
-                            <td className="p-1.5 border border-slate-200 font-bold">{t.drugName}</td>
-                            <td className="p-1.5 border border-slate-200">{t.dose}</td>
-                            <td className="p-1.5 border border-slate-200">{validateMedRoute(t.drugName, t.route)}</td>
-                            <td className="p-1.5 border border-slate-200 font-mono">{t.timeGiven}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-
-                {/* Disposition & Signatures  */}
-                <div className="space-y-2 pt-2 border-t border-slate-300">
-                  <div className="flex justify-between text-[10px]">
-                    <p><strong>Disposition Outcome:</strong> <span className="uppercase font-bold text-indigo-800">{currentCase.dispositionDetails?.dispositionType || "Not yet determined"}</span></p>
-                    <p><strong>Condition at Transfer/Shift:</strong> <span className="font-bold">{currentCase.conditionAtShift || "Not documented"}</span></p>
-                  </div>
-                  <div className="grid grid-cols-2 gap-4 pt-6 text-[10px] text-center border-t border-slate-200">
-                    <div>
-                      <p className="font-bold border-b border-slate-400 pb-1 max-w-[180px] mx-auto">{(currentCase.dispositionDetails?.residentName || currentCase.doctorName) ? formatDoctorName(currentCase.dispositionDetails?.residentName || currentCase.doctorName) : "Not documented"}</p>
-                      <p className="text-slate-500 text-[9px] mt-0.5">Resident Emergency Physician Signature</p>
-                    </div>
-                    <div>
-                      <p className="font-bold border-b border-slate-400 pb-1 max-w-[180px] mx-auto">{(currentCase.dispositionDetails?.consultantName || currentCase.consultantName) ? formatDoctorName(currentCase.dispositionDetails?.consultantName || currentCase.consultantName) : "Not documented"}</p>
-                      <p className="text-slate-500 text-[9px] mt-0.5">Consultant / Attending Physician Signature</p>
-                    </div>
-                  </div>
-                </div>
-
-              </div>
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 animate-fade-in no-print">
+          <div className="bg-white dark:bg-slate-900 w-full max-w-5xl h-[95vh] rounded-2xl shadow-2xl overflow-hidden flex flex-col border border-slate-200 dark:border-slate-800">
+            <div className="flex-1 overflow-y-auto">
+              <CaseSheetPrintView
+                clinicalCase={currentCase}
+                onBack={() => setShowPdfModal(false)}
+                onPrint={() => triggerPrintWithTip()}
+              />
             </div>
           </div>
         </div>
       )}
 
-    
       {showSafetyModal && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
           <div className="bg-white dark:bg-slate-900 rounded-2xl w-full max-w-3xl max-h-[90vh] overflow-hidden flex flex-col shadow-2xl border border-slate-200 dark:border-slate-800">

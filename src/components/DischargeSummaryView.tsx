@@ -1713,6 +1713,7 @@ export default function DischargeSummaryView({
       <div>Weight: {currentCase.pediatricDetails.patientWeight ? `${currentCase.pediatricDetails.patientWeight} kg` : "Not recorded"}</div>
       <div>Work of Breathing: {currentCase.pediatricDetails.patWorkOfBreathing || "Not recorded"}</div>
       <div>Circulation: {currentCase.pediatricDetails.patCirculation || "Not recorded"}</div>
+      <div>Immunization Status: {currentCase.pediatricDetails.immunizationHistory || (currentCase.pediatricDetails as any).immunization || "Not recorded"}</div>
     </div>
   )}
 

@@ -2092,6 +2092,7 @@ useEffect(() => {
   const [caseSheetInitialTab, setCaseSheetInitialTab] = useState<string | null>(null);
   const [pendingNewCase, setPendingNewCase] = useState<ClinicalCase | null>(null);
   const [viewCaseSheetPrintId, setViewCaseSheetPrintId] = useState<string | null>(null);
+  const [viewCaseSheetPrintCase, setViewCaseSheetPrintCase] = useState<ClinicalCase | null>(null);
   const [activeFormMode, setActiveFormMode] = useState<"full" | "quick" | null>(null);
   const [showEntryMenu, setShowEntryMenu] = useState<boolean>(false);
   const [showDischargeSummaryId, setShowDischargeSummaryId] = useState<string | null>(null);
@@ -2174,13 +2175,14 @@ useEffect(() => {
   };
 
   // Open read-only, print-styled Case Sheet view
-  const handleViewPrintSheet = (caseId: string) => {
+  const handleViewPrintSheet = (caseId: string, unsavedCase?: ClinicalCase) => {
     if (isGlobalVoiceRecordingActive()) {
       if (!window.confirm("Dictation is still recording. Discard it and leave?")) {
         return;
       }
     }
     setViewCaseSheetPrintId(caseId);
+    setViewCaseSheetPrintCase(unsavedCase || null);
     setSelectedCaseId(null);
     setActiveFormMode(null);
     setShowDischargeSummaryId(null);
@@ -6200,6 +6202,7 @@ const clearAccountScopedState = (previousUid?: string | null) => {
     // 1. Unmount logged-in / patient-facing views first.
     setSelectedCaseId(null);
     setViewCaseSheetPrintId(null);
+    setViewCaseSheetPrintCase(null);
     setActiveFormMode(null);
     setShowDischargeSummaryId(null);
 
@@ -6935,13 +6938,21 @@ const handleSignOut = async () => {
           {/* 1.5. Read-Only Printable Case Sheet View */}
           {viewCaseSheetPrintId && !selectedCaseId && !activeFormMode && !showDischargeSummaryId && (
             (() => {
-              const matched = cases.find(c => c.id === viewCaseSheetPrintId);
+              const matched = (viewCaseSheetPrintCase && viewCaseSheetPrintCase.id === viewCaseSheetPrintId)
+                ? viewCaseSheetPrintCase
+                : cases.find(c => c.id === viewCaseSheetPrintId);
               if (!matched) return <p className="p-8 text-center text-slate-500 font-sans font-bold">Case record not found</p>;
               return (
                 <CaseSheetPrintView
                   clinicalCase={matched}
-                  onBack={() => setViewCaseSheetPrintId(null)}
-                  onEdit={() => handleSelectCase(matched.id)}
+                  onBack={() => {
+                    setViewCaseSheetPrintId(null);
+                    setViewCaseSheetPrintCase(null);
+                  }}
+                  onEdit={() => {
+                    handleSelectCase(matched.id);
+                    setViewCaseSheetPrintCase(null);
+                  }}
                   onPrint={() => triggerPrintWithTip()}
                 />
               );

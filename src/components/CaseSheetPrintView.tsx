@@ -1,12 +1,15 @@
 import React, { useState } from "react";
 import { formatFlagged, isCulturePositive, type ClinicalParam } from "./clinicalRanges";
-import { ArrowLeft, Edit3, Printer, FileText, AlertTriangle, CheckCircle, RefreshCw } from "lucide-react";
+import { ArrowLeft, Edit3, Printer, FileText, AlertTriangle, CheckCircle, RefreshCw, Copy, Check } from "lucide-react";
 import { ClinicalCase, LegacyPediatricDetails, ProcedureNote, IpsgChecklist } from "../types";
 import { deduplicateConsultations } from "../utils/consultationNormalization";
 import { displayGcs, displayTemperature, displaySpo2, displayGrbs, displayDocumentedBoolean } from "../utils/clinicalFormatter";
 import { getDisplayCaseId } from "../utils/caseIdentity";
+import { formatCaseSheetText } from "../utils/caseSheetFormat";
 
-interface VitalReading {
+export { formatCaseSheetText };
+
+export interface VitalReading {
   label: string;
   param: ClinicalParam;
   value: number | null;
@@ -14,7 +17,7 @@ interface VitalReading {
   unit?: string;
 }
 
-interface LabPanel {
+export interface LabPanel {
   panelName: string;
   values: { name: string; param: ClinicalParam | null; value: number | null; unit?: string }[];
 }
@@ -1075,8 +1078,42 @@ export default function CaseSheetPrintView({
   const [isApplying, setIsApplying] = useState(false);
   const [applySuccess, setApplySuccess] = useState(false);
   const [applyError, setApplyError] = useState<string | null>(null);
+  const [copiedCaseText, setCopiedCaseText] = useState(false);
 
   const data = propData || (clinicalCase ? convertClinicalCaseToCaseSheetData(clinicalCase) : null);
+
+  const handleCopyCaseSheet = () => {
+    if (!data) return;
+    const plainText = formatCaseSheetText(data);
+    try {
+      if (typeof ClipboardItem !== "undefined") {
+        const clipboardItem = new ClipboardItem({
+          "text/plain": new Blob([plainText], { type: "text/plain" }),
+        });
+        navigator.clipboard.write([clipboardItem]).then(() => {
+          setCopiedCaseText(true);
+          setTimeout(() => setCopiedCaseText(false), 2000);
+        }).catch((err) => {
+          console.warn("ClipboardItem write failed, using writeText fallback:", err);
+          navigator.clipboard.writeText(plainText).then(() => {
+            setCopiedCaseText(true);
+            setTimeout(() => setCopiedCaseText(false), 2000);
+          });
+        });
+      } else {
+        navigator.clipboard.writeText(plainText).then(() => {
+          setCopiedCaseText(true);
+          setTimeout(() => setCopiedCaseText(false), 2000);
+        });
+      }
+    } catch (err) {
+      console.warn("Clipboard API exception, using writeText fallback:", err);
+      navigator.clipboard.writeText(plainText).then(() => {
+        setCopiedCaseText(true);
+        setTimeout(() => setCopiedCaseText(false), 2000);
+      });
+    }
+  };
 
   if (!data) {
     return (
@@ -1192,8 +1229,32 @@ export default function CaseSheetPrintView({
           <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
             {isPreview ? (
               <>
+                <button
+                  type="button"
+                  onClick={handleCopyCaseSheet}
+                  id="preview-copy-casesheet-button"
+                  className={`min-w-[44px] min-h-[44px] flex-1 sm:flex-none justify-center inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-xl transition-all cursor-pointer border ${
+                    copiedCaseText
+                      ? "bg-emerald-600 border-emerald-600 text-white"
+                      : "bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800"
+                  }`}
+                  title="Copy formatted case sheet to paste directly into any hospital EMR"
+                >
+                  {copiedCaseText ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                  <span>{copiedCaseText ? "Copied Case Sheet!" : "Copy Case Sheet"}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handlePrint}
+                  id="preview-print-casesheet-button"
+                  className="min-w-[44px] min-h-[44px] flex-1 sm:flex-none justify-center inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold rounded-xl transition-all cursor-pointer border border-slate-200 dark:border-slate-700"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  <span>Print / PDF</span>
+                </button>
                 {applySuccess ? (
                   <button
+                    type="button"
                     onClick={() => {
                       if (onViewCaseSheet) {
                         onViewCaseSheet(data.internalCaseId || data.caseId);
@@ -1202,13 +1263,14 @@ export default function CaseSheetPrintView({
                       }
                     }}
                     id="preview-view-casesheet-button"
-                    className="flex-1 sm:flex-none justify-center flex items-center gap-1.5 px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-all shadow-sm cursor-pointer"
+                    className="min-w-[44px] min-h-[44px] flex-1 sm:flex-none justify-center inline-flex items-center gap-1.5 px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all shadow-sm cursor-pointer"
                   >
                     <Edit3 className="w-3.5 h-3.5" />
                     <span>View Case Sheet</span>
                   </button>
                 ) : (
                   <button
+                    type="button"
                     disabled={isApplying}
                     onClick={async () => {
                       if (!clinicalCase || !onApplyPreview) return;
@@ -1225,7 +1287,7 @@ export default function CaseSheetPrintView({
                       }
                     }}
                     id="preview-apply-button"
-                    className="flex-1 sm:flex-none justify-center flex items-center gap-1.5 px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-lg text-xs font-bold transition-all shadow-sm cursor-pointer"
+                    className="min-w-[44px] min-h-[44px] flex-1 sm:flex-none justify-center inline-flex items-center gap-1.5 px-4 py-1.5 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all shadow-sm cursor-pointer"
                   >
                     {isApplying ? (
                       <>
@@ -1240,33 +1302,44 @@ export default function CaseSheetPrintView({
                     )}
                   </button>
                 )}
-                <button
-                  onClick={handlePrint}
-                  className="flex-1 sm:flex-none justify-center flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold rounded-lg transition-all cursor-pointer"
-                >
-                  <Printer className="w-3.5 h-3.5" />
-                  <span className="hidden sm:inline">Print / PDF</span>
-                </button>
               </>
             ) : (
               <>
-                {onEdit && (
-                  <button
-                    onClick={onEdit}
-                    className="flex-1 sm:flex-none justify-center flex items-center gap-1.5 px-3 py-1.5 sm:px-3.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-lg text-xs font-bold transition-all cursor-pointer"
-                  >
-                    <Edit3 className="w-3.5 h-3.5 text-slate-500" />
-                    <span>Edit<span className="hidden sm:inline"> Case Sheet</span></span>
-                  </button>
-                )}
                 <button
+                  type="button"
+                  onClick={handleCopyCaseSheet}
+                  id="print-copy-casesheet-button"
+                  className={`min-w-[44px] min-h-[44px] flex-1 sm:flex-none justify-center inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-xl transition-all cursor-pointer border ${
+                    copiedCaseText
+                      ? "bg-emerald-600 border-emerald-600 text-white"
+                      : "bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800"
+                  }`}
+                  title="Copy formatted case sheet to paste directly into any hospital EMR"
+                >
+                  {copiedCaseText ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                  <span>{copiedCaseText ? "Copied Case Sheet!" : "Copy Case Sheet"}</span>
+                </button>
+                <button
+                  type="button"
                   onClick={handlePrint}
-                  className="flex-1 sm:flex-none justify-center flex items-center gap-1.5 px-3 py-1.5 sm:px-4 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white text-xs font-bold rounded-lg shadow-sm transition-all cursor-pointer"
+                  id="print-download-casesheet-button"
+                  className="min-w-[44px] min-h-[44px] flex-1 sm:flex-none justify-center inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl shadow-sm transition-all cursor-pointer"
                 >
                   <Printer className="w-3.5 h-3.5" />
                   <span className="hidden sm:inline">Print / Download PDF</span>
                   <span className="sm:hidden">Print / PDF</span>
                 </button>
+                {onEdit && (
+                  <button
+                    type="button"
+                    onClick={onEdit}
+                    id="print-edit-casesheet-button"
+                    className="min-w-[44px] min-h-[44px] flex-1 sm:flex-none justify-center inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-bold transition-all cursor-pointer border border-slate-200 dark:border-slate-700"
+                  >
+                    <Edit3 className="w-3.5 h-3.5 text-slate-500" />
+                    <span>Edit<span className="hidden sm:inline"> Case Sheet</span></span>
+                  </button>
+                )}
               </>
             )}
           </div>
