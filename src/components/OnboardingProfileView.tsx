@@ -56,7 +56,7 @@ export default function OnboardingProfileView({
       ? erPhysicalBedCapacity
       : typeof (profile as any)?.erPhysicalBedCapacity === "number" && (profile as any).erPhysicalBedCapacity > 0
       ? (profile as any).erPhysicalBedCapacity
-      : 30;
+      : undefined;
 
   // 1. Initial field values
   const [name, setName] = useState<string>(profile?.name || "Dr. ");
@@ -67,7 +67,7 @@ export default function OnboardingProfileView({
   const [department, setDepartment] = useState<string>(
     profile?.department || "Emergency & Trauma Medicine"
   );
-  const [bedCapacity, setBedCapacity] = useState<number>(initialCap);
+  const [bedCapacity, setBedCapacity] = useState<number | string>(initialCap ?? "");
 
   // Saved values snapshot (to support Cancel in EDITING and render SAVED state)
   const [savedData, setSavedData] = useState<{
@@ -75,13 +75,13 @@ export default function OnboardingProfileView({
     role: string;
     hospital: string;
     department: string;
-    bedCapacity: number;
+    bedCapacity?: number | null;
   }>({
     name: profile?.name || "",
     role: profile?.displayRole || profile?.role || "EM Resident",
     hospital: profile?.workplaceName || profile?.hospitalLabel || profile?.hospital || "",
     department: profile?.department || "Emergency & Trauma Medicine",
-    bedCapacity: initialCap,
+    bedCapacity: initialCap ?? null,
   });
 
   const isInitiallyComplete = isClinicalProfileComplete(profile, erPhysicalBedCapacity);
@@ -105,7 +105,7 @@ export default function OnboardingProfileView({
           ? erPhysicalBedCapacity
           : typeof (profile as any)?.erPhysicalBedCapacity === "number" && (profile as any).erPhysicalBedCapacity > 0
           ? (profile as any).erPhysicalBedCapacity
-          : 30;
+          : null;
       setSavedData({
         name: profile.name || "",
         role: profile.displayRole || profile.role || "EM Resident",
@@ -142,12 +142,18 @@ export default function OnboardingProfileView({
     const cleanRole = role.trim();
     const cleanHospital = hospital.trim();
     const cleanDept = department.trim();
-    const rawCapacity = Number(bedCapacity);
-    if (isNaN(rawCapacity) || !Number.isInteger(rawCapacity) || rawCapacity < 1 || rawCapacity > 1000) {
-      setErrorMsg("ER Physical Bed Capacity must be a whole number between 1 and 1000.");
-      return;
+
+    // Bed capacity is optional. If supplied, validate whole number between 1 and 1000.
+    let parsedCapacity: number | null = null;
+    const rawCapacityStr = String(bedCapacity ?? "").trim();
+    if (rawCapacityStr !== "") {
+      const rawCapacity = Number(rawCapacityStr);
+      if (isNaN(rawCapacity) || !Number.isInteger(rawCapacity) || rawCapacity < 1 || rawCapacity > 1000) {
+        setErrorMsg("ER Physical Bed Capacity must be a whole number between 1 and 1000.");
+        return;
+      }
+      parsedCapacity = rawCapacity;
     }
-    const parsedCapacity = rawCapacity;
 
     if (!cleanName || cleanName.length < 2) {
       setErrorMsg("Please enter your doctor name (at least 2 characters).");
@@ -181,7 +187,7 @@ export default function OnboardingProfileView({
         workplaceName: cleanHospital,
         hospitalLabel: cleanHospital,
         department: cleanDept,
-        erPhysicalBedCapacity: parsedCapacity,
+        ...(parsedCapacity !== null ? { erPhysicalBedCapacity: parsedCapacity } : {}),
         onboardingComplete: true
       };
 
@@ -200,7 +206,7 @@ export default function OnboardingProfileView({
       setTeamCustomName(cleanHospital ? `${cleanHospital} ER Team` : "Emergency Team");
       setTeamHospitalName(cleanHospital);
       setTeamDepartment(cleanDept);
-      setTeamBedCapacity(parsedCapacity);
+      setTeamBedCapacity(parsedCapacity || 30);
 
       // Switch to SAVED state
       setProfileMode("SAVED");
@@ -220,7 +226,7 @@ export default function OnboardingProfileView({
     setRole(savedData.role);
     setHospital(savedData.hospital);
     setDepartment(savedData.department);
-    setBedCapacity(savedData.bedCapacity);
+    setBedCapacity(savedData.bedCapacity ?? "");
     setErrorMsg(null);
     setProfileMode("EDITING");
   };
@@ -231,7 +237,7 @@ export default function OnboardingProfileView({
     setRole(savedData.role);
     setHospital(savedData.hospital);
     setDepartment(savedData.department);
-    setBedCapacity(savedData.bedCapacity);
+    setBedCapacity(savedData.bedCapacity ?? "");
     setErrorMsg(null);
     setProfileMode("SAVED");
   };
@@ -419,12 +425,18 @@ export default function OnboardingProfileView({
                     <Bed className="w-3 h-3 text-amber-500" /> Physical Bed Capacity
                   </span>
                   <p className="font-semibold text-slate-800 dark:text-slate-200">
-                    {savedData.bedCapacity} Emergency Beds
+                    {savedData.bedCapacity ? `${savedData.bedCapacity} Emergency Beds` : "Not Specified (Optional)"}
                   </p>
                 </div>
-                <span className="text-[10px] font-mono text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/60 px-2 py-0.5 rounded-md border border-emerald-200 dark:border-emerald-800">
-                  Ready for Bedside MATE
-                </span>
+                {savedData.bedCapacity ? (
+                  <span className="text-[10px] font-mono text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/60 px-2 py-0.5 rounded-md border border-emerald-200 dark:border-emerald-800">
+                    Ready for Bedside MATE
+                  </span>
+                ) : (
+                  <span className="text-[10px] font-mono text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-md">
+                    Optional
+                  </span>
+                )}
               </div>
             </div>
           </div>
@@ -627,11 +639,11 @@ export default function OnboardingProfileView({
               </datalist>
             </div>
 
-            {/* 5. ER Physical Bed Capacity */}
+            {/* 5. ER Physical Bed Capacity (Optional) */}
             <div className="space-y-1.5">
               <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 uppercase font-mono flex items-center gap-1.5">
                 <Bed className="w-3.5 h-3.5 text-amber-500" />
-                <span>ER Physical Bed Capacity *</span>
+                <span>ER Physical Bed Capacity (Optional)</span>
               </label>
               <input
                 type="number"
@@ -644,12 +656,11 @@ export default function OnboardingProfileView({
                   const val = e.target.value;
                   setBedCapacity(val === '' ? ('' as any) : Number(val));
                 }}
-                placeholder="e.g. 30"
+                placeholder="e.g. 30 (Optional, 1..1000)"
                 className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-2.5 text-xs font-bold text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-hidden focus:ring-2 focus:ring-indigo-500/30 disabled:opacity-60"
-                required
               />
               <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">
-                Total physical emergency beds (1..1000) for MATE bedside referencing.
+                Optional: Total physical emergency beds (1..1000) for MATE bedside referencing.
               </span>
             </div>
 

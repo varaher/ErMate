@@ -470,6 +470,8 @@ export interface ClinicalCase {
   timeSpentMin: number; // calculated time spent
   doctorEmail?: string; // assigned doctor's email for custom dashboard cases
   hospital?: string; // hospital name for data isolation and security
+  hospitalLabel?: string;
+  workplaceName?: string;
   ipsgChecklist?: IpsgChecklist;
   vulnerableAssessment?: VulnerableAssessment;
   psychologicalAssessment?: PsychologicalAssessment;

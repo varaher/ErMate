@@ -262,6 +262,21 @@ ErMate employs a dynamic role-based navigation hierarchy computed from `getNorma
 | `/src/components/HandoverView.tsx` | Interactive Handover UI & PHI Protection Toast |
 | `/src/components/ProfileSettingsView.tsx` | Settings router delegating canonical profile/account views to MoreView & subviews to TeamRosterBoard / LogBook |
 
+| `/src/components/SignUpView.tsx` | Individual V1 registration view with strict validation, email verification, and informational workplace metadata |
+| `/src/utils/profileCompleteness.ts` | Clinical profile completeness and save-eligibility gates without mandatory bed capacity requirements |
+| `/src/utils/workspaceResolver.ts` | Multi-tenant workspace resolution ensuring individual clinicians remain isolated from hospital workspaces |
+
+---
+
+## 👨‍⚕️ Individual Clinician V1 Registration & Workspaces
+
+ErMate supports independent clinicians practicing in private, non-institutional, or exploratory settings without requiring a hospital or team workspace:
+1. **Public Registration**: Requires full clinician name, email, password, professional role, hospital/workplace name, and department. Age, address, state, and ER bed capacity remain strictly optional.
+2. **Informational Workplace Metadata**: Stored in `workplaceName` and `hospitalLabel`. Never establishes verified hospital access or team membership (`hospital: ""` on initial profile).
+3. **Workspace Isolation**: Default workspace resolves to `workspaceType: "individual"`, `ownerUid: user.uid`, `hospitalId: null`. Personal cases are strictly private to the authenticated creator.
+4. **Print Retained Identity**: Hospital/workplace display name is preserved on individual clinical cases for printing and PDF generation without granting shared department access.
+5. **Team Creation Preserved**: Hospital workspace creation remains preserved for future team collaboration but is never mandated or forced during individual onboarding.
+
 ---
 
 *ErMate Clinical OS — Designed for Emergency Care Excellence.*

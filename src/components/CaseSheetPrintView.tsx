@@ -557,7 +557,7 @@ export function convertClinicalCaseToCaseSheetData(c: ClinicalCase, defaultHospi
   return {
     caseId: getDisplayCaseId(c),
     internalCaseId: c.id,
-    hospitalName: c.hospital || defaultHospital || undefined, // no hardcoded hospital name fallback either
+    hospitalName: c.hospital || c.hospitalLabel || c.workplaceName || defaultHospital || undefined, // no hardcoded hospital name fallback either
     triageCategory: c.patient?.triageCategory || (c as any).triageCategory || null,
     caseType: c.patient?.caseType || (c as any).caseType || null,
     patient: {

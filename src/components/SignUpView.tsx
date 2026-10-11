@@ -28,12 +28,15 @@ export default function SignUpView({
   inviteToken = ""
 }: SignUpViewProps) {
   const [name, setName] = useState("");
-  const [age, setAge] = useState<string>("");
+  const [role, setRole] = useState(initialRole === "Consultant" ? "Consultant" : initialRole === "HOD" ? "HOD / Department Lead" : "EM Resident");
   const [workplaceName, setWorkplaceName] = useState(initialHospital);
-  const [stateName, setStateName] = useState("Maharashtra");
-  const [hospitalAddress, setHospitalAddress] = useState("");
+  const [department, setDepartment] = useState("Emergency & Trauma Medicine");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [age, setAge] = useState<string>("");
+  const [stateName, setStateName] = useState("Maharashtra");
+  const [hospitalAddress, setHospitalAddress] = useState("");
+  const [bedCapacity, setBedCapacity] = useState<string>("");
   const [subscription, setSubscription] = useState<"Free Trial" | "Pro Doctor" | "Team Department">("Free Trial");
   const [acceptOffer, setAcceptOffer] = useState(true);
 
@@ -43,6 +46,12 @@ export default function SignUpView({
       setWorkplaceName(initialHospital);
     }
   }, [initialHospital]);
+
+  React.useEffect(() => {
+    if (initialRole) {
+      setRole(initialRole === "Consultant" ? "Consultant" : initialRole === "HOD" ? "HOD / Department Lead" : "EM Resident");
+    }
+  }, [initialRole]);
   
   const [error, setError] = useState("");
   const [isRegistering, setIsRegistering] = useState(false);
@@ -59,42 +68,62 @@ const [registeredEmail, setRegisteredEmail] =
     e.preventDefault();
     setError("");
 
-    if (!name.trim()) {
-      setError("Please enter your full professional name.");
-      return;
-    }
-    
-    const parsedAge = parseInt(age);
-    if (!age || isNaN(parsedAge) || parsedAge <= 18 || parsedAge > 100) {
-      setError("Please enter a valid age (19-100).");
+    // 1. Required: Full Name
+    if (!name.trim() || name.trim().length < 2) {
+      setError("Please enter your full professional name (at least 2 characters).");
       return;
     }
 
-    if (!workplaceName.trim()) {
-      setError("Please specify your current active hospital name.");
-      return;
-    }
-
-    if (!hospitalAddress.trim()) {
-      setError("Please specify your hospital address (e.g. Street / District / Area).");
-      return;
-    }
-
-    if (!stateName.trim()) {
-      setError("Please select or enter your hospital state.");
-      return;
-    }
-
+    // 2. Required: Email
     if (!email.trim() || !email.includes("@")) {
       setError("Please provide a valid email address.");
       return;
     }
 
-    
-
+    // 3. Required: Password
     if (!password.trim() || password.length < 6) {
       setError("Password must be at least 6 characters long.");
       return;
+    }
+
+    // 4. Required: Professional Role
+    if (!role.trim()) {
+      setError("Please select or enter your professional role.");
+      return;
+    }
+
+    // 5. Required: Hospital / Workplace Name
+    if (!workplaceName.trim() || workplaceName.trim().length < 2) {
+      setError("Please specify your hospital or workplace name (at least 2 characters).");
+      return;
+    }
+
+    // 6. Required: Department
+    if (!department.trim() || department.trim().length < 2) {
+      setError("Please specify your department (at least 2 characters).");
+      return;
+    }
+
+    // 7. Optional: Age (validate if supplied)
+    let parsedAge: number | undefined = undefined;
+    if (age.trim()) {
+      const numAge = parseInt(age.trim(), 10);
+      if (isNaN(numAge) || numAge < 18 || numAge > 100) {
+        setError("Please enter a valid age between 18 and 100.");
+        return;
+      }
+      parsedAge = numAge;
+    }
+
+    // 8. Optional: Bed Capacity (validate if supplied: whole number between 1 and 1000)
+    let parsedCapacity: number | undefined = undefined;
+    if (bedCapacity.trim()) {
+      const numCap = Number(bedCapacity.trim());
+      if (isNaN(numCap) || !Number.isInteger(numCap) || numCap < 1 || numCap > 1000) {
+        setError("Bed capacity must be a whole number between 1 and 1000.");
+        return;
+      }
+      parsedCapacity = numCap;
     }
 
     // High fidelity registration animation
@@ -151,31 +180,22 @@ const [registeredEmail, setRegisteredEmail] =
      * through trusted backend workflows.
      */
     const newProfile: UserProfile = {
-      name: formattedName,
-      email: normalizedEmail,
-
+      name: formattedName.slice(0, 100),
+      email: normalizedEmail.slice(0, 100),
       role: "EM Resident",
-
-      workplaceName:
-        workplaceName.trim(),
-
-      hospitalLabel:
-        workplaceName.trim(),
-
+      displayRole: role.trim().slice(0, 100),
+      workplaceName: workplaceName.trim().slice(0, 100),
+      hospitalLabel: workplaceName.trim().slice(0, 100),
+      department: department.trim().slice(0, 100),
       hospital: "",
-
-      state:
-        stateName.trim(),
-
-      hospitalAddress:
-        hospitalAddress.trim(),
-
       aiCredits: 100,
       streak: 1,
-      subscriptionTier:
-        "Free Standard",
-
-      age: parsedAge
+      subscriptionTier: "Free Standard",
+      onboardingComplete: true,
+      ...(parsedAge !== undefined ? { age: parsedAge } : {}),
+      ...(stateName.trim() ? { state: stateName.trim().slice(0, 100) } : {}),
+      ...(hospitalAddress.trim() ? { hospitalAddress: hospitalAddress.trim().slice(0, 200) } : {}),
+      ...(parsedCapacity !== undefined ? { erPhysicalBedCapacity: parsedCapacity } : {})
     };
 
     await setDoc(
@@ -437,10 +457,10 @@ const [registeredEmail, setRegisteredEmail] =
                   </div>
                 )}
 
-                {/* Name */}
+                {/* 1. Full Name (Required) */}
                 <div className="space-y-1">
                   <label htmlFor="signup-name" className={`block text-[9px] font-bold uppercase tracking-wider font-mono ${isEmerald ? 'text-slate-500' : 'text-slate-400'}`}>
-                    Full Name (e.g. Vipin Kumar)
+                    Doctor Name *
                   </label>
                   <div className="relative rounded-lg">
                     <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
@@ -451,35 +471,41 @@ const [registeredEmail, setRegisteredEmail] =
                       type="text"
                       value={name}
                       onChange={(e) => setName(e.target.value)}
-                      placeholder="Dr. Rajesh Patel"
+                      placeholder="e.g. Dr. Rajesh Patel"
                       className={`${isEmerald ? 'bg-slate-50 border-slate-200 text-slate-800 focus:ring-emerald-500' : 'bg-slate-900 border-slate-800 text-slate-200 focus:ring-blue-500'} block w-full pl-9 pr-3 py-2 text-xs rounded-lg font-sans font-semibold focus:outline-none focus:ring-1`}
                       required
                     />
                   </div>
                 </div>
 
-                {/* Age */}
+                {/* 2. Professional Role (Required) */}
                 <div className="space-y-1">
-                  <label htmlFor="signup-age" className={`block text-[9px] font-bold uppercase tracking-wider font-mono ${isEmerald ? 'text-slate-500' : 'text-slate-400'}`}>
-                    Age (Years)
+                  <label htmlFor="signup-role" className={`block text-[9px] font-bold uppercase tracking-wider font-mono ${isEmerald ? 'text-slate-500' : 'text-slate-400'}`}>
+                    Professional Role *
                   </label>
-                  <input
-                    id="signup-age"
-                    type="number"
-                    value={age}
-                    onChange={(e) => setAge(e.target.value)}
-                    placeholder="e.g. 34"
-                    min="19"
-                    max="100"
-                    className={`${isEmerald ? 'bg-slate-50 border-slate-200 text-slate-800 focus:ring-emerald-500' : 'bg-slate-900 border-slate-800 text-slate-200 focus:ring-blue-500'} block w-full px-3 py-2 text-xs rounded-lg font-mono font-semibold focus:outline-none focus:ring-1`}
+                  <select
+                    id="signup-role"
+                    value={role}
+                    onChange={(e) => setRole(e.target.value)}
+                    className={`${isEmerald ? 'bg-slate-50 border-slate-200 text-slate-800 focus:ring-emerald-500' : 'bg-slate-900 border-slate-800 text-slate-200 focus:ring-blue-500'} block w-full px-3 py-2 text-xs rounded-lg font-sans font-semibold focus:outline-none focus:ring-1`}
                     required
-                  />
+                  >
+                    <option value="EM Resident">EM Resident</option>
+                    <option value="Consultant">Consultant</option>
+                    <option value="Senior Consultant">Senior Consultant</option>
+                    <option value="Medical Officer">Medical Officer</option>
+                    <option value="Emergency Physician">Emergency Physician</option>
+                    <option value="EM Intern">EM Intern</option>
+                    <option value="Fellow">Fellow</option>
+                    <option value="HOD / Department Lead">HOD / Department Lead</option>
+                    <option value="Staff Nurse">Staff Nurse</option>
+                  </select>
                 </div>
 
-                {/* Hospital Name */}
+                {/* 3. Hospital / Workplace Name (Required) */}
                 <div className="space-y-1">
                   <label htmlFor="signup-hospital" className={`block text-[9px] font-bold uppercase tracking-wider font-mono ${isEmerald ? 'text-slate-500' : 'text-slate-400'}`}>
-                    Hospital Name *
+                    Hospital / Workplace Name *
                   </label>
                   <div className="relative rounded-lg">
                     <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
@@ -497,18 +523,69 @@ const [registeredEmail, setRegisteredEmail] =
                   </div>
                 </div>
 
-                {/* State & Hospital Address */}
+                {/* 4. Department (Required) */}
+                <div className="space-y-1">
+                  <label htmlFor="signup-department" className={`block text-[9px] font-bold uppercase tracking-wider font-mono ${isEmerald ? 'text-slate-500' : 'text-slate-400'}`}>
+                    Department *
+                  </label>
+                  <input
+                    id="signup-department"
+                    type="text"
+                    value={department}
+                    onChange={(e) => setDepartment(e.target.value)}
+                    placeholder="e.g. Emergency & Trauma Medicine"
+                    className={`${isEmerald ? 'bg-slate-50 border-slate-200 text-slate-800 focus:ring-emerald-500' : 'bg-slate-900 border-slate-800 text-slate-200 focus:ring-blue-500'} block w-full px-3 py-2 text-xs rounded-lg font-sans font-semibold focus:outline-none focus:ring-1`}
+                    required
+                  />
+                </div>
+
+                {/* Optional Bed Capacity & Age */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label htmlFor="signup-bed-capacity" className={`block text-[9px] font-bold uppercase tracking-wider font-mono ${isEmerald ? 'text-slate-500' : 'text-slate-400'}`}>
+                      ER Bed Capacity (Optional)
+                    </label>
+                    <input
+                      id="signup-bed-capacity"
+                      type="number"
+                      min="1"
+                      max="1000"
+                      step="1"
+                      value={bedCapacity}
+                      onChange={(e) => setBedCapacity(e.target.value)}
+                      placeholder="e.g. 30 (1-1000)"
+                      className={`${isEmerald ? 'bg-slate-50 border-slate-200 text-slate-800 focus:ring-emerald-500' : 'bg-slate-900 border-slate-800 text-slate-200 focus:ring-blue-500'} block w-full px-3 py-2 text-xs rounded-lg font-mono font-semibold focus:outline-none focus:ring-1`}
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label htmlFor="signup-age" className={`block text-[9px] font-bold uppercase tracking-wider font-mono ${isEmerald ? 'text-slate-500' : 'text-slate-400'}`}>
+                      Age (Optional)
+                    </label>
+                    <input
+                      id="signup-age"
+                      type="number"
+                      value={age}
+                      onChange={(e) => setAge(e.target.value)}
+                      placeholder="e.g. 34"
+                      min="18"
+                      max="100"
+                      className={`${isEmerald ? 'bg-slate-50 border-slate-200 text-slate-800 focus:ring-emerald-500' : 'bg-slate-900 border-slate-800 text-slate-200 focus:ring-blue-500'} block w-full px-3 py-2 text-xs rounded-lg font-mono font-semibold focus:outline-none focus:ring-1`}
+                    />
+                  </div>
+                </div>
+
+                {/* Optional State & Hospital Address */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div className="space-y-1">
                     <label htmlFor="signup-state" className={`block text-[9px] font-bold uppercase tracking-wider font-mono ${isEmerald ? 'text-slate-500' : 'text-slate-400'}`}>
-                      State / Region *
+                      State / Region (Optional)
                     </label>
                     <select
                       id="signup-state"
                       value={stateName}
                       onChange={(e) => setStateName(e.target.value)}
                       className={`${isEmerald ? 'bg-slate-50 border-slate-200 text-slate-800 focus:ring-emerald-500' : 'bg-slate-900 border-slate-800 text-slate-200 focus:ring-blue-500'} block w-full px-2.5 py-2 text-xs rounded-lg font-bold focus:outline-none focus:ring-1`}
-                      required
                     >
                       <option value="Maharashtra">Maharashtra</option>
                       <option value="Delhi">Delhi NCR</option>
@@ -533,16 +610,15 @@ const [registeredEmail, setRegisteredEmail] =
 
                   <div className="space-y-1">
                     <label htmlFor="signup-address" className={`block text-[9px] font-bold uppercase tracking-wider font-mono ${isEmerald ? 'text-slate-500' : 'text-slate-400'}`}>
-                      Hospital Address *
+                      Hospital Address (Optional)
                     </label>
                     <input
                       id="signup-address"
                       type="text"
                       value={hospitalAddress}
                       onChange={(e) => setHospitalAddress(e.target.value)}
-                      placeholder="e.g. 12 Medical Enclave, Civil Lines"
+                      placeholder="e.g. 12 Medical Enclave"
                       className={`${isEmerald ? 'bg-slate-50 border-slate-200 text-slate-800 focus:ring-emerald-500' : 'bg-slate-900 border-slate-800 text-slate-200 focus:ring-blue-500'} block w-full px-3 py-2 text-xs rounded-lg font-sans focus:outline-none focus:ring-1`}
-                      required
                     />
                   </div>
                 </div>

@@ -2537,8 +2537,11 @@ const handleDeleteAllCases = async () => {
         displayId: displayCaseId || currentTrial.displayId,
         workspaceType: workspace.workspaceType,
         ownerUid: workspace.ownerUid,
-        hospitalId: workspace.hospitalId,
-        hospital: workspace.workspaceType === "hospital" ? (selfMembership?.hospitalId || workspace.hospitalId || "") : "",
+        hospital: workspace.workspaceType === "hospital"
+          ? (selfMembership?.hospitalId || workspace.hospitalId || "")
+          : (effectiveProfile?.workplaceName || effectiveProfile?.hospitalLabel || effectiveProfile?.hospital || ""),
+        hospitalLabel: effectiveProfile?.workplaceName || effectiveProfile?.hospitalLabel || effectiveProfile?.hospital || "",
+        workplaceName: effectiveProfile?.workplaceName || effectiveProfile?.hospitalLabel || effectiveProfile?.hospital || "",
         doctorEmail: user.email || effectiveProfile?.email || "",
         doctorName: effectiveProfile?.name || user.displayName || "Emergency Doctor",
         createdBy: user.uid,
@@ -2806,8 +2809,9 @@ const handleDeleteAllCases = async () => {
       })(),
       workspaceType: workspaceMetadata.workspaceType,
       ownerUid: workspaceMetadata.ownerUid,
-      hospitalId: workspaceMetadata.hospitalId,
-      hospital: updatedCase.hospital || profile.hospital,
+      hospital: updatedCase.hospital || (workspaceMetadata.workspaceType === "hospital" ? profile.hospital : (profile.workplaceName || profile.hospitalLabel || profile.hospital || "")),
+      hospitalLabel: updatedCase.hospitalLabel || (profile.workplaceName || profile.hospitalLabel || profile.hospital || ""),
+      workplaceName: updatedCase.workplaceName || (profile.workplaceName || profile.hospitalLabel || profile.hospital || ""),
       doctorEmail: updatedCase.doctorEmail || profile.email,
       doctorName: updatedCase.doctorName || profile.name || "Emergency Doctor",
       createdBy: (updatedCase as any).createdBy || auth.currentUser?.uid,
@@ -5758,14 +5762,29 @@ const handleSaveProfile = async (newProfile: UserProfile, explicitCapacity?: num
   const cleanHospital = (newProfile.workplaceName || newProfile.hospitalLabel || newProfile.hospital || "").trim();
   const cleanDept = (newProfile.department || "").trim();
 
-  const resolvedCapacity =
-    typeof explicitCapacity === "number" && explicitCapacity > 0
-      ? explicitCapacity
-      : typeof newProfile.erPhysicalBedCapacity === "number" && newProfile.erPhysicalBedCapacity > 0
-      ? newProfile.erPhysicalBedCapacity
-      : typeof (profile as any)?.erPhysicalBedCapacity === "number" && (profile as any).erPhysicalBedCapacity > 0
-      ? (profile as any).erPhysicalBedCapacity
-      : erPhysicalBedCapacity;
+  // Bed capacity is optional. If provided, it must be a whole number between 1 and 1000.
+  let validCapacity: number | undefined = undefined;
+  if (explicitCapacity !== undefined) {
+    if (explicitCapacity !== null && explicitCapacity > 0) {
+      const numExp = Number(explicitCapacity);
+      if (isNaN(numExp) || !Number.isInteger(numExp) || numExp < 1 || numExp > 1000) {
+        throw new Error("Bed capacity must be a whole number between 1 and 1000.");
+      }
+      validCapacity = numExp;
+    }
+  } else if (newProfile.erPhysicalBedCapacity !== undefined) {
+    if (newProfile.erPhysicalBedCapacity !== null && newProfile.erPhysicalBedCapacity > 0) {
+      const numProf = Number(newProfile.erPhysicalBedCapacity);
+      if (isNaN(numProf) || !Number.isInteger(numProf) || numProf < 1 || numProf > 1000) {
+        throw new Error("Bed capacity must be a whole number between 1 and 1000.");
+      }
+      validCapacity = numProf;
+    }
+  } else if (typeof (profile as any)?.erPhysicalBedCapacity === "number" && (profile as any).erPhysicalBedCapacity > 0) {
+    validCapacity = (profile as any).erPhysicalBedCapacity;
+  } else if (typeof erPhysicalBedCapacity === "number" && erPhysicalBedCapacity > 0) {
+    validCapacity = erPhysicalBedCapacity;
+  }
 
   if (!cleanName || cleanName.length < 2) {
     throw new Error("Doctor name must be at least 2 characters.");
@@ -5778,10 +5797,6 @@ const handleSaveProfile = async (newProfile: UserProfile, explicitCapacity?: num
   }
   if (!cleanDept || cleanDept.length < 2) {
     throw new Error("Department must be at least 2 characters.");
-  }
-  const numResolvedCap = Number(resolvedCapacity);
-  if (isNaN(numResolvedCap) || !Number.isInteger(numResolvedCap) || numResolvedCap < 1 || numResolvedCap > 1000) {
-    throw new Error("Bed capacity must be a whole number between 1 and 1000.");
   }
 
   // Safe string length capping to respect firestore.rules size bounds (<= 100)
@@ -5809,9 +5824,12 @@ const handleSaveProfile = async (newProfile: UserProfile, explicitCapacity?: num
         workplaceName: cappedWorkplace,
         hospitalLabel: cappedWorkplace,
         department: cappedDept,
-        erPhysicalBedCapacity: resolvedCapacity,
         onboardingComplete: true,
       };
+
+      if (validCapacity !== undefined) {
+        updatePayload.erPhysicalBedCapacity = validCapacity;
+      }
 
       if (newProfile.hasConsentedToLearning !== undefined) {
         updatePayload.hasConsentedToLearning = newProfile.hasConsentedToLearning;
@@ -5844,12 +5862,15 @@ const handleSaveProfile = async (newProfile: UserProfile, explicitCapacity?: num
         workplaceName: cappedWorkplace,
         displayRole: cappedDisplayRole,
         department: cappedDept,
-        erPhysicalBedCapacity: resolvedCapacity,
         onboardingComplete: true,
         aiCredits: 100,
         streak: 1,
         subscriptionTier: "Free Standard",
       };
+
+      if (validCapacity !== undefined) {
+        initialPayload.erPhysicalBedCapacity = validCapacity;
+      }
 
       if (newProfile.hasConsentedToLearning !== undefined) {
         initialPayload.hasConsentedToLearning = newProfile.hasConsentedToLearning;
@@ -5871,8 +5892,10 @@ const handleSaveProfile = async (newProfile: UserProfile, explicitCapacity?: num
 
     // Update local UI only after Firestore save succeeds
     setProfile(updatedProfileState);
-    if (resolvedCapacity && Number.isInteger(resolvedCapacity) && resolvedCapacity > 0) {
-      setErPhysicalBedCapacity(resolvedCapacity);
+    if (validCapacity !== undefined && Number.isInteger(validCapacity) && validCapacity > 0) {
+      setErPhysicalBedCapacity(validCapacity);
+    } else if (explicitCapacity === null) {
+      setErPhysicalBedCapacity(null);
     }
 
     // Optional Cloud SQL mirror (failure does not block or invalidate Firestore write)

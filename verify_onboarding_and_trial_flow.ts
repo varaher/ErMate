@@ -35,10 +35,10 @@ console.log("=== 1. PROFILE COMPLETENESS TESTS ===");
   // A. Null/undefined profile
   const resNull = getProfileCompletenessDetails(null);
   assert(!resNull.isComplete, "Null profile is incomplete");
-  assert(resNull.missingFields.length === 5, "Null profile missing all 5 fields");
+  assert(resNull.missingFields.length === 4, "Null profile missing all 4 mandatory fields");
   assert(!isClinicalProfileComplete(null), "isClinicalProfileComplete(null) returns false");
 
-  // B. Partial profile (e.g. from signup: name and default role, but no hospital, dept, capacity)
+  // B. Partial profile (e.g. from signup: name and default role, but no hospital, dept)
   const partialProfile: UserProfile = {
     name: "Dr. Arvind Rao",
     email: "arvind@example.com",
@@ -52,7 +52,7 @@ console.log("=== 1. PROFILE COMPLETENESS TESTS ===");
   assert(!resPartial.isComplete, "Partial signup profile is incomplete");
   assert(resPartial.missingFields.includes("Hospital / Workplace Name"), "Reports missing hospital");
   assert(resPartial.missingFields.includes("Department"), "Reports missing department");
-  assert(resPartial.missingFields.includes("ER Physical Bed Capacity"), "Reports missing capacity");
+  assert(!resPartial.missingFields.includes("ER Physical Bed Capacity"), "Bed capacity is optional");
   assert(!isClinicalProfileComplete(partialProfile), "isClinicalProfileComplete returns false for partial signup");
 
   // C. Invalid bed capacity tests

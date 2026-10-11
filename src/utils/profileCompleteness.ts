@@ -30,44 +30,47 @@ export function getProfileCompletenessDetails(
   if (!profile) {
     return {
       isComplete: false,
-      missingFields: ["Doctor Name", "Professional Role", "Hospital / Workplace Name", "Department", "ER Physical Bed Capacity"],
+      missingFields: ["Doctor Name", "Professional Role", "Hospital / Workplace Name", "Department"],
     };
   }
 
-  // 1. Doctor Name
+  // 1. Doctor Name (Required)
   const name = String(profile.name || "").trim();
   if (!name || name.length < 2) {
     missing.push("Doctor Name");
   }
 
-  // 2. Professional Role
+  // 2. Professional Role (Required)
   const role = String(profile.displayRole || profile.role || "").trim();
   if (!role || role.length < 2) {
     missing.push("Professional Role");
   }
 
-  // 3. Hospital / Workplace Name (personal workplace metadata only)
+  // 3. Hospital / Workplace Name (Required, personal workplace metadata only)
   const workplace = String(profile.workplaceName || profile.hospitalLabel || profile.hospital || "").trim();
   if (!workplace || workplace.length < 2) {
     missing.push("Hospital / Workplace Name");
   }
 
-  // 4. Department
+  // 4. Department (Required)
   const department = String(profile.department || "").trim();
   if (!department || department.length < 2) {
     missing.push("Department");
   }
 
-  // 5. ER Physical Bed Capacity
-  const capacity =
-    typeof erPhysicalBedCapacity === "number" && erPhysicalBedCapacity > 0
+  // 5. ER Physical Bed Capacity is OPTIONAL.
+  // If supplied, it must be a valid whole number between 1 and 1000.
+  const rawCapacity =
+    typeof erPhysicalBedCapacity === "number"
       ? erPhysicalBedCapacity
-      : typeof (profile as any).erPhysicalBedCapacity === "number" && (profile as any).erPhysicalBedCapacity > 0
+      : typeof (profile as any)?.erPhysicalBedCapacity === "number"
       ? (profile as any).erPhysicalBedCapacity
       : null;
 
-  if (!capacity || !Number.isInteger(capacity) || capacity <= 0) {
-    missing.push("ER Physical Bed Capacity");
+  if (rawCapacity !== null && rawCapacity !== undefined) {
+    if (!Number.isInteger(rawCapacity) || rawCapacity < 1 || rawCapacity > 1000) {
+      missing.push("Valid Bed Capacity (1-1000)");
+    }
   }
 
   return {

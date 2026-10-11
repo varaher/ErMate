@@ -45,6 +45,24 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-10] — ErMate: Individual V1 Signup & Profile Foundation
+- **Individual-First Registration & Email Verification (`src/components/SignUpView.tsx`)**:
+  - Required fields: Full Doctor Name (>= 2 chars), Email (valid format), Password (>= 6 chars), Professional Role, Hospital/Workplace Name (>= 2 chars), and Department (>= 2 chars).
+  - Optional fields: ER Physical Bed Capacity (optional; if supplied, strictly validated as a whole number between 1 and 1000), Age (18-100), State/Region, and Hospital Address.
+  - Informational Workplace Metadata: Saves workplace name into `workplaceName` and `hospitalLabel`. Never assigns verified hospital authorization from public signup (`hospital: ""`, `subscriptionTier: "Free Standard"`).
+  - Email Verification Enforcement: Sends Firebase email verification and immediately signs out newly registered accounts so unverified users cannot bypass authentication gates.
+- **Profile Completeness & Bed Capacity Gate Removal (`src/utils/profileCompleteness.ts`, `src/App.tsx`)**:
+  - Mandatory clinical profile completeness gate strictly checks Doctor Name, Professional Role, Hospital/Workplace Name, and Department.
+  - ER physical bed capacity is removed from mandatory gate; if supplied, strictly validated as whole number between 1 and 1000.
+  - In `handleSaveProfile` (`src/App.tsx`), `explicitCapacity` cleanly distinguishes omitted/cleared bed capacity (`null`) without resurrecting stale state.
+- **Individual Workspace Invariants & Data Isolation**:
+  - Authoritative workspace resolution (`src/utils/workspaceResolver.ts`) guarantees `workspaceType: "individual"`, `ownerUid: user.uid`, `hospitalId: null` for clinicians without verified canonical `team_members/{uid}` records.
+  - Hospital display name is retained on saved case records (`hospital`, `hospitalLabel`, `workplaceName`) for printing (`CaseSheetPrintView.tsx`) without granting hospital access or cross-user visibility.
+  - Multi-tenant privacy preserved: Firestore security rules enforce `caseData.ownerUid == uid()` for all individual cases. Unrelated users cannot read or modify another clinician's cases.
+- **Preserved Trial Safety & Team Creation Invariants**:
+  - Maintained `isSavingTrialCaseRef` double-tap guard, stable `allocatedCaseId`/`allocatedDisplayId`, and fresh doctor profile attribution on trial-case persistence.
+  - Team creation code preserved for optional future use, but never forced or promoted during individual onboarding.
+
 ### [2026-10-10] — ErMate: P0 Restore Lost Safety Features & Preserve Firestore Listener Fixes
 - **Selective Restoration of Safety Fixes (Commit `16b0253`)**:
   - `isSavingTrialCaseRef`: Concurrency protection guard in `App.tsx` prevents duplicate trial-case saves from rapid double-taps.
