@@ -1699,6 +1699,74 @@ Extremities: Peripheral pulses present and well felt. No edema. No cyanosis or c
     currentCase.primaryAssessment?.survey?.adjuncts?.abg?.aa,
   ]);
 
+  // PEDIATRIC "MARK ALL NORMAL" (manual pediatric case sheet).
+  // Fills ONLY empty fields with standard normal findings for PAT, ABCDE and the
+  // focused examination. It never overwrites anything already documented and never
+  // invents numbers (no vitals, GRBS, temperature, weight).
+  const [pedNormalNotice, setPedNormalNotice] = useState<string | null>(null);
+  // PAT chips are stored joined with ", " but some options themselves contain ", "
+  // (e.g. "Normal, no distress", "Pink, warm"). Read them back by matching known options
+  // first, so a saved selection shows as selected again.
+  const PAT_WOB_OPTIONS = ["Normal, no distress", "Increased rate, mild effort", "Retractions (subcostal/intercostal)", "Nasal flaring", "Head bobbing / grunting", "Apnea / minimal effort"];
+  const PAT_CIRC_OPTIONS = ["Pink, warm", "Pale", "Mottled", "Cyanotic", "Flushed"];
+  const parsePatChips = (stored: string | undefined, options: string[]): string[] => {
+    if (!stored) return [];
+    let rest = stored;
+    const picked: string[] = [];
+    for (const opt of options) {
+      if (rest.includes(opt)) { picked.push(opt); rest = rest.replace(opt, ""); }
+    }
+    rest.split(",").map(x => x.trim()).filter(Boolean).forEach(x => picked.push(x));
+    return picked;
+  };
+  const markPediatricAllNormal = () => {
+    setCurrentCase(prev => {
+      const ped: any = { ...(prev.pediatricDetails || {}) };
+      const fill = (key: string, value: string) => {
+        const cur = ped[key];
+        if (cur === undefined || cur === null || String(cur).trim() === "") { ped[key] = value; }
+      };
+      // PAT
+      fill("patAppearanceTone", "Moves spontaneously");
+      fill("patAppearanceInteractivity", "Alert");
+      fill("patAppearanceConsolability", "Stops crying with caregiver");
+      fill("patAppearanceLookGaze", "Makes eye contact");
+      fill("patAppearanceSpeechCry", "Age appropriate speech");
+      fill("patWorkOfBreathing", "Normal, no distress");
+      fill("patCirculation", "Pink, warm");
+      // A
+      fill("airwayCry", "Good");
+      fill("airwayStatus", "Patent");
+      // B
+      fill("breathingAirEntry", "Normal");
+      fill("breathingSubcutaneousEmphysema", "No");
+      // C
+      fill("circulationCrt", "Normal (less than 2 seconds)");
+      fill("circulationSkinColorTemp", "Pink");
+      fill("circulationDistendedNeckVeins", "No");
+      // D
+      fill("disabilityAvpuGcs", "Alert");
+      fill("disabilityPupils", "Equal, round, reactive to light");
+      // E
+      fill("exposureEvidenceInfectionBleeding", "No petechiae or purpura");
+      fill("exposureLongBoneDeformities", "No");
+      fill("exposureExtremitiesCheck", "No deformity, bruising or tenderness");
+      // Focused examination
+      fill("examHeent", PEDIATRIC_NORMAL_PRESETS.general);
+      fill("focusedHeent", PEDIATRIC_NORMAL_PRESETS.heent);
+      fill("focusedRespiratory", PEDIATRIC_NORMAL_PRESETS.respiratory);
+      fill("focusedCardiovascular", PEDIATRIC_NORMAL_PRESETS.cardiovascular);
+      fill("focusedAbdomen", PEDIATRIC_NORMAL_PRESETS.abdomen);
+      fill("focusedBack", PEDIATRIC_NORMAL_PRESETS.back);
+      fill("focusedExtremities", PEDIATRIC_NORMAL_PRESETS.extremities);
+      return { ...prev, pediatricDetails: ped };
+    });
+    setPedNormalNotice(
+      "Normal findings filled in empty fields only. Vitals, GRBS, temperature and weight are NOT filled — enter them yourself. Review before saving."
+    );
+    setTimeout(() => setPedNormalNotice(null), 7000);
+  };
+
   const markPrimarySurveyNormal = () => {
     const initialSurvey = getInitialPrimarySurvey(currentCase.patient.caseType);
     setCurrentCase(prev => {
@@ -4024,6 +4092,23 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
 
               {currentCase.isPediatric && (
                 <div className="bg-sky-50 dark:bg-sky-950/20 border border-sky-100 dark:border-sky-900 rounded-xl p-4 space-y-4 mb-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <p className="text-xs text-slate-600 dark:text-slate-400">
+                      Child looks well? Fill normal findings for PAT, ABCDE and examination in one tap.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={markPediatricAllNormal}
+                      className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg shadow-sm transition-colors cursor-pointer min-h-[40px] shrink-0"
+                    >
+                      ✓ Mark All Normal (Pediatric)
+                    </button>
+                  </div>
+                  {pedNormalNotice && (
+                    <div className="text-xs bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 rounded-lg px-3 py-2">
+                      {pedNormalNotice}
+                    </div>
+                  )}
                   <PediatricAssessmentTriangle
                     state={{
                       appearance: {
@@ -4033,8 +4118,8 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                         lookGaze: currentCase.pediatricDetails?.patAppearanceLookGaze || "",
                         speechCry: currentCase.pediatricDetails?.patAppearanceSpeechCry || ""
                       },
-                      workOfBreathing: currentCase.pediatricDetails?.patWorkOfBreathing ? currentCase.pediatricDetails.patWorkOfBreathing.split(", ").filter(Boolean) : [],
-                      circulationToSkin: currentCase.pediatricDetails?.patCirculation ? currentCase.pediatricDetails.patCirculation.split(", ").filter(Boolean) : []
+                      workOfBreathing: parsePatChips(currentCase.pediatricDetails?.patWorkOfBreathing, PAT_WOB_OPTIONS),
+                      circulationToSkin: parsePatChips(currentCase.pediatricDetails?.patCirculation, PAT_CIRC_OPTIONS)
                     }}
                     onChange={s => setCurrentCase(prev => ({
                       ...prev,

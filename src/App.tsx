@@ -2979,7 +2979,10 @@ const handleDeleteAllCases = async () => {
       await setDoc(addendumRef, auditLog);
 
       // Phase 3A: Trusted Logbook Snapshot Service
-      // Sync logbook for UID attribution
+      // Sync logbook for UID attribution.
+      // Runs in the BACKGROUND (not awaited): the case is already saved above, and a
+      // cold server start here used to delay opening a new manual case sheet by seconds.
+      void (async () => {
       try {
         const idToken = await auth.currentUser?.getIdToken();
         if (idToken) {
@@ -2995,6 +2998,7 @@ const handleDeleteAllCases = async () => {
       } catch (syncErr) {
         console.warn("Logbook sync encountered error", syncErr);
       }
+      })();
 
     } catch (err: any) {
       console.error("Error saving case or audit trail:", err);
