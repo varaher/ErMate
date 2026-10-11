@@ -156,6 +156,15 @@ export interface CaseSheetData {
   } | null;
 
   isMlc: boolean;
+  mlcDetails: {
+    natureOfIncident: string | null;
+    dateTimeOfIncident: string | null;
+    placeOfIncident: string | null;
+    identificationMark: string | null;
+    informantBroughtBy: string | null;
+    policeStation: string | null;
+  } | null;
+  familyHistory: string | null;
 
   signatureBlock: {
     clinicianName: string | null; // null means "not recorded" — never a fallback name
@@ -173,6 +182,8 @@ interface Props {
   isPreview?: boolean;
   onApplyPreview?: (reviewedCase: ClinicalCase) => Promise<void> | void;
   onViewCaseSheet?: (caseId: string) => void;
+  // Fallback header name (doctor's workplace) when the case itself has none.
+  defaultHospital?: string;
 }
 
 // ── Known lab-name → ClinicalParam mapping for abnormal flagging ─────
@@ -359,6 +370,51 @@ export function convertClinicalCaseToCaseSheetData(c: ClinicalCase, defaultHospi
     extremities: parsedExtremities,
   };
 
+  // Pediatric fallback: the manual pediatric form stores ABCDE and focused exam in
+  // pediatricDetails.* (PediatricABCDESections). Use them only when the shared
+  // primary/secondary fields are empty, so adult and dictated cases are unaffected.
+  const pedFallback = c.pediatricDetails as any;
+  const isPedForSurvey = !!c.isPediatric || (c.patient?.age !== null && c.patient?.age !== undefined && c.patient.age <= 16);
+  if (isPedForSurvey && pedFallback) {
+    const j = (parts: Array<string | false | null | undefined>) => {
+      const out = parts.filter((x): x is string => typeof x === "string" && x.trim().length > 0).join(", ");
+      return out || null;
+    };
+    const lbl = (label: string, v: any) => (v !== undefined && v !== null && String(v).trim() ? `${label}: ${String(v).trim()}` : null);
+    primarySurvey.airway = primarySurvey.airway || j([
+      lbl("Status", pedFallback.airwayStatus), lbl("Cry", pedFallback.airwayCry), lbl("Intervention", pedFallback.airwayIntervention),
+    ]);
+    primarySurvey.breathing = primarySurvey.breathing || j([
+      lbl("Work of breathing", pedFallback.breathingWob), lbl("Abnormal positioning", pedFallback.breathingAbnormalPositioning),
+      lbl("Air entry", pedFallback.breathingAirEntry), lbl("Subcutaneous emphysema", pedFallback.breathingSubcutaneousEmphysema),
+      lbl("Intervention", pedFallback.breathingIntervention),
+    ]);
+    primarySurvey.circulation = primarySurvey.circulation || j([
+      lbl("CRT", pedFallback.circulationCrt), lbl("Skin colour/temp", pedFallback.circulationSkinColorTemp),
+      lbl("Distended neck veins", pedFallback.circulationDistendedNeckVeins), lbl("Intervention", pedFallback.circulationIntervention),
+    ]);
+    primarySurvey.disability = primarySurvey.disability || j([
+      lbl("AVPU/GCS", pedFallback.disabilityAvpuGcs), lbl("Pupils", pedFallback.disabilityPupils),
+      lbl("Abnormal responses", pedFallback.disabilityAbnormalResponses), lbl("GRBS", pedFallback.disabilityGrbs),
+    ]);
+    primarySurvey.exposure = primarySurvey.exposure || j([
+      lbl("Temp", pedFallback.exposureTemp), lbl("Log roll", pedFallback.exposureTraumaLogroll),
+      lbl("Signs of trauma", pedFallback.exposureSignsOfTrauma), lbl("Infection/bleeding", pedFallback.exposureEvidenceInfectionBleeding),
+      lbl("Long bone deformities", pedFallback.exposureLongBoneDeformities), lbl("Extremities", pedFallback.exposureExtremitiesCheck),
+      lbl("Injured limbs immobilised", pedFallback.exposureImmobilizeInjuredLimbs),
+    ]);
+    primarySurvey.vitalsContext.grbs = primarySurvey.vitalsContext.grbs || pedFallback.disabilityGrbs || null;
+    primarySurvey.vitalsContext.temp = primarySurvey.vitalsContext.temp || pedFallback.exposureTemp || null;
+
+    secondarySurvey.general = secondarySurvey.general || lbl("HEENT", pedFallback.examHeent || pedFallback.focusedHeent);
+    secondarySurvey.respiratory = secondarySurvey.respiratory || pedFallback.focusedRespiratory || null;
+    secondarySurvey.cvs = secondarySurvey.cvs || pedFallback.focusedCardiovascular || null;
+    secondarySurvey.abdomen = secondarySurvey.abdomen || pedFallback.focusedAbdomen || null;
+    secondarySurvey.extremities = secondarySurvey.extremities || j([
+      pedFallback.focusedExtremities, lbl("Back", pedFallback.focusedBack),
+    ]);
+  }
+
   let psychologicalAssessment: PsychologicalAssessmentData | null = null;
   if (c.psychologicalAssessment) {
     psychologicalAssessment = c.psychologicalAssessment;
@@ -479,6 +535,18 @@ export function convertClinicalCaseToCaseSheetData(c: ClinicalCase, defaultHospi
       efastFindings = explicitNotes;
     } else if (!efastFindings.toLowerCase().includes(explicitNotes.toLowerCase())) {
       efastFindings = `${efastFindings} · ${explicitNotes}`;
+    }
+  }
+  {
+    const pedE = c.pediatricDetails as any;
+    if (!efastFindings && pedE) {
+      const parts = [
+        pedE.adjuvantEfastHeart && `Heart: ${pedE.adjuvantEfastHeart}`,
+        pedE.adjuvantEfastLungs && `Lungs: ${pedE.adjuvantEfastLungs}`,
+        pedE.adjuvantEfastAbdomen && `Abdomen: ${pedE.adjuvantEfastAbdomen}`,
+        pedE.adjuvantEfastPelvis && `Pelvis: ${pedE.adjuvantEfastPelvis}`,
+      ].filter(Boolean);
+      if (parts.length > 0) efastFindings = parts.join(", ");
     }
   }
   const efastDone = Boolean((efastFindings && efastFindings !== "Not done" && efastFindings !== "not_done") || adj.efastDone || (surveyAdj?.efastStatus && surveyAdj.efastStatus !== "Not done"));
@@ -761,6 +829,22 @@ export function convertClinicalCaseToCaseSheetData(c: ClinicalCase, defaultHospi
       addendum: c.addendumNotes || null,
     },
     isMlc: !!(c.patient as any)?.isMlc,
+    mlcDetails: (() => {
+      const m = (c.patient as any)?.mlcDetails;
+      if (!m) return null;
+      const v = (x: any) => (typeof x === "string" && x.trim() ? x.trim() : null);
+      const out = {
+        natureOfIncident: v(m.natureOfIncident),
+        dateTimeOfIncident: v(m.dateTimeOfIncident),
+        placeOfIncident: v(m.placeOfIncident),
+        identificationMark: v(m.identificationMark),
+        informantBroughtBy: v(m.informantBroughtBy),
+        policeStation: v(m.policeStation),
+      };
+      return Object.values(out).some(Boolean) ? out : null;
+    })(),
+    familyHistory: (typeof c.sampleHistory?.familyHistory === "string" && c.sampleHistory.familyHistory.trim()) ? c.sampleHistory.familyHistory.trim() : null,
+
 
     signatureBlock: {
       clinicianName: (c as any).emResident || c.doctorName || c.dispositionDetails?.residentName || (c.pediatricDetails as any)?.dispositionEmResident || null, // treating ER doctor / resident
@@ -771,6 +855,24 @@ export function convertClinicalCaseToCaseSheetData(c: ClinicalCase, defaultHospi
 }
 
 // ── Presentational helpers ────────────────────────────────────────────
+
+function MlcDetailsSection({ isMlc, details }: { isMlc: boolean; details: CaseSheetData["mlcDetails"] }) {
+  if (!isMlc && !details) return null;
+  const row = (label: string, value: string | null) => (
+    <div><span className="font-semibold text-slate-900">{label}:</span> {value || "Not documented"}</div>
+  );
+  return (
+    <div className="border border-red-300 rounded-md p-3 text-xs space-y-0.5 print:break-inside-avoid">
+      <div className="font-bold text-red-700 uppercase tracking-wide mb-1">Medico-Legal Case Details</div>
+      {row("Nature of incident", details?.natureOfIncident ?? null)}
+      {row("Date & time of incident", details?.dateTimeOfIncident ?? null)}
+      {row("Place of incident", details?.placeOfIncident ?? null)}
+      {row("Identification mark", details?.identificationMark ?? null)}
+      {row("Brought by / informant", details?.informantBroughtBy ?? null)}
+      {details?.policeStation && row("Police station", details.policeStation)}
+    </div>
+  );
+}
 
 function SectionHeading({ children }: { children: React.ReactNode }) {
   return (
@@ -1074,13 +1176,14 @@ export default function CaseSheetPrintView({
   isPreview = false,
   onApplyPreview,
   onViewCaseSheet,
+  defaultHospital,
 }: Props) {
   const [isApplying, setIsApplying] = useState(false);
   const [applySuccess, setApplySuccess] = useState(false);
   const [applyError, setApplyError] = useState<string | null>(null);
   const [copiedCaseText, setCopiedCaseText] = useState(false);
 
-  const data = propData || (clinicalCase ? convertClinicalCaseToCaseSheetData(clinicalCase) : null);
+  const data = propData || (clinicalCase ? convertClinicalCaseToCaseSheetData(clinicalCase, defaultHospital) : null);
 
   const handleCopyCaseSheet = () => {
     if (!data) return;
@@ -1416,6 +1519,7 @@ export default function CaseSheetPrintView({
               </Section>
             )}
 
+            <MlcDetailsSection isMlc={data.isMlc} details={data.mlcDetails} />
             <PrimarySurveySection data={data.primarySurvey} />
 
             <AdjunctsSection
@@ -1431,9 +1535,10 @@ export default function CaseSheetPrintView({
                 <div><span className="font-semibold text-slate-900">S — Signs & Symptoms:</span> {data.symptoms.length > 0 ? data.symptoms.join(", ") : ((data.pediatricDetails as LegacyPediatricDetails)?.historySignsSymptoms || "None documented")}</div>
                 <div><span className="font-semibold text-slate-900">A — Allergies:</span> {data.allergies.length > 0 ? data.allergies.join(", ") : ((data.pediatricDetails as LegacyPediatricDetails)?.historyAllergies || "None documented")}</div>
                 <div><span className="font-semibold text-slate-900">M — Medications:</span> {data.currentMedications.length > 0 ? data.currentMedications.join(", ") : ((data.pediatricDetails as LegacyPediatricDetails)?.historyMedications || "None documented")}</div>
-                <div><span className="font-semibold text-slate-900">P — Past Medical History:</span> {data.pastHistory.length > 0 ? data.pastHistory.join(" · ") : ((data.pediatricDetails as LegacyPediatricDetails)?.historyPastMedical || "Not significant")}</div>
+                <div><span className="font-semibold text-slate-900">P — Past Medical History:</span> {data.pastHistory.length > 0 ? data.pastHistory.join(" · ") : ((data.pediatricDetails as LegacyPediatricDetails)?.historyPastMedical || "Not documented")}</div>
                 <div><span className="font-semibold text-slate-900">L — Last Meal:</span> {data.lastMeal || (data.pediatricDetails as LegacyPediatricDetails)?.historyLastMeal || "Not documented"}</div>
                 <div><span className="font-semibold text-slate-900">E — Events Preceding:</span> {data.events || (data.pediatricDetails as LegacyPediatricDetails)?.historyEvents || "Not documented"}</div>
+                {data.familyHistory && <div><span className="font-semibold text-slate-900">Family History:</span> {data.familyHistory}</div>}
               </div>
             </Section>
 
@@ -1593,6 +1698,7 @@ export default function CaseSheetPrintView({
           </>
         ) : (
           <>
+            <MlcDetailsSection isMlc={data.isMlc} details={data.mlcDetails} />
             <PrimarySurveySection data={data.primarySurvey} />
 
             <AdjunctsSection
@@ -1608,9 +1714,10 @@ export default function CaseSheetPrintView({
                 <div><span className="font-semibold text-slate-900">S — Signs & Symptoms:</span> {data.symptoms.length > 0 ? data.symptoms.join(", ") : "None documented"}</div>
                 <div><span className="font-semibold text-slate-900">A — Allergies:</span> {data.allergies.length > 0 ? data.allergies.join(", ") : "None documented"}</div>
                 <div><span className="font-semibold text-slate-900">M — Current Medications:</span> {data.currentMedications.length > 0 ? data.currentMedications.join(", ") : "None documented"}</div>
-                <div><span className="font-semibold text-slate-900">P — Past Medical History:</span> {data.pastHistory.length > 0 ? data.pastHistory.join(" · ") : "Not significant"}</div>
+                <div><span className="font-semibold text-slate-900">P — Past Medical History:</span> {data.pastHistory.length > 0 ? data.pastHistory.join(" · ") : "Not documented"}</div>
                 <div><span className="font-semibold text-slate-900">L — Last Meal:</span> {data.lastMeal || "Not documented"}</div>
                 <div><span className="font-semibold text-slate-900">E — Events Preceding:</span> {data.events || "Not documented"}</div>
+                {data.familyHistory && <div><span className="font-semibold text-slate-900">Family History:</span> {data.familyHistory}</div>}
               </div>
             </Section>
 

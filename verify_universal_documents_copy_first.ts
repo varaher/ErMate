@@ -310,11 +310,12 @@ test("5. Pediatric Section Ordering follows strict clinical sequence", () => {
   const data = convertClinicalCaseToCaseSheetData(pedCase);
   const text = formatCaseSheetText(data);
 
-  const idxExam = text.indexOf("**FOCUSED PHYSICAL EXAMINATION:**");
-  const idxInv = text.indexOf("**INVESTIGATIONS & DIAGNOSTIC STUDIES:**");
-  const idxTreat = text.indexOf("**TREATMENT GIVEN & EMERGENCY ORDERS:**");
-  const idxDiag = text.indexOf("**PROVISIONAL DIAGNOSIS:**");
+  const idxExam = text.indexOf("\nFOCUSED PHYSICAL EXAMINATION\n");
+  const idxInv = text.indexOf("\nINVESTIGATIONS\n");
+  const idxTreat = text.indexOf("\nTREATMENT GIVEN\n");
+  const idxDiag = text.indexOf("Provisional Diagnosis:");
 
+  assert.ok(!text.includes("**"), "Copy text must be plain (no markdown **) for EMR paste");
   assert.ok(idxExam !== -1, "Focused Physical Exam must be present");
   assert.ok(idxInv !== -1, "Investigations must be present");
   assert.ok(idxTreat !== -1, "Treatment Given must be present");
@@ -331,12 +332,12 @@ test("6. Adult Section Ordering follows standard ATLS/adult sequence", () => {
   const data = convertClinicalCaseToCaseSheetData(adultCase);
   const text = formatCaseSheetText(data);
 
-  const idxPrimary = text.indexOf("**PRIMARY SURVEY (ABCDE):**");
-  const idxSample = text.indexOf("**SAMPLE HISTORY:**");
-  const idxSec = text.indexOf("**SECONDARY SURVEY (SYSTEMIC & GENERAL EXAMINATION):**");
-  const idxDiag = text.indexOf("**PROVISIONAL & DIFFERENTIAL DIAGNOSIS:**");
-  const idxInv = text.indexOf("**INVESTIGATIONS & DIAGNOSTIC STUDIES:**");
-  const idxTreat = text.indexOf("**TREATMENT GIVEN & EMERGENCY ORDERS:**");
+  const idxPrimary = text.indexOf("\nPRIMARY SURVEY (ABCDE)\n");
+  const idxSample = text.indexOf("\nSAMPLE HISTORY\n");
+  const idxSec = text.indexOf("\nSECONDARY SURVEY / SYSTEMIC EXAMINATION\n");
+  const idxDiag = text.indexOf("\nDIAGNOSIS\n");
+  const idxInv = text.indexOf("\nINVESTIGATIONS\n");
+  const idxTreat = text.indexOf("\nTREATMENT GIVEN\n");
 
   assert.ok(idxPrimary < idxSample, "Primary Survey must precede SAMPLE");
   assert.ok(idxSample < idxSec, "SAMPLE must precede Secondary Survey");
@@ -419,15 +420,16 @@ test("10. DischargeSummaryView implements COPY FIRST in toolbar", () => {
 // 11. Single printable document invariant: CaseSheetView has no duplicate hidden print block
 test("11. CaseSheetView has NO redundant duplicate print templates and wraps editor in no-print", () => {
   const code = readFileSync("src/components/CaseSheetView.tsx", "utf-8");
-  assert.ok(code.includes('className="w-full pb-28 sm:pb-36 no-print"'), "Editor container must have no-print");
-  assert.ok(code.includes('<CaseSheetPrintView clinicalCase={currentCase} />'), "Must embed canonical CaseSheetPrintView on print");
+  assert.ok(!code.includes('className="w-full pb-28 sm:pb-36 no-print"'), "Outer wrapper must NOT be no-print (it contains the print document)");
+  assert.ok(code.includes('id="case-sheet-container"') && /no-print"? id="case-sheet-container"|className="[^"]*no-print[^"]*" id="case-sheet-container"/.test(code), "Editable form container must be no-print");
+  assert.ok(code.includes('<div className="hidden print:block">') && code.includes('<CaseSheetPrintView clinicalCase={currentCase} defaultHospital='), "Must embed canonical CaseSheetPrintView on print");
   assert.ok(!code.includes("BEAUTIFUL PEDIATRIC PRINT RECORD"), "Obsolete duplicate pediatric print record must be removed");
 });
 
 // 12. Manual edits preservation: onViewPrintSheet passes unsaved currentCase
 test("12. CaseSheetView passes unsaved currentCase to onViewPrintSheet", () => {
   const code = readFileSync("src/components/CaseSheetView.tsx", "utf-8");
-  assert.ok(code.includes("onViewPrintSheet(currentCase.id, currentCase)"), "onViewPrintSheet must pass currentCase");
+  assert.ok(code.includes("setShowPdfModal(true) /* stay in the form so unsaved edits are kept */"), "Menu View must preview the current draft inside the form (unsaved edits kept)");
 });
 
 // 13. App.tsx retains unsaved viewCaseSheetPrintCase without silent Firestore writes

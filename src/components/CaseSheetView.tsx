@@ -2837,6 +2837,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
     return (
       <CaseSheetPrintView
         clinicalCase={currentCase}
+        defaultHospital={profile?.workplaceName || profile?.hospitalLabel || profile?.hospital || undefined}
         isPreview={true}
         onBack={() => {
           if (onReturnToScribe) {
@@ -2861,7 +2862,9 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
   }
 
   return (
-    <div className="w-full pb-28 sm:pb-36 no-print">
+    <div className="w-full pb-28 sm:pb-36">
+      {/* NOTE: do NOT add no-print to this wrapper — the universal print document below lives inside it.
+          The editable form itself is hidden in print via #case-sheet-container.no-print. */}
       {/* COMPACT MOBILE HEADER & NAV RAIL */}
       <div className="flex flex-col gap-4 max-w-7xl mx-auto no-print" id="case-sheet-container">
         
@@ -2991,13 +2994,13 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                       <button onClick={handleCopyCaseSheet} className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 flex items-center gap-2">
                         <Copy className="w-3.5 h-3.5" /> Copy to EMR
                       </button>
-                      <button onClick={() => onViewPrintSheet ? onViewPrintSheet(currentCase.id, currentCase) : setShowPdfModal(true)} className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 flex items-center gap-2">
+                      <button onClick={() => setShowPdfModal(true) /* stay in the form so unsaved edits are kept */} className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 flex items-center gap-2">
                         <Printer className="w-3.5 h-3.5" /> View PDF
                       </button>
                       <button onClick={handleDownloadCaseSheet} className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 flex items-center gap-2">
                         <Download className="w-3.5 h-3.5" /> Download
                       </button>
-                      <button onClick={() => onViewPrintSheet ? onViewPrintSheet(currentCase.id, currentCase) : triggerPrintWithTip()} className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 flex items-center gap-2">
+                      <button onClick={() => triggerPrintWithTip() /* prints the hidden universal document of the CURRENT draft */} className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 flex items-center gap-2">
                         <Printer className="w-3.5 h-3.5" /> Print
                       </button>
                       <div className="h-px bg-slate-100 dark:bg-slate-800 my-1.5" />
@@ -5518,7 +5521,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
 
       {/* Canonical Printable Document - Hidden on screen, rendered on print */}
       <div className="hidden print:block">
-        <CaseSheetPrintView clinicalCase={currentCase} />
+        <CaseSheetPrintView clinicalCase={currentCase} defaultHospital={profile?.workplaceName || profile?.hospitalLabel || profile?.hospital || undefined} />
       </div>
 
       {/* View Case Sheet PDF / Universal Document Modal */}
@@ -5528,6 +5531,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
             <div className="flex-1 overflow-y-auto">
               <CaseSheetPrintView
                 clinicalCase={currentCase}
+                defaultHospital={profile?.workplaceName || profile?.hospitalLabel || profile?.hospital || undefined}
                 onBack={() => setShowPdfModal(false)}
                 onPrint={() => triggerPrintWithTip()}
               />

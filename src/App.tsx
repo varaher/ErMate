@@ -6945,6 +6945,7 @@ const handleSignOut = async () => {
               return (
                 <CaseSheetPrintView
                   clinicalCase={matched}
+                  defaultHospital={profile?.workplaceName || profile?.hospitalLabel || profile?.hospital || undefined}
                   onBack={() => {
                     setViewCaseSheetPrintId(null);
                     setViewCaseSheetPrintCase(null);

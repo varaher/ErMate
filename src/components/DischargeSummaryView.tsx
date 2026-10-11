@@ -7,6 +7,7 @@ import { triggerPrintWithTip } from "../utils/printWithTip";
 import { BoundChatModal } from "./BoundChatModal";
 import { captureFeedbackCorrection } from "../services/learningClient";
 import { formatDischargeSummaryText, formatDischargeSummaryHtml, DischargeSummaryData, STATUTORY_FOOTER } from "../utils/dischargeSummaryFormat";
+import { isPediatricPatient } from "../utils/pediatricRanges";
 import {
   deriveInitialCourseInHospital,
   mergeAutoCoursePreservingManualEdits,
@@ -342,7 +343,15 @@ export default function DischargeSummaryView({
 
     const [copiedDischargeText, setCopiedDischargeText] = useState(false);
 
-  const displayHospitalName = (currentCase.hospital || profile?.hospital || "").trim().toUpperCase() || "[HOSPITAL NAME NOT SET]";
+  // Same hospital-name resolution as the case sheet view: case hospital, then the
+  // case's workplace label, then the doctor's workplace.
+  const resolvedHospitalName = (
+    currentCase.hospital || currentCase.hospitalLabel || currentCase.workplaceName ||
+    profile?.workplaceName || profile?.hospitalLabel || profile?.hospital || ""
+  ).trim();
+  // Same pediatric rule as the case sheet view: flag OR age <= 16.
+  const isPediatricCase = !!currentCase.isPediatric || isPediatricPatient(currentCase.patient?.age);
+  const displayHospitalName = resolvedHospitalName.toUpperCase() || "[HOSPITAL NAME NOT SET]";
   const displayHospitalAddress = profile?.hospitalAddress 
     ? `${profile.hospitalAddress}${profile?.state ? `, ${profile.state}` : ''}`
     : "Hospital address not set in profile";
@@ -374,12 +383,12 @@ export default function DischargeSummaryView({
     followUpPlan,
     emResidentName, emConsultantName,
     dischargeDateTime,
-        hospitalName: currentCase.hospital || profile?.hospital,
+        hospitalName: resolvedHospitalName || undefined,
     hospitalPhone: profile?.hospitalPhone,
     hospitalAddressLine: profile?.hospitalAddress
       ? `${profile.hospitalAddress}${profile?.state ? `, ${profile.state}` : ''}`
       : undefined,
-    pediatric: currentCase.isPediatric && currentCase.pediatricDetails ? {
+    pediatric: isPediatricCase && currentCase.pediatricDetails ? {
       weight: currentCase.pediatricDetails.patientWeight || (currentCase.pediatricDetails as any).weight,
       workOfBreathing: currentCase.pediatricDetails.patWorkOfBreathing || (currentCase.pediatricDetails as any).breathingWob || (currentCase.pediatricDetails as any).workOfBreathing,
       circulation: currentCase.pediatricDetails.patCirculation || (currentCase.pediatricDetails as any).circulationSkinColorTemp || (currentCase.pediatricDetails as any).circulation,
@@ -391,7 +400,9 @@ export default function DischargeSummaryView({
   const getFormattedDischargeSummaryHtml = () => formatDischargeSummaryHtml(buildDischargeSummaryData());
 
   const handleCopyDischargeSummary = () => {
-    const plainText = getFormattedDischargeSummaryText();
+    // Plain-text flavour must paste cleanly into EMR text boxes: strip markdown bold markers.
+    // (Rich editors still receive the HTML flavour with real formatting.)
+    const plainText = getFormattedDischargeSummaryText().replace(/\*\*/g, "");
     const htmlText = getFormattedDischargeSummaryHtml();
 
     try {
@@ -454,7 +465,7 @@ export default function DischargeSummaryView({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           profileState: profile?.state,
-          hospitalName: profile?.hospital,
+          hospitalName: resolvedHospitalName || undefined,
           caseData: {
             ...currentCase,
             dispositionDetails: {
@@ -1707,15 +1718,19 @@ export default function DischargeSummaryView({
   <div className="mt-2"><span className="font-bold">Family / Gynae History :</span> {familyGynaeHistory || "Not documented"}</div>
   <div><span className="font-bold">LMP :</span> {lmp || "Not documented"}</div>
 
-  {currentCase.isPediatric && currentCase.pediatricDetails && (
-    <div className="mt-2 text-slate-600">
-      <div className="font-bold">Pediatric Notes (supplemental):</div>
-      <div>Weight: {currentCase.pediatricDetails.patientWeight ? `${currentCase.pediatricDetails.patientWeight} kg` : "Not recorded"}</div>
-      <div>Work of Breathing: {currentCase.pediatricDetails.patWorkOfBreathing || "Not recorded"}</div>
-      <div>Circulation: {currentCase.pediatricDetails.patCirculation || "Not recorded"}</div>
-      <div>Immunization Status: {currentCase.pediatricDetails.immunizationHistory || (currentCase.pediatricDetails as any).immunization || "Not recorded"}</div>
-    </div>
-  )}
+  {isPediatricCase && currentCase.pediatricDetails && (() => {
+    const ped = currentCase.pediatricDetails as any;
+    const weight = ped.patientWeight || ped.weight;
+    return (
+      <div className="mt-2 text-slate-600">
+        <div className="font-bold">Pediatric Notes (supplemental):</div>
+        <div>Weight: {weight ? `${weight} kg` : "Not recorded"}</div>
+        <div>Work of Breathing: {ped.patWorkOfBreathing || ped.workOfBreathing || ped.breathingWob || "Not recorded"}</div>
+        <div>Circulation: {ped.patCirculation || ped.circulation || ped.circulationSkinColorTemp || "Not recorded"}</div>
+        <div>Immunization Status: {ped.immunizationHistory || ped.immunization || "Not recorded"}</div>
+      </div>
+    );
+  })()}
 
   <div className="font-bold mt-4">General Examination / Systemic examination:</div>
   <div>{generalExamination || "Not documented"}</div>

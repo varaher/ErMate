@@ -1,439 +1,219 @@
-// ============================================================
-// ErMate — Canonical Case Sheet Plain-Text Formatter
-// Single source of truth for Case Sheet plain-text clipboard / EMR output.
-// Used by CaseSheetPrintView, CaseSheetView, and MATE previews.
-// Guarantees zero-hallucination, clean EMR compatibility, and
-// strict clinical field parity with the universal visual preview.
-// ============================================================
+/**
+ * src/utils/caseSheetFormat.ts
+ *
+ * ONE canonical Case Sheet -> plain text formatter for "Copy Case Sheet".
+ *
+ * It reads the SAME CaseSheetData that CaseSheetPrintView renders, so what the
+ * clinician sees and what they paste into the hospital EMR/HIS are the same.
+ *
+ * Rules:
+ * - Plain text only: no markdown (**), no HTML, no icons, no UI labels.
+ * - UPPERCASE section headings, "Label: value" lines, blank line between sections.
+ * - Missing values are written as "Not documented". Nothing is invented:
+ *   no default "normal" findings, no assumed negatives.
+ * - Adult and pediatric both supported (pediatric block only when isPediatric).
+ */
+import type { CaseSheetData } from "../components/CaseSheetPrintView";
 
-import type { CaseSheetData, VitalReading, LabPanel } from "../components/CaseSheetPrintView";
-import { formatFlagged } from "../components/clinicalRanges";
+const ND = "Not documented";
 
-function formatVitalsLine(vitals: VitalReading[]): string {
-  const parts: string[] = [];
-  for (const v of vitals) {
-    if (v.displayValue) {
-      parts.push(`${v.label}: ${v.displayValue}`);
-    } else if (v.value !== null && v.value !== undefined) {
-      parts.push(`${v.label}: ${v.value}${v.unit ? ` ${v.unit}` : ""}`);
-    }
-  }
-  return parts.length > 0 ? parts.join(" | ") : "Not documented";
+function val(v: unknown): string {
+  if (v === null || v === undefined) return ND;
+  const s = String(v).trim();
+  return s ? s : ND;
+}
+
+function list(items: Array<string | null | undefined> | undefined | null): string {
+  const clean = (items || []).map((x) => (x == null ? "" : String(x).trim())).filter(Boolean);
+  return clean.length ? clean.join(", ") : ND;
+}
+
+function hasText(v: unknown): boolean {
+  return v !== null && v !== undefined && String(v).trim().length > 0;
 }
 
 export function formatCaseSheetText(data: CaseSheetData): string {
-  const lines: string[] = [];
+  const out: string[] = [];
+  const section = (title: string, lines: string[]) => {
+    const body = lines.filter((l) => l !== "");
+    if (body.length === 0) return;
+    out.push(title.toUpperCase());
+    out.push(...body);
+    out.push("");
+  };
 
-  // 1. Hospital & Record Header
-  const hospitalName = (data.hospitalName && data.hospitalName.trim() ? data.hospitalName.trim() : "[Hospital name not set]").toUpperCase();
-  lines.push(`**${hospitalName}**`);
-  lines.push(`EMERGENCY DEPARTMENT — CASE SHEET${data.isMlc ? " · MLC CASE" : ""}`);
-  lines.push(`Case ID: ${data.caseId}`);
-  lines.push(`Captured: ${data.arrival.date || "N/A"} ${data.arrival.time || ""}`);
-  lines.push("Confidential Medical Record");
-  lines.push("");
+  // Header
+  out.push(`${(data.hospitalName || "").trim() || "Hospital not set"}`);
+  out.push(`EMERGENCY DEPARTMENT — CASE SHEET${data.isPediatric ? " (PEDIATRIC)" : ""}${data.isMlc ? " - MLC" : ""}`);
+  out.push(`Case ID: ${val(data.caseId)}`);
+  out.push("");
 
-  // 2. Patient Demographics
-  lines.push("**PATIENT DEMOGRAPHICS:**");
-  lines.push(`- Name: ${data.patient.name || "Not recorded"}`);
-  lines.push(`- Age / Sex: ${data.patient.age !== null && data.patient.age !== undefined ? `${data.patient.age}y` : "—"} ${data.patient.sex || "—"}`);
-  lines.push(`- UHID: ${data.patient.uhid || "—"}`);
-  lines.push(`- Bed / Location: ${data.patient.bed || "—"}`);
-  lines.push(`- Arrival: ${data.arrival.date || "—"} ${data.arrival.time || ""}`);
-  lines.push(`- Treating Clinician: ${data.clinician || "Not recorded"}`);
-  if (data.triageCategory) {
-    lines.push(`- Triage Category: ${data.triageCategory}`);
-  }
-  if (data.caseType) {
-    lines.push(`- Case Type: ${data.caseType}`);
-  }
-  lines.push("");
+  // Patient
+  const p = data.patient;
+  section("Patient Details", [
+    `Name: ${val(p.name)}`,
+    `Age / Sex: ${p.age !== null && p.age !== undefined ? `${p.age}y` : ND} ${p.sex || ""}`.trimEnd(),
+    `UHID: ${val(p.uhid)}`,
+    `Bed: ${val(p.bed)}`,
+    `Arrival: ${hasText(data.arrival?.date) || hasText(data.arrival?.time) ? `${data.arrival?.date || ""} ${data.arrival?.time || ""}`.trim() : ND}`,
+    `Treating Clinician: ${val(data.clinician)}`,
+    hasText(data.triageCategory) ? `Triage: ${data.triageCategory}` : "",
+    hasText(data.caseType) ? `Case Type: ${data.caseType}` : "",
+  ]);
 
-  // 3. Presenting Complaint
-  lines.push("**CHIEF COMPLAINTS / PRESENTING COMPLAINT:**");
-  lines.push(data.presentingComplaint ? `- ${data.presentingComplaint}` : "- Not documented");
-  lines.push("");
-
-  if (data.isPediatric) {
-    // ---------------------------------------------------------
-    // PEDIATRIC SPECIFIC SECTION
-    // Ordering:
-    // PAT -> Primary Survey -> Adjuncts -> SAMPLE History ->
-    // Focused Physical Examination -> Psychological Assessment ->
-    // Investigations -> Treatment Given -> Provisional Diagnosis ->
-    // Differentials -> Procedures -> Consults -> Safety -> Disposition -> Notes -> Signature
-    // ---------------------------------------------------------
-
-    // 4. Pediatric Assessment (PAT / TICLS)
-    if (data.pediatricDetails) {
-      const ped = data.pediatricDetails;
-      lines.push("**PEDIATRIC ASSESSMENT (PAT):**");
-      lines.push(`- Weight: ${ped.weight ? `${ped.weight} kg` : "Not recorded"}`);
-      lines.push(
-        `- PAT — Appearance (TICLS): Tone: ${ped.patAppearanceTone || "—"}, ` +
-        `Interactivity: ${ped.patAppearanceInteractivity || "—"}, ` +
-        `Consolability: ${ped.patAppearanceConsolability || "—"}, ` +
-        `Look/Gaze: ${ped.patAppearanceLookGaze || "—"}, ` +
-        `Speech/Cry: ${ped.patAppearanceSpeechCry || "—"}`
-      );
-      lines.push(`- Work of Breathing: ${ped.patWorkOfBreathing || "—"} | Circulation: ${ped.patCirculation || "—"}`);
-      if (ped.birthHistory) lines.push(`- Birth History: ${ped.birthHistory}`);
-      if (ped.feedingHistory) lines.push(`- Feeding History: ${ped.feedingHistory}`);
-      if (ped.developmentalHistory) lines.push(`- Developmental History: ${ped.developmentalHistory}`);
-      lines.push(`- Immunization History: ${ped.immunizationHistory || "Not recorded"}`);
-      if (ped.broughtBy) lines.push(`- Brought By: ${ped.broughtBy}`);
-      if (ped.informant) lines.push(`- Informant: ${ped.informant}`);
-      lines.push("");
-    }
-
-    // 5. Initial Vitals & Primary Survey (ABCDE)
-    lines.push("**INITIAL VITALS & PRIMARY SURVEY (ABCDE):**");
-    lines.push(`- Initial Vitals: ${formatVitalsLine(data.initialVitals)}`);
-    lines.push(`- A — Airway: ${data.primarySurvey.airway || "Not documented"}`);
-    lines.push(`- B — Breathing: ${data.primarySurvey.breathing || "Not documented"}`);
-    lines.push(`- C — Circulation: ${data.primarySurvey.circulation || "Not documented"}`);
-    lines.push(`- D — Disability: ${data.primarySurvey.disability || "Not documented"}`);
-    lines.push(`- E — Exposure: ${data.primarySurvey.exposure || "Not documented"}`);
-    lines.push("");
-
-    // 6. Adjuncts to Primary Assessment
-    lines.push("**ADJUNCTS TO PRIMARY ASSESSMENT:**");
-    lines.push(`- ECG: ${data.ecg.findings || (data.ecg.performed ? "Performed" : "Not documented")}`);
-    lines.push(`- Bedside Echo: ${data.bedsideEcho.findings || (data.bedsideEcho.performed ? "Performed" : "Not documented")}`);
-    lines.push(`- eFAST: ${data.efast.findings || (data.efast.performed ? "Performed" : "Not documented")}`);
-    if (data.vbgAbg.performed || data.vbgAbg.type || data.vbgAbg.values.length > 0) {
-      const vbgParts = data.vbgAbg.values.map(v => `${v.name}: ${v.value}`).join(", ");
-      lines.push(`- ${data.vbgAbg.type || "Blood Gas"}: ${vbgParts || "Performed"}${data.vbgAbg.notes ? ` — ${data.vbgAbg.notes}` : ""}`);
-    } else {
-      lines.push("- VBG/ABG: Not documented");
-    }
-    lines.push("");
-
-    // 7. SAMPLE History
-    lines.push("**SECONDARY ASSESSMENT / SAMPLE HISTORY:**");
-    lines.push(`- S — Signs & Symptoms: ${data.symptoms.length > 0 ? data.symptoms.join(", ") : "None documented"}`);
-    lines.push(`- A — Allergies: ${data.allergies.length > 0 ? data.allergies.join(", ") : "None documented"}`);
-    lines.push(`- M — Medications: ${data.currentMedications.length > 0 ? data.currentMedications.join(", ") : "None documented"}`);
-    lines.push(`- P — Past Medical History: ${data.pastHistory.length > 0 ? data.pastHistory.join(" · ") : "Not significant"}`);
-    lines.push(`- L — Last Meal: ${data.lastMeal || "Not documented"}`);
-    lines.push(`- E — Events Preceding: ${data.events || "Not documented"}`);
-    lines.push("");
-
-    // 8. Focused Physical Examination
-    lines.push("**FOCUSED PHYSICAL EXAMINATION:**");
-    lines.push(`- General Examination: ${data.secondarySurvey.general || "Not documented"}`);
-    lines.push(`- Respiratory (RS): ${data.secondarySurvey.respiratory || "Not documented"}`);
-    lines.push(`- Cardiovascular (CVS): ${data.secondarySurvey.cvs || "Not documented"}`);
-    lines.push(`- Per Abdomen (PA): ${data.secondarySurvey.abdomen || "Not documented"}`);
-    lines.push(`- Central Nervous System (CNS): ${data.secondarySurvey.cns || "Not documented"}`);
-    lines.push(`- Extremities & Back: ${data.secondarySurvey.extremities || "Not documented"}`);
-    lines.push("");
-
-    // 9. Psychological Assessment
-    if (data.psychologicalAssessment) {
-      const psych = data.psychologicalAssessment;
-      lines.push("**PSYCHOLOGICAL ASSESSMENT:**");
-      if (psych.suicidalIdeation !== undefined && psych.suicidalIdeation !== null) lines.push(`- Suicidal Ideation: ${psych.suicidalIdeation ? "Yes" : "No"}`);
-      if (psych.selfHarmHistory !== undefined && psych.selfHarmHistory !== null) lines.push(`- Self-Harm History: ${psych.selfHarmHistory ? "Yes" : "No"}`);
-      if (psych.intentToHarmOthers !== undefined && psych.intentToHarmOthers !== null) lines.push(`- Intent to Harm Others: ${psych.intentToHarmOthers ? "Yes" : "No"}`);
-      if (psych.substanceAbuse !== undefined && psych.substanceAbuse !== null) lines.push(`- Substance Abuse: ${psych.substanceAbuse ? "Yes" : "No"}`);
-      if (psych.psychiatricHistory !== undefined && psych.psychiatricHistory !== null) lines.push(`- Psychiatric History: ${psych.psychiatricHistory ? "Yes" : "No"}`);
-      if (psych.currentlyOnPsychiatricTreatment !== undefined && psych.currentlyOnPsychiatricTreatment !== null) lines.push(`- Prior Mental Health Treatment: ${psych.currentlyOnPsychiatricTreatment ? "Yes" : "No"}`);
-      if (psych.notes) lines.push(`- Observations / Notes: ${psych.notes}`);
-      lines.push("");
-    }
-
-    // 10. Investigations & Diagnostic Studies
-    const hasInvestigations = Boolean(
-      data.investigationLabsOrdered ||
-      data.labs.length > 0 ||
-      data.investigationImaging ||
-      data.investigationResultsSummary
-    );
-    if (hasInvestigations) {
-      lines.push("**INVESTIGATIONS & DIAGNOSTIC STUDIES:**");
-      if (data.investigationLabsOrdered) {
-        lines.push(`- Laboratory Investigations Ordered:\n  ${data.investigationLabsOrdered}`);
-      }
-      if (data.labs.length > 0) {
-        for (const panel of data.labs) {
-          const panelVals = panel.values
-            .map(v => `${v.name}: ${v.param ? formatFlagged(v.param, v.value) : (v.value ?? "Pending")}${v.unit && v.value !== null ? ` ${v.unit}` : ""}`)
-            .join("  |  ");
-          lines.push(`- ${panel.panelName}: ${panelVals}`);
-        }
-      }
-      if (data.investigationImaging) {
-        lines.push(`- Diagnostic Imaging (X-Ray / CT / MRI / USG):\n  ${data.investigationImaging}`);
-      }
-      if (data.investigationResultsSummary) {
-        lines.push(`- Investigation Results Summary:\n  ${data.investigationResultsSummary}`);
-      }
-      lines.push("");
-    }
-
-    // 11. Treatment Given & Emergency Orders
-    const hasTreatments = Boolean(
-      data.treatmentGiven.length > 0 ||
-      data.treatmentNotes
-    );
-    if (hasTreatments) {
-      lines.push("**TREATMENT GIVEN & EMERGENCY ORDERS:**");
-      if (data.treatmentGiven.length > 0) {
-        data.treatmentGiven.forEach((t, i) => lines.push(`  ${i + 1}. ${t}`));
-      }
-      if (data.treatmentNotes) {
-        lines.push(`- Treatment Notes & Orders: ${data.treatmentNotes}`);
-      }
-      lines.push("");
-    }
-
-    // 12. Provisional Diagnosis
-    lines.push("**PROVISIONAL DIAGNOSIS:**");
-    lines.push(data.provisionalDiagnosis ? `- ${data.provisionalDiagnosis}` : "- Not documented");
-    if (data.differentials.length > 0 || data.provisionalDifferentialDiagnoses) {
-      lines.push("**Differential Diagnosis:**");
-      if (data.differentials.length > 0) {
-        data.differentials.forEach((d, i) => lines.push(`  ${i + 1}. ${d.diagnosis}${d.status ? ` (${d.status})` : ""}`));
-      }
-      if (data.provisionalDifferentialDiagnoses) {
-        lines.push(`- Notes / Details: ${data.provisionalDifferentialDiagnoses}`);
-      }
-    }
-    lines.push("");
-
-  } else {
-    // ---------------------------------------------------------
-    // ADULT SECTION
-    // Ordering:
-    // Primary Survey -> Adjuncts -> SAMPLE History ->
-    // Secondary Survey -> Psychological Assessment ->
-    // Provisional & Differential Diagnosis ->
-    // Investigations -> Treatment Given -> Procedures ->
-    // Consults -> Safety -> Disposition -> Notes -> Signature
-    // ---------------------------------------------------------
-
-    // 4. Initial Vitals & Primary Survey (ABCDE)
-    lines.push("**PRIMARY SURVEY (ABCDE):**");
-    lines.push(`- Initial Vitals: ${formatVitalsLine(data.initialVitals)}`);
-    lines.push(`- A — Airway: ${data.primarySurvey.airway || "Not documented"}`);
-    lines.push(`- B — Breathing: ${data.primarySurvey.breathing || "Not documented"}`);
-    lines.push(`- C — Circulation: ${data.primarySurvey.circulation || "Not documented"}`);
-    lines.push(`- D — Disability: ${data.primarySurvey.disability || "Not documented"}`);
-    lines.push(`- E — Exposure: ${data.primarySurvey.exposure || "Not documented"}`);
-    lines.push("");
-
-    // 5. Adjuncts to Primary Assessment
-    lines.push("**ADJUNCTS TO PRIMARY ASSESSMENT:**");
-    lines.push(`- ECG: ${data.ecg.findings || (data.ecg.performed ? "Performed" : "Not documented")}`);
-    lines.push(`- Bedside Echo: ${data.bedsideEcho.findings || (data.bedsideEcho.performed ? "Performed" : "Not documented")}`);
-    lines.push(`- eFAST: ${data.efast.findings || (data.efast.performed ? "Performed" : "Not documented")}`);
-    if (data.vbgAbg.performed || data.vbgAbg.type || data.vbgAbg.values.length > 0) {
-      const vbgParts = data.vbgAbg.values.map(v => `${v.name}: ${v.value}`).join(", ");
-      lines.push(`- ${data.vbgAbg.type || "Blood Gas"}: ${vbgParts || "Performed"}${data.vbgAbg.notes ? ` — ${data.vbgAbg.notes}` : ""}`);
-    } else {
-      lines.push("- VBG/ABG: Not documented");
-    }
-    lines.push("");
-
-    // 6. SAMPLE History
-    lines.push("**SAMPLE HISTORY:**");
-    lines.push(`- S — Signs & Symptoms: ${data.symptoms.length > 0 ? data.symptoms.join(", ") : "None documented"}`);
-    lines.push(`- A — Allergies: ${data.allergies.length > 0 ? data.allergies.join(", ") : "None documented"}`);
-    lines.push(`- M — Current Medications: ${data.currentMedications.length > 0 ? data.currentMedications.join(", ") : "None documented"}`);
-    lines.push(`- P — Past Medical History: ${data.pastHistory.length > 0 ? data.pastHistory.join(" · ") : "Not significant"}`);
-    lines.push(`- L — Last Meal: ${data.lastMeal || "Not documented"}`);
-    lines.push(`- E — Events Preceding: ${data.events || "Not documented"}`);
-    lines.push("");
-
-    // 7. Secondary Survey
-    lines.push("**SECONDARY SURVEY (SYSTEMIC & GENERAL EXAMINATION):**");
-    lines.push(`- General Examination: ${data.secondarySurvey.general || "Not documented"}`);
-    lines.push(`- Cardiovascular (CVS): ${data.secondarySurvey.cvs || "Not documented"}`);
-    lines.push(`- Respiratory (RS): ${data.secondarySurvey.respiratory || "Not documented"}`);
-    lines.push(`- Per Abdomen (PA): ${data.secondarySurvey.abdomen || "Not documented"}`);
-    lines.push(`- Central Nervous System (CNS): ${data.secondarySurvey.cns || "Not documented"}`);
-    lines.push(`- Extremities & Back: ${data.secondarySurvey.extremities || "Not documented"}`);
-    lines.push("");
-
-    // 8. Psychological Assessment
-    if (data.psychologicalAssessment) {
-      const psych = data.psychologicalAssessment;
-      lines.push("**PSYCHOLOGICAL ASSESSMENT:**");
-      if (psych.suicidalIdeation !== undefined && psych.suicidalIdeation !== null) lines.push(`- Suicidal Ideation: ${psych.suicidalIdeation ? "Yes" : "No"}`);
-      if (psych.selfHarmHistory !== undefined && psych.selfHarmHistory !== null) lines.push(`- Self-Harm History: ${psych.selfHarmHistory ? "Yes" : "No"}`);
-      if (psych.intentToHarmOthers !== undefined && psych.intentToHarmOthers !== null) lines.push(`- Intent to Harm Others: ${psych.intentToHarmOthers ? "Yes" : "No"}`);
-      if (psych.substanceAbuse !== undefined && psych.substanceAbuse !== null) lines.push(`- Substance Abuse: ${psych.substanceAbuse ? "Yes" : "No"}`);
-      if (psych.psychiatricHistory !== undefined && psych.psychiatricHistory !== null) lines.push(`- Psychiatric History: ${psych.psychiatricHistory ? "Yes" : "No"}`);
-      if (psych.currentlyOnPsychiatricTreatment !== undefined && psych.currentlyOnPsychiatricTreatment !== null) lines.push(`- Prior Mental Health Treatment: ${psych.currentlyOnPsychiatricTreatment ? "Yes" : "No"}`);
-      if (psych.notes) lines.push(`- Observations / Notes: ${psych.notes}`);
-      lines.push("");
-    }
-
-    // 9. Provisional & Differential Diagnosis
-    lines.push("**PROVISIONAL & DIFFERENTIAL DIAGNOSIS:**");
-    lines.push(data.provisionalDiagnosis ? `- Provisional Diagnosis: ${data.provisionalDiagnosis}` : "- Provisional Diagnosis: Not documented");
-    if (data.differentials.length > 0) {
-      lines.push("- Differential Diagnosis:");
-      data.differentials.forEach((d, i) => lines.push(`  ${i + 1}. ${d.diagnosis}${d.status ? ` (${d.status})` : ""}`));
-    }
-    if (data.provisionalDifferentialDiagnoses) {
-      lines.push(`- Notes / Details: ${data.provisionalDifferentialDiagnoses}`);
-    }
-    lines.push("");
-
-    // 10. Investigations & Diagnostic Studies
-    const hasInvestigations = Boolean(
-      data.investigationLabsOrdered ||
-      data.labs.length > 0 ||
-      data.investigationImaging ||
-      data.investigationResultsSummary
-    );
-    if (hasInvestigations) {
-      lines.push("**INVESTIGATIONS & DIAGNOSTIC STUDIES:**");
-      if (data.investigationLabsOrdered) {
-        lines.push(`- Laboratory Investigations Ordered:\n  ${data.investigationLabsOrdered}`);
-      }
-      if (data.labs.length > 0) {
-        for (const panel of data.labs) {
-          const panelVals = panel.values
-            .map(v => `${v.name}: ${v.param ? formatFlagged(v.param, v.value) : (v.value ?? "Pending")}${v.unit && v.value !== null ? ` ${v.unit}` : ""}`)
-            .join("  |  ");
-          lines.push(`- ${panel.panelName}: ${panelVals}`);
-        }
-      }
-      if (data.investigationImaging) {
-        lines.push(`- Diagnostic Imaging (X-Ray / CT / MRI / USG):\n  ${data.investigationImaging}`);
-      }
-      if (data.investigationResultsSummary) {
-        lines.push(`- Investigation Results Summary:\n  ${data.investigationResultsSummary}`);
-      }
-      lines.push("");
-    }
-
-    // 11. Treatment Given & Emergency Orders
-    const hasTreatments = Boolean(
-      data.treatmentGiven.length > 0 ||
-      data.treatmentNotes
-    );
-    if (hasTreatments) {
-      lines.push("**TREATMENT GIVEN & EMERGENCY ORDERS:**");
-      if (data.treatmentGiven.length > 0) {
-        data.treatmentGiven.forEach((t, i) => lines.push(`  ${i + 1}. ${t}`));
-      }
-      if (data.treatmentNotes) {
-        lines.push(`- Treatment Notes & Orders: ${data.treatmentNotes}`);
-      }
-      lines.push("");
-    }
+  // MLC
+  if (data.isMlc || data.mlcDetails) {
+    const m = data.mlcDetails;
+    section("Medico-Legal Case Details", [
+      `Nature of incident: ${val(m?.natureOfIncident)}`,
+      `Date & time of incident: ${val(m?.dateTimeOfIncident)}`,
+      `Place of incident: ${val(m?.placeOfIncident)}`,
+      `Identification mark: ${val(m?.identificationMark)}`,
+      `Brought by / informant: ${val(m?.informantBroughtBy)}`,
+      hasText(m?.policeStation) ? `Police station: ${m?.policeStation}` : "",
+    ]);
   }
 
-  // -----------------------------------------------------------
-  // COMMON CLOSING SECTIONS (Procedures, Consults, Safety, Disposition, Notes, Signatures)
-  // -----------------------------------------------------------
+  section("Presenting Complaint", [val(data.presentingComplaint)]);
 
-  // Procedures & Interventions
-  const hasProcedures = Boolean(
-    (data.procedures.procedureNotes && data.procedures.procedureNotes.length > 0) ||
-    data.procedures.proceduresChecked.length > 0 ||
-    data.procedures.otherProcedures
-  );
-  if (hasProcedures) {
-    lines.push("**PROCEDURES & INTERVENTIONS:**");
-    if (data.procedures.procedureNotes && data.procedures.procedureNotes.length > 0) {
-      for (const note of data.procedures.procedureNotes) {
-        const timeStr = [note.metadata.date, note.metadata.time].filter(Boolean).join(" ");
-        lines.push(`- ${note.procedureName}${timeStr ? ` (${timeStr})` : ""}:`);
-        lines.push(`  ${note.generatedNarrative}`);
-      }
-    }
-    if (data.procedures.proceduresChecked.length > 0) {
-      lines.push(`- Procedures Performed: ${data.procedures.proceduresChecked.join(", ")}`);
-    }
-    if (data.procedures.otherProcedures) {
-      lines.push(`- Procedure Details: ${data.procedures.otherProcedures}`);
-    }
-    lines.push("");
+  // Pediatric
+  if (data.isPediatric && data.pediatricDetails) {
+    const d = data.pediatricDetails;
+    section("Pediatric Assessment (PAT)", [
+      `Weight: ${hasText(d.weight) ? `${d.weight} kg` : ND}`,
+      `PAT Appearance: Tone ${val(d.patAppearanceTone)}; Interactivity ${val(d.patAppearanceInteractivity)}; Consolability ${val(d.patAppearanceConsolability)}; Look/Gaze ${val(d.patAppearanceLookGaze)}; Speech/Cry ${val(d.patAppearanceSpeechCry)}`,
+      `PAT Work of Breathing: ${val(d.patWorkOfBreathing)}`,
+      `PAT Circulation to Skin: ${val(d.patCirculation)}`,
+      hasText(d.birthHistory) ? `Birth History: ${d.birthHistory}` : "",
+      hasText(d.feedingHistory) ? `Feeding History: ${d.feedingHistory}` : "",
+      hasText(d.developmentalHistory) ? `Developmental History: ${d.developmentalHistory}` : "",
+      `Immunization History: ${val(d.immunizationHistory)}`,
+      hasText(d.broughtBy) ? `Brought By: ${d.broughtBy}` : "",
+      hasText(d.informant) ? `Informant: ${d.informant}` : "",
+    ]);
   }
 
-  // Specialist Consultation & Review
-  const hasConsultation = Boolean(
-    data.consultation.consultsRequested.length > 0 ||
-    data.consultation.consultantReview
-  );
-  if (hasConsultation) {
-    lines.push("**SPECIALIST CONSULTATION & REVIEW:**");
-    if (data.consultation.consultsRequested.length > 0) {
-      lines.push(`- Consults Requested: ${data.consultation.consultsRequested.join(", ")}`);
-    }
-    if (data.consultation.consultantReview) {
-      const cr = data.consultation.consultantReview;
-      lines.push(`- Consultant Review${cr.reviewedBy ? ` (${cr.reviewedBy})` : ""}${cr.timestamp ? ` [${cr.timestamp}]` : ""}:`);
-      lines.push(`  ${cr.reviewText}`);
-    }
-    lines.push("");
+  // Primary survey + vitals
+  const ps = data.primarySurvey;
+  const vc = ps?.vitalsContext || {};
+  section("Primary Survey (ABCDE)", [
+    `A — Airway: ${val(ps?.airway)}`,
+    `B — Breathing: ${val(ps?.breathing)}`,
+    `C — Circulation: ${val(ps?.circulation)}`,
+    `D — Disability: ${val(ps?.disability)}`,
+    `E — Exposure: ${val(ps?.exposure)}`,
+  ]);
+  section("Vitals", [
+    `HR: ${val(vc.hr)} | BP: ${val(vc.bp)} | RR: ${val(vc.rr)} | SpO2: ${val(vc.spo2)} | Temp: ${val(vc.temp)} | GCS: ${val(vc.gcsComponents || vc.gcs)} | GRBS: ${val(vc.grbs)}`,
+  ]);
+
+  // Adjuncts (only those performed / documented)
+  const adj: string[] = [];
+  if (data.ecg?.performed || hasText(data.ecg?.findings)) adj.push(`ECG: ${val(data.ecg?.findings)}`);
+  if (data.bedsideEcho?.performed || hasText(data.bedsideEcho?.findings)) adj.push(`Bedside Echo: ${val(data.bedsideEcho?.findings)}`);
+  if (data.efast?.performed || hasText(data.efast?.findings)) adj.push(`eFAST: ${val(data.efast?.findings)}`);
+  if (data.vbgAbg?.performed) {
+    const vals = (data.vbgAbg.values || []).filter((x) => x.value !== null && x.value !== undefined).map((x) => `${x.name} ${x.value}`);
+    adj.push(`${data.vbgAbg.type || "Blood gas"}: ${vals.length ? vals.join(", ") : ND}${hasText(data.vbgAbg.notes) ? ` (${data.vbgAbg.notes})` : ""}`);
   }
+  section("Adjuncts", adj);
 
-  // Safety & Accreditation Standards
-  const sa = data.safetyAndAccreditation;
-  const hasSafety = Boolean(
-    sa && (
-      sa.ipsg.length > 0 ||
-      sa.vulnerability.length > 0 ||
-      sa.fallRisk ||
-      sa.consentTimeOut.length > 0
-    )
-  );
-  if (hasSafety) {
-    lines.push("**SAFETY & ACCREDITATION STANDARDS:**");
-    if (sa.ipsg.length > 0) {
-      lines.push(`- International Patient Safety Goals (IPSG): ${sa.ipsg.join("; ")}`);
+  // SAMPLE
+  section("SAMPLE History", [
+    `S — Signs & Symptoms: ${list(data.symptoms)}`,
+    `A — Allergies: ${list(data.allergies)}`,
+    `M — Medications: ${list(data.currentMedications)}`,
+    `P — Past History: ${list(data.pastHistory)}`,
+    `L — Last Meal: ${val(data.lastMeal)}`,
+    `E — Events: ${val(data.events)}`,
+    hasText(data.familyHistory) ? `Family History: ${data.familyHistory}` : "",
+  ]);
+
+  // Diagnosis (adult: after examination; pediatric: after treatment — same order as the on-screen sheet)
+  const writeDiagnosis = () => {
+    const dx: string[] = [`Provisional Diagnosis: ${val(data.provisionalDiagnosis)}`];
+    if (data.differentials?.length) {
+      dx.push(`Differentials: ${data.differentials.map((d) => `${d.diagnosis}${d.status ? ` (${d.status})` : ""}`).join("; ")}`);
+    } else if (hasText(data.provisionalDifferentialDiagnoses)) {
+      dx.push(`Differentials: ${data.provisionalDifferentialDiagnoses}`);
     }
-    if (sa.fallRisk) {
-      lines.push(`- Fall Risk: ${sa.fallRisk}`);
-    }
-    if (sa.vulnerability.length > 0) {
-      lines.push(`- Vulnerability Flags: ${sa.vulnerability.join("; ")}`);
-    }
-    if (sa.consentTimeOut.length > 0) {
-      lines.push(`- Informed Consent & Time-Out: ${sa.consentTimeOut.join("; ")}`);
-    }
-    lines.push("");
+    section("Diagnosis", dx);
+  };
+
+  // Examination
+  const ss = data.secondarySurvey;
+  section(data.isPediatric ? "Focused Physical Examination" : "Secondary Survey / Systemic Examination", [
+    `General: ${val(ss?.general)}`,
+    `CVS: ${val(ss?.cvs)}`,
+    `RS: ${val(ss?.respiratory)}`,
+    `Abdomen: ${val(ss?.abdomen)}`,
+    `CNS: ${val(ss?.cns)}`,
+    `Extremities: ${val(ss?.extremities)}`,
+  ]);
+
+  if (!data.isPediatric) writeDiagnosis();
+
+  // Investigations
+  const inv: string[] = [];
+  (data.labs || []).forEach((panel) => {
+    const vals = (panel.values || []).filter((x) => x.value !== null && x.value !== undefined)
+      .map((x) => `${x.name} ${x.value}${x.unit ? ` ${x.unit}` : ""}`);
+    if (vals.length) inv.push(`${panel.panelName}: ${vals.join(", ")}`);
+  });
+  (data.cultureResults || []).forEach((c) => inv.push(`${c.name}: ${val(c.result)}`));
+  if (hasText(data.investigationLabsOrdered)) inv.push(`Ordered: ${data.investigationLabsOrdered}`);
+  if (hasText(data.investigationImaging)) inv.push(`Imaging: ${data.investigationImaging}`);
+  if (hasText(data.investigationResultsSummary)) inv.push(`Results: ${data.investigationResultsSummary}`);
+  section("Investigations", inv.length ? inv : [ND]);
+
+  // Treatment
+  const tx: string[] = (data.treatmentGiven || []).map((t, i) => `${i + 1}. ${t}`);
+  if (hasText(data.treatmentNotes)) tx.push(`Notes: ${data.treatmentNotes}`);
+  if (hasText(data.treatment?.otherNotes)) tx.push(`Other: ${data.treatment?.otherNotes}`);
+  section("Treatment Given", tx.length ? tx : [ND]);
+
+  if (data.isPediatric) writeDiagnosis();
+
+  // Procedures (only if any documented)
+  const proc: string[] = [];
+  (data.procedures?.procedureNotes || []).forEach((note: any) => {
+    const when = [note?.metadata?.date, note?.metadata?.time].filter(Boolean).join(" ");
+    proc.push(`${note?.procedureName || "Procedure"}${when ? ` (${when})` : ""}${note?.generatedNarrative ? `: ${note.generatedNarrative}` : ""}`);
+  });
+  if (data.procedures?.proceduresChecked?.length) proc.push(data.procedures.proceduresChecked.join(", "));
+  if (hasText(data.procedures?.otherProcedures)) proc.push(`Other: ${data.procedures.otherProcedures}`);
+  section("Procedures", proc);
+
+  // Consults
+  const consults: string[] = [];
+  if (data.consultation?.consultsRequested?.length) consults.push(`Requested: ${data.consultation.consultsRequested.join(", ")}`);
+  if (data.consultation?.consultantReview) {
+    const r = data.consultation.consultantReview;
+    consults.push(`Review by ${val(r.reviewedBy)}${hasText(r.timestamp) ? ` (${r.timestamp})` : ""}: ${val(r.reviewText)}`);
   }
+  section("Consultations", consults);
 
-  // Disposition & Outcome
-  lines.push("**DISPOSITION & OUTCOME:**");
-  lines.push(`- Status: ${data.disposition.status || "Not yet determined"}`);
-  if (data.disposition.destinationUnit) lines.push(`- Destination: ${data.disposition.destinationUnit}`);
-  if (data.disposition.durationInEr) lines.push(`- Duration in ER: ${data.disposition.durationInEr}`);
-  if (data.disposition.conditionAtShift) lines.push(`- Condition at Shift: ${data.disposition.conditionAtShift}`);
-  if (data.disposition.managementPlan) lines.push(`- Management Plan: ${data.disposition.managementPlan}`);
-  if (data.disposition.consultsRequested.length > 0) lines.push(`- Consults Requested: ${data.disposition.consultsRequested.join(", ")}`);
-  if (data.disposition.followUpAdvice) lines.push(`- Follow-Up Advice: ${data.disposition.followUpAdvice}`);
-  lines.push("");
+  // Disposition
+  const disp = data.disposition;
+  section("Disposition", [
+    `Disposition: ${val(disp?.status)}`,
+    hasText(disp?.destinationUnit) ? `Destination: ${disp?.destinationUnit}` : "",
+    hasText(disp?.conditionAtShift) ? `Condition at shift: ${disp?.conditionAtShift}` : "",
+    hasText(disp?.durationInEr) ? `Duration in ER: ${disp?.durationInEr}` : "",
+    hasText(disp?.managementPlan) ? `Plan: ${disp?.managementPlan}` : "",
+    hasText(disp?.followUpAdvice) ? `Follow-up: ${disp?.followUpAdvice}` : "",
+  ]);
 
-  // Clinical Notes & Addendum
-  const hasProgressNotes = data.notes.progressNotes && data.notes.progressNotes.trim() !== "Case created via ErMate Voice Scribe dictation.";
-  const hasAddendum = Boolean(data.notes.addendum);
-  if (hasProgressNotes || hasAddendum) {
-    lines.push("**CLINICAL NOTES & ADDENDUM:**");
-    if (hasProgressNotes) {
-      lines.push(`- Progress Notes:\n  ${data.notes.progressNotes}`);
-    }
-    if (hasAddendum) {
-      lines.push(`- Addendum:\n  ${data.notes.addendum}`);
-    }
-    lines.push("");
-  }
+  // Notes
+  section("Progress Notes", hasText(data.notes?.progressNotes) ? [String(data.notes.progressNotes).trim()] : []);
+  section("Addendum", hasText(data.notes?.addendum) ? [String(data.notes.addendum).trim()] : []);
 
-  // Signature Block
-  lines.push("--------------------------------------------------");
-  lines.push(`Treating ER Physician: ${data.signatureBlock.clinicianName || "Not recorded"}`);
-  if (data.signatureBlock.consultantName) {
-    lines.push(`EM Consultant: ${data.signatureBlock.consultantName}`);
-  }
-  lines.push(`Signed: ${data.signatureBlock.timestamp || "Not recorded"}`);
-  lines.push("Electronically Signed Confidential Record");
+  // Signature
+  const sig = (data as any).signatureBlock || {};
+  section("Clinicians", [
+    `EM Resident / Treating Doctor: ${val(sig.clinicianName)}`,
+    `EM Consultant: ${val(sig.consultantName)}`,
+  ]);
 
-  return lines.join("\n");
+  return out.join("\n").replace(/\n{3,}/g, "\n\n").trim() + "\n";
 }
