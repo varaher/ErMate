@@ -12,6 +12,7 @@ import { ClinicalCase, UserProfile, HandoverRecord, TeamMember, isPendingApprova
 import { DutySessionRecord, isActiveDutySessionNow } from "../services/dutySessionService";
 import { formatLocalDateKey } from "../utils/dutyWindow";
 import { getCasePendingStatus } from "../utils/caseHelper";
+import { getCaseCreationTimestamp } from "../utils/caseLifecycle";
 import { triggerPrintWithTip } from "../utils/printWithTip";
 import { doc, updateDoc } from "firebase/firestore";
 import { db, auth } from "../firebase";
@@ -140,6 +141,39 @@ export default function DashboardView({
 
   const activeDepartmentCases = cases.filter(isCaseOperationallyActive);
 
+  // CURRENT LIST VISIBILITY (what the doctor SEES on Home), separate from bed census.
+  // A case stays in the current list:
+  //   - for 24 hours from creation, whatever its disposition (discharged, admitted, referred...)
+  //   - or for as long as it is still operationally active (patient still in the ER)
+  // until the doctor archives it. Archived cases never show here (they remain in the registry).
+  // Bed occupancy / counts still use activeDepartmentCases only.
+  const CURRENT_LIST_WINDOW_MS = 24 * 60 * 60 * 1000;
+  const isCaseInCurrentList = (c: ClinicalCase): boolean => {
+    if (!c || !c.id) return false;
+    if (c.archivedAt || (c as any).isArchived || (c.status as string) === "Archived") return false;
+    if (isCaseOperationallyActive(c)) return true;
+    const created = getCaseCreationTimestamp(c);
+    if (!created) return false;
+    return Date.now() - created.getTime() < CURRENT_LIST_WINDOW_MS;
+  };
+  const currentListDepartmentCases = cases.filter(isCaseInCurrentList);
+
+  // Doctor-initiated archive: removes the case from the current list (never deletes it).
+  const handleArchiveCase = async (c: ClinicalCase) => {
+    const label = c.bedNo || c.patient?.bed ? `Bed ${c.bedNo || c.patient?.bed}` : "this case";
+    if (!window.confirm(`Archive ${label}? It will leave the current list but stays in Case Registry.`)) return;
+    try {
+      await updateDoc(doc(db, "cases", c.id), {
+        archivedAt: new Date().toISOString(),
+        archivedBy: auth.currentUser?.uid || "unknown",
+        archiveReason: "user_archived",
+      });
+    } catch (err: any) {
+      console.error("Archive failed:", err);
+      window.alert("Could not archive this case. Please try again.");
+    }
+  };
+
   // CORE PRODUCT RULE:
   // Hospital clinician status requires canonical active verified team membership.
   // Profile hospital name alone does NOT make a user a hospital/team workspace user.
@@ -159,7 +193,7 @@ export default function DashboardView({
   // Shows ONLY operationally active cases with currentAssigneeEmail matching doctor and currentAssignmentDutySessionId matching valid active duty session.
   // Strictly zero fallback to doctorEmail === profile.email.
   const myCurrentDutyCases = validActiveDutySession && activeDutySession
-    ? activeDepartmentCases.filter(c =>
+    ? currentListDepartmentCases.filter(c =>
         c.currentAssigneeEmail?.toLowerCase().trim() === userEmailLower &&
         c.currentAssignmentDutySessionId === activeDutySession.id
       )
@@ -216,26 +250,21 @@ export default function DashboardView({
     return false;
   };
 
-  const myIndependentCases = activeDepartmentCases.filter(c => {
+  const myIndependentCases = currentListDepartmentCases.filter(c => {
     const isOwnedOrAssigned = Boolean(
       (c.currentAssigneeEmail && c.currentAssigneeEmail.toLowerCase().trim() === userEmailLower) ||
       (c.doctorEmail && c.doctorEmail.toLowerCase().trim() === userEmailLower) ||
       (auth.currentUser?.uid && c.ownerUid === auth.currentUser.uid) ||
       (auth.currentUser?.uid && (c as any).createdByUid === auth.currentUser.uid)
     );
-    if (!isOwnedOrAssigned) return false;
-    return (
-      isCaseCreatedOnLocalDay(c, todayLocalKey) ||
-      Boolean(c.bedNo || c.patient?.bed) ||
-      (c.lastEditedAt && isCaseCreatedOnLocalDay({ ...c, createdAt: c.lastEditedAt }, todayLocalKey))
-    );
+    return isOwnedOrAssigned;
   });
 
   const myCases = isHospitalClinician ? myCurrentDutyCases : myIndependentCases;
 
   // Statistics & Home scoped metrics (Patch H1A):
   // For independent personal: active count, pending alerts, and recent cases all use the SAME current-day scoped list.
-  const activeCasesCount = isHospitalClinician ? activeDepartmentCases.length : myCases.length;
+  const activeCasesCount = isHospitalClinician ? activeDepartmentCases.length : myCases.filter(isCaseOperationallyActive).length;
   const casesThisWeekCount = cases.length;
   
   const recentCases = [...(isHospitalClinician ? cases.filter(c => !c.archivedAt) : myCases)]
@@ -1411,8 +1440,8 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
             {(() => {
               const displayedCases = [
                 ...(isHospitalClinician
-                  ? (isResident || activeCasesTab === "my" ? myCases : activeDepartmentCases)
-                  : (activeCasesTab === "all" ? activeDepartmentCases : myCases))
+                  ? (isResident || activeCasesTab === "my" ? myCases : currentListDepartmentCases)
+                  : (activeCasesTab === "all" ? currentListDepartmentCases : myCases))
               ]
                 .sort((a, b) => {
                   const getNumTime = (str: string) => {
@@ -1527,6 +1556,11 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
                               }`}>
                                 {c.status}
                               </span>
+                              {!isCaseOperationallyActive(c) && (c.dispositionDetails?.dispositionType || c.status === "Discharged") && (
+                                <span className="block mt-1 text-[10px] px-2 py-0.5 rounded-full font-semibold bg-amber-50 text-amber-700">
+                                  {c.dispositionDetails?.dispositionType || "Discharged"} · leaves list after 24h
+                                </span>
+                              )}
                               <p className="text-[10px] text-slate-400 mt-2 font-mono">{c.patient.dateOpened}</p>
                             </div>
                             {isExpanded ? (
@@ -1663,6 +1697,15 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
 
                               {/* Team Controls, Escalation & Consultant Review Note */}
                               <div className="md:col-span-2 space-y-3 pt-3 border-t border-slate-100 dark:border-slate-800">
+                                <div className="flex justify-end">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleArchiveCase(c)}
+                                    className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md text-[11px] font-bold"
+                                  >
+                                    Archive (remove from current list)
+                                  </button>
+                                </div>
                                 {/* Escalation Status Banner */}
                                 {c.escalated && (
                                   <div className="bg-rose-500/10 border border-rose-500/30 text-rose-750 dark:text-rose-400 p-3.5 rounded-lg flex items-center gap-2.5">
