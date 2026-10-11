@@ -677,6 +677,13 @@ useEffect(() => {
     profileRef.current = profile;
   }, [profile]);
 
+  // Individual (non-team) ER bed capacity, read from the clinician's own profile.
+  // Returns null when not set; the UI then falls back to its 30-bed default.
+  const getIndividualBedCapacity = (): number | null => {
+    const cap = Number((profileRef.current as any)?.erPhysicalBedCapacity);
+    return Number.isInteger(cap) && cap >= 1 && cap <= 1000 ? cap : null;
+  };
+
   // Shift & Team states
   const [activeDutySession, setActiveDutySession] = useState<DutySessionRecord | null>(() => {
     try {
@@ -1068,6 +1075,28 @@ useEffect(() => {
   const [showTrialSaveModal, setShowTrialSaveModal] = useState<boolean>(false);
   const [activeTrialCase, setActiveTrialCase] = useState<ClinicalCase | null>(null);
   const isSavingTrialCaseRef = useRef<boolean>(false);
+  // Last authenticated UID seen by onAuthStateChanged (detects direct A -> B switches).
+  const lastAuthUidRef = useRef<string | null>(null);
+
+  // Single entry point for creating/updating the in-memory trial case.
+  // Stamps the CURRENT authenticated UID on the case at creation time.
+  // Refuses (never reassigns) a case already owned by a different account,
+  // and refuses to create a trial case when nobody is signed in.
+  const assignActiveTrialCase = (trialCase: ClinicalCase): boolean => {
+    const uid = auth.currentUser?.uid || null;
+    const existingOwner = (trialCase as any).trialOwnerUid || null;
+    if (!uid) {
+      console.warn("assignActiveTrialCase: no authenticated user; trial case not kept.");
+      return false;
+    }
+    if (existingOwner && existingOwner !== uid) {
+      console.warn("assignActiveTrialCase: trial case belongs to another account; refused.");
+      return false;
+    }
+    (trialCase as any).trialOwnerUid = uid;
+    setActiveTrialCase(trialCase);
+    return true;
+  };
 
   const isVerifiedTeamUser = Boolean(
     selfMembership &&
@@ -1120,20 +1149,23 @@ useEffect(() => {
          * Firebase says there is no signed-in user.
          */
         if (!user) {
+          const previousUid = lastAuthUidRef.current;
+          lastAuthUidRef.current = null;
           setIsLoggedIn(false);
-          setProfile(null as any);
-          setSelfMembership(null);
-
-          setCases([]);
-          setHandovers([]);
-          setQuickPasteList([]);
-          setTeamMembers([]);
-          setShifts([]);
-          setHospitalSubscription(null);
+          clearAccountScopedState(previousUid);
 
           setAuthLoading(false);
           return;
         }
+
+        /*
+         * Direct identity switch (A -> B without a sign-out event):
+         * drop every account-specific in-memory state from the previous user.
+         */
+        if (lastAuthUidRef.current && lastAuthUidRef.current !== user.uid) {
+          clearAccountScopedState(lastAuthUidRef.current);
+        }
+        lastAuthUidRef.current = user.uid;
 
         const authenticatedEmail =
           String(user.email || "")
@@ -1827,7 +1859,8 @@ useEffect(() => {
             unsubscribeShifts = () => {};
             setSelfMembership((prev: any) => (prev === null ? prev : null));
             setShifts(ROTA_SHIFTS);
-            setErPhysicalBedCapacity(null);
+            // No verified team: individual capacity comes from users/{uid}, never wiped here.
+            setErPhysicalBedCapacity(getIndividualBedCapacity());
             return;
           }
 
@@ -1861,7 +1894,8 @@ useEffect(() => {
             unsubscribeShifts = () => {};
             setSelfMembership((prev: any) => (prev === null ? prev : null));
             setShifts(ROTA_SHIFTS);
-            setErPhysicalBedCapacity(null);
+            // No verified team: individual capacity comes from users/{uid}, never wiped here.
+            setErPhysicalBedCapacity(getIndividualBedCapacity());
             return;
           }
 
@@ -1964,7 +1998,8 @@ useEffect(() => {
           unsubscribeShifts = () => {};
           setSelfMembership((prev: any) => (prev === null ? prev : null));
           setShifts(ROTA_SHIFTS);
-          setErPhysicalBedCapacity(null);
+          // No verified team: individual capacity comes from users/{uid}, never wiped here.
+          setErPhysicalBedCapacity(getIndividualBedCapacity());
         }
       );
       unsubscribeShiftMembership = () => {
@@ -1980,7 +2015,8 @@ useEffect(() => {
       unsubscribeShifts = () => {};
       setSelfMembership((prev: any) => (prev === null ? prev : null));
       setShifts(ROTA_SHIFTS);
-      setErPhysicalBedCapacity(null);
+      // No verified team: individual capacity comes from users/{uid}, never wiped here.
+      setErPhysicalBedCapacity(getIndividualBedCapacity());
     }
 
     // Stream Clinical Contributions for Peer Review Notifications
@@ -2476,9 +2512,9 @@ const handleDeleteAllCases = async () => {
       if (!gate.canSave) {
         newCase.id = "trial-" + Date.now();
         newCase.displayId = "TRIAL-" + (newCase.bedNo ? "B" + newCase.bedNo : "1");
+        if (!assignActiveTrialCase(newCase)) return;
         setCases(prev => [newCase, ...prev.filter(c => c.id !== newCase.id)]);
         setSelectedCaseId(newCase.id);
-        setActiveTrialCase(newCase);
         setActiveFormMode(null);
         setShowTrialSaveModal(true);
         return;
@@ -2507,11 +2543,21 @@ const handleDeleteAllCases = async () => {
       console.warn("handleSaveActiveTrialCase: Save already in progress, ignoring duplicate call.");
       return;
     }
+    const currentTrial = activeTrialCase;
+    const savingUid = auth.currentUser.uid;
+    const trialOwnerUid = (currentTrial as any).trialOwnerUid || null;
+    if (!trialOwnerUid || trialOwnerUid !== savingUid) {
+      // Started under a different (or unknown) account: never persist it here.
+      console.warn("handleSaveActiveTrialCase: trial case belongs to another account; discarding.");
+      setActiveTrialCase(null);
+      throw new Error("This trial case was started under a different account and has been discarded. Please dictate the case again.");
+    }
+    // True only while the same clinician is still signed in.
+    const stillSameUser = () => auth.currentUser?.uid === savingUid;
     isSavingTrialCaseRef.current = true;
     try {
       const user = auth.currentUser;
       const workspace = await resolveWorkspaceForUser(user.uid);
-      const currentTrial = activeTrialCase;
       const effectiveProfile = freshProfile || profile;
 
       // 1. Stable internal ClinicalCase ID allocated once per trial case
@@ -2537,9 +2583,13 @@ const handleDeleteAllCases = async () => {
         displayId: displayCaseId || currentTrial.displayId,
         workspaceType: workspace.workspaceType,
         ownerUid: workspace.ownerUid,
+        // hospitalId is REQUIRED by firestore.rules for hospital cases and must be null for individual cases.
+        hospitalId: workspace.hospitalId,
+        // `hospital` is the team access/query key: only set for hospital cases. Individual
+        // cases carry the doctor's workplace only as display text (hospitalLabel / workplaceName).
         hospital: workspace.workspaceType === "hospital"
           ? (selfMembership?.hospitalId || workspace.hospitalId || "")
-          : (effectiveProfile?.workplaceName || effectiveProfile?.hospitalLabel || effectiveProfile?.hospital || ""),
+          : "",
         hospitalLabel: effectiveProfile?.workplaceName || effectiveProfile?.hospitalLabel || effectiveProfile?.hospital || "",
         workplaceName: effectiveProfile?.workplaceName || effectiveProfile?.hospitalLabel || effectiveProfile?.hospital || "",
         doctorEmail: user.email || effectiveProfile?.email || "",
@@ -2556,14 +2606,31 @@ const handleDeleteAllCases = async () => {
       delete (caseToSave as any).persistenceStatus;
       delete (caseToSave as any).allocatedCaseId;
       delete (caseToSave as any).allocatedDisplayId;
+      delete (caseToSave as any).trialOwnerUid;
+
+      // Re-verify identity immediately before the write (async steps above may
+      // have spanned a sign-out / account switch).
+      if (!stillSameUser()) {
+        throw new Error("You were signed out before the trial case could be saved. It was not saved.");
+      }
 
       const clean = sanitizeForFirestore(caseToSave);
       await setDoc(doc(db, "cases", realCaseId), clean, { merge: true });
+
+      // If the clinician changed while the write was in flight, the case is in the
+      // ORIGINAL clinician's account. Do not put it into the new session's screen.
+      if (!stillSameUser()) {
+        return;
+      }
 
       if (caseToSave.scribeSessionId) {
         await linkScribeSessionAndCase(caseToSave.scribeSessionId, realCaseId).catch((linkErr) => {
           console.warn("Could not link scribe session with case:", linkErr);
         });
+      }
+
+      if (!stillSameUser()) {
+        return;
       }
 
       setCases(prev => [caseToSave, ...prev.filter(c => c.id !== oldTrialId && c.id !== realCaseId)]);
@@ -2593,7 +2660,10 @@ const handleDeleteAllCases = async () => {
     });
 
     if (!gate.canSave) {
-      setActiveTrialCase(updatedCase);
+      if (!assignActiveTrialCase(updatedCase)) {
+        triggerNotification("Not Saved", "This trial case belongs to a different account.", "warning");
+        return;
+      }
       setCases(prev => {
         const idx = prev.findIndex(c => c.id === updatedCase.id);
         if (idx >= 0) {
@@ -2809,7 +2879,10 @@ const handleDeleteAllCases = async () => {
       })(),
       workspaceType: workspaceMetadata.workspaceType,
       ownerUid: workspaceMetadata.ownerUid,
-      hospital: updatedCase.hospital || (workspaceMetadata.workspaceType === "hospital" ? profile.hospital : (profile.workplaceName || profile.hospitalLabel || profile.hospital || "")),
+      // hospitalId is REQUIRED by firestore.rules for hospital cases and must be null for individual cases.
+      hospitalId: workspaceMetadata.hospitalId,
+      // `hospital` stays the team access/query key; never filled with free-text workplace for individual cases.
+      hospital: updatedCase.hospital || (workspaceMetadata.workspaceType === "hospital" ? profile.hospital : ""),
       hospitalLabel: updatedCase.hospitalLabel || (profile.workplaceName || profile.hospitalLabel || profile.hospital || ""),
       workplaceName: updatedCase.workplaceName || (profile.workplaceName || profile.hospitalLabel || profile.hospital || ""),
       doctorEmail: updatedCase.doctorEmail || profile.email,
@@ -3888,9 +3961,9 @@ const handleDeleteAllCases = async () => {
       (newCase as any).isTrial = true;
       (newCase as any).syncStatus = "local-only";
       (newCase as any).persistenceStatus = "unpersisted-trial";
+      if (!assignActiveTrialCase(newCase)) throw new Error("Your sign-in could not be confirmed. Please sign in again; the case was not kept.");
       setCases(prev => [newCase, ...prev.filter(c => c.id !== newCase.id)]);
       setSelectedCaseId(newCase.id);
-      setActiveTrialCase(newCase);
       setVoiceScribeCaseId(newCase.id);
       setShowVoiceScribeChat(false);
       setShowTrialSaveModal(true);
@@ -4223,8 +4296,8 @@ const handleDeleteAllCases = async () => {
       (draftCase as any).syncStatus = "local-only";
       (draftCase as any).persistenceStatus = "unpersisted-trial";
 
+      if (!assignActiveTrialCase(draftCase)) throw new Error("Your sign-in could not be confirmed. Please sign in again; the case was not kept.");
       upsertCaseLocally(draftCase);
-      setActiveTrialCase(draftCase);
       setVoiceScribeCaseId(trialId);
       triggerNotification(
         "Trial Mode Active",
@@ -4646,6 +4719,7 @@ const handleDeleteAllCases = async () => {
         caseToPersist.id = caseToPersist.id || "trial-" + Date.now();
         caseToPersist.displayId = caseToPersist.displayId || "TRIAL-1";
       }
+      if (!assignActiveTrialCase(caseToPersist)) return;
       setCases(prev => {
         const idx = prev.findIndex(c => c.id === caseToPersist.id);
         if (idx >= 0) {
@@ -4656,7 +4730,6 @@ const handleDeleteAllCases = async () => {
         return [caseToPersist, ...prev];
       });
       setSelectedCaseId(caseToPersist.id);
-      setActiveTrialCase(caseToPersist);
       setVoiceScribeCaseId(caseToPersist.id);
       setShowVoiceScribeChat(false);
       setShowTrialSaveModal(true);
@@ -6119,14 +6192,12 @@ const itemToSave = {
   };
 
 // Secure sign out
-const handleSignOut = async () => {
-  try {
-    const signingOutUid =
-      auth.currentUser?.uid || "";
-
+// Single place that wipes every account-specific / patient-bearing piece of
+// in-memory and browser state. Used by sign-out, Firebase auth loss, and a
+// direct identity switch (A -> B) so the next clinician on a shared ER device
+// never sees or saves the previous clinician's patients.
+const clearAccountScopedState = (previousUid?: string | null) => {
     // 1. Unmount logged-in / patient-facing views first.
-    setIsLoggedIn(false);
-    setLoginScreenMode("login");
     setSelectedCaseId(null);
     setViewCaseSheetPrintId(null);
     setActiveFormMode(null);
@@ -6161,6 +6232,9 @@ const handleSignOut = async () => {
     setPreviewCase(null);
     setIsPreviewMode(false);
     setPendingPreviewContext(null);
+    setPreviewDischargeCase(null);
+    setPendingDischargePreviewContext(null);
+    setVoiceScribeSessionId(null);
     setQuickDischargeCase(null);
     setShowQuickDischarge(false);
     setIsCaseSheetDirty(false);
@@ -6179,37 +6253,48 @@ const handleSignOut = async () => {
     setTeamMembers([]);
     setShifts([]);
     setHospitalSubscription(null);
+    // Account-specific trial/onboarding state must not leak to the next
+    // clinician on a shared ER device (trial case may contain patient data).
+    setActiveTrialCase(null);
+    setSelfMembership(null);
+    setErPhysicalBedCapacity(null);
+    setExploreInTrialMode(false);
+    setShowOnboardingProfile(false);
+    setNotifications([]);
 
     // Shift state is account-specific on a shared device.
     setIsOnShift(false);
     setShowShiftCheckIn(true);
 
-    // 5. Remove locally cached patient/account-specific data.
+    // Locally cached patient/account-specific data.
     try {
-      localStorage.removeItem(
-        "ermate_quick_paste_list"
-      );
-
-      localStorage.removeItem(
-        "ermate_isOnShift"
-      );
-
-      localStorage.removeItem(
-        "ermate_shiftDate"
-      );
-
-      localStorage.removeItem(
-        "ermate_shiftDismissed"
-      );
-
-      // Safe now and also prepares for the newer
-      // scribeSessions architecture that will be restored later.
-      if (signingOutUid) {
-        localStorage.removeItem(
-          `ermate:scribeSession:${signingOutUid}`
-        );
+      localStorage.removeItem("ermate_quick_paste_list");
+      localStorage.removeItem("ermate_notifications");
+      localStorage.removeItem("ermate_isOnShift");
+      localStorage.removeItem("ermate_shiftDate");
+      localStorage.removeItem("ermate_shiftDismissed");
+      if (previousUid) {
+        localStorage.removeItem(`ermate:scribeSession:${previousUid}`);
       }
+    } catch (storageErr) {
+      console.warn("Unable to clear local account state:", storageErr);
+    }
+};
 
+const handleSignOut = async () => {
+  try {
+    const signingOutUid =
+      auth.currentUser?.uid || "";
+
+    setIsLoggedIn(false);
+    setLoginScreenMode("login");
+
+    // 1-5. Clear all account-specific and patient-bearing state.
+    clearAccountScopedState(signingOutUid);
+
+    // Pending invitation tokens are cleared only on an explicit sign-out
+    // (not on auth loss, which happens during the email-verification flow).
+    try {
       sessionStorage.removeItem(
         "ermate_pending_invite_token"
       );

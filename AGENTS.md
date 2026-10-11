@@ -45,6 +45,24 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-11] — ErMate: Account Isolation, Trial Ownership Gating, Case hospitalId Restoration, & Individual Bed Capacity Retention (Commit `ee1b283`)
+- **Account Isolation & Centralized State Cleanup (`src/App.tsx`)**:
+  - Implemented `clearAccountScopedState(previousUid?: string | null)`: Single authoritative cleanup function that systematically purges all in-memory and local storage patient/account-specific state on explicit sign-out, Firebase auth session loss, and direct account switches (`A -> B`).
+  - Added `lastAuthUidRef` tracking in `onAuthStateChanged` to intercept direct user identity transitions on shared ER workstations and purge previous session state before new user state mounts.
+  - Clears `selectedCaseId`, `viewCaseSheetPrintId`, `activeFormMode`, `showScribeChat`, `previewCase`, `pendingPreviewContext`, `previewDischargeCase`, `pendingDischargePreviewContext`, `voiceScribeSessionId`, `activeTrialCase`, `selfMembership`, `erPhysicalBedCapacity`, `exploreInTrialMode`, `showOnboardingProfile`, `notifications`, `activeDutySession`, `dutyRosterMembers`, and `cases`.
+  - Removes account-scoped localStorage keys including `ermate_quick_paste_list`, `ermate_notifications`, `ermate_isOnShift`, `ermate_shiftDate`, `ermate_shiftDismissed`, and `ermate:scribeSession:${previousUid}`.
+- **Trial Case Account Ownership Gating (`src/App.tsx`)**:
+  - Implemented `assignActiveTrialCase(trialCase: ClinicalCase): boolean`: Stamps current authenticated UID as `trialOwnerUid` when trial case is initialized. Refuses to assign or preserve trial cases belonging to a different UID.
+  - In `handleSaveActiveTrialCase`: Checks `trialOwnerUid` against current authenticated UID; discards foreign trial cases with an actionable error.
+  - Added `stillSameUser()` re-verification before and after asynchronous Firestore `setDoc` calls and Scribe session linking to ensure trial cases are never persisted or exposed across mid-save account switches.
+- **Firestore Security Rules Invariant: `hospitalId` Restoration (`src/App.tsx`)**:
+  - Restored `hospitalId: workspaceMetadata.hospitalId` on cases created via `handleSaveCase` (`workspaceMetadata.hospitalId` is populated for hospital team cases and `null` for individual cases).
+  - Enforces `firestore.rules` compliance where `data.hospitalId` is strictly required for hospital workspace cases and `null` for individual cases.
+  - Re-anchored `hospital` key as strictly team access key (`""` for individual cases), preserving clinician workplace text exclusively in `hospitalLabel` and `workplaceName`.
+- **Individual ER Bed Capacity Retention (`src/App.tsx`)**:
+  - Implemented `getIndividualBedCapacity()` reading verified integer bed capacity (1..1000) from clinician's profile (`users/{uid}`).
+  - Shift and membership listeners fall back to `getIndividualBedCapacity()` instead of resetting bed capacity to `null` when no verified team is present, preserving the clinician's custom ER board dimensions across shifts.
+
 ### [2026-10-10] — ErMate: Individual V1 Signup & Profile Foundation
 - **Individual-First Registration & Email Verification (`src/components/SignUpView.tsx`)**:
   - Required fields: Full Doctor Name (>= 2 chars), Email (valid format), Password (>= 6 chars), Professional Role, Hospital/Workplace Name (>= 2 chars), and Department (>= 2 chars).
