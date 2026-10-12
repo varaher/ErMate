@@ -1355,52 +1355,11 @@ export default function MoreView({
             </div>
 
             <div className="space-y-3 text-xs">
-              <div className="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-200 dark:border-slate-800">
-                <div>
-                  <strong className="block text-slate-800 dark:text-slate-200">P1 Triage Resuscitation Alarms</strong>
-                  <span className="text-[10px] text-slate-400">High-priority alert sound for incoming red cases</span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setClinicalAlertsOn(!clinicalAlertsOn)}
-                  className={`px-3 py-1 rounded-full text-[10px] font-bold font-mono ${
-                    clinicalAlertsOn ? "bg-emerald-500 text-white" : "bg-slate-200 text-slate-600"
-                  }`}
-                >
-                  {clinicalAlertsOn ? "ON" : "OFF"}
-                </button>
-              </div>
-
-              <div className="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-200 dark:border-slate-800">
-                <div>
-                  <strong className="block text-slate-800 dark:text-slate-200">Shift Handover Transfers</strong>
-                  <span className="text-[10px] text-slate-400">Pings when an outgoing doctor transfers a patient</span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setHandoverAlertsOn(!handoverAlertsOn)}
-                  className={`px-3 py-1 rounded-full text-[10px] font-bold font-mono ${
-                    handoverAlertsOn ? "bg-emerald-500 text-white" : "bg-slate-200 text-slate-600"
-                  }`}
-                >
-                  {handoverAlertsOn ? "ON" : "OFF"}
-                </button>
-              </div>
-
-              <div className="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-200 dark:border-slate-800">
-                <div>
-                  <strong className="block text-slate-800 dark:text-slate-200">Critical Vitals Warning</strong>
-                  <span className="text-[10px] text-slate-400">SpO2 &lt; 90% or SBP &lt; 80 mmHg audible chimes</span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setVitalsAudioAlerts(!vitalsAudioAlerts)}
-                  className={`px-3 py-1 rounded-full text-[10px] font-bold font-mono ${
-                    vitalsAudioAlerts ? "bg-emerald-500 text-white" : "bg-slate-200 text-slate-600"
-                  }`}
-                >
-                  {vitalsAudioAlerts ? "ON" : "OFF"}
-                </button>
+              <div className="p-3 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-xl space-y-1">
+                <span className="font-bold text-amber-800 dark:text-amber-300 block">ErMate does not send clinical alerts</span>
+                <p className="text-[11px] text-amber-800 dark:text-amber-300">
+                  ErMate is a documentation companion. It does not monitor patients, triage or vitals. Rely on your department's monitors and alarm systems.
+                </p>
               </div>
             </div>
 
