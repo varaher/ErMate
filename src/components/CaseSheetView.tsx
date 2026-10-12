@@ -3399,32 +3399,11 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                 {renderTabSaveBadge("Disposition")}
               </div>
 
-              <div>
-                <h3 className="text-sm font-bold text-slate-800 dark:text-white border-b pb-2 flex items-center gap-1.5">
-                  <User className="w-4 h-4 text-blue-500" />
-                  Demographics & Registration Details
-                </h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs mt-3">
-                  <div className="space-y-2 bg-slate-50 dark:bg-slate-900 p-4 rounded-xl border border-slate-100 dark:border-slate-850">
-                    <p><span className="font-semibold text-slate-400">Case ID:</span> <span className="font-mono font-bold text-slate-700 dark:text-slate-200">{getDisplayCaseId(currentCase)}</span></p>
-                    <p><span className="font-semibold text-slate-400">UHID (JCI Identifier):</span> <span className="font-mono font-bold text-slate-700 dark:text-slate-200">{currentCase.patient.uhid || "Not Provided"}</span></p>
-                    <p><span className="font-semibold text-slate-400">Patient Name:</span> <span className="font-bold text-slate-700 dark:text-slate-200">{currentCase.patient.name}</span></p>
-                    <p><span className="font-semibold text-slate-400">Age / Gender:</span> <span className="font-semibold text-slate-700 dark:text-slate-200">{currentCase.patient.age || "N/A"} years | {currentCase.patient.gender}</span></p>
-                  </div>
-                  <div className="space-y-2 bg-slate-50 dark:bg-slate-900 p-4 rounded-xl border border-slate-100 dark:border-slate-850">
-                    <p><span className="font-semibold text-slate-400">Case Classification:</span> <span className="font-bold text-blue-600 dark:text-blue-400">{currentCase.patient.caseType} Mode</span></p>
-                    <p><span className="font-semibold text-slate-400">Triage Assignment:</span> <span className="font-semibold text-slate-700 dark:text-slate-200">{currentCase.patient.triageCategory}</span></p>
-                    <p><span className="font-semibold text-slate-400">DateTime Opened:</span> <span className="font-mono text-slate-700 dark:text-slate-200">{currentCase.patient.dateOpened}</span></p>
-                    <p><span className="font-semibold text-slate-400">Medico-Legal Case:</span> <span className={`font-bold px-2 py-0.5 rounded text-[10px] ${currentCase.patient.isMlc ? "bg-amber-100 text-amber-800" : "bg-slate-100 text-slate-600"}`}>{currentCase.patient.isMlc ? "YES (MLC Active)" : "NO"}</span></p>
-                  </div>
-                </div>
-              </div>
-
               {/* NABH Mandated Disposition & Log Panel  */}
-              <div className="border-t border-slate-150 dark:border-slate-850 pt-5 space-y-4">
+              <div className="space-y-4">
                 <h3 className="text-sm font-bold text-slate-800 dark:text-white border-b pb-2 flex items-center gap-1.5">
                   <LogOut className="w-4 h-4 text-emerald-500" />
-                  NABH Clinical Disposition & Logs
+                  Disposition
                 </h3>
                 
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
