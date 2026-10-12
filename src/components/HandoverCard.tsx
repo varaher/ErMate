@@ -6,6 +6,7 @@
 import React from 'react';
 import '../styles/handover.css';
 import type { HandoverPatient } from '../types';
+import { authenticatedFetch } from '../services/authenticatedFetch';
 
 export type { HandoverPatient };
 
@@ -72,7 +73,7 @@ export function HandoverCard({
     setDownloadingPdf(true);
     try {
       const pl: any = patient.patientLabel || {};
-      const response = await fetch("/api/handover/pdf", {
+      const response = await authenticatedFetch("/api/handover/pdf", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

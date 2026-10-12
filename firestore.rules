@@ -573,6 +573,13 @@ match /teams/{teamId} {
       allow update: if isPlatformAdmin();
     }
 
+    // ── Personal handover sheet ───────────────────────────────
+    // One document per clinician, readable/writable ONLY by its owner.
+
+    match /handover_sheets/{ownerUid} {
+      allow read, write: if isLoggedIn() && request.auth.uid == ownerUid;
+    }
+
     // ── Handovers ─────────────────────────────────────────────
     // Scoped by verified membership; the hospital label is frozen on update.
 

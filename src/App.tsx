@@ -15,6 +15,7 @@ import {
 } from "./types";
 import { isCaseEligibleFor24hArchive, filterActiveNonArchivedCases, isCaseArchived } from "./utils/caseLifecycle";
 import { saveHandoverPatient } from "./utils/handoverUtils";
+import { clearHandoverLocalCache, enforceHandoverCacheOwner } from "./utils/handoverLocalCache";
 import { triggerPrintWithTip } from "./utils/printWithTip";
 import { getNormalizedRole } from "./utils/roleUtils";
 import { isClinicalProfileComplete, canPersistClinicalData } from "./utils/profileCompleteness";
@@ -1070,6 +1071,24 @@ useEffect(() => {
     });
   }, [profile?.email, profile?.role, profile?.hospital, selfMembership]);
 
+  // Verified hospital-team membership (team_members/{uid}); never profile text alone.
+  const hasVerifiedHospitalTeam = Boolean(
+    selfMembership &&
+    isActiveMembershipStatus(String(selfMembership.status || "")) &&
+    selfMembership.membershipVerified === true &&
+    (selfMembership.hospitalId || selfMembership.hospital)
+  );
+  const handoverSyncWarnedRef = React.useRef(false);
+  const warnHandoverNotSynced = (what: string) => {
+    if (handoverSyncWarnedRef.current) return;
+    handoverSyncWarnedRef.current = true;
+    triggerNotification(
+      "Not saved to your account",
+      `${what} could not be saved online. It is kept on this device only until it saves successfully.`,
+      "warning"
+    );
+  };
+
   // Onboarding & Trial Mode states
   const [exploreInTrialMode, setExploreInTrialMode] = useState<boolean>(false);
   const [showOnboardingProfile, setShowOnboardingProfile] = useState<boolean>(false);
@@ -1167,6 +1186,14 @@ useEffect(() => {
           clearAccountScopedState(lastAuthUidRef.current);
         }
         lastAuthUidRef.current = user.uid;
+        // Handover cache must never be shown to a different account.
+        try {
+          if (enforceHandoverCacheOwner(localStorage, user.uid).clearedQuickPaste) {
+            setQuickPasteList([]);
+          }
+        } catch (storageErr) {
+          console.warn("Unable to verify handover cache owner:", storageErr);
+        }
 
         const authenticatedEmail =
           String(user.email || "")
@@ -6079,6 +6106,7 @@ const handleSaveProfile = async (newProfile: UserProfile, explicitCapacity?: num
           await setDoc(doc(db, "handovers", recordToSave.id), recordToSave);
         } catch (err) {
           console.error("Error adding handover to Firestore:", err);
+          warnHandoverNotSynced("A handover record");
         }
       } else if (existing.acknowledgedBy !== record.acknowledgedBy || existing.acknowledgedTime !== record.acknowledgedTime) {
         try {
@@ -6144,7 +6172,7 @@ const itemToSave = {
   hospital:
     existingItem
       ? (existingItem.hospital || "")
-      : (profile.hospital || ""),
+      : (hasVerifiedHospitalTeam ? (profile.hospital || "") : ""),
 
   // Creator identity is immutable.
   // Do not claim ownership of an old legacy record that had no UID.
@@ -6182,6 +6210,7 @@ const itemToSave = {
         await setDoc(doc(db, "quick_paste_patients", itemToSave.id), itemToSave);
       } catch (err) {
         console.error("Error saving quick paste patient to Firestore:", err);
+        warnHandoverNotSynced("A Quick Paste handover patient");
       }
     }
 
@@ -6277,6 +6306,7 @@ const clearAccountScopedState = (previousUid?: string | null) => {
     // Locally cached patient/account-specific data.
     try {
       localStorage.removeItem("ermate_quick_paste_list");
+      clearHandoverLocalCache(localStorage);
       localStorage.removeItem("ermate_notifications");
       localStorage.removeItem("ermate_isOnShift");
       localStorage.removeItem("ermate_shiftDate");

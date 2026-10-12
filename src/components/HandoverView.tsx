@@ -13,6 +13,7 @@ import { HandoverCard } from "./HandoverCard";
 import { BoundChatModal } from "./BoundChatModal";
 import { ChatContext } from "../hooks/useBoundChat";
 import { db, auth } from "../firebase";
+import { authenticatedFetch } from "../services/authenticatedFetch";
 import { doc, setDoc, getDoc, updateDoc, onSnapshot, arrayRemove, deleteField } from "firebase/firestore";
 import { captureFeedbackCorrection } from "../services/learningClient";
 import { displayGcs, displayTemperature, displaySpo2, displayGrbs } from "../utils/clinicalFormatter";
@@ -380,6 +381,12 @@ export function MultiColumnEntriesView({
       )}
     </div>
   );
+}
+
+// Each clinician's handover sheet lives at handover_sheets/{their uid}.
+// (Previously ONE global document, "active_shift", was shared by every user.)
+function getHandoverSheetRef() {
+  return doc(db, "handover_sheets", auth.currentUser?.uid || "__signed_out__");
 }
 
 export default function HandoverView({ 
@@ -923,7 +930,16 @@ export default function HandoverView({
 
   const [editableRows, setEditableRows] = useState<HandoverTableRow[]>([]);
   const [editingCells, setEditingCells] = useState<Record<string, boolean>>({});
-  const [autoSaveStatus, setAutoSaveStatus] = useState<"saved" | "saving" | "idle">("idle");
+  const [autoSaveStatus, setAutoSaveStatus] = useState<"saved" | "saving" | "idle" | "error">("idle");
+  // "Saved" is shown ONLY after Firestore confirms the write.
+  const trackSheetWrite = (write: Promise<unknown>, label: string) => {
+    write
+      .then(() => setAutoSaveStatus("saved"))
+      .catch((e) => {
+        console.warn(`[HandoverView] ${label} failed:`, e);
+        setAutoSaveStatus("error");
+      });
+  };
 
   const [boundChatContext, setBoundChatContext] = useState<ChatContext | null>(null);
   const [isBoundChatOpen, setIsBoundChatOpen] = useState(false);
@@ -966,11 +982,11 @@ export default function HandoverView({
           });
           const modifiedRow = updated.find(r => r.id === row.id);
           if (modifiedRow) {
-            const activeDocRef = doc(db, "handover_sheets", "active_shift");
-            updateDoc(activeDocRef, {
+            const activeDocRef = getHandoverSheetRef();
+            trackSheetWrite(updateDoc(activeDocRef, {
               [`rows.${row.id}`]: modifiedRow,
               updatedAt: new Date().toISOString()
-            }).catch(e => console.warn("Row update failed:", e));
+            }), "Row update");
           }
           return updated;
         });
@@ -1016,7 +1032,7 @@ export default function HandoverView({
       console.warn("Failed to write handover to localStorage:", err);
     }
 
-    const activeDocRef = doc(db, "handover_sheets", "active_shift");
+    const activeDocRef = getHandoverSheetRef();
     
     const rowsMap = {} as Record<string, any>;
     const rowOrder = [] as string[];
@@ -1035,14 +1051,14 @@ export default function HandoverView({
     }, { merge: true }).then(() => {
       setAutoSaveStatus("saved");
     }).catch(err => {
-      console.warn("Firestore handover sheet save warning:", err);
-      setAutoSaveStatus("saved");
+      console.warn("Firestore handover sheet save failed:", err);
+      setAutoSaveStatus("error");
     });
   }, [profile?.name, hospitalName]);
 
   // Restore saved handover state on mount
   useEffect(() => {
-    const activeDocRef = doc(db, "handover_sheets", "active_shift");
+    const activeDocRef = getHandoverSheetRef();
     let hasReceivedFirstSnapshot = false;
 
     const unsubscribe = onSnapshot(
@@ -1702,7 +1718,7 @@ function extractLatestVitalsWithTime(
   const refineSheetWithErMate = async (items: any[]) => {
     setIsAiCompilingSheet(true);
     try {
-      const res = await fetch("/api/handover/compile-sheet", {
+      const res = await authenticatedFetch("/api/handover/compile-sheet", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ patients: items }),
@@ -1954,14 +1970,12 @@ function extractLatestVitalsWithTime(
   const handleUpdateCell = (id: string, field: keyof HandoverTableRow, value: string) => {
     setEditableRows(prev => prev.map(row => row.id === id ? { ...row, [field]: value } : row));
 
-    const activeDocRef = doc(db, "handover_sheets", "active_shift");
-    updateDoc(activeDocRef, {
+    const activeDocRef = getHandoverSheetRef();
+    trackSheetWrite(updateDoc(activeDocRef, {
       [`rows.${id}.${field}`]: value,
       updatedAt: new Date().toISOString(),
       updatedBy: profile?.name || "Doctor"
-    }).catch((e) => {
-      console.warn("[HandoverView] Row update failed:", e);
-    });
+    }), "Row update");
   };
 
   const handleToggleRegistryCase = (caseId: string) => {
@@ -2025,7 +2039,7 @@ function extractLatestVitalsWithTime(
     try {
       const extractedMeta = extractPatientNameAndTimestamp(userText);
 
-      const response = await fetch("/api/handover/parse-structured", {
+      const response = await authenticatedFetch("/api/handover/parse-structured", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -2116,19 +2130,19 @@ function extractLatestVitalsWithTime(
           const exists = prev.some(r => r.id === newTableRow.id);
           const updated = exists ? prev.map(r => r.id === newTableRow.id ? { ...r, ...newTableRow } : r) : [newTableRow, ...prev];
           
-          const activeDocRef = doc(db, "handover_sheets", "active_shift");
+          const activeDocRef = getHandoverSheetRef();
           if (exists) {
-            updateDoc(activeDocRef, {
+            trackSheetWrite(updateDoc(activeDocRef, {
               [`rows.${newTableRow.id}`]: newTableRow,
               updatedAt: new Date().toISOString()
-            }).catch(e => console.warn("Row update failed:", e));
+            }), "Row update");
           } else {
             const updatedOrder = [newTableRow.id, ...prev.map(r => r.id)];
-            setDoc(activeDocRef, {
+            trackSheetWrite(setDoc(activeDocRef, {
               rows: { [newTableRow.id]: newTableRow },
               rowOrder: updatedOrder,
               updatedAt: new Date().toISOString()
-            }, { merge: true }).catch(e => console.warn("Row add failed:", e));
+            }, { merge: true }), "Row add");
           }
           return updated;
         });
@@ -2423,7 +2437,7 @@ function extractLatestVitalsWithTime(
         }));
       }
 
-      const response = await fetch("/api/handover/pdf", {
+      const response = await authenticatedFetch("/api/handover/pdf", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -2793,6 +2807,11 @@ function extractLatestVitalsWithTime(
             {autoSaveStatus === "saved" && (
               <span className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/80 px-2.5 py-1.5 rounded-lg border border-emerald-200 dark:border-emerald-800 flex items-center gap-1.5">
                 <Check className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" /> Saved
+              </span>
+            )}
+            {autoSaveStatus === "error" && (
+              <span className="text-[11px] font-semibold text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-950/80 px-2.5 py-1.5 rounded-lg border border-red-200 dark:border-red-800 flex items-center gap-1.5">
+                NOT SAVED — kept on this device only. Check connection and try again.
               </span>
             )}
             <button
@@ -3388,12 +3407,12 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
                     <button
                       onClick={() => {
                         setEditableRows(prev => prev.filter(r => r.id !== row.id));
-                        const activeDocRef = doc(db, "handover_sheets", "active_shift");
-                        updateDoc(activeDocRef, {
+                        const activeDocRef = getHandoverSheetRef();
+                        trackSheetWrite(updateDoc(activeDocRef, {
                           [`rows.${row.id}`]: deleteField(),
                           rowOrder: arrayRemove(row.id),
                           updatedAt: new Date().toISOString()
-                        }).catch(e => console.warn("Row removal failed:", e));
+                        }), "Row removal");
                       }}
                       className="text-xs text-red-600 hover:text-red-700 dark:text-red-400 font-bold flex items-center gap-1 cursor-pointer"
                     >
@@ -4253,19 +4272,19 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
                                         const exists = prev.some(r => r.id === restoredTableRow.id);
                                         const updated = exists ? prev.map(r => r.id === restoredTableRow.id ? { ...r, ...restoredTableRow } : r) : [restoredTableRow, ...prev];
                                         
-                                        const activeDocRef = doc(db, "handover_sheets", "active_shift");
+                                        const activeDocRef = getHandoverSheetRef();
                                         if (exists) {
-                                          updateDoc(activeDocRef, {
+                                          trackSheetWrite(updateDoc(activeDocRef, {
                                             [`rows.${restoredTableRow.id}`]: restoredTableRow,
                                             updatedAt: new Date().toISOString()
-                                          }).catch(e => console.warn("Row update failed:", e));
+                                          }), "Row update");
                                         } else {
                                           const updatedOrder = [restoredTableRow.id, ...prev.map(r => r.id)];
-                                          setDoc(activeDocRef, {
+                                          trackSheetWrite(setDoc(activeDocRef, {
                                             rows: { [restoredTableRow.id]: restoredTableRow },
                                             rowOrder: updatedOrder,
                                             updatedAt: new Date().toISOString()
-                                          }, { merge: true }).catch(e => console.warn("Row add failed:", e));
+                                          }, { merge: true }), "Row add");
                                         }
                                         return updated;
                                       });

@@ -45,6 +45,22 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-12] — ErMate: Handover Browser-Cache Ownership, AI Input Whitelist, & User-Scoped Sheet Isolation (HANDOVER-PRIVACY)
+- **Handover Local Cache Isolation (`src/utils/handoverLocalCache.ts`, `src/App.tsx`)**:
+  - Enforced single-account ownership on browser-cached handover data (`ermate_handover_local_owner`).
+  - Purges unlabelled or foreign cached handover keys on sign-in or account switch, and flushes cache systematically in `clearAccountScopedState`.
+- **Server-Side Handover AI Input Whitelist (`server/handoverAiInput.ts`, `server.ts`, `server/routes/extraction.routes.ts`)**:
+  - Strict whitelist filter `toSafeHandoverAiInput()` ensures patient identity (name, UHID, phone, IDs) is never sent to overseas AI models.
+  - Clinical free text is de-identified and stripped of patient name tokens.
+  - Original identity and bed are strictly re-injected post-extraction from the original client record (`getOriginalHandoverIdentity`).
+  - Overlay text in extraction routes is de-identified with patient name token scrubbing.
+  - Added `requireAuth` protection to `/api/handover-chat`, `/api/handover/pdf`, `/api/handover/parse-structured`, and `/api/handover/compile-sheet`.
+- **Per-User Handover Sheet Isolation (`src/components/HandoverView.tsx`, `firestore.rules`)**:
+  - Migrated handover sheets from global document `active_shift` to user-scoped `handover_sheets/{ownerUid}`.
+  - Firestore security rule restricts read/write to authenticated owner (`request.auth.uid == ownerUid`).
+  - Replaced unhandled row update/add/removal error logging with `trackSheetWrite()` displaying honest "NOT SAVED" error feedback to clinicians on failure.
+  - Replaced direct `fetch` with `authenticatedFetch` across handover API endpoints.
+
 ### [2026-10-11] — ErMate: Account Isolation, Trial Ownership Gating, Case hospitalId Restoration, & Individual Bed Capacity Retention (Commit `ee1b283`)
 - **Account Isolation & Centralized State Cleanup (`src/App.tsx`)**:
   - Implemented `clearAccountScopedState(previousUid?: string | null)`: Single authoritative cleanup function that systematically purges all in-memory and local storage patient/account-specific state on explicit sign-out, Firebase auth session loss, and direct account switches (`A -> B`).
