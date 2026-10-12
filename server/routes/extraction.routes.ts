@@ -13,6 +13,7 @@ import {
 } from '../extraction.ts';
 import { generateDischargeSummary as generateEMRDischargeSummary } from '../dischargeSummary.ts';
 import { requireAuth, AuthRequest } from '../../src/middleware/auth';
+import { deidentifyText } from '../deidentify.ts';
 const router = Router();
 
 // ── Route 1: Voice dictation → case extraction ────────────────
@@ -49,7 +50,8 @@ router.post(
 // ── Route 2: Paste EMR & Case Sheet Image → handover extraction ─────────────────
 router.post(
   '/api/handover/parse-structured',
-  async (req: Request, res: Response) => {
+  requireAuth,
+  async (req: AuthRequest, res: Response) => {
     const { image, mimeType, rawText, doctorName, patientName } = req.body;
 
     const hasText = typeof rawText === 'string' && rawText.trim().length > 0;
@@ -97,6 +99,14 @@ router.post(
           required: ["name", "ageGender", "triage", "vitals", "presentingComplaint", "rawNotes", "structuredSBAR"]
         };
 
+        // The typed overlay text is de-identified before it leaves the server.
+        let safeOverlayText = hasText ? deidentifyText(rawText).deidentified : "";
+        if (safeOverlayText && typeof patientName === 'string' && patientName.trim()) {
+          for (const tok of patientName.split(/\s+/).filter((t: string) => t.length > 2)) {
+            safeOverlayText = safeOverlayText.replace(new RegExp(`\\b${tok.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, 'gi'), '[PATIENT]');
+          }
+        }
+
         const imagePart = {
           inlineData: {
             mimeType: mimeType || "image/jpeg",
@@ -104,7 +114,7 @@ router.post(
           },
         };
         const textPart = {
-          text: `You are an expert Emergency Medicine Clinical Lead extracting a clinical handover from a case sheet photo or referral letter. Extract ALL clinical information (patient name, age/gender, triage, vitals, chief complaints, PMH, diagnosis, done actions, pending tasks). Text overlay: "${rawText || ""}"`
+          text: `You are an expert Emergency Medicine Clinical Lead extracting a clinical handover from a case sheet photo or referral letter. Extract ALL clinical information (patient name, age/gender, triage, vitals, chief complaints, PMH, diagnosis, done actions, pending tasks). Text overlay: "${safeOverlayText}"`
         };
 
         const candidates = ['gemini-2.0-flash', 'gemini-1.5-flash'];

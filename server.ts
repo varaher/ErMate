@@ -54,6 +54,7 @@ import { processScribeChatTurn } from "./server/scribeChatTurn.ts";
 import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
 import { deidentifyText } from "./server/deidentify.ts";
+import { toSafeHandoverAiInput, getOriginalHandoverIdentity } from "./server/handoverAiInput.ts";
 import { convertAndChunkAudioToWav } from "./server/audioConvert.ts";
 import { sarvamSpeechToText, sarvamSpeechToTextTranslate, isErMateAvailable } from "./server/sarvamClient.ts";
 import { extractExplicitDischargeContext, isMedicationSupportedInContext } from "./server/dischargeSummary.ts";
@@ -1634,7 +1635,7 @@ ${pendingPromptSection}
 });
 
 // 6. AI Shift Handover Assistant
-app.post("/api/handover-chat", async (req, res) => {
+app.post("/api/handover-chat", requireAuth, async (req: AuthRequest, res) => {
   const { messages, currentPatients } = req.body;
 
   try {
@@ -2646,7 +2647,7 @@ YOUR CRITICAL GUIDELINES:
 });
 
 // 5c-3. Handover PDF Generation Endpoint
-app.post("/api/handover/pdf", async (req, res) => {
+app.post("/api/handover/pdf", requireAuth, async (req: AuthRequest, res) => {
   try {
     const { date, facility, clinician, patients } = req.body;
 
@@ -2865,7 +2866,7 @@ app.post("/api/scribe-ocr-scan", requireAuth, async (req: AuthRequest, res) => {
 });
 
 // 6.5. AI-Assisted Structured Handover Parser (EMR Paste & Case Sheet Camera OCR)
-app.post("/api/handover/parse-structured", async (req, res) => {
+app.post("/api/handover/parse-structured", requireAuth, async (req: AuthRequest, res) => {
   const { image, mimeType, rawText, doctorName } = req.body;
 
   try {
@@ -3117,29 +3118,20 @@ CRITICAL RULES:
 });
 
 // 6.6. AI Handover Sheet Compiler (Extracts & Maps All Clinical Data into Doctors' Handover Sheet Columns)
-app.post("/api/handover/compile-sheet", async (req, res) => {
+app.post("/api/handover/compile-sheet", requireAuth, async (req: AuthRequest, res) => {
   const { patients } = req.body;
   if (!patients || !Array.isArray(patients) || patients.length === 0) {
     return res.status(400).json({ success: false, error: "No patient records provided for compilation." });
   }
 
-  // Preprocess, de-identify, & reverse raw notes for each patient (oldest at top)
-  // NOTE: processedPatients is the DE-IDENTIFIED version sent to the LLM only.
-  // We keep a separate map of ORIGINAL (real name, real raw notes) data to
-  // reconstruct the final output — never trust the LLM to echo these back correctly.
   const processedPatients = patients.map((p: any) => {
-    const raw = p.rawNotes || p.chronologicalNotes || "";
-    let safeNotes = raw;
-    if (raw && typeof raw === "string" && raw.trim().length > 0) {
-      const clean = preprocessEMR(raw);
-      const deidentified = deidentifyText(clean).deidentified;
-      safeNotes = reverseEMREntries(deidentified);
+    const safe = toSafeHandoverAiInput(p);
+    let safeNotes = safe.rawNotes;
+    if (safeNotes && safeNotes.trim().length > 0) {
+      safeNotes = reverseEMREntries(preprocessEMR(safeNotes));
     }
     return {
-      ...p,
-      name: deidentifyText(p.name || "").deidentified || p.name,
-      complaints: deidentifyText(p.complaints || p.presentingComplaint || "").deidentified || p.complaints,
-      history: deidentifyText(p.history || p.pmh || "").deidentified || p.history,
+      ...safe,
       rawNotes: safeNotes,
       chronologicalNotes: safeNotes
     };
@@ -3241,12 +3233,14 @@ app.post("/api/handover/compile-sheet", async (req, res) => {
 
     const finalRows = (result.rows || []).map((row: any) => {
       const original = originalById.get(row.id) || {};
-      const processed = processedPatients.find((p: any) => p.id === row.id) || {};
+      const processed: any = processedPatients.find((p: any) => p.id === row.id) || {};
 
       return {
         ...row,                                          // AI-extracted fields first (assessment, planDone, etc.)
         id: row.id,
-        name: original.name || processed.name || row.name,       // real name re-injected locally, never AI-sourced
+        // Identity and bed are re-attached ONLY from the original request record — never AI-sourced.
+        name: getOriginalHandoverIdentity(original).name,
+        bed: getOriginalHandoverIdentity(original).bed || row.bed,
         chronologicalNotes: processed.chronologicalNotes || "",  // verified pass-through, never AI-regenerated
         rawNotes: processed.rawNotes || "",
       };
