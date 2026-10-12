@@ -140,13 +140,6 @@ export default function MoreView({
   const [profileSaving, setProfileSaving] = useState<boolean>(false);
   const [profileSaveError, setProfileSaveError] = useState<string | null>(null);
 
-  // Security & Notification Preferences
-  const [pinEnabled, setPinEnabled] = useState<boolean>(true);
-  const [sessionPin, setSessionPin] = useState<string>("4821");
-  const [clinicalAlertsOn, setClinicalAlertsOn] = useState<boolean>(true);
-  const [handoverAlertsOn, setHandoverAlertsOn] = useState<boolean>(true);
-  const [vitalsAudioAlerts, setVitalsAudioAlerts] = useState<boolean>(true);
-
   // Delete All Cases Safeguards
   const [showDeleteModal, setShowDeleteModal] = useState<boolean>(false);
   const [deleteConfirmText, setDeleteConfirmText] = useState<string>("");
@@ -396,7 +389,7 @@ export default function MoreView({
               <div className="text-left">
                 <strong className="text-sm font-bold text-slate-900 dark:text-white block">Security & Access</strong>
                 <span className="text-xs text-slate-500 dark:text-slate-400 block mt-0.5">
-                  {pinEnabled ? "Session PIN active (••••)" : "Password authentication"} • Biometrics supported
+                  Protected by your ErMate sign-in
                 </span>
               </div>
             </div>
@@ -418,7 +411,7 @@ export default function MoreView({
               <div className="text-left">
                 <strong className="text-sm font-bold text-slate-900 dark:text-white block">Notifications & Alerts</strong>
                 <span className="text-xs text-slate-500 dark:text-slate-400 block mt-0.5">
-                  Clinical alerts {clinicalAlertsOn ? "on" : "off"} • Handover transfers {handoverAlertsOn ? "active" : "paused"}
+                  ErMate does not send clinical alerts
                 </span>
               </div>
             </div>
@@ -1305,7 +1298,7 @@ export default function MoreView({
             <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
               <div className="flex items-center gap-2">
                 <Lock className="w-5 h-5 text-blue-600 dark:text-blue-400" />
-                <h3 className="text-base font-bold text-slate-900 dark:text-white">Security & Access PIN</h3>
+                <h3 className="text-base font-bold text-slate-900 dark:text-white">Security & Access</h3>
               </div>
               <button
                 type="button"
@@ -1316,45 +1309,16 @@ export default function MoreView({
               </button>
             </div>
 
-            <div className="space-y-4 text-xs">
-              <div className="p-3 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="font-bold text-slate-800 dark:text-slate-200">Session Quick-Unlock PIN</span>
-                  <button
-                    type="button"
-                    onClick={() => setPinEnabled(!pinEnabled)}
-                    className={`px-2.5 py-1 rounded-full text-[10px] font-bold font-mono transition-all ${
-                      pinEnabled ? "bg-emerald-500 text-white" : "bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300"
-                    }`}
-                  >
-                    {pinEnabled ? "Enabled" : "Disabled"}
-                  </button>
-                </div>
-                {pinEnabled && (
-                  <div className="pt-1">
-                    <label className="text-[10px] font-mono text-slate-400 block mb-1">4-Digit Shift Unlock PIN</label>
-                    <input
-                      type="password"
-                      maxLength={4}
-                      value={sessionPin}
-                      onChange={(e) => setSessionPin(e.target.value)}
-                      className="w-24 text-center font-mono font-bold tracking-widest text-sm bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg py-1 px-2"
-                    />
-                  </div>
-                )}
-              </div>
-
+            <div className="space-y-3 text-xs">
               <div className="p-3 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl space-y-1">
-                <span className="font-bold text-slate-800 dark:text-slate-200 block">Biometric Screen Lock</span>
-                <p className="text-[11px] text-slate-400">
-                  Fingerprint and Face ID unlock enabled on supported hospital mobile hardware.
+                <span className="font-bold text-slate-800 dark:text-slate-200 block">Sign-in protection</span>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                  Access is protected by your ErMate sign-in (email/password or Google). ErMate does not have a separate PIN, biometric or auto-lock.
                 </p>
               </div>
-
-              <div className="p-3 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl space-y-1">
-                <span className="font-bold text-slate-800 dark:text-slate-200 block">Session Timeout</span>
-                <p className="text-[11px] text-slate-400">
-                  Auto-locks after 15 minutes of clinical inactivity to protect patient privacy.
+              <div className="p-3 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-xl">
+                <p className="text-[11px] text-amber-800 dark:text-amber-300">
+                  Lock your phone when unattended, and sign out on shared computers.
                 </p>
               </div>
             </div>
@@ -1379,7 +1343,7 @@ export default function MoreView({
             <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
               <div className="flex items-center gap-2">
                 <Bell className="w-5 h-5 text-amber-600 dark:text-amber-400" />
-                <h3 className="text-base font-bold text-slate-900 dark:text-white">Clinical Notification Preferences</h3>
+                <h3 className="text-base font-bold text-slate-900 dark:text-white">Notifications & Alerts</h3>
               </div>
               <button
                 type="button"
@@ -1446,7 +1410,7 @@ export default function MoreView({
                 onClick={() => setActiveModal(null)}
                 className="px-5 py-2 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold rounded-xl cursor-pointer"
               >
-                Save Preferences
+                Close
               </button>
             </div>
           </div>
