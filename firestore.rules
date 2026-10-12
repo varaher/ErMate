@@ -148,6 +148,7 @@ service cloud.firestore {
 
     function checkRotaManagerMember(m, hospId) {
       return m.get('status', '') in ['active', 'Active (Joined)']
+        && m.get('membershipVerified', false) == true
         && (
           m.get('isRotaManager', false) == true
           || m.get('rotaManager', false) == true
@@ -339,9 +340,15 @@ service cloud.firestore {
 
       allow delete: if isPlatformAdmin();
 
+      match /addenda/{addendumId} {
+        allow read, create: if canAccessCase(get(/databases/$(database)/documents/cases/$(caseId)).data);
+        allow update, delete: if isPlatformAdmin();
+      }
+
       match /{subcollection}/{subDoc=**} {
-        allow read, create, update, delete: if
-          canAccessCase(get(/databases/$(database)/documents/cases/$(caseId)).data);
+        allow read, create, update: if subcollection != 'addenda'
+          && canAccessCase(get(/databases/$(database)/documents/cases/$(caseId)).data);
+        allow delete: if isPlatformAdmin();
       }
     }
 
@@ -419,7 +426,7 @@ service cloud.firestore {
     // - Only the platform admin may edit another user's profile.
 
     match /users/{userId} {
-      allow read: if isLoggedIn();
+      allow read: if isLoggedIn() && (isOwner(userId) || isPlatformAdmin());
 
       allow create: if isLoggedIn() && isOwner(userId)
         && incoming().name is string && incoming().name.size() <= 100
@@ -720,7 +727,7 @@ match /teams/{teamId} {
     // ── Team Invites — trusted backend only (creation, revocation, regeneration via API) ──
 
     match /teamInvites/{token} {
-      allow read: if isLoggedIn();
+      allow read: if isPlatformAdmin();
       allow create, update, delete: if isPlatformAdmin();
     }
 
