@@ -1313,7 +1313,7 @@ export default function MoreView({
               <div className="p-3 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl space-y-1">
                 <span className="font-bold text-slate-800 dark:text-slate-200 block">Sign-in protection</span>
                 <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                  Access is protected by your ErMate sign-in (email/password or Google). ErMate does not have a separate PIN, biometric or auto-lock.
+                  Access is protected by your ErMate sign-in (email/password or Google). Fingerprint / Face ID unlock and auto-lock are coming soon.
                 </p>
               </div>
               <div className="p-3 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-xl">

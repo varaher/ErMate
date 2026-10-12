@@ -139,22 +139,6 @@ export default function ProfileSettingsView({
   const [simError, setSimError] = useState<string>("");
   const [simSuccess, setSimSuccess] = useState<string>("");
 
-  // Countdown timer for Device Linking PIN refreshes
-  useEffect(() => {
-    let timer: any;
-    timer = setInterval(() => {
-      setPairingTimeLeft((prev) => {
-        if (prev <= 1) {
-          const num = Math.floor(100000 + Math.random() * 900000).toString();
-          const formatted = num.substring(0, 3) + " " + num.substring(3, 6);
-          setPairingCode(formatted);
-          return 60;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-    return () => clearInterval(timer);
-  }, []);
 
 
 
@@ -1383,7 +1367,7 @@ const startRealCheckout = async (planKey: string) => {
                   </div>
                   <div className="text-left">
                     <strong className="text-sm font-bold block">Link to Web</strong>
-                    <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">Connect desktop monitors or recording pins</span>
+                    <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">Coming soon · link a desktop like WhatsApp Web</span>
                   </div>
                 </div>
                 <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
@@ -2298,7 +2282,7 @@ const startRealCheckout = async (planKey: string) => {
         <div className="space-y-4 font-mono text-left">
           <div className="p-4 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl space-y-1">
             <h4 className="text-xs font-black uppercase text-slate-800 dark:text-slate-200">Sign-in protection</h4>
-            <p className="text-xs text-slate-500">Access is protected by your ErMate sign-in (email/password or Google). ErMate does not have a separate PIN, biometric or auto-lock.</p>
+            <p className="text-xs text-slate-500">Access is protected by your ErMate sign-in (email/password or Google). Fingerprint / Face ID unlock and auto-lock are coming soon.</p>
           </div>
           <div className="p-4 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-2xl">
             <p className="text-xs text-amber-800 dark:text-amber-300">Lock your phone when unattended, and sign out on shared computers.</p>
@@ -2480,18 +2464,12 @@ const startRealCheckout = async (planKey: string) => {
         </form>
       );
     } else if (selectedSubSection === "device-link") {
-      title = "Link to Web Workstation";
+      title = "Link to Web";
       content = (
         <div className="space-y-4 font-mono text-left text-xs">
-          <div className="bg-white dark:bg-[#182333] border border-slate-200 dark:border-slate-800 p-5 rounded-2xl space-y-3">
-            <strong className="text-slate-900 dark:text-white block font-bold">Desktop Monitor Pairing PIN</strong>
-            <div className="p-3 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-center">
-              <span className="text-xl font-bold tracking-widest text-indigo-500 font-mono">{pairingCode}</span>
-              <p className="text-[10px] text-slate-400 mt-1">Refreshes in {pairingTimeLeft}s</p>
-            </div>
-            <p className="text-[11px] text-slate-400">
-              Enter this 6-digit PIN on any ER desk terminal to sync active shift charts instantly.
-            </p>
+          <div className="p-4 bg-indigo-50 dark:bg-indigo-950/20 border border-indigo-200 dark:border-indigo-800 rounded-2xl space-y-1">
+            <h4 className="text-xs font-black uppercase text-indigo-700 dark:text-indigo-300">Coming soon</h4>
+            <p className="text-xs text-slate-600 dark:text-slate-300">Link ErMate on your phone to an ER desk computer by scanning a QR code, like WhatsApp Web. Until then, sign in at ermate.in on the computer.</p>
           </div>
         </div>
       );
