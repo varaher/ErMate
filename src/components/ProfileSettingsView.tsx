@@ -21,6 +21,7 @@ import RoleChangeSection from "./RoleChangeSection";
 import { auth, db } from "../firebase";
 import { collection, query, onSnapshot } from "firebase/firestore";
 import { APP_VERSION } from "../changelog";
+import { FEATURES } from "../config/features";
 
 interface ProfileSettingsViewProps {
   profile: UserProfile;
@@ -1264,6 +1265,7 @@ const startRealCheckout = async (planKey: string) => {
           <h4 className="text-[10px] font-black tracking-widest text-slate-400 dark:text-slate-500 uppercase font-mono pl-1">ACCOUNT & CONTROL</h4>
           <div className="bg-white dark:bg-[#182333] border border-slate-200 dark:border-slate-200 dark:border-slate-800/80 rounded-2xl overflow-hidden divide-y divide-slate-100 dark:divide-slate-800/50 shadow-md">
             
+            {FEATURES.teamsForIndividuals && (
             <div 
               onClick={() => onNavigateToTab ? onNavigateToTab("directory") : setSelectedSubSection("directory")}
               className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-all"
@@ -1279,6 +1281,7 @@ const startRealCheckout = async (planKey: string) => {
               </div>
               <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
             </div>
+            )}
 
             <div 
               onClick={() => setSelectedSubSection("facility")}

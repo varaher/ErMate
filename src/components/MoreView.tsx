@@ -15,6 +15,7 @@ import { SelfLearningRulesPanel } from "./SelfLearningRulesPanel";
 import RoleChangeSection from "./RoleChangeSection";
 import { ErMateLogo } from "./shared/ErMateLogo";
 import { APP_VERSION } from "../changelog";
+import { FEATURES } from "../config/features";
 
 interface MoreViewProps {
   profile: UserProfile | null;
@@ -693,6 +694,7 @@ export default function MoreView({
               </p>
             </div>
 
+            {(FEATURES.teamsForIndividuals || isMembershipActive) && (
             <button
               type="button"
               onClick={() => onNavigateToTab("team")}
@@ -701,6 +703,7 @@ export default function MoreView({
               <Users className="w-3.5 h-3.5" />
               <span>Open Team Roster</span>
             </button>
+            )}
           </div>
 
           {/* Details Grid */}
@@ -888,6 +891,7 @@ export default function MoreView({
           </div>
 
           {/* 7. Clinician Directory */}
+          {FEATURES.teamsForIndividuals && (
           <div
             onClick={() => onNavigateToTab("directory")}
             className="group bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 hover:border-amber-500 rounded-2xl p-4.5 cursor-pointer shadow-xs hover:shadow-md transition-all flex flex-col justify-between"
@@ -908,6 +912,7 @@ export default function MoreView({
               <ChevronRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
             </div>
           </div>
+          )}
 
           {/* 6. Mortality Audit (HOD & Consultant) */}
           {(isHOD || isConsultant) && (

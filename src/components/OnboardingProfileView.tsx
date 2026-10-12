@@ -8,6 +8,7 @@ import { UserProfile } from "../types";
 import { ErMateLogo } from "./shared/ErMateLogo";
 import { isClinicalProfileComplete, getProfileCompletenessDetails } from "../utils/profileCompleteness";
 import { createHospitalWorkspace, createTeamInvite } from "../services/teamInviteService";
+import { FEATURES } from "../config/features";
 
 interface OnboardingProfileViewProps {
   profile: UserProfile | null;
@@ -485,6 +486,7 @@ export default function OnboardingProfileView({
           </div>
 
           {/* Optional Team Workspace creation card (Non-blocking) */}
+          {FEATURES.teamsForIndividuals && (
           <div className="pt-2 border-t border-slate-100 dark:border-slate-800 text-center space-y-2">
             <p className="text-[11px] text-slate-500 dark:text-slate-400">
               Want to collaborate with colleagues? You can create or join an ER team anytime.
@@ -498,6 +500,7 @@ export default function OnboardingProfileView({
               <span>Create Team Workspace (Optional)</span>
             </button>
           </div>
+          )}
         </div>
       </div>
     );

@@ -76,6 +76,7 @@ import { sanitizeForFirestore } from "./utils/firestoreSanitizer";
 import { getPublicAppUrl } from "./utils/publicUrl";
 import { listenerDiagnostics } from "./utils/listenerDiagnostics";
 import { onAuthStateChanged, signOut } from "firebase/auth";
+import { FEATURES } from "./config/features";
 import {
   doc,
   getDoc,
@@ -6327,6 +6328,15 @@ const handleSignOut = async () => {
 };
   // Direct tab navigating
   const navigateToTab = (tabId: string) => {
+    // Individual V1: team screens hidden for non-team clinicians; directory hidden for all.
+    if (!FEATURES.teamsForIndividuals) {
+      const blockedTeam = (tabId === "team" || tabId === "roster") && !isVerifiedTeamUser;
+      const blockedDirectory = tabId === "directory";
+      if (blockedTeam || blockedDirectory) {
+        triggerNotification("Coming soon", "Team features will be available soon. ErMate currently works as your personal workspace.", "info");
+        return;
+      }
+    }
     if (isGlobalVoiceRecordingActive()) {
       if (!window.confirm("Dictation is still recording. Discard it and leave?")) {
         return;
@@ -7218,7 +7228,7 @@ const handleSignOut = async () => {
                 />
               )}
 
-              {activeTab === "directory" && (
+              {activeTab === "directory" && FEATURES.teamsForIndividuals && (
                 <DoctorsDirectoryView
                   currentProfile={profile}
                   onNavigateToTab={navigateToTab}
@@ -7285,7 +7295,7 @@ const handleSignOut = async () => {
 
               {activeTab === "learn" && <LearnView onNavigateToTab={navigateToTab} isDarkMode={isDarkMode} />}
 
-              {activeTab === "team" && (
+              {activeTab === "team" && (FEATURES.teamsForIndividuals || isVerifiedTeamUser) && (
                 <ProfileSettingsView
                   initialSubSection="team"
                   profile={profile}
