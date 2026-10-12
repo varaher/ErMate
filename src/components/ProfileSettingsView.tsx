@@ -247,8 +247,6 @@ export default function ProfileSettingsView({
   const [openPolicySection, setOpenPolicySection] = useState<number | null>(null);
   const [shareAnalytics, setShareAnalytics] = useState<boolean>(true);
   const [shareAiTraining, setShareAiTraining] = useState<boolean>(true);
-  const [biometricLock, setBiometricLock] = useState<boolean>(true);
-
   // Facility Setup states
   const [facilityHospitalInput, setFacilityHospitalInput] = useState<string>(profile.hospital || "");
   const [facilityDepartmentInput, setFacilityDepartmentInput] = useState<string>(profile.department || "Emergency & Trauma Medicine");
@@ -1328,9 +1326,9 @@ const startRealCheckout = async (planKey: string) => {
                   <Lock className="w-4.5 h-4.5" />
                 </div>
                 <div className="text-left">
-                  <strong className="text-sm font-bold block">Security & Access PIN</strong>
+                  <strong className="text-sm font-bold block">Security & Access</strong>
                   <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">
-                    Password configured · PIN enabled
+                    Protected by your ErMate sign-in
                   </span>
                 </div>
               </div>
@@ -1348,7 +1346,7 @@ const startRealCheckout = async (planKey: string) => {
                 <div className="text-left">
                   <strong className="text-sm font-bold block">Notifications & Alerts</strong>
                   <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">
-                    Clinical alerts on · Handover pings active
+                    ErMate does not send clinical alerts
                   </span>
                 </div>
               </div>
@@ -2295,62 +2293,25 @@ const startRealCheckout = async (planKey: string) => {
         </div>
       );
     } else if (selectedSubSection === "security" || selectedSubSection === "set-password") {
-      title = "Security & Access PIN";
+      title = "Security & Access";
       content = (
         <div className="space-y-4 font-mono text-left">
           <div className="p-4 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl space-y-1">
-            <h4 className="text-xs font-black uppercase text-slate-800 dark:text-slate-200">Terminal Authentication</h4>
-            <p className="text-xs text-slate-500">Configure quick session PIN and biometric screen locks.</p>
+            <h4 className="text-xs font-black uppercase text-slate-800 dark:text-slate-200">Sign-in protection</h4>
+            <p className="text-xs text-slate-500">Access is protected by your ErMate sign-in (email/password or Google). ErMate does not have a separate PIN, biometric or auto-lock.</p>
           </div>
-
-          <div className="bg-white dark:bg-[#182333] border border-slate-200 dark:border-slate-800 p-5 rounded-2xl space-y-4 text-xs">
-            <div className="space-y-1">
-              <label className="text-[10px] font-bold text-slate-500 uppercase">4-Digit Shift Unlock PIN</label>
-              <input
-                type="password"
-                maxLength={4}
-                defaultValue="4821"
-                className="w-28 text-center font-mono font-bold text-base bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2"
-              />
-            </div>
-
-            <div className="p-3 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-150 dark:border-slate-800">
-              <strong className="block text-slate-800 dark:text-slate-200">Biometric Authentication</strong>
-              <span className="text-[10px] text-slate-400">Face ID & Fingerprint unlock active on supported mobile devices.</span>
-            </div>
-
-            <div className="p-3 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-150 dark:border-slate-800">
-              <strong className="block text-slate-800 dark:text-slate-200">Auto Session Lock</strong>
-              <span className="text-[10px] text-slate-400">Terminal locks after 15 minutes of clinical inactivity.</span>
-            </div>
+          <div className="p-4 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-2xl">
+            <p className="text-xs text-amber-800 dark:text-amber-300">Lock your phone when unattended, and sign out on shared computers.</p>
           </div>
         </div>
       );
     } else if (selectedSubSection === "notifications") {
-      title = "Clinical Notifications";
+      title = "Notifications & Alerts";
       content = (
         <div className="space-y-4 font-mono text-left">
           <div className="p-4 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-2xl space-y-1">
-            <h4 className="text-xs font-black uppercase text-amber-700 dark:text-amber-400">Alert Toggles</h4>
-            <p className="text-xs text-slate-600 dark:text-slate-300">Manage audio chimes and high-acuity push alerts.</p>
-          </div>
-
-          <div className="bg-white dark:bg-[#182333] border border-slate-200 dark:border-slate-800 p-5 rounded-2xl space-y-3 text-xs">
-            <div className="flex justify-between items-center p-3 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-150 dark:border-slate-800">
-              <div>
-                <strong className="block text-slate-800 dark:text-slate-200">P1 Triage Resuscitation Alerts</strong>
-                <span className="text-[10px] text-slate-400">Audible alarm on incoming red cases</span>
-              </div>
-              <span className="text-[10px] bg-emerald-500 text-white font-bold px-2.5 py-0.5 rounded-full">ON</span>
-            </div>
-
-            <div className="flex justify-between items-center p-3 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-150 dark:border-slate-800">
-              <div>
-                <strong className="block text-slate-800 dark:text-slate-200">Shift Handover Transfers</strong>
-                <span className="text-[10px] text-slate-400">Pings when patient transfer sheet is routed to you</span>
-              </div>
-              <span className="text-[10px] bg-emerald-500 text-white font-bold px-2.5 py-0.5 rounded-full">ON</span>
-            </div>
+            <h4 className="text-xs font-black uppercase text-amber-700 dark:text-amber-400">ErMate does not send clinical alerts</h4>
+            <p className="text-xs text-slate-600 dark:text-slate-300">ErMate is a documentation companion. It does not monitor patients, triage or vitals. Rely on your department's monitors and alarm systems.</p>
           </div>
         </div>
       );
