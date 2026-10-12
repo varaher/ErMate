@@ -2027,10 +2027,11 @@ Extremities: Peripheral pulses present and well felt. No edema. No cyanosis or c
     }
   };
 
-  const handleSave = async () => {
+  // Returns true ONLY when the case was actually persisted.
+  const handleSave = async (): Promise<boolean> => {
     if (isPreview) {
       console.warn("Direct save disabled in preview mode");
-      return;
+      return false;
     }
     // Audit & sanitize clinical fields before saving
     const ageNum = currentCase.patient.age;
@@ -2086,19 +2087,31 @@ Extremities: Peripheral pulses present and well felt. No edema. No cyanosis or c
         setSaveBanner(null);
       }, 5000);
       
-      // Auto-update discharge summary in background
-      await syncDischargeSummary(caseToSave);
+      // Auto-update discharge summary in background (case is already saved;
+      // a discharge-sync problem must not be reported as a failed case save).
+      try {
+        await syncDischargeSummary(caseToSave);
+      } catch (syncErr) {
+        console.warn("Discharge summary sync failed after case save:", syncErr);
+      }
+      return true;
     } catch (err) {
       console.error("Failed to save Case Sheet:", err);
       setTreatmentSaveStatus("error");
       setTabSaveStatus("error");
+      return false;
     } finally {
       setIsSavingCase(false);
     }
   };
 
   const handleSaveFromDisposition = async () => {
-    await handleSave();
+    const ok = await handleSave();
+    if (!ok) {
+      // Never claim success or leave the form when nothing was saved.
+      setDispositionSaveMessage("NOT SAVED — the case could not be saved. Check your connection and tap Save again. Your entries are still on this screen.");
+      return;
+    }
     const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     setDispositionSaveMessage(`Case Sheet saved to Dashboard successfully at ${timeStr}`);
     setTimeout(() => {
@@ -2114,7 +2127,8 @@ Extremities: Peripheral pulses present and well felt. No edema. No cyanosis or c
         if (isPreview && onApplyPreview) {
           await onApplyPreview(currentCase);
         } else {
-          await handleSave();
+          // Throw on failure so "Save & Refresh" does not refresh away unsaved edits.
+          if (!(await handleSave())) throw new Error("Case sheet was not saved.");
         }
       },
       discard: () => {
@@ -3080,7 +3094,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                       </button>
                       <div className="h-px bg-slate-100 dark:bg-slate-800 my-1.5" />
                       <div className="px-3 py-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Case Actions</div>
-                      <button onClick={async () => { await handleSave(); onBack(); }} className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 flex items-center gap-2">
+                      <button onClick={async () => { if (await handleSave()) onBack(); }} className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 flex items-center gap-2">
                         <Save className="w-3.5 h-3.5" /> Finish & Return to Cases
                       </button>
                     </div>
@@ -3515,7 +3529,12 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
 
                 {/* Handover & Save Actions  */}
                 <div className="pt-5 border-t border-slate-100 dark:border-slate-800 space-y-4">
-                  {dispositionSaveMessage && (
+                  {dispositionSaveMessage && dispositionSaveMessage.startsWith("NOT SAVED") && (
+                    <div className="bg-red-50 dark:bg-red-950/40 border border-red-300 dark:border-red-800 text-red-800 dark:text-red-200 p-3.5 rounded-xl text-xs font-bold shadow-xs">
+                      {dispositionSaveMessage}
+                    </div>
+                  )}
+                  {dispositionSaveMessage && !dispositionSaveMessage.startsWith("NOT SAVED") && (
                     <div className="bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200 p-3.5 rounded-xl flex items-center justify-between text-xs font-bold animate-fade-in shadow-xs">
                       <div className="flex items-center gap-2">
                         <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
