@@ -1735,8 +1735,8 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
                                   </div>
                                 )}
 
-                                {/* Resident Escalation Trigger */}
-                                {profile.role.toLowerCase().includes("resident") && !c.escalated && (
+                                {/* Escalation only means something inside a verified hospital team (shared case). */}
+                                {profile.role.toLowerCase().includes("resident") && !c.escalated && Boolean(c.hospitalId) && (
                                   <button
                                     onClick={() => {
                                       const updated: ClinicalCase = {

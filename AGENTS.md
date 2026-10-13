@@ -45,6 +45,16 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-12] — ErMate: Hospital Directory & Location Metadata (HOSPITAL-DIRECTORY)
+- **Hospital Directory Utility (`src/utils/hospitalDirectory.ts`, `firestore.rules`)**:
+  - Implemented hospital directory search and auto-entry (`searchHospitalDirectory`, `ensureHospitalDirectoryEntry`).
+  - Strict Firestore security rule allowing authenticated users to read and create `unverified` hospital entries with strict size and schema constraints; mutations and deletions restricted to platform admin.
+  - Hospital directory stores facility metadata only (name, place, district, state); clinician identities and affiliations are never stored or exposed in the directory.
+- **Onboarding & Profile Location Fields (`src/components/OnboardingProfileView.tsx`, `src/types.ts`, `src/App.tsx`)**:
+  - Added interactive prefix search and dropdown picker for existing directory hospitals.
+  - Captured verified structured location fields (`place`, `district`, `state`, `hospitalDirectoryId`) in UserProfile and persisted them defensively in `handleSaveProfile`.
+  - Added location rendering to saved profile summary card and gated escalation triggers in `DashboardView.tsx` strictly to verified hospital teams (`Boolean(c.hospitalId)`).
+
 ### [2026-10-12] — ErMate: Handover Browser-Cache Ownership, AI Input Whitelist, & User-Scoped Sheet Isolation (HANDOVER-PRIVACY)
 - **Handover Local Cache Isolation (`src/utils/handoverLocalCache.ts`, `src/App.tsx`)**:
   - Enforced single-account ownership on browser-cached handover data (`ermate_handover_local_owner`).

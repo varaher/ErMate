@@ -657,7 +657,9 @@ export interface UserProfile {
   hospitalLabel?: string;
   workplaceName?: string;
   place?: string;
+  district?: string;
   state?: string;
+  hospitalDirectoryId?: string;
   pincode?: string;
   hospitalAddress?: string;
   hospitalPhone?: string;

@@ -573,6 +573,25 @@ match /teams/{teamId} {
       allow update: if isPlatformAdmin();
     }
 
+    // ── Hospital directory ────────────────────────────────────
+    // Hospitals only (name, place, district, state) — never who works where.
+    // Any signed-in clinician may read or ADD an unverified entry;
+    // only the platform admin may edit, verify, merge or delete.
+
+    match /hospital_directory/{hospitalId} {
+      allow read: if isLoggedIn();
+      allow create: if isLoggedIn()
+        && incoming().keys().hasOnly(['name', 'nameKey', 'place', 'district', 'state', 'status', 'createdAt'])
+        && incoming().name is string && incoming().name.size() >= 2 && incoming().name.size() <= 100
+        && incoming().nameKey is string && incoming().nameKey.size() >= 1 && incoming().nameKey.size() <= 100
+        && incoming().place is string && incoming().place.size() <= 100
+        && incoming().district is string && incoming().district.size() >= 2 && incoming().district.size() <= 60
+        && incoming().state is string && incoming().state.size() >= 2 && incoming().state.size() <= 60
+        && incoming().status == 'unverified'
+        && incoming().createdAt is string;
+      allow update, delete: if isPlatformAdmin();
+    }
+
     // ── Personal handover sheet ───────────────────────────────
     // One document per clinician, readable/writable ONLY by its owner.
 

@@ -9,6 +9,13 @@ import { ErMateLogo } from "./shared/ErMateLogo";
 import { isClinicalProfileComplete, getProfileCompletenessDetails } from "../utils/profileCompleteness";
 import { createHospitalWorkspace, createTeamInvite } from "../services/teamInviteService";
 import { FEATURES } from "../config/features";
+import {
+  INDIAN_STATES_AND_UTS,
+  HospitalDirectoryEntry,
+  searchHospitalDirectory,
+  ensureHospitalDirectoryEntry,
+  formatHospitalLocation,
+} from "../utils/hospitalDirectory";
 
 interface OnboardingProfileViewProps {
   profile: UserProfile | null;
@@ -68,6 +75,12 @@ export default function OnboardingProfileView({
   const [department, setDepartment] = useState<string>(
     profile?.department || "Emergency & Trauma Medicine"
   );
+  // Hospital directory location (hospital list only — never who works where)
+  const [hospitalPlace, setHospitalPlace] = useState<string>(profile?.place || "");
+  const [hospitalDistrict, setHospitalDistrict] = useState<string>(profile?.district || "");
+  const [hospitalState, setHospitalState] = useState<string>(profile?.state || "");
+  const [hospitalSuggestions, setHospitalSuggestions] = useState<HospitalDirectoryEntry[]>([]);
+  const [showHospitalSuggestions, setShowHospitalSuggestions] = useState<boolean>(false);
   const [bedCapacity, setBedCapacity] = useState<number | string>(initialCap ?? "");
 
   // Saved values snapshot (to support Cancel in EDITING and render SAVED state)
@@ -86,6 +99,28 @@ export default function OnboardingProfileView({
   });
 
   const isInitiallyComplete = isClinicalProfileComplete(profile, erPhysicalBedCapacity);
+
+  // Suggest hospitals already in the directory while the doctor types.
+  useEffect(() => {
+    if (!showHospitalSuggestions || hospital.trim().length < 2) {
+      setHospitalSuggestions([]);
+      return;
+    }
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      const results = await searchHospitalDirectory(hospital);
+      if (!cancelled) setHospitalSuggestions(results);
+    }, 300);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [hospital, showHospitalSuggestions]);
+
+  const handlePickHospital = (entry: HospitalDirectoryEntry) => {
+    setHospital(entry.name);
+    setHospitalPlace(entry.place || "");
+    setHospitalDistrict(entry.district || "");
+    setHospitalState(entry.state || "");
+    setShowHospitalSuggestions(false);
+  };
 
   // Profile State Machine: "INCOMPLETE" | "SAVED" | "EDITING"
   const [profileMode, setProfileMode] = useState<"INCOMPLETE" | "SAVED" | "EDITING">(
@@ -172,9 +207,27 @@ export default function OnboardingProfileView({
       setErrorMsg("Please specify your department.");
       return;
     }
+    const cleanPlace = hospitalPlace.trim();
+    const cleanDistrict = hospitalDistrict.trim();
+    const cleanState = hospitalState.trim();
+    if (!cleanPlace || !cleanDistrict || !cleanState) {
+      setErrorMsg("Please enter the hospital's place, district and state.");
+      return;
+    }
 
     setSaving(true);
     try {
+      // Add the hospital to the shared directory (hospital details only).
+      // A directory failure never blocks saving the doctor's profile.
+      let hospitalDirectoryId: string | undefined;
+      try {
+        hospitalDirectoryId = await ensureHospitalDirectoryEntry({
+          name: cleanHospital, place: cleanPlace, district: cleanDistrict, state: cleanState,
+        });
+      } catch (dirErr) {
+        console.warn("[HospitalDirectory] could not add hospital:", dirErr);
+      }
+
       const updated: UserProfile = {
         ...(profile || {}),
         email: profile?.email || "",
@@ -188,6 +241,10 @@ export default function OnboardingProfileView({
         workplaceName: cleanHospital,
         hospitalLabel: cleanHospital,
         department: cleanDept,
+        place: cleanPlace,
+        district: cleanDistrict,
+        state: cleanState,
+        ...(hospitalDirectoryId ? { hospitalDirectoryId } : {}),
         ...(parsedCapacity !== null ? { erPhysicalBedCapacity: parsedCapacity } : {}),
         onboardingComplete: true
       };
@@ -234,6 +291,10 @@ export default function OnboardingProfileView({
 
   // Cancel Editing (restore previous saved values)
   const handleCancelEdit = () => {
+    setHospitalPlace(profile?.place || "");
+    setHospitalDistrict(profile?.district || "");
+    setHospitalState(profile?.state || "");
+    setShowHospitalSuggestions(false);
     setName(savedData.name);
     setRole(savedData.role);
     setHospital(savedData.hospital);
@@ -409,6 +470,11 @@ export default function OnboardingProfileView({
                 <p className="font-semibold text-slate-800 dark:text-slate-200 truncate">
                   {savedData.hospital || "Not Specified"}
                 </p>
+                {formatHospitalLocation({ place: profile?.place || "", district: profile?.district || "", state: profile?.state || "" }) && (
+                  <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate">
+                    {formatHospitalLocation({ place: profile?.place || "", district: profile?.district || "", state: profile?.state || "" })}
+                  </p>
+                )}
               </div>
 
               <div className="space-y-1 p-2.5 bg-white dark:bg-slate-900 rounded-xl border border-slate-100 dark:border-slate-800/80">
@@ -605,17 +671,68 @@ export default function OnboardingProfileView({
                 <Building2 className="w-3.5 h-3.5 text-blue-500" />
                 <span>Hospital / Workplace Name *</span>
               </label>
-              <input
-                type="text"
-                disabled={saving}
-                value={hospital}
-                onChange={(e) => setHospital(e.target.value)}
-                placeholder="e.g. City General Hospital"
-                className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-2.5 text-xs font-bold text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-hidden focus:ring-2 focus:ring-indigo-500/30 disabled:opacity-60"
-                required
-              />
+              <div className="relative">
+                <input
+                  type="text"
+                  disabled={saving}
+                  value={hospital}
+                  onChange={(e) => { setHospital(e.target.value); setShowHospitalSuggestions(true); }}
+                  onBlur={() => setTimeout(() => setShowHospitalSuggestions(false), 200)}
+                  placeholder="Start typing — pick your hospital if it is listed"
+                  autoComplete="off"
+                  className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-2.5 text-xs font-bold text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-hidden focus:ring-2 focus:ring-indigo-500/30 disabled:opacity-60"
+                  required
+                />
+                {showHospitalSuggestions && hospitalSuggestions.length > 0 && (
+                  <div className="absolute z-20 left-0 right-0 mt-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-lg max-h-60 overflow-y-auto">
+                    {hospitalSuggestions.map((h) => (
+                      <button
+                        key={h.id}
+                        type="button"
+                        onMouseDown={(e) => { e.preventDefault(); handlePickHospital(h); }}
+                        className="w-full text-left px-3 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 border-b last:border-b-0 border-slate-100 dark:border-slate-800"
+                      >
+                        <span className="block text-xs font-bold text-slate-900 dark:text-white">{h.name}</span>
+                        <span className="block text-[10px] text-slate-500 dark:text-slate-400">{formatHospitalLocation(h)}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <input
+                  type="text"
+                  disabled={saving}
+                  value={hospitalPlace}
+                  onChange={(e) => setHospitalPlace(e.target.value)}
+                  placeholder="Place / town *"
+                  className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-2.5 text-xs font-bold text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-hidden focus:ring-2 focus:ring-indigo-500/30 disabled:opacity-60"
+                  required
+                />
+                <input
+                  type="text"
+                  disabled={saving}
+                  value={hospitalDistrict}
+                  onChange={(e) => setHospitalDistrict(e.target.value)}
+                  placeholder="District *"
+                  className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-2.5 text-xs font-bold text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-hidden focus:ring-2 focus:ring-indigo-500/30 disabled:opacity-60"
+                  required
+                />
+                <select
+                  disabled={saving}
+                  value={hospitalState}
+                  onChange={(e) => setHospitalState(e.target.value)}
+                  className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-2.5 text-xs font-bold text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-hidden focus:ring-2 focus:ring-indigo-500/30 disabled:opacity-60"
+                  required
+                >
+                  <option value="">State *</option>
+                  {INDIAN_STATES_AND_UTS.map((st) => (
+                    <option key={st} value={st}>{st}</option>
+                  ))}
+                </select>
+              </div>
               <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">
-                Personal workplace metadata. Every clinician starts in an Individual workspace.
+                Hospital name and location are added to the ErMate hospital directory. Your name is never shown in it.
               </span>
             </div>
 

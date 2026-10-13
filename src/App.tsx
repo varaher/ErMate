@@ -5947,6 +5947,8 @@ const handleSaveProfile = async (newProfile: UserProfile, explicitCapacity?: num
       if (newProfile.qualifications !== undefined) updatePayload.qualifications = (newProfile.qualifications || "").slice(0, 100);
       if (newProfile.place !== undefined) updatePayload.place = (newProfile.place || "").slice(0, 100);
       if (newProfile.state !== undefined) updatePayload.state = (newProfile.state || "").slice(0, 100);
+      if (newProfile.district !== undefined) updatePayload.district = (newProfile.district || "").slice(0, 60);
+      if (newProfile.hospitalDirectoryId !== undefined) updatePayload.hospitalDirectoryId = (newProfile.hospitalDirectoryId || "").slice(0, 300);
       if (newProfile.pincode !== undefined) updatePayload.pincode = (newProfile.pincode || "").slice(0, 20);
 
       await updateDoc(userDocRef, sanitizeForFirestore(updatePayload));
@@ -5987,6 +5989,8 @@ const handleSaveProfile = async (newProfile: UserProfile, explicitCapacity?: num
       if (newProfile.qualifications) initialPayload.qualifications = newProfile.qualifications.slice(0, 100);
       if (newProfile.place) initialPayload.place = newProfile.place.slice(0, 100);
       if (newProfile.state) initialPayload.state = newProfile.state.slice(0, 100);
+      if (newProfile.district) initialPayload.district = newProfile.district.slice(0, 60);
+      if (newProfile.hospitalDirectoryId) initialPayload.hospitalDirectoryId = newProfile.hospitalDirectoryId.slice(0, 300);
       if (newProfile.pincode) initialPayload.pincode = newProfile.pincode.slice(0, 20);
 
       await setDoc(userDocRef, sanitizeForFirestore(initialPayload));
