@@ -28,7 +28,7 @@ export default function AnalyticsView({ profile, cases, onNavigateToTab, isDarkM
   const dateMap: { [date: string]: { date: string; active: number; discharged: number; total: number } } = {};
 
   cases.forEach(c => {
-    const dateKey = parseDateOpened(c.patient.dateOpened);
+    const dateKey = parseDateOpened(c.patient?.dateOpened || "");
     if (!dateMap[dateKey]) {
       dateMap[dateKey] = { date: dateKey, active: 0, discharged: 0, total: 0 };
     }
@@ -64,7 +64,7 @@ export default function AnalyticsView({ profile, cases, onNavigateToTab, isDarkM
   };
 
   cases.forEach(c => {
-    const cat = c.patient.triageCategory as string;
+    const cat = String(c.patient?.triageCategory || "");
     if (cat === "P1 (Immediate)" || cat.includes("P1")) {
       triageMap["P1 (Immediate)"] += 1;
     } else if (cat === "P2 (Urgent)" || cat.includes("P2")) {

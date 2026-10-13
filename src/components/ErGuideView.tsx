@@ -13,6 +13,7 @@ import {
 } from "../data/em_procedures";
 import { db, auth } from "../firebase";
 import { collection, addDoc, onSnapshot, query, orderBy, doc, updateDoc, deleteDoc, setDoc } from "firebase/firestore";
+import { authenticatedFetch } from "../services/authenticatedFetch";
 
 interface EMDrugsViewProps {
   onBack: () => void;
@@ -271,7 +272,7 @@ export default function ErGuideView({ onBack, isDarkMode }: EMDrugsViewProps) {
       }
 
       try {
-        const response = await fetch("/api/scan-mnemonic", {
+        const response = await authenticatedFetch("/api/scan-mnemonic", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",

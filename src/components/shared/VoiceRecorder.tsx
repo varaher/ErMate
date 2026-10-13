@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from "react";
 import { Mic, Trash2, Pause, Play, Check, AlertTriangle, RefreshCw } from "lucide-react";
+import { authenticatedFetch } from "../../services/authenticatedFetch";
 
 // Global active recording state tracking across any VoiceRecorder instances
 let globalActiveRecorders = 0;
@@ -522,7 +523,7 @@ export default function VoiceRecorder({
       formData.append("language_code", "auto"); 
       formData.append("mode", transcriptionMode);
 
-      const res = await fetch("/api/sarvam/batch-transcribe", { method: "POST", body: formData });
+      const res = await authenticatedFetch("/api/sarvam/batch-transcribe", { method: "POST", body: formData });
 
       if (res.status === 413) {
         throw new Error("Recording too long for batch fallback.");

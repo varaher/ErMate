@@ -5,6 +5,8 @@ import { ClinicalCase } from "../types";
 import { updateDoc, doc } from "firebase/firestore";
 import { db } from "../firebase";
 import VoiceRecorder from "./shared/VoiceRecorder";
+import { authenticatedFetch } from "../services/authenticatedFetch";
+import { printElementById } from "../utils/printElement";
 
 interface MlcCertificatesViewProps {
   cases: ClinicalCase[];
@@ -144,7 +146,7 @@ function MlcChatView({ clinicalCase }: { clinicalCase: ClinicalCase }) {
     setIsProcessing(true);
 
     try {
-      const res = await fetch("/api/mlc-extract", {
+      const res = await authenticatedFetch("/api/mlc-extract", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ 
@@ -250,15 +252,9 @@ function MlcCertificatePreview({ clinicalCase, profile }: { clinicalCase: Clinic
   const c = clinicalCase;
   const m = c.patient?.mlcDetails || {};
   
+  // Prints only the certificate in a hidden frame — the app is never wiped or reloaded.
   const handlePrint = () => {
-    const printContent = document.getElementById("mlc-certificate-print");
-    const originalBody = document.body.innerHTML;
-    if (printContent) {
-      document.body.innerHTML = printContent.innerHTML;
-      window.print();
-      document.body.innerHTML = originalBody;
-      window.location.reload();
-    }
+    printElementById("mlc-certificate-print", "MLC Certificate");
   };
 
   const getSecondaryList = () => {

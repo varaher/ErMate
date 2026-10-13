@@ -1,3 +1,5 @@
+import { authenticatedFetch } from "./authenticatedFetch";
+
 export interface FeedbackCorrection {
   id: string;
   field: string;
@@ -37,7 +39,7 @@ export async function captureFeedbackCorrection(
       return { captured: false };
     }
 
-    const response = await fetch('/api/learning/feedback', {
+    const response = await authenticatedFetch('/api/learning/feedback', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -61,7 +63,7 @@ export async function captureFeedbackCorrection(
 
 export async function fetchLearningRulesAndCorrections(): Promise<{ rules: LearnedRule[]; corrections: FeedbackCorrection[] }> {
   try {
-    const res = await fetch('/api/learning/rules');
+    const res = await authenticatedFetch('/api/learning/rules');
     if (!res.ok) return { rules: [], corrections: [] };
     const data = await res.json();
     return { rules: data.rules || [], corrections: data.corrections || [] };
@@ -73,7 +75,7 @@ export async function fetchLearningRulesAndCorrections(): Promise<{ rules: Learn
 
 export async function extractGeneralizableRules(): Promise<{ processedCount: number; newRules: LearnedRule[]; rules: LearnedRule[] }> {
   try {
-    const res = await fetch('/api/learning/extract-rules', { method: 'POST' });
+    const res = await authenticatedFetch('/api/learning/extract-rules', { method: 'POST' });
     if (!res.ok) throw new Error('Pattern extraction failed');
     return await res.json();
   } catch (err) {
@@ -84,7 +86,7 @@ export async function extractGeneralizableRules(): Promise<{ processedCount: num
 
 export async function reviewLearnedRule(ruleId: string, approved: boolean, active: boolean, approvedBy?: string): Promise<LearnedRule | null> {
   try {
-    const res = await fetch('/api/learning/rules/review', {
+    const res = await authenticatedFetch('/api/learning/rules/review', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ruleId, approved, active, approvedBy })
@@ -106,7 +108,7 @@ export async function createManualRule(
   createdBy?: string
 ): Promise<LearnedRule | null> {
   try {
-    const res = await fetch('/api/learning/rules/create', {
+    const res = await authenticatedFetch('/api/learning/rules/create', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ruleText, triggerKeywords, caseType, severity, createdBy })
@@ -122,7 +124,7 @@ export async function createManualRule(
 
 export async function deleteLearnedRule(ruleId: string): Promise<boolean> {
   try {
-    const res = await fetch('/api/learning/rules/delete', {
+    const res = await authenticatedFetch('/api/learning/rules/delete', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ruleId })

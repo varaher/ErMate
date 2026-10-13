@@ -551,7 +551,7 @@ export default function HandoverView({
     setDischargeError("");
 
     try {
-      const res = await fetch("/api/discharge-summary/generate", {
+      const res = await authenticatedFetch("/api/discharge-summary/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ rawText: raw }),

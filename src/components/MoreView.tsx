@@ -1358,7 +1358,7 @@ export default function MoreView({
               <div className="p-3 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-xl space-y-1">
                 <span className="font-bold text-amber-800 dark:text-amber-300 block">ErMate does not send clinical alerts</span>
                 <p className="text-[11px] text-amber-800 dark:text-amber-300">
-                  ErMate is a documentation companion. It does not monitor patients, triage or vitals. Rely on your department's monitors and alarm systems.
+                  ErMate is a documentation companion. It does not monitor patients, triage or vitals. Rely on your department's monitors and alarm systems. MATE reassessment reminders (e.g. "remind me in 10 min to reassess Bed 4") are coming soon.
                 </p>
               </div>
             </div>

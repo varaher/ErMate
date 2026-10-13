@@ -4,6 +4,7 @@ import { Mic, Camera, FileText, Loader2, ArrowRight } from "lucide-react";
 import { ClinicalCase, TriageCategory, ArrivalMode } from "../types";
 import VoiceRecorder from "./shared/VoiceRecorder";
 import { generateInternalCaseId } from "../utils/caseIdentity";
+import { authenticatedFetch } from "../services/authenticatedFetch";
 
 /**
  * QuickDischargeIntake.tsx
@@ -156,7 +157,7 @@ export default function QuickDischargeIntake({
     setError(null);
 
     try {
-      const response = await fetch("/api/scribe-extract", {
+      const response = await authenticatedFetch("/api/scribe-extract", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -322,7 +323,7 @@ export default function QuickDischargeIntake({
       formData.append("file", audioBlob, `dictation.${ext}`);
       formData.append("bypassCreditCheck", "true");
 
-      const transcribeRes = await fetch("/api/voice/transcribe", {
+      const transcribeRes = await authenticatedFetch("/api/voice/transcribe", {
         method: "POST",
         body: formData,
       });
@@ -352,7 +353,7 @@ export default function QuickDischargeIntake({
     try {
       const base64 = await fileToBase64(file);
 
-      const ocrRes = await fetch("/api/scribe-ocr-scan", {
+      const ocrRes = await authenticatedFetch("/api/scribe-ocr-scan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

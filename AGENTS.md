@@ -45,6 +45,42 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-13] — ErMate: Case Sheet Autosave, Case Lifecycle Retention & Dashboard Query Hardening (BATCH-1)
+- **Clinical Content Retention & Soft-Archive Gate (`src/utils/caseLifecycle.ts`, `verify_team_and_archive.ts`)**:
+  - Implemented `hasAnyClinicalContent(c)`: Checks demographics, vitals, SAMPLE history, treatments, investigations, notes, progress notes, differentials, and primary assessment.
+  - In `isCaseEligibleFor24hArchive`, added Rule 4b: cases with any clinical content are never auto-archived by elapsed time alone; only empty shells without documented clinical information qualify for soft-archive.
+- **Immediate Autosave & Real-Time Persist Status (`src/components/CaseSheetView.tsx`)**:
+  - Added debounced autosave (~2s delay after typing, tab switches, and unload) preserving user typing and persisting changes to Firestore without manual click requirement.
+  - Treatment and infusion changes remain gated by explicit clinician confirmation, with last-saved treatments sent safely on background autosaves.
+  - Added reactive persistence indicator (`renderPersistStatus()`) tracking `idle | pending | saving | saved | trial | offline | error` states.
+  - Modal and disposition save flows respect `lastSaveOutcomeRef` and `handleSave()` resolution.
+- **Firestore Query Rule Proof Alignment (`src/App.tsx`)**:
+  - Constrained `casesQuery` by both `workspaceType` and the corresponding key (`ownerUid` for individual, `hospitalId` for hospital workspace) in both `onSnapshot` and `getDocs` listeners.
+- **Dashboard Census & Assigned Cases Reliability (`src/components/DashboardView.tsx`, `src/App.tsx`)**:
+  - Updated `myCurrentDutyCases` in `DashboardView.tsx` so clinicians without an active duty session still see all operationally active cases they own, created, or are assigned to.
+  - Introduced `latestCasesRef` in `App.tsx` ensuring rapid sequential saves recognize existing cases immediately without re-allocating case IDs.
+
+### [2026-10-13] — ErMate: Hospital Case Access Key Restoration & Case Save Error Transparency (CASE-SAVE-FIX)
+- **Hospital Workspace Team Access Key Resolution (`src/App.tsx`)**:
+  - In `handleSaveCase`, ensured hospital-scoped cases are assigned `hospital: workspaceMetadata.hospitalId || selfMembership?.hospitalId || updatedCase.hospital || ""` instead of falling back to empty string or display names, ensuring saved cases match the team query listener and remain visible on the dashboard.
+- **Fail-Safe Case Save Error Propagation (`src/App.tsx`)**:
+  - Replaced silent `return;` in the "Duty Session Required" takeover check with `throw new Error("Not saved: start your current duty before taking handover.")`, preventing false success indications on unsaved handovers.
+  - Replaced silent `return;` in `reserveNextDisplaySequence` catch block with `throw new Error("Not saved: could not reserve a case ID.")`, ensuring UI displays honest NOT SAVED state to clinicians.
+
+### [2026-10-13] — ErMate: API Authentication, Admin RBAC & Client Hardening (API-SECURITY)
+- **Server API Route Authentication & Admin Gating (`server.ts`, `server/routes/extraction.routes.ts`)**:
+  - Enforced `requireAuth` across all operational clinical and AI routes (/api/interpret-abg, /api/lens-report, /api/voice-dictation, /api/document-scan, /api/em-reference, /api/ai-discharge, /api/mlc-extract, /api/learning/feedback, /api/learning/rules, /api/parse-rota, /api/scan-mnemonic, /api/sarvam-asr, /api/sarvam/transcribe, /api/sarvam/batch-transcribe, /api/voice/transcribe, /api/antigravity, /api/voice/extract-clinical, /api/discharge-summary, /api/discharge-summary/generate, /api/differentials).
+  - Replaced unverified browser-side `requireHOD` on `/api/mortality-audit/generate` and `/api/mortality-audit/download` with server-side `requireAuth`.
+  - Enforced strict platform admin gating via `requirePlatformAdmin` for global AI self-learning rule mutations (`/api/learning/extract-rules`, `/api/learning/rules/review`, `/api/learning/rules/create`, `/api/learning/rules/delete`).
+- **Client Authenticated Fetch Propagation**:
+  - Replaced native `fetch` with `authenticatedFetch` sending Firebase Bearer tokens across `QuickDischargeIntake.tsx`, `CaseSheetView.tsx`, `DischargeSummaryView.tsx`, `MortalityAuditModal.tsx`, `ErGuideView.tsx`, `MlcCertificatesView.tsx`, `PocketMirrorView.tsx`, `HandoverView.tsx`, `App.tsx`, `VoiceRecorder.tsx`, `WorkspaceRotaSyncModal.tsx`, and `learningClient.ts`.
+- **UI Hardening & Safe Printing**:
+  - Implemented `printElementById` (`src/utils/printElement.ts`) in hidden iframe for MLC Certificates, eliminating full DOM replacement and `window.location.reload()`.
+  - Safeguarded Trends tab with coming soon notice and disabled untested vitals history tracker.
+  - Added explicit DEMO ONLY banner to simulated eye camera in `PocketMirrorView.tsx`.
+  - Added null-safe checks for `dateOpened` and `triageCategory` in `AnalyticsView.tsx`.
+  - Anchored `HandoverView` mounting key to `auth.currentUser?.uid` in `App.tsx` ensuring clean remount on auth state change.
+
 ### [2026-10-12] — ErMate: Hospital Directory & Location Metadata (HOSPITAL-DIRECTORY)
 - **Hospital Directory Utility (`src/utils/hospitalDirectory.ts`, `firestore.rules`)**:
   - Implemented hospital directory search and auto-entry (`searchHospitalDirectory`, `ensureHospitalDirectoryEntry`).

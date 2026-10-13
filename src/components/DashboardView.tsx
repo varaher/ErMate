@@ -189,15 +189,19 @@ export default function DashboardView({
     activeDutySession && isActiveDutySessionNow(activeDutySession)
   );
 
-  // HOSPITAL — MY ASSIGNED CASES (Patch H1)
-  // Shows ONLY operationally active cases with currentAssigneeEmail matching doctor and currentAssignmentDutySessionId matching valid active duty session.
-  // Strictly zero fallback to doctorEmail === profile.email.
+  // Without an active duty session the doctor still sees every active case they
+  // own, created or are assigned to — a saved case never "disappears" because no
+  // duty session was started.
   const myCurrentDutyCases = validActiveDutySession && activeDutySession
     ? currentListDepartmentCases.filter(c =>
         c.currentAssigneeEmail?.toLowerCase().trim() === userEmailLower &&
         c.currentAssignmentDutySessionId === activeDutySession.id
       )
-    : [];
+    : currentListDepartmentCases.filter(c => Boolean(
+        (c.currentAssigneeEmail && c.currentAssigneeEmail.toLowerCase().trim() === userEmailLower) ||
+        (c.doctorEmail && c.doctorEmail.toLowerCase().trim() === userEmailLower) ||
+        (auth.currentUser?.uid && ((c as any).createdByUid === auth.currentUser.uid || c.ownerUid === auth.currentUser.uid))
+      ));
 
   // INDEPENDENT HOME = CURRENT LOCAL DAY (Patch H1A)
   // For individual/independent workspace, Home personal cases must be:

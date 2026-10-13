@@ -20,6 +20,7 @@ import { triggerPrintWithTip } from "./utils/printWithTip";
 import { getNormalizedRole } from "./utils/roleUtils";
 import { isClinicalProfileComplete, canPersistClinicalData } from "./utils/profileCompleteness";
 import OnboardingProfileView from "./components/OnboardingProfileView";
+import { authenticatedFetch } from "./services/authenticatedFetch";
 
 import DashboardView from "./components/DashboardView";
 const CasesListView = React.lazy(() => import("./components/CasesListView"));
@@ -1016,6 +1017,11 @@ useEffect(() => {
   }>>([]);
 
   const [cases, setCases] = useState<ClinicalCase[]>([]);
+  // Always-current view of cases for handleSaveCase. Autosave can call an older copy of
+  // handleSaveCase (from an earlier render); reading this ref keeps a just-saved new case
+  // recognised as EXISTING, so it never gets a second case number.
+  const latestCasesRef = useRef<ClinicalCase[]>([]);
+  latestCasesRef.current = cases;
   const [savedBanner, setSavedBanner] = useState<{
     visible: boolean;
     patientName: string;
@@ -1564,11 +1570,17 @@ useEffect(() => {
     // Stream Cases:
     // Hospital team members stream hospital cases.
     // Individual users stream strictly their own personal cases (where ownerUid == currentUser.uid).
-    const casesQuery = (hasActiveHospitalTeam && userHospital)
-      ? query(collection(db, "cases"), where("hospital", "==", userHospital))
-      : (auth.currentUser
-          ? query(collection(db, "cases"), where("ownerUid", "==", auth.currentUser.uid))
-          : (profile.email ? query(collection(db, "cases"), where("doctorEmail", "==", profile.email)) : collection(db, "cases")));
+    // Firestore only allows a query when the rules can be proven from the query's
+    // own constraints. canAccessCase() branches on workspaceType, so every case query
+    // must constrain workspaceType + the owning key (ownerUid / hospitalId).
+    const teamHospitalId = hasActiveHospitalTeam ? String(selfMembership?.hospitalId || "").trim() : "";
+    const casesQuery = (hasActiveHospitalTeam && teamHospitalId)
+      ? query(collection(db, "cases"), where("workspaceType", "==", "hospital"), where("hospitalId", "==", teamHospitalId))
+      : (hasActiveHospitalTeam && userHospital)
+        ? query(collection(db, "cases"), where("hospital", "==", userHospital))
+        : (auth.currentUser
+            ? query(collection(db, "cases"), where("workspaceType", "==", "individual"), where("ownerUid", "==", auth.currentUser.uid))
+            : (profile.email ? query(collection(db, "cases"), where("doctorEmail", "==", profile.email)) : collection(db, "cases")));
 
     listenerDiagnostics.trackSubscribe("cases");
     const unsubscribeCases = onSnapshot(casesQuery, async (snapshot) => {
@@ -1598,6 +1610,7 @@ useEffect(() => {
           (currentEmail && c.doctorEmail && c.doctorEmail.trim().toLowerCase() === currentEmail)
         );
         if (isMyCase) return true;
+        if (teamHospitalId && c.hospitalId === teamHospitalId) return true;
 
         const caseHospitalLower = (c.hospital || "").trim().toLowerCase();
         return userHospitalLower ? caseHospitalLower === userHospitalLower : true;
@@ -2144,7 +2157,7 @@ useEffect(() => {
     setCustomReferenceResult(null);
 
     try {
-      const response = await fetch("/api/em-reference", {
+      const response = await authenticatedFetch("/api/em-reference", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ query: queryText })
@@ -2677,8 +2690,19 @@ const handleDeleteAllCases = async () => {
   };
 
   // Save changes inside Case Sheet View
-  const handleSaveCase = async (updatedCase: ClinicalCase) => {
-    const previousCase = cases.find(c => c.id === updatedCase.id);
+  /**
+   * Save contract (Batch 1):
+   *  - resolves "persisted"  ONLY after the Firestore write of cases/{id} succeeded
+   *  - resolves "trial_only" when the case is kept on this device only (save gate)
+   *  - THROWS on any failure (denied, ID reservation, Firestore error)
+   * options.autosave: background autosave — no trial modal, no logbook sync.
+   */
+  const handleSaveCase = async (
+    updatedCase: ClinicalCase,
+    options?: { autosave?: boolean }
+  ): Promise<"persisted" | "trial_only"> => {
+    const isAutosave = Boolean(options?.autosave);
+    const previousCase = latestCasesRef.current.find(c => c.id === updatedCase.id);
     const isExistingPersistentCase = Boolean(previousCase && !previousCase.id.startsWith("trial-"));
 
     const gate = canPersistClinicalData({
@@ -2692,7 +2716,7 @@ const handleDeleteAllCases = async () => {
     if (!gate.canSave) {
       if (!assignActiveTrialCase(updatedCase)) {
         triggerNotification("Not Saved", "This trial case belongs to a different account.", "warning");
-        return;
+        throw new Error("Not saved: this trial case belongs to a different account.");
       }
       setCases(prev => {
         const idx = prev.findIndex(c => c.id === updatedCase.id);
@@ -2703,8 +2727,8 @@ const handleDeleteAllCases = async () => {
         }
         return [updatedCase, ...prev];
       });
-      setShowTrialSaveModal(true);
-      return;
+      if (!isAutosave) setShowTrialSaveModal(true);
+      return "trial_only";
     }
     
     // Phase 2: If this is a brand new case (like from Quick Discharge), resolve workspace securely.
@@ -2795,7 +2819,8 @@ const handleDeleteAllCases = async () => {
 
     if (previousCase && isHospitalScopedCase && isClinicianTakeover && !activeDutySessionValid) {
       triggerNotification("Duty Session Required", "Start your current duty before taking handover.", "warning");
-      return;
+      // Throw so the case sheet shows NOT SAVED instead of a false success.
+      throw new Error("Not saved: start your current duty before taking handover.");
     }
 
     let resolvedCurrentAssignment: Partial<ClinicalCase> = {};
@@ -2864,7 +2889,7 @@ const handleDeleteAllCases = async () => {
       } catch (err: any) {
         console.error("[handleSaveCase] Failed to reserve displayId sequence:", err);
         triggerNotification("Registration Error", err?.message || "Could not reserve daily case ID.", "warning");
-        return;
+        throw new Error("Not saved: could not reserve a case ID.");
       }
     }
 
@@ -2911,8 +2936,11 @@ const handleDeleteAllCases = async () => {
       ownerUid: workspaceMetadata.ownerUid,
       // hospitalId is REQUIRED by firestore.rules for hospital cases and must be null for individual cases.
       hospitalId: workspaceMetadata.hospitalId,
-      // `hospital` stays the team access/query key; never filled with free-text workplace for individual cases.
-      hospital: updatedCase.hospital || (workspaceMetadata.workspaceType === "hospital" ? profile.hospital : ""),
+      // `hospital` is the team access/query key. Hospital cases MUST carry the verified
+      // team id (never the hospital's display name), or the case vanishes from the list.
+      hospital: workspaceMetadata.workspaceType === "hospital"
+        ? (workspaceMetadata.hospitalId || selfMembership?.hospitalId || updatedCase.hospital || "")
+        : (updatedCase.hospital || ""),
       hospitalLabel: updatedCase.hospitalLabel || (profile.workplaceName || profile.hospitalLabel || profile.hospital || ""),
       workplaceName: updatedCase.workplaceName || (profile.workplaceName || profile.hospitalLabel || profile.hospital || ""),
       doctorEmail: updatedCase.doctorEmail || profile.email,
@@ -2930,7 +2958,7 @@ const handleDeleteAllCases = async () => {
       
       // Determine changed fields across all patient sections (Demographics, Vitals, Primary Survey, SAMPLE history, Treatments, Labs, Differentials, Notes, Disposition, Pediatric)
 
-      const previousCase = cases.find(c => c.id === updatedCase.id);
+      const previousCase = latestCasesRef.current.find(c => c.id === updatedCase.id);
       const changedKeys: string[] = [];
       const prevVals: any = {};
       const newValData: any = {};
@@ -3010,7 +3038,7 @@ const handleDeleteAllCases = async () => {
       // Sync logbook for UID attribution.
       // Runs in the BACKGROUND (not awaited): the case is already saved above, and a
       // cold server start here used to delay opening a new manual case sheet by seconds.
-      void (async () => {
+      if (!isAutosave) void (async () => {
       try {
         const idToken = await auth.currentUser?.getIdToken();
         if (idToken) {
@@ -3033,12 +3061,21 @@ const handleDeleteAllCases = async () => {
       handleFirestoreError(err, OperationType.WRITE, "cases");
       throw err;
     }
+    // Update the ref immediately (before React re-renders) so the next save of this
+    // case — even one already queued — sees it as existing and keeps its case number.
+    {
+      const prevList = latestCasesRef.current;
+      latestCasesRef.current = prevList.some(c => c.id === caseToSave.id)
+        ? prevList.map(c => c.id === caseToSave.id ? caseToSave : c)
+        : [caseToSave, ...prevList];
+    }
     setCases(prev => {
       const exists = prev.some(c => c.id === caseToSave.id);
       if (exists) return prev.map(c => c.id === caseToSave.id ? caseToSave : c);
       return [caseToSave, ...prev];
     });
-    checkConsentOnCaseSaved();
+    if (!isAutosave) checkConsentOnCaseSaved();
+    return "persisted";
   };
 
   /**
@@ -6592,11 +6629,14 @@ const handleSignOut = async () => {
           ? String(selfMembership.hospitalId || selfMembership.hospital || "").trim()
           : (isPlatformAdmin ? (profile?.hospital || "").trim() : "");
         const userHospitalLower = userHospital.trim().toLowerCase();
-        const casesQuery = (hasActiveHospitalTeam && userHospital)
-          ? query(collection(db, "cases"), where("hospital", "==", userHospital))
-          : (auth.currentUser
-              ? query(collection(db, "cases"), where("ownerUid", "==", auth.currentUser.uid))
-              : (profile?.email ? query(collection(db, "cases"), where("doctorEmail", "==", profile.email)) : collection(db, "cases")));
+        const teamHospitalId = hasActiveHospitalTeam ? String(selfMembership?.hospitalId || "").trim() : "";
+        const casesQuery = (hasActiveHospitalTeam && teamHospitalId)
+          ? query(collection(db, "cases"), where("workspaceType", "==", "hospital"), where("hospitalId", "==", teamHospitalId))
+          : (hasActiveHospitalTeam && userHospital)
+            ? query(collection(db, "cases"), where("hospital", "==", userHospital))
+            : (auth.currentUser
+                ? query(collection(db, "cases"), where("workspaceType", "==", "individual"), where("ownerUid", "==", auth.currentUser.uid))
+                : (profile?.email ? query(collection(db, "cases"), where("doctorEmail", "==", profile.email)) : collection(db, "cases")));
         const snapshot = await getDocs(casesQuery);
         const loadedCases: ClinicalCase[] = [];
         snapshot.forEach((d) => {
@@ -6619,6 +6659,7 @@ const handleSignOut = async () => {
             (currentEmail && c.doctorEmail && c.doctorEmail.trim().toLowerCase() === currentEmail)
           );
           if (isMyCase) return true;
+          if (teamHospitalId && c.hospitalId === teamHospitalId) return true;
           const caseHospitalLower = (c.hospital || "").trim().toLowerCase();
           return userHospitalLower ? caseHospitalLower === userHospitalLower : true;
         });
@@ -7249,6 +7290,7 @@ const handleSignOut = async () => {
 
               {activeTab === "handover" && (
                 <HandoverView
+                  key={auth.currentUser?.uid || "signed-out"}
                   cases={cases}
                   profile={profile}
                   handovers={handovers}

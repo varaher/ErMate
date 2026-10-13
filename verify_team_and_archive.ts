@@ -310,10 +310,17 @@ const now = new Date("2026-10-05T12:00:00.000Z");
     savedTime: created25hAgo
   });
 
+  // Batch 1 (2026-10-13): an active patient with documented content is NEVER archived by
+  // time alone. Only empty shells are.
   const isEligible = isCaseEligibleFor24hArchive(caseOldIncomplete, now);
+  const emptyShell: any = createMockCase({ createdAt: created25hAgo, savedTime: created25hAgo });
+  emptyShell.patient = { name: "", age: null, presentingComplaint: "", dateOpened: emptyShell.patient.dateOpened };
+  emptyShell.vitals = {}; emptyShell.sampleHistory = {}; emptyShell.primaryAssessment = {};
+  emptyShell.treatments = []; emptyShell.investigations = []; emptyShell.notes = []; emptyShell.progressNotes = "";
+  emptyShell.provisionalPrimaryDiagnosis = "";
   assert(
-    isEligible === true,
-    "11. eligible incomplete case at >=24h is eligible for 24-hour soft archive"
+    isEligible === false && isCaseEligibleFor24hArchive(emptyShell, now) === true,
+    "11. at >=24h: active case with content stays Current; only an empty shell is eligible for soft archive"
   );
 }
 

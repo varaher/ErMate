@@ -95,12 +95,45 @@ export function isCaseEligibleFor24hArchive(c: ClinicalCase, now = new Date()): 
   const pending = getCasePendingStatus(c);
   if (!pending.isPending) return false;
 
+  // Rule 4b (Batch 1): an operationally active patient must never leave the Current
+  // List because of time. Only EMPTY shells (no clinical content was ever saved, e.g.
+  // an abandoned "new case" tap) may be auto-archived.
+  if (hasAnyClinicalContent(c)) return false;
+
   // Rule 5: Must be >= 24 hours old
   const createdDate = getCaseCreationTimestamp(c);
   if (!createdDate) return false;
 
   const ageMs = now.getTime() - createdDate.getTime();
   return ageMs >= INCOMPLETE_CASE_ARCHIVE_MS;
+}
+
+/**
+ * True when any clinical information has been documented on the case.
+ */
+export function hasAnyClinicalContent(c: ClinicalCase): boolean {
+  if (!c) return false;
+  const filled = (v: unknown) => typeof v === "string" ? v.trim().length > 0 : v !== null && v !== undefined && v !== false;
+  const p: any = c.patient || {};
+  if (filled(p.presentingComplaint) || filled(p.name) || filled(p.age)) return true;
+  const v: any = c.vitals || {};
+  if (["hr", "bp", "rr", "spo2", "temp", "gcs", "grbs"].some(k => filled(v[k]))) return true;
+  const sh: any = c.sampleHistory || {};
+  if (Object.values(sh).some(filled)) return true;
+  if ((c.treatments || []).length > 0 || (c.investigations || []).length > 0) return true;
+  if ((c.notes || []).length > 0 || filled(c.progressNotes)) return true;
+  if (filled(c.provisionalPrimaryDiagnosis) || filled((c as any).bedNo)) return true;
+  // Primary survey: look at recorded VALUES only (field names never count as content).
+  const hasText = (val: unknown, depth = 0): boolean => {
+    if (depth > 6 || val === null || val === undefined) return false;
+    if (typeof val === "string") return val.trim().length > 0;
+    if (typeof val === "number" || val === true) return true;
+    if (Array.isArray(val)) return val.some(x => hasText(x, depth + 1));
+    if (typeof val === "object") return Object.values(val as Record<string, unknown>).some(x => hasText(x, depth + 1));
+    return false;
+  };
+  if (hasText(c.primaryAssessment)) return true;
+  return false;
 }
 
 /**

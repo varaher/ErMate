@@ -8,6 +8,7 @@ import { UserProfile, ClinicalCase } from "../types";
 import { BoundChatModal } from "./BoundChatModal";
 import VoiceRecorder from "./shared/VoiceRecorder";
 import { displayGcs, displaySpo2, displayTemperature, displayGrbs } from "../utils/clinicalFormatter";
+import { authenticatedFetch } from "../services/authenticatedFetch";
 
 interface MortalityAuditModalProps {
   isOpen: boolean;
@@ -97,7 +98,7 @@ Clinical Progress Notes: ${foundCase.progressNotes || "Deteriorated despite CPR 
     setErrorMsg(null);
 
     try {
-      const resp = await fetch("/api/mortality-audit/generate", {
+      const resp = await authenticatedFetch("/api/mortality-audit/generate", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -136,7 +137,7 @@ Clinical Progress Notes: ${foundCase.progressNotes || "Deteriorated despite CPR 
     setIsDownloading(true);
 
     try {
-      const resp = await fetch("/api/mortality-audit/download", {
+      const resp = await authenticatedFetch("/api/mortality-audit/download", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

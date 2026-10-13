@@ -15,6 +15,16 @@ import { db } from "./src/db/index.ts";
 import { cases, contributions, handovers, hospitalSubscriptions, teamMembers, users } from "./src/db/schema.ts";
 import { eq, desc } from "drizzle-orm";
 import { requireAuth, AuthRequest } from "./src/middleware/auth.ts";
+
+// Learned AI rules change the instructions given to the AI for EVERY user,
+// so only the verified platform admin may create, approve or delete them.
+function requirePlatformAdmin(req: AuthRequest, res: express.Response, next: express.NextFunction) {
+  const email = String(req.user?.email || "").trim().toLowerCase();
+  if (email !== "varahgrp@gmail.com") {
+    return res.status(403).json({ success: false, error: "Only the ErMate platform admin can change AI learning rules." });
+  }
+  return next();
+}
 import { extractClinicalData, 
   extractHandoverData, 
   generateDischargeSummary, 
@@ -38,7 +48,6 @@ import teamRouter from "./server/routes/team.routes.js";
 import mateRouter from "./server/routes/mate.routes.ts";
 
 import { generateMortalityAudit, generateMortalityAuditDocx } from "./server/mortalityAudit.ts";
-import { requireHOD } from "./middleware/requireHOD.ts";
 import { 
   recordFeedbackCorrection, 
   extractPatternsFromUnprocessedFeedback, 
@@ -551,7 +560,7 @@ async function performTranscription(file: Express.Multer.File, languageCode: str
 // 4a. Legacy endpoint proxy (Layer 3 compliant)
 
 
-app.post("/api/sarvam-asr", upload.single("file"), async (req, res) => {
+app.post("/api/sarvam-asr", requireAuth, upload.single("file"), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ success: false, error: "No audio file provided." });
   }
@@ -573,7 +582,7 @@ app.post("/api/sarvam-asr", upload.single("file"), async (req, res) => {
 
 
 // Requested /api/sarvam/transcribe endpoint
-app.post("/api/sarvam/transcribe", upload.single("file"), async (req, res) => {
+app.post("/api/sarvam/transcribe", requireAuth, upload.single("file"), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ success: false, error: "No audio file provided." });
   }
@@ -595,7 +604,7 @@ app.post("/api/sarvam/transcribe", upload.single("file"), async (req, res) => {
 
 
 // 4c. True Batch STT Fallback
-app.post("/api/sarvam/batch-transcribe", upload.single("file"), async (req, res) => {
+app.post("/api/sarvam/batch-transcribe", requireAuth, upload.single("file"), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ success: false, error: "No audio file provided." });
   }
@@ -614,7 +623,7 @@ app.post("/api/sarvam/batch-transcribe", upload.single("file"), async (req, res)
 
 
 // 4b. Upgraded Unified Transcription Endpoint (Layer 3)
-app.post("/api/voice/transcribe", upload.single("file"), async (req, res) => {
+app.post("/api/voice/transcribe", requireAuth, upload.single("file"), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ success: false, error: "No audio file provided." });
   }
@@ -706,7 +715,7 @@ Return ONLY a JSON object:
 // 1.5. Lens & Eye / Airway Bedside AI Diagnostic Report Generator
 
 // ABG Interpretation
-app.post("/api/interpret-abg", async (req, res) => {
+app.post("/api/interpret-abg", requireAuth, async (req: AuthRequest, res) => {
   const { abgValues, patientContext } = req.body;
   try {
     const interpretation = await interpretABG(abgValues, patientContext);
@@ -780,7 +789,7 @@ app.post("/api/clinical-decision-support", requireAuth, async (req: AuthRequest,
   }
 });
 
-app.post("/api/lens-report", async (req, res) => {
+app.post("/api/lens-report", requireAuth, async (req: AuthRequest, res) => {
   const { pupilSize, activeFilter, activeOverlay, mallampatiClass, clinicalObservations } = req.body;
 
   try {
@@ -870,7 +879,7 @@ app.post("/api/lens-report", async (req, res) => {
 
 
 // 2. AI Voice Dictation Parser (GPT-4o-mini Primary → Claude Haiku Fallback. NOT Gemini.)
-app.post("/api/voice-dictation", async (req, res) => {
+app.post("/api/voice-dictation", requireAuth, async (req: AuthRequest, res) => {
   const { speechText, aiCredits } = req.body;
 
   if (!speechText) {
@@ -987,7 +996,7 @@ NEVER GENERATE:
 });
 
 // 3. AI Document Scanner (OCR Extraction)
-app.post("/api/document-scan", async (req, res) => {
+app.post("/api/document-scan", requireAuth, async (req: AuthRequest, res) => {
   const { imageText } = req.body;
 
   // FAB-25 FIX (Sept 2026): this route previously fabricated a complete
@@ -1056,7 +1065,7 @@ app.post("/api/document-scan", async (req, res) => {
 // matrix), Clinical Q&A / Reference Chat is Claude 3.5 Sonnet ONLY, no
 // fallback, never Gemini. Moved to callClaudeSonnetOnly, matching every
 // other Clinical Q&A route in this file.
-app.post("/api/em-reference", async (req, res) => {
+app.post("/api/em-reference", requireAuth, async (req: AuthRequest, res) => {
   const { query } = req.body;
 
   if (!query) {
@@ -1102,7 +1111,7 @@ Return ONLY a valid JSON object matching this exact shape:
 });
 
 // 5. AI Discharge Summary Narrative Generator
-app.post("/api/ai-discharge", async (req, res) => {
+app.post("/api/ai-discharge", requireAuth, async (req: AuthRequest, res) => {
   try {
   const { caseData, profileState, hospitalName } = req.body;
 
@@ -1755,7 +1764,7 @@ app.post("/api/handover-chat", requireAuth, async (req: AuthRequest, res) => {
 // this app is image/OCR/vision — never text-based clinical or legal
 // extraction. Moved to Claude Sonnet, single-model, honest failure
 // instead of a silent empty/wrong extraction on a medico-legal document.
-app.post("/api/mlc-extract", async (req, res) => {
+app.post("/api/mlc-extract", requireAuth, async (req: AuthRequest, res) => {
   const { text, caseData } = req.body;
   if (!text) return res.status(400).json({ error: "No text provided" });
 
@@ -2074,7 +2083,7 @@ Return valid JSON with:
 // ─────────────────────────────────────────
 
 // 1. Capture Clinician Feedback Correction
-app.post("/api/learning/feedback", async (req, res) => {
+app.post("/api/learning/feedback", requireAuth, async (req: AuthRequest, res) => {
   try {
     const { field, ai_output, corrected_output, source_context, corrected_by, case_type } = req.body;
     if (!field || !ai_output || !corrected_output) {
@@ -2102,7 +2111,7 @@ app.post("/api/learning/feedback", async (req, res) => {
 });
 
 // 2. Fetch Rules & Raw Corrections List (for Admin Control Panel)
-app.get("/api/learning/rules", async (req, res) => {
+app.get("/api/learning/rules", requireAuth, async (req: AuthRequest, res) => {
   try {
     const rules = getAllLearnedRules();
     const corrections = getAllFeedbackCorrections();
@@ -2113,7 +2122,7 @@ app.get("/api/learning/rules", async (req, res) => {
 });
 
 // 3. Extract Generalizable Patterns from Pending Corrections (Offline Pass)
-app.post("/api/learning/extract-rules", async (req, res) => {
+app.post("/api/learning/extract-rules", requireAuth, requirePlatformAdmin, async (req: AuthRequest, res) => {
   try {
     const result = await extractPatternsFromUnprocessedFeedback(process.env.GEMINI_API_KEY);
     return res.json({
@@ -2129,7 +2138,7 @@ app.post("/api/learning/extract-rules", async (req, res) => {
 });
 
 // 4. Review Queue Approval / Rejection / Toggle
-app.post("/api/learning/rules/review", async (req, res) => {
+app.post("/api/learning/rules/review", requireAuth, requirePlatformAdmin, async (req: AuthRequest, res) => {
   try {
     const { ruleId, approved, active, approvedBy } = req.body;
     if (!ruleId) {
@@ -2148,7 +2157,7 @@ app.post("/api/learning/rules/review", async (req, res) => {
 });
 
 // 5. Create Manual Clinician Rule
-app.post("/api/learning/rules/create", async (req, res) => {
+app.post("/api/learning/rules/create", requireAuth, requirePlatformAdmin, async (req: AuthRequest, res) => {
   try {
     const { ruleText, triggerKeywords, caseType, severity, createdBy } = req.body;
     if (!ruleText?.trim()) {
@@ -2170,7 +2179,7 @@ app.post("/api/learning/rules/create", async (req, res) => {
 });
 
 // 6. Delete Rule
-app.post("/api/learning/rules/delete", async (req, res) => {
+app.post("/api/learning/rules/delete", requireAuth, requirePlatformAdmin, async (req: AuthRequest, res) => {
   try {
     const { ruleId } = req.body;
     if (!ruleId) return res.status(400).json({ success: false, error: "ruleId required" });
@@ -2187,7 +2196,7 @@ app.post("/api/learning/rules/delete", async (req, res) => {
 // ─────────────────────────────────────────
 app.post(
   "/api/mortality-audit/generate",
-  requireHOD,
+  requireAuth,
   async (req: express.Request, res: express.Response) => {
     const { rawText, caseId, patientInitials, hospitalName } = req.body;
 
@@ -2220,7 +2229,7 @@ app.post(
 // Download as Word doc (.docx)
 app.post(
   "/api/mortality-audit/download",
-  requireHOD,
+  requireAuth,
   async (req: express.Request, res: express.Response) => {
     const { audit } = req.body;
 
@@ -3258,7 +3267,7 @@ app.post("/api/handover/compile-sheet", requireAuth, async (req: AuthRequest, re
 // ==========================================
 // ROTA EXTRATION FROM SPREADSHEET
 // ==========================================
-app.post("/api/parse-rota", async (req, res) => {
+app.post("/api/parse-rota", requireAuth, async (req: AuthRequest, res) => {
   try {
     const { csvData, monthYear } = req.body;
     if (!csvData) return res.status(400).json({ error: "Missing spreadsheet data" });
@@ -3309,7 +3318,7 @@ app.post("/api/parse-rota", async (req, res) => {
   }
 });
 
-app.post("/api/scan-mnemonic", async (req, res) => {
+app.post("/api/scan-mnemonic", requireAuth, async (req: AuthRequest, res) => {
   const { image, mimeType } = req.body;
 
   if (!image) {
@@ -3730,7 +3739,7 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 // ══════════════════════════════════════════════════════════════════
 // Antigravity Interactions API Route
 // ══════════════════════════════════════════════════════════════════
-app.post("/api/antigravity", express.json(), async (req, res) => {
+app.post("/api/antigravity", requireAuth, express.json(), async (req: AuthRequest, res) => {
   try {
     const { input, previous_interaction_id } = req.body;
     

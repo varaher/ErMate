@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { 
   Camera, ChevronLeft, Eye, Sun, Zap, RotateCw, Pause, Play, ShieldAlert, Check, RefreshCw, Sparkles, Sliders, AlertCircle, FileText
 } from "lucide-react";
+import { authenticatedFetch } from "../services/authenticatedFetch";
 
 interface PocketMirrorViewProps {
   onBack: () => void;
@@ -79,7 +80,7 @@ export default function PocketMirrorView({ onBack }: PocketMirrorViewProps) {
     };
 
     try {
-      const response = await fetch("/api/lens-report", {
+      const response = await authenticatedFetch("/api/lens-report", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -397,6 +398,9 @@ export default function PocketMirrorView({ onBack }: PocketMirrorViewProps) {
                   <div className="space-y-1 bg-slate-950/80 border border-slate-800 px-3.5 py-1.5 rounded-xl">
                     <span className="text-[10px] text-emerald-400 font-extrabold uppercase tracking-widest block font-mono">
                       Simulated Eye Diagnostic Cam
+                    </span>
+                    <span className="text-[10px] text-amber-300 font-extrabold uppercase block">
+                      DEMO ONLY — not a real patient. Do not use for diagnosis.
                     </span>
                     <span className="text-[9px] text-slate-450 block">
                       Active Pupil Size: <strong className="text-white">{selectedPupilSize.toFixed(1)} mm</strong>

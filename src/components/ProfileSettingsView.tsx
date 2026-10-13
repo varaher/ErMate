@@ -2295,7 +2295,7 @@ const startRealCheckout = async (planKey: string) => {
         <div className="space-y-4 font-mono text-left">
           <div className="p-4 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-2xl space-y-1">
             <h4 className="text-xs font-black uppercase text-amber-700 dark:text-amber-400">ErMate does not send clinical alerts</h4>
-            <p className="text-xs text-slate-600 dark:text-slate-300">ErMate is a documentation companion. It does not monitor patients, triage or vitals. Rely on your department's monitors and alarm systems.</p>
+            <p className="text-xs text-slate-600 dark:text-slate-300">ErMate is a documentation companion. It does not monitor patients, triage or vitals. Rely on your department's monitors and alarm systems. MATE reassessment reminders (e.g. "remind me in 10 min to reassess Bed 4") are coming soon.</p>
           </div>
         </div>
       );

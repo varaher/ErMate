@@ -20,7 +20,8 @@ const router = Router();
 // Called after Sarvam transcribes the audio
 router.post(
   '/api/voice/extract-clinical',
-  async (req: Request, res: Response) => {
+  requireAuth,
+  async (req: AuthRequest, res: Response) => {
     const transcript = req.body.transcript || req.body.dictation;
 
     if (!transcript || typeof transcript !== 'string' || !transcript.trim()) {
@@ -167,7 +168,8 @@ router.post(
 // ── Route 3: Generate discharge summary from registered case ─────
 router.post(
   '/api/discharge-summary',
-  async (req: Request, res: Response) => {
+  requireAuth,
+  async (req: AuthRequest, res: Response) => {
     const { caseData } = req.body;
 
     if (!caseData) {
@@ -190,7 +192,8 @@ router.post(
 // ── Route 3b: Direct EMR Paste → Generate structured Discharge Summary ──
 router.post(
   '/api/discharge-summary/generate',
-  async (req: Request, res: Response) => {
+  requireAuth,
+  async (req: AuthRequest, res: Response) => {
     const { rawText } = req.body;
 
     if (!rawText || typeof rawText !== 'string' || !rawText.trim()) {
@@ -215,7 +218,8 @@ router.post(
 // ── Route 4: Generate differentials ──────────────────────────
 router.post(
   '/api/differentials',
-  async (req: Request, res: Response) => {
+  requireAuth,
+  async (req: AuthRequest, res: Response) => {
     const { caseData } = req.body;
 
     if (!caseData) {

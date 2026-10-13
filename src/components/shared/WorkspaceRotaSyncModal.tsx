@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { X, FileSpreadsheet, Loader2, CalendarCheck, AlertCircle } from "lucide-react";
 import { authenticateGoogleWorkspace, getRecentSpreadsheets, getSpreadsheetData } from "../../services/googleWorkspace";
 import { createGoogleCalendarEvent } from "../../services/googleCalendar";
+import { authenticatedFetch } from "../../services/authenticatedFetch";
 
 interface Props {
   onClose: () => void;
@@ -51,7 +52,7 @@ export function WorkspaceRotaSyncModal({ onClose, onSuccess, teamMembers }: Prop
       const csvData = rows.map((r: any[]) => r.join(",")).join("\n");
 
       // Send to AI for parsing
-      const parseRes = await fetch("/api/parse-rota", {
+      const parseRes = await authenticatedFetch("/api/parse-rota", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ csvData, monthYear: new Date().toLocaleDateString() })

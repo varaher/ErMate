@@ -43,6 +43,7 @@ import { formatTemperature, formatDoctorName, deduplicateMeds, validateMedRoute,
 import { isTriageCategoryPending } from "./NewPatientEntryMenu";
 import { hasCaseScribeHistory } from "../services/scribeChatStorage";
 import { PediatricVitalReference } from "./PediatricVitalReference";
+import { authenticatedFetch } from "../services/authenticatedFetch";
 import { isPediatricPatient, interpretPediatricVital, getPediatricVitalRange } from "../utils/pediatricRanges";
 import { ProcedureNote } from "../types/procedureNotes";
 import { ProcedureDefinition, PROCEDURE_DEFINITIONS } from "../data/procedureDefinitions";
@@ -257,7 +258,9 @@ interface CaseSheetViewProps {
   onSelectCase?: (caseId: string) => void;
   onViewPrintSheet?: (caseId: string, unsavedCase?: ClinicalCase) => void;
   onBack: () => void;
-  onSaveCase: (updatedCase: ClinicalCase) => Promise<void> | void;
+  // Resolves "persisted" only after Firestore confirmed the write, "trial_only" when kept
+  // on this device only; throws on failure. (Older callers may still return void.)
+  onSaveCase: (updatedCase: ClinicalCase, options?: { autosave?: boolean }) => Promise<"persisted" | "trial_only" | void> | void;
   onNavigateToDischarge: (caseId: string) => void;
   onStartNewTriage?: () => void;
   profile?: UserProfile;
@@ -568,6 +571,117 @@ export default function CaseSheetView({
     return isCaseSheetDirty(currentCase, lastSavedCaseRef.current);
   }, [isPreview, isTreatmentDirty, currentCase]);
 
+  // ── Autosave (Batch 1) ──────────────────────────────────────────────
+  // Every change is persisted ~2 s after the doctor stops typing, on tab switch,
+  // and when the case sheet closes. "Saved" is shown only after Firestore confirms.
+  // Pending treatment/infusion changes are NEVER auto-committed (they keep their
+  // explicit "Save Changes" confirmation); autosave sends the last saved ones.
+  type PersistStatus = "idle" | "pending" | "saving" | "saved" | "trial" | "offline" | "error";
+  const [persistStatus, setPersistStatus] = useState<PersistStatus>("idle");
+  const currentCaseRef = useRef<ClinicalCase>(initialCase);
+  currentCaseRef.current = currentCase;
+  const autosaveKey = (c: ClinicalCase): string => {
+    const { treatments, infusions, ...rest } = (c || {}) as any;
+    return JSON.stringify(rest);
+  };
+  const lastPersistedKeyRef = useRef<string>(autosaveKey(initialCase));
+  const editVersionRef = useRef<number>(0);
+  const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const saveInFlightRef = useRef<Promise<unknown> | null>(null);
+  // Always call the LATEST save function (timers/listeners may outlive a render).
+  const onSaveCaseRef = useRef(onSaveCase);
+  onSaveCaseRef.current = onSaveCase;
+
+  const runAutosave = async (): Promise<void> => {
+    if (isPreview) return;
+    if (autosaveTimerRef.current) { clearTimeout(autosaveTimerRef.current); autosaveTimerRef.current = null; }
+    // One write at a time: wait for any in-flight save, so an older write can never
+    // land after (and overwrite) a newer one.
+    if (saveInFlightRef.current) {
+      try { await saveInFlightRef.current; } catch { /* reported by its own caller */ }
+    }
+    const snapshot = currentCaseRef.current;
+    const key = autosaveKey(snapshot);
+    if (key === lastPersistedKeyRef.current) return;
+    if (typeof navigator !== "undefined" && navigator.onLine === false) {
+      setPersistStatus("offline");
+      return;
+    }
+    const base = lastSavedCaseRef.current;
+    const toSave: ClinicalCase = { ...snapshot, treatments: base.treatments, infusions: base.infusions } as ClinicalCase;
+    const version = editVersionRef.current;
+    setPersistStatus("saving");
+    const write = Promise.resolve(onSaveCaseRef.current(toSave, { autosave: true }));
+    saveInFlightRef.current = write;
+    try {
+      const outcome = await write;
+      lastPersistedKeyRef.current = key;
+      if (outcome === "trial_only") {
+        setPersistStatus("trial");
+      } else {
+        lastSavedCaseRef.current = toSave;
+        setPersistStatus(editVersionRef.current === version ? "saved" : "pending");
+      }
+    } catch (err) {
+      console.warn("[Autosave] not saved:", err);
+      setPersistStatus(typeof navigator !== "undefined" && navigator.onLine === false ? "offline" : "error");
+    } finally {
+      if (saveInFlightRef.current === write) saveInFlightRef.current = null;
+    }
+    // Edits made while this write was in flight get their own save.
+    if (editVersionRef.current !== version && autosaveKey(currentCaseRef.current) !== lastPersistedKeyRef.current) {
+      autosaveTimerRef.current = setTimeout(() => { void runAutosave(); }, 2000);
+    }
+  };
+
+  // Debounced autosave on every change
+  useEffect(() => {
+    if (isPreview) return;
+    if (autosaveKey(currentCase) === lastPersistedKeyRef.current) return;
+    editVersionRef.current += 1;
+    setPersistStatus(prev => (prev === "saving" ? prev : "pending"));
+    if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
+    autosaveTimerRef.current = setTimeout(() => { void runAutosave(); }, 2000);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentCase, isPreview]);
+
+  // Flush on tab switch
+  useEffect(() => {
+    if (!isPreview && autosaveKey(currentCaseRef.current) !== lastPersistedKeyRef.current) void runAutosave();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab]);
+
+  // Retry when the connection returns; flush when the case sheet closes
+  useEffect(() => {
+    const onOnline = () => { void runAutosave(); };
+    window.addEventListener("online", onOnline);
+    return () => {
+      window.removeEventListener("online", onOnline);
+      if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
+      if (!isPreview && autosaveKey(currentCaseRef.current) !== lastPersistedKeyRef.current) {
+        const base = lastSavedCaseRef.current;
+        void Promise.resolve(onSaveCaseRef.current({ ...currentCaseRef.current, treatments: base.treatments, infusions: base.infusions } as ClinicalCase, { autosave: true }))
+          .catch(err => console.warn("[Autosave] close-flush not saved:", err));
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const renderPersistStatus = () => {
+    const map: Record<PersistStatus, { text: string; cls: string } | null> = {
+      idle: null,
+      pending: { text: "Unsaved changes…", cls: "text-amber-700 dark:text-amber-300" },
+      saving: { text: "Saving…", cls: "text-amber-700 dark:text-amber-300" },
+      saved: { text: "All changes saved ✓", cls: "text-emerald-700 dark:text-emerald-400" },
+      trial: { text: "Saved on this device only — complete your profile to save permanently", cls: "text-amber-700 dark:text-amber-300" },
+      offline: { text: "Offline — will save when connected", cls: "text-amber-700 dark:text-amber-300" },
+      error: { text: "NOT SAVED — tap Save Changes to retry", cls: "text-red-700 dark:text-red-400 font-extrabold" },
+    };
+    const m = map[persistStatus];
+    if (!m) return null;
+    return <span data-testid="persist-status" className={`text-[10px] sm:text-[11px] font-bold ${m.cls} mr-2 text-right`}>{m.text}</span>;
+  };
+
   useEffect(() => {
     onDirtyChange?.(isCaseDirty);
     return () => {
@@ -576,15 +690,22 @@ export default function CaseSheetView({
   }, [isCaseDirty, onDirtyChange]);
 
   // Handle manual data refresh for the SAME open case sheet without resetting active tab
+  // Runs ONLY when the doctor explicitly refreshes — never on ordinary listener
+  // updates, so unsaved typing is never overwritten by a Firestore snapshot.
+  const latestInitialCaseRef = useRef<ClinicalCase>(initialCase);
+  latestInitialCaseRef.current = initialCase;
   useEffect(() => {
     if (!caseRefreshTimestamp) return;
-    setCurrentCase(initialCase);
-    lastSavedCaseRef.current = initialCase;
-    setSavedTreatmentSnapshot(extractTreatmentSnapshot(initialCase));
+    const fresh = latestInitialCaseRef.current;
+    setCurrentCase(fresh);
+    lastSavedCaseRef.current = fresh;
+    lastPersistedKeyRef.current = autosaveKey(fresh);
+    setSavedTreatmentSnapshot(extractTreatmentSnapshot(fresh));
     setPendingRemovedTreatments([]);
     setPendingRemovedInfusions([]);
     setTreatmentSaveStatus("saved");
-  }, [caseRefreshTimestamp, initialCase]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [caseRefreshTimestamp]);
 
   const [hasPersistedScribeHistory, setHasPersistedScribeHistory] = useState<boolean>(false);
 
@@ -825,6 +946,7 @@ export default function CaseSheetView({
   useEffect(() => {
     setCurrentCase(initialCase);
     lastSavedCaseRef.current = initialCase;
+    lastPersistedKeyRef.current = autosaveKey(initialCase);
     setSavedTreatmentSnapshot(extractTreatmentSnapshot(initialCase));
     setPendingRemovedTreatments([]);
     setPendingRemovedInfusions([]);
@@ -1076,7 +1198,7 @@ export default function CaseSheetView({
 
     setDischargeSyncStatus("syncing");
     try {
-      const response = await fetch("/api/ai-discharge", {
+      const response = await authenticatedFetch("/api/ai-discharge", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ caseData: caseToSync })
@@ -1500,7 +1622,7 @@ Extremities: Peripheral pulses present and well felt. No edema. No cyanosis or c
     try {
       const abgString = buildAbgParamString(abg);
 
-      const response = await fetch("/api/interpret-abg", {
+      const response = await authenticatedFetch("/api/interpret-abg", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1613,7 +1735,7 @@ Extremities: Peripheral pulses present and well felt. No edema. No cyanosis or c
     (async () => {
       try {
         const abgString = buildAbgParamString(abg);
-        const response = await fetch("/api/interpret-abg", {
+        const response = await authenticatedFetch("/api/interpret-abg", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -1906,7 +2028,7 @@ Extremities: Peripheral pulses present and well felt. No edema. No cyanosis or c
   const runClinicalDecisionSupport = async () => {
     setAiLoading(true);
     try {
-      const response = await fetch("/api/clinical-decision-support", {
+      const response = await authenticatedFetch("/api/clinical-decision-support", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1935,7 +2057,7 @@ Extremities: Peripheral pulses present and well felt. No edema. No cyanosis or c
   const handleOcrSubmit = async () => {
     setAiLoading(true);
     try {
-      const response = await fetch("/api/document-scan", {
+      const response = await authenticatedFetch("/api/document-scan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ imageText: ocrText })
@@ -2028,10 +2150,18 @@ Extremities: Peripheral pulses present and well felt. No edema. No cyanosis or c
   };
 
   // Returns true ONLY when the case was actually persisted.
+  // Outcome of the last explicit save, read by the CTA handlers below.
+  const lastSaveOutcomeRef = useRef<"persisted" | "trial_only" | "failed">("persisted");
+
   const handleSave = async (): Promise<boolean> => {
     if (isPreview) {
       console.warn("Direct save disabled in preview mode");
       return false;
+    }
+    // Explicit save supersedes any scheduled autosave and waits for an in-flight one.
+    if (autosaveTimerRef.current) { clearTimeout(autosaveTimerRef.current); autosaveTimerRef.current = null; }
+    if (saveInFlightRef.current) {
+      try { await saveInFlightRef.current; } catch { /* autosave failure is re-tried by this save */ }
     }
     // Audit & sanitize clinical fields before saving
     const ageNum = currentCase.patient.age;
@@ -2065,7 +2195,26 @@ Extremities: Peripheral pulses present and well felt. No edema. No cyanosis or c
       const activeTabAtSave = activeTab;
 
       setCurrentCase(caseToSave);
-      await onSaveCase(caseToSave);
+      setPersistStatus("saving");
+      const write = Promise.resolve(onSaveCase(caseToSave));
+      saveInFlightRef.current = write;
+      let outcome: "persisted" | "trial_only" | void;
+      try {
+        outcome = await write;
+      } finally {
+        if (saveInFlightRef.current === write) saveInFlightRef.current = null;
+      }
+      lastPersistedKeyRef.current = autosaveKey(caseToSave);
+      if (outcome === "trial_only") {
+        // Kept on this device only — never reported as a dashboard save.
+        lastSaveOutcomeRef.current = "trial_only";
+        setPersistStatus("trial");
+        setTreatmentSaveStatus("saved");
+        setTabSaveStatus("idle");
+        return false;
+      }
+      lastSaveOutcomeRef.current = "persisted";
+      setPersistStatus("saved");
 
       // Persistence confirmed: commit saved snapshot and clear pending removed items
       lastSavedCaseRef.current = caseToSave;
@@ -2097,6 +2246,8 @@ Extremities: Peripheral pulses present and well felt. No edema. No cyanosis or c
       return true;
     } catch (err) {
       console.error("Failed to save Case Sheet:", err);
+      lastSaveOutcomeRef.current = "failed";
+      setPersistStatus(typeof navigator !== "undefined" && navigator.onLine === false ? "offline" : "error");
       setTreatmentSaveStatus("error");
       setTabSaveStatus("error");
       return false;
@@ -2109,7 +2260,9 @@ Extremities: Peripheral pulses present and well felt. No edema. No cyanosis or c
     const ok = await handleSave();
     if (!ok) {
       // Never claim success or leave the form when nothing was saved.
-      setDispositionSaveMessage("NOT SAVED — the case could not be saved. Check your connection and tap Save again. Your entries are still on this screen.");
+      setDispositionSaveMessage(lastSaveOutcomeRef.current === "trial_only"
+        ? "NOT SAVED TO DASHBOARD — saved on this device only. Complete your profile to save cases permanently."
+        : "NOT SAVED — the case could not be saved. Check your connection and tap Save again. Your entries are still on this screen.");
       return;
     }
     const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -3574,6 +3727,13 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
 
           {/* Vitals Trends Tab  */}
           {activeTab === "trends" && (
+            <div className="p-6 bg-indigo-50 dark:bg-indigo-950/20 border border-indigo-200 dark:border-indigo-800 rounded-2xl space-y-1 animate-fade-in">
+              <h3 className="text-sm font-bold text-indigo-700 dark:text-indigo-300 uppercase tracking-wide">Vital Signs Trends — coming soon</h3>
+              <p className="text-xs text-slate-600 dark:text-slate-300">Repeat vitals charting will be available in a future update. Record current vitals in the Primary Survey.</p>
+            </div>
+          )}
+          {/* Trends tracker disabled until vitals history and age-appropriate status are validated. */}
+          {activeTab === "trends" && false && (
             <div className="space-y-4 animate-fade-in">
 <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 border-b pb-3">
                 <div>
@@ -5593,6 +5753,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
               );
             })()}
             
+            {renderPersistStatus()}
             <button onClick={handleSave} className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] sm:text-xs rounded-lg shadow-sm flex items-center gap-2 transition-colors active:scale-[0.98] shrink-0 ml-2">
               <Save className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> Save Changes
             </button>
@@ -5996,7 +6157,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                 Close
               </button>
               <button 
-                onClick={async () => { await handleSave(); setShowSafetyModal(false); }}
+                onClick={async () => { if (await handleSave()) setShowSafetyModal(false); }}
                 className="px-6 py-2 font-bold text-xs bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg shadow-sm"
               >
                 Save Changes

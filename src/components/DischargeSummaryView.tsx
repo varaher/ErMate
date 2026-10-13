@@ -17,6 +17,7 @@ import {
   mergeInvestigations,
   mergeDischargeMedications
 } from "../utils/dischargeSyncEngine";
+import { authenticatedFetch } from "../services/authenticatedFetch";
 
 interface DischargeSummaryViewProps {
   currentCase: ClinicalCase;
@@ -460,7 +461,7 @@ export default function DischargeSummaryView({
     setAiLoading(true);
     setAiError(null);
     try {
-      const response = await fetch("/api/ai-discharge", {
+      const response = await authenticatedFetch("/api/ai-discharge", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
