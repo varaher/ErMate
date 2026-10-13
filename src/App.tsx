@@ -2697,7 +2697,7 @@ const handleDeleteAllCases = async () => {
    *  - THROWS on any failure (denied, ID reservation, Firestore error)
    * options.autosave: background autosave — no trial modal, no logbook sync.
    */
-  const handleSaveCase = async (
+  const saveCaseNow = async (
     updatedCase: ClinicalCase,
     options?: { autosave?: boolean }
   ): Promise<"persisted" | "trial_only"> => {
@@ -3076,6 +3076,23 @@ const handleDeleteAllCases = async () => {
     });
     if (!isAutosave) checkConsentOnCaseSaved();
     return "persisted";
+  };
+
+  // One save at a time PER CASE, in the order requested — from every path (autosave,
+  // Save button, scribe, bed assignment…). A later save therefore always sees the
+  // earlier one as done: no second case number, no older write landing last.
+  const caseSaveQueuesRef = useRef<Map<string, Promise<unknown>>>(new Map());
+  const handleSaveCase = (
+    updatedCase: ClinicalCase,
+    options?: { autosave?: boolean }
+  ): Promise<"persisted" | "trial_only"> => {
+    const queues = caseSaveQueuesRef.current;
+    const previous = queues.get(updatedCase.id) || Promise.resolve();
+    const run = previous.then(() => saveCaseNow(updatedCase, options));
+    const tail = run.catch(() => undefined);
+    queues.set(updatedCase.id, tail);
+    void tail.then(() => { if (queues.get(updatedCase.id) === tail) queues.delete(updatedCase.id); });
+    return run;
   };
 
   /**

@@ -2111,7 +2111,8 @@ app.post("/api/learning/feedback", requireAuth, async (req: AuthRequest, res) =>
 });
 
 // 2. Fetch Rules & Raw Corrections List (for Admin Control Panel)
-app.get("/api/learning/rules", requireAuth, async (req: AuthRequest, res) => {
+// Admin only: corrections hold (de-identified) clinical text from EVERY doctor's cases.
+app.get("/api/learning/rules", requireAuth, requirePlatformAdmin, async (req: AuthRequest, res) => {
   try {
     const rules = getAllLearnedRules();
     const corrections = getAllFeedbackCorrections();

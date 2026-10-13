@@ -571,9 +571,10 @@ export default function CaseSheetView({
     return isCaseSheetDirty(currentCase, lastSavedCaseRef.current);
   }, [isPreview, isTreatmentDirty, currentCase]);
 
-  // ── Autosave (Batch 1) ──────────────────────────────────────────────
+  // ── Autosave (Batch 1 + 1B) ─────────────────────────────────────────
   // Every change is persisted ~2 s after the doctor stops typing, on tab switch,
-  // and when the case sheet closes. "Saved" is shown only after Firestore confirms.
+  // when the case sheet closes, and when the app is hidden (phone app switch,
+  // tab close). "Saved" is shown only after Firestore confirms.
   // Pending treatment/infusion changes are NEVER auto-committed (they keep their
   // explicit "Save Changes" confirmation); autosave sends the last saved ones.
   type PersistStatus = "idle" | "pending" | "saving" | "saved" | "trial" | "offline" | "error";
@@ -584,26 +585,36 @@ export default function CaseSheetView({
     const { treatments, infusions, ...rest } = (c || {}) as any;
     return JSON.stringify(rest);
   };
+  // Key of the last version CONFIRMED in Firestore (cloud). Trial (in-memory only)
+  // saves never update it, so those edits always still count as unsaved.
   const lastPersistedKeyRef = useRef<string>(autosaveKey(initialCase));
+  // Key of the last version kept in app memory only (trial) — avoids re-sending it.
+  const lastLocalOnlyKeyRef = useRef<string>("");
   const editVersionRef = useRef<number>(0);
   const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const saveInFlightRef = useRef<Promise<unknown> | null>(null);
+  // Single save queue: every write from this sheet (autosave, Save button, close
+  // flush) runs strictly one after another, in the order requested.
+  const saveQueueRef = useRef<Promise<unknown>>(Promise.resolve());
+  const enqueueWrite = <T,>(job: () => Promise<T>): Promise<T> => {
+    const run = saveQueueRef.current.then(job, job);
+    saveQueueRef.current = run.catch(() => undefined);
+    return run;
+  };
   // Always call the LATEST save function (timers/listeners may outlive a render).
   const onSaveCaseRef = useRef(onSaveCase);
   onSaveCaseRef.current = onSaveCase;
+  const hasUnsavedEdits = (): boolean =>
+    !isPreview && autosaveKey(currentCaseRef.current) !== lastPersistedKeyRef.current;
 
-  const runAutosave = async (): Promise<void> => {
-    if (isPreview) return;
-    if (autosaveTimerRef.current) { clearTimeout(autosaveTimerRef.current); autosaveTimerRef.current = null; }
-    // One write at a time: wait for any in-flight save, so an older write can never
-    // land after (and overwrite) a newer one.
-    if (saveInFlightRef.current) {
-      try { await saveInFlightRef.current; } catch { /* reported by its own caller */ }
-    }
+  // One autosave attempt. Runs only when it is its turn in the queue, and reads the
+  // case AT THAT MOMENT, so a queued attempt always sends the newest text (and does
+  // nothing if an earlier attempt already saved it).
+  const autosaveOnce = async (opts?: { evenIfOffline?: boolean }): Promise<void> => {
     const snapshot = currentCaseRef.current;
     const key = autosaveKey(snapshot);
     if (key === lastPersistedKeyRef.current) return;
-    if (typeof navigator !== "undefined" && navigator.onLine === false) {
+    if (key === lastLocalOnlyKeyRef.current) { setPersistStatus("trial"); return; }
+    if (!opts?.evenIfOffline && typeof navigator !== "undefined" && navigator.onLine === false) {
       setPersistStatus("offline");
       return;
     }
@@ -611,27 +622,32 @@ export default function CaseSheetView({
     const toSave: ClinicalCase = { ...snapshot, treatments: base.treatments, infusions: base.infusions } as ClinicalCase;
     const version = editVersionRef.current;
     setPersistStatus("saving");
-    const write = Promise.resolve(onSaveCaseRef.current(toSave, { autosave: true }));
-    saveInFlightRef.current = write;
     try {
-      const outcome = await write;
-      lastPersistedKeyRef.current = key;
+      const outcome = await onSaveCaseRef.current(toSave, { autosave: true });
       if (outcome === "trial_only") {
+        lastLocalOnlyKeyRef.current = key;
         setPersistStatus("trial");
-      } else {
-        lastSavedCaseRef.current = toSave;
-        setPersistStatus(editVersionRef.current === version ? "saved" : "pending");
+        return;
       }
+      lastPersistedKeyRef.current = key;
+      lastSavedCaseRef.current = toSave;
+      setPersistStatus(editVersionRef.current === version ? "saved" : "pending");
     } catch (err) {
       console.warn("[Autosave] not saved:", err);
       setPersistStatus(typeof navigator !== "undefined" && navigator.onLine === false ? "offline" : "error");
-    } finally {
-      if (saveInFlightRef.current === write) saveInFlightRef.current = null;
+      return;
     }
-    // Edits made while this write was in flight get their own save.
-    if (editVersionRef.current !== version && autosaveKey(currentCaseRef.current) !== lastPersistedKeyRef.current) {
+    // Edits made while this write was in flight get their own save (unless a
+    // debounce timer for them is already waiting — never postpone it).
+    if (editVersionRef.current !== version && hasUnsavedEdits() && !autosaveTimerRef.current) {
       autosaveTimerRef.current = setTimeout(() => { void runAutosave(); }, 2000);
     }
+  };
+
+  const runAutosave = (opts?: { evenIfOffline?: boolean }): Promise<void> => {
+    if (isPreview) return Promise.resolve();
+    if (autosaveTimerRef.current) { clearTimeout(autosaveTimerRef.current); autosaveTimerRef.current = null; }
+    return enqueueWrite(() => autosaveOnce(opts));
   };
 
   // Debounced autosave on every change
@@ -647,25 +663,43 @@ export default function CaseSheetView({
 
   // Flush on tab switch
   useEffect(() => {
-    if (!isPreview && autosaveKey(currentCaseRef.current) !== lastPersistedKeyRef.current) void runAutosave();
+    if (hasUnsavedEdits()) void runAutosave();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab]);
 
-  // Retry when the connection returns; flush when the case sheet closes
+  // Retry when the connection returns. Save immediately when the app is hidden
+  // (phone home button / app switch / tab close). Warn before a page close or
+  // refresh while anything is not yet saved. Flush when the case sheet closes.
   useEffect(() => {
     const onOnline = () => { void runAutosave(); };
+    const onHidden = () => {
+      if (document.visibilityState === "hidden" && hasUnsavedEdits()) void runAutosave({ evenIfOffline: true });
+    };
+    const onPageHide = () => { if (hasUnsavedEdits()) void runAutosave({ evenIfOffline: true }); };
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (!hasUnsavedEdits()) return;
+      void runAutosave({ evenIfOffline: true });
+      e.preventDefault();
+      e.returnValue = "";
+    };
     window.addEventListener("online", onOnline);
+    document.addEventListener("visibilitychange", onHidden);
+    window.addEventListener("pagehide", onPageHide);
+    window.addEventListener("beforeunload", onBeforeUnload);
     return () => {
       window.removeEventListener("online", onOnline);
-      if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
-      if (!isPreview && autosaveKey(currentCaseRef.current) !== lastPersistedKeyRef.current) {
-        const base = lastSavedCaseRef.current;
-        void Promise.resolve(onSaveCaseRef.current({ ...currentCaseRef.current, treatments: base.treatments, infusions: base.infusions } as ClinicalCase, { autosave: true }))
-          .catch(err => console.warn("[Autosave] close-flush not saved:", err));
-      }
+      document.removeEventListener("visibilitychange", onHidden);
+      window.removeEventListener("pagehide", onPageHide);
+      window.removeEventListener("beforeunload", onBeforeUnload);
+      // Case sheet closed inside the app: the queued write keeps running in the
+      // background and still reports failure to the console. In-app navigation
+      // away from unsaved edits is additionally guarded by the header's dirty check.
+      if (hasUnsavedEdits()) void runAutosave({ evenIfOffline: true });
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+
 
   const renderPersistStatus = () => {
     const map: Record<PersistStatus, { text: string; cls: string } | null> = {
@@ -673,7 +707,7 @@ export default function CaseSheetView({
       pending: { text: "Unsaved changes…", cls: "text-amber-700 dark:text-amber-300" },
       saving: { text: "Saving…", cls: "text-amber-700 dark:text-amber-300" },
       saved: { text: "All changes saved ✓", cls: "text-emerald-700 dark:text-emerald-400" },
-      trial: { text: "Saved on this device only — complete your profile to save permanently", cls: "text-amber-700 dark:text-amber-300" },
+      trial: { text: "NOT SAVED — kept only while the app is open. Complete your profile to save cases.", cls: "text-red-700 dark:text-red-400 font-extrabold" },
       offline: { text: "Offline — will save when connected", cls: "text-amber-700 dark:text-amber-300" },
       error: { text: "NOT SAVED — tap Save Changes to retry", cls: "text-red-700 dark:text-red-400 font-extrabold" },
     };
@@ -2158,11 +2192,8 @@ Extremities: Peripheral pulses present and well felt. No edema. No cyanosis or c
       console.warn("Direct save disabled in preview mode");
       return false;
     }
-    // Explicit save supersedes any scheduled autosave and waits for an in-flight one.
+    // Explicit save supersedes any scheduled autosave; it joins the same save queue.
     if (autosaveTimerRef.current) { clearTimeout(autosaveTimerRef.current); autosaveTimerRef.current = null; }
-    if (saveInFlightRef.current) {
-      try { await saveInFlightRef.current; } catch { /* autosave failure is re-tried by this save */ }
-    }
     // Audit & sanitize clinical fields before saving
     const ageNum = currentCase.patient.age;
     const isPeds = currentCase.isPediatric || (ageNum !== null && recomputeIsPediatric(ageNum));
@@ -2196,23 +2227,18 @@ Extremities: Peripheral pulses present and well felt. No edema. No cyanosis or c
 
       setCurrentCase(caseToSave);
       setPersistStatus("saving");
-      const write = Promise.resolve(onSaveCase(caseToSave));
-      saveInFlightRef.current = write;
-      let outcome: "persisted" | "trial_only" | void;
-      try {
-        outcome = await write;
-      } finally {
-        if (saveInFlightRef.current === write) saveInFlightRef.current = null;
-      }
-      lastPersistedKeyRef.current = autosaveKey(caseToSave);
+      const outcome = await enqueueWrite(() => Promise.resolve(onSaveCaseRef.current(caseToSave)));
       if (outcome === "trial_only") {
-        // Kept on this device only — never reported as a dashboard save.
+        // Kept in app memory only — never reported as a dashboard save, and the
+        // edits still count as unsaved (page-close warning stays on).
+        lastLocalOnlyKeyRef.current = autosaveKey(caseToSave);
         lastSaveOutcomeRef.current = "trial_only";
         setPersistStatus("trial");
         setTreatmentSaveStatus("saved");
         setTabSaveStatus("idle");
         return false;
       }
+      lastPersistedKeyRef.current = autosaveKey(caseToSave);
       lastSaveOutcomeRef.current = "persisted";
       setPersistStatus("saved");
 
@@ -2261,7 +2287,7 @@ Extremities: Peripheral pulses present and well felt. No edema. No cyanosis or c
     if (!ok) {
       // Never claim success or leave the form when nothing was saved.
       setDispositionSaveMessage(lastSaveOutcomeRef.current === "trial_only"
-        ? "NOT SAVED TO DASHBOARD — saved on this device only. Complete your profile to save cases permanently."
+        ? "NOT SAVED TO DASHBOARD — kept only while the app is open. Complete your profile to save cases permanently."
         : "NOT SAVED — the case could not be saved. Check your connection and tap Save again. Your entries are still on this screen.");
       return;
     }

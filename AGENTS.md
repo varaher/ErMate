@@ -45,6 +45,17 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-13] — ErMate: Autosave Queueing, Strict Per-Case FIFO Serialization & Admin Learning Endpoint Lock (AUTOSAVE-FIX)
+- **Per-Case FIFO Write Serialization (`src/App.tsx`)**:
+  - Encapsulated primary Firestore case saving inside `saveCaseNow()` and introduced `caseSaveQueuesRef` (`Map<string, Promise<unknown>>`).
+  - Serialized all case persistence paths (manual save, debounced autosave, voice scribe, bed changes) strictly sequentially per case ID, preventing race conditions, ID re-allocation, or older updates overwriting newer ones.
+- **Single Component Save Queue & Page-Hide Flushes (`src/components/CaseSheetView.tsx`)**:
+  - Upgraded autosave engine with `saveQueueRef` and `enqueueWrite()`.
+  - Added listeners for `visibilitychange` (`document.visibilityState === "hidden"`), `pagehide`, and `beforeunload` to flush unsaved edits when switching mobile apps or closing tabs.
+  - Clarified UI message for trial cases (`trial`: "NOT SAVED — kept only while the app is open. Complete your profile to save cases.").
+- **Strict Platform Admin Gating for Learning Rules API (`server.ts`)**:
+  - Enforced `requirePlatformAdmin` alongside `requireAuth` on `GET /api/learning/rules`, protecting clinical text corrections across all patient cases from unauthorized inspection.
+
 ### [2026-10-13] — ErMate: Case Sheet Autosave, Case Lifecycle Retention & Dashboard Query Hardening (BATCH-1)
 - **Clinical Content Retention & Soft-Archive Gate (`src/utils/caseLifecycle.ts`, `verify_team_and_archive.ts`)**:
   - Implemented `hasAnyClinicalContent(c)`: Checks demographics, vitals, SAMPLE history, treatments, investigations, notes, progress notes, differentials, and primary assessment.
