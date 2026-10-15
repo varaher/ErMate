@@ -43,6 +43,17 @@ export default function DischargeSummaryView({
   // Prepopulate from case records or existing dischargeInfo
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [activeTab, setActiveTab] = useState<TabType>("admin-vitals");
+  // VIEW (read-only, just the captured summary) vs EDIT (form). Opens in VIEW when a summary already
+  // exists, in EDIT when there is nothing yet to view. Preview mode (Scribe review) keeps its own layout.
+  const hasExistingSummary = Boolean(
+    currentCase.dischargeInfo &&
+      (currentCase.dischargeInfo.summaryStatus ||
+        currentCase.dischargeInfo.primaryDiagnosis ||
+        currentCase.dischargeInfo.courseInHospital)
+  );
+  const [isEditing, setIsEditing] = useState<boolean>(!hasExistingSummary);
+  const [editedNotSaved, setEditedNotSaved] = useState<boolean>(false);
+  const showEditor = previewMode || isEditing;
   const [downloadMenuOpen, setDownloadMenuOpen] = useState(false);
   const [isDiscussModalOpen, setIsDiscussModalOpen] = useState(false);
 
@@ -705,6 +716,8 @@ export default function DischargeSummaryView({
 
     const info = buildCurrentDischargeInfo(effectiveStatus);
     onSaveDischarge(info);
+    setIsEditing(false);
+    setEditedNotSaved(false);
     setSaveBanner(true);
     window.scrollTo({ top: 0, behavior: 'smooth' });
     setTimeout(() => {
@@ -730,7 +743,7 @@ export default function DischargeSummaryView({
             <div className="flex items-center gap-2 flex-wrap">
               <h1 className="text-base sm:text-lg md:text-xl font-bold font-display text-slate-900 dark:text-white flex items-center gap-2 truncate">
                 <FileText className="w-4 h-4 sm:w-5 sm:h-5 text-blue-600 shrink-0" />
-                <span>Discharge Card Scribe</span>
+                <span>{showEditor ? "Discharge Card Scribe" : "Discharge Summary"}</span>
               </h1>
               {/* Status Badge */}
               <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider ${
@@ -874,8 +887,29 @@ export default function DischargeSummaryView({
                 </>
               )}
             </button>
+          ) : !isEditing ? (
+            <button
+              type="button"
+              onClick={() => { setIsEditing(true); setEditedNotSaved(true); }}
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 shadow-sm cursor-pointer"
+              id="edit-discharge-btn"
+              title="Edit this discharge summary"
+            >
+              <FileText className="w-4 h-4" />
+              Edit Summary
+            </button>
           ) : (
             <>
+              {hasExistingSummary && (
+                <button
+                  type="button"
+                  onClick={() => setIsEditing(false)}
+                  className="px-3 py-2 bg-white hover:bg-slate-100 dark:bg-slate-900 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold rounded-lg transition-all cursor-pointer"
+                  title="Back to the read-only view (edits are kept until you leave this screen, but not saved)"
+                >
+                  View
+                </button>
+              )}
               <button
                 onClick={() => handleSave(isManuallyEdited ? "MANUALLY_EDITED" : "PREPARED")}
                 className="px-3 py-2 bg-slate-200 hover:bg-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 shadow-xs"
@@ -903,6 +937,17 @@ export default function DischargeSummaryView({
         <div className="bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900 text-emerald-700 dark:text-emerald-300 p-4 rounded-xl flex items-center gap-2 text-sm font-semibold no-print">
           <CheckCircle className="w-5 h-5 text-emerald-500 shrink-0" />
           Discharge Summary Card permanently finalized and archived. Status changed to DISCHARGED!
+        </div>
+      )}
+
+      {/* Unsaved edits notice (view mode only) */}
+      {!previewMode && !isEditing && editedNotSaved && (
+        <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-200 p-3 rounded-xl flex flex-wrap items-center justify-between gap-2 text-xs font-medium no-print">
+          <span>This view includes edits that are not saved yet.</span>
+          <span className="flex gap-2">
+            <button type="button" onClick={() => setIsEditing(true)} className="px-3 py-1 rounded-lg bg-white dark:bg-slate-900 border border-amber-300 dark:border-amber-700 font-bold cursor-pointer">Keep editing</button>
+            <button type="button" onClick={() => handleSave(isManuallyEdited ? "MANUALLY_EDITED" : "PREPARED")} className="px-3 py-1 rounded-lg bg-amber-600 text-white font-bold cursor-pointer">Save draft</button>
+          </span>
         </div>
       )}
 
@@ -968,7 +1013,8 @@ export default function DischargeSummaryView({
       {/* Main Grid Layout: left inputs, right print sheet */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         
-        {/* Left Hand Editor Section (5 Cols) */}
+        {/* Left Hand Editor Section (5 Cols) — only while editing */}
+        {showEditor && (
         <div className="lg:col-span-5 space-y-4 no-print">
           
           {/* Safety standards checks */}
@@ -1671,14 +1717,15 @@ export default function DischargeSummaryView({
           </div>
 
         </div>
+        )}
 
         {/* Live Printable Paper Preview Sheet (7 Cols) */}
-        <div className="lg:col-span-7 bg-white text-slate-900 border border-slate-300 rounded-2xl shadow-lg overflow-hidden print:overflow-visible h-[calc(100dvh-130px)] print:h-auto flex flex-col print:border-0 print:shadow-none print:rounded-none print:col-span-12 print:w-full print:p-0 print:m-0">
+        <div className={`${showEditor ? "lg:col-span-7" : "lg:col-span-12 max-w-4xl mx-auto w-full"} bg-white text-slate-900 border border-slate-300 rounded-2xl shadow-lg overflow-hidden print:overflow-visible h-[calc(100dvh-130px)] print:h-auto flex flex-col print:border-0 print:shadow-none print:rounded-none print:col-span-12 print:w-full print:p-0 print:m-0`}>
           
           {/* Top Banner (No Print) */}
           <div className="bg-slate-100 dark:bg-slate-900 border-b p-3 px-4 flex items-center justify-between text-xs text-slate-600 dark:text-slate-400 no-print">
             <span className="font-extrabold flex items-center gap-1.5 text-indigo-600 dark:text-indigo-400">
-              <Printer className="w-4 h-4" /> LIVE PRINTABLE SHIELDED PREVIEW
+              <Printer className="w-4 h-4" /> {showEditor ? "LIVE PRINTABLE SHIELDED PREVIEW" : "DISCHARGE SUMMARY"}
             </span>
             <span className="font-mono text-[10px]">A4 Clinical Card Formats</span>
           </div>
@@ -1808,13 +1855,15 @@ export default function DischargeSummaryView({
 
 </div>
 
-          {/* Bottom Advice Area (No Print) */}
+          {/* Bottom Advice Area (No Print) — editor only */}
+          {showEditor && (
           <div className="bg-slate-50 dark:bg-slate-900 p-4 border-t text-xs text-slate-500 leading-relaxed flex items-start gap-1.5 no-print">
             <AlertCircle className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
             <div>
               <span className="font-bold text-slate-700 dark:text-slate-300">Clinician Advice:</span> Use the tabs in the left-hand panel to compile the clinical variables. The live preview automatically formats for printing. Click <strong>Print Case Card</strong> or press <strong>Cmd/Ctrl + P</strong> to launch the printer driver.
             </div>
           </div>
+          )}
 
         </div>
 
