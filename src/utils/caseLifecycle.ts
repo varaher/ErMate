@@ -6,8 +6,9 @@
  *
  * Locked invariants:
  * 1. Never hard-delete clinical records: archive is strictly metadata-based (soft archive).
- * 2. Only incomplete / draft / pending active cases are eligible for 24h archival.
- * 3. Completed / finalized records or records with active duty sessions are never auto-archived.
+ * 2. Only incomplete / draft / pending cases are eligible for 24h archival. The 24 hours run from
+ *    the LAST EDIT (or creation if never edited), so a case being worked on is never archived.
+ * 3. Completed / finalized / discharged records are never auto-archived.
  * 4. Archived cases are excluded from active dashboard cards and MATE bed census,
  *    but remain retrievable and viewable in Case Log / history.
  */
@@ -61,6 +62,14 @@ export function getCaseCreationTimestamp(c: ClinicalCase): Date | null {
   return null;
 }
 
+export function getCaseLastActivityTimestamp(c: ClinicalCase): Date | null {
+  const created = getCaseCreationTimestamp(c);
+  const edited = c?.lastEditedAt ? new Date(c.lastEditedAt) : null;
+  const editedOk = edited && !isNaN(edited.getTime()) ? edited : null;
+  if (created && editedOk) return editedOk.getTime() > created.getTime() ? editedOk : created;
+  return editedOk || created;
+}
+
 /**
  * Evaluates whether an active/triage case qualifies for 24-hour soft-archive.
  *
@@ -81,30 +90,14 @@ export function isCaseEligibleFor24hArchive(c: ClinicalCase, now = new Date()): 
   if (c.status === "Discharged") return false;
   if (c.dischargeInfo?.summaryStatus === "FINALIZED") return false;
 
-  // Rule 3: Physical Bed Safety Invariant
-  // Active bedside patients occupying an ER bed are physically in the department.
-  // 24 hours + incomplete documentation alone is NOT proof the patient left the ER.
-  // Fail-safe: Established physical bed occupants remain active in census and must
-  // never be automatically archived or have their bed marked as vacant.
-  const hasActiveBed = Boolean((c.bedNo && String(c.bedNo).trim() !== "") || (c.patient?.bed && String(c.patient.bed).trim() !== ""));
-  if (hasActiveBed) {
-    return false;
-  }
-
   // Rule 4: Only incomplete/draft cases are eligible
   const pending = getCasePendingStatus(c);
   if (!pending.isPending) return false;
 
-  // Rule 4b (Batch 1): an operationally active patient must never leave the Current
-  // List because of time. Only EMPTY shells (no clinical content was ever saved, e.g.
-  // an abandoned "new case" tap) may be auto-archived.
-  if (hasAnyClinicalContent(c)) return false;
-
-  // Rule 5: Must be >= 24 hours old
-  const createdDate = getCaseCreationTimestamp(c);
-  if (!createdDate) return false;
-
-  const ageMs = now.getTime() - createdDate.getTime();
+  // Rule 5: Must be >= 24 hours since the last edit (or creation if never edited)
+  const lastActivity = getCaseLastActivityTimestamp(c);
+  if (!lastActivity) return false;
+  const ageMs = now.getTime() - lastActivity.getTime();
   return ageMs >= INCOMPLETE_CASE_ARCHIVE_MS;
 }
 
