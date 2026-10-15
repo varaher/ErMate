@@ -479,12 +479,16 @@ export default function CaseSheetView({
     }
   }, [initialTab]);
 
-  // 5 visible tabs. Each groups existing sections; internal section ids (activeTab) are unchanged.
+  // One tab per section, same as the original case sheet.
   const TAB_GROUPS: ReadonlyArray<{ id: string; label: string; members: readonly string[] }> = [
-    { id: "case", label: "Case", members: ["complaints", "history"] },
-    { id: "assessment", label: "Assessment", members: ["primary-survey", "secondary-survey"] },
-    { id: "workup", label: "Work-up & Rx", members: ["investigations", "treatment"] },
-    { id: "wrapup", label: "Notes & Disposition", members: ["notes", "disposition"] },
+    { id: "complaints", label: "Complaints", members: ["complaints"] },
+    { id: "primary-survey", label: "Primary", members: ["primary-survey"] },
+    { id: "history", label: "SAMPLE", members: ["history"] },
+    { id: "secondary-survey", label: "Secondary", members: ["secondary-survey"] },
+    { id: "investigations", label: "Investigations", members: ["investigations"] },
+    { id: "treatment", label: "Treatment", members: ["treatment"] },
+    { id: "notes", label: "Notes", members: ["notes"] },
+    { id: "disposition", label: "Disposition", members: ["disposition"] },
     { id: "trends", label: "Trends", members: ["trends"] },
   ];
   const activeGroupIndex = TAB_GROUPS.findIndex((g) => g.members.includes(activeTab));
@@ -3444,7 +3448,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
           )}
 
           {/* Mobile: one dropdown to switch tabs */}
-          <div className="sm:hidden px-4 pb-2 pt-2 border-t border-slate-100 dark:border-slate-800/50">
+          <div className="hidden px-4 pb-2 pt-2 border-t border-slate-100 dark:border-slate-800/50">
             <select
               aria-label="Go to section"
               value={activeGroupIndex >= 0 ? TAB_GROUPS[activeGroupIndex].id : "rounds"}
@@ -3473,7 +3477,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
           </div>
 
           {/* Horizontal Nav Rail (tablet / desktop) */}
-          <div ref={navContainerRef} className="hidden sm:flex items-center gap-1.5 px-4 overflow-x-auto no-scrollbar pb-2 pt-1 border-t border-slate-100 dark:border-slate-800/50">
+          <div ref={navContainerRef} className="flex items-center gap-1.5 px-4 overflow-x-auto no-scrollbar pb-2 pt-1 border-t border-slate-100 dark:border-slate-800/50">
             {TAB_GROUPS.map((group) => {
               const isActive = group.members.includes(activeTab);
               const hasData = group.members.some((m) => tabHasData(m));
