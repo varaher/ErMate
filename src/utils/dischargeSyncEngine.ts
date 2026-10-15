@@ -8,8 +8,8 @@
  * and avoid duplicate paragraphs or redundant bullet points.
  */
 
-import { ClinicalCase, DischargeInfo } from "../types";
-import { interpretPediatricVital } from "./pediatricRanges";
+import type { ClinicalCase, DischargeInfo } from '../types.ts';
+import { interpretPediatricVital } from './pediatricRanges.ts';
 
 /**
  * Format primary assessment findings into a concise narrative string
@@ -223,7 +223,9 @@ export function stripCourseSectionHeadings(text: string): string {
  * 7. How and why finally disposed
  */
 export function deriveInitialCourseInHospital(c: ClinicalCase): string {
-  const isPed = c.isPediatric || (c.patient?.age !== undefined && Number(c.patient.age) <= 16);
+  // Age must be a real number: a blank/unknown age is NOT a child (Number("") and Number(null) are 0).
+  const ageNum = parseFloat(String(c.patient?.age ?? ""));
+  const isPed = c.isPediatric === true || (Number.isFinite(ageNum) && ageNum <= 16);
   const subject = isPed ? "The child" : "The patient";
 
   // --- PARAGRAPH 1: EVALUATION REASON, PRECEDING EVENT & CLINICAL PRESENTATION ---
@@ -367,8 +369,10 @@ export function deriveInitialCourseInHospital(c: ClinicalCase): string {
     invSentences.push(img.endsWith(".") ? img : `${img} was ordered.`);
   }
   if (c.investigations && c.investigations.length > 0) {
+    // "Ordered"/"Pending" are order statuses, not results: never report them as "showed ...".
+    const NOT_A_RESULT = /^\s*(pending|ordered|sent|awaited|awaiting|in progress|not (yet )?(done|resulted)|n\/?a)\.?\s*$/i;
     const results = c.investigations
-      .filter(i => i.result)
+      .filter(i => i.result && !NOT_A_RESULT.test(String(i.result)))
       .map(i => `${i.testName} showed ${i.result}`)
       .join(", ");
     if (results) {

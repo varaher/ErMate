@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "tsx server.ts",
     "build": "node guardAgainstGemini.js && vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs && rm -rf build && cp -rf dist build",
-    "start": "node dist/server.cjs",
+    "start": "node server.ts",
     "clean": "rm -rf dist build server.js",
     "lint": "tsc --noEmit"
   },

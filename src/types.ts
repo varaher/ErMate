@@ -1013,5 +1013,5 @@ export interface LogbookEntry {
   updatedAt: string;
 }
 
-export * from "./types/procedureNotes";
+export * from './types/procedureNotes.ts';
 

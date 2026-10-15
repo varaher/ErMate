@@ -2245,11 +2245,11 @@ export default function VoiceScribeChatView({
     try {
       if (currentMode === "discuss") {
         // ── DISCUSS MODE — Claude Sonnet only, read-only, via /api/case-discussion.
-        // Bounded client request lifecycle with 25s timeout via AbortController.
+        // Bounded client request lifecycle with 75s timeout via AbortController (server allows up to ~70s).
         // suggestedUpdate is deliberately ignored — discuss-mode conversations
         // never write to the real case sheet, regardless of what the model proposes.
         const discussController = new AbortController();
-        const discussTimeoutId = setTimeout(() => discussController.abort(), 25000);
+        const discussTimeoutId = setTimeout(() => discussController.abort(), 75000);
         let res: Response;
         try {
           res = await authenticatedFetch("/api/case-discussion", {

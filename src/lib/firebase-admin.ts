@@ -1,7 +1,18 @@
-import { initializeApp, getApps, App } from "firebase-admin/app";
+import { initializeApp, getApps, type App } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
-import { getFirestore, Firestore } from "firebase-admin/firestore";
-import firebaseConfig from "../../firebase-applet-config.json";
+import { getFirestore, type Firestore } from "firebase-admin/firestore";
+import { readFileSync, existsSync } from "fs";
+import { resolve } from "path";
+
+let firebaseConfig: any = {};
+try {
+  const configPath = resolve(process.cwd(), "firebase-applet-config.json");
+  if (existsSync(configPath)) {
+    firebaseConfig = JSON.parse(readFileSync(configPath, "utf-8"));
+  }
+} catch {
+  firebaseConfig = {};
+}
 
 export const FIRESTORE_DATABASE_ID: string =
   (firebaseConfig as any)?.firestoreDatabaseId ||

@@ -14,7 +14,7 @@ import { detectNormalcyPhrases } from "./server/extraction.ts";
 import { db } from "./src/db/index.ts";
 import { cases, contributions, handovers, hospitalSubscriptions, teamMembers, users } from "./src/db/schema.ts";
 import { eq, desc } from "drizzle-orm";
-import { requireAuth, AuthRequest } from "./src/middleware/auth.ts";
+import { requireAuth, type AuthRequest } from "./src/middleware/auth.ts";
 
 // Learned AI rules change the instructions given to the AI for EVERY user,
 // so only the verified platform admin may create, approve or delete them.

@@ -1,8 +1,8 @@
-import { Router, Request, Response } from "express";
+import { Router, type Request, type Response } from "express";
 import crypto from "crypto";
 import { getRazorpayClient, RAZORPAY_ENABLED } from "../services/razorpayClient.ts";
 import { db } from "../../src/lib/firebase-admin.ts"; // using the actual path
-import { requireAuth, AuthRequest } from "../../src/middleware/auth.ts"; // using the actual path
+import { requireAuth, type AuthRequest } from "../../src/middleware/auth.ts"; // using the actual path
 
 const router = Router();
 

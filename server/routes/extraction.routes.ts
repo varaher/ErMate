@@ -3,7 +3,7 @@
 // File: server/routes/extraction.routes.ts
 // ============================================================
 
-import { Router, Request, Response } from 'express';
+import { Router, type Request, type Response } from 'express';
 import { GoogleGenAI, Type } from '@google/genai';
 import {
   extractClinicalData,
@@ -12,7 +12,7 @@ import {
   generateDifferentials,
 } from '../extraction.ts';
 import { generateDischargeSummary as generateEMRDischargeSummary } from '../dischargeSummary.ts';
-import { requireAuth, AuthRequest } from '../../src/middleware/auth.ts';
+import { requireAuth, type AuthRequest } from '../../src/middleware/auth.ts';
 import { deidentifyText } from '../deidentify.ts';
 const router = Router();
 

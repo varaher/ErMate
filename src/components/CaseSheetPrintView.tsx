@@ -377,7 +377,7 @@ export function convertClinicalCaseToCaseSheetData(c: ClinicalCase, defaultHospi
   // pediatricDetails.* (PediatricABCDESections). Use them only when the shared
   // primary/secondary fields are empty, so adult and dictated cases are unaffected.
   const pedFallback = c.pediatricDetails as any;
-  const isPedForSurvey = !!c.isPediatric || (c.patient?.age !== null && c.patient?.age !== undefined && c.patient.age <= 16);
+  const isPedForSurvey = !!c.isPediatric || (Number.isFinite(parseFloat(String(c.patient?.age ?? ""))) && parseFloat(String(c.patient?.age)) <= 16);
   if (isPedForSurvey && pedFallback) {
     const j = (parts: Array<string | false | null | undefined>) => {
       const out = parts.filter((x): x is string => typeof x === "string" && x.trim().length > 0).join(", ");

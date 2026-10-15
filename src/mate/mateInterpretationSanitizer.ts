@@ -9,7 +9,7 @@ import type {
   MatePlannedTask,
   MatePlannedTaskType,
   MateTaskAccessMode,
-} from "./mateInterpretationTypes";
+} from './mateInterpretationTypes.ts';
 
 const VALID_TASK_TYPES = new Set<MatePlannedTaskType>([
   "ER_OVERVIEW",

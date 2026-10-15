@@ -7,7 +7,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { GoogleGenAI } from '@google/genai';
 import { getRelevantLearnedRules, formatLearnedRulesPromptBlock } from './learningService.ts';
 import { deidentifyText } from './deidentify.ts';
-import { compileAlerts, HandoverOutput } from './alertCompiler.ts';
+import { compileAlerts, type HandoverOutput } from './alertCompiler.ts';
 import { extractCrossConsultations, shouldRenderConsultSection } from './crossConsultParser.ts';
 import { isAbnormal } from './clinicalRanges.ts';
 

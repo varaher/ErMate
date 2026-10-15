@@ -50,7 +50,7 @@ async function callClaudePrimary(
   for (const modelName of sonnetModels) {
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 20000); // 20s bound
+      const timeoutId = setTimeout(() => controller.abort(), 40000); // 40s bound (long answers need time; non-streaming)
 
       const response = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
@@ -62,7 +62,7 @@ async function callClaudePrimary(
         signal: controller.signal,
         body: JSON.stringify({
           model: modelName,
-          max_tokens: 4096,
+          max_tokens: 2500,
           temperature: 0.0,
           system: expectJson
             ? systemInstruction + " IMPORTANT: Return ONLY valid raw JSON with no preamble, markdown code fences, or formatting wrapper."
@@ -85,6 +85,8 @@ async function callClaudePrimary(
       }
     } catch (err: any) {
       console.warn(`[FailoverLayer] Claude (${modelName}) network/timeout:`, err?.message || err);
+      // A timeout means the answer is slow, not that the model is missing: go straight to the fallback.
+      if (err?.name === "AbortError") return { text: null, recoverable: true };
     }
   }
 
@@ -107,7 +109,7 @@ async function callOpenAIFallback(
 
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 25000);
+    const timeoutId = setTimeout(() => controller.abort(), 30000);
 
     const instructions = expectJson
       ? `${systemInstruction}\n\nIMPORTANT: Return ONLY valid raw JSON matching the required schema with no preamble or code fences.`
@@ -125,7 +127,7 @@ async function callOpenAIFallback(
         instructions,
         input: prompt,
         temperature: 0.0,
-        max_output_tokens: 4096
+        max_output_tokens: 2500
       })
     });
     clearTimeout(timeoutId);

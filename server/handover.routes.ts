@@ -3,7 +3,7 @@
 // File: server/handover.routes.ts
 // ============================================================
 
-import { Router, Request, Response } from 'express';
+import { Router, type Request, type Response } from 'express';
 import { extractHandover } from './handover.ts';
 
 const router = Router();

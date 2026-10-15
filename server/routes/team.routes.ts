@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { randomBytes, createHash } from "crypto";
 import { adminAuth, db, PROJECT_ID, FIRESTORE_DATABASE_ID } from "../../src/lib/firebase-admin.ts";
-import { requireAuth, AuthRequest } from "../../src/middleware/auth.ts";
+import { requireAuth, type AuthRequest } from "../../src/middleware/auth.ts";
 
 export function hashInviteToken(token: string): string {
   return createHash("sha256").update(token.trim()).digest("hex");

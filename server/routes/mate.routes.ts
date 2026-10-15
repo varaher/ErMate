@@ -13,7 +13,7 @@
  */
 
 import { Router } from "express";
-import { requireAuth, AuthRequest } from "../../src/middleware/auth.ts";
+import { requireAuth, type AuthRequest } from "../../src/middleware/auth.ts";
 import { deidentifyText } from "../deidentify.ts";
 import type {
   MateInterpretation,

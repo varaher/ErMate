@@ -1,4 +1,4 @@
-import { getAgeBand, type AgeBand, type PediatricVitalParam } from "../../server/pediatricClinicalRanges";
+import { getAgeBand, type AgeBand, type PediatricVitalParam } from '../../server/pediatricClinicalRanges.ts';
 
 export { getAgeBand, type AgeBand, type PediatricVitalParam };
 
