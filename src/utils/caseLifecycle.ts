@@ -102,6 +102,26 @@ export function isCaseEligibleFor24hArchive(c: ClinicalCase, now = new Date()): 
 }
 
 /**
+ * A patient who is still in the department: not archived/discharged/transferred/finalized and
+ * with no disposition set. Single source of truth for "who is on the floor right now".
+ */
+export function isCaseOperationallyActive(c: ClinicalCase): boolean {
+  if (!c || !c.id) return false;
+  if (c.archivedAt || (c as any).isArchived) return false;
+  if (c.status === "Discharged" || (c.status as string) === "Transferred" || (c.status as string) === "Completed" || (c.status as string) === "Archived") return false;
+  if (c.status !== "Active" && c.status !== "Triage") return false;
+  if (c.dischargeInfo?.summaryStatus === "FINALIZED") return false;
+  const dispType = c.dispositionDetails?.dispositionType;
+  if (dispType && ["Discharge", "Admit", "Refer", "LAMA", "Absconded", "Death"].includes(dispType)) return false;
+  return true;
+}
+
+/** Cases that belong on a shift handover: on the floor now and not due to leave the list (24h rule). */
+export function isCaseHandoverEligible(c: ClinicalCase, now = new Date()): boolean {
+  return isCaseOperationallyActive(c) && !isCaseEligibleFor24hArchive(c, now);
+}
+
+/**
  * True when any clinical information has been documented on the case.
  */
 export function hasAnyClinicalContent(c: ClinicalCase): boolean {

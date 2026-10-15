@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { 
   Users, ClipboardCopy, FileText, Printer, Plus, Trash2, Edit2, Pencil,
   CheckCircle, HelpCircle, Download, Check, RefreshCw, Layers, LayoutList,
@@ -10,6 +10,7 @@ import { sanitizeDoctorError } from "../utils/sanitizeError";
 import { triggerPrintWithTip } from "../utils/printWithTip";
 import { ClinicalCase, UserProfile, HandoverRecord, QuickPastePatient, InvestigationItem, HandoverPatient, DirectDischargeSummaryItem, TreatmentItem } from "../types";
 import { HandoverCard } from "./HandoverCard";
+import { isCaseHandoverEligible } from "../utils/caseLifecycle";
 import { BoundChatModal } from "./BoundChatModal";
 import { ChatContext } from "../hooks/useBoundChat";
 import { db, auth } from "../firebase";
@@ -411,19 +412,26 @@ export default function HandoverView({
   // DPDP Shield Protection Info Toast State
   const [phiShieldInfo, setPhiShieldInfo] = useState<{ count: number; phiFound: string[]; details: Record<string, number> } | null>(null);
 
+  // Only patients currently on the floor (not archived/discharged/dispositioned, not 24h-stale).
+  // Re-derived whenever `cases` changes; Registry selection and every handover output use this list.
+  const handoverCases = useMemo(() => cases.filter((c) => isCaseHandoverEligible(c)), [cases]);
+
   // State for Registry Cases selection (by default select all active cases)
   const [selectedRegistryIds, setSelectedRegistryIds] = useState<string[]>(
-    cases.filter(c => c.status === "Active").map(c => c.id)
+    handoverCases.map(c => c.id)
   );
 
-  const seenRegistryIdsRef = useRef<Set<string>>(new Set(cases.filter(c => c.status === "Active").map(c => c.id)));
+  const seenRegistryIdsRef = useRef<Set<string>>(new Set(handoverCases.map(c => c.id)));
 
   useEffect(() => {
-    const activeCaseIds = cases.filter(c => c.status === "Active").map(c => c.id);
+    const activeCaseIds = handoverCases.map(c => c.id);
     
     setSelectedRegistryIds(prev => {
       let changed = false;
-      const newSelection = [...prev];
+      const activeSet = new Set(activeCaseIds);
+      // Drop cases that have left the floor (archived/discharged/24h) so they can't linger in a handover.
+      const newSelection = prev.filter((id) => activeSet.has(id));
+      if (newSelection.length !== prev.length) changed = true;
       for (const id of activeCaseIds) {
         if (!seenRegistryIdsRef.current.has(id)) {
           seenRegistryIdsRef.current.add(id);
@@ -435,7 +443,7 @@ export default function HandoverView({
       }
       return changed ? newSelection : prev;
     });
-  }, [cases]);
+  }, [handoverCases]);
 
   // Quick Paste lists state (synced with Firestore if provided via props, else local state)
   const [localQuickPasteList, setLocalQuickPasteList] = useState<QuickPastePatient[]>(() => {
@@ -1571,7 +1579,7 @@ function extractLatestVitalsWithTime(
   }
 
   const getRegistryRows = (): HandoverTableRow[] => {
-    const selectedCases = cases.filter(c => selectedRegistryIds.includes(c.id));
+    const selectedCases = handoverCases.filter(c => selectedRegistryIds.includes(c.id));
     const rows = selectedCases.map((c, idx) => {
       const { confirmedGiven, unconfirmed } = classifyTreatments(c.treatments, c.notes);
       
@@ -1925,7 +1933,7 @@ function extractLatestVitalsWithTime(
     const localRows = getRegistryRows();
     setEditableRows(localRows);
     saveRefinedHandoverSheet(localRows, handoverMeta);
-    const selectedCases = cases.filter(c => selectedRegistryIds.includes(c.id));
+    const selectedCases = handoverCases.filter(c => selectedRegistryIds.includes(c.id));
     if (selectedCases.length > 0) {
       refineSheetWithErMate(selectedCases);
     }
@@ -1945,7 +1953,7 @@ function extractLatestVitalsWithTime(
 
   const handleDownloadWordDirect = async (type: "registry" | "quickpaste") => {
     const selectedIds = type === "registry" ? selectedRegistryIds : selectedQuickPasteIds;
-    const selectedCases = cases.filter(c => selectedIds.includes(c.id));
+    const selectedCases = (type === "registry" ? handoverCases : cases).filter(c => selectedIds.includes(c.id));
     if (selectedCases.length === 1) {
       const { generateDetailedPatientDocx } = await import("../utils/docxGenerator");
       const blob = await generateDetailedPatientDocx(selectedCases[0]);
@@ -2133,11 +2141,10 @@ function extractLatestVitalsWithTime(
   };
 
   const handleSelectAllRegistry = () => {
-    const activeCases = cases.filter(c => c.status === "Active");
-    if (selectedRegistryIds.length === activeCases.length) {
+    if (selectedRegistryIds.length === handoverCases.length) {
       setSelectedRegistryIds([]);
     } else {
-      setSelectedRegistryIds(activeCases.map(c => c.id));
+      setSelectedRegistryIds(handoverCases.map(c => c.id));
     }
   };
 
@@ -2554,7 +2561,7 @@ function extractLatestVitalsWithTime(
     try {
       let patientList: any[] = [];
       if (type === "registry") {
-        patientList = cases.filter(c => selectedRegistryIds.includes(c.id)).map(c => {
+        patientList = handoverCases.filter(c => selectedRegistryIds.includes(c.id)).map(c => {
           const { confirmedGiven, unconfirmed } = classifyTreatments(c.treatments, c.notes);
           const treatingPhysician = c.doctorName ? (c.doctorName.startsWith("Dr.") ? c.doctorName : `Dr. ${c.doctorName}`) : "Not documented";
           const admittingConsultant = c.consultantReview?.reviewedBy || (c as any).admittingConsultant || (c as any).consultant || "Not documented";
@@ -2662,7 +2669,7 @@ function extractLatestVitalsWithTime(
 
   const getRegistryPrintText = (): string => {
     const selectedCases = sortRowsByBedNumber(
-      cases.filter(c => selectedRegistryIds.includes(c.id)).map(c => ({ ...c, bed: c.bedNo }))
+      handoverCases.filter(c => selectedRegistryIds.includes(c.id)).map(c => ({ ...c, bed: c.bedNo }))
     );
     let text = `==================================================\n`;
     text += `ERMATE ACTIVE PATIENTS SHIFT HANDOVER SHEET\n`;
@@ -2722,7 +2729,7 @@ function extractLatestVitalsWithTime(
     return text;
   };
 
-  const activeCases = cases.filter(c => c.status === "Active");
+  const activeCases = handoverCases;
 
   if (isViewingSheet) {
     const chunkRows = (rows: HandoverTableRow[], size: number) => {
@@ -3012,7 +3019,7 @@ function extractLatestVitalsWithTime(
             <button
               onClick={() => {
                 if (activeSubTab === "registry") {
-                  const selectedCases = cases.filter(c => selectedRegistryIds.includes(c.id));
+                  const selectedCases = handoverCases.filter(c => selectedRegistryIds.includes(c.id));
                   refineSheetWithErMate(selectedCases);
                 } else {
                   const selectedQuick = quickPasteList.filter(qp => selectedQuickPasteIds.includes(qp.id));
@@ -3730,7 +3737,7 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
               {printType === "registry" ? (
                 // Registry Cases Print Layout
                 <div className="space-y-6">
-                  {cases.filter(c => selectedRegistryIds.includes(c.id)).map((c, idx) => (
+                  {handoverCases.filter(c => selectedRegistryIds.includes(c.id)).map((c, idx) => (
                     <div key={`${c.id}-${idx}`} className="border border-slate-200 rounded-xl p-4 space-y-3 bg-slate-50/20">
                       <div className="flex items-center justify-between border-b pb-2">
                         <h3 className="text-sm font-bold text-slate-900">
@@ -4049,7 +4056,7 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
                 <button
                   disabled={selectedRegistryIds.length === 0}
                   onClick={() => {
-                    const selected = cases.filter(c => selectedRegistryIds.includes(c.id));
+                    const selected = handoverCases.filter(c => selectedRegistryIds.includes(c.id));
                     const patientsSummary = selected.map(s => `${s.patient.name} (${String(s.patient.triageCategory || "P2").split(" ")[0]} - ${s.patient.presentingComplaint})`).join(", ");
                     const record: HandoverRecord = {
                       id: "H-" + Math.floor(1000 + Math.random() * 9000),
