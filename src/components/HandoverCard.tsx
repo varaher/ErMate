@@ -73,26 +73,45 @@ export function HandoverCard({
     setDownloadingPdf(true);
     try {
       const pl: any = patient.patientLabel || {};
+      const treatingDr = pl.treatingERPhysician || "Not documented";
+      const admittingCons = pl.admittingConsultant || "Not documented";
+
+      const doneList = (patient as any)?.managementPlan?.done || patient?.done || [];
+      const todoList = (patient as any)?.managementPlan?.pending || patient?.toBeDone || [];
+
+      let pendingPlanStr = "";
+      if (todoList && todoList.length > 0) {
+        pendingPlanStr = todoList.join(" | ");
+      } else {
+        const rawRec = (patient as any)?.recommendation || (patient as any)?.structuredSBAR?.recommendation || "";
+        if (rawRec && rawRec.trim() !== (patient.diagnosis || "").trim() && !/^(?:same as above|under evaluation|not documented)$/i.test(rawRec.trim())) {
+          pendingPlanStr = rawRec.trim();
+        }
+      }
+      const donePlanStr = (doneList && doneList.length > 0) ? doneList.join(" | ") : "";
+
       const response = await authenticatedFetch("/api/handover/pdf", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           date: new Date().toLocaleDateString(),
           facility: pl.admittingDepartment || "Emergency Department",
-          clinician: pl.admittingConsultant || pl.treatingERPhysician || "Duty ER Physician",
+          clinician: "Duty ER Team",
           patients: [{
             id: patient.id || "card",
-            bed: pl.bed || "N/A",
+            bed: (pl.bed && pl.bed !== "N/A") ? pl.bed : "Unassigned",
             name: pl.name || "Patient",
             ageGender: pl.ageSex || "N/A",
             erNo: pl.erNumber || "N/A",
-            doctor: pl.admittingConsultant || pl.treatingERPhysician || "Duty Medical Officer",
+            treatingPhysician: treatingDr,
+            admittingConsultant: admittingCons,
+            doctor: treatingDr,
             vitals: patient.vitalsNow || "Not documented",
-            complaints: patient.presentingComplaint || "Emergency evaluation",
-            assessment: patient.diagnosis || "Under evaluation",
-            planDone: (patient.done && patient.done.length > 0) ? patient.done.join(" | ") : "",
-            planToBeDone: (patient.toBeDone && patient.toBeDone.length > 0) ? patient.toBeDone.join(" | ") : ((patient as any)?.recommendation || (patient as any)?.structuredSBAR?.recommendation || "Maintain monitoring & care"),
-            alerts: patient.alertBanner?.summary || (patient.criticalAlerts || []).join(" · ") || "None"
+            complaints: patient.presentingComplaint || patient.story || "Emergency evaluation",
+            assessment: patient.diagnosis || "",
+            planDone: donePlanStr,
+            planToBeDone: pendingPlanStr,
+            alerts: patient.alertBanner?.summary || (patient.criticalAlerts || []).join(" · ") || ""
           }]
         })
       });

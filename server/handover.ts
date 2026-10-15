@@ -609,6 +609,33 @@ export function extractPatientNameAndTimestamp(rawText: string): {
   return { name, ageGender, time: time || null, bed };
 }
 
+// ── Extract Treating Physician if explicitly established in source ───
+export function extractTreatingPhysicianFromSource(rawText: string, handoverAuthor?: string): string | null {
+  if (!rawText || typeof rawText !== "string") return null;
+  const patterns = [
+    /(?:treating\s*(?:er\s*)?(?:physician|doctor|clinician|resident)|er\s*physician|duty\s*(?:doctor|mo)|attending\s*(?:physician|doctor)|seen\s*by|evaluated\s*by|primary\s*(?:doctor|physician))\s*[:=-]?\s*(?:Dr\.?\s*)?([A-Za-z]+(?:\s+[A-Za-z]+){0,3})/i,
+    /(?:Dr\.?\s*([A-Za-z]+(?:\s+[A-Za-z]+){0,3}))\s*\((?:treating|er\s*physician|duty\s*doctor|resident|cmo)\)/i
+  ];
+  for (const pat of patterns) {
+    const match = rawText.match(pat);
+    if (match && match[1]) {
+      const name = match[1].trim().replace(/[,\.\n\r\(\);].*$/, "").trim();
+      if (name.length >= 2 && !/^(?:hospital|emergency|department|resident|officer|physician|doctor|consultant|unit|team|not|nil|none)$/i.test(name)) {
+        return name.startsWith("Dr.") || name.startsWith("Dr ") ? name : `Dr. ${name}`;
+      }
+    }
+  }
+  // Only use handoverAuthor if the source text explicitly indicates they are the treating physician
+  if (handoverAuthor && handoverAuthor.trim().length > 2) {
+    const cleanAuthor = handoverAuthor.replace(/^Dr\.?\s*/i, "").trim().toLowerCase();
+    const isExplicitlyAuthor = new RegExp(`(?:treating|attending|primary|seen\\s*by|duty\\s*doctor|er\\s*doctor|evaluated\\s*by).*?${cleanAuthor}`, 'i').test(rawText);
+    if (isExplicitlyAuthor) {
+      return handoverAuthor.startsWith("Dr.") ? handoverAuthor : `Dr. ${handoverAuthor}`;
+    }
+  }
+  return null;
+}
+
 // ── Heuristic Fallback Handover Data ──────────────────────────
 function buildHeuristicFallback(rawText: string): any {
   const extracted = extractPatientNameAndTimestamp(rawText);
@@ -1045,7 +1072,7 @@ const alertBanner = parsed.alertBanner || {
           erBoarder: Boolean(pl.erBoarder),
           inERSince: pl.inERSince || null,
           status,
-          treatingERPhysician: doctorName || null,
+          treatingERPhysician: extractTreatingPhysicianFromSource(rawText, doctorName),
         },
         alertBanner,
         initialPresentation,

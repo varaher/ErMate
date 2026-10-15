@@ -17,6 +17,7 @@ import {
 } from "../services/scribeChatStorage";
 import { resolveWorkspaceForUser, WorkspaceResolutionError } from "../utils/workspaceResolver";
 import VoiceRecorder, { isGlobalVoiceRecordingActive } from "./shared/VoiceRecorder";
+import { setCriticalFlag } from "../utils/criticalOps";
 import Markdown from "react-markdown";
 import { getChecklistForKind, type CaseSheetKind } from "../../server/caseSheetChecklist";
 import { ScribeReasoningRenderer } from "./ScribeReasoningRenderer";
@@ -1170,6 +1171,16 @@ export default function VoiceScribeChatView({
   useEffect(() => {
     onBusyChange?.(isSending);
   }, [isSending, onBusyChange]);
+
+  // Hard Refresh safety: a scribe request or attachment read is in flight (read-only signal).
+  useEffect(() => {
+    setCriticalFlag(
+      "scribeBusy",
+      isUploadingAttachment ? "An attachment is still being read." : "A scribe request is still in progress.",
+      isSending || isUploadingAttachment
+    );
+    return () => setCriticalFlag("scribeBusy", "", false);
+  }, [isSending, isUploadingAttachment]);
 
   // Handle explicit manual refresh trigger from Global Refresh button
   useEffect(() => {

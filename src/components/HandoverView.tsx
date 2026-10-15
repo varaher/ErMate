@@ -8,7 +8,7 @@ import {
 import VoiceRecorder from "./shared/VoiceRecorder";
 import { sanitizeDoctorError } from "../utils/sanitizeError";
 import { triggerPrintWithTip } from "../utils/printWithTip";
-import { ClinicalCase, UserProfile, HandoverRecord, QuickPastePatient, InvestigationItem, HandoverPatient, DirectDischargeSummaryItem } from "../types";
+import { ClinicalCase, UserProfile, HandoverRecord, QuickPastePatient, InvestigationItem, HandoverPatient, DirectDischargeSummaryItem, TreatmentItem } from "../types";
 import { HandoverCard } from "./HandoverCard";
 import { BoundChatModal } from "./BoundChatModal";
 import { ChatContext } from "../hooks/useBoundChat";
@@ -63,6 +63,8 @@ interface HandoverTableRow {
   ageGender: string;
   erNo?: string;
   doctor?: string;
+  treatingPhysician?: string;
+  admittingConsultant?: string;
   stayDuration?: string;
   complaints: string;
   chronologicalNotes?: string;
@@ -1382,6 +1384,58 @@ function extractLatestVitalsWithTime(
     return 9999;
   }
 
+  function classifyTreatments(
+    treatments: TreatmentItem[] | undefined,
+    notesList?: Array<{ content?: string }>
+  ): {
+    confirmedGiven: string[];
+    unconfirmed: string[];
+  } {
+    const confirmedGiven: string[] = [];
+    const unconfirmed: string[] = [];
+
+    if (!treatments || treatments.length === 0) {
+      return { confirmedGiven, unconfirmed };
+    }
+
+    const allNotesText = (notesList?.map(n => n.content).join(" ") || "").toLowerCase();
+
+    treatments.forEach(t => {
+      const medDesc = `${t.drugName} ${t.dose}${t.route ? ` (${t.route})` : ''}`.trim();
+      if (!medDesc) return;
+
+      const rawStatus = (t as any).status ? String((t as any).status).trim().toLowerCase() : "";
+      const rawTimeGiven = t.timeGiven ? String(t.timeGiven).trim() : "";
+      const rawInstruction = t.instruction ? String(t.instruction).trim().toLowerCase() : "";
+      
+      const isClockTime = /\b(?:[0-1]?\d|2[0-3]):[0-5]\d(?:\s*[AP]M)?\b/i.test(rawTimeGiven);
+      const isExplicitlyGivenStatus = rawStatus === "given" || rawStatus === "administered" || rawStatus === "completed";
+      const isExplicitlyPendingStatus = rawStatus === "ordered" || rawStatus === "pending" || rawStatus === "due" || rawStatus === "to be given" || rawStatus === "stat" || /to\s*be\s*given|pending|ordered|hold|withheld|avoid|cancelled/i.test(rawInstruction);
+      const isExplicitlyWithheldOrOmitted = rawStatus === "held" || rawStatus === "withheld" || rawStatus === "not given" || rawStatus === "omitted" || rawStatus === "cancelled" || /not\s*given|withheld|hold/i.test(rawInstruction);
+
+      const drugEscaped = t.drugName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').toLowerCase();
+      const drugMentionedInNotes = new RegExp(`(?:inj|iv|tab|syp|infusion|nebulization)?\\s*${drugEscaped}`, 'i').test(allNotesText);
+      const hasNegativeNote = new RegExp(`(?:not\\s+given|withheld|hold|avoid|to\\s+be\\s+given|if\\s+needed|stat\\s+order)\\s*.*?${drugEscaped}|${drugEscaped}.*?(?:not\\s+given|withheld|hold|avoid|to\\s+be\\s+given|if\\s+needed)`, 'i').test(allNotesText);
+      const drugAdminEvidence = drugMentionedInNotes && !hasNegativeNote && new RegExp(`(?:inj|iv|tab|syp|infusion|nebulization)?\\s*${drugEscaped}\\s*(?:was|is)?\\s*(?:given|administered|pushed|infused|started|taken)`, 'i').test(allNotesText);
+
+      const hasConfirmedAdministration = !isExplicitlyPendingStatus && !isExplicitlyWithheldOrOmitted && (
+        Boolean(t.ipsgVerified) ||
+        isExplicitlyGivenStatus ||
+        (isClockTime && !/not\s*given/i.test(rawTimeGiven)) ||
+        drugAdminEvidence
+      );
+
+      if (hasConfirmedAdministration) {
+        const timeSuffix = isClockTime && !/not\s*given/i.test(rawTimeGiven) ? ` at ${rawTimeGiven}` : "";
+        confirmedGiven.push(`${medDesc}${timeSuffix}`);
+      } else {
+        unconfirmed.push(medDesc);
+      }
+    });
+
+    return { confirmedGiven, unconfirmed };
+  }
+
   function extractChronologicalInvestigationsAndAlerts(
     rawText: string,
     assessmentStr?: string,
@@ -1401,7 +1455,11 @@ function extractLatestVitalsWithTime(
     // 1. Process investigationsArray
     if (investigationsArray && investigationsArray.length > 0) {
       investigationsArray.forEach(inv => {
-        const hasResult = Boolean(inv.result && inv.result.trim().length > 0);
+        const hasResult = Boolean(
+          inv.result &&
+          inv.result.trim().length > 0 &&
+          !/^(?:pending|ordered|awaited|awaiting|awaiting\s+(?:results?|report)|sent|sample\s*(?:collected|sent|drawn)|scheduled|due|repeat|repeat\s+.*|to\s*be\s*.*|to\s*do|advised|requisition.*|not\s*done|not\s*yet.*)$/i.test(inv.result.trim())
+        );
         const rawStatus = (inv as any).status ? String((inv as any).status).trim().toLowerCase() : "";
         const isAbn = !!inv.isAbnormal || (hasResult && checkLineForAbnormalities(`${inv.testName} ${inv.result || ''}`));
 
@@ -1466,11 +1524,25 @@ function extractLatestVitalsWithTime(
             timestamp: ts
           });
 
-          const testNameMatch = line.match(/\b(CBC|RFT|LFT|VBG|ABG|CT\s*\w+|MRI\s*\w+|X-Ray|CXR|USG|Echo|ECG|Troponin|CRP|GRBS)\b/i);
-          if (testNameMatch && !completedLabNames.some(c => c.toUpperCase().includes(testNameMatch[0].toUpperCase()))) {
-            // Only add if there is a documented value/result on this line
-            const hasNumericOrResult = /\b(?:\d+(?:\.\d+)?|positive|negative|normal|elevated|detected|sinus|ischemia)\b/i.test(line);
-            if (hasNumericOrResult) {
+          // Classify whether this line is an actual documented result, a pending instruction, or unconfirmed
+          const isPendingInstruction = /\b(?:repeat|repeating|ordered|order|to\s*order|sent|to\s*be\s*sent|pending|awaiting|awaited|advise[d]?|plan\b|sample\s*collected|collect\b|to\s*do|scheduled|requisition|check\b|r\/o|rule\s*out|consider|target|keep|if\b|when\b|expected|suspect|query|\?)\b/i.test(line);
+
+          if (isPendingInstruction) {
+            const testNameMatch = line.match(/\b(CBC|RFT|LFT|VBG|ABG|CT\s*\w+|MRI\s*\w+|X-Ray|CXR|USG|Echo|ECG|Troponin|CRP|GRBS)\b/i);
+            if (testNameMatch && !pendingLabsList.some(p => p.toUpperCase().includes(testNameMatch[0].toUpperCase()))) {
+              pendingLabsList.push(line);
+            }
+          } else {
+            // Check for explicit documented lab/diagnostic results (not assuming result merely because of digits or isolated word 'normal')
+            const numericWithUnitRegex = /\b(?:cbc|wbc|hgb|hb|platelet|platelets|rft|creatinine|urea|lft|bilirubin|sgot|sgpt|trop|troponin|ckmb|crp|esr|lactate|grbs|sugar|d-dimer|ddimer|inr|pt\/inr|potassium|sodium|calcium|pco2|po2|hco3|ph)\b.*?[:=-]?\s*\d+(?:\.\d+)?\s*(?:mg\/d[lL]|g\/d[lL]|mmol\/[lL]|meq\/[lL]|\/cumm|lakhs?|cells?\/|ng\/m[lL]|pg\/m[lL]|u\/[lL]|iu\/[lL]|%|k\/ul)\b/i;
+            const explicitValAssignmentRegex = /\b(?:creatinine|hb|hgb|wbc|platelets?|urea|bilirubin|sgot|sgpt|lactate|grbs|potassium|sodium|inr|ph|pco2|po2|hco3)\s*[:=-]\s*\d+(?:\.\d+)?\b/i;
+            const qualitativeResultRegex = /\b(?:troponin|trop|crp|ckmb|urine|rapid\s*antigen|covid|d-dimer|efast|fast)\b\s*(?:is|was|reported|shows|showed|result|status)?\s*[:=-]?\s*(?:positive|negative|normal|elevated|detected|non-reactive|reactive)\b/i;
+            const ecgResultRegex = /\b(?:ecg|ekg)\b\s*(?:shows?|showed|reveals?|[:=-])\s*(?:normal\s*sinus\s*rhythm|nsr|st\s*(?:elevation|depression)|t\s*wave\s*inversion|sinus\s*(?:tachycardia|bradycardia)|lbbb|rbbb|afib|atrial\s*fibrillation|ischemia|arrhythmia)/i;
+            const imagingResultRegex = /\b(?:cxr|x-ray|xray|ct|mri|usg|ultrasound|echo)\s*(?:brain|chest|abdomen|pelvis|kub|head)?\b\s*(?:shows?|showed|reveals?|reported|[:=-])\s*(?:normal|clear|no\s*acute|no\s*pneumothorax|cholelithiasis|fracture|infarct|hemorrhage|consolidation|effusion|cardiomegaly|edema)/i;
+
+            const isDocumentedResult = numericWithUnitRegex.test(line) || explicitValAssignmentRegex.test(line) || qualitativeResultRegex.test(line) || ecgResultRegex.test(line) || imagingResultRegex.test(line);
+
+            if (isDocumentedResult && !completedLabNames.some(c => c.toLowerCase() === line.toLowerCase())) {
               completedLabNames.push(line);
             }
           }
@@ -1501,7 +1573,7 @@ function extractLatestVitalsWithTime(
   const getRegistryRows = (): HandoverTableRow[] => {
     const selectedCases = cases.filter(c => selectedRegistryIds.includes(c.id));
     const rows = selectedCases.map((c, idx) => {
-      const rxText = c.treatments.map(t => `${t.drugName} ${t.dose}${t.route ? ` (${t.route})` : ''}`).join(", ");
+      const { confirmedGiven, unconfirmed } = classifyTreatments(c.treatments, c.notes);
       
       const diagnosisText = c.provisionalPrimaryDiagnosis 
         ? `PROVISIONAL DIAGNOSIS: ${c.provisionalPrimaryDiagnosis}` 
@@ -1516,7 +1588,7 @@ function extractLatestVitalsWithTime(
 
       const doneParts: string[] = [];
       if (planDoneLabsText) doneParts.push(planDoneLabsText);
-      if (rxText) doneParts.push(`✓ Treatments given: ${rxText}`);
+      if (confirmedGiven.length > 0) doneParts.push(`✓ Treatments given: ${confirmedGiven.join(", ")}`);
       if (c.vitals && (c.vitals.bp || c.vitals.hr || c.vitals.spo2)) {
         const vitalsLoggedParts: string[] = [];
         if (c.vitals.bp) vitalsLoggedParts.push(`BP ${c.vitals.bp}`);
@@ -1535,6 +1607,13 @@ function extractLatestVitalsWithTime(
         pendingParts.push(`□ ${c.dispositionDetails.observationNotes.trim()}`);
       }
       const planToBeDoneText = pendingParts.join("\n");
+
+      // Preserve unconfirmed treatments under neutral heading in assessment, never placing under completed or pending actions
+      let finalAssessment = formattedAssessment;
+      if (unconfirmed.length > 0) {
+        const unconfirmedHeading = `Treatment documented — administration unconfirmed: ${unconfirmed.join(", ")}`;
+        finalAssessment = finalAssessment ? `${finalAssessment}\n\n${unconfirmedHeading}` : unconfirmedHeading;
+      }
 
       const vitalsText = extractLatestVitalsWithTime(
         c.vitals,
@@ -1558,7 +1637,7 @@ function extractLatestVitalsWithTime(
               if (!isNaN(d.getTime())) {
                 const dateStr = d.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit' });
                 const timeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-                const docLabel = c.doctorName || profile?.name ? `Dr. ${c.doctorName || profile.name}` : "Treating Clinician";
+                const docLabel = c.doctorName ? (c.doctorName.startsWith("Dr.") ? c.doctorName : `Dr. ${c.doctorName}`) : "Treating Clinician not documented";
                 return `${dateStr} ${timeStr} ${docLabel} · Initial assessment\n${vitalsLine}`;
               }
             }
@@ -1602,9 +1681,18 @@ function extractLatestVitalsWithTime(
       })();
 
       const doctorText = (() => {
-        const rawDoc = c.doctorName || c.lastEditedByName || "";
+        const rawDoc = c.doctorName || "";
         if (rawDoc && rawDoc.trim().length > 0) {
           const trimmed = rawDoc.trim();
+          return trimmed.startsWith("Dr.") || trimmed.startsWith("Dr ") ? trimmed : `Dr. ${trimmed}`;
+        }
+        return "Not documented";
+      })();
+
+      const consultantText = (() => {
+        const rawCons = c.consultantReview?.reviewedBy || (c as any).admittingConsultant || (c as any).consultant || "";
+        if (rawCons && rawCons.trim().length > 0) {
+          const trimmed = rawCons.trim();
           return trimmed.startsWith("Dr.") || trimmed.startsWith("Dr ") ? trimmed : `Dr. ${trimmed}`;
         }
         return "Not documented";
@@ -1617,11 +1705,13 @@ function extractLatestVitalsWithTime(
         ageGender: `${c.patient.age ?? "N/A"}${c.patient.gender === "Male" ? "M" : c.patient.gender === "Female" ? "F" : "U"}`,
         erNo: `ER# ${c.patient.id || c.displayId || c.id.substring(0, 7)}`,
         doctor: doctorText,
+        treatingPhysician: doctorText,
+        admittingConsultant: consultantText,
         stayDuration: stayDurationText,
         complaints: (c.patient.presentingComplaint && c.patient.presentingComplaint.trim()) ? c.patient.presentingComplaint.trim() : "Not documented",
         chronologicalNotes: chronoNotes,
         history: historyText,
-        assessment: formattedAssessment,
+        assessment: finalAssessment,
         planDone: planDoneText,
         planToBeDone: planToBeDoneText,
         bystander: bystanderNote,
@@ -1739,15 +1829,22 @@ function extractLatestVitalsWithTime(
         toBeDoneText = `□ ${qp.structuredSBAR.recommendation}`;
       }
 
+      const treatingDr = card?.patientLabel?.treatingERPhysician
+        ? (card.patientLabel.treatingERPhysician.startsWith("Dr.") ? card.patientLabel.treatingERPhysician : `Dr. ${card.patientLabel.treatingERPhysician}`)
+        : "Not documented";
+      const admittingCons = card?.patientLabel?.admittingConsultant
+        ? (card.patientLabel.admittingConsultant.startsWith("Dr.") ? card.patientLabel.admittingConsultant : `Dr. ${card.patientLabel.admittingConsultant}`)
+        : "Not documented";
+
       return {
         id: qp.id,
         bed: bedText,
         name: nameText,
         ageGender: ageSexText,
         erNo: card?.patientLabel?.erNumber ? `ER# ${card.patientLabel.erNumber}` : `ER# ${qp.id.substring(0, 7)}`,
-        doctor: card?.patientLabel?.admittingConsultant
-          ? (card.patientLabel.admittingConsultant.startsWith("Dr.") ? card.patientLabel.admittingConsultant : `Dr. ${card.patientLabel.admittingConsultant}`)
-          : (profile?.name ? (profile.name.startsWith("Dr.") ? profile.name : `Dr. ${profile.name}`) : "Treating Clinician"),
+        doctor: treatingDr !== "Not documented" ? treatingDr : (admittingCons !== "Not documented" ? `Cons: ${admittingCons}` : "Not documented"),
+        treatingPhysician: treatingDr,
+        admittingConsultant: admittingCons,
         stayDuration: card?.patientLabel?.inERSince ? `In ER since: ${card.patientLabel.inERSince}` : "Arrival time not documented",
         complaints: sit,
         chronologicalNotes: chronoNotes,
@@ -2457,33 +2554,66 @@ function extractLatestVitalsWithTime(
     try {
       let patientList: any[] = [];
       if (type === "registry") {
-        patientList = cases.filter(c => selectedRegistryIds.includes(c.id)).map(c => ({
-          id: c.id,
-          bed: c.bedNo || "N/A",
-          name: c.patient.name,
-          ageGender: `${c.patient.age || "N/A"}y / ${c.patient.gender}`,
-          erNo: c.patient.uhid || c.displayId || c.id.substring(0, 7),
-          doctor: c.createdByName || c.doctorName || `Dr. ${profile.name}`,
-          vitals: `HR ${c.vitals.hr || "N/A"}, BP ${c.vitals.bp || "N/A"}, SpO2 ${c.vitals.spo2 || "N/A"}%`,
-          complaints: c.patient.presentingComplaint,
-          assessment: c.progressNotes || c.sampleHistory?.symptoms || "Not documented",
-          planDone: c.treatments?.map(t => `${t.drugName} ${t.dose}`).join(", ") || "",
-          planToBeDone: c.dispositionDetails?.observationNotes?.trim() || "Maintain monitoring & care",
-          alerts: c.sampleHistory?.allergies || "None"
-        }));
+        patientList = cases.filter(c => selectedRegistryIds.includes(c.id)).map(c => {
+          const { confirmedGiven, unconfirmed } = classifyTreatments(c.treatments, c.notes);
+          const treatingPhysician = c.doctorName ? (c.doctorName.startsWith("Dr.") ? c.doctorName : `Dr. ${c.doctorName}`) : "Not documented";
+          const admittingConsultant = c.consultantReview?.reviewedBy || (c as any).admittingConsultant || (c as any).consultant || "Not documented";
+          
+          let pdfAssessment = c.progressNotes || c.sampleHistory?.symptoms || "Not documented";
+          if (unconfirmed.length > 0) {
+            pdfAssessment += `\nTreatment documented — administration unconfirmed: ${unconfirmed.join(", ")}`;
+          }
+
+          const doneParts: string[] = [];
+          if (confirmedGiven.length > 0) {
+            doneParts.push(`✓ Treatments given: ${confirmedGiven.join(", ")}`);
+          }
+          if (c.vitals && (c.vitals.bp || c.vitals.hr || c.vitals.spo2)) {
+            const vitalsLoggedParts: string[] = [];
+            if (c.vitals.bp) vitalsLoggedParts.push(`BP ${c.vitals.bp}`);
+            if (c.vitals.hr) vitalsLoggedParts.push(`HR ${c.vitals.hr}`);
+            if (c.vitals.spo2) vitalsLoggedParts.push(`SpO2 ${c.vitals.spo2}%`);
+            doneParts.push(`✓ Vitals logged: ${vitalsLoggedParts.join(" | ")}`);
+          }
+
+          const pendingObs = c.dispositionDetails?.observationNotes?.trim();
+          const pendingParts: string[] = [];
+          if (pendingObs && pendingObs.length > 0) {
+            pendingParts.push(pendingObs);
+          }
+
+          return {
+            id: c.id,
+            bed: c.bedNo || "Unassigned",
+            name: c.patient.name,
+            ageGender: `${c.patient.age || "N/A"}y / ${c.patient.gender}`,
+            erNo: c.patient.uhid || c.displayId || c.id.substring(0, 7),
+            doctor: treatingPhysician,
+            treatingPhysician: treatingPhysician,
+            admittingConsultant: admittingConsultant,
+            vitals: `HR ${c.vitals.hr || "N/A"}, BP ${c.vitals.bp || "N/A"}, SpO2 ${c.vitals.spo2 || "N/A"}%`,
+            complaints: c.patient.presentingComplaint,
+            assessment: pdfAssessment,
+            planDone: doneParts.join(" | "),
+            planToBeDone: pendingParts.join(" | "),
+            alerts: c.sampleHistory?.allergies || "None"
+          };
+        });
       } else {
         patientList = editableRows.filter(r => selectedQuickPasteIds.includes(r.id)).map(r => ({
           id: r.id,
-          bed: r.bed || "N/A",
+          bed: r.bed || "Unassigned",
           name: r.name || "Patient",
           ageGender: r.ageGender || "N/A",
           erNo: r.erNo || r.id.substring(0, 7),
-          doctor: r.doctor || `Dr. ${profile.name}`,
+          doctor: r.doctor || "Not documented",
+          treatingPhysician: r.treatingPhysician || r.doctor || "Not documented",
+          admittingConsultant: r.admittingConsultant || "Not documented",
           vitals: r.vitals || "N/A",
           complaints: r.complaints || r.history || "N/A",
           assessment: r.assessment || "N/A",
           planDone: r.planDone || "",
-          planToBeDone: r.planToBeDone || "Maintain monitoring & care",
+          planToBeDone: r.planToBeDone || "",
           alerts: r.bystander || r.alerts || "None"
         }));
       }
@@ -2542,8 +2672,13 @@ function extractLatestVitalsWithTime(
     text += `Date: ${new Date().toLocaleDateString()} | Time: ${new Date().toLocaleTimeString()}\n\n`;
 
     selectedCases.forEach((c, idx) => {
+      const { confirmedGiven, unconfirmed } = classifyTreatments(c.treatments, c.notes);
+      const treatingDr = c.doctorName ? (c.doctorName.startsWith("Dr.") ? c.doctorName : `Dr. ${c.doctorName}`) : "Not documented";
+      const admittingCons = c.consultantReview?.reviewedBy || (c as any).admittingConsultant || (c as any).consultant || "Not documented";
+
       text += `${idx + 1}. PATIENT: ${c.patient.name} (${c.patient.age}y / ${c.patient.gender}) [${c.bedNo || 'Bed N/A'}]\n`;
       text += `   Case ID: ${c.displayId || c.id} | UHID: ${c.patient.uhid} | Triage Level: ${c.patient.triageCategory}\n`;
+      text += `   Treating Physician: ${treatingDr} | Admitting Consultant: ${admittingCons}\n`;
       text += `   Vitals: HR ${c.vitals.hr || "N/A"} | BP ${c.vitals.bp || "N/A"} | SpO2 ${c.vitals.spo2 || "N/A"}%\n`;
       text += `   Chief Complaint: ${c.patient.presentingComplaint}\n`;
       text += `   SAMPLE History:\n`;
@@ -2551,7 +2686,10 @@ function extractLatestVitalsWithTime(
       text += `     - Allergies: ${c.sampleHistory?.allergies || "Not documented"}\n`;
       text += `     - Medications: ${c.sampleHistory?.medications || "N/A"}\n`;
       text += `   Primary Assessment: A-${c.primaryAssessment?.airwayStatus || "Not documented"}, B-${c.primaryAssessment?.breathingStatus || "Not documented"}, C-${c.primaryAssessment?.circulationStatus || "Not documented"}\n`;
-      text += `   ER Treatment Given: ${c.treatments.map(t => `${t.drugName} ${t.dose}`).join(", ") || "None recorded"}\n`;
+      text += `   ER Treatment Given: ${confirmedGiven.length > 0 ? confirmedGiven.join(", ") : "None confirmed"}\n`;
+      if (unconfirmed.length > 0) {
+        text += `   Treatment documented — administration unconfirmed: ${unconfirmed.join(", ")}\n`;
+      }
       text += `   Progress Notes Summary: ${c.progressNotes || "Not documented."}\n`;
       text += `--------------------------------------------------\n\n`;
     });
@@ -3606,6 +3744,8 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs leading-relaxed">
                         <div>
                           <p><strong className="text-slate-500">UHID:</strong> <span className="font-mono">{c.patient.uhid}</span></p>
+                          <p><strong className="text-slate-500">Treating Dr:</strong> {c.doctorName ? (c.doctorName.startsWith("Dr.") ? c.doctorName : `Dr. ${c.doctorName}`) : "Not documented"}</p>
+                          <p><strong className="text-slate-500">Admitting Consultant:</strong> {c.consultantReview?.reviewedBy || (c as any).admittingConsultant || "Not documented"}</p>
                           <p><strong className="text-slate-500">Chief Complaint:</strong> {c.patient.presentingComplaint}</p>
                           <p><strong className="text-slate-500">Vitals:</strong> HR {c.vitals.hr || "N/A"} | BP {c.vitals.bp || "N/A"} | SpO2 {c.vitals.spo2 || "N/A"}% | RR {c.vitals.rr || "N/A"}</p>
                         </div>
@@ -3616,7 +3756,17 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
                           ) : (
                             <span className="text-slate-600 font-normal">Not documented</span>
                           )}</p>
-                          <p><strong className="text-slate-500">Therapies given in ER:</strong> {c.treatments.map(t => `${t.drugName} ${t.dose}`).join(", ") || "None recorded"}</p>
+                          {(() => {
+                            const { confirmedGiven, unconfirmed } = classifyTreatments(c.treatments, c.notes);
+                            return (
+                              <>
+                                <p><strong className="text-slate-500">Therapies given in ER:</strong> {confirmedGiven.length > 0 ? confirmedGiven.join(", ") : "None confirmed"}</p>
+                                {unconfirmed.length > 0 && (
+                                  <p><strong className="text-amber-700 dark:text-amber-400">Treatment documented — administration unconfirmed:</strong> {unconfirmed.join(", ")}</p>
+                                )}
+                              </>
+                            );
+                          })()}
                         </div>
                       </div>
 

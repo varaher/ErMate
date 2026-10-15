@@ -2671,55 +2671,158 @@ app.post("/api/handover/pdf", requireAuth, async (req: AuthRequest, res) => {
 
     doc.pipe(res);
 
+    const pageWidth = doc.page.width;
+    const pageHeight = doc.page.height;
+    const margin = 30;
+    const cardWidth = pageWidth - (margin * 2);
+    const contentWidth = cardWidth - 20;
+
     // Document Header
-    doc.fillColor("#0f172a").fontSize(16).font("Helvetica-Bold").text(`${(facility || "EMERGENCY DEPARTMENT").toUpperCase()} - CLINICAL HANDOVER REPORT`, { align: "center" });
+    doc.fillColor("#0f172a").fontSize(15).font("Helvetica-Bold").text(`${(facility || "EMERGENCY DEPARTMENT").toUpperCase()} - CLINICAL HANDOVER REPORT`, { align: "center" });
     doc.moveDown(0.2);
-    doc.fillColor("#475569").fontSize(9.5).font("Helvetica").text(
-      `Facility: ${facility || "Emergency Department"}  |  Lead Clinician: ${clinician || "Duty Officer"}  |  Date: ${date || new Date().toLocaleDateString()}`,
+    doc.fillColor("#475569").fontSize(9).font("Helvetica").text(
+      `Facility: ${facility || "Emergency Department"}  |  Handover Author: ${clinician || "Duty Officer"}  |  Date: ${date || new Date().toLocaleDateString()}`,
       { align: "center" }
     );
-    doc.moveDown(0.4);
-    doc.strokeColor("#cbd5e1").lineWidth(1).moveTo(30, doc.y).lineTo(doc.page.width - 30, doc.y).stroke();
-    doc.moveDown(0.6);
+    doc.moveDown(0.3);
+    doc.strokeColor("#cbd5e1").lineWidth(1).moveTo(margin, doc.y).lineTo(pageWidth - margin, doc.y).stroke();
+    doc.moveDown(0.5);
 
     // Patient Cards / Table
     if (Array.isArray(patients) && patients.length > 0) {
       patients.forEach((p: any, idx: number) => {
-        if (doc.y > doc.page.height - 120) {
-          doc.addPage();
+        const bedStr = p.bed && p.bed !== "N/A" ? p.bed : "Unassigned";
+        const nameStr = p.name || p.patientName || "Patient";
+        const ageSexStr = p.ageGender || p.ageSex || "N/A";
+        const headerTitle = `${idx + 1}. [Bed: ${bedStr}]  ${nameStr} (${ageSexStr})`;
+
+        const treatingDoctor = p.treatingPhysician || p.doctor || "Not documented";
+        const admittingConsultant = p.admittingConsultant || "Not documented";
+        const subheaderStr = `ER No: ${p.erNo || "N/A"}  |  Treating Dr: ${treatingDoctor}  |  Consultant: ${admittingConsultant}  |  Vitals: ${p.vitals || "Not documented"}`;
+
+        const complaintsText = p.complaints || p.situation || p.presentingComplaint || "Not documented";
+        const assessmentText = p.assessment && p.assessment !== "Under evaluation" ? p.assessment : "";
+        const doneText = p.planDone && p.planDone.trim().length > 0 ? p.planDone.trim() : "None documented";
+        // Never substitute assessment or diagnosis for a pending action; never use "Maintain monitoring & care" fallback
+        const todoText = p.planToBeDone && p.planToBeDone.trim().length > 0 ? p.planToBeDone.trim() : "No pending actions documented";
+        const alertText = p.alerts || p.bystander || "";
+
+        // Calculate card content height dynamically to prevent clipping and truncation
+        doc.font("Helvetica").fontSize(8.5);
+        const compHeight = doc.heightOfString(`Chief Complaints: ${complaintsText}`, { width: contentWidth });
+        const assessHeight = assessmentText ? doc.heightOfString(`Assessment: ${assessmentText}`, { width: contentWidth }) + 4 : 0;
+        const doneHeight = doc.heightOfString(doneText, { width: contentWidth });
+        const todoHeight = doc.heightOfString(todoText, { width: contentWidth });
+        const alertHeight = alertText ? doc.heightOfString(`Alerts / Bystander: ${alertText}`, { width: contentWidth }) + 4 : 0;
+
+        const padding = 22;
+        // Total height if contained within a single bordered box (including section titles)
+        const cardHeight = 38 + compHeight + assessHeight + doneHeight + 12 + todoHeight + 12 + alertHeight + padding;
+        const fitsOnSinglePage = cardHeight <= (pageHeight - 70);
+
+        if (fitsOnSinglePage) {
+          // If card does not fit on current page, start a fresh page
+          if (doc.y + cardHeight > pageHeight - 45 && doc.y > 70) {
+            doc.addPage();
+          }
+
+          const startY = doc.y;
+
+          // Background box & border
+          doc.rect(margin, startY, cardWidth, cardHeight).fillAndStroke("#ffffff", "#0f172a");
+
+          let curY = startY + 8;
+
+          // Header Line
+          doc.fillColor("#0f172a").fontSize(10.5).font("Helvetica-Bold")
+             .text(headerTitle, margin + 10, curY, { width: contentWidth });
+          curY += 16;
+
+          // Subheader Line
+          doc.fillColor("#334155").fontSize(8.5).font("Helvetica-Bold")
+             .text(subheaderStr, margin + 10, curY, { width: contentWidth });
+          curY += 14;
+
+          // Complaints
+          doc.fillColor("#0f172a").fontSize(8.5).font("Helvetica")
+             .text(`Chief Complaints: ${complaintsText}`, margin + 10, curY, { width: contentWidth });
+          curY += compHeight + 3;
+
+          // Assessment (if present)
+          if (assessmentText) {
+            doc.fillColor("#1e293b").fontSize(8.5).font("Helvetica")
+               .text(`Assessment: ${assessmentText}`, margin + 10, curY, { width: contentWidth });
+            curY += assessHeight;
+          }
+
+          // Plan Done (Separate Section)
+          doc.fillColor("#065f46").fontSize(8.5).font("Helvetica-Bold")
+             .text("Plan (Done / Completed):", margin + 10, curY, { width: contentWidth });
+          curY += 11;
+          doc.fillColor("#0f172a").fontSize(8.5).font("Helvetica")
+             .text(doneText, margin + 10, curY, { width: contentWidth });
+          curY += doneHeight + 4;
+
+          // Plan To Be Done (Separate Section - Never substituted with assessment or diagnosis!)
+          doc.fillColor("#1e40af").fontSize(8.5).font("Helvetica-Bold")
+             .text("Plan (Pending / Action Needed):", margin + 10, curY, { width: contentWidth });
+          curY += 11;
+          doc.fillColor("#0f172a").fontSize(8.5).font("Helvetica")
+             .text(todoText, margin + 10, curY, { width: contentWidth });
+          curY += todoHeight + 4;
+
+          // Alerts / Bystander (if present)
+          if (alertText) {
+            doc.fillColor("#991b1b").fontSize(8.5).font("Helvetica-Bold")
+               .text(`Alerts / Bystander: ${alertText}`, margin + 10, curY, { width: contentWidth });
+            curY += alertHeight;
+          }
+
+          doc.y = startY + cardHeight + 8;
+        } else {
+          // Flowing multi-page layout for long patient records or lengthy plans to guarantee zero clipping
+          if (doc.y > pageHeight - 120) {
+            doc.addPage();
+          }
+
+          const renderSection = (title: string, content: string, titleColor: string, bodyColor = "#0f172a") => {
+            doc.font("Helvetica-Bold").fontSize(8.5);
+            const titleH = doc.heightOfString(title, { width: contentWidth });
+            doc.font("Helvetica").fontSize(8.5);
+            const contentH = doc.heightOfString(content, { width: contentWidth });
+            const totalH = titleH + contentH + 6;
+
+            if (doc.y + totalH > pageHeight - 45) {
+              doc.addPage();
+              doc.fillColor("#64748b").fontSize(8).font("Helvetica-Oblique")
+                 .text(`[Continued: Bed ${bedStr} - ${nameStr} (${ageSexStr}) | ER No: ${p.erNo || "N/A"}]`, margin, doc.y);
+              doc.moveDown(0.3);
+            }
+
+            doc.fillColor(titleColor).font("Helvetica-Bold").fontSize(8.5).text(title, margin, doc.y, { width: contentWidth });
+            doc.fillColor(bodyColor).font("Helvetica").fontSize(8.5).text(content, margin, doc.y, { width: contentWidth });
+            doc.moveDown(0.3);
+          };
+
+          doc.fillColor("#0f172a").fontSize(10.5).font("Helvetica-Bold").text(headerTitle, margin, doc.y, { width: contentWidth });
+          doc.moveDown(0.2);
+          doc.fillColor("#334155").fontSize(8.5).font("Helvetica-Bold").text(subheaderStr, margin, doc.y, { width: contentWidth });
+          doc.moveDown(0.4);
+
+          renderSection("Chief Complaints:", complaintsText, "#0f172a");
+          if (assessmentText) {
+            renderSection("Assessment:", assessmentText, "#1e293b");
+          }
+          renderSection("Plan (Done / Completed):", doneText, "#065f46");
+          renderSection("Plan (Pending / Action Needed):", todoText, "#1e40af");
+          if (alertText) {
+            renderSection("Alerts / Bystander:", alertText, "#991b1b");
+          }
+
+          doc.moveDown(0.4);
+          doc.strokeColor("#cbd5e1").lineWidth(1).moveTo(margin, doc.y).lineTo(pageWidth - margin, doc.y).stroke();
+          doc.moveDown(0.5);
         }
-
-        const startY = doc.y;
-        const cardWidth = doc.page.width - 60;
-        const cardHeight = 92;
-
-        // Card container
-        doc.rect(30, startY, cardWidth, cardHeight).fillAndStroke("#ffffff", "#0f172a");
-
-        // Header line
-        doc.fillColor("#0f172a").fontSize(11).font("Helvetica-Bold")
-           .text(`${idx + 1}. [Bed: ${p.bed || "N/A"}]  ${p.name || p.patientName || "Patient"} (${p.ageGender || p.ageSex || "N/A"})`, 40, startY + 8);
-
-        // Subheader line
-        doc.fillColor("#334155").fontSize(9).font("Helvetica-Bold")
-           .text(`ER No: ${p.erNo || "N/A"}  |  Doctor: ${p.doctor || "N/A"}  |  Vitals: ${p.vitals || "N/A"}`, 40, startY + 24);
-
-        // Complaints / History
-        const comp = (p.complaints || p.situation || p.presentingComplaint || "N/A").substring(0, 110);
-        doc.fillColor("#0f172a").fontSize(8.5).font("Helvetica")
-           .text(`Chief Complaints: ${comp}`, 40, startY + 40);
-
-        // Assessment & Plan
-        const plan = (p.planToBeDone || p.assessment || p.recommendation || "Maintain monitoring & care").substring(0, 120);
-        doc.fillColor("#0f172a").fontSize(8.5).font("Helvetica")
-           .text(`Plan / Action Needed: ${plan}`, 40, startY + 55);
-
-        // Bystanders / Alerts
-        const alertText = (p.alerts || p.bystander || "None").substring(0, 100);
-        doc.fillColor("#991b1b").fontSize(8.5).font("Helvetica-Bold")
-           .text(`Alerts / Bystander Update: ${alertText}`, 40, startY + 70);
-
-        doc.y = startY + cardHeight + 10;
       });
     } else {
       doc.fillColor("#64748b").fontSize(10).text("No active handover patients in report.", { align: "center" });
@@ -2730,15 +2833,15 @@ app.post("/api/handover/pdf", requireAuth, async (req: AuthRequest, res) => {
     for (let i = range.start; i < range.start + range.count; i++) {
       doc.switchToPage(i);
       doc.strokeColor("#e2e8f0").lineWidth(0.5)
-         .moveTo(30, doc.page.height - 35)
-         .lineTo(doc.page.width - 30, doc.page.height - 35)
+         .moveTo(margin, pageHeight - 35)
+         .lineTo(pageWidth - margin, pageHeight - 35)
          .stroke();
 
-      doc.fillColor("#475569").fontSize(8.5).font("Helvetica-Bold").text(
+      doc.fillColor("#475569").fontSize(8).font("Helvetica-Bold").text(
         `CONFIDENTIAL CLINICAL HANDOVER REPORT  •  Powered by ErMate  •  Page ${i + 1} of ${range.count}`,
-        30,
-        doc.page.height - 24,
-        { align: "center", width: doc.page.width - 60 }
+        margin,
+        pageHeight - 24,
+        { align: "center", width: cardWidth }
       );
     }
 

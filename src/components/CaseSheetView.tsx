@@ -387,6 +387,7 @@ export function SaveSectionButton({ onSave }: { onSave: () => void }) {
 }
 
 import { recomputeIsPediatric } from "./NewPatientEntryMenu";
+import { beginCriticalOp, setCriticalFlag } from "../utils/criticalOps";
 
 
 const hasMeaningfulValue = (value: any): boolean => {
@@ -596,8 +597,12 @@ export default function CaseSheetView({
   // flush) runs strictly one after another, in the order requested.
   const saveQueueRef = useRef<Promise<unknown>>(Promise.resolve());
   const enqueueWrite = <T,>(job: () => Promise<T>): Promise<T> => {
+    // Tell the Hard Refresh safety check a write is queued/in flight (module-level, so it
+    // still counts after this sheet closes while its final flush is running).
+    const endCriticalOp = beginCriticalOp("caseWrite", "A case save is still in progress.");
     const run = saveQueueRef.current.then(job, job);
     saveQueueRef.current = run.catch(() => undefined);
+    run.then(endCriticalOp, endCriticalOp);
     return run;
   };
   // Always call the LATEST save function (timers/listeners may outlive a render).
@@ -2322,6 +2327,32 @@ Extremities: Peripheral pulses present and well felt. No edema. No cyanosis or c
       onRegisterActions(null);
     };
   }, [onRegisterActions, isPreview, onApplyPreview, handleSave, currentCase]);
+
+  // Hard Refresh safety: report this sheet's save state (read-only signal; changes no save behaviour).
+  const handleSaveForRefreshRef = useRef(handleSave);
+  handleSaveForRefreshRef.current = handleSave;
+  useEffect(() => {
+    const KEY = "caseUnsaved";
+    if (isPreview) {
+      setCriticalFlag(KEY, "", false);
+    } else if (persistStatus === "pending" || persistStatus === "error" || persistStatus === "offline") {
+      setCriticalFlag(KEY, "This case sheet has changes that are not saved yet.", true, {
+        resolve: {
+          label: "Save now",
+          run: async () => {
+            if (!(await handleSaveForRefreshRef.current())) throw new Error("Case sheet was not saved.");
+          },
+        },
+      });
+    } else if (persistStatus === "trial") {
+      setCriticalFlag(KEY, "This case sheet is NOT saved (profile incomplete) and exists only while the app is open.", true);
+    } else if (persistStatus === "saving") {
+      setCriticalFlag(KEY, "This case sheet is saving…", true);
+    } else {
+      setCriticalFlag(KEY, "", false);
+    }
+    return () => setCriticalFlag(KEY, "", false);
+  }, [persistStatus, isPreview]);
 
   // Calculated composite GCS based on explicit vitals or complete subscale variables
   const calculatedGcs = (() => {

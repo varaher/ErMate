@@ -15,6 +15,7 @@ import { SelfLearningRulesPanel } from "./SelfLearningRulesPanel";
 import RoleChangeSection from "./RoleChangeSection";
 import { ErMateLogo } from "./shared/ErMateLogo";
 import { APP_VERSION } from "../changelog";
+import { HardRefreshTile } from "./shared/HardRefreshTile";
 import { FEATURES } from "../config/features";
 
 interface MoreViewProps {
@@ -1065,6 +1066,8 @@ export default function MoreView({
               </div>
               <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
             </button>
+
+            <HardRefreshTile />
           </div>
 
           {/* Sign Out Button */}

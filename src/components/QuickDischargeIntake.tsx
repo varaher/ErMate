@@ -1,10 +1,11 @@
 import { generateUHID } from "../utils/caseHelper";
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import { Mic, Camera, FileText, Loader2, ArrowRight } from "lucide-react";
 import { ClinicalCase, TriageCategory, ArrivalMode } from "../types";
 import VoiceRecorder from "./shared/VoiceRecorder";
 import { generateInternalCaseId } from "../utils/caseIdentity";
 import { authenticatedFetch } from "../services/authenticatedFetch";
+import { setCriticalFlag } from "../utils/criticalOps";
 
 /**
  * QuickDischargeIntake.tsx
@@ -144,6 +145,16 @@ export default function QuickDischargeIntake({
   const audioChunksRef = useRef<BlobPart[]>([]);
   const [isRecordingVoice, setIsRecordingVoice] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Hard Refresh safety: this screen has its own recorder + upload (read-only signal).
+  useEffect(() => {
+    setCriticalFlag(
+      "quickDischargeIntake",
+      isRecordingVoice ? "A discharge dictation is being recorded." : "Discharge details are still being read.",
+      isRecordingVoice || status === "processing"
+    );
+    return () => setCriticalFlag("quickDischargeIntake", "", false);
+  }, [isRecordingVoice, status]);
 
   // Take raw extracted text -> structured fields -> minimal case -> handoff
   const finalizeAndHandOff = async (rawText: string) => {
