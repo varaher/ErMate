@@ -614,6 +614,7 @@ export interface PediatricDetails {
   focusedCardiovascular?: string;
   focusedAbdomen?: string;
   focusedBack?: string;
+  focusedCns?: string;
   focusedExtremities?: string;
   examHeent?: string;
   dispositionProvisionalDiagnosis?: string;

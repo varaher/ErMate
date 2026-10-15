@@ -45,6 +45,7 @@ import { hasCaseScribeHistory } from "../services/scribeChatStorage";
 import { PediatricVitalReference } from "./PediatricVitalReference";
 import { authenticatedFetch } from "../services/authenticatedFetch";
 import { isPediatricPatient, interpretPediatricVital, getPediatricVitalRange } from "../utils/pediatricRanges";
+import { mirrorPediatricToStandard } from "../utils/pediatricMirror";
 import { ProcedureNote } from "../types/procedureNotes";
 import { ProcedureDefinition, PROCEDURE_DEFINITIONS } from "../data/procedureDefinitions";
 import { ProcedureSelectorModal } from "./ProcedureSelectorModal";
@@ -624,7 +625,7 @@ export default function CaseSheetView({
       return;
     }
     const base = lastSavedCaseRef.current;
-    const toSave: ClinicalCase = { ...snapshot, treatments: base.treatments, infusions: base.infusions } as ClinicalCase;
+    const toSave: ClinicalCase = mirrorPediatricToStandard({ ...snapshot, treatments: base.treatments, infusions: base.infusions } as ClinicalCase);
     const version = editVersionRef.current;
     setPersistStatus("saving");
     try {
@@ -1073,6 +1074,12 @@ export default function CaseSheetView({
         await syncDischargeSummary(backupCase);
       }
     } else {
+      // Children: the global template invents vitals, history and social findings. Never run it;
+      // use the empty-fields-only pediatric action instead.
+      if (currentCase.isPediatric) {
+        markPediatricAllNormal();
+        return;
+      }
       setBackupCase(JSON.parse(JSON.stringify(currentCase)));
       
       const age = currentCase.patient.age;
@@ -1920,6 +1927,7 @@ Extremities: Peripheral pulses present and well felt. No edema. No cyanosis or c
       fill("focusedAbdomen", PEDIATRIC_NORMAL_PRESETS.abdomen);
       fill("focusedBack", PEDIATRIC_NORMAL_PRESETS.back);
       fill("focusedExtremities", PEDIATRIC_NORMAL_PRESETS.extremities);
+      fill("focusedCns", PEDIATRIC_NORMAL_PRESETS.cns);
       return { ...prev, pediatricDetails: ped };
     });
     setPedNormalNotice(
@@ -2215,13 +2223,13 @@ Extremities: Peripheral pulses present and well felt. No edema. No cyanosis or c
 
     const formattedDocName = formatDoctorName(currentCase.doctorName);
 
-    const caseToSave: ClinicalCase = {
+    const caseToSave: ClinicalCase = mirrorPediatricToStandard({
       ...currentCase,
       isPediatric: isPeds,
       vitals: formattedVitals,
       treatments: formattedTreatments,
       doctorName: formattedDocName
-    };
+    });
 
     try {
       setIsSavingCase(true);
@@ -4519,7 +4527,8 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                       cardiovascular: currentCase.pediatricDetails?.focusedCardiovascular || "",
                       abdomen: currentCase.pediatricDetails?.focusedAbdomen || "",
                       back: currentCase.pediatricDetails?.focusedBack || "",
-                      extremities: currentCase.pediatricDetails?.focusedExtremities || ""
+                      extremities: currentCase.pediatricDetails?.focusedExtremities || "",
+                      cns: currentCase.pediatricDetails?.focusedCns || ""
                     }}
                     onChange={s => setCurrentCase(prev => ({
                       ...prev,
@@ -4530,7 +4539,8 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                         focusedCardiovascular: s.cardiovascular,
                         focusedAbdomen: s.abdomen,
                         focusedBack: s.back,
-                        focusedExtremities: s.extremities
+                        focusedExtremities: s.extremities,
+                        focusedCns: s.cns
                       }
                     }))}
                   />
@@ -4555,41 +4565,44 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                          ...prev,
                          pediatricDetails: {
                            ...(prev.pediatricDetails || {}),
-                           examHeent: findings.length > 0 ? findings.join(", ") : "No pallor, icterus, cyanosis, clubbing, lymphadenopathy, or pedal edema."
+                           examHeent: findings.length > 0 ? findings.join(", ") : ""
                          }
                        }));
                     }}
                   />
                   <PediatricQuickNormalPresets
                     onApply={(section, text) => {
-                      setCurrentCase(prev => ({
-                        ...prev,
-                        pediatricDetails: {
-                           ...(prev.pediatricDetails || {}),
-                           ...(section === 'general' ? { examHeent: text } : {}),
-                           ...(section === 'heent' ? { focusedHeent: text } : {}),
-                           ...(section === 'respiratory' ? { focusedRespiratory: text } : {}),
-                           ...(section === 'cardiovascular' ? { focusedCardiovascular: text } : {}),
-                           ...(section === 'abdomen' ? { focusedAbdomen: text } : {}),
-                           ...(section === 'back' ? { focusedBack: text } : {}),
-                           ...(section === 'extremities' ? { focusedExtremities: text } : {})
-                        }
-                      }));
+                      const fieldBySection: Record<string, string> = {
+                        general: "examHeent", heent: "focusedHeent", respiratory: "focusedRespiratory",
+                        cardiovascular: "focusedCardiovascular", abdomen: "focusedAbdomen", back: "focusedBack",
+                        extremities: "focusedExtremities", cns: "focusedCns"
+                      };
+                      const field = fieldBySection[section as string];
+                      if (!field) return;
+                      // Append to what the doctor already wrote; never replace it.
+                      setCurrentCase(prev => {
+                        const ped: any = { ...(prev.pediatricDetails || {}) };
+                        const cur = String(ped[field] || "").trim();
+                        if (cur.includes(text)) return prev;
+                        ped[field] = cur ? `${cur} ${text}` : text;
+                        return { ...prev, pediatricDetails: ped };
+                      });
                     }}
                     onFillAll={() => {
-                      setCurrentCase(prev => ({
-                        ...prev,
-                        pediatricDetails: {
-                           ...(prev.pediatricDetails || {}),
-                           examHeent: PEDIATRIC_NORMAL_PRESETS.general,
-                           focusedHeent: PEDIATRIC_NORMAL_PRESETS.heent,
-                           focusedRespiratory: PEDIATRIC_NORMAL_PRESETS.respiratory,
-                           focusedCardiovascular: PEDIATRIC_NORMAL_PRESETS.cardiovascular,
-                           focusedAbdomen: PEDIATRIC_NORMAL_PRESETS.abdomen,
-                           focusedBack: PEDIATRIC_NORMAL_PRESETS.back,
-                           focusedExtremities: PEDIATRIC_NORMAL_PRESETS.extremities
-                        }
-                      }));
+                      // Fill only EMPTY sections; anything the doctor already wrote stays untouched.
+                      setCurrentCase(prev => {
+                        const ped: any = { ...(prev.pediatricDetails || {}) };
+                        const fill = (key: string, value: string) => { if (!String(ped[key] || "").trim()) ped[key] = value; };
+                        fill("examHeent", PEDIATRIC_NORMAL_PRESETS.general);
+                        fill("focusedHeent", PEDIATRIC_NORMAL_PRESETS.heent);
+                        fill("focusedRespiratory", PEDIATRIC_NORMAL_PRESETS.respiratory);
+                        fill("focusedCardiovascular", PEDIATRIC_NORMAL_PRESETS.cardiovascular);
+                        fill("focusedAbdomen", PEDIATRIC_NORMAL_PRESETS.abdomen);
+                        fill("focusedBack", PEDIATRIC_NORMAL_PRESETS.back);
+                        fill("focusedExtremities", PEDIATRIC_NORMAL_PRESETS.extremities);
+                        fill("focusedCns", PEDIATRIC_NORMAL_PRESETS.cns);
+                        return { ...prev, pediatricDetails: ped };
+                      });
                     }}
                   />
                 </div>

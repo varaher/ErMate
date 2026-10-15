@@ -9,6 +9,7 @@
  */
 
 import { ClinicalCase, DischargeInfo } from "../types";
+import { interpretPediatricVital } from "./pediatricRanges";
 
 /**
  * Format primary assessment findings into a concise narrative string
@@ -265,15 +266,23 @@ export function deriveInitialCourseInHospital(c: ClinicalCase): string {
     if (patNormal) {
       p1Parts.push("The Pediatric Assessment Triangle was documented as normal.");
     } else {
+      // Report exactly what was documented; never judge it normal/abnormal here.
       const ptDetails: string[] = [];
-      const app = pd.patAppearance || pd.pediatricTriangle?.appearance;
-      if (app) ptDetails.push(`appearance: ${app}`);
+      const appParts = [
+        pd.patAppearanceTone && `tone: ${pd.patAppearanceTone}`,
+        pd.patAppearanceInteractivity && `interactivity: ${pd.patAppearanceInteractivity}`,
+        pd.patAppearanceConsolability && `consolability: ${pd.patAppearanceConsolability}`,
+        pd.patAppearanceLookGaze && `look/gaze: ${pd.patAppearanceLookGaze}`,
+        pd.patAppearanceSpeechCry && `speech/cry: ${pd.patAppearanceSpeechCry}`,
+      ].filter(Boolean) as string[];
+      const app = pd.patAppearance || pd.pediatricTriangle?.appearance || (appParts.length ? appParts.join(", ") : "");
+      if (app) ptDetails.push(`appearance (${app})`);
       const wob = pd.patWorkOfBreathing || pd.pediatricTriangle?.workOfBreathing;
-      if (wob) ptDetails.push(`work of breathing: ${wob}`);
+      if (wob) ptDetails.push(`work of breathing (${wob})`);
       const circ = pd.patCirculation || pd.pediatricTriangle?.circulation;
-      if (circ) ptDetails.push(`circulation: ${circ}`);
+      if (circ) ptDetails.push(`circulation to skin (${circ})`);
       if (ptDetails.length > 0) {
-        p1Parts.push(`Pediatric Assessment Triangle revealed ${ptDetails.join(", ")}.`);
+        p1Parts.push(`Pediatric Assessment Triangle documented: ${ptDetails.join("; ")}.`);
       }
     }
   }
@@ -296,6 +305,22 @@ export function deriveInitialCourseInHospital(c: ClinicalCase): string {
     const isFebrile = tempNum !== null && (tempNum >= 38.0 || tempNum >= 100.4);
     const isAlteredGcs = v.gcs && v.gcs !== "15" && v.gcs !== "15/15";
 
+    if (isPed) {
+      // Children: adult cut-offs (SBP<95, HR>100, RR>22) are wrong. Use the age-banded reference ranges.
+      const ageYears = c.patient?.age as any;
+      const flag = (param: "hr" | "rr" | "sbp" | "spo2", value: any) => interpretPediatricVital(param, value, ageYears);
+      const hrI = v.hr ? flag("hr", v.hr) : null;
+      const rrI = v.rr ? flag("rr", v.rr) : null;
+      const spI = v.spo2 ? flag("spo2", v.spo2) : null;
+      const bpI = bpM ? flag("sbp", bpM[1]) : null;
+      const word = (i: any) => (i?.status === "High" ? "high for age" : i?.status === "Low" ? "low for age" : "");
+      if (v.bp) vitalTokens.push(`blood pressure ${v.bp} mmHg${word(bpI) ? ` (${word(bpI)})` : ""}`);
+      if (v.hr) vitalTokens.push(`heart rate ${v.hr}/min${word(hrI) ? ` (${word(hrI)})` : ""}`);
+      if (v.rr) vitalTokens.push(`respiratory rate ${v.rr}/min${word(rrI) ? ` (${word(rrI)})` : ""}`);
+      if (v.spo2) vitalTokens.push(`oxygen saturation ${v.spo2}%${word(spI) ? ` (${word(spI)})` : ""}`);
+      if (isFebrile) vitalTokens.push(`temperature ${v.temp}`);
+      if (isAlteredGcs) vitalTokens.push(`GCS ${v.gcs}`);
+    } else {
     if (isHypotensive) vitalTokens.push(`hypotension with blood pressure ${v.bp} mmHg`);
     else if (isHypertensive) vitalTokens.push(`elevated blood pressure of ${v.bp} mmHg`);
     else if (v.bp) vitalTokens.push(`blood pressure ${v.bp} mmHg`);
@@ -312,6 +337,8 @@ export function deriveInitialCourseInHospital(c: ClinicalCase): string {
 
     if (rrNum && (rrNum > 22 || rrNum < 12)) vitalTokens.push(`respiratory rate ${v.rr}/min`);
     if (isAlteredGcs) vitalTokens.push(`GCS ${v.gcs}`);
+
+    }
 
     if (vitalTokens.length > 0) {
       p1Parts.push(`Initial assessment revealed ${vitalTokens.join(", ")}.`);

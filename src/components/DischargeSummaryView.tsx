@@ -107,48 +107,48 @@ export default function DischargeSummaryView({
     currentCase.dischargeInfo?.primaryAirway || currentCase.primaryAssessment?.airway || ""
   );
   const [primaryAirwayIntervention, setPrimaryAirwayIntervention] = useState(
-    currentCase.dischargeInfo?.primaryAirwayIntervention || ""
+    currentCase.dischargeInfo?.primaryAirwayIntervention || currentCase.pediatricDetails?.airwayIntervention || ""
   );
 
   const [primaryBreathing, setPrimaryBreathing] = useState(
     currentCase.dischargeInfo?.primaryBreathing || currentCase.primaryAssessment?.breathing || ""
   );
   const [primaryBreathingWork, setPrimaryBreathingWork] = useState(
-    currentCase.dischargeInfo?.primaryBreathingWork || ""
+    currentCase.dischargeInfo?.primaryBreathingWork || currentCase.pediatricDetails?.breathingWob || ""
   );
   const [primaryBreathingAirEntry, setPrimaryBreathingAirEntry] = useState(
-    currentCase.dischargeInfo?.primaryBreathingAirEntry || ""
+    currentCase.dischargeInfo?.primaryBreathingAirEntry || currentCase.pediatricDetails?.breathingAirEntry || ""
   );
   const [primaryBreathingCct, setPrimaryBreathingCct] = useState(
     currentCase.dischargeInfo?.primaryBreathingCct || ""
   );
   const [primaryBreathingSubcut, setPrimaryBreathingSubcut] = useState(
-    currentCase.dischargeInfo?.primaryBreathingSubcut || ""
+    currentCase.dischargeInfo?.primaryBreathingSubcut || currentCase.pediatricDetails?.breathingSubcutaneousEmphysema || ""
   );
   const [primaryBreathingEfast, setPrimaryBreathingEfast] = useState(
     currentCase.dischargeInfo?.primaryBreathingEfast || ""
   );
   const [primaryBreathingIntervention, setPrimaryBreathingIntervention] = useState(
-    currentCase.dischargeInfo?.primaryBreathingIntervention || ""
+    currentCase.dischargeInfo?.primaryBreathingIntervention || currentCase.pediatricDetails?.breathingIntervention || ""
   );
 
   const [primaryCirculationCrt, setPrimaryCirculationCrt] = useState(
-    currentCase.dischargeInfo?.primaryCirculationCrt || ""
+    currentCase.dischargeInfo?.primaryCirculationCrt || currentCase.pediatricDetails?.circulationCrt || ""
   );
   const [primaryCirculationDnv, setPrimaryCirculationDnv] = useState(
-    currentCase.dischargeInfo?.primaryCirculationDnv || ""
+    currentCase.dischargeInfo?.primaryCirculationDnv || currentCase.pediatricDetails?.circulationDistendedNeckVeins || ""
   );
   const [primaryCirculationPct, setPrimaryCirculationPct] = useState(
     currentCase.dischargeInfo?.primaryCirculationPct || ""
   );
   const [primaryCirculationDeformity, setPrimaryCirculationDeformity] = useState(
-    currentCase.dischargeInfo?.primaryCirculationDeformity || ""
+    currentCase.dischargeInfo?.primaryCirculationDeformity || currentCase.pediatricDetails?.exposureLongBoneDeformities || ""
   );
   const [primaryCirculationFast, setPrimaryCirculationFast] = useState(
     currentCase.dischargeInfo?.primaryCirculationFast || ""
   );
   const [primaryCirculationInterventions, setPrimaryCirculationInterventions] = useState(
-    currentCase.dischargeInfo?.primaryCirculationInterventions || ""
+    currentCase.dischargeInfo?.primaryCirculationInterventions || currentCase.pediatricDetails?.circulationIntervention || ""
   );
 
   const [primaryDisabilityAvpuGcs, setPrimaryDisabilityAvpuGcs] = useState(
@@ -161,20 +161,20 @@ export default function DischargeSummaryView({
         neuroParts.push(`GCS ${currentCase.vitals.gcs}`);
       }
       return neuroParts.join(" / ");
-    })()
+    })() || currentCase.pediatricDetails?.disabilityAvpuGcs || ""
   );
   const [primaryDisabilityPupils, setPrimaryDisabilityPupils] = useState(
-    currentCase.dischargeInfo?.primaryDisabilityPupils || ""
+    currentCase.dischargeInfo?.primaryDisabilityPupils || currentCase.pediatricDetails?.disabilityPupils || ""
   );
   const [primaryDisabilityGrbs, setPrimaryDisabilityGrbs] = useState(
-    currentCase.dischargeInfo?.primaryDisabilityGrbs || currentCase.vitals.grbs || ""
+    currentCase.dischargeInfo?.primaryDisabilityGrbs || currentCase.vitals.grbs || currentCase.pediatricDetails?.disabilityGrbs || ""
   );
 
   const [primaryExposureTemp, setPrimaryExposureTemp] = useState(
-    currentCase.dischargeInfo?.primaryExposureTemp || currentCase.vitals.temp || ""
+    currentCase.dischargeInfo?.primaryExposureTemp || currentCase.vitals.temp || currentCase.pediatricDetails?.exposureTemp || ""
   );
   const [primaryExposureTrauma, setPrimaryExposureTrauma] = useState(
-    currentCase.dischargeInfo?.primaryExposureTrauma || ""
+    currentCase.dischargeInfo?.primaryExposureTrauma || currentCase.pediatricDetails?.exposureTraumaLogroll || ""
   );
 
   // --- Parse Secondary Assessment ---

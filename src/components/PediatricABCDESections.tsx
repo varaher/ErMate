@@ -419,6 +419,7 @@ export interface PediatricFocusedExamState {
   abdomen: string;
   back: string;
   extremities: string;
+  cns: string;
 }
 
 export function PediatricFocusedPhysicalExam({
@@ -431,6 +432,7 @@ export function PediatricFocusedPhysicalExam({
     { key: "abdomen", label: "Abdomen", helper: "Check for tenderness, distention, signs of injury, and hepatomegaly" },
     { key: "back", label: "Back", helper: "Check for any signs of spine or vertebral injury" },
     { key: "extremities", label: "Extremities", helper: "Assess for fractures, swelling, bruising, or deformities" },
+    { key: "cns", label: "CNS", helper: "Alertness, tone, power, reflexes, fontanelle (infants), focal deficit, meningeal signs, gait as age-appropriate" },
   ];
   return (
     <CollapsibleSection icon={<span>🔍</span>} iconBgColor="bg-teal-600" title="Focused Physical Examination" titleColor="text-teal-400">
@@ -521,6 +523,7 @@ export const PEDIATRIC_NORMAL_PRESETS: Record<string, string> = {
   abdomen: "Soft, non-tender, non-distended. No hepatomegaly. Bowel sounds present.",
   back: "No signs of spine or vertebral injury on inspection/palpation.",
   extremities: "No fractures, swelling, bruising, or deformities. Full range of movement.",
+  cns: "Alert, age-appropriate activity, normal tone, moves all limbs, no focal deficit.",
 };
 
 interface PediatricQuickPresetsProps {
@@ -537,6 +540,7 @@ export function PediatricQuickNormalPresets({ onApply, onFillAll }: PediatricQui
     { key: "abdomen", label: "+ Normal Abdomen" },
     { key: "back", label: "+ Normal Back" },
     { key: "extremities", label: "+ Normal Extremities" },
+    { key: "cns", label: "+ Normal CNS" },
   ];
 
   return (
