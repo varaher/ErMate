@@ -1,3 +1,4 @@
+import { isLmpApplicable } from "../utils/historyFields";
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import VoiceRecorder from "./shared/VoiceRecorder";
 import { 
@@ -4254,6 +4255,46 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                     </div>
                   </div>
                 ))}
+              </div>
+
+              {/* History of Presenting Illness / Surgical / LMP */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-4 border-t">
+                <div className="space-y-1 md:col-span-2">
+                  <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">
+                    History of Presenting Illness
+                  </label>
+                  <textarea
+                    rows={3}
+                    value={currentCase.sampleHistory.hpi || ""}
+                    onChange={(e) => updateHistory("hpi", e.target.value)}
+                    placeholder="Onset, duration, progression, associated symptoms, treatment taken before arrival..."
+                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">
+                    Surgical History
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={currentCase.sampleHistory.surgicalHistory || ""}
+                    onChange={(e) => updateHistory("surgicalHistory", e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  />
+                </div>
+                {(isLmpApplicable(currentCase.patient) || currentCase.sampleHistory.lmp) && (
+                  <div className="space-y-1">
+                    <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">
+                      LMP (Last Menstrual Period)
+                    </label>
+                    <input
+                      type="text"
+                      value={currentCase.sampleHistory.lmp || ""}
+                      onChange={(e) => updateHistory("lmp", e.target.value)}
+                      className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                  </div>
+                )}
               </div>
 
               {/* Extra Medical details  */}

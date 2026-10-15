@@ -127,6 +127,9 @@ export function formatCaseSheetText(data: CaseSheetData): string {
     `L — Last Meal: ${val(data.lastMeal)}`,
     `E — Events: ${val(data.events)}`,
     hasText(data.familyHistory) ? `Family History: ${data.familyHistory}` : "",
+    hasText(data.hpi) ? `History of Presenting Illness: ${data.hpi}` : "",
+    hasText(data.surgicalHistory) ? `Surgical History: ${data.surgicalHistory}` : "",
+    hasText(data.lmp) ? `LMP: ${data.lmp}` : "",
   ]);
 
   // Diagnosis (adult: after examination; pediatric: after treatment — same order as the on-screen sheet)

@@ -165,6 +165,9 @@ export interface CaseSheetData {
     policeStation: string | null;
   } | null;
   familyHistory: string | null;
+  hpi: string | null;
+  surgicalHistory: string | null;
+  lmp: string | null;
 
   signatureBlock: {
     clinicianName: string | null; // null means "not recorded" — never a fallback name
@@ -844,6 +847,9 @@ export function convertClinicalCaseToCaseSheetData(c: ClinicalCase, defaultHospi
       return Object.values(out).some(Boolean) ? out : null;
     })(),
     familyHistory: (typeof c.sampleHistory?.familyHistory === "string" && c.sampleHistory.familyHistory.trim()) ? c.sampleHistory.familyHistory.trim() : null,
+    hpi: (typeof c.sampleHistory?.hpi === "string" && c.sampleHistory.hpi.trim()) ? c.sampleHistory.hpi.trim() : null,
+    surgicalHistory: (typeof c.sampleHistory?.surgicalHistory === "string" && c.sampleHistory.surgicalHistory.trim()) ? c.sampleHistory.surgicalHistory.trim() : null,
+    lmp: (typeof c.sampleHistory?.lmp === "string" && c.sampleHistory.lmp.trim()) ? c.sampleHistory.lmp.trim() : null,
 
 
     signatureBlock: {
@@ -1539,6 +1545,9 @@ export default function CaseSheetPrintView({
                 <div><span className="font-semibold text-slate-900">L — Last Meal:</span> {data.lastMeal || (data.pediatricDetails as LegacyPediatricDetails)?.historyLastMeal || "Not documented"}</div>
                 <div><span className="font-semibold text-slate-900">E — Events Preceding:</span> {data.events || (data.pediatricDetails as LegacyPediatricDetails)?.historyEvents || "Not documented"}</div>
                 {data.familyHistory && <div><span className="font-semibold text-slate-900">Family History:</span> {data.familyHistory}</div>}
+                {data.hpi && <div><span className="font-semibold text-slate-900">History of Presenting Illness:</span> {data.hpi}</div>}
+                {data.surgicalHistory && <div><span className="font-semibold text-slate-900">Surgical History:</span> {data.surgicalHistory}</div>}
+                {data.lmp && <div><span className="font-semibold text-slate-900">LMP:</span> {data.lmp}</div>}
               </div>
             </Section>
 
@@ -1718,6 +1727,9 @@ export default function CaseSheetPrintView({
                 <div><span className="font-semibold text-slate-900">L — Last Meal:</span> {data.lastMeal || "Not documented"}</div>
                 <div><span className="font-semibold text-slate-900">E — Events Preceding:</span> {data.events || "Not documented"}</div>
                 {data.familyHistory && <div><span className="font-semibold text-slate-900">Family History:</span> {data.familyHistory}</div>}
+                {data.hpi && <div><span className="font-semibold text-slate-900">History of Presenting Illness:</span> {data.hpi}</div>}
+                {data.surgicalHistory && <div><span className="font-semibold text-slate-900">Surgical History:</span> {data.surgicalHistory}</div>}
+                {data.lmp && <div><span className="font-semibold text-slate-900">LMP:</span> {data.lmp}</div>}
               </div>
             </Section>
 

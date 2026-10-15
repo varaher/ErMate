@@ -156,7 +156,7 @@ export function formatDischargeSummaryText(d: DischargeSummaryData): string {
   lines.push("");
   lines.push("**Family / Gynae History :** " + (d.familyGynaeHistory || "Not documented"));
   lines.push("");
-  lines.push("**LMP :** " + (d.lmp || "Not documented"));
+  if (d.lmp) lines.push("**LMP :** " + d.lmp);
   if (pedInfo) lines.push(pedInfo);
   lines.push("**General Examination / Systemic examination:**");
   lines.push(d.generalExamination || "Not documented");
@@ -260,7 +260,7 @@ export function formatDischargeSummaryHtml(d: DischargeSummaryData): string {
   parts.push("<strong>Past Medical/Surgical Histories:</strong><br/>");
   parts.push((d.pastMedicalHistory || "Not documented") + "<br/><br/>");
   parts.push("<strong>Family / Gynae History :</strong> " + (d.familyGynaeHistory || "Not documented") + "<br/>");
-  parts.push("<strong>LMP :</strong> " + (d.lmp || "Not documented") + "<br/><br/>");
+  parts.push(d.lmp ? "<strong>LMP :</strong> " + d.lmp + "<br/><br/>" : "<br/>");
   if (pedHtml) parts.push(pedHtml);
   parts.push("<strong>General Examination / Systemic examination:</strong><br/>");
   parts.push((d.generalExamination || "Not documented") + "<br/><br/>");

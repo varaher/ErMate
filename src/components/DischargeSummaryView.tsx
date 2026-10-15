@@ -8,6 +8,7 @@ import { BoundChatModal } from "./BoundChatModal";
 import { captureFeedbackCorrection } from "../services/learningClient";
 import { formatDischargeSummaryText, formatDischargeSummaryHtml, DischargeSummaryData, STATUTORY_FOOTER } from "../utils/dischargeSummaryFormat";
 import { isPediatricPatient } from "../utils/pediatricRanges";
+import { isLmpApplicable, resolveHpi, resolvePastMedicalSurgical } from "../utils/historyFields";
 import {
   deriveInitialCourseInHospital,
   mergeAutoCoursePreservingManualEdits,
@@ -98,16 +99,16 @@ export default function DischargeSummaryView({
     currentCase.dischargeInfo?.presentingComplaints || currentCase.patient.presentingComplaint || ""
   );
   const [historyOfPresentIllness, setHistoryOfPresentIllness] = useState(
-    currentCase.dischargeInfo?.historyOfPresentIllness || currentCase.sampleHistory?.events || currentCase.sampleHistory?.symptoms || ""
+    currentCase.dischargeInfo?.historyOfPresentIllness || resolveHpi(currentCase.sampleHistory)
   );
   const [pastMedicalHistory, setPastMedicalHistory] = useState(
-    currentCase.dischargeInfo?.pastMedicalHistory || currentCase.sampleHistory?.pastHistory || ""
+    currentCase.dischargeInfo?.pastMedicalHistory || resolvePastMedicalSurgical(currentCase.sampleHistory)
   );
   const [familyGynaeHistory, setFamilyGynaeHistory] = useState(
     currentCase.dischargeInfo?.familyGynaeHistory || currentCase.sampleHistory?.familyHistory || ""
   );
   const [lmp, setLmp] = useState(
-    currentCase.dischargeInfo?.lmp || (currentCase.sampleHistory as any)?.lmp || ""
+    currentCase.dischargeInfo?.lmp || currentCase.sampleHistory?.lmp || ""
   );
   const [generalExamination, setGeneralExamination] = useState(
     currentCase.dischargeInfo?.generalExamination || ""
@@ -518,7 +519,7 @@ export default function DischargeSummaryView({
 
   // Automatically trigger AI Draft / Course Generation on mount if not already done
   useEffect(() => {
-    if (!currentCase.dischargeInfo?.courseInHospital && !aiDrafted && !aiLoading) {
+    if (showEditor && !currentCase.dischargeInfo?.courseInHospital && !aiDrafted && !aiLoading) {
       handleAiDraft();
     }
   }, []);
@@ -560,8 +561,20 @@ export default function DischargeSummaryView({
     }
 
     // 5. History & examination findings synchronization (fill if blank or empty)
-    if (currentCase.sampleHistory?.pastHistory && !pastMedicalHistory.trim()) {
-      setPastMedicalHistory(currentCase.sampleHistory.pastHistory);
+    if (!historyOfPresentIllness.trim() && resolveHpi(currentCase.sampleHistory)) {
+      setHistoryOfPresentIllness(resolveHpi(currentCase.sampleHistory));
+    }
+    if (!presentingComplaints.trim() && currentCase.patient?.presentingComplaint) {
+      setPresentingComplaints(currentCase.patient.presentingComplaint);
+    }
+    if (!pastMedicalHistory.trim() && resolvePastMedicalSurgical(currentCase.sampleHistory)) {
+      setPastMedicalHistory(resolvePastMedicalSurgical(currentCase.sampleHistory));
+    }
+    if (!familyGynaeHistory.trim() && currentCase.sampleHistory?.familyHistory) {
+      setFamilyGynaeHistory(currentCase.sampleHistory.familyHistory);
+    }
+    if (!lmp.trim() && currentCase.sampleHistory?.lmp) {
+      setLmp(currentCase.sampleHistory.lmp);
     }
     if (currentCase.sampleHistory?.allergies && (!allergies || allergies.length === 0)) {
       setAllergies(currentCase.sampleHistory.allergies);
@@ -1367,6 +1380,7 @@ export default function DischargeSummaryView({
                       className="w-full px-2.5 py-1.5 bg-slate-50 dark:bg-slate-900 border rounded-lg"
                     />
                   </div>
+                  {(isLmpApplicable(currentCase.patient) || lmp) && (
                   <div className="space-y-1">
                     <label className="font-bold text-slate-500 uppercase text-[9px]">Last Menstrual Period (LMP)</label>
                     <input
@@ -1376,6 +1390,7 @@ export default function DischargeSummaryView({
                       className="w-full px-2.5 py-1.5 bg-slate-50 dark:bg-slate-900 border rounded-lg"
                     />
                   </div>
+                  )}
                 </div>
 
                 <div className="space-y-1">
@@ -1764,7 +1779,9 @@ export default function DischargeSummaryView({
   <div>{pastMedicalHistory || "Not documented"}</div>
 
   <div className="mt-2"><span className="font-bold">Family / Gynae History :</span> {familyGynaeHistory || "Not documented"}</div>
-  <div><span className="font-bold">LMP :</span> {lmp || "Not documented"}</div>
+  {(lmp || isLmpApplicable(currentCase.patient)) && (
+    <div><span className="font-bold">LMP :</span> {lmp || "Not documented"}</div>
+  )}
 
   {isPediatricCase && currentCase.pediatricDetails && (() => {
     const ped = currentCase.pediatricDetails as any;

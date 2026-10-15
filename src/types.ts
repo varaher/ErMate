@@ -77,6 +77,9 @@ export interface SampleHistory {
   socialHistory: string;
   familyHistory: string;
   psychiatricFlags: string;
+  hpi?: string;
+  surgicalHistory?: string;
+  lmp?: string;
 }
 
 export interface PrimarySurvey {

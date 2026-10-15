@@ -3491,7 +3491,10 @@ const handleDeleteAllCases = async () => {
         events: extracted.sampleHistory?.events || extracted.events || existingMatch?.sampleHistory.events || "",
         socialHistory: extracted.sampleHistory?.socialHistory || extracted.socialHistory || existingMatch?.sampleHistory?.socialHistory || "",
         familyHistory: extracted.sampleHistory?.familyHistory || extracted.familyHistory || existingMatch?.sampleHistory?.familyHistory || "",
-        psychiatricFlags: extracted.sampleHistory?.psychiatricFlags || extracted.psychiatricFlags || existingMatch?.sampleHistory?.psychiatricFlags || ""
+        psychiatricFlags: extracted.sampleHistory?.psychiatricFlags || extracted.psychiatricFlags || existingMatch?.sampleHistory?.psychiatricFlags || "",
+        hpi: extracted.sampleHistory?.hpi || extracted.hpi || existingMatch?.sampleHistory?.hpi || "",
+        surgicalHistory: extracted.sampleHistory?.surgicalHistory || extracted.surgicalHistory || existingMatch?.sampleHistory?.surgicalHistory || "",
+        lmp: extracted.sampleHistory?.lmp || extracted.lmp || existingMatch?.sampleHistory?.lmp || ""
       },
       primaryAssessment: (() => {
         const existingPA: any = existingMatch?.primaryAssessment || {};

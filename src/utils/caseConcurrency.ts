@@ -67,6 +67,9 @@ export function mergeConcurrentCaseLeaves(
     ...(inSample.socialHistory !== undefined && inSample.socialHistory !== "" ? { socialHistory: inSample.socialHistory } : {}),
     ...(inSample.familyHistory !== undefined && inSample.familyHistory !== "" ? { familyHistory: inSample.familyHistory } : {}),
     ...(inSample.psychiatricFlags !== undefined && inSample.psychiatricFlags !== "" ? { psychiatricFlags: inSample.psychiatricFlags } : {}),
+    ...(inSample.hpi !== undefined && inSample.hpi !== "" ? { hpi: inSample.hpi } : {}),
+    ...(inSample.surgicalHistory !== undefined && inSample.surgicalHistory !== "" ? { surgicalHistory: inSample.surgicalHistory } : {}),
+    ...(inSample.lmp !== undefined && inSample.lmp !== "" ? { lmp: inSample.lmp } : {}),
   };
 
   // 3. Merge Primary Assessment & Adjuncts
