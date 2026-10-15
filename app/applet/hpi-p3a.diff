@@ -1,0 +1,29 @@
+diff --git a/src/components/DischargeSummaryView.tsx b/src/components/DischargeSummaryView.tsx
+index 4f40ee4..6994ec1 100644
+--- a/src/components/DischargeSummaryView.tsx
++++ b/src/components/DischargeSummaryView.tsx
+@@ -8,6 +8,7 @@ import { BoundChatModal } from "./BoundChatModal";
+ import { captureFeedbackCorrection } from "../services/learningClient";
+ import { formatDischargeSummaryText, formatDischargeSummaryHtml, DischargeSummaryData, STATUTORY_FOOTER } from "../utils/dischargeSummaryFormat";
+ import { isPediatricPatient } from "../utils/pediatricRanges";
++import { isLmpApplicable, resolveHpi, resolvePastMedicalSurgical } from "../utils/historyFields";
+ import {
+   deriveInitialCourseInHospital,
+   mergeAutoCoursePreservingManualEdits,
+@@ -98,16 +99,16 @@ export default function DischargeSummaryView({
+     currentCase.dischargeInfo?.presentingComplaints || currentCase.patient.presentingComplaint || ""
+   );
+   const [historyOfPresentIllness, setHistoryOfPresentIllness] = useState(
+-    currentCase.dischargeInfo?.historyOfPresentIllness || currentCase.sampleHistory?.events || currentCase.sampleHistory?.symptoms || ""
++    currentCase.dischargeInfo?.historyOfPresentIllness || resolveHpi(currentCase.sampleHistory)
+   );
+   const [pastMedicalHistory, setPastMedicalHistory] = useState(
+-    currentCase.dischargeInfo?.pastMedicalHistory || currentCase.sampleHistory?.pastHistory || ""
++    currentCase.dischargeInfo?.pastMedicalHistory || resolvePastMedicalSurgical(currentCase.sampleHistory)
+   );
+   const [familyGynaeHistory, setFamilyGynaeHistory] = useState(
+     currentCase.dischargeInfo?.familyGynaeHistory || currentCase.sampleHistory?.familyHistory || ""
+   );
+   const [lmp, setLmp] = useState(
+     currentCase.dischargeInfo?.lmp || (currentCase.sampleHistory as any)?.lmp || ""
+   );
