@@ -3178,7 +3178,9 @@ const handleDeleteAllCases = async () => {
   };
 
   // Trigger discharge flow for active case
-  const handleNavigateToDischarge = (caseId: string) => {
+  const [dischargeStartInEdit, setDischargeStartInEdit] = useState<boolean>(false);
+  const handleNavigateToDischarge = (caseId: string, startInEdit: boolean = false) => {
+    setDischargeStartInEdit(startInEdit);
     setShowDischargeSummaryId(caseId);
     setSelectedCaseId(null);
     setViewCaseSheetPrintId(null);
@@ -7149,6 +7151,7 @@ const handleSignOut = async () => {
               return (
                 <DischargeSummaryView
                   currentCase={matched}
+                  startInEdit={dischargeStartInEdit}
                   previewMode={isDischargePreviewMode}
                   onApplyPreviewDischarge={handleApplyPreviewDischarge}
                   onBack={() => {

@@ -29,7 +29,7 @@ interface DashboardViewProps {
   onStartQuickCase: () => void;
   onSelectCase: (caseId: string) => void;
   onViewSheet?: (caseId: string) => void;
-  onNavigateToDischarge: (caseId: string) => void;
+  onNavigateToDischarge: (caseId: string, startInEdit?: boolean) => void;
   onNavigateToTab: (tabId: string) => void;
   onStartHandoverChat: () => void;
   onStartHandoverSheet: () => void;
@@ -1671,7 +1671,7 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
                                     View Card
                                   </button>
                                   <button
-                                    onClick={() => onNavigateToDischarge(c.id)}
+                                    onClick={() => onNavigateToDischarge(c.id, true)}
                                     className="flex items-center justify-center gap-1 px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-900 dark:hover:bg-slate-850 text-slate-700 dark:text-slate-300 rounded-md text-[11px] font-bold transition-all"
                                   >
                                     <Edit className="w-3.5 h-3.5" />

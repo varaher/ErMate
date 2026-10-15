@@ -28,6 +28,8 @@ interface DischargeSummaryViewProps {
   onDeleteCase?: (caseId: string) => void;
   previewMode?: boolean;
   onApplyPreviewDischarge?: (info: DischargeInfo) => Promise<void> | void;
+  /** Open straight in the edit form (Edit Card). Default: read-only view (View Card). */
+  startInEdit?: boolean;
 }
 
 type TabType = "admin-vitals" | "clinical-hx" | "primary-assessment" | "secondary-assessment" | "course-plans";
@@ -39,7 +41,8 @@ export default function DischargeSummaryView({
   profile,
   onDeleteCase,
   previewMode = false,
-  onApplyPreviewDischarge
+  onApplyPreviewDischarge,
+  startInEdit = false
 }: DischargeSummaryViewProps) {
   // Prepopulate from case records or existing dischargeInfo
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -52,7 +55,11 @@ export default function DischargeSummaryView({
         currentCase.dischargeInfo.primaryDiagnosis ||
         currentCase.dischargeInfo.courseInHospital)
   );
-  const [isEditing, setIsEditing] = useState<boolean>(!hasExistingSummary);
+  // Opens in VIEW (read-only) unless Edit Card was used. The form otherwise appears only after "Edit Summary".
+  const [isEditing, setIsEditing] = useState<boolean>(startInEdit);
+  useEffect(() => {
+    if (!previewMode) { setIsEditing(startInEdit); setEditedNotSaved(false); }
+  }, [currentCase.id, startInEdit]);
   const [editedNotSaved, setEditedNotSaved] = useState<boolean>(false);
   const showEditor = previewMode || isEditing;
   const [downloadMenuOpen, setDownloadMenuOpen] = useState(false);
@@ -522,7 +529,7 @@ export default function DischargeSummaryView({
     if (showEditor && !currentCase.dischargeInfo?.courseInHospital && !aiDrafted && !aiLoading) {
       handleAiDraft();
     }
-  }, []);
+  }, [showEditor]);
   const handleMarkDischargeRoutine = () => {
     setDischargeCondition("STABLE");
     setDischargeHr(arrivalHr);
@@ -913,7 +920,7 @@ export default function DischargeSummaryView({
             </button>
           ) : (
             <>
-              {hasExistingSummary && (
+              {true && (
                 <button
                   type="button"
                   onClick={() => setIsEditing(false)}
