@@ -1129,15 +1129,28 @@ app.post("/api/ai-discharge", requireAuth, async (req: AuthRequest, res) => {
   const safeEvents = deidentifyText(rawEventText).deidentified;
   const safeProgressNotes = deidentifyText(caseData?.progressNotes || "").deidentified;
   const safePastHistory = deidentifyText(caseData?.sampleHistory?.pastHistory || "").deidentified;
+  // Every free-text field that reaches the LLM goes through deidentifyText (Rule 4).
+  const dx = (v: any): string => (typeof v === "string" && v.trim() ? deidentifyText(v).deidentified : "");
+  const safeSymptoms = dx(caseData?.sampleHistory?.symptoms);
+  const safeHpi = dx(caseData?.sampleHistory?.hpi);
+  const safeSurgical = dx(caseData?.sampleHistory?.surgicalHistory);
+  const safeFamily = dx(caseData?.sampleHistory?.familyHistory);
+  const safeDiagnosis = dx(caseData?.dischargeInfo?.primaryDiagnosis || caseData?.provisionalPrimaryDiagnosis);
+  const safeAirway = dx(caseData?.primaryAssessment?.airway);
+  const safeBreathing = dx(caseData?.primaryAssessment?.breathing);
+  const safeCirculation = dx(caseData?.primaryAssessment?.circulation);
+  const safeBirth = dx(caseData?.pediatricDetails?.birthHistory);
+  const safeFeeding = dx(caseData?.pediatricDetails?.feedingHistory);
+  const safeImmun = dx(caseData?.pediatricDetails?.immunizationHistory);
 
   const isPediatric = !!caseData?.isPediatric;
 
   const actualTreatments = Array.isArray(caseData?.treatments) && caseData.treatments.length > 0
-    ? caseData.treatments.map((t: any, idx: number) => `${idx + 1}. ${t.drugName || "Medication"} ${t.dose || ""} (${t.route || "PO"}) - ${t.timeGiven || "Given in ER"}`).join("\n")
+    ? caseData.treatments.map((t: any, idx: number) => `${idx + 1}. ${dx(t.drugName) || "Medication"} ${dx(t.dose)} (${dx(t.route) || "PO"}) - ${dx(t.timeGiven) || "Given in ER"}`).join("\n")
     : "None prescribed in ER";
 
   const actualInvestigations = Array.isArray(caseData?.investigations) && caseData.investigations.length > 0
-    ? caseData.investigations.map((i: any) => `${i.testName || "Test"}: ${i.result || "Completed"}`).join("\n")
+    ? caseData.investigations.map((i: any) => `${dx(i.testName) || "Test"}: ${dx(i.result) || "Completed"}`).join("\n")
     : "No investigations ordered";
 
   const prompt = `
@@ -1162,7 +1175,7 @@ app.post("/api/ai-discharge", requireAuth, async (req: AuthRequest, res) => {
     - Weight: ${caseData?.pediatricDetails?.weight || caseData?.pediatricDetails?.patientWeight || "N/A"} kg
     - PAT (TICLS): Tone: ${caseData?.pediatricDetails?.patAppearanceTone}, Interactivity: ${caseData?.pediatricDetails?.patAppearanceInteractivity}, Consolability: ${caseData?.pediatricDetails?.patAppearanceConsolability}, Look/Gaze: ${caseData?.pediatricDetails?.patAppearanceLookGaze}, Speech/Cry: ${caseData?.pediatricDetails?.patAppearanceSpeechCry}
     - Work of Breathing: ${caseData?.pediatricDetails?.patWorkOfBreathing} | Circulation: ${caseData?.pediatricDetails?.patCirculation}
-    - Birth/Feeding/Immunizations: Birth: ${caseData?.pediatricDetails?.birthHistory}, Feeding: ${caseData?.pediatricDetails?.feedingHistory}, Immunizations: ${caseData?.pediatricDetails?.immunizationHistory}
+    - Birth/Feeding/Immunizations: Birth: ${safeBirth || "Not documented"}, Feeding: ${safeFeeding || "Not documented"}, Immunizations: ${safeImmun || "Not documented"}
     ` : ""}
 
     Vitals on Admission:
@@ -1170,14 +1183,17 @@ app.post("/api/ai-discharge", requireAuth, async (req: AuthRequest, res) => {
     - RR: ${caseData?.vitals?.rr || "N/A"} /min, Temp: ${caseData?.vitals?.temp || "N/A"}°C, GCS: ${caseData?.vitals?.gcs || "N/A"}
 
     Clinical SAMPLE History:
-    - Symptoms: ${caseData?.sampleHistory?.symptoms || "Not documented"}
+    - Symptoms: ${safeSymptoms || "Not documented"}
+    - History of Presenting Illness: ${safeHpi || "Not documented"}
     - Allergies: ${caseData?.sampleHistory?.allergies ? deidentifyText(caseData.sampleHistory.allergies).deidentified : "Not documented"}
     - Outpatient Medications: ${caseData?.sampleHistory?.medications ? deidentifyText(caseData.sampleHistory.medications).deidentified : "Not documented"}
     - Past History: ${safePastHistory || "Not documented"}
+    - Surgical History: ${safeSurgical || "Not documented"}
+    - Family History: ${safeFamily || "Not documented"}
     - Events Leading to Presentation: ${safeEvents || "Not documented"}
 
     Emergency Assessments:
-    - Primary Assessment: Airway: ${caseData?.primaryAssessment?.airway || "Not documented"}, Breathing: ${caseData?.primaryAssessment?.breathing || "Not documented"}, Circulation: ${caseData?.primaryAssessment?.circulation || "Not documented"}
+    - Primary Assessment: Airway: ${safeAirway || "Not documented"}, Breathing: ${safeBreathing || "Not documented"}, Circulation: ${safeCirculation || "Not documented"}
     - Secondary Assessment / Survey: ${typeof caseData?.secondaryAssessment === 'string' && caseData.secondaryAssessment.trim() ? deidentifyText(caseData.secondaryAssessment).deidentified : "Not documented"}
 
     ER Investigations & Diagnostics:
@@ -1190,7 +1206,7 @@ app.post("/api/ai-discharge", requireAuth, async (req: AuthRequest, res) => {
     ${safeProgressNotes || "Not documented"}
 
     Provisional / Primary Diagnosis recorded in Case:
-    ${caseData?.dischargeInfo?.primaryDiagnosis || caseData?.provisionalPrimaryDiagnosis || "Not documented"}
+    ${safeDiagnosis || "Not documented"}
 
     YOUR TASK:
     Generate a professionally formatted discharge summary JSON with the following fields:
@@ -1309,67 +1325,82 @@ app.post("/api/ai-discharge", requireAuth, async (req: AuthRequest, res) => {
     }).join("\n").trim();
   };
 
-  // ── STEP 2: Claude 3.5 Sonnet PRIMARY ──
+  // ── STEP 2: Alternating model ladder (owner-specified): Claude → GPT → Claude → GPT, ONE attempt each. ──
+  // Every attempt gets the same deidentified prompt and the same medication/narrative safeguards.
+  // If all four fail, STEP 4 serves a deterministic record-only draft (flagged `simulated`). Gemini is never used here.
+  const parseDischargeJson = (raw: string): any | null => {
+    const cleaned = raw.replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/```\s*$/s, "").trim();
+    try { return JSON.parse(cleaned); } catch { /* try brace extraction */ }
+    const first = cleaned.indexOf("{");
+    const last = cleaned.lastIndexOf("}");
+    if (first >= 0 && last > first) {
+      try { return JSON.parse(cleaned.slice(first, last + 1)); } catch { /* give up */ }
+    }
+    return null;
+  };
   const anthropic = getAnthropicClient();
-  if (anthropic) {
-    try {
-      const msg = await anthropic.messages.create({
-        model: "claude-sonnet-4-6",
-        max_tokens: 2048,
-        temperature: 0.0,
-        system: finalSysInstruction,
-        messages: [{ role: "user", content: prompt }]
-      });
-      const rawText = (msg.content[0] as any)?.text || "{}";
-      const cleaned = rawText.replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/```$/s, "").trim();
-      const data = JSON.parse(cleaned);
-      if (data && typeof data === "object") {
-        data.courseInHospital = sanitizeCourseNarrative(data.courseInHospital);
-        data.dischargeMedications = sanitizeDischargeMeds(data);
-        const factCheck = validateNarrativeFacts(data.courseInHospital, caseData);
-        if (!factCheck.valid) {
-          console.warn("[ai-discharge] Claude narrative introduced unproven facts, falling back to deterministic course:", factCheck.violations);
-          data.courseInHospital = deriveInitialCourseInHospital(caseData);
-        }
-      }
-      console.log("[ai-discharge] Claude 3.5 Sonnet succeeded");
-      return res.json({ success: true, data, engine: "claude-3-5-sonnet" });
-    } catch (claudeErr: any) {
-      console.warn("[ai-discharge] Claude 3.5 Sonnet failed, falling back to GPT-4o:", claudeErr?.message);
-    }
-  }
-
-  // ── STEP 3: GPT-4o FALLBACK ──
   const openai = getOpenAIClient();
-  if (openai) {
+  const modelLadder: Array<{ provider: "claude" | "gpt"; model: string }> = [
+    { provider: "claude", model: "claude-sonnet-4-6" },
+    { provider: "gpt", model: "gpt-4o" },
+    { provider: "claude", model: "claude-sonnet-4-5-20250929" },
+    { provider: "gpt", model: "gpt-4o" },
+  ];
+  for (let i = 0; i < modelLadder.length; i++) {
+    const step = modelLadder[i];
+    if (step.provider === "claude" && !anthropic) continue;
+    if (step.provider === "gpt" && !openai) continue;
     try {
-      const response = await openai.chat.completions.create({
-        model: "gpt-4o",
-        temperature: 0.0,
-        response_format: { type: "json_object" },
-        messages: [
-          { role: "system", content: finalSysInstruction },
-          { role: "user", content: prompt }
-        ]
-      });
-      const data = JSON.parse(response.choices[0]?.message?.content || "{}");
-      if (data && typeof data === "object") {
-        data.courseInHospital = sanitizeCourseNarrative(data.courseInHospital);
-        data.dischargeMedications = sanitizeDischargeMeds(data);
-        const factCheck = validateNarrativeFacts(data.courseInHospital, caseData);
-        if (!factCheck.valid) {
-          console.warn("[ai-discharge] GPT-4o narrative introduced unproven facts, falling back to deterministic course:", factCheck.violations);
-          data.courseInHospital = deriveInitialCourseInHospital(caseData);
-        }
+      let rawText = "";
+      if (step.provider === "claude") {
+        const msg = await anthropic!.messages.create(
+          {
+            model: step.model,
+            max_tokens: 3072,
+            temperature: 0.0,
+            system: finalSysInstruction,
+            messages: [{ role: "user", content: prompt }],
+          },
+          { timeout: 45000, maxRetries: 0 }
+        );
+        rawText = (msg.content as any[]).map((blk: any) => (blk?.type === "text" ? blk.text : "")).join("");
+      } else {
+        const response = await openai!.chat.completions.create(
+          {
+            model: step.model,
+            temperature: 0.0,
+            max_tokens: 3072,
+            response_format: { type: "json_object" },
+            messages: [
+              { role: "system", content: finalSysInstruction },
+              { role: "user", content: prompt },
+            ],
+          },
+          { timeout: 45000, maxRetries: 0 }
+        );
+        rawText = response.choices[0]?.message?.content || "";
       }
-      console.log("[ai-discharge] GPT-4o fallback succeeded");
-      return res.json({ success: true, data, engine: "gpt-4o" });
-    } catch (gptErr: any) {
-      console.error("[ai-discharge] GPT-4o fallback also failed, using deterministic backup:", gptErr?.message);
+      const data = parseDischargeJson(rawText);
+      if (!data || typeof data !== "object" || Array.isArray(data)) {
+        throw new Error("Model returned unparseable JSON");
+      }
+      data.courseInHospital = sanitizeCourseNarrative(data.courseInHospital);
+      data.dischargeMedications = sanitizeDischargeMeds(data);
+      const factCheck = validateNarrativeFacts(data.courseInHospital, caseData);
+      if (!factCheck.valid) {
+        console.warn(`[ai-discharge] ${step.model} narrative introduced unproven facts, using deterministic course:`, factCheck.violations);
+        data.courseInHospital = deriveInitialCourseInHospital(caseData);
+      }
+      console.log(`[ai-discharge] ${step.provider}/${step.model} succeeded (ladder step ${i + 1}/${modelLadder.length})`);
+      return res.json({ success: true, data, engine: step.model, provider: step.provider, ladderStep: i + 1, fallback: i > 0 });
+    } catch (stepErr: any) {
+      console.warn(`[ai-discharge] ladder step ${i + 1}/${modelLadder.length} (${step.provider}/${step.model}) failed:`, stepErr?.status || "", stepErr?.message);
+      if (i < modelLadder.length - 1) await new Promise((r) => setTimeout(r, 1000));
     }
   }
+  console.error("[ai-discharge] All models failed — serving deterministic record-only draft.");
 
-  // ── STEP 4: Factual Deterministic Backup (No Gemini. Null over hallucination.) ──
+  // ── STEP 4: Factual deterministic backup — built only from what is recorded. Flagged `simulated` so the UI warns the clinician. ──
   const backupData = {
     primaryDiagnosis: caseData?.dischargeInfo?.primaryDiagnosis || caseData?.provisionalPrimaryDiagnosis || "",
     secondaryDiagnosis: caseData?.dischargeInfo?.secondaryDiagnosis || "",
@@ -1385,7 +1416,7 @@ app.post("/api/ai-discharge", requireAuth, async (req: AuthRequest, res) => {
       : `Dear ${safeName}, you were evaluated in the emergency department.`,
     patientAdvice: "RETURN TO THE ER IMMEDIATELY if you experience worsening symptoms, breathing difficulty, chest pain, high fever, or severe dizziness."
   };
-  return res.json({ success: true, data: backupData, simulated: true });
+  return res.json({ success: true, data: backupData, simulated: true, engine: "deterministic" });
   } catch (err: any) {
     console.error("[ai-discharge] CRITICAL ERROR:", err);
     res.status(500).json({ success: false, error: err?.message || "Internal server error" });
