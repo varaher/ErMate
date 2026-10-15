@@ -1,3 +1,4 @@
+import { isLmpApplicable } from "../utils/historyFields";
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import VoiceRecorder from "./shared/VoiceRecorder";
 import { 
@@ -47,6 +48,7 @@ import { hasCaseScribeHistory } from "../services/scribeChatStorage";
 import { PediatricVitalReference } from "./PediatricVitalReference";
 import { authenticatedFetch } from "../services/authenticatedFetch";
 import { isPediatricPatient, interpretPediatricVital, getPediatricVitalRange } from "../utils/pediatricRanges";
+import { mirrorPediatricToStandard } from "../utils/pediatricMirror";
 import { ProcedureNote } from "../types/procedureNotes";
 import { ProcedureDefinition, PROCEDURE_DEFINITIONS } from "../data/procedureDefinitions";
 import { ProcedureSelectorModal } from "./ProcedureSelectorModal";
@@ -651,7 +653,7 @@ export default function CaseSheetView({
       return;
     }
     const base = lastSavedCaseRef.current;
-    const toSave: ClinicalCase = { ...snapshot, treatments: base.treatments, infusions: base.infusions } as ClinicalCase;
+    const toSave: ClinicalCase = mirrorPediatricToStandard({ ...snapshot, treatments: base.treatments, infusions: base.infusions } as ClinicalCase);
     const version = editVersionRef.current;
     setPersistStatus("saving");
     try {
@@ -1100,6 +1102,12 @@ export default function CaseSheetView({
         await syncDischargeSummary(backupCase);
       }
     } else {
+      // Children: the global template invents vitals, history and social findings. Never run it;
+      // use the empty-fields-only pediatric action instead.
+      if (currentCase.isPediatric) {
+        markPediatricAllNormal();
+        return;
+      }
       setBackupCase(JSON.parse(JSON.stringify(currentCase)));
       
       const age = currentCase.patient.age;
@@ -1947,6 +1955,7 @@ Extremities: Peripheral pulses present and well felt. No edema. No cyanosis or c
       fill("focusedAbdomen", PEDIATRIC_NORMAL_PRESETS.abdomen);
       fill("focusedBack", PEDIATRIC_NORMAL_PRESETS.back);
       fill("focusedExtremities", PEDIATRIC_NORMAL_PRESETS.extremities);
+      fill("focusedCns", PEDIATRIC_NORMAL_PRESETS.cns);
       return { ...prev, pediatricDetails: ped };
     });
     setPedNormalNotice(
@@ -2249,13 +2258,13 @@ Extremities: Peripheral pulses present and well felt. No edema. No cyanosis or c
 
     const formattedDocName = formatDoctorName(currentCase.doctorName);
 
-    const caseToSave: ClinicalCase = {
+    const caseToSave: ClinicalCase = mirrorPediatricToStandard({
       ...currentCase,
       isPediatric: isPeds,
       vitals: formattedVitals,
       treatments: formattedTreatments,
       doctorName: formattedDocName
-    };
+    });
 
     try {
       setIsSavingCase(true);
@@ -3434,8 +3443,37 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
             </div>
           )}
 
-          {/* Horizontal Nav Rail */}
-          <div ref={navContainerRef} className="flex items-center gap-1.5 px-4 overflow-x-auto no-scrollbar pb-2 pt-1 border-t border-slate-100 dark:border-slate-800/50">
+          {/* Mobile: one dropdown to switch tabs */}
+          <div className="sm:hidden px-4 pb-2 pt-2 border-t border-slate-100 dark:border-slate-800/50">
+            <select
+              aria-label="Go to section"
+              value={activeGroupIndex >= 0 ? TAB_GROUPS[activeGroupIndex].id : "rounds"}
+              onChange={(e) => {
+                const v = e.target.value;
+                if (v === "rounds") {
+                  if (onDiscussCase) {
+                    onDiscussCase(currentCase, "rounds");
+                  } else {
+                    setShowInternalRoundsWorkspace(true);
+                  }
+                  return;
+                }
+                const g = TAB_GROUPS.find((x) => x.id === v);
+                if (g) setActiveTab(g.members[0] as any);
+              }}
+              className="w-full min-h-[44px] px-3 py-2 bg-blue-600 text-white font-bold text-base rounded-xl border-0 focus:outline-none focus:ring-2 focus:ring-blue-400"
+            >
+              {TAB_GROUPS.map((g) => (
+                <option key={g.id} value={g.id}>
+                  {g.label}{g.members.some((m) => tabHasData(m)) ? "  ✓" : ""}
+                </option>
+              ))}
+              <option value="rounds">Rounds</option>
+            </select>
+          </div>
+
+          {/* Horizontal Nav Rail (tablet / desktop) */}
+          <div ref={navContainerRef} className="hidden sm:flex items-center gap-1.5 px-4 overflow-x-auto no-scrollbar pb-2 pt-1 border-t border-slate-100 dark:border-slate-800/50">
             {TAB_GROUPS.map((group) => {
               const isActive = group.members.includes(activeTab);
               const hasData = group.members.some((m) => tabHasData(m));
@@ -4270,11 +4308,85 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                         rows={2}
                         value={currentCase.sampleHistory[item.field as keyof SampleHistory] || (item.field === "events" ? ((currentCase as any).events || "") : "")}
                         onChange={(e) => updateHistory(item.field as keyof SampleHistory, e.target.value)}
-                        className="flex-1 px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        className="flex-1 px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-base sm:text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      />
+                    </div>
+                    {QUICK_PICKS[item.field] && (
+                      <QuickPick
+                        options={QUICK_PICKS[item.field].options}
+                        exclusive={QUICK_PICKS[item.field].exclusive}
+                        value={String(currentCase.sampleHistory[item.field as keyof SampleHistory] || "")}
+                        onChange={(v) => updateHistory(item.field as keyof SampleHistory, v)}
+                      />
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              {/* History of Presenting Illness / Surgical / LMP */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-4 border-t">
+                <div className="space-y-1 md:col-span-2">
+                  <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">
+                    History of Presenting Illness
+                  </label>
+                  <textarea
+                    rows={3}
+                    value={currentCase.sampleHistory.hpi || ""}
+                    onChange={(e) => updateHistory("hpi", e.target.value)}
+                    placeholder="Onset, duration, progression, associated symptoms, treatment taken before arrival..."
+                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-base sm:text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">
+                    Surgical History
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={currentCase.sampleHistory.surgicalHistory || ""}
+                    onChange={(e) => updateHistory("surgicalHistory", e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-base sm:text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  />
+                  <QuickPick
+                    options={QUICK_PICKS.surgicalHistory.options}
+                    exclusive={QUICK_PICKS.surgicalHistory.exclusive}
+                    value={currentCase.sampleHistory.surgicalHistory || ""}
+                    onChange={(v) => updateHistory("surgicalHistory", v)}
+                  />
+                </div>
+                {(isLmpApplicable(currentCase.patient) || currentCase.sampleHistory.lmp) && (
+                  <div className="space-y-1">
+                    <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">
+                      LMP (Last Menstrual Period)
+                    </label>
+                    <input
+                      type="text"
+                      value={currentCase.sampleHistory.lmp || ""}
+                      onChange={(e) => updateHistory("lmp", e.target.value)}
+                      className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-base sm:text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                    <div className="grid grid-cols-2 gap-2">
+                      <input
+                        type="date"
+                        aria-label="Pick LMP date"
+                        max={new Date().toISOString().slice(0, 10)}
+                        onChange={(e) => {
+                          if (!e.target.value) return;
+                          const d = new Date(e.target.value + "T00:00:00");
+                          updateHistory("lmp", d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }));
+                        }}
+                        className="w-full min-h-[44px] sm:min-h-0 px-3 py-2 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-base sm:text-xs text-slate-600 dark:text-slate-300"
+                      />
+                      <QuickPick
+                        options={QUICK_PICKS.lmp.options}
+                        exclusive={QUICK_PICKS.lmp.exclusive}
+                        value={currentCase.sampleHistory.lmp || ""}
+                        onChange={(v) => updateHistory("lmp", v)}
+                        placeholder="Or choose…"
                       />
                     </div>
                   </div>
-                ))}
+                )}
               </div>
 
               {/* Extra Medical details  */}
@@ -4287,7 +4399,13 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                     rows={2}
                     value={currentCase.sampleHistory.socialHistory || ""}
                     onChange={(e) => updateHistory("socialHistory", e.target.value)}
-                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-base sm:text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  />
+                  <QuickPick
+                    options={QUICK_PICKS.socialHistory.options}
+                    exclusive={QUICK_PICKS.socialHistory.exclusive}
+                    value={currentCase.sampleHistory.socialHistory || ""}
+                    onChange={(v) => updateHistory("socialHistory", v)}
                   />
                 </div>
 
@@ -4299,7 +4417,13 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                     rows={2}
                     value={currentCase.sampleHistory.familyHistory || ""}
                     onChange={(e) => updateHistory("familyHistory", e.target.value)}
-                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-base sm:text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  />
+                  <QuickPick
+                    options={QUICK_PICKS.familyHistory.options}
+                    exclusive={QUICK_PICKS.familyHistory.exclusive}
+                    value={currentCase.sampleHistory.familyHistory || ""}
+                    onChange={(v) => updateHistory("familyHistory", v)}
                   />
                 </div>
 
@@ -4551,7 +4675,8 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                       cardiovascular: currentCase.pediatricDetails?.focusedCardiovascular || "",
                       abdomen: currentCase.pediatricDetails?.focusedAbdomen || "",
                       back: currentCase.pediatricDetails?.focusedBack || "",
-                      extremities: currentCase.pediatricDetails?.focusedExtremities || ""
+                      extremities: currentCase.pediatricDetails?.focusedExtremities || "",
+                      cns: currentCase.pediatricDetails?.focusedCns || ""
                     }}
                     onChange={s => setCurrentCase(prev => ({
                       ...prev,
@@ -4562,7 +4687,8 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                         focusedCardiovascular: s.cardiovascular,
                         focusedAbdomen: s.abdomen,
                         focusedBack: s.back,
-                        focusedExtremities: s.extremities
+                        focusedExtremities: s.extremities,
+                        focusedCns: s.cns
                       }
                     }))}
                   />
@@ -4587,41 +4713,44 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                          ...prev,
                          pediatricDetails: {
                            ...(prev.pediatricDetails || {}),
-                           examHeent: findings.length > 0 ? findings.join(", ") : "No pallor, icterus, cyanosis, clubbing, lymphadenopathy, or pedal edema."
+                           examHeent: findings.length > 0 ? findings.join(", ") : ""
                          }
                        }));
                     }}
                   />
                   <PediatricQuickNormalPresets
                     onApply={(section, text) => {
-                      setCurrentCase(prev => ({
-                        ...prev,
-                        pediatricDetails: {
-                           ...(prev.pediatricDetails || {}),
-                           ...(section === 'general' ? { examHeent: text } : {}),
-                           ...(section === 'heent' ? { focusedHeent: text } : {}),
-                           ...(section === 'respiratory' ? { focusedRespiratory: text } : {}),
-                           ...(section === 'cardiovascular' ? { focusedCardiovascular: text } : {}),
-                           ...(section === 'abdomen' ? { focusedAbdomen: text } : {}),
-                           ...(section === 'back' ? { focusedBack: text } : {}),
-                           ...(section === 'extremities' ? { focusedExtremities: text } : {})
-                        }
-                      }));
+                      const fieldBySection: Record<string, string> = {
+                        general: "examHeent", heent: "focusedHeent", respiratory: "focusedRespiratory",
+                        cardiovascular: "focusedCardiovascular", abdomen: "focusedAbdomen", back: "focusedBack",
+                        extremities: "focusedExtremities", cns: "focusedCns"
+                      };
+                      const field = fieldBySection[section as string];
+                      if (!field) return;
+                      // Append to what the doctor already wrote; never replace it.
+                      setCurrentCase(prev => {
+                        const ped: any = { ...(prev.pediatricDetails || {}) };
+                        const cur = String(ped[field] || "").trim();
+                        if (cur.includes(text)) return prev;
+                        ped[field] = cur ? `${cur} ${text}` : text;
+                        return { ...prev, pediatricDetails: ped };
+                      });
                     }}
                     onFillAll={() => {
-                      setCurrentCase(prev => ({
-                        ...prev,
-                        pediatricDetails: {
-                           ...(prev.pediatricDetails || {}),
-                           examHeent: PEDIATRIC_NORMAL_PRESETS.general,
-                           focusedHeent: PEDIATRIC_NORMAL_PRESETS.heent,
-                           focusedRespiratory: PEDIATRIC_NORMAL_PRESETS.respiratory,
-                           focusedCardiovascular: PEDIATRIC_NORMAL_PRESETS.cardiovascular,
-                           focusedAbdomen: PEDIATRIC_NORMAL_PRESETS.abdomen,
-                           focusedBack: PEDIATRIC_NORMAL_PRESETS.back,
-                           focusedExtremities: PEDIATRIC_NORMAL_PRESETS.extremities
-                        }
-                      }));
+                      // Fill only EMPTY sections; anything the doctor already wrote stays untouched.
+                      setCurrentCase(prev => {
+                        const ped: any = { ...(prev.pediatricDetails || {}) };
+                        const fill = (key: string, value: string) => { if (!String(ped[key] || "").trim()) ped[key] = value; };
+                        fill("examHeent", PEDIATRIC_NORMAL_PRESETS.general);
+                        fill("focusedHeent", PEDIATRIC_NORMAL_PRESETS.heent);
+                        fill("focusedRespiratory", PEDIATRIC_NORMAL_PRESETS.respiratory);
+                        fill("focusedCardiovascular", PEDIATRIC_NORMAL_PRESETS.cardiovascular);
+                        fill("focusedAbdomen", PEDIATRIC_NORMAL_PRESETS.abdomen);
+                        fill("focusedBack", PEDIATRIC_NORMAL_PRESETS.back);
+                        fill("focusedExtremities", PEDIATRIC_NORMAL_PRESETS.extremities);
+                        fill("focusedCns", PEDIATRIC_NORMAL_PRESETS.cns);
+                        return { ...prev, pediatricDetails: ped };
+                      });
                     }}
                   />
                 </div>
