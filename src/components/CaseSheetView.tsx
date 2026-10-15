@@ -1,4 +1,3 @@
-import { isLmpApplicable } from "../utils/historyFields";
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import VoiceRecorder from "./shared/VoiceRecorder";
 import { 
@@ -38,6 +37,8 @@ import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend
 } from "recharts";
 import { getCasePendingStatus } from "../utils/caseHelper";
+import MissingStrip from "./shared/MissingStrip";
+import QuickPick from "./shared/QuickPick";
 import { getDisplayCaseId } from "../utils/caseIdentity";
 import { classifyEmergencyTriage } from "../utils/triageClassifier";
 import { formatTemperature, formatDoctorName, deduplicateMeds, validateMedRoute, formatDisabilityAssessment, displaySpo2, displayGcs, displayTemperature, displayGrbs } from "../utils/clinicalFormatter";
@@ -46,7 +47,6 @@ import { hasCaseScribeHistory } from "../services/scribeChatStorage";
 import { PediatricVitalReference } from "./PediatricVitalReference";
 import { authenticatedFetch } from "../services/authenticatedFetch";
 import { isPediatricPatient, interpretPediatricVital, getPediatricVitalRange } from "../utils/pediatricRanges";
-import { mirrorPediatricToStandard } from "../utils/pediatricMirror";
 import { ProcedureNote } from "../types/procedureNotes";
 import { ProcedureDefinition, PROCEDURE_DEFINITIONS } from "../data/procedureDefinitions";
 import { ProcedureSelectorModal } from "./ProcedureSelectorModal";
@@ -476,6 +476,31 @@ export default function CaseSheetView({
       setActiveTab(initialTab as any);
     }
   }, [initialTab]);
+
+  // 5 visible tabs. Each groups existing sections; internal section ids (activeTab) are unchanged.
+  const TAB_GROUPS: ReadonlyArray<{ id: string; label: string; members: readonly string[] }> = [
+    { id: "case", label: "Case", members: ["complaints", "history"] },
+    { id: "assessment", label: "Assessment", members: ["primary-survey", "secondary-survey"] },
+    { id: "workup", label: "Work-up & Rx", members: ["investigations", "treatment"] },
+    { id: "wrapup", label: "Notes & Disposition", members: ["notes", "disposition"] },
+    { id: "trends", label: "Trends", members: ["trends"] },
+  ];
+  const activeGroupIndex = TAB_GROUPS.findIndex((g) => g.members.includes(activeTab));
+  // True when the given section lives in the currently open tab group.
+  const showSection = (sectionId: string): boolean =>
+    activeGroupIndex >= 0 && TAB_GROUPS[activeGroupIndex].members.includes(sectionId);
+
+  // Tap-to-add choices for history fields (dropdown on phones). Picking is the clinician's act; nothing auto-fills.
+  const QUICK_PICKS: Record<string, { options: string[]; exclusive: string[] }> = {
+    allergies: { options: ["NKDA (no known drug allergy)", "No known allergies", "Penicillin", "Sulfa drugs", "NSAIDs / aspirin", "Seafood", "Egg", "Dust / pollen", "Latex"], exclusive: ["NKDA (no known drug allergy)", "No known allergies"] },
+    medications: { options: ["None", "Antihypertensives", "Oral antidiabetics", "Insulin", "Aspirin / antiplatelets", "Anticoagulants", "Statins", "Inhalers", "Thyroxine", "Antiepileptics", "Steroids"], exclusive: ["None"] },
+    pastHistory: { options: ["Nil significant", "Diabetes mellitus", "Hypertension", "Coronary artery disease", "Stroke", "Asthma / COPD", "CKD", "Epilepsy", "Hypothyroidism", "Tuberculosis", "Malignancy", "Liver disease"], exclusive: ["Nil significant"] },
+    lastMeal: { options: ["Fasting > 6 hours", "Light meal < 2 hours ago", "Full meal < 2 hours ago", "Liquids only", "Not known"], exclusive: ["Fasting > 6 hours", "Light meal < 2 hours ago", "Full meal < 2 hours ago", "Liquids only", "Not known"] },
+    surgicalHistory: { options: ["No previous surgery", "LSCS", "Appendectomy", "Cholecystectomy", "Hernia repair", "Hysterectomy", "CABG / PCI", "Orthopaedic surgery"], exclusive: ["No previous surgery"] },
+    socialHistory: { options: ["Non-smoker, non-alcoholic", "Smoker", "Tobacco chewing", "Alcohol - occasional", "Alcohol - daily", "Substance use"], exclusive: ["Non-smoker, non-alcoholic"] },
+    familyHistory: { options: ["Nil significant", "Diabetes", "Hypertension", "Coronary artery disease", "Epilepsy", "Cancer", "Bleeding disorder"], exclusive: ["Nil significant"] },
+    lmp: { options: ["Pregnant", "Post-menopausal", "Not sure", "Amenorrhoea", "Hysterectomy"], exclusive: ["Pregnant", "Post-menopausal", "Not sure", "Amenorrhoea", "Hysterectomy"] },
+  };
   const navContainerRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (navContainerRef.current) {
@@ -514,7 +539,7 @@ export default function CaseSheetView({
 
   // Unified save feedback badge for active tab
   const renderTabSaveBadge = (tabName: "Treatment" | "Investigations" | "Disposition") => {
-    const isThisTab = activeTab.toLowerCase().includes(tabName.toLowerCase());
+    const isThisTab = showSection(tabName.toLowerCase());
     const isSaving = isSavingCase && isThisTab;
     const isError = (treatmentSaveStatus === "error" || tabSaveStatus === "error") && (isThisTab || lastSavedTab === activeTab);
     const isSaved = (treatmentSaveStatus === "saved" || tabSaveStatus === "saved") && (lastSavedTab === activeTab || isThisTab);
@@ -626,7 +651,7 @@ export default function CaseSheetView({
       return;
     }
     const base = lastSavedCaseRef.current;
-    const toSave: ClinicalCase = mirrorPediatricToStandard({ ...snapshot, treatments: base.treatments, infusions: base.infusions } as ClinicalCase);
+    const toSave: ClinicalCase = { ...snapshot, treatments: base.treatments, infusions: base.infusions } as ClinicalCase;
     const version = editVersionRef.current;
     setPersistStatus("saving");
     try {
@@ -1075,12 +1100,6 @@ export default function CaseSheetView({
         await syncDischargeSummary(backupCase);
       }
     } else {
-      // Children: the global template invents vitals, history and social findings. Never run it;
-      // use the empty-fields-only pediatric action instead.
-      if (currentCase.isPediatric) {
-        markPediatricAllNormal();
-        return;
-      }
       setBackupCase(JSON.parse(JSON.stringify(currentCase)));
       
       const age = currentCase.patient.age;
@@ -1928,7 +1947,6 @@ Extremities: Peripheral pulses present and well felt. No edema. No cyanosis or c
       fill("focusedAbdomen", PEDIATRIC_NORMAL_PRESETS.abdomen);
       fill("focusedBack", PEDIATRIC_NORMAL_PRESETS.back);
       fill("focusedExtremities", PEDIATRIC_NORMAL_PRESETS.extremities);
-      fill("focusedCns", PEDIATRIC_NORMAL_PRESETS.cns);
       return { ...prev, pediatricDetails: ped };
     });
     setPedNormalNotice(
@@ -1937,33 +1955,42 @@ Extremities: Peripheral pulses present and well felt. No edema. No cyanosis or c
     setTimeout(() => setPedNormalNotice(null), 7000);
   };
 
+  // True when a recorded value exists. Used so "Mark normal" never overwrites what the clinician already entered.
+  const hasRecordedValue = (v: any): boolean =>
+    v !== undefined && v !== null && !(typeof v === "string" && v.trim() === "");
+  // Fill normal values where nothing is recorded; recorded values always win.
+  const preferRecorded = (normal: any, recorded: any): any => {
+    if (normal && typeof normal === "object" && !Array.isArray(normal)) {
+      const out: any = { ...(recorded && typeof recorded === "object" ? recorded : {}) };
+      for (const k of Object.keys(normal)) out[k] = preferRecorded(normal[k], recorded ? recorded[k] : undefined);
+      return out;
+    }
+    return hasRecordedValue(recorded) ? recorded : normal;
+  };
+
   const markPrimarySurveyNormal = () => {
     const initialSurvey = getInitialPrimarySurvey(currentCase.patient.caseType);
     setCurrentCase(prev => {
       const prevSurvey = prev.primaryAssessment?.survey || ({} as Partial<PrimarySurvey>);
-      const newSurvey = {
+      const normalSurvey: any = {
         ...initialSurvey,
         airway: { ...initialSurvey.airway, cSpine: "not_applicable" },
         breathing: { ...initialSurvey.breathing, chestWall: "Normal", rr: "16", spo2: "98" },
         circulation: { ...initialSurvey.circulation, bleeding: "Nil", ivAccess: "18G", hr: "80", sbp: "120", dbp: "80" },
         disability: { ...initialSurvey.disability, focalDeficit: "None", grbs: "100" },
         exposure: { ...initialSurvey.exposure, skin: "Normal", temp: "37.0" },
-        adjuncts: (prevSurvey as Partial<PrimarySurvey>).adjuncts || {}
       };
+      const mergedSurvey = preferRecorded(normalSurvey, prevSurvey);
+      mergedSurvey.adjuncts = (prevSurvey as Partial<PrimarySurvey>).adjuncts || {};
       return {
         ...prev,
-        vitals: {
-          ...prev.vitals,
-          rr: "16",
-          spo2: "98",
-          hr: "80",
-          bp: "120/80",
-          gcs: "15",
-          temp: "37.0"
-        },
+        vitals: preferRecorded(
+          { rr: "16", spo2: "98", hr: "80", bp: "120/80", gcs: "15", temp: "37.0" },
+          prev.vitals
+        ),
         primaryAssessment: {
           ...prev.primaryAssessment,
-          survey: newSurvey as any
+          survey: mergedSurvey as any
         }
       };
     });
@@ -1971,28 +1998,7 @@ Extremities: Peripheral pulses present and well felt. No edema. No cyanosis or c
     setTimeout(() => setNormalMarkedBanner(false), 4000);
   };
 
-  const markSecondarySurveyNormal = (forceOverwrite = false) => {
-    // Check if examination already contains non-empty findings
-    const sec = currentCase.secondarySurvey || {};
-    const hasExisting = Boolean(
-      (sec.general && sec.general.trim()) ||
-      (sec.cvs && sec.cvs.trim()) ||
-      (sec.respiratory && sec.respiratory.trim()) ||
-      (sec.abdomen && sec.abdomen.trim()) ||
-      (sec.cns && sec.cns.trim()) ||
-      (sec.extremities && sec.extremities.trim()) ||
-      (currentCase.secondaryAssessment && currentCase.secondaryAssessment.trim())
-    );
-
-    if (hasExisting && !forceOverwrite) {
-      const confirmed = window.confirm(
-        "Some examination findings are already documented. Replace them with the normal template?"
-      );
-      if (!confirmed) {
-        return;
-      }
-    }
-
+  const markSecondarySurveyNormal = () => {
     // GCS Consistency: check whether an already documented GCS elsewhere in Case Sheet conflicts
     const getDocumentedGcs = (c: ClinicalCase): number | null => {
       const vGcs = c.vitals?.gcs ? parseInt(String(c.vitals.gcs).trim(), 10) : NaN;
@@ -2032,24 +2038,43 @@ Extremities: Peripheral pulses present and well felt. No edema. No cyanosis or c
       cns: normalCns,
       extremities: normalExt,
     };
+    const labelFor: Record<string, string> = { general: "General", cvs: "CVS", respiratory: "RS", abdomen: "PA", cns: "CNS", extremities: "Extremities" };
 
-    const normalSecondaryAssessment = [
-      `General: ${normalGeneral}`,
-      `CVS: ${normalCvs}`,
-      `RS: ${normalRs}`,
-      `PA: ${normalPa}`,
-      `CNS: ${normalCns}`,
-      `Extremities: ${normalExt}`,
-    ].join("\n");
-
-    setCurrentCase(prev => ({
-      ...prev,
-      secondarySurvey: normalSecondarySurvey,
-      secondaryAssessment: normalSecondaryAssessment,
-    }));
+    setCurrentCase(prev => {
+      const prevSec: any = prev.secondarySurvey || {};
+      const merged: any = { ...prevSec };
+      const addedLines: string[] = [];
+      for (const key of Object.keys(normalSecondarySurvey)) {
+        if (!hasRecordedValue(prevSec[key]) || String(prevSec[key]).trim() === "") {
+          merged[key] = (normalSecondarySurvey as any)[key];
+          addedLines.push(`${labelFor[key]}: ${(normalSecondarySurvey as any)[key]}`);
+        }
+      }
+      const prevNarrative = (prev.secondaryAssessment || "").trim();
+      return {
+        ...prev,
+        secondarySurvey: merged,
+        // Blank narrative -> rebuilt from systems; existing narrative is kept and only newly filled systems are appended.
+        secondaryAssessment: prevNarrative ? (addedLines.length ? `${prev.secondaryAssessment}\n${addedLines.join("\n")}` : prev.secondaryAssessment) : addedLines.join("\n"),
+      };
+    });
 
     setNormalMarkedBanner(true);
     setTimeout(() => setNormalMarkedBanner(false), 4000);
+  };
+
+  // ONE "Mark normal" action for the whole Assessment tab. Fills blank fields only; never overwrites recorded findings.
+  const markAssessmentNormal = () => {
+    if (currentCase.isPediatric) {
+      markPediatricAllNormal();
+      return;
+    }
+    markPrimarySurveyNormal();
+    markSecondarySurveyNormal();
+    setPedNormalNotice(
+      "Normal findings filled in blank fields only — anything you already recorded was kept. Review, then edit any finding that is not normal."
+    );
+    setTimeout(() => setPedNormalNotice(null), 7000);
   };
 
   const markPsychNormal = () => {
@@ -2224,13 +2249,13 @@ Extremities: Peripheral pulses present and well felt. No edema. No cyanosis or c
 
     const formattedDocName = formatDoctorName(currentCase.doctorName);
 
-    const caseToSave: ClinicalCase = mirrorPediatricToStandard({
+    const caseToSave: ClinicalCase = {
       ...currentCase,
       isPediatric: isPeds,
       vitals: formattedVitals,
       treatments: formattedTreatments,
       doctorName: formattedDocName
-    });
+    };
 
     try {
       setIsSavingCase(true);
@@ -3411,57 +3436,52 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
 
           {/* Horizontal Nav Rail */}
           <div ref={navContainerRef} className="flex items-center gap-1.5 px-4 overflow-x-auto no-scrollbar pb-2 pt-1 border-t border-slate-100 dark:border-slate-800/50">
-            {[
-              { id: "complaints", label: "Complaints" },
-              { id: "primary-survey", label: "Primary" },
-              { id: "history", label: "SAMPLE" },
-              { id: "secondary-survey", label: "Secondary" },
-              { id: "investigations", label: "Investigations" },
-              { id: "treatment", label: "Treatment" },
-              { id: "notes", label: "Notes" },
-              { id: "disposition", label: "Disposition" },
-              { id: "trends", label: "Trends" },
-              { id: "rounds", label: "Rounds" },
-            ].map((tab) => {
-              const isActive = activeTab === tab.id;
-              const hasData = tabHasData(tab.id);
+            {TAB_GROUPS.map((group) => {
+              const isActive = group.members.includes(activeTab);
+              const hasData = group.members.some((m) => tabHasData(m));
               return (
                 <button
-                  key={tab.id}
-                  data-tab-id={tab.id}
-                  onClick={() => {
-                    if (tab.id === "rounds") {
-                      if (onDiscussCase) {
-                        onDiscussCase(currentCase, "rounds");
-                      } else {
-                        setShowInternalRoundsWorkspace(true);
-                      }
-                    } else {
-                      setActiveTab(tab.id as any);
-                    }
-                  }}
+                  key={group.id}
+                  data-tab-id={isActive ? activeTab : group.members[0]}
+                  onClick={() => setActiveTab(group.members[0] as any)}
                   className={`text-[11px] font-bold px-4 py-2 rounded-full transition-colors shrink-0 whitespace-nowrap flex items-center gap-1.5 ${
                     isActive 
                       ? "bg-blue-600 text-white shadow-sm ring-2 ring-blue-600/20" 
                       : (hasData ? "bg-transparent text-emerald-700 dark:text-emerald-400 border border-emerald-100/50 dark:border-emerald-500/20" : "bg-transparent text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800")
                   }`}
                 >
-                  <span>{tab.label}</span>
+                  <span>{group.label}</span>
                   {hasData && (
                     <span className={`w-1.5 h-1.5 rounded-full ${isActive ? 'bg-white' : 'bg-emerald-500 dark:bg-emerald-400'}`} />
                   )}
                 </button>
               );
             })}
+            <button
+              type="button"
+              data-tab-id="rounds"
+              onClick={() => {
+                if (onDiscussCase) {
+                  onDiscussCase(currentCase, "rounds");
+                } else {
+                  setShowInternalRoundsWorkspace(true);
+                }
+              }}
+              className="text-[11px] font-bold px-4 py-2 rounded-full transition-colors shrink-0 whitespace-nowrap flex items-center gap-1.5 bg-transparent text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+            >
+              <span>Rounds</span>
+            </button>
           </div>
         </div>
 
         {/* Tab content area  */}
         <div className="p-2 sm:p-4 space-y-4">
 
+          {!isPreview && <MissingStrip clinicalCase={currentCase} onJump={(tab) => setActiveTab(tab as any)} />}
+
           
           {/* Chief Complaints & Editable Demographics  */}
-          {activeTab === "complaints" && (
+          {showSection("complaints") && (
             <div className="space-y-4 animate-fade-in">
 <div className="border-b pb-2.5 flex items-center justify-between">
                 <div>
@@ -3608,7 +3628,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
           )}
           
           {/* Patient Demographics & Disposition Tab (Accreditation Level)  */}
-          {activeTab === "disposition" && (
+          {showSection("disposition") && (
             <div className="space-y-4">
               <div className="border-b pb-2 flex items-center justify-between gap-2 flex-wrap">
                 <div>
@@ -3792,7 +3812,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
           {/* Pediatrics Sheet Tab  */}
 
           {/* Vitals Trends Tab  */}
-          {activeTab === "trends" && (
+          {showSection("trends") && (
             <div className="p-6 bg-indigo-50 dark:bg-indigo-950/20 border border-indigo-200 dark:border-indigo-800 rounded-2xl space-y-1 animate-fade-in">
               <h3 className="text-sm font-bold text-indigo-700 dark:text-indigo-300 uppercase tracking-wide">Vital Signs Trends — coming soon</h3>
               <p className="text-xs text-slate-600 dark:text-slate-300">Repeat vitals charting will be available in a future update. Record current vitals in the Primary Survey.</p>
@@ -4163,7 +4183,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
 
           
           {/* SAMPLE History Tab  */}
-          {activeTab === "history" && (
+          {showSection("history") && (
             <div className="space-y-4">
 
               {currentCase.isPediatric && (
@@ -4257,46 +4277,6 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                 ))}
               </div>
 
-              {/* History of Presenting Illness / Surgical / LMP */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-4 border-t">
-                <div className="space-y-1 md:col-span-2">
-                  <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">
-                    History of Presenting Illness
-                  </label>
-                  <textarea
-                    rows={3}
-                    value={currentCase.sampleHistory.hpi || ""}
-                    onChange={(e) => updateHistory("hpi", e.target.value)}
-                    placeholder="Onset, duration, progression, associated symptoms, treatment taken before arrival..."
-                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">
-                    Surgical History
-                  </label>
-                  <textarea
-                    rows={2}
-                    value={currentCase.sampleHistory.surgicalHistory || ""}
-                    onChange={(e) => updateHistory("surgicalHistory", e.target.value)}
-                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  />
-                </div>
-                {(isLmpApplicable(currentCase.patient) || currentCase.sampleHistory.lmp) && (
-                  <div className="space-y-1">
-                    <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">
-                      LMP (Last Menstrual Period)
-                    </label>
-                    <input
-                      type="text"
-                      value={currentCase.sampleHistory.lmp || ""}
-                      onChange={(e) => updateHistory("lmp", e.target.value)}
-                      className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                    />
-                  </div>
-                )}
-              </div>
-
               {/* Extra Medical details  */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-4 border-t">
                 <div className="space-y-1">
@@ -4351,28 +4331,32 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
 
           
           {/* Primary Assessment ABCDE Tab  */}
-          {activeTab === "primary-survey" && (
+          {showSection("primary-survey") && (
             <div className="space-y-4">
+
+              {/* The ONE "Mark normal" action for Assessment (primary + secondary). Blank fields only. */}
+              <div className="bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800 rounded-xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <p className="text-xs text-emerald-800 dark:text-emerald-300">
+                  {currentCase.isPediatric
+                    ? "Child looks well? Fills normal PAT, ABCDE and examination in blank fields only. Vitals, GRBS, temperature and weight are never filled."
+                    : "Patient looks well? Fills normal primary + secondary findings in blank fields only. Anything you recorded is kept."}
+                </p>
+                <button
+                  type="button"
+                  onClick={markAssessmentNormal}
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg shadow-sm transition-colors cursor-pointer min-h-[40px] shrink-0"
+                >
+                  ✓ Mark Assessment Normal
+                </button>
+              </div>
+              {pedNormalNotice && (
+                <div className="text-xs bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 rounded-lg px-3 py-2">
+                  {pedNormalNotice}
+                </div>
+              )}
 
               {currentCase.isPediatric && (
                 <div className="bg-sky-50 dark:bg-sky-950/20 border border-sky-100 dark:border-sky-900 rounded-xl p-4 space-y-4 mb-4">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                    <p className="text-xs text-slate-600 dark:text-slate-400">
-                      Child looks well? Fill normal findings for PAT, ABCDE and examination in one tap.
-                    </p>
-                    <button
-                      type="button"
-                      onClick={markPediatricAllNormal}
-                      className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg shadow-sm transition-colors cursor-pointer min-h-[40px] shrink-0"
-                    >
-                      ✓ Mark All Normal (Pediatric)
-                    </button>
-                  </div>
-                  {pedNormalNotice && (
-                    <div className="text-xs bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 rounded-lg px-3 py-2">
-                      {pedNormalNotice}
-                    </div>
-                  )}
                   <PediatricAssessmentTriangle
                     state={{
                       appearance: {
@@ -4546,7 +4530,6 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                   data={currentCase.primaryAssessment?.survey || getInitialPrimarySurvey(currentCase.patient.caseType)}
                   onChange={handleSurveyChange}
                   caseType={currentCase.patient.caseType}
-                  onMarkNormal={markPrimarySurveyNormal}
                   onInterpretABG={handleInterpretABG}
                   vitals={currentCase.vitals}
                   onUpdateVitals={updateVitals}
@@ -4557,7 +4540,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
           )}
 
           {/* Secondary Assessment head-to-toe Exam Tab  */}
-          {activeTab === "secondary-survey" && (
+          {showSection("secondary-survey") && (
             <div className="space-y-4">
               {currentCase.isPediatric ? (
                 <div className="space-y-4">
@@ -4568,8 +4551,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                       cardiovascular: currentCase.pediatricDetails?.focusedCardiovascular || "",
                       abdomen: currentCase.pediatricDetails?.focusedAbdomen || "",
                       back: currentCase.pediatricDetails?.focusedBack || "",
-                      extremities: currentCase.pediatricDetails?.focusedExtremities || "",
-                      cns: currentCase.pediatricDetails?.focusedCns || ""
+                      extremities: currentCase.pediatricDetails?.focusedExtremities || ""
                     }}
                     onChange={s => setCurrentCase(prev => ({
                       ...prev,
@@ -4580,8 +4562,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                         focusedCardiovascular: s.cardiovascular,
                         focusedAbdomen: s.abdomen,
                         focusedBack: s.back,
-                        focusedExtremities: s.extremities,
-                        focusedCns: s.cns
+                        focusedExtremities: s.extremities
                       }
                     }))}
                   />
@@ -4606,44 +4587,41 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                          ...prev,
                          pediatricDetails: {
                            ...(prev.pediatricDetails || {}),
-                           examHeent: findings.length > 0 ? findings.join(", ") : ""
+                           examHeent: findings.length > 0 ? findings.join(", ") : "No pallor, icterus, cyanosis, clubbing, lymphadenopathy, or pedal edema."
                          }
                        }));
                     }}
                   />
                   <PediatricQuickNormalPresets
                     onApply={(section, text) => {
-                      const fieldBySection: Record<string, string> = {
-                        general: "examHeent", heent: "focusedHeent", respiratory: "focusedRespiratory",
-                        cardiovascular: "focusedCardiovascular", abdomen: "focusedAbdomen", back: "focusedBack",
-                        extremities: "focusedExtremities", cns: "focusedCns"
-                      };
-                      const field = fieldBySection[section as string];
-                      if (!field) return;
-                      // Append to what the doctor already wrote; never replace it.
-                      setCurrentCase(prev => {
-                        const ped: any = { ...(prev.pediatricDetails || {}) };
-                        const cur = String(ped[field] || "").trim();
-                        if (cur.includes(text)) return prev;
-                        ped[field] = cur ? `${cur} ${text}` : text;
-                        return { ...prev, pediatricDetails: ped };
-                      });
+                      setCurrentCase(prev => ({
+                        ...prev,
+                        pediatricDetails: {
+                           ...(prev.pediatricDetails || {}),
+                           ...(section === 'general' ? { examHeent: text } : {}),
+                           ...(section === 'heent' ? { focusedHeent: text } : {}),
+                           ...(section === 'respiratory' ? { focusedRespiratory: text } : {}),
+                           ...(section === 'cardiovascular' ? { focusedCardiovascular: text } : {}),
+                           ...(section === 'abdomen' ? { focusedAbdomen: text } : {}),
+                           ...(section === 'back' ? { focusedBack: text } : {}),
+                           ...(section === 'extremities' ? { focusedExtremities: text } : {})
+                        }
+                      }));
                     }}
                     onFillAll={() => {
-                      // Fill only EMPTY sections; anything the doctor already wrote stays untouched.
-                      setCurrentCase(prev => {
-                        const ped: any = { ...(prev.pediatricDetails || {}) };
-                        const fill = (key: string, value: string) => { if (!String(ped[key] || "").trim()) ped[key] = value; };
-                        fill("examHeent", PEDIATRIC_NORMAL_PRESETS.general);
-                        fill("focusedHeent", PEDIATRIC_NORMAL_PRESETS.heent);
-                        fill("focusedRespiratory", PEDIATRIC_NORMAL_PRESETS.respiratory);
-                        fill("focusedCardiovascular", PEDIATRIC_NORMAL_PRESETS.cardiovascular);
-                        fill("focusedAbdomen", PEDIATRIC_NORMAL_PRESETS.abdomen);
-                        fill("focusedBack", PEDIATRIC_NORMAL_PRESETS.back);
-                        fill("focusedExtremities", PEDIATRIC_NORMAL_PRESETS.extremities);
-                        fill("focusedCns", PEDIATRIC_NORMAL_PRESETS.cns);
-                        return { ...prev, pediatricDetails: ped };
-                      });
+                      setCurrentCase(prev => ({
+                        ...prev,
+                        pediatricDetails: {
+                           ...(prev.pediatricDetails || {}),
+                           examHeent: PEDIATRIC_NORMAL_PRESETS.general,
+                           focusedHeent: PEDIATRIC_NORMAL_PRESETS.heent,
+                           focusedRespiratory: PEDIATRIC_NORMAL_PRESETS.respiratory,
+                           focusedCardiovascular: PEDIATRIC_NORMAL_PRESETS.cardiovascular,
+                           focusedAbdomen: PEDIATRIC_NORMAL_PRESETS.abdomen,
+                           focusedBack: PEDIATRIC_NORMAL_PRESETS.back,
+                           focusedExtremities: PEDIATRIC_NORMAL_PRESETS.extremities
+                        }
+                      }));
                     }}
                   />
                 </div>
@@ -4657,7 +4635,6 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                       secondaryAssessment: val,
                       secondarySurvey: updatedSurvey || prev.secondarySurvey
                     }))}
-                    onMarkNormal={markSecondarySurveyNormal}
                   />
                   {/* Normal Exam Presets (from user adult normal template)  */}
                   <details className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3.5 text-xs group">
@@ -4723,13 +4700,6 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                           + {preset.label}
                         </button>
                       ))}
-                      <button
-                        type="button"
-                        onClick={() => markSecondarySurveyNormal(true)}
-                        className="px-3 py-1.5 bg-emerald-100 hover:bg-emerald-200 dark:bg-emerald-900/30 dark:hover:bg-emerald-800/50 text-emerald-700 dark:text-emerald-400 font-medium rounded transition-colors"
-                      >
-                        🚀 Fill All Normal Findings
-                      </button>
                     </div>
                   </div>
                   </details>
@@ -4741,7 +4711,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
           
 
           {/* Investigations (Labs & Imaging) Tab  */}
-          {activeTab === "investigations" && (
+          {showSection("investigations") && (
             <div className="space-y-4 pt-4 border-t border-slate-100 dark:border-slate-800">
               <div className="border-b pb-2 flex items-center justify-between gap-2 flex-wrap">
                 <div className="flex items-center gap-2">
@@ -5124,7 +5094,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
             </div>
           )}
           {/* Treatment Logs & Resuscitation Dosages Tab with IPSG Drug Double-Checks  */}
-          {activeTab === "treatment" && (
+          {showSection("treatment") && (
             <div className="space-y-4">
               <div className="border-b pb-2 flex items-center justify-between gap-2 flex-wrap">
                 <div className="flex items-center gap-2">
@@ -5660,7 +5630,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
             </div>
           )}
           {/* Progress Notes Tab  */}
-          {activeTab === "notes" && (
+          {showSection("notes") && (
             <div className="space-y-4">
 <h3 className="text-sm font-bold text-slate-800 dark:text-white border-b pb-2 uppercase tracking-wide">Continuous Progress Notes Log</h3>
               
@@ -5848,16 +5818,13 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
         ) : (
           <>
             {(() => {
-              const order = ["complaints", "primary-survey", "history", "secondary-survey", "investigations", "treatment", "notes", "disposition", "trends", "rounds"];
-              const curr = order.indexOf(activeTab);
-              const nextId = (curr !== -1 && curr < order.length - 1) ? order[curr + 1] : null;
-              const labels: Record<string, string> = {  "complaints": "Complaints",  "primary-survey": "Primary",  "history": "SAMPLE",  "secondary-survey": "Secondary",  "investigations": "Investigations",  "treatment": "Treatment",  "notes": "Notes",  "disposition": "Disposition",  "trends": "Trends",  "rounds": "Rounds"};
+              const nextGroup = activeGroupIndex >= 0 && activeGroupIndex < TAB_GROUPS.length - 1 ? TAB_GROUPS[activeGroupIndex + 1] : null;
               
               return (
                 <div className="flex-1 flex justify-start">
-                  {nextId && (
-                    <button onClick={() => setActiveTab(nextId as any)} className="px-4 py-2.5 bg-transparent hover:bg-slate-100 dark:hover:bg-slate-900 text-slate-600 dark:text-slate-400 font-semibold text-[11px] rounded-lg flex items-center gap-1.5 transition-colors active:scale-[0.98]">
-                      Next: {labels[nextId]} <ArrowRight className="w-3.5 h-3.5" />
+                  {nextGroup && (
+                    <button onClick={() => setActiveTab(nextGroup.members[0] as any)} className="px-4 py-2.5 bg-transparent hover:bg-slate-100 dark:hover:bg-slate-900 text-slate-600 dark:text-slate-400 font-semibold text-[11px] rounded-lg flex items-center gap-1.5 transition-colors active:scale-[0.98]">
+                      Next: {nextGroup.label} <ArrowRight className="w-3.5 h-3.5" />
                     </button>
                   )}
                 </div>

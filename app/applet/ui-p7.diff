@@ -1,0 +1,54 @@
+diff --git a/src/components/CaseSheetView.tsx b/src/components/CaseSheetView.tsx
+index 2d72fd9..6dfc542 100644
+--- a/src/components/CaseSheetView.tsx
++++ b/src/components/CaseSheetView.tsx
+@@ -5848,16 +5859,13 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
+         ) : (
+           <>
+             {(() => {
+-              const order = ["complaints", "primary-survey", "history", "secondary-survey", "investigations", "treatment", "notes", "disposition", "trends", "rounds"];
+-              const curr = order.indexOf(activeTab);
+-              const nextId = (curr !== -1 && curr < order.length - 1) ? order[curr + 1] : null;
+-              const labels: Record<string, string> = {  "complaints": "Complaints",  "primary-survey": "Primary",  "history": "SAMPLE",  "secondary-survey": "Secondary",  "investigations": "Investigations",  "treatment": "Treatment",  "notes": "Notes",  "disposition": "Disposition",  "trends": "Trends",  "rounds": "Rounds"};
++              const nextGroup = activeGroupIndex >= 0 && activeGroupIndex < TAB_GROUPS.length - 1 ? TAB_GROUPS[activeGroupIndex + 1] : null;
+               
+               return (
+                 <div className="flex-1 flex justify-start">
+-                  {nextId && (
+-                    <button onClick={() => setActiveTab(nextId as any)} className="px-4 py-2.5 bg-transparent hover:bg-slate-100 dark:hover:bg-slate-900 text-slate-600 dark:text-slate-400 font-semibold text-[11px] rounded-lg flex items-center gap-1.5 transition-colors active:scale-[0.98]">
+-                      Next: {labels[nextId]} <ArrowRight className="w-3.5 h-3.5" />
++                  {nextGroup && (
++                    <button onClick={() => setActiveTab(nextGroup.members[0] as any)} className="px-4 py-2.5 bg-transparent hover:bg-slate-100 dark:hover:bg-slate-900 text-slate-600 dark:text-slate-400 font-semibold text-[11px] rounded-lg flex items-center gap-1.5 transition-colors active:scale-[0.98]">
++                      Next: {nextGroup.label} <ArrowRight className="w-3.5 h-3.5" />
+                     </button>
+                   )}
+                 </div>
+diff --git a/src/components/SecondarySurveySection.tsx b/src/components/SecondarySurveySection.tsx
+index 1b71c36..0d4f8a4 100644
+--- a/src/components/SecondarySurveySection.tsx
++++ b/src/components/SecondarySurveySection.tsx
+@@ -48,7 +48,7 @@ export function SecondarySurveySection({
+   secondaryAssessment: string;
+   secondarySurvey?: Record<string, string>;
+   onChange: (value: string, updatedSurvey?: Record<string, string>) => void;
+-  onMarkNormal: () => void;
++  onMarkNormal?: () => void;
+ }) {
+   const [fields, setFields] = useState({
+     General: "",
+@@ -146,6 +146,7 @@ export function SecondarySurveySection({
+     <div className="space-y-4">
+       <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-2">
+         <h3 className="text-sm font-bold text-slate-800 dark:text-white uppercase tracking-wide">Secondary Head-to-Toe Examination Findings</h3>
++        {onMarkNormal && (
+         <button
+           type="button"
+           onClick={onMarkNormal}
+@@ -156,6 +157,7 @@ export function SecondarySurveySection({
+           <CheckCircle className="w-3.5 h-3.5 text-emerald-600" />
+           Mark All Examination Normal
+         </button>
++        )}
+       </div>
+       
+       <div className="space-y-3">

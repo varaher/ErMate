@@ -1,0 +1,72 @@
+diff --git a/src/components/CaseSheetView.tsx b/src/components/CaseSheetView.tsx
+index 6dfc542..35b1fb5 100644
+--- a/src/components/CaseSheetView.tsx
++++ b/src/components/CaseSheetView.tsx
+@@ -3430,8 +3443,37 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
+             </div>
+           )}
+ 
+-          {/* Horizontal Nav Rail */}
+-          <div ref={navContainerRef} className="flex items-center gap-1.5 px-4 overflow-x-auto no-scrollbar pb-2 pt-1 border-t border-slate-100 dark:border-slate-800/50">
++          {/* Mobile: one dropdown to switch tabs */}
++          <div className="sm:hidden px-4 pb-2 pt-2 border-t border-slate-100 dark:border-slate-800/50">
++            <select
++              aria-label="Go to section"
++              value={activeGroupIndex >= 0 ? TAB_GROUPS[activeGroupIndex].id : "rounds"}
++              onChange={(e) => {
++                const v = e.target.value;
++                if (v === "rounds") {
++                  if (onDiscussCase) {
++                    onDiscussCase(currentCase, "rounds");
++                  } else {
++                    setShowInternalRoundsWorkspace(true);
++                  }
++                  return;
++                }
++                const g = TAB_GROUPS.find((x) => x.id === v);
++                if (g) setActiveTab(g.members[0] as any);
++              }}
++              className="w-full min-h-[44px] px-3 py-2 bg-blue-600 text-white font-bold text-base rounded-xl border-0 focus:outline-none focus:ring-2 focus:ring-blue-400"
++            >
++              {TAB_GROUPS.map((g) => (
++                <option key={g.id} value={g.id}>
++                  {g.label}{g.members.some((m) => tabHasData(m)) ? "  ✓" : ""}
++                </option>
++              ))}
++              <option value="rounds">Rounds</option>
++            </select>
++          </div>
++
++          {/* Horizontal Nav Rail (tablet / desktop) */}
++          <div ref={navContainerRef} className="hidden sm:flex items-center gap-1.5 px-4 overflow-x-auto no-scrollbar pb-2 pt-1 border-t border-slate-100 dark:border-slate-800/50">
+             {TAB_GROUPS.map((group) => {
+               const isActive = group.members.includes(activeTab);
+               const hasData = group.members.some((m) => tabHasData(m));
+@@ -4266,9 +4308,17 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
+                         rows={2}
+                         value={currentCase.sampleHistory[item.field as keyof SampleHistory] || (item.field === "events" ? ((currentCase as any).events || "") : "")}
+                         onChange={(e) => updateHistory(item.field as keyof SampleHistory, e.target.value)}
+-                        className="flex-1 px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
++                        className="flex-1 px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-base sm:text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                       />
+                     </div>
++                    {QUICK_PICKS[item.field] && (
++                      <QuickPick
++                        options={QUICK_PICKS[item.field].options}
++                        exclusive={QUICK_PICKS[item.field].exclusive}
++                        value={String(currentCase.sampleHistory[item.field as keyof SampleHistory] || "")}
++                        onChange={(v) => updateHistory(item.field as keyof SampleHistory, v)}
++                      />
++                    )}
+                   </div>
+                 ))}
+               </div>
+@@ -4284,7 +4334,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
+                     value={currentCase.sampleHistory.hpi || ""}
+                     onChange={(e) => updateHistory("hpi", e.target.value)}
+                     placeholder="Onset, duration, progression, associated symptoms, treatment taken before arrival..."
+-                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
++                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-base sm:text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                   />
+                 </div>
+                 <div className="space-y-1">

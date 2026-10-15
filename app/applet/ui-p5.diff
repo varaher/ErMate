@@ -1,0 +1,73 @@
+diff --git a/src/components/CaseSheetView.tsx b/src/components/CaseSheetView.tsx
+index 2d72fd9..6dfc542 100644
+--- a/src/components/CaseSheetView.tsx
++++ b/src/components/CaseSheetView.tsx
+@@ -3792,7 +3808,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
+           {/* Pediatrics Sheet Tab  */}
+ 
+           {/* Vitals Trends Tab  */}
+-          {activeTab === "trends" && (
++          {showSection("trends") && (
+             <div className="p-6 bg-indigo-50 dark:bg-indigo-950/20 border border-indigo-200 dark:border-indigo-800 rounded-2xl space-y-1 animate-fade-in">
+               <h3 className="text-sm font-bold text-indigo-700 dark:text-indigo-300 uppercase tracking-wide">Vital Signs Trends — coming soon</h3>
+               <p className="text-xs text-slate-600 dark:text-slate-300">Repeat vitals charting will be available in a future update. Record current vitals in the Primary Survey.</p>
+@@ -4163,7 +4179,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
+ 
+           
+           {/* SAMPLE History Tab  */}
+-          {activeTab === "history" && (
++          {showSection("history") && (
+             <div className="space-y-4">
+ 
+               {currentCase.isPediatric && (
+@@ -4351,28 +4367,32 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
+ 
+           
+           {/* Primary Assessment ABCDE Tab  */}
+-          {activeTab === "primary-survey" && (
++          {showSection("primary-survey") && (
+             <div className="space-y-4">
+ 
++              {/* The ONE "Mark normal" action for Assessment (primary + secondary). Blank fields only. */}
++              <div className="bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800 rounded-xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
++                <p className="text-xs text-emerald-800 dark:text-emerald-300">
++                  {currentCase.isPediatric
++                    ? "Child looks well? Fills normal PAT, ABCDE and examination in blank fields only. Vitals, GRBS, temperature and weight are never filled."
++                    : "Patient looks well? Fills normal primary + secondary findings in blank fields only. Anything you recorded is kept."}
++                </p>
++                <button
++                  type="button"
++                  onClick={markAssessmentNormal}
++                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg shadow-sm transition-colors cursor-pointer min-h-[40px] shrink-0"
++                >
++                  ✓ Mark Assessment Normal
++                </button>
++              </div>
++              {pedNormalNotice && (
++                <div className="text-xs bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 rounded-lg px-3 py-2">
++                  {pedNormalNotice}
++                </div>
++              )}
++
+               {currentCase.isPediatric && (
+                 <div className="bg-sky-50 dark:bg-sky-950/20 border border-sky-100 dark:border-sky-900 rounded-xl p-4 space-y-4 mb-4">
+-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+-                    <p className="text-xs text-slate-600 dark:text-slate-400">
+-                      Child looks well? Fill normal findings for PAT, ABCDE and examination in one tap.
+-                    </p>
+-                    <button
+-                      type="button"
+-                      onClick={markPediatricAllNormal}
+-                      className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg shadow-sm transition-colors cursor-pointer min-h-[40px] shrink-0"
+-                    >
+-                      ✓ Mark All Normal (Pediatric)
+-                    </button>
+-                  </div>
+-                  {pedNormalNotice && (
+-                    <div className="text-xs bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 rounded-lg px-3 py-2">
+-                      {pedNormalNotice}
+-                    </div>
+-                  )}
+                   <PediatricAssessmentTriangle
+                     state={{
+                       appearance: {

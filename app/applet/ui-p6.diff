@@ -1,0 +1,69 @@
+diff --git a/src/components/CaseSheetView.tsx b/src/components/CaseSheetView.tsx
+index 2d72fd9..6dfc542 100644
+--- a/src/components/CaseSheetView.tsx
++++ b/src/components/CaseSheetView.tsx
+@@ -4546,7 +4566,6 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
+                   data={currentCase.primaryAssessment?.survey || getInitialPrimarySurvey(currentCase.patient.caseType)}
+                   onChange={handleSurveyChange}
+                   caseType={currentCase.patient.caseType}
+-                  onMarkNormal={markPrimarySurveyNormal}
+                   onInterpretABG={handleInterpretABG}
+                   vitals={currentCase.vitals}
+                   onUpdateVitals={updateVitals}
+@@ -4557,7 +4576,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
+           )}
+ 
+           {/* Secondary Assessment head-to-toe Exam Tab  */}
+-          {activeTab === "secondary-survey" && (
++          {showSection("secondary-survey") && (
+             <div className="space-y-4">
+               {currentCase.isPediatric ? (
+                 <div className="space-y-4">
+@@ -4657,7 +4676,6 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
+                       secondaryAssessment: val,
+                       secondarySurvey: updatedSurvey || prev.secondarySurvey
+                     }))}
+-                    onMarkNormal={markSecondarySurveyNormal}
+                   />
+                   {/* Normal Exam Presets (from user adult normal template)  */}
+                   <details className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3.5 text-xs group">
+@@ -4723,13 +4741,6 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
+                           + {preset.label}
+                         </button>
+                       ))}
+-                      <button
+-                        type="button"
+-                        onClick={() => markSecondarySurveyNormal(true)}
+-                        className="px-3 py-1.5 bg-emerald-100 hover:bg-emerald-200 dark:bg-emerald-900/30 dark:hover:bg-emerald-800/50 text-emerald-700 dark:text-emerald-400 font-medium rounded transition-colors"
+-                      >
+-                        🚀 Fill All Normal Findings
+-                      </button>
+                     </div>
+                   </div>
+                   </details>
+@@ -4741,7 +4752,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
+           
+ 
+           {/* Investigations (Labs & Imaging) Tab  */}
+-          {activeTab === "investigations" && (
++          {showSection("investigations") && (
+             <div className="space-y-4 pt-4 border-t border-slate-100 dark:border-slate-800">
+               <div className="border-b pb-2 flex items-center justify-between gap-2 flex-wrap">
+                 <div className="flex items-center gap-2">
+@@ -5124,7 +5135,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
+             </div>
+           )}
+           {/* Treatment Logs & Resuscitation Dosages Tab with IPSG Drug Double-Checks  */}
+-          {activeTab === "treatment" && (
++          {showSection("treatment") && (
+             <div className="space-y-4">
+               <div className="border-b pb-2 flex items-center justify-between gap-2 flex-wrap">
+                 <div className="flex items-center gap-2">
+@@ -5660,7 +5671,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
+             </div>
+           )}
+           {/* Progress Notes Tab  */}
+-          {activeTab === "notes" && (
++          {showSection("notes") && (
+             <div className="space-y-4">
+ <h3 className="text-sm font-bold text-slate-800 dark:text-white border-b pb-2 uppercase tracking-wide">Continuous Progress Notes Log</h3>

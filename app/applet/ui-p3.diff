@@ -1,0 +1,64 @@
+diff --git a/src/components/CaseSheetView.tsx b/src/components/CaseSheetView.tsx
+index 2d72fd9..6dfc542 100644
+--- a/src/components/CaseSheetView.tsx
++++ b/src/components/CaseSheetView.tsx
+@@ -2032,26 +2034,45 @@ Extremities: Peripheral pulses present and well felt. No edema. No cyanosis or c
+       cns: normalCns,
+       extremities: normalExt,
+     };
++    const labelFor: Record<string, string> = { general: "General", cvs: "CVS", respiratory: "RS", abdomen: "PA", cns: "CNS", extremities: "Extremities" };
+ 
+-    const normalSecondaryAssessment = [
+-      `General: ${normalGeneral}`,
+-      `CVS: ${normalCvs}`,
+-      `RS: ${normalRs}`,
+-      `PA: ${normalPa}`,
+-      `CNS: ${normalCns}`,
+-      `Extremities: ${normalExt}`,
+-    ].join("\n");
+-
+-    setCurrentCase(prev => ({
+-      ...prev,
+-      secondarySurvey: normalSecondarySurvey,
+-      secondaryAssessment: normalSecondaryAssessment,
+-    }));
++    setCurrentCase(prev => {
++      const prevSec: any = prev.secondarySurvey || {};
++      const merged: any = { ...prevSec };
++      const addedLines: string[] = [];
++      for (const key of Object.keys(normalSecondarySurvey)) {
++        if (!hasRecordedValue(prevSec[key]) || String(prevSec[key]).trim() === "") {
++          merged[key] = (normalSecondarySurvey as any)[key];
++          addedLines.push(`${labelFor[key]}: ${(normalSecondarySurvey as any)[key]}`);
++        }
++      }
++      const prevNarrative = (prev.secondaryAssessment || "").trim();
++      return {
++        ...prev,
++        secondarySurvey: merged,
++        // Blank narrative -> rebuilt from systems; existing narrative is kept and only newly filled systems are appended.
++        secondaryAssessment: prevNarrative ? (addedLines.length ? `${prev.secondaryAssessment}\n${addedLines.join("\n")}` : prev.secondaryAssessment) : addedLines.join("\n"),
++      };
++    });
+ 
+     setNormalMarkedBanner(true);
+     setTimeout(() => setNormalMarkedBanner(false), 4000);
+   };
+ 
++  // ONE "Mark normal" action for the whole Assessment tab. Fills blank fields only; never overwrites recorded findings.
++  const markAssessmentNormal = () => {
++    if (currentCase.isPediatric) {
++      markPediatricAllNormal();
++      return;
++    }
++    markPrimarySurveyNormal();
++    markSecondarySurveyNormal();
++    setPedNormalNotice(
++      "Normal findings filled in blank fields only — anything you already recorded was kept. Review, then edit any finding that is not normal."
++    );
++    setTimeout(() => setPedNormalNotice(null), 7000);
++  };
++
+   const markPsychNormal = () => {
+     setCurrentCase(prev => ({
+       ...prev,

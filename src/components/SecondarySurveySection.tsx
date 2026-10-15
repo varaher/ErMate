@@ -48,7 +48,7 @@ export function SecondarySurveySection({
   secondaryAssessment: string;
   secondarySurvey?: Record<string, string>;
   onChange: (value: string, updatedSurvey?: Record<string, string>) => void;
-  onMarkNormal: () => void;
+  onMarkNormal?: () => void;
 }) {
   const [fields, setFields] = useState({
     General: "",
@@ -146,6 +146,7 @@ export function SecondarySurveySection({
     <div className="space-y-4">
       <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-2">
         <h3 className="text-sm font-bold text-slate-800 dark:text-white uppercase tracking-wide">Secondary Head-to-Toe Examination Findings</h3>
+        {onMarkNormal && (
         <button
           type="button"
           onClick={onMarkNormal}
@@ -156,6 +157,7 @@ export function SecondarySurveySection({
           <CheckCircle className="w-3.5 h-3.5 text-emerald-600" />
           Mark All Examination Normal
         </button>
+        )}
       </div>
       
       <div className="space-y-3">

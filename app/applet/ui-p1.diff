@@ -1,0 +1,41 @@
+diff --git a/src/components/CaseSheetView.tsx b/src/components/CaseSheetView.tsx
+index 2d72fd9..6dfc542 100644
+--- a/src/components/CaseSheetView.tsx
++++ b/src/components/CaseSheetView.tsx
+@@ -38,6 +38,7 @@ import {
+   ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend
+ } from "recharts";
+ import { getCasePendingStatus } from "../utils/caseHelper";
++import MissingStrip from "./shared/MissingStrip";
+ import { getDisplayCaseId } from "../utils/caseIdentity";
+ import { classifyEmergencyTriage } from "../utils/triageClassifier";
+ import { formatTemperature, formatDoctorName, deduplicateMeds, validateMedRoute, formatDisabilityAssessment, displaySpo2, displayGcs, displayTemperature, displayGrbs } from "../utils/clinicalFormatter";
+@@ -476,6 +477,19 @@ export default function CaseSheetView({
+       setActiveTab(initialTab as any);
+     }
+   }, [initialTab]);
++
++  // 5 visible tabs. Each groups existing sections; internal section ids (activeTab) are unchanged.
++  const TAB_GROUPS: ReadonlyArray<{ id: string; label: string; members: readonly string[] }> = [
++    { id: "case", label: "Case", members: ["complaints", "history"] },
++    { id: "assessment", label: "Assessment", members: ["primary-survey", "secondary-survey"] },
++    { id: "workup", label: "Work-up & Rx", members: ["investigations", "treatment"] },
++    { id: "wrapup", label: "Notes & Disposition", members: ["notes", "disposition"] },
++    { id: "trends", label: "Trends", members: ["trends"] },
++  ];
++  const activeGroupIndex = TAB_GROUPS.findIndex((g) => g.members.includes(activeTab));
++  // True when the given section lives in the currently open tab group.
++  const showSection = (sectionId: string): boolean =>
++    activeGroupIndex >= 0 && TAB_GROUPS[activeGroupIndex].members.includes(sectionId);
+   const navContainerRef = useRef<HTMLDivElement>(null);
+   useEffect(() => {
+     if (navContainerRef.current) {
+@@ -514,7 +528,7 @@ export default function CaseSheetView({
+ 
+   // Unified save feedback badge for active tab
+   const renderTabSaveBadge = (tabName: "Treatment" | "Investigations" | "Disposition") => {
+-    const isThisTab = activeTab.toLowerCase().includes(tabName.toLowerCase());
++    const isThisTab = showSection(tabName.toLowerCase());
+     const isSaving = isSavingCase && isThisTab;
+     const isError = (treatmentSaveStatus === "error" || tabSaveStatus === "error") && (isThisTab || lastSavedTab === activeTab);
+     const isSaved = (treatmentSaveStatus === "saved" || tabSaveStatus === "saved") && (lastSavedTab === activeTab || isThisTab);
