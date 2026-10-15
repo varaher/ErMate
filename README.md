@@ -163,7 +163,10 @@ ErMate implements **Local On-The-Fly PHI De-identification** hosted on Indian Cl
   - Replay routes directly into the existing clinical Scribe extraction pipeline (`/api/scribe-chat`), extracting clinical information (age, gender, complaints, vitals) into the single created patient record.
 - **Generation & Session Link Safety**:
   - Stamped `generation` prevents stale handoffs from replaying if context shifted unexpectedly.
-  - Pending handoff refs are cleared to `null` before dispatch, guaranteeing exactly-once replay with single-message chat history.
+### 10. Mobile Safe Hard Refresh & Critical Operation Registry (`src/utils/hardRefresh.ts`, `src/utils/criticalOps.ts`)
+- **Mobile Equivalent of Ctrl+Shift+R**: Provides an in-app "Reload latest version" tile in the Settings/More menu (`HardRefreshTile.tsx`) allowing doctors on mobile PWAs to check for app updates and refresh without risking lost clinical work.
+- **Critical Operation Protection**: Evaluates active Sarvam voice recordings, in-flight case saves, scribe uploads, and pending Firestore writes (`waitForPendingWrites`) before proceeding. Blocks reloads if unsaved work is in-flight, offering one-tap resolution (e.g. "Save now").
+- **Connectivity & Cache Safety**: Verifies server reachability before initiating refresh, preventing offline blank screens, and preserves patient records, auth sessions, and Firestore offline storage.
 
 ---
 

@@ -45,6 +45,18 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-15] — ErMate: Mobile Safe Hard Refresh & Critical Ops Protection (HARD-REFRESH)
+- **Critical Ops Registry (`src/utils/criticalOps.ts`)**:
+  - Implemented in-memory operation registry (`beginCriticalOp`, `setCriticalFlag`, `getActiveCriticalOps`) tracking active in-flight saves, uploads, and unsaved changes without localStorage or network overhead.
+- **Mobile Hard Refresh Engine (`src/utils/hardRefresh.ts`)**:
+  - Deep safety validation checking Sarvam recording, in-flight case saves, scribe uploads, and pending Firestore writes (`waitForPendingWrites`).
+  - Network connectivity probe ensuring offline devices never discard working state.
+  - Service worker update lifecycle check and safe reload orchestration without clearing auth, local cache, or clinical storage.
+- **Hard Refresh UI Tile (`src/components/shared/HardRefreshTile.tsx`, `src/components/MoreView.tsx`)**:
+  - Interactive tile in Settings/More screen providing mobile equivalent of Ctrl+Shift+R with blocked blocker resolution actions (e.g., "Save now").
+- **Clinical View Critical Op Signals (`src/components/CaseSheetView.tsx`, `src/components/VoiceScribeChatView.tsx`, `src/components/QuickDischargeIntake.tsx`)**:
+  - Registered critical operation flags on autosave queueing, voice recordings, discharge dictations, and scribe attachments.
+
 ### [2026-10-14] — ErMate: Clinical Handover Integrity Corrections (BATCH-H1)
 - **Investigation Status Integrity (`src/components/HandoverView.tsx`)**:
   - Gated Plan (Done) labs strictly to confirmed results (`completedLabNames`). Investigations pending results or without documentation are never pushed into `doneParts` or `doneItems`.
