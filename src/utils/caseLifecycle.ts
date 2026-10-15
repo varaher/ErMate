@@ -95,7 +95,8 @@ export function isCaseEligibleFor24hArchive(c: ClinicalCase, now = new Date()): 
   if (!pending.isPending) return false;
 
   // Rule 5: Must be >= 24 hours since the last edit (or creation if never edited)
-  const lastActivity = getCaseLastActivityTimestamp(c);
+  // An empty draft (nothing documented) ages from creation, so a stray save cannot keep it alive forever.
+  const lastActivity = hasAnyClinicalContent(c) ? getCaseLastActivityTimestamp(c) : (getCaseCreationTimestamp(c) || getCaseLastActivityTimestamp(c));
   if (!lastActivity) return false;
   const ageMs = now.getTime() - lastActivity.getTime();
   return ageMs >= INCOMPLETE_CASE_ARCHIVE_MS;

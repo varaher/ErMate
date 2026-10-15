@@ -311,7 +311,7 @@ export default function DashboardView({
   const isResident = profile.role.toLowerCase().includes("resident");
 
   // Filter out discharged cases, check which active ones are pending/incomplete (Patch H1A: independent uses current-day scoped list)
-  const pendingCasesSource = isHospitalClinician ? (isResident ? myCases : activeDepartmentCases) : myCases;
+  const pendingCasesSource = isHospitalClinician ? (isResident ? myCases : activeDepartmentCases.filter(isCaseInCurrentList)) : myCases;
   const pendingCases = pendingCasesSource
     .map(c => ({
       case: c,
