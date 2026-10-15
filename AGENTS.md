@@ -45,6 +45,22 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-14] — ErMate: Clinical Handover Integrity Corrections (BATCH-H1)
+- **Investigation Status Integrity (`src/components/HandoverView.tsx`)**:
+  - Gated Plan (Done) labs strictly to confirmed results (`completedLabNames`). Investigations pending results or without documentation are never pushed into `doneParts` or `doneItems`.
+  - Linked chronological investigation findings to assessment narrative, while keeping pending investigations segregated in `pendingLabsList` / Plan (To Be Done).
+- **Bed Location Fabrication Guard (`src/components/HandoverView.tsx`)**:
+  - Eliminated bed number generation from array indices (`Bed ${idx + 1}` and `Bed ${prev.length + 1}`). Undocumented bed locations now consistently fall back to `"Unassigned"`.
+- **Completed Treatments vs Pending Actions Segregation (`src/components/HandoverCard.tsx`, `src/components/HandoverView.tsx`)**:
+  - Separated `planDone` (completed treatments and investigations) from `planToBeDone` (pending actions and consults) in single-card and batch PDF exports.
+  - Eliminated concatenation of `patient.done` into `planToBeDone` / "Plan / Action Needed".
+- **Placeholder & Generic Action Elimination (`src/components/HandoverView.tsx`)**:
+  - Corrected SBAR recommendation assignment from `done` to `toBeDone` across extraction and row restoration pipelines.
+  - Cleared fabricated completed labs and placeholder text from manual row addition.
+- **Timestamp & Clinician Identity Honesty (`server/handover.ts`, `src/components/HandoverView.tsx`)**:
+  - Eliminated clock fallback (`new Date().toLocaleTimeString`) when admission time is omitted; timestamps remain `null` or display "Arrival time not documented".
+  - Removed hardcoded clinician fallback names.
+
 ### [2026-10-13] — ErMate: Autosave Queueing, Strict Per-Case FIFO Serialization & Admin Learning Endpoint Lock (AUTOSAVE-FIX)
 - **Per-Case FIFO Write Serialization (`src/App.tsx`)**:
   - Encapsulated primary Firestore case saving inside `saveCaseNow()` and introduced `caseSaveQueuesRef` (`Map<string, Promise<unknown>>`).

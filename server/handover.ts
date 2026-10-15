@@ -503,16 +503,16 @@ export function getAlertSeverity(
 export function extractPatientNameAndTimestamp(rawText: string): {
   name: string;
   ageGender: string;
-  time: string;
+  time: string | null;
   bed: string | null;
 } {
   if (!rawText || typeof rawText !== 'string') {
-    return { name: "Bed Patient", ageGender: "Unknown", time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), bed: null };
+    return { name: "Bed Patient", ageGender: "Unknown", time: null, bed: null };
   }
 
   let name = "";
   let ageGender = "";
-  let time = "";
+  let time: string | null = null;
   let bed: string | null = null;
 
   // 1. Bed Extraction
@@ -605,12 +605,8 @@ export function extractPatientNameAndTimestamp(rawText: string): {
     }
   }
 
-  // Fallback Time
-  if (!time) {
-    time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  }
-
-  return { name, ageGender, time, bed };
+  // If time is not documented in the notes, do not fabricate a timestamp
+  return { name, ageGender, time: time || null, bed };
 }
 
 // ── Heuristic Fallback Handover Data ──────────────────────────

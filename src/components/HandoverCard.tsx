@@ -90,7 +90,8 @@ export function HandoverCard({
             vitals: patient.vitalsNow || "Not documented",
             complaints: patient.presentingComplaint || "Emergency evaluation",
             assessment: patient.diagnosis || "Under evaluation",
-            planToBeDone: (patient.done || []).concat(patient.toBeDone || []).join(" | "),
+            planDone: (patient.done && patient.done.length > 0) ? patient.done.join(" | ") : "",
+            planToBeDone: (patient.toBeDone && patient.toBeDone.length > 0) ? patient.toBeDone.join(" | ") : ((patient as any)?.recommendation || (patient as any)?.structuredSBAR?.recommendation || "Maintain monitoring & care"),
             alerts: patient.alertBanner?.summary || (patient.criticalAlerts || []).join(" · ") || "None"
           }]
         })
