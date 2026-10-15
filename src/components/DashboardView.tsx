@@ -1,5 +1,5 @@
 import VoiceRecorder from "./shared/VoiceRecorder";
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { 
   PlusCircle, Zap, TrendingUp, Clock, ArrowRight, Activity, 
   Calendar, Users, FileText, Heart, ShieldAlert, ChevronRight, Calculator,
@@ -12,7 +12,7 @@ import { ClinicalCase, UserProfile, HandoverRecord, TeamMember, isPendingApprova
 import { DutySessionRecord, isActiveDutySessionNow } from "../services/dutySessionService";
 import { formatLocalDateKey } from "../utils/dutyWindow";
 import { getCasePendingStatus } from "../utils/caseHelper";
-import { getCaseCreationTimestamp } from "../utils/caseLifecycle";
+import { getCaseCreationTimestamp, isCaseEligibleFor24hArchive } from "../utils/caseLifecycle";
 import { triggerPrintWithTip } from "../utils/printWithTip";
 import { doc, updateDoc } from "firebase/firestore";
 import { db, auth } from "../firebase";
@@ -148,9 +148,17 @@ export default function DashboardView({
   // until the doctor archives it. Archived cases never show here (they remain in the registry).
   // Bed occupancy / counts still use activeDepartmentCases only.
   const CURRENT_LIST_WINDOW_MS = 24 * 60 * 60 * 1000;
+  // Re-evaluate every minute so an incomplete case leaves the list the moment its 24h passes.
+  const [, setListClockTick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setListClockTick((n) => n + 1), 60_000);
+    return () => clearInterval(t);
+  }, []);
   const isCaseInCurrentList = (c: ClinicalCase): boolean => {
     if (!c || !c.id) return false;
     if (c.archivedAt || (c as any).isArchived || (c.status as string) === "Archived") return false;
+    // Incomplete case, 24h since last edit: leaves the list (App.tsx also soft-archives it).
+    if (isCaseEligibleFor24hArchive(c)) return false;
     if (isCaseOperationallyActive(c)) return true;
     const created = getCaseCreationTimestamp(c);
     if (!created) return false;

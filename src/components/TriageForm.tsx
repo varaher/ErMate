@@ -4,6 +4,7 @@ import { TriageCategory, ArrivalMode, PatientDemographics, PatientVitals, MlcDet
 import VoiceRecorder from "./shared/VoiceRecorder";
 import { classifyEmergencyTriage } from "../utils/triageClassifier";
 import { allocateOrValidateBed } from "../utils/bedAllocation";
+import BedPicker from "./shared/BedPicker";
 
 interface TriageFormProps {
   onBack: () => void;
@@ -310,19 +311,17 @@ export default function TriageForm({ onBack, onSubmit, initialMode, activeCases 
                   <Hash className="w-3.5 h-3.5 text-slate-400" />
                   ER Bed (Optional)
                 </span>
-                <span className="text-[10px] text-slate-400 font-normal">e.g. 11, 11A</span>
+                <span className="text-[10px] text-slate-400 font-normal">tap to choose</span>
               </label>
-              <input
-                type="text"
-                placeholder="e.g. 11, 11A, Bed 10B"
+              <BedPicker
                 value={bedNo}
-                onChange={(e) => {
-                  setBedNo(e.target.value);
+                onChange={(v) => {
+                  setBedNo(v);
                   setBedError(null);
                 }}
-                className={`w-full px-4 py-2 bg-slate-50 dark:bg-slate-900 border ${
-                  bedError ? "border-rose-500 focus:ring-rose-500" : "border-slate-200 dark:border-slate-800 focus:ring-blue-500"
-                } rounded-lg text-sm font-mono text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2`}
+                activeCases={activeCases}
+                capacity={physicalBedCapacity || 30}
+                hasError={Boolean(bedError)}
               />
               {bedError && (
                 <p className="text-[11px] text-rose-600 dark:text-rose-400 mt-1 font-medium flex items-center gap-1">
