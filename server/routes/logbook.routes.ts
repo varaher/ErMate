@@ -1,6 +1,6 @@
 import { Router } from "express";
-import { requireAuth, AuthRequest } from "../../src/middleware/auth.js";
-import { db } from "../../src/lib/firebase-admin.js";
+import { requireAuth, AuthRequest } from "../../src/middleware/auth.ts";
+import { db } from "../../src/lib/firebase-admin.ts";
 
 const router = Router();
 

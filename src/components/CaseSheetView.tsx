@@ -49,6 +49,7 @@ import { PediatricVitalReference } from "./PediatricVitalReference";
 import { authenticatedFetch } from "../services/authenticatedFetch";
 import { isPediatricPatient, interpretPediatricVital, getPediatricVitalRange } from "../utils/pediatricRanges";
 import { mirrorPediatricToStandard } from "../utils/pediatricMirror";
+import { ORDER_PANELS } from "../data/orderPanels";
 import { ProcedureNote } from "../types/procedureNotes";
 import { ProcedureDefinition, PROCEDURE_DEFINITIONS } from "../data/procedureDefinitions";
 import { ProcedureSelectorModal } from "./ProcedureSelectorModal";
@@ -1562,27 +1563,24 @@ export default function CaseSheetView({
   };
 
   const handleOrderPanel = (panelName: string) => {
-    let tests: string[] = [];
-    if (panelName === "ADULT SEIZURE PANEL") {
-      tests = ["CBC", "CRP", "LFT", "RFT", "ELECTROLYTES", "UREA", "CALCIUM", "MAGNESIUM", "PHOSPHORUS"];
-    } else if (panelName === "PEDIA MINI PANEL") {
-      tests = ["CBC", "CRP", "CREATININE", "LFT MINIS", "ELECTROLYTES"];
-    } else if (panelName === "PA PANEL PEDIATRICS SURGERY") {
-      tests = ["CBC", "CRP", "RFT", "HIV ANTIGEN AND ANTIBODY", "HBSAG", "ANTI HCV", "LFT MINI PANEL"];
-    } else if (panelName === "PEDIATRIC FEBRILE SEIZURE PANEL") {
-      tests = ["CBC", "CRP", "RFT", "LFT", "ELECTROLYTES", "UREA", "CALCIUM", "PHOSPHORUS", "MAGNESIUM", "ESR", "CULTURE AND SENSITIVITY BLOOD"];
-    }
+    const tests: string[] = ORDER_PANELS.find((p) => p.name === panelName)?.tests || [];
 
     if (tests.length === 0) return;
+
+    // Skip tests already ordered on this case (so tapping two panels never duplicates CBC etc.)
+    const norm = (x: string) => x.trim().toLowerCase();
+    const already = new Set((currentCase.investigations || []).map((i) => norm(i.testName)));
+    const toAdd = tests.filter((t) => !already.has(norm(t)));
+    if (toAdd.length === 0) return;
 
     // 1. Update text area for labs ordered
     const currentLabsStr = currentCase.investigationLabsOrdered || "";
     const updatedLabsStr = currentLabsStr.trim()
-      ? `${currentLabsStr.trim()}, ${tests.join(", ")}`
-      : tests.join(", ");
+      ? `${currentLabsStr.trim()}, ${toAdd.join(", ")}`
+      : toAdd.join(", ");
 
     // 2. Add as individual line items with "Pending" result
-    const newItems: InvestigationItem[] = tests.map((test, index) => ({
+    const newItems: InvestigationItem[] = toAdd.map((test, index) => ({
       id: `i-panel-${Date.now()}-${index}`,
       testName: test,
       result: "Pending",
@@ -4861,33 +4859,16 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                   Orders
                 </h4>
                 
-                <details className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 text-xs group">
+                <details open className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 text-xs group">
                   <summary className="font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wide cursor-pointer list-none flex items-center justify-between [&::-webkit-details-marker]:hidden">
                     <span>Quick Order Sets ▾</span>
                   </summary>
                   <div className="pt-2 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-2">
-                  {[
-                    {
-                      name: "ADULT SEIZURE PANEL",
-                      desc: "CBC, CRP, LFT, RFT, ELECTROLYTES, UREA, CALCIUM, MAGNESIUM, PHOSPHORUS",
-                      color: "from-blue-50 to-indigo-50 border-blue-200 text-blue-700 dark:from-blue-950/20 dark:to-indigo-950/10 dark:border-blue-900 dark:text-blue-300",
-                    },
-                    {
-                      name: "PEDIA MINI PANEL",
-                      desc: "CBC, CRP, CREATININE, LFT MINIS, ELECTROLYTES",
-                      color: "from-sky-50 to-teal-50 border-sky-200 text-sky-700 dark:from-sky-950/20 dark:to-teal-950/10 dark:border-sky-900 dark:text-sky-300",
-                    },
-                    {
-                      name: "PA PANEL PEDIATRICS SURGERY",
-                      desc: "CBC, CRP, RFT, HIV ANTIGEN/ANTIBODY, HBSAG, ANTI HCV, LFT MINI",
-                      color: "from-amber-50 to-orange-50 border-amber-200 text-amber-700 dark:from-amber-950/20 dark:to-orange-950/10 dark:border-amber-900 dark:text-amber-300",
-                    },
-                    {
-                      name: "PEDIATRIC FEBRILE SEIZURE PANEL",
-                      desc: "CBC, CRP, RFT, LFT, ELECTROLYTES, UREA, CALCIUM, PHOSPHORUS, MAGNESIUM, ESR, BLOOD CS",
-                      color: "from-purple-50 to-pink-50 border-purple-200 text-purple-700 dark:from-purple-950/20 dark:to-pink-950/10 dark:border-purple-900 dark:text-purple-300",
-                    }
-                  ].map((panel) => (
+                  {[...ORDER_PANELS].sort((x, y) => (x.group === (currentCase.isPediatric ? "pediatric" : "adult") ? 0 : 1) - (y.group === (currentCase.isPediatric ? "pediatric" : "adult") ? 0 : 1)).map((p) => ({
+                    name: p.name,
+                    desc: p.tests.join(", "),
+                    color: "",
+                  })).map((panel) => (
                     <button
                       key={panel.name}
                       type="button"

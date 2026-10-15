@@ -23,7 +23,7 @@
  * the explicit-section parsers in scribeChatTurn.ts own those fields.
  */
 
-import { normalizeConsultationSpecialty, deduplicateConsultations } from "./consultationNormalization";
+import { normalizeConsultationSpecialty, deduplicateConsultations } from "./consultationNormalization.ts";
 
 export type ClinicalIntent =
   | "QUESTION"

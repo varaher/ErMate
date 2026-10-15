@@ -72,23 +72,23 @@ import {
   protectInternalClinicians,
   isRedactedOrPlaceholderClinician,
   type ProtectedCliniciansResult,
-} from "./deidentify";
-import { cleanExtractionOutput, isGenericInvestigationPhrase, type RawExtractionFields } from "./extractionCleanup";
-import type { CaseSheetData } from "./caseSheetTypes";
-import { generateDischargeSummary } from "./dischargeSummary";
-import { detectNormalcyPhrases, EXAM_DEFAULTS, processSampleMedicationsAndPmh } from "./extraction";
-import { isNormalOnlySectionValue } from "./clinicalLanguageNormalizer";
+} from "./deidentify.ts";
+import { cleanExtractionOutput, isGenericInvestigationPhrase, type RawExtractionFields } from "./extractionCleanup.ts";
+import type { CaseSheetData } from "./caseSheetTypes.ts";
+import { generateDischargeSummary } from "./dischargeSummary.ts";
+import { detectNormalcyPhrases, EXAM_DEFAULTS, processSampleMedicationsAndPmh } from "./extraction.ts";
+import { isNormalOnlySectionValue } from "./clinicalLanguageNormalizer.ts";
 import {
   resolveNaturalLanguageClinicalTask,
   classifyClinicalTaskIntent,
   applyClinicalPatchesToCase,
   type ClinicalPatch,
   type ClinicalTaskResolution
-} from "./clinicalTaskApplier";
-import { deduplicateConsultations } from "./consultationNormalization";
-import { isEstablishedCaseSheet } from "./establishedCaseCheck";
-import { assertCanonicalExtractionShape } from "./voiceExtraction";
-import { deterministicAbgAnalysis } from "./aiDiagnosis";
+} from "./clinicalTaskApplier.ts";
+import { deduplicateConsultations } from "./consultationNormalization.ts";
+import { isEstablishedCaseSheet } from "./establishedCaseCheck.ts";
+import { assertCanonicalExtractionShape } from "./voiceExtraction.ts";
+import { deterministicAbgAnalysis } from "./aiDiagnosis.ts";
 
 console.log(
   "[scribeChatTurn] module loaded: SCRIBE-RUNTIME-2026-09-23-B"

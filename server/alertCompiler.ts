@@ -14,7 +14,7 @@
  * Callers must never re-wrap this into a multi-line summary.
  */
 
-import { isAbnormal, isCulturePositive } from "./clinicalRanges";
+import { isAbnormal, isCulturePositive } from "./clinicalRanges.ts";
 
 export interface HandoverOutput {
   patientHeader?: {

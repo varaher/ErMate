@@ -20,8 +20,8 @@
  * never has to branch on patient age.
  */
 
-import { formatFlaggedForAge, ageToMonths, type PediatricVitalParam } from "./pediatricClinicalRanges";
-import type { CaseSheetData, Disposition, ChronologicalNote, MedicationLogEntry, LabPanel, CultureResult } from "./caseSheetTypes";
+import { formatFlaggedForAge, ageToMonths, type PediatricVitalParam } from "./pediatricClinicalRanges.ts";
+import type { CaseSheetData, Disposition, ChronologicalNote, MedicationLogEntry, LabPanel, CultureResult } from "./caseSheetTypes.ts";
 
 // ── PAT (Paediatric Assessment Triangle) ────────────────────────────
 

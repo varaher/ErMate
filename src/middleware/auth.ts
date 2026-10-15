@@ -4,7 +4,7 @@ import {
   NextFunction
 } from "express";
 
-import { adminAuth } from "../lib/firebase-admin";
+import { adminAuth } from "../lib/firebase-admin.ts";
 
 import type {
   DecodedIdToken

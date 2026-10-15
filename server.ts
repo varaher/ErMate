@@ -5,8 +5,8 @@ import PDFDocument from "pdfkit";
 import { GoogleGenAI, Type } from "@google/genai";
 import { createServer as createViteServer } from "vite";
 import multer from "multer";
-import { sarvamBatchTranscribe } from "./server/sarvamBatch.js";
-import { initSarvamRealtimeStream } from "./server/sarvamRealtimeStream.js";
+import { sarvamBatchTranscribe } from "./server/sarvamBatch.ts";
+import { initSarvamRealtimeStream } from "./server/sarvamRealtimeStream.ts";
 import { spawn } from "child_process";
 import { detectNormalcyPhrases } from "./server/extraction.ts";
 
@@ -43,8 +43,8 @@ import { VOICE_EXTRACTION_PROMPT, extractFromTranscript } from "./server/voiceEx
 
 
 import extractionRouter from "./server/routes/extraction.routes.ts";
-import logbookRouter from "./server/routes/logbook.routes.js";
-import teamRouter from "./server/routes/team.routes.js";
+import logbookRouter from "./server/routes/logbook.routes.ts";
+import teamRouter from "./server/routes/team.routes.ts";
 import mateRouter from "./server/routes/mate.routes.ts";
 
 import { generateMortalityAudit, generateMortalityAuditDocx } from "./server/mortalityAudit.ts";
@@ -74,7 +74,7 @@ import { executeCaseDiscussionWithFailover, executeRoundsDebriefWithFailover } f
 // Load environment variables
 dotenv.config();
 
-import paymentsRouter from "./server/routes/payments";
+import paymentsRouter from "./server/routes/payments.ts";
 const SCRIBE_EXTRACTION_GUARDRAILS = `
 
 ERMATE CLINICAL EXTRACTION GUARDRAILS — THESE RULES OVERRIDE ANY CONFLICTING EXTRACTION BEHAVIOUR:

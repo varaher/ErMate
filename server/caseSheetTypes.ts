@@ -11,7 +11,7 @@
  * so the discharge generation pipeline never branches on patient age.
  */
 
-import type { ClinicalParam } from "./clinicalRanges";
+import type { ClinicalParam } from "./clinicalRanges.ts";
 
 export type Disposition =
   | "Normal Discharge"

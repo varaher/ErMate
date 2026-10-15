@@ -1,6 +1,6 @@
 
 import Anthropic from "@anthropic-ai/sdk";
-import { deidentifyText } from "./deidentify";
+import { deidentifyText } from "./deidentify.ts";
 let anthropicClient: Anthropic | null = null;
 let anthropicDisabledUntilInLearning = 0; // epoch ms; 0 = not disabled
 

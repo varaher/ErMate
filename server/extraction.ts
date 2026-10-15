@@ -10,7 +10,7 @@ import { detectClinicalNormalcy, NORMAL_EXAM_TEMPLATES, isNormalOnlySectionValue
 
 // ── Model Config ──────────────────────────────────────────────
 
-import { getChecklistForKind, buildChecklistPromptSection } from "./caseSheetChecklist";
+import { getChecklistForKind, buildChecklistPromptSection } from "./caseSheetChecklist.ts";
 
  
 

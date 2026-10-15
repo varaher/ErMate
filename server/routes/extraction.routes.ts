@@ -12,7 +12,7 @@ import {
   generateDifferentials,
 } from '../extraction.ts';
 import { generateDischargeSummary as generateEMRDischargeSummary } from '../dischargeSummary.ts';
-import { requireAuth, AuthRequest } from '../../src/middleware/auth';
+import { requireAuth, AuthRequest } from '../../src/middleware/auth.ts';
 import { deidentifyText } from '../deidentify.ts';
 const router = Router();
 
