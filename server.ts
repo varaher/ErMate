@@ -48,8 +48,8 @@ import teamRouter from "./server/routes/team.routes.ts";
 import mateRouter from "./server/routes/mate.routes.ts";
 
 import { generateMortalityAudit, generateMortalityAuditDocx } from "./server/mortalityAudit.ts";
+import { legacySqlGuard, learningFeedbackRejectHandler, errorForLog } from "./server/legacyContainment.ts";
 import { 
-  recordFeedbackCorrection, 
   extractPatternsFromUnprocessedFeedback, 
   getAllFeedbackCorrections, 
   getAllLearnedRules, 
@@ -2113,33 +2113,10 @@ Return valid JSON with:
 // ERMATE SELF-LEARNING ARCHITECTURE ROUTES
 // ─────────────────────────────────────────
 
-// 1. Capture Clinician Feedback Correction
-app.post("/api/learning/feedback", requireAuth, async (req: AuthRequest, res) => {
-  try {
-    const { field, ai_output, corrected_output, source_context, corrected_by, case_type } = req.body;
-    if (!field || !ai_output || !corrected_output) {
-      return res.status(400).json({ success: false, error: "field, ai_output, and corrected_output are required." });
-    }
-
-    const recorded = recordFeedbackCorrection(
-      field,
-      ai_output,
-      corrected_output,
-      source_context || "",
-      corrected_by || "doctor",
-      case_type || "general"
-    );
-
-    if (!recorded) {
-      return res.json({ success: true, captured: false, message: "Ignored stylistic or non-factual edit." });
-    }
-
-    return res.json({ success: true, captured: true, feedback: recorded });
-  } catch (err: any) {
-    console.error("[Learning Feedback Error]", err);
-    return res.status(500).json({ success: false, error: err?.message || "Failed to log feedback" });
-  }
-});
+// 1. Capture Clinician Feedback Correction — DISABLED (Batch 0 P-B).
+// Nothing submitted here is read or stored. Re-enabling needs purpose-specific
+// consent, verified case authorization and tenant isolation (not a flag).
+app.post("/api/learning/feedback", requireAuth, learningFeedbackRejectHandler);
 
 // 2. Fetch Rules & Raw Corrections List (for Admin Control Panel)
 // Admin only: corrections hold (de-identified) clinical text from EVERY doctor's cases.
@@ -3522,6 +3499,10 @@ app.post("/api/scan-mnemonic", requireAuth, async (req: AuthRequest, res) => {
 // 7. CLOUD SQL (POSTGRESQL) API ENDPOINTS
 // ==========================================
 
+// Batch 0 P-A: default-deny for every /api/sql route except /sync-user (all methods, 410).
+// Not env-configurable; re-enabling requires hospital-membership/ownership/role authorization.
+app.use("/api/sql", legacySqlGuard);
+
 // 7.1. Sync User Profile (Upsert)
 app.post("/api/sql/sync-user", requireAuth, async (req: AuthRequest, res) => {
   const { uid, email, name, role, hospital, aiCredits, streak, subscriptionTier, hasConsentedToLearning } = req.body;
@@ -3863,7 +3844,7 @@ app.delete("/api/sql/contributions/:id", requireAuth, async (req: AuthRequest, r
 
 // Global unhandled error handler to ensure JSON responses are always returned instead of HTML error pages
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
-  console.error("Unhandled server error:", err);
+  console.error("Unhandled server error:", errorForLog(err));
   res.status(err.status || 500).json({
     success: false,
     error: getFriendlyErrorMessage(err)
@@ -3952,7 +3933,7 @@ async function startServer() {
   }
 
   app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
-    console.error("Unhandled Error:", err);
+    console.error("Unhandled Error:", errorForLog(err));
     if (!res.headersSent) {
       res.status(err.status || 500).json({ success: false, error: err.message || "Internal Server Error" });
     }

@@ -26,6 +26,8 @@ export interface LearnedRule {
   approvedBy?: string;
 }
 
+const LEARNING_CAPTURE_CLIENT_ENABLED = false;
+
 export async function captureFeedbackCorrection(
   field: string,
   aiOutput: string,
@@ -34,6 +36,9 @@ export async function captureFeedbackCorrection(
   caseType?: string,
   correctedBy?: string
 ): Promise<{ captured: boolean; feedback?: FeedbackCorrection }> {
+  // Batch 0 P-B: capture is closed. Nothing leaves the device and the server
+  // also rejects /api/learning/feedback, so editing flows are unaffected.
+  if (!LEARNING_CAPTURE_CLIENT_ENABLED) return { captured: false };
   try {
     if (!aiOutput || !correctedOutput || aiOutput.trim() === correctedOutput.trim()) {
       return { captured: false };

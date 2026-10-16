@@ -2439,9 +2439,6 @@ function extractLatestVitalsWithTime(
       if (originalItem.vitals !== editingPatient.vitals) {
         captureFeedbackCorrection("vitals", originalItem.vitals, editingPatient.vitals, editingPatient.rawNotes, "handover_synthesis", profile?.name || "Doctor");
       }
-      if (originalItem.name !== editingPatient.name) {
-        captureFeedbackCorrection("patient_name", originalItem.name, editingPatient.name, editingPatient.rawNotes, "handover_synthesis", profile?.name || "Doctor");
-      }
     }
     
     // Update the quickPasteList
