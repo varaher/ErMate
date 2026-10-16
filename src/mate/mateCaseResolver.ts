@@ -178,7 +178,8 @@ export function resolveMateCaseReference(
 
   if (options.newCaseIntent) {
     // Bed family allocation rules for explicit NEW cases
-    const aOccupied = slotAMatches.length > 0;
+    // A patient stored on the bare number (e.g. "5") holds slot A, same as allocateOrValidateBed.
+    const aOccupied = slotAMatches.length > 0 || bareMatches.length > 0;
     const bOccupied = slotBMatches.length > 0;
 
     if (aOccupied && bOccupied) {

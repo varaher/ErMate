@@ -48,6 +48,7 @@ import { getCasePendingStatus } from "../utils/caseHelper";
 import { checkDischargeCompleteness } from "../utils/dischargeCompleteness";
 import { tryDeterministicFastPath } from "../mate/mateFastPath";
 import { interpretWithServer } from "../mate/mateInterpreterClient";
+import { normalizeMateBedId } from "../mate/mateBedModel";
 import { validateAndBuildMateTask } from "../mate/mateTaskValidator";
 import { resolveInterpretedPatient } from "../mate/matePatientDisambiguator";
 import { computeCensusOrientation, formatErOverviewMessage } from "../mate/mateOrientation";
@@ -818,6 +819,7 @@ export default function VoiceScribeChatView({
     targetBed: string;
     utterance: string;
     generation: number;
+    notice?: string;
   } | null>(null);
   // A chat is "case-linked" if either a real caseId was passed in, OR
   // the caller didn't explicitly ask for a standalone discussion.
@@ -1882,11 +1884,21 @@ export default function VoiceScribeChatView({
             const newCaseId = await onEnsureDraftCase(newSessionId, { bedNo: assignedBed });
             sessionContextGenerationRef.current += 1;
             const currentGen = sessionContextGenerationRef.current;
+            // Tell the doctor when the new patient shares a bed with an existing one.
+            const familyBase = String(bedRef).replace(/[AB]$/i, "");
+            const familyOccupant = activeCensusCases.find((c) => {
+              const nb = normalizeMateBedId(c.bedNo);
+              return nb === familyBase || nb === `${familyBase}A` || nb === `${familyBase}B`;
+            });
+            const familyNotice = familyOccupant
+              ? `Bed ${familyBase} already has ${familyOccupant.patient?.name || "a patient"} (${normalizeMateBedId(familyOccupant.bedNo) === familyBase ? `${familyBase}A` : normalizeMateBedId(familyOccupant.bedNo)}). I've placed this new patient in ${assignedBed}.`
+              : undefined;
             pendingNewPatientHandoffRef.current = {
               targetCaseId: newCaseId,
               targetBed: assignedBed,
               utterance: trimmed,
               generation: currentGen,
+              notice: familyNotice,
             };
             setActiveSessionId(newSessionId);
             onSessionIdChange?.(newSessionId);
@@ -2606,7 +2618,19 @@ export default function VoiceScribeChatView({
         !isSending
       ) {
         pendingNewPatientHandoffRef.current = null;
-        sendToChat(pendingNew.utterance, { skipMatePatientResolution: true });
+        const handoffNotice = pendingNew.notice;
+        sendToChat(pendingNew.utterance, { skipMatePatientResolution: true }).then(() => {
+          if (!handoffNotice) return;
+          const noticeMsg: Message = {
+            id: `ai-bednotice-${Date.now()}`,
+            sender: "ai",
+            text: handoffNotice,
+            timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+            mode: "discuss",
+          };
+          setMessages((prev) => [...prev, noticeMsg]);
+          persistMessage(noticeMsg);
+        });
         return;
       }
     }
