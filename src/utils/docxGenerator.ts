@@ -1,5 +1,6 @@
 import { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, BorderStyle, WidthType, PageOrientation, AlignmentType, HeadingLevel } from "docx";
 import { ClinicalCase } from "../types";
+import { tempToCelsius } from "./criticalAlerts";
 import { isAbnormal, formatFlagged } from "../../server/clinicalRanges";
 import { getAgeBand, ageToMonths, formatFlaggedForAge } from "../../server/pediatricClinicalRanges";
 
@@ -16,14 +17,16 @@ function getVitalsAlerts(c: ClinicalCase): string[] {
     if (c.vitals.rr && formatFlaggedForAge("rr", c.vitals.rr, ageMonths).includes("⚠")) alerts.push(`⚠ RR ${c.vitals.rr}`);
     if (c.vitals.bp && formatFlaggedForAge("sbp", c.vitals.bp.split("/")[0], ageMonths).includes("⚠")) alerts.push(`⚠ BP ${c.vitals.bp}`);
     if (c.vitals.spo2 && formatFlaggedForAge("spo2", c.vitals.spo2, ageMonths).includes("⚠")) alerts.push(`⚠ SpO2 ${c.vitals.spo2}%`);
-    if (c.vitals.temp && formatFlaggedForAge("temp", c.vitals.temp, ageMonths).includes("⚠")) alerts.push(`⚠ Temp ${c.vitals.temp}`);
+    const pedTempC = c.vitals.temp ? tempToCelsius(parseFloat(c.vitals.temp as string)) : null;
+    if (pedTempC !== null && formatFlaggedForAge("temp", String(pedTempC), ageMonths).includes("⚠")) alerts.push(`⚠ Temp ${c.vitals.temp}`);
   } else {
     if (c.vitals.hr && isAbnormal("hr", parseFloat(c.vitals.hr as string))) alerts.push(`⚠ HR ${c.vitals.hr}`);
     if (c.vitals.rr && isAbnormal("rr", parseFloat(c.vitals.rr as string))) alerts.push(`⚠ RR ${c.vitals.rr}`);
     const sbp = c.vitals.bp ? parseFloat(c.vitals.bp.split("/")[0]) : null;
     if (sbp && isAbnormal("sbp", sbp)) alerts.push(`⚠ BP ${c.vitals.bp}`);
     if (c.vitals.spo2 && isAbnormal("spo2", parseFloat(c.vitals.spo2 as string))) alerts.push(`⚠ SpO2 ${c.vitals.spo2}%`);
-    if (c.vitals.temp && isAbnormal("temp", parseFloat(c.vitals.temp as string))) alerts.push(`⚠ Temp ${c.vitals.temp}`);
+    const adultTempC = c.vitals.temp ? tempToCelsius(parseFloat(c.vitals.temp as string)) : null;
+    if (adultTempC !== null && isAbnormal("temp", adultTempC)) alerts.push(`⚠ Temp ${c.vitals.temp}`);
   }
   return alerts;
 }

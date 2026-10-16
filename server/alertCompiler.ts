@@ -208,8 +208,12 @@ export function compileAlerts(data: HandoverOutput): string | null {
     if (lv.rr !== undefined && lv.rr !== null && isAbnormal("rr", lv.rr)) {
       alerts.push(`RR ${lv.rr}`);
     }
-    if (lv.temp !== undefined && lv.temp !== null && isAbnormal("temp", lv.temp)) {
-      alerts.push(`Temp ${lv.temp}°C`);
+    if (lv.temp !== undefined && lv.temp !== null) {
+      // Case sheet stores °F; reference ranges are °C. Values >= 50 are °F.
+      const tempC = lv.temp >= 50 ? ((lv.temp - 32) * 5) / 9 : lv.temp;
+      if (tempC >= 25 && tempC <= 45 && isAbnormal("temp", tempC)) {
+        alerts.push(`Temp ${((tempC * 9) / 5 + 32).toFixed(1)}°F (${tempC.toFixed(1)}°C)`);
+      }
     }
     if (lv.grbs !== undefined && lv.grbs !== null && isAbnormal("grbs", lv.grbs)) {
       alerts.push(`GRBS ${lv.grbs}`);

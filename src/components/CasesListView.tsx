@@ -2,6 +2,8 @@ import React, { useState } from "react";
 import { ConfirmModal } from "./shared/ConfirmModal";
 import { Search, Filter, Plus, Calendar, Activity, Eye, Edit, Trash2, Clock, CheckCircle, ChevronLeft, MessageSquare, FileText, Bed, X, AlertTriangle, GraduationCap } from "lucide-react";
 import { ClinicalCase } from "../types";
+import { CriticalAlertBadge } from "./shared/CriticalAlertBadge";
+import { computeCriticalAlerts } from "../utils/criticalAlerts";
 
 interface CasesListViewProps {
   cases: ClinicalCase[];
@@ -326,6 +328,7 @@ export default function CasesListView({
                         <span className="text-[9px] font-mono font-medium px-1.5 py-0.2 rounded bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-500">
                           {c.displayId || c.id}
                         </span>
+                        <CriticalAlertBadge alerts={computeCriticalAlerts(c)} />
                       </div>
                       <h3 className="text-sm font-bold text-slate-800 dark:text-white mt-1 group-hover:text-blue-600 transition-colors">
                         {c.patient.name}
