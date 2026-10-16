@@ -74,11 +74,20 @@ interface Message {
 }
 
 /**
- * Detect explicit new-patient intake intent.
- * Locked rule: Bed mention alone NEVER creates a patient.
- * Only explicit new patient phrases ("new patient in Bed 11", "start a new case for Bed 12",
- * "patient just arrived in Bed 11 with chest pain") trigger new case creation.
+ * One MATE for everything: pick how a turn is answered from what was said, not from a toggle.
+ * Safe default is "dictation" (captures clinical facts, also replies). A turn is answered
+ * read-only ("discuss") only when it is clearly a question with no clinical facts in it.
  */
+export function detectMateTurnMode(text: string): ChatMode {
+  const t = (text || "").trim();
+  if (!t) return "dictation";
+  if (planMateConversation(t).mayContainClinicalUpdate) return "dictation";
+  const looksLikeQuestion =
+    /\?\s*$/.test(t) ||
+    /^(?:what|whats|why|how|when|where|which|who|is|are|can|could|should|would|do|does|did|tell me|explain|give me|suggest|list|compare)\b/i.test(t);
+  return looksLikeQuestion ? "discuss" : "dictation";
+}
+
 export function detectExplicitNewCaseIntent(text: string): boolean {
   if (!text) return false;
   return /\b(?:new\s+(?:patient|case|intake|arrival|admission)|start\s+a?\s*new\s+(?:patient|case)|patient\s+just\s+arrived|admit(?:ted)?\s+a?\s*new\s+patient|fresh\s+arrival)\b/i.test(text);
@@ -2267,12 +2276,15 @@ export default function VoiceScribeChatView({
     setInputText("");
     setIsSending(true);
 
+    const turnMode: ChatMode = isDiscussionOnly ? "discuss" : detectMateTurnMode(trimmed);
+    if (turnMode !== currentMode) setCurrentMode(turnMode);
+
     const userMsg: Message = {
       id: `u-${Date.now()}`,
       sender: "user",
       text: trimmed,
       timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-      mode: currentMode,
+      mode: turnMode,
     };
 
     setMessages((prev) => [...prev, userMsg]);
@@ -2285,7 +2297,7 @@ export default function VoiceScribeChatView({
     });
 
     try {
-      if (currentMode === "discuss") {
+      if (turnMode === "discuss") {
         // ── DISCUSS MODE — Claude Sonnet only, read-only, via /api/case-discussion.
         // Bounded client request lifecycle with 75s timeout via AbortController (server allows up to ~70s).
         // suggestedUpdate is deliberately ignored — discuss-mode conversations
@@ -2426,7 +2438,7 @@ export default function VoiceScribeChatView({
         // → patient appears immediately in Current Cases
         // → extracted clinical content remains UNAPPLIED until Preview/Apply
         const hasMeaningfulExtraction = hasMeaningfulClinicalExtraction(fieldsToExtract);
-        const isCaseMode = initialEntryMode === "case" && !isDiscussionOnly && (currentMode as string) !== "discuss";
+        const isCaseMode = initialEntryMode === "case" && !isDiscussionOnly && (turnMode as string) !== "discuss";
         const currentActiveCaseId = activeCaseId || activeCaseIdRef.current;
         const currentSessionId = activeSessionId || activeSessionIdRef.current;
         const existingSessionLinkedCase = currentSessionId && allCases
@@ -2802,35 +2814,6 @@ export default function VoiceScribeChatView({
         </div>
       )}
 
-      {/* Mode toggle strip — only shown when dictation is actually an option */}
-      {!isDiscussionOnly && (
-        <div className={`bg-white dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 flex items-center gap-2 ${isSidecar ? 'px-3 py-1.5' : 'px-4 py-2'}`}>
-          <button
-            onClick={() => setCurrentMode("dictation")}
-            className={`px-3 py-1.5 rounded-lg text-[11px] font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
-              currentMode === "dictation"
-                ? "bg-indigo-600 text-white shadow-sm"
-                : "bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700"
-            }`}
-          >
-            <MicIcon size={13} /> Dictation
-          </button>
-          <button
-            onClick={() => setCurrentMode("discuss")}
-            className={`px-3 py-1.5 rounded-lg text-[11px] font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
-              currentMode === "discuss"
-                ? "bg-purple-600 text-white shadow-sm"
-                : "bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700"
-            }`}
-          >
-            <MessageSquare size={13} /> Discuss
-          </button>
-          {currentMode === "discuss" && !isSidecar && (
-            <span className="text-[10px] text-slate-400 italic ml-1">Read-only — won't be saved to the case sheet</span>
-          )}
-        </div>
-      )}
-
       {/* Chat Thread */}
       <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-slate-50/50 dark:bg-transparent min-w-0">
         {sessionAttachError && (
@@ -3144,7 +3127,7 @@ export default function VoiceScribeChatView({
                       }
                     }
                   }}
-                  placeholder={currentMode === "discuss" ? "Ask anything about this case..." : "Type clinical details / questions..."}
+                  placeholder={isDiscussionOnly ? "Ask anything about this case..." : "Talk to MATE — dictate, ask, or give a command..."}
                   disabled={isSending}
                   rows={1}
                   className="flex-1 w-full bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2 text-xs text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:opacity-50 resize-none overflow-y-auto leading-relaxed"
