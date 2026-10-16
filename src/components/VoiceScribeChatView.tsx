@@ -2900,6 +2900,36 @@ export default function VoiceScribeChatView({
         </div>
       )}
 
+      {!isDiscussionOnly && onPreviewCaseSheet && (() => {
+        const { merged: pendingMerged, contributingMsgIds: pendingIds } = getMergedUnappliedCaseExtraction(messages);
+        if (pendingIds.length === 0 || !pendingMerged || Object.keys(pendingMerged).length === 0) return null;
+        return (
+          <div
+            role="status"
+            className="bg-amber-50 dark:bg-amber-950/40 border-b border-amber-200 dark:border-amber-900 px-3.5 py-2 flex items-center justify-between gap-2 shrink-0"
+          >
+            <span className="text-[11px] font-semibold text-amber-800 dark:text-amber-300">
+              ⚠ Not yet on the case sheet: {pendingIds.length} dictated update{pendingIds.length > 1 ? "s" : ""}
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                const latestId = pendingIds[pendingIds.length - 1];
+                onPreviewCaseSheet(pendingMerged, {
+                  existingCaseId: activeCaseId || null,
+                  msgId: latestId,
+                  contributingMsgIds: pendingIds,
+                  scribeSessionId: activeSessionId || null,
+                });
+              }}
+              className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-md text-[11px] font-bold shrink-0 cursor-pointer"
+            >
+              Review &amp; Apply
+            </button>
+          </div>
+        );
+      })()}
+
       {/* Chat Thread */}
       <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-slate-50/50 dark:bg-transparent min-w-0">
         {sessionAttachError && (
