@@ -66,7 +66,7 @@ export function tryDeterministicFastPath(params: {
   const orientation = computeCensusOrientation(censusCases);
 
   // 1. Social greetings & acknowledgments
-  const isSocial = /^(?:hi|hello|hey|good\s+(?:morning|afternoon|evening)|mate|hi\s+mate|hello\s+mate|hey\s+mate)[!.]?$/i.test(trimmed);
+  const isSocial = /^(?:(?:hi|hello|hey|namaste|good\s+(?:morning|afternoon|evening)|doctor|mate)[\s,!.]*){1,4}$/i.test(trimmed);
   if (isSocial) {
     return {
       handled: true,

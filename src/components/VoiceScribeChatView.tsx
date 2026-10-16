@@ -2286,10 +2286,59 @@ export default function VoiceScribeChatView({
     }
     // ── END OF MATE CONTROLLER ──────────────────────────────────────
 
+    const turnMode: ChatMode = isDiscussionOnly ? "discuss" : detectMateTurnMode(trimmed);
+
+    // ── FALLTHROUGH SAFETY GUARD ────────────────────────────────────
+    // Reached only when the MATE interpreter did not handle the turn (failed, timed out,
+    // or returned nothing). With no active patient, a dictation that names an EXISTING
+    // occupied bed must never fall into new-case creation (duplicate / wrong-patient risk).
+    if (
+      !isDiscussionOnly &&
+      !options?.skipMatePatientResolution &&
+      turnMode === "dictation" &&
+      allCases &&
+      !(activeCaseId || activeCaseIdRef.current) &&
+      !detectExplicitNewCaseIntent(trimmed) &&
+      extractMateBedReference(trimmed)
+    ) {
+      const activeCensusCases = allCases.filter((c) => !(c as any).archivedAt);
+      const guardResolution = resolveMateCaseReference({
+        utterance: trimmed,
+        cases: activeCensusCases,
+        activeCaseId: null,
+        physicalCapacity: physicalBedCapacity,
+      });
+      if (guardResolution.status === "RESOLVED" || guardResolution.status === "AMBIGUOUS") {
+        setInputText("");
+        const occupant = guardResolution.caseId
+          ? activeCensusCases.find((c) => c.id === guardResolution.caseId)
+          : null;
+        const guardUserMsg: Message = {
+          id: `u-${Date.now()}`,
+          sender: "user",
+          text: trimmed,
+          timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+          mode: "dictation",
+        };
+        const guardAiMsg: Message = {
+          id: `ai-${Date.now()}`,
+          sender: "ai",
+          text: guardResolution.status === "RESOLVED"
+            ? `Bed ${guardResolution.referenceValue} is ${occupant?.patient?.name || "an active patient"}. I couldn't process that just now, so nothing was saved. Say "open bed ${guardResolution.referenceValue}" and repeat it.`
+            : `More than one patient matches bed ${guardResolution.referenceValue}. Nothing was saved. Say the slot (for example "${guardResolution.referenceValue}A") and repeat it.`,
+          timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+          mode: "discuss",
+        };
+        setMessages((prev) => [...prev, guardUserMsg, guardAiMsg]);
+        persistMessage(guardUserMsg);
+        persistMessage(guardAiMsg);
+        return;
+      }
+    }
+
     setInputText("");
     setIsSending(true);
 
-    const turnMode: ChatMode = isDiscussionOnly ? "discuss" : detectMateTurnMode(trimmed);
     if (turnMode !== currentMode) setCurrentMode(turnMode);
 
     const userMsg: Message = {
