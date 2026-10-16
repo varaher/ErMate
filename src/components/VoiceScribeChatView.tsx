@@ -81,11 +81,18 @@ interface Message {
 export function detectMateTurnMode(text: string): ChatMode {
   const t = (text || "").trim();
   if (!t) return "dictation";
+  const endsWithQuestionMark = /\?\s*$/.test(t);
+  // Clear wh-question with no clinical numbers in it ("what are the differentials for chest pain"):
+  // answer it, even though it names a symptom. Bed numbers don't count; vitals, ages and doses do.
+  const withoutBedRefs = t.replace(/\bbed\s*(?:no\.?|number|#)?\s*\d{1,3}\s*[ab]?\b/gi, " ");
+  const whQuestion = /^(?:what|whats|why|how|which|who)\b/i.test(t) && !/\d/.test(withoutBedRefs);
+  if (whQuestion) return "discuss";
   if (planMateConversation(t).mayContainClinicalUpdate) return "dictation";
-  const looksLikeQuestion =
-    /\?\s*$/.test(t) ||
-    /^(?:what|whats|why|how|when|where|which|who|is|are|can|could|should|would|do|does|did|tell me|explain|give me|suggest|list|compare)\b/i.test(t);
-  return looksLikeQuestion ? "discuss" : "dictation";
+  // "is / are / can ..." only counts as a question when it reads like one. A bare
+  // "is allergic to penicillin" or "are bilateral crepitations present" is a dictated finding.
+  const auxQuestion = /^(?:is|are|do|does|did|can|could|should|would)\s+(?:bed|the|there|he|she|it|they|this|that|his|her|you|i|we|any)\b/i.test(t);
+  const askCommand = /^(?:tell me|explain|give me|suggest|list|compare)\b/i.test(t);
+  return endsWithQuestionMark || auxQuestion || askCommand ? "discuss" : "dictation";
 }
 
 export function detectExplicitNewCaseIntent(text: string): boolean {
