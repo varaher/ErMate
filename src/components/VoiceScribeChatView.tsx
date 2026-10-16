@@ -1415,7 +1415,24 @@ export default function VoiceScribeChatView({
     }
   };
 
-  const persistMessage = async (message: any) => {
+  const persistMessage = async (rawMessage: any) => {
+    // Many call sites pass the on-screen shape {sender, text, timestamp: "10:01 PM"}.
+    // Storage and history restore expect {role, content, timestamp: ISO}; saving the
+    // on-screen shape made replies reload as blank bubbles with "Invalid Date".
+    const message: any =
+      rawMessage && rawMessage.content === undefined && typeof rawMessage.text === "string"
+        ? {
+            ...rawMessage,
+            role: rawMessage.role || (rawMessage.sender === "user" ? "user" : "assistant"),
+            type: rawMessage.type || "text",
+            content: rawMessage.text,
+            timestamp: new Date().toISOString(),
+          }
+        : rawMessage;
+    if (message && message !== rawMessage) {
+      delete message.sender;
+      delete message.text;
+    }
     if (isDiscussionOnly) {
       if (discussionId) {
         try {

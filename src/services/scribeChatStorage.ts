@@ -52,13 +52,17 @@ export interface ScribeSessionDoc {
 
 function mapDocToMessage(docSnap: any): ScribeChatMessage {
   const data = docSnap.data();
+  // Tolerate messages saved in the on-screen shape ({sender, text, "10:01 PM"}).
+  const rawTs = data.timestamp;
+  const tsValid = typeof rawTs === "string" && !Number.isNaN(new Date(rawTs).getTime());
+  const serverTs = typeof data.serverTimestamp?.toDate === "function" ? data.serverTimestamp.toDate().toISOString() : null;
   return {
     id: data.id || docSnap.id,
     docId: docSnap.id,
-    role: data.role || "assistant",
-    timestamp: data.timestamp || new Date().toISOString(),
+    role: data.role || (data.sender === "user" ? "user" : "assistant"),
+    timestamp: tsValid ? rawTs : (serverTs || new Date().toISOString()),
     type: data.type || "text",
-    content: data.content || "",
+    content: data.content || (typeof data.text === "string" ? data.text : ""),
     extractionSummary: data.extractionSummary,
     clinicalReasoning: data.clinicalReasoning,
     unappliedExtraction: data.unappliedExtraction,
