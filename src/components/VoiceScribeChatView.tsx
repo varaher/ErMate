@@ -1979,6 +1979,31 @@ export default function VoiceScribeChatView({
           return;
         }
 
+        // Explicit reference (bed / case no. / list index) that matches nothing:
+        // stop here. Never fall back to the open patient, or "summarise bed 9"
+        // would describe someone else and clinical facts could be aimed at the wrong chart.
+        if (patientResolution.status === "NOT_FOUND") {
+          setInputText("");
+          const userMsg: Message = {
+            id: `u-${Date.now()}`,
+            sender: "user",
+            text: trimmed,
+            timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+            mode: currentMode,
+          };
+          const aiMsg: Message = {
+            id: `ai-${Date.now()}`,
+            sender: "ai",
+            text: `${patientResolution.clarificationMessage || "I couldn't find that patient."} Nothing was changed. To start a case say "new patient bed N ...".`,
+            timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+            mode: "discuss",
+          };
+          setMessages(prev => [...prev, userMsg, aiMsg]);
+          persistMessage(userMsg);
+          persistMessage(aiMsg);
+          return;
+        }
+
         let interpTargetCaseId = patientResolution.caseId;
         let interpTargetCase = patientResolution.matchedCase;
 
