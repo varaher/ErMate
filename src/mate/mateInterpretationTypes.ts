@@ -69,6 +69,10 @@ export interface MateInterpretationRequestBody {
     lastReferencedDisplayId?: string | null;
     hasActivePatient?: boolean;
     lastPresentedCount?: number;
+    /** The patient currently open on screen. Bed / case number only — never name or identifiers. */
+    currentPatient?: { bed?: string | null; displayId?: string | null; status?: string | null } | null;
+    /** Last few chat turns so follow-ups ("him", "what's left", "and the labs?") make sense. De-identified server-side. */
+    recentTurns?: Array<{ role: "doctor" | "mate"; text: string }>;
   };
   runtimeContext?: {
     activeTopLevelTab?: string;

@@ -265,7 +265,7 @@ const greetingRes = tryDeterministicFastPath({
   utterance: "Hi Mate",
   censusCases: mockCensus,
 });
-assert(greetingRes !== null && greetingRes.replyText?.includes("Hi Doctor"), "14. Greeting responded friendly");
+assert(greetingRes !== null && greetingRes.replyText?.includes("Doctor"), "14. Greeting responded friendly");
 console.log("✓ Scenario 14 PASS: Greeting fast-path returns natural friendly response");
 
 // 15. "Thanks" -> natural response

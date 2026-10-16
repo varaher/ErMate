@@ -48,6 +48,7 @@ import { getCasePendingStatus } from "../utils/caseHelper";
 import { checkDischargeCompleteness } from "../utils/dischargeCompleteness";
 import { tryDeterministicFastPath } from "../mate/mateFastPath";
 import { interpretWithServer } from "../mate/mateInterpreterClient";
+import { formatCaseCompletenessReply, formatDischargePendingReply } from "../mate/mateReplies";
 import { normalizeMateBedId } from "../mate/mateBedModel";
 import { validateAndBuildMateTask } from "../mate/mateTaskValidator";
 import { resolveInterpretedPatient } from "../mate/matePatientDisambiguator";
@@ -62,6 +63,8 @@ interface Message {
   text: string;
   timestamp: string;
   mode?: ChatMode;
+  /** MATE app-control replies are labelled "Command" rather than "Discuss". */
+  badge?: "command" | "mate";
   extractionData?: any;
   extractionApplied?: boolean;
   dischargeDraft?: string;
@@ -1764,6 +1767,7 @@ export default function VoiceScribeChatView({
           text: fastPathResult.replyText || "Done.",
           timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
           mode: "discuss",
+          badge: fastPathResult.action === "SOCIAL" ? "mate" : "command",
         };
         setMessages(prev => [...prev, userMsg, aiMsg]);
         persistMessage(userMsg);
@@ -1815,6 +1819,7 @@ export default function VoiceScribeChatView({
             text: `⚠️ Bed ${resolution.referenceValue} is outside the configured ER capacity (${physicalBedCapacity || 30} beds).`,
             timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
             mode: "discuss",
+            badge: "command",
           };
           setMessages(prev => [...prev, userMsg, aiMsg]);
           persistMessage(userMsg);
@@ -1837,6 +1842,7 @@ export default function VoiceScribeChatView({
             text: `⚠️ Both Bed ${resolution.referenceValue}A and Bed ${resolution.referenceValue}B are currently occupied. Cannot assign a new patient to Bed ${resolution.referenceValue}.`,
             timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
             mode: "discuss",
+            badge: "command",
           };
           setMessages(prev => [...prev, userMsg, aiMsg]);
           persistMessage(userMsg);
@@ -1860,6 +1866,7 @@ export default function VoiceScribeChatView({
             text: `⚠️ Bed ${resolution.referenceValue} is already occupied by ${existingOccupant?.patient?.name || 'an active patient'}. Please specify a vacant bed or discharge the current occupant first.`,
             timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
             mode: "discuss",
+            badge: "command",
           };
           setMessages(prev => [...prev, userMsg, aiMsg]);
           persistMessage(userMsg);
@@ -1934,6 +1941,13 @@ export default function VoiceScribeChatView({
           lastReferencedDisplayId: lastReferencedDisplayIdRef.current,
           hasActivePatient: Boolean(activeCase),
           lastPresentedCount: lastPresentedCaseIdsRef.current.length,
+          currentPatient: activeCase
+            ? { bed: activeCase.bedNo || null, displayId: activeCase.displayId || null, status: activeCase.status || null }
+            : null,
+          recentTurns: messages
+            .filter((m) => typeof m.text === "string" && m.text.trim())
+            .slice(-6)
+            .map((m) => ({ role: m.sender === "user" ? ("doctor" as const) : ("mate" as const), text: m.text.slice(0, 300) })),
         },
         runtimeContext: {
           activeTopLevelTab: "dashboard",
@@ -1965,6 +1979,7 @@ export default function VoiceScribeChatView({
           text: serverInterp.data?.conversationalReply || "Your session needs to be refreshed. Please sign in again.",
           timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
           mode: "discuss",
+          badge: "command",
         };
         setMessages(prev => [...prev, userMsg, aiMsg]);
         persistMessage(userMsg);
@@ -1991,6 +2006,7 @@ export default function VoiceScribeChatView({
             text: interp.clarificationQuestion,
             timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
             mode: "discuss",
+            badge: "command",
           };
           setMessages(prev => [...prev, userMsg, aiMsg]);
           persistMessage(userMsg);
@@ -2023,6 +2039,7 @@ export default function VoiceScribeChatView({
             text: patientResolution.clarificationMessage || "Multiple patients match your query. Please specify the bed number.",
             timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
             mode: "discuss",
+            badge: "command",
           };
           setMessages(prev => [...prev, userMsg, aiMsg]);
           persistMessage(userMsg);
@@ -2048,6 +2065,7 @@ export default function VoiceScribeChatView({
             text: `${patientResolution.clarificationMessage || "I couldn't find that patient."} Nothing was changed. To start a case say "new patient bed N ...".`,
             timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
             mode: "discuss",
+            badge: "command",
           };
           setMessages(prev => [...prev, userMsg, aiMsg]);
           persistMessage(userMsg);
@@ -2126,6 +2144,7 @@ export default function VoiceScribeChatView({
             text: `I understand the reminder request for ${bedLabel} (${minutes} mins), but scheduled persistent notifications are not enabled yet.`,
             timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
             mode: "discuss",
+            badge: "command",
           };
           setMessages(prev => [...prev, userMsg, aiMsg]);
           persistMessage(userMsg);
@@ -2145,21 +2164,14 @@ export default function VoiceScribeChatView({
               timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
               mode: currentMode,
             };
-            const pendingStatus = getCasePendingStatus(cToReview);
-            const bedLabel = cToReview.bedNo ? `Bed ${cToReview.bedNo}` : (cToReview.displayId || "This case");
-            let replyText = "";
-            if (!pendingStatus.isPending || pendingStatus.pendingCount === 0) {
-              replyText = `✓ ${bedLabel} documentation is complete. All clinical sections are filled.`;
-            } else {
-              replyText = `${bedLabel} has ${pendingStatus.pendingCount} incomplete section${pendingStatus.pendingCount > 1 ? "s" : ""}:\n` +
-                pendingStatus.pendingSections.map(s => `• ${s}`).join("\n");
-            }
+            const replyText = formatCaseCompletenessReply(cToReview);
             const aiMsg: Message = {
               id: `ai-${Date.now()}`,
               sender: "ai",
               text: replyText,
               timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
               mode: "discuss",
+              badge: "command",
             };
             setMessages(prev => [...prev, userMsg, aiMsg]);
             persistMessage(userMsg);
@@ -2178,22 +2190,14 @@ export default function VoiceScribeChatView({
               mode: currentMode,
             };
             const report = checkDischargeCompleteness(cToReview);
-            const bedLabel = cToReview.bedNo ? `Bed ${cToReview.bedNo}` : (cToReview.displayId || "This case");
-            let replyText = "";
-            if (report.complete) {
-              replyText = `✓ ${bedLabel} discharge documentation is complete. No pending items.`;
-            } else {
-              const lines: string[] = [];
-              if (report.missing.length > 0) lines.push(`• Missing: ${report.missing.join(", ")}`);
-              if (report.pendingReports.length > 0) lines.push(`• Pending Reports: ${report.pendingReports.join(", ")}`);
-              replyText = `${bedLabel} has pending items before discharge:\n` + lines.join("\n");
-            }
+            const replyText = formatDischargePendingReply(cToReview, report);
             const aiMsg: Message = {
               id: `ai-${Date.now()}`,
               sender: "ai",
               text: replyText,
               timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
               mode: "discuss",
+              badge: "command",
             };
             setMessages(prev => [...prev, userMsg, aiMsg]);
             persistMessage(userMsg);
@@ -2237,6 +2241,7 @@ export default function VoiceScribeChatView({
               text: summaryText,
               timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
               mode: "discuss",
+              badge: "command",
             };
             setMessages(prev => [...prev, userMsg, aiMsg]);
             persistMessage(userMsg);
@@ -2268,6 +2273,7 @@ export default function VoiceScribeChatView({
             text: replyText,
             timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
             mode: "discuss",
+            badge: "command",
           };
           setMessages(prev => [...prev, userMsg, aiMsg]);
           persistMessage(userMsg);
@@ -2288,6 +2294,7 @@ export default function VoiceScribeChatView({
             text: interp.conversationalReply,
             timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
             mode: "discuss",
+            badge: "mate",
           };
           setMessages(prev => [...prev, userMsg, aiMsg]);
           persistMessage(userMsg);
@@ -2966,7 +2973,11 @@ export default function VoiceScribeChatView({
                   : "bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-slate-100 rounded-tl-none"
               }`}
             >
-              {msg.mode === "discuss" && msg.sender === "ai" && (
+              {msg.badge && msg.sender === "ai" ? (
+                <div className={`mb-1.5 inline-flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider ${msg.badge === "command" ? "text-emerald-600 dark:text-emerald-400" : "text-indigo-500 dark:text-indigo-400"}`}>
+                  <Sparkles size={10} /> {msg.badge === "command" ? "Command" : "MATE"}
+                </div>
+              ) : msg.mode === "discuss" && msg.sender === "ai" && (
                 <div className="mb-1.5 inline-flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider text-purple-500 dark:text-purple-400">
                   <Sparkles size={10} /> Discuss
                 </div>

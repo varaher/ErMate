@@ -26,10 +26,20 @@ const router = Router();
 
 const MATE_SYSTEM_PROMPT = `You are MATE, a friendly clinical workflow companion inside ErMate.
 
-Speak naturally, briefly, and like a helpful colleague in a busy Emergency Department.
-Understand imperfect clinician language, shorthand, typos, and follow-up references using the supplied conversation and app context.
-Never require exact commands.
-Your job is to interpret intent and produce structured tasks.
+HOW YOU TALK
+Talk like a sharp, warm colleague on the same shift — the way Alexa, Claude or ChatGPT would, but brief: one or two short sentences.
+Small talk gets a natural, human reply ("Morning! Busy shift?"), not a menu of options.
+Understand imperfect clinician language, shorthand, Indian English, mixed languages and typos ("whst pending", "pt", "bp low") and follow-up references using the supplied conversation and app context.
+Never require exact commands. Never say "I can't understand" when a reasonable reading exists — take it, and ask only if two readings would act on different patients.
+Your job is to interpret intent and produce structured tasks; ErMate fills in the facts.
+
+CONVERSATION CONTEXT
+conversationContext.currentPatient is the patient open on screen right now. conversationContext.recentTurns are the last few messages.
+If a patient is open and the doctor does not name a different bed, case number or the whole ER, a follow-up is about the CURRENT patient: use patientReference { "type": "CURRENT" }.
+Examples with a patient open: "what's pending", "whst pending", "anything left?", "what's missing", "what else do I need" → task CASE_COMPLETENESS with CURRENT. "summarise him", "how is she" → CASE_SUMMARY with CURRENT. "his labs", "show treatment" → OPEN_CASE_SECTION with CURRENT.
+Use the whole-ER census ONLY when the doctor clearly asks about everyone ("how many patients", "which cases are pending", "what's happening in the ER").
+When a task will produce the answer, keep conversationalReply to a short lead-in (e.g. "Checking Bed 24.") — never state clinical findings, counts or pending items yourself.
+Only the censusSummary numbers may be quoted directly, and only for whole-ER questions.
 
 Never invent clinical facts.
 Never choose between ambiguous patients.
@@ -95,9 +105,21 @@ export async function interpretWithModel(
 ): Promise<MateInterpretation> {
   const deidentified = deidentifyText(body.utterance || "").deidentified;
 
+  const ctx = body.conversationContext || {};
+  const safeTurns = Array.isArray(ctx.recentTurns)
+    ? ctx.recentTurns.slice(-6).map((t) => ({
+        role: t?.role === "mate" ? "mate" : "doctor",
+        text: deidentifyText(String(t?.text || "").slice(0, 300)).deidentified,
+      }))
+    : [];
+  const cp = ctx.currentPatient;
+  const safeCurrentPatient = cp
+    ? { bed: cp.bed ? String(cp.bed).slice(0, 8) : null, displayId: cp.displayId ? String(cp.displayId).slice(0, 16) : null, status: cp.status ? String(cp.status).slice(0, 20) : null }
+    : null;
+
   const userContent = JSON.stringify({
     utterance: deidentified,
-    conversationContext: body.conversationContext || {},
+    conversationContext: { ...ctx, currentPatient: safeCurrentPatient, recentTurns: safeTurns },
     runtimeContext: body.runtimeContext || {},
     censusSummary: body.censusSummary || {},
   });

@@ -28,6 +28,7 @@ import { extractMateBedReference, resolveMateCaseReference } from "./mateCaseRes
 import { extractMateDisplayIdReference, resolveMateCaseByDisplayId } from "./mateCaseDisplayResolver";
 import { getCasePendingStatus } from "../utils/caseHelper";
 import { checkDischargeCompleteness } from "../utils/dischargeCompleteness";
+import { formatCaseCompletenessReply, greetingForNow, isCurrentPatientPendingFollowUp } from "./mateReplies";
 
 export interface FastPathResult {
   handled: boolean;
@@ -71,7 +72,7 @@ export function tryDeterministicFastPath(params: {
     return {
       handled: true,
       action: "SOCIAL",
-      replyText: "Hi Doctor. I'm ready.",
+      replyText: greetingForNow(),
     };
   }
 
@@ -163,6 +164,18 @@ export function tryDeterministicFastPath(params: {
   const plan = planMateConversation(trimmed);
   if (plan.mayContainClinicalUpdate) {
     return null;
+  }
+
+  // Follow-up about the patient who is already open ("what's pending?", "whst pending",
+  // "anything left?"). Means THIS patient — never the whole-ER census.
+  if (activeCase && isCurrentPatientPendingFollowUp(trimmed)) {
+    return {
+      handled: true,
+      action: "CASE_COMPLETENESS",
+      targetCaseId: activeCase.id,
+      targetBed: activeCase.bedNo || null,
+      replyText: formatCaseCompletenessReply(activeCase),
+    };
   }
 
   // If compound commands (more than one distinct action)
