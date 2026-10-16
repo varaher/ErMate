@@ -4572,6 +4572,10 @@ const handleDeleteAllCases = async () => {
       teamMembers,
     });
 
+    // Leave any case-sheet view/preview state so the discharge view can mount.
+    setIsPreviewMode(false);
+    setPreviewCase(null);
+    setSelectedCaseId(null);
     setPreviewDischargeCase(draftCase);
     setIsDischargePreviewMode(true);
     setShowDischargeSummaryId(existingId);
@@ -7115,6 +7119,7 @@ const handleSignOut = async () => {
                       setIsPreviewMode(false);
                       setPreviewCase(null);
                       setPendingPreviewContext(null);
+                      setSelectedCaseId(null);
                     }
                     const targetCaseId = caseId || selectedCaseId;
                     if (targetCaseId) {
