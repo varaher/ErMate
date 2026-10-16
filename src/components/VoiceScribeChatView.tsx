@@ -1424,6 +1424,7 @@ export default function VoiceScribeChatView({
     }
   };
 
+  const lastPersistTsRef = useRef(0);
   const persistMessage = async (rawMessage: any) => {
     // Many call sites pass the on-screen shape {sender, text, timestamp: "10:01 PM"}.
     // Storage and history restore expect {role, content, timestamp: ISO}; saving the
@@ -1435,7 +1436,12 @@ export default function VoiceScribeChatView({
             role: rawMessage.role || (rawMessage.sender === "user" ? "user" : "assistant"),
             type: rawMessage.type || "text",
             content: rawMessage.text,
-            timestamp: new Date().toISOString(),
+            // strictly increasing, so a reply never ties with (and sorts before) its question
+            timestamp: (() => {
+              const t = Math.max(Date.now(), lastPersistTsRef.current + 1);
+              lastPersistTsRef.current = t;
+              return new Date(t).toISOString();
+            })(),
           }
         : rawMessage;
     if (message && message !== rawMessage) {

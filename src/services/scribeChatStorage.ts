@@ -91,7 +91,10 @@ export function mergeChatMessages(
   combined.sort((a, b) => {
     const tA = new Date(a.timestamp || 0).getTime();
     const tB = new Date(b.timestamp || 0).getTime();
-    return tA - tB;
+    if (tA !== tB) return tA - tB;
+    // Same instant (a quick reply saved in the same millisecond as the question):
+    // the doctor's message always comes first.
+    return (a.role === "user" ? 0 : 1) - (b.role === "user" ? 0 : 1);
   });
 
   return combined;
