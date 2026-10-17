@@ -1,5 +1,6 @@
 import express from "express";
 import path from "path";
+import fs from "fs";
 import dotenv from "dotenv";
 import PDFDocument from "pdfkit";
 import { GoogleGenAI, Type } from "@google/genai";
@@ -3907,6 +3908,21 @@ app.post("/api/antigravity", requireAuth, express.json(), async (req: AuthReques
     console.error("[Antigravity Route Error]:", error);
     res.status(500).json({ success: false, error: error.message || "Failed to process Antigravity request." });
   }
+});
+
+// Pitch Deck PPT / PPTX Download Endpoints
+app.get(["/api/download/pitch-deck", "/ErMate_Investor_Pitch_Deck.pptx", "/ErMate_Investor_Pitch_Deck.ppt"], (req, res) => {
+  const isPpt = req.query.format === "ppt" || req.path.endsWith(".ppt");
+  const filename = isPpt ? "ErMate_Investor_Pitch_Deck.ppt" : "ErMate_Investor_Pitch_Deck.pptx";
+  const contentType = isPpt ? "application/vnd.ms-powerpoint" : "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+  const filePath = path.join(process.cwd(), "public", filename);
+  
+  if (fs.existsSync(filePath)) {
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.setHeader("Content-Type", contentType);
+    return res.sendFile(filePath);
+  }
+  return res.status(404).send("Pitch deck file not found");
 });
 
 // Setup Vite Dev Server / Static Asset Serving

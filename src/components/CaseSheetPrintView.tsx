@@ -6,6 +6,7 @@ import { deduplicateConsultations } from "../utils/consultationNormalization";
 import { displayGcs, displayTemperature, displaySpo2, displayGrbs, displayDocumentedBoolean } from "../utils/clinicalFormatter";
 import { getDisplayCaseId } from "../utils/caseIdentity";
 import { formatCaseSheetText } from "../utils/caseSheetFormat";
+import { copyTextToClipboard } from "../utils/copyToClipboard";
 
 export { formatCaseSheetText };
 
@@ -1188,39 +1189,20 @@ export default function CaseSheetPrintView({
   const [applySuccess, setApplySuccess] = useState(false);
   const [applyError, setApplyError] = useState<string | null>(null);
   const [copiedCaseText, setCopiedCaseText] = useState(false);
+  const [copyFailed, setCopyFailed] = useState(false);
 
   const data = propData || (clinicalCase ? convertClinicalCaseToCaseSheetData(clinicalCase, defaultHospital) : null);
 
-  const handleCopyCaseSheet = () => {
+  const handleCopyCaseSheet = async () => {
     if (!data) return;
-    const plainText = formatCaseSheetText(data);
-    try {
-      if (typeof ClipboardItem !== "undefined") {
-        const clipboardItem = new ClipboardItem({
-          "text/plain": new Blob([plainText], { type: "text/plain" }),
-        });
-        navigator.clipboard.write([clipboardItem]).then(() => {
-          setCopiedCaseText(true);
-          setTimeout(() => setCopiedCaseText(false), 2000);
-        }).catch((err) => {
-          console.warn("ClipboardItem write failed, using writeText fallback:", err);
-          navigator.clipboard.writeText(plainText).then(() => {
-            setCopiedCaseText(true);
-            setTimeout(() => setCopiedCaseText(false), 2000);
-          });
-        });
-      } else {
-        navigator.clipboard.writeText(plainText).then(() => {
-          setCopiedCaseText(true);
-          setTimeout(() => setCopiedCaseText(false), 2000);
-        });
-      }
-    } catch (err) {
-      console.warn("Clipboard API exception, using writeText fallback:", err);
-      navigator.clipboard.writeText(plainText).then(() => {
-        setCopiedCaseText(true);
-        setTimeout(() => setCopiedCaseText(false), 2000);
-      });
+    const ok = await copyTextToClipboard(formatCaseSheetText(data));
+    if (ok) {
+      setCopyFailed(false);
+      setCopiedCaseText(true);
+      setTimeout(() => setCopiedCaseText(false), 2000);
+    } else {
+      setCopyFailed(true);
+      setTimeout(() => setCopyFailed(false), 4000);
     }
   };
 
@@ -1345,12 +1327,14 @@ export default function CaseSheetPrintView({
                   className={`min-w-[44px] min-h-[44px] flex-1 sm:flex-none justify-center inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-xl transition-all cursor-pointer border ${
                     copiedCaseText
                       ? "bg-emerald-600 border-emerald-600 text-white"
+                      : copyFailed
+                      ? "bg-rose-600 border-rose-600 text-white"
                       : "bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800"
                   }`}
                   title="Copy formatted case sheet to paste directly into any hospital EMR"
                 >
                   {copiedCaseText ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                  <span>{copiedCaseText ? "Copied Case Sheet!" : "Copy Case Sheet"}</span>
+                  <span className="whitespace-nowrap">{copiedCaseText ? "Copied to EMR!" : copyFailed ? "Copy failed — try again" : "Copy to EMR"}</span>
                 </button>
                 <button
                   type="button"
@@ -1421,12 +1405,14 @@ export default function CaseSheetPrintView({
                   className={`min-w-[44px] min-h-[44px] flex-1 sm:flex-none justify-center inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-xl transition-all cursor-pointer border ${
                     copiedCaseText
                       ? "bg-emerald-600 border-emerald-600 text-white"
+                      : copyFailed
+                      ? "bg-rose-600 border-rose-600 text-white"
                       : "bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800"
                   }`}
                   title="Copy formatted case sheet to paste directly into any hospital EMR"
                 >
                   {copiedCaseText ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                  <span>{copiedCaseText ? "Copied Case Sheet!" : "Copy Case Sheet"}</span>
+                  <span className="whitespace-nowrap">{copiedCaseText ? "Copied to EMR!" : copyFailed ? "Copy failed — try again" : "Copy to EMR"}</span>
                 </button>
                 <button
                   type="button"

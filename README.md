@@ -51,6 +51,7 @@ ErMate implements **Local On-The-Fly PHI De-identification** hosted on Indian Cl
 - **Lifecycle State Machine**: Explicit status tracking (`DRAFT` → `PREPARED` → `MANUALLY_EDITED` → `FINALIZED`) with status badge indicators in the discharge header.
 - **Non-Destructive Reconciliation**: When subsequent case updates occur after preparation, a prominent alert banner allows clinicians to refresh and merge newly documented investigations, treatments, and notes without erasing or overwriting manual edits and instructions.
 - **Separated Save Boundaries & Patient Status Decoupling**: Dedicated "Save Draft" versus "Finalize & Save Summary" controls. Summary finalization updates the document lifecycle (`summaryStatus = "FINALIZED"`) while strictly preserving `ClinicalCase.status` without altering the patient's operational bed/admission state. Operational status remains exclusively governed by the authoritative clinical disposition workflow.
+- **Universal Copy to EMR Pipeline (`src/utils/copyToClipboard.ts`)**: Rich multi-flavour clipboard pipeline (`text/plain` + `text/html`) with synchronous initiation and graceful fallbacks (`navigator.clipboard.write` -> `navigator.clipboard.writeText` -> legacy `document.execCommand`), providing honest success/failure feedback across Case Sheet and Discharge Summary views.
 
 ### 3. Voice & Text Case Sheet Extraction
 - Supports real-time clinical dictation and OCR case sheet capture.

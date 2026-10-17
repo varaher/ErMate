@@ -45,6 +45,18 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-17] — ErMate: Robust Universal Copy to EMR Pipeline (ERMATE-COPY-TO-EMR-V1)
+- **Universal Clipboard Pipeline (`src/utils/copyToClipboard.ts`)**:
+  - Implemented `copyTextToClipboard(plain, html)` with robust fallback hierarchy: rich `ClipboardItem` (`text/plain` + `text/html`) -> `navigator.clipboard.writeText` -> legacy `document.execCommand("copy")`.
+  - Guarantees synchronous initial execution to maintain user gesture context across Safari, mobile WebViews, and non-secure environments.
+  - Returns honest boolean state (`true` on success, `false` on total failure), completely eliminating silent copy drops.
+- **Case Sheet Preview & Print View (`src/components/CaseSheetPrintView.tsx`)**:
+  - Standardized copy action label to `"Copy to EMR"` with explicit transient failure banner (`"Copy failed — try again"`).
+  - Maintained accessibility button IDs (`preview-copy-casesheet-button`, `print-copy-casesheet-button`).
+- **Discharge Summary View (`src/components/DischargeSummaryView.tsx`)**:
+  - Unified copy action with `copyTextToClipboard` and promoted `"Copy to EMR"` (`id="copy-to-emr-discharge"`) to the leading position in the toolbar with flex wrapping.
+  - Provides clear visual feedback on both success (`"Copied to EMR!"`) and error (`"Copy failed — try again"`).
+
 ### [2026-10-15] — ErMate: Mobile Safe Hard Refresh & Critical Ops Protection (HARD-REFRESH)
 - **Critical Ops Registry (`src/utils/criticalOps.ts`)**:
   - Implemented in-memory operation registry (`beginCriticalOp`, `setCriticalFlag`, `getActiveCriticalOps`) tracking active in-flight saves, uploads, and unsaved changes without localStorage or network overhead.

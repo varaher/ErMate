@@ -5,7 +5,7 @@ import {
   User, Award, Wrench, MoreHorizontal, Lock, Bell, Shield,
   LogOut, Moon, Sun, Clock, RefreshCcw, Laptop, HelpCircle,
   Compass, Info, Trash2, Cpu, CheckCircle2, AlertTriangle, X,
-  Save, Eye, Check, ExternalLink, Activity
+  Save, Eye, Check, ExternalLink, Activity, Presentation, Download
 } from "lucide-react";
 import { UserProfile, ClinicalCase, TeamMember, isActiveMembershipStatus, isPendingApprovalStatus } from "../types";
 import { NormalizedRole, getRoleDisplayLabel } from "../utils/roleUtils";
@@ -16,6 +16,7 @@ import RoleChangeSection from "./RoleChangeSection";
 import { ErMateLogo } from "./shared/ErMateLogo";
 import { APP_VERSION } from "../changelog";
 import { HardRefreshTile } from "./shared/HardRefreshTile";
+import PitchDeckModal from "./shared/PitchDeckModal";
 import { FEATURES } from "../config/features";
 
 interface MoreViewProps {
@@ -101,7 +102,7 @@ export default function MoreView({
 
   // Modal controls
   const [activeModal, setActiveModal] = useState<
-    "profile" | "role" | "security" | "notifications" | "privacy" | "mortality" | "self-learning" | "support" | "about" | "tour" | null
+    "profile" | "role" | "security" | "notifications" | "privacy" | "mortality" | "self-learning" | "support" | "about" | "tour" | "pitch-deck" | null
   >(null);
 
   // Facility Setup Local State
@@ -1068,6 +1069,48 @@ export default function MoreView({
             </button>
 
             <HardRefreshTile />
+
+            {/* Investor Pitch Deck (.PPT & .PPTX) */}
+            <div className="p-3.5 bg-gradient-to-r from-sky-50 to-indigo-50 dark:from-sky-950/40 dark:to-indigo-950/40 border border-sky-200 dark:border-sky-800 rounded-xl flex flex-col gap-2.5">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-sky-600 text-white flex items-center justify-center shrink-0 shadow-sm">
+                  <Presentation className="w-4 h-4" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <strong className="text-xs font-bold text-slate-900 dark:text-white block flex items-center gap-1.5">
+                    Investor Pitch Deck
+                    <span className="text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded bg-sky-200 dark:bg-sky-900 text-sky-800 dark:text-sky-300">11 SLIDES</span>
+                  </strong>
+                  <span className="text-[10px] text-slate-500 dark:text-slate-400">Emergency Medicine AI pitch presentation</span>
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-sky-100 dark:border-sky-900/50">
+                <button
+                  type="button"
+                  onClick={() => setActiveModal("pitch-deck")}
+                  className="py-1.5 px-2.5 bg-sky-100 dark:bg-sky-950/80 hover:bg-sky-200 dark:hover:bg-sky-900 text-sky-800 dark:text-sky-300 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer border border-sky-300 dark:border-sky-800"
+                >
+                  <Eye className="w-3.5 h-3.5" />
+                  <span>View Slides</span>
+                </button>
+                <a
+                  href="/api/download/pitch-deck?format=ppt"
+                  download="ErMate_Investor_Pitch_Deck.ppt"
+                  className="flex-1 py-1.5 px-2 bg-sky-600 hover:bg-sky-700 text-white rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer shadow-xs"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Download .PPT</span>
+                </a>
+                <a
+                  href="/api/download/pitch-deck?format=pptx"
+                  download="ErMate_Investor_Pitch_Deck.pptx"
+                  className="flex-1 py-1.5 px-2 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                >
+                  <Download className="w-3.5 h-3.5 text-slate-400" />
+                  <span>Download .PPTX</span>
+                </a>
+              </div>
+            </div>
           </div>
 
           {/* Sign Out Button */}
@@ -1618,6 +1661,12 @@ export default function MoreView({
           </div>
         </div>
       )}
+
+      {/* 10. Pitch Deck Slide Viewer Modal */}
+      <PitchDeckModal
+        isOpen={activeModal === "pitch-deck"}
+        onClose={() => setActiveModal(null)}
+      />
     </div>
   );
 }

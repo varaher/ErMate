@@ -19,6 +19,7 @@ import {
   mergeDischargeMedications
 } from "../utils/dischargeSyncEngine";
 import { authenticatedFetch } from "../services/authenticatedFetch";
+import { copyTextToClipboard } from "../utils/copyToClipboard";
 
 interface DischargeSummaryViewProps {
   currentCase: ClinicalCase;
@@ -363,6 +364,8 @@ export default function DischargeSummaryView({
 
     const [copiedDischargeText, setCopiedDischargeText] = useState(false);
 
+  const [copyDischargeFailed, setCopyDischargeFailed] = useState(false);
+
   // Same hospital-name resolution as the case sheet view: case hospital, then the
   // case's workplace label, then the doctor's workplace.
   const resolvedHospitalName = (
@@ -419,40 +422,19 @@ export default function DischargeSummaryView({
   const getFormattedDischargeSummaryText = () => formatDischargeSummaryText(buildDischargeSummaryData());
   const getFormattedDischargeSummaryHtml = () => formatDischargeSummaryHtml(buildDischargeSummaryData());
 
-  const handleCopyDischargeSummary = () => {
+  const handleCopyDischargeSummary = async () => {
     // Plain-text flavour must paste cleanly into EMR text boxes: strip markdown bold markers.
     // (Rich editors still receive the HTML flavour with real formatting.)
     const plainText = getFormattedDischargeSummaryText().replace(/\*\*/g, "");
     const htmlText = getFormattedDischargeSummaryHtml();
-
-    try {
-      if (typeof ClipboardItem !== "undefined") {
-        const clipboardItem = new ClipboardItem({
-          "text/plain": new Blob([plainText], { type: "text/plain" }),
-          "text/html": new Blob([htmlText], { type: "text/html" })
-        });
-        navigator.clipboard.write([clipboardItem]).then(() => {
-          setCopiedDischargeText(true);
-          setTimeout(() => setCopiedDischargeText(false), 2000);
-        }).catch(err => {
-          console.warn("ClipboardItem write failed, using writeText fallback:", err);
-          navigator.clipboard.writeText(plainText).then(() => {
-            setCopiedDischargeText(true);
-            setTimeout(() => setCopiedDischargeText(false), 2000);
-          });
-        });
-      } else {
-        navigator.clipboard.writeText(plainText).then(() => {
-          setCopiedDischargeText(true);
-          setTimeout(() => setCopiedDischargeText(false), 2000);
-        });
-      }
-    } catch (err) {
-      console.warn("Clipboard API exception, using writeText fallback:", err);
-      navigator.clipboard.writeText(plainText).then(() => {
-        setCopiedDischargeText(true);
-        setTimeout(() => setCopiedDischargeText(false), 2000);
-      });
+    const ok = await copyTextToClipboard(plainText, htmlText);
+    if (ok) {
+      setCopyDischargeFailed(false);
+      setCopiedDischargeText(true);
+      setTimeout(() => setCopiedDischargeText(false), 2000);
+    } else {
+      setCopyDischargeFailed(true);
+      setTimeout(() => setCopyDischargeFailed(false), 4000);
     }
   };
 
@@ -786,7 +768,24 @@ export default function DischargeSummaryView({
           </div>
         </div>
 
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2 w-full sm:w-auto">
+          <button
+            type="button"
+            onClick={handleCopyDischargeSummary}
+            id="copy-to-emr-discharge"
+            className={`inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-bold rounded-lg transition-all border whitespace-nowrap min-h-[40px] cursor-pointer ${
+              copiedDischargeText
+                ? "bg-emerald-600 border-emerald-600 text-white"
+                : copyDischargeFailed
+                ? "bg-rose-600 border-rose-600 text-white"
+                : "bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800"
+            }`}
+            title="Copy formatted discharge summary to paste directly into any hospital EMR"
+          >
+            {copiedDischargeText ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+            {copiedDischargeText ? "Copied to EMR!" : copyDischargeFailed ? "Copy failed — try again" : "Copy to EMR"}
+          </button>
+
           {onDeleteCase && (
             <button
               type="button"
@@ -808,19 +807,6 @@ export default function DischargeSummaryView({
           >
             <MessageSquare className="w-3.5 h-3.5" />
             <span>Discuss Discharge</span>
-          </button>
-
-          <button
-            onClick={handleCopyDischargeSummary}
-            className={`inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-lg transition-all border ${
-              copiedDischargeText
-                ? "bg-emerald-600 border-emerald-600 text-white"
-                : "bg-amber-50 dark:bg-amber-950/20 hover:bg-amber-100 text-amber-700 dark:text-amber-300 border-amber-200/50 dark:border-amber-900/50"
-            }`}
-            title="Copy formatted discharge summary to paste directly into any hospital EMR"
-          >
-            {copiedDischargeText ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-            {copiedDischargeText ? "Copied EMR Text!" : "Copy to EMR"}
           </button>
 
           <div className="relative inline-block text-left" id="download-dropdown-discharge-container">
