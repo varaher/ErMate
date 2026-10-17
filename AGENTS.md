@@ -45,6 +45,17 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-17] — ErMate: Quick Investigation Panels Customisation & Compact Dropdown (ERMATE-QUICK-INVESTIGATION-PANELS-V1)
+- **Compact Quick Investigation Dropdown (`src/components/QuickInvestigationMenu.tsx`, `src/components/CaseSheetView.tsx`)**:
+  - Replaced the large, always-open 16-card panel grid with a compact, accessible dropdown button (`#quick-investigation-button`, `#quick-investigation-list`).
+  - Automatically sorts panels for the patient's context (pediatric panels leading on pediatric cases, adult panels leading on adult cases).
+  - Tapping a panel auto-orders non-duplicate tests, updates the investigation labs text area, adds pending line items, and displays clear toast feedback.
+- **Clinician Customisation & Management (`src/utils/quickPanels.ts`, `src/services/quickPanelsStorage.ts`)**:
+  - Built-in panels remain stable without mutability; clinicians can rename built-ins, modify test lists, hide unused panels, or reset to factory defaults.
+  - Clinicians can create up to 30 custom hospital-specific investigation panels (`MAX_CUSTOM_PANELS = 30`, `MAX_TESTS_PER_PANEL = 40`).
+  - Persisted in user metadata subcollection `users/{uid}/meta/quickPanels` with offline-first localStorage mirroring (`ermate_quickPanels_{uid}`) without mutating the core profile document.
+  - Verified with 35 assertions in `verify_quick_investigation_panels.ts`.
+
 ### [2026-10-17] — ErMate: Manual Diagnosis Integrity & Differential Generator Removal (ERMATE-MANUAL-NO-DX-GENERATOR-V1)
 - **Manual Diagnosis Field Governance (`src/components/CaseSheetView.tsx`)**:
   - Removed AI "Generate Differential" button and `runClinicalDecisionSupport` from the Investigations & Diagnosis tab.

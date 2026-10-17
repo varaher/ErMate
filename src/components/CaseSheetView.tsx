@@ -49,7 +49,8 @@ import { PediatricVitalReference } from "./PediatricVitalReference";
 import { authenticatedFetch } from "../services/authenticatedFetch";
 import { isPediatricPatient, interpretPediatricVital, getPediatricVitalRange } from "../utils/pediatricRanges";
 import { mirrorPediatricToStandard } from "../utils/pediatricMirror";
-import { ORDER_PANELS } from "../data/orderPanels";
+import { QuickInvestigationMenu } from "./QuickInvestigationMenu";
+import { EffectivePanel, testsToAdd } from "../utils/quickPanels";
 import { ProcedureNote } from "../types/procedureNotes";
 import { ProcedureDefinition, PROCEDURE_DEFINITIONS } from "../data/procedureDefinitions";
 import { ProcedureSelectorModal } from "./ProcedureSelectorModal";
@@ -1562,16 +1563,10 @@ export default function CaseSheetView({
     }));
   };
 
-  const handleOrderPanel = (panelName: string) => {
-    const tests: string[] = ORDER_PANELS.find((p) => p.name === panelName)?.tests || [];
-
-    if (tests.length === 0) return;
-
+  const handleOrderPanel = (panel: EffectivePanel): number => {
     // Skip tests already ordered on this case (so tapping two panels never duplicates CBC etc.)
-    const norm = (x: string) => x.trim().toLowerCase();
-    const already = new Set((currentCase.investigations || []).map((i) => norm(i.testName)));
-    const toAdd = tests.filter((t) => !already.has(norm(t)));
-    if (toAdd.length === 0) return;
+    const toAdd = testsToAdd(panel.tests, (currentCase.investigations || []).map((i) => i.testName));
+    if (toAdd.length === 0) return 0;
 
     // 1. Update text area for labs ordered
     const currentLabsStr = currentCase.investigationLabsOrdered || "";
@@ -1593,6 +1588,7 @@ export default function CaseSheetView({
       investigationLabsOrdered: updatedLabsStr,
       investigations: [...prev.investigations, ...newItems]
     }));
+    return toAdd.length;
   };
 
   // Section Normal Definitions for Per-Section and Global Mark Normal
@@ -4831,33 +4827,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                   Orders
                 </h4>
                 
-                <details open className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 text-xs group">
-                  <summary className="font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wide cursor-pointer list-none flex items-center justify-between [&::-webkit-details-marker]:hidden">
-                    <span>Quick Order Sets ▾</span>
-                  </summary>
-                  <div className="pt-2 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-2">
-                  {[...ORDER_PANELS].sort((x, y) => (x.group === (currentCase.isPediatric ? "pediatric" : "adult") ? 0 : 1) - (y.group === (currentCase.isPediatric ? "pediatric" : "adult") ? 0 : 1)).map((p) => ({
-                    name: p.name,
-                    desc: p.tests.join(", "),
-                    color: "",
-                  })).map((panel) => (
-                    <button
-                      key={panel.name}
-                      type="button"
-                      onClick={() => handleOrderPanel(panel.name)}
-                      className="p-2 text-left rounded-lg border border-slate-200 dark:border-slate-850 bg-gradient-to-br transition-all hover:scale-[1.01] hover:shadow-xs flex flex-col justify-between h-full group"
-                    >
-                      <div>
-                        <span className="font-bold text-[10px] block uppercase tracking-wider text-slate-800 dark:text-slate-200">{panel.name}</span>
-                        <p className="text-[9px] text-slate-500 dark:text-slate-400 font-mono mt-0.5 leading-tight">{panel.desc}</p>
-                      </div>
-                      <span className="text-[8px] font-bold uppercase mt-1 bg-blue-50 dark:bg-slate-850 text-blue-600 dark:text-blue-400 px-1.5 py-0.5 rounded self-start border border-blue-200 dark:border-blue-900 group-hover:bg-blue-600 group-hover:text-white group-hover:border-blue-600 transition-all">
-                        + Auto-Order
-                      </span>
-                    </button>
-                  ))}
-                  </div>
-                </details>
+                <QuickInvestigationMenu isPediatric={!!currentCase.isPediatric} onOrder={handleOrderPanel} />
 
                 {currentCase.investigationsOrdered && currentCase.investigationsOrdered.length > 0 && (
                   <div className="pt-2">
