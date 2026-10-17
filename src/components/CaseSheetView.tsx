@@ -2,7 +2,7 @@ import { isLmpApplicable } from "../utils/historyFields";
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import VoiceRecorder from "./shared/VoiceRecorder";
 import { 
-  ArrowLeft, MoreVertical, ArrowRight, Save, Sparkles, Mic, FileText, CheckCircle, CheckCircle2,
+  ArrowLeft, MoreVertical, ArrowRight, Save, Mic, FileText, CheckCircle, CheckCircle2,
   Trash2, Plus, ShieldAlert, BookOpen, Clock, Heart, Baby,
   Eye, RefreshCw, Printer, AlertTriangle, ClipboardCheck, 
   User, Check, Shield, FileCheck, Users, LogOut, ChevronRight,
@@ -2108,35 +2108,7 @@ Extremities: Peripheral pulses present and well felt. No edema. No cyanosis or c
     }));
   };
 
-  // AI Decision Support trigger
-  const runClinicalDecisionSupport = async () => {
-    setAiLoading(true);
-    try {
-      const response = await authenticatedFetch("/api/clinical-decision-support", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          patient: currentCase.patient,
-          history: currentCase.sampleHistory,
-          vitals: currentCase.vitals,
-          primaryAssessment: currentCase.primaryAssessment
-        })
-      });
-      const resData = await response.json();
-      if (resData.success || resData.data) {
-        setCurrentCase(prev => ({
-          ...prev,
-          differentials: resData.data
-        }));
-      } else {
-        alert(resData.error || "Clinical assistant busy — try again in a moment");
-      }
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setAiLoading(false);
-    }
-  };
+
   // AI Document Scanning Simulation trigger
   const handleOcrSubmit = async () => {
     setAiLoading(true);
@@ -5117,35 +5089,14 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                   </div>
                 </div>
 
-                {/* ErMate Differential & CDS Support (Integrated into Assessment & Diagnosis) */}
+                {/* Differentials already on the case (dictated or saved earlier). The "Generate Differential"
+                    button was removed: MATE handles differential discussion, and the provisional
+                    diagnosis fields above stay manual. */}
+                {currentCase.differentials && currentCase.differentials.length > 0 ? (
                 <div className="pt-3 border-t border-slate-200 dark:border-slate-800 space-y-3">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div>
-                      <h5 className="text-xs font-bold text-slate-800 dark:text-white uppercase tracking-wide flex items-center gap-1.5">
-                        <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-                        ErMate Differential & Clinical Decision Support
-                      </h5>
-                      <p className="text-[10px] text-slate-500 dark:text-slate-400">Evaluate diagnostic differentials and citations using secure LLM models.</p>
-                    </div>
-                    <button
-                      type="button"
-                      disabled={aiLoading}
-                      onClick={runClinicalDecisionSupport}
-                      className="px-3 py-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 disabled:from-slate-300 disabled:to-slate-400 disabled:cursor-not-allowed text-white text-[11px] font-bold rounded-lg shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer"
-                    >
-                      {aiLoading ? (
-                        <>
-                          <RefreshCw className="w-3 h-3 animate-spin" />
-                          Analyzing Records...
-                        </>
-                      ) : (
-                        <>
-                          <Sparkles className="w-3 h-3 text-amber-300" />
-                          Generate Differential
-                        </>
-                      )}
-                    </button>
-                  </div>
+                  <h5 className="text-xs font-bold text-slate-800 dark:text-white uppercase tracking-wide">
+                    Differentials on record
+                  </h5>
 
                   {/* Disclaimer Alert */}
                   <div className="bg-amber-50/50 border border-amber-200 dark:bg-amber-950/20 dark:border-amber-900/60 p-3 rounded-lg text-[11px] text-amber-800 dark:text-amber-300 leading-relaxed flex items-start gap-2">
@@ -5204,6 +5155,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                     </div>
                   ) : null}
                 </div>
+                ) : null}
               </div>
             </div>
           )}

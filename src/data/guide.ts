@@ -64,7 +64,7 @@ export const guideData = [
     badge: "ErMate Feature",
     content: `ErMate includes an advanced **Clinical Decision Support Engine** to assist with complex cases.
 ### Features:
-*   **Differential Diagnoses**: Based on the current case sheet, tap **Generate Differentials** to receive a ranked list of potential diagnoses with supporting and refuting evidence.
+*   **Differential Diagnoses**: Enter your provisional primary and differential diagnoses yourself in the **Investigations** tab, or ask **MATE** to discuss the differentials for the case.
 *   **Automated Alert Flags**: Abnormal vital signs and critical lab values (e.g., hyperkalemia, severe tachycardia) are automatically flagged in red.
 *   **ABG/VBG Interpretation**: Enter blood gas values to receive automatic acid-base interpretation.`
   },

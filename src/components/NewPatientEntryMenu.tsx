@@ -169,7 +169,7 @@ export default function NewPatientEntryMenu({ onSelect, onClose, currentUserName
           <MenuRow
             icon={<PenLine size={18} />}
             title="Prefer to type it in?"
-            subtitle="Manual form — all fields, AI diagnosis, ABG analysis"
+            subtitle="Manual form — all fields, ABG analysis"
             onClick={() => handleChoice("type")}
           />
           <MenuRow

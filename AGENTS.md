@@ -45,6 +45,17 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-17] — ErMate: Manual Diagnosis Integrity & Differential Generator Removal (ERMATE-MANUAL-NO-DX-GENERATOR-V1)
+- **Manual Diagnosis Field Governance (`src/components/CaseSheetView.tsx`)**:
+  - Removed AI "Generate Differential" button and `runClinicalDecisionSupport` from the Investigations & Diagnosis tab.
+  - Diagnosis fields (Provisional Primary Diagnosis, Provisional Differential Diagnoses) stay strictly clinician-authored.
+  - Differentials already on the case sheet (from voice dictation or intake) remain displayed under "Differentials on record" conditionally only when present.
+  - Clinical reasoning and differential diagnosis discussions are owned exclusively by MATE via Case Chat Workspace.
+- **Copy & Documentation Alignment (`src/components/NewPatientEntryMenu.tsx`, `src/data/guide.ts`, `verify_manual_no_diagnosis_generator.ts`)**:
+  - Removed "AI diagnosis" claim from manual entry subtitle ("Manual form — all fields, ABG analysis").
+  - Updated Help Guide to clarify manual diagnosis entry and MATE case discussion.
+  - Verified with 16 automated assertions in `verify_manual_no_diagnosis_generator.ts`.
+
 ### [2026-10-17] — ErMate: Robust Universal Copy to EMR Pipeline (ERMATE-COPY-TO-EMR-V1)
 - **Universal Clipboard Pipeline (`src/utils/copyToClipboard.ts`)**:
   - Implemented `copyTextToClipboard(plain, html)` with robust fallback hierarchy: rich `ClipboardItem` (`text/plain` + `text/html`) -> `navigator.clipboard.writeText` -> legacy `document.execCommand("copy")`.
