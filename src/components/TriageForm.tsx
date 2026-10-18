@@ -10,6 +10,7 @@ import PediatricNormalVitalsCard from "./PediatricNormalVitalsCard";
 import TriageScreeningFields from "./TriageScreeningFields";
 import { normalizeScreening } from "../utils/triageScreening";
 import { parseTriageDictation, type TriageDictationResult } from "../utils/triageDictation";
+import { formatAge, getAgeStage } from "../utils/ageLabel";
 
 interface TriageFormProps {
   onBack: () => void;
@@ -65,8 +66,10 @@ export default function TriageForm({ onBack, onSubmit, initialMode, activeCases 
 
   const [autoTriageEnabled, setAutoTriageEnabled] = useState(true);
 
-  // Months beyond whole years for age 0-1 (0.5 = under 1 month); screening block
+  // Age units and subdivisions (years | months | days)
+  const [ageUnit, setAgeUnit] = useState<"years" | "months" | "days">("years");
   const [ageMonthsStr, setAgeMonthsStr] = useState("");
+  const [ageDaysStr, setAgeDaysStr] = useState("");
   const [screening, setScreening] = useState<TriageScreening>({});
   const [queueForDoctor, setQueueForDoctor] = useState(false);
   const [dictationFilled, setDictationFilled] = useState<string[] | null>(null);
@@ -76,8 +79,18 @@ export default function TriageForm({ onBack, onSubmit, initialMode, activeCases 
     const r: TriageDictationResult = parseTriageDictation(transcript);
     if (r.filled.length === 0) { setDictationFilled([]); return; }
     if (r.name && !name.trim()) setName(r.name);
-    if (r.age !== undefined && age === "") setAge(String(r.age));
+    if (r.ageUnit) setAgeUnit(r.ageUnit);
+    if (r.ageDays !== undefined && ageDaysStr === "") setAgeDaysStr(String(r.ageDays));
     if (r.ageMonths !== undefined && ageMonthsStr === "") setAgeMonthsStr(String(r.ageMonths));
+    if (r.age !== undefined && age === "") {
+      if (r.ageUnit === "days" && r.ageDays !== undefined) {
+        setAge(String(r.ageDays));
+      } else if (r.ageUnit === "months" && r.ageMonths !== undefined) {
+        setAge(String(r.ageMonths));
+      } else {
+        setAge(String(r.age));
+      }
+    }
     if (r.gender && gender === "Male" && r.gender === "Female") setGender("Female");
     if (r.complaint) setPresentingComplaint((prev) => (prev.trim() ? `${prev.trim()}; ${r.complaint}` : r.complaint!));
     if (r.vitals.bp && !bp) setBp(r.vitals.bp);
@@ -94,11 +107,39 @@ export default function TriageForm({ onBack, onSubmit, initialMode, activeCases 
     setDictationFilled(r.filled);
   };
 
-  // Logic
-  const ageNum = age ? parseInt(age) : null;
+  // Logic: compute normalized age in years, extra months, and neonatal days
+  let ageNum: number | null = null;
+  let ageMonthsNum: number | null = null;
+  let ageDaysNum: number | null = null;
+
+  if (ageUnit === "years") {
+    ageNum = age !== "" && !isNaN(Number(age)) ? parseInt(age, 10) : null;
+    const needsMonths = ageNum !== null && ageNum >= 0 && ageNum <= 1;
+    ageMonthsNum = needsMonths && ageMonthsStr !== "" ? parseFloat(ageMonthsStr) : null;
+    ageDaysNum = ageDaysStr !== "" ? parseInt(ageDaysStr, 10) : null;
+  } else if (ageUnit === "months") {
+    const mVal = age !== "" && !isNaN(Number(age)) ? parseFloat(age) : null;
+    if (mVal !== null) {
+      if (mVal >= 12) {
+        ageNum = Math.floor(mVal / 12);
+        ageMonthsNum = mVal % 12 || null;
+      } else {
+        ageNum = 0;
+        ageMonthsNum = mVal;
+      }
+    }
+    ageDaysNum = null;
+  } else if (ageUnit === "days") {
+    const dVal = age !== "" && !isNaN(Number(age)) ? parseInt(age, 10) : null;
+    if (dVal !== null) {
+      ageNum = 0;
+      ageMonthsNum = 0.5;
+      ageDaysNum = dVal;
+    }
+  }
+
   const isPediatric = ageNum !== null && ageNum <= 16;
-  const needsMonths = ageNum !== null && ageNum >= 0 && ageNum <= 1;
-  const ageMonthsNum = needsMonths && ageMonthsStr !== "" ? parseFloat(ageMonthsStr) : null;
+  const needsMonths = ageUnit === "years" && ageNum !== null && ageNum >= 0 && ageNum <= 1;
 
   // Calculate composite GCS
   const hasCompleteGcs = gcsE !== "" && gcsV !== "" && gcsM !== "";
@@ -156,6 +197,8 @@ export default function TriageForm({ onBack, onSubmit, initialMode, activeCases 
       triageCategory: levelToLegacyCategory(triageLevel),
       triageLevel,
       ...(ageMonthsNum !== null && !isNaN(ageMonthsNum) ? { ageMonths: ageMonthsNum } : {}),
+      ...(ageDaysNum !== null && !isNaN(ageDaysNum) ? { ageDays: ageDaysNum } : {}),
+      ageUnit,
       ...(() => {
         const ts = normalizeScreening({
           ...screening,
@@ -305,12 +348,32 @@ export default function TriageForm({ onBack, onSubmit, initialMode, activeCases 
 
             {/* Age */}
             <div>
-              <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">
-                Age
-              </label>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide">
+                  Age
+                </label>
+                <div className="inline-flex rounded-md shadow-xs bg-slate-100 dark:bg-slate-900 p-0.5 border border-slate-200 dark:border-slate-800 text-[10px]">
+                  {(["years", "months", "days"] as const).map((u) => (
+                    <button
+                      key={u}
+                      type="button"
+                      data-testid={`triage-age-unit-${u}`}
+                      onClick={() => setAgeUnit(u)}
+                      className={`px-1.5 py-0.5 rounded capitalize font-medium transition-colors ${
+                        ageUnit === u
+                          ? "bg-blue-600 text-white shadow-xs"
+                          : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
+                      }`}
+                    >
+                      {u}
+                    </button>
+                  ))}
+                </div>
+              </div>
               <input
                 type="number"
-                placeholder="Age in years"
+                min="0"
+                placeholder={ageUnit === "years" ? "Age in years" : ageUnit === "months" ? "Age in months (1-36)" : "Age in days (0-90)"}
                 value={age}
                 onChange={(e) => setAge(e.target.value)}
                 className="w-full px-4 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 dark:text-slate-100"
@@ -329,6 +392,12 @@ export default function TriageForm({ onBack, onSubmit, initialMode, activeCases 
                     <option key={m} value={m}>{m} month{m > 1 ? "s" : ""}</option>
                   ))}
                 </select>
+              )}
+              {ageNum !== null && (
+                <div className="mt-1 flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400">
+                  <span>Stage: <strong className="text-slate-700 dark:text-slate-200">{getAgeStage(ageNum, ageMonthsNum, ageDaysNum).label}</strong></span>
+                  <span className="font-mono text-[10px] text-blue-600 dark:text-blue-400 font-semibold">{formatAge(ageNum, ageMonthsNum, ageDaysNum)}</span>
+                </div>
               )}
             </div>
 
@@ -705,6 +774,7 @@ export default function TriageForm({ onBack, onSubmit, initialMode, activeCases 
           <PediatricNormalVitalsCard
             ageYears={ageNum}
             ageMonths={ageMonthsNum}
+            ageDays={ageDaysNum}
             hr={hr}
             rr={rr}
             sbp={bp.split("/")[0]}

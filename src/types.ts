@@ -77,6 +77,10 @@ export interface PatientDemographics {
   triageLevel?: TriageLevel;
   /** Months beyond whole years, only for age 0–1 (0.5 = under 1 month); used for age-band normal ranges. */
   ageMonths?: number;
+  /** Days for neonates/infants (0-90 days). Used for neonatal clinical vital bands and age formatting. */
+  ageDays?: number;
+  /** Primary unit for age entry and presentation: years | months | days */
+  ageUnit?: "years" | "months" | "days";
   triageScreening?: TriageScreening;
   arrivalMode?: ArrivalMode;
   dateOpened: string;

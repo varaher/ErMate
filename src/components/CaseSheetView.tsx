@@ -51,7 +51,7 @@ import { hasCaseScribeHistory } from "../services/scribeChatStorage";
 import { PediatricVitalReference } from "./PediatricVitalReference";
 import { authenticatedFetch } from "../services/authenticatedFetch";
 import { isPediatricPatient, interpretPediatricVital, getPediatricVitalRange } from "../utils/pediatricRanges";
-import { formatAge, formatAgeLong } from "../utils/ageLabel";
+import { formatAge, formatAgeLong, getAgeStage } from "../utils/ageLabel";
 import { suggestPediatricDoses, resolveDosingWeight, estimateWeightFromAge } from "../utils/drugDoseSuggestions";
 import DoseGuide from "./DoseGuide";
 import { mirrorPediatricToStandard } from "../utils/pediatricMirror";
@@ -296,6 +296,8 @@ export function isCaseSheetDirty(current: ClinicalCase | null | undefined, saved
       name: (c.patient?.name || "").trim(),
       age: c.patient?.age,
       ageMonths: c.patient?.ageMonths,
+      ageDays: c.patient?.ageDays,
+      ageUnit: c.patient?.ageUnit,
       gender: c.patient?.gender,
       uhid: (c.patient?.uhid || "").trim(),
       phone: (c.patient?.phone || "").trim(),
@@ -1000,7 +1002,7 @@ export default function CaseSheetView({
     
     const currentCat = currentCase.patient.triageCategory;
     const autoTriage = isTriageCategoryPending(currentCat)
-      ? classifyEmergencyTriage(currentCase.patient.age, currentCase.patient.presentingComplaint, updatedVitals)
+      ? classifyEmergencyTriage(currentCase.patient.age, currentCase.patient.presentingComplaint, updatedVitals, currentCase.patient.ageMonths)
       : null;
     const finalCategory = autoTriage ? autoTriage.category : currentCat;
 
@@ -1048,10 +1050,15 @@ export default function CaseSheetView({
 
   const getAPLSEstimate = (ageNum: number | null) => {
     if (ageNum === null) return 15;
-    if (ageNum < 1) return 7;
-    if (ageNum >= 1 && ageNum <= 5) return (ageNum * 2) + 8;
-    if (ageNum > 5 && ageNum <= 12) return (ageNum * 3) + 7;
-    return (ageNum * 3) + 10;
+    return estimateWeightFromAge(ageNum, currentCase?.patient?.ageMonths, currentCase?.patient?.ageDays) ?? 15;
+  };
+
+  // Weight used by the PALS quick calculator: weight entered in the Weight section, else an age estimate.
+  const palsWeight = (): number => {
+    if (pediatricWeight !== "") return Number(pediatricWeight);
+    const entered = parseFloat(currentCase?.patient?.weight || currentCase?.pediatricDetails?.weight || "");
+    if (Number.isFinite(entered) && entered > 0) return entered;
+    return getAPLSEstimate(currentCase?.patient?.age ?? null);
   };
 
   useEffect(() => {
@@ -1459,7 +1466,7 @@ export default function CaseSheetView({
       const updatedVitals = { ...prev.vitals, [field]: value };
       const currentCat = prev.patient.triageCategory;
       const autoTriage = isTriageCategoryPending(currentCat)
-        ? classifyEmergencyTriage(prev.patient.age, prev.patient.presentingComplaint, updatedVitals)
+        ? classifyEmergencyTriage(prev.patient.age, prev.patient.presentingComplaint, updatedVitals, prev.patient.ageMonths)
         : null;
       const finalCategory = autoTriage ? autoTriage.category : currentCat;
       if (field === "weight") {
@@ -2177,7 +2184,7 @@ Extremities: Peripheral pulses present and well felt. No edema. No cyanosis or c
         };
         const currentCat = currentCase.patient.triageCategory;
         const autoTriage = isTriageCategoryPending(currentCat)
-          ? classifyEmergencyTriage(updatedPatient.age, updatedPatient.presentingComplaint, currentCase.vitals)
+          ? classifyEmergencyTriage(updatedPatient.age, updatedPatient.presentingComplaint, currentCase.vitals, (updatedPatient as any).ageMonths ?? currentCase.patient.ageMonths)
           : null;
         const finalCategory = autoTriage ? autoTriage.category : currentCat;
         const updatedCase: ClinicalCase = {
@@ -2226,7 +2233,7 @@ Extremities: Peripheral pulses present and well felt. No edema. No cyanosis or c
     setPreviewError(null);
 
     const isPeds = (currentCase.patient?.age !== null && currentCase.patient?.age !== undefined)
-      ? currentCase.patient.age < 18
+      ? recomputeIsPediatric(currentCase.patient.age)
       : false;
 
     const formattedVitals = {
@@ -2748,7 +2755,7 @@ Extremities: Peripheral pulses present and well felt. No edema. No cyanosis or c
     return `**INITIAL ASSESSMENT AND EMERGENCY DEPARTMENT CASE RECORD**
 --------------------------------------------------
 **Patient Name:** ${currentCase.patient.name}
-**Age/Sex:** ${currentCase.patient.age || "N/A"} years / ${currentCase.patient.gender}
+**Age/Sex:** ${formatAgeLong(currentCase.patient.age, currentCase.patient.ageMonths, currentCase.patient.ageDays)} / ${currentCase.patient.gender}
 **Weight:** ${currentCase.patient.weight || currentCase.vitals?.weight || currentCase.pediatricDetails?.patientWeight || "Not documented"} kg
 **Address:** Chunangamvely, Aluva, Ernakulam, Kerala - 683 112
 **Phone Number:** ${currentCase.patient.phone || "Not Provided"}
@@ -2928,7 +2935,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}
     return `<h3><strong>INITIAL ASSESSMENT AND EMERGENCY DEPARTMENT CASE RECORD</strong></h3>
 <hr/>
 <strong>Patient Name:</strong> ${currentCase.patient.name}<br/>
-<strong>Age/Sex:</strong> ${currentCase.patient.age || "N/A"} years / ${currentCase.patient.gender}<br/>
+<strong>Age/Sex:</strong> ${formatAgeLong(currentCase.patient.age, currentCase.patient.ageMonths, currentCase.patient.ageDays)} / ${currentCase.patient.gender}<br/>
 <strong>Weight:</strong> ${currentCase.patient.weight || currentCase.vitals?.weight || currentCase.pediatricDetails?.patientWeight || "Not documented"} kg<br/>
 <strong>Address:</strong> Chunangamvely, Aluva, Ernakulam, Kerala - 683 112<br/>
 <strong>Phone Number:</strong> ${currentCase.patient.phone || "Not Provided"}<br/>
@@ -3257,7 +3264,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
           <div className="px-4 flex items-end justify-between gap-4">
             <div className="flex-1 min-w-0">
               <div className="text-lg font-black text-slate-900 dark:text-white truncate">
-                {currentCase.patient.name} <span className="font-normal text-slate-400">· {currentCase.patient.age || "N/A"}y/{currentCase.patient.gender?.charAt(0) || "U"}</span>
+                {currentCase.patient.name} <span className="font-normal text-slate-400">· {formatAge(currentCase.patient.age, currentCase.patient.ageMonths, currentCase.patient.ageDays)}/{currentCase.patient.gender?.charAt(0) || "U"}</span>
               </div>
               {currentCase.patient.uhid && (
                 <div className="text-[10px] font-mono text-slate-500 truncate">UHID {currentCase.patient.uhid}</div>
@@ -3596,31 +3603,200 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                   
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <div>
-                      <label className="block text-[11px] text-slate-500 font-semibold mb-1">Age (Years)</label>
-                      <input
-                        type="number"
-                        value={currentCase.patient.age || ""}
-                        onChange={(e) => {
-                          const val = e.target.value ? parseInt(e.target.value) : 0;
-                          const newIsPeds = recomputeIsPediatric(val);
-                          setCurrentCase(prev => {
-                            return { ...prev, patient: { ...prev.patient, age: val }, isPediatric: newIsPeds };
-                          });
-                        }}
-                        className="w-full px-3 py-2 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-xs font-semibold focus:ring-1 focus:ring-blue-500 text-slate-850 dark:text-white"
-                        placeholder="e.g. 45"
-                      />
+                      {(() => {
+                        const activeUnit: "years" | "months" | "days" =
+                          currentCase.patient.ageUnit ||
+                          (currentCase.patient.ageDays ? "days" : (currentCase.patient.age === 0 && currentCase.patient.ageMonths ? "months" : "years"));
+
+                        const displayVal =
+                          activeUnit === "days"
+                            ? (currentCase.patient.ageDays !== undefined && currentCase.patient.ageDays !== null
+                                ? String(currentCase.patient.ageDays)
+                                : (currentCase.patient.age === 0 && currentCase.patient.ageDays ? String(currentCase.patient.ageDays) : ""))
+                            : activeUnit === "months"
+                            ? (currentCase.patient.age === 0
+                                ? (currentCase.patient.ageMonths !== undefined && currentCase.patient.ageMonths !== null ? String(currentCase.patient.ageMonths) : "")
+                                : (currentCase.patient.age !== null && currentCase.patient.age !== undefined ? String(currentCase.patient.age * 12 + (currentCase.patient.ageMonths || 0)) : ""))
+                            : (currentCase.patient.age === null || currentCase.patient.age === undefined ? "" : String(currentCase.patient.age));
+
+                        const stageInfo = getAgeStage(currentCase.patient.age, currentCase.patient.ageMonths, currentCase.patient.ageDays);
+
+                        return (
+                          <>
+                            <div className="flex items-center justify-between mb-1">
+                              <label className="block text-[11px] text-slate-500 font-semibold">Age</label>
+                              <div className="inline-flex rounded-md shadow-2xs bg-slate-100 dark:bg-slate-900 p-0.5 border border-slate-200 dark:border-slate-800 text-[10px]">
+                                {(["years", "months", "days"] as const).map((u) => (
+                                  <button
+                                    key={u}
+                                    type="button"
+                                    data-testid={`cs-age-unit-${u}`}
+                                    onClick={() => {
+                                      setCurrentCase(prev => ({
+                                        ...prev,
+                                        patient: { ...prev.patient, ageUnit: u }
+                                      }));
+                                    }}
+                                    className={`px-1.5 py-0.5 rounded capitalize font-medium transition-colors ${
+                                      activeUnit === u
+                                        ? "bg-blue-600 text-white shadow-2xs"
+                                        : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
+                                    }`}
+                                  >
+                                    {u}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                            <input
+                              type="text"
+                              inputMode="numeric"
+                              data-testid="cs-age"
+                              value={displayVal}
+                              onChange={(e) => {
+                                const digits = e.target.value.replace(/\D/g, "").slice(0, 3);
+                                setCurrentCase(prev => {
+                                  if (digits === "") {
+                                    return {
+                                      ...prev,
+                                      patient: { ...prev.patient, age: null, ageMonths: undefined, ageDays: undefined }
+                                    };
+                                  }
+                                  if (activeUnit === "days") {
+                                    const dVal = parseInt(digits, 10);
+                                    return {
+                                      ...prev,
+                                      patient: { ...prev.patient, age: 0, ageMonths: 0.5, ageDays: dVal, ageUnit: "days" },
+                                      isPediatric: true,
+                                    };
+                                  }
+                                  if (activeUnit === "months") {
+                                    const mVal = parseInt(digits, 10);
+                                    let y = 0;
+                                    let m: number | undefined = mVal;
+                                    if (mVal >= 12) {
+                                      y = Math.floor(mVal / 12);
+                                      m = mVal % 12 || undefined;
+                                    }
+                                    return {
+                                      ...prev,
+                                      patient: { ...prev.patient, age: y, ageMonths: m, ageDays: undefined, ageUnit: "months" },
+                                      isPediatric: recomputeIsPediatric(y),
+                                    };
+                                  }
+                                  // Years
+                                  const val = Math.min(120, parseInt(digits, 10));
+                                  const keepMonths = val <= 1 ? prev.patient.ageMonths : undefined;
+                                  return {
+                                    ...prev,
+                                    patient: { ...prev.patient, age: val, ageMonths: keepMonths, ageDays: undefined, ageUnit: "years" },
+                                    isPediatric: recomputeIsPediatric(val)
+                                  };
+                                });
+                              }}
+                              className="w-full px-3 py-2 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-xs font-semibold focus:ring-1 focus:ring-blue-500 text-slate-850 dark:text-white"
+                              placeholder={activeUnit === "days" ? "e.g. 14 (days)" : activeUnit === "months" ? "e.g. 6 (months)" : "e.g. 45 (0 for infants)"}
+                            />
+                            {activeUnit === "years" && (currentCase.patient.age === 0 || currentCase.patient.age === 1) && (
+                              <select
+                                aria-label="Age in months"
+                                data-testid="cs-age-months"
+                                value={currentCase.patient.ageMonths === undefined || currentCase.patient.ageMonths === null ? "" : String(currentCase.patient.ageMonths)}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  setCurrentCase(prev => ({ ...prev, patient: { ...prev.patient, ageMonths: v === "" ? undefined : parseFloat(v) } }));
+                                }}
+                                className="mt-1.5 w-full px-2 py-1.5 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-[11px] text-slate-800 dark:text-white"
+                              >
+                                <option value="">{currentCase.patient.age === 0 ? "Months old? (needed for infants)" : "Extra months (optional)"}</option>
+                                <option value="0.5">Under 1 month</option>
+                                {Array.from({ length: 11 }, (_, i) => i + 1).map((m) => (
+                                  <option key={m} value={m}>{m} month{m > 1 ? "s" : ""}</option>
+                                ))}
+                              </select>
+                            )}
+                            <div className="mt-1 flex items-center justify-between text-[10px]">
+                              <span className="text-slate-500 dark:text-slate-400">
+                                Stage: <strong className="text-slate-700 dark:text-slate-200">{stageInfo.label}</strong>
+                              </span>
+                              {currentCase.patient.age !== null && currentCase.patient.age !== undefined && (
+                                <span className="font-mono text-blue-600 dark:text-blue-400 font-semibold">
+                                  {formatAge(currentCase.patient.age, currentCase.patient.ageMonths, currentCase.patient.ageDays)}
+                                </span>
+                              )}
+                            </div>
+                            {/* Rapid 1-Tap Presets */}
+                            <div className="mt-1 flex flex-wrap items-center gap-1">
+                              <span className="text-[9px] text-slate-400 uppercase font-bold">Presets:</span>
+                              {[
+                                { label: "7d", unit: "days" as const, age: 0, m: 0.5, d: 7 },
+                                { label: "14d", unit: "days" as const, age: 0, m: 0.5, d: 14 },
+                                { label: "2m", unit: "months" as const, age: 0, m: 2, d: undefined },
+                                { label: "6m", unit: "months" as const, age: 0, m: 6, d: undefined },
+                                { label: "1y", unit: "years" as const, age: 1, m: undefined, d: undefined },
+                                { label: "3y", unit: "years" as const, age: 3, m: undefined, d: undefined },
+                                { label: "5y", unit: "years" as const, age: 5, m: undefined, d: undefined },
+                                { label: "10y", unit: "years" as const, age: 10, m: undefined, d: undefined },
+                                { label: "25y", unit: "years" as const, age: 25, m: undefined, d: undefined },
+                                { label: "45y", unit: "years" as const, age: 45, m: undefined, d: undefined },
+                                { label: "65y", unit: "years" as const, age: 65, m: undefined, d: undefined },
+                                { label: "75y", unit: "years" as const, age: 75, m: undefined, d: undefined },
+                              ].map((preset) => (
+                                <button
+                                  key={preset.label}
+                                  type="button"
+                                  onClick={() => {
+                                    setCurrentCase(prev => ({
+                                      ...prev,
+                                      patient: {
+                                        ...prev.patient,
+                                        age: preset.age,
+                                        ageMonths: preset.m,
+                                        ageDays: preset.d,
+                                        ageUnit: preset.unit,
+                                      },
+                                      isPediatric: recomputeIsPediatric(preset.age),
+                                    }));
+                                  }}
+                                  className="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-750 text-slate-700 dark:text-slate-300 transition-colors cursor-pointer"
+                                >
+                                  {preset.label}
+                                </button>
+                              ))}
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setCurrentCase(prev => ({
+                                    ...prev,
+                                    patient: {
+                                      ...prev.patient,
+                                      age: null,
+                                      ageMonths: undefined,
+                                      ageDays: undefined,
+                                      ageUnit: "years",
+                                    },
+                                  }));
+                                }}
+                                className="px-1.5 py-0.5 rounded text-[9px] font-bold text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors cursor-pointer ml-auto"
+                              >
+                                Clear
+                              </button>
+                            </div>
+                          </>
+                        );
+                      })()}
                     </div>
                     <div>
                       <label className="block text-[11px] text-slate-500 font-semibold mb-1">Gender</label>
                       <select
-                        value={currentCase.patient.gender}
+                        value={currentCase.patient.gender || ""}
                         onChange={(e) => {
                           const val = e.target.value;
                           setCurrentCase(prev => ({ ...prev, patient: { ...prev.patient, gender: val } }));
                         }}
                         className="w-full px-3 py-2 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-xs font-semibold focus:ring-1 focus:ring-blue-500 text-slate-800 dark:text-white"
                       >
+                        <option value="">Select</option>
                         <option value="Male">Male</option>
                         <option value="Female">Female</option>
                         <option value="Other">Other</option>
@@ -3792,7 +3968,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                           Pediatric APLS Age-Based Formula Estimate
                         </span>
                         {(() => {
-                          const est = estimateWeightFromAge(currentCase.patient.age, currentCase.patient.ageMonths);
+                          const est = estimateWeightFromAge(currentCase.patient.age, currentCase.patient.ageMonths, currentCase.patient.ageDays);
                           if (est === null) return null;
                           return (
                             <button
@@ -3807,9 +3983,9 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                         })()}
                       </div>
                       <p className="text-[11px] text-sky-800 dark:text-sky-300">
-                        Age: <b>{formatAge(currentCase.patient.age, currentCase.patient.ageMonths)}</b> · 
+                        Age: <b>{formatAge(currentCase.patient.age, currentCase.patient.ageMonths, currentCase.patient.ageDays)}</b> · 
                         {currentCase.patient.age === 0
-                          ? " Infant formula: (0.5 × Months) + 4 kg"
+                          ? (currentCase.patient.ageDays ? " Neonatal standard average: ~3.5 kg" : " Infant formula: (0.5 × Months) + 4 kg")
                           : currentCase.patient.age !== null && currentCase.patient.age <= 5
                           ? " Toddler/Preschool formula: (2 × Age) + 8 kg"
                           : " Child formula: (3 × Age) + 7 kg"}
@@ -4105,11 +4281,11 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                     }
                     let isUnstable = false;
                     if (isPediatric) {
-                      const hrInterp = interpretPediatricVital("hr", currentCase.vitals.hr, currentCase.patient.age);
-                      const rrInterp = interpretPediatricVital("rr", currentCase.vitals.rr, currentCase.patient.age);
-                      const spo2Interp = interpretPediatricVital("spo2", currentCase.vitals.spo2, currentCase.patient.age);
-                      const sbpInterp = interpretPediatricVital("sbp", currentCase.vitals.bp, currentCase.patient.age);
-                      const tempInterp = interpretPediatricVital("temp", currentCase.vitals.temp, currentCase.patient.age);
+                      const hrInterp = interpretPediatricVital("hr", currentCase.vitals.hr, currentCase.patient.age, currentCase.patient.ageMonths, currentCase.patient.ageDays);
+                      const rrInterp = interpretPediatricVital("rr", currentCase.vitals.rr, currentCase.patient.age, currentCase.patient.ageMonths, currentCase.patient.ageDays);
+                      const spo2Interp = interpretPediatricVital("spo2", currentCase.vitals.spo2, currentCase.patient.age, currentCase.patient.ageMonths, currentCase.patient.ageDays);
+                      const sbpInterp = interpretPediatricVital("sbp", currentCase.vitals.bp, currentCase.patient.age, currentCase.patient.ageMonths, currentCase.patient.ageDays);
+                      const tempInterp = interpretPediatricVital("temp", currentCase.vitals.temp, currentCase.patient.age, currentCase.patient.ageMonths, currentCase.patient.ageDays);
                       if (
                         hrInterp.status === "High" || hrInterp.status === "Low" ||
                         rrInterp.status === "High" || rrInterp.status === "Low" ||
@@ -4160,7 +4336,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                   </div>
                   {isPediatricPatient(currentCase.patient.age) && (
                     <div className="pt-0.5">
-                      <PediatricVitalReference param="hr" value={currentCase.vitals.hr} ageYears={currentCase.patient.age} />
+                      <PediatricVitalReference param="hr" value={currentCase.vitals.hr} ageYears={currentCase.patient.age} ageMonthsParam={currentCase.patient.ageMonths} ageDaysParam={currentCase.patient.ageDays} />
                     </div>
                   )}
                   <div className="h-56 w-full pt-2">
@@ -4198,7 +4374,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                   </div>
                   {isPediatricPatient(currentCase.patient.age) && (
                     <div className="pt-0.5">
-                      <PediatricVitalReference param="sbp" value={currentCase.vitals.bp} ageYears={currentCase.patient.age} />
+                      <PediatricVitalReference param="sbp" value={currentCase.vitals.bp} ageYears={currentCase.patient.age} ageMonthsParam={currentCase.patient.ageMonths} ageDaysParam={currentCase.patient.ageDays} />
                     </div>
                   )}
                   <div className="h-56 w-full pt-2">
@@ -4238,7 +4414,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                   </div>
                   {isPediatricPatient(currentCase.patient.age) && (
                     <div className="pt-0.5">
-                      <PediatricVitalReference param="spo2" value={currentCase.vitals.spo2} ageYears={currentCase.patient.age} />
+                      <PediatricVitalReference param="spo2" value={currentCase.vitals.spo2} ageYears={currentCase.patient.age} ageMonthsParam={currentCase.patient.ageMonths} ageDaysParam={currentCase.patient.ageDays} />
                     </div>
                   )}
                   <div className="h-56 w-full pt-2">
@@ -4393,7 +4569,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                             
                             const hrStr = rec.hr !== undefined && rec.hr !== null && rec.hr !== 0 ? rec.hr.toString() : "";
                             const isHrAbnormal = isPediatric
-                              ? (hrStr ? interpretPediatricVital("hr", hrStr, currentCase.patient.age).status !== "Normal" : false)
+                              ? (hrStr ? interpretPediatricVital("hr", hrStr, currentCase.patient.age, currentCase.patient.ageMonths, currentCase.patient.ageDays).status !== "Normal" : false)
                               : (hrStr ? parseInt(hrStr) > 100 || parseInt(hrStr) < 60 : false);
 
                             const spo2Str = rec.spo2 !== undefined && rec.spo2 !== null && rec.spo2 !== 0 ? rec.spo2.toString() : "";
@@ -4401,7 +4577,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
 
                             const rrStr = rec.rr !== undefined && rec.rr !== null && rec.rr !== 0 ? rec.rr.toString() : "";
                             const isRrAbnormal = isPediatric
-                              ? (rrStr ? interpretPediatricVital("rr", rrStr, currentCase.patient.age).status !== "Normal" : false)
+                              ? (rrStr ? interpretPediatricVital("rr", rrStr, currentCase.patient.age, currentCase.patient.ageMonths, currentCase.patient.ageDays).status !== "Normal" : false)
                               : (rrStr ? parseInt(rrStr) > 24 || parseInt(rrStr) < 10 : false);
 
                             const tempStr = rec.temp !== undefined && rec.temp !== null && rec.temp !== 0 ? rec.temp.toString() : "";
@@ -5439,30 +5615,30 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                 <div className="bg-sky-50/50 dark:bg-sky-950/10 border border-sky-200 rounded-xl p-4 space-y-2 text-xs">
                   <div className="flex justify-between items-center border-b border-sky-100/50 dark:border-sky-900/30 pb-1.5 mb-1">
                     <h4 className="font-bold text-sky-800 dark:text-sky-300">PALS Pediatric Emergency Dosing Quick Calculator</h4>
-                    <span className="bg-sky-100 dark:bg-sky-900/50 text-sky-800 dark:text-sky-200 px-2.5 py-0.5 rounded text-[10px] font-bold font-mono">
-                      Weight: {pediatricWeight === "" ? getAPLSEstimate(currentCase.patient.age) : pediatricWeight} kg
+                    <span data-testid="pals-weight" className="bg-sky-100 dark:bg-sky-900/50 text-sky-800 dark:text-sky-200 px-2.5 py-0.5 rounded text-[10px] font-bold font-mono">
+                      Weight: {palsWeight()} kg{!(parseFloat(currentCase.patient?.weight || currentCase.pediatricDetails?.weight || "") > 0) && pediatricWeight === "" ? " (est.)" : ""}
                     </span>
                   </div>
                   <p className="text-slate-500 text-[10px] leading-snug">Based on standard weight calculation. Confirm patient actual weight on admission.</p>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-[11px] font-mono leading-relaxed pt-1">
                     <div className="bg-white dark:bg-slate-900 border border-sky-100/60 p-2 rounded hover:shadow-sm transition-all">
                       <span className="font-semibold text-sky-600 block text-[10px]">Adrenaline (1:10k)</span>
-                      <p className="text-slate-700 dark:text-slate-300 font-bold mt-0.5 text-xs">{(0.1 * (pediatricWeight === "" ? (getAPLSEstimate(currentCase.patient.age) as number) : pediatricWeight)).toFixed(1)} mL IV/IO</p>
+                      <p className="text-slate-700 dark:text-slate-300 font-bold mt-0.5 text-xs">{(0.1 * palsWeight()).toFixed(1)} mL IV/IO</p>
                       <span className="text-[9px] text-slate-400 block mt-0.5">0.1 mL/kg (0.01 mg/kg)</span>
                     </div>
                     <div className="bg-white dark:bg-slate-900 border border-sky-100/60 p-2 rounded hover:shadow-sm transition-all">
                       <span className="font-semibold text-sky-600 block text-[10px]">Amiodarone Bolus</span>
-                      <p className="text-slate-700 dark:text-slate-300 font-bold mt-0.5 text-xs">{(5 * (pediatricWeight === "" ? (getAPLSEstimate(currentCase.patient.age) as number) : pediatricWeight)).toFixed(0)} mg IV/IO</p>
+                      <p className="text-slate-700 dark:text-slate-300 font-bold mt-0.5 text-xs">{(5 * palsWeight()).toFixed(0)} mg IV/IO</p>
                       <span className="text-[9px] text-slate-400 block mt-0.5">5 mg/kg</span>
                     </div>
                     <div className="bg-white dark:bg-slate-900 border border-sky-100/60 p-2 rounded hover:shadow-sm transition-all">
                       <span className="font-semibold text-sky-600 block text-[10px]">Fluid Bolus (NS/LR)</span>
-                      <p className="text-slate-700 dark:text-slate-300 font-bold mt-0.5 text-xs">{(20 * (pediatricWeight === "" ? (getAPLSEstimate(currentCase.patient.age) as number) : pediatricWeight)).toFixed(0)} mL IV/IO</p>
+                      <p className="text-slate-700 dark:text-slate-300 font-bold mt-0.5 text-xs">{(20 * palsWeight()).toFixed(0)} mL IV/IO</p>
                       <span className="text-[9px] text-slate-400 block mt-0.5">20 mL/kg</span>
                     </div>
                     <div className="bg-white dark:bg-slate-900 border border-sky-100/60 p-2 rounded hover:shadow-sm transition-all">
                       <span className="font-semibold text-sky-600 block text-[10px]">Atropine IV/IO</span>
-                      <p className="text-slate-700 dark:text-slate-300 font-bold mt-0.5 text-xs">{Math.max(0.1, 0.02 * (pediatricWeight === "" ? (getAPLSEstimate(currentCase.patient.age) as number) : pediatricWeight)).toFixed(2)} mg</p>
+                      <p className="text-slate-700 dark:text-slate-300 font-bold mt-0.5 text-xs">{Math.max(0.1, 0.02 * palsWeight()).toFixed(2)} mg</p>
                       <span className="text-[9px] text-slate-400 block mt-0.5">0.02 mg/kg (min 0.1 mg)</span>
                     </div>
                   </div>
@@ -5485,6 +5661,28 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                   )}
                 </div>
                 
+                {/* Recommended dose for the typed drug (paediatric: weight-based, from the in-app formulary) */}
+                {(() => {
+                  if (!currentCase.isPediatric || newDrug.trim().length < 3) return null;
+                  const w = resolveDosingWeight(pediatricWeight !== "" ? pediatricWeight : (currentCase.patient?.weight || currentCase.pediatricDetails?.weight || currentCase.pediatricDetails?.patientWeight), currentCase.patient.age, currentCase.patient.ageMonths, currentCase.patient.ageDays);
+                  const sugg = w ? suggestPediatricDoses(newDrug, w.kg) : [];
+                  const routes = ["IV", "IM", "IO", "PO", "PR", "SC"];
+                  return (
+                    <DoseGuide
+                      query={newDrug}
+                      suggestions={sugg}
+                      weightKg={w ? w.kg : null}
+                      weightEstimated={!!w?.estimated}
+                      ageLabel={formatAge(currentCase.patient.age, currentCase.patient.ageMonths, currentCase.patient.ageDays)}
+                      onUse={(sg) => {
+                        setNewDose(sg.doseValue);
+                        const first = (sg.route || "").split("/")[0].trim().toUpperCase();
+                        if (routes.includes(first)) setNewRoute(first);
+                      }}
+                    />
+                  );
+                })()}
+
                 {/* Add Manual Form */}
                 <div className="bg-white dark:bg-slate-950 p-2.5 rounded-lg border border-slate-200 dark:border-slate-800 grid grid-cols-1 md:grid-cols-4 gap-2 items-end mt-2">
                   <div className="md:col-span-1.5">

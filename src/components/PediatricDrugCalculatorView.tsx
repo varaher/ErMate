@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from "react";
+import { getDrugSafetyNotices } from "../data/pediatricDrugSafety";
 import { 
   ArrowLeft, Search, Thermometer, Shield, Circle, Droplet, 
   Target, Wind, Crosshair, Zap, RotateCcw, Leaf, Heart, 
@@ -190,10 +191,17 @@ export default function PediatricDrugCalculatorView({ onBack, initialWeight }: P
             </div>
           </div>
           
-                   <div className="text-[10px] text-amber-600 dark:text-amber-500/90 font-medium font-mono flex items-center gap-1 bg-amber-500/5 border border-amber-500/10 p-2.5 rounded-lg">
-            <Info className="w-3.5 h-3.5 shrink-0" />
-            <span>Enter patient weight for dose calculations</span>
-          </div>
+          {isWeightValid ? (
+            <div data-testid="weight-ok" className="text-[10px] text-emerald-700 dark:text-emerald-400 font-medium font-mono flex items-center gap-1 bg-emerald-500/5 border border-emerald-500/20 p-2.5 rounded-lg">
+              <Info className="w-3.5 h-3.5 shrink-0" />
+              <span>Doses calculated for {numericWeight} kg</span>
+            </div>
+          ) : (
+            <div data-testid="weight-hint" className="text-[10px] text-amber-600 dark:text-amber-500/90 font-medium font-mono flex items-center gap-1 bg-amber-500/5 border border-amber-500/10 p-2.5 rounded-lg">
+              <Info className="w-3.5 h-3.5 shrink-0" />
+              <span>Enter patient weight for dose calculations</span>
+            </div>
+          )}
 
           {isWeightImplausible && (
             <div className="text-[10px] text-rose-700 dark:text-rose-400 font-bold font-mono flex items-center gap-1.5 bg-rose-500/10 border border-rose-500/30 p-2.5 rounded-lg">
@@ -490,6 +498,11 @@ function DrugCard({ drug, weight, isWeightValid, isExpanded, onToggle }: DrugCar
     return null;
   }, [isWeightValid, drug, weight]);
 
+  const safetyNotices = useMemo(
+    () => getDrugSafetyNotices(drug, isWeightValid ? Number(weight) : null),
+    [drug, isWeightValid, weight],
+  );
+
   return (
     <div 
       className={`bg-white dark:bg-slate-950/50 border rounded-2xl p-4 hover:border-slate-400 dark:hover:border-slate-700 transition-all ${
@@ -514,6 +527,24 @@ function DrugCard({ drug, weight, isWeightValid, isExpanded, onToggle }: DrugCar
           {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
         </button>
       </div>
+
+      {safetyNotices.length > 0 && (
+        <div className="mt-3 space-y-1" data-testid="drug-safety-notices">
+          {safetyNotices.map((n, i) => (
+            <div
+              key={i}
+              data-severity={n.severity}
+              className={`rounded-lg border px-2.5 py-1.5 text-[10px] font-sans leading-snug ${
+                n.severity === "danger"
+                  ? "bg-rose-50 border-rose-200 text-rose-800 dark:bg-rose-500/10 dark:border-rose-500/30 dark:text-rose-300"
+                  : "bg-amber-50 border-amber-200 text-amber-800 dark:bg-amber-500/10 dark:border-amber-500/30 dark:text-amber-300"
+              }`}
+            >
+              {n.text}
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Realtime Calculated Dose Alert Block */}
       {isWeightValid && calculation ? (

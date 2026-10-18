@@ -6,6 +6,7 @@ const cToF1 = (c: number) => Math.round(((c * 9) / 5 + 32) * 10) / 10;
 interface Props {
   ageYears: number | null;
   ageMonths?: number | null;
+  ageDays?: number | null;
   /** Optional measured values to flag against the band. */
   hr?: string; rr?: string; sbp?: string; spo2?: string; tempF?: string;
 }
@@ -13,13 +14,13 @@ interface Props {
 type Row = { key: string; label: string; unit: string; low: number; high: number; value?: number | null };
 
 /** Reference-only chart: normal vitals for the entered age. Never changes triage level by itself. */
-export default function PediatricNormalVitalsCard({ ageYears, ageMonths, hr, rr, sbp, spo2, tempF }: Props) {
+export default function PediatricNormalVitalsCard({ ageYears, ageMonths, ageDays, hr, rr, sbp, spo2, tempF }: Props) {
   if (ageYears === null || !isPediatricPatient(ageYears)) return null;
-  const band = getPediatricAgeBand(ageYears, ageMonths);
+  const band = getPediatricAgeBand(ageYears, ageMonths, ageDays);
   if (!band) {
     return (
       <div data-testid="paed-normal-vitals" className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
-        Age under 1 year — enter the age in <b>months</b> to see the normal vitals for this infant.
+        Age under 1 year — enter the age in <b>months or days</b> to see the normal vitals for this infant.
       </div>
     );
   }

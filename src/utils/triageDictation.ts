@@ -12,6 +12,8 @@ export interface TriageDictationResult {
   name?: string;
   age?: number;
   ageMonths?: number; // 0.5 = under 1 month
+  ageDays?: number;
+  ageUnit?: "years" | "months" | "days";
   gender?: "Male" | "Female";
   complaint?: string;
   vitals: { bp?: string; hr?: string; spo2?: string; rr?: string; temp?: string; grbs?: string; painScore?: string };
@@ -49,23 +51,80 @@ export function parseTriageDictation(input: string): TriageDictationResult {
     note("name");
   }
 
-  // ── age
-  let m = take(/(\d{1,3})\s*[- ]?\s*(?:years?|yrs?|y\/o|yo)(?:\s*old)?\b/);
-  if (m) {
-    const y = parseInt(m[1], 10);
-    if (y >= 0 && y <= 120) { out.age = y; note("age"); }
+  // ── age: days / weeks (neonates/infants) first so "14 days old" isn't swallowed
+  const daysMatch = take(/(\d{1,2})\s*[- ]?\s*days?(?:\s*old)?\b/);
+  if (daysMatch && out.age === undefined) {
+    const d = parseInt(daysMatch[1], 10);
+    if (d >= 0 && d <= 90) {
+      out.age = 0;
+      out.ageMonths = 0.5;
+      out.ageDays = d;
+      out.ageUnit = "days";
+      note("age (days)");
+    }
   }
+
+  const weeksMatch = take(/(\d{1,2})\s*[- ]?\s*weeks?(?:\s*old)?\b/);
+  if (weeksMatch && out.age === undefined) {
+    const w = parseInt(weeksMatch[1], 10);
+    if (w >= 1 && w <= 12) {
+      out.age = 0;
+      out.ageMonths = 0.5;
+      out.ageDays = w * 7;
+      out.ageUnit = "days";
+      note("age (weeks)");
+    }
+  }
+
+  const newborn = take(/\bnew ?born\b|\bneonate\b/);
+  if (out.age === undefined && newborn) {
+    out.age = 0;
+    out.ageMonths = 0.5;
+    out.ageDays = 1;
+    out.ageUnit = "days";
+    note("age (newborn)");
+  }
+
+  // ── age: months
   const mo = take(/(\d{1,2})\s*[- ]?\s*months?(?:\s*old)?\b/);
-  if (mo) {
+  if (mo && out.age === undefined) {
     const months = parseInt(mo[1], 10);
-    if (out.age === undefined && months >= 1 && months <= 23) {
-      if (months >= 12) { out.age = 1; out.ageMonths = months - 12 || undefined; } else { out.age = 0; out.ageMonths = months; }
+    if (months >= 1 && months <= 36) {
+      if (months >= 12) {
+        out.age = Math.floor(months / 12);
+        out.ageMonths = months % 12 || undefined;
+      } else {
+        out.age = 0;
+        out.ageMonths = months;
+      }
+      out.ageUnit = "months";
       note("age (months)");
     }
   }
-  const days = take(/(\d{1,2})\s*[- ]?\s*(?:days?|weeks?)(?:\s*old)\b/);
-  const newborn = take(/\bnew ?born\b|\bneonate\b/);
-  if (out.age === undefined && (days || newborn)) { out.age = 0; out.ageMonths = 0.5; note("age (newborn)"); }
+
+  // ── age: years suffix (e.g. "45 years old", "45 yo")
+  let m = take(/(\d{1,3})\s*[- ]?\s*(?:years?|yrs?|y\/o|yo)(?:\s*old)?\b/);
+  if (m && out.age === undefined) {
+    const y = parseInt(m[1], 10);
+    if (y >= 0 && y <= 120) {
+      out.age = y;
+      out.ageUnit = "years";
+      note("age");
+    }
+  }
+
+  // ── age: direct prefix (e.g. "age 45", "aged 52", "age is 35")
+  if (out.age === undefined) {
+    const directAge = take(/(?:\baged|\bage(?: is|:)?)\s*(\d{1,3})\b(?!\s*[- ]?(?:days?|weeks?|months?))/);
+    if (directAge) {
+      const y = parseInt(directAge[1], 10);
+      if (y >= 0 && y <= 120) {
+        out.age = y;
+        out.ageUnit = "years";
+        note("age");
+      }
+    }
+  }
 
   // ── sex
   const g = take(/\b(male|female|man|woman|boy|girl|lady|gentleman)\b/);

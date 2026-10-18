@@ -82,18 +82,26 @@ export function suggestPediatricDoses(query: string, weightKg: number | null | u
 export function resolveDosingWeight(
   entered: string | number | null | undefined,
   ageYears: number | null | undefined,
-  ageMonths?: number | null
+  ageMonths?: number | null,
+  ageDays?: number | null
 ): { kg: number; estimated: boolean } | null {
   const n = typeof entered === "number" ? entered : parseFloat(String(entered ?? ""));
   if (Number.isFinite(n) && n > 0) return { kg: n, estimated: false };
-  const est = estimateWeightFromAge(ageYears, ageMonths);
+  const est = estimateWeightFromAge(ageYears, ageMonths, ageDays);
   return est === null ? null : { kg: est, estimated: true };
 }
 
-/** APLS-style estimate. Infants use months when known; without months, age 0 uses the existing 7 kg default. */
-export function estimateWeightFromAge(ageYears: number | null | undefined, ageMonths?: number | null): number | null {
+/** APLS-style estimate. Infants use months when known; neonates use days; without months/days, age 0 uses 7 kg. */
+export function estimateWeightFromAge(
+  ageYears: number | null | undefined,
+  ageMonths?: number | null,
+  ageDays?: number | null
+): number | null {
   if (ageYears === null || ageYears === undefined || !Number.isFinite(ageYears) || ageYears < 0) return null;
   if (ageYears === 0) {
+    if (typeof ageDays === "number" && Number.isFinite(ageDays) && ageDays > 0) {
+      return 3.5;
+    }
     if (typeof ageMonths === "number" && Number.isFinite(ageMonths)) return ageMonths < 1 ? 3.5 : Math.round((0.5 * ageMonths + 4) * 10) / 10;
     return 7;
   }

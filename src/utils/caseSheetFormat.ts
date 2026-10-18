@@ -54,7 +54,7 @@ export function formatCaseSheetText(data: CaseSheetData): string {
   const p = data.patient;
   section("Patient Details", [
     `Name: ${val(p.name)}`,
-    `Age / Sex: ${p.age !== null && p.age !== undefined ? formatAge(p.age, p.ageMonths) : ND} ${p.sex || ""}`.trimEnd(),
+    `Age / Sex: ${p.age !== null && p.age !== undefined ? formatAge(p.age, p.ageMonths, p.ageDays) : ND} ${p.sex || ""}`.trimEnd(),
     hasText(p.weight) ? `Weight: ${p.weight} kg` : "",
     `UHID: ${val(p.uhid)}`,
     `Bed: ${val(p.bed)}`,

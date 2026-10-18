@@ -129,7 +129,7 @@ export function hasAnyClinicalContent(c: ClinicalCase): boolean {
   if (!c) return false;
   const filled = (v: unknown) => typeof v === "string" ? v.trim().length > 0 : v !== null && v !== undefined && v !== false;
   const p: any = c.patient || {};
-  if (filled(p.presentingComplaint) || filled(p.name) || filled(p.age) || filled(p.weight)) return true;
+  if (filled(p.presentingComplaint) || filled(p.name) || filled(p.age) || filled(p.ageMonths) || filled(p.ageDays) || filled(p.weight)) return true;
   const v: any = c.vitals || {};
   if (["hr", "bp", "rr", "spo2", "temp", "gcs", "grbs", "weight"].some(k => filled(v[k]))) return true;
   const sh: any = c.sampleHistory || {};
