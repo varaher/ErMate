@@ -16,6 +16,7 @@
 import type { CaseSheetData } from "../components/CaseSheetPrintView";
 
 import { screeningLines, isolationBanner } from "./triageScreening";
+import { formatAge } from "./ageLabel";
 const ND = "Not documented";
 
 function val(v: unknown): string {
@@ -53,7 +54,7 @@ export function formatCaseSheetText(data: CaseSheetData): string {
   const p = data.patient;
   section("Patient Details", [
     `Name: ${val(p.name)}`,
-    `Age / Sex: ${p.age !== null && p.age !== undefined ? `${p.age}y` : ND} ${p.sex || ""}`.trimEnd(),
+    `Age / Sex: ${p.age !== null && p.age !== undefined ? formatAge(p.age, p.ageMonths) : ND} ${p.sex || ""}`.trimEnd(),
     `UHID: ${val(p.uhid)}`,
     `Bed: ${val(p.bed)}`,
     `Arrival: ${hasText(data.arrival?.date) || hasText(data.arrival?.time) ? `${data.arrival?.date || ""} ${data.arrival?.time || ""}`.trim() : ND}`,

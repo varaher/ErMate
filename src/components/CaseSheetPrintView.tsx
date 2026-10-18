@@ -9,6 +9,7 @@ import { formatCaseSheetText } from "../utils/caseSheetFormat";
 import { copyTextToClipboard } from "../utils/copyToClipboard";
 import { getTriageDisplay } from "../utils/triageScale";
 import { screeningLines, isolationBanner } from "../utils/triageScreening";
+import { formatAge } from "../utils/ageLabel";
 import type { TriageScreening } from "../types";
 
 export { formatCaseSheetText };
@@ -74,6 +75,7 @@ export interface CaseSheetData {
   patient: {
     name: string | null;
     age: number | null;
+    ageMonths?: number | null;
     sex: "M" | "F" | "O" | null;
     uhid: string | null;
     bed: string | null;
@@ -642,7 +644,8 @@ export function convertClinicalCaseToCaseSheetData(c: ClinicalCase, defaultHospi
     caseType: c.patient?.caseType || (c as any).caseType || null,
     patient: {
       name: c.patient?.name || null,
-      age: c.patient?.age ? parseVal(c.patient.age) : null,
+      age: (c.patient?.age !== null && c.patient?.age !== undefined) ? parseVal(c.patient.age) : null,
+      ageMonths: c.patient?.ageMonths ?? null,
       sex: c.patient?.gender ? (c.patient.gender.toUpperCase().startsWith("M") ? "M" : c.patient.gender.toUpperCase().startsWith("F") ? "F" : "O") : null,
       uhid: c.patient?.uhid || null,
       bed: c.bedNo || null
@@ -1471,7 +1474,7 @@ export default function CaseSheetPrintView({
         <Section>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-1.5 text-sm">
             <div><span className="font-bold">Name:</span> {data.patient.name || "Not recorded"}</div>
-            <div><span className="font-bold">Age / Sex:</span> {data.patient.age !== null ? `${data.patient.age}y` : "—"} {data.patient.sex || "—"}</div>
+            <div><span className="font-bold">Age / Sex:</span> {data.patient.age !== null ? formatAge(data.patient.age, data.patient.ageMonths) : "—"} {data.patient.sex || "—"}</div>
             <div><span className="font-bold">UHID:</span> {data.patient.uhid || "—"}</div>
             <div><span className="font-bold">Bed / Location:</span> {data.patient.bed || "—"}</div>
             <div><span className="font-bold">Arrival:</span> {data.arrival.date || "—"} {data.arrival.time || ""}</div>

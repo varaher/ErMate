@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { formatAge } from "../utils/ageLabel";
 import { 
   Users, ClipboardCopy, FileText, Printer, Plus, Trash2, Edit2, Pencil,
   CheckCircle, HelpCircle, Download, Check, RefreshCw, Layers, LayoutList,
@@ -2590,7 +2591,7 @@ function extractLatestVitalsWithTime(
             id: c.id,
             bed: c.bedNo || "Unassigned",
             name: c.patient.name,
-            ageGender: `${c.patient.age || "N/A"}y / ${c.patient.gender}`,
+            ageGender: `${formatAge(c.patient.age, c.patient.ageMonths)} / ${c.patient.gender}`,
             erNo: c.patient.uhid || c.displayId || c.id.substring(0, 7),
             doctor: treatingPhysician,
             treatingPhysician: treatingPhysician,

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
+import { formatAgeLong } from "../utils/ageLabel";
 import { ConfirmModal } from "./shared/ConfirmModal";
 import { ArrowLeft, Sparkles, CheckCircle, Save, RefreshCw, AlertCircle, Printer, ShieldAlert, FileText, Check, AlertTriangle, ListFilter, Copy, Download, ChevronDown, FileCheck, MessageSquare, Trash2 } from "lucide-react";
 import { ClinicalCase, DischargeInfo, DischargeSummaryStatus, UserProfile } from "../types";
@@ -1752,7 +1753,7 @@ export default function DischargeSummaryView({
             </div>
 
   <div><span className="font-bold">PATIENT NAME:</span> {currentCase.patient.name}</div>
-  <div><span className="font-bold">AGE / GENDER:</span> {currentCase.patient.age ? `${currentCase.patient.age} Years` : "Not documented"} / {currentCase.patient.gender || "Not documented"}</div>
+  <div><span className="font-bold">AGE / GENDER:</span> {formatAgeLong(currentCase.patient.age, currentCase.patient.ageMonths)} / {currentCase.patient.gender || "Not documented"}</div>
   <div><span className="font-bold">UHID / CR NUMBER:</span> {uhid || "Not documented"}</div>
 
   <div className="mt-4"><span className="font-bold">MLC:</span> {isMlc === "Yes" ? `Yes (${mlcNo || "Not documented"})` : "No"}</div>

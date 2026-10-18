@@ -51,6 +51,9 @@ import { hasCaseScribeHistory } from "../services/scribeChatStorage";
 import { PediatricVitalReference } from "./PediatricVitalReference";
 import { authenticatedFetch } from "../services/authenticatedFetch";
 import { isPediatricPatient, interpretPediatricVital, getPediatricVitalRange } from "../utils/pediatricRanges";
+import { formatAge, formatAgeLong } from "../utils/ageLabel";
+import { suggestPediatricDoses, resolveDosingWeight, estimateWeightFromAge } from "../utils/drugDoseSuggestions";
+import DoseGuide from "./DoseGuide";
 import { mirrorPediatricToStandard } from "../utils/pediatricMirror";
 import { QuickInvestigationMenu } from "./QuickInvestigationMenu";
 import { EffectivePanel, testsToAdd } from "../utils/quickPanels";
@@ -292,6 +295,7 @@ export function isCaseSheetDirty(current: ClinicalCase | null | undefined, saved
     patient: {
       name: (c.patient?.name || "").trim(),
       age: c.patient?.age,
+      ageMonths: c.patient?.ageMonths,
       gender: c.patient?.gender,
       uhid: (c.patient?.uhid || "").trim(),
       phone: (c.patient?.phone || "").trim(),
