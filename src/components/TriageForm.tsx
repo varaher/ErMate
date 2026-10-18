@@ -9,16 +9,19 @@ import BedPicker from "./shared/BedPicker";
 import PediatricNormalVitalsCard from "./PediatricNormalVitalsCard";
 import TriageScreeningFields from "./TriageScreeningFields";
 import { normalizeScreening } from "../utils/triageScreening";
+import { parseTriageDictation, type TriageDictationResult } from "../utils/triageDictation";
 
 interface TriageFormProps {
   onBack: () => void;
-  onSubmit: (demographics: PatientDemographics, vitals: PatientVitals, bedNo?: string) => void;
+  onSubmit: (demographics: PatientDemographics, vitals: PatientVitals, bedNo?: string, options?: { queueForDoctor?: boolean }) => void;
+  /** Hospital team members only: lets a triage desk hand the patient to the waiting queue instead of treating. */
+  canQueueForDoctor?: boolean;
   initialMode: "full" | "quick";
   activeCases?: ClinicalCase[];
   physicalBedCapacity?: number;
 }
 
-export default function TriageForm({ onBack, onSubmit, initialMode, activeCases = [], physicalBedCapacity = 30 }: TriageFormProps) {
+export default function TriageForm({ onBack, onSubmit, initialMode, activeCases = [], physicalBedCapacity = 30, canQueueForDoctor = false }: TriageFormProps) {
   // Demographic State
   const [name, setName] = useState("");
   const [age, setAge] = useState<string>("");
@@ -64,6 +67,30 @@ export default function TriageForm({ onBack, onSubmit, initialMode, activeCases 
   // Months beyond whole years for age 0-1 (0.5 = under 1 month); screening block
   const [ageMonthsStr, setAgeMonthsStr] = useState("");
   const [screening, setScreening] = useState<TriageScreening>({});
+  const [queueForDoctor, setQueueForDoctor] = useState(false);
+  const [dictationFilled, setDictationFilled] = useState<string[] | null>(null);
+
+  // Fill from ONE spoken triage dictation. Existing entries win; nothing unspoken is invented.
+  const applyDictation = (transcript: string) => {
+    const r: TriageDictationResult = parseTriageDictation(transcript);
+    if (r.filled.length === 0) { setDictationFilled([]); return; }
+    if (r.name && !name.trim()) setName(r.name);
+    if (r.age !== undefined && age === "") setAge(String(r.age));
+    if (r.ageMonths !== undefined && ageMonthsStr === "") setAgeMonthsStr(String(r.ageMonths));
+    if (r.gender && gender === "Male" && r.gender === "Female") setGender("Female");
+    if (r.complaint) setPresentingComplaint((prev) => (prev.trim() ? `${prev.trim()}; ${r.complaint}` : r.complaint!));
+    if (r.vitals.bp && !bp) setBp(r.vitals.bp);
+    if (r.vitals.hr && !hr) setHr(r.vitals.hr);
+    if (r.vitals.spo2 && !spo2) setSpo2(r.vitals.spo2);
+    if (r.vitals.rr && !rr) setRr(r.vitals.rr);
+    if (r.vitals.temp && !temp) setTemp(r.vitals.temp);
+    if (r.vitals.grbs && !grbs) setGrbs(r.vitals.grbs);
+    if (r.vitals.painScore && !painScore) setPainScore(r.vitals.painScore);
+    if (r.arrivalMode) setArrivalMode(r.arrivalMode as ArrivalMode);
+    if (r.isMlc) setIsMlc(true);
+    setScreening((prev) => ({ ...r.screening, ...prev }));
+    setDictationFilled(r.filled);
+  };
 
   // Logic
   const ageNum = age ? parseInt(age) : null;
@@ -174,7 +201,7 @@ export default function TriageForm({ onBack, onSubmit, initialMode, activeCases 
       finalBedNo = allocation.canonicalBed;
     }
 
-    onSubmit(demographics, vitals, finalBedNo);
+    onSubmit(demographics, vitals, finalBedNo, canQueueForDoctor && queueForDoctor ? { queueForDoctor: true } : undefined);
   };
 
   return (
@@ -231,6 +258,22 @@ export default function TriageForm({ onBack, onSubmit, initialMode, activeCases 
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-6">
+
+        {/* Dictate the whole triage once; fields fill for the nurse to confirm */}
+        <div className="rounded-xl border border-indigo-200 dark:border-indigo-900 bg-indigo-50/60 dark:bg-indigo-950/20 p-3 flex items-center justify-between gap-3" data-testid="triage-dictation">
+          <div className="text-xs text-indigo-900 dark:text-indigo-200">
+            <div className="font-bold">Dictate triage</div>
+            <div className="text-[11px] opacity-80">e.g. “Name is Ramesh, 45 male, chest pain, BP 150 over 90, pulse 110, came by ambulance, no travel history”</div>
+          </div>
+          <VoiceRecorder renderMode="compact-button" onTranscript={applyDictation} />
+        </div>
+        {dictationFilled !== null && (
+          <div role="status" data-testid="dictation-result" className={`rounded-lg px-3 py-2 text-xs ${dictationFilled.length ? "bg-emerald-50 text-emerald-900 border border-emerald-200" : "bg-amber-50 text-amber-900 border border-amber-200"}`}>
+            {dictationFilled.length
+              ? <>Filled from dictation: <b>{dictationFilled.join(", ")}</b>. Please confirm before saving; anything not said is left blank.</>
+              : <>Nothing recognised in that dictation — please say it again or type.</>}
+          </div>
+        )}
         {/* Core Demographics Card */}
         <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl p-5 md:p-6 shadow-sm space-y-4">
           <h3 className="text-sm font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2 border-b border-slate-100 dark:border-slate-900 pb-2">
@@ -862,6 +905,13 @@ export default function TriageForm({ onBack, onSubmit, initialMode, activeCases 
               </div>
             </div>
           </div>
+        )}
+
+        {canQueueForDoctor && (
+          <label className="flex items-start gap-2 rounded-xl border border-slate-200 dark:border-slate-800 p-3 text-xs text-slate-700 dark:text-slate-200 cursor-pointer" data-testid="queue-toggle">
+            <input type="checkbox" checked={queueForDoctor} onChange={(e) => setQueueForDoctor(e.target.checked)} className="mt-0.5" />
+            <span><b>Send to waiting queue</b> — I am not the treating doctor. A doctor will take this patient from the queue.</span>
+          </label>
         )}
 
         {/* Submit Button */}

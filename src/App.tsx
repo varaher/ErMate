@@ -2377,7 +2377,8 @@ const handleDeleteAllCases = async () => {
   const handleTriageSubmit = async (
     demographics: PatientDemographics, 
     vitals: PatientVitals,
-    bedNo?: string
+    bedNo?: string,
+    options?: { queueForDoctor?: boolean }
   ) => {
     const isPeds = demographics.age !== null && demographics.age <= 16;
     
@@ -2398,6 +2399,8 @@ const handleDeleteAllCases = async () => {
     const createdByUid = auth.currentUser?.uid || "uid_priya";
     const createdByRoleVal = (profile.role || "").toLowerCase().includes("hod") ? "hod" : ((profile.role || "").toLowerCase().includes("consultant") ? "consultant" : "resident");
     const hospitalSlug = (profile.hospital || "general-er").trim().toLowerCase().replace(/[^a-z0-9]/g, "-");
+    // Triage-desk hand-off is only valid inside a hospital workspace (queue is shared by team members).
+    const queueForDoctor = Boolean(options?.queueForDoctor) && workspace.workspaceType === "hospital";
 
     const parseNullableInt = (value: string | undefined | null): number | null => {
       const parsed = parseInt(value ?? "", 10);
@@ -2437,8 +2440,13 @@ const handleDeleteAllCases = async () => {
       hospitalId: workspace.hospitalId,
       createdBy: createdByUid,
       createdByUid: auth.currentUser?.uid || createdByUid,
-      createdByName: (profile.name || "").startsWith("Dr. ") ? profile.name : "Dr. " + (profile.name || "Doctor"),
-      createdByRole: createdByRoleVal,
+      createdByName: queueForDoctor
+        ? (profile.name || "Triage desk")
+        : ((profile.name || "").startsWith("Dr. ") ? profile.name : "Dr. " + (profile.name || "Doctor")),
+      createdByRole: queueForDoctor ? "triage" : createdByRoleVal,
+      ...(queueForDoctor
+        ? { awaitingDoctor: true, triagedAt: new Date().toISOString(), triagedByUid: auth.currentUser?.uid, triagedByName: profile.name || "" }
+        : {}),
       ...(creationDuty
         ? {
             shiftId: creationDuty.shiftId,
@@ -2450,11 +2458,15 @@ const handleDeleteAllCases = async () => {
       ...(consultantName ? { consultantName } : {}),
       departmentId: hospitalSlug,
       createdAt: new Date().toISOString(),
-      currentAssigneeUid: auth.currentUser?.uid || createdByUid,
-      currentAssigneeEmail: profile.email,
-      currentAssigneeName: (profile.name || "").startsWith("Dr. ") ? profile.name : "Dr. " + (profile.name || "Doctor"),
-      currentAssignmentAt: new Date().toISOString(),
-      ...(creationDuty && activeDutySession
+      ...(queueForDoctor
+        ? {}
+        : {
+            currentAssigneeUid: auth.currentUser?.uid || createdByUid,
+            currentAssigneeEmail: profile.email,
+            currentAssigneeName: (profile.name || "").startsWith("Dr. ") ? profile.name : "Dr. " + (profile.name || "Doctor"),
+            currentAssignmentAt: new Date().toISOString(),
+          }),
+      ...(!queueForDoctor && creationDuty && activeDutySession
         ? {
             currentAssignmentDutySessionId: activeDutySession.id,
             currentAssignmentDutyDateKey: activeDutySession.dutyDateKey,
@@ -2499,8 +2511,8 @@ const handleDeleteAllCases = async () => {
       status: activeFormMode === "quick" ? "Active" : "Triage",
       savedTime: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       timeSpentMin: 1, // Start timer
-      doctorEmail: profile.email,
-      doctorName: "Dr. " + profile.name,
+      doctorEmail: queueForDoctor ? "" : profile.email,
+      doctorName: queueForDoctor ? "" : "Dr. " + profile.name,
       hospital: profile.hospital,
       ipsgChecklist: {
         ipsg1IdentifiersVerified: null,
@@ -2523,8 +2535,8 @@ const handleDeleteAllCases = async () => {
       },
       dispositionDetails: {
         durationInEr: "",
-        residentName: "Dr. " + profile.name,
-        consultantName: "Dr. " + profile.name,
+        residentName: queueForDoctor ? "" : "Dr. " + profile.name,
+        consultantName: queueForDoctor ? "" : "Dr. " + profile.name,
         observationNotes: ""
       } as any,
       vitalsHistory: hasInitialVitals
@@ -2572,9 +2584,61 @@ const handleDeleteAllCases = async () => {
     }
 
     setCases(prev => [newCase, ...prev.filter(c => c.id !== newCase.id)]);
+    if (queueForDoctor) {
+      // Desk is done: back to the dashboard; the patient waits in the queue for a doctor.
+      setActiveFormMode(null);
+      triggerNotification("Sent to waiting queue", `${demographics.name || "Patient"} is waiting for a doctor.`, "success");
+      return;
+    }
     setSelectedCaseId(newCase.id);
     setActiveFormMode(null);
     checkConsentOnCaseSaved();
+  };
+
+  // Doctor takes a patient from the waiting queue. Transactional so two doctors cannot both take the same patient.
+  const handleTakeQueuedCase = async (caseId: string) => {
+    if (!auth.currentUser) return;
+    const dutyOk = Boolean(activeDutySession && isActiveDutySessionNow(activeDutySession, new Date()));
+    if (!dutyOk) {
+      triggerNotification("Duty Session Required", "Start your current duty before taking a patient.", "warning");
+      return;
+    }
+    const rawName = profile.name || auth.currentUser.displayName || "Doctor";
+    const myName = rawName.startsWith("Dr. ") ? rawName : "Dr. " + rawName;
+    const myEmail = profile.email || auth.currentUser.email || "";
+    const now = new Date().toISOString();
+    const rawShiftId = activeDutySession ? (activeDutySession.shiftId || "custom").trim().toLowerCase().replace(/^shift_/, "") : "";
+    const ref = doc(db, "cases", caseId);
+    try {
+      const taken = await runTransaction(db, async (tx) => {
+        const snap = await tx.get(ref);
+        const current = snap.exists() ? (snap.data() as ClinicalCase) : null;
+        if (!current || current.awaitingDoctor !== true) return null;
+        const patch = sanitizeForFirestore({
+          awaitingDoctor: false,
+          claimedAt: now,
+          doctorEmail: myEmail,
+          doctorName: myName,
+          currentAssigneeUid: auth.currentUser!.uid,
+          currentAssigneeEmail: myEmail,
+          currentAssigneeName: myName,
+          currentAssignmentAt: now,
+          ...(activeDutySession ? { currentAssignmentDutySessionId: activeDutySession.id, currentAssignmentDutyDateKey: activeDutySession.dutyDateKey, currentAssignmentShiftId: rawShiftId } : {}),
+        });
+        tx.update(ref, { ...patch, "dispositionDetails.residentName": myName, "dispositionDetails.consultantName": myName });
+        return { ...current, ...patch, dispositionDetails: { ...(current.dispositionDetails as any), residentName: myName, consultantName: myName } } as ClinicalCase;
+      });
+      if (!taken) {
+        triggerNotification("Already taken", "Another doctor has just taken this patient.", "info");
+        return;
+      }
+      setCases(prev => prev.map(c => (c.id === caseId ? taken : c)));
+      setSelectedCaseId(caseId);
+    } catch (err: any) {
+      console.error("Error taking queued case:", err);
+      handleFirestoreError(err, OperationType.WRITE, "cases");
+      triggerNotification("Could not take patient", "Please try again.", "warning");
+    }
   };
 
   // Save active trial case permanently to Firestore once profile is complete
@@ -7044,6 +7108,12 @@ const handleSignOut = async () => {
             <TriageForm
               onBack={() => setActiveFormMode(null)}
               onSubmit={handleTriageSubmit}
+              canQueueForDoctor={Boolean(
+                selfMembership &&
+                isActiveMembershipStatus(String(selfMembership.status || "")) &&
+                selfMembership.membershipVerified === true &&
+                (selfMembership.hospitalId || selfMembership.hospital)
+              )}
               initialMode={activeFormMode}
               activeCases={filterActiveNonArchivedCases(cases)}
               physicalBedCapacity={erPhysicalBedCapacity || 30}
@@ -7233,6 +7303,7 @@ const handleSignOut = async () => {
                   onStartFullFlow={() => setShowEntryMenu(true)}
                   onStartQuickCase={() => setActiveFormMode("quick")}
                   onSelectCase={handleSelectCase}
+                  onTakeQueuedCase={handleTakeQueuedCase}
                   onViewSheet={handleViewPrintSheet}
                   onNavigateToDischarge={handleNavigateToDischarge}
                   onNavigateToTab={navigateToTab}

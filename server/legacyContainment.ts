@@ -21,16 +21,61 @@ function normaliseSqlSubPath(p: string): string {
 
 /**
  * P-A. Mount with app.use("/api/sql", legacySqlGuard) BEFORE any /api/sql route.
- * Default-deny: everything except POST-handled /sync-user returns 410, for every
- * HTTP method, with or without credentials.
+ * Default-deny: everything except `POST /sync-user` returns 410. The exception is
+ * pinned to BOTH method and path, so a future handler on another verb cannot slip through.
  */
 export function legacySqlGuard(req: Request, res: Response, next: NextFunction) {
-  if (normaliseSqlSubPath(req.path) === SQL_ALLOWED_PATH) return next();
+  if (req.method === "POST" && normaliseSqlSubPath(req.path) === SQL_ALLOWED_PATH) return next();
   return res.status(410).json({
     success: false,
     code: "LEGACY_SQL_API_DISABLED",
     error: "This legacy endpoint has been permanently disabled.",
   });
+}
+
+/**
+ * S3. The SQL users row is only an identity mirror. role / hospital / aiCredits /
+ * subscriptionTier / consent are server-owned (Firestore rules + payments webhook), so
+ * NOTHING the client sends for them is ever stored. On update only email + name change.
+ */
+export interface SyncUserRecord {
+  insert: {
+    uid: string; email: string; name: string; role: string; hospital: string;
+    aiCredits: number; streak: number; subscriptionTier: string; hasConsentedToLearning: null;
+  };
+  update: { email: string; name: string };
+}
+
+export function buildSyncUserRecord(
+  body: { uid?: unknown; email?: unknown; name?: unknown } | null | undefined,
+  token: { uid?: string; email?: string } | null | undefined
+): SyncUserRecord | null {
+  const uid = String(token?.uid || "");
+  const name = String(body?.name ?? "").trim().slice(0, 200);
+  const email = String(token?.email || body?.email || "").trim().slice(0, 320);
+  if (!uid || !email || !name) return null;
+  return {
+    insert: {
+      uid, email, name,
+      role: "EM Physician",
+      hospital: "Varah Group Emergency Care",
+      aiCredits: 350,
+      streak: 0,
+      subscriptionTier: "Free Standard",
+      hasConsentedToLearning: null,
+    },
+    update: { email, name },
+  };
+}
+
+/**
+ * Credit gate: decided ONLY from the server-side stored balance, never from the request body.
+ * Unknown / missing balance does not block clinical use (fail open); a stored balance < 1 does.
+ */
+export function evaluateCreditGate(storedCredits: unknown): { allowed: boolean; remaining?: number } {
+  if (typeof storedCredits !== "number" || !Number.isFinite(storedCredits)) return { allowed: true };
+  if (storedCredits < 1) return { allowed: false, remaining: storedCredits };
+  return { allowed: true, remaining: storedCredits - 1 };
 }
 
 /**

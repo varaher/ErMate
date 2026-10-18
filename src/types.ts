@@ -576,6 +576,13 @@ export interface ClinicalCase {
   departmentId?: string;
   createdAt?: string;
 
+  // Triage-desk hand-off: true while the patient is triaged but no doctor has taken the case yet.
+  awaitingDoctor?: boolean;
+  triagedAt?: string;
+  triagedByUid?: string;
+  triagedByName?: string;
+  claimedAt?: string;
+
   // Operational current clinician assignment & duty session (Patch D4A)
   currentAssigneeUid?: string;
   currentAssigneeEmail?: string;

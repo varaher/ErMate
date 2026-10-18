@@ -12,6 +12,7 @@ import { ClinicalCase, UserProfile, HandoverRecord, TeamMember, isPendingApprova
 import { DutySessionRecord, isActiveDutySessionNow } from "../services/dutySessionService";
 import { formatLocalDateKey } from "../utils/dutyWindow";
 import { getTriageDisplay, triageBadgeClass } from "../utils/triageScale";
+import TriageQueueCard from "./TriageQueueCard";
 import { getCasePendingStatus } from "../utils/caseHelper";
 import { getCaseCreationTimestamp, isCaseEligibleFor24hArchive } from "../utils/caseLifecycle";
 import { triggerPrintWithTip } from "../utils/printWithTip";
@@ -29,6 +30,8 @@ interface DashboardViewProps {
   onStartFullFlow: () => void;
   onStartQuickCase: () => void;
   onSelectCase: (caseId: string) => void;
+  /** Doctor takes a triaged patient from the waiting queue. */
+  onTakeQueuedCase?: (caseId: string) => void | Promise<void>;
   onViewSheet?: (caseId: string) => void;
   onNavigateToDischarge: (caseId: string, startInEdit?: boolean) => void;
   onNavigateToTab: (tabId: string) => void;
@@ -76,6 +79,7 @@ export default function DashboardView({
   onStartFullFlow,
   onStartQuickCase,
   onSelectCase,
+  onTakeQueuedCase,
   onViewSheet,
   onNavigateToDischarge,
   onNavigateToTab,
@@ -730,6 +734,9 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
 
   return (
     <div className="space-y-6 pb-28" id="dashboard-container">
+      {onTakeQueuedCase && (
+        <TriageQueueCard cases={cases} onTake={onTakeQueuedCase} onOpen={onSelectCase} />
+      )}
       {/* 1. Shift Status Banner & Controls */}
       {isOnShift ? (
         <div className="bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900/60 rounded-xl p-4 flex flex-col sm:flex-row items-center justify-between gap-3 shadow-xs">

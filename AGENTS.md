@@ -45,6 +45,28 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-17] — ErMate: Security Follow-Up S1 + S3 & Server-Side Credit Gating (ERMATE-SECURITY-FOLLOWUP-V1)
+- **HTTP Method Pinning for Legacy SQL Guard (`server/legacyContainment.ts`)**:
+  - Pinned `legacySqlGuard` exception strictly to `req.method === "POST" && normaliseSqlSubPath(req.path) === "/sync-user"`; all other HTTP verbs (GET, PUT, PATCH, DELETE) on `/api/sql/sync-user` now return 410 Gone.
+- **Client Profile Privileged Field Neutralisation (`server/legacyContainment.ts`, `server.ts`)**:
+  - Implemented `buildSyncUserRecord(body, token)`: SQL user sync acts solely as an identity mirror. Client-supplied `role`, `hospital`, `aiCredits`, `subscriptionTier`, `hasConsentedToLearning`, and `streak` are ignored.
+  - Insert uses trusted server defaults; update touches only `email` and `name` with email anchored to verified JWT auth token.
+- **Server-Side Credit Verification for Voice Dictation (`server.ts`, `server/legacyContainment.ts`)**:
+  - Replaced client-sent `aiCredits` body parameter on `/api/voice-dictation` with server-side read from Firestore `users/{uid}.aiCredits` using Firebase Admin SDK.
+  - Evaluated via `evaluateCreditGate`: fail-open on transient lookup errors to protect clinical continuity, blocking (403) only when stored credits < 1.
+  - Verified with 23 test assertions in `verify_security_followup.ts` and regression-verified against `verify_batch0_containment.ts`.
+
+### [2026-10-17] — ErMate: Triage Desk Hand-Off & Waiting Queue (ERMATE-TRIAGE-DESK-V1)
+- **Deterministic Triage Dictation Parser (`src/utils/triageDictation.ts`, `src/components/TriageForm.tsx`)**:
+  - Implemented local, zero-network spoken triage dictation parser supporting single-pass voice capture of demographics, vitals, mobility, consciousness/orientation, communicable screening, and arrival mode.
+  - Dictation fills only explicit statements without hallucination, never overwrites manually typed values, and requires confirmation prior to persistence.
+- **Triage Desk Waiting Queue & Hand-Off (`src/utils/triageQueue.ts`, `src/components/TriageQueueCard.tsx`, `src/App.tsx`, `src/types.ts`)**:
+  - Added `awaitingDoctor`, `triagedAt`, `triagedByUid`, and `triagedByName` metadata to `ClinicalCase`.
+  - Added "Send to waiting queue" toggle in TriageForm gated to active verified hospital team members.
+  - Pure priority queue (`buildTriageQueue`) sorting waiting patients by clinical priority (P1 through P5) and longest wait duration with target time indicators.
+  - Atomic, transactional patient claiming (`handleTakeQueuedCase`) enforcing active duty session and preventing race conditions between clinicians.
+  - Verified with 39 automated test assertions in `verify_triage_desk.ts`.
+
 ### [2026-10-17] — ErMate: 5-Level Triage Chart & Infection Screening Integration (ERMATE-TRIAGE-CHART-V1 & ERMATE-TRIAGE-SCREENING-V1)
 - **5-Level Emergency Triage System (`src/utils/triageScale.ts`, `src/utils/triageClassifier.ts`)**:
   - Implemented 5-level clinical triage scale (P1 Immediate 0m, P2 Very Urgent 5m, P3 Urgent 30m, P4 Standard 60m, P5 Non-Urgent 120m) with clean backward compatibility to legacy P1/P2/P3 categories.

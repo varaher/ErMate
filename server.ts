@@ -13,6 +13,7 @@ import { detectNormalcyPhrases } from "./server/extraction.ts";
 
 // Database and authentication imports
 import { db } from "./src/db/index.ts";
+import { db as firestoreAdmin } from "./src/lib/firebase-admin.ts";
 import { cases, contributions, handovers, hospitalSubscriptions, teamMembers, users } from "./src/db/schema.ts";
 import { eq, desc } from "drizzle-orm";
 import { requireAuth, type AuthRequest } from "./src/middleware/auth.ts";
@@ -49,7 +50,7 @@ import teamRouter from "./server/routes/team.routes.ts";
 import mateRouter from "./server/routes/mate.routes.ts";
 
 import { generateMortalityAudit, generateMortalityAuditDocx } from "./server/mortalityAudit.ts";
-import { legacySqlGuard, learningFeedbackRejectHandler, errorForLog } from "./server/legacyContainment.ts";
+import { legacySqlGuard, buildSyncUserRecord, evaluateCreditGate, learningFeedbackRejectHandler, errorForLog } from "./server/legacyContainment.ts";
 import { 
   extractPatternsFromUnprocessedFeedback, 
   getAllFeedbackCorrections, 
@@ -881,14 +882,24 @@ app.post("/api/lens-report", requireAuth, async (req: AuthRequest, res) => {
 
 // 2. AI Voice Dictation Parser (GPT-4o-mini Primary → Claude Haiku Fallback. NOT Gemini.)
 app.post("/api/voice-dictation", requireAuth, async (req: AuthRequest, res) => {
-  const { speechText, aiCredits } = req.body;
+  const { speechText } = req.body;
 
   if (!speechText) {
     return res.status(400).json({ error: "No speech text provided" });
   }
 
-  // Credit Gating Validation (Layer 4)
-  if (aiCredits !== undefined && aiCredits !== null && Number(aiCredits) < 1) {
+  // Credit Gating Validation (Layer 4): balance comes from the server-side user record,
+  // never from the request body (a client-sent aiCredits is ignored).
+  let aiCredits: number | undefined;
+  try {
+    const userSnap = await firestoreAdmin.collection("users").doc(String(req.user?.uid || "_")).get();
+    const stored = userSnap.exists ? userSnap.data()?.aiCredits : undefined;
+    const gate = evaluateCreditGate(stored);
+    if (typeof stored === "number" && Number.isFinite(stored)) aiCredits = gate.allowed ? stored : 0;
+  } catch (e: any) {
+    console.warn("[voice-dictation] credit lookup failed; not blocking clinical use:", e?.message || e);
+  }
+  if (aiCredits !== undefined && Number(aiCredits) < 1) {
     return res.status(403).json({ 
       success: false, 
       error: "Insufficient AI Scribe credits. Please refill your credits in the Team & Billing settings." 
@@ -3506,42 +3517,25 @@ app.use("/api/sql", legacySqlGuard);
 
 // 7.1. Sync User Profile (Upsert)
 app.post("/api/sql/sync-user", requireAuth, async (req: AuthRequest, res) => {
-  const { uid, email, name, role, hospital, aiCredits, streak, subscriptionTier, hasConsentedToLearning } = req.body;
-
-  if (!uid || !email || !name) {
-    return res.status(400).json({ success: false, error: "UID, email, and name are required." });
-  }
+  const { uid } = req.body;
 
   // Ensure user cannot sync another user's UID unless authorized
   if (req.user?.uid !== uid) {
     return res.status(403).json({ success: false, error: "Forbidden: UID mismatch." });
   }
 
+  // S3: identity mirror only. role/hospital/aiCredits/subscriptionTier/consent from the client are ignored.
+  const record = buildSyncUserRecord(req.body, req.user);
+  if (!record) {
+    return res.status(400).json({ success: false, error: "UID, email, and name are required." });
+  }
+
   try {
     const result = await db.insert(users)
-      .values({
-        uid,
-        email,
-        name,
-        role: role || "EM Physician",
-        hospital: hospital || "Varah Group Emergency Care",
-        aiCredits: aiCredits !== undefined ? aiCredits : 350,
-        streak: streak !== undefined ? streak : 0,
-        subscriptionTier: subscriptionTier || "Free Standard",
-        hasConsentedToLearning: hasConsentedToLearning !== undefined ? hasConsentedToLearning : null
-      })
+      .values(record.insert)
       .onConflictDoUpdate({
         target: users.uid,
-        set: {
-          email,
-          name,
-          role: role || "EM Physician",
-          hospital: hospital || "Varah Group Emergency Care",
-          aiCredits: aiCredits !== undefined ? aiCredits : 350,
-          streak: streak !== undefined ? streak : 0,
-          subscriptionTier: subscriptionTier || "Free Standard",
-          hasConsentedToLearning: hasConsentedToLearning !== undefined ? hasConsentedToLearning : null
-        }
+        set: record.update
       })
       .returning();
 
