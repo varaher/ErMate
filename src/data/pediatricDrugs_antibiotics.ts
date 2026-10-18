@@ -101,16 +101,18 @@ export const ANTIBIOTICS_DRUGS: PediatricDrug[] = [
     id: "penicillin-g-benzathine",
     name: "Penicillin G Benzathine",
     category: "Antibiotics - Penicillins",
-    standardDose: "<6yrs: 0.6 mega units, >6yrs: 1.2 mega units IM",
+    standardDose: "Under 27 kg: 0.6 mega units, 27 kg or more: 1.2 mega units IM",
     route: "IM",
     frequency: "Weekly or every 3-4 weeks",
     source: "User Sheet",
     indications: ["Rheumatic fever prophylaxis", "Streptococcal pharyngitis", "Congenital syphilis"],
     calculateDose: (w: number) => {
+      // Weight band (WHO / AHA): under 27 kg 0.6 MU, 27 kg or more 1.2 MU
+      const mu = w < 27 ? 0.6 : 1.2;
       return {
-        doseValue: `<6 yrs: 0.6 MU, >6 yrs: 1.2 MU`,
+        doseValue: `${mu} MU IM`,
         unit: "Mega Units (MU)",
-        breakdown: `Children < 6 years: 0.6 Mega Units IM once\nChildren >= 6 years: 1.2 Mega Units IM once\n(Often given every 3 to 4 weeks for Rheumatic fever secondary prevention)`,
+        breakdown: `${w} kg: ${mu} Mega Units IM once (under 27 kg: 0.6 MU; 27 kg or more: 1.2 MU)\n(Often given every 3 to 4 weeks for Rheumatic fever secondary prevention)`,
         notes: "CRITICAL: Intramuscular use ONLY. Never inject intravenously (risk of cardiac arrest and tissue necrosis)."
       };
     }

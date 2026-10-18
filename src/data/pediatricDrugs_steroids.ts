@@ -162,14 +162,14 @@ export const STEROIDS_DRUGS: PediatricDrug[] = [
     source: "User Sheet / PALS Guidelines",
     indications: ["Anaphylaxis (IM 1:1000)", "Cardiac arrest (IV 1:10,000)", "Croup (Nebulized)"],
     calculateDose: (w: number) => {
-      const imVol = w * 0.01; // 1:1000 is 1mg/mL, so 0.01mg is 0.01mL
-      const ivVol10k = w * 0.1; // 1:10,000 is 0.1mg/mL, so 0.01mg/kg is 0.1mL/kg
+      const imVol = Math.min(0.5, w * 0.01); // 1:1000 is 1mg/mL; single IM dose capped at 0.5 mg (0.5 mL)
+      const ivVol10k = Math.min(10, w * 0.1); // 1:10,000 is 0.1mg/mL; single dose capped at 1 mg (10 mL)
       const croupNeb = Math.min(5, w * 0.5); // L-Adrenaline neb 0.5mL/kg (max 5mL)
       return {
         doseValue: `Anaph IM: ${imVol.toFixed(2)} mL, CPR IV: ${ivVol10k.toFixed(1)} mL, Croup Neb: ${croupNeb.toFixed(1)} mL`,
         unit: "mL",
         breakdown: `Anaphylaxis (IM 1:1000, 0.01 mg/kg): ${imVol.toFixed(2)} mL IM (lateral thigh)\nCardiac Arrest (IV/IO 1:10,000, 0.1 mL/kg): ${ivVol10k.toFixed(1)} mL IV push Q3-5M\nCroup Nebulization (1:1000 L-Adrenaline, 0.5 mL/kg): ${croupNeb.toFixed(1)} mL diluted with NS`,
-        notes: "IM Adrenaline is given as 1:1000 concentration. IV/IO/Endotracheal is given as 1:10,000. Double-check concentration always."
+        notes: "Single-dose caps applied: IM 0.5 mg (0.5 mL of 1:1000), IV/IO 1 mg (10 mL of 1:10,000). IM Adrenaline is given as 1:1000 concentration. IV/IO/Endotracheal is given as 1:10,000. Double-check concentration always."
       };
     }
   },
@@ -224,7 +224,7 @@ export const STEROIDS_DRUGS: PediatricDrug[] = [
     id: "terbutaline",
     name: "Terbutaline Sulphate",
     category: "Bronchodilators",
-    standardDose: "Oral: 0.1-0.15 mg/kg/day 8hly, SC: 0.01-0.02 mL/kg, Neb: 2.5-5 mg/kg",
+    standardDose: "Oral: 0.1-0.15 mg/kg/day 8hly, SC: 0.01-0.02 mL/kg, Neb: 2.5-5 mg per dose (fixed dose, not per kg)",
     route: "PO / SC / Nebulization",
     frequency: "8hly or as needed",
     source: "User Sheet",

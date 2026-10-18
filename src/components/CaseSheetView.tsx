@@ -5054,6 +5054,8 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                   vitals={currentCase.vitals}
                   onUpdateVitals={updateVitals}
                   patientAge={currentCase.patient.age}
+                  patientAgeMonths={currentCase.patient.ageMonths}
+                  patientAgeDays={currentCase.patient.ageDays}
                 />
               )}
             </div>

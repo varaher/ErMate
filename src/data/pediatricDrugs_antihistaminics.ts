@@ -480,7 +480,7 @@ export const ANTIHISTAMINICS_DRUGS: PediatricDrug[] = [
 
   // Anti-Helmintics
   {
-    id: "albendazole",
+    id: "albendazole-alt",
     name: "Albendazole",
     category: "Anti-Helmintics",
     standardDose: "1-2yrs: 200mg, >2yrs: 400mg, Neurocysticercosis: 15 mg/kg/day BD",
@@ -500,7 +500,7 @@ export const ANTIHISTAMINICS_DRUGS: PediatricDrug[] = [
     }
   },
   {
-    id: "diethylcarbamazine",
+    id: "diethylcarbamazine-alt",
     name: "Diethylcarbamazine Citrate",
     genericName: "Banocide",
     category: "Anti-Helmintics",
@@ -521,7 +521,7 @@ export const ANTIHISTAMINICS_DRUGS: PediatricDrug[] = [
     }
   },
   {
-    id: "mebendazole",
+    id: "mebendazole-alt",
     name: "Mebendazole",
     genericName: "Wormin",
     category: "Anti-Helmintics",
@@ -544,7 +544,7 @@ export const ANTIHISTAMINICS_DRUGS: PediatricDrug[] = [
 
   // Anti-Viral
   {
-    id: "acyclovir",
+    id: "acyclovir-varicella",
     name: "Acyclovir",
     category: "Anti-Viral",
     standardDose: "Varicella: 80 mg/kg/day divided 6hly for 5 days",
@@ -554,9 +554,9 @@ export const ANTIHISTAMINICS_DRUGS: PediatricDrug[] = [
     indications: ["Varicella (Chickenpox)", "Herpes simplex encephalitis (IV)", "Mucocutaneous HSV"],
     calculateDose: (w: number) => {
       const varicellaDaily = w * 80;
-      const varicellaDose = varicellaDaily / 4;
+      const varicellaDose = Math.min(800, varicellaDaily / 4); // usual maximum 800 mg per dose
       return {
-        doseValue: `Varicella: ${varicellaDose.toFixed(0)} mg`,
+        doseValue: `Varicella: ${varicellaDose.toFixed(0)} mg${varicellaDaily / 4 > 800 ? " (capped at 800 mg)" : ""}`,
         unit: "mg",
         breakdown: `Varicella Oral Dose (80 mg/kg/day divided Q6H): ${varicellaDose.toFixed(1)} mg PO Q6H for 5 days\n(Neonatal/HSV encephalitis IV dose is typically 20 mg/kg/dose IV Q8H)`,
         notes: "Ensure adequate hydration to prevent crystalluria and renal toxicity. Administer IV dose over 1 hour."

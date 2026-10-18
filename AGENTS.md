@@ -60,8 +60,22 @@
   - Wired `ageDays` to `PediatricNormalVitalsCard` and `PediatricVitalReference` across HR, BP, and SpO2 charts and vitals history logs, resolving neonatal bands without premature "Age in months required" prompts.
   - Passed `ageMonths` into all 3 `classifyEmergencyTriage` call sites in `CaseSheetView.tsx` (handleAddVitalsLog, updateVitals, and handleVoiceSubmit), preventing infants from silently defaulting to 6-month vital bands.
   - Updated `hasAnyClinicalContent` in `src/utils/caseLifecycle.ts` and `isCaseSheetDirty` to cover `ageDays`, `ageMonths`, and `ageUnit`.
-- **Verification Suites (`verify_age_dose_guide.ts`, `verify_pediatric_drug_safety.ts`)**:
-  - Verified with 39 automated tests in `verify_age_dose_guide.ts` and 19 tests in `verify_pediatric_drug_safety.ts`, alongside 0 regressions across triage desk (39/39), triage chart (123/123), screening (29/29), and weight (26/26).
+- **Primary Survey Infant & Neonatal Vital Evaluation (`src/components/PrimarySurveySection.tsx`, `src/components/CaseSheetView.tsx`, `verify_primary_survey_age.ts`)**:
+  - Propagated `patientAgeMonths` and `patientAgeDays` from `CaseSheetView` into `PrimarySurveySectionProps`.
+  - Upgraded `VitalInput` to accept `ageMonths` and `ageDays`, forwarding them directly into `interpretPediatricVital(param, value, ageYears, ageMonths, ageDays)` and `<PediatricVitalReference />`.
+  - Wired all 5 cardinal vitals (RR, SpO₂, HR, BP, Temperature) in Primary Survey to pass months and days, ensuring neonates and infants are judged accurately against their specific physiological bands.
+  - Verified with 6 tests in `verify_primary_survey_age.ts`.
+- **Pediatric Formulary Integrity & Single-Dose Safety Caps (`src/data/pediatricDrugs_*.ts`, `verify_peds_formulary_fixes.ts`)**:
+  - Heparin: Changed dosing unit from mcg to units across standard dose, calculated values, and breakdown.
+  - Penicillin G Benzathine: Updated to weight-band based dosing (under 27 kg: 0.6 MU, 27 kg or more: 1.2 MU IM once).
+  - Anti-helmintics & Anti-virals ID uniqueness: De-duplicated IDs (`albendazole-alt`, `diethylcarbamazine-alt`, `mebendazole-alt`, `acyclovir-varicella`), guaranteeing unique React keys across all 127 formulary entries.
+  - Acyclovir: Applied 800 mg single-dose cap for varicella oral dosing.
+  - Co-amoxiclav: Applied 2000 mg/day amoxicillin component ceiling with capped calculation and advisory notes.
+  - Adrenaline (Epinephrine): Applied single-dose caps (IM 0.5 mg / 0.5 mL of 1:1000; IV/IO 1 mg / 10 mL of 1:10,000).
+  - Terbutaline: Clarified nebulization as fixed dose (2.5–5 mg per dose, not per kg).
+  - Verified with 17 tests in `verify_peds_formulary_fixes.ts`.
+- **Verification Suites (`verify_age_dose_guide.ts`, `verify_pediatric_drug_safety.ts`, `verify_primary_survey_age.ts`, `verify_peds_formulary_fixes.ts`)**:
+  - Verified with 39 automated tests in `verify_age_dose_guide.ts`, 19 tests in `verify_pediatric_drug_safety.ts`, 6 tests in `verify_primary_survey_age.ts`, and 17 tests in `verify_peds_formulary_fixes.ts`, alongside 0 regressions across triage desk (39/39), triage chart (123/123), screening (29/29), and weight (26/26).
 
 ### [2026-10-18] — ErMate: Patient Weight Section & Universal Dosing Anthropometry (ERMATE-CASE-SHEET-WEIGHT-V1)
 - **Data Model & Synchronization (`src/types.ts`, `src/components/CaseSheetView.tsx`)**:

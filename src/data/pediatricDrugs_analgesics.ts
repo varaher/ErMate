@@ -451,7 +451,7 @@ export const ANALGESICS_DRUGS: PediatricDrug[] = [
     id: "heparin",
     name: "Heparin",
     category: "Miscellaneous",
-    standardDose: "IV: 50-100 mcg/kg 4hrly, SC: 25-50 mcg/kg 12hly, DVT: 5000 mcg 8hly",
+    standardDose: "IV: 50-100 units/kg 4hrly, SC: 25-50 units/kg 12hly, DVT: 5000 units 8hly (dosed in UNITS)",
     route: "IV / SC",
     frequency: "4hly or 12hly",
     source: "User Sheet",
@@ -462,9 +462,9 @@ export const ANALGESICS_DRUGS: PediatricDrug[] = [
       const scMin = w * 25;
       const scMax = w * 50;
       return {
-        doseValue: `IV: ${ivMin.toFixed(0)}-${ivMax.toFixed(0)} mcg, SC: ${scMin.toFixed(0)}-${scMax.toFixed(0)} mcg`,
-        unit: "mcg (units equivalent)",
-        breakdown: `IV Bolus Dose (50-100 mcg/kg): ${ivMin.toFixed(0)} to ${ivMax.toFixed(0)} mcg IV Q4H\nSC Prophylaxis Dose (25-50 mcg/kg): ${scMin.toFixed(0)} to ${scMax.toFixed(0)} mcg SC Q12H\nDVT standard fixed dose: 5,000 mcg (units) SC Q8H`,
+        doseValue: `IV: ${ivMin.toFixed(0)}-${ivMax.toFixed(0)} units, SC: ${scMin.toFixed(0)}-${scMax.toFixed(0)} units`,
+        unit: "units",
+        breakdown: `IV Bolus Dose (50-100 units/kg): ${ivMin.toFixed(0)} to ${ivMax.toFixed(0)} units IV Q4H\nSC Prophylaxis Dose (25-50 units/kg): ${scMin.toFixed(0)} to ${scMax.toFixed(0)} units SC Q12H\nDVT standard fixed dose: 5,000 units SC Q8H`,
         notes: "Monitor APTT carefully. Have protamine sulfate ready as an antidote for severe bleeding."
       };
     }

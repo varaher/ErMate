@@ -20,7 +20,8 @@ export const COMBINATION_DRUGS: PediatricDrug[] = [
     ],
     calculateDose: (w: number) => {
       // Standard dose (45 mg/kg/day Amoxicillin component, divided twice daily)
-      const dailyAmox = w * 45;
+      const dailyAmoxRaw = w * 45;
+      const dailyAmox = Math.min(2000, dailyAmoxRaw); // entry's own stated maximum: 2000 mg/day amoxicillin component
       const singleAmox = dailyAmox / 2;
       
       // Augmentin 228mg/5mL contains 200mg Amox + 28.5mg Clav
@@ -33,7 +34,7 @@ export const COMBINATION_DRUGS: PediatricDrug[] = [
         doseValue: `${singleAmox.toFixed(1)} mg PO BD (of Amoxicillin component)`,
         unit: "mg (Amox)",
         breakdown: `Total Daily Amoxicillin: ${dailyAmox.toFixed(1)} mg/day\nSingle Dose (Q12H): ${singleAmox.toFixed(1)} mg Amox BD.\n\nSuspension Volumes:\n* Augmentin 228 mg/5 mL (200/28.5): ${ml228.toFixed(1)} mL BD\n* Augmentin 457 mg/5 mL (400/57): ${ml457.toFixed(1)} mL BD`,
-        notes: "Dosing is always calculated using the Amoxicillin component. Administer at the start of a meal to minimize gastrointestinal side effects."
+        notes: `${dailyAmoxRaw > 2000 ? "Capped at the listed maximum of 2000 mg/day amoxicillin component. " : ""}Dosing is always calculated using the Amoxicillin component. Administer at the start of a meal to minimize gastrointestinal side effects.`
       };
     }
   },

@@ -311,6 +311,8 @@ interface PrimarySurveySectionProps {
   vitals?: PatientVitals;
   onUpdateVitals?: (field: keyof PatientVitals, value: string) => void;
   patientAge?: number | null;
+  patientAgeMonths?: number | null;
+  patientAgeDays?: number | null;
 }
 
 // ── Helper UI Sub-components ──────────────────────────────────────
@@ -371,6 +373,8 @@ export function VitalInput({
   max,
   min,
   ageYears,
+  ageMonths,
+  ageDays,
   param,
 }: {
   label: string;
@@ -386,10 +390,12 @@ export function VitalInput({
   max?: number;
   min?: number;
   ageYears?: number | null;
+  ageMonths?: number | null;
+  ageDays?: number | null;
   param?: "hr" | "rr" | "spo2" | "sbp" | "temp";
 }) {
   const isPediatric = isPediatricPatient(ageYears);
-  const pedInterpretation = isPediatric && param ? interpretPediatricVital(param, value, ageYears) : null;
+  const pedInterpretation = isPediatric && param ? interpretPediatricVital(param, value, ageYears, ageMonths, ageDays) : null;
 
   const numVal = value ? parseFloat(value) : NaN;
   let isAbnormal = false;
@@ -434,7 +440,7 @@ export function VitalInput({
         }`}
       />
       {isPediatric && param && (
-        <PediatricVitalReference param={param} value={value} ageYears={ageYears} />
+        <PediatricVitalReference param={param} value={value} ageYears={ageYears} ageMonthsParam={ageMonths} ageDaysParam={ageDays} />
       )}
     </div>
   );
@@ -573,6 +579,8 @@ export function PrimarySurveySection({
   vitals,
   onUpdateVitals,
   patientAge,
+  patientAgeMonths,
+  patientAgeDays,
 }: PrimarySurveySectionProps) {
   const isTrauma = caseType?.toLowerCase() === "trauma";
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({
@@ -732,6 +740,8 @@ export function PrimarySurveySection({
             flagLow={10}
             value={displayRR}
             ageYears={patientAge}
+            ageMonths={patientAgeMonths}
+            ageDays={patientAgeDays}
             param="rr"
             onChange={(v) => {
               onUpdateVitals?.("rr", v);
@@ -744,6 +754,8 @@ export function PrimarySurveySection({
             flagLow={94}
             value={displaySpO2}
             ageYears={patientAge}
+            ageMonths={patientAgeMonths}
+            ageDays={patientAgeDays}
             param="spo2"
             onChange={(v) => {
               onUpdateVitals?.("spo2", v);
@@ -809,6 +821,8 @@ export function PrimarySurveySection({
             flagLow={50}
             value={displayHR}
             ageYears={patientAge}
+            ageMonths={patientAgeMonths}
+            ageDays={patientAgeDays}
             param="hr"
             onChange={(v) => {
               onUpdateVitals?.("hr", v);
@@ -823,6 +837,8 @@ export function PrimarySurveySection({
             flagLowSBP={90}
             value={displayBP}
             ageYears={patientAge}
+            ageMonths={patientAgeMonths}
+            ageDays={patientAgeDays}
             param="sbp"
             onChange={(v) => {
               onUpdateVitals?.("bp", v);
@@ -1035,6 +1051,8 @@ export function PrimarySurveySection({
             flagLow={35.5}
             value={displayTemp}
             ageYears={patientAge}
+            ageMonths={patientAgeMonths}
+            ageDays={patientAgeDays}
             param="temp"
             onChange={(v) => {
               onUpdateVitals?.("temp", v);
