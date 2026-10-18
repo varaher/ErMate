@@ -9,6 +9,39 @@ export enum TriageCategory {
   P3 = "P3 (Non-Urgent)",
 }
 
+/**
+ * Five-level emergency triage scale (Priority I-V). Stored alongside the legacy 3-bucket
+ * `triageCategory`, which every existing consumer (analytics, handover, server) keeps reading.
+ */
+export type TriageLevel = 1 | 2 | 3 | 4 | 5;
+
+export type IsolationType = "Airborne" | "Droplet" | "Contact";
+
+/**
+ * Triage-desk assessment captured at registration (and editable later on the case sheet).
+ * Yes/No fields are tri-state: null/undefined = "not assessed" — never silently "No".
+ */
+export interface TriageScreening {
+  levelOfConsciousness?: "Alert" | "Drowsy" | "Unconscious";
+  orientation?: "Oriented" | "Disoriented";
+  arrivalMobility?: "Walking" | "Wheelchair" | "Stretcher" | "In lap";
+  /** Communicable-disease triage: fever with rash / cough / respiratory distress / bleeding / intense headache / extreme fatigue. */
+  communicableScreenPositive?: boolean | null;
+  /** Epidemiological history (asked when the screen is positive). */
+  travelEndemicArea3Weeks?: boolean | null;
+  travelDetails?: string;
+  closeContactSimilarSymptoms?: boolean | null;
+  healthcareWorkerExposure?: boolean | null;
+  petsLivestockContact?: boolean | null;
+  knownCommunicableDisease?: boolean | null;
+  knownCommunicableDiseaseName?: string;
+  isolationRequired?: boolean | null;
+  isolationTypes?: IsolationType[];
+  completedAt?: string;
+  triagedByName?: string;
+  triagedByEmpId?: string;
+}
+
 export enum ArrivalMode {
   WalkIn = "Walk-in",
   Ambulance = "Ambulance",
@@ -40,6 +73,11 @@ export interface PatientDemographics {
   gender: string;
   presentingComplaint: string;
   triageCategory: TriageCategory;
+  /** Optional 5-level priority (I-V). Absent on older cases, which keep their stored triageCategory. */
+  triageLevel?: TriageLevel;
+  /** Months beyond whole years, only for age 0–1 (0.5 = under 1 month); used for age-band normal ranges. */
+  ageMonths?: number;
+  triageScreening?: TriageScreening;
   arrivalMode?: ArrivalMode;
   dateOpened: string;
   uhid?: string;

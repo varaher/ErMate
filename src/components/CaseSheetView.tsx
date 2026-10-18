@@ -42,6 +42,9 @@ import MissingStrip from "./shared/MissingStrip";
 import QuickPick from "./shared/QuickPick";
 import { getDisplayCaseId } from "../utils/caseIdentity";
 import { classifyEmergencyTriage } from "../utils/triageClassifier";
+import { TRIAGE_LEVEL_LIST, levelToLegacyCategory, getTriageDisplay } from "../utils/triageScale";
+import TriageScreeningFields from "./TriageScreeningFields";
+import { normalizeScreening, isolationBanner } from "../utils/triageScreening";
 import { formatTemperature, formatDoctorName, deduplicateMeds, validateMedRoute, formatDisabilityAssessment, displaySpo2, displayGcs, displayTemperature, displayGrbs } from "../utils/clinicalFormatter";
 import { isTriageCategoryPending } from "./NewPatientEntryMenu";
 import { hasCaseScribeHistory } from "../services/scribeChatStorage";
@@ -294,6 +297,8 @@ export function isCaseSheetDirty(current: ClinicalCase | null | undefined, saved
       phone: (c.patient?.phone || "").trim(),
       presentingComplaint: (c.patient?.presentingComplaint || "").trim(),
       triageCategory: c.patient?.triageCategory,
+      triageLevel: c.patient?.triageLevel,
+      triageScreening: normalizeScreening(c.patient?.triageScreening),
       arrivalMode: c.patient?.arrivalMode,
       caseType: c.patient?.caseType,
       isMlc: !!c.patient?.isMlc,
@@ -988,16 +993,18 @@ export default function CaseSheetView({
     };
     
     const currentCat = currentCase.patient.triageCategory;
-    const finalCategory = (!isTriageCategoryPending(currentCat))
-      ? currentCat
-      : classifyEmergencyTriage(currentCase.patient.age, currentCase.patient.presentingComplaint, updatedVitals).category;
+    const autoTriage = isTriageCategoryPending(currentCat)
+      ? classifyEmergencyTriage(currentCase.patient.age, currentCase.patient.presentingComplaint, updatedVitals)
+      : null;
+    const finalCategory = autoTriage ? autoTriage.category : currentCat;
 
     const updatedCase: ClinicalCase = {
       ...currentCase,
       vitals: updatedVitals,
       patient: {
         ...currentCase.patient,
-        triageCategory: finalCategory
+        triageCategory: finalCategory,
+        ...(autoTriage ? { triageLevel: autoTriage.level } : {})
       },
       vitalsHistory: updatedHistory
     };
@@ -1419,15 +1426,17 @@ export default function CaseSheetView({
     setCurrentCase(prev => {
       const updatedVitals = { ...prev.vitals, [field]: value };
       const currentCat = prev.patient.triageCategory;
-      const finalCategory = (!isTriageCategoryPending(currentCat))
-        ? currentCat
-        : classifyEmergencyTriage(prev.patient.age, prev.patient.presentingComplaint, updatedVitals).category;
+      const autoTriage = isTriageCategoryPending(currentCat)
+        ? classifyEmergencyTriage(prev.patient.age, prev.patient.presentingComplaint, updatedVitals)
+        : null;
+      const finalCategory = autoTriage ? autoTriage.category : currentCat;
       return {
         ...prev,
         vitals: updatedVitals,
         patient: {
           ...prev.patient,
-          triageCategory: finalCategory
+          triageCategory: finalCategory,
+          ...(autoTriage ? { triageLevel: autoTriage.level } : {})
         }
       };
     });
@@ -2123,14 +2132,16 @@ Extremities: Peripheral pulses present and well felt. No edema. No cyanosis or c
           age: parsed.age || currentCase.patient.age
         };
         const currentCat = currentCase.patient.triageCategory;
-        const finalCategory = (!isTriageCategoryPending(currentCat))
-          ? currentCat
-          : classifyEmergencyTriage(updatedPatient.age, updatedPatient.presentingComplaint, currentCase.vitals).category;
+        const autoTriage = isTriageCategoryPending(currentCat)
+          ? classifyEmergencyTriage(updatedPatient.age, updatedPatient.presentingComplaint, currentCase.vitals)
+          : null;
+        const finalCategory = autoTriage ? autoTriage.category : currentCat;
         const updatedCase: ClinicalCase = {
           ...currentCase,
           patient: {
             ...updatedPatient,
-            triageCategory: finalCategory
+            triageCategory: finalCategory,
+            ...(autoTriage ? { triageLevel: autoTriage.level } : {})
           },
           sampleHistory: {
             ...currentCase.sampleHistory,
@@ -3191,7 +3202,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                   Preview — changes are not saved
                 </span>
               ) : (
-                <span>{currentCase.patient.caseType || "Medical"} · {!isTriageCategoryPending(currentCase.patient.triageCategory) ? currentCase.patient.triageCategory?.split(" ")[0] || "P2" : "P2"}</span>
+                <span>{currentCase.patient.caseType || "Medical"} · {!isTriageCategoryPending(currentCase.patient.triageCategory) ? getTriageDisplay(currentCase.patient).code : "P2"}</span>
               )}
             </div>
           </div>
@@ -3383,17 +3394,15 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
               </span>
               <div className="flex items-center gap-1.5 shrink-0 overflow-x-auto no-scrollbar">
                 {[
-                  { label: "P1", cat: "P1 (Resuscitative)" },
-                  { label: "P2", cat: "P2 (Emergent)" },
-                  { label: "P3", cat: "P3 (Urgent)" },
-                  { label: "P4", cat: "P4 (Non-Urgent)" }
+                  ...TRIAGE_LEVEL_LIST.map((t) => ({ label: t.code, level: t.level, title: t.label }))
                 ].map((item) => (
                   <button
-                    key={item.cat}
+                    key={item.level}
+                    title={item.title}
                     onClick={async () => {
                       const updatedCase: ClinicalCase = {
                         ...currentCase,
-                        patient: { ...currentCase.patient, triageCategory: item.cat as any }
+                        patient: { ...currentCase.patient, triageCategory: levelToLegacyCategory(item.level), triageLevel: item.level }
                       };
                       setCurrentCase(updatedCase);
                       if (!isPreview) {
@@ -3411,6 +3420,29 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                 ))}
               </div>
             </div>
+          )}
+
+          {/* Isolation banner + triage assessment / infection screening */}
+          {isolationBanner(currentCase.patient.triageScreening) && (
+            <div role="alert" data-testid="isolation-banner" className="mx-4 mt-2 rounded-lg bg-rose-600 text-white px-3 py-2 text-xs font-bold uppercase tracking-wide">
+              {isolationBanner(currentCase.patient.triageScreening)}
+            </div>
+          )}
+          <details className="mx-4 mt-2 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950" data-testid="triage-screening-card">
+            <summary className="cursor-pointer px-3 py-2 text-[11px] font-bold uppercase tracking-wide text-slate-500">
+              Triage assessment & infection screening
+            </summary>
+            <div className="p-3">
+              <TriageScreeningFields
+                idPrefix="cs"
+                value={currentCase.patient.triageScreening ?? {}}
+                onChange={(next) => {
+                  if (isPreview) return;
+                  setCurrentCase({ ...currentCase, patient: { ...currentCase.patient, triageScreening: next } });
+                }}
+              />
+            </div>
+          </details>
           )}
 
           {/* Mobile: one dropdown to switch tabs */}

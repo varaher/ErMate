@@ -1,10 +1,14 @@
 import React, { useState, useEffect } from "react";
 import { ArrowLeft, User, Heart, ShieldAlert, ChevronRight, Scale, Clock, Phone, Hash, FileText, Check, BrainCircuit, AlertTriangle } from "lucide-react";
-import { TriageCategory, ArrivalMode, PatientDemographics, PatientVitals, MlcDetails, ClinicalCase } from "../types";
+import { TriageLevel, TriageScreening, ArrivalMode, PatientDemographics, PatientVitals, MlcDetails, ClinicalCase } from "../types";
 import VoiceRecorder from "./shared/VoiceRecorder";
 import { classifyEmergencyTriage } from "../utils/triageClassifier";
+import { TRIAGE_LEVELS, TRIAGE_LEVEL_LIST, levelToLegacyCategory, triageBadgeClass } from "../utils/triageScale";
 import { allocateOrValidateBed } from "../utils/bedAllocation";
 import BedPicker from "./shared/BedPicker";
+import PediatricNormalVitalsCard from "./PediatricNormalVitalsCard";
+import TriageScreeningFields from "./TriageScreeningFields";
+import { normalizeScreening } from "../utils/triageScreening";
 
 interface TriageFormProps {
   onBack: () => void;
@@ -20,7 +24,7 @@ export default function TriageForm({ onBack, onSubmit, initialMode, activeCases 
   const [age, setAge] = useState<string>("");
   const [gender, setGender] = useState("Male");
   const [presentingComplaint, setPresentingComplaint] = useState("");
-  const [triageCategory, setTriageCategory] = useState<TriageCategory>(TriageCategory.P2);
+  const [triageLevel, setTriageLevel] = useState<TriageLevel>(3);
   const [arrivalMode, setArrivalMode] = useState<ArrivalMode>(ArrivalMode.WalkIn);
   const [bedNo, setBedNo] = useState("");
   const [bedError, setBedError] = useState<string | null>(null);
@@ -57,9 +61,15 @@ export default function TriageForm({ onBack, onSubmit, initialMode, activeCases 
 
   const [autoTriageEnabled, setAutoTriageEnabled] = useState(true);
 
+  // Months beyond whole years for age 0-1 (0.5 = under 1 month); screening block
+  const [ageMonthsStr, setAgeMonthsStr] = useState("");
+  const [screening, setScreening] = useState<TriageScreening>({});
+
   // Logic
   const ageNum = age ? parseInt(age) : null;
   const isPediatric = ageNum !== null && ageNum <= 16;
+  const needsMonths = ageNum !== null && ageNum >= 0 && ageNum <= 1;
+  const ageMonthsNum = needsMonths && ageMonthsStr !== "" ? parseFloat(ageMonthsStr) : null;
 
   // Calculate composite GCS
   const hasCompleteGcs = gcsE !== "" && gcsV !== "" && gcsM !== "";
@@ -83,14 +93,14 @@ export default function TriageForm({ onBack, onSubmit, initialMode, activeCases 
     painScore: painScore
   };
 
-  const autoTriageResult = classifyEmergencyTriage(ageNum, presentingComplaint, currentVitalsObj);
+  const autoTriageResult = classifyEmergencyTriage(ageNum, presentingComplaint, currentVitalsObj, ageMonthsNum);
 
   // Sync triage selection if auto-triage is enabled
   useEffect(() => {
     if (autoTriageEnabled && autoTriageResult) {
-      setTriageCategory(autoTriageResult.category);
+      setTriageLevel(autoTriageResult.level);
     }
-  }, [autoTriageEnabled, autoTriageResult.category]);
+  }, [autoTriageEnabled, autoTriageResult.level]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -114,7 +124,18 @@ export default function TriageForm({ onBack, onSubmit, initialMode, activeCases 
       age: ageNum,
       gender,
       presentingComplaint: finalComplaint,
-      triageCategory,
+      triageCategory: levelToLegacyCategory(triageLevel),
+      triageLevel,
+      ...(ageMonthsNum !== null && !isNaN(ageMonthsNum) ? { ageMonths: ageMonthsNum } : {}),
+      ...(() => {
+        const ts = normalizeScreening({
+          ...screening,
+          completedAt: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) + " | " + new Date().toLocaleDateString([], { month: "short", day: "numeric" }),
+        });
+        // a record holding only the auto timestamp carries no assessment
+        const meaningful = ts && Object.keys(ts).some((k) => k !== "completedAt");
+        return meaningful ? { triageScreening: ts } : {};
+      })(),
       arrivalMode,
       dateOpened: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + " | " + new Date().toLocaleDateString([], { month: 'short', day: 'numeric' }),
       uhid: uhid || "",
@@ -247,6 +268,21 @@ export default function TriageForm({ onBack, onSubmit, initialMode, activeCases 
                 onChange={(e) => setAge(e.target.value)}
                 className="w-full px-4 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 dark:text-slate-100"
               />
+              {needsMonths && (
+                <select
+                  aria-label="Age in months"
+                  data-testid="age-months"
+                  value={ageMonthsStr}
+                  onChange={(e) => setAgeMonthsStr(e.target.value)}
+                  className="mt-2 w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-xs text-slate-900 dark:text-slate-100"
+                >
+                  <option value="">{ageNum === 0 ? "Months old? (needed for infants)" : "Extra months (optional)"}</option>
+                  <option value="0.5">Under 1 month</option>
+                  {Array.from({ length: 11 }, (_, i) => i + 1).map((m) => (
+                    <option key={m} value={m}>{m} month{m > 1 ? "s" : ""}</option>
+                  ))}
+                </select>
+              )}
             </div>
 
             {/* Gender */}
@@ -352,9 +388,9 @@ export default function TriageForm({ onBack, onSubmit, initialMode, activeCases 
                 </span>
               </label>
               <select
-                value={triageCategory}
+                value={triageLevel}
                 onChange={(e) => {
-                  setTriageCategory(e.target.value as TriageCategory);
+                  setTriageLevel(Number(e.target.value) as TriageLevel);
                   setAutoTriageEnabled(false); // User override disables auto sync
                 }}
                 className={`w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 dark:text-slate-100 transition-all ${
@@ -363,9 +399,9 @@ export default function TriageForm({ onBack, onSubmit, initialMode, activeCases 
                     : "bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-800"
                 }`}
               >
-                <option value={TriageCategory.P1}>P1 (Immediate Resuscitation)</option>
-                <option value={TriageCategory.P2}>P2 (Urgent)</option>
-                <option value={TriageCategory.P3}>P3 (Non-Urgent)</option>
+                {TRIAGE_LEVEL_LIST.map((t) => (
+                  <option key={t.level} value={t.level}>{t.label}</option>
+                ))}
               </select>
             </div>
 
@@ -418,13 +454,9 @@ export default function TriageForm({ onBack, onSubmit, initialMode, activeCases 
               <div className="space-y-1">
                 <div className="flex items-center gap-2">
                   <span className={`text-[10px] font-bold px-2 py-0.5 rounded font-mono uppercase tracking-wider ${
-                    autoTriageResult.category === TriageCategory.P1
-                      ? "bg-rose-500/15 text-rose-500 border border-rose-500/20"
-                      : autoTriageResult.category === TriageCategory.P2
-                      ? "bg-amber-500/15 text-amber-500 border border-amber-500/20"
-                      : "bg-emerald-500/15 text-emerald-500 border border-emerald-500/20"
+                    triageBadgeClass(TRIAGE_LEVELS[autoTriageResult.level].tone, "solid-soft")
                   }`}>
-                    Detected: {autoTriageResult.category}
+                    Detected: {TRIAGE_LEVELS[autoTriageResult.level].label}
                   </span>
                   <span className="text-[10px] text-slate-400 font-medium">
                     (Mode: {isPediatric ? "Pediatric PALS" : "Adult Triage Protocol"})
@@ -433,6 +465,14 @@ export default function TriageForm({ onBack, onSubmit, initialMode, activeCases 
                 <p className="text-[10.5px] text-slate-600 dark:text-slate-400 font-medium leading-relaxed font-mono bg-white/40 dark:bg-slate-950/40 border border-slate-100 dark:border-slate-900 rounded p-2">
                   ℹ️ {autoTriageResult.reason}
                 </p>
+                {autoTriageResult.reasons.length > 1 && (
+                  <ul className="text-[10px] text-slate-500 dark:text-slate-400 font-mono space-y-0.5 pl-1">
+                    {autoTriageResult.reasons.slice(1, 5).map((r) => (<li key={r}>• {r}</li>))}
+                  </ul>
+                )}
+                {autoTriageResult.needsClinician && (
+                  <p className="text-[10px] font-semibold text-amber-600 dark:text-amber-400">Nothing on the triage chart matched — please choose the priority yourself.</p>
+                )}
               </div>
             ) : (
               <p className="text-[10.5px] text-slate-400 italic">
@@ -595,6 +635,28 @@ export default function TriageForm({ onBack, onSubmit, initialMode, activeCases 
               </div>
             </div>
           )}
+        </div>
+
+        {/* Paediatric normal vitals (reference) — appears as soon as an age <= 16 is entered */}
+        {isPediatric && (
+          <PediatricNormalVitalsCard
+            ageYears={ageNum}
+            ageMonths={ageMonthsNum}
+            hr={hr}
+            rr={rr}
+            sbp={bp.split("/")[0]}
+            spo2={spo2}
+            tempF={temp}
+          />
+        )}
+
+        {/* Triage assessment & communicable-disease screening (quick and full) */}
+        <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl p-5 md:p-6 shadow-sm space-y-4">
+          <h3 className="text-sm font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2 border-b border-slate-100 dark:border-slate-900 pb-2">
+            <ShieldAlert className="w-4 h-4 text-amber-500" />
+            Triage Assessment & Infection Screening
+          </h3>
+          <TriageScreeningFields value={screening} onChange={setScreening} idPrefix="tf" />
         </div>
 
         {/* Triage Vitals Card */}

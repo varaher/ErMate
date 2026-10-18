@@ -11,6 +11,7 @@ import { motion, AnimatePresence } from "motion/react";
 import { ClinicalCase, UserProfile, HandoverRecord, TeamMember, isPendingApprovalStatus, isActiveMembershipStatus } from "../types";
 import { DutySessionRecord, isActiveDutySessionNow } from "../services/dutySessionService";
 import { formatLocalDateKey } from "../utils/dutyWindow";
+import { getTriageDisplay, triageBadgeClass } from "../utils/triageScale";
 import { getCasePendingStatus } from "../utils/caseHelper";
 import { getCaseCreationTimestamp, isCaseEligibleFor24hArchive } from "../utils/caseLifecycle";
 import { triggerPrintWithTip } from "../utils/printWithTip";
@@ -1146,14 +1147,10 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
                         {pc.patient.gender || "Unknown"} • {pc.patient.age !== null && pc.patient.age !== undefined ? `${pc.patient.age} years` : "Age N/A"}
                       </div>
                     </div>
-                    <span className={`font-mono font-bold text-[9.5px] uppercase tracking-wider px-2 py-0.5 rounded shrink-0 ${
-                      String(pc.patient.triageCategory || "").includes("P1")
-                        ? "bg-rose-500/10 text-rose-500 border border-rose-500/20"
-                        : String(pc.patient.triageCategory || "").includes("P2")
-                        ? "bg-amber-500/10 text-amber-500 border border-amber-500/20"
-                        : "bg-emerald-500/10 text-emerald-500 border border-emerald-500/20"
+                    <span title={getTriageDisplay(pc.patient).label} className={`font-mono font-bold text-[9.5px] uppercase tracking-wider px-2 py-0.5 rounded shrink-0 ${
+                      triageBadgeClass(getTriageDisplay(pc.patient).tone, "solid-soft")
                     }`}>
-                      {String(pc.patient.triageCategory || "P2").split(" ")[0]}
+                      {getTriageDisplay(pc.patient).code}
                     </span>
                   </div>
 
@@ -1512,14 +1509,10 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
                         >
                           <div className="space-y-1 min-w-0 flex-1">
                             <div className="flex items-center gap-2 flex-wrap">
-                              <span className={`text-[9px] px-2 py-0.5 rounded border font-bold font-mono uppercase ${
-                                String(c.patient.triageCategory || "").includes("P1")
-                                  ? "bg-rose-50 border-rose-250 text-rose-700 dark:bg-rose-950/20 dark:text-rose-400"
-                                  : String(c.patient.triageCategory || "").includes("P2")
-                                  ? "bg-amber-50 border-amber-250 text-amber-700 dark:bg-amber-950/20 dark:text-amber-400"
-                                  : "bg-emerald-50 border-emerald-250 text-emerald-700 dark:bg-emerald-950/20 dark:text-emerald-400"
+                              <span title={getTriageDisplay(c.patient).label} className={`text-[9px] px-2 py-0.5 rounded border font-bold font-mono uppercase ${
+                                triageBadgeClass(getTriageDisplay(c.patient).tone, "outline-soft")
                               }`}>
-                                {String(c.patient.triageCategory || "P2").split(" ")[0]}
+                                {getTriageDisplay(c.patient).code}
                               </span>
                               <h4 className="text-sm font-bold text-slate-800 dark:text-white truncate">
                                 {c.patient.name}
@@ -2178,14 +2171,10 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
                                       {c.patient.uhid || `ID: ${c.displayId || c.id}`}
                                     </span>
                                   </div>
-                                  <span className={`text-[8px] uppercase font-black font-mono px-1.5 py-0.2 rounded border ${
-                                    String(c.patient.triageCategory || "").includes("P1")
-                                      ? "bg-rose-50 border-rose-200 text-rose-700"
-                                      : String(c.patient.triageCategory || "").includes("P2")
-                                      ? "bg-amber-50 border-amber-250 text-amber-700"
-                                      : "bg-emerald-50 border-emerald-250 text-emerald-700"
+                                  <span title={getTriageDisplay(c.patient).label} className={`text-[8px] uppercase font-black font-mono px-1.5 py-0.2 rounded border ${
+                                    triageBadgeClass(getTriageDisplay(c.patient).tone, "plain")
                                   }`}>
-                                    {String(c.patient.triageCategory || "P2").split(" ")[0] || "P3"}
+                                    {getTriageDisplay(c.patient).code || "P3"}
                                   </span>
                                 </div>
 

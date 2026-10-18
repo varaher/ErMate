@@ -7,6 +7,9 @@ import { displayGcs, displayTemperature, displaySpo2, displayGrbs, displayDocume
 import { getDisplayCaseId } from "../utils/caseIdentity";
 import { formatCaseSheetText } from "../utils/caseSheetFormat";
 import { copyTextToClipboard } from "../utils/copyToClipboard";
+import { getTriageDisplay } from "../utils/triageScale";
+import { screeningLines, isolationBanner } from "../utils/triageScreening";
+import type { TriageScreening } from "../types";
 
 export { formatCaseSheetText };
 
@@ -66,6 +69,7 @@ export interface CaseSheetData {
   internalCaseId?: string;
   hospitalName?: string;
   triageCategory?: string | null;
+  triageScreening?: TriageScreening | null;
   caseType?: string | null;
   patient: {
     name: string | null;
@@ -633,7 +637,8 @@ export function convertClinicalCaseToCaseSheetData(c: ClinicalCase, defaultHospi
     caseId: getDisplayCaseId(c),
     internalCaseId: c.id,
     hospitalName: c.hospital || c.hospitalLabel || c.workplaceName || defaultHospital || undefined, // no hardcoded hospital name fallback either
-    triageCategory: c.patient?.triageCategory || (c as any).triageCategory || null,
+    triageCategory: c.patient?.triageCategory ? getTriageDisplay(c.patient).label : ((c as any).triageCategory || null),
+    triageScreening: c.patient?.triageScreening || null,
     caseType: c.patient?.caseType || (c as any).caseType || null,
     patient: {
       name: c.patient?.name || null,
@@ -1479,6 +1484,18 @@ export default function CaseSheetPrintView({
             )}
           </div>
         </Section>
+
+        {screeningLines(data.triageScreening).length > 0 && (
+          <Section>
+            <SectionHeading>Triage Assessment & Infection Screening</SectionHeading>
+            {isolationBanner(data.triageScreening) && (
+              <div className="text-sm font-bold uppercase mb-1">{isolationBanner(data.triageScreening)}</div>
+            )}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-1 text-sm">
+              {screeningLines(data.triageScreening).map((l) => <div key={l}>{l}</div>)}
+            </div>
+          </Section>
+        )}
 
         <Section>
           <SectionHeading>Presenting Complaint</SectionHeading>

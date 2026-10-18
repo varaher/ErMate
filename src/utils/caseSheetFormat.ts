@@ -15,6 +15,7 @@
  */
 import type { CaseSheetData } from "../components/CaseSheetPrintView";
 
+import { screeningLines, isolationBanner } from "./triageScreening";
 const ND = "Not documented";
 
 function val(v: unknown): string {
@@ -60,6 +61,13 @@ export function formatCaseSheetText(data: CaseSheetData): string {
     hasText(data.triageCategory) ? `Triage: ${data.triageCategory}` : "",
     hasText(data.caseType) ? `Case Type: ${data.caseType}` : "",
   ]);
+
+  // Triage assessment / infection screening (only assessed items; nothing invented)
+  const triageLines = screeningLines(data.triageScreening);
+  if (triageLines.length) {
+    const banner = isolationBanner(data.triageScreening);
+    section("Triage Assessment & Infection Screening", banner ? [banner.toUpperCase(), ...triageLines] : triageLines);
+  }
 
   // MLC
   if (data.isMlc || data.mlcDetails) {

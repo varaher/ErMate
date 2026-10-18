@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { ConfirmModal } from "./shared/ConfirmModal";
 import { Search, Filter, Plus, Calendar, Activity, Eye, Edit, Trash2, Clock, CheckCircle, ChevronLeft, MessageSquare, FileText, Bed, X, AlertTriangle, GraduationCap } from "lucide-react";
 import { ClinicalCase } from "../types";
+import { getTriageDisplay, triageBadgeClass, matchesTriageCode } from "../utils/triageScale";
 import { CriticalAlertBadge } from "./shared/CriticalAlertBadge";
 import { computeCriticalAlerts } from "../utils/criticalAlerts";
 
@@ -65,7 +66,7 @@ export default function CasesListView({
   const [caseToDelete, setCaseToDelete] = useState<{ id: string; name: string } | null>(null);
   const [showDeleteAllConfirm, setShowDeleteAllConfirm] = useState(false);
   const [statusFilter, setStatusFilter] = useState<"All" | "Active" | "Triage" | "Admitted" | "Discharged" | "Transferred" | "MLC">("All");
-  const [triageFilter, setTriageFilter] = useState<"All" | "P1" | "P2" | "P3">("All");
+  const [triageFilter, setTriageFilter] = useState<"All" | "P1" | "P2" | "P3" | "P4" | "P5">("All");
   const [ageGroupFilter, setAgeGroupFilter] = useState<"All" | "Adult" | "Pediatric">("All");
 
   const filteredCases = cases.filter((c) => {
@@ -95,9 +96,7 @@ export default function CasesListView({
 
     const matchesTriage = 
       triageFilter === "All" ||
-      (triageFilter === "P1" && String(c.patient.triageCategory || "").includes("P1")) ||
-      (triageFilter === "P2" && String(c.patient.triageCategory || "").includes("P2")) ||
-      (triageFilter === "P3" && String(c.patient.triageCategory || "").includes("P3"));
+      matchesTriageCode(c.patient, triageFilter);
 
     const matchesAgeGroup = 
       ageGroupFilter === "All" ||
@@ -198,7 +197,7 @@ export default function CasesListView({
 
           {/* Triage Filter */}
           <div className="flex gap-1 bg-slate-50 dark:bg-slate-950 p-1 rounded-lg border border-slate-200 dark:border-slate-800 overflow-x-auto">
-            {(["All", "P1", "P2", "P3"] as const).map((filter) => (
+            {(["All", "P1", "P2", "P3", "P4", "P5"] as const).map((filter) => (
               <button
                 key={filter}
                 onClick={() => setTriageFilter(filter)}
@@ -307,14 +306,10 @@ export default function CasesListView({
                   <div className="flex items-start justify-between gap-2">
                     <div className="space-y-1">
                       <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className={`text-[9px] px-2 py-0.5 rounded font-mono font-bold border ${
-                          String(c.patient.triageCategory || "").includes("P1")
-                            ? "bg-rose-50 border-rose-250 text-rose-700 dark:bg-rose-950/20 dark:text-rose-400"
-                            : String(c.patient.triageCategory || "").includes("P2")
-                            ? "bg-amber-50 border-amber-250 text-amber-700 dark:bg-amber-950/20 dark:text-amber-400"
-                            : "bg-emerald-50 border-emerald-250 text-emerald-700 dark:bg-emerald-950/20 dark:text-emerald-400"
+                        <span title={getTriageDisplay(c.patient).label} className={`text-[9px] px-2 py-0.5 rounded font-mono font-bold border ${
+                          triageBadgeClass(getTriageDisplay(c.patient).tone, "outline-soft")
                         }`}>
-                          {String(c.patient.triageCategory || "P2").split(" ")[0]}
+                          {getTriageDisplay(c.patient).code}
                         </span>
                         {c.isPediatric ? (
                           <span className="text-[9px] bg-sky-50 text-sky-700 border border-sky-100 px-1.5 py-0.2 rounded font-semibold uppercase">
