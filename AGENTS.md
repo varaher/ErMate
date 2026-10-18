@@ -45,6 +45,24 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-18] — ErMate: Universal Age Engine, Multi-Unit Anthropometry & Pediatric Dose Guide (ERMATE-AGE-PATCH-V1)
+- **Universal Age Modeling & Subdivisions (`src/types.ts`, `src/utils/ageLabel.ts`, `src/utils/drugDoseSuggestions.ts`)**:
+  - Added `ageDays?: number` and `ageUnit?: "years" | "months" | "days"` to `PatientDemographics`, `CaseSheetPrintData`, and `TriageDictationResult`.
+  - Upgraded `formatAge(age, ageMonths, ageDays)` and `formatAgeLong(age, ageMonths, ageDays)`: keeps age 0 safe for neonates/infants without falling back to "Not documented", formats neonatal days (e.g. `14d` / `14 days`), infant months (e.g. `6m` / `6 months`), and toddler ages (e.g. `1y 3m` / `1 year 3 months`).
+  - Implemented `getAgeStage(age, ageMonths, ageDays)` helper providing objective age-bracket staging (`Neonate`, `Infant`, `Toddler`, `Preschool`, `School-age`, `Adolescent`, `Adult`, `Geriatric`) with clinical status and vulnerability indicators.
+  - Updated `estimateWeightFromAge` and `resolveDosingWeight`: supports `ageDays` where neonates (<= 28 days) map to 3.5 kg, and older infants convert days to fractional months (`ageDays / 30.4375`) so a 100-day-old infant scales accurately with APLS without misclassification.
+- **Ergonomic Multi-Unit Age Input & Rapid Presets (`src/components/CaseSheetView.tsx`, `src/components/TriageForm.tsx`)**:
+  - Integrated Unit toggle (`Years` | `Months` | `Days`) directly into Demographics Age field with instant synchronization across `age`, `ageMonths`, `ageDays`, `ageUnit`, and reactive `recomputeIsPediatric` execution.
+  - Added 1-tap rapid presets (`[7d]`, `[14d]`, `[2m]`, `[6m]`, `[1y]`, `[3y]`, `[5y]`, `[10y]`, `[25y]`, `[45y]`, `[65y]`, `[75y]`) and `[Clear]` for high-volume emergency triage and resuscitation workflows.
+  - Added live Stage indicator badge and formatted clinical age display below the input.
+  - Updated Triage Desk voice dictation parser (`src/utils/triageDictation.ts`) to extract neonatal days (`"14 days old"`), weeks (`"3 weeks old"`), newborn references, months, and direct prefix age cues (`"age 45"`, `"aged 52"`).
+- **Clinical Vital Ranges & Emergency Triage Integration (`src/components/PediatricNormalVitalsCard.tsx`, `src/components/CaseSheetView.tsx`, `src/utils/caseLifecycle.ts`)**:
+  - Wired `ageDays` to `PediatricNormalVitalsCard` and `PediatricVitalReference` across HR, BP, and SpO2 charts and vitals history logs, resolving neonatal bands without premature "Age in months required" prompts.
+  - Passed `ageMonths` into all 3 `classifyEmergencyTriage` call sites in `CaseSheetView.tsx` (handleAddVitalsLog, updateVitals, and handleVoiceSubmit), preventing infants from silently defaulting to 6-month vital bands.
+  - Updated `hasAnyClinicalContent` in `src/utils/caseLifecycle.ts` and `isCaseSheetDirty` to cover `ageDays`, `ageMonths`, and `ageUnit`.
+- **Verification Suites (`verify_age_dose_guide.ts`, `verify_pediatric_drug_safety.ts`)**:
+  - Verified with 39 automated tests in `verify_age_dose_guide.ts` and 19 tests in `verify_pediatric_drug_safety.ts`, alongside 0 regressions across triage desk (39/39), triage chart (123/123), screening (29/29), and weight (26/26).
+
 ### [2026-10-18] — ErMate: Patient Weight Section & Universal Dosing Anthropometry (ERMATE-CASE-SHEET-WEIGHT-V1)
 - **Data Model & Synchronization (`src/types.ts`, `src/components/CaseSheetView.tsx`)**:
   - Added `weight?: string` to `PatientDemographics` and `PatientVitals`.

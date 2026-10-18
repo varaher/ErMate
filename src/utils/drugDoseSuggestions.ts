@@ -100,7 +100,10 @@ export function estimateWeightFromAge(
   if (ageYears === null || ageYears === undefined || !Number.isFinite(ageYears) || ageYears < 0) return null;
   if (ageYears === 0) {
     if (typeof ageDays === "number" && Number.isFinite(ageDays) && ageDays > 0) {
-      return 3.5;
+      // Up to 28 days: newborn estimate. Beyond that, convert days to months so a 100-day-old is not treated as a newborn.
+      if (ageDays <= 28) return 3.5;
+      const monthsFromDays = ageDays / 30.4375;
+      return Math.round((0.5 * monthsFromDays + 4) * 10) / 10;
     }
     if (typeof ageMonths === "number" && Number.isFinite(ageMonths)) return ageMonths < 1 ? 3.5 : Math.round((0.5 * ageMonths + 4) * 10) / 10;
     return 7;
