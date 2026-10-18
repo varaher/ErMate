@@ -45,6 +45,14 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-18] — ErMate: Voice Batch Upload Content-Type & Error Sanitization (VOICE-BATCH-UPLOAD-V1)
+- **Audio Blob Content-Type Enforcement (`server/sarvamBatch.ts`)**:
+  - Attached explicit `"x-ms-blob-content-type": "audio/wav"` and `"Content-Type": "audio/wav"` headers during presigned blob PUT uploads, preventing Azure/Sarvam storage from defaulting audio to `binary/octet-stream` and rejecting job starts.
+- **Clinician-Safe Error Abstraction (`server.ts`, `server/sarvamBatch.ts`, `verify_voice_batch_upload.ts`)**:
+  - Replaced vendor error string propagation (`${err.message}`, HTTP status codes, raw JSON responses) with friendly, actionable clinician prompts (`"Voice transcription could not be completed. Please try dictating again."`).
+  - Raw upstream response statuses and truncated diagnostics remain strictly in server-side logs (`console.error`).
+  - Verified with 8 automated tests in `verify_voice_batch_upload.ts`.
+
 ### [2026-10-18] — ErMate: Universal Age Engine, Multi-Unit Anthropometry & Pediatric Dose Guide (ERMATE-AGE-PATCH-V1)
 - **Universal Age Modeling & Subdivisions (`src/types.ts`, `src/utils/ageLabel.ts`, `src/utils/drugDoseSuggestions.ts`)**:
   - Added `ageDays?: number` and `ageUnit?: "years" | "months" | "days"` to `PatientDemographics`, `CaseSheetPrintData`, and `TriageDictationResult`.
@@ -73,9 +81,13 @@
   - Co-amoxiclav: Applied 2000 mg/day amoxicillin component ceiling with capped calculation and advisory notes.
   - Adrenaline (Epinephrine): Applied single-dose caps (IM 0.5 mg / 0.5 mL of 1:1000; IV/IO 1 mg / 10 mL of 1:10,000).
   - Terbutaline: Clarified nebulization as fixed dose (2.5–5 mg per dose, not per kg).
-  - Verified with 17 tests in `verify_peds_formulary_fixes.ts`.
-- **Verification Suites (`verify_age_dose_guide.ts`, `verify_pediatric_drug_safety.ts`, `verify_primary_survey_age.ts`, `verify_peds_formulary_fixes.ts`)**:
-  - Verified with 39 automated tests in `verify_age_dose_guide.ts`, 19 tests in `verify_pediatric_drug_safety.ts`, 6 tests in `verify_primary_survey_age.ts`, and 17 tests in `verify_peds_formulary_fixes.ts`, alongside 0 regressions across triage desk (39/39), triage chart (123/123), screening (29/29), and weight (26/26).
+- **Pediatric Drug Calculator Mobile Layout Optimization (`src/components/PediatricDrugCalculatorView.tsx`, `verify_peds_calc_mobile_layout.ts`)**:
+  - Prevented horizontal scrolling by adding `overflow-x-hidden` on `#pediatric-calculator-container`.
+  - Re-architected real-time calculated dose alert blocks: stacks cleanly on mobile (`flex-col-reverse gap-2 sm:flex-row sm:justify-between sm:items-center sm:gap-3`).
+  - Added text-wrapping and container shrinking rules (`min-w-0 flex-1`, `break-words`, `inline-block max-w-full whitespace-normal break-words`), removing rigid `shrink-0` constraints on mobile.
+  - Verified with 6 tests in `verify_peds_calc_mobile_layout.ts`.
+- **Verification Suites (`verify_age_dose_guide.ts`, `verify_pediatric_drug_safety.ts`, `verify_primary_survey_age.ts`, `verify_peds_formulary_fixes.ts`, `verify_peds_calc_mobile_layout.ts`)**:
+  - Verified with 39 automated tests in `verify_age_dose_guide.ts`, 19 tests in `verify_pediatric_drug_safety.ts`, 6 tests in `verify_primary_survey_age.ts`, 17 tests in `verify_peds_formulary_fixes.ts`, and 6 tests in `verify_peds_calc_mobile_layout.ts`, alongside 0 regressions across triage desk (39/39), triage chart (123/123), screening (29/29), and weight (26/26).
 
 ### [2026-10-18] — ErMate: Patient Weight Section & Universal Dosing Anthropometry (ERMATE-CASE-SHEET-WEIGHT-V1)
 - **Data Model & Synchronization (`src/types.ts`, `src/components/CaseSheetView.tsx`)**:

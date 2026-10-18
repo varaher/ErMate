@@ -134,7 +134,7 @@ export default function PediatricDrugCalculatorView({ onBack, initialWeight }: P
   };
 
   return (
-    <div className="bg-slate-50 dark:bg-slate-900 min-h-screen text-slate-800 dark:text-slate-100 p-4 md:p-6 pb-20 font-sans" id="pediatric-calculator-container">
+    <div className="bg-slate-50 dark:bg-slate-900 min-h-screen text-slate-800 dark:text-slate-100 p-4 md:p-6 pb-20 font-sans overflow-x-hidden" id="pediatric-calculator-container">
       
       {/* Header section */}
       <div className="sticky top-[var(--ermate-header-height,50px)] z-20 bg-white/95 dark:bg-slate-950/95 backdrop-blur-md -mx-4 md:-mx-6 px-4 md:px-6 py-2.5 sm:py-3 border-b border-slate-200 dark:border-slate-800 mb-5 shadow-2xs">
@@ -548,15 +548,15 @@ function DrugCard({ drug, weight, isWeightValid, isExpanded, onToggle }: DrugCar
 
       {/* Realtime Calculated Dose Alert Block */}
       {isWeightValid && calculation ? (
-        <div className="mt-3 bg-indigo-50 dark:bg-indigo-500/5 border border-indigo-150 dark:border-indigo-500/15 rounded-xl p-3 flex justify-between items-center">
-          <div className="space-y-0.5">
-            <span className="text-[9px] font-bold text-indigo-600 dark:text-indigo-400 uppercase tracking-wider font-mono">Calculated Dose ({weight} kg)</span>
-            <span className="text-[10px] text-slate-700 dark:text-slate-300 font-semibold font-sans block leading-normal whitespace-pre-line">
+        <div data-testid="calc-dose-block" className="mt-3 bg-indigo-50 dark:bg-indigo-500/5 border border-indigo-150 dark:border-indigo-500/15 rounded-xl p-3 flex flex-col-reverse gap-2 sm:flex-row sm:justify-between sm:items-center sm:gap-3">
+          <div className="space-y-0.5 min-w-0 flex-1">
+            <span className="block text-[9px] font-bold text-indigo-600 dark:text-indigo-400 uppercase tracking-wider font-mono">Calculated Dose ({weight} kg)</span>
+            <span className="text-[10px] text-slate-700 dark:text-slate-300 font-semibold font-sans block leading-normal whitespace-pre-line break-words">
               {calculation.breakdown || `${calculation.doseValue} ${drug.route} ${drug.frequency}`}
             </span>
           </div>
-          <div className="text-right shrink-0">
-            <span className="text-xs font-black text-indigo-600 dark:text-indigo-300 font-mono bg-indigo-100 dark:bg-indigo-500/10 border border-indigo-200 dark:border-indigo-500/20 px-2.5 py-1 rounded-md">
+          <div className="min-w-0 sm:max-w-[45%] sm:text-right">
+            <span data-testid="calc-dose-badge" className="inline-block max-w-full text-xs font-black text-indigo-600 dark:text-indigo-300 font-mono bg-indigo-100 dark:bg-indigo-500/10 border border-indigo-200 dark:border-indigo-500/20 px-2.5 py-1 rounded-md whitespace-normal break-words">
               {calculation.doseValue}
             </span>
           </div>

@@ -7,6 +7,9 @@ import { getErMateApiKey } from "./sarvamClient.ts";
 
 const SARVAM_API_BASE = "https://api.sarvam.ai";
 
+/** Shown to clinicians. Raw upstream responses are logged server-side only. */
+export const BATCH_USER_ERROR = "Voice transcription could not be completed. Please try dictating again.";
+
 export async function sarvamBatchTranscribe(
   audioBuffer: Buffer,
   filename: string,
@@ -72,7 +75,8 @@ export async function sarvamBatchTranscribe(
 
     if (!initReq.ok) {
         const errText = await initReq.text();
-        throw new Error(`Failed to create batch job: ${initReq.status} ${errText}`);
+        console.error(`[SarvamBatch] Job creation rejected: ${initReq.status} ${errText.slice(0, 300)}`);
+        throw new Error(BATCH_USER_ERROR);
     }
     const initRes = await initReq.json();
     const jobId = initRes.job_id;
@@ -93,7 +97,8 @@ export async function sarvamBatchTranscribe(
 
     if (!uploadFilesReq.ok) {
         const errText = await uploadFilesReq.text();
-        throw new Error(`Failed to get batch upload URLs: ${errText}`);
+        console.error(`[SarvamBatch] Upload URL request rejected: ${uploadFilesReq.status} ${errText.slice(0, 300)}`);
+        throw new Error(BATCH_USER_ERROR);
     }
     const uploadRes = await uploadFilesReq.json();
     const uploadUrlObj = uploadRes.upload_urls?.[safeFilename];
@@ -106,13 +111,18 @@ export async function sarvamBatchTranscribe(
         body: normalizedBuffer,
         headers: {
             "x-ms-blob-type": "BlockBlob",
+            // Without an explicit type the blob is stored as binary/octet-stream and the
+            // job start step rejects it ("Only audio/... allowed"). The audio is always WAV here.
+            "x-ms-blob-content-type": "audio/wav",
+            "Content-Type": "audio/wav",
             "Content-Length": String(normalizedBuffer.length)
         }
     });
 
     if (!putReq.ok) {
         const errText = await putReq.text();
-        throw new Error(`Failed to upload audio to Sarvam storage: ${putReq.status} ${errText}`);
+        console.error(`[SarvamBatch] Audio upload rejected: ${putReq.status} ${errText.slice(0, 300)}`);
+        throw new Error(BATCH_USER_ERROR);
     }
 
     // 4. Start the job
@@ -126,7 +136,8 @@ export async function sarvamBatchTranscribe(
 
     if (!startReq.ok) {
         const errText = await startReq.text();
-        throw new Error(`Failed to start batch job processing: ${startReq.status} ${errText}`);
+        console.error(`[SarvamBatch] Job start rejected: ${startReq.status} ${errText.slice(0, 300)}`);
+        throw new Error(BATCH_USER_ERROR);
     }
 
     // 5. Poll the job status

@@ -544,9 +544,8 @@ async function performTranscription(file: Express.Multer.File, languageCode: str
     }
   } catch (err: any) {
     console.error(`[Transcription] Sarvam Voice exception: ${err.message}. No fallback — Sarvam is the sole transcription engine by deliberate design.`);
-    throw new Error(
-      `Voice transcription is temporarily unavailable. Error: ${err.message}`
-    );
+    // Vendor error text stays in the server log above; clinicians get a plain retry message.
+    throw new Error("Voice transcription is temporarily unavailable. Please try dictating again.");
   }
 
   if (!finalTranscript.trim()) {
