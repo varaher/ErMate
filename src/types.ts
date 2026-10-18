@@ -87,6 +87,8 @@ export interface PatientDemographics {
   isMlc: boolean;
   mlcDetails?: MlcDetails;
   caseType?: "Medical" | "Trauma" | "";
+  /** Patient weight in kg (e.g. "70", "14.5"). Critical for emergency dosing and pediatric resuscitation. */
+  weight?: string;
 }
 
 export interface PatientVitals {
@@ -102,6 +104,7 @@ export interface PatientVitals {
   grbs: string;    // Blood glucose
   avpu: string;    // AVPU scale
   painScore: string; // Pain Score (0-10)
+  weight?: string; // Weight in kg
 }
 
 export interface SampleHistory {

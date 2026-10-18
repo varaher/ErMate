@@ -17,6 +17,7 @@ export interface TriageDictationResult {
   vitals: { bp?: string; hr?: string; spo2?: string; rr?: string; temp?: string; grbs?: string; painScore?: string };
   arrivalMode?: "Walk-in" | "Ambulance" | "Referred";
   isMlc?: boolean;
+  weight?: string;
   screening: Partial<TriageScreening>;
   /** Human-readable names of everything that was filled — shown to the nurse for confirmation. */
   filled: string[];
@@ -97,6 +98,8 @@ export function parseTriageDictation(input: string): TriageDictationResult {
   if (gr) { const v = parseInt(gr[1], 10); if (v >= 10 && v <= 800) { out.vitals.grbs = String(v); note("GRBS"); } }
   const pn = take(/pain(?: score| scale)?\s*(?:is|of|was|:|-)?\s*(\d{1,2})(?:\s*(?:\/|out of)\s*10)?/);
   if (pn) { const v = parseInt(pn[1], 10); if (v >= 0 && v <= 10) { out.vitals.painScore = String(v); note("pain score"); } }
+  const wt = take(/(?:weight|wt)\s*(?:is|of|was|:|-)?\s*(\d{1,3}(?:\.\d{1,2})?)\s*(?:kgs?|kilos?|kilograms?)?/);
+  if (wt) { const v = parseFloat(wt[1]); if (v >= 0.5 && v <= 350) { out.weight = wt[1]; note("weight (kg)"); } }
 
   // ── arrival
   if (take(/\bambulance\b/)) { out.arrivalMode = "Ambulance"; note("arrival"); }

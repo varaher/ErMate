@@ -8,7 +8,7 @@ import {
   User, Check, Shield, FileCheck, Users, LogOut, ChevronRight,
   Copy, Download, ChevronDown, TrendingUp, PlusCircle, Activity, Droplets, Edit3,
   Brain, Send, Award, MoreHorizontal, Pill, MessageSquare, HelpCircle, Info, Lightbulb, X, Skull,
-  BookmarkCheck, Undo2, GraduationCap
+  BookmarkCheck, Undo2, GraduationCap, Scale
 } from "lucide-react";
 import { CaseChatWorkspace } from "./CaseChatWorkspace";
 import { 
@@ -306,6 +306,7 @@ export function isCaseSheetDirty(current: ClinicalCase | null | undefined, saved
       arrivalMode: c.patient?.arrivalMode,
       caseType: c.patient?.caseType,
       isMlc: !!c.patient?.isMlc,
+      weight: (c.patient?.weight || "").trim(),
     },
     vitals: {
       hr: (c.vitals?.hr || "").trim(),
@@ -315,6 +316,7 @@ export function isCaseSheetDirty(current: ClinicalCase | null | undefined, saved
       temp: (c.vitals?.temp || "").trim(),
       gcs: (c.vitals?.gcs || "").trim(),
       grbs: (c.vitals?.grbs || "").trim(),
+      weight: (c.vitals?.weight || "").trim(),
     },
     primaryAssessment: c.primaryAssessment,
     secondaryAssessment: c.secondaryAssessment,
@@ -448,7 +450,7 @@ export default function CaseSheetView({
     if (!currentCase) return false;
     switch (tabId) {
       case "complaints":
-        return hasMeaningfulValue(currentCase.patient?.presentingComplaint) || hasMeaningfulValue(currentCase.sampleHistory?.symptoms);
+        return hasMeaningfulValue(currentCase.patient?.presentingComplaint) || hasMeaningfulValue(currentCase.sampleHistory?.symptoms) || hasMeaningfulValue(currentCase.patient?.weight);
       case "primary-survey":
         return hasMeaningfulValue(currentCase.primaryAssessment) || hasMeaningfulValue(currentCase.vitals) || hasMeaningfulValue((currentCase as any).adjuncts) || hasMeaningfulValue((currentCase as any).adjunctsNow) || hasMeaningfulValue((currentCase as any).adjunctsAtArrival);
       case "history":
@@ -1020,6 +1022,30 @@ export default function CaseSheetView({
   };
 
   const [pediatricWeight, setPediatricWeight] = useState<number | "">("");
+
+  const handleUpdateWeight = (newWeightStr: string) => {
+    const trimmed = newWeightStr.trim();
+    const parsed = parseFloat(trimmed);
+    const numVal = !isNaN(parsed) && parsed > 0 ? parsed : "";
+    setPediatricWeight(numVal);
+    setCurrentCase(prev => ({
+      ...prev,
+      patient: {
+        ...prev.patient,
+        weight: trimmed,
+      },
+      vitals: {
+        ...(prev.vitals || { bp: "", hr: "", spo2: "", rr: "", temp: "", gcs: "", gcs_e: "", gcs_v: "", gcs_m: "", grbs: "", avpu: "", painScore: "" }),
+        weight: trimmed,
+      },
+      pediatricDetails: prev.isPediatric ? {
+        ...(prev.pediatricDetails || {}),
+        patientWeight: trimmed,
+        weight: trimmed,
+      } : prev.pediatricDetails,
+    }));
+  };
+
   const getAPLSEstimate = (ageNum: number | null) => {
     if (ageNum === null) return 15;
     if (ageNum < 1) return 7;
@@ -1038,8 +1064,10 @@ export default function CaseSheetView({
     setTreatmentSaveStatus("saved");
     setIsNormalToggled(false);
     setActiveTab("complaints");
-    setPediatricWeight("");
 
+    const initialWt = initialCase.patient?.weight || initialCase.vitals?.weight || initialCase.pediatricDetails?.patientWeight || initialCase.pediatricDetails?.weight;
+    const initialParsed = initialWt ? parseFloat(initialWt) : NaN;
+    setPediatricWeight(!isNaN(initialParsed) && initialParsed > 0 ? initialParsed : "");
   }, [initialCase.id]);
 
   const getPalsNormalParameters = (age: number | null) => {
@@ -1434,14 +1462,26 @@ export default function CaseSheetView({
         ? classifyEmergencyTriage(prev.patient.age, prev.patient.presentingComplaint, updatedVitals)
         : null;
       const finalCategory = autoTriage ? autoTriage.category : currentCat;
+      if (field === "weight") {
+        const parsed = parseFloat(value);
+        setPediatricWeight(!isNaN(parsed) && parsed > 0 ? parsed : "");
+      }
       return {
         ...prev,
         vitals: updatedVitals,
         patient: {
           ...prev.patient,
           triageCategory: finalCategory,
-          ...(autoTriage ? { triageLevel: autoTriage.level } : {})
-        }
+          ...(autoTriage ? { triageLevel: autoTriage.level } : {}),
+          ...(field === "weight" ? { weight: value } : {})
+        },
+        ...(field === "weight" && prev.isPediatric ? {
+          pediatricDetails: {
+            ...(prev.pediatricDetails || {}),
+            patientWeight: value,
+            weight: value
+          }
+        } : {})
       };
     });
   };
@@ -2709,6 +2749,7 @@ Extremities: Peripheral pulses present and well felt. No edema. No cyanosis or c
 --------------------------------------------------
 **Patient Name:** ${currentCase.patient.name}
 **Age/Sex:** ${currentCase.patient.age || "N/A"} years / ${currentCase.patient.gender}
+**Weight:** ${currentCase.patient.weight || currentCase.vitals?.weight || currentCase.pediatricDetails?.patientWeight || "Not documented"} kg
 **Address:** Chunangamvely, Aluva, Ernakulam, Kerala - 683 112
 **Phone Number:** ${currentCase.patient.phone || "Not Provided"}
 **Date & Time of Arrival:** ${currentCase.patient.dateOpened}
@@ -2888,6 +2929,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}
 <hr/>
 <strong>Patient Name:</strong> ${currentCase.patient.name}<br/>
 <strong>Age/Sex:</strong> ${currentCase.patient.age || "N/A"} years / ${currentCase.patient.gender}<br/>
+<strong>Weight:</strong> ${currentCase.patient.weight || currentCase.vitals?.weight || currentCase.pediatricDetails?.patientWeight || "Not documented"} kg<br/>
 <strong>Address:</strong> Chunangamvely, Aluva, Ernakulam, Kerala - 683 112<br/>
 <strong>Phone Number:</strong> ${currentCase.patient.phone || "Not Provided"}<br/>
 <strong>Date & Time of Arrival:</strong> ${currentCase.patient.dateOpened}<br/>
@@ -3552,7 +3594,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                     />
                   </div>
                   
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <div>
                       <label className="block text-[11px] text-slate-500 font-semibold mb-1">Age (Years)</label>
                       <input
@@ -3583,6 +3625,25 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                         <option value="Female">Female</option>
                         <option value="Other">Other</option>
                       </select>
+                    </div>
+                    <div>
+                      <label className="block text-[11px] text-slate-500 font-semibold mb-1 flex items-center justify-between">
+                        <span>Weight (kg)</span>
+                        {currentCase.patient.weight && !isNaN(parseFloat(currentCase.patient.weight)) && (
+                          <span className="text-[10px] text-blue-600 dark:text-blue-400 font-mono">
+                            {(parseFloat(currentCase.patient.weight) * 2.20462).toFixed(1)} lbs
+                          </span>
+                        )}
+                      </label>
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        id="casesheet-patient-weight-input"
+                        value={currentCase.patient.weight || currentCase.pediatricDetails?.patientWeight || currentCase.vitals?.weight || ""}
+                        onChange={(e) => handleUpdateWeight(e.target.value)}
+                        className="w-full px-3 py-2 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-xs font-semibold focus:ring-1 focus:ring-blue-500 text-slate-850 dark:text-white"
+                        placeholder="e.g. 70 or 14"
+                      />
                     </div>
                   </div>
 
@@ -3645,6 +3706,160 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                       <option value="Trauma">Trauma Case</option>
                     </select>
                   </div>
+                </div>
+
+                {/* === DEDICATED PATIENT WEIGHT & ANTHROPOMETRY SECTION === */}
+                <div data-testid="casesheet-weight-section" id="casesheet-weight-section" className="bg-white dark:bg-slate-950 p-4 border border-slate-200 dark:border-slate-800 rounded-xl space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 dark:border-slate-900 pb-2.5">
+                    <div className="flex items-center gap-2">
+                      <Scale className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                      <h4 className="text-xs font-black uppercase tracking-wider text-slate-800 dark:text-slate-200">
+                        Patient Weight & Anthropometry
+                      </h4>
+                    </div>
+                    {currentCase.patient.weight && currentCase.patient.weight.trim() ? (
+                      <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300 font-mono flex items-center gap-1 border border-emerald-200 dark:border-emerald-800">
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        {currentCase.patient.weight} kg {(!isNaN(parseFloat(currentCase.patient.weight))) ? `(${(parseFloat(currentCase.patient.weight) * 2.20462).toFixed(1)} lbs)` : ""}
+                      </span>
+                    ) : (
+                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300 flex items-center gap-1 border border-amber-200 dark:border-amber-800">
+                        <AlertTriangle className="w-3.5 h-3.5" />
+                        Weight Not Documented
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Input + Conversion row */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-center">
+                    <div className="sm:col-span-2">
+                      <label className="block text-[11px] text-slate-500 font-semibold mb-1">
+                        Measured / Reported Weight (kg)
+                      </label>
+                      <div className="flex items-center gap-2">
+                        <div className="relative flex-1">
+                          <input
+                            type="text"
+                            inputMode="decimal"
+                            id="casesheet-weight-input"
+                            value={currentCase.patient.weight || currentCase.pediatricDetails?.patientWeight || currentCase.vitals?.weight || ""}
+                            onChange={(e) => handleUpdateWeight(e.target.value)}
+                            placeholder={currentCase.isPediatric ? "e.g. 14.5" : "e.g. 70"}
+                            className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-sm font-bold font-mono focus:ring-2 focus:ring-blue-500 text-slate-900 dark:text-white"
+                          />
+                          {(currentCase.patient.weight || currentCase.pediatricDetails?.patientWeight || currentCase.vitals?.weight) && (
+                            <button
+                              type="button"
+                              onClick={() => handleUpdateWeight("")}
+                              className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600 rounded cursor-pointer"
+                              title="Clear weight"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+                        <span className="text-xs font-bold text-slate-500">kg</span>
+                      </div>
+                    </div>
+
+                    <div className="bg-slate-50 dark:bg-slate-900 p-2.5 rounded-lg border border-slate-200 dark:border-slate-800 text-xs space-y-1">
+                      <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">Calculated Conversions</div>
+                      <div className="flex justify-between text-slate-700 dark:text-slate-300 font-mono">
+                        <span>Pounds:</span>
+                        <span className="font-bold">
+                          {currentCase.patient.weight && !isNaN(parseFloat(currentCase.patient.weight))
+                            ? `${(parseFloat(currentCase.patient.weight) * 2.20462).toFixed(1)} lbs`
+                            : "—"}
+                        </span>
+                      </div>
+                      <div className="flex justify-between text-slate-700 dark:text-slate-300 font-mono">
+                        <span>Est. BSA:</span>
+                        <span className="font-bold">
+                          {currentCase.patient.weight && !isNaN(parseFloat(currentCase.patient.weight))
+                            ? `${Math.sqrt((currentCase.isPediatric ? 100 : 165) * parseFloat(currentCase.patient.weight) / 3600).toFixed(2)} m²`
+                            : "—"}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Pediatric APLS estimation or Adult reference */}
+                  {currentCase.isPediatric ? (
+                    <div className="bg-sky-50 dark:bg-sky-950/30 border border-sky-200 dark:border-sky-800 rounded-lg p-3 text-xs space-y-2">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="font-bold text-sky-900 dark:text-sky-200 flex items-center gap-1.5">
+                          <Baby className="w-3.5 h-3.5 text-sky-600" />
+                          Pediatric APLS Age-Based Formula Estimate
+                        </span>
+                        {(() => {
+                          const est = estimateWeightFromAge(currentCase.patient.age, currentCase.patient.ageMonths);
+                          if (est === null) return null;
+                          return (
+                            <button
+                              type="button"
+                              onClick={() => handleUpdateWeight(String(est))}
+                              className="px-2.5 py-1 bg-sky-600 hover:bg-sky-700 text-white font-bold rounded-lg transition-colors cursor-pointer text-[11px] shadow-2xs flex items-center gap-1"
+                            >
+                              <span>Use APLS Estimate:</span>
+                              <span className="font-mono underline">{est} kg</span>
+                            </button>
+                          );
+                        })()}
+                      </div>
+                      <p className="text-[11px] text-sky-800 dark:text-sky-300">
+                        Age: <b>{formatAge(currentCase.patient.age, currentCase.patient.ageMonths)}</b> · 
+                        {currentCase.patient.age === 0
+                          ? " Infant formula: (0.5 × Months) + 4 kg"
+                          : currentCase.patient.age !== null && currentCase.patient.age <= 5
+                          ? " Toddler/Preschool formula: (2 × Age) + 8 kg"
+                          : " Child formula: (3 × Age) + 7 kg"}
+                      </p>
+                      <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                        <span className="text-[10px] font-bold text-sky-700 uppercase">Quick bands:</span>
+                        {[3, 5, 8, 10, 12, 15, 20, 25, 30, 40].map((kg) => (
+                          <button
+                            key={kg}
+                            type="button"
+                            onClick={() => handleUpdateWeight(String(kg))}
+                            className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold border transition-colors cursor-pointer ${
+                              currentCase.patient.weight === String(kg)
+                                ? "bg-sky-600 text-white border-sky-600 shadow-2xs"
+                                : "bg-white dark:bg-slate-900 border-sky-200 dark:border-sky-800 text-sky-800 dark:text-sky-300 hover:bg-sky-100"
+                            }`}
+                          >
+                            {kg} kg
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="bg-slate-100/70 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-800 rounded-lg p-3 text-xs space-y-2">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="font-bold text-slate-700 dark:text-slate-300">
+                          Adult Baseline & Quick Weight Ranges:
+                        </span>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {[50, 60, 70, 80, 90, 100].map((kg) => (
+                            <button
+                              key={kg}
+                              type="button"
+                              onClick={() => handleUpdateWeight(String(kg))}
+                              className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold border transition-colors cursor-pointer ${
+                                currentCase.patient.weight === String(kg)
+                                  ? "bg-blue-600 text-white border-blue-600 shadow-2xs"
+                                  : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100"
+                              }`}
+                            >
+                              {kg} kg
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      <p className="text-[10px] text-slate-500 leading-relaxed">
+                        Critical for weight-tiered emergency therapeutics: <b>RSI</b> (Rocuronium 1.2 mg/kg, Sux 1.5 mg/kg), <b>Thrombolysis</b> (Tenecteplase / Alteplase 0.9 mg/kg), <b>Anticoagulation</b> (Heparin 60 U/kg, Enoxaparin 1 mg/kg), and <b>Fluid Resuscitation</b> (Parkland Burn 4 mL/kg/%TBSA).
+                      </p>
+                    </div>
+                  )}
                 </div>
 
                 <div className="pt-2">

@@ -56,6 +56,7 @@ export default function TriageForm({ onBack, onSubmit, initialMode, activeCases 
   const [temp, setTemp] = useState("");
   const [grbs, setGrbs] = useState("");
   const [painScore, setPainScore] = useState("");
+  const [weight, setWeight] = useState("");
 
   // GCS Subscales
   const [gcsE, setGcsE] = useState("");
@@ -86,6 +87,7 @@ export default function TriageForm({ onBack, onSubmit, initialMode, activeCases 
     if (r.vitals.temp && !temp) setTemp(r.vitals.temp);
     if (r.vitals.grbs && !grbs) setGrbs(r.vitals.grbs);
     if (r.vitals.painScore && !painScore) setPainScore(r.vitals.painScore);
+    if (r.weight && !weight) setWeight(r.weight);
     if (r.arrivalMode) setArrivalMode(r.arrivalMode as ArrivalMode);
     if (r.isMlc) setIsMlc(true);
     setScreening((prev) => ({ ...r.screening, ...prev }));
@@ -167,6 +169,7 @@ export default function TriageForm({ onBack, onSubmit, initialMode, activeCases 
       dateOpened: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + " | " + new Date().toLocaleDateString([], { month: 'short', day: 'numeric' }),
       uhid: uhid || "",
       phone: phone || "",
+      ...(weight.trim() ? { weight: weight.trim() } : {}),
       isMlc,
       caseType,
       ...(isMlc ? { mlcDetails: mlcData } : {})
@@ -184,7 +187,8 @@ export default function TriageForm({ onBack, onSubmit, initialMode, activeCases 
       gcs_m: gcsM,
       grbs: grbs || "",
       avpu: "",
-      painScore: painScore
+      painScore: painScore,
+      ...(weight.trim() ? { weight: weight.trim() } : {})
     };
 
     let finalBedNo: string | undefined = undefined;
@@ -352,12 +356,12 @@ export default function TriageForm({ onBack, onSubmit, initialMode, activeCases 
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-1">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 pt-1">
             {/* UHID (JCI Identifier standard) */}
             <div className="relative">
               <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5 flex items-center gap-1">
                 <Hash className="w-3.5 h-3.5 text-slate-400" />
-                UHID / Registration Number (JCI ID)
+                UHID / Reg No
               </label>
               <input
                 type="text"
@@ -372,13 +376,29 @@ export default function TriageForm({ onBack, onSubmit, initialMode, activeCases 
             <div className="relative">
               <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5 flex items-center gap-1">
                 <Phone className="w-3.5 h-3.5 text-slate-400" />
-                Contact Phone Number
+                Contact Phone
               </label>
               <input
                 type="tel"
                 placeholder="e.g. +91 94471 23456"
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}
+                className="w-full px-4 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 dark:text-slate-100"
+              />
+            </div>
+
+            {/* Patient Weight (kg) */}
+            <div className="relative">
+              <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5 flex items-center gap-1">
+                <Scale className="w-3.5 h-3.5 text-slate-400" />
+                Weight (kg)
+              </label>
+              <input
+                type="text"
+                inputMode="decimal"
+                placeholder={ageNum !== null && ageNum <= 16 ? "e.g. 15" : "e.g. 70"}
+                value={weight}
+                onChange={(e) => setWeight(e.target.value)}
                 className="w-full px-4 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 dark:text-slate-100"
               />
             </div>

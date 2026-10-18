@@ -1018,7 +1018,7 @@ export function PrimarySurveySection({
       {/* ── E — EXPOSURE ─────────────────────────────────────────── */}
       <AccordionItem
         title="E - EXPOSURE"
-        summary={[displayTemp ? `Temp ${displayTemperature(displayTemp)}` : ""]
+        summary={[displayTemp ? `Temp ${displayTemperature(displayTemp)}` : "", vitals?.weight ? `Weight ${vitals.weight} kg` : ""]
           .filter(Boolean).join(" · ")}
         iconLetter="E"
         iconBgClass="bg-blue-500"
@@ -1026,7 +1026,7 @@ export function PrimarySurveySection({
         isOpen={openSections.exposure}
         onToggle={() => toggleSection('exposure')}
       >
-        <div className="grid grid-cols-2 sm:grid-cols-2 gap-2 md:gap-3 mb-2 md:mb-3">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 md:gap-3 mb-2 md:mb-3">
           <VitalInput
             label="Temperature"
             unit="°C / °F"
@@ -1040,7 +1040,17 @@ export function PrimarySurveySection({
               onUpdateVitals?.("temp", v);
             }}
           />
-          <div className="col-span-2 sm:col-span-1"><QuickSelect
+          <VitalInput
+            label="Weight"
+            unit="kg"
+            placeholder={patientAge !== null && patientAge !== undefined && patientAge <= 16 ? "e.g. 15" : "e.g. 70"}
+            normal={patientAge !== null && patientAge !== undefined && patientAge <= 16 ? "Pediatric" : "Adult ~60-70 kg"}
+            value={vitals?.weight || ""}
+            onChange={(v) => {
+              onUpdateVitals?.("weight", v);
+            }}
+          />
+          <div className="col-span-1"><QuickSelect
             label="Hypothermia Prevention"
             options={["Warm blankets applied", "Warmer on", "Not required"]}
             value={data.exposure?.hypothermiaPrevention ? "Warm blankets applied" : "Not required"}

@@ -45,6 +45,21 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-18] — ErMate: Patient Weight Section & Universal Dosing Anthropometry (ERMATE-CASE-SHEET-WEIGHT-V1)
+- **Data Model & Synchronization (`src/types.ts`, `src/components/CaseSheetView.tsx`)**:
+  - Added `weight?: string` to `PatientDemographics` and `PatientVitals`.
+  - Implemented `handleUpdateWeight` in `CaseSheetView` providing two-way synchronization across `patient.weight`, `vitals.weight`, and `pediatricDetails.patientWeight` with reactive updates to the PALS resuscitation drug dosing calculator.
+  - Added `weight` comparison to `isCaseSheetDirty` and `hasAnyClinicalContent` (`src/utils/caseLifecycle.ts`) preventing unintended autosave loss or 24-hour soft-archiving of weight-documented records.
+- **Dedicated Case Sheet Weight & Anthropometry Section (`src/components/CaseSheetView.tsx`)**:
+  - Implemented dedicated Weight card (`data-testid="casesheet-weight-section"`) featuring measured kg input with quick clearance, real-time pounds conversion, and Body Surface Area (BSA) estimation.
+  - Pediatric: Integrated APLS age-based formula estimation with 1-tap "Use APLS Estimate" fill button and quick weight-band presets (3–40 kg).
+  - Adult: Integrated standard weight ranges (50–100 kg) and clinical reference guidelines for weight-tiered therapeutics (RSI, Thrombolysis, Anticoagulation, Parkland burns).
+  - Added Weight input in the primary demographics grid beside Age & Gender, and in Primary Survey Exposure (E) vitals.
+- **Triage Desk & Universal EMR Export Pipeline (`src/components/TriageForm.tsx`, `src/utils/triageDictation.ts`, `src/components/CaseSheetPrintView.tsx`, `src/utils/caseSheetFormat.ts`)**:
+  - Added Weight input in `TriageForm.tsx` and updated spoken triage dictation parser to capture weight in kg.
+  - Integrated `Weight: XX kg` in Case Sheet Print View header, markdown EMR copy, and HTML clipboard export.
+  - Verified with 26 automated tests in `verify_case_sheet_weight.ts` with zero regressions across existing triage and security suites.
+
 ### [2026-10-17] — ErMate: Security Follow-Up S1 + S3 & Server-Side Credit Gating (ERMATE-SECURITY-FOLLOWUP-V1)
 - **HTTP Method Pinning for Legacy SQL Guard (`server/legacyContainment.ts`)**:
   - Pinned `legacySqlGuard` exception strictly to `req.method === "POST" && normaliseSqlSubPath(req.path) === "/sync-user"`; all other HTTP verbs (GET, PUT, PATCH, DELETE) on `/api/sql/sync-user` now return 410 Gone.
