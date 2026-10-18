@@ -45,6 +45,17 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-17] — ErMate: 5-Level Triage Chart & Infection Screening Integration (ERMATE-TRIAGE-CHART-V1 & ERMATE-TRIAGE-SCREENING-V1)
+- **5-Level Emergency Triage System (`src/utils/triageScale.ts`, `src/utils/triageClassifier.ts`)**:
+  - Implemented 5-level clinical triage scale (P1 Immediate 0m, P2 Very Urgent 5m, P3 Urgent 30m, P4 Standard 60m, P5 Non-Urgent 120m) with clean backward compatibility to legacy P1/P2/P3 categories.
+  - Robust rule-based classifier matching chief complaint conditions, age-specific criteria (including paediatric protocol for age <= 16), negation handling, and vitals-based escalation.
+  - Verified with 123 automated test assertions in `verify_triage_chart.ts`.
+- **Triage Assessment & Infection Screening (`src/utils/triageScreening.ts`, `src/components/TriageScreeningFields.tsx`, `src/components/PediatricNormalVitalsCard.tsx`)**:
+  - Structured communicable disease screening, travel history (endemic areas in last 3 weeks), isolation requirements (Airborne, Droplet, Contact), and triaged-by credentials.
+  - Reactive isolation alert banner in CaseSheetView, screening lines rendered in CaseSheetPrintView, and EMR export text formatting.
+  - Paediatric age bands (0-3m, 3-6m, 6-12m, 1-3y, 4-6y, 7-11y, 12-16y) with normal physiological reference card.
+  - Verified with 29 automated test assertions in `verify_triage_screening.ts`.
+
 ### [2026-10-17] — ErMate: Quick Investigation Panels Customisation & Compact Dropdown (ERMATE-QUICK-INVESTIGATION-PANELS-V1)
 - **Compact Quick Investigation Dropdown (`src/components/QuickInvestigationMenu.tsx`, `src/components/CaseSheetView.tsx`)**:
   - Replaced the large, always-open 16-card panel grid with a compact, accessible dropdown button (`#quick-investigation-button`, `#quick-investigation-list`).

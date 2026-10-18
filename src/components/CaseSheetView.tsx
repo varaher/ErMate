@@ -3443,7 +3443,6 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
               />
             </div>
           </details>
-          )}
 
           {/* Mobile: one dropdown to switch tabs */}
           <div className="hidden px-4 pb-2 pt-2 border-t border-slate-100 dark:border-slate-800/50">
