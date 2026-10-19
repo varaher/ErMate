@@ -45,6 +45,16 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-18] — ErMate: MATE Vacant Bed New Case Intake (MATE_VACANT_BED_NEW_CASE)
+- **Flexible New-Patient Intent Recognition (`src/mate/mateNewCaseIntent.ts`)**:
+  - Implemented `detectExplicitNewCaseIntent` matching variants such as `"new patient bed 11"`, `"New pt in bed no 11"`, `"Start a case in bed no 11"`, `"fresh arrival bed 3"`, and `"register a new pt"`.
+  - Added `bedFromUnmatchedReference` converting unmatched short numbers (e.g. `"patient number 11"`) into bed identifiers while protecting long clinical display IDs (e.g. `261006004`, `C-2976`).
+  - Added `shouldStartCaseForVacantBed`: ensures vacant beds with clinical dictation or explicit new-case phrases initiate a new case, while queries (`"what is the BP in bed 9?"`) and summaries (`"summarise bed 9"`) remain read-only.
+- **Vacant Bed Auto-Intake Pipeline (`src/components/VoiceScribeChatView.tsx`)**:
+  - Reusable `startNewCaseInBed` helper provisioning a fresh Scribe session and linking draft clinical case in the target bed with shared-bed collision advisory notices.
+  - Intercepted unmatched short numbers for vacant beds before the `NOT_FOUND` rejection stop: verifies true vacancy via `resolveMateCaseReference` before creating the case, while occupied beds seamlessly update the active occupant.
+  - Verified with 29 automated tests in `verify_mate_vacant_bed_new_case.ts` and 0 regressions in `verify_mate_replay_safety.ts`, `verify_mate_integration.ts`, `verify_bed_binding.ts`, and `verify_mate_universal_phase1.ts`.
+
 ### [2026-10-18] — ErMate: Handover Synthesis, Model Upgrade & Card Print Layout Refinement (HANDOVER-REFINEMENT-V1)
 - **Model Upgrade to Gemini 2.5 Pro (`server.ts`, `server/handover.ts`, `server/mortalityAudit.ts`)**:
   - Upgraded retired `gemini-1.5-pro` model identifiers to `gemini-2.5-pro` across `/api/handover-chat`, `/api/handover/compile-sheet`, `MODELS.GEMINI_PRO`, and mortality audit fallback.

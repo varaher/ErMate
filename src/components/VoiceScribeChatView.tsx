@@ -52,6 +52,7 @@ import { formatCaseCompletenessReply, formatDischargePendingReply } from "../mat
 import { normalizeMateBedId } from "../mate/mateBedModel";
 import { validateAndBuildMateTask } from "../mate/mateTaskValidator";
 import { resolveInterpretedPatient } from "../mate/matePatientDisambiguator";
+import { detectExplicitNewCaseIntent, bedFromUnmatchedReference, shouldStartCaseForVacantBed } from "../mate/mateNewCaseIntent";
 import { computeCensusOrientation, formatErOverviewMessage } from "../mate/mateOrientation";
 import { authenticatedFetch } from "../services/authenticatedFetch";
 
@@ -99,10 +100,7 @@ export function detectMateTurnMode(text: string): ChatMode {
   return endsWithQuestionMark || auxQuestion || askCommand ? "discuss" : "dictation";
 }
 
-export function detectExplicitNewCaseIntent(text: string): boolean {
-  if (!text) return false;
-  return /\b(?:new\s+(?:patient|case|intake|arrival|admission)|start\s+a?\s*new\s+(?:patient|case)|patient\s+just\s+arrived|admit(?:ted)?\s+a?\s*new\s+patient|fresh\s+arrival)\b/i.test(text);
-}
+export { detectExplicitNewCaseIntent } from "../mate/mateNewCaseIntent";
 
 interface VoiceScribeChatViewProps {
   caseId?: string | null;
@@ -1790,6 +1788,61 @@ export default function VoiceScribeChatView({
         return;
       }
 
+      const startNewCaseInBed = async (assignedBed: string, bedRef: string) => {
+        if (!onEnsureDraftCase) return;
+        setInputText("");
+        setIsSending(true);
+        try {
+          const user = auth.currentUser;
+          if (!user) throw new Error("Not authenticated");
+          const workspace = await resolveWorkspaceForUser(user.uid);
+          const newSessionId = await createScribeSession({
+            ownerUid: user.uid,
+            workspaceType: workspace.workspaceType,
+            hospitalId: workspace.hospitalId,
+            mode: "case",
+          });
+          const newCaseId = await onEnsureDraftCase(newSessionId, { bedNo: assignedBed });
+          sessionContextGenerationRef.current += 1;
+          const currentGen = sessionContextGenerationRef.current;
+          // Tell the doctor when the new patient shares a bed with an existing one.
+          const familyBase = String(bedRef).replace(/[AB]$/i, "");
+          const familyOccupant = activeCensusCases.find((c) => {
+            const nb = normalizeMateBedId(c.bedNo);
+            return nb === familyBase || nb === `${familyBase}A` || nb === `${familyBase}B`;
+          });
+          const familyNotice = familyOccupant
+            ? `Bed ${familyBase} already has ${familyOccupant.patient?.name || "a patient"} (${normalizeMateBedId(familyOccupant.bedNo) === familyBase ? `${familyBase}A` : normalizeMateBedId(familyOccupant.bedNo)}). I've placed this new patient in ${assignedBed}.`
+            : undefined;
+          pendingNewPatientHandoffRef.current = {
+            targetCaseId: newCaseId,
+            targetBed: assignedBed,
+            utterance: trimmed,
+            generation: currentGen,
+            notice: familyNotice,
+          };
+          setActiveSessionId(newSessionId);
+          onSessionIdChange?.(newSessionId);
+          onSwitchCase?.(newCaseId);
+        } catch (err: any) {
+          console.error("[VoiceScribeChatView] Failed to ensure draft case for new patient:", err);
+          const isWsError = err instanceof WorkspaceResolutionError || err?.isWorkspaceResolutionError || err?.name === "WorkspaceResolutionError";
+          if (isWsError) {
+            setSessionAttachError("Unable to verify your workspace right now. Please retry. No clinical data has been saved.");
+          } else {
+            const errMsg: Message = {
+              id: `err-${Date.now()}`,
+              sender: "ai",
+              text: `⚠️ Could not establish new case for Bed ${assignedBed}: ${err?.message || "Storage error"}`,
+              timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+            };
+            setMessages(prev => [...prev, errMsg]);
+          }
+        } finally {
+          setIsSending(false);
+        }
+      };
+
       // Check for explicit new-patient intake
       const bedRef = extractMateBedReference(trimmed);
       const explicitNewCaseIntent = detectExplicitNewCaseIntent(trimmed);
@@ -1875,58 +1928,7 @@ export default function VoiceScribeChatView({
         }
 
         if (resolution.status === "NOT_FOUND" && onEnsureDraftCase) {
-          const assignedBed = resolution.referenceValue || bedRef;
-          setInputText("");
-          setIsSending(true);
-          try {
-            const user = auth.currentUser;
-            if (!user) throw new Error("Not authenticated");
-            const workspace = await resolveWorkspaceForUser(user.uid);
-            const newSessionId = await createScribeSession({
-              ownerUid: user.uid,
-              workspaceType: workspace.workspaceType,
-              hospitalId: workspace.hospitalId,
-              mode: "case",
-            });
-            const newCaseId = await onEnsureDraftCase(newSessionId, { bedNo: assignedBed });
-            sessionContextGenerationRef.current += 1;
-            const currentGen = sessionContextGenerationRef.current;
-            // Tell the doctor when the new patient shares a bed with an existing one.
-            const familyBase = String(bedRef).replace(/[AB]$/i, "");
-            const familyOccupant = activeCensusCases.find((c) => {
-              const nb = normalizeMateBedId(c.bedNo);
-              return nb === familyBase || nb === `${familyBase}A` || nb === `${familyBase}B`;
-            });
-            const familyNotice = familyOccupant
-              ? `Bed ${familyBase} already has ${familyOccupant.patient?.name || "a patient"} (${normalizeMateBedId(familyOccupant.bedNo) === familyBase ? `${familyBase}A` : normalizeMateBedId(familyOccupant.bedNo)}). I've placed this new patient in ${assignedBed}.`
-              : undefined;
-            pendingNewPatientHandoffRef.current = {
-              targetCaseId: newCaseId,
-              targetBed: assignedBed,
-              utterance: trimmed,
-              generation: currentGen,
-              notice: familyNotice,
-            };
-            setActiveSessionId(newSessionId);
-            onSessionIdChange?.(newSessionId);
-            onSwitchCase?.(newCaseId);
-          } catch (err: any) {
-            console.error("[VoiceScribeChatView] Failed to ensure draft case for new patient:", err);
-            const isWsError = err instanceof WorkspaceResolutionError || err?.isWorkspaceResolutionError || err?.name === "WorkspaceResolutionError";
-            if (isWsError) {
-              setSessionAttachError("Unable to verify your workspace right now. Please retry. No clinical data has been saved.");
-            } else {
-              const errMsg: Message = {
-                id: `err-${Date.now()}`,
-                sender: "ai",
-                text: `⚠️ Could not establish new case for Bed ${assignedBed}: ${err?.message || "Storage error"}`,
-                timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-              };
-              setMessages(prev => [...prev, errMsg]);
-            }
-          } finally {
-            setIsSending(false);
-          }
+          await startNewCaseInBed(resolution.referenceValue || bedRef, bedRef);
           return;
         }
       }
@@ -2015,14 +2017,48 @@ export default function VoiceScribeChatView({
         }
 
         // B. Patient Reference Disambiguation
-        const patientResolution = resolveInterpretedPatient({
-          reference: interp.patientReference,
+        const resolveRef = (reference: typeof interp.patientReference) => resolveInterpretedPatient({
+          reference,
           activeCase,
           recentCase,
           censusCases: activeCensusCases,
           lastPresentedCaseIds: lastPresentedCaseIdsRef.current,
           physicalCapacity: physicalBedCapacity,
         });
+        let patientResolution = resolveRef(interp.patientReference);
+
+        // A short number that is not a case no. ("patient number 11") is the bed number.
+        // If that bed is occupied the dictation goes to that patient as usual.
+        const unmatchedBed = patientResolution.status === "NOT_FOUND"
+          ? bedFromUnmatchedReference(interp.patientReference)
+          : null;
+        if (unmatchedBed && interp.patientReference?.type === "DISPLAY_ID") {
+          patientResolution = resolveRef({ type: "BED", value: unmatchedBed });
+        }
+
+        // Vacant bed + clinical dictation (or an explicit "new patient") = start that patient here.
+        // Occupied beds never reach this point; questions and "summarise bed 9" still stop below.
+        if (
+          patientResolution.status === "NOT_FOUND" &&
+          unmatchedBed &&
+          onEnsureDraftCase &&
+          shouldStartCaseForVacantBed({
+            utterance: trimmed,
+            mayContainClinicalUpdate: planMateConversation(trimmed).mayContainClinicalUpdate,
+          })
+        ) {
+          const vacantCheck = resolveMateCaseReference({
+            utterance: `Bed ${unmatchedBed}`,
+            cases: activeCensusCases,
+            activeCaseId,
+            physicalCapacity: physicalBedCapacity,
+          });
+          if (vacantCheck.status === "NOT_FOUND") {
+            lastReferencedBedRef.current = unmatchedBed;
+            await startNewCaseInBed(unmatchedBed, unmatchedBed);
+            return;
+          }
+        }
 
         if (patientResolution.status === "AMBIGUOUS") {
           setInputText("");
