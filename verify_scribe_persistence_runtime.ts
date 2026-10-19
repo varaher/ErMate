@@ -299,14 +299,14 @@ async function runAllTests() {
 
   // Setup seed users
   const individualUser = { uid: "user_indiv_001", email: "dr.indiv@gmail.com" };
-  const teamUser = { uid: "user_team_002", email: "dr.team@rajagiri.org" };
+  const teamUser = { uid: "user_team_002", email: "dr.team@sample.org" };
   const otherTeamUser = { uid: "user_team_003", email: "dr.other@apollo.org" };
 
   // Setup team_members
   sim.setTeamMember(teamUser.uid, {
     status: "active",
     membershipVerified: true,
-    hospitalId: "rajagiri_hospital",
+    hospitalId: "sample_hospital",
     role: "resident",
   });
 
@@ -336,7 +336,7 @@ async function runAllTests() {
     const norm = getNormalizedRole({
       email: teamUser.email,
       role: "Resident",
-      hospital: "Rajagiri Hospital",
+      hospital: "Sample Hospital",
       hasActiveHospitalMembership: true,
       membershipRole: "EM Resident",
     });
@@ -498,7 +498,7 @@ async function runAllTests() {
     sim.createSession(teamUser, teamSessionId, {
       workspaceType: "hospital",
       ownerUid: teamUser.uid,
-      hospitalId: "rajagiri_hospital",
+      hospitalId: "sample_hospital",
       linkedCaseId: null,
       createdAt: new Date().toISOString(),
     });
@@ -507,7 +507,7 @@ async function runAllTests() {
     assert.ok(s);
     assert.strictEqual(s.workspaceType, "hospital");
     assert.strictEqual(s.ownerUid, teamUser.uid);
-    assert.strictEqual(s.hospitalId, "rajagiri_hospital");
+    assert.strictEqual(s.hospitalId, "sample_hospital");
     assert.strictEqual(s.linkedCaseId, null);
   });
 
@@ -522,12 +522,12 @@ async function runAllTests() {
     assert.strictEqual(msgs.length, 1);
   });
 
-  await test("3.3 Team ClinicalCase creates with ownerUid == null and hospitalId == 'rajagiri_hospital'", () => {
+  await test("3.3 Team ClinicalCase creates with ownerUid == null and hospitalId == 'sample_hospital'", () => {
     sim.createCase(teamUser, teamCaseId, {
       workspaceType: "hospital",
       ownerUid: null,
       createdByUid: teamUser.uid,
-      hospitalId: "rajagiri_hospital",
+      hospitalId: "sample_hospital",
       bedNo: "12A",
       patient: { name: "Maria Garcia", age: 60, gender: "female" },
       status: "Active",
@@ -538,7 +538,7 @@ async function runAllTests() {
     assert.strictEqual(c.workspaceType, "hospital");
     assert.strictEqual(c.ownerUid, null);
     assert.strictEqual(c.createdByUid, teamUser.uid);
-    assert.strictEqual(c.hospitalId, "rajagiri_hospital");
+    assert.strictEqual(c.hospitalId, "sample_hospital");
   });
 
   await test("3.4 Two-sided link between team session and team case is established", () => {
@@ -551,12 +551,12 @@ async function runAllTests() {
   });
 
   await test("3.5 Same hospital colleague can access case and linked Scribe session", () => {
-    // Add colleague in Rajagiri Hospital
-    const colleague = { uid: "user_team_colleague", email: "dr.colleague@rajagiri.org" };
+    // Add colleague in Sample Hospital
+    const colleague = { uid: "user_team_colleague", email: "dr.colleague@sample.org" };
     sim.setTeamMember(colleague.uid, {
       status: "active",
       membershipVerified: true,
-      hospitalId: "rajagiri_hospital",
+      hospitalId: "sample_hospital",
       role: "consultant",
     });
 
@@ -570,7 +570,7 @@ async function runAllTests() {
     assert.strictEqual(msgs.length, 1);
   });
 
-  await test("3.6 Clinician from DIFFERENT hospital CANNOT access Rajagiri hospital case", () => {
+  await test("3.6 Clinician from DIFFERENT hospital CANNOT access Sample hospital case", () => {
     const c = sim.cases.get(teamCaseId);
     assert.strictEqual(sim.canAccessCase(otherTeamUser, c), false);
 
@@ -580,7 +580,7 @@ async function runAllTests() {
   });
 
   await test("3.7 Team colleague updates case under hospital rules", () => {
-    const colleague = { uid: "user_team_colleague", email: "dr.colleague@rajagiri.org" };
+    const colleague = { uid: "user_team_colleague", email: "dr.colleague@sample.org" };
     const updatedCase = {
       ...sim.cases.get(teamCaseId),
       provisionalDiagnosis: "Inferior wall STEMI",
@@ -616,7 +616,7 @@ async function runAllTests() {
           workspaceType: "hospital",
           ownerUid: null,
           createdByUid: individualUser.uid,
-          hospitalId: "rajagiri_hospital",
+          hospitalId: "sample_hospital",
         }),
       /Invalid case create payload or unauthorized workspace/
     );

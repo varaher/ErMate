@@ -2757,7 +2757,7 @@ Extremities: Peripheral pulses present and well felt. No edema. No cyanosis or c
 **Patient Name:** ${currentCase.patient.name}
 **Age/Sex:** ${formatAgeLong(currentCase.patient.age, currentCase.patient.ageMonths, currentCase.patient.ageDays)} / ${currentCase.patient.gender}
 **Weight:** ${currentCase.patient.weight || currentCase.vitals?.weight || currentCase.pediatricDetails?.patientWeight || "Not documented"} kg
-**Address:** Chunangamvely, Aluva, Ernakulam, Kerala - 683 112
+**Address:** ${currentCase.patient.address || "Not Provided"}
 **Phone Number:** ${currentCase.patient.phone || "Not Provided"}
 **Date & Time of Arrival:** ${currentCase.patient.dateOpened}
 **Date & Time of Accident:** ${currentCase.patient.mlcDetails?.dateTimeOfIncident || "N/A"}
@@ -2937,7 +2937,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}
 <strong>Patient Name:</strong> ${currentCase.patient.name}<br/>
 <strong>Age/Sex:</strong> ${formatAgeLong(currentCase.patient.age, currentCase.patient.ageMonths, currentCase.patient.ageDays)} / ${currentCase.patient.gender}<br/>
 <strong>Weight:</strong> ${currentCase.patient.weight || currentCase.vitals?.weight || currentCase.pediatricDetails?.patientWeight || "Not documented"} kg<br/>
-<strong>Address:</strong> Chunangamvely, Aluva, Ernakulam, Kerala - 683 112<br/>
+<strong>Address:</strong> ${currentCase.patient.address || "Not Provided"}<br/>
 <strong>Phone Number:</strong> ${currentCase.patient.phone || "Not Provided"}<br/>
 <strong>Date & Time of Arrival:</strong> ${currentCase.patient.dateOpened}<br/>
 <strong>Date & Time of Accident:</strong> ${currentCase.patient.mlcDetails?.dateTimeOfIncident || "N/A"}<br/>

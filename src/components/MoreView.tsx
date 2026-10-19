@@ -486,7 +486,7 @@ export default function MoreView({
                     type="text"
                     value={facilityHospitalName}
                     onChange={(e) => setFacilityHospitalName(e.target.value)}
-                    placeholder="e.g. Rajagiri Emergency Care"
+                    placeholder="e.g. City Emergency Care"
                     className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2 text-xs font-bold text-slate-900 dark:text-white focus:outline-indigo-500"
                   />
                 </div>

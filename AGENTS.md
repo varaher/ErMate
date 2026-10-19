@@ -45,6 +45,16 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-18] — ErMate: Shared Reference Sanitizer Fix & Neutral Hospital Export (ERMATE-SANITIZER-NEUTRAL-V1)
+- **Shared (Non-Circular) Reference Preservation (`src/utils/firestoreSanitizer.ts`)**:
+  - Fixed `sanitizeForFirestore` visited tracking by scoping `visited.delete(data)` inside a `finally` block to track only the active ancestor chain.
+  - Non-circular objects referenced in multiple branches (such as vitals duplicated across pediatric details or array entries) are now preserved in full rather than incorrectly collapsed to `null`.
+- **Neutral Hospital Export & Dynamic Address (`src/components/CaseSheetView.tsx`, `src/components/HandoverView.tsx`, etc.)**:
+  - Replaced hardcoded patient address strings with `${currentCase.patient.address || "Not Provided"}` in Case Sheet markdown and HTML export.
+  - Eliminated hardcoded hospital fallback literal in Handover View header, rendering generic "EMERGENCY DEPARTMENT" unless a hospital name is explicitly configured.
+  - Cleaned specific hospital placeholders across Doctors Directory, More, Profile Settings, Team Roster Board, and Triage Form to generic emergency care examples.
+  - Verified with 6 tests in `verify_sanitizer_and_neutral_output.ts`.
+
 ### [2026-10-18] — ErMate: Voice Batch Upload Content-Type & Error Sanitization (VOICE-BATCH-UPLOAD-V1)
 - **Audio Blob Content-Type Enforcement (`server/sarvamBatch.ts`)**:
   - Attached explicit `"x-ms-blob-content-type": "audio/wav"` and `"Content-Type": "audio/wav"` headers during presigned blob PUT uploads, preventing Azure/Sarvam storage from defaulting audio to `binary/octet-stream` and rejecting job starts.

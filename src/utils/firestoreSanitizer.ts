@@ -18,17 +18,23 @@ export function sanitizeForFirestore<T>(data: T, visited = new WeakSet()): T {
     // Avoid circular reference infinite loop
     return null as unknown as T;
   }
+  // `visited` tracks only the current ancestor chain (true cycles). An object that is
+  // merely referenced twice (a shared, non-circular reference) must be saved in full
+  // both times, never replaced with null.
   visited.add(data);
-
-  if (Array.isArray(data)) {
-    return data.map((item) => sanitizeForFirestore(item, visited)) as unknown as T;
-  }
-
-  const cleanObj: Record<string, any> = {};
-  for (const [key, val] of Object.entries(data as Record<string, any>)) {
-    if (val !== undefined) {
-      cleanObj[key] = sanitizeForFirestore(val, visited);
+  try {
+    if (Array.isArray(data)) {
+      return data.map((item) => sanitizeForFirestore(item, visited)) as unknown as T;
     }
+
+    const cleanObj: Record<string, any> = {};
+    for (const [key, val] of Object.entries(data as Record<string, any>)) {
+      if (val !== undefined) {
+        cleanObj[key] = sanitizeForFirestore(val, visited);
+      }
+    }
+    return cleanObj as T;
+  } finally {
+    visited.delete(data);
   }
-  return cleanObj as T;
 }

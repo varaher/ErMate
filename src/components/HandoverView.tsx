@@ -3174,7 +3174,7 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
               value={hospitalName}
               onChange={(e) => setHospitalName(e.target.value)}
               className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg font-bold text-slate-800 dark:text-slate-100"
-              placeholder="e.g. RAJAGIRI HOSPITAL"
+              placeholder="e.g. CITY GENERAL HOSPITAL"
             />
           </div>
           <div>
@@ -3224,7 +3224,7 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
               <div>
                 <div className="flex items-center gap-2 justify-center md:justify-start">
                   <h1 className="text-base md:text-lg font-black tracking-wider text-slate-950 dark:text-white uppercase font-mono">
-                    {hospitalName || "RAJAGIRI HOSPITAL"} &mdash; EMERGENCY DEPARTMENT
+                    {hospitalName && hospitalName !== "EMERGENCY DEPARTMENT" ? `${hospitalName} \u2014 ` : ""}EMERGENCY DEPARTMENT
                   </h1>
                 </div>
                 <p className="text-[10px] text-slate-600 dark:text-slate-400 font-mono tracking-widest mt-0.5 uppercase font-bold">

@@ -24,11 +24,11 @@ async function runTests() {
   const user1 = getNormalizedRole({
     email: "dr.smith@gmail.com",
     role: "HOD",
-    hospital: "Rajagiri Hospital",
+    hospital: "Sample Hospital",
     hasActiveHospitalMembership: false,
     membershipRole: null
   });
-  assert(user1 === "independent", "User with role=HOD & hospital=Rajagiri without active membership is normalized to 'independent'");
+  assert(user1 === "independent", "User with role=HOD & hospital=Sample without active membership is normalized to 'independent'");
 
   // 2. User signs up as Senior Consultant with hospital name, BUT no active team membership -> INDIVIDUAL
   const user2 = getNormalizedRole({

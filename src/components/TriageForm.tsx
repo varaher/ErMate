@@ -695,7 +695,7 @@ export default function TriageForm({ onBack, onSubmit, initialMode, activeCases 
                   </label>
                   <input
                     type="text"
-                    placeholder="e.g. National Highway 47, near Rajagiri"
+                    placeholder="e.g. National Highway 47, near the hospital"
                     value={placeOfIncident}
                     onChange={(e) => setPlaceOfIncident(e.target.value)}
                     className="w-full px-3 py-1.5 bg-white dark:bg-slate-900 border border-amber-200 dark:border-amber-850 rounded-lg focus:outline-none"

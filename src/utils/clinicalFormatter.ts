@@ -172,7 +172,7 @@ export function deduplicateMeds<T extends { id?: string; drugName: string; dose?
 
 /**
  * Formats doctor display name cleanly.
- * Capitalizes usernames like "rajagirier" -> "Dr. Rajagirier".
+ * Capitalizes usernames like "jsmith" -> "Dr. Jsmith".
  */
 export function formatDoctorName(rawName?: string | null): string {
   if (!rawName || !rawName.trim()) {
@@ -186,7 +186,7 @@ export function formatDoctorName(rawName?: string | null): string {
     clean = clean.split('@')[0];
   }
 
-  // If name contains lowercase-only username without space (e.g. "rajagirier")
+  // If name contains lowercase-only username without space (e.g. "jsmith")
   if (/^[a-z0-9_]+$/.test(clean)) {
     clean = clean.charAt(0).toUpperCase() + clean.slice(1);
   }

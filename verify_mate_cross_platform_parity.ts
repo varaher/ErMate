@@ -614,12 +614,12 @@ runTest("8.1 Same UID queries and renders persistent case after simulated app re
 });
 
 runTest("8.2 Shared hospital case is queryable by colleagues in same hospital but not other hospitals", () => {
-  const rajagiriCase: ClinicalCase = {
-    id: "case_rajagiri_01",
+  const sampleCase: ClinicalCase = {
+    id: "case_sample_01",
     displayId: "2026101099",
     workspaceType: "hospital",
-    hospital: "Rajagiri Hospital",
-    hospitalId: "hosp_rajagiri",
+    hospital: "Sample Hospital",
+    hospitalId: "hosp_sample",
     ownerUid: null,
     createdByUid: "doc_shift_morning",
     status: "Active",
@@ -636,13 +636,13 @@ runTest("8.2 Shared hospital case is queryable by colleagues in same hospital bu
     },
   } as ClinicalCase;
 
-  // Colleague from Rajagiri
-  const colleagueHospital = "Rajagiri Hospital";
-  assert.strictEqual(rajagiriCase.hospital, colleagueHospital, "Rajagiri colleague can access case");
+  // Colleague from Sample
+  const colleagueHospital = "Sample Hospital";
+  assert.strictEqual(sampleCase.hospital, colleagueHospital, "Sample colleague can access case");
 
   // Colleague from Apollo
   const externalHospital = "Apollo Hospital";
-  assert.notStrictEqual(rajagiriCase.hospital, externalHospital, "Apollo colleague cannot access Rajagiri case");
+  assert.notStrictEqual(sampleCase.hospital, externalHospital, "Apollo colleague cannot access Sample case");
 });
 
 // --------------------------------------------------------------------------------

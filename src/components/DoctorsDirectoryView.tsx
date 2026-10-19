@@ -239,7 +239,7 @@ export default function DoctorsDirectoryView({ currentProfile, onNavigateToTab }
               type="text"
               value={searchHospital}
               onChange={(e) => setSearchHospital(e.target.value)}
-              placeholder="e.g. Rajagiri Hospital"
+              placeholder="e.g. City General Hospital"
               className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-white font-semibold focus:outline-none focus:border-indigo-500"
             />
           </div>
@@ -413,7 +413,7 @@ export default function DoctorsDirectoryView({ currentProfile, onNavigateToTab }
                 <textarea
                   value={claimReason}
                   onChange={(e) => setClaimReason(e.target.value)}
-                  placeholder="e.g. I am the senior-most Emergency Physician / HOD at Rajagiri Hospital, creating our official ER team roster."
+                  placeholder="e.g. I am the senior-most Emergency Physician / HOD at City General Hospital, creating our official ER team roster."
                   rows={3}
                   className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl p-3 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-indigo-500 font-sans"
                   required
