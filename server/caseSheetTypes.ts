@@ -71,7 +71,7 @@ export interface MedicationLogEntry {
 
 export interface CaseSheetData {
   caseId: string;
-  hospitalName?: string; // defaults to "Rajagiri Hospital" if omitted
+  hospitalName?: string; // optional; falls back to a generic ED title if omitted
 
   patient: {
     name: string | null;   // masked per PHI rules unless treating physician view
