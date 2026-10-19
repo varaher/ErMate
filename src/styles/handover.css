@@ -526,10 +526,20 @@
     margin-left: 12mm;
   }
 
-  .hov-card,
-  .print-card {
+  .hov-card {
     break-inside: avoid !important;
     page-break-inside: avoid !important;
+    margin-bottom: 8px;
+    box-shadow: none !important;
+    border: 1px solid #0f172a !important;
+    background: #ffffff !important;
+  }
+
+  /* A long patient card must flow onto the next page instead of jumping whole and
+     leaving the previous page mostly blank. Individual sections still avoid splitting. */
+  .print-card {
+    break-inside: auto !important;
+    page-break-inside: auto !important;
     margin-bottom: 8px;
     box-shadow: none !important;
     border: 1px solid #0f172a !important;

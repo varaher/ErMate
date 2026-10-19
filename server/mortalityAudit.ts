@@ -370,10 +370,10 @@ export async function generateMortalityAudit(
   // matching the hard-refuse pattern in handover.ts.
   if (process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim() !== "") {
     try {
-      console.log("[MortalityAudit] Attempting fallback model: gemini-1.5-pro...");
+      console.log("[MortalityAudit] Attempting fallback model: gemini-2.5-pro...");
       const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
       const response = await ai.models.generateContent({
-        model: "gemini-1.5-pro",
+        model: "gemini-2.5-pro",
         contents: prompt,
         config: {
           temperature: 0.0,

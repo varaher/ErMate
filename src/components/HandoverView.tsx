@@ -1795,7 +1795,13 @@ function extractLatestVitalsWithTime(
         : "");
 
       const sit = card?.presentingComplaint || card?.story || qp.presentingComplaint || qp.structuredSBAR?.situation || extractPresentingComplaint(qp);
-      const ass = card?.diagnosis || qp.structuredSBAR?.assessment || (qp.vitals ? `Vitals: ${qp.vitals}` : "");
+      // A placeholder such as "Not documented" is not a recorded vital sign.
+      const qpVitalsReal = (qp.vitals && !/^\s*(?:not\s+documented|n\/?a|nil|-+)\s*$/i.test(qp.vitals)) ? qp.vitals : "";
+      const ass = card?.diagnosis || qp.structuredSBAR?.assessment || (qpVitalsReal ? `Vitals: ${qpVitalsReal}` : "");
+      // The presenting complaint is NOT a diagnosis. Use a diagnosis only when one was
+      // actually extracted (card diagnosis, or an explicit "PROVISIONAL DIAGNOSIS:" in the SBAR situation).
+      const sbarDx = (qp.structuredSBAR?.situation || "").match(/^\s*PROVISIONAL\s+DIAGNOSIS:\s*(.+)$/is);
+      const dxText = (card?.diagnosis || (sbarDx ? sbarDx[1].trim() : "") || "").trim();
 
       const chronoNotes = qp.rawNotes && qp.rawNotes.trim().length > 0
         ? qp.rawNotes.split(/\n\s*\n+/).map(l => l.trim()).filter(l => l.length > 0).join("\n\n")
@@ -1803,7 +1809,7 @@ function extractLatestVitalsWithTime(
 
       const { formattedAssessment, alertsList: invAlerts, planDoneLabsText, fullInvText: invsFullText } = extractChronologicalInvestigationsAndAlerts(
         qp.rawNotes || "",
-        `PROVISIONAL DIAGNOSIS: ${sit}\nASSESSMENT: ${ass}`,
+        `PROVISIONAL DIAGNOSIS: ${dxText || "Not yet documented"}${ass ? `\nASSESSMENT: ${ass}` : ""}`,
         []
       );
 
@@ -1827,7 +1833,7 @@ function extractLatestVitalsWithTime(
       if (card?.done && card.done.length > 0) {
         card.done.forEach(d => doneItems.push(`✓ ${d}`));
       } else {
-        if (qp.vitals) doneItems.push(`✓ Vitals: ${qp.vitals}`);
+        if (qpVitalsReal) doneItems.push(`✓ Vitals: ${qpVitalsReal}`);
         if (planDoneLabsText) doneItems.push(planDoneLabsText);
       }
 
@@ -1850,7 +1856,7 @@ function extractLatestVitalsWithTime(
         bed: bedText,
         name: nameText,
         ageGender: ageSexText,
-        erNo: card?.patientLabel?.erNumber ? `ER# ${card.patientLabel.erNumber}` : `ER# ${qp.id.substring(0, 7)}`,
+        erNo: card?.patientLabel?.erNumber ? `ER# ${card.patientLabel.erNumber}` : "",
         doctor: treatingDr !== "Not documented" ? treatingDr : (admittingCons !== "Not documented" ? `Cons: ${admittingCons}` : "Not documented"),
         treatingPhysician: treatingDr,
         admittingConsultant: admittingCons,

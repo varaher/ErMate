@@ -275,7 +275,7 @@ function getAI(): GoogleGenAI {
                        // Dynamic retry fallback — only rotate within retryModelList if the
             // ORIGINALLY requested model was itself one of these two. If the caller
             // asked for a different, specific Gemini model (e.g. gemini-2.5-flash,
-            // gemini-1.5-pro), retry that exact same model — never silently swap it.
+            // gemini-2.5-pro), retry that exact same model — never silently swap it.
             if (args[0] && typeof args[0] === "object" && originallyRequestedModel && retryModelList.includes(originallyRequestedModel)) {
               const currentModel = args[0].model || originallyRequestedModel;
               const nextIdx = (retryModelList.indexOf(currentModel) + 1) % retryModelList.length;
@@ -1728,7 +1728,7 @@ app.post("/api/handover-chat", requireAuth, async (req: AuthRequest, res) => {
     }
 
     const ai = getAI();
-    const geminiCandidates = ["gemini-1.5-pro", "gemini-1.5-pro-latest"];
+    const geminiCandidates = ["gemini-2.5-pro"];
     
     for (const modelCandidate of geminiCandidates) {
       try {
@@ -3349,7 +3349,7 @@ app.post("/api/handover/compile-sheet", requireAuth, async (req: AuthRequest, re
     } catch (sonnetError) {
       console.warn("[compile-sheet] Claude Sonnet unavailable, falling back to Gemini Pro:", sonnetError);
       const geminiResponse = await ai.models.generateContent({
-        model: "gemini-1.5-pro",
+        model: "gemini-2.5-pro",
         contents: prompt,
         config: {
           responseMimeType: "application/json",

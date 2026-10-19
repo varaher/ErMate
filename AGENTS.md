@@ -45,6 +45,21 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-18] — ErMate: Handover Synthesis, Model Upgrade & Card Print Layout Refinement (HANDOVER-REFINEMENT-V1)
+- **Model Upgrade to Gemini 2.5 Pro (`server.ts`, `server/handover.ts`, `server/mortalityAudit.ts`)**:
+  - Upgraded retired `gemini-1.5-pro` model identifiers to `gemini-2.5-pro` across `/api/handover-chat`, `/api/handover/compile-sheet`, `MODELS.GEMINI_PRO`, and mortality audit fallback.
+  - Guaranteed Pro-tier reasoning integrity (strictly zero Flash fallback on complex reasoning).
+- **Claude Handover Token Capacity & Truncation Guard (`server/handover.ts`)**:
+  - Increased Claude handover `max_tokens` from 2048 to 8192 to safely accommodate complete multi-patient EMR structured JSON outputs.
+  - Added explicit `stop_reason === 'max_tokens'` check throwing actionable error to smoothly failover to next model instead of attempting to parse broken, truncated JSON.
+- **Handover Quick-Paste Clinical Honesty (`src/components/HandoverView.tsx`)**:
+  - Filtered placeholder vitals (`Not documented`, `N/A`, `nil`, `--`) via `qpVitalsReal` regex, preventing empty placeholders from appearing under Plan Done.
+  - Decoupled presenting complaints from provisional diagnosis: diagnosis is populated only when an explicit diagnosis or `PROVISIONAL DIAGNOSIS:` header exists, defaulting honestly to `"Not yet documented"`.
+  - Removed artificial pseudo ER# generated from quick-paste UUID substring.
+- **Handover Print Page Flow (`src/styles/handover.css`)**:
+  - Updated `.print-card` with `break-inside: auto !important; page-break-inside: auto !important;`, allowing tall patient cards to flow across pages instead of jumping entirely to the next page and leaving large blank areas. Individual `.hov-section` elements retain their layout.
+  - Verified with 8 automated tests in `verify_handover_refinement.ts`.
+
 ### [2026-10-18] — ErMate: Shared Reference Sanitizer Fix & Neutral Hospital Export (ERMATE-SANITIZER-NEUTRAL-V1)
 - **Shared (Non-Circular) Reference Preservation (`src/utils/firestoreSanitizer.ts`)**:
   - Fixed `sanitizeForFirestore` visited tracking by scoping `visited.delete(data)` inside a `finally` block to track only the active ancestor chain.

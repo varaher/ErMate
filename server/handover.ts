@@ -16,7 +16,7 @@ export const MODELS = {
   CLAUDE_SONNET:  'claude-sonnet-4-6',
   CLAUDE_HAIKU:   'claude-haiku-4-5-20251001',
   GEMINI_FLASH:   'gemini-2.0-flash',   // whitelisted ONLY for vision/OCR — never call from here
-  GEMINI_PRO:     'gemini-1.5-pro',     // ⚠ VERIFY against your current Google AI Studio available-models list before deploying — model IDs change. This must resolve to an actual Pro-tier model, not any string containing "flash".
+  GEMINI_PRO:     'gemini-2.5-pro',     // Pro-tier only (never Flash). Google lists gemini-2.5-pro as the stable Pro model; the older 1.5-generation Pro model is retired. Re-check against the Google AI model list when upgrading.
 };
 
 // ── Step 1: Preprocess — strip noise ─────────────────────────
@@ -398,10 +398,16 @@ async function callClaude(
     const anthropic = new Anthropic({ apiKey });
     const msg = await anthropic.messages.create({
       model,
-      max_tokens: 2048,
+      // The handover JSON (many sections) routinely exceeds 2048 tokens for real EMR
+      // pastes; a truncated reply is invalid JSON and sent every attempt to the
+      // "extraction failed" fallback. 8192 leaves ample headroom.
+      max_tokens: 8192,
       temperature: 0.0,
       messages: [{ role: 'user', content: prompt }],
     });
+    if ((msg as any).stop_reason === 'max_tokens') {
+      throw new Error(`Handover reply truncated at max_tokens (${model}); trying next model.`);
+    }
     return ((msg.content[0] as any).text as string)
       .replace(/```json\n?/g, '')
       .replace(/```\n?/g, '')
