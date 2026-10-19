@@ -45,6 +45,21 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-19] — ErMate: Paste-First Bed-Second, Identity Conflict Guard & Local Case Sheet Parser (PASTE-FIRST-FLOW-V1)
+- **Local Case Sheet & Discharge Parser (`src/mate/pastedSheetParser.ts`, `verify_pasted_sheet_import.ts`)**:
+  - Implemented client-side parser reading patient demographics (names with title stripping, age, sex) and labelled discharge sections (`Final Diagnosis`, `Condition at Discharge`, `Discharge Medications`, `Follow-up plan`).
+  - Merges into extraction post-model to protect PHI while accurately populating discharge recommendations in the clinician's exact words.
+  - Implemented `detectSheetIdentityConflict`: guards against merging a pasted note belonging to another patient into an open case when name, age (>5 year delta), or sex clash.
+- **Paste-First, Bed-Second Lifecycle (`src/mate/mateNewCaseIntent.ts`, `src/components/VoiceScribeChatView.tsx`, `verify_mate_paste_first.ts`)**:
+  - Unassigned case sheets pasted with no bed and no open patient are held in memory (`pendingPastedSheetRef`) with a 15-minute TTL while prompting the clinician: `"Which bed is this patient in?"`.
+  - Short bed replies (e.g. `"Bed 9"`, `"put her in 9A"`) automatically allocate the bed, create the draft case, and replay the held case sheet into extraction.
+- **Patient Announcement Intake (`src/mate/mateNewCaseIntent.ts`, `src/components/VoiceScribeChatView.tsx`, `verify_mate_announce_bed.ts`)**:
+  - Implemented `detectPatientAnnouncement` (e.g. `"I have a patient in bed 9"`, `"we got a new pt in bed 4"`): opens a fresh case on vacant beds immediately without LLM command interpretation latency and awaits dictation.
+- **Discharge Auto-Draft Protection (`src/components/DischargeSummaryView.tsx`, `src/App.tsx`)**:
+  - `handleAiDraft(keepExisting = true)` on component mount fills only blank fields using functional state updates, preventing late AI responses from overwriting typed or pasted content.
+  - Carries `dischargeInfoDraft` into `draftCase.dischargeInfo` on discharge preview.
+  - Verified with 111 new automated tests (25 in `verify_mate_announce_bed.ts`, 42 in `verify_mate_paste_first.ts`, 44 in `verify_pasted_sheet_import.ts`).
+
 ### [2026-10-19] — ErMate: MATE Dictation Flow Grounding & Long Clinical Paste Fast-Track (MATE-DICTATION-FLOW-V1)
 - **Patient Reference Grounding (`src/mate/mateNewCaseIntent.ts`, `src/components/VoiceScribeChatView.tsx`)**:
   - Implemented `isReferenceGroundedInUtterance` and `groundPatientReference`: validates that bed/case numbers extracted by the interpreter were explicitly spoken by the clinician (e.g. `"bed 11"`, `"patient number 11"`, `"case C-2976"`) rather than numbers embedded inside vital signs or lab values (such as `"RR 18"`, `"BP 140 by 80"`, `"GCS 15"`).

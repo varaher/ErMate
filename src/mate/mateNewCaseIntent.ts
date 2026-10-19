@@ -15,6 +15,18 @@ export function detectExplicitNewCaseIntent(text: string): boolean {
   return NEW_CASE_PATTERN.test(text);
 }
 
+/**
+ * "I have apt in bed no 9", "we got a new patient in bed 4": the doctor is announcing a patient
+ * before dictating. Subject + verb + patient word only, so "summarise patient in bed 9" or
+ * "open the patient in bed 9" never count.
+ */
+export function detectPatientAnnouncement(text: string): boolean {
+  if (!text) return false;
+  const t = text.trim();
+  if (/\?\s*$/.test(t)) return false;
+  return /\b(?:(?:i|we)(?:'ve|\s+have|\s+got|\s+just\s+got)|there(?:'s|\s+is)|(?:just\s+)?(?:got|received|admitted))\s+(?:a\s+|an\s+|one\s+|another\s+)?(?:new\s+)?(?:patient|pt|apt|case|admission)\b/i.test(t);
+}
+
 const SHORT_BED = /^\s*(\d{1,3})\s*([ab])?\s*$/i;
 
 /**
@@ -39,7 +51,7 @@ export function shouldStartCaseForVacantBed(opts: {
 }): boolean {
   const t = (opts.utterance || "").trim();
   if (!t || /\?\s*$/.test(t)) return false;
-  if (detectExplicitNewCaseIntent(t)) return true;
+  if (detectExplicitNewCaseIntent(t) || detectPatientAnnouncement(t)) return true;
   return opts.mayContainClinicalUpdate;
 }
 
@@ -97,4 +109,28 @@ export function looksLikeFullCaseSheet(utterance: string): boolean {
     /\b(?:disposition|discharge|advice|admit)\b/i,
   ];
   return labels.filter((r) => r.test(t)).length >= 4;
+}
+
+/** A sheet that states its own bed with a "Bed" label (not a stray "B12" / "2a" token). */
+export function hasExplicitBedLabel(text: string): boolean {
+  return /\bbed\s*(?:no\.?|number|#)?\s*[:\-]?\s*\d{1,3}\s*[ab]?\b/i.test(text || "");
+}
+
+/** Paste-first: a full case sheet with no bed of its own and no open patient is held until a bed is given. */
+export function shouldHoldPastedSheet(opts: { text: string; hasOpenPatient: boolean }): boolean {
+  return !opts.hasOpenPatient && looksLikeFullCaseSheet(opts.text) && !hasExplicitBedLabel(opts.text);
+}
+
+export type PendingSheetReply =
+  | { kind: "bed"; bed: string }
+  | { kind: "cancel" }
+  | { kind: "other" };
+
+/** Classify the message that follows a held sheet. Only a short bed-only reply is a bed answer. */
+export function classifyPendingSheetReply(text: string): PendingSheetReply {
+  const t = (text || "").trim();
+  if (/^(cancel|discard|stop|never ?mind)[.!]?$/i.test(t)) return { kind: "cancel" };
+  const m = /^(?:(?:it(?:'s| is)|its|in|to|put (?:him|her|them|this|the patient) in|assign(?: it)?(?: to)?|place(?: it)?(?: in)?)\s+)?(?:bed\s*(?:no\.?|number|#)?\s*)?(\d{1,3})\s*([ab])?\s*(?:please)?[.!]?$/i.exec(t);
+  if (m) return { kind: "bed", bed: `${parseInt(m[1], 10)}${(m[2] || "").toUpperCase()}` };
+  return { kind: "other" };
 }

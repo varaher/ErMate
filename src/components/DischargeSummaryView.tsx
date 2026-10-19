@@ -459,7 +459,7 @@ export default function DischargeSummaryView({
   };
 
   // Auto-Draft API integration
-  const handleAiDraft = async () => {
+  const handleAiDraft = async (keepExisting: boolean = false) => {
     setAiLoading(true);
     setAiError(null);
     try {
@@ -482,11 +482,24 @@ export default function DischargeSummaryView({
       });
       const resData = await response.json();
       if (resData.success && resData.data) {
-        if (resData.data.primaryDiagnosis) setPrimaryDiagnosis(resData.data.primaryDiagnosis);
-        if (resData.data.secondaryDiagnosis) setSecondaryDiagnosis(resData.data.secondaryDiagnosis);
-        if (resData.data.conditionAtDischarge) setDischargeCondition(resData.data.conditionAtDischarge);
-        if (resData.data.dischargeMedications) setDischargeMedications(_safeStringFromMixed(resData.data.dischargeMedications));
-        if (resData.data.followUpPlan) setFollowUpPlan(resData.data.followUpPlan);
+        // Automatic first draft: fill only fields that are blank in the EDITOR at the moment this
+        // response arrives (functional updates read live state), so delayed AI output can never
+        // overwrite anything the clinician typed or pasted. The one exception is a primary
+        // diagnosis that is still just the untouched provisional pre-fill. The manual
+        // "AI draft" button still replaces everything, as before.
+        const blankNow = (prev: any) => !(typeof prev === "string" && prev.trim().length > 0);
+        const provisionalPrefill = (currentCase.provisionalPrimaryDiagnosis || "").trim();
+        const apply = (prev: string, incoming: string, allowPrefillReplace = false) => {
+          if (!keepExisting) return incoming;
+          if (blankNow(prev)) return incoming;
+          if (allowPrefillReplace && provisionalPrefill && prev.trim() === provisionalPrefill) return incoming;
+          return prev;
+        };
+        if (resData.data.primaryDiagnosis) setPrimaryDiagnosis((p) => apply(p, resData.data.primaryDiagnosis, true));
+        if (resData.data.secondaryDiagnosis) setSecondaryDiagnosis((p) => apply(p, resData.data.secondaryDiagnosis));
+        if (resData.data.conditionAtDischarge) setDischargeCondition((p) => apply(p, resData.data.conditionAtDischarge));
+        if (resData.data.dischargeMedications) setDischargeMedications((p) => apply(p, _safeStringFromMixed(resData.data.dischargeMedications)));
+        if (resData.data.followUpPlan) setFollowUpPlan((p) => apply(p, resData.data.followUpPlan));
         if (resData.data.patientInstructions) setPatientInstructions(resData.data.patientInstructions);
         if (resData.data.courseInHospital) {
           setCourseInHospital(_safeCourseInHospital(resData.data.courseInHospital));
@@ -510,7 +523,7 @@ export default function DischargeSummaryView({
   // Automatically trigger AI Draft / Course Generation on mount if not already done
   useEffect(() => {
     if (showEditor && !currentCase.dischargeInfo?.courseInHospital && !aiDrafted && !aiLoading) {
-      handleAiDraft();
+      handleAiDraft(true);
     }
   }, [showEditor]);
   const handleMarkDischargeRoutine = () => {
@@ -1594,7 +1607,7 @@ export default function DischargeSummaryView({
                   <button
                     type="button"
                     disabled={aiLoading}
-                    onClick={handleAiDraft}
+                    onClick={() => handleAiDraft(false)}
                     className="px-2 py-0.5 bg-purple-50 hover:bg-purple-100 disabled:bg-slate-100 text-purple-700 text-[10px] font-extrabold rounded border border-purple-200 transition-all flex items-center gap-1 dark:bg-purple-950/20 dark:text-purple-300 dark:border-purple-900"
                   >
                     {aiLoading ? (

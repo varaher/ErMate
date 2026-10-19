@@ -1,0 +1,722 @@
+diff --git a/src/App.tsx b/src/App.tsx
+index ec35beb..226f87f 100644
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -4636,6 +4636,29 @@ const handleDeleteAllCases = async () => {
+       teamMembers,
+     });
+ 
++    // Case sheet -> discharge format: carry discharge lines read from a pasted sheet into the
++    // discharge record (fill blanks only; nothing is saved until the doctor saves the summary).
++    const pastedDischarge = extracted?.dischargeInfoDraft;
++    if (pastedDischarge && typeof pastedDischarge === "object") {
++      const base: any = draftCase.dischargeInfo || {
++        summaryStatus: "DRAFT",
++        primaryDiagnosis: "",
++        secondaryDiagnosis: "",
++        conditionAtDischarge: "",
++        dischargeMedications: "",
++        followUpPlan: "",
++        patientInstructions: "",
++      };
++      const fill = (cur: any, incoming: any) => (typeof cur === "string" && cur.trim()) ? cur : (incoming || cur || "");
++      draftCase.dischargeInfo = {
++        ...base,
++        primaryDiagnosis: fill(base.primaryDiagnosis, pastedDischarge.primaryDiagnosis),
++        conditionAtDischarge: fill(base.conditionAtDischarge, pastedDischarge.conditionAtDischarge),
++        dischargeMedications: fill(base.dischargeMedications, pastedDischarge.dischargeMedications),
++        followUpPlan: fill(base.followUpPlan, pastedDischarge.followUpPlan),
++      };
++    }
++
+     // Leave any case-sheet view/preview state so the discharge view can mount.
+     setIsPreviewMode(false);
+     setPreviewCase(null);
+diff --git a/src/components/DischargeSummaryView.tsx b/src/components/DischargeSummaryView.tsx
+index 20363d5..fac09f0 100644
+--- a/src/components/DischargeSummaryView.tsx
++++ b/src/components/DischargeSummaryView.tsx
+@@ -459,7 +459,7 @@ export default function DischargeSummaryView({
+   };
+ 
+   // Auto-Draft API integration
+-  const handleAiDraft = async () => {
++  const handleAiDraft = async (keepExisting: boolean = false) => {
+     setAiLoading(true);
+     setAiError(null);
+     try {
+@@ -482,11 +482,24 @@ export default function DischargeSummaryView({
+       });
+       const resData = await response.json();
+       if (resData.success && resData.data) {
+-        if (resData.data.primaryDiagnosis) setPrimaryDiagnosis(resData.data.primaryDiagnosis);
+-        if (resData.data.secondaryDiagnosis) setSecondaryDiagnosis(resData.data.secondaryDiagnosis);
+-        if (resData.data.conditionAtDischarge) setDischargeCondition(resData.data.conditionAtDischarge);
+-        if (resData.data.dischargeMedications) setDischargeMedications(_safeStringFromMixed(resData.data.dischargeMedications));
+-        if (resData.data.followUpPlan) setFollowUpPlan(resData.data.followUpPlan);
++        // Automatic first draft: fill only fields that are blank in the EDITOR at the moment this
++        // response arrives (functional updates read live state), so delayed AI output can never
++        // overwrite anything the clinician typed or pasted. The one exception is a primary
++        // diagnosis that is still just the untouched provisional pre-fill. The manual
++        // "AI draft" button still replaces everything, as before.
++        const blankNow = (prev: any) => !(typeof prev === "string" && prev.trim().length > 0);
++        const provisionalPrefill = (currentCase.provisionalPrimaryDiagnosis || "").trim();
++        const apply = (prev: string, incoming: string, allowPrefillReplace = false) => {
++          if (!keepExisting) return incoming;
++          if (blankNow(prev)) return incoming;
++          if (allowPrefillReplace && provisionalPrefill && prev.trim() === provisionalPrefill) return incoming;
++          return prev;
++        };
++        if (resData.data.primaryDiagnosis) setPrimaryDiagnosis((p) => apply(p, resData.data.primaryDiagnosis, true));
++        if (resData.data.secondaryDiagnosis) setSecondaryDiagnosis((p) => apply(p, resData.data.secondaryDiagnosis));
++        if (resData.data.conditionAtDischarge) setDischargeCondition((p) => apply(p, resData.data.conditionAtDischarge));
++        if (resData.data.dischargeMedications) setDischargeMedications((p) => apply(p, _safeStringFromMixed(resData.data.dischargeMedications)));
++        if (resData.data.followUpPlan) setFollowUpPlan((p) => apply(p, resData.data.followUpPlan));
+         if (resData.data.patientInstructions) setPatientInstructions(resData.data.patientInstructions);
+         if (resData.data.courseInHospital) {
+           setCourseInHospital(_safeCourseInHospital(resData.data.courseInHospital));
+@@ -510,7 +523,7 @@ export default function DischargeSummaryView({
+   // Automatically trigger AI Draft / Course Generation on mount if not already done
+   useEffect(() => {
+     if (showEditor && !currentCase.dischargeInfo?.courseInHospital && !aiDrafted && !aiLoading) {
+-      handleAiDraft();
++      handleAiDraft(true);
+     }
+   }, [showEditor]);
+   const handleMarkDischargeRoutine = () => {
+@@ -1594,7 +1607,7 @@ export default function DischargeSummaryView({
+                   <button
+                     type="button"
+                     disabled={aiLoading}
+-                    onClick={handleAiDraft}
++                    onClick={() => handleAiDraft(false)}
+                     className="px-2 py-0.5 bg-purple-50 hover:bg-purple-100 disabled:bg-slate-100 text-purple-700 text-[10px] font-extrabold rounded border border-purple-200 transition-all flex items-center gap-1 dark:bg-purple-950/20 dark:text-purple-300 dark:border-purple-900"
+                   >
+                     {aiLoading ? (
+diff --git a/src/components/VoiceScribeChatView.tsx b/src/components/VoiceScribeChatView.tsx
+index 6359f0f..7899c58 100644
+--- a/src/components/VoiceScribeChatView.tsx
++++ b/src/components/VoiceScribeChatView.tsx
+@@ -52,7 +52,8 @@ import { formatCaseCompletenessReply, formatDischargePendingReply } from "../mat
+ import { normalizeMateBedId } from "../mate/mateBedModel";
+ import { validateAndBuildMateTask } from "../mate/mateTaskValidator";
+ import { resolveInterpretedPatient } from "../mate/matePatientDisambiguator";
+-import { detectExplicitNewCaseIntent, bedFromUnmatchedReference, shouldStartCaseForVacantBed, groundPatientReference, isLongClinicalPaste, looksLikeFullCaseSheet } from "../mate/mateNewCaseIntent";
++import { mergePastedSheetIntoExtraction, detectSheetIdentityConflict } from "../mate/pastedSheetParser";
++import { detectPatientAnnouncement, detectExplicitNewCaseIntent, bedFromUnmatchedReference, shouldStartCaseForVacantBed, groundPatientReference, isLongClinicalPaste, looksLikeFullCaseSheet, shouldHoldPastedSheet, classifyPendingSheetReply } from "../mate/mateNewCaseIntent";
+ import { computeCensusOrientation, formatErOverviewMessage } from "../mate/mateOrientation";
+ import { authenticatedFetch } from "../services/authenticatedFetch";
+ 
+@@ -814,6 +815,10 @@ export default function VoiceScribeChatView({
+     generation: number;
+   } | null>(null);
+ 
++  // Paste-first: a full case sheet that arrived with no bed and no open patient. Held (in memory only)
++  // until the doctor gives a bed, then replayed into that new case. Never applied anywhere else.
++  const pendingPastedSheetRef = useRef<{ text: string; generation: number; createdAt: number } | null>(null);
++
+   // Pending new-patient handoff state
+   const pendingNewPatientHandoffRef = useRef<{
+     targetCaseId: string;
+@@ -821,6 +826,8 @@ export default function VoiceScribeChatView({
+     utterance: string;
+     generation: number;
+     notice?: string;
++    /** "I have a patient in bed 9": open the case and wait for the dictation / pasted sheet. */
++    announceOnly?: boolean;
+   } | null>(null);
+   // A chat is "case-linked" if either a real caseId was passed in, OR
+   // the caller didn't explicitly ask for a standalone discussion.
+@@ -1731,8 +1738,34 @@ export default function VoiceScribeChatView({
+         ? activeCensusCases.find(c => c.id === lastReferencedCaseIdRef.current) || null
+         : null;
+ 
++      // ── PASTE-FIRST, BED-SECOND: end a stale or abandoned hold before anything else ─────
++      // ── PASTE-FIRST, BED-SECOND ────────────────────────────────
++      const postPair = (userText: string | null, aiText: string) => {
++        const stamp = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
++        const out: Message[] = [];
++        if (userText !== null) out.push({ id: `u-${Date.now()}`, sender: "user", text: userText, timestamp: stamp, mode: "dictation" });
++        out.push({ id: `ai-${Date.now() + 1}`, sender: "ai", text: aiText, timestamp: stamp, mode: "discuss", badge: "command" });
++        setMessages((prev) => [...prev, ...out]);
++        out.forEach((m) => persistMessage(m));
++      };
++
++      {
++        const held = pendingPastedSheetRef.current;
++        if (held) {
++          const expired = held.generation !== sessionContextGenerationRef.current || Date.now() - held.createdAt > 15 * 60 * 1000;
++          if (expired) {
++            pendingPastedSheetRef.current = null;
++          } else if (classifyPendingSheetReply(trimmed).kind === "other") {
++            // A question, another patient or new dictation ends the hold; the message is then handled normally.
++            pendingPastedSheetRef.current = null;
++            postPair(null, "I dropped the case sheet that was waiting for a bed. Nothing was added. Paste it again with a bed when ready.");
++          }
++        }
++      }
++
+       // ── PART 1: DETERMINISTIC FAST PATH ─────────────────────────
+-      const fastPathResult = tryDeterministicFastPath({
++      // A held case sheet is waiting on a bed reply: that reply must not be consumed by the fast path.
++      const fastPathResult = pendingPastedSheetRef.current ? null : tryDeterministicFastPath({
+         utterance: trimmed,
+         activeCase,
+         recentCase,
+@@ -1788,8 +1821,8 @@ export default function VoiceScribeChatView({
+         return;
+       }
+ 
+-      const startNewCaseInBed = async (assignedBed: string, bedRef: string) => {
+-        if (!onEnsureDraftCase) return;
++      const startNewCaseInBed = async (assignedBed: string, bedRef: string, announceOnly: boolean = false, replayText: string = trimmed): Promise<boolean> => {
++        if (!onEnsureDraftCase) return false;
+         setInputText("");
+         setIsSending(true);
+         try {
+@@ -1817,13 +1850,15 @@ export default function VoiceScribeChatView({
+           pendingNewPatientHandoffRef.current = {
+             targetCaseId: newCaseId,
+             targetBed: assignedBed,
+-            utterance: trimmed,
++            utterance: replayText,
+             generation: currentGen,
+             notice: familyNotice,
++            announceOnly,
+           };
+           setActiveSessionId(newSessionId);
+           onSessionIdChange?.(newSessionId);
+           onSwitchCase?.(newCaseId);
++          return true;
+         } catch (err: any) {
+           console.error("[VoiceScribeChatView] Failed to ensure draft case for new patient:", err);
+           const isWsError = err instanceof WorkspaceResolutionError || err?.isWorkspaceResolutionError || err?.name === "WorkspaceResolutionError";
+@@ -1838,11 +1873,66 @@ export default function VoiceScribeChatView({
+             };
+             setMessages(prev => [...prev, errMsg]);
+           }
++          return false;
+         } finally {
+           setIsSending(false);
+         }
+       };
+ 
++      const heldSheet = pendingPastedSheetRef.current;
++      if (heldSheet) {
++        const reply = classifyPendingSheetReply(trimmed);
++        if (reply.kind === "cancel") {
++          pendingPastedSheetRef.current = null;
++          setInputText("");
++          postPair(trimmed, "Case sheet discarded. Nothing was added or changed.");
++          return;
++        } else if (reply.kind === "bed") {
++          setInputText("");
++          const dest = resolveMateCaseReference({
++            utterance: `Bed ${reply.bed}`,
++            cases: activeCensusCases,
++            activeCaseId: null,
++            physicalCapacity: physicalBedCapacity,
++            newCaseIntent: true,
++          });
++          if (dest.status !== "NOT_FOUND") {
++            postPair(
++              trimmed,
++              dest.status === "INVALID_LOCATION"
++                ? `Bed ${reply.bed} is outside the configured ER capacity (${physicalBedCapacity || 30} beds). Your case sheet is still held. Give a valid bed, or say "cancel".`
++                : `Bed ${reply.bed} has no free slot. Your case sheet is still held. Give a vacant bed, or say "cancel".`
++            );
++            return;
++          }
++          if (!onEnsureDraftCase) {
++            postPair(trimmed, "Case creation is unavailable right now. The case sheet was not applied.");
++            return;
++          }
++          postPair(trimmed, `Starting the case in Bed ${dest.referenceValue || reply.bed}…`);
++          lastReferencedBedRef.current = reply.bed;
++          // Release the sheet to the case-and-replay handoff; if the case could not be created it stays held.
++          pendingPastedSheetRef.current = null;
++          const started = await startNewCaseInBed(dest.referenceValue || reply.bed, reply.bed, false, heldSheet.text);
++          if (!started) pendingPastedSheetRef.current = heldSheet;
++          return;
++        }
++      }
++
++      if (shouldHoldPastedSheet({ text: trimmed, hasOpenPatient: Boolean(activeCaseId && activeCensusCases.some((c) => c.id === activeCaseId)) })) {
++        pendingPastedSheetRef.current = {
++          text: trimmed,
++          generation: sessionContextGenerationRef.current,
++          createdAt: Date.now(),
++        };
++        setInputText("");
++        postPair(
++          `📄 Case sheet pasted (${trimmed.length} characters)`,
++          "Got the case sheet. Which bed is this patient in? Reply \"Bed 9\" or \"9A\". Nothing has been applied yet."
++        );
++        return;
++      }
++
+       // Check for explicit new-patient intake
+       const bedRef = extractMateBedReference(trimmed);
+       const explicitNewCaseIntent = detectExplicitNewCaseIntent(trimmed);
+@@ -1933,6 +2023,54 @@ export default function VoiceScribeChatView({
+         }
+       }
+ 
++      // A pasted sheet that belongs to a DIFFERENT patient must not be merged into the open chart.
++      if (activeCase && looksLikeFullCaseSheet(trimmed)) {
++        const conflict = detectSheetIdentityConflict(trimmed, {
++          name: (activeCase as any)?.patient?.name,
++          age: (activeCase as any)?.patient?.age,
++          gender: (activeCase as any)?.patient?.gender,
++        });
++        if (conflict) {
++          setInputText("");
++          const stamp = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
++          const conflictUser: Message = { id: `u-${Date.now()}`, sender: "user", text: trimmed, timestamp: stamp, mode: "dictation" };
++          const conflictAi: Message = {
++            id: `ai-${Date.now()}`,
++            sender: "ai",
++            text: `This sheet does not match the open patient (${conflict}). Nothing was added or changed. To add it as a new patient say "new patient bed N", or open the right patient first.`,
++            timestamp: stamp,
++            mode: "discuss",
++            badge: "command",
++          };
++          setMessages(prev => [...prev, conflictUser, conflictAi]);
++          persistMessage(conflictUser);
++          persistMessage(conflictAi);
++          return;
++        }
++      }
++
++      // "I have a patient in bed 9" (no clinical content yet): if bed 9 is vacant, open the case
++      // there now and wait for the dictation / pasted sheet. Decided locally, not by the model.
++      if (
++        bedRef &&
++        !explicitNewCaseIntent &&
++        onEnsureDraftCase &&
++        detectPatientAnnouncement(trimmed) &&
++        !planMateConversation(trimmed).mayContainClinicalUpdate
++      ) {
++        const announceCheck = resolveMateCaseReference({
++          utterance: trimmed,
++          cases: activeCensusCases,
++          activeCaseId,
++          physicalCapacity: physicalBedCapacity,
++        });
++        if (announceCheck.status === "NOT_FOUND") {
++          lastReferencedBedRef.current = bedRef;
++          await startNewCaseInBed(bedRef, bedRef, true);
++          return;
++        }
++      }
++
+       // ── PART 2: SERVER INTERPRETATION & TASK VALIDATION ───────────
+       const censusSummary = computeCensusOrientation(activeCensusCases);
+       setIsSending(true);
+@@ -2527,6 +2665,11 @@ export default function VoiceScribeChatView({
+           delete fieldsToExtract.clinicianUpdateText;
+           delete fieldsToExtract.clinicianUpdates;
+         }
++        // A pasted external case sheet is a case sheet: read its labelled header / discharge lines
++        // locally (never sent to a model) and fill only what extraction left empty.
++        if (looksLikeFullCaseSheet(trimmed)) {
++          Object.assign(fieldsToExtract, mergePastedSheetIntoExtraction(fieldsToExtract, trimmed));
++        }
+         // A pasted external case sheet also offers "Preview Discharge Summary" (the doctor still chooses).
+         const dischargeIntent = data.dischargeIntent || looksLikeFullCaseSheet(trimmed);
+         const clinicalReasoning = data.reasoningMessage?.clinicalReasoning || data.clinicalReasoning;
+@@ -2673,6 +2816,22 @@ export default function VoiceScribeChatView({
+       ) {
+         pendingNewPatientHandoffRef.current = null;
+         const handoffNotice = pendingNew.notice;
++        if (pendingNew.announceOnly) {
++          const stamp = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
++          const announceUser: Message = { id: `u-${Date.now()}`, sender: "user", text: pendingNew.utterance, timestamp: stamp, mode: "dictation" };
++          const announceAi: Message = {
++            id: `ai-${Date.now()}`,
++            sender: "ai",
++            text: `Bed ${pendingNew.targetBed} is ready. Dictate, or paste the case sheet.${handoffNotice ? " " + handoffNotice : ""}`,
++            timestamp: stamp,
++            mode: "discuss",
++            badge: "command",
++          };
++          setMessages((prev) => [...prev, announceUser, announceAi]);
++          persistMessage(announceUser);
++          persistMessage(announceAi);
++          return;
++        }
+         sendToChat(pendingNew.utterance, { skipMatePatientResolution: true }).then(() => {
+           if (!handoffNotice) return;
+           const noticeMsg: Message = {
+diff --git a/src/mate/mateNewCaseIntent.ts b/src/mate/mateNewCaseIntent.ts
+index 31b6897..296b20e 100644
+--- a/src/mate/mateNewCaseIntent.ts
++++ b/src/mate/mateNewCaseIntent.ts
+@@ -15,6 +15,18 @@ export function detectExplicitNewCaseIntent(text: string): boolean {
+   return NEW_CASE_PATTERN.test(text);
+ }
+ 
++/**
++ * "I have apt in bed no 9", "we got a new patient in bed 4": the doctor is announcing a patient
++ * before dictating. Subject + verb + patient word only, so "summarise patient in bed 9" or
++ * "open the patient in bed 9" never count.
++ */
++export function detectPatientAnnouncement(text: string): boolean {
++  if (!text) return false;
++  const t = text.trim();
++  if (/\?\s*$/.test(t)) return false;
++  return /\b(?:(?:i|we)(?:'ve|\s+have|\s+got|\s+just\s+got)|there(?:'s|\s+is)|(?:just\s+)?(?:got|received|admitted))\s+(?:a\s+|an\s+|one\s+|another\s+)?(?:new\s+)?(?:patient|pt|apt|case|admission)\b/i.test(t);
++}
++
+ const SHORT_BED = /^\s*(\d{1,3})\s*([ab])?\s*$/i;
+ 
+ /**
+@@ -39,7 +51,7 @@ export function shouldStartCaseForVacantBed(opts: {
+ }): boolean {
+   const t = (opts.utterance || "").trim();
+   if (!t || /\?\s*$/.test(t)) return false;
+-  if (detectExplicitNewCaseIntent(t)) return true;
++  if (detectExplicitNewCaseIntent(t) || detectPatientAnnouncement(t)) return true;
+   return opts.mayContainClinicalUpdate;
+ }
+ 
+@@ -98,3 +110,27 @@ export function looksLikeFullCaseSheet(utterance: string): boolean {
+   ];
+   return labels.filter((r) => r.test(t)).length >= 4;
+ }
++
++/** A sheet that states its own bed with a "Bed" label (not a stray "B12" / "2a" token). */
++export function hasExplicitBedLabel(text: string): boolean {
++  return /\bbed\s*(?:no\.?|number|#)?\s*[:\-]?\s*\d{1,3}\s*[ab]?\b/i.test(text || "");
++}
++
++/** Paste-first: a full case sheet with no bed of its own and no open patient is held until a bed is given. */
++export function shouldHoldPastedSheet(opts: { text: string; hasOpenPatient: boolean }): boolean {
++  return !opts.hasOpenPatient && looksLikeFullCaseSheet(opts.text) && !hasExplicitBedLabel(opts.text);
++}
++
++export type PendingSheetReply =
++  | { kind: "bed"; bed: string }
++  | { kind: "cancel" }
++  | { kind: "other" };
++
++/** Classify the message that follows a held sheet. Only a short bed-only reply is a bed answer. */
++export function classifyPendingSheetReply(text: string): PendingSheetReply {
++  const t = (text || "").trim();
++  if (/^(cancel|discard|stop|never ?mind)[.!]?$/i.test(t)) return { kind: "cancel" };
++  const m = /^(?:(?:it(?:'s| is)|its|in|to|put (?:him|her|them|this|the patient) in|assign(?: it)?(?: to)?|place(?: it)?(?: in)?)\s+)?(?:bed\s*(?:no\.?|number|#)?\s*)?(\d{1,3})\s*([ab])?\s*(?:please)?[.!]?$/i.exec(t);
++  if (m) return { kind: "bed", bed: `${parseInt(m[1], 10)}${(m[2] || "").toUpperCase()}` };
++  return { kind: "other" };
++}
+diff --git a/src/mate/pastedSheetParser.ts b/src/mate/pastedSheetParser.ts
+new file mode 100644
+index 0000000..8d46e6c
+--- /dev/null
++++ b/src/mate/pastedSheetParser.ts
+@@ -0,0 +1,139 @@
++/**
++ * Local (no-LLM) reader for a pasted external case sheet / summary.
++ *
++ * Patient details are removed before any text reaches a model (PHI rule), so the model can never
++ * fill the name or the discharge advice written in the sheet's own words. This reads clearly
++ * labelled lines in the browser, after the model call, and only fills what extraction left empty.
++ */
++
++export interface PastedSheetHeader {
++  patientName?: string;
++  age?: string;
++  gender?: "Male" | "Female";
++}
++
++export interface PastedDischargeDraft {
++  primaryDiagnosis?: string;
++  conditionAtDischarge?: string;
++  dischargeMedications?: string;
++  followUpPlan?: string;
++}
++
++const LABEL_END = String.raw`(?:\s*[:\-–]\s*|\s*\n\s*)`;
++
++/** Text after a label, up to the next line that looks like another "Label:" or a blank gap. */
++function section(text: string, labels: string[]): string | undefined {
++  const alt = labels.join("|");
++  const re = new RegExp(`(?:^|\\n)[ \\t]*(?:${alt})${LABEL_END}([\\s\\S]*?)(?=\\n[ \\t]*[A-Za-z][A-Za-z /&().'-]{2,40}\\s*[:：]|\\n\\s*\\n|$)`, "i");
++  const m = text.match(re);
++  const v = m?.[1]?.replace(/\s+\n/g, "\n").trim();
++  return v ? v : undefined;
++}
++
++export function parsePastedSheetHeader(text: string): PastedSheetHeader {
++  const out: PastedSheetHeader = {};
++  const t = text || "";
++
++  const nameM = t.match(/(?:^|\n)[ \t]*(?:patient\s*name|name\s+of\s+(?:the\s+)?patient|name)\s*[:\-–]\s*([^\n]{2,60}?)(?=\s{2,}|\s+(?:age|sex|gender|uhid|mrn|ip\s*no|op\s*no|date|dob)\b|\s*[,;|]|\n|$)/i);
++  if (nameM) {
++    const n = nameM[1].replace(/^(?:mr|mrs|ms|master|baby|dr)\.?\s+/i, "").trim();
++    if (n && !/\d/.test(n) && n.split(/\s+/).length <= 5) out.patientName = n;
++  }
++
++  // Unlabelled header: first non-empty line such as "Mrs. CLARAMMA ABRAHAM".
++  if (!out.patientName) {
++    const first = t.split("\n").map((l) => l.trim()).find((l) => l.length > 0) || "";
++    const hm = first.match(/^(?:mr|mrs|ms|miss|master|baby|smt|shri)\.?\s+([A-Za-z][A-Za-z.'-]*(?:\s+[A-Za-z][A-Za-z.'-]*){0,3})$/i);
++    if (hm && first.length <= 60 && !/\d/.test(first)) out.patientName = hm[1].trim();
++  }
++
++  const ageSex = t.match(/\b(?:age\s*(?:\/\s*sex)?|age\s*\/\s*gender)\s*[:\-–]?\s*(\d{1,3})\s*(?:y(?:ea)?rs?|y)?\s*(?:[\/,\s]+\s*(male|female|m|f)\b)?/i);
++  if (ageSex) {
++    out.age = ageSex[1];
++    const g = ageSex[2]?.toLowerCase();
++    if (g) out.gender = g.startsWith("f") ? "Female" : "Male";
++  }
++  if (!out.age) {
++    const a = t.match(/\bage\s*[:\-–]\s*(\d{1,3})\b/i);
++    if (a) out.age = a[1];
++  }
++  if (!out.gender) {
++    const s = t.match(/\b(?:sex|gender)\s*[:\-–]\s*(male|female|m|f)\b/i);
++    if (s) out.gender = s[1].toLowerCase().startsWith("f") ? "Female" : "Male";
++  }
++  const age = out.age ? Number(out.age) : NaN;
++  if (!Number.isFinite(age) || age < 0 || age > 120) delete out.age;
++  return out;
++}
++
++export function parsePastedDischargeDraft(text: string): PastedDischargeDraft {
++  const t = text || "";
++  const out: PastedDischargeDraft = {};
++  // Only an explicitly FINAL / DISCHARGE diagnosis. A bare "Diagnosis:" or "Impression:" may be provisional.
++  const dx = section(t, ["final\\s+diagnosis", "discharge\\s+diagnosis", "diagnosis\\s+at\\s+discharge"]);
++  if (dx) out.primaryDiagnosis = dx.split("\n")[0].trim();
++  const cond = section(t, ["condition\\s+at\\s+discharge", "discharge\\s+condition", "condition\\s+on\\s+discharge"]);
++  if (cond) out.conditionAtDischarge = cond.split("\n")[0].trim();
++  const meds = section(t, ["discharge\\s+medications?", "discharge\\s+meds", "medications?\\s+on\\s+discharge", "rx\\s+on\\s+discharge", "take\\s+home\\s+medications?", "tto"]);
++  if (meds) out.dischargeMedications = meds;
++  const fu = section(t, ["follow[\\s-]?up(?:\\s+advice|\\s+plan)?", "review\\s+(?:advice|after)", "advice\\s+on\\s+discharge", "discharge\\s+advice"]);
++  if (fu) out.followUpPlan = fu;
++  return out;
++}
++
++/** Fill only blanks; never overwrite what extraction produced. */
++export function mergePastedSheetIntoExtraction(extraction: Record<string, any>, text: string): Record<string, any> {
++  const out = { ...(extraction || {}) };
++  const blank = (v: any) => v === undefined || v === null || (typeof v === "string" && !v.trim()) || String(v).toLowerCase() === "unknown";
++  const h = parsePastedSheetHeader(text);
++  if (h.patientName && blank(out.patientName)) out.patientName = h.patientName;
++  if (h.age && blank(out.age)) out.age = h.age;
++  if (h.gender && blank(out.gender) && blank(out.sex)) out.gender = h.gender;
++  const d = parsePastedDischargeDraft(text);
++  if (d.followUpPlan && blank(out.followUpAdvice)) out.followUpAdvice = d.followUpPlan;
++  if (Object.keys(d).length > 0) {
++    const prev: Record<string, any> = { ...(out.dischargeInfoDraft || {}) };
++    for (const [k, v] of Object.entries(d)) {
++      if (blank(prev[k])) prev[k] = v; // existing non-empty values always win
++    }
++    out.dischargeInfoDraft = prev;
++  }
++  return out;
++}
++
++const normName = (n: string) =>
++  (n || "")
++    .toLowerCase()
++    .replace(/\b(?:mr|mrs|ms|miss|master|baby|smt|shri|dr)\b\.?/g, " ")
++    .replace(/[^a-z\s]/g, " ")
++    .split(/\s+/)
++    .filter((w) => w.length >= 2);
++
++/**
++ * A pasted sheet that clearly belongs to someone else must never be merged into the open
++ * patient's chart. Returns a message when the sheet's name / age / sex contradict the open
++ * patient, otherwise null. Missing information on either side is not a conflict.
++ */
++export function detectSheetIdentityConflict(
++  sheetText: string,
++  open: { name?: string | null; age?: number | string | null; gender?: string | null } | null | undefined
++): string | null {
++  if (!open) return null;
++  const h = parsePastedSheetHeader(sheetText);
++  const reasons: string[] = [];
++
++  const a = normName(h.patientName || "");
++  const b = normName(String(open.name || ""));
++  if (a.length > 0 && b.length > 0 && !a.some((w) => b.includes(w))) {
++    reasons.push(`name "${h.patientName}" vs open patient "${open.name}"`);
++  }
++  const openAge = open.age === null || open.age === undefined || String(open.age).trim() === "" ? NaN : Number(open.age);
++  if (h.age && Number.isFinite(openAge) && Math.abs(Number(h.age) - openAge) > 5) {
++    reasons.push(`age ${h.age} vs open patient ${openAge}`);
++  }
++  const og = String(open.gender || "").trim().charAt(0).toUpperCase();
++  if (h.gender && (og === "M" || og === "F") && h.gender.charAt(0) !== og) {
++    reasons.push(`sex ${h.gender} vs open patient ${og === "M" ? "Male" : "Female"}`);
++  }
++  return reasons.length ? reasons.join("; ") : null;
++}
+diff --git a/verify_mate_announce_bed.ts b/verify_mate_announce_bed.ts
+new file mode 100644
+index 0000000..6d37833
+--- /dev/null
++++ b/verify_mate_announce_bed.ts
+@@ -0,0 +1,24 @@
++import fs from "fs";
++import { detectPatientAnnouncement, shouldStartCaseForVacantBed, detectExplicitNewCaseIntent } from "./src/mate/mateNewCaseIntent";
++import { extractMateBedReference } from "./src/mate/mateCaseResolver";
++import { planMateConversation } from "./src/mate/mateConversationPlanner";
++let pass = 0, fail = 0;
++const t = (n: string, c: boolean) => { c ? pass++ : fail++; console.log(`${c ? "PASS" : "FAIL"} ${n}`); };
++
++for (const s of ["I have apt in bed no 9", "I have a patient in bed 9", "we got a new pt in bed 4", "I've got a patient in bed 12", "there is a patient in bed 3", "received a patient in bed 7", "I have one patient in bed no 2"])
++  t(`announcement: ${s}`, detectPatientAnnouncement(s) && extractMateBedReference(s) !== null);
++for (const s of ["summarise patient in bed 9", "open the patient in bed 9", "what is the BP of the patient in bed 9?", "do I have a patient in bed 9?", "patient in bed 9 has BP 80/50", "bed 9", "show patient in bed 9", "how many patients do I have", "I have a headache"])
++  t(`not announcement: ${s}`, !detectPatientAnnouncement(s));
++
++t("announcement is not an explicit new-case phrase (separate, vacant-only path)", !detectExplicitNewCaseIntent("I have apt in bed no 9"));
++t("announcement starts a case on a vacant bed", shouldStartCaseForVacantBed({ utterance: "I have apt in bed no 9", mayContainClinicalUpdate: planMateConversation("I have apt in bed no 9").mayContainClinicalUpdate }));
++t("plain 'bed 9' still does not", !shouldStartCaseForVacantBed({ utterance: "bed 9", mayContainClinicalUpdate: false }));
++t("question never starts", !shouldStartCaseForVacantBed({ utterance: "do I have a patient in bed 9?", mayContainClinicalUpdate: false }));
++
++const src = fs.readFileSync("./src/components/VoiceScribeChatView.tsx", "utf8");
++t("local announce block exists", /detectPatientAnnouncement\(trimmed\)/.test(src) && /startNewCaseInBed\(bedRef, bedRef, true\)/.test(src));
++t("announce path requires vacant bed", /announceCheck\.status === "NOT_FOUND"/.test(src));
++t("announce block runs before the interpreter", src.indexOf("startNewCaseInBed(bedRef, bedRef, true)") < src.indexOf("// ── PART 2: SERVER INTERPRETATION"));
++t("announce-only posts a ready message and does not replay", /pendingNew\.announceOnly/.test(src) && /is ready\. Dictate, or paste the case sheet\./.test(src));
++t("explicit new-patient replay unchanged", /sendToChat\(pendingNew\.utterance, \{ skipMatePatientResolution: true \}\)/.test(src));
++console.log(`${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);
+diff --git a/verify_mate_paste_first.ts b/verify_mate_paste_first.ts
+new file mode 100644
+index 0000000..0410a97
+--- /dev/null
++++ b/verify_mate_paste_first.ts
+@@ -0,0 +1,42 @@
++import fs from "fs";
++import { hasExplicitBedLabel, shouldHoldPastedSheet, classifyPendingSheetReply } from "./src/mate/mateNewCaseIntent";
++import { resolveMateCaseReference } from "./src/mate/mateCaseResolver";
++let pass = 0, fail = 0;
++const t = (n: string, c: boolean) => { c ? pass++ : fail++; console.log(`${c ? "PASS" : "FAIL"} ${n}`); };
++
++const sheet = `Mrs. TEST PATIENT\nAge/Sex: 54/F\nChief complaints: chest pain since 2 hours\nHistory of present illness: ${"pain radiating to left arm. ".repeat(12)}\nPast history: DM, HTN\nVitals: BP 150/90 HR 98 SpO2 97% RR 18 Temp 98.6\nExamination: CVS S1 S2 normal\nInvestigations: ECG ST depression, Trop pending, Vit B12 normal\nTreatment: Aspirin 300 mg, nitroglycerin\nPlan: admit, cardiology opinion\nFinal diagnosis: NSTEMI\n`;
++t("fixture is a full sheet", sheet.length >= 500);
++t("held: sheet with no bed and no patient open", shouldHoldPastedSheet({ text: sheet, hasOpenPatient: false }));
++t("not held when a patient is open", !shouldHoldPastedSheet({ text: sheet, hasOpenPatient: true }));
++t("'Vit B12' / '2a' do not count as a bed", !hasExplicitBedLabel("Vit B12 given, 2a done, grade 2"));
++t("not held when the sheet states its own bed", !shouldHoldPastedSheet({ text: sheet + "Bed No: 9\n", hasOpenPatient: false }));
++t("short dictation is never held", !shouldHoldPastedSheet({ text: "BP 90/60 HR 110", hasOpenPatient: false }));
++t("explicit labels", hasExplicitBedLabel("Bed no 9") && hasExplicitBedLabel("bed: 12B") && hasExplicitBedLabel("BED #4"));
++
++const bed = (s: string) => { const r = classifyPendingSheetReply(s); return r.kind === "bed" ? r.bed : r.kind; };
++for (const [s, e] of [["9", "9"], ["Bed 9", "9"], ["bed no 9", "9"], ["bed number 12", "12"], ["9A", "9A"], ["9 b", "9B"], ["in bed 9", "9"], ["put her in bed 9", "9"], ["it's bed 4", "4"], ["Bed 9.", "9"], ["bed 9 please", "9"], ["cancel", "cancel"], ["Discard", "cancel"]] as const)
++  t(`reply "${s}" -> ${e}`, bed(s) === e);
++for (const s of ["what is the dose of aspirin", "summarise bed 9", "show bed 9 vitals", "new patient bed 9", "BP 120/80", "do I have a patient in bed 9?", "hello", "patient in bed 9 has chest pain"])
++  t(`reply "${s}" -> other`, bed(s) === "other");
++
++// Placement uses the existing A/B family rules.
++const mk = (id: string, bedNo: string) => ({ id, bedNo, patient: { name: "X" } } as any);
++const d = (cases: any[], b: string) => resolveMateCaseReference({ utterance: `Bed ${b}`, cases, activeCaseId: null, physicalCapacity: 30, newCaseIntent: true });
++t("empty bed 9 -> NOT_FOUND slot 9A", d([], "9").status === "NOT_FOUND" && d([], "9").referenceValue === "9A");
++t("9A occupied -> NOT_FOUND slot 9B (notice is posted by startNewCaseInBed)", d([mk("a", "9A")], "9").referenceValue === "9B");
++t("9A and 9B occupied -> AMBIGUOUS (refused, sheet stays held)", d([mk("a", "9A"), mk("b", "9B")], "9").status === "AMBIGUOUS");
++t("bed 99 -> INVALID_LOCATION", d([], "99").status === "INVALID_LOCATION");
++
++const src = fs.readFileSync("./src/components/VoiceScribeChatView.tsx", "utf8");
++const at = (x: string) => src.indexOf(x);
++t("pending ref declared", /pendingPastedSheetRef = useRef</.test(src));
++t("hold/stale-drop runs before the fast path", at("end a stale or abandoned hold") > 0 && at("end a stale or abandoned hold") < at("const fastPathResult = pendingPastedSheetRef.current ? null"));
++t("fast path skipped while a sheet is held", /const fastPathResult = pendingPastedSheetRef\.current \? null : tryDeterministicFastPath/.test(src));
++t("hold + bed reply handled after startNewCaseInBed is defined", at("const heldSheet = pendingPastedSheetRef.current") > at("const startNewCaseInBed"));
++t("hold happens before explicit new-patient intake", at("shouldHoldPastedSheet({") < at("// Check for explicit new-patient intake"));
++t("replay reuses the existing handoff with the held text", /startNewCaseInBed\(dest\.referenceValue \|\| reply\.bed, reply\.bed, false, heldSheet\.text\)/.test(src));
++t("startNewCaseInBed reports success", /Promise<boolean>/.test(src) && /if \(!started\) pendingPastedSheetRef\.current = heldSheet/.test(src));
++t("replay still skips MATE resolution (no re-hold loop)", /sendToChat\(pendingNew\.utterance, \{ skipMatePatientResolution: true \}\)/.test(src));
++t("hold expires (15 min) and drops on other messages", /15 \* 60 \* 1000/.test(src) && /I dropped the case sheet that was waiting for a bed/.test(src));
++t("held text is not shown twice (placeholder bubble)", /Case sheet pasted \(\$\{trimmed\.length\} characters\)/.test(src));
++console.log(`${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);
+diff --git a/verify_pasted_sheet_import.ts b/verify_pasted_sheet_import.ts
+new file mode 100644
+index 0000000..53b28a6
+--- /dev/null
++++ b/verify_pasted_sheet_import.ts
+@@ -0,0 +1,83 @@
++import fs from "fs";
++import { parsePastedSheetHeader, parsePastedDischargeDraft, mergePastedSheetIntoExtraction, detectSheetIdentityConflict } from "./src/mate/pastedSheetParser";
++let pass = 0, fail = 0;
++const t = (n: string, c: boolean) => { c ? pass++ : fail++; console.log(`${c ? "PASS" : "FAIL"} ${n}`); };
++
++const a = `EMERGENCY CASE SHEET
++Name: R. Kumar  Age/Sex: 54/M  UHID: 123456  Date: 18/10/2026
++Chief complaints: Chest pain x 2 hrs
++Diagnosis: Acute anterior wall STEMI
++Treatment given: Aspirin 300 mg
++Discharge medications:
++Tab Aspirin 75 mg OD
++Tab Atorvastatin 40 mg HS
++Condition at discharge: Stable
++Follow up: Cardiology OPD in 1 week. Return if chest pain.
++Signature: Dr X`;
++const h = parsePastedSheetHeader(a), d = parsePastedDischargeDraft(a);
++t("name", h.patientName === "R. Kumar");
++t("age", h.age === "54");
++t("sex", h.gender === "Male");
++t("bare Diagnosis: is NOT promoted to discharge diagnosis", d.primaryDiagnosis === undefined);
++t("explicit Final diagnosis IS", parsePastedDischargeDraft("Final Diagnosis: Acute anterior wall STEMI").primaryDiagnosis === "Acute anterior wall STEMI");
++t("Impression / Provisional not promoted", Object.keys(parsePastedDischargeDraft("Impression: ? sepsis\nProvisional Diagnosis: UTI")).length === 0);
++t("condition", d.conditionAtDischarge === "Stable");
++t("discharge meds multi-line", d.dischargeMedications === "Tab Aspirin 75 mg OD\nTab Atorvastatin 40 mg HS");
++t("follow-up", /Cardiology OPD in 1 week/.test(d.followUpPlan || ""));
++t("ER 'Treatment given' NOT taken as discharge meds", !/Aspirin 300/.test(d.dischargeMedications || ""));
++
++const b = `Patient Name: Mrs. Latha Menon, Age: 62 years, Sex: Female\nPresenting complaint: fever\nFinal Diagnosis: Urosepsis\nAdvice on discharge: Plenty of oral fluids; review in 3 days.`;
++const hb = parsePastedSheetHeader(b), db = parsePastedDischargeDraft(b);
++t("name with title stripped", hb.patientName === "Latha Menon");
++t("age years / female", hb.age === "62" && hb.gender === "Female");
++t("final diagnosis", db.primaryDiagnosis === "Urosepsis");
++t("advice on discharge → follow-up", /review in 3 days/.test(db.followUpPlan || ""));
++
++// Safety: nothing invented from a note without labels
++const none = parsePastedSheetHeader("chest pain since morning, BP 140/80, HR 90, age of onset 2 hours");
++t("no name invented", none.patientName === undefined);
++t("'age of onset' not an age", none.age === undefined);
++t("no discharge draft from plain note", Object.keys(parsePastedDischargeDraft("chest pain, BP 140/80, plan admit and monitor")).length === 0);
++t("age out of range ignored", parsePastedSheetHeader("Age: 250").age === undefined);
++
++// Merge fills blanks only
++const m = mergePastedSheetIntoExtraction({ patientName: "Already Set", age: "", gender: "Unknown" }, a);
++t("existing name kept", m.patientName === "Already Set");
++t("blank age filled", m.age === "54");
++t("unknown gender filled", m.gender === "Male");
++t("follow-up advice carried to case sheet", /Cardiology OPD/.test(m.followUpAdvice));
++t("discharge draft attached", m.dischargeInfoDraft?.dischargeMedications?.includes("Atorvastatin"));
++const m2 = mergePastedSheetIntoExtraction({ dischargeInfoDraft: { followUpPlan: "Existing plan", dischargeMedications: "" } }, a);
++t("existing non-empty discharge draft value kept", m2.dischargeInfoDraft.followUpPlan === "Existing plan");
++t("blank discharge draft value filled", /Atorvastatin/.test(m2.dischargeInfoDraft.dischargeMedications));
++t("blank-valued extraction not overwritten by sheet name", mergePastedSheetIntoExtraction({ patientName: "Set Name" }, a).patientName === "Set Name");
++
++// Unlabelled honorific header (real-world sheet)
++const real = "Mrs. CLARAMMA ABRAHAM\nAge - 79 Y/ F        ER- 1859001, B- ERP1-08D\n\nINITIAL ASSESSMENT\nPresenting Complaint: Reduced response since 1 day";
++const hr = parsePastedSheetHeader(real);
++t("honorific first-line name", hr.patientName === "CLARAMMA ABRAHAM");
++t("Age - 79 Y/ F", hr.age === "79" && hr.gender === "Female");
++t("a clinical first line is not a name", parsePastedSheetHeader("Mr. Sharma has chest pain since morning and BP is high").patientName === undefined);
++
++// Identity conflict: sheet for another patient must not merge into the open one
++t("different name blocks", !!detectSheetIdentityConflict(real, { name: "Ravi Menon", age: 79, gender: "Female" }));
++t("same name ok", detectSheetIdentityConflict(real, { name: "Claramma Abraham", age: 79, gender: "Female" }) === null);
++t("partial name overlap ok", detectSheetIdentityConflict(real, { name: "Claramma", age: 79, gender: "F" }) === null);
++t("different sex blocks", !!detectSheetIdentityConflict(real, { name: "", age: 79, gender: "Male" }));
++t("age gap >5 blocks", !!detectSheetIdentityConflict(real, { name: "", age: 30, gender: "Female" }));
++t("age gap <=5 ok", detectSheetIdentityConflict(real, { name: "", age: 76, gender: "Female" }) === null);
++t("open patient with no details = no conflict", detectSheetIdentityConflict(real, { name: "", age: null, gender: "" }) === null);
++t("sheet without header = no conflict", detectSheetIdentityConflict("Presenting Complaint: fever\nHR 90 BP 120/80", { name: "Ravi Menon", age: 40, gender: "Male" }) === null);
++t("no open patient = no conflict", detectSheetIdentityConflict(real, null) === null);
++t("input not mutated", mergePastedSheetIntoExtraction({}, a) !== undefined);
++
++// Wiring
++const chat = fs.readFileSync("./src/components/VoiceScribeChatView.tsx", "utf8");
++const app = fs.readFileSync("./src/App.tsx", "utf8");
++const dis = fs.readFileSync("./src/components/DischargeSummaryView.tsx", "utf8");
++t("paste merged only for full case sheets", /if \(looksLikeFullCaseSheet\(trimmed\)\) \{\s*Object\.assign\(fieldsToExtract, mergePastedSheetIntoExtraction\(fieldsToExtract, trimmed\)\)/.test(chat));
++t("discharge preview applies pasted draft", /extracted\?\.dischargeInfoDraft/.test(app) && /draftCase\.dischargeInfo = \{/.test(app));
++t("auto AI draft fills only fields blank at response time", /handleAiDraft\(true\)/.test(dis) && /blankNow\(prev\)/.test(dis) && /setFollowUpPlan\(\(p\) => apply\(p,/.test(dis));
++t("conflict guard wired before extraction", /detectSheetIdentityConflict\(trimmed,/.test(chat) && /does not match the open patient/.test(chat));
++t("manual AI draft button replaces as before", /onClick=\{\(\) => handleAiDraft\(false\)\}/.test(dis));
++console.log(`${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);

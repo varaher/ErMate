@@ -52,7 +52,8 @@ import { formatCaseCompletenessReply, formatDischargePendingReply } from "../mat
 import { normalizeMateBedId } from "../mate/mateBedModel";
 import { validateAndBuildMateTask } from "../mate/mateTaskValidator";
 import { resolveInterpretedPatient } from "../mate/matePatientDisambiguator";
-import { detectExplicitNewCaseIntent, bedFromUnmatchedReference, shouldStartCaseForVacantBed, groundPatientReference, isLongClinicalPaste, looksLikeFullCaseSheet } from "../mate/mateNewCaseIntent";
+import { mergePastedSheetIntoExtraction, detectSheetIdentityConflict } from "../mate/pastedSheetParser";
+import { detectPatientAnnouncement, detectExplicitNewCaseIntent, bedFromUnmatchedReference, shouldStartCaseForVacantBed, groundPatientReference, isLongClinicalPaste, looksLikeFullCaseSheet, shouldHoldPastedSheet, classifyPendingSheetReply } from "../mate/mateNewCaseIntent";
 import { computeCensusOrientation, formatErOverviewMessage } from "../mate/mateOrientation";
 import { authenticatedFetch } from "../services/authenticatedFetch";
 
@@ -814,6 +815,10 @@ export default function VoiceScribeChatView({
     generation: number;
   } | null>(null);
 
+  // Paste-first: a full case sheet that arrived with no bed and no open patient. Held (in memory only)
+  // until the doctor gives a bed, then replayed into that new case. Never applied anywhere else.
+  const pendingPastedSheetRef = useRef<{ text: string; generation: number; createdAt: number } | null>(null);
+
   // Pending new-patient handoff state
   const pendingNewPatientHandoffRef = useRef<{
     targetCaseId: string;
@@ -821,6 +826,8 @@ export default function VoiceScribeChatView({
     utterance: string;
     generation: number;
     notice?: string;
+    /** "I have a patient in bed 9": open the case and wait for the dictation / pasted sheet. */
+    announceOnly?: boolean;
   } | null>(null);
   // A chat is "case-linked" if either a real caseId was passed in, OR
   // the caller didn't explicitly ask for a standalone discussion.
@@ -1731,8 +1738,34 @@ export default function VoiceScribeChatView({
         ? activeCensusCases.find(c => c.id === lastReferencedCaseIdRef.current) || null
         : null;
 
+      // ── PASTE-FIRST, BED-SECOND: end a stale or abandoned hold before anything else ─────
+      // ── PASTE-FIRST, BED-SECOND ────────────────────────────────
+      const postPair = (userText: string | null, aiText: string) => {
+        const stamp = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+        const out: Message[] = [];
+        if (userText !== null) out.push({ id: `u-${Date.now()}`, sender: "user", text: userText, timestamp: stamp, mode: "dictation" });
+        out.push({ id: `ai-${Date.now() + 1}`, sender: "ai", text: aiText, timestamp: stamp, mode: "discuss", badge: "command" });
+        setMessages((prev) => [...prev, ...out]);
+        out.forEach((m) => persistMessage(m));
+      };
+
+      {
+        const held = pendingPastedSheetRef.current;
+        if (held) {
+          const expired = held.generation !== sessionContextGenerationRef.current || Date.now() - held.createdAt > 15 * 60 * 1000;
+          if (expired) {
+            pendingPastedSheetRef.current = null;
+          } else if (classifyPendingSheetReply(trimmed).kind === "other") {
+            // A question, another patient or new dictation ends the hold; the message is then handled normally.
+            pendingPastedSheetRef.current = null;
+            postPair(null, "I dropped the case sheet that was waiting for a bed. Nothing was added. Paste it again with a bed when ready.");
+          }
+        }
+      }
+
       // ── PART 1: DETERMINISTIC FAST PATH ─────────────────────────
-      const fastPathResult = tryDeterministicFastPath({
+      // A held case sheet is waiting on a bed reply: that reply must not be consumed by the fast path.
+      const fastPathResult = pendingPastedSheetRef.current ? null : tryDeterministicFastPath({
         utterance: trimmed,
         activeCase,
         recentCase,
@@ -1788,8 +1821,8 @@ export default function VoiceScribeChatView({
         return;
       }
 
-      const startNewCaseInBed = async (assignedBed: string, bedRef: string) => {
-        if (!onEnsureDraftCase) return;
+      const startNewCaseInBed = async (assignedBed: string, bedRef: string, announceOnly: boolean = false, replayText: string = trimmed): Promise<boolean> => {
+        if (!onEnsureDraftCase) return false;
         setInputText("");
         setIsSending(true);
         try {
@@ -1817,13 +1850,15 @@ export default function VoiceScribeChatView({
           pendingNewPatientHandoffRef.current = {
             targetCaseId: newCaseId,
             targetBed: assignedBed,
-            utterance: trimmed,
+            utterance: replayText,
             generation: currentGen,
             notice: familyNotice,
+            announceOnly,
           };
           setActiveSessionId(newSessionId);
           onSessionIdChange?.(newSessionId);
           onSwitchCase?.(newCaseId);
+          return true;
         } catch (err: any) {
           console.error("[VoiceScribeChatView] Failed to ensure draft case for new patient:", err);
           const isWsError = err instanceof WorkspaceResolutionError || err?.isWorkspaceResolutionError || err?.name === "WorkspaceResolutionError";
@@ -1838,10 +1873,65 @@ export default function VoiceScribeChatView({
             };
             setMessages(prev => [...prev, errMsg]);
           }
+          return false;
         } finally {
           setIsSending(false);
         }
       };
+
+      const heldSheet = pendingPastedSheetRef.current;
+      if (heldSheet) {
+        const reply = classifyPendingSheetReply(trimmed);
+        if (reply.kind === "cancel") {
+          pendingPastedSheetRef.current = null;
+          setInputText("");
+          postPair(trimmed, "Case sheet discarded. Nothing was added or changed.");
+          return;
+        } else if (reply.kind === "bed") {
+          setInputText("");
+          const dest = resolveMateCaseReference({
+            utterance: `Bed ${reply.bed}`,
+            cases: activeCensusCases,
+            activeCaseId: null,
+            physicalCapacity: physicalBedCapacity,
+            newCaseIntent: true,
+          });
+          if (dest.status !== "NOT_FOUND") {
+            postPair(
+              trimmed,
+              dest.status === "INVALID_LOCATION"
+                ? `Bed ${reply.bed} is outside the configured ER capacity (${physicalBedCapacity || 30} beds). Your case sheet is still held. Give a valid bed, or say "cancel".`
+                : `Bed ${reply.bed} has no free slot. Your case sheet is still held. Give a vacant bed, or say "cancel".`
+            );
+            return;
+          }
+          if (!onEnsureDraftCase) {
+            postPair(trimmed, "Case creation is unavailable right now. The case sheet was not applied.");
+            return;
+          }
+          postPair(trimmed, `Starting the case in Bed ${dest.referenceValue || reply.bed}…`);
+          lastReferencedBedRef.current = reply.bed;
+          // Release the sheet to the case-and-replay handoff; if the case could not be created it stays held.
+          pendingPastedSheetRef.current = null;
+          const started = await startNewCaseInBed(dest.referenceValue || reply.bed, reply.bed, false, heldSheet.text);
+          if (!started) pendingPastedSheetRef.current = heldSheet;
+          return;
+        }
+      }
+
+      if (shouldHoldPastedSheet({ text: trimmed, hasOpenPatient: Boolean(activeCaseId && activeCensusCases.some((c) => c.id === activeCaseId)) })) {
+        pendingPastedSheetRef.current = {
+          text: trimmed,
+          generation: sessionContextGenerationRef.current,
+          createdAt: Date.now(),
+        };
+        setInputText("");
+        postPair(
+          `📄 Case sheet pasted (${trimmed.length} characters)`,
+          "Got the case sheet. Which bed is this patient in? Reply \"Bed 9\" or \"9A\". Nothing has been applied yet."
+        );
+        return;
+      }
 
       // Check for explicit new-patient intake
       const bedRef = extractMateBedReference(trimmed);
@@ -1929,6 +2019,54 @@ export default function VoiceScribeChatView({
 
         if (resolution.status === "NOT_FOUND" && onEnsureDraftCase) {
           await startNewCaseInBed(resolution.referenceValue || bedRef, bedRef);
+          return;
+        }
+      }
+
+      // A pasted sheet that belongs to a DIFFERENT patient must not be merged into the open chart.
+      if (activeCase && looksLikeFullCaseSheet(trimmed)) {
+        const conflict = detectSheetIdentityConflict(trimmed, {
+          name: (activeCase as any)?.patient?.name,
+          age: (activeCase as any)?.patient?.age,
+          gender: (activeCase as any)?.patient?.gender,
+        });
+        if (conflict) {
+          setInputText("");
+          const stamp = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+          const conflictUser: Message = { id: `u-${Date.now()}`, sender: "user", text: trimmed, timestamp: stamp, mode: "dictation" };
+          const conflictAi: Message = {
+            id: `ai-${Date.now()}`,
+            sender: "ai",
+            text: `This sheet does not match the open patient (${conflict}). Nothing was added or changed. To add it as a new patient say "new patient bed N", or open the right patient first.`,
+            timestamp: stamp,
+            mode: "discuss",
+            badge: "command",
+          };
+          setMessages(prev => [...prev, conflictUser, conflictAi]);
+          persistMessage(conflictUser);
+          persistMessage(conflictAi);
+          return;
+        }
+      }
+
+      // "I have a patient in bed 9" (no clinical content yet): if bed 9 is vacant, open the case
+      // there now and wait for the dictation / pasted sheet. Decided locally, not by the model.
+      if (
+        bedRef &&
+        !explicitNewCaseIntent &&
+        onEnsureDraftCase &&
+        detectPatientAnnouncement(trimmed) &&
+        !planMateConversation(trimmed).mayContainClinicalUpdate
+      ) {
+        const announceCheck = resolveMateCaseReference({
+          utterance: trimmed,
+          cases: activeCensusCases,
+          activeCaseId,
+          physicalCapacity: physicalBedCapacity,
+        });
+        if (announceCheck.status === "NOT_FOUND") {
+          lastReferencedBedRef.current = bedRef;
+          await startNewCaseInBed(bedRef, bedRef, true);
           return;
         }
       }
@@ -2527,6 +2665,11 @@ export default function VoiceScribeChatView({
           delete fieldsToExtract.clinicianUpdateText;
           delete fieldsToExtract.clinicianUpdates;
         }
+        // A pasted external case sheet is a case sheet: read its labelled header / discharge lines
+        // locally (never sent to a model) and fill only what extraction left empty.
+        if (looksLikeFullCaseSheet(trimmed)) {
+          Object.assign(fieldsToExtract, mergePastedSheetIntoExtraction(fieldsToExtract, trimmed));
+        }
         // A pasted external case sheet also offers "Preview Discharge Summary" (the doctor still chooses).
         const dischargeIntent = data.dischargeIntent || looksLikeFullCaseSheet(trimmed);
         const clinicalReasoning = data.reasoningMessage?.clinicalReasoning || data.clinicalReasoning;
@@ -2673,6 +2816,22 @@ export default function VoiceScribeChatView({
       ) {
         pendingNewPatientHandoffRef.current = null;
         const handoffNotice = pendingNew.notice;
+        if (pendingNew.announceOnly) {
+          const stamp = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+          const announceUser: Message = { id: `u-${Date.now()}`, sender: "user", text: pendingNew.utterance, timestamp: stamp, mode: "dictation" };
+          const announceAi: Message = {
+            id: `ai-${Date.now()}`,
+            sender: "ai",
+            text: `Bed ${pendingNew.targetBed} is ready. Dictate, or paste the case sheet.${handoffNotice ? " " + handoffNotice : ""}`,
+            timestamp: stamp,
+            mode: "discuss",
+            badge: "command",
+          };
+          setMessages((prev) => [...prev, announceUser, announceAi]);
+          persistMessage(announceUser);
+          persistMessage(announceAi);
+          return;
+        }
         sendToChat(pendingNew.utterance, { skipMatePatientResolution: true }).then(() => {
           if (!handoffNotice) return;
           const noticeMsg: Message = {

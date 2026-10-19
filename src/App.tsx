@@ -4636,6 +4636,29 @@ const handleDeleteAllCases = async () => {
       teamMembers,
     });
 
+    // Case sheet -> discharge format: carry discharge lines read from a pasted sheet into the
+    // discharge record (fill blanks only; nothing is saved until the doctor saves the summary).
+    const pastedDischarge = extracted?.dischargeInfoDraft;
+    if (pastedDischarge && typeof pastedDischarge === "object") {
+      const base: any = draftCase.dischargeInfo || {
+        summaryStatus: "DRAFT",
+        primaryDiagnosis: "",
+        secondaryDiagnosis: "",
+        conditionAtDischarge: "",
+        dischargeMedications: "",
+        followUpPlan: "",
+        patientInstructions: "",
+      };
+      const fill = (cur: any, incoming: any) => (typeof cur === "string" && cur.trim()) ? cur : (incoming || cur || "");
+      draftCase.dischargeInfo = {
+        ...base,
+        primaryDiagnosis: fill(base.primaryDiagnosis, pastedDischarge.primaryDiagnosis),
+        conditionAtDischarge: fill(base.conditionAtDischarge, pastedDischarge.conditionAtDischarge),
+        dischargeMedications: fill(base.dischargeMedications, pastedDischarge.dischargeMedications),
+        followUpPlan: fill(base.followUpPlan, pastedDischarge.followUpPlan),
+      };
+    }
+
     // Leave any case-sheet view/preview state so the discharge view can mount.
     setIsPreviewMode(false);
     setPreviewCase(null);
