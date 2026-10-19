@@ -45,6 +45,17 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-19] — ErMate: MATE Dictation Flow Grounding & Long Clinical Paste Fast-Track (MATE-DICTATION-FLOW-V1)
+- **Patient Reference Grounding (`src/mate/mateNewCaseIntent.ts`, `src/components/VoiceScribeChatView.tsx`)**:
+  - Implemented `isReferenceGroundedInUtterance` and `groundPatientReference`: validates that bed/case numbers extracted by the interpreter were explicitly spoken by the clinician (e.g. `"bed 11"`, `"patient number 11"`, `"case C-2976"`) rather than numbers embedded inside vital signs or lab values (such as `"RR 18"`, `"BP 140 by 80"`, `"GCS 15"`).
+  - Ungrounded references are stripped to `NONE`, preventing accidental bed switching or spurious vacant-bed case creation.
+- **Long Clinical Paste Fast-Track (`src/mate/mateNewCaseIntent.ts`, `src/components/VoiceScribeChatView.tsx`)**:
+  - Added `isLongClinicalPaste` and `looksLikeFullCaseSheet`: pasted EMR records or notes (>= 500 characters containing clinical updates) bypass the command interpretation step directly to clinical extraction, eliminating ~24s in redundant LLM round-trips.
+  - Automatically offers the "Preview Discharge Summary" action when a pasted record contains comprehensive clinical sections.
+- **Dictation Clarification Trap Protection (`src/components/VoiceScribeChatView.tsx`)**:
+  - Added `dictationNotQuestion` guard: clinical dictation containing updates is never held hostage to conversational questions or generic replies, allowing continuous dictation to flow directly to extraction.
+  - Verified with 29 automated tests in `verify_mate_dictation_flow.ts`.
+
 ### [2026-10-19] — ErMate: Dynamic Header Height Tracking & Tool Overlay Navigation (HEADER-AND-OVERLAY-V1)
 - **ResizeObserver for Header Sizing (`src/components/GlobalHeader.tsx`, `verify_header_height_tracking.ts`)**:
   - Bound a `ResizeObserver` to `headerRef.current` in `GlobalHeader.tsx` to dynamically track header height adjustments (e.g., navigation wrapping, banners, profile loading) without requiring a browser window resize event.

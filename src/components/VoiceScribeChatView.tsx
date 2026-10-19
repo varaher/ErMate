@@ -52,7 +52,7 @@ import { formatCaseCompletenessReply, formatDischargePendingReply } from "../mat
 import { normalizeMateBedId } from "../mate/mateBedModel";
 import { validateAndBuildMateTask } from "../mate/mateTaskValidator";
 import { resolveInterpretedPatient } from "../mate/matePatientDisambiguator";
-import { detectExplicitNewCaseIntent, bedFromUnmatchedReference, shouldStartCaseForVacantBed } from "../mate/mateNewCaseIntent";
+import { detectExplicitNewCaseIntent, bedFromUnmatchedReference, shouldStartCaseForVacantBed, groundPatientReference, isLongClinicalPaste, looksLikeFullCaseSheet } from "../mate/mateNewCaseIntent";
 import { computeCensusOrientation, formatErOverviewMessage } from "../mate/mateOrientation";
 import { authenticatedFetch } from "../services/authenticatedFetch";
 
@@ -1936,7 +1936,12 @@ export default function VoiceScribeChatView({
       // ── PART 2: SERVER INTERPRETATION & TASK VALIDATION ───────────
       const censusSummary = computeCensusOrientation(activeCensusCases);
       setIsSending(true);
-      const serverInterp = await interpretWithServer({
+      // A pasted case sheet / long note is clinical content, not a command: skip the interpreter
+      // (two slow model calls that can only misroute it) and go straight to extraction.
+      const skipInterpreter = isLongClinicalPaste(trimmed, planMateConversation(trimmed).mayContainClinicalUpdate);
+      const serverInterp = skipInterpreter
+        ? { success: false, data: { conversationalReply: "", tasks: [], needsClarification: false, confidence: "LOW" as const } }
+        : await interpretWithServer({
         utterance: trimmed,
         conversationContext: {
           lastReferencedBed: lastReferencedBedRef.current,
@@ -1993,7 +1998,10 @@ export default function VoiceScribeChatView({
         const interp = serverInterp.data;
 
         // A. Explicit Clarification needed
-        if (interp.needsClarification && interp.clarificationQuestion) {
+        // Never hold clinical dictation hostage to a "which bed?" question: identity ambiguity
+        // is resolved deterministically below, and a dictation with no bed starts an unassigned case.
+        const dictationNotQuestion = planMateConversation(trimmed).mayContainClinicalUpdate && !/\?\s*$/.test(trimmed);
+        if (interp.needsClarification && interp.clarificationQuestion && !dictationNotQuestion) {
           setInputText("");
           const userMsg: Message = {
             id: `u-${Date.now()}`,
@@ -2025,14 +2033,16 @@ export default function VoiceScribeChatView({
           lastPresentedCaseIds: lastPresentedCaseIdsRef.current,
           physicalCapacity: physicalBedCapacity,
         });
-        let patientResolution = resolveRef(interp.patientReference);
+        // Trust a bed / case number from the model only if the doctor actually said it.
+        const groundedRef = groundPatientReference(interp.patientReference, trimmed);
+        let patientResolution = resolveRef(groundedRef);
 
         // A short number that is not a case no. ("patient number 11") is the bed number.
         // If that bed is occupied the dictation goes to that patient as usual.
         const unmatchedBed = patientResolution.status === "NOT_FOUND"
-          ? bedFromUnmatchedReference(interp.patientReference)
+          ? bedFromUnmatchedReference(groundedRef)
           : null;
-        if (unmatchedBed && interp.patientReference?.type === "DISPLAY_ID") {
+        if (unmatchedBed && groundedRef?.type === "DISPLAY_ID") {
           patientResolution = resolveRef({ type: "BED", value: unmatchedBed });
         }
 
@@ -2315,7 +2325,7 @@ export default function VoiceScribeChatView({
           persistMessage(userMsg);
           persistMessage(aiMsg);
           return;
-        } else if (validatedTasks.length === 0 && interp.confidence !== "LOW" && interp.conversationalReply) {
+        } else if (validatedTasks.length === 0 && interp.confidence !== "LOW" && interp.conversationalReply && !dictationNotQuestion) {
           setInputText("");
           const userMsg: Message = {
             id: `u-${Date.now()}`,
@@ -2517,7 +2527,8 @@ export default function VoiceScribeChatView({
           delete fieldsToExtract.clinicianUpdateText;
           delete fieldsToExtract.clinicianUpdates;
         }
-        const dischargeIntent = data.dischargeIntent;
+        // A pasted external case sheet also offers "Preview Discharge Summary" (the doctor still chooses).
+        const dischargeIntent = data.dischargeIntent || looksLikeFullCaseSheet(trimmed);
         const clinicalReasoning = data.reasoningMessage?.clinicalReasoning || data.clinicalReasoning;
 
         const aiMsg: Message = {

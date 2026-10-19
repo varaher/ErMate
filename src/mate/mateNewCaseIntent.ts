@@ -42,3 +42,59 @@ export function shouldStartCaseForVacantBed(opts: {
   if (detectExplicitNewCaseIntent(t)) return true;
   return opts.mayContainClinicalUpdate;
 }
+
+/**
+ * The interpreter model sometimes mistakes a number inside a dictation ("RR 18", "BP 140 by 80")
+ * for a bed or case number. A BED / DISPLAY_ID reference is trusted only when the doctor
+ * actually said it as one: "bed 11", "patient number 11", "case C-2976", or a bare reply "11".
+ */
+export function isReferenceGroundedInUtterance(
+  ref: MatePatientReference | null | undefined,
+  utterance: string
+): boolean {
+  if (!ref || (ref.type !== "BED" && ref.type !== "DISPLAY_ID")) return true;
+  const value = String(ref.value ?? "").trim();
+  const text = (utterance || "").trim();
+  if (!value || !text) return false;
+  const esc = value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  if (text.toLowerCase() === value.toLowerCase()) return true;
+  if (value.length >= 4 && new RegExp(esc, "i").test(text)) return true; // long display IDs are distinctive
+  const num = value.match(/^0*(\d{1,3})\s*([ab])?$/i);
+  if (!num) return new RegExp(`\\b${esc}\\b`, "i").test(text);
+  const slot = num[2] ? `\\s*${num[2]}` : "(?:\\s*[ab])?";
+  return new RegExp(
+    `(?:\\bbed|\\bpatient|\\bpt|\\bcase|\\bnumber|\\bno\\.?|#|\\bid)\\W{0,6}(?:no\\.?|number|#)?\\W{0,3}0*${num[1]}${slot}(?![\\d.])`,
+    "i"
+  ).test(text);
+}
+
+/** Reference to use for routing: an ungrounded BED / DISPLAY_ID becomes NONE (open patient / new patient). */
+export function groundPatientReference(
+  ref: MatePatientReference | null | undefined,
+  utterance: string
+): MatePatientReference | undefined {
+  if (!ref) return ref ?? undefined;
+  return isReferenceGroundedInUtterance(ref, utterance) ? ref : { type: "NONE" };
+}
+
+/**
+ * A pasted case sheet / long note. Interpreting it as a command wastes up to ~24 s on two model
+ * calls and can only misroute it, so it goes straight to clinical extraction.
+ */
+export function isLongClinicalPaste(utterance: string, mayContainClinicalUpdate: boolean): boolean {
+  const t = (utterance || "").trim();
+  return t.length >= 500 && mayContainClinicalUpdate && !/\?\s*$/.test(t);
+}
+
+/** Looks like a whole external case sheet (several labelled sections) rather than a short dictation. */
+export function looksLikeFullCaseSheet(utterance: string): boolean {
+  const t = (utterance || "").trim();
+  if (t.length < 500) return false;
+  const labels = [
+    /\b(?:chief\s+)?complaints?\b/i, /\b(?:history|hpi|h\/o)\b/i, /\bvitals?\b/i,
+    /\b(?:examination|exam|o\/e|cvs|cns|p\/a)\b/i, /\b(?:investigations?|labs?|ecg|x-?ray|ct)\b/i,
+    /\b(?:diagnosis|impression)\b/i, /\b(?:treatment|management|rx)\b/i,
+    /\b(?:disposition|discharge|advice|admit)\b/i,
+  ];
+  return labels.filter((r) => r.test(t)).length >= 4;
+}
