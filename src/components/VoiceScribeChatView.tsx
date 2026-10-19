@@ -53,6 +53,7 @@ import { normalizeMateBedId } from "../mate/mateBedModel";
 import { validateAndBuildMateTask } from "../mate/mateTaskValidator";
 import { resolveInterpretedPatient } from "../mate/matePatientDisambiguator";
 import { mergePastedSheetIntoExtraction, detectSheetIdentityConflict } from "../mate/pastedSheetParser";
+import { stampClinicianUpdates } from "../mate/clinicianUpdateStamp";
 import { detectPatientAnnouncement, detectExplicitNewCaseIntent, bedFromUnmatchedReference, shouldStartCaseForVacantBed, groundPatientReference, isLongClinicalPaste, looksLikeFullCaseSheet, shouldHoldPastedSheet, classifyPendingSheetReply } from "../mate/mateNewCaseIntent";
 import { computeCensusOrientation, formatErOverviewMessage } from "../mate/mateOrientation";
 import { authenticatedFetch } from "../services/authenticatedFetch";
@@ -2665,6 +2666,10 @@ export default function VoiceScribeChatView({
           delete fieldsToExtract.clinicianUpdateText;
           delete fieldsToExtract.clinicianUpdates;
         }
+        // The server's clock is UTC: stamp each update with the exact instant and the clinician's local time.
+        if (Array.isArray(fieldsToExtract.clinicianUpdates)) {
+          fieldsToExtract.clinicianUpdates = stampClinicianUpdates(fieldsToExtract).clinicianUpdates;
+        }
         // A pasted external case sheet is a case sheet: read its labelled header / discharge lines
         // locally (never sent to a model) and fill only what extraction left empty.
         if (looksLikeFullCaseSheet(trimmed)) {
@@ -3305,6 +3310,15 @@ export default function VoiceScribeChatView({
           </div>
         ))}
 
+      </div>
+
+      <div
+        data-testid="extraction-save-status"
+        className={`px-3 py-1.5 border-t border-slate-200 dark:border-slate-800 text-[11px] font-semibold ${msg.extractionApplied === true ? "text-emerald-700 dark:text-emerald-400" : "text-amber-700 dark:text-amber-400"}`}
+      >
+        {msg.extractionApplied === true
+          ? `✓ Saved to the case sheet${(allCases || []).find((c) => c.id === activeCaseId)?.bedNo ? ` (Bed ${(allCases || []).find((c) => c.id === activeCaseId)?.bedNo})` : ""}`
+          : "Awaiting your review: these details are not yet saved to the case sheet. Tap Preview Case Sheet to apply."}
       </div>
 
       <div className="p-2 border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-col sm:flex-row gap-2">

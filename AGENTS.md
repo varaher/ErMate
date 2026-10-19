@@ -45,6 +45,15 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-19] — ErMate: Clinician Update Timestamps & Extraction Save Status (CLINICIAN-UPDATE-STAMP-V1)
+- **Device-Local Time Stamping for Clinician Updates (`src/mate/clinicianUpdateStamp.ts`, `src/App.tsx`, `src/components/VoiceScribeChatView.tsx`)**:
+  - Implemented `stampClinicianUpdates` and `displayTimeForUpdate`: records exact ISO-8601 UTC instant (`at`) and device-local time (`timestamp`).
+  - Solves the server UTC clock discrepancy (e.g. UTC 23:16 vs IST 04:46) so that clinical timeline entries rendered on case sheets reflect the clinician's exact local duty time.
+- **Extraction Review & Save Status Banner (`src/components/VoiceScribeChatView.tsx`)**:
+  - Added persistent `data-testid="extraction-save-status"` banner on extraction cards.
+  - Clearly informs the clinician when details are awaiting review ("Awaiting your review: these details are not yet saved to the case sheet. Tap Preview Case Sheet to apply.") versus saved ("✓ Saved to the case sheet (Bed X)").
+  - Verified with 16 automated tests in `verify_clinician_update_time_and_status.ts`.
+
 ### [2026-10-19] — ErMate: Paste-First Bed-Second, Identity Conflict Guard & Local Case Sheet Parser (PASTE-FIRST-FLOW-V1)
 - **Local Case Sheet & Discharge Parser (`src/mate/pastedSheetParser.ts`, `verify_pasted_sheet_import.ts`)**:
   - Implemented client-side parser reading patient demographics (names with title stripping, age, sex) and labelled discharge sections (`Final Diagnosis`, `Condition at Discharge`, `Discharge Medications`, `Follow-up plan`).

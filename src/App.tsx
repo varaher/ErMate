@@ -1,3 +1,4 @@
+import { displayTimeForUpdate } from "./mate/clinicianUpdateStamp";
 import { resolveWorkspaceForUser } from "./utils/workspaceResolver";
 import React, { useState, useEffect, useRef, useCallback, Suspense } from "react";
 import { 
@@ -3812,7 +3813,7 @@ const handleDeleteAllCases = async () => {
             if (!text) continue;
             if (/^(?:hi|hello|hey|good\s+morning|good\s+evening|good\s+afternoon)[\s!.]*$/i.test(text)) continue;
             if (cleanExisting.includes(text) || updatesToAppend.some(u => u.includes(text))) continue;
-            const time = (typeof item === 'object' && item.timestamp) ? item.timestamp : new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            const time = displayTimeForUpdate(item);
             updatesToAppend.push(`[${time}] — ${text}`);
           }
         } else if (extracted.clinicianUpdateText && typeof extracted.clinicianUpdateText === "string") {
