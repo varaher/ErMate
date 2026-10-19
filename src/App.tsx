@@ -6510,6 +6510,10 @@ const handleSignOut = async () => {
     setActiveFormMode(null);
     setShowDischargeSummaryId(null);
     setShowVoiceScribeChat(false);
+    // Tool overlays sit above the tab views; without closing them a tab tap changed the
+    // tab underneath while the calculator / pocket mirror stayed on screen.
+    setShowPediatricCalculator(false);
+    setShowPocketMirror(false);
   };
 
   if (authLoading) {

@@ -45,6 +45,15 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-19] — ErMate: Dynamic Header Height Tracking & Tool Overlay Navigation (HEADER-AND-OVERLAY-V1)
+- **ResizeObserver for Header Sizing (`src/components/GlobalHeader.tsx`, `verify_header_height_tracking.ts`)**:
+  - Bound a `ResizeObserver` to `headerRef.current` in `GlobalHeader.tsx` to dynamically track header height adjustments (e.g., navigation wrapping, banners, profile loading) without requiring a browser window resize event.
+  - Keeps CSS variable `--ermate-header-height` synchronized so sticky sub-headers and calculator controls never sit below a stale offset.
+  - Verified with 5 automated tests in `verify_header_height_tracking.ts`.
+- **Tool Overlay Cleanup on Navigation (`src/App.tsx`, `verify_tool_overlay_navigation.ts`)**:
+  - Dismisses `showPediatricCalculator` and `showPocketMirror` within `navigateToTab`, preventing modal tool overlays from persisting on screen when the clinician changes tabs.
+  - Verified with 6 automated tests in `verify_tool_overlay_navigation.ts`.
+
 ### [2026-10-18] — ErMate: MATE Vacant Bed New Case Intake (MATE_VACANT_BED_NEW_CASE)
 - **Flexible New-Patient Intent Recognition (`src/mate/mateNewCaseIntent.ts`)**:
   - Implemented `detectExplicitNewCaseIntent` matching variants such as `"new patient bed 11"`, `"New pt in bed no 11"`, `"Start a case in bed no 11"`, `"fresh arrival bed 3"`, and `"register a new pt"`.

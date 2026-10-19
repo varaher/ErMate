@@ -1,0 +1,13 @@
+import fs from "fs";
+const s = fs.readFileSync("./src/App.tsx", "utf8");
+const a = s.indexOf("const navigateToTab = (tabId: string) => {");
+const body = s.slice(a, s.indexOf("if (authLoading)", a));
+let pass = 0, fail = 0;
+const t = (n: string, c: boolean) => { c ? pass++ : fail++; console.log(`${c ? "PASS" : "FAIL"} ${n}`); };
+t("navigateToTab found", a > 0);
+t("closes paediatric calculator", /setShowPediatricCalculator\(false\)/.test(body));
+t("closes pocket mirror", /setShowPocketMirror\(false\)/.test(body));
+t("still closes case sheet / forms / MATE", /setSelectedCaseId\(null\)/.test(body) && /setActiveFormMode\(null\)/.test(body) && /setShowVoiceScribeChat\(false\)/.test(body));
+t("recording guard kept before closing", body.indexOf("isGlobalVoiceRecordingActive") < body.indexOf("setShowPediatricCalculator(false)"));
+t("calculator in-page back still wired", /onBack=\{\(\) => setShowPediatricCalculator\(false\)\}/.test(s));
+console.log(`${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);

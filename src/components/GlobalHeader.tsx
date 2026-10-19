@@ -128,7 +128,17 @@ export const GlobalHeader: React.FC<GlobalHeaderProps> = ({
     };
     updateHeaderHeight();
     window.addEventListener("resize", updateHeaderHeight);
-    return () => window.removeEventListener("resize", updateHeaderHeight);
+    // The header can change height without a window resize (nav row wrapping, banners,
+    // fonts/profile loading). Track it so sticky sub-headers never sit below a stale offset.
+    let observer: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== "undefined" && headerRef.current) {
+      observer = new ResizeObserver(updateHeaderHeight);
+      observer.observe(headerRef.current);
+    }
+    return () => {
+      window.removeEventListener("resize", updateHeaderHeight);
+      observer?.disconnect();
+    };
   }, []);
 
   // Close menus on outside click

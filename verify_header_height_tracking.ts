@@ -1,0 +1,10 @@
+import fs from "fs";
+const s = fs.readFileSync("./src/components/GlobalHeader.tsx", "utf8");
+let pass = 0, fail = 0;
+const t = (n: string, c: boolean) => { c ? pass++ : fail++; console.log(`${c ? "PASS" : "FAIL"} ${n}`); };
+t("sets --ermate-header-height", /setProperty\("--ermate-header-height"/.test(s));
+t("observes header size changes", /new ResizeObserver\(updateHeaderHeight\)/.test(s) && /observer\.observe\(headerRef\.current\)/.test(s));
+t("guards unsupported browsers", /typeof ResizeObserver !== "undefined"/.test(s));
+t("disconnects on unmount", /observer\?\.disconnect\(\)/.test(s));
+t("resize listener kept", /addEventListener\("resize", updateHeaderHeight\)/.test(s) && /removeEventListener\("resize", updateHeaderHeight\)/.test(s));
+console.log(`${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);
