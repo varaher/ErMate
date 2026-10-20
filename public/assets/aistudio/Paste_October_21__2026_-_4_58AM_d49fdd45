@@ -1,0 +1,626 @@
+ErMate checkout card — complete Studio code
+Prepared against varaher/ErMate main at d47f7a9b9f95ad7a296b950a4025b369ac494fb2, 21 October 2026.
+
+Copy this entire document into the chat of your EXISTING ErMate Google AI Studio project.
+Instruction for Studio
+Apply the replacement component and the integration patch below to the existing app. Do not create a new project, Firebase database or authentication system. Preserve Sarvam, clinical extraction, case persistence and clinical models. Do not deploy Firestore rules or enable live payments. Keep src/lib/pricing.ts unchanged. If your Studio files differ from this baseline, merge the intent into the current files instead of replacing unrelated changes. Apply the server endpoint and UI together; the new card requires that endpoint. Run the existing build and report any failures accurately.
+
+The prices already implemented on GitHub are deliberately preserved:
+Product	Price including GST	Credits	Validity
+Individual Pro	₹600	300	30 days; manual renewal
+Recharge	₹300	150	Adds credits, no subscription extension
+Recharge	₹700	350	Adds credits, no subscription extension
+Recharge	₹1,000	500	Adds credits, no subscription extension
+
+
+The earlier proposed 400-credit monthly allowance and 300/750/1,100-credit packs are NOT applied by this patch. Free/trial users see their actual balance, rather than an invented default. No expiry or rollover promises are added to the product copy.
+
+Expected behavior:
+- Show subscription name, price, validity and current credits on the saved profile and near the top of More.
+- Render the plan catalogue and recharge options clearly. Show manual renewal and GST-inclusive prices.
+- The header always exposes a balance/management CTA, including covered accounts.
+- Administrator access is labelled separately; no personal payment is needed. Only verified membership plus an active hospital subscription produces hospital-covered billing. Membership alone never hides the card.
+- For administrator or covered accounts, show the catalogue but disable personal checkout to avoid an unnecessary purchase.
+- Subscribe/Renew and Recharge use the existing server-created Razorpay order flow. There are no fake card/UPI fields in this card.
+- Live Firestore updates reflect credit decreases; there is no stale refreshed balance overriding a newer one.
+- Keep checkout locked while open or confirming. Cancellation unlocks it. A successful browser callback starts a specific server-side order-status check; it never grants credits.
+- Confirm only after the webhook has fulfilled that order. If confirmation is delayed, retain the order ID and offer Check payment; discourage duplicate payments.
+1. Replace src/components/CreditsPlanCard.tsx completely
+import React, { useEffect, useRef, useState } from "react";
+import { doc, getDocFromServer, onSnapshot } from "firebase/firestore";
+import { auth, db } from "../firebase";
+import { PLAN_PRICING, CREDIT_COSTS, rupees } from "../lib/pricing";
+import { creditLevel, formatDay } from "../lib/creditDisplay";
+
+export interface CreditsProfileFields {
+  aiCredits?: number;
+  subscriptionTier?: string;
+  tierExpiresAt?: string;
+  email?: string;
+}
+interface Props {
+  profile: CreditsProfileFields | null;
+  /** True only for a verified member of an active, paid hospital subscription. */
+  coveredByTeam?: boolean;
+  teamName?: string;
+  onProfileRefreshed?: (fields: CreditsProfileFields) => void;
+}
+type Pending = { id: string; uid: string };
+let checkoutScript: Promise<void> | undefined;
+function loadCheckout(): Promise<void> {
+  if ((window as any).Razorpay) return Promise.resolve();
+  if (checkoutScript) return checkoutScript;
+  checkoutScript = new Promise<void>((resolve, reject) => {
+    const script = document.createElement("script");
+    const timer = window.setTimeout(() => fail(), 15000);
+    const fail = () => {
+      window.clearTimeout(timer); script.remove(); checkoutScript = undefined;
+      reject(new Error("Checkout could not load. Check your connection and try again."));
+    };
+    script.src = "https://checkout.razorpay.com/v1/checkout.js";
+    script.onload = () => { window.clearTimeout(timer); resolve(); };
+    script.onerror = fail;
+    document.body.appendChild(script);
+  });
+  return checkoutScript;
+}
+
+export default function CreditsPlanCard({ profile, coveredByTeam = false, teamName, onProfileRefreshed }: Props) {
+  const uid = auth.currentUser?.uid;
+  const [record, setRecord] = useState<{ uid: string; fields: CreditsProfileFields } | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [pending, setPending] = useState<Pending | null>(null);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const lock = useRef(false);
+  const confirming = useRef(false);
+  const controller = useRef<AbortController | null>(null);
+  const checkout = useRef<any>(null);
+  const callback = useRef(onProfileRefreshed);
+  useEffect(() => { callback.current = onProfileRefreshed; }, [onProfileRefreshed]);
+
+  useEffect(() => {
+    setRecord(null); setPending(null); setBusy(null); setError(""); setMessage("");
+    lock.current = false; confirming.current = false;
+    const lifecycle = new AbortController(); controller.current = lifecycle;
+    if (!uid) return () => lifecycle.abort();
+    const unsubscribe = onSnapshot(doc(db, "users", uid), (snapshot) => {
+      if (lifecycle.signal.aborted || auth.currentUser?.uid !== uid) return;
+      if (snapshot.exists()) {
+        const d = snapshot.data();
+        const fields = { aiCredits: d.aiCredits, subscriptionTier: d.subscriptionTier, tierExpiresAt: d.tierExpiresAt };
+        setRecord({ uid, fields }); callback.current?.(fields);
+      }
+    }, () => { if (!lifecycle.signal.aborted) setError("Balance may be out of date. Tap Refresh to check."); });
+    return () => { lifecycle.abort(); unsubscribe(); checkout.current?.close(); checkout.current = null; };
+  }, [uid]);
+
+  // Listener updates replace old balances, including decreases after AI use.
+  const view = record && record.uid === uid ? { ...profile, ...record.fields } : (profile || {});
+  const balance = typeof view.aiCredits === "number" && Number.isFinite(view.aiCredits) ? view.aiCredits : null;
+  const admin = (auth.currentUser?.email || profile?.email || "").trim().toLowerCase() === "varahgrp@gmail.com";
+  const exempt = admin || coveredByTeam;
+  const pro = String(view.subscriptionTier || "").toLowerCase().includes("individual pro");
+  const expiry = view.tierExpiresAt ? Date.parse(view.tierExpiresAt) : NaN;
+  const active = pro && Number.isFinite(expiry) && expiry > Date.now();
+  const monthly = PLAN_PRICING.individual_pro_monthly;
+  const period = monthly.periodDays || 30;
+  const refillKeys = Object.keys(PLAN_PRICING).filter(key => PLAN_PRICING[key].kind === "refill");
+  const label = admin ? "Administrator access" : coveredByTeam ? "Hospital-covered" : pro ? "Individual Pro" : "Free / trial";
+  const state = exempt ? "Covered" : active ? "Active" : pro ? (Number.isFinite(expiry) ? "Expired" : "Validity unavailable") : "Not subscribed";
+  const amount = admin ? "₹0" : coveredByTeam ? "Paid by hospital" : pro ? `${rupees(monthly.amountPaise)} / ${period} days` : "₹0";
+  const release = () => { lock.current = false; confirming.current = false; setBusy(null); };
+
+  const request = async (path: string, owner: string, body?: object) => {
+    const user = auth.currentUser;
+    const lifecycle = controller.current;
+    if (!user || user.uid !== owner || !lifecycle || lifecycle.signal.aborted) throw new Error("Please sign in again.");
+    const token = await user.getIdToken();
+    const timeout = new AbortController();
+    const abort = () => timeout.abort();
+    lifecycle.signal.addEventListener("abort", abort, { once: true });
+    const timer = window.setTimeout(abort, 15000);
+    try {
+      const res = await fetch(path, {
+        method: body ? "POST" : "GET", signal: timeout.signal, cache: "no-store",
+        headers: { Authorization: `Bearer ${token}`, ...(body ? { "Content-Type": "application/json" } : {}) },
+        ...(body ? { body: JSON.stringify(body) } : {}),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Could not contact billing. Please try again.");
+      if (auth.currentUser?.uid !== owner || lifecycle.signal.aborted) throw new Error("Account changed.");
+      return data;
+    } finally { window.clearTimeout(timer); lifecycle.signal.removeEventListener("abort", abort); }
+  };
+  const refresh = async () => {
+    if (!uid) throw new Error("Please sign in first.");
+    const snapshot = await getDocFromServer(doc(db, "users", uid));
+    if (controller.current?.signal.aborted || auth.currentUser?.uid !== uid) return;
+    if (!snapshot.exists()) throw new Error("Your account could not be found.");
+    const d = snapshot.data();
+    const fields = { aiCredits: d.aiCredits, subscriptionTier: d.subscriptionTier, tierExpiresAt: d.tierExpiresAt };
+    setRecord({ uid, fields }); callback.current?.(fields);
+  };
+  const confirm = async (order: Pending) => {
+    confirming.current = true; lock.current = true; setBusy("confirming"); setError("");
+    setMessage("Confirming your payment. Please do not pay again.");
+    const lifecycle = controller.current;
+    try {
+      for (let i = 0; i < 18; i++) {
+        if (lifecycle?.signal.aborted || auth.currentUser?.uid !== order.uid) return;
+        const result = await request(`/api/payments/orders/${encodeURIComponent(order.id)}`, order.uid);
+        if (result.status === "fulfilled") {
+          setPending(null); setMessage("Payment confirmed. Your account has been updated.");
+          try { await refresh(); } catch { setError("Payment is confirmed. Refresh to check your latest balance."); }
+          return;
+        }
+        if (result.status === "mismatch") throw new Error(`This payment needs support review. Order: ${order.id}. Please do not pay again.`);
+        await new Promise(resolve => window.setTimeout(resolve, 4000));
+      }
+      setMessage(`Confirmation is pending. Use Check payment below. Order: ${order.id}. Please do not pay again.`);
+    } catch (e: any) {
+      if (!lifecycle?.signal.aborted) { setMessage(`Order: ${order.id}`); setError(e.message || "Could not check payment. Try Check payment again."); }
+    } finally { if (!lifecycle?.signal.aborted) release(); }
+  };
+  const start = async (key: string) => {
+    if (lock.current || pending || exempt) return;
+    const owner = auth.currentUser?.uid;
+    if (!owner) { setError("Please sign in before purchasing."); return; }
+    const lifecycle = controller.current;
+    lock.current = true; setBusy(key); setError(""); setMessage("");
+    try {
+      await loadCheckout();
+      const order = await request("/api/payments/create-order", owner, { planKey: key });
+      if (lifecycle?.signal.aborted) return;
+      if (!order.orderId || !order.keyId || order.currency !== "INR" || !Number.isInteger(order.amount) || order.amount <= 0) throw new Error("Invalid checkout response. Please contact support.");
+      if (order.amount !== PLAN_PRICING[key].amountPaise) throw new Error("Pricing has changed. Refresh ErMate before paying.");
+      checkout.current = new (window as any).Razorpay({
+        key: order.keyId, order_id: order.orderId, amount: order.amount, currency: order.currency,
+        name: "ErMate", description: PLAN_PRICING[key].label,
+        prefill: { email: auth.currentUser?.email || profile?.email || "" },
+        theme: { color: "#059669" },
+        handler: () => {
+          if (lifecycle?.signal.aborted || auth.currentUser?.uid !== owner) return;
+          const payment = { id: order.orderId, uid: owner };
+          setPending(payment); void confirm(payment);
+        },
+        modal: { ondismiss: () => { if (!lifecycle?.signal.aborted && !confirming.current) release(); } },
+      });
+      checkout.current.on("payment.failed", () => {
+        if (!lifecycle?.signal.aborted) setError("Payment was not completed. You can retry in checkout or close it.");
+      });
+      checkout.current.open();
+    } catch (e: any) { if (!lifecycle?.signal.aborted) { setError(e.message || "Could not start checkout."); release(); } }
+  };
+
+  const disabled = !!busy || !!pending || exempt;
+  const button = "w-full rounded-xl px-4 py-3 text-sm font-bold transition disabled:cursor-not-allowed disabled:opacity-50";
+  return (
+    <section id="ermate-billing" data-testid="credits-plan-card" aria-label="ErMate subscription and credits" className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900 scroll-mt-24">
+      <header className="bg-slate-950 p-5 text-white sm:p-6">
+        <p className="text-xs font-semibold uppercase tracking-widest text-emerald-300">ErMate · Your shift companion</p>
+        <h2 className="mt-2 text-xl font-bold">Your plan & credits</h2>
+        <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <div><p className="text-xs text-slate-400">Subscription</p><p className="mt-1 font-semibold" data-testid="current-plan">{label}</p><span className="text-xs text-emerald-300">{state}</span></div>
+          <div><p className="text-xs text-slate-400">{exempt ? "Billing" : "Plan price"}</p><p className="mt-1 font-semibold" data-testid="current-price">{amount}</p><span className="text-xs text-slate-400">{exempt ? "No personal payment required" : "Including GST"}</span></div>
+          <div><p className="text-xs text-slate-400">{exempt ? "Personal credits remaining" : "Credits remaining"}</p><p data-testid="credits-balance" className={`mt-1 text-3xl font-bold ${creditLevel(balance) === "empty" ? "text-rose-300" : "text-emerald-300"}`}>{balance ?? "—"}</p></div>
+        </div>
+        <p className="mt-4 text-xs text-slate-300">{admin ? "Your administrator account is exempt from AI credit charges." : coveredByTeam ? `${teamName || "Your hospital"} covers your account. Personal credits are not used during coverage.` : pro ? Number.isFinite(expiry) ? `${active ? "Valid until" : "Expired on"} ${formatDay(view.tierExpiresAt)}. Renewal is manual.` : "Your plan expiry is unavailable. Please check with support." : "Your free / trial balance is shown above. Choose Individual Pro to start your monthly plan."}</p>
+      </header>
+      <div className="space-y-5 p-5 sm:p-6">
+        {balance === 0 && !exempt && <p data-testid="credits-empty-notice" className="rounded-xl bg-rose-50 p-3 text-sm text-rose-700 dark:bg-rose-950/30 dark:text-rose-300">No credits remaining. Manual entry, saving and printing use no credits.</p>}
+        {balance !== null && balance > 0 && creditLevel(balance) === "low" && !exempt && <p data-testid="credits-low-notice" className="text-sm text-amber-700 dark:text-amber-300">Your credits are running low. Recharge when needed.</p>}
+        <article className="rounded-2xl border-2 border-emerald-500 bg-emerald-50/50 p-4 dark:bg-emerald-950/20">
+          <div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="font-bold text-slate-900 dark:text-white">Individual Pro</h3><p className="text-sm text-slate-600 dark:text-slate-300">One monthly plan. Every feature available.</p></div><div className="text-right"><strong className="text-2xl text-emerald-700 dark:text-emerald-300">{rupees(monthly.amountPaise)}</strong><p className="text-xs text-slate-500">{period} days · GST included</p></div></div>
+          <ul className="my-4 space-y-2 text-sm text-slate-700 dark:text-slate-200">
+            <li>✓ {monthly.credits} credits included with each purchase</li><li>✓ Voice case sheets, AI discharge, Discuss, Rounds and other AI tools use credits</li><li>✓ Manual documentation, saving and print/export use no credits</li><li>✓ Renew manually. No automatic debit. No annual commitment.</li>
+          </ul>
+          <button type="button" data-testid="buy-individual_pro_monthly" disabled={disabled} onClick={() => void start("individual_pro_monthly")} className={`${button} bg-emerald-600 text-white hover:bg-emerald-700`}>{busy === "individual_pro_monthly" ? "Opening checkout…" : exempt ? "Included through your access" : `${pro ? "Renew" : "Subscribe"} · ${rupees(monthly.amountPaise)}`}</button>
+        </article>
+        <div><h3 className="font-bold text-slate-900 dark:text-white">Need more AI usage?</h3><p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Recharges add credits. They do not extend your subscription validity.</p></div>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          {refillKeys.map(key => { const pack = PLAN_PRICING[key]; return <article key={key} className="flex flex-col rounded-2xl border border-slate-200 p-4 dark:border-slate-700"><p className="text-xs uppercase tracking-wide text-slate-500">Credit recharge</p><h4 className="mt-2 text-xl font-bold text-slate-900 dark:text-white">{rupees(pack.amountPaise)}</h4><p className="mt-1 text-sm font-semibold text-emerald-700 dark:text-emerald-300">{pack.credits} credits</p><p className="my-3 text-xs text-slate-500">GST included · One-time purchase</p><button type="button" data-testid={`buy-${key}`} disabled={disabled} onClick={() => void start(key)} className={`${button} mt-auto border border-emerald-600 text-emerald-700 hover:bg-emerald-50 dark:text-emerald-300 dark:hover:bg-emerald-950/30`}>{busy === key ? "Opening…" : "Recharge"}</button></article>; })}
+        </div>
+        <details className="rounded-xl bg-slate-50 p-4 text-sm dark:bg-slate-950/50"><summary className="cursor-pointer font-semibold text-slate-800 dark:text-slate-200">How do credits work?</summary><p className="mt-3 text-slate-600 dark:text-slate-300">One credit is a usage unit, not one complete patient case. Different AI actions use different amounts. Dictation may involve transcription and extraction as separate actions. All plans use the same action rates.</p><ul className="mt-3 grid gap-2 text-xs text-slate-600 dark:text-slate-300 sm:grid-cols-2">{[{label:"Transcription request",cost:CREDIT_COSTS.stt},{label:"Case extraction turn",cost:CREDIT_COSTS.scribe_chat},{label:"AI discharge draft",cost:CREDIT_COSTS.ai_discharge},{label:"Discuss message",cost:CREDIT_COSTS.case_discussion},{label:"Rounds request",cost:CREDIT_COSTS.rounds_debrief},{label:"Handover compilation",cost:CREDIT_COSTS.handover_compile}].map(item=><li key={item.label}>{item.label}: <strong>{item.cost} {item.cost === 1 ? "credit" : "credits"}</strong></li>)}</ul></details>
+        <div aria-live="polite" className="space-y-2 text-sm"><p className="break-words text-slate-600 dark:text-slate-300">{message}</p>{error && <p role="alert" className="break-words text-rose-700 dark:text-rose-300">{error}</p>}</div>
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-4 dark:border-slate-800"><span className="text-xs text-slate-400">Secure checkout through Razorpay</span><button type="button" disabled={!!busy} onClick={() => { setError(""); if (pending) void confirm(pending); else void refresh().then(()=>setMessage("Balance updated.")).catch(e=>setError(e.message)); }} className="text-sm font-semibold text-emerald-700 disabled:opacity-50 dark:text-emerald-300">{pending ? "Check payment" : "Refresh balance"}</button></div>
+      </div>
+    </section>
+  );
+}
+2. Apply this integration patch
+This patch updates the existing authenticated payments router, the two profile paths, More, the header and documentation. The new GET endpoint is read-only and owner-scoped. It does not grant credits. The existing verified webhook remains the authority.
+diff --git a/AGENTS.md b/AGENTS.md
+index 9991be4..294a9e9 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -45,6 +45,13 @@
+ 
+ ## Implementation Log & Recent Changes
+ 
++### [2026-10-21] — Subscription visibility and checkout confirmation
++- Replaced CreditsPlanCard with a profile-visible summary, 30-day plan and recharge catalogue using unchanged shared pricing. Administrator and hospital-covered access remain visible with personal checkout disabled.
++- Added a UID-scoped Firestore listener so balance decreases appear after refresh or payment. Checkout stays locked until dismissal or server confirmation; no browser credit grants.
++- Added authenticated, owner-only GET /api/payments/orders/:orderId and unique 35-character Razorpay receipts.
++- Added the card to the saved clinical profile and moved it above More account settings. Hospital coverage display requires verified membership and an active hospital subscription. Header includes plan price, balance and a management CTA.
++- Isolated verification: 40 UI behavior checks, 14 payment-route checks and syntax compilation of all seven changed code files. Full production build and live Razorpay were not run. Existing AI reservation/expiry and streaming-auth audit findings remain outside this checkout change.
++
+ ### [2026-10-20] — ErMate: Shared Credits Plan Card, Header Credit Chip & Live Refresh (CREDITS-UI-AND-HEADER-CHIP-V1)
+ - **Shared Credits Plan Card (`src/components/CreditsPlanCard.tsx`)**:
+   - Unified credit balance, plan status (`planStatus`), low/empty alerts, and recharge options into a reusable component.
+diff --git a/README.md b/README.md
+index b29af57..7198735 100644
+--- a/README.md
++++ b/README.md
+@@ -1,5 +1,10 @@
+ # ErMate — Emergency Medicine AI Operating System & Clinical EMR
+ 
++### Subscription and checkout UI (21 October 2026)
++The saved profile and More screen show subscription status, current plan price, validity and credits. The catalogue uses `src/lib/pricing.ts`: ₹600 / 300 credits / 30 days, plus ₹300 / 150, ₹700 / 350 and ₹1,000 / 500 credit recharges, GST included. These are one-time orders with manual renewal.
++
++The card listens to the current user's balance and confirms the specific order through authenticated `GET /api/payments/orders/:orderId`. Only the webhook grants credits. Administrator exemption and hospital coverage have explicit labels; team membership alone does not imply paid coverage. Razorpay receipts use a short unique ID. Existing metering reservation/expiry and live streaming security findings require separate work before production billing is considered complete.
++
+ > **DPDP Act 2023 Compliant · Offline-Resilient · Multi-Model AI Clinical Copilot**
+ 
+ ErMate is a high-speed, enterprise-grade Emergency Department (ED) Clinical AI Assistant and EMR platform designed specifically for fast-paced acute care environments (India & Global). It optimizes ED handovers, automates discharge summaries, performs real-time clinical case extractions, and generates mortality/morbidity audit documents with zero data leakage.
+diff --git a/server/routes/payments.ts b/server/routes/payments.ts
+index 7315716..5fb2c75 100644
+--- a/server/routes/payments.ts
++++ b/server/routes/payments.ts
+@@ -38,7 +38,7 @@ router.post("/create-order", requireAuth, async (req: AuthRequest, res: Response
+     const order = await razorpay.orders.create({
+       amount: plan.amountPaise,
+       currency: "INR",
+-      receipt: `${uid}_${Date.now()}`,
++      receipt: `em_${crypto.randomUUID().replace(/-/g, "")}`,
+       notes: {
+         firebaseUid: uid,
+         planKey,
+@@ -119,5 +119,24 @@ router.post("/webhook", async (req: Request, res: Response) => {
+   }
+ });
+ 
++// Read-only confirmation for the authenticated owner. Only the webhook grants access.
++router.get("/orders/:orderId", requireAuth, async (req: AuthRequest, res: Response) => {
++  res.setHeader("Cache-Control", "no-store");
++  const orderId = String(req.params.orderId || "");
++  if (!/^order_[a-zA-Z0-9]+$/.test(orderId)) {
++    return res.status(400).json({ error: "Invalid order." });
++  }
++  try {
++    const snapshot = await db.collection("paymentIntents").doc(orderId).get();
++    if (!snapshot.exists || snapshot.data()?.uid !== req.user?.uid) {
++      return res.status(404).json({ error: "Order not found." });
++    }
++    const intent = snapshot.data()!;
++    return res.json({ orderId, status: intent.status, planKey: intent.planKey });
++  } catch {
++    return res.status(503).json({ error: "Could not confirm payment yet. Please check again." });
++  }
++});
++
+ export default router;
+ 
+diff --git a/src/App.tsx b/src/App.tsx
+index 4126fd6..48e82f3 100644
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -6590,6 +6590,8 @@ const handleSignOut = async () => {
+     return (
+       <OnboardingProfileView
+         profile={profile}
++        coveredByTeam={isVerifiedTeamUser && hospitalSubscription?.active === true}
++        teamName={profile?.hospitalLabel || profile?.hospital || undefined}
+         erPhysicalBedCapacity={erPhysicalBedCapacity}
+         onSaveProfile={async (updatedProfile, capacity) => {
+           await handleSaveProfile(updatedProfile, capacity);
+diff --git a/src/components/GlobalHeader.tsx b/src/components/GlobalHeader.tsx
+index e92bb18..fec3c50 100644
+--- a/src/components/GlobalHeader.tsx
++++ b/src/components/GlobalHeader.tsx
+@@ -1,4 +1,5 @@
+-import { creditLevel } from "../lib/creditDisplay";
++import { creditLevel, formatDay, planStatus } from "../lib/creditDisplay";
++import { PLAN_PRICING, rupees } from "../lib/pricing";
+ import React, { useState, useRef, useEffect } from "react";
+ import {
+   Activity,
+@@ -76,7 +77,7 @@ export interface GlobalHeaderProps {
+   onNavigateToTab: (tabId: string) => void;
+   onSignOut: () => void;
+   onOpenProfile?: () => void;
+-  /** Verified hospital team members are not metered, so no credit chip is shown for them. */
++  /** Verified membership; billing coverage additionally requires an active hospital subscription. */
+   coveredByTeam?: boolean;
+ }
+ 
+@@ -113,6 +114,11 @@ export const GlobalHeader: React.FC<GlobalHeaderProps> = ({
+   onSignOut,
+   onOpenProfile,
+ }) => {
++  const isBillingAdmin = profile?.email?.trim().toLowerCase() === "varahgrp@gmail.com";
++  const hospitalCovered = coveredByTeam && hospitalSubscription?.active === true;
++  const personalPlan = planStatus(profile?.subscriptionTier, profile?.tierExpiresAt);
++  const billingLabel = isBillingAdmin ? "Administrator access" : hospitalCovered ? "Hospital-covered" : personalPlan.label;
++  const billingPrice = isBillingAdmin ? "₹0" : hospitalCovered ? "Paid by hospital" : personalPlan.label.startsWith("Individual Pro") ? `${rupees(PLAN_PRICING.individual_pro_monthly.amountPaise)} / ${PLAN_PRICING.individual_pro_monthly.periodDays || 30} days` : "₹0";
+   const [showNotificationsDropdown, setShowNotificationsDropdown] = useState(false);
+   const [notificationsTab, setNotificationsTab] = useState<"active" | "history">("active");
+   const [showProfileMenu, setShowProfileMenu] = useState(false);
+@@ -430,7 +436,7 @@ export const GlobalHeader: React.FC<GlobalHeaderProps> = ({
+           />
+ 
+           {/* AI credits chip: always visible so the balance is never a surprise. Tap to recharge. */}
+-          {!coveredByTeam && typeof profile?.aiCredits === "number" && (
++          {profile && (
+             <button
+               type="button"
+               data-testid="header-credit-chip"
+@@ -446,7 +452,7 @@ export const GlobalHeader: React.FC<GlobalHeaderProps> = ({
+               }`}
+             >
+               <span aria-hidden="true">✦</span>
+-              <span>{profile.aiCredits}</span>
++              <span>{Number.isFinite(profile.aiCredits) ? profile.aiCredits : "—"}</span>
+             </button>
+           )}
+ 
+@@ -737,18 +743,32 @@ export const GlobalHeader: React.FC<GlobalHeaderProps> = ({
+ 
+                   <div className="flex items-center justify-between text-[11px] pt-1 border-t border-slate-200/50 dark:border-slate-800">
+                     <span className="text-slate-500 dark:text-slate-400 font-medium">Subscription:</span>
+-                    {hospitalSubscription?.active ? (
++                    {hospitalCovered && !isBillingAdmin ? (
+                       <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/50 px-1.5 py-0.5 rounded border border-emerald-500/20">
+                         <ShieldCheck className="w-3 h-3" />
+-                        Team Plan
++                        {billingLabel}
+                       </span>
+                     ) : (
+                       <span className="inline-flex items-center gap-1 text-[10px] font-bold text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded">
+                         <User className="w-3 h-3" />
+-                        Individual Plan
++                        {billingLabel}
+                       </span>
+                     )}
+                   </div>
++                  <div className="flex items-center justify-between gap-3 text-[11px]">
++                    <span className="text-slate-500 dark:text-slate-400">Plan price:</span>
++                    <strong>{billingPrice}</strong>
++                  </div>
++                  <div className="flex items-center justify-between text-[11px]">
++                    <span className="text-slate-500 dark:text-slate-400">Credits remaining:</span>
++                    <strong>{Number.isFinite(profile?.aiCredits) ? profile?.aiCredits : "—"}</strong>
++                  </div>
++                  {profile?.tierExpiresAt && !isBillingAdmin && !hospitalCovered && (
++                    <p className="text-[10px] text-slate-500">Valid until {formatDay(profile.tierExpiresAt)} · Manual renewal</p>
++                  )}
++                  <button type="button" onClick={() => { onNavigateToTab("more"); setShowProfileMenu(false); }} className="w-full rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white">
++                    Manage plan & recharge
++                  </button>
+                 </div>
+ 
+                 {/* Quick Preferences & Navigation Links */}
+diff --git a/src/components/MoreView.tsx b/src/components/MoreView.tsx
+index 98b2af4..dd53afd 100644
+--- a/src/components/MoreView.tsx
++++ b/src/components/MoreView.tsx
+@@ -309,6 +309,13 @@ export default function MoreView({
+         </div>
+       </div>
+ 
++      <CreditsPlanCard
++        profile={profile}
++        coveredByTeam={!isAdminUser && isMembershipActive && hospitalSubscription?.active === true}
++        teamName={activeHospitalName}
++        onProfileRefreshed={onProfileRefreshed}
++      />
++
+       {/* SECTION A: MY ACCOUNT */}
+       <section className="space-y-3">
+         <div className="flex items-center justify-between px-1">
+@@ -672,7 +679,7 @@ export default function MoreView({
+             <div>
+               <div className="flex items-center gap-2">
+                 <h3 className="text-base font-bold text-slate-900 dark:text-white">
+-                  {isMembershipActive ? "Team Plan" : "Individual Plan"}
++                  {isMembershipActive ? "Team workspace" : "Individual workspace"}
+                 </h3>
+                 <span className={`text-[10px] font-bold font-mono px-2.5 py-0.5 rounded-full border ${
+                   isMembershipActive 
+@@ -681,12 +688,12 @@ export default function MoreView({
+                       ? "bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 border-amber-200 dark:border-amber-800"
+                       : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-700"
+                 }`}>
+-                  {isMembershipActive ? "Active" : isMembershipPending ? "Invitation awaiting approval" : "Not joined"}
++                  {isMembershipActive ? "Joined" : isMembershipPending ? "Invitation awaiting approval" : "Not joined"}
+                 </span>
+               </div>
+               <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                 {isMembershipActive 
+-                  ? `Covered by ${activeHospitalName} team subscription.`
++                    ? `Member of ${activeHospitalName}. Billing coverage is shown above.`
+                   : isMembershipPending 
+                     ? "Invitation submitted — awaiting authorization from department lead."
+                     : "Your personal ErMate workspace."}
+@@ -705,14 +712,12 @@ export default function MoreView({
+             )}
+           </div>
+ 
+-          <CreditsPlanCard profile={profile} coveredByTeam={isMembershipActive} teamName={activeHospitalName} onProfileRefreshed={onProfileRefreshed} />
+-
+           {/* Details Grid */}
+           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+             <div className="p-3 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-100 dark:border-slate-800">
+               <span className="text-[10px] font-mono text-slate-400 block uppercase">Plan</span>
+               <strong className="text-xs font-bold text-slate-900 dark:text-white mt-0.5 block">
+-                {isMembershipActive ? "Team Plan" : "Individual Plan"}
++                {isMembershipActive ? "Team workspace" : "Individual workspace"}
+               </strong>
+             </div>
+ 
+@@ -741,7 +746,7 @@ export default function MoreView({
+           </div>
+ 
+           <p className="text-[10.5px] text-slate-400 dark:text-slate-500 font-mono leading-relaxed">
+-            Note: Every clinician begins with an Individual Plan. When you join an approved hospital team on ErMate, your account automatically shifts to the Hospital Team Plan without requiring manual upgrades.
++            Team membership and paid subscription coverage are separate. Your current billing status is shown in Your plan & credits above.
+           </p>
+         </div>
+       </section>
+diff --git a/src/components/OnboardingProfileView.tsx b/src/components/OnboardingProfileView.tsx
+index 9f69bf6..9de9ffc 100644
+--- a/src/components/OnboardingProfileView.tsx
++++ b/src/components/OnboardingProfileView.tsx
+@@ -1,4 +1,5 @@
+ import React, { useState, useEffect } from "react";
++import CreditsPlanCard from "./CreditsPlanCard";
+ import {
+   User, Building2, Stethoscope, Bed, Sparkles, Check, ArrowRight,
+   Shield, Users, Share2, Copy, CheckCircle2, AlertCircle, Eye, EyeOff,
+@@ -26,6 +27,8 @@ interface OnboardingProfileViewProps {
+   onTeamCreated?: (hospitalId: string, hospitalName: string) => void;
+   hasActiveTrialCase?: boolean;
+   onSaveActiveTrialCase?: () => Promise<void> | void;
++  coveredByTeam?: boolean;
++  teamName?: string;
+ }
+ 
+ export const ROLE_OPTIONS = [
+@@ -58,6 +61,8 @@ export default function OnboardingProfileView({
+   onTeamCreated,
+   hasActiveTrialCase = false,
+   onSaveActiveTrialCase,
++  coveredByTeam = false,
++  teamName,
+ }: OnboardingProfileViewProps) {
+   const initialCap =
+     typeof erPhysicalBedCapacity === "number" && erPhysicalBedCapacity > 0
+@@ -519,6 +524,8 @@ export default function OnboardingProfileView({
+             </div>
+           )}
+ 
++          <CreditsPlanCard profile={profile} coveredByTeam={coveredByTeam} teamName={teamName} />
++
+           {/* CTAs: Primary "Edit Profile", Secondary "Continue to Dashboard" */}
+           <div className="space-y-2.5 pt-1">
+             <button
+diff --git a/src/components/ProfileSettingsView.tsx b/src/components/ProfileSettingsView.tsx
+index b0cb0ad..94054a0 100644
+--- a/src/components/ProfileSettingsView.tsx
++++ b/src/components/ProfileSettingsView.tsx
+@@ -958,16 +958,16 @@ export default function ProfileSettingsView({
+                 >
+                   <div className="flex items-center gap-3">
+                     <div className={`w-8.5 h-8.5 rounded-xl flex items-center justify-center ${
+-                      (profile.aiCredits ?? 350) < 50 ? "bg-amber-500/20 text-amber-400" : "bg-purple-500/10 text-purple-400"
++                      (profile.aiCredits ?? 0) < 50 ? "bg-amber-500/20 text-amber-400" : "bg-purple-500/10 text-purple-400"
+                     }`}>
+                       <Mic className="w-4.5 h-4.5" />
+                     </div>
+                     <div className="text-left">
+                       <strong className="text-sm font-bold block">Scribe Credits</strong>
+                       <span className={`text-[10px] block font-mono ${
+-                        (profile.aiCredits ?? 350) < 50 ? "text-amber-500 font-extrabold" : "text-slate-500 dark:text-slate-400"
++                        (profile.aiCredits ?? 0) < 50 ? "text-amber-500 font-extrabold" : "text-slate-500 dark:text-slate-400"
+                       }`}>
+-                        {profile.aiCredits ?? 350} scribe credits remaining
++                        {typeof profile.aiCredits === "number" ? profile.aiCredits : "—"} AI credits remaining
+                       </span>
+                     </div>
+                   </div>
+@@ -1039,7 +1039,7 @@ export default function ProfileSettingsView({
+                     </div>
+                     <div className="text-left">
+                       <strong className="text-sm font-extrabold block text-emerald-600 dark:text-emerald-400">Upgrade Plan</strong>
+-                      <span className="text-[10px] text-emerald-600/80 dark:text-emerald-400/80 block font-mono font-bold">Unlock unlimited voice AI & Rounds Debriefs</span>
++                      <span className="text-[10px] text-emerald-600/80 dark:text-emerald-400/80 block font-mono font-bold">View the monthly plan and optional AI recharges</span>
+                     </div>
+                   </div>
+                   <ChevronRight className="w-4 h-4 text-emerald-500 shrink-0" />
+@@ -2154,73 +2154,13 @@ export default function ProfileSettingsView({
+           myMembership.membershipVerified === true
+         )
+       );
+-      const isMembershipPending = myMembership
+-        ? isPendingApprovalStatus(myMembership.status)
+-        : false;
+-      const isTeam = isMembershipActive;
++      const isTeamCovered = isMembershipActive && hospitalSubscription?.active === true;
+       content = (
+-        <div className="space-y-4 font-mono text-left">
+-          <div className="p-4 bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 rounded-2xl space-y-1">
+-            <h4 className="text-xs font-black uppercase text-blue-700 dark:text-blue-400">
+-              {isTeam ? "Hospital Team Plan" : "Individual Workspace"}
+-            </h4>
+-            <p className="text-xs text-slate-600 dark:text-slate-300">
+-              {isTeam 
+-                ? `Covered by ${profile.hospital || "Hospital"} team subscription.` 
+-                : isMembershipPending
+-                  ? "Invitation awaiting approval from department lead."
+-                  : "Your personal ErMate workspace."}
+-            </p>
+-          </div>
+-
+-          <div className="bg-white dark:bg-[#182333] border border-slate-200 dark:border-slate-800 p-5 rounded-2xl space-y-3 text-xs">
+-            <div className="grid grid-cols-2 gap-3">
+-              <div className="p-3 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-100 dark:border-slate-800">
+-                <span className="text-[10px] text-slate-400 uppercase block">Plan</span>
+-                <strong className="text-xs font-bold text-slate-900 dark:text-white block mt-0.5">
+-                  {isTeam ? "Team Plan" : "Individual Plan"}
+-                </strong>
+-              </div>
+-
+-              <div className="p-3 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-100 dark:border-slate-800">
+-                <span className="text-[10px] text-slate-400 uppercase block">Managed By</span>
+-                <strong className="text-xs font-bold text-slate-900 dark:text-white block mt-0.5 truncate">
+-                  {isTeam ? (profile.hospital || "Hospital") : "Self"}
+-                </strong>
+-              </div>
+-
+-              <div className="p-3 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-100 dark:border-slate-800">
+-                <span className="text-[10px] text-slate-400 uppercase block">Team</span>
+-                <strong className="text-xs font-bold text-slate-900 dark:text-white block mt-0.5 truncate">
+-                  {profile.hospital || "Independent"}
+-                </strong>
+-              </div>
+-
+-              <div className="p-3 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-100 dark:border-slate-800">
+-                <span className="text-[10px] text-slate-400 uppercase block">Membership</span>
+-                <strong className={`text-xs font-bold block mt-0.5 ${
+-                  isTeam ? "text-emerald-500" : isMembershipPending ? "text-amber-500" : "text-slate-400"
+-                }`}>
+-                  {isTeam ? "Active" : isMembershipPending ? "Pending Approval" : "Not Joined"}
+-                </strong>
+-              </div>
+-            </div>
+-
+-            <p className="text-[11px] text-slate-400 pt-2 leading-relaxed">
+-              Every user starts with an Individual Plan. When you join an approved hospital team on ErMate, your account automatically shifts to the Team Plan without manual upgrades.
+-            </p>
+-
+-            <button
+-              type="button"
+-              onClick={handleOpenTeamRoster}
+-              className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-xs transition-all cursor-pointer font-mono mt-2"
+-            >
+-              Open Team Roster & Manage Invitations
+-            </button>
+-          </div>
+-
+-          <CreditsPlanCard profile={profile} coveredByTeam={isTeam} teamName={profile.hospital || undefined} />
+-        </div>
++        <CreditsPlanCard
++          profile={profile}
++          coveredByTeam={isTeamCovered}
++          teamName={profile.hospital || undefined}
++        />
+       );
+     } else if (selectedSubSection === "security" || selectedSubSection === "set-password") {
+       title = "Security & Access";
+Verification performed
+- 40 React UI behavior checks with an isolated DOM and mocked Firebase/Razorpay: free, active, expired, unknown balance, administrator, hospital-covered, decreasing balance after refresh, duplicate clicks, cancellation, server-confirmed payment, account switch and unauthenticated rendering.
+- 14 payment-route checks with mocked services: owner-only order lookup, missing/invalid orders, database failure, ignored client price/credits and a 35-character receipt.
+- Syntax compilation of all seven changed code files and git diff --check.
+- No real payment, production write, Firestore deployment or full repository build was performed here. Studio must run the actual app build after merging.
+Important scope
+This is a checkout/profile UI patch. The earlier audit's credit-reservation race, expiry enforcement, unknown-balance fail-open behavior, and live voice authentication/metering remain separate backend issues. This patch does not claim to make those production billing controls complete. Frontend coverage labels are display logic; server authorization must independently enforce paid hospital coverage.

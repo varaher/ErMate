@@ -309,6 +309,13 @@ export default function MoreView({
         </div>
       </div>
 
+      <CreditsPlanCard
+        profile={profile}
+        coveredByTeam={!isAdminUser && isMembershipActive && hospitalSubscription?.active === true}
+        teamName={activeHospitalName}
+        onProfileRefreshed={onProfileRefreshed}
+      />
+
       {/* SECTION A: MY ACCOUNT */}
       <section className="space-y-3">
         <div className="flex items-center justify-between px-1">
@@ -672,7 +679,7 @@ export default function MoreView({
             <div>
               <div className="flex items-center gap-2">
                 <h3 className="text-base font-bold text-slate-900 dark:text-white">
-                  {isMembershipActive ? "Team Plan" : "Individual Plan"}
+                  {isMembershipActive ? "Team workspace" : "Individual workspace"}
                 </h3>
                 <span className={`text-[10px] font-bold font-mono px-2.5 py-0.5 rounded-full border ${
                   isMembershipActive 
@@ -681,12 +688,12 @@ export default function MoreView({
                       ? "bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 border-amber-200 dark:border-amber-800"
                       : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-700"
                 }`}>
-                  {isMembershipActive ? "Active" : isMembershipPending ? "Invitation awaiting approval" : "Not joined"}
+                  {isMembershipActive ? "Joined" : isMembershipPending ? "Invitation awaiting approval" : "Not joined"}
                 </span>
               </div>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
                 {isMembershipActive 
-                  ? `Covered by ${activeHospitalName} team subscription.`
+                  ? `Member of ${activeHospitalName}. Billing coverage is shown above.`
                   : isMembershipPending 
                     ? "Invitation submitted — awaiting authorization from department lead."
                     : "Your personal ErMate workspace."}
@@ -705,14 +712,12 @@ export default function MoreView({
             )}
           </div>
 
-          <CreditsPlanCard profile={profile} coveredByTeam={isMembershipActive} teamName={activeHospitalName} onProfileRefreshed={onProfileRefreshed} />
-
           {/* Details Grid */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
             <div className="p-3 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-100 dark:border-slate-800">
               <span className="text-[10px] font-mono text-slate-400 block uppercase">Plan</span>
               <strong className="text-xs font-bold text-slate-900 dark:text-white mt-0.5 block">
-                {isMembershipActive ? "Team Plan" : "Individual Plan"}
+                {isMembershipActive ? "Team workspace" : "Individual workspace"}
               </strong>
             </div>
 
@@ -735,13 +740,13 @@ export default function MoreView({
               <strong className={`text-xs font-bold mt-0.5 block font-mono ${
                 isMembershipActive ? "text-emerald-600 dark:text-emerald-400" : isMembershipPending ? "text-amber-500" : "text-slate-500"
               }`}>
-                {isMembershipActive ? "Active" : isMembershipPending ? "Pending" : "Not Joined"}
+                {isMembershipActive ? "Joined" : isMembershipPending ? "Pending" : "Not Joined"}
               </strong>
             </div>
           </div>
 
           <p className="text-[10.5px] text-slate-400 dark:text-slate-500 font-mono leading-relaxed">
-            Note: Every clinician begins with an Individual Plan. When you join an approved hospital team on ErMate, your account automatically shifts to the Hospital Team Plan without requiring manual upgrades.
+            Team membership and paid subscription coverage are separate. Your current billing status is shown in Your plan & credits above.
           </p>
         </div>
       </section>

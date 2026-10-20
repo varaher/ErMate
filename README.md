@@ -1,5 +1,10 @@
 # ErMate — Emergency Medicine AI Operating System & Clinical EMR
 
+### Subscription and checkout UI (21 October 2026)
+The saved profile and More screen show subscription status, current plan price, validity and credits. The catalogue uses `src/lib/pricing.ts`: ₹600 / 300 credits / 30 days, plus ₹300 / 150, ₹700 / 350 and ₹1,000 / 500 credit recharges, GST included. These are one-time orders with manual renewal.
+
+The card listens to the current user's balance and confirms the specific order through authenticated `GET /api/payments/orders/:orderId`. Only the webhook grants credits. Administrator exemption and hospital coverage have explicit labels; team membership alone does not imply paid coverage. Razorpay receipts use a short unique ID. Existing metering reservation/expiry and live streaming security findings require separate work before production billing is considered complete.
+
 > **DPDP Act 2023 Compliant · Offline-Resilient · Multi-Model AI Clinical Copilot**
 
 ErMate is a high-speed, enterprise-grade Emergency Department (ED) Clinical AI Assistant and EMR platform designed specifically for fast-paced acute care environments (India & Global). It optimizes ED handovers, automates discharge summaries, performs real-time clinical case extractions, and generates mortality/morbidity audit documents with zero data leakage.

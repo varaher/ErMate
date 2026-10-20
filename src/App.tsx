@@ -6590,6 +6590,8 @@ const handleSignOut = async () => {
     return (
       <OnboardingProfileView
         profile={profile}
+        coveredByTeam={isVerifiedTeamUser && hospitalSubscription?.active === true}
+        teamName={profile?.hospitalLabel || profile?.hospital || undefined}
         erPhysicalBedCapacity={erPhysicalBedCapacity}
         onSaveProfile={async (updatedProfile, capacity) => {
           await handleSaveProfile(updatedProfile, capacity);

@@ -38,7 +38,7 @@ router.post("/create-order", requireAuth, async (req: AuthRequest, res: Response
     const order = await razorpay.orders.create({
       amount: plan.amountPaise,
       currency: "INR",
-      receipt: `${uid}_${Date.now()}`,
+      receipt: `em_${crypto.randomUUID().replace(/-/g, "")}`,
       notes: {
         firebaseUid: uid,
         planKey,
@@ -116,6 +116,25 @@ router.post("/webhook", async (req: Request, res: Response) => {
   } catch (err) {
     console.error("Webhook fulfillment failed:", err);
     return res.status(500).send("Fulfillment error."); // Razorpay will retry; fulfillment is idempotent
+  }
+});
+
+// Read-only confirmation for the authenticated owner. Only the webhook grants access.
+router.get("/orders/:orderId", requireAuth, async (req: AuthRequest, res: Response) => {
+  res.setHeader("Cache-Control", "no-store");
+  const orderId = String(req.params.orderId || "");
+  if (!/^order_[a-zA-Z0-9]+$/.test(orderId)) {
+    return res.status(400).json({ error: "Invalid order." });
+  }
+  try {
+    const snapshot = await db.collection("paymentIntents").doc(orderId).get();
+    if (!snapshot.exists || snapshot.data()?.uid !== req.user?.uid) {
+      return res.status(404).json({ error: "Order not found." });
+    }
+    const intent = snapshot.data()!;
+    return res.json({ orderId, status: intent.status, planKey: intent.planKey });
+  } catch {
+    return res.status(503).json({ error: "Could not confirm payment yet. Please check again." });
   }
 });
 

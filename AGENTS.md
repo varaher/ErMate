@@ -45,6 +45,13 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-21] — Subscription visibility and checkout confirmation
+- Replaced CreditsPlanCard with a profile-visible summary, 30-day plan and recharge catalogue using unchanged shared pricing. Administrator and hospital-covered access remain visible with personal checkout disabled.
+- Added a UID-scoped Firestore listener so balance decreases appear after refresh or payment. Checkout stays locked until dismissal or server confirmation; no browser credit grants.
+- Added authenticated, owner-only GET /api/payments/orders/:orderId and unique 35-character Razorpay receipts.
+- Added the card to the saved clinical profile and moved it above More account settings. Hospital coverage display requires verified membership and an active hospital subscription. Header includes plan price, balance and a management CTA.
+- Isolated verification: 40 UI behavior checks, 14 payment-route checks and syntax compilation of all seven changed code files. Full production build and live Razorpay were not run. Existing AI reservation/expiry and streaming-auth audit findings remain outside this checkout change.
+
 ### [2026-10-20] — ErMate: Shared Credits Plan Card, Header Credit Chip & Live Refresh (CREDITS-UI-AND-HEADER-CHIP-V1)
 - **Shared Credits Plan Card (`src/components/CreditsPlanCard.tsx`)**:
   - Unified credit balance, plan status (`planStatus`), low/empty alerts, and recharge options into a reusable component.

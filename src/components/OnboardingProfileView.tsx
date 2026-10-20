@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import CreditsPlanCard from "./CreditsPlanCard";
 import {
   User, Building2, Stethoscope, Bed, Sparkles, Check, ArrowRight,
   Shield, Users, Share2, Copy, CheckCircle2, AlertCircle, Eye, EyeOff,
@@ -26,6 +27,8 @@ interface OnboardingProfileViewProps {
   onTeamCreated?: (hospitalId: string, hospitalName: string) => void;
   hasActiveTrialCase?: boolean;
   onSaveActiveTrialCase?: () => Promise<void> | void;
+  coveredByTeam?: boolean;
+  teamName?: string;
 }
 
 export const ROLE_OPTIONS = [
@@ -58,6 +61,8 @@ export default function OnboardingProfileView({
   onTeamCreated,
   hasActiveTrialCase = false,
   onSaveActiveTrialCase,
+  coveredByTeam = false,
+  teamName,
 }: OnboardingProfileViewProps) {
   const initialCap =
     typeof erPhysicalBedCapacity === "number" && erPhysicalBedCapacity > 0
@@ -518,6 +523,8 @@ export default function OnboardingProfileView({
               </div>
             </div>
           )}
+
+          <CreditsPlanCard profile={profile} coveredByTeam={coveredByTeam} teamName={teamName} />
 
           {/* CTAs: Primary "Edit Profile", Secondary "Continue to Dashboard" */}
           <div className="space-y-2.5 pt-1">

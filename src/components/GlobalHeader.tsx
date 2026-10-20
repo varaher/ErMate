@@ -1,4 +1,5 @@
-import { creditLevel } from "../lib/creditDisplay";
+import { creditLevel, formatDay, planStatus } from "../lib/creditDisplay";
+import { PLAN_PRICING, rupees } from "../lib/pricing";
 import React, { useState, useRef, useEffect } from "react";
 import {
   Activity,
@@ -76,7 +77,7 @@ export interface GlobalHeaderProps {
   onNavigateToTab: (tabId: string) => void;
   onSignOut: () => void;
   onOpenProfile?: () => void;
-  /** Verified hospital team members are not metered, so no credit chip is shown for them. */
+  /** Verified membership; billing coverage additionally requires an active hospital subscription. */
   coveredByTeam?: boolean;
 }
 
@@ -113,6 +114,11 @@ export const GlobalHeader: React.FC<GlobalHeaderProps> = ({
   onSignOut,
   onOpenProfile,
 }) => {
+  const isBillingAdmin = profile?.email?.trim().toLowerCase() === "varahgrp@gmail.com";
+  const hospitalCovered = coveredByTeam && hospitalSubscription?.active === true;
+  const personalPlan = planStatus(profile?.subscriptionTier, profile?.tierExpiresAt);
+  const billingLabel = isBillingAdmin ? "Administrator access" : hospitalCovered ? "Hospital-covered" : personalPlan.label;
+  const billingPrice = isBillingAdmin ? "₹0" : hospitalCovered ? "Paid by hospital" : personalPlan.label.startsWith("Individual Pro") ? `${rupees(PLAN_PRICING.individual_pro_monthly.amountPaise)} / ${PLAN_PRICING.individual_pro_monthly.periodDays || 30} days` : "₹0";
   const [showNotificationsDropdown, setShowNotificationsDropdown] = useState(false);
   const [notificationsTab, setNotificationsTab] = useState<"active" | "history">("active");
   const [showProfileMenu, setShowProfileMenu] = useState(false);
@@ -430,7 +436,7 @@ export const GlobalHeader: React.FC<GlobalHeaderProps> = ({
           />
 
           {/* AI credits chip: always visible so the balance is never a surprise. Tap to recharge. */}
-          {!coveredByTeam && typeof profile?.aiCredits === "number" && (
+          {profile && (
             <button
               type="button"
               data-testid="header-credit-chip"
@@ -446,7 +452,7 @@ export const GlobalHeader: React.FC<GlobalHeaderProps> = ({
               }`}
             >
               <span aria-hidden="true">✦</span>
-              <span>{profile.aiCredits}</span>
+              <span>{Number.isFinite(profile.aiCredits) ? profile.aiCredits : "—"}</span>
             </button>
           )}
 
@@ -737,18 +743,32 @@ export const GlobalHeader: React.FC<GlobalHeaderProps> = ({
 
                   <div className="flex items-center justify-between text-[11px] pt-1 border-t border-slate-200/50 dark:border-slate-800">
                     <span className="text-slate-500 dark:text-slate-400 font-medium">Subscription:</span>
-                    {hospitalSubscription?.active ? (
+                    {hospitalCovered && !isBillingAdmin ? (
                       <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/50 px-1.5 py-0.5 rounded border border-emerald-500/20">
                         <ShieldCheck className="w-3 h-3" />
-                        Team Plan
+                        {billingLabel}
                       </span>
                     ) : (
                       <span className="inline-flex items-center gap-1 text-[10px] font-bold text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded">
                         <User className="w-3 h-3" />
-                        Individual Plan
+                        {billingLabel}
                       </span>
                     )}
                   </div>
+                  <div className="flex items-center justify-between gap-3 text-[11px]">
+                    <span className="text-slate-500 dark:text-slate-400">Plan price:</span>
+                    <strong>{billingPrice}</strong>
+                  </div>
+                  <div className="flex items-center justify-between text-[11px]">
+                    <span className="text-slate-500 dark:text-slate-400">Credits remaining:</span>
+                    <strong>{Number.isFinite(profile?.aiCredits) ? profile?.aiCredits : "—"}</strong>
+                  </div>
+                  {profile?.tierExpiresAt && !isBillingAdmin && !hospitalCovered && (
+                    <p className="text-[10px] text-slate-500">Valid until {formatDay(profile.tierExpiresAt)} · Manual renewal</p>
+                  )}
+                  <button type="button" onClick={() => { onNavigateToTab("more"); setShowProfileMenu(false); }} className="w-full rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white">
+                    Manage plan & recharge
+                  </button>
                 </div>
 
                 {/* Quick Preferences & Navigation Links */}

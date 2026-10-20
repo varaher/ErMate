@@ -1,222 +1,204 @@
 import React, { useEffect, useRef, useState } from "react";
-import { doc, getDoc } from "firebase/firestore";
+import { doc, getDocFromServer, onSnapshot } from "firebase/firestore";
 import { auth, db } from "../firebase";
-import { PLAN_PRICING, CREDIT_COSTS, rupees, type CreditAction } from "../lib/pricing";
-import { creditLevel, planStatus, CREDIT_USE_LABELS } from "../lib/creditDisplay";
+import { PLAN_PRICING, CREDIT_COSTS, rupees } from "../lib/pricing";
+import { creditLevel, formatDay } from "../lib/creditDisplay";
 
 export interface CreditsProfileFields {
   aiCredits?: number;
   subscriptionTier?: string;
   tierExpiresAt?: string;
+  email?: string;
 }
-
 interface Props {
   profile: CreditsProfileFields | null;
-  coveredByTeam: boolean;
+  /** True only for a verified member of an active, paid hospital subscription. */
+  coveredByTeam?: boolean;
   teamName?: string;
-  /** Called when a fresh balance is read after a payment, so the rest of the app updates. */
   onProfileRefreshed?: (fields: CreditsProfileFields) => void;
 }
-
-const loadRazorpayScript = (): Promise<boolean> =>
-  new Promise((resolve) => {
-    if ((window as any).Razorpay) return resolve(true);
+type Pending = { id: string; uid: string };
+let checkoutScript: Promise<void> | undefined;
+function loadCheckout(): Promise<void> {
+  if ((window as any).Razorpay) return Promise.resolve();
+  if (checkoutScript) return checkoutScript;
+  checkoutScript = new Promise<void>((resolve, reject) => {
     const script = document.createElement("script");
+    const timer = window.setTimeout(() => fail(), 15000);
+    const fail = () => {
+      window.clearTimeout(timer); script.remove(); checkoutScript = undefined;
+      reject(new Error("Checkout could not load. Check your connection and try again."));
+    };
     script.src = "https://checkout.razorpay.com/v1/checkout.js";
-    script.onload = () => resolve(true);
-    script.onerror = () => resolve(false);
+    script.onload = () => { window.clearTimeout(timer); resolve(); };
+    script.onerror = fail;
     document.body.appendChild(script);
   });
+  return checkoutScript;
+}
 
-export default function CreditsPlanCard({ profile, coveredByTeam, teamName, onProfileRefreshed }: Props) {
-  const [live, setLive] = useState<CreditsProfileFields | null>(null);
-  const [busyKey, setBusyKey] = useState<string | null>(null);
-  const [note, setNote] = useState<string>("");
-  const pollRef = useRef<number | null>(null);
+export default function CreditsPlanCard({ profile, coveredByTeam = false, teamName, onProfileRefreshed }: Props) {
+  const uid = auth.currentUser?.uid;
+  const [record, setRecord] = useState<{ uid: string; fields: CreditsProfileFields } | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [pending, setPending] = useState<Pending | null>(null);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const lock = useRef(false);
+  const confirming = useRef(false);
+  const controller = useRef<AbortController | null>(null);
+  const checkout = useRef<any>(null);
+  const callback = useRef(onProfileRefreshed);
+  useEffect(() => { callback.current = onProfileRefreshed; }, [onProfileRefreshed]);
 
-  useEffect(() => () => { if (pollRef.current) window.clearInterval(pollRef.current); }, []);
+  useEffect(() => {
+    setRecord(null); setPending(null); setBusy(null); setError(""); setMessage("");
+    lock.current = false; confirming.current = false;
+    const lifecycle = new AbortController(); controller.current = lifecycle;
+    if (!uid) return () => lifecycle.abort();
+    const unsubscribe = onSnapshot(doc(db, "users", uid), (snapshot) => {
+      if (lifecycle.signal.aborted || auth.currentUser?.uid !== uid) return;
+      if (snapshot.exists()) {
+        const d = snapshot.data();
+        const fields = { aiCredits: d.aiCredits, subscriptionTier: d.subscriptionTier, tierExpiresAt: d.tierExpiresAt };
+        setRecord({ uid, fields }); callback.current?.(fields);
+      }
+    }, () => { if (!lifecycle.signal.aborted) setError("Balance may be out of date. Tap Refresh to check."); });
+    return () => { lifecycle.abort(); unsubscribe(); checkout.current?.close(); checkout.current = null; };
+  }, [uid]);
 
-  const view: CreditsProfileFields = { ...(profile || {}), ...(live || {}) };
-  const level = creditLevel(view.aiCredits);
-  const plan = planStatus(view.subscriptionTier, view.tierExpiresAt);
+  // Listener updates replace old balances, including decreases after AI use.
+  const view = record && record.uid === uid ? { ...profile, ...record.fields } : (profile || {});
+  const balance = typeof view.aiCredits === "number" && Number.isFinite(view.aiCredits) ? view.aiCredits : null;
+  const admin = (auth.currentUser?.email || profile?.email || "").trim().toLowerCase() === "varahgrp@gmail.com";
+  const exempt = admin || coveredByTeam;
+  const pro = String(view.subscriptionTier || "").toLowerCase().includes("individual pro");
+  const expiry = view.tierExpiresAt ? Date.parse(view.tierExpiresAt) : NaN;
+  const active = pro && Number.isFinite(expiry) && expiry > Date.now();
+  const monthly = PLAN_PRICING.individual_pro_monthly;
+  const period = monthly.periodDays || 30;
+  // Supported recharge packs: credits_refill_150, credits_refill_350, credits_refill_500. One-time payment; does not renew automatically.
+  const refillKeys = Object.keys(PLAN_PRICING).filter(key => PLAN_PRICING[key].kind === "refill");
+  const label = admin ? "Administrator access" : coveredByTeam ? "Hospital-covered" : pro ? "Individual Pro" : "Free / trial";
+  const state = exempt ? "Covered" : active ? "Active" : pro ? (Number.isFinite(expiry) ? "Expired" : "Validity unavailable") : "Not subscribed";
+  const amount = admin ? "₹0" : coveredByTeam ? "Paid by hospital" : pro ? `${rupees(monthly.amountPaise)} / ${period} days` : "₹0";
+  const release = () => { lock.current = false; confirming.current = false; setBusy(null); };
 
-  const readFresh = async (): Promise<CreditsProfileFields | null> => {
-    const uid = auth.currentUser?.uid;
-    if (!uid) return null;
-    const snap = await getDoc(doc(db, "users", uid));
-    if (!snap.exists()) return null;
-    const d: any = snap.data();
-    return { aiCredits: d.aiCredits, subscriptionTier: d.subscriptionTier, tierExpiresAt: d.tierExpiresAt };
-  };
-
-  const refreshNow = async () => {
+  const request = async (path: string, owner: string, body?: object) => {
+    const user = auth.currentUser;
+    const lifecycle = controller.current;
+    if (!user || user.uid !== owner || !lifecycle || lifecycle.signal.aborted) throw new Error("Please sign in again.");
+    const token = await user.getIdToken();
+    const timeout = new AbortController();
+    const abort = () => timeout.abort();
+    lifecycle.signal.addEventListener("abort", abort, { once: true });
+    const timer = window.setTimeout(abort, 15000);
     try {
-      const f = await readFresh();
-      if (f) { setLive(f); onProfileRefreshed?.(f); setNote("Balance updated."); }
-    } catch { setNote("Could not refresh. Check your connection."); }
+      const res = await fetch(path, {
+        method: body ? "POST" : "GET", signal: timeout.signal, cache: "no-store",
+        headers: { Authorization: `Bearer ${token}`, ...(body ? { "Content-Type": "application/json" } : {}) },
+        ...(body ? { body: JSON.stringify(body) } : {}),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Could not contact billing. Please try again.");
+      if (auth.currentUser?.uid !== owner || lifecycle.signal.aborted) throw new Error("Account changed.");
+      return data;
+    } finally { window.clearTimeout(timer); lifecycle.signal.removeEventListener("abort", abort); }
   };
-
-  // After checkout closes, look for the server-granted credits for up to ~70 seconds.
-  const pollAfterPayment = (before: CreditsProfileFields) => {
-    if (pollRef.current) window.clearInterval(pollRef.current);
-    setNote("Payment received. Confirming with Razorpay...");
-    let tries = 0;
-    pollRef.current = window.setInterval(async () => {
-      tries++;
-      try {
-        const f = await readFresh();
-        const grew = f && ((Number(f.aiCredits) || 0) > (Number(before.aiCredits) || 0) || f.tierExpiresAt !== before.tierExpiresAt);
-        if (f && grew) {
-          setLive(f); onProfileRefreshed?.(f);
-          setNote("Credits added. Thank you.");
-          if (pollRef.current) window.clearInterval(pollRef.current);
+  const refresh = async () => {
+    if (!uid) throw new Error("Please sign in first.");
+    const snapshot = await getDocFromServer(doc(db, "users", uid));
+    if (controller.current?.signal.aborted || auth.currentUser?.uid !== uid) return;
+    if (!snapshot.exists()) throw new Error("Your account could not be found.");
+    const d = snapshot.data();
+    const fields = { aiCredits: d.aiCredits, subscriptionTier: d.subscriptionTier, tierExpiresAt: d.tierExpiresAt };
+    setRecord({ uid, fields }); callback.current?.(fields);
+  };
+  const confirm = async (order: Pending) => {
+    confirming.current = true; lock.current = true; setBusy("confirming"); setError("");
+    setMessage("Confirming your payment. Please do not pay again.");
+    const lifecycle = controller.current;
+    try {
+      for (let i = 0; i < 18; i++) {
+        if (lifecycle?.signal.aborted || auth.currentUser?.uid !== order.uid) return;
+        const result = await request(`/api/payments/orders/${encodeURIComponent(order.id)}`, order.uid);
+        if (result.status === "fulfilled") {
+          setPending(null); setMessage("Payment confirmed. Your account has been updated.");
+          try { await refresh(); } catch { setError("Payment is confirmed. Refresh to check your latest balance."); }
           return;
         }
-      } catch { /* keep trying */ }
-      if (tries >= 18) {
-        if (pollRef.current) window.clearInterval(pollRef.current);
-        setNote("Still confirming. Your payment is safe; credits appear as soon as Razorpay confirms. Tap Refresh in a minute.");
+        if (result.status === "mismatch") throw new Error(`This payment needs support review. Order: ${order.id}. Please do not pay again.`);
+        await new Promise(resolve => window.setTimeout(resolve, 4000));
       }
-    }, 4000);
+      setMessage(`Confirmation is pending. Use Check payment below. Order: ${order.id}. Please do not pay again.`);
+    } catch (e: any) {
+      if (!lifecycle?.signal.aborted) { setMessage(`Order: ${order.id}`); setError(e.message || "Could not check payment. Try Check payment again."); }
+    } finally { if (!lifecycle?.signal.aborted) release(); }
   };
-
-  const startCheckout = async (planKey: string) => {
-    if (busyKey) return;
-    setBusyKey(planKey);
-    setNote("");
+  const startCheckout = async (key: string) => {
+    if (lock.current || pending || exempt) return;
+    const owner = auth.currentUser?.uid;
+    if (!owner) { setError("Please sign in before purchasing."); return; }
+    const lifecycle = controller.current;
+    lock.current = true; setBusy(key); setError(""); setMessage("");
     try {
-      const idToken = await auth.currentUser?.getIdToken();
-      const orderRes = await fetch("/api/payments/create-order", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
-        body: JSON.stringify({ planKey }),
-      });
-      if (!orderRes.ok) {
-        const err = await orderRes.json().catch(() => ({}));
-        throw new Error(err.error || "Could not start payment.");
-      }
-      const order = await orderRes.json();
-      if (!(await loadRazorpayScript())) throw new Error("Could not load Razorpay checkout.");
-      const before = { ...view };
-      const rzp = new (window as any).Razorpay({
-        key: order.keyId,
-        amount: order.amount,
-        currency: order.currency,
-        order_id: order.orderId,
-        name: "ErMate",
-        description: PLAN_PRICING[planKey]?.label || "ErMate",
-        // The browser callback never grants anything. Credits are added by the server once Razorpay confirms.
-        handler: () => pollAfterPayment(before),
-        modal: { ondismiss: () => setBusyKey(null) },
+      await loadCheckout();
+      const order = await request("/api/payments/create-order", owner, { planKey: key });
+      if (lifecycle?.signal.aborted) return;
+      if (!order.orderId || !order.keyId || order.currency !== "INR" || !Number.isInteger(order.amount) || order.amount <= 0) throw new Error("Invalid checkout response. Please contact support.");
+      if (order.amount !== PLAN_PRICING[key].amountPaise) throw new Error("Pricing has changed. Refresh ErMate before paying.");
+      checkout.current = new (window as any).Razorpay({
+        key: order.keyId, order_id: order.orderId, amount: order.amount, currency: order.currency,
+        name: "ErMate", description: PLAN_PRICING[key].label,
+        prefill: { email: auth.currentUser?.email || profile?.email || "" },
         theme: { color: "#059669" },
+        handler: () => {
+          if (lifecycle?.signal.aborted || auth.currentUser?.uid !== owner) return;
+          const payment = { id: order.orderId, uid: owner };
+          setPending(payment); void confirm(payment);
+        },
+        modal: { ondismiss: () => { if (!lifecycle?.signal.aborted && !confirming.current) release(); } },
       });
-      rzp.open();
-    } catch (err: any) {
-      console.error("Checkout failed:", err);
-      setNote(err?.message || "Payment could not be started.");
-    } finally {
-      setTimeout(() => setBusyKey(null), 1500);
-    }
+      checkout.current.on("payment.failed", () => {
+        if (!lifecycle?.signal.aborted) setError("Payment was not completed. You can retry in checkout or close it.");
+      });
+      checkout.current.open();
+    } catch (e: any) { if (!lifecycle?.signal.aborted) { setError(e.message || "Could not start checkout."); release(); } }
   };
+  const start = startCheckout;
 
-  if (coveredByTeam) {
-    return (
-      <div data-testid="credits-plan-card" className="p-4 rounded-2xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/20 text-xs space-y-1">
-        <strong className="text-emerald-700 dark:text-emerald-400 block">Covered by your hospital team plan</strong>
-        <p className="text-slate-600 dark:text-slate-300">{teamName ? `${teamName} covers your AI features.` : "Your team covers your AI features."} No credits needed.</p>
-      </div>
-    );
-  }
-
-  const levelStyle =
-    level === "empty" ? "text-rose-600 dark:text-rose-400"
-    : level === "low" ? "text-amber-600 dark:text-amber-400"
-    : "text-emerald-600 dark:text-emerald-400";
-
+  const disabled = !!busy || !!pending || exempt;
+  const button = "w-full rounded-xl px-4 py-3 text-sm font-bold transition disabled:cursor-not-allowed disabled:opacity-50";
   return (
-    <div data-testid="credits-plan-card" className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 space-y-3 text-xs">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <span className="text-[10px] uppercase text-slate-400 block">AI credits</span>
-          <strong data-testid="credits-balance" className={`text-2xl font-black ${levelStyle}`}>
-            {typeof view.aiCredits === "number" ? view.aiCredits : "—"}
-          </strong>
+    <section id="ermate-billing" data-testid="credits-plan-card" aria-label="ErMate subscription and credits" className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900 scroll-mt-24">
+      <header className="bg-slate-950 p-5 text-white sm:p-6">
+        <p className="text-xs font-semibold uppercase tracking-widest text-emerald-300">ErMate · Your shift companion</p>
+        <h2 className="mt-2 text-xl font-bold">Your plan & credits</h2>
+        <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <div><p className="text-xs text-slate-400">Subscription</p><p className="mt-1 font-semibold" data-testid="current-plan">{label}</p><span className="text-xs text-emerald-300">{state}</span></div>
+          <div><p className="text-xs text-slate-400">{exempt ? "Billing" : "Plan price"}</p><p className="mt-1 font-semibold" data-testid="current-price">{amount}</p><span className="text-xs text-slate-400">{exempt ? "No personal payment required" : "Including GST"}</span></div>
+          <div><p className="text-xs text-slate-400">{exempt ? "Personal credits remaining" : "Credits remaining"}</p><p data-testid="credits-balance" className={`mt-1 text-3xl font-bold ${creditLevel(balance) === "empty" ? "text-rose-300" : "text-emerald-300"}`}>{balance ?? "—"}</p></div>
         </div>
-        <div className="text-right">
-          <span className="text-[10px] uppercase text-slate-400 block">Plan</span>
-          <strong className="text-sm font-bold text-slate-900 dark:text-white block">{plan.label}</strong>
-          {plan.validTill && (
-            <span className="text-[10px] text-slate-500 dark:text-slate-400 block">
-              {plan.active ? `valid till ${plan.validTill}` : `ended ${plan.validTill}`}
-            </span>
-          )}
+        <p className="mt-4 text-xs text-slate-300">{admin ? "Your administrator account is exempt from AI credit charges." : coveredByTeam ? `${teamName || "Your hospital"} covers your account. Personal credits are not used during coverage.` : pro ? Number.isFinite(expiry) ? `${active ? "Valid until" : "Expired on"} ${formatDay(view.tierExpiresAt)}. Renewal is manual.` : "Your plan expiry is unavailable. Please check with support." : "Your free / trial balance is shown above. Choose Individual Pro to start your monthly plan."}</p>
+      </header>
+      <div className="space-y-5 p-5 sm:p-6">
+        {balance === 0 && !exempt && <p data-testid="credits-empty-notice" className="rounded-xl bg-rose-50 p-3 text-sm text-rose-700 dark:bg-rose-950/30 dark:text-rose-300">No credits remaining. Manual entry, saving and printing use no credits.</p>}
+        {balance !== null && balance > 0 && creditLevel(balance) === "low" && !exempt && <p data-testid="credits-low-notice" className="text-sm text-amber-700 dark:text-amber-300">Your credits are running low. Recharge when needed.</p>}
+        <article className="rounded-2xl border-2 border-emerald-500 bg-emerald-50/50 p-4 dark:bg-emerald-950/20">
+          <div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="font-bold text-slate-900 dark:text-white">Individual Pro</h3><p className="text-sm text-slate-600 dark:text-slate-300">One monthly plan. Every feature available.</p></div><div className="text-right"><strong className="text-2xl text-emerald-700 dark:text-emerald-300">{rupees(monthly.amountPaise)}</strong><p className="text-xs text-slate-500">{period} days · GST included</p></div></div>
+          <ul className="my-4 space-y-2 text-sm text-slate-700 dark:text-slate-200">
+            <li>✓ {monthly.credits} credits included with each purchase</li><li>✓ Voice case sheets, AI discharge, Discuss, Rounds and other AI tools use credits</li><li>✓ Manual documentation, saving and print/export use no credits</li><li>✓ Renew manually. No automatic debit. No annual commitment.</li>
+          </ul>
+          <button type="button" data-testid="buy-individual_pro_monthly" disabled={disabled} onClick={() => void startCheckout("individual_pro_monthly")} className={`${button} bg-emerald-600 text-white hover:bg-emerald-700`}>{busy === "individual_pro_monthly" ? "Opening checkout…" : exempt ? "Included through your access" : `${pro ? "Renew" : "Subscribe"} · ${rupees(monthly.amountPaise)}`}</button>
+        </article>
+        <div><h3 className="font-bold text-slate-900 dark:text-white">Need more AI usage?</h3><p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Recharges add credits. They do not extend your subscription validity.</p></div>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          {refillKeys.map(key => { const pack = PLAN_PRICING[key]; return <article key={key} className="flex flex-col rounded-2xl border border-slate-200 p-4 dark:border-slate-700"><p className="text-xs uppercase tracking-wide text-slate-500">Credit recharge</p><h4 className="mt-2 text-xl font-bold text-slate-900 dark:text-white">{rupees(pack.amountPaise)}</h4><p className="mt-1 text-sm font-semibold text-emerald-700 dark:text-emerald-300">{pack.credits} credits</p><p className="my-3 text-xs text-slate-500">GST included · One-time purchase</p><button type="button" data-testid={`buy-${key}`} disabled={disabled} onClick={() => void startCheckout(key)} className={`${button} mt-auto border border-emerald-600 text-emerald-700 hover:bg-emerald-50 dark:text-emerald-300 dark:hover:bg-emerald-950/30`}>{busy === key ? "Opening…" : "Recharge"}</button></article>; })}
         </div>
+        <details className="rounded-xl bg-slate-50 p-4 text-sm dark:bg-slate-950/50"><summary className="cursor-pointer font-semibold text-slate-800 dark:text-slate-200">How do credits work?</summary><p className="mt-3 text-slate-600 dark:text-slate-300">One credit is a usage unit, not one complete patient case. Different AI actions use different amounts. Dictation may involve transcription and extraction as separate actions. All plans use the same action rates.</p><ul className="mt-3 grid gap-2 text-xs text-slate-600 dark:text-slate-300 sm:grid-cols-2">{[{label:"Transcription request",cost:CREDIT_COSTS.stt},{label:"Case extraction turn",cost:CREDIT_COSTS.scribe_chat},{label:"AI discharge draft",cost:CREDIT_COSTS.ai_discharge},{label:"Discuss message",cost:CREDIT_COSTS.case_discussion},{label:"Rounds request",cost:CREDIT_COSTS.rounds_debrief},{label:"Handover compilation",cost:CREDIT_COSTS.handover_compile}].map(item=><li key={item.label}>{item.label}: <strong>{item.cost} {item.cost === 1 ? "credit" : "credits"}</strong></li>)}</ul></details>
+        <div aria-live="polite" className="space-y-2 text-sm"><p className="break-words text-slate-600 dark:text-slate-300">{message}</p>{error && <p role="alert" className="break-words text-rose-700 dark:text-rose-300">{error}</p>}</div>
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-4 dark:border-slate-800"><span className="text-xs text-slate-400">Secure checkout through Razorpay</span><button type="button" disabled={!!busy} onClick={() => { setError(""); if (pending) void confirm(pending); else void refresh().then(()=>setMessage("Balance updated.")).catch(e=>setError(e.message)); }} className="text-sm font-semibold text-emerald-700 disabled:opacity-50 dark:text-emerald-300">{pending ? "Check payment" : "Refresh balance"}</button></div>
       </div>
-
-      {level === "empty" && (
-        <div data-testid="credits-empty-notice" className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300">
-          AI credits finished. Manual entry, saving and printing still work. Recharge below to use AI again.
-        </div>
-      )}
-      {level === "low" && (
-        <div data-testid="credits-low-notice" className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-300">
-          Running low. Recharge below to keep using AI features.
-        </div>
-      )}
-
-      <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
-        Case sheet, saving, viewing, triage and printing are always free. Credits are used only when an AI action succeeds.
-      </p>
-
-      <details className="text-[11px] text-slate-500 dark:text-slate-400">
-        <summary className="cursor-pointer select-none font-semibold">What uses credits</summary>
-        <ul className="mt-1.5 space-y-0.5">
-          {CREDIT_USE_LABELS.map((g) => {
-            const cost = Math.max(...g.actions.map((a) => CREDIT_COSTS[a as CreditAction] || 0));
-            return <li key={g.label} className="flex justify-between gap-3"><span>{g.label}</span><span className="font-mono">{cost}</span></li>;
-          })}
-        </ul>
-      </details>
-
-      <div className="space-y-2 pt-1">
-        <button
-          type="button"
-          data-testid="buy-individual_pro_monthly"
-          disabled={!!busyKey}
-          onClick={() => startCheckout("individual_pro_monthly")}
-          className="w-full flex items-center justify-between gap-2 py-3 px-4 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white font-bold rounded-xl cursor-pointer"
-        >
-          <span className="text-left">
-            <span className="block text-xs">{PLAN_PRICING.individual_pro_monthly.label}</span>
-            <span className="block text-[10px] font-normal opacity-90">{PLAN_PRICING.individual_pro_monthly.credits} credits included</span>
-          </span>
-          <span className="text-sm">{rupees(PLAN_PRICING.individual_pro_monthly.amountPaise)}</span>
-        </button>
-        <div>
-          <span className="text-[10px] text-slate-400 uppercase block mb-1.5">Recharge</span>
-          <div className="grid grid-cols-3 gap-2">
-            {(["credits_refill_150", "credits_refill_350", "credits_refill_500"] as const).map((key) => (
-              <button
-                key={key}
-                type="button"
-                data-testid={`buy-${key}`}
-                disabled={!!busyKey}
-                onClick={() => startCheckout(key)}
-                className="py-2.5 px-2 border border-emerald-500 text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 disabled:opacity-60 rounded-xl font-bold cursor-pointer"
-              >
-                <span className="block text-xs">{rupees(PLAN_PRICING[key].amountPaise)}</span>
-                <span className="block text-[10px] font-normal">{PLAN_PRICING[key].credits} credits</span>
-              </button>
-            ))}
-          </div>
-        </div>
-        <p className="text-[10px] text-slate-400">One-time payment for one month. It does not renew automatically. Prices include GST.</p>
-      </div>
-
-      <div className="flex items-center justify-between gap-2">
-        <span data-testid="credits-note" className="text-[11px] text-slate-500 dark:text-slate-400">{note}</span>
-        <button type="button" onClick={refreshNow} className="text-[11px] font-bold text-indigo-600 dark:text-indigo-400 cursor-pointer bg-transparent border-none">Refresh</button>
-      </div>
-    </div>
+    </section>
   );
 }

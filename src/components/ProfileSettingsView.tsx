@@ -958,16 +958,16 @@ export default function ProfileSettingsView({
                 >
                   <div className="flex items-center gap-3">
                     <div className={`w-8.5 h-8.5 rounded-xl flex items-center justify-center ${
-                      (profile.aiCredits ?? 350) < 50 ? "bg-amber-500/20 text-amber-400" : "bg-purple-500/10 text-purple-400"
+                      (profile.aiCredits ?? 0) < 50 ? "bg-amber-500/20 text-amber-400" : "bg-purple-500/10 text-purple-400"
                     }`}>
                       <Mic className="w-4.5 h-4.5" />
                     </div>
                     <div className="text-left">
                       <strong className="text-sm font-bold block">Scribe Credits</strong>
                       <span className={`text-[10px] block font-mono ${
-                        (profile.aiCredits ?? 350) < 50 ? "text-amber-500 font-extrabold" : "text-slate-500 dark:text-slate-400"
+                        (profile.aiCredits ?? 0) < 50 ? "text-amber-500 font-extrabold" : "text-slate-500 dark:text-slate-400"
                       }`}>
-                        {profile.aiCredits ?? 350} scribe credits remaining
+                        {typeof profile.aiCredits === "number" ? profile.aiCredits : "—"} AI credits remaining
                       </span>
                     </div>
                   </div>
@@ -1039,7 +1039,7 @@ export default function ProfileSettingsView({
                     </div>
                     <div className="text-left">
                       <strong className="text-sm font-extrabold block text-emerald-600 dark:text-emerald-400">Upgrade Plan</strong>
-                      <span className="text-[10px] text-emerald-600/80 dark:text-emerald-400/80 block font-mono font-bold">Unlock unlimited voice AI & Rounds Debriefs</span>
+                      <span className="text-[10px] text-emerald-600/80 dark:text-emerald-400/80 block font-mono font-bold">View the monthly plan and optional AI recharges</span>
                     </div>
                   </div>
                   <ChevronRight className="w-4 h-4 text-emerald-500 shrink-0" />
@@ -2154,73 +2154,13 @@ export default function ProfileSettingsView({
           myMembership.membershipVerified === true
         )
       );
-      const isMembershipPending = myMembership
-        ? isPendingApprovalStatus(myMembership.status)
-        : false;
-      const isTeam = isMembershipActive;
+      const isTeamCovered = isMembershipActive && hospitalSubscription?.active === true;
       content = (
-        <div className="space-y-4 font-mono text-left">
-          <div className="p-4 bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 rounded-2xl space-y-1">
-            <h4 className="text-xs font-black uppercase text-blue-700 dark:text-blue-400">
-              {isTeam ? "Hospital Team Plan" : "Individual Workspace"}
-            </h4>
-            <p className="text-xs text-slate-600 dark:text-slate-300">
-              {isTeam 
-                ? `Covered by ${profile.hospital || "Hospital"} team subscription.` 
-                : isMembershipPending
-                  ? "Invitation awaiting approval from department lead."
-                  : "Your personal ErMate workspace."}
-            </p>
-          </div>
-
-          <div className="bg-white dark:bg-[#182333] border border-slate-200 dark:border-slate-800 p-5 rounded-2xl space-y-3 text-xs">
-            <div className="grid grid-cols-2 gap-3">
-              <div className="p-3 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-100 dark:border-slate-800">
-                <span className="text-[10px] text-slate-400 uppercase block">Plan</span>
-                <strong className="text-xs font-bold text-slate-900 dark:text-white block mt-0.5">
-                  {isTeam ? "Team Plan" : "Individual Plan"}
-                </strong>
-              </div>
-
-              <div className="p-3 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-100 dark:border-slate-800">
-                <span className="text-[10px] text-slate-400 uppercase block">Managed By</span>
-                <strong className="text-xs font-bold text-slate-900 dark:text-white block mt-0.5 truncate">
-                  {isTeam ? (profile.hospital || "Hospital") : "Self"}
-                </strong>
-              </div>
-
-              <div className="p-3 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-100 dark:border-slate-800">
-                <span className="text-[10px] text-slate-400 uppercase block">Team</span>
-                <strong className="text-xs font-bold text-slate-900 dark:text-white block mt-0.5 truncate">
-                  {profile.hospital || "Independent"}
-                </strong>
-              </div>
-
-              <div className="p-3 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-100 dark:border-slate-800">
-                <span className="text-[10px] text-slate-400 uppercase block">Membership</span>
-                <strong className={`text-xs font-bold block mt-0.5 ${
-                  isTeam ? "text-emerald-500" : isMembershipPending ? "text-amber-500" : "text-slate-400"
-                }`}>
-                  {isTeam ? "Active" : isMembershipPending ? "Pending Approval" : "Not Joined"}
-                </strong>
-              </div>
-            </div>
-
-            <p className="text-[11px] text-slate-400 pt-2 leading-relaxed">
-              Every user starts with an Individual Plan. When you join an approved hospital team on ErMate, your account automatically shifts to the Team Plan without manual upgrades.
-            </p>
-
-            <button
-              type="button"
-              onClick={handleOpenTeamRoster}
-              className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-xs transition-all cursor-pointer font-mono mt-2"
-            >
-              Open Team Roster & Manage Invitations
-            </button>
-          </div>
-
-          <CreditsPlanCard profile={profile} coveredByTeam={isTeam} teamName={profile.hospital || undefined} />
-        </div>
+        <CreditsPlanCard
+          profile={profile}
+          coveredByTeam={isTeamCovered}
+          teamName={profile.hospital || undefined}
+        />
       );
     } else if (selectedSubSection === "security" || selectedSubSection === "set-password") {
       title = "Security & Access";
