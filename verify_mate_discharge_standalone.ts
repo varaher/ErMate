@@ -1,5 +1,5 @@
 import fs from "fs";
-import { isDischargeSummaryRequest, stripDischargeRequest, classifyDischargeRequest, missingDischargeItems } from "./src/mate/mateDischargeIntent";
+import { isDischargeSummaryRequest, stripDischargeRequest, classifyDischargeRequest, missingDischargeItems, mayAiFillDischargeField } from "./src/mate/mateDischargeIntent";
 import { looksLikeFullCaseSheet, shouldHoldPastedSheet } from "./src/mate/mateNewCaseIntent";
 import { mergePastedSheetIntoExtraction } from "./src/mate/pastedSheetParser";
 import { resolveMateCaseReference } from "./src/mate/mateCaseResolver";
@@ -8,6 +8,7 @@ const t = (n: string, c: boolean) => { c ? pass++ : fail++; console.log(`${c ? "
 
 const sheet = `Mr. TEST PATIENT\nAge/Sex: 45/M\nChief complaints: loose stools and fever since 3 days\nHistory of present illness: ${"watery stools, no blood. ".repeat(12)}\nPast history: nil\nVitals: BP 110/70 HR 98 SpO2 98% RR 18 Temp 99\nExamination: abdomen soft\nInvestigations: stool routine normal\nTreatment: ORS, IV fluids\nPlan: observe\nFinal diagnosis: acute gastroenteritis\nCondition at discharge: stable\nDischarge medications: ORS sachets\n`;
 const noDx = sheet.replace(/Final diagnosis:.*\n/, "").replace(/Condition at discharge:.*\n/, "").replace(/Discharge medications:.*\n/, "");
+
 
 // request detection
 for (const u of ["Prepare discharge summary", "prepare his discharge summary", "make DS for bed 3A", "can you draft the discharge note?", "I need a discharge summary for bed 3", "discharge summary", "please prepare the discharge summary", "generate a discharge summary now"])
@@ -39,6 +40,10 @@ const draft2: any = mergePastedSheetIntoExtraction({}, stripDischargeRequest(noD
 const miss = missingDischargeItems(draft2.dischargeInfoDraft);
 t("missing discharge-critical items are flagged, not invented", miss.includes("final diagnosis") && miss.includes("discharge medications") && miss.includes("condition at discharge") && !(draft2.dischargeInfoDraft?.dischargeMedications));
 t("missingDischargeItems handles an empty draft", missingDischargeItems(null).length === 4 && missingDischargeItems({ primaryDiagnosis: "x", dischargeMedications: "y", conditionAtDischarge: "z", followUpPlan: "w" }).length === 0);
+t("mayAiFillDischargeField: standalone blocks AI from filling factual discharge fields", !mayAiFillDischargeField("primaryDiagnosis", { standaloneDraft: true }) && !mayAiFillDischargeField("secondaryDiagnosis", { standaloneDraft: true }) && !mayAiFillDischargeField("conditionAtDischarge", { standaloneDraft: true }) && !mayAiFillDischargeField("dischargeMedications", { standaloneDraft: true }) && !mayAiFillDischargeField("followUpPlan", { standaloneDraft: true }) && !mayAiFillDischargeField("patientInstructions", { standaloneDraft: true }));
+t("mayAiFillDischargeField: standalone permits narrative courseInHospital synthesis", mayAiFillDischargeField("courseInHospital", { standaloneDraft: true }));
+t("mayAiFillDischargeField: standard patient permits AI filling all discharge fields", mayAiFillDischargeField("primaryDiagnosis", { standaloneDraft: false }) && mayAiFillDischargeField("dischargeMedications", { standaloneDraft: false }) && mayAiFillDischargeField("patientInstructions", { standaloneDraft: false }));
+
 
 // routing safety: the standalone route is independent of the paste-first / bed flow
 t("paste-first would have asked for a bed for this text (so discharge routing must run first)", shouldHoldPastedSheet({ text: cleaned, hasOpenPatient: false }));
@@ -68,5 +73,7 @@ t("App: standalone uses a throwaway id and never the open/displayed case", /opti
 t("App: standalone context is recorded, banner prop passed", /standalone: Boolean\(options\?\.standalone\)/.test(app) && /standaloneDraft=\{isDischargePreviewMode && Boolean\(pendingDischargePreviewContext\?\.standalone\)\}/.test(app));
 t("a standalone draft cannot be saved to a patient (apply fails closed without a persisted case)", /Apply the Case Sheet first to establish the patient record/.test(app) && /if \(!persistedCase\)/.test(app));
 t("discharge screen shows Draft prepared / Not saved / Review required", /Draft prepared/.test(dsv) && /Not saved to any patient record/.test(dsv) && /Review required/.test(dsv));
+t("discharge screen guards AI draft population with mayAiFillDischargeField", /mayAiFillDischargeField\(f,\s*\{\s*keepExisting,\s*standaloneDraft\s*\}\)/.test(dsv) && /mayFill\("primaryDiagnosis"\)/.test(dsv) && /mayFill\("dischargeMedications"\)/.test(dsv) && /mayFill\("patientInstructions"\)/.test(dsv));
 t("existing-patient route opens preview only (no writes) for the resolved case", /onPreviewDischargeSummary\(\{\}, \{ existingCaseId: dischargeTarget\.id \}\)/.test(chat));
 console.log(`${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);
+

@@ -1,4 +1,4 @@
-import { missingDischargeItems } from "../mate/mateDischargeIntent";
+import { missingDischargeItems, mayAiFillDischargeField, type AiDischargeField } from "../mate/mateDischargeIntent";
 import React, { useState, useEffect, useRef } from "react";
 import { formatAgeLong } from "../utils/ageLabel";
 import { ConfirmModal } from "./shared/ConfirmModal";
@@ -499,14 +499,16 @@ export default function DischargeSummaryView({
           if (allowPrefillReplace && provisionalPrefill && prev.trim() === provisionalPrefill) return incoming;
           return prev;
         };
-        if (resData.data.primaryDiagnosis) setPrimaryDiagnosis((p) => apply(p, resData.data.primaryDiagnosis, true));
-        if (resData.data.secondaryDiagnosis) setSecondaryDiagnosis((p) => apply(p, resData.data.secondaryDiagnosis));
-        if (resData.data.conditionAtDischarge) setDischargeCondition((p) => apply(p, resData.data.conditionAtDischarge));
-        if (resData.data.dischargeMedications) setDischargeMedications((p) => apply(p, _safeStringFromMixed(resData.data.dischargeMedications)));
-        if (resData.data.followUpPlan) setFollowUpPlan((p) => apply(p, resData.data.followUpPlan));
-        if (resData.data.patientInstructions) setPatientInstructions(resData.data.patientInstructions);
+        const mayFill = (f: AiDischargeField) => mayAiFillDischargeField(f, { keepExisting, standaloneDraft });
+        if (resData.data.primaryDiagnosis && mayFill("primaryDiagnosis")) setPrimaryDiagnosis((p) => apply(p, resData.data.primaryDiagnosis, true));
+        if (resData.data.secondaryDiagnosis && mayFill("secondaryDiagnosis")) setSecondaryDiagnosis((p) => apply(p, resData.data.secondaryDiagnosis));
+        if (resData.data.conditionAtDischarge && mayFill("conditionAtDischarge")) setDischargeCondition((p) => apply(p, resData.data.conditionAtDischarge));
+        if (resData.data.dischargeMedications && mayFill("dischargeMedications")) setDischargeMedications((p) => apply(p, _safeStringFromMixed(resData.data.dischargeMedications)));
+        if (resData.data.followUpPlan && mayFill("followUpPlan")) setFollowUpPlan((p) => apply(p, resData.data.followUpPlan));
+        // Instructions were overwritten unconditionally, even by the automatic draft; it now fills blanks only.
+        if (resData.data.patientInstructions && mayFill("patientInstructions")) setPatientInstructions((p) => apply(p, resData.data.patientInstructions));
         if (resData.data.courseInHospital) {
-          setCourseInHospital(_safeCourseInHospital(resData.data.courseInHospital));
+          setCourseInHospital((p) => apply(p, _safeCourseInHospital(resData.data.courseInHospital)));
         }
         setAiDrafted(true);
 

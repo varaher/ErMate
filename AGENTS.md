@@ -47,14 +47,16 @@
 
 ### [2026-10-19] — ErMate: Standalone & Existing-Patient Discharge Intent Routing (MATE-DISCHARGE-ROUTING-V1)
 - **Discharge Intent Recognition & Routing (`src/mate/mateDischargeIntent.ts`, `src/components/VoiceScribeChatView.tsx`)**:
-  - Implemented `isDischargeSummaryRequest`, `stripDischargeRequest`, `classifyDischargeRequest`, and `missingDischargeItems`.
+  - Implemented `isDischargeSummaryRequest`, `stripDischargeRequest`, `classifyDischargeRequest`, `missingDischargeItems`, and `mayAiFillDischargeField`.
   - Disentangles "prepare the discharge summary" intent from case-sheet dictation before the Stage 0 write gate, fast path, and intent interpreter.
   - **Standalone Route**: When a complete case sheet is pasted along with a discharge request, generates an editable in-memory discharge draft strictly from the pasted text. Does not create, switch, or touch any active patient case, and writes no chat extraction.
   - **Existing Patient Route**: When the request references an explicit bed (e.g. `"prepare discharge summary for bed 3A"`) or active focus case, opens the discharge preview directly for review without finalizing or auto-discharging.
-- **Standalone Draft Safety & Review Banner (`src/App.tsx`, `src/components/DischargeSummaryView.tsx`)**:
+- **Standalone Draft Safety, AI Field Gate & Review Banner (`src/App.tsx`, `src/components/DischargeSummaryView.tsx`)**:
+  - `mayAiFillDischargeField`: Guards AI draft population in `DischargeSummaryView`. For standalone drafts, blocks AI from inventing factual fields (`primaryDiagnosis`, `secondaryDiagnosis`, `conditionAtDischarge`, `dischargeMedications`, `followUpPlan`, `patientInstructions`), allowing only the narrative `courseInHospital` synthesis.
+  - Automatic draft on mount respects live editor state via `apply()`, preventing late AI responses from overwriting typed or pasted instructions or hospital course notes.
   - `pendingDischargePreviewContext.standalone`: Uses a throwaway internal ID, preventing any clash or merge with an open/displayed case. Fails closed against saving unless an established patient record exists.
   - Amber banner (`Draft prepared · Not saved to any patient record · Review required`): Highlights verified sections and explicitly flags missing critical items (`missingDischargeItems`: final diagnosis, medications, condition at discharge, follow-up advice) without hallucinating facts.
-  - Verified with 44 automated tests in `verify_mate_discharge_standalone.ts` and 229 tests across regression suites.
+  - Verified with 48 automated tests in `verify_mate_discharge_standalone.ts` and 233 tests across regression suites.
 
 ### [2026-10-19] — ErMate: Stage 0 Write Target Gate & Patient Focus (MATE-STAGE0-WRITE-TARGET-V1)
 - **Zero-Guessing Clinical Write Target Gate (`src/mate/mateWriteTargetGate.ts`, `src/components/VoiceScribeChatView.tsx`)**:

@@ -42,9 +42,10 @@ ErMate implements **Local On-The-Fly PHI De-identification** hosted on Indian Cl
 ### 2. Auto-Discharge Summary & Quick Discharge Generator
 - Converts complex ED stay trajectories into NABH/JCI-ready Discharge Summaries.
 - **Standalone Quick Discharge Intake**: Fast, direct discharge creation via EMR Text Paste, Voice Dictation, or Photo Capture without requiring full 11-tab case documentation. Tagged with `entrySource: "quick_discharge"` for unified NABH case registry traceability and always 100% free (`bypassCreditCheck: true`).
-- **MATE Standalone & Existing-Patient Discharge Intent Routing (`src/mate/mateDischargeIntent.ts`, `src/components/VoiceScribeChatView.tsx`)**:
+- **MATE Standalone & Existing-Patient Discharge Intent Routing (`src/mate/mateDischargeIntent.ts`, `src/components/VoiceScribeChatView.tsx`, `src/components/DischargeSummaryView.tsx`)**:
   - Automatically recognizes "prepare discharge summary" intents before the general Stage 0 dictation gate.
   - When a complete case sheet is pasted with the request, builds a standalone in-memory draft without creating an ER case or writing to any patient chart, displaying an amber review banner highlighting missing critical fields (`missingDischargeItems`).
+  - Guards AI auto-draft population via `mayAiFillDischargeField`: prevents AI from inventing factual fields (diagnoses, medications, condition at discharge, follow-up advice) for standalone drafts, permitting only synthesized `courseInHospital`.
   - When referencing an existing bed or open patient, opens that case's discharge preview directly for physician review without auto-finalizing or modifying patient status.
 - **Extracts Presenting Complaints, Physical Examination Findings, Diagnostic Course, Procedures Performed, Discharge Medications, and Red-Flag Advice.**:
 - **Live Synchronization Engine & Source of Truth (`src/utils/dischargeSyncEngine.ts`)**: Automatically pulls and reconciles data from the latest saved `ClinicalCase`—including Vitals, ABCDE, secondary systems, ECG, eFAST/POCUS, ABG/VBG, acute medications, IV fluids, procedures, consultations, and chronological progress notes—for both Adult and Pediatric cases.

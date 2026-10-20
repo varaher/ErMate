@@ -68,3 +68,32 @@ export function missingDischargeItems(info?: {
   if (blank(info?.followUpPlan)) out.push("follow-up advice");
   return out;
 }
+
+export type AiDischargeField =
+  | "primaryDiagnosis"
+  | "secondaryDiagnosis"
+  | "conditionAtDischarge"
+  | "dischargeMedications"
+  | "followUpPlan"
+  | "patientInstructions"
+  | "courseInHospital";
+
+/**
+ * Governs whether the AI discharge auto-draft may populate a given field.
+ *
+ * For a standalone draft prepared from an external case sheet:
+ * Clinical facts (final diagnosis, medications, condition at discharge, follow-up advice)
+ * MUST come strictly from what the pasted sheet stated. If omitted, they are flagged for
+ * human review by missingDischargeItems, never hallucinated or invented by an AI draft.
+ * Only the narrative course in hospital can be synthesized.
+ */
+export function mayAiFillDischargeField(
+  field: AiDischargeField,
+  options?: { keepExisting?: boolean; standaloneDraft?: boolean }
+): boolean {
+  if (options?.standaloneDraft) {
+    return field === "courseInHospital";
+  }
+  return true;
+}
+
