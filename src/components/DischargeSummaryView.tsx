@@ -1,3 +1,4 @@
+import { missingDischargeItems } from "../mate/mateDischargeIntent";
 import React, { useState, useEffect, useRef } from "react";
 import { formatAgeLong } from "../utils/ageLabel";
 import { ConfirmModal } from "./shared/ConfirmModal";
@@ -29,6 +30,8 @@ interface DischargeSummaryViewProps {
   profile?: UserProfile;
   onDeleteCase?: (caseId: string) => void;
   previewMode?: boolean;
+  /** Draft prepared from a pasted case sheet: not attached to any patient record. */
+  standaloneDraft?: boolean;
   onApplyPreviewDischarge?: (info: DischargeInfo) => Promise<void> | void;
   /** Open straight in the edit form (Edit Card). Default: read-only view (View Card). */
   startInEdit?: boolean;
@@ -43,6 +46,7 @@ export default function DischargeSummaryView({
   profile,
   onDeleteCase,
   previewMode = false,
+  standaloneDraft = false,
   onApplyPreviewDischarge,
   startInEdit = false
 }: DischargeSummaryViewProps) {
@@ -968,6 +972,24 @@ export default function DischargeSummaryView({
             <button type="button" onClick={() => setIsEditing(true)} className="px-3 py-1 rounded-lg bg-white dark:bg-slate-900 border border-amber-300 dark:border-amber-700 font-bold cursor-pointer">Keep editing</button>
             <button type="button" onClick={() => handleSave(isManuallyEdited ? "MANUALLY_EDITED" : "PREPARED")} className="px-3 py-1 rounded-lg bg-amber-600 text-white font-bold cursor-pointer">Save draft</button>
           </span>
+        </div>
+      )}
+
+      {/* Standalone draft banner: prepared from a pasted case sheet, attached to no patient */}
+      {standaloneDraft && (
+        <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-800 text-amber-900 dark:text-amber-200 p-4 rounded-xl text-xs font-semibold no-print space-y-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="px-2 py-0.5 bg-amber-200 dark:bg-amber-900/60 rounded-md font-bold">Draft prepared</span>
+            <span className="px-2 py-0.5 bg-amber-200 dark:bg-amber-900/60 rounded-md font-bold">Not saved to any patient record</span>
+            <span className="px-2 py-0.5 bg-amber-200 dark:bg-amber-900/60 rounded-md font-bold">Review required</span>
+          </div>
+          <p>
+            Built only from the case sheet you pasted. Verify the final diagnosis, treatment given, discharge medications, condition at discharge and follow-up before using it.
+            {missingDischargeItems(currentCase.dischargeInfo).length > 0 && (
+              <> Not found in the sheet: <strong>{missingDischargeItems(currentCase.dischargeInfo).join(", ")}</strong>.</>
+            )}
+            {" "}To save it, open the patient's case first.
+          </p>
         </div>
       )}
 

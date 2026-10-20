@@ -543,6 +543,8 @@ useEffect(() => {
     caseId: string;
     contributingMsgIds: string[];
     scribeSessionId?: string | null;
+    /** Draft prepared from a pasted case sheet with no patient record: view/edit only, cannot be saved to a patient. */
+    standalone?: boolean;
   } | null>(null);
   
   // Manual Data Refresh & Dirty Tracking State
@@ -4601,11 +4603,15 @@ const handleDeleteAllCases = async () => {
       msgId?: string;
       contributingMsgIds?: string[];
       scribeSessionId?: string | null;
+      standalone?: boolean;
     }
   ) => {
-    const existingId = options?.existingCaseId || voiceScribeCaseId || generateInternalCaseId();
-    let existingMatch = cases.find(c => c.id === existingId) || null;
-    if (!existingMatch && existingId) {
+    // Standalone draft (pasted case sheet): a throwaway ID, never the open / displayed case.
+    const existingId = options?.standalone
+      ? generateInternalCaseId()
+      : (options?.existingCaseId || voiceScribeCaseId || generateInternalCaseId());
+    let existingMatch = options?.standalone ? null : (cases.find(c => c.id === existingId) || null);
+    if (!existingMatch && existingId && !options?.standalone) {
       try {
         const snap = await getDoc(doc(db, "cases", existingId));
         if (snap.exists()) {
@@ -4681,6 +4687,7 @@ const handleDeleteAllCases = async () => {
       msgId: options?.msgId,
       contributingMsgIds: options?.contributingMsgIds || (options?.msgId ? [options.msgId] : []),
       scribeSessionId: options?.scribeSessionId || null,
+      standalone: Boolean(options?.standalone),
     });
   };
 
@@ -7266,6 +7273,7 @@ const handleSignOut = async () => {
                   currentCase={matched}
                   startInEdit={dischargeStartInEdit}
                   previewMode={isDischargePreviewMode}
+                  standaloneDraft={isDischargePreviewMode && Boolean(pendingDischargePreviewContext?.standalone)}
                   onApplyPreviewDischarge={handleApplyPreviewDischarge}
                   onBack={() => {
                     if (isDischargePreviewMode) {

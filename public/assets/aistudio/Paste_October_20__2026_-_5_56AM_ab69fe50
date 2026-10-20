@@ -1,0 +1,370 @@
+diff --git a/src/App.tsx b/src/App.tsx
+index d9c2272..4e419c2 100644
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -543,6 +543,8 @@ useEffect(() => {
+     caseId: string;
+     contributingMsgIds: string[];
+     scribeSessionId?: string | null;
++    /** Draft prepared from a pasted case sheet with no patient record: view/edit only, cannot be saved to a patient. */
++    standalone?: boolean;
+   } | null>(null);
+   
+   // Manual Data Refresh & Dirty Tracking State
+@@ -4601,11 +4603,15 @@ const handleDeleteAllCases = async () => {
+       msgId?: string;
+       contributingMsgIds?: string[];
+       scribeSessionId?: string | null;
++      standalone?: boolean;
+     }
+   ) => {
+-    const existingId = options?.existingCaseId || voiceScribeCaseId || generateInternalCaseId();
+-    let existingMatch = cases.find(c => c.id === existingId) || null;
+-    if (!existingMatch && existingId) {
++    // Standalone draft (pasted case sheet): a throwaway ID, never the open / displayed case.
++    const existingId = options?.standalone
++      ? generateInternalCaseId()
++      : (options?.existingCaseId || voiceScribeCaseId || generateInternalCaseId());
++    let existingMatch = options?.standalone ? null : (cases.find(c => c.id === existingId) || null);
++    if (!existingMatch && existingId && !options?.standalone) {
+       try {
+         const snap = await getDoc(doc(db, "cases", existingId));
+         if (snap.exists()) {
+@@ -4681,6 +4687,7 @@ const handleDeleteAllCases = async () => {
+       msgId: options?.msgId,
+       contributingMsgIds: options?.contributingMsgIds || (options?.msgId ? [options.msgId] : []),
+       scribeSessionId: options?.scribeSessionId || null,
++      standalone: Boolean(options?.standalone),
+     });
+   };
+ 
+@@ -7266,6 +7273,7 @@ const handleSignOut = async () => {
+                   currentCase={matched}
+                   startInEdit={dischargeStartInEdit}
+                   previewMode={isDischargePreviewMode}
++                  standaloneDraft={isDischargePreviewMode && Boolean(pendingDischargePreviewContext?.standalone)}
+                   onApplyPreviewDischarge={handleApplyPreviewDischarge}
+                   onBack={() => {
+                     if (isDischargePreviewMode) {
+diff --git a/src/components/DischargeSummaryView.tsx b/src/components/DischargeSummaryView.tsx
+index fac09f0..bb86e41 100644
+--- a/src/components/DischargeSummaryView.tsx
++++ b/src/components/DischargeSummaryView.tsx
+@@ -1,3 +1,4 @@
++import { missingDischargeItems } from "../mate/mateDischargeIntent";
+ import React, { useState, useEffect, useRef } from "react";
+ import { formatAgeLong } from "../utils/ageLabel";
+ import { ConfirmModal } from "./shared/ConfirmModal";
+@@ -29,6 +30,8 @@ interface DischargeSummaryViewProps {
+   profile?: UserProfile;
+   onDeleteCase?: (caseId: string) => void;
+   previewMode?: boolean;
++  /** Draft prepared from a pasted case sheet: not attached to any patient record. */
++  standaloneDraft?: boolean;
+   onApplyPreviewDischarge?: (info: DischargeInfo) => Promise<void> | void;
+   /** Open straight in the edit form (Edit Card). Default: read-only view (View Card). */
+   startInEdit?: boolean;
+@@ -43,6 +46,7 @@ export default function DischargeSummaryView({
+   profile,
+   onDeleteCase,
+   previewMode = false,
++  standaloneDraft = false,
+   onApplyPreviewDischarge,
+   startInEdit = false
+ }: DischargeSummaryViewProps) {
+@@ -971,6 +975,24 @@ export default function DischargeSummaryView({
+         </div>
+       )}
+ 
++      {/* Standalone draft banner: prepared from a pasted case sheet, attached to no patient */}
++      {standaloneDraft && (
++        <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-800 text-amber-900 dark:text-amber-200 p-4 rounded-xl text-xs font-semibold no-print space-y-1">
++          <div className="flex flex-wrap items-center gap-2">
++            <span className="px-2 py-0.5 bg-amber-200 dark:bg-amber-900/60 rounded-md font-bold">Draft prepared</span>
++            <span className="px-2 py-0.5 bg-amber-200 dark:bg-amber-900/60 rounded-md font-bold">Not saved to any patient record</span>
++            <span className="px-2 py-0.5 bg-amber-200 dark:bg-amber-900/60 rounded-md font-bold">Review required</span>
++          </div>
++          <p>
++            Built only from the case sheet you pasted. Verify the final diagnosis, treatment given, discharge medications, condition at discharge and follow-up before using it.
++            {missingDischargeItems(currentCase.dischargeInfo).length > 0 && (
++              <> Not found in the sheet: <strong>{missingDischargeItems(currentCase.dischargeInfo).join(", ")}</strong>.</>
++            )}
++            {" "}To save it, open the patient's case first.
++          </p>
++        </div>
++      )}
++
+       {/* Preview Mode Banner */}
+       {previewMode && (
+         <div className="bg-purple-50 dark:bg-purple-950/30 border border-purple-200 dark:border-purple-800 text-purple-800 dark:text-purple-300 p-4 rounded-xl flex items-center justify-between gap-3 text-xs font-semibold no-print">
+diff --git a/src/components/VoiceScribeChatView.tsx b/src/components/VoiceScribeChatView.tsx
+index e7ee4dd..ea8b32a 100644
+--- a/src/components/VoiceScribeChatView.tsx
++++ b/src/components/VoiceScribeChatView.tsx
+@@ -54,6 +54,7 @@ import { validateAndBuildMateTask } from "../mate/mateTaskValidator";
+ import { resolveInterpretedPatient } from "../mate/matePatientDisambiguator";
+ import { mergePastedSheetIntoExtraction, detectSheetIdentityConflict } from "../mate/pastedSheetParser";
+ import { stampClinicianUpdates } from "../mate/clinicianUpdateStamp";
++import { classifyDischargeRequest } from "../mate/mateDischargeIntent";
+ import { hasExplicitPatientReference, isFocusAuthorized, isImplicitPatientReference, shouldAskWhichPatient, isHeldUpdateExpired, appendHeldUpdate, WHICH_PATIENT_QUESTION, type HeldUpdate } from "../mate/mateWriteTargetGate";
+ import { detectPatientAnnouncement, detectExplicitNewCaseIntent, bedFromUnmatchedReference, shouldStartCaseForVacantBed, groundPatientReference, isLongClinicalPaste, looksLikeFullCaseSheet, shouldHoldPastedSheet, classifyPendingSheetReply } from "../mate/mateNewCaseIntent";
+ import { computeCensusOrientation, formatErOverviewMessage } from "../mate/mateOrientation";
+@@ -121,7 +122,7 @@ interface VoiceScribeChatViewProps {
+   onSaveExtractedCase?: (extracted: any, options?: { autoNavigate?: boolean; existingCaseId?: string }) => Promise<string>;
+   onPrepareDischarge?: (extractedData: any, messageId: string, caseId: string) => Promise<void>;
+   onPreviewCaseSheet?: (extracted: any, options?: { existingCaseId?: string | null; msgId?: string; contributingMsgIds?: string[]; scribeSessionId?: string | null }) => void | Promise<void>;
+-  onPreviewDischargeSummary?: (extracted: any, options?: { existingCaseId?: string | null; msgId?: string; contributingMsgIds?: string[]; scribeSessionId?: string | null }) => void | Promise<void>;
++  onPreviewDischargeSummary?: (extracted: any, options?: { existingCaseId?: string | null; msgId?: string; contributingMsgIds?: string[]; scribeSessionId?: string | null; standalone?: boolean }) => void | Promise<void>;
+   profile?: any;
+   onSaveProfile?: (newProfile: any) => Promise<any>;
+   messages?: any;
+@@ -1789,6 +1790,95 @@ export default function VoiceScribeChatView({
+         planMateConversation(trimmed).mayContainClinicalUpdate &&
+         !/\?\s*$/.test(trimmed);
+ 
++      // ── STAGE 2B-1: "PREPARE DISCHARGE SUMMARY" IS AN INTENT, NOT CASE-SHEET DICTATION ───
++      // Standalone: a pasted complete case sheet + the request -> an editable discharge DRAFT from the
++      // pasted text alone. No ER case is created or switched and nothing is written to any patient.
++      // Existing patient: the named bed (or the open case) -> that case's discharge preview.
++      // Asking for a draft is never authorization to discharge or to finalize the record.
++      const dischargeRoute = classifyDischargeRequest(trimmed);
++      if (dischargeRoute.kind !== "NONE") {
++        if (!onPreviewDischargeSummary) {
++          postPair(trimmed, "The discharge summary screen isn't available from here. Open the patient and use Discharge Summary.");
++          return;
++        }
++        if (dischargeRoute.kind === "STANDALONE") {
++          setInputText("");
++          setIsSending(true);
++          const dischargeGen = sessionContextGenerationRef.current;
++          const standaloneController = new AbortController();
++          const standaloneTimeout = setTimeout(() => standaloneController.abort(), 30000);
++          try {
++            // Fresh extraction of the pasted text only: no case, no chat history, so nothing from an open patient can mix in.
++            const res = await authenticatedFetch("/api/scribe-chat", {
++              method: "POST",
++              headers: { "Content-Type": "application/json" },
++              signal: standaloneController.signal,
++              body: JSON.stringify({
++                userInput: dischargeRoute.clinicalText,
++                caseId: null,
++                caseData: {},
++                patientAgeYears: null,
++                caseContext: {},
++                messages: [],
++              }),
++            });
++            const data = await res.json().catch(() => ({}));
++            if (!res.ok) throw new Error(data?.error || "Request failed");
++            if (sessionContextGenerationRef.current !== dischargeGen) return;
++            const rawFields = data.unappliedExtraction || data.updatedCaseSheetFields || data.extractedFields || {};
++            const draftFields: any = mergePastedSheetIntoExtraction({ ...rawFields }, dischargeRoute.clinicalText);
++            delete draftFields.clinicianUpdateText;
++            delete draftFields.clinicianUpdates;
++            await onPreviewDischargeSummary(draftFields, { existingCaseId: null, standalone: true });
++          } catch (err: any) {
++            console.error("[VoiceScribeChatView] Standalone discharge draft failed:", err);
++            postPair(
++              `📄 Case sheet pasted (${dischargeRoute.clinicalText.length} characters)`,
++              "I couldn't prepare the discharge draft just now. Nothing was saved and no patient record was created. Please try again."
++            );
++          } finally {
++            clearTimeout(standaloneTimeout);
++            setIsSending(false);
++          }
++          return;
++        }
++
++        // Existing patient route
++        const dischargeRef = resolveMateCaseReference({
++          utterance: trimmed,
++          cases: activeCensusCases,
++          activeCaseId: null,
++          physicalCapacity: physicalBedCapacity,
++        });
++        let dischargeTarget: any = null;
++        if (dischargeRef.status === "RESOLVED" && dischargeRef.caseId) {
++          dischargeTarget = activeCensusCases.find((c) => c.id === dischargeRef.caseId) || null;
++        } else if (dischargeRef.status === "AMBIGUOUS") {
++          setInputText("");
++          postPair(trimmed, `Bed ${dischargeRef.referenceValue} has two patients. Say "prepare discharge summary for Bed ${dischargeRef.referenceValue}A" or "${dischargeRef.referenceValue}B".`);
++          return;
++        } else if (dischargeRef.status === "NOT_FOUND" || dischargeRef.status === "INVALID_LOCATION") {
++          setInputText("");
++          postPair(trimmed, `There is no patient in Bed ${dischargeRef.referenceValue}. Nothing was opened.`);
++          return;
++        } else if (activeCase) {
++          dischargeTarget = activeCase; // draft preview only; the bed is shown below so the wrong chart is obvious
++        }
++        if (!dischargeTarget) {
++          setInputText("");
++          postPair(trimmed, 'Which patient is this discharge summary for, doctor? Say "prepare discharge summary for Bed 3A", or paste the complete case sheet with the request.');
++          return;
++        }
++        setInputText("");
++        lastReferencedCaseIdRef.current = dischargeTarget.id;
++        postPair(
++          trimmed,
++          `Opening the discharge summary draft for ${dischargeTarget.bedNo ? `Bed ${dischargeTarget.bedNo}` : "this patient"}. Review the diagnosis, treatment given, medications, condition and follow-up. Nothing is finalised until you save it.`
++        );
++        await onPreviewDischargeSummary({}, { existingCaseId: dischargeTarget.id });
++        return;
++      }
++
+       const holdForPatient = (updateText: string) => {
+         const prev = pendingUnreferencedUpdateRef.current;
+         pendingUnreferencedUpdateRef.current = appendHeldUpdate(prev, updateText, sessionContextGenerationRef.current);
+diff --git a/src/mate/mateDischargeIntent.ts b/src/mate/mateDischargeIntent.ts
+new file mode 100644
+index 0000000..c925a52
+--- /dev/null
++++ b/src/mate/mateDischargeIntent.ts
+@@ -0,0 +1,70 @@
++/**
++ * MATE Stage 2B-1 — "prepare the discharge summary" as an intent, separate from case-sheet dictation.
++ *
++ * Two routes (never mixed):
++ *  - STANDALONE: a complete case sheet is pasted with the request. A discharge DRAFT is prepared from
++ *    the pasted text alone. No ER case is created or switched, nothing is written to any patient.
++ *  - EXISTING PATIENT: the request names (or Patient Focus is on) a verified case; its discharge
++ *    preview opens. Asking for a draft is never authorization to discharge or to finalize.
++ */
++import { looksLikeFullCaseSheet } from "./mateNewCaseIntent";
++
++const VERBS = "prepare|prepping|make|write|create|generate|draft|give|provide|compile|convert|turn|need|want|do|get|build|start|finali[sz]e";
++const DOC = "discharge\\s+(?:summary|summaries|note|notes|sheet|papers?)|\\bds\\b";
++
++const REQUEST = new RegExp(`\\b(?:${VERBS})\\b[^\\n.!?]{0,60}?(?:${DOC})`, "i");
++const BARE = /^\s*(?:please\s+)?(?:(?:the\s+|a\s+)?discharge\s+(?:summary|note)|ds)\s*(?:please)?[.!]?\s*$/i;
++// "what is pending in discharge", "is the discharge summary complete" are status questions, not requests.
++const STATUS_QUESTION = /\b(?:pending|missing|completeness|incomplete|left\s+to)\b/i;
++const GREETING_ONLY = /^\s*(?:hey|hi|hello|ok|okay)?[\s,]*(?:mate|jarvis)?[\s,.!:-]*$/i;
++
++export function isDischargeSummaryRequest(text: string): boolean {
++  const t = (text || "").trim();
++  if (!t) return false;
++  if (BARE.test(t)) return true;
++  const fragments = t.split(/\n+|(?<=[.!?])\s+/);
++  return fragments.some((f) => REQUEST.test(f) && !STATUS_QUESTION.test(f));
++}
++
++/** The pasted clinical text with the request sentence(s) and the "Mate," address removed. */
++export function stripDischargeRequest(text: string): string {
++  const lines = (text || "").split("\n").map((line) => {
++    const parts = line.split(/(?<=[.!?])\s+/).filter((f) => !(REQUEST.test(f) && !STATUS_QUESTION.test(f)) && !GREETING_ONLY.test(f));
++    return parts.join(" ");
++  });
++  // A short spoken preface on the first lines ("Mate, here is the complete case sheet:") is not clinical text,
++  // and would hide the sheet's own first-line patient name from the header reader.
++  const PREFACE = /^\s*(?:(?:hey|hi|ok|okay)\s+)?(?:mate|jarvis)\b[^\n]*$|\b(?:here(?:'s|\s+is)|pasting|pasted|below\s+is|attached)\b[^\n]{0,80}\b(?:case\s*sheet|sheet|record|notes?)\b[^\n]*$/i;
++  const out = [...lines];
++  let dropped = 0;
++  while (out.length && dropped < 2 && (out[0].trim() === "" || (out[0].length < 140 && PREFACE.test(out[0])))) {
++    out.shift();
++    dropped++;
++  }
++  return out.join("\n").replace(/\n{3,}/g, "\n\n").trim();
++}
++
++export type DischargeRoute =
++  | { kind: "NONE" }
++  | { kind: "STANDALONE"; clinicalText: string }
++  | { kind: "EXISTING_PATIENT" };
++
++export function classifyDischargeRequest(text: string): DischargeRoute {
++  if (!isDischargeSummaryRequest(text)) return { kind: "NONE" };
++  const clinicalText = stripDischargeRequest(text);
++  if (looksLikeFullCaseSheet(clinicalText)) return { kind: "STANDALONE", clinicalText };
++  return { kind: "EXISTING_PATIENT" };
++}
++
++/** Discharge-critical items the pasted sheet did not state. They are flagged, never invented. */
++export function missingDischargeItems(info?: {
++  primaryDiagnosis?: string; dischargeMedications?: string; conditionAtDischarge?: string; followUpPlan?: string;
++} | null): string[] {
++  const out: string[] = [];
++  const blank = (v?: string) => !(typeof v === "string" && v.trim());
++  if (blank(info?.primaryDiagnosis)) out.push("final diagnosis");
++  if (blank(info?.dischargeMedications)) out.push("discharge medications");
++  if (blank(info?.conditionAtDischarge)) out.push("condition at discharge");
++  if (blank(info?.followUpPlan)) out.push("follow-up advice");
++  return out;
++}
+diff --git a/verify_mate_discharge_standalone.ts b/verify_mate_discharge_standalone.ts
+new file mode 100644
+index 0000000..befc79b
+--- /dev/null
++++ b/verify_mate_discharge_standalone.ts
+@@ -0,0 +1,72 @@
++import fs from "fs";
++import { isDischargeSummaryRequest, stripDischargeRequest, classifyDischargeRequest, missingDischargeItems } from "./src/mate/mateDischargeIntent";
++import { looksLikeFullCaseSheet, shouldHoldPastedSheet } from "./src/mate/mateNewCaseIntent";
++import { mergePastedSheetIntoExtraction } from "./src/mate/pastedSheetParser";
++import { resolveMateCaseReference } from "./src/mate/mateCaseResolver";
++let pass = 0, fail = 0;
++const t = (n: string, c: boolean) => { c ? pass++ : fail++; console.log(`${c ? "PASS" : "FAIL"} ${n}`); };
++
++const sheet = `Mr. TEST PATIENT\nAge/Sex: 45/M\nChief complaints: loose stools and fever since 3 days\nHistory of present illness: ${"watery stools, no blood. ".repeat(12)}\nPast history: nil\nVitals: BP 110/70 HR 98 SpO2 98% RR 18 Temp 99\nExamination: abdomen soft\nInvestigations: stool routine normal\nTreatment: ORS, IV fluids\nPlan: observe\nFinal diagnosis: acute gastroenteritis\nCondition at discharge: stable\nDischarge medications: ORS sachets\n`;
++const noDx = sheet.replace(/Final diagnosis:.*\n/, "").replace(/Condition at discharge:.*\n/, "").replace(/Discharge medications:.*\n/, "");
++
++// request detection
++for (const u of ["Prepare discharge summary", "prepare his discharge summary", "make DS for bed 3A", "can you draft the discharge note?", "I need a discharge summary for bed 3", "discharge summary", "please prepare the discharge summary", "generate a discharge summary now"])
++  t(`request: ${u}`, isDischargeSummaryRequest(u));
++for (const u of ["What is pending in discharge summary?", "is the discharge summary complete", "Plan: discharge tomorrow", "patient discharged home, treatment ORS", "discharge medications ORS and zinc", "BP 90/60", sheet])
++  t(`not a request: ${u.slice(0, 40).replace(/\n/g, " ")}`, !isDischargeSummaryRequest(u));
++
++// routes
++const withReq = "Mate, here is the complete case sheet. Prepare a discharge summary.\n" + sheet;
++t("sheet + request -> STANDALONE", classifyDischargeRequest(withReq).kind === "STANDALONE");
++t("request at the end -> STANDALONE", classifyDischargeRequest(sheet + "\nPlease prepare discharge summary.").kind === "STANDALONE");
++t("request alone / with a bed -> EXISTING_PATIENT", classifyDischargeRequest("prepare discharge summary for bed 3A").kind === "EXISTING_PATIENT" && classifyDischargeRequest("make DS").kind === "EXISTING_PATIENT");
++t("sheet without a request -> NONE (normal paste flow)", classifyDischargeRequest(sheet).kind === "NONE");
++t("ordinary dictation -> NONE", classifyDischargeRequest("fever and vomiting since 2 days").kind === "NONE");
++
++// stripping keeps all clinical facts and removes the request
++const r: any = classifyDischargeRequest(withReq);
++const cleaned: string = r.clinicalText;
++t("request sentence removed before extraction", !/prepare a discharge summary/i.test(cleaned) && !/discharge summary/i.test(cleaned));
++t("every clinical line is kept", ["Chief complaints", "Vitals: BP 110/70", "Treatment: ORS, IV fluids", "Final diagnosis: acute gastroenteritis", "Discharge medications: ORS sachets"].every((x) => cleaned.includes(x)));
++t("cleaned text is still a full case sheet", looksLikeFullCaseSheet(cleaned));
++t("a request word inside a labelled section is not stripped (Plan: observe)", cleaned.includes("Plan: observe"));
++
++// standalone draft content: only what the sheet states; nothing invented
++const draft: any = mergePastedSheetIntoExtraction({}, cleaned);
++t("draft takes name/age/sex from the sheet header", draft.patientName && /TEST PATIENT/i.test(draft.patientName) && String(draft.age) === "45");
++t("draft takes stated diagnosis, condition and medications", /gastroenteritis/i.test(draft.dischargeInfoDraft?.primaryDiagnosis || "") && /stable/i.test(draft.dischargeInfoDraft?.conditionAtDischarge || "") && /ORS/.test(draft.dischargeInfoDraft?.dischargeMedications || ""));
++const draft2: any = mergePastedSheetIntoExtraction({}, stripDischargeRequest(noDx));
++const miss = missingDischargeItems(draft2.dischargeInfoDraft);
++t("missing discharge-critical items are flagged, not invented", miss.includes("final diagnosis") && miss.includes("discharge medications") && miss.includes("condition at discharge") && !(draft2.dischargeInfoDraft?.dischargeMedications));
++t("missingDischargeItems handles an empty draft", missingDischargeItems(null).length === 4 && missingDischargeItems({ primaryDiagnosis: "x", dischargeMedications: "y", conditionAtDischarge: "z", followUpPlan: "w" }).length === 0);
++
++// routing safety: the standalone route is independent of the paste-first / bed flow
++t("paste-first would have asked for a bed for this text (so discharge routing must run first)", shouldHoldPastedSheet({ text: cleaned, hasOpenPatient: false }));
++
++// existing-patient route uses the real resolver (A/B rules intact)
++const mk = (id: string, bedNo: string) => ({ id, bedNo, patient: { name: id } } as any);
++const cases = [mk("a", "3A"), mk("b", "3B"), mk("c", "7A")];
++const R = (u: string) => resolveMateCaseReference({ utterance: u, cases, activeCaseId: null, physicalCapacity: 30 });
++t("'for Bed 7A' -> exactly 7A", R("prepare discharge summary for bed 7A").caseId === "c");
++t("'for Bed 3' with both slots -> AMBIGUOUS (asks 3A or 3B)", R("prepare discharge summary for bed 3").status === "AMBIGUOUS");
++t("'for Bed 12' -> NOT_FOUND (nothing opened)", R("prepare discharge summary for bed 12").status === "NOT_FOUND");
++t("no bed -> NO_REFERENCE (open case or ask)", R("prepare his discharge summary").status === "NO_REFERENCE");
++
++// wiring
++const chat = fs.readFileSync("./src/components/VoiceScribeChatView.tsx", "utf8");
++const app = fs.readFileSync("./src/App.tsx", "utf8");
++const dsv = fs.readFileSync("./src/components/DischargeSummaryView.tsx", "utf8");
++const a = chat.indexOf("STAGE 2B-1");
++const standalone = chat.slice(chat.indexOf('if (dischargeRoute.kind === "STANDALONE")'), chat.indexOf("// Existing patient route"));
++t("discharge routing runs before the Stage 0 gate, the fast path, the bed-announce and the interpreter", a > 0 && a < chat.indexOf("if (\n        shouldAskWhichPatient") && a < chat.indexOf("const fastPathResult") && a < chat.indexOf("PART 2: SERVER INTERPRETATION"));
++t("standalone sends only the pasted text with no case, no history", /caseId: null,\s*caseData: \{\},\s*patientAgeYears: null,\s*caseContext: \{\},\s*messages: \[\],/.test(standalone) && /userInput: dischargeRoute\.clinicalText/.test(standalone));
++t("standalone never creates, switches or attaches a case, and writes no chat extraction", !/onEnsureDraftCase|startNewCaseInBed|onSwitchCase|setActiveCaseId|extractionData|onSaveExtractedCase|onCaseSheetUpdated/.test(standalone));
++t("standalone opens the discharge preview with standalone:true and no case id", /onPreviewDischargeSummary\(draftFields, \{ existingCaseId: null, standalone: true \}\)/.test(standalone));
++t("request/clinical-updates fields dropped from the draft", /delete draftFields\.clinicianUpdateText;\s*delete draftFields\.clinicianUpdates;/.test(standalone));
++t("failure says nothing saved and no record created", /Nothing was saved and no patient record was created/.test(standalone));
++t("App: standalone uses a throwaway id and never the open/displayed case", /options\?\.standalone\s*\?\s*generateInternalCaseId\(\)/.test(app) && /options\?\.standalone \? null : \(cases\.find/.test(app));
++t("App: standalone context is recorded, banner prop passed", /standalone: Boolean\(options\?\.standalone\)/.test(app) && /standaloneDraft=\{isDischargePreviewMode && Boolean\(pendingDischargePreviewContext\?\.standalone\)\}/.test(app));
++t("a standalone draft cannot be saved to a patient (apply fails closed without a persisted case)", /Apply the Case Sheet first to establish the patient record/.test(app) && /if \(!persistedCase\)/.test(app));
++t("discharge screen shows Draft prepared / Not saved / Review required", /Draft prepared/.test(dsv) && /Not saved to any patient record/.test(dsv) && /Review required/.test(dsv));
++t("existing-patient route opens preview only (no writes) for the resolved case", /onPreviewDischargeSummary\(\{\}, \{ existingCaseId: dischargeTarget\.id \}\)/.test(chat));
++console.log(`${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);

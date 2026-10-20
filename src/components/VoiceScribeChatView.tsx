@@ -54,6 +54,7 @@ import { validateAndBuildMateTask } from "../mate/mateTaskValidator";
 import { resolveInterpretedPatient } from "../mate/matePatientDisambiguator";
 import { mergePastedSheetIntoExtraction, detectSheetIdentityConflict } from "../mate/pastedSheetParser";
 import { stampClinicianUpdates } from "../mate/clinicianUpdateStamp";
+import { classifyDischargeRequest } from "../mate/mateDischargeIntent";
 import { hasExplicitPatientReference, isFocusAuthorized, isImplicitPatientReference, shouldAskWhichPatient, isHeldUpdateExpired, appendHeldUpdate, WHICH_PATIENT_QUESTION, type HeldUpdate } from "../mate/mateWriteTargetGate";
 import { detectPatientAnnouncement, detectExplicitNewCaseIntent, bedFromUnmatchedReference, shouldStartCaseForVacantBed, groundPatientReference, isLongClinicalPaste, looksLikeFullCaseSheet, shouldHoldPastedSheet, classifyPendingSheetReply } from "../mate/mateNewCaseIntent";
 import { computeCensusOrientation, formatErOverviewMessage } from "../mate/mateOrientation";
@@ -121,7 +122,7 @@ interface VoiceScribeChatViewProps {
   onSaveExtractedCase?: (extracted: any, options?: { autoNavigate?: boolean; existingCaseId?: string }) => Promise<string>;
   onPrepareDischarge?: (extractedData: any, messageId: string, caseId: string) => Promise<void>;
   onPreviewCaseSheet?: (extracted: any, options?: { existingCaseId?: string | null; msgId?: string; contributingMsgIds?: string[]; scribeSessionId?: string | null }) => void | Promise<void>;
-  onPreviewDischargeSummary?: (extracted: any, options?: { existingCaseId?: string | null; msgId?: string; contributingMsgIds?: string[]; scribeSessionId?: string | null }) => void | Promise<void>;
+  onPreviewDischargeSummary?: (extracted: any, options?: { existingCaseId?: string | null; msgId?: string; contributingMsgIds?: string[]; scribeSessionId?: string | null; standalone?: boolean }) => void | Promise<void>;
   profile?: any;
   onSaveProfile?: (newProfile: any) => Promise<any>;
   messages?: any;
@@ -1788,6 +1789,95 @@ export default function VoiceScribeChatView({
         detectMateTurnMode(trimmed) === "dictation" &&
         planMateConversation(trimmed).mayContainClinicalUpdate &&
         !/\?\s*$/.test(trimmed);
+
+      // ── STAGE 2B-1: "PREPARE DISCHARGE SUMMARY" IS AN INTENT, NOT CASE-SHEET DICTATION ───
+      // Standalone: a pasted complete case sheet + the request -> an editable discharge DRAFT from the
+      // pasted text alone. No ER case is created or switched and nothing is written to any patient.
+      // Existing patient: the named bed (or the open case) -> that case's discharge preview.
+      // Asking for a draft is never authorization to discharge or to finalize the record.
+      const dischargeRoute = classifyDischargeRequest(trimmed);
+      if (dischargeRoute.kind !== "NONE") {
+        if (!onPreviewDischargeSummary) {
+          postPair(trimmed, "The discharge summary screen isn't available from here. Open the patient and use Discharge Summary.");
+          return;
+        }
+        if (dischargeRoute.kind === "STANDALONE") {
+          setInputText("");
+          setIsSending(true);
+          const dischargeGen = sessionContextGenerationRef.current;
+          const standaloneController = new AbortController();
+          const standaloneTimeout = setTimeout(() => standaloneController.abort(), 30000);
+          try {
+            // Fresh extraction of the pasted text only: no case, no chat history, so nothing from an open patient can mix in.
+            const res = await authenticatedFetch("/api/scribe-chat", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              signal: standaloneController.signal,
+              body: JSON.stringify({
+                userInput: dischargeRoute.clinicalText,
+                caseId: null,
+                caseData: {},
+                patientAgeYears: null,
+                caseContext: {},
+                messages: [],
+              }),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data?.error || "Request failed");
+            if (sessionContextGenerationRef.current !== dischargeGen) return;
+            const rawFields = data.unappliedExtraction || data.updatedCaseSheetFields || data.extractedFields || {};
+            const draftFields: any = mergePastedSheetIntoExtraction({ ...rawFields }, dischargeRoute.clinicalText);
+            delete draftFields.clinicianUpdateText;
+            delete draftFields.clinicianUpdates;
+            await onPreviewDischargeSummary(draftFields, { existingCaseId: null, standalone: true });
+          } catch (err: any) {
+            console.error("[VoiceScribeChatView] Standalone discharge draft failed:", err);
+            postPair(
+              `📄 Case sheet pasted (${dischargeRoute.clinicalText.length} characters)`,
+              "I couldn't prepare the discharge draft just now. Nothing was saved and no patient record was created. Please try again."
+            );
+          } finally {
+            clearTimeout(standaloneTimeout);
+            setIsSending(false);
+          }
+          return;
+        }
+
+        // Existing patient route
+        const dischargeRef = resolveMateCaseReference({
+          utterance: trimmed,
+          cases: activeCensusCases,
+          activeCaseId: null,
+          physicalCapacity: physicalBedCapacity,
+        });
+        let dischargeTarget: any = null;
+        if (dischargeRef.status === "RESOLVED" && dischargeRef.caseId) {
+          dischargeTarget = activeCensusCases.find((c) => c.id === dischargeRef.caseId) || null;
+        } else if (dischargeRef.status === "AMBIGUOUS") {
+          setInputText("");
+          postPair(trimmed, `Bed ${dischargeRef.referenceValue} has two patients. Say "prepare discharge summary for Bed ${dischargeRef.referenceValue}A" or "${dischargeRef.referenceValue}B".`);
+          return;
+        } else if (dischargeRef.status === "NOT_FOUND" || dischargeRef.status === "INVALID_LOCATION") {
+          setInputText("");
+          postPair(trimmed, `There is no patient in Bed ${dischargeRef.referenceValue}. Nothing was opened.`);
+          return;
+        } else if (activeCase) {
+          dischargeTarget = activeCase; // draft preview only; the bed is shown below so the wrong chart is obvious
+        }
+        if (!dischargeTarget) {
+          setInputText("");
+          postPair(trimmed, 'Which patient is this discharge summary for, doctor? Say "prepare discharge summary for Bed 3A", or paste the complete case sheet with the request.');
+          return;
+        }
+        setInputText("");
+        lastReferencedCaseIdRef.current = dischargeTarget.id;
+        postPair(
+          trimmed,
+          `Opening the discharge summary draft for ${dischargeTarget.bedNo ? `Bed ${dischargeTarget.bedNo}` : "this patient"}. Review the diagnosis, treatment given, medications, condition and follow-up. Nothing is finalised until you save it.`
+        );
+        await onPreviewDischargeSummary({}, { existingCaseId: dischargeTarget.id });
+        return;
+      }
 
       const holdForPatient = (updateText: string) => {
         const prev = pendingUnreferencedUpdateRef.current;
