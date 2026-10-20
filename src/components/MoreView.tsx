@@ -1,3 +1,4 @@
+import CreditsPlanCard from "./CreditsPlanCard";
 import React, { useState, useEffect } from "react";
 import { 
   Building2, FileWarning, BookOpen, Users, 
@@ -35,6 +36,8 @@ interface MoreViewProps {
   cases?: ClinicalCase[];
   hospitalSubscription?: { active: boolean; subscriptionTier: string } | null;
   handovers?: any[];
+  /** Called with the fresh credit fields after a payment is confirmed. */
+  onProfileRefreshed?: (fields: { aiCredits?: number; subscriptionTier?: string; tierExpiresAt?: string }) => void;
 }
 
 export default function MoreView({
@@ -53,6 +56,7 @@ export default function MoreView({
   cases = [],
   hospitalSubscription = null,
   handovers = [],
+  onProfileRefreshed,
 }: MoreViewProps) {
   const isAdminUser = profile?.email?.toLowerCase().trim() === "varahgrp@gmail.com";
   const isHOD = normalizedRole === "hod" || isAdminUser;
@@ -700,6 +704,8 @@ export default function MoreView({
             </button>
             )}
           </div>
+
+          <CreditsPlanCard profile={profile} coveredByTeam={isMembershipActive} teamName={activeHospitalName} onProfileRefreshed={onProfileRefreshed} />
 
           {/* Details Grid */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">

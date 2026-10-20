@@ -1,0 +1,631 @@
+diff --git a/server/services/creditMeter.ts b/server/services/creditMeter.ts
+index a80387f..d694851 100644
+--- a/server/services/creditMeter.ts
++++ b/server/services/creditMeter.ts
+@@ -83,7 +83,7 @@ export function meterCredits(action: CreditAction, getDb: () => any) {
+         return res.status(402).json({
+           success: false,
+           code: "INSUFFICIENT_CREDITS",
+-          error: "AI credits finished. Your case sheet, saving and printing still work. Recharge in Profile > Subscription to use AI features.",
++          error: "AI credits finished. Your case sheet, saving and printing still work. Recharge in More > Team & Subscription to use AI features.",
+           balance: decision.balance,
+           required: decision.required,
+         });
+diff --git a/src/App.tsx b/src/App.tsx
+index 822bdf1..bf39e80 100644
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -6856,6 +6856,7 @@ const handleSignOut = async () => {
+         onNavigateToTab={navigateToTab}
+         onSignOut={handleSignOut}
+         onOpenProfile={() => setShowOnboardingProfile(true)}
++        coveredByTeam={isVerifiedTeamUser}
+       />
+ 
+       {/* Persistent non-obnoxious banner when profile is incomplete */}
+@@ -7484,6 +7485,7 @@ const handleSignOut = async () => {
+                   cases={cases}
+                   hospitalSubscription={hospitalSubscription}
+                   handovers={handovers}
++                  onProfileRefreshed={(f) => setProfile((prev) => (prev ? { ...prev, ...(typeof f.aiCredits === "number" ? { aiCredits: f.aiCredits } : {}), ...(f.subscriptionTier ? { subscriptionTier: f.subscriptionTier } : {}), ...(f.tierExpiresAt ? { tierExpiresAt: f.tierExpiresAt } : {}) } : prev))}
+                 />
+               )}
+ 
+@@ -7575,6 +7577,7 @@ const handleSignOut = async () => {
+                   cases={cases}
+                   hospitalSubscription={hospitalSubscription}
+                   handovers={handovers}
++                  onProfileRefreshed={(f) => setProfile((prev) => (prev ? { ...prev, ...(typeof f.aiCredits === "number" ? { aiCredits: f.aiCredits } : {}), ...(f.subscriptionTier ? { subscriptionTier: f.subscriptionTier } : {}), ...(f.tierExpiresAt ? { tierExpiresAt: f.tierExpiresAt } : {}) } : prev))}
+                   onOpenProfile={() => setShowOnboardingProfile(true)}
+                 />
+               )}
+diff --git a/src/components/CreditsPlanCard.tsx b/src/components/CreditsPlanCard.tsx
+new file mode 100644
+index 0000000..43760ae
+--- /dev/null
++++ b/src/components/CreditsPlanCard.tsx
+@@ -0,0 +1,222 @@
++import React, { useEffect, useRef, useState } from "react";
++import { doc, getDoc } from "firebase/firestore";
++import { auth, db } from "../firebase";
++import { PLAN_PRICING, CREDIT_COSTS, rupees, type CreditAction } from "../lib/pricing";
++import { creditLevel, planStatus, CREDIT_USE_LABELS } from "../lib/creditDisplay";
++
++export interface CreditsProfileFields {
++  aiCredits?: number;
++  subscriptionTier?: string;
++  tierExpiresAt?: string;
++}
++
++interface Props {
++  profile: CreditsProfileFields | null;
++  coveredByTeam: boolean;
++  teamName?: string;
++  /** Called when a fresh balance is read after a payment, so the rest of the app updates. */
++  onProfileRefreshed?: (fields: CreditsProfileFields) => void;
++}
++
++const loadRazorpayScript = (): Promise<boolean> =>
++  new Promise((resolve) => {
++    if ((window as any).Razorpay) return resolve(true);
++    const script = document.createElement("script");
++    script.src = "https://checkout.razorpay.com/v1/checkout.js";
++    script.onload = () => resolve(true);
++    script.onerror = () => resolve(false);
++    document.body.appendChild(script);
++  });
++
++export default function CreditsPlanCard({ profile, coveredByTeam, teamName, onProfileRefreshed }: Props) {
++  const [live, setLive] = useState<CreditsProfileFields | null>(null);
++  const [busyKey, setBusyKey] = useState<string | null>(null);
++  const [note, setNote] = useState<string>("");
++  const pollRef = useRef<number | null>(null);
++
++  useEffect(() => () => { if (pollRef.current) window.clearInterval(pollRef.current); }, []);
++
++  const view: CreditsProfileFields = { ...(profile || {}), ...(live || {}) };
++  const level = creditLevel(view.aiCredits);
++  const plan = planStatus(view.subscriptionTier, view.tierExpiresAt);
++
++  const readFresh = async (): Promise<CreditsProfileFields | null> => {
++    const uid = auth.currentUser?.uid;
++    if (!uid) return null;
++    const snap = await getDoc(doc(db, "users", uid));
++    if (!snap.exists()) return null;
++    const d: any = snap.data();
++    return { aiCredits: d.aiCredits, subscriptionTier: d.subscriptionTier, tierExpiresAt: d.tierExpiresAt };
++  };
++
++  const refreshNow = async () => {
++    try {
++      const f = await readFresh();
++      if (f) { setLive(f); onProfileRefreshed?.(f); setNote("Balance updated."); }
++    } catch { setNote("Could not refresh. Check your connection."); }
++  };
++
++  // After checkout closes, look for the server-granted credits for up to ~70 seconds.
++  const pollAfterPayment = (before: CreditsProfileFields) => {
++    if (pollRef.current) window.clearInterval(pollRef.current);
++    setNote("Payment received. Confirming with Razorpay...");
++    let tries = 0;
++    pollRef.current = window.setInterval(async () => {
++      tries++;
++      try {
++        const f = await readFresh();
++        const grew = f && ((Number(f.aiCredits) || 0) > (Number(before.aiCredits) || 0) || f.tierExpiresAt !== before.tierExpiresAt);
++        if (f && grew) {
++          setLive(f); onProfileRefreshed?.(f);
++          setNote("Credits added. Thank you.");
++          if (pollRef.current) window.clearInterval(pollRef.current);
++          return;
++        }
++      } catch { /* keep trying */ }
++      if (tries >= 18) {
++        if (pollRef.current) window.clearInterval(pollRef.current);
++        setNote("Still confirming. Your payment is safe; credits appear as soon as Razorpay confirms. Tap Refresh in a minute.");
++      }
++    }, 4000);
++  };
++
++  const startCheckout = async (planKey: string) => {
++    if (busyKey) return;
++    setBusyKey(planKey);
++    setNote("");
++    try {
++      const idToken = await auth.currentUser?.getIdToken();
++      const orderRes = await fetch("/api/payments/create-order", {
++        method: "POST",
++        headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
++        body: JSON.stringify({ planKey }),
++      });
++      if (!orderRes.ok) {
++        const err = await orderRes.json().catch(() => ({}));
++        throw new Error(err.error || "Could not start payment.");
++      }
++      const order = await orderRes.json();
++      if (!(await loadRazorpayScript())) throw new Error("Could not load Razorpay checkout.");
++      const before = { ...view };
++      const rzp = new (window as any).Razorpay({
++        key: order.keyId,
++        amount: order.amount,
++        currency: order.currency,
++        order_id: order.orderId,
++        name: "ErMate",
++        description: PLAN_PRICING[planKey]?.label || "ErMate",
++        // The browser callback never grants anything. Credits are added by the server once Razorpay confirms.
++        handler: () => pollAfterPayment(before),
++        modal: { ondismiss: () => setBusyKey(null) },
++        theme: { color: "#059669" },
++      });
++      rzp.open();
++    } catch (err: any) {
++      console.error("Checkout failed:", err);
++      setNote(err?.message || "Payment could not be started.");
++    } finally {
++      setTimeout(() => setBusyKey(null), 1500);
++    }
++  };
++
++  if (coveredByTeam) {
++    return (
++      <div data-testid="credits-plan-card" className="p-4 rounded-2xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/20 text-xs space-y-1">
++        <strong className="text-emerald-700 dark:text-emerald-400 block">Covered by your hospital team plan</strong>
++        <p className="text-slate-600 dark:text-slate-300">{teamName ? `${teamName} covers your AI features.` : "Your team covers your AI features."} No credits needed.</p>
++      </div>
++    );
++  }
++
++  const levelStyle =
++    level === "empty" ? "text-rose-600 dark:text-rose-400"
++    : level === "low" ? "text-amber-600 dark:text-amber-400"
++    : "text-emerald-600 dark:text-emerald-400";
++
++  return (
++    <div data-testid="credits-plan-card" className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 space-y-3 text-xs">
++      <div className="flex items-start justify-between gap-3">
++        <div>
++          <span className="text-[10px] uppercase text-slate-400 block">AI credits</span>
++          <strong data-testid="credits-balance" className={`text-2xl font-black ${levelStyle}`}>
++            {typeof view.aiCredits === "number" ? view.aiCredits : "—"}
++          </strong>
++        </div>
++        <div className="text-right">
++          <span className="text-[10px] uppercase text-slate-400 block">Plan</span>
++          <strong className="text-sm font-bold text-slate-900 dark:text-white block">{plan.label}</strong>
++          {plan.validTill && (
++            <span className="text-[10px] text-slate-500 dark:text-slate-400 block">
++              {plan.active ? `valid till ${plan.validTill}` : `ended ${plan.validTill}`}
++            </span>
++          )}
++        </div>
++      </div>
++
++      {level === "empty" && (
++        <div data-testid="credits-empty-notice" className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300">
++          AI credits finished. Manual entry, saving and printing still work. Recharge below to use AI again.
++        </div>
++      )}
++      {level === "low" && (
++        <div data-testid="credits-low-notice" className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-300">
++          Running low. Recharge below to keep using AI features.
++        </div>
++      )}
++
++      <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
++        Case sheet, saving, viewing, triage and printing are always free. Credits are used only when an AI action succeeds.
++      </p>
++
++      <details className="text-[11px] text-slate-500 dark:text-slate-400">
++        <summary className="cursor-pointer select-none font-semibold">What uses credits</summary>
++        <ul className="mt-1.5 space-y-0.5">
++          {CREDIT_USE_LABELS.map((g) => {
++            const cost = Math.max(...g.actions.map((a) => CREDIT_COSTS[a as CreditAction] || 0));
++            return <li key={g.label} className="flex justify-between gap-3"><span>{g.label}</span><span className="font-mono">{cost}</span></li>;
++          })}
++        </ul>
++      </details>
++
++      <div className="space-y-2 pt-1">
++        <button
++          type="button"
++          data-testid="buy-individual_pro_monthly"
++          disabled={!!busyKey}
++          onClick={() => startCheckout("individual_pro_monthly")}
++          className="w-full flex items-center justify-between gap-2 py-3 px-4 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white font-bold rounded-xl cursor-pointer"
++        >
++          <span className="text-left">
++            <span className="block text-xs">{PLAN_PRICING.individual_pro_monthly.label}</span>
++            <span className="block text-[10px] font-normal opacity-90">{PLAN_PRICING.individual_pro_monthly.credits} credits included</span>
++          </span>
++          <span className="text-sm">{rupees(PLAN_PRICING.individual_pro_monthly.amountPaise)}</span>
++        </button>
++        <div>
++          <span className="text-[10px] text-slate-400 uppercase block mb-1.5">Recharge</span>
++          <div className="grid grid-cols-3 gap-2">
++            {(["credits_refill_150", "credits_refill_350", "credits_refill_500"] as const).map((key) => (
++              <button
++                key={key}
++                type="button"
++                data-testid={`buy-${key}`}
++                disabled={!!busyKey}
++                onClick={() => startCheckout(key)}
++                className="py-2.5 px-2 border border-emerald-500 text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 disabled:opacity-60 rounded-xl font-bold cursor-pointer"
++              >
++                <span className="block text-xs">{rupees(PLAN_PRICING[key].amountPaise)}</span>
++                <span className="block text-[10px] font-normal">{PLAN_PRICING[key].credits} credits</span>
++              </button>
++            ))}
++          </div>
++        </div>
++        <p className="text-[10px] text-slate-400">One-time payment for one month. It does not renew automatically. Prices include GST.</p>
++      </div>
++
++      <div className="flex items-center justify-between gap-2">
++        <span data-testid="credits-note" className="text-[11px] text-slate-500 dark:text-slate-400">{note}</span>
++        <button type="button" onClick={refreshNow} className="text-[11px] font-bold text-indigo-600 dark:text-indigo-400 cursor-pointer bg-transparent border-none">Refresh</button>
++      </div>
++    </div>
++  );
++}
+diff --git a/src/components/GlobalHeader.tsx b/src/components/GlobalHeader.tsx
+index bd95afb..22c2d3b 100644
+--- a/src/components/GlobalHeader.tsx
++++ b/src/components/GlobalHeader.tsx
+@@ -1,3 +1,4 @@
++import { creditLevel } from "../lib/creditDisplay";
+ import React, { useState, useRef, useEffect } from "react";
+ import {
+   Activity,
+@@ -75,10 +76,13 @@ export interface GlobalHeaderProps {
+   onNavigateToTab: (tabId: string) => void;
+   onSignOut: () => void;
+   onOpenProfile?: () => void;
++  /** Verified hospital team members are not metered, so no credit chip is shown for them. */
++  coveredByTeam?: boolean;
+ }
+ 
+ export const GlobalHeader: React.FC<GlobalHeaderProps> = ({
+   profile,
++  coveredByTeam = false,
+   hospitalSubscription,
+   isDarkMode,
+   onToggleDarkMode,
+@@ -425,6 +429,27 @@ export const GlobalHeader: React.FC<GlobalHeaderProps> = ({
+             }}
+           />
+ 
++          {/* AI credits chip: always visible so the balance is never a surprise. Tap to recharge. */}
++          {!coveredByTeam && typeof profile?.aiCredits === "number" && (
++            <button
++              type="button"
++              data-testid="header-credit-chip"
++              onClick={() => onNavigateToTab("more")}
++              title="AI credits. Tap to view plan and recharge."
++              aria-label={`AI credits ${profile.aiCredits}. Open plan and recharge.`}
++              className={`h-8 px-2 flex items-center gap-1 rounded-lg border text-[11px] font-bold font-mono cursor-pointer ${
++                creditLevel(profile.aiCredits) === "empty"
++                  ? "border-rose-300 text-rose-600 bg-rose-50 dark:bg-rose-950/30 dark:border-rose-800 dark:text-rose-400"
++                  : creditLevel(profile.aiCredits) === "low"
++                    ? "border-amber-300 text-amber-700 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 dark:text-amber-400"
++                    : "border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300"
++              }`}
++            >
++              <span aria-hidden="true">✦</span>
++              <span>{profile.aiCredits}</span>
++            </button>
++          )}
++
+           {/* Real-time Notifications Bell */}
+           <div className="relative" ref={notificationsRef}>
+             <button
+diff --git a/src/components/MoreView.tsx b/src/components/MoreView.tsx
+index 78b79e3..10911e7 100644
+--- a/src/components/MoreView.tsx
++++ b/src/components/MoreView.tsx
+@@ -1,3 +1,4 @@
++import CreditsPlanCard from "./CreditsPlanCard";
+ import React, { useState, useEffect } from "react";
+ import { 
+   Building2, FileWarning, BookOpen, Users, 
+@@ -35,6 +36,8 @@ interface MoreViewProps {
+   cases?: ClinicalCase[];
+   hospitalSubscription?: { active: boolean; subscriptionTier: string } | null;
+   handovers?: any[];
++  /** Called with the fresh credit fields after a payment is confirmed. */
++  onProfileRefreshed?: (fields: { aiCredits?: number; subscriptionTier?: string; tierExpiresAt?: string }) => void;
+ }
+ 
+ export default function MoreView({
+@@ -53,6 +56,7 @@ export default function MoreView({
+   cases = [],
+   hospitalSubscription = null,
+   handovers = [],
++  onProfileRefreshed,
+ }: MoreViewProps) {
+   const isAdminUser = profile?.email?.toLowerCase().trim() === "varahgrp@gmail.com";
+   const isHOD = normalizedRole === "hod" || isAdminUser;
+@@ -701,6 +705,8 @@ export default function MoreView({
+             )}
+           </div>
+ 
++          <CreditsPlanCard profile={profile} coveredByTeam={isMembershipActive} teamName={activeHospitalName} onProfileRefreshed={onProfileRefreshed} />
++
+           {/* Details Grid */}
+           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+             <div className="p-3 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-100 dark:border-slate-800">
+diff --git a/src/components/ProfileSettingsView.tsx b/src/components/ProfileSettingsView.tsx
+index 2e08d14..115c3a4 100644
+--- a/src/components/ProfileSettingsView.tsx
++++ b/src/components/ProfileSettingsView.tsx
+@@ -1,4 +1,4 @@
+-import { PLAN_PRICING, rupees } from "../lib/pricing";
++import CreditsPlanCard from "./CreditsPlanCard";
+ import React, { useState, useEffect } from "react";
+ import { ConfirmModal } from "./shared/ConfirmModal";
+ import { 
+@@ -264,7 +264,6 @@ export default function ProfileSettingsView({
+   const [cardExpiry, setCardExpiry] = useState<string>("12/29");
+   const [cardCvv, setCardCvv] = useState<string>("123");
+   const [razorpayAmount, setRazorpayAmount] = useState<number>(0);
+-  const [buyingPlanKey, setBuyingPlanKey] = useState<string | null>(null);
+   const [razorpayPlanName, setRazorpayPlanName] = useState<string>("");
+   const [razorpayTier, setRazorpayTier] = useState<string>("");
+   const [razorpayCredits, setRazorpayCredits] = useState<number>(0);
+@@ -374,65 +373,6 @@ export default function ProfileSettingsView({
+     setInvitedMembers(prev => prev.filter(m => m.id !== id));
+   };
+ 
+-  const loadRazorpayScript = (): Promise<boolean> => {
+-  return new Promise((resolve) => {
+-    if ((window as any).Razorpay) return resolve(true);
+-    const script = document.createElement("script");
+-    script.src = "https://checkout.razorpay.com/v1/checkout.js";
+-    script.onload = () => resolve(true);
+-    script.onerror = () => resolve(false);
+-    document.body.appendChild(script);
+-  });
+-};
+-
+-const startRealCheckout = async (planKey: string) => {
+-  if (buyingPlanKey) return;
+-  setBuyingPlanKey(planKey);
+-  try {
+-    const idToken = await auth.currentUser?.getIdToken();
+-    const orderRes = await fetch("/api/payments/create-order", {
+-      method: "POST",
+-      headers: {
+-        "Content-Type": "application/json",
+-        Authorization: `Bearer ${idToken}`,
+-      },
+-      body: JSON.stringify({ planKey }),
+-    });
+-
+-    if (!orderRes.ok) {
+-      const err = await orderRes.json().catch(() => ({}));
+-      throw new Error(err.error || "Could not start payment.");
+-    }
+-    const order = await orderRes.json();
+-
+-    const scriptLoaded = await loadRazorpayScript();
+-    if (!scriptLoaded) throw new Error("Could not load Razorpay checkout.");
+-
+-    const rzp = new (window as any).Razorpay({
+-      key: order.keyId,
+-      amount: order.amount,
+-      currency: order.currency,
+-      order_id: order.orderId,
+-      name: "ErMate",
+-      description: PLAN_PRICING[planKey]?.label || "ErMate",
+-      // The browser callback never grants anything. Credits are added by the server once Razorpay confirms the payment.
+-      handler: function () {
+-        alert("Payment received. Credits are added as soon as the payment is confirmed (usually within a minute). Reopen this screen to see your balance.");
+-      },
+-      modal: { ondismiss: () => setBuyingPlanKey(null) },
+-      theme: { color: "#059669" },
+-    });
+-
+-    rzp.open();
+-  } catch (err: any) {
+-    console.error("Checkout failed:", err);
+-    alert(err.message || "Payment could not be started.");
+-  } finally {
+-    // The checkout window runs independently; allow another attempt shortly after it opens.
+-    setTimeout(() => setBuyingPlanKey(null), 1500);
+-  }
+-};
+-
+   // Toggle Shift Checked-In State
+   const handleToggleShift = async () => {
+     if (!setIsOnShift) return;
+@@ -2279,47 +2219,7 @@ const startRealCheckout = async (planKey: string) => {
+             </button>
+           </div>
+ 
+-          {!isTeam && (
+-            <div data-testid="individual-plan-purchase" className="bg-white dark:bg-[#182333] border border-slate-200 dark:border-slate-800 p-5 rounded-2xl space-y-3 text-xs">
+-              <div>
+-                <h4 className="text-xs font-black uppercase text-emerald-600 dark:text-emerald-400">Individual Pro</h4>
+-                <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed mt-1">
+-                  One-time payment for one month. It does not renew automatically. Prices include GST.
+-                </p>
+-              </div>
+-              <button
+-                type="button"
+-                data-testid="buy-individual_pro_monthly"
+-                disabled={!!buyingPlanKey}
+-                onClick={() => startRealCheckout("individual_pro_monthly")}
+-                className="w-full flex items-center justify-between gap-2 py-3 px-4 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white font-bold rounded-xl cursor-pointer"
+-              >
+-                <span className="text-left">
+-                  <span className="block text-xs">{PLAN_PRICING.individual_pro_monthly.label}</span>
+-                  <span className="block text-[10px] font-normal opacity-90">{PLAN_PRICING.individual_pro_monthly.credits} credits included</span>
+-                </span>
+-                <span className="text-sm">{rupees(PLAN_PRICING.individual_pro_monthly.amountPaise)}</span>
+-              </button>
+-              <div className="pt-1">
+-                <span className="text-[10px] text-slate-400 uppercase block mb-1.5">Need more credits? Recharge</span>
+-                <div className="grid grid-cols-3 gap-2">
+-                  {(["credits_refill_150", "credits_refill_350", "credits_refill_500"] as const).map((key) => (
+-                    <button
+-                      key={key}
+-                      type="button"
+-                      data-testid={`buy-${key}`}
+-                      disabled={!!buyingPlanKey}
+-                      onClick={() => startRealCheckout(key)}
+-                      className="py-2.5 px-2 border border-emerald-500 text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 disabled:opacity-60 rounded-xl font-bold cursor-pointer"
+-                    >
+-                      <span className="block text-xs">{rupees(PLAN_PRICING[key].amountPaise)}</span>
+-                      <span className="block text-[10px] font-normal">{PLAN_PRICING[key].credits} credits</span>
+-                    </button>
+-                  ))}
+-                </div>
+-              </div>
+-            </div>
+-          )}
++          <CreditsPlanCard profile={profile} coveredByTeam={isTeam} teamName={profile.hospital || undefined} />
+         </div>
+       );
+     } else if (selectedSubSection === "security" || selectedSubSection === "set-password") {
+diff --git a/src/lib/creditDisplay.ts b/src/lib/creditDisplay.ts
+new file mode 100644
+index 0000000..891b46d
+--- /dev/null
++++ b/src/lib/creditDisplay.ts
+@@ -0,0 +1,44 @@
++/** Display-only helpers for AI credits. The server owns the balance; nothing here grants or checks access. */
++export const LOW_CREDIT_THRESHOLD = 20;
++
++export type CreditLevel = "unknown" | "ok" | "low" | "empty";
++
++export function creditLevel(balance: unknown): CreditLevel {
++  if (typeof balance !== "number" || !Number.isFinite(balance)) return "unknown";
++  if (balance < 1) return "empty";
++  if (balance < LOW_CREDIT_THRESHOLD) return "low";
++  return "ok";
++}
++
++export function formatDay(iso: string | undefined | null): string {
++  const t = iso ? Date.parse(iso) : NaN;
++  if (!Number.isFinite(t)) return "";
++  return new Date(t).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
++}
++
++export interface PlanStatus {
++  label: "Free" | "Individual Pro" | "Individual Pro (expired)";
++  validTill: string; // formatted day, "" when none
++  active: boolean;
++}
++
++/** Tier + expiry shown to the user. Expiry is display-only for now; the server does not yet downgrade on expiry. */
++export function planStatus(tier: unknown, tierExpiresAt: unknown, now: number = Date.now()): PlanStatus {
++  const isPro = typeof tier === "string" && tier.toLowerCase().includes("individual pro");
++  if (!isPro) return { label: "Free", validTill: "", active: false };
++  const exp = typeof tierExpiresAt === "string" ? Date.parse(tierExpiresAt) : NaN;
++  if (Number.isFinite(exp) && exp < now) return { label: "Individual Pro (expired)", validTill: formatDay(tierExpiresAt as string), active: false };
++  return { label: "Individual Pro", validTill: Number.isFinite(exp) ? formatDay(tierExpiresAt as string) : "", active: true };
++}
++
++/** Human labels for what spends credits (grouped so the list stays short). */
++export const CREDIT_USE_LABELS: Array<{ label: string; actions: string[] }> = [
++  { label: "Voice transcription", actions: ["stt"] },
++  { label: "Dictation / pasted-sheet extraction", actions: ["scribe_chat", "scribe_extract", "voice_dictation", "voice_extract"] },
++  { label: "AI discharge draft", actions: ["ai_discharge", "discharge_summary"] },
++  { label: "MATE / case discussion, handover chat, reference, differentials, ABG", actions: ["case_discussion", "handover_chat", "em_reference", "decision_support", "differentials", "interpret_abg"] },
++  { label: "Document / photo scans", actions: ["vision_scan", "scan_mnemonic"] },
++  { label: "Rounds debrief", actions: ["rounds_debrief"] },
++  { label: "Handover & rota parsing", actions: ["handover_parse", "handover_compile", "parse_rota"] },
++  { label: "Lens report", actions: ["lens_report"] },
++];
+diff --git a/src/types.ts b/src/types.ts
+index 4375513..9df553a 100644
+--- a/src/types.ts
++++ b/src/types.ts
+@@ -725,6 +725,8 @@ export interface UserProfile {
+   aiCredits: number;
+   streak: number;
+   subscriptionTier: string;
++  /** ISO time when the paid Individual Pro month ends (display only; set by the payments webhook). */
++  tierExpiresAt?: string;
+   age?: number;
+   seededCases?: boolean;
+   seededTeam?: boolean;
+diff --git a/verify_credits_ui.ts b/verify_credits_ui.ts
+new file mode 100644
+index 0000000..09622c7
+--- /dev/null
++++ b/verify_credits_ui.ts
+@@ -0,0 +1,50 @@
++import { readFileSync } from "fs";
++import { creditLevel, planStatus, formatDay, LOW_CREDIT_THRESHOLD, CREDIT_USE_LABELS } from "./src/lib/creditDisplay";
++import { CREDIT_COSTS } from "./src/lib/pricing";
++
++let pass = 0, fail = 0;
++const t = (n: string, ok: boolean) => { ok ? pass++ : (fail++, console.log("FAIL", n)); };
++
++// A. levels
++t("unknown", creditLevel(undefined) === "unknown" && creditLevel("5") === "unknown" && creditLevel(NaN) === "unknown");
++t("empty at 0", creditLevel(0) === "empty" && creditLevel(-3) === "empty");
++t("low 1..19", creditLevel(1) === "low" && creditLevel(LOW_CREDIT_THRESHOLD - 1) === "low");
++t("ok at 20+", creditLevel(LOW_CREDIT_THRESHOLD) === "ok" && creditLevel(300) === "ok");
++
++// B. plan status
++const now = Date.parse("2026-10-20T00:00:00Z");
++t("free tier", planStatus("Free Standard", undefined, now).label === "Free" && !planStatus("Free Standard", undefined, now).active);
++t("pro active with date", planStatus("Individual Pro", "2026-11-19T10:00:00.000Z", now).active && /Nov/.test(planStatus("Individual Pro", "2026-11-19T10:00:00.000Z", now).validTill));
++t("pro expired", planStatus("Individual Pro", "2026-10-01T00:00:00Z", now).label === "Individual Pro (expired)" && !planStatus("Individual Pro", "2026-10-01T00:00:00Z", now).active);
++t("pro without expiry still shown active", planStatus("Individual Pro", undefined, now).active);
++t("bad date handled", formatDay("nope") === "" && formatDay(undefined) === "");
++
++// C. cost list covers every metered action exactly once
++const listed = CREDIT_USE_LABELS.flatMap(g => g.actions).sort();
++const all = Object.keys(CREDIT_COSTS).sort();
++t("what-uses-credits list covers every action once", JSON.stringify(listed) === JSON.stringify(all));
++
++// D. wiring
++const card = readFileSync("src/components/CreditsPlanCard.tsx", "utf8");
++const more = readFileSync("src/components/MoreView.tsx", "utf8");
++const psv = readFileSync("src/components/ProfileSettingsView.tsx", "utf8");
++const app = readFileSync("src/App.tsx", "utf8");
++const hdr = readFileSync("src/components/GlobalHeader.tsx", "utf8");
++const meter = readFileSync("server/services/creditMeter.ts", "utf8");
++t("More screen shows the credits card", /<CreditsPlanCard profile=\{profile\} coveredByTeam=\{isMembershipActive\}/.test(more));
++t("More screen refreshes app profile", /onProfileRefreshed=\{onProfileRefreshed\}/.test(more));
++t("both More/Profile tabs pass refresh handler", (app.match(/onProfileRefreshed=\{\(f\) =>/g) || []).length === 2);
++t("profile settings reuses the shared card", /<CreditsPlanCard/.test(psv) && !/startRealCheckout|loadRazorpayScript/.test(psv));
++t("only one checkout implementation", (card.match(/api\/payments\/create-order/g) || []).length === 1 && !/api\/payments\/create-order/.test(psv));
++t("team members see covered notice, no buy buttons", /if \(coveredByTeam\)/.test(card) && card.indexOf("if (coveredByTeam)") < card.indexOf('data-testid="buy-individual_pro_monthly"'));
++t("browser callback never grants", /handler: \(\) => pollAfterPayment/.test(card) && !/aiCredits\s*[:=]\s*[^;]*\+/.test(card));
++t("polls for confirmation after payment", /window\.setInterval/.test(card) && /tries >= 18/.test(card));
++t("empty + low notices", /credits-empty-notice/.test(card) && /credits-low-notice/.test(card));
++t("states free features stay free", /always free/.test(card) && /does not renew automatically/.test(card));
++t("header chip present and hidden for team", /header-credit-chip/.test(hdr) && /!coveredByTeam/.test(hdr));
++t("header chip opens More", /onNavigateToTab\("more"\)/.test(hdr));
++t("App passes coveredByTeam to header", /coveredByTeam=\{isVerifiedTeamUser\}/.test(app));
++t("server 402 message names a real screen", /More > Team & Subscription/.test(meter) && !/Profile > Subscription/.test(meter));
++t("UserProfile has tierExpiresAt", /tierExpiresAt\?: string/.test(readFileSync("src/types.ts", "utf8")));
++console.log(`${pass} passed, ${fail} failed`);
++process.exit(fail ? 1 : 0);
+diff --git a/verify_payments_individual_plan.ts b/verify_payments_individual_plan.ts
+index 3e8bd89..5e08cd8 100644
+--- a/verify_payments_individual_plan.ts
++++ b/verify_payments_individual_plan.ts
+@@ -107,7 +107,7 @@ const pay = (planKey: string, over: any = {}) => ({ id: "pay_1", order_id: "orde
+   // H. source guards
+   const route = readFileSync("server/routes/payments.ts", "utf8");
+   const ful = readFileSync("server/services/paymentFulfillment.ts", "utf8");
+-  const ui = readFileSync("src/components/ProfileSettingsView.tsx", "utf8");
++  const ui = readFileSync("src/components/CreditsPlanCard.tsx", "utf8");
+   const srv = readFileSync("server.ts", "utf8");
+   t("raw body registered before json", srv.indexOf('"/api/payments/webhook", express.raw') < srv.indexOf('app.use(express.json'));
+   t("route has no outside-transaction intent read", !/intentRef\.get\(\)/.test(route));
+@@ -115,8 +115,8 @@ const pay = (planKey: string, over: any = {}) => ({ id: "pay_1", order_id: "orde
+   t("route uses timing-safe verify", /verifyWebhookSignature/.test(route) && /timingSafeEqual/.test(ful));
+   t("route no longer holds its own price table", !/amountPaise:\s*\d/.test(route));
+   t("UI no annual toggle", !/"annual"/.test(ui));
+-  t("UI buttons call server keys", /startRealCheckout\("individual_pro_monthly"\)/.test(ui) && /credits_refill_150/.test(ui));
+-  t("UI never grants on success", !/aiCredits\s*[:=].*\+/.test(ui.slice(ui.indexOf("startRealCheckout = async"), ui.indexOf("startRealCheckout = async") + 1800)));
++  t("UI buttons call server keys", /startCheckout\("individual_pro_monthly"\)/.test(ui) && /credits_refill_150/.test(ui));
++  t("UI never grants on success", !/aiCredits\s*[:=].*\+/.test(ui.slice(ui.indexOf("startCheckout = async"), ui.indexOf("startCheckout = async") + 1800)));
+   t("UI says no auto-renewal", /does not renew automatically/.test(ui));
+   console.log(`${pass} passed, ${fail} failed`);
+   process.exit(fail ? 1 : 0);

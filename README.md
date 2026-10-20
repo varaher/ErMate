@@ -268,6 +268,9 @@ ErMate employs a dynamic role-based navigation hierarchy computed from `getNorma
 | `/test_phase3_rules.cjs` | 79-scenario emulator test suite validating full Phase-3 authorization matrix |
 | `/test_privilege_escalation_audit.cjs` | Privilege escalation audit test suite verifying strict closure of P1-P11 attack vectors and P12 shift persistence |
 | `/src/lib/firebase-admin.ts` | Named Firestore database Admin singleton (`ai-studio-ermate-c85078ba-126c-43fd-b799-a4aa8b82bf03`) |
+| `/src/components/CreditsPlanCard.tsx` | Shared component for credit balance display, plan status, low balance alerts, and Razorpay checkout polling |
+| `/src/lib/creditDisplay.ts` | Credit level evaluation (`creditLevel`), plan status formatting (`planStatus`), and categorized credit action labels |
+| `/verify_credits_ui.ts` | Verification suite for Credits UI levels, plan status, checkout wiring, header chip, and screen references |
 | `/src/lib/pricing.ts` | Single source of truth for ErMate individual pricing, credit tiers, and service credit costs |
 | `/server/services/creditMeter.ts` | Express middleware for server-side credit balance check and post-success deduction |
 | `/server/services/paymentFulfillment.ts` | Timing-safe Razorpay webhook HMAC verification and idempotent transactional payment fulfillment |

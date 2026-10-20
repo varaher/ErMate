@@ -6856,6 +6856,7 @@ const handleSignOut = async () => {
         onNavigateToTab={navigateToTab}
         onSignOut={handleSignOut}
         onOpenProfile={() => setShowOnboardingProfile(true)}
+        coveredByTeam={isVerifiedTeamUser}
       />
 
       {/* Persistent non-obnoxious banner when profile is incomplete */}
@@ -7484,6 +7485,7 @@ const handleSignOut = async () => {
                   cases={cases}
                   hospitalSubscription={hospitalSubscription}
                   handovers={handovers}
+                  onProfileRefreshed={(f) => setProfile((prev) => (prev ? { ...prev, ...(typeof f.aiCredits === "number" ? { aiCredits: f.aiCredits } : {}), ...(f.subscriptionTier ? { subscriptionTier: f.subscriptionTier } : {}), ...(f.tierExpiresAt ? { tierExpiresAt: f.tierExpiresAt } : {}) } : prev))}
                 />
               )}
 
@@ -7575,6 +7577,7 @@ const handleSignOut = async () => {
                   cases={cases}
                   hospitalSubscription={hospitalSubscription}
                   handovers={handovers}
+                  onProfileRefreshed={(f) => setProfile((prev) => (prev ? { ...prev, ...(typeof f.aiCredits === "number" ? { aiCredits: f.aiCredits } : {}), ...(f.subscriptionTier ? { subscriptionTier: f.subscriptionTier } : {}), ...(f.tierExpiresAt ? { tierExpiresAt: f.tierExpiresAt } : {}) } : prev))}
                   onOpenProfile={() => setShowOnboardingProfile(true)}
                 />
               )}

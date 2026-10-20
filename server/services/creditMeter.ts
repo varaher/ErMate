@@ -83,7 +83,7 @@ export function meterCredits(action: CreditAction, getDb: () => any) {
         return res.status(402).json({
           success: false,
           code: "INSUFFICIENT_CREDITS",
-          error: "AI credits finished. Your case sheet, saving and printing still work. Recharge in Profile > Subscription to use AI features.",
+          error: "AI credits finished. Your case sheet, saving and printing still work. Recharge in More > Team & Subscription to use AI features.",
           balance: decision.balance,
           required: decision.required,
         });

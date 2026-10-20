@@ -1,3 +1,4 @@
+import { creditLevel } from "../lib/creditDisplay";
 import React, { useState, useRef, useEffect } from "react";
 import {
   Activity,
@@ -75,10 +76,13 @@ export interface GlobalHeaderProps {
   onNavigateToTab: (tabId: string) => void;
   onSignOut: () => void;
   onOpenProfile?: () => void;
+  /** Verified hospital team members are not metered, so no credit chip is shown for them. */
+  coveredByTeam?: boolean;
 }
 
 export const GlobalHeader: React.FC<GlobalHeaderProps> = ({
   profile,
+  coveredByTeam = false,
   hospitalSubscription,
   isDarkMode,
   onToggleDarkMode,
@@ -424,6 +428,27 @@ export const GlobalHeader: React.FC<GlobalHeaderProps> = ({
               }
             }}
           />
+
+          {/* AI credits chip: always visible so the balance is never a surprise. Tap to recharge. */}
+          {!coveredByTeam && typeof profile?.aiCredits === "number" && (
+            <button
+              type="button"
+              data-testid="header-credit-chip"
+              onClick={() => onNavigateToTab("more")}
+              title="AI credits. Tap to view plan and recharge."
+              aria-label={`AI credits ${profile.aiCredits}. Open plan and recharge.`}
+              className={`h-8 px-2 flex items-center gap-1 rounded-lg border text-[11px] font-bold font-mono cursor-pointer ${
+                creditLevel(profile.aiCredits) === "empty"
+                  ? "border-rose-300 text-rose-600 bg-rose-50 dark:bg-rose-950/30 dark:border-rose-800 dark:text-rose-400"
+                  : creditLevel(profile.aiCredits) === "low"
+                    ? "border-amber-300 text-amber-700 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 dark:text-amber-400"
+                    : "border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300"
+              }`}
+            >
+              <span aria-hidden="true">✦</span>
+              <span>{profile.aiCredits}</span>
+            </button>
+          )}
 
           {/* Real-time Notifications Bell */}
           <div className="relative" ref={notificationsRef}>

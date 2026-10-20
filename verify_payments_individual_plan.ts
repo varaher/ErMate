@@ -107,7 +107,7 @@ const pay = (planKey: string, over: any = {}) => ({ id: "pay_1", order_id: "orde
   // H. source guards
   const route = readFileSync("server/routes/payments.ts", "utf8");
   const ful = readFileSync("server/services/paymentFulfillment.ts", "utf8");
-  const ui = readFileSync("src/components/ProfileSettingsView.tsx", "utf8");
+  const ui = readFileSync("src/components/CreditsPlanCard.tsx", "utf8");
   const srv = readFileSync("server.ts", "utf8");
   t("raw body registered before json", srv.indexOf('"/api/payments/webhook", express.raw') < srv.indexOf('app.use(express.json'));
   t("route has no outside-transaction intent read", !/intentRef\.get\(\)/.test(route));
@@ -115,8 +115,8 @@ const pay = (planKey: string, over: any = {}) => ({ id: "pay_1", order_id: "orde
   t("route uses timing-safe verify", /verifyWebhookSignature/.test(route) && /timingSafeEqual/.test(ful));
   t("route no longer holds its own price table", !/amountPaise:\s*\d/.test(route));
   t("UI no annual toggle", !/"annual"/.test(ui));
-  t("UI buttons call server keys", /startRealCheckout\("individual_pro_monthly"\)/.test(ui) && /credits_refill_150/.test(ui));
-  t("UI never grants on success", !/aiCredits\s*[:=].*\+/.test(ui.slice(ui.indexOf("startRealCheckout = async"), ui.indexOf("startRealCheckout = async") + 1800)));
+  t("UI buttons call server keys", /startCheckout\("individual_pro_monthly"\)/.test(ui) && /credits_refill_150/.test(ui));
+  t("UI never grants on success", !/aiCredits\s*[:=].*\+/.test(ui.slice(ui.indexOf("startCheckout = async"), ui.indexOf("startCheckout = async") + 1800)));
   t("UI says no auto-renewal", /does not renew automatically/.test(ui));
   console.log(`${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);

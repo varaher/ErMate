@@ -725,6 +725,8 @@ export interface UserProfile {
   aiCredits: number;
   streak: number;
   subscriptionTier: string;
+  /** ISO time when the paid Individual Pro month ends (display only; set by the payments webhook). */
+  tierExpiresAt?: string;
   age?: number;
   seededCases?: boolean;
   seededTeam?: boolean;

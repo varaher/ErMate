@@ -1,4 +1,4 @@
-import { PLAN_PRICING, rupees } from "../lib/pricing";
+import CreditsPlanCard from "./CreditsPlanCard";
 import React, { useState, useEffect } from "react";
 import { ConfirmModal } from "./shared/ConfirmModal";
 import { 
@@ -264,7 +264,6 @@ export default function ProfileSettingsView({
   const [cardExpiry, setCardExpiry] = useState<string>("12/29");
   const [cardCvv, setCardCvv] = useState<string>("123");
   const [razorpayAmount, setRazorpayAmount] = useState<number>(0);
-  const [buyingPlanKey, setBuyingPlanKey] = useState<string | null>(null);
   const [razorpayPlanName, setRazorpayPlanName] = useState<string>("");
   const [razorpayTier, setRazorpayTier] = useState<string>("");
   const [razorpayCredits, setRazorpayCredits] = useState<number>(0);
@@ -373,65 +372,6 @@ export default function ProfileSettingsView({
   const handleRemoveMember = (id: string) => {
     setInvitedMembers(prev => prev.filter(m => m.id !== id));
   };
-
-  const loadRazorpayScript = (): Promise<boolean> => {
-  return new Promise((resolve) => {
-    if ((window as any).Razorpay) return resolve(true);
-    const script = document.createElement("script");
-    script.src = "https://checkout.razorpay.com/v1/checkout.js";
-    script.onload = () => resolve(true);
-    script.onerror = () => resolve(false);
-    document.body.appendChild(script);
-  });
-};
-
-const startRealCheckout = async (planKey: string) => {
-  if (buyingPlanKey) return;
-  setBuyingPlanKey(planKey);
-  try {
-    const idToken = await auth.currentUser?.getIdToken();
-    const orderRes = await fetch("/api/payments/create-order", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${idToken}`,
-      },
-      body: JSON.stringify({ planKey }),
-    });
-
-    if (!orderRes.ok) {
-      const err = await orderRes.json().catch(() => ({}));
-      throw new Error(err.error || "Could not start payment.");
-    }
-    const order = await orderRes.json();
-
-    const scriptLoaded = await loadRazorpayScript();
-    if (!scriptLoaded) throw new Error("Could not load Razorpay checkout.");
-
-    const rzp = new (window as any).Razorpay({
-      key: order.keyId,
-      amount: order.amount,
-      currency: order.currency,
-      order_id: order.orderId,
-      name: "ErMate",
-      description: PLAN_PRICING[planKey]?.label || "ErMate",
-      // The browser callback never grants anything. Credits are added by the server once Razorpay confirms the payment.
-      handler: function () {
-        alert("Payment received. Credits are added as soon as the payment is confirmed (usually within a minute). Reopen this screen to see your balance.");
-      },
-      modal: { ondismiss: () => setBuyingPlanKey(null) },
-      theme: { color: "#059669" },
-    });
-
-    rzp.open();
-  } catch (err: any) {
-    console.error("Checkout failed:", err);
-    alert(err.message || "Payment could not be started.");
-  } finally {
-    // The checkout window runs independently; allow another attempt shortly after it opens.
-    setTimeout(() => setBuyingPlanKey(null), 1500);
-  }
-};
 
   // Toggle Shift Checked-In State
   const handleToggleShift = async () => {
@@ -2279,47 +2219,7 @@ const startRealCheckout = async (planKey: string) => {
             </button>
           </div>
 
-          {!isTeam && (
-            <div data-testid="individual-plan-purchase" className="bg-white dark:bg-[#182333] border border-slate-200 dark:border-slate-800 p-5 rounded-2xl space-y-3 text-xs">
-              <div>
-                <h4 className="text-xs font-black uppercase text-emerald-600 dark:text-emerald-400">Individual Pro</h4>
-                <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed mt-1">
-                  One-time payment for one month. It does not renew automatically. Prices include GST.
-                </p>
-              </div>
-              <button
-                type="button"
-                data-testid="buy-individual_pro_monthly"
-                disabled={!!buyingPlanKey}
-                onClick={() => startRealCheckout("individual_pro_monthly")}
-                className="w-full flex items-center justify-between gap-2 py-3 px-4 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white font-bold rounded-xl cursor-pointer"
-              >
-                <span className="text-left">
-                  <span className="block text-xs">{PLAN_PRICING.individual_pro_monthly.label}</span>
-                  <span className="block text-[10px] font-normal opacity-90">{PLAN_PRICING.individual_pro_monthly.credits} credits included</span>
-                </span>
-                <span className="text-sm">{rupees(PLAN_PRICING.individual_pro_monthly.amountPaise)}</span>
-              </button>
-              <div className="pt-1">
-                <span className="text-[10px] text-slate-400 uppercase block mb-1.5">Need more credits? Recharge</span>
-                <div className="grid grid-cols-3 gap-2">
-                  {(["credits_refill_150", "credits_refill_350", "credits_refill_500"] as const).map((key) => (
-                    <button
-                      key={key}
-                      type="button"
-                      data-testid={`buy-${key}`}
-                      disabled={!!buyingPlanKey}
-                      onClick={() => startRealCheckout(key)}
-                      className="py-2.5 px-2 border border-emerald-500 text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 disabled:opacity-60 rounded-xl font-bold cursor-pointer"
-                    >
-                      <span className="block text-xs">{rupees(PLAN_PRICING[key].amountPaise)}</span>
-                      <span className="block text-[10px] font-normal">{PLAN_PRICING[key].credits} credits</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
+          <CreditsPlanCard profile={profile} coveredByTeam={isTeam} teamName={profile.hospital || undefined} />
         </div>
       );
     } else if (selectedSubSection === "security" || selectedSubSection === "set-password") {

@@ -45,6 +45,23 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-20] — ErMate: Shared Credits Plan Card, Header Credit Chip & Live Refresh (CREDITS-UI-AND-HEADER-CHIP-V1)
+- **Shared Credits Plan Card (`src/components/CreditsPlanCard.tsx`)**:
+  - Unified credit balance, plan status (`planStatus`), low/empty alerts, and recharge options into a reusable component.
+  - Replaces custom checkout implementations in `ProfileSettingsView` and integrates into `MoreView` ("More > Team & Subscription").
+  - Post-payment confirmation polling (`pollAfterPayment`): checks Firestore for balance increment up to 70 seconds after checkout closes.
+  - Hospital team plan guard: verified team members see covered notice without recharge buttons.
+- **Header AI Credit Chip (`src/components/GlobalHeader.tsx`, `src/App.tsx`)**:
+  - Always-visible credit indicator in the top navigation bar (`data-testid="header-credit-chip"`) showing live credit balance with status-based coloring (empty: rose, low: amber, normal: neutral).
+  - Tapping the chip navigates directly to `More` tab for plan management.
+  - Hidden automatically for verified team members (`coveredByTeam={isVerifiedTeamUser}`).
+- **Real-Time App Balance Refresh (`src/App.tsx`, `src/components/MoreView.tsx`)**:
+  - Added `onProfileRefreshed` callback updating top-level `profile.aiCredits`, `subscriptionTier`, and `tierExpiresAt` immediately after payment confirmation.
+- **Server 402 Error Guidance (`server/services/creditMeter.ts`)**:
+  - Updated 402 error message to direct clinicians accurately to `"More > Team & Subscription"` instead of legacy paths.
+- **Verification (`verify_credits_ui.ts`, `verify_payments_individual_plan.ts`)**:
+  - Added 25 automated tests in `verify_credits_ui.ts` (100% pass) and updated `verify_payments_individual_plan.ts` (38 / 38 pass).
+
 ### [2026-10-20] — ErMate: Individual Pro Subscription, Credit Metering & Payment Fulfillment Hardening (PAYMENTS-CREDIT-METER-V1)
 - **Server-Side Credit Metering (`server/services/creditMeter.ts`, `server.ts`, `server/routes/extraction.routes.ts`)**:
   - Implemented `meterCredits` middleware protecting AI and compute endpoints (`/api/sarvam-asr`, `/api/sarvam/transcribe`, `/api/sarvam/batch-transcribe`, `/api/voice/transcribe`, `/api/interpret-abg`, `/api/clinical-decision-support`, `/api/lens-report`, `/api/scribe-extract`, `/api/handover/parse-structured`, `/api/handover-chat`, `/api/ai-discharge`, `/api/mortality-audit/generate`).
