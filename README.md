@@ -268,6 +268,11 @@ ErMate employs a dynamic role-based navigation hierarchy computed from `getNorma
 | `/test_phase3_rules.cjs` | 79-scenario emulator test suite validating full Phase-3 authorization matrix |
 | `/test_privilege_escalation_audit.cjs` | Privilege escalation audit test suite verifying strict closure of P1-P11 attack vectors and P12 shift persistence |
 | `/src/lib/firebase-admin.ts` | Named Firestore database Admin singleton (`ai-studio-ermate-c85078ba-126c-43fd-b799-a4aa8b82bf03`) |
+| `/src/lib/pricing.ts` | Single source of truth for ErMate individual pricing, credit tiers, and service credit costs |
+| `/server/services/creditMeter.ts` | Express middleware for server-side credit balance check and post-success deduction |
+| `/server/services/paymentFulfillment.ts` | Timing-safe Razorpay webhook HMAC verification and idempotent transactional payment fulfillment |
+| `/verify_credit_metering.ts` | Automated test suite for credit metering decisions, deductions, and exemptions |
+| `/verify_payments_individual_plan.ts` | Automated test suite for Razorpay payment fulfillment, webhook signatures, and tier extension |
 | `/src/utils/logbookSync.ts` | Client-side direct Firestore sync for clinician logbook entries with de-identification and permission handling |
 | `/verify_logbook_sync.ts` | P0 verification suite for client logbook direct sync, security rules, and server fallback |
 | `/verify_casesheet_no_invented_values.ts` | Verification suite for Case Sheet zero-invented-vitals honesty and normal exam decoupling |

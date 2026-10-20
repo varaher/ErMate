@@ -14,6 +14,8 @@ import {
 import { generateDischargeSummary as generateEMRDischargeSummary } from '../dischargeSummary.ts';
 import { requireAuth, type AuthRequest } from '../../src/middleware/auth.ts';
 import { deidentifyText } from '../deidentify.ts';
+import { meterCredits } from '../services/creditMeter.ts';
+import { db } from '../../src/lib/firebase-admin.ts';
 const router = Router();
 
 // ── Route 1: Voice dictation → case extraction ────────────────
@@ -21,6 +23,7 @@ const router = Router();
 router.post(
   '/api/voice/extract-clinical',
   requireAuth,
+  meterCredits('voice_extract', () => db),
   async (req: AuthRequest, res: Response) => {
     const transcript = req.body.transcript || req.body.dictation;
 
@@ -52,6 +55,7 @@ router.post(
 router.post(
   '/api/handover/parse-structured',
   requireAuth,
+  meterCredits('handover_parse', () => db),
   async (req: AuthRequest, res: Response) => {
     const { image, mimeType, rawText, doctorName, patientName } = req.body;
 
@@ -169,6 +173,7 @@ router.post(
 router.post(
   '/api/discharge-summary',
   requireAuth,
+  meterCredits('discharge_summary', () => db),
   async (req: AuthRequest, res: Response) => {
     const { caseData } = req.body;
 
@@ -193,6 +198,7 @@ router.post(
 router.post(
   '/api/discharge-summary/generate',
   requireAuth,
+  meterCredits('discharge_summary', () => db),
   async (req: AuthRequest, res: Response) => {
     const { rawText } = req.body;
 
@@ -219,6 +225,7 @@ router.post(
 router.post(
   '/api/differentials',
   requireAuth,
+  meterCredits('differentials', () => db),
   async (req: AuthRequest, res: Response) => {
     const { caseData } = req.body;
 

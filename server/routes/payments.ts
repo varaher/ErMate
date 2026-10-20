@@ -3,15 +3,12 @@ import crypto from "crypto";
 import { getRazorpayClient, RAZORPAY_ENABLED } from "../services/razorpayClient.ts";
 import { db } from "../../src/lib/firebase-admin.ts"; // using the actual path
 import { requireAuth, type AuthRequest } from "../../src/middleware/auth.ts"; // using the actual path
+import { PLAN_PRICING } from "../../src/lib/pricing.ts";
+import { verifyWebhookSignature, fulfillCapturedPayment } from "../services/paymentFulfillment.ts";
 
 const router = Router();
 
-// Canonical, server-side price table. NEVER accept amount from the client.
-const PLAN_PRICING: Record<string, { amountPaise: number; credits: number; label: string }> = {
-  individual_pro_monthly: { amountPaise: 119900, credits: 1500, label: "Individual Pro Plan (Monthly)" },
-  individual_pro_annual:  { amountPaise: 999000, credits: 1500, label: "Individual Pro Plan (Annual)" },
-  credits_refill_150:     { amountPaise: 29900,  credits: 150,  label: "150 Scribe Credits Refill" },
-};
+// Canonical, server-side price table lives in src/lib/pricing.ts (shared with the UI for display only).
 
 /**
  * POST /api/payments/create-order
@@ -25,7 +22,7 @@ router.post("/create-order", requireAuth, async (req: AuthRequest, res: Response
   }
 
   const { planKey } = req.body;
-  const plan = PLAN_PRICING[planKey];
+  const plan = typeof planKey === "string" && Object.prototype.hasOwnProperty.call(PLAN_PRICING, planKey) ? PLAN_PRICING[planKey] : undefined;
   if (!plan) {
     return res.status(400).json({ error: "Invalid plan selected." });
   }
@@ -55,6 +52,7 @@ router.post("/create-order", requireAuth, async (req: AuthRequest, res: Response
       planKey,
       amountPaise: plan.amountPaise,
       credits: plan.credits,
+      currency: "INR",
       status: "created",
       createdAt: new Date().toISOString(),
     });
@@ -85,63 +83,40 @@ router.post("/webhook", async (req: Request, res: Response) => {
     return res.status(500).send("Webhook not configured.");
   }
 
-  const signature = req.headers["x-razorpay-signature"] as string;
-  const rawBody = req.body; // must be Buffer — see express.raw() note above
+  const rawBody = req.body; // Buffer, from express.raw() registered before express.json()
+  if (!Buffer.isBuffer(rawBody)) {
+    console.error("Razorpay webhook body is not a raw Buffer; check middleware order.");
+    return res.status(400).send("Bad request.");
+  }
 
-  const expectedSignature = crypto
-    .createHmac("sha256", webhookSecret)
-    .update(rawBody)
-    .digest("hex");
-
-  if (expectedSignature !== signature) {
+  const signature = req.headers["x-razorpay-signature"] as string | undefined;
+  if (!verifyWebhookSignature(rawBody, signature, webhookSecret)) {
     console.warn("Razorpay webhook signature mismatch — possible spoofed request.");
     return res.status(400).send("Invalid signature.");
   }
 
-  const event = JSON.parse(rawBody.toString());
-
-  if (event.event === "payment.captured") {
-    const payment = event.payload.payment.entity;
-    const orderId = payment.order_id;
-
-    const intentRef = db.collection("paymentIntents").doc(orderId);
-    const intentSnap = await intentRef.get();
-
-    if (!intentSnap.exists) {
-      console.error(`No paymentIntent found for order ${orderId} — ignoring.`);
-      return res.status(200).send("OK"); // ack anyway so Razorpay stops retrying
-    }
-
-    const intent = intentSnap.data()!;
-
-    if (intent.status === "fulfilled") {
-      // Idempotency guard — webhook can be delivered more than once.
-      return res.status(200).send("OK");
-    }
-
-    const userRef = db.collection("users").doc(intent.uid);
-    await db.runTransaction(async (tx) => {
-      const userSnap = await tx.get(userRef);
-      if (!userSnap.exists) throw new Error(`User ${intent.uid} not found`);
-      const currentCredits = userSnap.data()?.aiCredits || 0;
-
-      tx.update(userRef, {
-        aiCredits: currentCredits + intent.credits,
-        subscriptionTier: intent.planKey.startsWith("individual_pro")
-          ? "Individual Pro"
-          : userSnap.data()?.subscriptionTier,
-      });
-
-      tx.update(intentRef, {
-        status: "fulfilled",
-        fulfilledAt: new Date().toISOString(),
-        razorpayPaymentId: payment.id,
-      });
-    });
-    console.log(`Payment fulfilled for uid ${intent.uid}, order ${orderId}`);
+  let event: any;
+  try {
+    event = JSON.parse(rawBody.toString("utf8"));
+  } catch {
+    return res.status(400).send("Invalid payload.");
   }
 
-  return res.status(200).send("OK");
+  if (event?.event !== "payment.captured") return res.status(200).send("OK");
+
+  try {
+    const payment = event.payload?.payment?.entity;
+    const result = await fulfillCapturedPayment(db, payment);
+    if (result.status === "fulfilled") console.log(`Payment fulfilled: order ${payment.order_id}`);
+    else if (result.status === "mismatch") console.error(`Payment ${payment?.id} NOT fulfilled: ${result.reason}`);
+    else if (result.status === "unknown_order") console.error(`No paymentIntent for order ${payment?.order_id} — ignoring.`);
+    // no_user: return 500 so Razorpay retries after the account exists / support reconciles
+    if (result.status === "no_user") return res.status(500).send("User not found.");
+    return res.status(200).send("OK");
+  } catch (err) {
+    console.error("Webhook fulfillment failed:", err);
+    return res.status(500).send("Fulfillment error."); // Razorpay will retry; fulfillment is idempotent
+  }
 });
 
 export default router;

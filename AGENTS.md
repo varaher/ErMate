@@ -45,6 +45,22 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-20] — ErMate: Individual Pro Subscription, Credit Metering & Payment Fulfillment Hardening (PAYMENTS-CREDIT-METER-V1)
+- **Server-Side Credit Metering (`server/services/creditMeter.ts`, `server.ts`, `server/routes/extraction.routes.ts`)**:
+  - Implemented `meterCredits` middleware protecting AI and compute endpoints (`/api/sarvam-asr`, `/api/sarvam/transcribe`, `/api/sarvam/batch-transcribe`, `/api/voice/transcribe`, `/api/interpret-abg`, `/api/clinical-decision-support`, `/api/lens-report`, `/api/scribe-extract`, `/api/handover/parse-structured`, `/api/handover-chat`, `/api/ai-discharge`, `/api/mortality-audit/generate`).
+  - Stored credit balance is read server-side from Firestore (`users/{uid}.aiCredits`); platform admin (`varahgrp@gmail.com`) is exempt from deduction.
+  - Non-blocking clinical safeguard: if user balance lookup fails due to transient Firestore error, requests proceed to prevent blocking urgent patient care.
+  - Only genuine successes (HTTP 200 with valid clinical output) are charged. Upstream vendor errors, model failovers, or 4xx/5xx failures are strictly free.
+- **Single Source of Truth Pricing & Payment Fulfillment (`src/lib/pricing.ts`, `server/services/paymentFulfillment.ts`, `server/routes/payments.ts`)**:
+  - Authoritative pricing table in paise including GST (`individual_pro_monthly`: ₹600 / 300 credits / 30 days; `credits_refill_150`: ₹300 / 150 credits; `credits_refill_350`: ₹700 / 350 credits; `credits_refill_500`: ₹1000 / 500 credits). Flat ₹2/credit. No auto-renewal.
+  - Constant-time HMAC SHA-256 webhook signature verification (`verifyWebhookSignature`).
+  - Idempotent transactional fulfillment (`fulfillCapturedPayment`): updates `users/{uid}.aiCredits`, extends or sets `tierExpiresAt` for Individual Pro, writes immutable `creditLedger/{paymentId}`, and marks `paymentIntents/{orderId}` as fulfilled. Concurrent duplicate webhooks are safely ignored.
+- **Client Profile & Billing Hardening (`src/components/ProfileSettingsView.tsx`)**:
+  - Removed client-side billing period toggle and client-supplied pricing logic.
+  - Purchases invoke server keys directly via `startRealCheckout(planKey)`. The client never calculates or grants credits on success.
+- **Verification (`verify_credit_metering.ts`, `verify_payments_individual_plan.ts`)**:
+  - Added 59 automated tests in `verify_credit_metering.ts` and 38 automated tests in `verify_payments_individual_plan.ts` with 0 failures (97 total).
+
 ### [2026-10-20] — ErMate: Case Sheet Layout Prioritization, IV Access Honesty & ABG Streamlining (CASESHEET-LAYOUT-ABG-V1)
 - **Complaints & Demographics Layout Prioritization (`src/components/CaseSheetView.tsx`)**:
   - Moved Presenting Chief Complaint up front as the first input field in the Chief Complaints tab for rapid intake.

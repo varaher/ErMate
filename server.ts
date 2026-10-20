@@ -76,6 +76,7 @@ import { executeCaseDiscussionWithFailover, executeRoundsDebriefWithFailover } f
 // Load environment variables
 dotenv.config();
 
+import { meterCredits } from "./server/services/creditMeter.ts";
 import paymentsRouter from "./server/routes/payments.ts";
 const SCRIBE_EXTRACTION_GUARDRAILS = `
 
@@ -561,7 +562,7 @@ async function performTranscription(file: Express.Multer.File, languageCode: str
 // 4a. Legacy endpoint proxy (Layer 3 compliant)
 
 
-app.post("/api/sarvam-asr", requireAuth, upload.single("file"), async (req, res) => {
+app.post("/api/sarvam-asr", requireAuth, meterCredits("stt", () => firestoreAdmin), upload.single("file"), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ success: false, error: "No audio file provided." });
   }
@@ -583,7 +584,7 @@ app.post("/api/sarvam-asr", requireAuth, upload.single("file"), async (req, res)
 
 
 // Requested /api/sarvam/transcribe endpoint
-app.post("/api/sarvam/transcribe", requireAuth, upload.single("file"), async (req, res) => {
+app.post("/api/sarvam/transcribe", requireAuth, meterCredits("stt", () => firestoreAdmin), upload.single("file"), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ success: false, error: "No audio file provided." });
   }
@@ -605,7 +606,7 @@ app.post("/api/sarvam/transcribe", requireAuth, upload.single("file"), async (re
 
 
 // 4c. True Batch STT Fallback
-app.post("/api/sarvam/batch-transcribe", requireAuth, upload.single("file"), async (req, res) => {
+app.post("/api/sarvam/batch-transcribe", requireAuth, meterCredits("stt", () => firestoreAdmin), upload.single("file"), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ success: false, error: "No audio file provided." });
   }
@@ -624,7 +625,7 @@ app.post("/api/sarvam/batch-transcribe", requireAuth, upload.single("file"), asy
 
 
 // 4b. Upgraded Unified Transcription Endpoint (Layer 3)
-app.post("/api/voice/transcribe", requireAuth, upload.single("file"), async (req, res) => {
+app.post("/api/voice/transcribe", requireAuth, meterCredits("stt", () => firestoreAdmin), upload.single("file"), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ success: false, error: "No audio file provided." });
   }
@@ -716,7 +717,7 @@ Return ONLY a JSON object:
 // 1.5. Lens & Eye / Airway Bedside AI Diagnostic Report Generator
 
 // ABG Interpretation
-app.post("/api/interpret-abg", requireAuth, async (req: AuthRequest, res) => {
+app.post("/api/interpret-abg", requireAuth, meterCredits("interpret_abg", () => firestoreAdmin), async (req: AuthRequest, res) => {
   const { abgValues, patientContext } = req.body;
   try {
     const interpretation = await interpretABG(abgValues, patientContext);
@@ -737,7 +738,7 @@ app.post("/api/interpret-abg", requireAuth, async (req: AuthRequest, res) => {
 
 
 // 1. AI Clinical Decision Support (CDS) / Differential Diagnosis (Locked to Claude Sonnet)
-app.post("/api/clinical-decision-support", requireAuth, async (req: AuthRequest, res) => {
+app.post("/api/clinical-decision-support", requireAuth, meterCredits("decision_support", () => firestoreAdmin), async (req: AuthRequest, res) => {
   const { patient, history, vitals, primaryAssessment } = req.body;
   const prompt = `
     You are an Emergency Medicine expert Clinical Decision Support assistant (Claude Sonnet).
@@ -790,7 +791,7 @@ app.post("/api/clinical-decision-support", requireAuth, async (req: AuthRequest,
   }
 });
 
-app.post("/api/lens-report", requireAuth, async (req: AuthRequest, res) => {
+app.post("/api/lens-report", requireAuth, meterCredits("lens_report", () => firestoreAdmin), async (req: AuthRequest, res) => {
   const { pupilSize, activeFilter, activeOverlay, mallampatiClass, clinicalObservations } = req.body;
 
   try {
@@ -880,7 +881,7 @@ app.post("/api/lens-report", requireAuth, async (req: AuthRequest, res) => {
 
 
 // 2. AI Voice Dictation Parser (GPT-4o-mini Primary → Claude Haiku Fallback. NOT Gemini.)
-app.post("/api/voice-dictation", requireAuth, async (req: AuthRequest, res) => {
+app.post("/api/voice-dictation", requireAuth, meterCredits("voice_dictation", () => firestoreAdmin), async (req: AuthRequest, res) => {
   const { speechText } = req.body;
 
   if (!speechText) {
@@ -1007,7 +1008,7 @@ NEVER GENERATE:
 });
 
 // 3. AI Document Scanner (OCR Extraction)
-app.post("/api/document-scan", requireAuth, async (req: AuthRequest, res) => {
+app.post("/api/document-scan", requireAuth, meterCredits("vision_scan", () => firestoreAdmin), async (req: AuthRequest, res) => {
   const { imageText } = req.body;
 
   // FAB-25 FIX (Sept 2026): this route previously fabricated a complete
@@ -1076,7 +1077,7 @@ app.post("/api/document-scan", requireAuth, async (req: AuthRequest, res) => {
 // matrix), Clinical Q&A / Reference Chat is Claude 3.5 Sonnet ONLY, no
 // fallback, never Gemini. Moved to callClaudeSonnetOnly, matching every
 // other Clinical Q&A route in this file.
-app.post("/api/em-reference", requireAuth, async (req: AuthRequest, res) => {
+app.post("/api/em-reference", requireAuth, meterCredits("em_reference", () => firestoreAdmin), async (req: AuthRequest, res) => {
   const { query } = req.body;
 
   if (!query) {
@@ -1122,7 +1123,7 @@ Return ONLY a valid JSON object matching this exact shape:
 });
 
 // 5. AI Discharge Summary Narrative Generator
-app.post("/api/ai-discharge", requireAuth, async (req: AuthRequest, res) => {
+app.post("/api/ai-discharge", requireAuth, meterCredits("ai_discharge", () => firestoreAdmin), async (req: AuthRequest, res) => {
   try {
   const { caseData, profileState, hospitalName } = req.body;
 
@@ -1435,7 +1436,7 @@ app.post("/api/ai-discharge", requireAuth, async (req: AuthRequest, res) => {
 });
 
 // 5.5. Unified Clinical Rounds & 7-Lens Case Debrief API (Locked to Claude Sonnet)
-app.post("/api/rounds-debrief", requireAuth, async (req: AuthRequest, res) => {
+app.post("/api/rounds-debrief", requireAuth, meterCredits("rounds_debrief", () => firestoreAdmin), async (req: AuthRequest, res) => {
   const { caseData, lens, userMessage, message, chatHistory, messages, pendingClinicalContext } = req.body;
 
   if (!caseData) {
@@ -1686,7 +1687,7 @@ ${pendingPromptSection}
 });
 
 // 6. AI Shift Handover Assistant
-app.post("/api/handover-chat", requireAuth, async (req: AuthRequest, res) => {
+app.post("/api/handover-chat", requireAuth, meterCredits("handover_chat", () => firestoreAdmin), async (req: AuthRequest, res) => {
   const { messages, currentPatients } = req.body;
 
   try {
@@ -1806,7 +1807,7 @@ app.post("/api/handover-chat", requireAuth, async (req: AuthRequest, res) => {
 // this app is image/OCR/vision — never text-based clinical or legal
 // extraction. Moved to Claude Sonnet, single-model, honest failure
 // instead of a silent empty/wrong extraction on a medico-legal document.
-app.post("/api/mlc-extract", requireAuth, async (req: AuthRequest, res) => {
+app.post("/api/mlc-extract", requireAuth, meterCredits("vision_scan", () => firestoreAdmin), async (req: AuthRequest, res) => {
   const { text, caseData } = req.body;
   if (!text) return res.status(400).json({ error: "No text provided" });
 
@@ -1841,7 +1842,7 @@ app.post("/api/mlc-extract", requireAuth, async (req: AuthRequest, res) => {
 });
 
 // 5b. AI Scribe Dictation Extractor
-app.post("/api/scribe-extract", requireAuth, async (req: AuthRequest, res) => {
+app.post("/api/scribe-extract", requireAuth, meterCredits("scribe_extract", () => firestoreAdmin), async (req: AuthRequest, res) => {
   const { dictation } = req.body;
   if (!dictation) return res.status(400).json({ error: "No dictation provided" });
   try {
@@ -1933,7 +1934,7 @@ app.post("/api/scribe-extract", requireAuth, async (req: AuthRequest, res) => {
 });
 
 // 5c. AI Scribe Chat Assistant with Textbook References & Post-Dictation Summarizer
-app.post("/api/scribe-chat", requireAuth, async (req: AuthRequest, res) => {
+app.post("/api/scribe-chat", requireAuth, meterCredits("scribe_chat", () => firestoreAdmin), async (req: AuthRequest, res) => {
   const { userInput, patientAgeYears, caseContext, caseId, messages, caseData } = req.body;
 
   // New two-way turn format with parallel Extraction & Clinical Reasoning
@@ -2294,7 +2295,7 @@ app.post(
 // route back to it and silently reintroduce the exact Rule 1 violation
 // this fix corrected.
 
-app.post("/api/case-discussion", requireAuth, async (req: AuthRequest, res) => {
+app.post("/api/case-discussion", requireAuth, meterCredits("case_discussion", () => firestoreAdmin), async (req: AuthRequest, res) => {
   try {
     const { caseData, contextType, contextData, messages, history, message } = req.body;
 
@@ -2872,7 +2873,7 @@ app.post("/api/handover/pdf", requireAuth, async (req: AuthRequest, res) => {
 });
 
 // 5d. AI Scribe Document Scanner (OCR & Mapping)
-app.post("/api/scribe-ocr-scan", requireAuth, async (req: AuthRequest, res) => {
+app.post("/api/scribe-ocr-scan", requireAuth, meterCredits("vision_scan", () => firestoreAdmin), async (req: AuthRequest, res) => {
   const { image, mimeType, imageText } = req.body;
 
   try {
@@ -2998,7 +2999,7 @@ app.post("/api/scribe-ocr-scan", requireAuth, async (req: AuthRequest, res) => {
 });
 
 // 6.5. AI-Assisted Structured Handover Parser (EMR Paste & Case Sheet Camera OCR)
-app.post("/api/handover/parse-structured", requireAuth, async (req: AuthRequest, res) => {
+app.post("/api/handover/parse-structured", requireAuth, meterCredits("handover_parse", () => firestoreAdmin), async (req: AuthRequest, res) => {
   const { image, mimeType, rawText, doctorName } = req.body;
 
   try {
@@ -3250,7 +3251,7 @@ CRITICAL RULES:
 });
 
 // 6.6. AI Handover Sheet Compiler (Extracts & Maps All Clinical Data into Doctors' Handover Sheet Columns)
-app.post("/api/handover/compile-sheet", requireAuth, async (req: AuthRequest, res) => {
+app.post("/api/handover/compile-sheet", requireAuth, meterCredits("handover_compile", () => firestoreAdmin), async (req: AuthRequest, res) => {
   const { patients } = req.body;
   if (!patients || !Array.isArray(patients) || patients.length === 0) {
     return res.status(400).json({ success: false, error: "No patient records provided for compilation." });
@@ -3390,7 +3391,7 @@ app.post("/api/handover/compile-sheet", requireAuth, async (req: AuthRequest, re
 // ==========================================
 // ROTA EXTRATION FROM SPREADSHEET
 // ==========================================
-app.post("/api/parse-rota", requireAuth, async (req: AuthRequest, res) => {
+app.post("/api/parse-rota", requireAuth, meterCredits("parse_rota", () => firestoreAdmin), async (req: AuthRequest, res) => {
   try {
     const { csvData, monthYear } = req.body;
     if (!csvData) return res.status(400).json({ error: "Missing spreadsheet data" });
@@ -3441,7 +3442,7 @@ app.post("/api/parse-rota", requireAuth, async (req: AuthRequest, res) => {
   }
 });
 
-app.post("/api/scan-mnemonic", requireAuth, async (req: AuthRequest, res) => {
+app.post("/api/scan-mnemonic", requireAuth, meterCredits("scan_mnemonic", () => firestoreAdmin), async (req: AuthRequest, res) => {
   const { image, mimeType } = req.body;
 
   if (!image) {
