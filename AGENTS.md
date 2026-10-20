@@ -45,6 +45,20 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-20] — ErMate: Case Sheet Zero-Invented-Vitals Honesty & Normal Exam Decoupling (CASESHEET-NO-INVENTED-VITALS-V1)
+- **Primary Survey Normal Template Honesty (`src/components/CaseSheetView.tsx`)**:
+  - Removed invented numerical vital signs (`RR 16/min`, `SpO₂ 98%`, `HR 80/min`, `BP 120/80 mmHg`, `GCS 15/15`, `Pupils 3mm`) from `SECTION_NORMALS.primarySurvey`.
+  - Replaced with genuine physical examination status descriptions (`Work of breathing normal. Air entry bilaterally equal.`, `CRT < 2 seconds. Pulse regular. Peripheral pulses normal. Warm peripheries.`, `Alert. Pupils bilaterally equal and reactive to light.`).
+- **Dynamic Survey Assessment Narrative (`src/components/CaseSheetView.tsx`)**:
+  - Replaced hardcoded fallback defaults (`rr || '16'`, `spo2 || '98'`, `hr || '80'`, `sbp || '120'`, `dbp || '80'`, `gcsTotal || '15'`, `temp || '37.0'`) in `handleSurveyChange` with dynamic conditional array filtering.
+  - Generates honest narrative lines containing only clinician-measured parameters; unrecorded parameters gracefully fall back to clinical status indicators (`Breathing assessed`, `Circulation assessed`, `Disability assessed`, `Exposure assessed`).
+  - Strict blood pressure composition requiring both SBP and DBP before generating `sbp/dbp` string, eliminating partial BP hallucination (`sbp/80` or `120/dbp`).
+- **Normal Primary Survey Exam Decoupling (`src/components/CaseSheetView.tsx`)**:
+  - `markPrimarySurveyNormal` now exclusively populates anatomical and physical examination descriptors (chest wall, bleeding, IV access, focal deficit, skin status).
+  - Preserves `prev.vitals` untouched without injecting hardcoded vital dictionaries or overwriting patient vitals with synthetic numbers.
+- **Verification (`verify_casesheet_no_invented_values.ts`)**:
+  - Added 25 automated tests verifying template honesty, dynamic narrative formatting, and strict vital isolation with 0 failures.
+
 ### [2026-10-20] — ErMate: Direct Client-Side Logbook Sync & Firestore Permission Hardening (LOGBOOK-DIRECT-SYNC-V1)
 - **Direct Client-Side Logbook Sync (`src/utils/logbookSync.ts`, `src/App.tsx`)**:
   - Implemented `buildLogbookEntryFromCase`, `shouldSyncCaseToUserLogbook`, and `syncCaseToLogbookDirect`.

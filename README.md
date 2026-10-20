@@ -270,6 +270,7 @@ ErMate employs a dynamic role-based navigation hierarchy computed from `getNorma
 | `/src/lib/firebase-admin.ts` | Named Firestore database Admin singleton (`ai-studio-ermate-c85078ba-126c-43fd-b799-a4aa8b82bf03`) |
 | `/src/utils/logbookSync.ts` | Client-side direct Firestore sync for clinician logbook entries with de-identification and permission handling |
 | `/verify_logbook_sync.ts` | P0 verification suite for client logbook direct sync, security rules, and server fallback |
+| `/verify_casesheet_no_invented_values.ts` | Verification suite for Case Sheet zero-invented-vitals honesty and normal exam decoupling |
 | `/firebase.json` | Explicit Named Firestore database targeting for `ai-studio-ermate-c85078ba-126c-43fd-b799-a4aa8b82bf03` security rules deployments |
 | `/server/clinicalRanges.ts` | Deterministic adult ED reference ranges & zero-hallucination abnormal flagger |
 | `/server/alertCompiler.ts` | Rule-based post-synthesis critical alert compiler (Section 0) |

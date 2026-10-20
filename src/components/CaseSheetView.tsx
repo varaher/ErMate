@@ -1656,11 +1656,11 @@ export default function CaseSheetView({
     primarySurvey: {
       airway: 'Patent',
       airwayStatus: 'Normal' as const,
-      breathing: 'RR 16/min. SpO₂ 98% on room air. Work of breathing normal. Air entry bilaterally equal.',
+      breathing: 'Work of breathing normal. Air entry bilaterally equal.',
       breathingStatus: 'Normal' as const,
-      circulation: 'CRT < 2 seconds. HR 80/min regular. BP 120/80 mmHg. Peripheral pulses normal. Warm peripheries.',
+      circulation: 'CRT < 2 seconds. Pulse regular. Peripheral pulses normal. Warm peripheries.',
       circulationStatus: 'Normal' as const,
-      disability: 'GCS 15/15 (E4V5M6). Pupils 3mm bilaterally equal and reactive to light.',
+      disability: 'Alert. Pupils bilaterally equal and reactive to light.',
       disabilityStatus: 'Normal' as const,
       exposure: 'No obvious injuries or rashes.',
       exposureStatus: 'Normal' as const,
@@ -1695,7 +1695,7 @@ Extremities: Peripheral pulses present and well felt. No edema. No cyanosis or c
       if (fieldPath === "circulation.sbp" || fieldPath === "circulation.dbp") {
         const sbp = fieldPath === "circulation.sbp" ? value : newSurvey.circulation.sbp;
         const dbp = fieldPath === "circulation.dbp" ? value : newSurvey.circulation.dbp;
-        if (sbp || dbp) newVitals.bp = `${sbp || '120'}/${dbp || '80'}`;
+        if (sbp && dbp) newVitals.bp = `${sbp}/${dbp}`;
       }
       if (fieldPath === "disability.gcsTotal" && value) newVitals.gcs = String(value);
       if (fieldPath === "disability.grbs" && value) newVitals.grbs = String(value);
@@ -1708,10 +1708,32 @@ Extremities: Peripheral pulses present and well felt. No edema. No cyanosis or c
           ...prev.primaryAssessment,
           survey: newSurvey,
           airway: `Airway ${newSurvey.airway.status}${newSurvey.airway.intervention ? `, Intervention: ${newSurvey.airway.intervention}` : ''}${isTrauma ? `, C-Spine: ${newSurvey.airway.cSpine}` : ''}`,
-          breathing: `RR: ${newSurvey.breathing.rr || '16'}/min, SpO2: ${newSurvey.breathing.spo2 || '98'}% on ${newSurvey.breathing.o2Delivery || 'Room air'}, Work: ${newSurvey.breathing.workOfBreathing || 'normal'}, Air Entry: ${newSurvey.breathing.airEntry || 'Bilaterally equal'}, Sounds: ${newSurvey.breathing.addedSounds || 'Clear'}`,
-          circulation: `HR: ${newSurvey.circulation.hr || '80'}/min ${newSurvey.circulation.rhythm || 'regular'}, BP: ${newSurvey.circulation.sbp || '120'}/${newSurvey.circulation.dbp || '80'} mmHg, CRT: ${newSurvey.circulation.crt || '<2sec'}, Pulses: ${newSurvey.circulation.peripheralPulses || 'normal'}, Skin: ${newSurvey.circulation.skinPerfusion || 'Warm + dry'}`,
-          disability: `GCS: ${newSurvey.disability.gcsTotal || '15'}/15 (E${newSurvey.disability.gcsE || '4'}V${newSurvey.disability.gcsV || '5'}M${newSurvey.disability.gcsM || '6'}), Pupils: ${newSurvey.disability.pupilSizeR || '3'}mm R / ${newSurvey.disability.pupilSizeL || '3'}mm L (${newSurvey.disability.pupilReaction || 'reactive'}), GRBS: ${newSurvey.disability.grbs || 'N/A'}`,
-          exposure: `Temp: ${newSurvey.exposure.temp || '37.0'}°C, Skin: ${newSurvey.exposure.skin || 'Clear'}${isTrauma ? `, Logroll: ${newSurvey.exposure.logRoll || 'Spine clear'}, Pelvis: ${newSurvey.exposure.pelvis || 'stable'}` : ''}`
+          breathing: [
+            newSurvey.breathing.rr ? `RR: ${newSurvey.breathing.rr}/min` : null,
+            newSurvey.breathing.spo2 ? `SpO2: ${newSurvey.breathing.spo2}%${newSurvey.breathing.o2Delivery ? ` on ${newSurvey.breathing.o2Delivery}` : ''}` : null,
+            newSurvey.breathing.workOfBreathing ? `Work: ${newSurvey.breathing.workOfBreathing}` : null,
+            newSurvey.breathing.airEntry ? `Air Entry: ${newSurvey.breathing.airEntry}` : null,
+            newSurvey.breathing.addedSounds ? `Sounds: ${newSurvey.breathing.addedSounds}` : null,
+          ].filter(Boolean).join(', ') || 'Breathing assessed',
+          circulation: [
+            newSurvey.circulation.hr ? `HR: ${newSurvey.circulation.hr}/min` : null,
+            newSurvey.circulation.rhythm ? `Rhythm: ${newSurvey.circulation.rhythm}` : null,
+            (newSurvey.circulation.sbp && newSurvey.circulation.dbp) ? `BP: ${newSurvey.circulation.sbp}/${newSurvey.circulation.dbp} mmHg` : null,
+            newSurvey.circulation.crt ? `CRT: ${newSurvey.circulation.crt}` : null,
+            newSurvey.circulation.peripheralPulses ? `Pulses: ${newSurvey.circulation.peripheralPulses}` : null,
+            newSurvey.circulation.skinPerfusion ? `Skin: ${newSurvey.circulation.skinPerfusion}` : null,
+          ].filter(Boolean).join(', ') || 'Circulation assessed',
+          disability: [
+            newSurvey.disability.gcsTotal ? `GCS: ${newSurvey.disability.gcsTotal}/15` : null,
+            (newSurvey.disability.pupilSizeR || newSurvey.disability.pupilSizeL || newSurvey.disability.pupilReaction) ? `Pupils: ${newSurvey.disability.pupilSizeR || '-'}/${newSurvey.disability.pupilSizeL || '-'}mm (${newSurvey.disability.pupilReaction || '-'})` : null,
+            newSurvey.disability.grbs ? `GRBS: ${newSurvey.disability.grbs}` : null,
+          ].filter(Boolean).join(', ') || 'Disability assessed',
+          exposure: [
+            newSurvey.exposure.temp ? `Temp: ${newSurvey.exposure.temp}°C` : null,
+            newSurvey.exposure.skin ? `Skin: ${newSurvey.exposure.skin}` : null,
+            isTrauma ? (newSurvey.exposure.logRoll ? `Logroll: ${newSurvey.exposure.logRoll}` : null) : null,
+            isTrauma ? (newSurvey.exposure.pelvis ? `Pelvis: ${newSurvey.exposure.pelvis}` : null) : null,
+          ].filter(Boolean).join(', ') || 'Exposure assessed',
         }
       };
     });
@@ -2042,19 +2064,15 @@ Extremities: Peripheral pulses present and well felt. No edema. No cyanosis or c
       const normalSurvey: any = {
         ...initialSurvey,
         airway: { ...initialSurvey.airway, cSpine: "not_applicable" },
-        breathing: { ...initialSurvey.breathing, chestWall: "Normal", rr: "16", spo2: "98" },
-        circulation: { ...initialSurvey.circulation, bleeding: "Nil", ivAccess: "18G", hr: "80", sbp: "120", dbp: "80" },
-        disability: { ...initialSurvey.disability, focalDeficit: "None", grbs: "100" },
-        exposure: { ...initialSurvey.exposure, skin: "Normal", temp: "37.0" },
+        breathing: { ...initialSurvey.breathing, chestWall: "Normal" },
+        circulation: { ...initialSurvey.circulation, bleeding: "Nil", ivAccess: "18G" },
+        disability: { ...initialSurvey.disability, focalDeficit: "None" },
+        exposure: { ...initialSurvey.exposure, skin: "Normal" },
       };
       const mergedSurvey = preferRecorded(normalSurvey, prevSurvey);
       mergedSurvey.adjuncts = (prevSurvey as Partial<PrimarySurvey>).adjuncts || {};
       return {
         ...prev,
-        vitals: preferRecorded(
-          { rr: "16", spo2: "98", hr: "80", bp: "120/80", gcs: "15", temp: "37.0" },
-          prev.vitals
-        ),
         primaryAssessment: {
           ...prev.primaryAssessment,
           survey: mergedSurvey as any
