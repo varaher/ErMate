@@ -45,6 +45,19 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-19] — ErMate: Stage 0 Write Target Gate & Patient Focus (MATE-STAGE0-WRITE-TARGET-V1)
+- **Zero-Guessing Clinical Write Target Gate (`src/mate/mateWriteTargetGate.ts`, `src/components/VoiceScribeChatView.tsx`)**:
+  - Implemented `shouldAskWhichPatient`, `hasExplicitPatientReference`, `isFocusAuthorized`, and `isImplicitPatientReference`.
+  - In MATE's general conversation, an unreferenced clinical update (e.g. `"BP has fallen to 80/50"`, `"HR 120 SpO2 88"`) is never guessed, assumed, or silently written to whichever case happens to be displayed or recently viewed.
+  - Held unapplied in memory via `pendingUnreferencedUpdateRef` with 15-minute TTL while prompting: `"Which patient is this update for, doctor? Say the bed, for example 'Bed 3A', or say 'cancel'. Nothing has been saved."`.
+  - Bed clarification replies (`"Bed 3A"`, `"7"`) route through `resolveMateCaseReference` with bed capacity, vacancy, ambiguity, and patient identity conflict checks before applying.
+- **Patient Focus Authorization (`src/App.tsx`, `src/components/VoiceScribeChatView.tsx`, `src/mate/matePatientDisambiguator.ts`)**:
+  - `voiceScribeFocusCaseId` (`patientFocusCaseId` prop): granted exclusively when a clinician deliberately opens a case sheet/focus, when MATE starts a new patient case, or from an explicit `"Open Bed X"` fast path.
+  - Opening MATE from the tab bar or free discussion clears focus to general conversation mode.
+  - `allowImplicitFallback: focusAuthorized || !clinicalWriteTurn` in `resolveInterpretedPatient`: ensures clinical updates without explicit references or authorized patient focus resolve to `NO_REFERENCE`, while queries and reads continue seamlessly.
+  - Post-interpreter safety net catches model-inferred implicit targets (`CURRENT`/`RECENT`/`NONE`) and holds unreferenced updates safely.
+  - Verified with 46 automated tests in `verify_mate_stage0_write_target.ts` and 185 tests across regression suites.
+
 ### [2026-10-19] — ErMate: Clinician Update Timestamps & Extraction Save Status (CLINICIAN-UPDATE-STAMP-V1)
 - **Device-Local Time Stamping for Clinician Updates (`src/mate/clinicianUpdateStamp.ts`, `src/App.tsx`, `src/components/VoiceScribeChatView.tsx`)**:
   - Implemented `stampClinicianUpdates` and `displayTimeForUpdate`: records exact ISO-8601 UTC instant (`at`) and device-local time (`timestamp`).

@@ -37,7 +37,13 @@ export function resolveInterpretedPatient(params: {
   censusCases: ClinicalCase[];
   lastPresentedCaseIds?: string[];
   physicalCapacity?: number;
+  /**
+   * Stage 0: when false, "no reference" / "this patient" / "the last one" never resolve to the open
+   * or last-referenced case (clinical writes must not guess the patient). Default true keeps reads as before.
+   */
+  allowImplicitFallback?: boolean;
 }): ResolvedPatientResult {
+  const allowImplicit = params.allowImplicitFallback !== false;
   const {
     reference,
     activeCase,
@@ -46,6 +52,17 @@ export function resolveInterpretedPatient(params: {
     lastPresentedCaseIds = [],
     physicalCapacity = 30,
   } = params;
+
+  const noPatient: ResolvedPatientResult = {
+    status: "NO_REFERENCE",
+    matchedCase: null,
+    caseId: null,
+    bedNo: null,
+    candidateCases: [],
+  };
+  if (!allowImplicit && (!reference || reference.type === "NONE" || reference.type === "CURRENT" || reference.type === "RECENT" || !reference.type)) {
+    return noPatient;
+  }
 
   if (!reference || reference.type === "NONE") {
     // If clinician utterance had no explicit reference, fall back to active or recent case if present

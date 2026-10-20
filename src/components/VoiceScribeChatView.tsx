@@ -54,6 +54,7 @@ import { validateAndBuildMateTask } from "../mate/mateTaskValidator";
 import { resolveInterpretedPatient } from "../mate/matePatientDisambiguator";
 import { mergePastedSheetIntoExtraction, detectSheetIdentityConflict } from "../mate/pastedSheetParser";
 import { stampClinicianUpdates } from "../mate/clinicianUpdateStamp";
+import { hasExplicitPatientReference, isFocusAuthorized, isImplicitPatientReference, shouldAskWhichPatient, isHeldUpdateExpired, appendHeldUpdate, WHICH_PATIENT_QUESTION, type HeldUpdate } from "../mate/mateWriteTargetGate";
 import { detectPatientAnnouncement, detectExplicitNewCaseIntent, bedFromUnmatchedReference, shouldStartCaseForVacantBed, groundPatientReference, isLongClinicalPaste, looksLikeFullCaseSheet, shouldHoldPastedSheet, classifyPendingSheetReply } from "../mate/mateNewCaseIntent";
 import { computeCensusOrientation, formatErOverviewMessage } from "../mate/mateOrientation";
 import { authenticatedFetch } from "../services/authenticatedFetch";
@@ -110,6 +111,8 @@ interface VoiceScribeChatViewProps {
   sessionId?: string | null;
   onSessionIdChange?: (sessionId: string | null) => void;
   onNewChat?: () => void;
+  /** Stage 0: the case the clinician deliberately opened for documentation (Patient Focus). Null = general conversation. */
+  patientFocusCaseId?: string | null;
   onBack: () => void;
   onOpenCaseSheet?: (caseId: string) => void;
   onOpenCaseSection?: (caseId: string, sectionId: string) => void;
@@ -797,6 +800,7 @@ export default function VoiceScribeChatView({
   physicalBedCapacity = 30,
   onSwitchCase,
   onEnsureDraftCase,
+  patientFocusCaseId = null,
   isSidecar = false,
   isSidecarExpanded = false,
   onToggleSidecarExpand,
@@ -815,6 +819,15 @@ export default function VoiceScribeChatView({
     utterance: string;
     generation: number;
   } | null>(null);
+
+  // Stage 0 — Patient Focus: the only case an unreferenced clinical update may be written to without asking.
+  // Set from a deliberate open (prop), or when MATE starts a patient for the doctor. Never inferred from display.
+  const focusCaseIdRef = useRef<string | null>(patientFocusCaseId);
+  useEffect(() => {
+    focusCaseIdRef.current = patientFocusCaseId;
+  }, [patientFocusCaseId]);
+  // A clinical update that named no patient: held unapplied until the doctor says which patient.
+  const pendingUnreferencedUpdateRef = useRef<HeldUpdate | null>(null);
 
   // Paste-first: a full case sheet that arrived with no bed and no open patient. Held (in memory only)
   // until the doctor gives a bed, then replayed into that new case. Never applied anywhere else.
@@ -1568,6 +1581,8 @@ export default function VoiceScribeChatView({
       ]);
       setFailedMessages(new Map());
       setSessionAttachError(null);
+      focusCaseIdRef.current = null;
+      pendingUnreferencedUpdateRef.current = null;
       onNewChat?.();
     } catch (err: any) {
       console.error("Failed to start new chat session:", err);
@@ -1764,6 +1779,108 @@ export default function VoiceScribeChatView({
         }
       }
 
+      // ── STAGE 0: NEVER GUESS THE PATIENT FOR A CLINICAL WRITE ──────────────
+      // An update that names no patient is not written to the open / displayed / last-mentioned case.
+      // It is held (nothing saved) until the doctor says which patient, unless a Patient Focus applies.
+      const inUseCaseId = activeCaseId || activeCaseIdRef.current;
+      const focusAuthorized = isFocusAuthorized(focusCaseIdRef.current, inUseCaseId);
+      const clinicalWriteTurn =
+        detectMateTurnMode(trimmed) === "dictation" &&
+        planMateConversation(trimmed).mayContainClinicalUpdate &&
+        !/\?\s*$/.test(trimmed);
+
+      const holdForPatient = (updateText: string) => {
+        const prev = pendingUnreferencedUpdateRef.current;
+        pendingUnreferencedUpdateRef.current = appendHeldUpdate(prev, updateText, sessionContextGenerationRef.current);
+        setInputText("");
+        const snippet = updateText.length > 140 ? `${updateText.slice(0, 140)}…` : updateText;
+        postPair(
+          `🕘 Update waiting for a patient: “${snippet}”`,
+          `${WHICH_PATIENT_QUESTION} Say the bed, for example "Bed 3A", or say "cancel". Nothing has been saved.`
+        );
+      };
+
+      if (isHeldUpdateExpired(pendingUnreferencedUpdateRef.current, sessionContextGenerationRef.current)) {
+        pendingUnreferencedUpdateRef.current = null;
+      }
+      const heldUpdate = pendingUnreferencedUpdateRef.current;
+      if (heldUpdate) {
+        const heldReply = classifyPendingSheetReply(trimmed);
+        if (heldReply.kind === "cancel") {
+          pendingUnreferencedUpdateRef.current = null;
+          setInputText("");
+          postPair(trimmed, "Update discarded. Nothing was saved.");
+          return;
+        }
+        if (heldReply.kind === "bed") {
+          setInputText("");
+          const dest = resolveMateCaseReference({
+            utterance: `Bed ${heldReply.bed}`,
+            cases: activeCensusCases,
+            activeCaseId: null,
+            physicalCapacity: physicalBedCapacity,
+          });
+          const target = dest.status === "RESOLVED" && dest.caseId ? activeCensusCases.find((c) => c.id === dest.caseId) || null : null;
+          if (!target) {
+            postPair(
+              trimmed,
+              dest.status === "AMBIGUOUS"
+                ? `Bed ${heldReply.bed} has two patients. Say "${heldReply.bed}A" or "${heldReply.bed}B". Your update is still waiting; nothing was saved.`
+                : dest.status === "INVALID_LOCATION"
+                  ? `Bed ${heldReply.bed} is outside the configured ER capacity. Your update is still waiting; nothing was saved.`
+                  : `There is no patient in Bed ${heldReply.bed}. Your update is still waiting. Name an occupied bed, or say "cancel". Nothing was saved.`
+            );
+            return;
+          }
+          const sheetConflict = looksLikeFullCaseSheet(heldUpdate.text)
+            ? detectSheetIdentityConflict(heldUpdate.text, {
+                name: (target as any)?.patient?.name,
+                age: (target as any)?.patient?.age,
+                gender: (target as any)?.patient?.gender,
+              })
+            : null;
+          if (sheetConflict) {
+            postPair(trimmed, `This sheet does not match Bed ${target.bedNo || heldReply.bed} (${sheetConflict}). Nothing was saved. Name the right bed, or say "cancel".`);
+            return;
+          }
+          pendingUnreferencedUpdateRef.current = null;
+          lastReferencedCaseIdRef.current = target.id;
+          if (target.bedNo) lastReferencedBedRef.current = target.bedNo;
+          if (target.displayId) lastReferencedDisplayIdRef.current = target.displayId;
+          postPair(trimmed, `Adding the update to Bed ${target.bedNo || heldReply.bed}. It will appear as a preview to apply; nothing is saved until you apply it.`);
+          if (target.id === inUseCaseId) {
+            await sendToChat(heldUpdate.text, { skipMatePatientResolution: true });
+          } else {
+            sessionContextGenerationRef.current += 1;
+            pendingUtteranceAfterSwitchRef.current = {
+              targetCaseId: target.id,
+              utterance: heldUpdate.text,
+              generation: sessionContextGenerationRef.current,
+            };
+            onSwitchCase?.(target.id);
+          }
+          return;
+        }
+        // Anything else (a question, a read of another patient, an explicit-bed update) leaves the hold in place.
+      }
+
+      if (
+        shouldAskWhichPatient({
+          clinicalWrite: clinicalWriteTurn,
+          text: trimmed,
+          explicitNewCase: detectExplicitNewCaseIntent(trimmed),
+          hasContextCase: Boolean(activeCase || recentCase),
+          focusAuthorized,
+          pasteFlow: shouldHoldPastedSheet({
+            text: trimmed,
+            hasOpenPatient: Boolean(activeCaseId && activeCensusCases.some((c) => c.id === activeCaseId)),
+          }),
+        })
+      ) {
+        holdForPatient(trimmed);
+        return;
+      }
+
       // ── PART 1: DETERMINISTIC FAST PATH ─────────────────────────
       // A held case sheet is waiting on a bed reply: that reply must not be consumed by the fast path.
       const fastPathResult = pendingPastedSheetRef.current ? null : tryDeterministicFastPath({
@@ -1808,6 +1925,8 @@ export default function VoiceScribeChatView({
         if (fastPathResult.action === "NAVIGATE_TAB" && fastPathResult.targetTab) {
           onNavigateToTab?.(fastPathResult.targetTab);
         } else if (fastPathResult.action === "OPEN_CASE" && fastPathResult.targetCaseId) {
+          // "Open Bed 3A" is a deliberate open by name: that case becomes the Patient Focus.
+          focusCaseIdRef.current = fastPathResult.targetCaseId;
           if (fastPathResult.targetCaseId !== activeCaseId) {
             onSwitchCase?.(fastPathResult.targetCaseId);
           }
@@ -1848,6 +1967,8 @@ export default function VoiceScribeChatView({
           const familyNotice = familyOccupant
             ? `Bed ${familyBase} already has ${familyOccupant.patient?.name || "a patient"} (${normalizeMateBedId(familyOccupant.bedNo) === familyBase ? `${familyBase}A` : normalizeMateBedId(familyOccupant.bedNo)}). I've placed this new patient in ${assignedBed}.`
             : undefined;
+          // MATE just started this patient for the doctor ("Bed 5A is ready. Dictate…"): it is the Patient Focus.
+          focusCaseIdRef.current = newCaseId;
           pendingNewPatientHandoffRef.current = {
             targetCaseId: newCaseId,
             targetBed: assignedBed,
@@ -2171,6 +2292,8 @@ export default function VoiceScribeChatView({
           censusCases: activeCensusCases,
           lastPresentedCaseIds: lastPresentedCaseIdsRef.current,
           physicalCapacity: physicalBedCapacity,
+       
+          allowImplicitFallback: focusAuthorized || !clinicalWriteTurn,
         });
         // Trust a bed / case number from the model only if the doctor actually said it.
         const groundedRef = groundPatientReference(interp.patientReference, trimmed);
@@ -2295,6 +2418,12 @@ export default function VoiceScribeChatView({
         })).filter(env => env.isValid && env.mateTask);
 
         const hasClinicalDoc = validatedTasks.some(t => t.mateTask?.capability === "case.document");
+
+        // Stage 0 safety net: the interpreter decided this is a clinical write but the doctor named no patient.
+        if (hasClinicalDoc && !focusAuthorized && isImplicitPatientReference(groundedRef)) {
+          holdForPatient(trimmed);
+          return;
+        }
         const navTask = validatedTasks.find(t => t.mateTask?.capability === "case.navigate" && t.sanitizedPlannedTask?.section);
         const appNavTask = validatedTasks.find(t => t.mateTask?.capability === "case.navigate" && t.sanitizedPlannedTask?.targetTab);
         const openCaseTask = validatedTasks.find(t => t.mateTask?.capability === "case.open");
@@ -2753,6 +2882,7 @@ export default function VoiceScribeChatView({
               const ensuredCaseId = await onEnsureDraftCase(targetSessionId, { bedNo: targetBed });
               if (ensuredCaseId) {
                 activeCaseIdRef.current = ensuredCaseId;
+                focusCaseIdRef.current = ensuredCaseId; // the doctor is dictating this new patient
                 setActiveCaseId(ensuredCaseId);
                 lastReferencedCaseIdRef.current = ensuredCaseId;
                 onSwitchCase?.(ensuredCaseId);

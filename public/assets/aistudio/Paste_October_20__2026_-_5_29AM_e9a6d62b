@@ -1,0 +1,496 @@
+diff --git a/src/App.tsx b/src/App.tsx
+index 44c3aa9..d9c2272 100644
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -504,6 +504,9 @@ useEffect(() => {
+   const [showVoiceScribeChat, setShowVoiceScribeChat] = useState<boolean>(false);
+   const [isMateExpanded, setIsMateExpanded] = useState<boolean>(false);
+   const [voiceScribeCaseId, setVoiceScribeCaseId] = useState<string | null>(null);
++  // MATE Stage 0: the case the clinician deliberately opened for documentation (Patient Focus).
++  // Null in the general MATE conversation: unreferenced clinical updates then ask "which patient?".
++  const [voiceScribeFocusCaseId, setVoiceScribeFocusCaseId] = useState<string | null>(null);
+   const [voiceScribeSessionId, setVoiceScribeSessionId] = useState<string | null>(null);
+   // NEW — entry-choice popup and discussion-mode flag for the merged
+   // ErMate Assistant. See handleVoiceScribeEntryClick / handleStartFreeDiscussion.
+@@ -3321,6 +3324,7 @@ const handleDeleteAllCases = async () => {
+ 
+   const handleStartVoiceScribe = (caseId?: string) => {
+     setVoiceScribeCaseId(caseId || null);
++    setVoiceScribeFocusCaseId(caseId || null);
+     if (caseId) {
+       const match = cases.find(c => c.id === caseId);
+       setVoiceScribeSessionId(match?.scribeSessionId || null);
+@@ -3335,11 +3339,13 @@ const handleDeleteAllCases = async () => {
+     // If clinician is currently viewing an active Case Sheet, bind MATE to that patient context safely
+     if (selectedCaseId) {
+       setVoiceScribeCaseId(selectedCaseId);
++      setVoiceScribeFocusCaseId(selectedCaseId);
+       const match = cases.find(c => c.id === selectedCaseId);
+       setVoiceScribeSessionId(match?.scribeSessionId || null);
+     } else {
+       // Dashboard with no specific patient selected: open conversationally with no forced case context
+       setVoiceScribeCaseId(null);
++      setVoiceScribeFocusCaseId(null);
+       setVoiceScribeSessionId(null);
+     }
+     setVoiceScribeDiscussionMode(false);
+@@ -3365,6 +3371,7 @@ const handleDeleteAllCases = async () => {
+     setShowVoiceScribeEntryChoice(false);
+     setVoiceScribeDiscussionMode(true);
+     setVoiceScribeCaseId(null);
++    setVoiceScribeFocusCaseId(null);
+     setVoiceScribeSessionId(null);
+     setShowVoiceScribeChat(true);
+   };
+@@ -7003,6 +7010,8 @@ const handleSignOut = async () => {
+                 aria-label={tab.label}
+                 onClick={() => {
+                   if (tab.id === "scribe") {
++                    // Opening MATE from the tab bar is the general conversation, not a patient focus.
++                    setVoiceScribeFocusCaseId(null);
+                     setShowVoiceScribeChat(true);
+                   } else {
+                     if (showVoiceScribeChat) {
+@@ -7220,6 +7229,7 @@ const handleSignOut = async () => {
+                       setSelectedCaseId(null);
+                     }
+                     const targetCaseId = caseId || selectedCaseId;
++                    setVoiceScribeFocusCaseId(targetCaseId || null);
+                     if (targetCaseId) {
+                       setVoiceScribeCaseId(targetCaseId);
+                       const match = cases.find(c => c.id === targetCaseId);
+@@ -7633,6 +7643,7 @@ const handleSignOut = async () => {
+           <VoiceScribeChatView
+             isSidecar={true}
+             caseId={voiceScribeCaseId}
++            patientFocusCaseId={voiceScribeFocusCaseId}
+             caseData={voiceScribeCaseId ? (cases.find(c => c.id === voiceScribeCaseId) || null) : null}
+             sessionId={voiceScribeSessionId}
+             onSessionIdChange={setVoiceScribeSessionId}
+@@ -7649,6 +7660,7 @@ const handleSignOut = async () => {
+               // Hard patient-context boundary:
+               // a new Scribe session must not inherit the previous patient's case.
+               setVoiceScribeCaseId(null);
++              setVoiceScribeFocusCaseId(null);
+               setVoiceScribeSessionId(null);
+               setPendingPreviewContext(null);
+               setPreviewCase(null);
+diff --git a/src/components/VoiceScribeChatView.tsx b/src/components/VoiceScribeChatView.tsx
+index 0b56eb8..e7ee4dd 100644
+--- a/src/components/VoiceScribeChatView.tsx
++++ b/src/components/VoiceScribeChatView.tsx
+@@ -54,6 +54,7 @@ import { validateAndBuildMateTask } from "../mate/mateTaskValidator";
+ import { resolveInterpretedPatient } from "../mate/matePatientDisambiguator";
+ import { mergePastedSheetIntoExtraction, detectSheetIdentityConflict } from "../mate/pastedSheetParser";
+ import { stampClinicianUpdates } from "../mate/clinicianUpdateStamp";
++import { hasExplicitPatientReference, isFocusAuthorized, isImplicitPatientReference, shouldAskWhichPatient, isHeldUpdateExpired, appendHeldUpdate, WHICH_PATIENT_QUESTION, type HeldUpdate } from "../mate/mateWriteTargetGate";
+ import { detectPatientAnnouncement, detectExplicitNewCaseIntent, bedFromUnmatchedReference, shouldStartCaseForVacantBed, groundPatientReference, isLongClinicalPaste, looksLikeFullCaseSheet, shouldHoldPastedSheet, classifyPendingSheetReply } from "../mate/mateNewCaseIntent";
+ import { computeCensusOrientation, formatErOverviewMessage } from "../mate/mateOrientation";
+ import { authenticatedFetch } from "../services/authenticatedFetch";
+@@ -110,6 +111,8 @@ interface VoiceScribeChatViewProps {
+   sessionId?: string | null;
+   onSessionIdChange?: (sessionId: string | null) => void;
+   onNewChat?: () => void;
++  /** Stage 0: the case the clinician deliberately opened for documentation (Patient Focus). Null = general conversation. */
++  patientFocusCaseId?: string | null;
+   onBack: () => void;
+   onOpenCaseSheet?: (caseId: string) => void;
+   onOpenCaseSection?: (caseId: string, sectionId: string) => void;
+@@ -797,6 +800,7 @@ export default function VoiceScribeChatView({
+   physicalBedCapacity = 30,
+   onSwitchCase,
+   onEnsureDraftCase,
++  patientFocusCaseId = null,
+   isSidecar = false,
+   isSidecarExpanded = false,
+   onToggleSidecarExpand,
+@@ -816,6 +820,15 @@ export default function VoiceScribeChatView({
+     generation: number;
+   } | null>(null);
+ 
++  // Stage 0 — Patient Focus: the only case an unreferenced clinical update may be written to without asking.
++  // Set from a deliberate open (prop), or when MATE starts a patient for the doctor. Never inferred from display.
++  const focusCaseIdRef = useRef<string | null>(patientFocusCaseId);
++  useEffect(() => {
++    focusCaseIdRef.current = patientFocusCaseId;
++  }, [patientFocusCaseId]);
++  // A clinical update that named no patient: held unapplied until the doctor says which patient.
++  const pendingUnreferencedUpdateRef = useRef<HeldUpdate | null>(null);
++
+   // Paste-first: a full case sheet that arrived with no bed and no open patient. Held (in memory only)
+   // until the doctor gives a bed, then replayed into that new case. Never applied anywhere else.
+   const pendingPastedSheetRef = useRef<{ text: string; generation: number; createdAt: number } | null>(null);
+@@ -1568,6 +1581,8 @@ export default function VoiceScribeChatView({
+       ]);
+       setFailedMessages(new Map());
+       setSessionAttachError(null);
++      focusCaseIdRef.current = null;
++      pendingUnreferencedUpdateRef.current = null;
+       onNewChat?.();
+     } catch (err: any) {
+       console.error("Failed to start new chat session:", err);
+@@ -1764,6 +1779,108 @@ export default function VoiceScribeChatView({
+         }
+       }
+ 
++      // ── STAGE 0: NEVER GUESS THE PATIENT FOR A CLINICAL WRITE ──────────────
++      // An update that names no patient is not written to the open / displayed / last-mentioned case.
++      // It is held (nothing saved) until the doctor says which patient, unless a Patient Focus applies.
++      const inUseCaseId = activeCaseId || activeCaseIdRef.current;
++      const focusAuthorized = isFocusAuthorized(focusCaseIdRef.current, inUseCaseId);
++      const clinicalWriteTurn =
++        detectMateTurnMode(trimmed) === "dictation" &&
++        planMateConversation(trimmed).mayContainClinicalUpdate &&
++        !/\?\s*$/.test(trimmed);
++
++      const holdForPatient = (updateText: string) => {
++        const prev = pendingUnreferencedUpdateRef.current;
++        pendingUnreferencedUpdateRef.current = appendHeldUpdate(prev, updateText, sessionContextGenerationRef.current);
++        setInputText("");
++        const snippet = updateText.length > 140 ? `${updateText.slice(0, 140)}…` : updateText;
++        postPair(
++          `🕘 Update waiting for a patient: “${snippet}”`,
++          `${WHICH_PATIENT_QUESTION} Say the bed, for example "Bed 3A", or say "cancel". Nothing has been saved.`
++        );
++      };
++
++      if (isHeldUpdateExpired(pendingUnreferencedUpdateRef.current, sessionContextGenerationRef.current)) {
++        pendingUnreferencedUpdateRef.current = null;
++      }
++      const heldUpdate = pendingUnreferencedUpdateRef.current;
++      if (heldUpdate) {
++        const heldReply = classifyPendingSheetReply(trimmed);
++        if (heldReply.kind === "cancel") {
++          pendingUnreferencedUpdateRef.current = null;
++          setInputText("");
++          postPair(trimmed, "Update discarded. Nothing was saved.");
++          return;
++        }
++        if (heldReply.kind === "bed") {
++          setInputText("");
++          const dest = resolveMateCaseReference({
++            utterance: `Bed ${heldReply.bed}`,
++            cases: activeCensusCases,
++            activeCaseId: null,
++            physicalCapacity: physicalBedCapacity,
++          });
++          const target = dest.status === "RESOLVED" && dest.caseId ? activeCensusCases.find((c) => c.id === dest.caseId) || null : null;
++          if (!target) {
++            postPair(
++              trimmed,
++              dest.status === "AMBIGUOUS"
++                ? `Bed ${heldReply.bed} has two patients. Say "${heldReply.bed}A" or "${heldReply.bed}B". Your update is still waiting; nothing was saved.`
++                : dest.status === "INVALID_LOCATION"
++                  ? `Bed ${heldReply.bed} is outside the configured ER capacity. Your update is still waiting; nothing was saved.`
++                  : `There is no patient in Bed ${heldReply.bed}. Your update is still waiting. Name an occupied bed, or say "cancel". Nothing was saved.`
++            );
++            return;
++          }
++          const sheetConflict = looksLikeFullCaseSheet(heldUpdate.text)
++            ? detectSheetIdentityConflict(heldUpdate.text, {
++                name: (target as any)?.patient?.name,
++                age: (target as any)?.patient?.age,
++                gender: (target as any)?.patient?.gender,
++              })
++            : null;
++          if (sheetConflict) {
++            postPair(trimmed, `This sheet does not match Bed ${target.bedNo || heldReply.bed} (${sheetConflict}). Nothing was saved. Name the right bed, or say "cancel".`);
++            return;
++          }
++          pendingUnreferencedUpdateRef.current = null;
++          lastReferencedCaseIdRef.current = target.id;
++          if (target.bedNo) lastReferencedBedRef.current = target.bedNo;
++          if (target.displayId) lastReferencedDisplayIdRef.current = target.displayId;
++          postPair(trimmed, `Adding the update to Bed ${target.bedNo || heldReply.bed}. It will appear as a preview to apply; nothing is saved until you apply it.`);
++          if (target.id === inUseCaseId) {
++            await sendToChat(heldUpdate.text, { skipMatePatientResolution: true });
++          } else {
++            sessionContextGenerationRef.current += 1;
++            pendingUtteranceAfterSwitchRef.current = {
++              targetCaseId: target.id,
++              utterance: heldUpdate.text,
++              generation: sessionContextGenerationRef.current,
++            };
++            onSwitchCase?.(target.id);
++          }
++          return;
++        }
++        // Anything else (a question, a read of another patient, an explicit-bed update) leaves the hold in place.
++      }
++
++      if (
++        shouldAskWhichPatient({
++          clinicalWrite: clinicalWriteTurn,
++          text: trimmed,
++          explicitNewCase: detectExplicitNewCaseIntent(trimmed),
++          hasContextCase: Boolean(activeCase || recentCase),
++          focusAuthorized,
++          pasteFlow: shouldHoldPastedSheet({
++            text: trimmed,
++            hasOpenPatient: Boolean(activeCaseId && activeCensusCases.some((c) => c.id === activeCaseId)),
++          }),
++        })
++      ) {
++        holdForPatient(trimmed);
++        return;
++      }
++
+       // ── PART 1: DETERMINISTIC FAST PATH ─────────────────────────
+       // A held case sheet is waiting on a bed reply: that reply must not be consumed by the fast path.
+       const fastPathResult = pendingPastedSheetRef.current ? null : tryDeterministicFastPath({
+@@ -1808,6 +1925,8 @@ export default function VoiceScribeChatView({
+         if (fastPathResult.action === "NAVIGATE_TAB" && fastPathResult.targetTab) {
+           onNavigateToTab?.(fastPathResult.targetTab);
+         } else if (fastPathResult.action === "OPEN_CASE" && fastPathResult.targetCaseId) {
++          // "Open Bed 3A" is a deliberate open by name: that case becomes the Patient Focus.
++          focusCaseIdRef.current = fastPathResult.targetCaseId;
+           if (fastPathResult.targetCaseId !== activeCaseId) {
+             onSwitchCase?.(fastPathResult.targetCaseId);
+           }
+@@ -1848,6 +1967,8 @@ export default function VoiceScribeChatView({
+           const familyNotice = familyOccupant
+             ? `Bed ${familyBase} already has ${familyOccupant.patient?.name || "a patient"} (${normalizeMateBedId(familyOccupant.bedNo) === familyBase ? `${familyBase}A` : normalizeMateBedId(familyOccupant.bedNo)}). I've placed this new patient in ${assignedBed}.`
+             : undefined;
++          // MATE just started this patient for the doctor ("Bed 5A is ready. Dictate…"): it is the Patient Focus.
++          focusCaseIdRef.current = newCaseId;
+           pendingNewPatientHandoffRef.current = {
+             targetCaseId: newCaseId,
+             targetBed: assignedBed,
+@@ -2171,6 +2292,8 @@ export default function VoiceScribeChatView({
+           censusCases: activeCensusCases,
+           lastPresentedCaseIds: lastPresentedCaseIdsRef.current,
+           physicalCapacity: physicalBedCapacity,
++       
++          allowImplicitFallback: focusAuthorized || !clinicalWriteTurn,
+         });
+         // Trust a bed / case number from the model only if the doctor actually said it.
+         const groundedRef = groundPatientReference(interp.patientReference, trimmed);
+@@ -2295,6 +2418,12 @@ export default function VoiceScribeChatView({
+         })).filter(env => env.isValid && env.mateTask);
+ 
+         const hasClinicalDoc = validatedTasks.some(t => t.mateTask?.capability === "case.document");
++
++        // Stage 0 safety net: the interpreter decided this is a clinical write but the doctor named no patient.
++        if (hasClinicalDoc && !focusAuthorized && isImplicitPatientReference(groundedRef)) {
++          holdForPatient(trimmed);
++          return;
++        }
+         const navTask = validatedTasks.find(t => t.mateTask?.capability === "case.navigate" && t.sanitizedPlannedTask?.section);
+         const appNavTask = validatedTasks.find(t => t.mateTask?.capability === "case.navigate" && t.sanitizedPlannedTask?.targetTab);
+         const openCaseTask = validatedTasks.find(t => t.mateTask?.capability === "case.open");
+@@ -2753,6 +2882,7 @@ export default function VoiceScribeChatView({
+               const ensuredCaseId = await onEnsureDraftCase(targetSessionId, { bedNo: targetBed });
+               if (ensuredCaseId) {
+                 activeCaseIdRef.current = ensuredCaseId;
++                focusCaseIdRef.current = ensuredCaseId; // the doctor is dictating this new patient
+                 setActiveCaseId(ensuredCaseId);
+                 lastReferencedCaseIdRef.current = ensuredCaseId;
+                 onSwitchCase?.(ensuredCaseId);
+diff --git a/src/mate/matePatientDisambiguator.ts b/src/mate/matePatientDisambiguator.ts
+index f530eb8..bb5980f 100644
+--- a/src/mate/matePatientDisambiguator.ts
++++ b/src/mate/matePatientDisambiguator.ts
+@@ -37,7 +37,13 @@ export function resolveInterpretedPatient(params: {
+   censusCases: ClinicalCase[];
+   lastPresentedCaseIds?: string[];
+   physicalCapacity?: number;
++  /**
++   * Stage 0: when false, "no reference" / "this patient" / "the last one" never resolve to the open
++   * or last-referenced case (clinical writes must not guess the patient). Default true keeps reads as before.
++   */
++  allowImplicitFallback?: boolean;
+ }): ResolvedPatientResult {
++  const allowImplicit = params.allowImplicitFallback !== false;
+   const {
+     reference,
+     activeCase,
+@@ -47,6 +53,17 @@ export function resolveInterpretedPatient(params: {
+     physicalCapacity = 30,
+   } = params;
+ 
++  const noPatient: ResolvedPatientResult = {
++    status: "NO_REFERENCE",
++    matchedCase: null,
++    caseId: null,
++    bedNo: null,
++    candidateCases: [],
++  };
++  if (!allowImplicit && (!reference || reference.type === "NONE" || reference.type === "CURRENT" || reference.type === "RECENT" || !reference.type)) {
++    return noPatient;
++  }
++
+   if (!reference || reference.type === "NONE") {
+     // If clinician utterance had no explicit reference, fall back to active or recent case if present
+     if (activeCase) {
+diff --git a/src/mate/mateWriteTargetGate.ts b/src/mate/mateWriteTargetGate.ts
+new file mode 100644
+index 0000000..f51a84b
+--- /dev/null
++++ b/src/mate/mateWriteTargetGate.ts
+@@ -0,0 +1,67 @@
++/**
++ * MATE Stage 0 — never guess which patient a clinical update belongs to.
++ *
++ * In MATE's general conversation, a clinical update that names no patient must NOT be written to
++ * the case that happens to be open, displayed or last mentioned. It is held (unapplied, nothing
++ * saved) while MATE asks "Which patient is this update for, doctor?".
++ * The only implicit write target is an explicit Patient Focus: a case the clinician deliberately
++ * opened (or that MATE just started for them), and only while that same case is the one in use.
++ */
++import type { MatePatientReference } from "./mateInterpretationTypes";
++
++export const WHICH_PATIENT_QUESTION = "Which patient is this update for, doctor?";
++export const HELD_UPDATE_TTL_MS = 15 * 60 * 1000;
++
++/** An explicit patient reference in the utterance: a labelled bed, a compact bed like "3A", or a case no. */
++export function hasExplicitPatientReference(text: string): boolean {
++  const t = text || "";
++  if (/\bbed\s*(?:no\.?|number|#)?\s*[:\-]?\s*\d{1,3}\s*[ab]?\b/i.test(t)) return true;
++  if (/\b(?:patient|pt)\s+in\s+(?:bed\s*)?\d{1,3}\s*[ab]?\b/i.test(t)) return true;
++  if (/(?:^|[\s,.(])\d{1,3}[ab]\b(?!\s*(?:mg|mcg|ml|%))/i.test(t)) return true;
++  if (/\b(?:case|patient|pt)\s*(?:no\.?|number|#|id)\s*[:\-]?\s*[\w-]+/i.test(t)) return true;
++  if (/\bC-\d{3,}\b/i.test(t) || /\b\d{9}\b/.test(t)) return true;
++  return false;
++}
++
++/** Patient Focus is valid only while the focused case is the case actually in use. */
++export function isFocusAuthorized(focusCaseId: string | null | undefined, inUseCaseId: string | null | undefined): boolean {
++  return Boolean(focusCaseId) && Boolean(inUseCaseId) && focusCaseId === inUseCaseId;
++}
++
++/** True when the model/interpreter did not name a patient (none, "this patient", "the last one", untyped). */
++export function isImplicitPatientReference(ref?: MatePatientReference | null): boolean {
++  if (!ref) return true;
++  return ref.type === "NONE" || ref.type === "CURRENT" || ref.type === "RECENT" || !ref.type;
++}
++
++export function shouldAskWhichPatient(opts: {
++  clinicalWrite: boolean;
++  text: string;
++  explicitNewCase: boolean;
++  hasContextCase: boolean;   // a case is open/displayed or was last referenced
++  focusAuthorized: boolean;
++  pasteFlow: boolean;        // bed-less sheet with no open patient: handled by the paste-first flow
++}): boolean {
++  if (!opts.clinicalWrite) return false;
++  if (opts.explicitNewCase) return false;
++  if (hasExplicitPatientReference(opts.text)) return false;
++  if (opts.focusAuthorized) return false;
++  if (opts.pasteFlow) return false;
++  // Nothing open and nothing mentioned: a fresh new-patient dictation, nothing to be silently assigned to.
++  return opts.hasContextCase;
++}
++
++export interface HeldUpdate { text: string; generation: number; createdAt: number }
++
++export function isHeldUpdateExpired(held: HeldUpdate | null, generation: number, now: number = Date.now()): boolean {
++  if (!held) return false;
++  return held.generation !== generation || now - held.createdAt > HELD_UPDATE_TTL_MS;
++}
++
++/** Add a further unreferenced update to the held one; identical text is never added twice. */
++export function appendHeldUpdate(prev: HeldUpdate | null, text: string, generation: number, now: number = Date.now()): HeldUpdate {
++  const t = (text || "").trim();
++  if (!prev) return { text: t, generation, createdAt: now };
++  if (prev.text.includes(t)) return prev;
++  return { ...prev, text: `${prev.text}\n${t}` };
++}
+diff --git a/verify_mate_stage0_write_target.ts b/verify_mate_stage0_write_target.ts
+new file mode 100644
+index 0000000..a026b82
+--- /dev/null
++++ b/verify_mate_stage0_write_target.ts
+@@ -0,0 +1,93 @@
++import fs from "fs";
++import { planMateConversation } from "./src/mate/mateConversationPlanner";
++import { detectExplicitNewCaseIntent, shouldHoldPastedSheet, classifyPendingSheetReply } from "./src/mate/mateNewCaseIntent";
++import { resolveInterpretedPatient } from "./src/mate/matePatientDisambiguator";
++import { resolveMateCaseReference } from "./src/mate/mateCaseResolver";
++import { hasExplicitPatientReference, isFocusAuthorized, isImplicitPatientReference, shouldAskWhichPatient, appendHeldUpdate, isHeldUpdateExpired, HELD_UPDATE_TTL_MS, WHICH_PATIENT_QUESTION } from "./src/mate/mateWriteTargetGate";
++let pass = 0, fail = 0;
++const t = (n: string, c: boolean) => { c ? pass++ : fail++; console.log(`${c ? "PASS" : "FAIL"} ${n}`); };
++
++const mk = (id: string, bedNo: string) => ({ id, bedNo, patient: { name: id, presentingComplaint: "c" }, createdAt: new Date().toISOString() } as any);
++const c3 = mk("c3", "3A"), c7 = mk("c7", "7A"), c23 = mk("c23", "23A");
++const census = [c3, c7, c23];
++
++// Mirror of the sendToChat gate inputs (clinicalWrite = planner flags clinical content and it is not a question).
++const ask = (text: string, o: { active?: any; recent?: any; focusCaseId?: string | null; inUse?: string | null }) => {
++  const clinicalWrite = planMateConversation(text).mayContainClinicalUpdate && !/\?\s*$/.test(text);
++  return shouldAskWhichPatient({
++    clinicalWrite, text, explicitNewCase: detectExplicitNewCaseIntent(text),
++    hasContextCase: Boolean(o.active || o.recent),
++    focusAuthorized: isFocusAuthorized(o.focusCaseId ?? null, o.inUse ?? (o.active ? o.active.id : null)),
++    pasteFlow: shouldHoldPastedSheet({ text, hasOpenPatient: Boolean(o.active) }),
++  });
++};
++
++// 1-2 general conversation
++t("no bed named, 3A open, general conversation -> ask", ask("BP has fallen to 80/50", { active: c3 }));
++t("no bed named, last-mentioned 7A (nothing open) -> ask", ask("BP has fallen to 80/50", { recent: c7 }));
++t("question is not a write", !ask("what is the usual BP target in sepsis?", { active: c3 }));
++t("short vitals dictation -> ask", ask("HR 120 SpO2 88 on room air", { active: c3 }));
++t("fresh session, nothing open or mentioned -> new-patient dictation allowed", !ask("45 year old male chest pain", {}));
++// 3 explicit
++t("'Bed 3A BP is now 80/50' -> explicit, no ask", !ask("Bed 3A BP is now 80/50", { active: c7 }));
++t("'3A BP 80/50' compact -> explicit", !ask("3A BP 80/50", { active: c7 }));
++t("'patient in bed 7 has fever' -> explicit", !ask("patient in bed 7 has fever", { active: c3 }));
++t("'Vit B12 given' is NOT a patient reference", !hasExplicitPatientReference("Vit B12 given, grade 2"));
++t("explicit new patient not asked", !ask("new patient bed 5, 45 male abdominal pain", { active: c3 }));
++// 4 Patient Focus
++t("Bed 3A deliberately opened in Patient Focus -> unreferenced update accepted", !ask("BP has fallen to 80/50", { active: c3, focusCaseId: "c3" }));
++t("Focus on 3A but chat now on 7A (switched) -> focus does NOT carry", ask("BP 90/60", { active: c7, focusCaseId: "c3", inUse: "c7" }));
++t("displayed case without focus is not focus", !isFocusAuthorized(null, "c3") && !isFocusAuthorized(undefined, "c3"));
++t("focus requires the same case in use", isFocusAuthorized("c3", "c3") && !isFocusAuthorized("c3", "c7") && !isFocusAuthorized("c3", null));
++// 5 read of another patient does not change write target: reads are not writes and never set focus
++t("read of Bed 7 is not a write (no hold, no focus change)", !ask("What is pending for Bed 7?", { active: c3 }));
++t("read then unreferenced BP -> ask", ask("BP 80/50", { active: c3, recent: c7 }));
++t("read of Bed 7 while 3A focused: BP still resolves to 3A focus (write target unchanged)", !ask("BP 80/50", { active: c3, recent: c7, focusCaseId: "c3" }));
++// 6 hold/preserve/no duplication
++let held = appendHeldUpdate(null, "BP 80/50", 1, 1000);
++held = appendHeldUpdate(held, "HR 120", 1, 2000);
++t("second unreferenced update is added to the same hold", held.text === "BP 80/50\nHR 120");
++t("same update repeated is not duplicated", appendHeldUpdate(held, "HR 120", 1, 3000).text === "BP 80/50\nHR 120");
++t("hold expires after TTL / generation change (patient switch clears it)", !isHeldUpdateExpired(held, 1, 1000 + 1000) && isHeldUpdateExpired(held, 2, 2000) && isHeldUpdateExpired(held, 1, 1000 + HELD_UPDATE_TTL_MS + 1));
++t("clarification replies", classifyPendingSheetReply("Bed 3A").kind === "bed" && classifyPendingSheetReply("7").kind === "bed" && classifyPendingSheetReply("cancel").kind === "cancel" && classifyPendingSheetReply("what is pending for bed 7").kind === "other");
++// reply resolves through the real resolver (A/B rules intact)
++const cases = [mk("a", "3A"), mk("b", "3B"), c7];
++const r = (b: string) => resolveMateCaseReference({ utterance: `Bed ${b}`, cases, activeCaseId: null, physicalCapacity: 30 });
++t("reply 'Bed 3A' -> exactly 3A", r("3A").status === "RESOLVED" && r("3A").caseId === "a");
++t("reply 'Bed 3' with both slots occupied -> AMBIGUOUS (asks 3A or 3B)", r("3").status === "AMBIGUOUS");
++t("reply 'Bed 12' empty -> NOT_FOUND (stays held)", r("12").status === "NOT_FOUND");
++t("reply 'Bed 99' -> INVALID_LOCATION", r("99").status === "INVALID_LOCATION");
++
++// 7 resolver: no implicit fallback when disallowed; defaults unchanged
++const base = { censusCases: census };
++const R = (reference: any, allow?: boolean, active: any = c3, recent: any = c7) => resolveInterpretedPatient({ reference, activeCase: active, recentCase: recent, allowImplicitFallback: allow, ...base });
++t("NONE + open 3A, fallback allowed (default, reads) -> 3A", R({ type: "NONE" }).status === "RESOLVED" && R({ type: "NONE" }).bedNo === "3A");
++t("NONE + open 3A, fallback disallowed -> NO_REFERENCE", R({ type: "NONE" }, false).status === "NO_REFERENCE");
++t("NONE + only last-referenced 7A, disallowed -> NO_REFERENCE", R({ type: "NONE" }, false, null).status === "NO_REFERENCE");
++t("CURRENT ('this patient') disallowed -> NO_REFERENCE", R({ type: "CURRENT" }, false).status === "NO_REFERENCE");
++t("RECENT ('the last one') disallowed -> NO_REFERENCE", R({ type: "RECENT" }, false).status === "NO_REFERENCE");
++t("untyped reference disallowed -> NO_REFERENCE", R({}, false).status === "NO_REFERENCE");
++t("explicit BED still resolves when fallback disallowed", R({ type: "BED", value: "7A" }, false).caseId === "c7");
++t("implicit types detected for the post-interpreter safety net", isImplicitPatientReference(null) && isImplicitPatientReference({ type: "NONE" }) && isImplicitPatientReference({ type: "CURRENT" }) && isImplicitPatientReference({ type: "RECENT" }) && !isImplicitPatientReference({ type: "BED", value: "3A" } as any));
++
++// 8 alternating patients: explicit references never fall back, so there is no cross-patient write
++const seq = ["Bed 3A BP 80/50", "Bed 7A fever 3 days", "3A HR 110", "7A vomiting"];
++t("alternating explicit updates are all explicit (never ask, never use the previous patient)", seq.every((u) => !ask(u, { active: c3 }) && hasExplicitPatientReference(u)));
++t("each alternating reference resolves to its own case", ["3A", "7A"].every((b, i) => resolveMateCaseReference({ utterance: seq[i], cases: census, activeCaseId: i ? "c3" : "c7", physicalCapacity: 30 }).caseId === (b === "3A" ? "c3" : "c7")));
++
++// wiring
++const chat = fs.readFileSync("./src/components/VoiceScribeChatView.tsx", "utf8");
++const app = fs.readFileSync("./src/App.tsx", "utf8");
++const at = (x: string) => chat.indexOf(x);
++t("gate runs before the fast path and the interpreter", at("STAGE 0: NEVER GUESS THE PATIENT") > 0 && at("STAGE 0: NEVER GUESS THE PATIENT") < at("const fastPathResult") && at("STAGE 0: NEVER GUESS THE PATIENT") < at("PART 2: SERVER INTERPRETATION"));
++t("question text is the specified one", WHICH_PATIENT_QUESTION === "Which patient is this update for, doctor?" && /\$\{WHICH_PATIENT_QUESTION\}/.test(chat));
++t("post-interpreter safety net present", /hasClinicalDoc && !focusAuthorized && isImplicitPatientReference\(groundedRef\)/.test(chat));
++t("resolver call disallows implicit fallback for unfocused clinical writes", /allowImplicitFallback: focusAuthorized \|\| !clinicalWriteTurn/.test(chat));
++t("replay of a clarified update skips re-resolution (no second hold, no duplicate)", /sendToChat\(heldUpdate\.text, \{ skipMatePatientResolution: true \}\)/.test(chat) && /pendingUtteranceAfterSwitchRef\.current = \{\s*targetCaseId: target\.id,\s*utterance: heldUpdate\.text/.test(chat));
++t("hold is cleared before replay", chat.indexOf("pendingUnreferencedUpdateRef.current = null;\n          lastReferencedCaseIdRef.current = target.id") > 0);
++t("focus is granted only by: prop, new patient started by MATE, first dictated case, 'Open Bed X'", /focusCaseIdRef\.current = newCaseId/.test(chat) && /focusCaseIdRef\.current = ensuredCaseId/.test(chat) && /focusCaseIdRef\.current = fastPathResult\.targetCaseId/.test(chat) && /focusCaseIdRef\.current = patientFocusCaseId/.test(chat));
++t("focus is not set from lastReferencedCaseId / activeCaseId anywhere", !/focusCaseIdRef\.current = (activeCaseId|lastReferencedCaseIdRef)/.test(chat));
++t("New Chat clears focus and any held update", /focusCaseIdRef\.current = null;\s*pendingUnreferencedUpdateRef\.current = null;\s*onNewChat/.test(chat));
++t("App: deliberate opens set focus; tab-bar MATE and free discussion clear it", /setVoiceScribeFocusCaseId\(caseId \|\| null\)/.test(app) && /setVoiceScribeFocusCaseId\(selectedCaseId\)/.test(app) && /Opening MATE from the tab bar[\s\S]{0,120}setVoiceScribeFocusCaseId\(null\)/.test(app) && /patientFocusCaseId=\{voiceScribeFocusCaseId\}/.test(app));
++t("existing safety kept: NOT_FOUND hard stop, A/B resolver, Apply workflow", /Explicit reference \(bed \/ case no\.\/ list index\) that matches nothing|Explicit reference \(bed/.test(chat) && /handleApplyExtraction/.test(chat) && /familyOccupant/.test(chat));
++console.log(`${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);

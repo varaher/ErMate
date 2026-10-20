@@ -504,6 +504,9 @@ useEffect(() => {
   const [showVoiceScribeChat, setShowVoiceScribeChat] = useState<boolean>(false);
   const [isMateExpanded, setIsMateExpanded] = useState<boolean>(false);
   const [voiceScribeCaseId, setVoiceScribeCaseId] = useState<string | null>(null);
+  // MATE Stage 0: the case the clinician deliberately opened for documentation (Patient Focus).
+  // Null in the general MATE conversation: unreferenced clinical updates then ask "which patient?".
+  const [voiceScribeFocusCaseId, setVoiceScribeFocusCaseId] = useState<string | null>(null);
   const [voiceScribeSessionId, setVoiceScribeSessionId] = useState<string | null>(null);
   // NEW — entry-choice popup and discussion-mode flag for the merged
   // ErMate Assistant. See handleVoiceScribeEntryClick / handleStartFreeDiscussion.
@@ -3321,6 +3324,7 @@ const handleDeleteAllCases = async () => {
 
   const handleStartVoiceScribe = (caseId?: string) => {
     setVoiceScribeCaseId(caseId || null);
+    setVoiceScribeFocusCaseId(caseId || null);
     if (caseId) {
       const match = cases.find(c => c.id === caseId);
       setVoiceScribeSessionId(match?.scribeSessionId || null);
@@ -3335,11 +3339,13 @@ const handleDeleteAllCases = async () => {
     // If clinician is currently viewing an active Case Sheet, bind MATE to that patient context safely
     if (selectedCaseId) {
       setVoiceScribeCaseId(selectedCaseId);
+      setVoiceScribeFocusCaseId(selectedCaseId);
       const match = cases.find(c => c.id === selectedCaseId);
       setVoiceScribeSessionId(match?.scribeSessionId || null);
     } else {
       // Dashboard with no specific patient selected: open conversationally with no forced case context
       setVoiceScribeCaseId(null);
+      setVoiceScribeFocusCaseId(null);
       setVoiceScribeSessionId(null);
     }
     setVoiceScribeDiscussionMode(false);
@@ -3365,6 +3371,7 @@ const handleDeleteAllCases = async () => {
     setShowVoiceScribeEntryChoice(false);
     setVoiceScribeDiscussionMode(true);
     setVoiceScribeCaseId(null);
+    setVoiceScribeFocusCaseId(null);
     setVoiceScribeSessionId(null);
     setShowVoiceScribeChat(true);
   };
@@ -7003,6 +7010,8 @@ const handleSignOut = async () => {
                 aria-label={tab.label}
                 onClick={() => {
                   if (tab.id === "scribe") {
+                    // Opening MATE from the tab bar is the general conversation, not a patient focus.
+                    setVoiceScribeFocusCaseId(null);
                     setShowVoiceScribeChat(true);
                   } else {
                     if (showVoiceScribeChat) {
@@ -7220,6 +7229,7 @@ const handleSignOut = async () => {
                       setSelectedCaseId(null);
                     }
                     const targetCaseId = caseId || selectedCaseId;
+                    setVoiceScribeFocusCaseId(targetCaseId || null);
                     if (targetCaseId) {
                       setVoiceScribeCaseId(targetCaseId);
                       const match = cases.find(c => c.id === targetCaseId);
@@ -7633,6 +7643,7 @@ const handleSignOut = async () => {
           <VoiceScribeChatView
             isSidecar={true}
             caseId={voiceScribeCaseId}
+            patientFocusCaseId={voiceScribeFocusCaseId}
             caseData={voiceScribeCaseId ? (cases.find(c => c.id === voiceScribeCaseId) || null) : null}
             sessionId={voiceScribeSessionId}
             onSessionIdChange={setVoiceScribeSessionId}
@@ -7649,6 +7660,7 @@ const handleSignOut = async () => {
               // Hard patient-context boundary:
               // a new Scribe session must not inherit the previous patient's case.
               setVoiceScribeCaseId(null);
+              setVoiceScribeFocusCaseId(null);
               setVoiceScribeSessionId(null);
               setPendingPreviewContext(null);
               setPreviewCase(null);
