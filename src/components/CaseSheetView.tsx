@@ -2065,7 +2065,7 @@ Extremities: Peripheral pulses present and well felt. No edema. No cyanosis or c
         ...initialSurvey,
         airway: { ...initialSurvey.airway, cSpine: "not_applicable" },
         breathing: { ...initialSurvey.breathing, chestWall: "Normal" },
-        circulation: { ...initialSurvey.circulation, bleeding: "Nil", ivAccess: "18G" },
+        circulation: { ...initialSurvey.circulation, bleeding: "Nil" },
         disability: { ...initialSurvey.disability, focalDeficit: "None" },
         exposure: { ...initialSurvey.exposure, skin: "Normal" },
       };
@@ -3604,6 +3604,33 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
               </div>
 
               <div className="bg-slate-50 dark:bg-slate-900/50 p-4 border border-slate-200 dark:border-slate-850 rounded-xl space-y-4">
+                <div className="pt-2">
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-[11px] text-slate-500 font-semibold">Presenting Chief Complaint</label>
+                    
+                  </div>
+                  <div className="relative">
+                    <textarea
+                      rows={4}
+                      value={currentCase.patient.presentingComplaint || ""}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setCurrentCase(prev => ({ ...prev, patient: { ...prev.patient, presentingComplaint: val } }));
+                      }}
+                      placeholder="Enter chief complaint details here..."
+                      className="w-full px-3 py-2 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-xs font-semibold focus:ring-1 focus:ring-blue-500 text-slate-800 dark:text-white leading-relaxed"
+                    />
+                    
+                  </div>
+                </div>
+
+                {/* Patient details: collapsed by default. Only the presenting complaint is needed up front. */}
+                <details data-testid="complaints-patient-details" className="group bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl p-3">
+                  <summary className="cursor-pointer select-none text-xs font-bold text-slate-700 dark:text-slate-200 flex items-center justify-between gap-2">
+                    <span>Patient details <span className="font-normal text-slate-400">(name, age, gender, UHID, phone, arrival, category)</span></span>
+                    <span className="text-[10px] font-normal text-slate-500 truncate">{[currentCase.patient.name, currentCase.patient.age !== null && currentCase.patient.age !== undefined ? `${currentCase.patient.age}y` : "", currentCase.patient.gender].filter(Boolean).join(" · ")}</span>
+                  </summary>
+                  <div className="space-y-4 pt-3">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
                   <div>
                     <label className="block text-[11px] text-slate-500 font-semibold mb-1">Patient Name</label>
@@ -3901,7 +3928,15 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                     </select>
                   </div>
                 </div>
+                  </div>
+                </details>
 
+                <details data-testid="complaints-weight-details" open={currentCase.isPediatric ? true : undefined} className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl p-3">
+                  <summary className="cursor-pointer select-none text-xs font-bold text-slate-700 dark:text-slate-200 flex items-center justify-between gap-2">
+                    <span>Weight &amp; anthropometry <span className="font-normal text-slate-400">(needed for weight-based doses)</span></span>
+                    <span className="text-[10px] font-normal text-slate-500">{currentCase.patient.weight ? `${currentCase.patient.weight} kg` : "not recorded"}</span>
+                  </summary>
+                  <div className="pt-3">
                 {/* === DEDICATED PATIENT WEIGHT & ANTHROPOMETRY SECTION === */}
                 <div data-testid="casesheet-weight-section" id="casesheet-weight-section" className="bg-white dark:bg-slate-950 p-4 border border-slate-200 dark:border-slate-800 rounded-xl space-y-3">
                   <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 dark:border-slate-900 pb-2.5">
@@ -4055,26 +4090,8 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                     </div>
                   )}
                 </div>
-
-                <div className="pt-2">
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="block text-[11px] text-slate-500 font-semibold">Presenting Chief Complaint</label>
-                    
                   </div>
-                  <div className="relative">
-                    <textarea
-                      rows={4}
-                      value={currentCase.patient.presentingComplaint || ""}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        setCurrentCase(prev => ({ ...prev, patient: { ...prev.patient, presentingComplaint: val } }));
-                      }}
-                      placeholder="Enter chief complaint details here..."
-                      className="w-full px-3 py-2 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-xs font-semibold focus:ring-1 focus:ring-blue-500 text-slate-800 dark:text-white leading-relaxed"
-                    />
-                    
-                  </div>
-                </div>
+                </details>
               </div>
             </div>
           )}

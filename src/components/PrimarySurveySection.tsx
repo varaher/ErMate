@@ -15,18 +15,6 @@ export function PrimarySurveyAdjuncts({ data, onChange, openSections, toggleSect
         isOpen={openSections.abg}
         onToggle={() => toggleSection('abg')}
       >
-        <div className="flex gap-3 mb-4">
-          <button className="flex-1 flex items-center justify-center gap-2 border border-emerald-500 text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 py-2 rounded-lg text-sm font-bold">
-            <Camera className="w-4 h-4" /> Camera
-          </button>
-          <button className="flex-1 flex items-center justify-center gap-2 border border-emerald-500 text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 py-2 rounded-lg text-sm font-bold">
-            <ImageIcon className="w-4 h-4" /> Gallery
-          </button>
-        </div>
-        <button className="w-full flex items-center justify-center gap-2 border border-emerald-500 text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 py-2 rounded-lg text-sm font-bold mb-4">
-          <CheckCircle className="w-4 h-4" /> Fill Normal Values
-        </button>
-
         <div className="grid grid-cols-2 gap-4 mb-4">
           <DropdownSelect
             label="Sample Type"
@@ -35,15 +23,16 @@ export function PrimarySurveyAdjuncts({ data, onChange, openSections, toggleSect
             onChange={(v) => onChange("adjuncts.abg.sampleType", v)}
           />
           <DropdownSelect
-            label="Interpretation"
+            label="ABG result"
             options={["Not done", "Normal", "Abnormal"]}
             value={data.adjuncts?.abg?.interpretation}
             onChange={(v) => onChange("adjuncts.abg.interpretation", v)}
           />
         </div>
 
-        <div className="bg-slate-50 dark:bg-slate-900 p-3 rounded-lg text-xs mb-4">
-          <div className="font-bold text-emerald-600 dark:text-emerald-400 mb-2">Normal Values Reference</div>
+        <details data-testid="abg-reference" className="bg-slate-50 dark:bg-slate-900 p-3 rounded-lg text-xs mb-4">
+          <summary className="font-bold text-emerald-600 dark:text-emerald-400 cursor-pointer select-none">Normal values reference</summary>
+          <div className="mt-2" />
           <div className="grid grid-cols-2 gap-y-1">
             <div className="flex justify-between px-2"><span className="text-slate-500">pH</span><span>7.35 - 7.45</span></div>
             <div className="flex justify-between px-2"><span className="text-slate-500">pCO₂</span><span>35 - 45 mmHg</span></div>
@@ -54,7 +43,7 @@ export function PrimarySurveyAdjuncts({ data, onChange, openSections, toggleSect
             <div className="flex justify-between px-2"><span className="text-slate-500">SaO₂</span><span>95 - 100%</span></div>
             <div className="flex justify-between px-2"><span className="text-slate-500">A-a</span><span>&lt;10-15</span></div>
           </div>
-        </div>
+        </details>
 
         <div className="text-sm font-bold mb-2">Blood Gas Values (Optional)</div>
         <div className="grid grid-cols-4 gap-3 mb-4">
@@ -68,7 +57,9 @@ export function PrimarySurveyAdjuncts({ data, onChange, openSections, toggleSect
           <VitalInput label="FiO₂%" value={data.adjuncts?.abg?.fio2} onChange={(v) => onChange("adjuncts.abg.fio2", v)} />
         </div>
 
-        <div className="text-sm font-bold mb-2">Electrolytes (Optional)</div>
+        <details data-testid="abg-more" className="mb-4">
+          <summary className="text-sm font-bold cursor-pointer select-none mb-2">Electrolytes &amp; notes (optional)</summary>
+        <div className="text-xs font-semibold text-slate-500 mb-2">Electrolytes</div>
         <div className="grid grid-cols-4 gap-3 mb-4">
           <VitalInput label="Na⁺" value={data.adjuncts?.abg?.na} onChange={(v) => onChange("adjuncts.abg.na", v)} />
           <VitalInput label="K⁺" value={data.adjuncts?.abg?.k} onChange={(v) => onChange("adjuncts.abg.k", v)} />
@@ -95,13 +86,14 @@ export function PrimarySurveyAdjuncts({ data, onChange, openSections, toggleSect
             />
           </div>
         </div>
+        </details>
 
         <button type="button" onClick={onInterpretABG} className="w-full bg-indigo-500 hover:bg-indigo-600 active:scale-95 text-white font-bold py-2 rounded-lg mb-4 flex items-center justify-center gap-2 transition-all cursor-pointer shadow-sm">
           <Activity className="w-4 h-4" /> Interpret ABG
         </button>
 
         <div className="mb-4">
-          <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wide block mb-1">Final ABG Diagnosis</label>
+          <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wide block mb-1">Final ABG diagnosis</label>
           <div className="flex gap-2">
             <textarea
               placeholder="e.g. Mixed respiratory and metabolic acidosis with lactic acidosis"
@@ -118,7 +110,7 @@ export function PrimarySurveyAdjuncts({ data, onChange, openSections, toggleSect
         </div>
 
         <div>
-          <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wide block mb-1">Your Interpretation (Optional)</label>
+          <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wide block mb-1">Your own note (optional)</label>
           <div className="flex gap-2">
             <textarea
               placeholder="Your clinical interpretation of the ABG..."

@@ -45,6 +45,20 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-20] — ErMate: Case Sheet Layout Prioritization, IV Access Honesty & ABG Streamlining (CASESHEET-LAYOUT-ABG-V1)
+- **Complaints & Demographics Layout Prioritization (`src/components/CaseSheetView.tsx`)**:
+  - Moved Presenting Chief Complaint up front as the first input field in the Chief Complaints tab for rapid intake.
+  - Wrapped secondary patient details (name, age, gender, UHID, phone, arrival, category) into a collapsed `<details data-testid="complaints-patient-details">` with an inline demographic summary line, reducing visual clutter.
+  - Wrapped Patient Weight & Anthropometry into `<details data-testid="complaints-weight-details">` (opened by default for pediatric cases for weight-based dosing, collapsed for adults with live weight tag).
+- **IV Access Preset Honesty (`src/components/CaseSheetView.tsx`)**:
+  - Removed `ivAccess: "18G"` from `markPrimarySurveyNormal`, ensuring vascular access is only recorded when explicitly inserted/confirmed by the clinician rather than invented.
+- **Streamlined ABG / VBG Section (`src/components/PrimarySurveySection.tsx`)**:
+  - Removed dead/unused Camera, Gallery, and "Fill Normal Values" buttons from the ABG accordion.
+  - Relabelled "Interpretation" dropdown to "ABG result" and refined section labels ("Final ABG diagnosis", "Your own note (optional)").
+  - Collapsed "Normal values reference" into `<details data-testid="abg-reference">` and optional electrolytes/notes into `<details data-testid="abg-more">`.
+- **Verification (`verify_casesheet_layout_and_abg.ts`)**:
+  - Added 13 automated tests verifying layout ordering, details collapsing, weight retention, and ABG keys with 0 failures.
+
 ### [2026-10-20] — ErMate: Case Sheet Zero-Invented-Vitals Honesty & Normal Exam Decoupling (CASESHEET-NO-INVENTED-VITALS-V1)
 - **Primary Survey Normal Template Honesty (`src/components/CaseSheetView.tsx`)**:
   - Removed invented numerical vital signs (`RR 16/min`, `SpO₂ 98%`, `HR 80/min`, `BP 120/80 mmHg`, `GCS 15/15`, `Pupils 3mm`) from `SECTION_NORMALS.primarySurvey`.
