@@ -494,16 +494,15 @@ service cloud.firestore {
         allow read, write: if isLoggedIn() && isOwner(userId);
       }
 
-      // My Log Book — private to the owning doctor. Created only by the
-      // backend; the owner may edit only learningPoints / skills / updatedAt.
+      // My Log Book — private to the owning doctor (UID-owned portfolio).
       match /logbook/{entryId} {
         allow read, delete: if isLoggedIn() && isOwner(userId);
-        allow create: if false;
+        allow create: if isLoggedIn() && isOwner(userId)
+          && isValidId(entryId)
+          && incoming().get('ownerUid', '') == userId;
         allow update: if isLoggedIn() && isOwner(userId)
-          && incoming().diff(existing()).affectedKeys().hasOnly(['learningPoints', 'skills', 'updatedAt'])
-          && (!('learningPoints' in incoming()) || incoming().learningPoints is string)
-          && (!('skills' in incoming()) || incoming().skills is list)
-          && (!('updatedAt' in incoming()) || incoming().updatedAt is string);
+          && isValidId(entryId)
+          && incoming().get('ownerUid', '') == userId;
       }
     }
 

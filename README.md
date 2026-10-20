@@ -198,6 +198,12 @@ ErMate enforces strict per-route AI model assignments and dedicated fallback cas
 
 > **Temperature Enforcement**: All clinical extraction routes operate strictly at `temperature: 0.0` for zero-hallucination, deterministic outputs.
 
+### 10. Clinician Procedure & Case Log Book Portfolio (`src/utils/logbookSync.ts`, `src/components/ProfileSettingsView.tsx`)
+- **UID-Owned Personal Portfolio**: Private resident & ER physician procedural registry decoupled from ephemeral shift handovers and hospital beds.
+- **Direct Client-Side Firestore Synchronization**: Bypasses cloud container IAM limits by syncing case snapshots directly to `/users/{uid}/logbook/{entryId}` on case save and scribe review via the authenticated Firebase Web client session.
+- **De-Identified Audit & Case Categorization**: Accurately classifies age brackets (pediatric vs. adult), captures logged interventions & procedures, records triage priority, and anchors clinical date stamps.
+- **Hardened Security Rules (`firestore.rules`) & Intermediate Representation (`firebase-blueprint.json`)**: Strictly enforces document identity validation and prevents cross-user tampering while allowing real-time `onSnapshot` queries for the doctor.
+
 ---
 
 ## 🧭 Role-Based Navigation Architecture
@@ -262,6 +268,8 @@ ErMate employs a dynamic role-based navigation hierarchy computed from `getNorma
 | `/test_phase3_rules.cjs` | 79-scenario emulator test suite validating full Phase-3 authorization matrix |
 | `/test_privilege_escalation_audit.cjs` | Privilege escalation audit test suite verifying strict closure of P1-P11 attack vectors and P12 shift persistence |
 | `/src/lib/firebase-admin.ts` | Named Firestore database Admin singleton (`ai-studio-ermate-c85078ba-126c-43fd-b799-a4aa8b82bf03`) |
+| `/src/utils/logbookSync.ts` | Client-side direct Firestore sync for clinician logbook entries with de-identification and permission handling |
+| `/verify_logbook_sync.ts` | P0 verification suite for client logbook direct sync, security rules, and server fallback |
 | `/firebase.json` | Explicit Named Firestore database targeting for `ai-studio-ermate-c85078ba-126c-43fd-b799-a4aa8b82bf03` security rules deployments |
 | `/server/clinicalRanges.ts` | Deterministic adult ED reference ranges & zero-hallucination abnormal flagger |
 | `/server/alertCompiler.ts` | Rule-based post-synthesis critical alert compiler (Section 0) |

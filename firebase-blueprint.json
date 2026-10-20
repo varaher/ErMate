@@ -151,6 +151,31 @@
         "alertRow": { "type": "string" }
       },
       "required": ["patientLabel", "presentingComplaint", "diagnosis"]
+    },
+    "LogbookEntry": {
+      "title": "LogbookEntry",
+      "description": "Personal clinical logbook and procedure portfolio entry for a resident or ER physician",
+      "type": "object",
+      "properties": {
+        "entryId": { "type": "string" },
+        "ownerUid": { "type": "string" },
+        "sourceCaseId": { "type": "string" },
+        "sourceType": { "type": "string" },
+        "hospitalIdAtTime": { "type": "string" },
+        "hospitalNameAtTime": { "type": "string" },
+        "roleAtTime": { "type": "string" },
+        "dateSeen": { "type": "string" },
+        "ageGroup": { "type": "string" },
+        "gender": { "type": "string" },
+        "triageCategory": { "type": "string" },
+        "caseCategory": { "type": "string" },
+        "proceduresPerformed": { "type": "array" },
+        "skills": { "type": "array" },
+        "learningPoints": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["entryId", "ownerUid"]
     }
   },
   "firestore": {
@@ -169,6 +194,10 @@
     "/users/{userId}": {
       "schema": "UserProfile",
       "description": "User profiles keyed by auth.uid"
+    },
+    "/users/{userId}/logbook/{entryId}": {
+      "schema": "LogbookEntry",
+      "description": "Personal doctor logbook entries tracking procedure and case logs"
     },
     "/cases/{caseId}": {
       "schema": "ClinicalCase",

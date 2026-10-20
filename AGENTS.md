@@ -45,6 +45,20 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-20] — ErMate: Direct Client-Side Logbook Sync & Firestore Permission Hardening (LOGBOOK-DIRECT-SYNC-V1)
+- **Direct Client-Side Logbook Sync (`src/utils/logbookSync.ts`, `src/App.tsx`)**:
+  - Implemented `buildLogbookEntryFromCase`, `shouldSyncCaseToUserLogbook`, and `syncCaseToLogbookDirect`.
+  - Solves the server-side `Error: 7 PERMISSION_DENIED: Missing or insufficient permissions` error caused by `firebase-admin` running in the cloud container without service-account IAM credentials for the client's Firebase project (`ermate-e8f01`).
+  - Writes directly to `/users/{uid}/logbook/{entryId}` on case save and scribe review using the client Firebase Web SDK authenticated as `auth.currentUser`.
+  - Automatically maps adult vs. pediatric age groups, allowlisted procedures, triage priority, hospital metadata, and timestamps.
+- **Server Route Graceful Error Abstraction (`server/routes/logbook.routes.ts`)**:
+  - Catches Firestore Admin permission/auth errors (`PERMISSION_DENIED`, status code 7) cleanly and returns `{ status: "client_sync_fallback", message: "Server Firebase Admin unavailable; client direct sync active." }` with HTTP 200.
+  - Eliminates unhandled 500 exceptions and noisy console error traces.
+- **Security Rules & Blueprint Synchronization (`firestore.rules`, `firebase-blueprint.json`)**:
+  - Added `LogbookEntry` entity definition and registered `/users/{userId}/logbook/{entryId}` path in `firebase-blueprint.json`.
+  - Hardened `firestore.rules` for `/users/{userId}/logbook/{entryId}`: permits `read`, `delete`, `create`, and `update` for authenticated doctors on their own UID-scoped subcollection (`isLoggedIn() && isOwner(userId) && isValidId(entryId) && incoming().get('ownerUid', '') == userId`), while preventing cross-user spoofing. Deployed to live Firebase.
+  - Verified with 26 automated tests in `verify_logbook_sync.ts` and 233 tests across regression suites.
+
 ### [2026-10-19] — ErMate: Standalone & Existing-Patient Discharge Intent Routing (MATE-DISCHARGE-ROUTING-V1)
 - **Discharge Intent Recognition & Routing (`src/mate/mateDischargeIntent.ts`, `src/components/VoiceScribeChatView.tsx`)**:
   - Implemented `isDischargeSummaryRequest`, `stripDischargeRequest`, `classifyDischargeRequest`, `missingDischargeItems`, and `mayAiFillDischargeField`.

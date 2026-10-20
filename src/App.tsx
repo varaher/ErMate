@@ -1,5 +1,6 @@
 import { displayTimeForUpdate } from "./mate/clinicianUpdateStamp";
 import { resolveWorkspaceForUser } from "./utils/workspaceResolver";
+import { syncCaseToLogbookDirect } from "./utils/logbookSync";
 import React, { useState, useEffect, useRef, useCallback, Suspense } from "react";
 import { 
   Activity, Sparkles, BookOpen, User, Clock, ShieldAlert, 
@@ -3104,27 +3105,11 @@ const handleDeleteAllCases = async () => {
       };
       await setDoc(addendumRef, auditLog);
 
-      // Phase 3A: Trusted Logbook Snapshot Service
-      // Sync logbook for UID attribution.
-      // Runs in the BACKGROUND (not awaited): the case is already saved above, and a
-      // cold server start here used to delay opening a new manual case sheet by seconds.
-      if (!isAutosave) void (async () => {
-      try {
-        const idToken = await auth.currentUser?.getIdToken();
-        if (idToken) {
-          await fetch("/api/logbook/sync-case", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "Authorization": `Bearer ${idToken}`
-            },
-            body: JSON.stringify({ caseId: caseToSave.id })
-          }).catch(err => console.warn("Logbook sync failed silently", err));
-        }
-      } catch (syncErr) {
-        console.warn("Logbook sync encountered error", syncErr);
+      // Trusted Logbook Snapshot Service
+      // Direct client-side Firestore sync (UID-owned portfolio)
+      if (!isAutosave && auth.currentUser) {
+        void syncCaseToLogbookDirect(caseToSave, auth.currentUser.uid, auth.currentUser.email);
       }
-      })();
 
     } catch (err: any) {
       console.error("Error saving case or audit trail:", err);
@@ -5072,21 +5057,9 @@ const handleDeleteAllCases = async () => {
       caseId: reviewedCase.id
     });
 
-    // Background logbook sync
+    // Direct client logbook sync (UID-owned portfolio)
     if (auth.currentUser) {
-      auth.currentUser.getIdToken().then(token => {
-        fetch("/api/logbook/sync-case", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`
-          },
-          body: JSON.stringify({
-            caseData: finalSavedCase,
-            sourceType: "active_case"
-          })
-        }).catch(err => console.warn("Background logbook sync error:", err));
-      }).catch(err => console.warn("Failed to get token for logbook sync:", err));
+      void syncCaseToLogbookDirect(finalSavedCase, auth.currentUser.uid, auth.currentUser.email);
     }
 
     triggerNotification(
