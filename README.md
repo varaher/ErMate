@@ -276,6 +276,8 @@ ErMate employs a dynamic role-based navigation hierarchy computed from `getNorma
 | `/src/components/CreditsPlanCard.tsx` | Shared component for credit balance display, plan status, low balance alerts, and Razorpay checkout polling |
 | `/src/lib/creditDisplay.ts` | Credit level evaluation (`creditLevel`), plan status formatting (`planStatus`), and categorized credit action labels |
 | `/verify_credits_ui.ts` | Verification suite for Credits UI levels, plan status, checkout wiring, header chip, and screen references |
+| `/server/middleware/rateLimit.ts` | Small in-memory per-client IP rate limiter for `/api` with webhook exemption |
+| `/verify_fix_batch_individual.ts` | Verification suite for API rate limiting, mortality audit metering, antigravity route removal, and session wipe |
 | `/src/lib/pricing.ts` | Single source of truth for ErMate individual pricing, credit tiers, and service credit costs |
 | `/server/services/creditMeter.ts` | Express middleware for server-side credit balance check and post-success deduction |
 | `/server/services/paymentFulfillment.ts` | Timing-safe Razorpay webhook HMAC verification and idempotent transactional payment fulfillment |

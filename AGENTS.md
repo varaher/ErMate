@@ -45,6 +45,21 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-21] — ErMate: Rate Limiting, Mortality Audit Metering & Session Cleanup Hardening (SECURITY-RATELIMIT-METER-V1)
+- **API Rate Limiting (`server/middleware/rateLimit.ts`, `server.ts`)**:
+  - Implemented lightweight, in-memory IP rate limiter (`apiRateLimit`, default 300 requests/minute) mounted on `/api` before JSON body parsing.
+  - Generous limits prevent hospital NAT throttling while blocking abuse bursts; Razorpay webhook (`/api/payments/webhook`) is explicitly exempt.
+- **Mortality Audit Metering & Removal of Unused Routes (`server.ts`, `src/lib/pricing.ts`, `src/lib/creditDisplay.ts`)**:
+  - Added `meterCredits("mortality_audit", () => firestoreAdmin)` middleware to `/api/mortality-audit/generate` with a cost of 3 credits in `CREDIT_COSTS`.
+  - Added "Mortality audit (M&M)" action mapping to `CREDIT_USE_LABELS`.
+  - Completely removed legacy `/api/antigravity` route (unmetered, un-de-identified agent unused by the client).
+- **Session Cleanup on Sign-Out (`src/App.tsx`)**:
+  - `clearAccountScopedState` now clears `ermate_activeDutySession` and `clinical_memory_log` from localStorage on sign-out and account switches.
+- **What Uses Credits Explainer (`src/components/CreditsPlanCard.tsx`)**:
+  - Added collapsible `<details data-testid="credit-uses">` displaying starting cost actions and emphasizing that manual entry, saving, triage, and export remain always free.
+- **Verification (`verify_fix_batch_individual.ts`)**:
+  - 10 automated unit and behavior tests covering antigravity removal, mortality audit metering, rate limiter bursts/429/webhook exemption, and session storage wipes.
+
 ### [2026-10-21] — Subscription visibility and checkout confirmation
 - Simplified recharge copy to "Need more AI features? Buy credits" with ₹300/₹700/₹1,000 purchase CTAs. Removed displayed credited quantities and per-action rate tables, preserving all server pricing and grants. Existing secret values are untouched. Live test reached the login screen; no live payment was verified.
 - Replaced CreditsPlanCard with a profile-visible summary, 30-day plan and recharge catalogue using unchanged shared pricing. Administrator and hospital-covered access remain visible. Their optional credit recharges remain actionable; redundant monthly subscription checkout is disabled.

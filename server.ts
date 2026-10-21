@@ -77,6 +77,7 @@ import { executeCaseDiscussionWithFailover, executeRoundsDebriefWithFailover } f
 dotenv.config();
 
 import { meterCredits } from "./server/services/creditMeter.ts";
+import { apiRateLimit } from "./server/middleware/rateLimit.ts";
 import paymentsRouter from "./server/routes/payments.ts";
 const SCRIBE_EXTRACTION_GUARDRAILS = `
 
@@ -181,6 +182,7 @@ const PORT = 3000;
 
 app.use("/api/payments/webhook", express.raw({ type: "application/json" }));
 
+app.use("/api", apiRateLimit());
 app.use(express.json({ limit: "10mb" }));
 app.use("/api/payments", paymentsRouter);
 app.use(extractionRouter);
@@ -2218,6 +2220,7 @@ app.post("/api/learning/rules/delete", requireAuth, requirePlatformAdmin, async 
 app.post(
   "/api/mortality-audit/generate",
   requireAuth,
+  meterCredits("mortality_audit", () => firestoreAdmin),
   async (req: express.Request, res: express.Response) => {
     const { rawText, caseId, patientInitials, hospitalName } = req.body;
 
@@ -3847,62 +3850,8 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 });
 
 
-// ══════════════════════════════════════════════════════════════════
-// Antigravity Interactions API Route
-// ══════════════════════════════════════════════════════════════════
-app.post("/api/antigravity", requireAuth, express.json(), async (req: AuthRequest, res) => {
-  try {
-    const { input, previous_interaction_id } = req.body;
-    
-    if (!input) {
-      return res.status(400).json({ success: false, error: "Input is required" });
-    }
+// /api/antigravity removed: unmetered, un-de-identified Gemini agent, unused by the client.
 
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      return res.status(500).json({ success: false, error: "GEMINI_API_KEY is not configured" });
-    }
-
-    const ai = new GoogleGenAI({ apiKey });
-    
-    const interactionParams: Record<string, any> = {
-      agent: "antigravity-preview-05-2026",
-      input,
-      environment: "remote",
-    };
-
-    if (previous_interaction_id) {
-      interactionParams.previous_interaction_id = previous_interaction_id;
-    }
-
-    // Call Antigravity using Interactions API
-    const interaction = await ai.interactions.create(interactionParams as any, { timeout: 300000 });
-    
-    // Antigravity agents generate incremental model_output steps. Combine all text outputs:
-    let fullOutput = "";
-    for (const step of interaction.steps) {
-      if (step.type === 'model_output') {
-        const textContent = step.content?.find(c => c.type === 'text');
-        if (textContent && textContent.text) {
-          fullOutput += textContent.text;
-        }
-      }
-    }
-
-    res.json({
-      success: true,
-      data: {
-        interaction_id: interaction.id,
-        environment_id: interaction.environment_id,
-        output_text: fullOutput || "Agent completed without returning text output."
-      }
-    });
-
-  } catch (error) {
-    console.error("[Antigravity Route Error]:", error);
-    res.status(500).json({ success: false, error: error.message || "Failed to process Antigravity request." });
-  }
-});
 
 // Pitch Deck PPT / PPTX Download Endpoints
 app.get(["/api/download/pitch-deck", "/ErMate_Investor_Pitch_Deck.pptx", "/ErMate_Investor_Pitch_Deck.ppt"], (req, res) => {

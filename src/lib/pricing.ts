@@ -52,6 +52,7 @@ export const CREDIT_COSTS = {
   parse_rota: 2,
   handover_parse: 2,
   handover_compile: 2,
+  mortality_audit: 3,
 } as const;
 export type CreditAction = keyof typeof CREDIT_COSTS;
 

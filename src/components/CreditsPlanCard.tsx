@@ -1,8 +1,8 @@
 import React, { useEffect, useRef, useState } from "react";
 import { doc, getDocFromServer, onSnapshot } from "firebase/firestore";
 import { auth, db } from "../firebase";
-import { PLAN_PRICING, rupees } from "../lib/pricing";
-import { creditLevel, formatDay } from "../lib/creditDisplay";
+import { PLAN_PRICING, rupees, CREDIT_COSTS } from "../lib/pricing";
+import { creditLevel, formatDay, CREDIT_USE_LABELS } from "../lib/creditDisplay";
 
 export interface CreditsProfileFields {
   aiCredits?: number;
@@ -218,6 +218,13 @@ export default function CreditsPlanCard({ profile, coveredByTeam = false, teamNa
             );
           })}
         </div>
+        <details data-testid="credit-uses" className="rounded-xl border border-slate-200 p-3 text-sm dark:border-slate-700">
+          <summary className="cursor-pointer font-semibold text-slate-800 dark:text-slate-100">What uses credits</summary>
+          <ul className="mt-2 space-y-1 text-slate-600 dark:text-slate-300">
+            {CREDIT_USE_LABELS.map(u => <li key={u.label} className="flex justify-between gap-3"><span>{u.label}</span><span className="shrink-0 font-mono text-xs">{Math.min(...u.actions.map(a => (CREDIT_COSTS as Record<string, number>)[a] ?? 0))}{u.actions.some(a => (CREDIT_COSTS as Record<string, number>)[a] !== (CREDIT_COSTS as Record<string, number>)[u.actions[0]]) ? "+" : ""}</span></li>)}
+          </ul>
+          <p className="mt-2 text-xs text-slate-500">Always free: manual case entry, saving, triage, print / export. Credits are charged only after a successful result.</p>
+        </details>
         <p className="text-xs text-slate-500 dark:text-slate-400">
           Recharges add AI usage to your account. They do not extend your subscription validity.
         </p>

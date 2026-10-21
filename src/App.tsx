@@ -6453,6 +6453,8 @@ const clearAccountScopedState = (previousUid?: string | null) => {
       localStorage.removeItem("ermate_isOnShift");
       localStorage.removeItem("ermate_shiftDate");
       localStorage.removeItem("ermate_shiftDismissed");
+      localStorage.removeItem("ermate_activeDutySession");
+      localStorage.removeItem("clinical_memory_log");
       if (previousUid) {
         localStorage.removeItem(`ermate:scribeSession:${previousUid}`);
       }

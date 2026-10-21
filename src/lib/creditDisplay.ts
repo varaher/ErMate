@@ -41,4 +41,5 @@ export const CREDIT_USE_LABELS: Array<{ label: string; actions: string[] }> = [
   { label: "Rounds debrief", actions: ["rounds_debrief"] },
   { label: "Handover & rota parsing", actions: ["handover_parse", "handover_compile", "parse_rota"] },
   { label: "Lens report", actions: ["lens_report"] },
+  { label: "Mortality audit (M&M)", actions: ["mortality_audit"] },
 ];
