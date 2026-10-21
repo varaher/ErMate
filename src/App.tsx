@@ -66,6 +66,7 @@ import { isEstablishedCaseSheet } from "./utils/establishedCaseCheck";
 import { resolveDutyWindow } from "./utils/dutyWindow";
 import { isGlobalVoiceRecordingActive } from "./components/shared/VoiceRecorder";
 import { allocateOrValidateBed } from "./utils/bedAllocation";
+import { shouldAttachToOpenCase } from "./mate/ensureDraftPolicy";
 import { generateInternalCaseId, reserveNextDisplaySequence, getDisplayCaseId } from "./utils/caseIdentity";
 import {
   startDutySession,
@@ -4182,7 +4183,7 @@ const handleDeleteAllCases = async () => {
    */
   const handleEnsureDraftCase = async (
     sessionId: string,
-    options?: { bedNo?: string }
+    options?: { bedNo?: string; forceNew?: boolean }
   ): Promise<string> => {
     const user = auth.currentUser;
     if (!user) throw new Error("Not authenticated");
@@ -4323,7 +4324,9 @@ const handleDeleteAllCases = async () => {
      * If App already has a case context but session is not yet linked,
      * attach this session to that exact existing case. Never create duplicate.
      */
-    if (voiceScribeCaseId) {
+    // forceNew: MATE is starting a DIFFERENT patient (vetted vacant bed) while another case is open.
+    // The open case must not be reused or re-bedded, so skip the "attach to current case" branch.
+    if (voiceScribeCaseId && shouldAttachToOpenCase(voiceScribeCaseId, options?.forceNew)) {
       let existingCase = cases.find(c => c.id === voiceScribeCaseId) || null;
       if (!existingCase) {
         const existingCaseSnap = await getDoc(doc(db, "cases", voiceScribeCaseId));

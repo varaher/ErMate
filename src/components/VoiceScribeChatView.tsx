@@ -137,7 +137,7 @@ interface VoiceScribeChatViewProps {
   allCases?: ClinicalCase[];
   physicalBedCapacity?: number;
   onSwitchCase?: (caseId: string) => void;
-  onEnsureDraftCase?: (sessionId: string, options?: { bedNo?: string }) => Promise<string>;
+  onEnsureDraftCase?: (sessionId: string, options?: { bedNo?: string; forceNew?: boolean }) => Promise<string>;
   isSidecar?: boolean;
   isSidecarExpanded?: boolean;
   onToggleSidecarExpand?: () => void;
@@ -2045,7 +2045,7 @@ export default function VoiceScribeChatView({
             hospitalId: workspace.hospitalId,
             mode: "case",
           });
-          const newCaseId = await onEnsureDraftCase(newSessionId, { bedNo: assignedBed });
+          const newCaseId = await onEnsureDraftCase(newSessionId, { bedNo: assignedBed, forceNew: true });
           sessionContextGenerationRef.current += 1;
           const currentGen = sessionContextGenerationRef.current;
           // Tell the doctor when the new patient shares a bed with an existing one.

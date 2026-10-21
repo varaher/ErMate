@@ -291,6 +291,8 @@ ErMate employs a dynamic role-based navigation hierarchy computed from `getNorma
 | `/src/lib/pricing.ts` | Single source of truth for ErMate individual pricing, credit tiers, and service credit costs |
 | `/server/services/creditMeter.ts` | Express middleware for server-side credit balance check and post-success deduction |
 | `/server/services/paymentFulfillment.ts` | Timing-safe Razorpay webhook HMAC verification and idempotent transactional payment fulfillment |
+| `/src/mate/ensureDraftPolicy.ts` | Policy gating whether a new Scribe session should attach to the open case or create a distinct draft case |
+| `/verify_mate_new_patient_with_open_case.ts` | Verification suite for draft creation policy when starting a new patient in a vacant bed while another case is open |
 | `/verify_team_coverage_rule.ts` | Verification suite for unified hospital team coverage rule, slug matching, fail-open resiliency, and client parity |
 | `/verify_credit_metering.ts` | Automated test suite for credit metering decisions, deductions, and exemptions |
 | `/verify_payments_individual_plan.ts` | Automated test suite for Razorpay payment fulfillment, webhook signatures, and tier extension |

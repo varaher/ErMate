@@ -45,6 +45,16 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-21] — ErMate: Distinct Draft Creation for New Patients With Open Case (MATE-ENSURE-DRAFT-POLICY-V1)
+- **Draft Creation Policy (`src/mate/ensureDraftPolicy.ts`)**:
+  - Implemented `shouldAttachToOpenCase(openCaseId, forceNew)`: guards against attaching new Scribe sessions to an existing open case when starting a distinct patient in a vacant bed.
+  - Normal idempotent recovery retains attachment to the open case when `forceNew` is falsy.
+- **App & MATE Integration (`src/App.tsx`, `src/components/VoiceScribeChatView.tsx`)**:
+  - `handleEnsureDraftCase` in `App.tsx` accepts `{ bedNo?: string; forceNew?: boolean }`. When `forceNew === true`, branch 3 bypasses the open case context, creating a distinct draft case instead of refusing or mutating the open case's bed.
+  - `startNewCaseInBed` in `VoiceScribeChatView.tsx` passes `{ bedNo: assignedBed, forceNew: true }` when allocating a new case in a vacant bed.
+- **Verification (`verify_mate_new_patient_with_open_case.ts`)**:
+  - 8 automated tests verifying policy logic, branch 3 bypass, option typing, and bed-mismatch refusal preservation.
+
 ### [2026-10-21] — ErMate: Unified Hospital Team Coverage Rule & Credit Meter Exemption (TEAM-COVERAGE-RULE-V1)
 - **Unified Hospital Team Coverage Rule (`server/services/creditMeter.ts`)**:
   - Implemented `isTeamCovered(db, member)` and `hospitalSlug(name)`: single authoritative coverage rule shared between frontend and server.

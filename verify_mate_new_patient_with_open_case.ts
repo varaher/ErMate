@@ -1,0 +1,15 @@
+import fs from "fs";
+import { shouldAttachToOpenCase } from "./src/mate/ensureDraftPolicy";
+let pass = 0, fail = 0;
+const t = (n: string, c: boolean) => { c ? pass++ : fail++; console.log(`${c ? "PASS" : "FAIL"} ${n}`); };
+t("no open case -> nothing to attach to", !shouldAttachToOpenCase(null) && !shouldAttachToOpenCase(undefined, true));
+t("open case, normal request -> attach (idempotent recovery unchanged)", shouldAttachToOpenCase("case-3A"));
+t("open case, forceNew (new patient in another bed) -> do NOT attach", !shouldAttachToOpenCase("case-3A", true));
+const app = fs.readFileSync("./src/App.tsx", "utf8");
+const chat = fs.readFileSync("./src/components/VoiceScribeChatView.tsx", "utf8");
+t("App branch 3 uses the policy", /if \(voiceScribeCaseId && shouldAttachToOpenCase\(voiceScribeCaseId, options\?\.forceNew\)\)/.test(app));
+t("App option typed", /options\?: \{ bedNo\?: string; forceNew\?: boolean \}/.test(app));
+t("startNewCaseInBed requests a new case", /onEnsureDraftCase\(newSessionId, \{ bedNo: assignedBed, forceNew: true \}\)/.test(chat));
+t("auto-create after first extraction is unchanged (no forceNew)", /onEnsureDraftCase\(targetSessionId, \{ bedNo: targetBed \}\)/.test(chat));
+t("bed-mismatch refusal for the normal path is still present", /refusing to reassign it automatically/.test(app));
+console.log(`${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);
