@@ -79,6 +79,7 @@ dotenv.config();
 import { meterCredits } from "./server/services/creditMeter.ts";
 import { apiRateLimit } from "./server/middleware/rateLimit.ts";
 import paymentsRouter from "./server/routes/payments.ts";
+import accountRouter from "./server/routes/account.routes.ts";
 const SCRIBE_EXTRACTION_GUARDRAILS = `
 
 ERMATE CLINICAL EXTRACTION GUARDRAILS — THESE RULES OVERRIDE ANY CONFLICTING EXTRACTION BEHAVIOUR:
@@ -185,6 +186,7 @@ app.use("/api/payments/webhook", express.raw({ type: "application/json" }));
 app.use("/api", apiRateLimit());
 app.use(express.json({ limit: "10mb" }));
 app.use("/api/payments", paymentsRouter);
+app.use("/api/account", accountRouter);
 app.use(extractionRouter);
 app.use("/api/logbook", logbookRouter);
 app.use("/api/team", teamRouter);

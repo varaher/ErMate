@@ -103,7 +103,7 @@ const U = { uid: "u1", email: "doc@x.com", email_verified: true };
   t("lookup error fails open", c.nexted);
   db = makeDb({ "users/u1": {} });
   c = await call(db, "scribe_chat", U, 200, { success: true });
-  t("no balance field fails open, nothing charged", c.nexted && db.store["users/u1"].aiCredits === undefined);
+  t("no balance field (legacy): starter 100 granted once, then this call charged 1", c.nexted && db.store["users/u1"].aiCredits === 99 && !!db.store["users/u1"].legacyCreditsGrantedAt);
   db = makeDb({ "users/u1": { aiCredits: 5 } });
   c = await call(db, "scribe_chat", U, 200, null, false);
   t("2xx with non-json response still charges once", db.store["users/u1"].aiCredits === 4);

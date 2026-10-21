@@ -23,6 +23,7 @@ export const PLAN_PRICING: Record<string, PlanPrice> = {
 
 /** Price per credit charged to the user, GST inclusive (informational; amounts above are the authority). */
 export const RUPEES_PER_CREDIT = 2;
+export const FREE_STARTER_CREDITS = 100;
 /** Target value of AI work (our cost to serve) delivered per credit, in rupees. Calibrate against real vendor bills. */
 export const TARGET_COST_PER_CREDIT_RUPEES = 1.5;
 

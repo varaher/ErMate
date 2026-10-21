@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import LegalLinks from "./LegalLinks";
 
 import {
   Activity,
@@ -778,6 +779,9 @@ export default function MockLoginView({
       {/* Truthful Security Footer */}
       <div className="mt-6 text-center text-[10px] text-slate-500 font-mono">
         Secure authentication powered by Firebase
+      </div>
+      <div className="mt-4">
+        <LegalLinks />
       </div>
     </div>
   );

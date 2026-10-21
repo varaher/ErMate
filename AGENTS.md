@@ -45,6 +45,22 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-21] — ErMate: DPDP Legal Pages, Self-Serve Account Deletion & Legacy Credit Grant (LEGAL-DELETION-LEGACY-V1)
+- **DPDP Act 2023 Statutory Legal Disclosures (`public/privacy.html`, `public/terms.html`, `public/refund.html`, `src/lib/legal.ts`, `src/components/LegalLinks.tsx`)**:
+  - Published static, neutral policy pages: Privacy Policy (`/privacy.html`), Terms of Use (`/terms.html`), and Refund Policy (`/refund.html`).
+  - Added reusable `<LegalLinks />` component linking to legal disclosures in `MockLoginView` and `MoreView`.
+  - Added mandatory consent checkbox (`data-testid="accept-terms"`) on `SignUpView`, recording `termsAcceptedAt` and `termsVersion: TERMS_VERSION` ("2026-10-21") in Firestore.
+- **DPDP Self-Serve Account Erasure (`server/services/accountDeletion.ts`, `server/routes/account.routes.ts`, `src/components/DeleteAccountCard.tsx`)**:
+  - Implemented `POST /api/account/delete`: requires authenticated owner and recent reauthentication (within 5 minutes) + explicit confirmation word `"DELETE"`.
+  - Retention rule: deletes login (`deleteAuthUser`), `users/{uid}`, individual cases (`cases` where `workspaceType == "individual"`), personal scribe sessions, chat sessions, handover sheet, and personal quick paste.
+  - Exclusions: hospital-workspace cases remain intact with the hospital record; payment/credit ledgers remain for statutory tax/audit compliance (up to 8 years) without profile linkage.
+  - Active hospital team members are blocked from deleting until they leave or are removed by an HOD.
+- **Legacy Account Starter Balance (`server/services/creditMeter.ts`, `src/lib/pricing.ts`)**:
+  - Defined `FREE_STARTER_CREDITS = 100` in `pricing.ts`.
+  - Implemented `grantLegacyCredits`: accounts created before credit metering with undefined balance receive 100 starter credits atomically on their next verified AI request. Existing balances (including 0) are never overwritten.
+- **Verification (`verify_legal_deletion_legacy.ts`)**:
+  - 35 automated tests verifying legacy credit grants, deletion rules, query scopes, recent-login gating, route auth, and static policy page contracts with 0 failures.
+
 ### [2026-10-21] — ErMate: Expiry Downgrade, Refund Fulfillment & Email Verification Gating (EXPIRY-REFUND-VERIFIED-V1)
 - **Refund Fulfillment (`server/routes/payments.ts`, `server/services/paymentFulfillment.ts`)**:
   - Implemented `fulfillRefund` to handle Razorpay `refund.processed` webhook events idempotently in a Firestore transaction.

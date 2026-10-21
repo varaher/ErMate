@@ -1,4 +1,6 @@
 import CreditsPlanCard from "./CreditsPlanCard";
+import LegalLinks from "./LegalLinks";
+import DeleteAccountCard from "./DeleteAccountCard";
 import React, { useState, useEffect } from "react";
 import { 
   Building2, FileWarning, BookOpen, Users, 
@@ -1137,12 +1139,19 @@ export default function MoreView({
               </button>
             </div>
           )}
+
+          {onSignOut && (
+            <div className="pt-2">
+              <DeleteAccountCard onDeleted={onSignOut} />
+            </div>
+          )}
         </div>
       </section>
 
       {/* FOOTER */}
-      <div className="text-center pt-2 font-mono text-[11px] text-slate-400">
-        ErMate v{APP_VERSION} • Certified ATLS Protocol Engine • DPDP Act 2023 Compliant • End-to-End Encrypted
+      <div className="text-center pt-2 font-mono text-[11px] text-slate-400 space-y-2">
+        <p>ErMate v{APP_VERSION} • Certified ATLS Protocol Engine • DPDP Act 2023 Compliant • End-to-End Encrypted</p>
+        <LegalLinks />
       </div>
 
       {/* ----------------- SUBSECTION MODALS ----------------- */}

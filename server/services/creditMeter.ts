@@ -1,5 +1,5 @@
 import type { NextFunction, Response } from "express";
-import { CREDIT_COSTS, type CreditAction } from "../../src/lib/pricing.ts";
+import { CREDIT_COSTS, FREE_STARTER_CREDITS, type CreditAction } from "../../src/lib/pricing.ts";
 
 /**
  * AI credit metering.
@@ -49,6 +49,22 @@ export async function downgradeIfExpired(db: any, uid: string, now: Date = new D
     if (!snap.exists || !isPlanExpired(snap.data(), now.getTime())) return false;
     tx.update(ref, { subscriptionTier: "Free Standard", planExpiredAt: now.toISOString() });
     return true;
+  });
+}
+
+/**
+ * Older accounts were created before credits existed and have no balance (which used to mean unlimited AI).
+ * Give them the standard starter balance once, atomically. Never overwrites an existing numeric balance.
+ */
+export async function grantLegacyCredits(db: any, uid: string, now: Date = new Date()): Promise<number | undefined> {
+  const ref = db.collection("users").doc(uid);
+  return db.runTransaction(async (tx: any) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) return undefined;
+    const cur = snap.data()?.aiCredits;
+    if (typeof cur === "number" && Number.isFinite(cur)) return cur;
+    tx.update(ref, { aiCredits: FREE_STARTER_CREDITS, legacyCreditsGrantedAt: now.toISOString() });
+    return FREE_STARTER_CREDITS;
   });
 }
 
@@ -109,7 +125,7 @@ export function meterCredits(action: CreditAction, getDb: () => any) {
       if (await isExempt(db, uid, String(req.user?.email || ""))) return next();
       const snap = await db.collection("users").doc(uid).get();
       const userData = snap.exists ? snap.data() : undefined;
-      const stored = userData?.aiCredits;
+      let stored = userData?.aiCredits;
       if (userData && isPlanExpired(userData)) {
         await downgradeIfExpired(db, uid).catch((e: any) => console.warn(`[credit-meter:${action}] expiry downgrade failed:`, e?.message || e));
       }
@@ -119,6 +135,10 @@ export function meterCredits(action: CreditAction, getDb: () => any) {
           code: "EMAIL_NOT_VERIFIED",
           error: "Verify your email to use AI features. Open More > Team & Subscription and tap Resend verification email. Your case sheet, saving and printing still work.",
         });
+      }
+      if (userData && (typeof stored !== "number" || !Number.isFinite(stored))) {
+        try { stored = await grantLegacyCredits(db, uid); }
+        catch (e: any) { console.warn(`[credit-meter:${action}] legacy credit grant failed; not blocking:`, e?.message || e); }
       }
       const decision = decideAccess(stored, cost);
       if (decision.allow === false) {

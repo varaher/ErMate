@@ -273,6 +273,15 @@ ErMate employs a dynamic role-based navigation hierarchy computed from `getNorma
 | `/test_phase3_rules.cjs` | 79-scenario emulator test suite validating full Phase-3 authorization matrix |
 | `/test_privilege_escalation_audit.cjs` | Privilege escalation audit test suite verifying strict closure of P1-P11 attack vectors and P12 shift persistence |
 | `/src/lib/firebase-admin.ts` | Named Firestore database Admin singleton (`ai-studio-ermate-c85078ba-126c-43fd-b799-a4aa8b82bf03`) |
+| `/public/privacy.html` | DPDP Act 2023 compliant Privacy Policy disclosure |
+| `/public/terms.html` | Terms of Use for emergency clinicians and hospital workspaces |
+| `/public/refund.html` | Razorpay-compliant Cancellation and Refund Policy |
+| `/src/lib/legal.ts` | Centralized legal constants (`TERMS_VERSION`, `SUPPORT_EMAIL`, `LEGAL_LINKS`) |
+| `/src/components/LegalLinks.tsx` | Reusable footer links for Privacy, Terms, and Refunds across login and settings views |
+| `/src/components/DeleteAccountCard.tsx` | DPDP self-serve account erasure UI card with 5-minute recent-login requirement |
+| `/server/services/accountDeletion.ts` | Transactional DPDP data erasure engine (removes login, profile, individual cases, chat/scribe history while preserving hospital records and audit ledgers) |
+| `/server/routes/account.routes.ts` | Authenticated `POST /api/account/delete` route with recent-login authentication and deletion guard |
+| `/verify_legal_deletion_legacy.ts` | Verification suite for DPDP legal disclosures, self-serve account erasure, and legacy account credit grants |
 | `/src/components/CreditsPlanCard.tsx` | Shared component for credit balance display, plan status, low balance alerts, and Razorpay checkout polling |
 | `/src/lib/creditDisplay.ts` | Credit level evaluation (`creditLevel`), plan status formatting (`planStatus`), and categorized credit action labels |
 | `/verify_credits_ui.ts` | Verification suite for Credits UI levels, plan status, checkout wiring, header chip, and screen references |

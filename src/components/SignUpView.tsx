@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { Activity, User, Building, ShieldCheck, ArrowRight, ArrowLeft, Mail, Key, Sparkles } from "lucide-react";
 import { ErMateLogo } from "./shared/ErMateLogo";
 import { UserProfile } from "../types";
+import { TERMS_VERSION } from "../lib/legal";
 import {
   createUserWithEmailAndPassword,
   sendEmailVerification,
@@ -39,6 +40,7 @@ export default function SignUpView({
   const [bedCapacity, setBedCapacity] = useState<string>("");
   const [subscription, setSubscription] = useState<"Free Trial" | "Pro Doctor" | "Team Department">("Free Trial");
   const [acceptOffer, setAcceptOffer] = useState(true);
+  const [acceptTerms, setAcceptTerms] = useState(false);
 
   // Sync state if initial props change
   React.useEffect(() => {
@@ -126,6 +128,11 @@ const [registeredEmail, setRegisteredEmail] =
       parsedCapacity = numCap;
     }
 
+    if (!acceptTerms) {
+      setError("Please agree to the Terms of Use and Privacy Policy to continue.");
+      return;
+    }
+
     // High fidelity registration animation
     setIsRegistering(true);
     
@@ -192,6 +199,8 @@ const [registeredEmail, setRegisteredEmail] =
       streak: 1,
       subscriptionTier: "Free Standard",
       onboardingComplete: true,
+      termsAcceptedAt: new Date().toISOString(),
+      termsVersion: TERMS_VERSION,
       ...(parsedAge !== undefined ? { age: parsedAge } : {}),
       ...(stateName.trim() ? { state: stateName.trim().slice(0, 100) } : {}),
       ...(hospitalAddress.trim() ? { hospitalAddress: hospitalAddress.trim().slice(0, 200) } : {}),
@@ -724,6 +733,20 @@ const [registeredEmail, setRegisteredEmail] =
                       <span className="text-[8px] font-mono block mt-0.5">Custom / Roster</span>
                     </button>
                   </div>
+                </div>
+
+                <div className="flex items-start gap-2 pt-1 text-xs text-slate-600 dark:text-slate-300">
+                  <input
+                    id="signup-accept-terms"
+                    data-testid="accept-terms"
+                    type="checkbox"
+                    checked={acceptTerms}
+                    onChange={(e) => setAcceptTerms(e.target.checked)}
+                    className="mt-0.5 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                  />
+                  <label htmlFor="signup-accept-terms" className="text-[11px] leading-tight select-none cursor-pointer">
+                    I agree to the <a href="/terms.html" target="_blank" rel="noopener noreferrer" className="underline text-emerald-700 dark:text-emerald-400">Terms of Use</a>, <a href="/privacy.html" target="_blank" rel="noopener noreferrer" className="underline text-emerald-700 dark:text-emerald-400">Privacy Policy</a> and <a href="/refund.html" target="_blank" rel="noopener noreferrer" className="underline text-emerald-700 dark:text-emerald-400">Refund Policy</a>.
+                  </label>
                 </div>
 
                 <button
