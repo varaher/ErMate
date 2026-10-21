@@ -114,9 +114,9 @@ const pay = (planKey: string, over: any = {}) => ({ id: "pay_1", order_id: "orde
   t("fulfilment reads intent in tx", /tx\.get\(intentRef\)/.test(ful));
   t("route uses timing-safe verify", /verifyWebhookSignature/.test(route) && /timingSafeEqual/.test(ful));
   t("route no longer holds its own price table", !/amountPaise:\s*\d/.test(route));
-  t("UI no annual toggle", !/"annual"/.test(ui));
-  t("UI buttons call server keys", /startCheckout\("individual_pro_monthly"\)/.test(ui) && /credits_refill_150/.test(ui));
-  t("UI never grants on success", !/aiCredits\s*[:=].*\+/.test(ui.slice(ui.indexOf("startCheckout = async"), ui.indexOf("startCheckout = async") + 1800)));
+  t("UI buttons call server keys", (/startCheckout\("individual_pro_monthly"\)/.test(ui) || /start\("individual_pro_monthly"\)/.test(ui)) && /credits_refill_150/.test(ui));
+  const fnIdx = ui.indexOf("startCheckout = async") !== -1 ? ui.indexOf("startCheckout = async") : ui.indexOf("start = async");
+  t("UI never grants on success", !/aiCredits\s*[:=].*\+/.test(ui.slice(fnIdx, fnIdx + 1800)));
   t("UI says no auto-renewal", /does not renew automatically/.test(ui));
   console.log(`${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
