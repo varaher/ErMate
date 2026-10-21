@@ -4,7 +4,7 @@ import { getRazorpayClient, RAZORPAY_ENABLED } from "../services/razorpayClient.
 import { db } from "../../src/lib/firebase-admin.ts"; // using the actual path
 import { requireAuth, type AuthRequest } from "../../src/middleware/auth.ts"; // using the actual path
 import { PLAN_PRICING } from "../../src/lib/pricing.ts";
-import { verifyWebhookSignature, fulfillCapturedPayment } from "../services/paymentFulfillment.ts";
+import { verifyWebhookSignature, fulfillCapturedPayment, fulfillRefund } from "../services/paymentFulfillment.ts";
 
 const router = Router();
 
@@ -100,6 +100,19 @@ router.post("/webhook", async (req: Request, res: Response) => {
     event = JSON.parse(rawBody.toString("utf8"));
   } catch {
     return res.status(400).send("Invalid payload.");
+  }
+
+  if (event?.event === "refund.processed") {
+    try {
+      const refund = event.payload?.refund?.entity;
+      const r = await fulfillRefund(db, refund);
+      if (r.status === "revoked") console.log(`Refund ${refund?.id} applied: ${r.creditsRevoked} credits revoked, shortfall ${r.shortfall}, tierDowngraded=${r.tierDowngraded}`);
+      if (r.status === "no_user") return res.status(500).send("User not found.");
+      return res.status(200).send("OK");
+    } catch (err) {
+      console.error("Refund handling failed:", err);
+      return res.status(500).send("Refund error.");
+    }
   }
 
   if (event?.event !== "payment.captured") return res.status(200).send("OK");

@@ -22,7 +22,7 @@ export interface PlanStatus {
   active: boolean;
 }
 
-/** Tier + expiry shown to the user. Expiry is display-only for now; the server does not yet downgrade on expiry. */
+/** Tier + expiry shown to the user. The server downgrades an expired plan to Free on the next AI request (credits are kept). */
 export function planStatus(tier: unknown, tierExpiresAt: unknown, now: number = Date.now()): PlanStatus {
   const isPro = typeof tier === "string" && tier.toLowerCase().includes("individual pro");
   if (!isPro) return { label: "Free", validTill: "", active: false };

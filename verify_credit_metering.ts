@@ -43,7 +43,7 @@ async function call(db: any, action: any, user: any, status: number, body: any, 
   await flush();
   return { nexted, res };
 }
-const U = { uid: "u1", email: "doc@x.com" };
+const U = { uid: "u1", email: "doc@x.com", email_verified: true };
 
 (async () => {
   // A. pure decisions

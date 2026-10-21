@@ -21,6 +21,37 @@ export function decideAccess(stored: unknown, cost: number): MeterDecision {
   return { allow: true, reason: "ok" };
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** True when the stored plan is Individual Pro and its paid period has ended. Credits are NOT touched. */
+export function isPlanExpired(user: any, now: number = Date.now()): boolean {
+  const tier = typeof user?.subscriptionTier === "string" ? user.subscriptionTier.toLowerCase() : "";
+  if (!tier.includes("individual pro")) return false;
+  const exp = typeof user?.tierExpiresAt === "string" ? Date.parse(user.tierExpiresAt) : NaN;
+  return Number.isFinite(exp) && exp < now;
+}
+
+/**
+ * Free credits need a verified email (stops throw-away accounts farming the free balance).
+ * Anyone who has paid, or holds an active paid plan, is never gated by this.
+ */
+export function needsEmailVerification(user: any, tokenEmailVerified: unknown): boolean {
+  if (tokenEmailVerified === true) return false;
+  if (user?.hasPurchased === true) return false;
+  return true;
+}
+
+/** Lazy downgrade when a paid period ends. Re-checked inside a transaction; remaining credits are kept. */
+export async function downgradeIfExpired(db: any, uid: string, now: Date = new Date()): Promise<boolean> {
+  const ref = db.collection("users").doc(uid);
+  return db.runTransaction(async (tx: any) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists || !isPlanExpired(snap.data(), now.getTime())) return false;
+    tx.update(ref, { subscriptionTier: "Free Standard", planExpiredAt: now.toISOString() });
+    return true;
+  });
+}
+
 /** Only genuine successes are charged. Error statuses, simulated fallbacks and explicit failures are free. */
 export function shouldChargeResponse(status: number, body: any): boolean {
   if (status < 200 || status >= 300) return false;
@@ -77,7 +108,18 @@ export function meterCredits(action: CreditAction, getDb: () => any) {
     try {
       if (await isExempt(db, uid, String(req.user?.email || ""))) return next();
       const snap = await db.collection("users").doc(uid).get();
-      const stored = snap.exists ? snap.data()?.aiCredits : undefined;
+      const userData = snap.exists ? snap.data() : undefined;
+      const stored = userData?.aiCredits;
+      if (userData && isPlanExpired(userData)) {
+        await downgradeIfExpired(db, uid).catch((e: any) => console.warn(`[credit-meter:${action}] expiry downgrade failed:`, e?.message || e));
+      }
+      if (userData && needsEmailVerification(userData, req.user?.email_verified)) {
+        return res.status(403).json({
+          success: false,
+          code: "EMAIL_NOT_VERIFIED",
+          error: "Verify your email to use AI features. Open More > Team & Subscription and tap Resend verification email. Your case sheet, saving and printing still work.",
+        });
+      }
       const decision = decideAccess(stored, cost);
       if (decision.allow === false) {
         return res.status(402).json({

@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { doc, getDocFromServer, onSnapshot } from "firebase/firestore";
+import { sendEmailVerification } from "firebase/auth";
 import { auth, db } from "../firebase";
 import { PLAN_PRICING, rupees, CREDIT_COSTS } from "../lib/pricing";
 import { creditLevel, formatDay, CREDIT_USE_LABELS } from "../lib/creditDisplay";
@@ -44,6 +45,21 @@ export default function CreditsPlanCard({ profile, coveredByTeam = false, teamNa
   const [pending, setPending] = useState<Pending | null>(null);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [verified, setVerified] = useState<boolean>(() => auth.currentUser?.emailVerified !== false);
+  const [verifyMsg, setVerifyMsg] = useState("");
+  const resendVerification = async () => {
+    const u = auth.currentUser; if (!u) return;
+    try { await sendEmailVerification(u); setVerifyMsg("Verification email sent. Open the link, then tap \"I have verified\"."); }
+    catch { setVerifyMsg("Could not send the email right now. Please try again in a minute."); }
+  };
+  const recheckVerification = async () => {
+    const u = auth.currentUser; if (!u) return;
+    try {
+      await u.reload(); await u.getIdToken(true);
+      setVerified(u.emailVerified === true);
+      setVerifyMsg(u.emailVerified === true ? "Email verified. AI features are unlocked." : "Not verified yet. Open the link in the email first.");
+    } catch { setVerifyMsg("Could not check right now. Please try again."); }
+  };
   const lock = useRef(false);
   const confirming = useRef(false);
   const controller = useRef<AbortController | null>(null);
@@ -182,6 +198,17 @@ export default function CreditsPlanCard({ profile, coveredByTeam = false, teamNa
         <p className="mt-4 text-xs text-slate-300">{admin ? "Your administrator account is exempt from AI credit charges. Buying additional credits is optional." : coveredByTeam ? `${teamName || "Your hospital"} covers your account. Personal credits are not used during coverage. Buying additional credits is optional.` : pro ? Number.isFinite(expiry) ? `${active ? "Valid until" : "Expired on"} ${formatDay(view.tierExpiresAt)}. Renewal is manual.` : "Your plan expiry is unavailable. Please check with support." : "Your free / trial balance is shown above. Choose Individual Pro to start your monthly plan."}</p>
       </header>
       <div className="space-y-5 p-5 sm:p-6">
+        {!verified && !exempt && (
+          <div data-testid="verify-email-notice" className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-200">
+            <p className="font-semibold">Verify your email to use AI features</p>
+            <p className="mt-1">Free credits unlock once your email is verified. Manual entry, saving and printing work without it.</p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <button type="button" data-testid="resend-verification" onClick={() => void resendVerification()} className="rounded-lg border border-amber-600 px-3 py-1.5 font-semibold">Resend verification email</button>
+              <button type="button" data-testid="recheck-verification" onClick={() => void recheckVerification()} className="rounded-lg bg-amber-600 px-3 py-1.5 font-semibold text-white">I have verified</button>
+            </div>
+            {verifyMsg && <p className="mt-2 text-xs" role="status">{verifyMsg}</p>}
+          </div>
+        )}
         {balance === 0 && !exempt && <p data-testid="credits-empty-notice" className="rounded-xl bg-rose-50 p-3 text-sm text-rose-700 dark:bg-rose-950/30 dark:text-rose-300">No credits remaining. Manual entry, saving and printing use no credits.</p>}
         {balance !== null && balance > 0 && creditLevel(balance) === "low" && !exempt && <p data-testid="credits-low-notice" className="text-sm text-amber-700 dark:text-amber-300">Your credits are running low. Recharge when needed.</p>}
         <article className="rounded-2xl border-2 border-emerald-500 bg-emerald-50/50 p-4 dark:bg-emerald-950/20">

@@ -63,7 +63,7 @@ export async function fulfillCapturedPayment(db: any, payment: any, now: Date = 
     const user = userSnap.data() || {};
     const before = Number.isFinite(user.aiCredits) ? Number(user.aiCredits) : 0;
     const after = before + plan.credits;
-    const update: Record<string, any> = { aiCredits: after };
+    const update: Record<string, any> = { aiCredits: after, hasPurchased: true };
 
     if (plan.kind === "plan") {
       const currentExpiry = user.tierExpiresAt ? Date.parse(user.tierExpiresAt) : NaN;
@@ -80,5 +80,75 @@ export async function fulfillCapturedPayment(db: any, payment: any, now: Date = 
       balanceBefore: before, balanceAfter: after, createdAt: now.toISOString(),
     });
     return { status: "fulfilled" };
+  });
+}
+
+export type RefundResult =
+  | { status: "revoked"; creditsRevoked: number; shortfall: number; tierDowngraded: boolean }
+  | { status: "duplicate" }
+  | { status: "unknown_payment" }
+  | { status: "no_user" };
+
+/**
+ * Handles a Razorpay `refund.processed` event. Idempotent per refund id.
+ * Credits granted by the refunded payment are taken back in proportion to the amount refunded
+ * (never below zero; any already-spent portion is recorded as `shortfall`). A full refund of a
+ * plan payment also removes that payment's paid days, and drops the user to Free if none remain.
+ * Refunds for payments ErMate never fulfilled (e.g. ARYA's) are ignored.
+ */
+export async function fulfillRefund(db: any, refund: any, now: Date = new Date()): Promise<RefundResult> {
+  const refundId: string | undefined = refund?.id;
+  const paymentId: string | undefined = refund?.payment_id;
+  const refundPaise = Number(refund?.amount);
+  if (!refundId || !paymentId || !Number.isFinite(refundPaise) || refundPaise <= 0) return { status: "unknown_payment" };
+
+  const refundRef = db.collection("creditRefunds").doc(refundId);
+  const ledgerRef = db.collection("creditLedger").doc(paymentId);
+
+  return db.runTransaction(async (tx: any): Promise<RefundResult> => {
+    const refundSnap = await tx.get(refundRef);
+    if (refundSnap.exists) return { status: "duplicate" };
+    const ledgerSnap = await tx.get(ledgerRef);
+    if (!ledgerSnap.exists) return { status: "unknown_payment" };
+    const ledger = ledgerSnap.data();
+
+    const userRef = db.collection("users").doc(ledger.uid);
+    const userSnap = await tx.get(userRef);
+    if (!userSnap.exists) return { status: "no_user" };
+    const user = userSnap.data() || {};
+
+    const paid = Number(ledger.amountPaise);
+    const totalRefunded = Math.min(paid, (Number(ledger.refundedPaise) || 0) + refundPaise);
+    const targetRevoked = Math.round(Number(ledger.creditsGranted) * (totalRefunded / paid));
+    const delta = Math.max(0, targetRevoked - (Number(ledger.creditsRevoked) || 0));
+
+    const before = Number.isFinite(user.aiCredits) ? Number(user.aiCredits) : 0;
+    const revoke = Math.min(delta, Math.max(0, before));
+    const userUpdate: Record<string, any> = { aiCredits: before - revoke };
+
+    let tierDowngraded = false;
+    let tierRevoked = ledger.tierRevoked === true;
+    if (ledger.kind === "plan" && totalRefunded >= paid && !tierRevoked) {
+      tierRevoked = true;
+      const days = PLAN_PRICING[ledger.planKey]?.periodDays || 30;
+      const exp = user.tierExpiresAt ? Date.parse(user.tierExpiresAt) : NaN;
+      const newExp = Number.isFinite(exp) ? exp - days * DAY_MS : NaN;
+      if (!Number.isFinite(newExp) || newExp <= now.getTime()) {
+        userUpdate.subscriptionTier = "Free Standard";
+        userUpdate.tierExpiresAt = null;
+        tierDowngraded = true;
+      } else {
+        userUpdate.tierExpiresAt = new Date(newExp).toISOString();
+      }
+    }
+
+    tx.update(userRef, userUpdate);
+    tx.update(ledgerRef, { refundedPaise: totalRefunded, creditsRevoked: (Number(ledger.creditsRevoked) || 0) + revoke, tierRevoked, lastRefundAt: now.toISOString() });
+    tx.set(refundRef, {
+      refundId, paymentId, uid: ledger.uid, amountPaise: refundPaise,
+      creditsRevoked: revoke, shortfall: delta - revoke, tierDowngraded,
+      balanceBefore: before, balanceAfter: before - revoke, at: now.toISOString(),
+    });
+    return { status: "revoked", creditsRevoked: revoke, shortfall: delta - revoke, tierDowngraded };
   });
 }

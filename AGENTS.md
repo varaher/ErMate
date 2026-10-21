@@ -45,6 +45,20 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-21] — ErMate: Expiry Downgrade, Refund Fulfillment & Email Verification Gating (EXPIRY-REFUND-VERIFIED-V1)
+- **Refund Fulfillment (`server/routes/payments.ts`, `server/services/paymentFulfillment.ts`)**:
+  - Implemented `fulfillRefund` to handle Razorpay `refund.processed` webhook events idempotently in a Firestore transaction.
+  - Proportional credit revocation: takes back credits granted by the original payment (floored at zero with `shortfall` tracked for spent credits).
+  - Full refund of an `individual_pro_monthly` plan deducts paid days and downgrades tier to `Free Standard` if no stacked days remain.
+- **Lazy Expiry Downgrade (`server/services/creditMeter.ts`)**:
+  - Added `isPlanExpired` and `downgradeIfExpired`: checks expired Individual Pro status on the next incoming AI request and lazily updates user tier to `Free Standard` without erasing existing unspent credits.
+- **Email Verification Guard (`server/services/creditMeter.ts`, `src/components/CreditsPlanCard.tsx`)**:
+  - Added `needsEmailVerification`: unverified accounts without purchase history are gated from spending free credits (returns 403 `EMAIL_NOT_VERIFIED`), preventing throwaway bot farming.
+  - Paid users (`hasPurchased: true`), verified team members, and platform admin are automatically exempt.
+  - Added `data-testid="verify-email-notice"` to `CreditsPlanCard` with `resendVerification` and `recheckVerification` ("I have verified") buttons.
+- **Verification (`verify_expiry_refund_verified.ts`)**:
+  - 32 automated tests verifying expiry helpers, gate enforcement, lazy downgrade, purchase tracking, full/partial/stacked refunds, and webhook wiring with 0 failures.
+
 ### [2026-10-21] — ErMate: Rate Limiting, Mortality Audit Metering & Session Cleanup Hardening (SECURITY-RATELIMIT-METER-V1)
 - **API Rate Limiting (`server/middleware/rateLimit.ts`, `server.ts`)**:
   - Implemented lightweight, in-memory IP rate limiter (`apiRateLimit`, default 300 requests/minute) mounted on `/api` before JSON body parsing.

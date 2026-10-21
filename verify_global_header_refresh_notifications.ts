@@ -50,7 +50,7 @@ runTest("3. Primary header: subscription badge removed from main navbar", () => 
     headerContent.indexOf("id=\"profile-avatar-btn\"")
   );
   const noSubInMainBar = !headerMainSlice.includes("Team Licensed") && !headerMainSlice.includes("Individual Plan");
-  const hasSubInProfileMenu = headerContent.includes("Subscription:") && headerContent.includes("Team Plan");
+  const hasSubInProfileMenu = headerContent.includes("Subscription:") && headerContent.includes("{billingLabel}");
   return noSubInMainBar && hasSubInProfileMenu;
 });
 
