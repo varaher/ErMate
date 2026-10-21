@@ -73,7 +73,7 @@ const card = readFileSync("src/components/CreditsPlanCard.tsx", "utf8");
   db = makeDb({ "users/admin": { aiCredits: 0 } });
   c = await call(db, "scribe_chat", { uid: "admin", email: "varahgrp@gmail.com", email_verified: false }, 200, { success: true });
   t("platform admin exempt from gate", c.nexted);
-  db = makeDb({ "users/u1": { aiCredits: 5 }, "team_members/u1": { status: "Active", membershipVerified: true } });
+  db = makeDb({ "users/u1": { aiCredits: 5 }, "team_members/u1": { status: "Active", membershipVerified: true, hospitalId: "h1" }, "hospital_subscriptions/h1": { active: true } });
   c = await call(db, "scribe_chat", { uid: "u1", email: "a@x.com", email_verified: false }, 200, { success: true });
   t("verified team member exempt from gate", c.nexted);
 

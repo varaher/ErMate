@@ -89,7 +89,7 @@ const U = { uid: "u1", email: "doc@x.com", email_verified: true };
   await call(db, "scribe_chat", U, 200, { success: true, simulated: true });
   await call(db, "scribe_chat", U, 200, { success: false });
   t("failed / simulated calls cost nothing", db.store["users/u1"].aiCredits === 5);
-  db = makeDb({ "users/u1": { aiCredits: 0 }, "team_members/u1": { status: "Active", membershipVerified: true } });
+  db = makeDb({ "users/u1": { aiCredits: 0 }, "team_members/u1": { status: "Active", membershipVerified: true, hospitalId: "h1" }, "hospital_subscriptions/h1": { active: true } });
   c = await call(db, "scribe_chat", U, 200, { success: true });
   t("verified active team member never metered", c.nexted && db.store["users/u1"].aiCredits === 0);
   db = makeDb({ "users/u1": { aiCredits: 0 }, "team_members/u1": { status: "pending_approval", membershipVerified: false } });

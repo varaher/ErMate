@@ -45,6 +45,16 @@
 
 ## Implementation Log & Recent Changes
 
+### [2026-10-21] — ErMate: Unified Hospital Team Coverage Rule & Credit Meter Exemption (TEAM-COVERAGE-RULE-V1)
+- **Unified Hospital Team Coverage Rule (`server/services/creditMeter.ts`)**:
+  - Implemented `isTeamCovered(db, member)` and `hospitalSlug(name)`: single authoritative coverage rule shared between frontend and server.
+  - A team member is covered by their hospital (exempt from personal credit deduction) only when they are an `Active` / `Active (Joined)` and `membershipVerified === true` member AND their hospital has an `active === true` subscription in `hospital_subscriptions` (matched via `hospitalId`, `teamId`, or hospital name slug).
+  - Unpaid hospital team members transparently utilize personal credits without service disruption (or receive 402 if personal balance is 0).
+  - High-availability clinical safeguard: if `hospital_subscriptions` lookup encounters a transient database error, it fails open to prevent delaying emergency patient care.
+- **Client & Verification Parity (`verify_team_coverage_rule.ts`, `verify_credit_metering.ts`, `verify_expiry_refund_verified.ts`)**:
+  - Validated exact rule parity across `src/App.tsx`, `src/components/GlobalHeader.tsx`, and `src/components/MoreView.tsx`.
+  - Added 17 test cases in `verify_team_coverage_rule.ts` and updated mock datasets across test suites with 100% pass rate.
+
 ### [2026-10-21] — ErMate: DPDP Legal Pages, Self-Serve Account Deletion & Legacy Credit Grant (LEGAL-DELETION-LEGACY-V1)
 - **DPDP Act 2023 Statutory Legal Disclosures (`public/privacy.html`, `public/terms.html`, `public/refund.html`, `src/lib/legal.ts`, `src/components/LegalLinks.tsx`)**:
   - Published static, neutral policy pages: Privacy Policy (`/privacy.html`), Terms of Use (`/terms.html`), and Refund Policy (`/refund.html`).

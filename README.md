@@ -291,6 +291,7 @@ ErMate employs a dynamic role-based navigation hierarchy computed from `getNorma
 | `/src/lib/pricing.ts` | Single source of truth for ErMate individual pricing, credit tiers, and service credit costs |
 | `/server/services/creditMeter.ts` | Express middleware for server-side credit balance check and post-success deduction |
 | `/server/services/paymentFulfillment.ts` | Timing-safe Razorpay webhook HMAC verification and idempotent transactional payment fulfillment |
+| `/verify_team_coverage_rule.ts` | Verification suite for unified hospital team coverage rule, slug matching, fail-open resiliency, and client parity |
 | `/verify_credit_metering.ts` | Automated test suite for credit metering decisions, deductions, and exemptions |
 | `/verify_payments_individual_plan.ts` | Automated test suite for Razorpay payment fulfillment, webhook signatures, and tier extension |
 | `/src/utils/logbookSync.ts` | Client-side direct Firestore sync for clinician logbook entries with de-identification and permission handling |

@@ -99,15 +99,37 @@ export async function deductCredits(
   });
 }
 
+/** Same slug the app uses to find a hospital's subscription document. */
+export function hospitalSlug(name: unknown): string {
+  return String(name || "").toLowerCase().replace(/[^a-z0-9]/g, "-").replace(/^-+|-+$/g, "");
+}
+
+/**
+ * ONE coverage rule, shared with what the app shows:
+ * a team member is covered (no personal credits used) only when they are an ACTIVE, VERIFIED member
+ * AND their hospital has an ACTIVE paid subscription. Anyone else uses their own credits.
+ * If the subscription cannot be read we fail open (never block care on a lookup error).
+ */
+export async function isTeamCovered(db: any, member: any): Promise<boolean> {
+  const st = String(member?.status || "").trim().toLowerCase();
+  if (!((st === "active" || st === "active (joined)") && member?.membershipVerified === true)) return false;
+  const ids = Array.from(new Set([member.hospitalId, member.teamId, hospitalSlug(member.hospital)].map(x => String(x || "").trim()).filter(Boolean)));
+  if (ids.length === 0) return false;
+  let lookupFailed = false;
+  for (const id of ids) {
+    try {
+      const sub = await db.collection("hospital_subscriptions").doc(id).get();
+      if (sub.exists && sub.data()?.active === true) return true;
+    } catch { lookupFailed = true; }
+  }
+  return lookupFailed;
+}
+
 async function isExempt(db: any, uid: string, email: string): Promise<boolean> {
   if (email && email.toLowerCase() === PLATFORM_ADMIN_EMAIL) return true;
   try {
     const m = await db.collection("team_members").doc(uid).get();
-    if (m.exists) {
-      const d = m.data() || {};
-      const st = String(d.status || "").trim().toLowerCase();
-      if ((st === "active" || st === "active (joined)") && d.membershipVerified === true) return true; // covered by hospital team plan
-    }
+    if (m.exists && await isTeamCovered(db, m.data() || {})) return true; // covered by an active hospital plan
   } catch { /* fail open below */ }
   return false;
 }
