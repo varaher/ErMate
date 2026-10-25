@@ -3,13 +3,14 @@ import VoiceRecorder from "./shared/VoiceRecorder";
 import { 
   BookOpen, Trophy, HelpCircle, Sparkles, Search, Library, FileText, 
   ChevronRight, Download, ChevronLeft, GraduationCap, Bot, User, Send, 
-  Mic, MicOff, RefreshCw 
+  Mic, MicOff, RefreshCw, ClipboardList, Stethoscope 
 } from "lucide-react";
 import { auth } from "../firebase";
 import { useBoundChat } from "../hooks/useBoundChat";
 import SimulationsView from "./SimulationsView";
 import TriviaView from "./TriviaView";
 import GoogleClassroomModal from "./GoogleClassroomModal";
+import ProtocolsPanel from "./ProtocolsPanel";
 
 interface LearnViewProps {
   onNavigateToTab?: (tabId: string) => void;
@@ -188,7 +189,7 @@ function EMReferenceChatPanel() {
 }
 
 export default function LearnView({ onNavigateToTab, isDarkMode = false }: LearnViewProps) {
-  const [activeTab, setActiveTab] = useState<"library" | "simulations" | "trivia" | "memory">("library");
+  const [activeTab, setActiveTab] = useState<"protocols" | "library" | "simulations" | "trivia" | "memory">("protocols");
   const [isClassroomModalOpen, setIsClassroomModalOpen] = useState(false);
 
   // Clinical memories log state
@@ -288,15 +289,27 @@ ${m.physicianReflections || "No reflections logged."}
         <div>
           <h1 className="text-xl md:text-2xl font-bold font-display text-slate-900 dark:text-white flex items-center gap-2">
             <BookOpen className="w-5 h-5 text-purple-600" />
-            EM Reference & Learn Suite
+           Learn
           </h1>
           <p className="text-xs text-slate-400">
-            Ask generic evidence-based emergency medicine questions or hone skills with clinical simulators and MCQ quizzes.
+           Protocols, EM reference chat, simulations, trivia and your clinical memory log, all in one place.
           </p>
         </div>
 
         {/* Learn Tabs */}
-        <div className="flex bg-slate-100 dark:bg-slate-900 p-1 rounded-xl w-fit">
+        <div className="flex flex-wrap bg-slate-100 dark:bg-slate-900 p-1 rounded-xl w-fit">
+                  <button
+            onClick={() => setActiveTab("protocols")}
+            data-testid="learn-tab-protocols"
+            className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
+              activeTab === "protocols"
+                ? "bg-white dark:bg-slate-800 text-red-600 dark:text-red-400 shadow-xs"
+                : "text-slate-600 dark:text-slate-400 hover:text-slate-950"
+            }`}
+          >
+            <ClipboardList className="w-3.5 h-3.5" />
+            Protocols
+          </button>
           <button
             onClick={() => setActiveTab("library")}
             className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
@@ -344,7 +357,17 @@ ${m.physicianReflections || "No reflections logged."}
             <FileText className="w-3.5 h-3.5" />
             Clinical Memory Log
           </button>
-
+          {onNavigateToTab && (
+            <button
+              onClick={() => onNavigateToTab("tools")}
+              data-testid="learn-open-tools"
+              className="px-3 py-1.5 text-xs font-bold bg-teal-600 hover:bg-teal-500 text-white rounded-lg transition-all flex items-center gap-1.5 cursor-pointer"
+              title="Drug doses, resuscitation guides and calculators"
+            >
+              <Stethoscope className="w-3.5 h-3.5" />
+              <span>Emergency Tools</span>
+            </button>
+          )}
           <button
             onClick={() => setIsClassroomModalOpen(true)}
             className="px-3 py-1.5 text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg transition-all flex items-center gap-1.5 cursor-pointer shadow-xs ml-1"
@@ -358,7 +381,12 @@ ${m.physicianReflections || "No reflections logged."}
 
       {/* Render active sub-view */}
       <div className="transition-all duration-300">
-        
+                {/* Sub-view: Clinical protocols library */}
+        {activeTab === "protocols" && (
+          <div className="animate-fade-in max-w-5xl mx-auto space-y-4">
+            <ProtocolsPanel />
+          </div>
+        )}
         {/* Sub-view: Standalone EM Reference Chat */}
         {activeTab === "library" && (
           <div className="animate-fade-in max-w-5xl mx-auto space-y-4">

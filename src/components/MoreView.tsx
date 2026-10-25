@@ -776,10 +776,10 @@ export default function MoreView({
                 <BookOpen className="w-4.5 h-4.5" />
               </div>
               <h3 className="text-sm font-extrabold text-slate-900 dark:text-white mb-1">
-                Clinical Learn & Protocols
+                Learn
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-                Evidence-based emergency algorithms, ATLS resuscitation guides, and reference material.
+                Protocols, EM reference chat, simulations, trivia and your clinical memory log.
               </p>
             </div>
             <div className="mt-4 flex items-center justify-between text-xs font-bold text-purple-600 dark:text-purple-400 border-t border-slate-100 dark:border-slate-800 pt-2.5">
