@@ -32,9 +32,10 @@ import {
 import { PrimarySurveySection } from "./PrimarySurveySection";
 import { PediatricAssessmentTriangle } from "./PediatricCaseSheetFields";
 import { SecondarySurveySection } from "./SecondarySurveySection";
+import { applySecondaryNormals, recordedSecondary, SECONDARY_KEYS, type SecondaryKey } from "../utils/secondaryNormals";
 import CaseSheetPrintView, { convertClinicalCaseToCaseSheetData, formatCaseSheetText } from "./CaseSheetPrintView";
 import { triggerPrintWithTip } from "../utils/printWithTip";
-import { 
+import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend
 } from "recharts";
 import { getCasePendingStatus } from "../utils/caseHelper";
@@ -272,7 +273,7 @@ interface CaseSheetViewProps {
   onBack: () => void;
   // Resolves "persisted" only after Firestore confirmed the write, "trial_only" when kept
   // on this device only; throws on failure. (Older callers may still return void.)
-  onSaveCase: (updatedCase: ClinicalCase, options?: { autosave?: boolean }) => Promise<"persisted" | "trial_only" | void> | void;
+  onSaveCase: (updatedCase: ClinicalCase, options?: { autosave?: boolean; baseCase?: ClinicalCase }) => Promise<"persisted" | "trial_only" | void> | void;
   onNavigateToDischarge: (caseId: string) => void;
   onStartNewTriage?: () => void;
   profile?: UserProfile;
@@ -676,7 +677,7 @@ export default function CaseSheetView({
     const version = editVersionRef.current;
     setPersistStatus("saving");
     try {
-      const outcome = await onSaveCaseRef.current(toSave, { autosave: true });
+      const outcome = await onSaveCaseRef.current(toSave, { autosave: true, baseCase: base });
       if (outcome === "trial_only") {
         lastLocalOnlyKeyRef.current = key;
         setPersistStatus("trial");
@@ -687,6 +688,7 @@ export default function CaseSheetView({
       setPersistStatus(editVersionRef.current === version ? "saved" : "pending");
     } catch (err) {
       console.warn("[Autosave] not saved:", err);
+      setSaveErrorReason(describeSaveError(err));
       setPersistStatus(typeof navigator !== "undefined" && navigator.onLine === false ? "offline" : "error");
       return;
     }
@@ -754,15 +756,25 @@ export default function CaseSheetView({
 
 
 
+
+  // Short, readable reason shown next to "NOT SAVED" so a failure can be diagnosed from a screenshot.
+  const [saveErrorReason, setSaveErrorReason] = useState("");
+  const describeSaveError = (err: unknown): string => {
+    let msg = err instanceof Error ? err.message : String(err ?? "");
+    try { const j = JSON.parse(msg); if (j && typeof j.error === "string") msg = j.error; } catch { /* plain message */ }
+    const code = (err as any)?.code ? `${(err as any).code}: ` : "";
+    return (code + msg.replace(/^Firebase: |^FirebaseError: /, "")).slice(0, 110);
+  };
+
   const renderPersistStatus = () => {
     const map: Record<PersistStatus, { text: string; cls: string } | null> = {
       idle: null,
       pending: { text: "Unsaved changes…", cls: "text-amber-700 dark:text-amber-300" },
       saving: { text: "Saving…", cls: "text-amber-700 dark:text-amber-300" },
-      saved: { text: "All changes saved ✓", cls: "text-emerald-700 dark:text-emerald-400" },
+       saved: { text: "All changes saved ✓", cls: "text-emerald-700 dark:text-emerald-400" },
       trial: { text: "NOT SAVED — kept only while the app is open. Complete your profile to save cases.", cls: "text-red-700 dark:text-red-400 font-extrabold" },
       offline: { text: "Offline — will save when connected", cls: "text-amber-700 dark:text-amber-300" },
-      error: { text: "NOT SAVED — tap Save Changes to retry", cls: "text-red-700 dark:text-red-400 font-extrabold" },
+      error: { text: `NOT SAVED — tap Save Changes to retry${saveErrorReason ? ` (${saveErrorReason})` : ""}`, cls: "text-red-700 dark:text-red-400 font-extrabold" },
     };
     const m = map[persistStatus];
     if (!m) return null;
@@ -1665,12 +1677,6 @@ export default function CaseSheetView({
       exposure: 'No obvious injuries or rashes.',
       exposureStatus: 'Normal' as const,
     },
-    secondarySurvey: `General: Conscious, alert, and oriented. No pallor, no icterus, no cyanosis, no clubbing, no lymphadenopathy, no edema.
-CVS: S1 and S2 heard, normal intensity. Regular pulse. Normal apex beat, no precordial heave. No murmurs, no gallops or rubs. JVP not elevated. Peripheral pulses well felt bilaterally.
-Chest / RS: Equal chest expansion. Bilateral equal air entry. Vesicular breath sounds. Resonant percussion. Normal vocal resonance. No wheeze, no crackles, no rhonchi.
-Abdomen: Soft, non-distended, non-tender. No guarding or rigidity. No organomegaly. Tympanic percussion. Bowel sounds present and normal. Normal umbilicus, normal external genitalia, normal hernial orifices.
-CNS: Conscious and oriented to time, place, and person. GCS 15/15. Higher mental functions intact. Cranial nerves intact. Pupils: BERL. Sensory system intact. Motor system normal. Motor power 5/5 in all limbs. Reflexes normal. Romberg sign negative. Cerebellar examination normal.
-Extremities: Peripheral pulses present and well felt. No edema. No cyanosis or clubbing. No deformity. No swelling. Full range of motion.`,
     psychological: 'No features of depression, anxiety, psychosis, agitation, suicidal ideation, or substance use. Behaviour appropriate.'
   };
 
@@ -2081,67 +2087,13 @@ Extremities: Peripheral pulses present and well felt. No edema. No cyanosis or c
     });
     setNormalMarkedBanner(true);
     setTimeout(() => setNormalMarkedBanner(false), 4000);
-  };
+   };
 
   const markSecondarySurveyNormal = () => {
-    // GCS Consistency: check whether an already documented GCS elsewhere in Case Sheet conflicts
-    const getDocumentedGcs = (c: ClinicalCase): number | null => {
-      const vGcs = c.vitals?.gcs ? parseInt(String(c.vitals.gcs).trim(), 10) : NaN;
-      if (!isNaN(vGcs) && vGcs >= 3 && vGcs <= 15) return vGcs;
-
-      const sGcs = c.primaryAssessment?.survey?.disability?.gcsTotal;
-      const numSGcs = sGcs !== undefined && sGcs !== null ? parseInt(String(sGcs).trim(), 10) : NaN;
-      if (!isNaN(numSGcs) && numSGcs >= 3 && numSGcs <= 15) return numSGcs;
-
-      if (c.primaryAssessment?.disability) {
-        const match = c.primaryAssessment.disability.match(/GCS[:\s]*(\d+)/i);
-        if (match && match[1]) {
-          const parsed = parseInt(match[1], 10);
-          if (!isNaN(parsed) && parsed >= 3 && parsed <= 15) return parsed;
-        }
-      }
-
-      return null;
-    };
-
-    const documentedGcs = getDocumentedGcs(currentCase);
-    const effectiveGcs = documentedGcs !== null ? documentedGcs : 15;
-
-    // Approved Normal Template
-    const normalGeneral = "Conscious, alert, and oriented. No pallor, no icterus, no cyanosis, no clubbing, no lymphadenopathy, no edema.";
-    const normalCvs = "S1 and S2 heard, normal intensity. Regular pulse. Normal apex beat, no precordial heave. No murmurs, no gallops or rubs. JVP not elevated. Peripheral pulses well felt bilaterally.";
-    const normalRs = "Equal chest expansion. Bilateral equal air entry. Vesicular breath sounds. Resonant percussion. Normal vocal resonance. No wheeze, no crackles, no rhonchi.";
-    const normalPa = "Soft, non-distended, non-tender. No guarding or rigidity. No organomegaly. Tympanic percussion. Bowel sounds present and normal. Normal umbilicus, normal external genitalia, normal hernial orifices.";
-    const normalCns = `Conscious and oriented to time, place, and person. GCS ${effectiveGcs}/15. Higher mental functions intact. Cranial nerves intact. Pupils: BERL. Sensory system intact. Motor system normal. Motor power 5/5 in all limbs. Reflexes normal. Romberg sign negative. Cerebellar examination normal.`;
-    const normalExt = "Peripheral pulses present and well felt. No edema. No cyanosis or clubbing. No deformity. No swelling. Full range of motion.";
-
-    const normalSecondarySurvey: SecondarySurvey = {
-      general: normalGeneral,
-      cvs: normalCvs,
-      respiratory: normalRs,
-      abdomen: normalPa,
-      cns: normalCns,
-      extremities: normalExt,
-    };
-    const labelFor: Record<string, string> = { general: "General", cvs: "CVS", respiratory: "RS", abdomen: "PA", cns: "CNS", extremities: "Extremities" };
-
+    // Fill blank systems only (typed OR already in the narrative). No GCS unless one is documented.
     setCurrentCase(prev => {
-      const prevSec: any = prev.secondarySurvey || {};
-      const merged: any = { ...prevSec };
-      const addedLines: string[] = [];
-      for (const key of Object.keys(normalSecondarySurvey)) {
-        if (!hasRecordedValue(prevSec[key]) || String(prevSec[key]).trim() === "") {
-          merged[key] = (normalSecondarySurvey as any)[key];
-          addedLines.push(`${labelFor[key]}: ${(normalSecondarySurvey as any)[key]}`);
-        }
-      }
-      const prevNarrative = (prev.secondaryAssessment || "").trim();
-      return {
-        ...prev,
-        secondarySurvey: merged,
-        // Blank narrative -> rebuilt from systems; existing narrative is kept and only newly filled systems are appended.
-        secondaryAssessment: prevNarrative ? (addedLines.length ? `${prev.secondaryAssessment}\n${addedLines.join("\n")}` : prev.secondaryAssessment) : addedLines.join("\n"),
-      };
+      const r = applySecondaryNormals(prev, SECONDARY_KEYS);
+      return { ...prev, secondarySurvey: r.secondarySurvey as any, secondaryAssessment: r.secondaryAssessment };
     });
 
     setNormalMarkedBanner(true);
@@ -2367,9 +2319,10 @@ Extremities: Peripheral pulses present and well felt. No edema. No cyanosis or c
       } catch (syncErr) {
         console.warn("Discharge summary sync failed after case save:", syncErr);
       }
-      return true;
+       return true;
     } catch (err) {
       console.error("Failed to save Case Sheet:", err);
+      setSaveErrorReason(describeSaveError(err));
       lastSaveOutcomeRef.current = "failed";
       setPersistStatus(typeof navigator !== "undefined" && navigator.onLine === false ? "offline" : "error");
       setTreatmentSaveStatus("error");
@@ -5202,66 +5155,39 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                   <details className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3.5 text-xs group">
                     <summary className="font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wide cursor-pointer list-none flex items-center justify-between [&::-webkit-details-marker]:hidden">
                       Normal Presets ▾
-                    </summary>
+                               </summary>
                     <div className="pt-2 space-y-2">
                       <p className="text-[10px] text-slate-500">
-                        Click a preset to instantly append normal findings:
+                        Fills a system only when it is empty. Anything you already wrote is never replaced:
                       </p>
                     <div className="flex flex-wrap gap-2">
-                      {[
-                        {
-                          label: "General Examination",
-                          key: "general",
-                          text: "General: Conscious, alert, and oriented. No pallor, no icterus, no cyanosis, no clubbing, no lymphadenopathy, no edema."
-                        },
-                        {
-                          label: "Normal CVS",
-                          key: "cvs",
-                          text: "CVS: S1 and S2 heard, normal intensity. Regular pulse. Normal apex beat, no precordial heave. No murmurs, no gallops or rubs. JVP not elevated. Peripheral pulses well felt bilaterally."
-                        },
-                        {
-                          label: "Normal Respiratory (RS)",
-                          key: "respiratory",
-                          text: "RS: Equal chest expansion. Bilateral equal air entry. Vesicular breath sounds. Resonant percussion. Normal vocal resonance. No wheeze, no crackles, no rhonchi."
-                        },
-                        {
-                          label: "Normal P/A (Abdomen)",
-                          key: "abdomen",
-                          text: "P/A: Soft, non-distended, non-tender. No guarding or rigidity. No organomegaly. Tympanic percussion. Bowel sounds present and normal. Normal umbilicus, normal external genitalia, normal hernial orifices."
-                        },
-                        {
-                          label: "Normal CNS",
-                          key: "cns",
-                          text: "CNS: Conscious and oriented to time, place, and person. GCS 15/15. Higher mental functions intact. Cranial nerves intact. Pupils: BERL. Sensory system intact. Motor system normal. Motor power 5/5 in all limbs. Reflexes normal. Romberg sign negative. Cerebellar examination normal."
-                        },
-                        {
-                          label: "Normal Extremities",
-                          key: "extremities",
-                          text: "Extremities: Peripheral pulses present and well felt. No edema. No cyanosis or clubbing. No deformity. No swelling. Full range of motion."
-                        }
-                      ].map((preset, idx) => (
-                        <button
-                          key={idx}
-                          type="button"
-                          onClick={() => {
-                            setCurrentCase(prev => {
-                              const cleanText = preset.text.replace(/^[^:]+:\s*/, "");
-                              const updatedSurvey = {
-                                ...(prev.secondarySurvey || {}),
-                                [preset.key]: cleanText
-                              };
-                              return {
-                                ...prev,
-                                secondarySurvey: updatedSurvey,
-                                secondaryAssessment: (prev.secondaryAssessment || "") + (prev.secondaryAssessment ? "\n\n" : "") + preset.text
-                              };
-                            });
-                          }}
-                          className="px-2.5 py-1.5 bg-slate-200 hover:bg-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded transition-colors"
-                        >
-                          + {preset.label}
-                        </button>
-                      ))}
+                      {([
+                        { label: "General Examination", key: "general" },
+                        { label: "Normal CVS", key: "cvs" },
+                        { label: "Normal Respiratory (RS)", key: "respiratory" },
+                        { label: "Normal P/A (Abdomen)", key: "abdomen" },
+                        { label: "Normal CNS", key: "cns" },
+                        { label: "Normal Extremities", key: "extremities" },
+                      ] as Array<{ label: string; key: SecondaryKey }>).map((preset) => {
+                        const alreadyRecorded = !!recordedSecondary(currentCase)[preset.key];
+                        return (
+                          <button
+                            key={preset.key}
+                            type="button"
+                            disabled={alreadyRecorded}
+                            title={alreadyRecorded ? "Already recorded — edit the box above instead. Presets never replace what you wrote." : "Fill this system with the normal template"}
+                            onClick={() => {
+                              setCurrentCase(prev => {
+                                const r = applySecondaryNormals(prev, [preset.key]);
+                                return { ...prev, secondarySurvey: r.secondarySurvey as any, secondaryAssessment: r.secondaryAssessment };
+                              });
+                            }}
+                            className="px-2.5 py-1.5 bg-slate-200 hover:bg-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                          >
+                            {alreadyRecorded ? "✓ " : "+ "}{preset.label}
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
                   </details>
