@@ -22,6 +22,24 @@ interface EMDrugsViewProps {
 
 type EMSectionTab = "rsi" | "sedation" | "vent" | "bipap" | "neuro" | "lines" | "dialysis" | "mnemonics";
 
+// Four groups instead of eight tabs. Same panels, same ids; only the navigation is grouped.
+const EM_GROUPS: Array<{
+  id: string;
+  label: string;
+  icon: any;
+  color: string;
+  tabs: Array<{ id: EMSectionTab; label: string }>;
+}> = [
+  { id: "airway", label: "Airway & Ventilation", icon: Wind, color: "text-red-500 bg-red-500/10",
+    tabs: [{ id: "rsi", label: "RSI Protocol" }, { id: "vent", label: "Ventilator Settings" }, { id: "bipap", label: "BiPAP & CPAP" }] },
+  { id: "sedproc", label: "Sedation & Procedures", icon: Zap, color: "text-amber-500 bg-amber-500/10",
+    tabs: [{ id: "sedation", label: "Procedural Sedation" }, { id: "lines", label: "Central & Art Lines" }] },
+  { id: "critical", label: "Critical Care", icon: Activity, color: "text-purple-500 bg-purple-500/10",
+    tabs: [{ id: "neuro", label: "Neuroprotective Care" }, { id: "dialysis", label: "Dialysis Guide" }] },
+  { id: "scores", label: "Scores & Mnemonics", icon: BookOpen, color: "text-emerald-500 bg-emerald-500/10",
+    tabs: [{ id: "mnemonics", label: "Scores & Mnemonics" }] },
+];
+
 export default function ErGuideView({ onBack, isDarkMode }: EMDrugsViewProps) {
   const [activeSubTab, setActiveSubTab] = useState<EMSectionTab>("rsi");
 
@@ -450,35 +468,28 @@ export default function ErGuideView({ onBack, isDarkMode }: EMDrugsViewProps) {
         
         {/* 2. Side Tab Navigation Menu (Left, Span 3) */}
         <div className="lg:col-span-3 flex flex-row lg:flex-col gap-1 overflow-x-auto lg:overflow-x-visible pb-2 lg:pb-0 scrollbar-none shrink-0 border-b lg:border-b-0 lg:border-r border-slate-200 dark:border-slate-800 pr-0 lg:pr-4">
-          {[
-            { id: "rsi" as const, label: "RSI Protocol", icon: ShieldAlert, color: "text-red-500 bg-red-500/10" },
-            { id: "sedation" as const, label: "Procedural Sedation", icon: Zap, color: "text-amber-500 bg-amber-500/10" },
-            { id: "vent" as const, label: "Ventilator Settings", icon: Wind, color: "text-indigo-500 bg-indigo-500/10" },
-            { id: "bipap" as const, label: "BiPAP & CPAP", icon: Layers, color: "text-teal-500 bg-teal-500/10" },
-            { id: "neuro" as const, label: "Neuroprotective Care", icon: Activity, color: "text-purple-500 bg-purple-500/10" },
-            { id: "lines" as const, label: "Central & Art Lines", icon: Stethoscope, color: "text-blue-500 bg-blue-500/10" },
-            { id: "dialysis" as const, label: "Dialysis Guide", icon: RefreshCw, color: "text-indigo-600 bg-indigo-600/10" },
-            { id: "mnemonics" as const, label: "Clinical Mnemonics", icon: BookOpen, color: "text-emerald-500 bg-emerald-500/10" }
-          ].map((tab) => {
-            const Icon = tab.icon;
-            const active = activeSubTab === tab.id;
+          {EM_GROUPS.map((group) => {
+            const Icon = group.icon;
+            const active = group.tabs.some((t) => t.id === activeSubTab);
             return (
               <button
-                key={tab.id}
+                key={group.id}
                 onClick={() => {
-                  setActiveSubTab(tab.id);
-                  setExpandedSection(null);
+                  if (!active) {
+                    setActiveSubTab(group.tabs[0].id);
+                    setExpandedSection(null);
+                  }
                 }}
                 className={`flex items-center gap-3 px-4 py-3 text-xs font-bold rounded-xl transition-all whitespace-nowrap text-left w-full ${
-                  active 
+                  active
                     ? "bg-slate-200 dark:bg-slate-800 text-slate-900 dark:text-white font-extrabold border-l-3 border-emerald-500" 
                     : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-850"
                 }`}
               >
-                <div className={`p-1.5 rounded-lg ${tab.color}`}>
+                <div className={`p-1.5 rounded-lg ${group.color}`}>
                   <Icon className="w-4 h-4" />
                 </div>
-                <span>{tab.label}</span>
+                <span>{group.label}</span>
               </button>
             );
           })}
@@ -486,6 +497,29 @@ export default function ErGuideView({ onBack, isDarkMode }: EMDrugsViewProps) {
 
         {/* 3. Main Display Screen (Right, Span 9) */}
         <div className="lg:col-span-9 space-y-6">
+
+          {/* Sub-section pills for the active group (hidden when the group has one section) */}
+          {(() => {
+            const group = EM_GROUPS.find((g) => g.tabs.some((t) => t.id === activeSubTab));
+            if (!group || group.tabs.length < 2) return null;
+            return (
+              <div className="flex flex-wrap gap-2" data-testid="erguide-subtabs">
+                {group.tabs.map((t) => (
+                  <button
+                    key={t.id}
+                    onClick={() => { setActiveSubTab(t.id); setExpandedSection(null); }}
+                    className={`px-3 py-1.5 rounded-full text-[11px] font-bold border transition-all ${
+                      activeSubTab === t.id
+                        ? "bg-emerald-600 text-white border-emerald-600"
+                        : "bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:border-emerald-500"
+                    }`}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+            );
+          })()}
 
           {/* TAB 1: RAPID SEQUENCE INTUBATION */}
           {activeSubTab === "rsi" && (
@@ -1472,10 +1506,10 @@ export default function ErGuideView({ onBack, isDarkMode }: EMDrugsViewProps) {
             <div className="space-y-6 animate-fade-in" id="mnemonics-view-panel">
               {/* Toolbar */}
               <div className="bg-white dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-sm space-y-4">
-                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                               <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                   <div>
                     <h3 className="text-sm font-bold text-slate-800 dark:text-white uppercase tracking-wider font-display">
-                      Clinical Mnemonics Hub
+                      Scores &amp; Mnemonics Hub
                     </h3>
                     <p className="text-[10px] text-slate-400 dark:text-slate-500 font-mono">
                       High-yield diagnostic guides, safety checklists, and cognitive aids for critical situations
