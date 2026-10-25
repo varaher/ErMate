@@ -1,14 +1,15 @@
 import React, { useState, useMemo, useEffect } from "react";
 import { 
   ArrowLeft, Info, Activity, ShieldAlert, Clock, Scale, 
-  Ruler, Stethoscope, Layers, AlertCircle, Check, HelpCircle, 
+   Ruler, Stethoscope, Layers, AlertCircle, Check, HelpCircle, 
   ChevronRight, ChevronDown, ChevronUp, RefreshCw, Zap, Wind,
   BookOpen, Plus, ThumbsUp, Trash2, ShieldCheck, Mail, User,
-  Camera, Upload
+  Camera, Upload, ClipboardList
 } from "lucide-react";
+import ProtocolsPanel from "./ProtocolsPanel";
 import { 
   RSI_7_PS, INDUCTION_AGENTS, PARALYTIC_AGENTS, 
-  SEDATION_AGENTS, VENT_STRATEGIES, CENTRAL_LINE_PROTOCOLS, 
+  SEDATION_AGENTS, VENT_STRATEGIES, CENTRAL_LINE_PROTOCOLS,
   ARTERIAL_LINE_PROTOCOLS, BIPAP_CPAP_GUIDELINES, NEUROPROTECTIVE_GUIDELINES 
 } from "../data/em_procedures";
 import { db, auth } from "../firebase";
@@ -20,16 +21,18 @@ interface EMDrugsViewProps {
   isDarkMode?: boolean;
 }
 
-type EMSectionTab = "rsi" | "sedation" | "vent" | "bipap" | "neuro" | "lines" | "dialysis" | "mnemonics";
+type EMSectionTab = "protocols" | "rsi" | "sedation" | "vent" | "bipap" | "neuro" | "lines" | "dialysis" | "mnemonics";
 
 // Four groups instead of eight tabs. Same panels, same ids; only the navigation is grouped.
 const EM_GROUPS: Array<{
   id: string;
   label: string;
   icon: any;
-  color: string;
+   color: string;
   tabs: Array<{ id: EMSectionTab; label: string }>;
 }> = [
+  { id: "protocolgroup", label: "Protocols", icon: ClipboardList, color: "text-rose-600 bg-rose-600/10",
+    tabs: [{ id: "protocols", label: "Protocols" }] },
   { id: "airway", label: "Airway & Ventilation", icon: Wind, color: "text-red-500 bg-red-500/10",
     tabs: [{ id: "rsi", label: "RSI Protocol" }, { id: "vent", label: "Ventilator Settings" }, { id: "bipap", label: "BiPAP & CPAP" }] },
   { id: "sedproc", label: "Sedation & Procedures", icon: Zap, color: "text-amber-500 bg-amber-500/10",
@@ -41,7 +44,7 @@ const EM_GROUPS: Array<{
 ];
 
 export default function ErGuideView({ onBack, isDarkMode }: EMDrugsViewProps) {
-  const [activeSubTab, setActiveSubTab] = useState<EMSectionTab>("rsi");
+  const [activeSubTab, setActiveSubTab] = useState<EMSectionTab>("protocols");
 
   // RSI Calculator State
   const [rsiWeight, setRsiWeight] = useState<string>("70");
@@ -520,6 +523,13 @@ export default function ErGuideView({ onBack, isDarkMode }: EMDrugsViewProps) {
               </div>
             );
           })()}
+
+          {/* PROTOCOLS: read-only protocol library */}
+          {activeSubTab === "protocols" && (
+            <div className="animate-fade-in" id="protocols-view-panel">
+              <ProtocolsPanel />
+            </div>
+          )}
 
           {/* TAB 1: RAPID SEQUENCE INTUBATION */}
           {activeSubTab === "rsi" && (
