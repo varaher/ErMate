@@ -3,7 +3,7 @@ import VoiceRecorder from "./shared/VoiceRecorder";
 import { 
   BookOpen, Trophy, HelpCircle, Sparkles, Search, Library, FileText, 
   ChevronRight, Download, ChevronLeft, GraduationCap, Bot, User, Send, 
-  Mic, MicOff, RefreshCw, ClipboardList, Stethoscope 
+  Mic, MicOff, RefreshCw, ClipboardList
 } from "lucide-react";
 import { auth } from "../firebase";
 import { useBoundChat } from "../hooks/useBoundChat";
@@ -189,7 +189,7 @@ function EMReferenceChatPanel() {
 }
 
 export default function LearnView({ onNavigateToTab, isDarkMode = false }: LearnViewProps) {
-  const [activeTab, setActiveTab] = useState<"erguide" | "library" | "simulations" | "trivia" | "memory">("protocols");
+  const [activeTab, setActiveTab] = useState<"erguide" | "library" | "simulations" | "trivia" |"memory">("erguide");
   const [isClassroomModalOpen, setIsClassroomModalOpen] = useState(false);
 
   // Clinical memories log state
@@ -274,15 +274,7 @@ ${m.physicianReflections || "No reflections logged."}
 
   return (
     <div className="space-y-6 animate-fade-in" id="learn-main-container">
-      {onNavigateToTab && (
-        <button
-          type="button"
-          onClick={() => onNavigateToTab("dashboard")}
-          className="inline-flex items-center gap-1 text-xs font-bold text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200 transition-all cursor-pointer"
-        >
-          <ChevronLeft className="w-4 h-4 text-emerald-500" /> Back to Dashboard
-        </button>
-      )}
+    
       
       {/* Tab Navigation header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between border-b pb-4 gap-4 no-print">

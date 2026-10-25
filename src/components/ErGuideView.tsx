@@ -15,14 +15,15 @@ import {
 import { db, auth } from "../firebase";
 import { collection, addDoc, onSnapshot, query, orderBy, doc, updateDoc, deleteDoc, setDoc } from "firebase/firestore";
 import { authenticatedFetch } from "../services/authenticatedFetch";
+import PediatricDrugCalculatorView from "./PediatricDrugCalculatorView";
+import PocketMirrorView from "./PocketMirrorView";
 
 interface EMDrugsViewProps {
  onBack?: () => void;
   isDarkMode?: boolean;
 }
 
-type EMSectionTab = "protocols" | "rsi" | "sedation" | "vent" | "bipap" | "neuro" | "lines" | "dialysis" | "mnemonics";
-
+type EMSectionTab = "protocols" | "rsi" | "sedation" | "vent" | "bipap" | "neuro" | "lines" |"dialysis" | "mnemonics" | "pediatric" | "pocketmirror";
 // Four groups instead of eight tabs. Same panels, same ids; only the navigation is grouped.
 const EM_GROUPS: Array<{
   id: string;
@@ -41,6 +42,10 @@ const EM_GROUPS: Array<{
     tabs: [{ id: "neuro", label: "Neuroprotective Care" }, { id: "dialysis", label: "Dialysis Guide" }] },
   { id: "scores", label: "Scores & Mnemonics", icon: BookOpen, color: "text-emerald-500 bg-emerald-500/10",
     tabs: [{ id: "mnemonics", label: "Scores & Mnemonics" }] },
+      { id: "pedsgroup", label: "Pediatric Dosing", icon: Activity, color: "text-blue-500 bg-blue-500/10",
+    tabs: [{ id: "pediatric", label: "Pediatric Dosing & Resuscitation" }] },
+  { id: "mirrorgroup", label: "Pocket Mirror", icon: BookOpen, color: "text-indigo-500 bg-indigo-500/10",
+    tabs: [{ id: "pocketmirror", label: "Pocket Mirror & Airway Exam" }] },
 ];
 
 export default function ErGuideView({ onBack, isDarkMode }: EMDrugsViewProps) {
@@ -1510,6 +1515,17 @@ export default function ErGuideView({ onBack, isDarkMode }: EMDrugsViewProps) {
                   </div>
                 </div>
               </div>
+            </div>
+          )}
+                    {activeSubTab === "pediatric" && (
+            <div className="animate-fade-in" id="pediatric-view-panel">
+              <PediatricDrugCalculatorView onBack={() => setActiveSubTab("protocols")} />
+            </div>
+          )}
+
+          {activeSubTab === "pocketmirror" && (
+            <div className="animate-fade-in" id="pocketmirror-view-panel">
+              <PocketMirrorView onBack={() => setActiveSubTab("protocols")} />
             </div>
           )}
 

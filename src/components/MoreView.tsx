@@ -788,27 +788,7 @@ export default function MoreView({
             </div>
           </div>
 
-          {/* 2. Emergency Tools & Calculators */}
-          <div
-            onClick={() => onNavigateToTab("tools")}
-            className="group bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 hover:border-teal-500 rounded-2xl p-4.5 cursor-pointer shadow-xs hover:shadow-md transition-all flex flex-col justify-between"
-          >
-            <div>
-              <div className="w-9 h-9 rounded-xl bg-teal-50 dark:bg-teal-950/40 text-teal-600 dark:text-teal-400 flex items-center justify-center mb-2.5 group-hover:scale-105 transition-transform">
-                <Wrench className="w-4.5 h-4.5" />
-              </div>
-              <h3 className="text-sm font-extrabold text-slate-900 dark:text-white mb-1">
-                Emergency Tools & Calculators
-              </h3>
-              <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-                Pediatric weight-based dosing, clinical scores (GCS, Wells, HEART, NIHSS), and resuscitation aids.
-              </p>
-            </div>
-            <div className="mt-4 flex items-center justify-between text-xs font-bold text-teal-600 dark:text-teal-400 border-t border-slate-100 dark:border-slate-800 pt-2.5">
-              <span>Open Tools</span>
-              <ChevronRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
-            </div>
-          </div>
+      
 
           {/* 3. My Log Book */}
           <div
