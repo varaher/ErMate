@@ -10,6 +10,12 @@ export interface VersionInfo {
 }
 
 export const CHANGELOG: Record<string, string[]> = {
+  "3.1.0": [
+    "Case sheet now saves reliably: no more false 'NOT SAVED', and edits made offline are kept and sent when you reconnect",
+    "Two devices editing the same case no longer overwrite each other's untouched fields",
+    "History of Presenting Illness now writes itself from your dictation; Events accepts 'collapsed' and exertional onset",
+    "Secondary survey 'Normal' fills only blank systems and never invents a GCS",
+  ],
   "3.0.4": [
     "Fixed voice dictation crash due to FFmpeg/node-fetch module conflict",
     "Fixed 'dischargeDraft is not defined' error in Scribe Chat",
@@ -61,5 +67,5 @@ export const CHANGELOG: Record<string, string[]> = {
 };
 
 // Current application version — increment on release
-export const APP_VERSION = "3.0.4";
+export const APP_VERSION = "3.1.0";
 

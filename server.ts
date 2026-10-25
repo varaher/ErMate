@@ -315,7 +315,7 @@ function getAI(): GoogleGenAI {
 // API Routes
 
 import { getFfmpegPath } from "./server/ffmpegPath.ts";
-const APP_VERSION = "3.0.4";
+const APP_VERSION = "3.1.0";
 const BUILD_TIMESTAMP = new Date().toISOString();
 
 function checkFfmpeg() {
@@ -333,7 +333,7 @@ app.get("/api/version", (req, res) => {
     version: APP_VERSION,
     buildTime: BUILD_TIMESTAMP,
     updatedAt: BUILD_TIMESTAMP,
-    releaseNotes: "ErMate v3.0.4: P0 Scribe persistence & cross-platform parity.",
+    releaseNotes: "ErMate v3.1.0: reliable case saving, HPI auto-write, honest secondary normals.",
     ffmpegAvailable: checkFfmpeg()
   });
 });
