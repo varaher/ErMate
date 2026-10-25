@@ -21,6 +21,7 @@ import { clearHandoverLocalCache, enforceHandoverCacheOwner } from "./utils/hand
 import { triggerPrintWithTip } from "./utils/printWithTip";
 import { getNormalizedRole } from "./utils/roleUtils";
 import { isClinicalProfileComplete, canPersistClinicalData } from "./utils/profileCompleteness";
+import { diffForWrite } from "./utils/changedFields";
 import OnboardingProfileView from "./components/OnboardingProfileView";
 import { authenticatedFetch } from "./services/authenticatedFetch";
 
@@ -2771,7 +2772,7 @@ const handleDeleteAllCases = async () => {
    */
   const saveCaseNow = async (
     updatedCase: ClinicalCase,
-    options?: { autosave?: boolean }
+    options?: { autosave?: boolean; baseCase?: ClinicalCase }
   ): Promise<"persisted" | "trial_only"> => {
     const isAutosave = Boolean(options?.autosave);
     const previousCase = latestCasesRef.current.find(c => c.id === updatedCase.id);
@@ -3022,14 +3023,30 @@ const handleDeleteAllCases = async () => {
       lastEditedBy: editUid,
       lastEditedByName: editName,
       lastEditedByRole: editRole,
-      lastEditedAt: new Date().toISOString()
+          lastEditedAt: new Date().toISOString()
     };
 
+    const canDeltaWrite = Boolean(isAutosave && previousCase && options?.baseCase && options.baseCase.id === updatedCase.id);
     try {
-      await setDoc(doc(db, "cases", caseToSave.id), sanitizeForFirestore(caseToSave), { merge: true });
+      // Autosave of an EXISTING case writes only the leaves this device changed (merge:true deep-merges),
+      // so stale untouched fields never overwrite another device's newer edit. Explicit saves,
+      // new cases and anything without a base copy still write the whole case as before.
+      const writePayload: any = canDeltaWrite
+        ? {
+            ...diffForWrite(options.baseCase, updatedCase),
+            id: caseToSave.id,
+            lastEditedBy: caseToSave.lastEditedBy,
+            lastEditedByName: caseToSave.lastEditedByName,
+            lastEditedByRole: caseToSave.lastEditedByRole,
+            lastEditedAt: caseToSave.lastEditedAt,
+            ...(caseToSave.dischargeInfo
+              ? { dischargeInfo: { ...((diffForWrite(options.baseCase, updatedCase) as any).dischargeInfo || {}), caseUpdatedAfterPreparation: true } }
+              : {}),
+          }
+        : caseToSave;
+      await setDoc(doc(db, "cases", caseToSave.id), sanitizeForFirestore(writePayload), { merge: true });
       
       // Determine changed fields across all patient sections (Demographics, Vitals, Primary Survey, SAMPLE history, Treatments, Labs, Differentials, Notes, Disposition, Pediatric)
-
       const previousCase = latestCasesRef.current.find(c => c.id === updatedCase.id);
       const changedKeys: string[] = [];
       const prevVals: any = {};
@@ -3101,10 +3118,16 @@ const handleDeleteAllCases = async () => {
         fieldsChanged: changedKeys.length > 0 ? changedKeys : ["caseData"],
         previousValues: prevVals,
         newValues: newValData,
-        addedAt: new Date().toISOString(),
+            addedAt: new Date().toISOString(),
         addedBy: editUid // for rules create constraint
       };
-      await setDoc(addendumRef, auditLog);
+      // The case itself is already saved above. The audit entry must be cleaned of `undefined`
+      // values (Firestore rejects them) and must never turn a saved case into "NOT SAVED".
+      try {
+        await setDoc(addendumRef, sanitizeForFirestore(auditLog));
+      } catch (auditErr) {
+        console.error("[handleSaveCase] Case saved, but the edit audit entry failed:", auditErr);
+      }
 
       // Trusted Logbook Snapshot Service
       // Direct client-side Firestore sync (UID-owned portfolio)
@@ -3137,10 +3160,10 @@ const handleDeleteAllCases = async () => {
   // One save at a time PER CASE, in the order requested — from every path (autosave,
   // Save button, scribe, bed assignment…). A later save therefore always sees the
   // earlier one as done: no second case number, no older write landing last.
-  const caseSaveQueuesRef = useRef<Map<string, Promise<unknown>>>(new Map());
+   const caseSaveQueuesRef = useRef<Map<string, Promise<unknown>>>(new Map());
   const handleSaveCase = (
     updatedCase: ClinicalCase,
-    options?: { autosave?: boolean }
+    options?: { autosave?: boolean; baseCase?: ClinicalCase }
   ): Promise<"persisted" | "trial_only"> => {
     const queues = caseSaveQueuesRef.current;
     const previous = queues.get(updatedCase.id) || Promise.resolve();
@@ -3554,7 +3577,10 @@ const handleDeleteAllCases = async () => {
         socialHistory: extracted.sampleHistory?.socialHistory || extracted.socialHistory || existingMatch?.sampleHistory?.socialHistory || "",
         familyHistory: extracted.sampleHistory?.familyHistory || extracted.familyHistory || existingMatch?.sampleHistory?.familyHistory || "",
         psychiatricFlags: extracted.sampleHistory?.psychiatricFlags || extracted.psychiatricFlags || existingMatch?.sampleHistory?.psychiatricFlags || "",
-        hpi: extracted.sampleHistory?.hpi || extracted.hpi || existingMatch?.sampleHistory?.hpi || "",
+        // An HPI already on the sheet (typed or previously applied) is never silently replaced by extraction.
+        hpi: (existingMatch?.sampleHistory?.hpi || "").trim()
+          ? existingMatch!.sampleHistory!.hpi!
+          : (extracted.sampleHistory?.hpi || extracted.hpi || ""),
         surgicalHistory: extracted.sampleHistory?.surgicalHistory || extracted.surgicalHistory || existingMatch?.sampleHistory?.surgicalHistory || "",
         lmp: extracted.sampleHistory?.lmp || extracted.lmp || existingMatch?.sampleHistory?.lmp || ""
       },
