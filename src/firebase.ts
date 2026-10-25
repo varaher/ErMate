@@ -1,13 +1,23 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut } from 'firebase/auth';
-import { getFirestore, doc, getDoc, setLogLevel } from 'firebase/firestore';
+import { getFirestore, initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, getDoc, setLogLevel } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 import firebaseConfig from '../firebase-applet-config.json';
 
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
-export const db = (firebaseConfig as any).firestoreDatabaseId
-  ? getFirestore(app, (firebaseConfig as any).firestoreDatabaseId)
-  : getFirestore(app);
+const dbId = (firebaseConfig as any).firestoreDatabaseId;
+// Offline cache (IndexedDB): edits made offline or just before the phone kills the app are kept on the
+// device and sent when the connection returns. Falls back to the default in-memory instance if
+// IndexedDB is unavailable (private mode, blocked storage) or the instance was already created.
+function createDb() {
+  try {
+    const settings = { localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }) };
+    return dbId ? initializeFirestore(app, settings, dbId) : initializeFirestore(app, settings);
+  } catch {
+    return dbId ? getFirestore(app, dbId) : getFirestore(app);
+  }
+}
+export const db = createDb();
 
 // Set Firestore log level to silent to prevent noisy transient connection/offline warnings
 setLogLevel('silent');
