@@ -829,10 +829,10 @@ export function isExplicitPrecipitatingEvent(text: string): boolean {
     return false;
   }
   if (/\b(?:acute symptom onset|presented to (?:ed|er|hospital)|evaluation of fever|history of fever)\b/i.test(t)) {
-    return false;
+      return false;
   }
   // Must match explicit precipitating trigger
-  const hasTrigger = /\b(rta\b|road traffic accident|motor vehicle|accident|fall|fell|trauma|assault|hit\s+by|injury|injuries|fracture|burn|drowning|bite|sting|poison|ingestion|overdose|collapse|syncope|unconscious|found\s+(?:lying|collapsed|unconscious)|electrocution|struck|wound|post-op|surgery)\b/i.test(t);
+  const hasTrigger = /\b(rta\b|road traffic accident|motor vehicle|accident|fall|fell|trauma|assault|hit\s+by|injury|injuries|fracture|burn|drowning|bite|sting|poison|ingestion|overdose|collapse[ds]?|collapsing|exertional|exertion|syncope|unconscious|found\s+(?:lying|collapsed|unconscious)|electrocution|struck|wound|post-op|surgery)\b/i.test(t);
   return hasTrigger;
 }
 
@@ -1371,7 +1371,17 @@ function extractExplicitPsychologicalAssessment(text: string): string | null {
     return Array.from(new Set(explicitNegatives.map(v => normalizeClinicalText(v)))).join(", ");
   }
 
-  return null;
+    return null;
+}
+
+/** HPI composed only from clinician-stated symptoms + accepted preceding event. Never invented. */
+export function composeHpiFromRecorded(sh: { symptoms?: unknown; events?: unknown }): string {
+  const sym = typeof sh.symptoms === "string" ? sh.symptoms.trim() : "";
+  const ev = typeof sh.events === "string" ? sh.events.trim() : "";
+  const parts: string[] = [];
+  if (sym) parts.push(sym);
+  if (ev && !sym.toLowerCase().includes(ev.toLowerCase())) parts.push(ev);
+  return parts.join(". ");
 }
 
 export function mapExtractionToCaseSheetFields(
@@ -2272,7 +2282,31 @@ export function mapExtractionToCaseSheetFields(
           timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
         }
       ];
-    }
+     }
+  }
+
+  // ═══════════════════════════════════════════════════════
+  // HPI AUTO-WRITE FIX: the case sheet's HPI box reads sampleHistory.hpi, but
+  // the model fills the "symptoms" narrative and often leaves "hpi" null, so
+  // the box stayed empty. Bridge the model's hpi into sampleHistory, and when
+  // none was returned (and the sheet has none) compose it from what the
+  // clinician dictated: accepted symptoms + accepted preceding event.
+  // Nothing is invented; an HPI already on the sheet is never overwritten.
+  // ═══════════════════════════════════════════════════════
+  const existingHpi = String(existingCaseSheet?.sampleHistory?.hpi ?? existingCaseSheet?.hpi ?? "").trim();
+  let hpiOut = typeof fields.hpi === "string" ? fields.hpi.trim() : "";
+  if (!hpiOut && !existingHpi) {
+    hpiOut = composeHpiFromRecorded({
+      symptoms: fields.sampleHistory?.symptoms,
+      events: fields.sampleHistory?.events ?? fields.events,
+    });
+  }
+  if (hpiOut && (hpiOut === fields.hpi || !existingHpi)) {
+    fields.hpi = hpiOut;
+    fields.sampleHistory = {
+      ...(fields.sampleHistory || existingCaseSheet?.sampleHistory || {}),
+      hpi: hpiOut,
+    };
   }
 
   return fields;
