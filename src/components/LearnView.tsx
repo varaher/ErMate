@@ -10,7 +10,7 @@ import { useBoundChat } from "../hooks/useBoundChat";
 import SimulationsView from "./SimulationsView";
 import TriviaView from "./TriviaView";
 import GoogleClassroomModal from "./GoogleClassroomModal";
-import ProtocolsPanel from "./ProtocolsPanel";
+import ErGuideView from "./ErGuideView";
 
 interface LearnViewProps {
   onNavigateToTab?: (tabId: string) => void;
@@ -189,7 +189,7 @@ function EMReferenceChatPanel() {
 }
 
 export default function LearnView({ onNavigateToTab, isDarkMode = false }: LearnViewProps) {
-  const [activeTab, setActiveTab] = useState<"protocols" | "library" | "simulations" | "trivia" | "memory">("protocols");
+  const [activeTab, setActiveTab] = useState<"erguide" | "library" | "simulations" | "trivia" | "memory">("protocols");
   const [isClassroomModalOpen, setIsClassroomModalOpen] = useState(false);
 
   // Clinical memories log state
@@ -299,16 +299,16 @@ ${m.physicianReflections || "No reflections logged."}
         {/* Learn Tabs */}
         <div className="flex flex-wrap bg-slate-100 dark:bg-slate-900 p-1 rounded-xl w-fit">
                   <button
-            onClick={() => setActiveTab("protocols")}
-            data-testid="learn-tab-protocols"
+            onClick={() => setActiveTab("erguide")}
+            data-testid="learn-tab-erguide"
             className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
-              activeTab === "protocols"
+              activeTab === "erguide"
                 ? "bg-white dark:bg-slate-800 text-red-600 dark:text-red-400 shadow-xs"
                 : "text-slate-600 dark:text-slate-400 hover:text-slate-950"
             }`}
           >
             <ClipboardList className="w-3.5 h-3.5" />
-            Protocols
+           ER Guide
           </button>
           <button
             onClick={() => setActiveTab("library")}
@@ -382,9 +382,9 @@ ${m.physicianReflections || "No reflections logged."}
       {/* Render active sub-view */}
       <div className="transition-all duration-300">
                 {/* Sub-view: Clinical protocols library */}
-        {activeTab === "protocols" && (
+        {activeTab === "erguide" && (
           <div className="animate-fade-in max-w-5xl mx-auto space-y-4">
-            <ProtocolsPanel />
+                      <ErGuideView isDarkMode={isDarkMode} />
           </div>
         )}
         {/* Sub-view: Standalone EM Reference Chat */}

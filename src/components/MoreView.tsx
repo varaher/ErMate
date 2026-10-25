@@ -779,7 +779,7 @@ export default function MoreView({
                 Learn
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-                Protocols, EM reference chat, simulations, trivia and your clinical memory log.
+                ER Guide, EM reference chat, simulations, trivia and your clinical memory log.
               </p>
             </div>
             <div className="mt-4 flex items-center justify-between text-xs font-bold text-purple-600 dark:text-purple-400 border-t border-slate-100 dark:border-slate-800 pt-2.5">
