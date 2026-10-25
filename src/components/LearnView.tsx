@@ -349,17 +349,7 @@ ${m.physicianReflections || "No reflections logged."}
             <FileText className="w-3.5 h-3.5" />
             Clinical Memory Log
           </button>
-          {onNavigateToTab && (
-            <button
-              onClick={() => onNavigateToTab("tools")}
-              data-testid="learn-open-tools"
-              className="px-3 py-1.5 text-xs font-bold bg-teal-600 hover:bg-teal-500 text-white rounded-lg transition-all flex items-center gap-1.5 cursor-pointer"
-              title="Drug doses, resuscitation guides and calculators"
-            >
-              <Stethoscope className="w-3.5 h-3.5" />
-              <span>Emergency Tools</span>
-            </button>
-          )}
+          
           <button
             onClick={() => setIsClassroomModalOpen(true)}
             className="px-3 py-1.5 text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg transition-all flex items-center gap-1.5 cursor-pointer shadow-xs ml-1"
