@@ -1,0 +1,710 @@
+diff --git a/server/scribeChatTurn.ts b/server/scribeChatTurn.ts
+index dbec630..0caec2d 100644
+--- a/server/scribeChatTurn.ts
++++ b/server/scribeChatTurn.ts
+@@ -832,7 +832,7 @@ export function isExplicitPrecipitatingEvent(text: string): boolean {
+     return false;
+   }
+   // Must match explicit precipitating trigger
+-  const hasTrigger = /\b(rta\b|road traffic accident|motor vehicle|accident|fall|fell|trauma|assault|hit\s+by|injury|injuries|fracture|burn|drowning|bite|sting|poison|ingestion|overdose|collapse|syncope|unconscious|found\s+(?:lying|collapsed|unconscious)|electrocution|struck|wound|post-op|surgery)\b/i.test(t);
++  const hasTrigger = /\b(rta\b|road traffic accident|motor vehicle|accident|fall|fell|trauma|assault|hit\s+by|injury|injuries|fracture|burn|drowning|bite|sting|poison|ingestion|overdose|collapse[ds]?|collapsing|exertional|exertion|syncope|unconscious|found\s+(?:lying|collapsed|unconscious)|electrocution|struck|wound|post-op|surgery)\b/i.test(t);
+   return hasTrigger;
+ }
+ 
+@@ -1374,6 +1374,16 @@ function extractExplicitPsychologicalAssessment(text: string): string | null {
+   return null;
+ }
+ 
++/** HPI composed only from clinician-stated symptoms + accepted preceding event. Never invented. */
++export function composeHpiFromRecorded(sh: { symptoms?: unknown; events?: unknown }): string {
++  const sym = typeof sh.symptoms === "string" ? sh.symptoms.trim() : "";
++  const ev = typeof sh.events === "string" ? sh.events.trim() : "";
++  const parts: string[] = [];
++  if (sym) parts.push(sym);
++  if (ev && !sym.toLowerCase().includes(ev.toLowerCase())) parts.push(ev);
++  return parts.join(". ");
++}
++
+ export function mapExtractionToCaseSheetFields(
+   cleaned: ReturnType<typeof cleanExtractionOutput>,
+   raw: any,
+@@ -2275,6 +2285,30 @@ export function mapExtractionToCaseSheetFields(
+     }
+   }
+ 
++  // ═══════════════════════════════════════════════════════
++  // HPI AUTO-WRITE FIX: the case sheet's HPI box reads sampleHistory.hpi, but
++  // the model fills the "symptoms" narrative and often leaves "hpi" null, so
++  // the box stayed empty. Bridge the model's hpi into sampleHistory, and when
++  // none was returned (and the sheet has none) compose it from what the
++  // clinician dictated: accepted symptoms + accepted preceding event.
++  // Nothing is invented; an HPI already on the sheet is never overwritten.
++  // ═══════════════════════════════════════════════════════
++  const existingHpi = String(existingCaseSheet?.sampleHistory?.hpi ?? existingCaseSheet?.hpi ?? "").trim();
++  let hpiOut = typeof fields.hpi === "string" ? fields.hpi.trim() : "";
++  if (!hpiOut && !existingHpi) {
++    hpiOut = composeHpiFromRecorded({
++      symptoms: fields.sampleHistory?.symptoms,
++      events: fields.sampleHistory?.events ?? fields.events,
++    });
++  }
++  if (hpiOut && (hpiOut === fields.hpi || !existingHpi)) {
++    fields.hpi = hpiOut;
++    fields.sampleHistory = {
++      ...(fields.sampleHistory || existingCaseSheet?.sampleHistory || {}),
++      hpi: hpiOut,
++    };
++  }
++
+   return fields;
+ }
+ 
+diff --git a/src/App.tsx b/src/App.tsx
+index 9dc4d99..5d08e68 100644
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -21,6 +21,7 @@ import { clearHandoverLocalCache, enforceHandoverCacheOwner } from "./utils/hand
+ import { triggerPrintWithTip } from "./utils/printWithTip";
+ import { getNormalizedRole } from "./utils/roleUtils";
+ import { isClinicalProfileComplete, canPersistClinicalData } from "./utils/profileCompleteness";
++import { diffForWrite } from "./utils/changedFields";
+ import OnboardingProfileView from "./components/OnboardingProfileView";
+ import { authenticatedFetch } from "./services/authenticatedFetch";
+ 
+@@ -2771,7 +2772,7 @@ const handleDeleteAllCases = async () => {
+    */
+   const saveCaseNow = async (
+     updatedCase: ClinicalCase,
+-    options?: { autosave?: boolean }
++    options?: { autosave?: boolean; baseCase?: ClinicalCase }
+   ): Promise<"persisted" | "trial_only"> => {
+     const isAutosave = Boolean(options?.autosave);
+     const previousCase = latestCasesRef.current.find(c => c.id === updatedCase.id);
+@@ -3025,8 +3026,25 @@ const handleDeleteAllCases = async () => {
+       lastEditedAt: new Date().toISOString()
+     };
+ 
++    const canDeltaWrite = Boolean(isAutosave && previousCase && options?.baseCase && options.baseCase.id === updatedCase.id);
+     try {
+-      await setDoc(doc(db, "cases", caseToSave.id), sanitizeForFirestore(caseToSave), { merge: true });
++      // Autosave of an EXISTING case writes only the leaves this device changed (merge:true deep-merges),
++      // so stale untouched fields never overwrite another device's newer edit. Explicit saves,
++      // new cases and anything without a base copy still write the whole case as before.
++      const writePayload: any = canDeltaWrite
++        ? {
++            ...diffForWrite(options.baseCase, updatedCase),
++            id: caseToSave.id,
++            lastEditedBy: caseToSave.lastEditedBy,
++            lastEditedByName: caseToSave.lastEditedByName,
++            lastEditedByRole: caseToSave.lastEditedByRole,
++            lastEditedAt: caseToSave.lastEditedAt,
++            ...(caseToSave.dischargeInfo
++              ? { dischargeInfo: { ...((diffForWrite(options.baseCase, updatedCase) as any).dischargeInfo || {}), caseUpdatedAfterPreparation: true } }
++              : {}),
++          }
++        : caseToSave;
++      await setDoc(doc(db, "cases", caseToSave.id), sanitizeForFirestore(writePayload), { merge: true });
+       
+       // Determine changed fields across all patient sections (Demographics, Vitals, Primary Survey, SAMPLE history, Treatments, Labs, Differentials, Notes, Disposition, Pediatric)
+ 
+@@ -3104,7 +3122,13 @@ const handleDeleteAllCases = async () => {
+         addedAt: new Date().toISOString(),
+         addedBy: editUid // for rules create constraint
+       };
+-      await setDoc(addendumRef, auditLog);
++      // The case itself is already saved above. The audit entry must be cleaned of `undefined`
++      // values (Firestore rejects them) and must never turn a saved case into "NOT SAVED".
++      try {
++        await setDoc(addendumRef, sanitizeForFirestore(auditLog));
++      } catch (auditErr) {
++        console.error("[handleSaveCase] Case saved, but the edit audit entry failed:", auditErr);
++      }
+ 
+       // Trusted Logbook Snapshot Service
+       // Direct client-side Firestore sync (UID-owned portfolio)
+@@ -3140,7 +3164,7 @@ const handleDeleteAllCases = async () => {
+   const caseSaveQueuesRef = useRef<Map<string, Promise<unknown>>>(new Map());
+   const handleSaveCase = (
+     updatedCase: ClinicalCase,
+-    options?: { autosave?: boolean }
++    options?: { autosave?: boolean; baseCase?: ClinicalCase }
+   ): Promise<"persisted" | "trial_only"> => {
+     const queues = caseSaveQueuesRef.current;
+     const previous = queues.get(updatedCase.id) || Promise.resolve();
+@@ -3554,7 +3578,10 @@ const handleDeleteAllCases = async () => {
+         socialHistory: extracted.sampleHistory?.socialHistory || extracted.socialHistory || existingMatch?.sampleHistory?.socialHistory || "",
+         familyHistory: extracted.sampleHistory?.familyHistory || extracted.familyHistory || existingMatch?.sampleHistory?.familyHistory || "",
+         psychiatricFlags: extracted.sampleHistory?.psychiatricFlags || extracted.psychiatricFlags || existingMatch?.sampleHistory?.psychiatricFlags || "",
+-        hpi: extracted.sampleHistory?.hpi || extracted.hpi || existingMatch?.sampleHistory?.hpi || "",
++        // An HPI already on the sheet (typed or previously applied) is never silently replaced by extraction.
++        hpi: (existingMatch?.sampleHistory?.hpi || "").trim()
++          ? existingMatch!.sampleHistory!.hpi!
++          : (extracted.sampleHistory?.hpi || extracted.hpi || ""),
+         surgicalHistory: extracted.sampleHistory?.surgicalHistory || extracted.surgicalHistory || existingMatch?.sampleHistory?.surgicalHistory || "",
+         lmp: extracted.sampleHistory?.lmp || extracted.lmp || existingMatch?.sampleHistory?.lmp || ""
+       },
+diff --git a/src/components/CaseSheetView.tsx b/src/components/CaseSheetView.tsx
+index 282e30e..6072670 100644
+--- a/src/components/CaseSheetView.tsx
++++ b/src/components/CaseSheetView.tsx
+@@ -32,6 +32,7 @@ import {
+ import { PrimarySurveySection } from "./PrimarySurveySection";
+ import { PediatricAssessmentTriangle } from "./PediatricCaseSheetFields";
+ import { SecondarySurveySection } from "./SecondarySurveySection";
++import { applySecondaryNormals, recordedSecondary, SECONDARY_KEYS, type SecondaryKey } from "../utils/secondaryNormals";
+ import CaseSheetPrintView, { convertClinicalCaseToCaseSheetData, formatCaseSheetText } from "./CaseSheetPrintView";
+ import { triggerPrintWithTip } from "../utils/printWithTip";
+ import { 
+@@ -272,7 +273,7 @@ interface CaseSheetViewProps {
+   onBack: () => void;
+   // Resolves "persisted" only after Firestore confirmed the write, "trial_only" when kept
+   // on this device only; throws on failure. (Older callers may still return void.)
+-  onSaveCase: (updatedCase: ClinicalCase, options?: { autosave?: boolean }) => Promise<"persisted" | "trial_only" | void> | void;
++  onSaveCase: (updatedCase: ClinicalCase, options?: { autosave?: boolean; baseCase?: ClinicalCase }) => Promise<"persisted" | "trial_only" | void> | void;
+   onNavigateToDischarge: (caseId: string) => void;
+   onStartNewTriage?: () => void;
+   profile?: UserProfile;
+@@ -676,7 +677,7 @@ export default function CaseSheetView({
+     const version = editVersionRef.current;
+     setPersistStatus("saving");
+     try {
+-      const outcome = await onSaveCaseRef.current(toSave, { autosave: true });
++      const outcome = await onSaveCaseRef.current(toSave, { autosave: true, baseCase: base });
+       if (outcome === "trial_only") {
+         lastLocalOnlyKeyRef.current = key;
+         setPersistStatus("trial");
+@@ -687,6 +688,7 @@ export default function CaseSheetView({
+       setPersistStatus(editVersionRef.current === version ? "saved" : "pending");
+     } catch (err) {
+       console.warn("[Autosave] not saved:", err);
++      setSaveErrorReason(describeSaveError(err));
+       setPersistStatus(typeof navigator !== "undefined" && navigator.onLine === false ? "offline" : "error");
+       return;
+     }
+@@ -754,6 +756,15 @@ export default function CaseSheetView({
+ 
+ 
+ 
++  // Short, readable reason shown next to "NOT SAVED" so a failure can be diagnosed from a screenshot.
++  const [saveErrorReason, setSaveErrorReason] = useState("");
++  const describeSaveError = (err: unknown): string => {
++    let msg = err instanceof Error ? err.message : String(err ?? "");
++    try { const j = JSON.parse(msg); if (j && typeof j.error === "string") msg = j.error; } catch { /* plain message */ }
++    const code = (err as any)?.code ? `${(err as any).code}: ` : "";
++    return (code + msg.replace(/^Firebase: |^FirebaseError: /, "")).slice(0, 110);
++  };
++
+   const renderPersistStatus = () => {
+     const map: Record<PersistStatus, { text: string; cls: string } | null> = {
+       idle: null,
+@@ -762,7 +773,7 @@ export default function CaseSheetView({
+       saved: { text: "All changes saved ✓", cls: "text-emerald-700 dark:text-emerald-400" },
+       trial: { text: "NOT SAVED — kept only while the app is open. Complete your profile to save cases.", cls: "text-red-700 dark:text-red-400 font-extrabold" },
+       offline: { text: "Offline — will save when connected", cls: "text-amber-700 dark:text-amber-300" },
+-      error: { text: "NOT SAVED — tap Save Changes to retry", cls: "text-red-700 dark:text-red-400 font-extrabold" },
++      error: { text: `NOT SAVED — tap Save Changes to retry${saveErrorReason ? ` (${saveErrorReason})` : ""}`, cls: "text-red-700 dark:text-red-400 font-extrabold" },
+     };
+     const m = map[persistStatus];
+     if (!m) return null;
+@@ -1665,12 +1676,6 @@ export default function CaseSheetView({
+       exposure: 'No obvious injuries or rashes.',
+       exposureStatus: 'Normal' as const,
+     },
+-    secondarySurvey: `General: Conscious, alert, and oriented. No pallor, no icterus, no cyanosis, no clubbing, no lymphadenopathy, no edema.
+-CVS: S1 and S2 heard, normal intensity. Regular pulse. Normal apex beat, no precordial heave. No murmurs, no gallops or rubs. JVP not elevated. Peripheral pulses well felt bilaterally.
+-Chest / RS: Equal chest expansion. Bilateral equal air entry. Vesicular breath sounds. Resonant percussion. Normal vocal resonance. No wheeze, no crackles, no rhonchi.
+-Abdomen: Soft, non-distended, non-tender. No guarding or rigidity. No organomegaly. Tympanic percussion. Bowel sounds present and normal. Normal umbilicus, normal external genitalia, normal hernial orifices.
+-CNS: Conscious and oriented to time, place, and person. GCS 15/15. Higher mental functions intact. Cranial nerves intact. Pupils: BERL. Sensory system intact. Motor system normal. Motor power 5/5 in all limbs. Reflexes normal. Romberg sign negative. Cerebellar examination normal.
+-Extremities: Peripheral pulses present and well felt. No edema. No cyanosis or clubbing. No deformity. No swelling. Full range of motion.`,
+     psychological: 'No features of depression, anxiety, psychosis, agitation, suicidal ideation, or substance use. Behaviour appropriate.'
+   };
+ 
+@@ -2084,64 +2089,10 @@ Extremities: Peripheral pulses present and well felt. No edema. No cyanosis or c
+   };
+ 
+   const markSecondarySurveyNormal = () => {
+-    // GCS Consistency: check whether an already documented GCS elsewhere in Case Sheet conflicts
+-    const getDocumentedGcs = (c: ClinicalCase): number | null => {
+-      const vGcs = c.vitals?.gcs ? parseInt(String(c.vitals.gcs).trim(), 10) : NaN;
+-      if (!isNaN(vGcs) && vGcs >= 3 && vGcs <= 15) return vGcs;
+-
+-      const sGcs = c.primaryAssessment?.survey?.disability?.gcsTotal;
+-      const numSGcs = sGcs !== undefined && sGcs !== null ? parseInt(String(sGcs).trim(), 10) : NaN;
+-      if (!isNaN(numSGcs) && numSGcs >= 3 && numSGcs <= 15) return numSGcs;
+-
+-      if (c.primaryAssessment?.disability) {
+-        const match = c.primaryAssessment.disability.match(/GCS[:\s]*(\d+)/i);
+-        if (match && match[1]) {
+-          const parsed = parseInt(match[1], 10);
+-          if (!isNaN(parsed) && parsed >= 3 && parsed <= 15) return parsed;
+-        }
+-      }
+-
+-      return null;
+-    };
+-
+-    const documentedGcs = getDocumentedGcs(currentCase);
+-    const effectiveGcs = documentedGcs !== null ? documentedGcs : 15;
+-
+-    // Approved Normal Template
+-    const normalGeneral = "Conscious, alert, and oriented. No pallor, no icterus, no cyanosis, no clubbing, no lymphadenopathy, no edema.";
+-    const normalCvs = "S1 and S2 heard, normal intensity. Regular pulse. Normal apex beat, no precordial heave. No murmurs, no gallops or rubs. JVP not elevated. Peripheral pulses well felt bilaterally.";
+-    const normalRs = "Equal chest expansion. Bilateral equal air entry. Vesicular breath sounds. Resonant percussion. Normal vocal resonance. No wheeze, no crackles, no rhonchi.";
+-    const normalPa = "Soft, non-distended, non-tender. No guarding or rigidity. No organomegaly. Tympanic percussion. Bowel sounds present and normal. Normal umbilicus, normal external genitalia, normal hernial orifices.";
+-    const normalCns = `Conscious and oriented to time, place, and person. GCS ${effectiveGcs}/15. Higher mental functions intact. Cranial nerves intact. Pupils: BERL. Sensory system intact. Motor system normal. Motor power 5/5 in all limbs. Reflexes normal. Romberg sign negative. Cerebellar examination normal.`;
+-    const normalExt = "Peripheral pulses present and well felt. No edema. No cyanosis or clubbing. No deformity. No swelling. Full range of motion.";
+-
+-    const normalSecondarySurvey: SecondarySurvey = {
+-      general: normalGeneral,
+-      cvs: normalCvs,
+-      respiratory: normalRs,
+-      abdomen: normalPa,
+-      cns: normalCns,
+-      extremities: normalExt,
+-    };
+-    const labelFor: Record<string, string> = { general: "General", cvs: "CVS", respiratory: "RS", abdomen: "PA", cns: "CNS", extremities: "Extremities" };
+-
++    // Fill blank systems only (typed OR already in the narrative). No GCS unless one is documented.
+     setCurrentCase(prev => {
+-      const prevSec: any = prev.secondarySurvey || {};
+-      const merged: any = { ...prevSec };
+-      const addedLines: string[] = [];
+-      for (const key of Object.keys(normalSecondarySurvey)) {
+-        if (!hasRecordedValue(prevSec[key]) || String(prevSec[key]).trim() === "") {
+-          merged[key] = (normalSecondarySurvey as any)[key];
+-          addedLines.push(`${labelFor[key]}: ${(normalSecondarySurvey as any)[key]}`);
+-        }
+-      }
+-      const prevNarrative = (prev.secondaryAssessment || "").trim();
+-      return {
+-        ...prev,
+-        secondarySurvey: merged,
+-        // Blank narrative -> rebuilt from systems; existing narrative is kept and only newly filled systems are appended.
+-        secondaryAssessment: prevNarrative ? (addedLines.length ? `${prev.secondaryAssessment}\n${addedLines.join("\n")}` : prev.secondaryAssessment) : addedLines.join("\n"),
+-      };
++      const r = applySecondaryNormals(prev, SECONDARY_KEYS);
++      return { ...prev, secondarySurvey: r.secondarySurvey as any, secondaryAssessment: r.secondaryAssessment };
+     });
+ 
+     setNormalMarkedBanner(true);
+@@ -2370,6 +2321,7 @@ Extremities: Peripheral pulses present and well felt. No edema. No cyanosis or c
+       return true;
+     } catch (err) {
+       console.error("Failed to save Case Sheet:", err);
++      setSaveErrorReason(describeSaveError(err));
+       lastSaveOutcomeRef.current = "failed";
+       setPersistStatus(typeof navigator !== "undefined" && navigator.onLine === false ? "offline" : "error");
+       setTreatmentSaveStatus("error");
+@@ -5205,63 +5157,36 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
+                     </summary>
+                     <div className="pt-2 space-y-2">
+                       <p className="text-[10px] text-slate-500">
+-                        Click a preset to instantly append normal findings:
++                        Fills a system only when it is empty. Anything you already wrote is never replaced:
+                       </p>
+                     <div className="flex flex-wrap gap-2">
+-                      {[
+-                        {
+-                          label: "General Examination",
+-                          key: "general",
+-                          text: "General: Conscious, alert, and oriented. No pallor, no icterus, no cyanosis, no clubbing, no lymphadenopathy, no edema."
+-                        },
+-                        {
+-                          label: "Normal CVS",
+-                          key: "cvs",
+-                          text: "CVS: S1 and S2 heard, normal intensity. Regular pulse. Normal apex beat, no precordial heave. No murmurs, no gallops or rubs. JVP not elevated. Peripheral pulses well felt bilaterally."
+-                        },
+-                        {
+-                          label: "Normal Respiratory (RS)",
+-                          key: "respiratory",
+-                          text: "RS: Equal chest expansion. Bilateral equal air entry. Vesicular breath sounds. Resonant percussion. Normal vocal resonance. No wheeze, no crackles, no rhonchi."
+-                        },
+-                        {
+-                          label: "Normal P/A (Abdomen)",
+-                          key: "abdomen",
+-                          text: "P/A: Soft, non-distended, non-tender. No guarding or rigidity. No organomegaly. Tympanic percussion. Bowel sounds present and normal. Normal umbilicus, normal external genitalia, normal hernial orifices."
+-                        },
+-                        {
+-                          label: "Normal CNS",
+-                          key: "cns",
+-                          text: "CNS: Conscious and oriented to time, place, and person. GCS 15/15. Higher mental functions intact. Cranial nerves intact. Pupils: BERL. Sensory system intact. Motor system normal. Motor power 5/5 in all limbs. Reflexes normal. Romberg sign negative. Cerebellar examination normal."
+-                        },
+-                        {
+-                          label: "Normal Extremities",
+-                          key: "extremities",
+-                          text: "Extremities: Peripheral pulses present and well felt. No edema. No cyanosis or clubbing. No deformity. No swelling. Full range of motion."
+-                        }
+-                      ].map((preset, idx) => (
+-                        <button
+-                          key={idx}
+-                          type="button"
+-                          onClick={() => {
+-                            setCurrentCase(prev => {
+-                              const cleanText = preset.text.replace(/^[^:]+:\s*/, "");
+-                              const updatedSurvey = {
+-                                ...(prev.secondarySurvey || {}),
+-                                [preset.key]: cleanText
+-                              };
+-                              return {
+-                                ...prev,
+-                                secondarySurvey: updatedSurvey,
+-                                secondaryAssessment: (prev.secondaryAssessment || "") + (prev.secondaryAssessment ? "\n\n" : "") + preset.text
+-                              };
+-                            });
+-                          }}
+-                          className="px-2.5 py-1.5 bg-slate-200 hover:bg-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded transition-colors"
+-                        >
+-                          + {preset.label}
+-                        </button>
+-                      ))}
++                      {([
++                        { label: "General Examination", key: "general" },
++                        { label: "Normal CVS", key: "cvs" },
++                        { label: "Normal Respiratory (RS)", key: "respiratory" },
++                        { label: "Normal P/A (Abdomen)", key: "abdomen" },
++                        { label: "Normal CNS", key: "cns" },
++                        { label: "Normal Extremities", key: "extremities" },
++                      ] as Array<{ label: string; key: SecondaryKey }>).map((preset) => {
++                        const alreadyRecorded = !!recordedSecondary(currentCase)[preset.key];
++                        return (
++                          <button
++                            key={preset.key}
++                            type="button"
++                            disabled={alreadyRecorded}
++                            title={alreadyRecorded ? "Already recorded — edit the box above instead. Presets never replace what you wrote." : "Fill this system with the normal template"}
++                            onClick={() => {
++                              setCurrentCase(prev => {
++                                const r = applySecondaryNormals(prev, [preset.key]);
++                                return { ...prev, secondarySurvey: r.secondarySurvey as any, secondaryAssessment: r.secondaryAssessment };
++                              });
++                            }}
++                            className="px-2.5 py-1.5 bg-slate-200 hover:bg-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
++                          >
++                            {alreadyRecorded ? "✓ " : "+ "}{preset.label}
++                          </button>
++                        );
++                      })}
+                     </div>
+                   </div>
+                   </details>
+diff --git a/src/firebase.ts b/src/firebase.ts
+index 6fe73b0..5bc8981 100644
+--- a/src/firebase.ts
++++ b/src/firebase.ts
+@@ -1,13 +1,23 @@
+ import { initializeApp, getApps, getApp } from 'firebase/app';
+ import { getAuth, GoogleAuthProvider, signInWithPopup, signOut } from 'firebase/auth';
+-import { getFirestore, doc, getDoc, setLogLevel } from 'firebase/firestore';
++import { getFirestore, initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, getDoc, setLogLevel } from 'firebase/firestore';
+ import { getStorage } from 'firebase/storage';
+ import firebaseConfig from '../firebase-applet-config.json';
+ 
+ const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
+-export const db = (firebaseConfig as any).firestoreDatabaseId
+-  ? getFirestore(app, (firebaseConfig as any).firestoreDatabaseId)
+-  : getFirestore(app);
++const dbId = (firebaseConfig as any).firestoreDatabaseId;
++// Offline cache (IndexedDB): edits made offline or just before the phone kills the app are kept on the
++// device and sent when the connection returns. Falls back to the default in-memory instance if
++// IndexedDB is unavailable (private mode, blocked storage) or the instance was already created.
++function createDb() {
++  try {
++    const settings = { localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }) };
++    return dbId ? initializeFirestore(app, settings, dbId) : initializeFirestore(app, settings);
++  } catch {
++    return dbId ? getFirestore(app, dbId) : getFirestore(app);
++  }
++}
++export const db = createDb();
+ 
+ // Set Firestore log level to silent to prevent noisy transient connection/offline warnings
+ setLogLevel('silent');
+diff --git a/src/utils/changedFields.ts b/src/utils/changedFields.ts
+new file mode 100644
+index 0000000..3bd1d8d
+--- /dev/null
++++ b/src/utils/changedFields.ts
+@@ -0,0 +1,24 @@
++// Autosave sends ONLY what this device changed, so a stale copy of an untouched field can never
++// overwrite another device's newer edit. Used with setDoc(..., { merge: true }), which deep-merges maps.
++const isPlain = (v: unknown): v is Record<string, unknown> =>
++  v !== null && typeof v === "object" && !Array.isArray(v) && Object.getPrototypeOf(v) === Object.prototype;
++
++/** Leaves of `next` that differ from `base`. Arrays and scalars are compared whole; plain objects recurse.
++ *  Keys missing from `next` are never deleted (undefined = "not touched"). */
++export function diffForWrite(base: any, next: any): Record<string, unknown> {
++  const out: Record<string, unknown> = {};
++  if (!isPlain(next)) return out;
++  const b = isPlain(base) ? base : {};
++  for (const key of Object.keys(next)) {
++    const nv = (next as any)[key];
++    if (nv === undefined) continue;
++    const bv = b[key];
++    if (isPlain(nv) && isPlain(bv)) {
++      const sub = diffForWrite(bv, nv);
++      if (Object.keys(sub).length) out[key] = sub;
++    } else if (JSON.stringify(nv) !== JSON.stringify(bv)) {
++      out[key] = nv;
++    }
++  }
++  return out;
++}
+diff --git a/src/utils/secondaryNormals.ts b/src/utils/secondaryNormals.ts
+new file mode 100644
+index 0000000..eeedded
+--- /dev/null
++++ b/src/utils/secondaryNormals.ts
+@@ -0,0 +1,78 @@
++import { parseSecondaryAssessmentToSurvey } from "../components/SecondarySurveySection";
++
++/**
++ * Adult secondary-survey "normal" findings, in ONE place for the Mark-Normal button and the
++ * per-system presets. Rules (same as the primary survey):
++ *  - fill a system only when nothing is recorded for it (typed in the system box OR already in the narrative);
++ *  - never invent a value: GCS appears only when one is already documented elsewhere on the case.
++ */
++export const SECONDARY_KEYS = ["general", "cvs", "respiratory", "abdomen", "cns", "extremities"] as const;
++export type SecondaryKey = typeof SECONDARY_KEYS[number];
++export const SECONDARY_LABELS: Record<SecondaryKey, string> = {
++  general: "General", cvs: "CVS", respiratory: "RS", abdomen: "PA", cns: "CNS", extremities: "Extremities",
++};
++
++export function adultSecondaryNormals(documentedGcs: number | null): Record<SecondaryKey, string> {
++  return {
++    general: "Conscious, alert, and oriented. No pallor, no icterus, no cyanosis, no clubbing, no lymphadenopathy, no edema.",
++    cvs: "S1 and S2 heard, normal intensity. Regular pulse. Normal apex beat, no precordial heave. No murmurs, no gallops or rubs. JVP not elevated. Peripheral pulses well felt bilaterally.",
++    respiratory: "Equal chest expansion. Bilateral equal air entry. Vesicular breath sounds. Resonant percussion. Normal vocal resonance. No wheeze, no crackles, no rhonchi.",
++    abdomen: "Soft, non-distended, non-tender. No guarding or rigidity. No organomegaly. Tympanic percussion. Bowel sounds present and normal. Normal umbilicus, normal external genitalia, normal hernial orifices.",
++    cns: `Conscious and oriented to time, place, and person. ${documentedGcs !== null ? `GCS ${documentedGcs}/15. ` : ""}Higher mental functions intact. Cranial nerves intact. Pupils: BERL. Sensory system intact. Motor system normal. Motor power 5/5 in all limbs. Reflexes normal. Romberg sign negative. Cerebellar examination normal.`,
++    extremities: "Peripheral pulses present and well felt. No edema. No cyanosis or clubbing. No deformity. No swelling. Full range of motion.",
++  };
++}
++
++/** A GCS the clinician already documented (vitals, primary survey, or primary narrative). Never defaults. */
++export function documentedGcsOf(c: any): number | null {
++  const ok = (n: number) => !isNaN(n) && n >= 3 && n <= 15;
++  const v = c?.vitals?.gcs ? parseInt(String(c.vitals.gcs).trim(), 10) : NaN;
++  if (ok(v)) return v;
++  const s = c?.primaryAssessment?.survey?.disability?.gcsTotal;
++  const sn = s !== undefined && s !== null ? parseInt(String(s).trim(), 10) : NaN;
++  if (ok(sn)) return sn;
++  const m = typeof c?.primaryAssessment?.disability === "string" ? c.primaryAssessment.disability.match(/GCS[:\s]*(\d+)/i) : null;
++  if (m && ok(parseInt(m[1], 10))) return parseInt(m[1], 10);
++  return null;
++}
++
++const has = (v: unknown): boolean => typeof v === "string" && v.trim() !== "";
++
++/** What is already recorded per system: the system boxes, plus anything only present in the narrative text. */
++export function recordedSecondary(c: any): Partial<Record<SecondaryKey, string>> {
++  const out: Partial<Record<SecondaryKey, string>> = {};
++  const parsed = parseSecondaryAssessmentToSurvey(typeof c?.secondaryAssessment === "string" ? c.secondaryAssessment : "");
++  for (const k of SECONDARY_KEYS) {
++    if (has(parsed[k])) out[k] = parsed[k];
++    if (has(c?.secondarySurvey?.[k])) out[k] = c.secondarySurvey[k];
++  }
++  return out;
++}
++
++export function buildSecondaryNarrative(survey: Partial<Record<SecondaryKey, string>>): string {
++  return SECONDARY_KEYS.filter(k => has(survey[k])).map(k => `${SECONDARY_LABELS[k]}: ${String(survey[k]).trim()}`).join("\n");
++}
++
++/**
++ * Fill ONLY the requested systems that have nothing recorded. Anything recorded is kept untouched.
++ * The narrative is rebuilt from the merged systems, so it can never repeat or contradict the boxes.
++ */
++export function applySecondaryNormals(c: any, keys: readonly SecondaryKey[]): { secondarySurvey: Record<string, string>; secondaryAssessment: string; filled: SecondaryKey[]; kept: SecondaryKey[] } {
++  const normals = adultSecondaryNormals(documentedGcsOf(c));
++  const recorded = recordedSecondary(c);
++  const merged: Record<string, string> = { ...(c?.secondarySurvey || {}) };
++  const filled: SecondaryKey[] = [];
++  const kept: SecondaryKey[] = [];
++  for (const k of keys) {
++    if (has(recorded[k])) { kept.push(k); if (!has(merged[k])) merged[k] = recorded[k] as string; continue; }
++    merged[k] = normals[k];
++    filled.push(k);
++  }
++  if (filled.length === 0 && kept.every(k => has(c?.secondarySurvey?.[k]))) {
++    return { secondarySurvey: merged, secondaryAssessment: typeof c?.secondaryAssessment === "string" ? c.secondaryAssessment : "", filled, kept };
++  }
++  const full: Partial<Record<SecondaryKey, string>> = {};
++  for (const k of SECONDARY_KEYS) if (has(merged[k])) full[k] = merged[k];
++  for (const k of SECONDARY_KEYS) if (!has(full[k]) && has(recorded[k])) full[k] = recorded[k];
++  return { secondarySurvey: merged, secondaryAssessment: buildSecondaryNarrative(full), filled, kept };
++}
+diff --git a/verify_autosave_hpi_hardening.ts b/verify_autosave_hpi_hardening.ts
+new file mode 100644
+index 0000000..339d74c
+--- /dev/null
++++ b/verify_autosave_hpi_hardening.ts
+@@ -0,0 +1,31 @@
++import fs from "fs";
++import { diffForWrite } from "./src/utils/changedFields";
++import { isExplicitPrecipitatingEvent } from "./server/scribeChatTurn";
++const log = console.log; console.log = () => {};
++let pass = 0, fail = 0;
++const ok = (c: boolean, m: string) => { if (c) pass++; else { fail++; log("FAIL", m); } };
++const base = { id: "c1", vitals: { hr: "80", bp: "120/80" }, sampleHistory: { hpi: "old", symptoms: "fever", events: "" }, investigations: [{ n: 1 }], status: "Active" };
++// device B only changed hpi; its copy of vitals is stale
++const next = { ...base, sampleHistory: { ...base.sampleHistory, hpi: "new" } };
++const d: any = diffForWrite(base, next);
++ok(JSON.stringify(d) === JSON.stringify({ sampleHistory: { hpi: "new" } }), "only changed leaf is written");
++ok(!("vitals" in d), "stale untouched vitals not written");
++ok(Object.keys(diffForWrite(base, { ...base })).length === 0, "no change => empty diff");
++const d2: any = diffForWrite(base, { ...base, investigations: [{ n: 1 }, { n: 2 }] });
++ok(d2.investigations.length === 2 && Object.keys(d2).length === 1, "array change written whole");
++const d3: any = diffForWrite(base, { ...base, sampleHistory: { ...base.sampleHistory, events: undefined } });
++ok(Object.keys(d3).length === 0, "undefined never deletes");
++const d4: any = diffForWrite(base, { ...base, sampleHistory: { ...base.sampleHistory, hpi: "" } });
++ok(d4.sampleHistory.hpi === "", "clearing a field is a real change");
++for (const t of ["Collapsed at home before arrival", "Exertional chest pain while climbing stairs", "Syncope at home", "Fall from stairs"])
++  ok(isExplicitPrecipitatingEvent(t), "event accepted: " + t);
++for (const t of ["Fever for 3 days", "vomiting since yesterday", "none"])
++  ok(!isExplicitPrecipitatingEvent(t), "event rejected: " + t);
++const fb = fs.readFileSync("src/firebase.ts", "utf8");
++ok(/persistentLocalCache/.test(fb) && /persistentMultipleTabManager/.test(fb) && /catch/.test(fb), "offline cache with safe fallback");
++const app = fs.readFileSync("src/App.tsx", "utf8");
++ok(/canDeltaWrite/.test(app) && /diffForWrite\(options\.baseCase/.test(app), "autosave uses delta write");
++ok(/never silently replaced by extraction/.test(app), "typed HPI protected");
++const sheet = fs.readFileSync("src/components/CaseSheetView.tsx", "utf8");
++ok(/autosave: true, baseCase: base/.test(sheet), "sheet passes base copy");
++log(`verify_autosave_hpi_hardening: ${pass} pass, ${fail} fail`); process.exit(fail ? 1 : 0);
+diff --git a/verify_case_save_audit_undefined.ts b/verify_case_save_audit_undefined.ts
+new file mode 100644
+index 0000000..e6f7f24
+--- /dev/null
++++ b/verify_case_save_audit_undefined.ts
+@@ -0,0 +1,48 @@
++import { readFileSync } from "fs";
++import { initializeApp } from "firebase/app";
++import { getFirestore, doc, setDoc, setLogLevel } from "firebase/firestore";
++setLogLevel("silent");
++import { sanitizeForFirestore } from "./src/utils/firestoreSanitizer";
++
++let pass = 0, fail = 0;
++const t = (n: string, ok: boolean) => { ok ? pass++ : (fail++, console.log("FAIL", n)); };
++
++const db = getFirestore(initializeApp({ projectId: "demo-save-audit", apiKey: "k" }));
++// Firestore validates data BEFORE any network call: an invalid doc rejects at once; a valid one just waits.
++async function validates(data: any): Promise<boolean> {
++  try {
++    const r = await Promise.race([
++      setDoc(doc(db, "cases/c1/addenda/a1"), data).then(() => "ok", (e: any) => (e?.code === "invalid-argument" ? "invalid" : "other")),
++      new Promise<string>(res => setTimeout(() => res("waiting"), 700)),
++    ]);
++    return r !== "invalid";
++  } catch (e: any) {
++    return e?.code !== "invalid-argument";
++  }
++}
++
++(async () => {
++  // The audit log built on every edit holds whole sections of the case. A triage-pending patient has
++  // triageCategory === undefined in memory.
++  const audit = {
++    id: "add-1", type: "edit", fieldsChanged: ["patient"],
++    previousValues: { patient: { name: "N/A/U", triageCategory: undefined, bed: undefined } },
++    newValues: { patient: { name: "N/A/U", age: 40, triageCategory: undefined } },
++    addedAt: "2026-10-21T00:00:00Z", addedBy: "u1",
++  };
++  t("RAW audit log with undefined is rejected by Firestore (the bug)", !(await validates(audit)));
++  t("sanitized audit log is accepted", await validates(sanitizeForFirestore(audit)));
++
++  const app = readFileSync("src/App.tsx", "utf8");
++  t("addendum write is sanitized", app.includes("setDoc(addendumRef, sanitizeForFirestore(auditLog))"));
++  t("raw addendum write no longer present in case save", !app.includes("await setDoc(addendumRef, auditLog);\n\n      // Trusted Logbook"));
++  t("audit failure cannot fail a saved case", /Case saved, but the edit audit entry failed/.test(app));
++  t("primary case write still throws on failure", /await setDoc\(doc\(db, "cases", caseToSave\.id\), sanitizeForFirestore\((?:caseToSave|writePayload)\), \{ merge: true \}\);[\s\S]{0,200}?const previousCase = latestCasesRef/.test(app) && app.includes('console.error("Error saving case or audit trail:", err);') && app.includes("throw err;"));
++
++  const sheet = readFileSync("src/components/CaseSheetView.tsx", "utf8");
++  t("NOT SAVED shows the reason", sheet.includes("saveErrorReason") && sheet.includes("describeSaveError"));
++  t("reason set for autosave and for Save button", (sheet.match(/setSaveErrorReason\(describeSaveError\(err\)\)/g) || []).length === 2);
++
++  console.log(`verify_case_save_audit_undefined: ${pass} passed, ${fail} failed`);
++  process.exit(fail ? 1 : 0);
++})();
+diff --git a/verify_hpi_autowrite.ts b/verify_hpi_autowrite.ts
+new file mode 100644
+index 0000000..74bee6d
+--- /dev/null
++++ b/verify_hpi_autowrite.ts
+@@ -0,0 +1,20 @@
++import { mapExtractionToCaseSheetFields } from "./server/scribeChatTurn";
++import { cleanExtractionOutput } from "./server/extractionCleanup";
++const orig = console.log; console.log = () => {};
++let pass = 0, fail = 0;
++const ok = (c: boolean, m: string) => { if (c) pass++; else { fail++; orig("FAIL", m); } };
++const run = (raw: any, text: string, ex: any = {}) => mapExtractionToCaseSheetFields(cleanExtractionOutput(raw), raw, ex, text) as any;
++let f = run({ chiefComplaint: "Fever", symptoms: "fever and cough for 3 days" }, "fever and cough for 3 days");
++ok(f.sampleHistory?.hpi === "Fever and cough for 3 days", "composed HPI from symptoms");
++ok(f.hpi === f.sampleHistory?.hpi, "top-level hpi matches");
++f = run({ chiefComplaint: "Fever", symptoms: "fever", hpi: "Fever for 3 days with cough." }, "fever");
++ok(f.sampleHistory?.hpi === "Fever for 3 days with cough.", "model hpi bridged into sampleHistory");
++f = run({ chiefComplaint: "Fever", symptoms: "fever" }, "fever", { sampleHistory: { hpi: "Typed by doctor" } });
++ok(f.sampleHistory?.hpi === "Typed by doctor" && f.hpi === undefined, "existing HPI never overwritten");
++f = run({}, "bp 120/80");
++ok(f.hpi === undefined && !f.sampleHistory?.hpi, "nothing dictated => no HPI invented");
++f = run({ chiefComplaint: "RTA", symptoms: "head pain", events: "Road traffic accident, 2 hours ago" }, "RTA two hours ago head pain");
++ok(!!f.sampleHistory?.hpi && /head pain/i.test(f.sampleHistory.hpi), "trauma HPI includes symptoms");
++f = run({ chiefComplaint: "Fever", symptoms: "fever" }, "fever", { sampleHistory: { hpi: "Typed" } });
++ok(f.sampleHistory?.hpi === "Typed", "existing preserved in sampleHistory");
++orig(`verify_hpi_autowrite: ${pass} pass, ${fail} fail`); process.exit(fail ? 1 : 0);
+diff --git a/verify_secondary_normals_honest.ts b/verify_secondary_normals_honest.ts
+new file mode 100644
+index 0000000..d80f6b7
+--- /dev/null
++++ b/verify_secondary_normals_honest.ts
+@@ -0,0 +1,52 @@
++import fs from "fs";
++import { applySecondaryNormals, adultSecondaryNormals, documentedGcsOf, recordedSecondary, SECONDARY_KEYS } from "./src/utils/secondaryNormals";
++
++let pass = 0, fail = 0;
++const t = (n: string, ok: boolean) => { ok ? pass++ : (fail++, console.log("FAIL", n)); };
++const base = (over: any = {}) => ({ secondarySurvey: {}, secondaryAssessment: "", vitals: {}, primaryAssessment: {}, ...over });
++
++// A. no invented GCS
++let r = applySecondaryNormals(base(), SECONDARY_KEYS);
++t("no GCS documented: CNS text has NO GCS value", !/GCS/i.test(r.secondarySurvey.cns));
++t("blank case: all 6 systems filled", r.filled.length === 6 && SECONDARY_KEYS.every(k => r.secondarySurvey[k]));
++r = applySecondaryNormals(base({ vitals: { gcs: "14" } }), ["cns"]);
++t("documented GCS 14 is used, not 15", r.secondarySurvey.cns.includes("GCS 14/15") && !r.secondarySurvey.cns.includes("GCS 15/15"));
++t("GCS read from primary narrative", documentedGcsOf(base({ primaryAssessment: { disability: "GCS 9 E2V3M4" } })) === 9);
++t("junk GCS ignored", documentedGcsOf(base({ vitals: { gcs: "abc" } })) === null);
++
++// B. never overwrite what the doctor wrote
++r = applySecondaryNormals(base({ secondarySurvey: { cvs: "Systolic murmur 3/6 at apex" }, secondaryAssessment: "CVS: Systolic murmur 3/6 at apex" }), ["cvs"]);
++t("typed CVS finding kept", r.secondarySurvey.cvs === "Systolic murmur 3/6 at apex" && r.filled.length === 0 && r.kept.includes("cvs"));
++t("no contradiction in narrative", !/no murmurs/i.test(r.secondaryAssessment));
++// narrative-only record (box empty) must also be respected
++r = applySecondaryNormals(base({ secondaryAssessment: "CVS: Systolic murmur 3/6 at apex\nRS: Bilateral crepts" }), SECONDARY_KEYS);
++t("narrative-only CVS finding is respected", /Systolic murmur/.test(r.secondarySurvey.cvs) && !/no murmurs/i.test(r.secondarySurvey.cvs));
++t("narrative-only RS finding is respected", /crepts/.test(r.secondarySurvey.respiratory) && !/Vesicular breath sounds/.test(r.secondarySurvey.respiratory));
++t("narrative keeps the abnormal findings", /Systolic murmur/.test(r.secondaryAssessment) && /crepts/.test(r.secondaryAssessment));
++t("only the unrecorded systems were filled", r.filled.length === 4 && !r.filled.includes("cvs") && !r.filled.includes("respiratory"));
++t("narrative has no duplicated system lines", (r.secondaryAssessment.match(/^CVS:/gm) || []).length === 1 && (r.secondaryAssessment.match(/^RS:/gm) || []).length === 1);
++
++// C. presets: one click per system, repeat clicks are harmless
++let c: any = base();
++for (let i = 0; i < 3; i++) { const x = applySecondaryNormals(c, ["abdomen"]); c = { ...c, secondarySurvey: x.secondarySurvey, secondaryAssessment: x.secondaryAssessment }; }
++t("clicking a preset 3 times writes it once", (c.secondaryAssessment.match(/PA:/g) || []).length === 1);
++r = applySecondaryNormals(base({ secondarySurvey: { abdomen: "Tender RIF, guarding" } }), ["abdomen"]);
++t("preset does not replace typed abdomen", r.secondarySurvey.abdomen === "Tender RIF, guarding");
++t("recordedSecondary sees both sources", Object.keys(recordedSecondary(base({ secondarySurvey: { cns: "x" }, secondaryAssessment: "RS: y" }))).sort().join() === "cns,respiratory");
++t("whitespace-only box counts as blank", applySecondaryNormals(base({ secondarySurvey: { cvs: "   " } }), ["cvs"]).filled.includes("cvs"));
++
++// D. input is not mutated
++const orig = base({ secondarySurvey: { cvs: "murmur" } }); const snap = JSON.stringify(orig);
++applySecondaryNormals(orig, SECONDARY_KEYS);
++t("input case not mutated", JSON.stringify(orig) === snap);
++
++// E. wiring
++const code = fs.readFileSync("src/components/CaseSheetView.tsx", "utf8");
++t("Mark-normal uses the shared helper", code.includes("applySecondaryNormals(prev, SECONDARY_KEYS)"));
++t("presets use the shared helper and are disabled when recorded", code.includes("applySecondaryNormals(prev, [preset.key])") && code.includes("disabled={alreadyRecorded}"));
++t("no hard-coded 'GCS 15/15' left in CaseSheetView", !/GCS 15\/15\. Higher/.test(code) && !code.includes("const effectiveGcs"));
++t("old replace-on-click preset code is gone", !code.includes("const cleanText = preset.text"));
++t("general template unchanged text", adultSecondaryNormals(null).general.startsWith("Conscious, alert, and oriented."));
++
++console.log(`verify_secondary_normals_honest: ${pass} passed, ${fail} failed`);
++process.exit(fail ? 1 : 0);
