@@ -7411,33 +7411,12 @@ const handleSignOut = async () => {
                   isDarkMode={isDarkMode}
                 />
               )}
-
-              {activeTab === "admin" && (
-                (profile?.email?.toLowerCase().trim() === "varahgrp@gmail.com" || auth.currentUser?.email?.toLowerCase().trim() === "varahgrp@gmail.com") ? (
-                  <AdminPanelView
-                    currentProfile={profile}
-                    cases={cases}
-                    onNavigateToTab={navigateToTab}
-                  />
-                ) : (
-                  <div className="bg-white dark:bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-8 text-center max-w-md mx-auto shadow-xl space-y-4 my-12 font-sans">
-                    <div className="w-14 h-14 bg-red-500/10 text-red-500 rounded-2xl flex items-center justify-center mx-auto">
-                      <ShieldAlert className="w-7 h-7" />
-                    </div>
-                    <div className="space-y-1">
-                      <h2 className="text-lg font-extrabold text-slate-900 dark:text-white">Admin Panel Restricted</h2>
-                      <p className="text-xs text-slate-500">
-                        This control center is exclusively authorized for <span className="font-mono text-indigo-600 dark:text-indigo-400 font-bold">varahgrp@gmail.com</span>.
-                      </p>
-                    </div>
-                    <button
-                      onClick={() => navigateToTab("dashboard")}
-                      className="px-5 py-2.5 bg-indigo-600 text-white font-bold text-xs rounded-xl shadow-md cursor-pointer hover:bg-indigo-500 transition-all font-mono"
-                    >
-                      Return to Dashboard
-                    </button>
-                  </div>
-                )
+{activeTab === "admin" && (profile?.email?.toLowerCase().trim() === "varahgrp@gmail.com" || auth.currentUser?.email?.toLowerCase().trim() === "varahgrp@gmail.com") && (
+                <AdminPanelView
+                  currentProfile={profile}
+                  cases={cases}
+                  onNavigateToTab={navigateToTab}
+                />
               )}
 
               {activeTab === "handover" && (

@@ -1156,13 +1156,9 @@ export default function MoreView({
 
             <HardRefreshTile />
 
-                        {/* Investor Pitch Deck: platform admin only */}
+            {/* Investor Pitch Deck: platform admin only */}
             {isAdminUser && (
-            <div className="p-3.5 bg-gradient-to-r from-sky-50 ... (unchanged card, all lines kept)
-              ...
-            </div>
-            )}
-          </div>
+            <div className="p-3.5 bg-gradient-to-r from-sky-50 to-indigo-50 dark:from-sky-950/40 dark:to-indigo-950/40 border border-sky-200 dark:border-sky-800 rounded-xl flex flex-col gap-2.5">
               <div className="flex items-center gap-2.5">
                 <div className="w-8 h-8 rounded-lg bg-sky-600 text-white flex items-center justify-center shrink-0 shadow-sm">
                   <Presentation className="w-4 h-4" />
@@ -1202,6 +1198,7 @@ export default function MoreView({
                 </a>
               </div>
             </div>
+            )}
           </div>
 
           {/* Sign Out Button */}
@@ -1764,7 +1761,7 @@ export default function MoreView({
       )}
 
       {/* 10. Pitch Deck Slide Viewer Modal */}
-           {isAdminUser && (
+      {isAdminUser && (
         <PitchDeckModal
           isOpen={activeModal === "pitch-deck"}
           onClose={() => setActiveModal(null)}
