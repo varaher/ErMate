@@ -10,6 +10,7 @@ import { useBoundChat } from "../hooks/useBoundChat";
 import SimulationsView from "./SimulationsView";
 import TriviaView from "./TriviaView";
 import GoogleClassroomModal from "./GoogleClassroomModal";
+import ChatMarkdown from "./shared/ChatMarkdown";
 import ErGuideView from "./ErGuideView";
 
 interface LearnViewProps {
@@ -56,31 +57,22 @@ function EMReferenceChatPanel() {
   ];
 
   return (
-    <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm overflow-hidden flex flex-col h-[75vh]">
-      {/* Reference Banner Header */}
-      <div className="p-4 bg-gradient-to-r from-purple-900 via-slate-900 to-indigo-950 text-white flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-purple-900/40 shrink-0">
-        <div className="flex items-center gap-3">
-          <div className="p-2.5 bg-purple-500/20 border border-purple-400/30 rounded-xl text-purple-300 shrink-0">
-            <BookOpen className="w-5 h-5" />
+    <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm overflow-hidden flex flex-col h-[78vh]">
+      {/* Reference Banner Header (compact) */}
+      <div className="px-3 py-2 sm:px-4 sm:py-3 bg-gradient-to-r from-purple-900 via-slate-900 to-indigo-950 text-white flex items-center justify-between gap-3 shrink-0">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <div className="p-1.5 bg-purple-500/20 border border-purple-400/30 rounded-lg text-purple-300 shrink-0">
+            <BookOpen className="w-4 h-4" />
           </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-md border font-mono bg-purple-500/20 text-purple-300 border-purple-400/30">
-                EM Reference
-              </span>
-              <span className="text-[10px] text-emerald-400 font-mono font-bold flex items-center gap-1">
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                ErMate Engine
-              </span>
-            </div>
-            <h3 className="text-sm sm:text-base font-extrabold tracking-tight text-white mt-0.5">
-              Emergency Medicine Standalone Clinical Reference
-            </h3>
+          <div className="min-w-0">
+            <h3 className="text-sm font-extrabold tracking-tight text-white truncate">EM Clinical Reference</h3>
+            <p className="hidden sm:block text-[10px] text-purple-200/80 font-mono truncate">Tintinalli's · Rosen's · UpToDate · WikEM</p>
           </div>
         </div>
-        <div className="text-[11px] text-purple-200/80 font-mono flex items-center gap-2 shrink-0">
-          <span>Tintinalli's · Rosen's · UpToDate · WikEM</span>
-        </div>
+        <span className="text-[10px] text-emerald-400 font-mono font-bold flex items-center gap-1 shrink-0">
+          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+          Live
+        </span>
       </div>
 
       {/* Quick Question Chips */}
@@ -126,9 +118,13 @@ function EMReferenceChatPanel() {
                     : 'bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 border border-slate-200 dark:border-slate-800 rounded-bl-none shadow-xs'
                 }`}
               >
-                <div className="whitespace-pre-wrap font-sans font-normal leading-relaxed">
-                  {msg.content}
-                </div>
+                {msg.role === 'assistant' ? (
+                  <ChatMarkdown content={msg.content} />
+                ) : (
+                  <div className="whitespace-pre-wrap font-sans font-normal leading-relaxed">
+                    {msg.content}
+                  </div>
+                )}
                 <div
                   className={`text-[9px] font-mono mt-2 text-right ${
                     msg.role === 'user' ? 'text-purple-200' : 'text-slate-400'
@@ -188,8 +184,18 @@ function EMReferenceChatPanel() {
   );
 }
 
+type LearnTab = "erguide" | "library" | "simulations" | "trivia" | "memory";
+
+const LEARN_NAV: Array<{ id: LearnTab; label: string; short: string; icon: any }> = [
+  { id: "erguide", label: "ER Guide", short: "ER Guide", icon: ClipboardList },
+  { id: "library", label: "EM Reference", short: "EM Ref", icon: Library },
+  { id: "simulations", label: "Simulations", short: "Sims", icon: Trophy },
+  { id: "trivia", label: "Trivia Time", short: "Trivia", icon: HelpCircle },
+  { id: "memory", label: "Clinical Memory Log", short: "Memory", icon: FileText },
+];
+
 export default function LearnView({ onNavigateToTab, isDarkMode = false }: LearnViewProps) {
-  const [activeTab, setActiveTab] = useState<"erguide" | "library" | "simulations" | "trivia" |"memory">("erguide");
+  const [activeTab, setActiveTab] = useState<LearnTab>("erguide");
   const [isClassroomModalOpen, setIsClassroomModalOpen] = useState(false);
 
   // Clinical memories log state
@@ -276,96 +282,62 @@ ${m.physicianReflections || "No reflections logged."}
     <div className="space-y-6 animate-fade-in" id="learn-main-container">
     
       
-      {/* Tab Navigation header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between border-b pb-4 gap-4 no-print">
-        <div>
-          <h1 className="text-xl md:text-2xl font-bold font-display text-slate-900 dark:text-white flex items-center gap-2">
-            <BookOpen className="w-5 h-5 text-purple-600" />
-           Learn
-          </h1>
-          <p className="text-xs text-slate-400">
-           Protocols, EM reference chat, simulations, trivia and your clinical memory log, all in one place.
-          </p>
-        </div>
-
-        {/* Learn Tabs */}
-        <div className="flex flex-wrap bg-slate-100 dark:bg-slate-900 p-1 rounded-xl w-fit">
-                  <button
-            onClick={() => setActiveTab("erguide")}
-            data-testid="learn-tab-erguide"
-            className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
-              activeTab === "erguide"
-                ? "bg-white dark:bg-slate-800 text-red-600 dark:text-red-400 shadow-xs"
-                : "text-slate-600 dark:text-slate-400 hover:text-slate-950"
-            }`}
-          >
-            <ClipboardList className="w-3.5 h-3.5" />
-           ER Guide
-          </button>
+      {/* Learn layout: left navigation (icon rail on phones, full sidebar from md up) + content */}
+      <div className="flex gap-3 md:gap-6 items-start">
+        <nav
+          aria-label="Learn sections"
+          data-testid="learn-side-nav"
+          className="no-print sticky top-[calc(var(--ermate-header-height,50px)+8px)] self-start shrink-0 w-[72px] md:w-56 bg-white/80 dark:bg-slate-900/70 backdrop-blur-md border border-slate-200 dark:border-slate-800 rounded-2xl p-1.5 md:p-2.5 flex flex-col gap-1"
+        >
+          <div className="hidden md:flex items-center gap-2 px-2.5 pt-1.5 pb-2 text-[11px] font-extrabold uppercase tracking-wider text-slate-400">
+            <BookOpen className="w-3.5 h-3.5 text-purple-600" /> Learn
+          </div>
+          {LEARN_NAV.map((item) => {
+            const Icon = item.icon;
+            const active = activeTab === item.id;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => setActiveTab(item.id)}
+                data-testid={`learn-nav-${item.id}`}
+                aria-current={active ? "page" : undefined}
+                className={`w-full rounded-xl px-1 py-2 md:px-2.5 md:py-2 flex flex-col md:flex-row items-center gap-1 md:gap-3 text-center md:text-left transition-colors cursor-pointer ${
+                  active
+                    ? "bg-purple-100 dark:bg-purple-950/50 text-purple-700 dark:text-purple-300"
+                    : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+                }`}
+              >
+                <span className={`w-7 h-7 md:w-7 md:h-7 rounded-lg flex items-center justify-center shrink-0 ${active ? "bg-purple-600 text-white" : "bg-slate-100 dark:bg-slate-800"}`}>
+                  <Icon className="w-4 h-4" />
+                </span>
+                <span className="text-[10px] md:text-sm font-semibold leading-tight md:hidden">{item.short}</span>
+                <span className="hidden md:inline text-sm font-semibold">{item.label}</span>
+              </button>
+            );
+          })}
+          <div className="h-px bg-slate-200 dark:bg-slate-800 my-1 mx-2" />
           <button
-            onClick={() => setActiveTab("library")}
-            className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
-              activeTab === "library"
-                ? "bg-white dark:bg-slate-800 text-purple-600 dark:text-purple-400 shadow-xs"
-                : "text-slate-600 dark:text-slate-400 hover:text-slate-950"
-            }`}
-          >
-            <Library className="w-3.5 h-3.5" />
-            EM Reference
-          </button>
-
-          <button
-            onClick={() => setActiveTab("simulations")}
-            className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
-              activeTab === "simulations"
-                ? "bg-white dark:bg-slate-800 text-indigo-600 dark:text-indigo-400 shadow-xs"
-                : "text-slate-600 dark:text-slate-400 hover:text-slate-950"
-            }`}
-          >
-            <Trophy className="w-3.5 h-3.5" />
-            Simulations
-          </button>
-
-          <button
-            onClick={() => setActiveTab("trivia")}
-            className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
-              activeTab === "trivia"
-                ? "bg-white dark:bg-slate-800 text-emerald-600 dark:text-emerald-400 shadow-xs"
-                : "text-slate-600 dark:text-slate-400 hover:text-slate-950"
-            }`}
-          >
-            <HelpCircle className="w-3.5 h-3.5" />
-            Trivia Time
-          </button>
-
-          <button
-            onClick={() => setActiveTab("memory")}
-            className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
-              activeTab === "memory"
-                ? "bg-white dark:bg-slate-800 text-blue-600 dark:text-blue-400 shadow-xs"
-                : "text-slate-600 dark:text-slate-400 hover:text-slate-950"
-            }`}
-          >
-            <FileText className="w-3.5 h-3.5" />
-            Clinical Memory Log
-          </button>
-          
-          <button
+            type="button"
             onClick={() => setIsClassroomModalOpen(true)}
-            className="px-3 py-1.5 text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg transition-all flex items-center gap-1.5 cursor-pointer shadow-xs ml-1"
+            data-testid="learn-nav-classroom"
             title="Open Google Classroom Residency Portal"
+            className="w-full rounded-xl px-1 py-2 md:px-2.5 md:py-2 flex flex-col md:flex-row items-center gap-1 md:gap-3 text-center md:text-left text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 transition-colors cursor-pointer"
           >
-            <GraduationCap className="w-3.5 h-3.5" />
-            <span>Google Classroom</span>
+            <span className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 bg-emerald-100 dark:bg-emerald-950/50">
+              <GraduationCap className="w-4 h-4" />
+            </span>
+            <span className="text-[10px] md:hidden font-semibold leading-tight">Class&shy;room</span>
+            <span className="hidden md:inline text-sm font-semibold">Google Classroom</span>
           </button>
-        </div>
-      </div>
+        </nav>
 
+        <div className="flex-1 min-w-0">
       {/* Render active sub-view */}
       <div className="transition-all duration-300">
                 {/* Sub-view: Clinical protocols library */}
         {activeTab === "erguide" && (
-          <div className="animate-fade-in max-w-5xl mx-auto space-y-4">
+          <div className="animate-fade-in space-y-4 px-3 md:px-6">
                       <ErGuideView isDarkMode={isDarkMode} />
           </div>
         )}
@@ -522,6 +494,8 @@ ${m.physicianReflections || "No reflections logged."}
           </div>
         )}
 
+      </div>
+        </div>
       </div>
 
       {/* Google Classroom Residency Modal */}
