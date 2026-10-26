@@ -134,7 +134,7 @@ export default function PediatricDrugCalculatorView({ onBack, initialWeight }: P
   };
 
   return (
-    <div className="bg-slate-50 dark:bg-slate-900 min-h-screen text-slate-800 dark:text-slate-100 p-4 md:p-6 pb-20 font-sans overflow-x-hidden" id="pediatric-calculator-container">
+    <div className="bg-slate-50 dark:bg-slate-900 min-h-screen text-slate-800 dark:text-slate-100 p-4 md:p-6 pb-20 font-sans overflow-x-clip" id="pediatric-calculator-container">
       
       {/* Header section */}
       <div className="sticky top-[var(--ermate-header-height,50px)] z-20 bg-white/95 dark:bg-slate-950/95 backdrop-blur-md -mx-4 md:-mx-6 px-4 md:px-6 py-2.5 sm:py-3 border-b border-slate-200 dark:border-slate-800 mb-5 shadow-2xs">
