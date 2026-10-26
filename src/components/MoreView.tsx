@@ -8,7 +8,7 @@ import {
   User, Award, Wrench, MoreHorizontal, Lock, Bell, Shield,
   LogOut, Moon, Sun, Clock, RefreshCcw, Laptop, HelpCircle,
   Compass, Info, Trash2, Cpu, CheckCircle2, AlertTriangle, X,
-  Save, Eye, Check, ExternalLink, Activity, Presentation, Download
+  Save, Eye, Check, ExternalLink, Activity, Presentation, Download, CreditCard
 } from "lucide-react";
 import { UserProfile, ClinicalCase, TeamMember, isActiveMembershipStatus, isPendingApprovalStatus } from "../types";
 import { NormalizedRole, getRoleDisplayLabel } from "../utils/roleUtils";
@@ -41,6 +41,17 @@ interface MoreViewProps {
   /** Called with the fresh credit fields after a payment is confirmed. */
   onProfileRefreshed?: (fields: { aiCredits?: number; subscriptionTier?: string; tierExpiresAt?: string }) => void;
 }
+
+type MoreSection = "home" | "account" | "plan" | "hospital" | "team" | "tools" | "app";
+
+const MORE_NAV: Array<{ id: Exclude<MoreSection, "home">; label: string; sub: string; icon: any; tint: string }> = [
+  { id: "account", label: "My Account", sub: "Profile, role, security, privacy", icon: User, tint: "bg-purple-100 text-purple-700 dark:bg-purple-950/50 dark:text-purple-300" },
+  { id: "plan", label: "Plan & Credits", sub: "AI credits and recharge", icon: CreditCard, tint: "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300" },
+  { id: "hospital", label: "Hospital & ER Setup", sub: "Facility, beds, theme", icon: Building2, tint: "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300" },
+  { id: "team", label: "Team", sub: "Roster and workspace", icon: Users, tint: "bg-purple-100 text-purple-700 dark:bg-purple-950/50 dark:text-purple-300" },
+  { id: "tools", label: "Clinical Tools", sub: "Learn, log book, analytics, audits", icon: Wrench, tint: "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300" },
+  { id: "app", label: "App & Help", sub: "Display, what's new, support", icon: HelpCircle, tint: "bg-purple-100 text-purple-700 dark:bg-purple-950/50 dark:text-purple-300" },
+];
 
 export default function MoreView({
   profile,
@@ -112,6 +123,16 @@ export default function MoreView({
   >(null);
 
   // Facility Setup Local State
+  // Section navigation: phone shows a landing list ("home") then one section at a time;
+  // desktop shows a left sidebar and defaults to "account". Hidden sections stay mounted (display:none),
+  // so no state or behaviour inside a section changes.
+  const [moreSection, setMoreSection] = useState<MoreSection>("home");
+  const secClass = (id: Exclude<MoreSection, "home">) =>
+    moreSection === id ? "" : moreSection === "home" && id === "account" ? "hidden md:block" : "hidden";
+  const openMoreSection = (id: MoreSection) => {
+    setMoreSection(id);
+    try { window.scrollTo({ top: 0 }); } catch { /* ignore */ }
+  };
   const [facilityHospitalName, setFacilityHospitalName] = useState<string>(activeHospitalName);
   const [facilityDepartment, setFacilityDepartment] = useState<string>("Emergency & Trauma Medicine");
   const [facilitySpecialty, setFacilitySpecialty] = useState<string>("Emergency Medicine");
@@ -252,25 +273,95 @@ export default function MoreView({
 
   return (
     <div className="space-y-6 max-w-5xl mx-auto animate-fade-in pb-16 font-sans" id="more-utilities-hub">
-      {/* Header */}
-      <div className="border-b border-slate-200 dark:border-slate-800 pb-5">
+      {/* Header (phone: only on the landing list) */}
+      <div className={`border-b border-slate-200 dark:border-slate-800 pb-5 ${moreSection === "home" ? "" : "hidden md:block"}`}>
         <div className="flex items-center gap-2.5 mb-1.5">
           <div className="p-2 bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 rounded-xl">
             <MoreHorizontal className="w-5 h-5" />
           </div>
           <div>
             <h1 className="text-xl md:text-2xl font-bold font-display text-slate-900 dark:text-white">
-              More & Clinical Hub
+              More
             </h1>
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-              Account credentials, facility configuration, team subscription, and clinical tools.
+              Account, plan, hospital setup, team and tools.
             </p>
           </div>
         </div>
       </div>
 
+      {/* Phone: back to the landing list */}
+      {moreSection !== "home" && (
+        <button
+          type="button"
+          onClick={() => openMoreSection("home")}
+          data-testid="more-back"
+          className="md:hidden -mt-2 flex items-center gap-1 text-sm font-semibold text-purple-700 dark:text-purple-300 cursor-pointer"
+        >
+          <ChevronRight className="w-4 h-4 rotate-180" /> More
+        </button>
+      )}
+
+      <div className="md:flex md:gap-6 md:items-start space-y-6 md:space-y-0">
+        {/* Desktop: left sidebar */}
+        <nav
+          aria-label="More sections"
+          data-testid="more-side-nav"
+          className="hidden md:flex md:flex-col gap-1 w-60 shrink-0 sticky top-[calc(var(--ermate-header-height,50px)+8px)] bg-white/80 dark:bg-slate-900/70 backdrop-blur-md border border-slate-200 dark:border-slate-800 rounded-2xl p-2.5"
+        >
+          {MORE_NAV.map((item) => {
+            const Icon = item.icon;
+            const active = (moreSection === "home" ? "account" : moreSection) === item.id;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => openMoreSection(item.id)}
+                data-testid={`more-nav-${item.id}`}
+                aria-current={active ? "page" : undefined}
+                className={`w-full rounded-xl px-2.5 py-2 flex items-center gap-3 text-left transition-colors cursor-pointer ${
+                  active ? "bg-purple-100 dark:bg-purple-950/50 text-purple-700 dark:text-purple-300" : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+                }`}
+              >
+                <span className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${active ? "bg-purple-600 text-white" : "bg-slate-100 dark:bg-slate-800"}`}>
+                  <Icon className="w-4 h-4" />
+                </span>
+                <span className="text-sm font-semibold">{item.label}</span>
+              </button>
+            );
+          })}
+        </nav>
+
+        <div className="flex-1 min-w-0 space-y-6">
+          {/* Phone: landing list */}
+          {moreSection === "home" && (
+            <div className="md:hidden bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden divide-y divide-slate-100 dark:divide-slate-800" data-testid="more-landing">
+              {MORE_NAV.map((item) => {
+                const Icon = item.icon;
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => openMoreSection(item.id)}
+                    data-testid={`more-landing-${item.id}`}
+                    className="w-full flex items-center gap-3 px-3.5 py-3 text-left cursor-pointer active:bg-slate-50 dark:active:bg-slate-800"
+                  >
+                    <span className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${item.tint}`}>
+                      <Icon className="w-4 h-4" />
+                    </span>
+                    <span className="flex-1 min-w-0">
+                      <span className="block text-[15px] font-semibold text-slate-900 dark:text-white">{item.label}</span>
+                      <span className="block text-xs text-slate-500 dark:text-slate-400">{item.sub}</span>
+                    </span>
+                    <ChevronRight className="w-4 h-4 text-slate-300" />
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
       {/* COMPACT ACCOUNT SUMMARY CARD */}
-      <div className="bg-gradient-to-r from-slate-900 via-slate-850 to-slate-900 text-white rounded-3xl p-5 md:p-6 shadow-xl border border-slate-800 relative overflow-hidden">
+      <div className={`bg-gradient-to-r from-slate-900 via-slate-850 to-slate-900 text-white rounded-3xl p-5 md:p-6 shadow-xl border border-slate-800 relative overflow-hidden ${secClass("account")}`}>
         <div className="absolute top-0 right-0 w-64 h-64 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none" />
         
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 relative z-10">
@@ -311,20 +402,22 @@ export default function MoreView({
         </div>
       </div>
 
+      <div className={secClass("plan")}>
       <CreditsPlanCard
         profile={profile}
         coveredByTeam={!isAdminUser && isMembershipActive && hospitalSubscription?.active === true}
         teamName={activeHospitalName}
         onProfileRefreshed={onProfileRefreshed}
       />
+      </div>
 
       {/* SECTION A: MY ACCOUNT */}
-      <section className="space-y-3">
+      <section className={`space-y-3 ${secClass("account")}`}>
         <div className="flex items-center justify-between px-1">
           <div className="flex items-center gap-2">
             <User className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
             <h2 className="text-xs font-black uppercase font-mono tracking-wider text-slate-500 dark:text-slate-400">
-              A. MY ACCOUNT
+              My Account
             </h2>
           </div>
           <span className="text-[10px] text-slate-400 font-mono">Personal Credentials & Security</span>
@@ -461,12 +554,12 @@ export default function MoreView({
       </section>
 
       {/* SECTION B: HOSPITAL & ER SETUP */}
-      <section className="space-y-3">
+      <section className={`space-y-3 ${secClass("hospital")}`}>
         <div className="flex items-center justify-between px-1">
           <div className="flex items-center gap-2">
             <Building2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
             <h2 className="text-xs font-black uppercase font-mono tracking-wider text-slate-500 dark:text-slate-400">
-              B. HOSPITAL & ER SETUP
+              Hospital & ER Setup
             </h2>
           </div>
           <span className="text-[10px] text-slate-400 font-mono">
@@ -665,12 +758,12 @@ export default function MoreView({
       </section>
 
       {/* SECTION C: TEAM & SUBSCRIPTION */}
-      <section className="space-y-3">
+      <section className={`space-y-3 ${secClass("team")}`}>
         <div className="flex items-center justify-between px-1">
           <div className="flex items-center gap-2">
             <Users className="w-4 h-4 text-blue-600 dark:text-blue-400" />
             <h2 className="text-xs font-black uppercase font-mono tracking-wider text-slate-500 dark:text-slate-400">
-              C. TEAM & SUBSCRIPTION
+              Team & Subscription
             </h2>
           </div>
           <span className="text-[10px] text-slate-400 font-mono">Canonical Workplace Plan</span>
@@ -754,12 +847,12 @@ export default function MoreView({
       </section>
 
       {/* SECTION D: MY WORK / CLINICAL TOOLS */}
-      <section className="space-y-3">
+      <section className={`space-y-3 ${secClass("tools")}`}>
         <div className="flex items-center justify-between px-1">
           <div className="flex items-center gap-2">
             <Wrench className="w-4 h-4 text-amber-600 dark:text-amber-400" />
             <h2 className="text-xs font-black uppercase font-mono tracking-wider text-slate-500 dark:text-slate-400">
-              D. MY WORK / CLINICAL TOOLS
+              My Work / Clinical Tools
             </h2>
           </div>
           <span className="text-[10px] text-slate-400 font-mono">Department Registries & Modules</span>
@@ -953,12 +1046,12 @@ export default function MoreView({
       </section>
 
       {/* SECTION E: HELP & APP SETTINGS */}
-      <section className="space-y-3">
+      <section className={`space-y-3 ${secClass("app")}`}>
         <div className="flex items-center justify-between px-1">
           <div className="flex items-center gap-2">
             <HelpCircle className="w-4 h-4 text-slate-600 dark:text-slate-400" />
             <h2 className="text-xs font-black uppercase font-mono tracking-wider text-slate-500 dark:text-slate-400">
-              E. HELP & APP SETTINGS
+              Help & App Settings
             </h2>
           </div>
           <span className="text-[10px] text-slate-400 font-mono">App Configuration & Support</span>
@@ -1127,6 +1220,9 @@ export default function MoreView({
           )}
         </div>
       </section>
+
+        </div>
+      </div>
 
       {/* FOOTER */}
       <div className="text-center pt-2 font-mono text-[11px] text-slate-400 space-y-2">
