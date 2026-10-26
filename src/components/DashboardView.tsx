@@ -398,6 +398,12 @@ export default function DashboardView({
   );
   const isSelfHOD = profile.role?.toLowerCase().includes("hod") || profile.role?.toLowerCase().includes("owner") || profile.role?.toLowerCase().includes("head");
   const hodDisplayName = departmentHODMember ? departmentHODMember.name : (isSelfHOD ? profile.name : (profile.hospital ? `Dr. ${profile.hospital.split(' ')[0]} HOD` : "Department Head"));
+  // Display helpers (skin only): the saved profile name may already start with "Dr."
+  const cleanDoctorName = (profile.name || "").replace(/^\s*(dr\.?\s*)+/i, "").trim();
+  const drName = cleanDoctorName ? `Dr. ${cleanDoctorName}` : "Doctor";
+  const isPlatformOwner = profile.email?.toLowerCase().trim() === "varahgrp@gmail.com";
+  const greetingHour = new Date().getHours();
+  const greetingWord = greetingHour < 12 ? "Good morning" : greetingHour < 17 ? "Good afternoon" : "Good evening";
   const hodEmail = departmentHODMember ? departmentHODMember.email : (isSelfHOD ? profile.email : "hod@" + (profile.hospital ? profile.hospital.toLowerCase().replace(/[^a-z]/g, '') : "ermate") + ".in");
 
   // Google Calendar & Classroom Modal States
@@ -737,72 +743,6 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
       {onTakeQueuedCase && (
         <TriageQueueCard cases={cases} onTake={onTakeQueuedCase} onOpen={onSelectCase} />
       )}
-      {/* 1. Shift Status Banner & Controls */}
-      {isOnShift ? (
-        <div className="bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900/60 rounded-xl p-4 flex flex-col sm:flex-row items-center justify-between gap-3 shadow-xs">
-          <div className="flex items-center gap-3">
-            <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
-            <div>
-              <p className="text-xs font-black text-emerald-850 dark:text-emerald-400 uppercase tracking-wider flex items-center gap-2">
-                <span>{actualDutyShift.name} • Active on Duty</span>
-                {activeDutySession?.dutyDateKey && (
-                  <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-900/50 text-emerald-700 dark:text-emerald-300">
-                    [{activeDutySession.dutyDateKey}]
-                  </span>
-                )}
-              </p>
-              <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                {actualDutyShift.time} • {profile.hospital} • {activeShiftDoctors.length} clinicians active
-              </p>
-            </div>
-          </div>
-          <div className="flex gap-2 w-full sm:w-auto">
-            <button
-              onClick={() => {
-                setShowShiftWarning(true);
-                setWarningSeconds(300); // 5 minutes
-              }}
-              className="flex-1 sm:flex-initial px-3 py-1.5 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 text-amber-600 dark:text-amber-400 font-bold rounded-lg text-[11px] transition-all cursor-pointer"
-            >
-              Simulate Shift End
-            </button>
-            <button
-              onClick={async () => {
-                if (onEndDutySession) {
-                  await onEndDutySession();
-                } else {
-                  setIsOnShift(false);
-                }
-                setShowShiftWarning(false);
-              }}
-              className="flex-1 sm:flex-initial px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-lg text-[11px] shadow-xs transition-all cursor-pointer"
-            >
-              End Shift
-            </button>
-          </div>
-        </div>
-      ) : (
-        <div className="bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900/40 rounded-xl p-4 flex items-center justify-between gap-3 shadow-xs">
-          <div className="flex items-center gap-3">
-            <div className="w-2.5 h-2.5 rounded-full bg-amber-500" />
-            <div>
-              <p className="text-xs font-black text-amber-850 dark:text-amber-400 uppercase tracking-wider">
-                OFF SHIFT • Clinical Records Locked
-              </p>
-              <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                Scheduled rota: <span className="font-bold text-slate-700 dark:text-slate-300">{plannedShift.name} ({plannedShift.time})</span>. Check in to log cases & handovers.
-              </p>
-            </div>
-          </div>
-          <button
-            onClick={() => setShowShiftCheckIn(true)}
-            className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg text-[11px] shadow-xs transition-all shrink-0 cursor-pointer"
-          >
-            Check In Now
-          </button>
-        </div>
-      )}
-
       {/* Countdown warning for auto-logout */}
       {showShiftWarning && (
         <div className="bg-amber-500 text-slate-950 px-4 py-3 rounded-xl flex items-center justify-between gap-4 font-semibold text-xs shadow-md animate-bounce">
@@ -926,78 +866,96 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
         </div>
       )}
 
-      {/* 2. Welcome Banner */}
-      <div className={`bg-gradient-to-r ${isDarkMode ? 'from-emerald-950 via-slate-900 to-purple-950 text-white border-emerald-500/20' : 'from-emerald-600 via-teal-500 to-indigo-600 text-white border-transparent'} rounded-2xl p-4 md:p-8 shadow-md relative overflow-hidden no-print border`}>
-        <div className="absolute right-0 top-0 w-64 h-64 bg-purple-500/10 rounded-full blur-2xl -mr-20 -mt-20 pointer-events-none" />
-        <div className="absolute left-1/3 bottom-0 w-48 h-48 bg-emerald-500/10 rounded-full blur-xl -mb-10 pointer-events-none" />
-        
-        <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div className="space-y-1.5">
-            <div className="flex items-center gap-1.5 flex-wrap">
-              <span className={`px-2 py-0.5 rounded-full font-mono font-bold uppercase tracking-wider border ${
-                isDarkMode 
-                  ? "bg-purple-950/50 text-purple-300 text-[8px] md:text-[10px] border-purple-500/30" 
-                  : "bg-white/15 text-white text-[8px] md:text-[10px] border-white/20"
-              }`}>
-                Session • {profile.subscriptionTier || "Enterprise Platinum"}
-              </span>
-              <span className={`px-2 py-0.5 rounded-full font-mono font-bold uppercase tracking-wider border ${
-                isDarkMode 
-                  ? "bg-emerald-500/10 text-emerald-400 text-[8px] md:text-[10px] border-emerald-500/20" 
-                  : "bg-white/10 text-white text-[8px] md:text-[10px] border-white/10"
-              }`}>
-                Shift Active • {profile.hospital}
-              </span>
-              <button
-                type="button"
-                onClick={() => setShowHODModal(true)}
-                className={`px-2.5 py-0.5 rounded-full font-mono font-bold uppercase tracking-wider border cursor-pointer transition-all flex items-center gap-1 hover:scale-105 ${
-                  isDarkMode 
-                    ? "bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 border-amber-500/40 text-[8px] md:text-[10px]" 
-                    : "bg-amber-400/25 text-amber-100 hover:bg-amber-400/40 border-amber-300/40 text-[8px] md:text-[10px]"
-                }`}
-                title="Click to view Head of Department details"
-              >
-                <span>👑 HOD: {hodDisplayName}</span>
-              </button>
+      {/* 2. Welcome Banner (now a Home header: greeting + HOD chip; skin only) */}
+      <div className="no-print space-y-2 px-1" data-testid="home-header">
+        <p className="text-[13px] text-slate-500 dark:text-slate-400">
+          {new Date().toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" })}
+        </p>
+        <h1 className="text-[28px] leading-[1.12] font-extrabold tracking-tight text-slate-900 dark:text-white font-display">
+          {greetingWord},<br />{drName}
+        </h1>
+        <div className="flex items-center gap-1.5 flex-wrap pt-1">
+          <button
+            type="button"
+            onClick={() => setShowHODModal(true)}
+            className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-purple-100 text-purple-700 dark:bg-purple-950/50 dark:text-purple-300 cursor-pointer"
+            title="Head of Department details"
+          >
+            HOD: {hodDisplayName}
+          </button>
+          <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-slate-200/70 text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+            {profile.subscriptionTier || "Enterprise Platinum"}
+          </span>
+        </div>
+      </div>
+
+      {/* 1. Shift Status Banner & Controls */}
+      {isOnShift ? (
+        <div className="bg-white dark:bg-slate-900 border border-emerald-200/70 dark:border-emerald-900/60 rounded-2xl p-4 flex flex-col sm:flex-row items-center justify-between gap-3 shadow-xs">
+          <div className="flex items-center gap-3">
+            <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+            <div>
+              <p className="text-xs font-black text-emerald-850 dark:text-emerald-400 uppercase tracking-wider flex items-center gap-2">
+                <span>{actualDutyShift.name} • Active on Duty</span>
+                {activeDutySession?.dutyDateKey && (
+                  <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-900/50 text-emerald-700 dark:text-emerald-300">
+                    [{activeDutySession.dutyDateKey}]
+                  </span>
+                )}
+              </p>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                {actualDutyShift.time} • {profile.hospital} • {activeShiftDoctors.length} clinicians active
+              </p>
             </div>
-            
-            <h1 className={`text-lg md:text-2xl font-extrabold font-display tracking-tight ${
-              isDarkMode 
-                ? "bg-gradient-to-r from-white via-slate-100 to-purple-200 bg-clip-text text-transparent" 
-                : "text-white"
-            }`}>
-              Welcome back, Dr. {profile.name}
-            </h1>
-            <p className={`hidden md:block text-xs max-w-xl leading-relaxed ${
-              isDarkMode ? "text-slate-300" : "text-emerald-50"
-            }`}>
-              Log patient details, run certified clinical surveys, or use continuous dictation.
-            </p>
           </div>
-          
-          <div className="flex gap-2 shrink-0 w-full md:w-auto">
+          <div className="flex gap-2 w-full sm:w-auto">
+            {isPlatformOwner && (
+              <button
+                onClick={() => {
+                  setShowShiftWarning(true);
+                  setWarningSeconds(300); // 5 minutes
+                }}
+                className="flex-1 sm:flex-initial px-3 py-1.5 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 text-amber-600 dark:text-amber-400 font-bold rounded-lg text-[11px] transition-all cursor-pointer"
+              >
+                Simulate Shift End
+              </button>
+            )}
             <button
-              onClick={() => onOpenPediatricCalculator()}
-              className={`hidden md:flex flex-1 md:flex-none px-3 py-1.5 border font-bold rounded-xl text-[10px] md:text-[11px] transition-all items-center justify-center gap-1.5 cursor-pointer ${
-                isDarkMode 
-                  ? "bg-slate-800/80 hover:bg-slate-700 border-slate-700 text-slate-200" 
-                  : "bg-white/15 hover:bg-white/25 border-white/20 text-white"
-              }`}
+              onClick={async () => {
+                if (onEndDutySession) {
+                  await onEndDutySession();
+                } else {
+                  setIsOnShift(false);
+                }
+                setShowShiftWarning(false);
+              }}
+              className="flex-1 sm:flex-initial px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-lg text-[11px] shadow-xs transition-all cursor-pointer"
             >
-              <Calculator className="w-3.5 h-3.5 text-slate-150" />
-              Pediatric Dosing
-            </button>
-            <button
-              onClick={() => { if (!isOnShift) setShowShiftCheckIn(true); else onStartHandoverChat(); }}
-              className="flex-1 md:flex-none px-3 py-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white text-[10px] md:text-[11px] font-bold rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer"
-            >
-              <Users className="w-3.5 h-3.5 text-purple-100" />
-              Handover
+              End Shift
             </button>
           </div>
         </div>
-      </div>
+      ) : (
+        <div className="bg-white dark:bg-slate-900 border border-amber-200 dark:border-amber-900/40 rounded-2xl p-4 flex items-center justify-between gap-3 shadow-xs">
+          <div className="flex items-center gap-3">
+            <div className="w-2.5 h-2.5 rounded-full bg-amber-500" />
+            <div>
+              <p className="text-xs font-black text-amber-850 dark:text-amber-400 uppercase tracking-wider">
+                OFF SHIFT • Clinical Records Locked
+              </p>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                Scheduled rota: <span className="font-bold text-slate-700 dark:text-slate-300">{plannedShift.name} ({plannedShift.time})</span>. Check in to log cases & handovers.
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => setShowShiftCheckIn(true)}
+            className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg text-[11px] shadow-xs transition-all shrink-0 cursor-pointer"
+          >
+            Check In Now
+          </button>
+        </div>
+      )}
 
       {/* 3. Important Clinical & Leadership Alerts */}
       {/* PEER REVIEW PIPELINE BANNER */}
@@ -1234,107 +1192,76 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
         </div>
       )}
 
-      {/* 3. Clinical Tools & Active Workflows */}
-      <div className="space-y-3 no-print">
-        <div className="flex items-center justify-between">
-          <h2 className="text-xs font-black text-slate-400 uppercase tracking-widest font-mono">
-            Clinical Tools & Active Workflows
-          </h2>
-          <span className="text-[10px] font-mono text-slate-400 dark:text-slate-500">
-            Rapid ER Actions
-          </span>
-        </div>
-
-        {/* Unified Responsive Tool Action Pad */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-          {/* Card 1: Voice Scribe Desk */}
-          <button 
-            type="button"
-            onClick={() => { if (!isOnShift) setShowShiftCheckIn(true); else onStartVoiceScribe(); }}
-            className="flex flex-col justify-between p-3.5 bg-purple-500/10 dark:bg-purple-950/20 border border-purple-500/20 hover:border-purple-500/40 rounded-2xl text-left transition-all shadow-xs hover:shadow-md cursor-pointer group min-h-[110px]"
-          >
-            <div className="w-8 h-8 bg-purple-500/20 text-purple-600 dark:text-purple-400 rounded-xl flex items-center justify-center group-hover:scale-105 transition-transform">
-              <Mic className="w-4.5 h-4.5" />
-            </div>
-            <div>
-              <span className="block font-black text-xs text-slate-800 dark:text-purple-300">Voice Scribe</span>
-              <span className="block text-[9.5px] text-slate-500 dark:text-slate-400 font-medium leading-tight mt-0.5">
-                Dictate in native language
-              </span>
-            </div>
-          </button>
-
-          {/* Card 2: New Patient Intake */}
-          <button 
+      {/* 3. Clinical Tools & Active Workflows (primary actions + quick tools; skin only, handlers unchanged) */}
+      <div className="space-y-3 no-print" data-testid="home-actions">
+        <div className="grid grid-cols-2 gap-3">
+          <button
             type="button"
             onClick={() => { if (!isOnShift) setShowShiftCheckIn(true); else onStartFullFlow(); }}
-            className="flex flex-col justify-between p-3.5 bg-emerald-500/10 dark:bg-emerald-950/20 border border-emerald-500/25 hover:border-emerald-500/40 rounded-2xl text-left transition-all shadow-xs hover:shadow-md cursor-pointer group min-h-[110px]"
+            className="flex flex-col justify-between p-4 min-h-[118px] rounded-3xl text-left text-white bg-gradient-to-br from-emerald-500 to-emerald-700 shadow-md active:scale-[0.98] transition-transform cursor-pointer"
           >
-            <div className="w-8 h-8 bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 rounded-xl flex items-center justify-center group-hover:scale-105 transition-transform">
-              <PlusCircle className="w-4.5 h-4.5" />
-            </div>
+            <PlusCircle className="w-7 h-7" />
             <div>
-              <span className="block font-black text-xs text-slate-800 dark:text-emerald-300">New Patient</span>
-              <span className="block text-[9.5px] text-slate-500 dark:text-slate-400 font-medium leading-tight mt-0.5">
-                AI Triage & Intake
-              </span>
+              <span className="block text-[17px] font-extrabold">New Patient</span>
+              <span className="block text-[12.5px] opacity-90">AI triage & intake</span>
             </div>
           </button>
-
-          {/* Card 3: Shift Handover */}
-          <button 
+          <button
             type="button"
-            onClick={() => { if (!isOnShift) setShowShiftCheckIn(true); else onStartHandoverChat(); }}
-            className="flex flex-col justify-between p-3.5 bg-indigo-500/10 dark:bg-indigo-950/20 border border-indigo-500/20 hover:border-indigo-500/40 rounded-2xl text-left transition-all shadow-xs hover:shadow-md cursor-pointer group min-h-[110px]"
+            onClick={() => { if (!isOnShift) setShowShiftCheckIn(true); else onStartVoiceScribe(); }}
+            className="flex flex-col justify-between p-4 min-h-[118px] rounded-3xl text-left text-white bg-gradient-to-br from-purple-500 to-purple-700 shadow-md active:scale-[0.98] transition-transform cursor-pointer"
           >
-            <div className="w-8 h-8 bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 rounded-xl flex items-center justify-center group-hover:scale-105 transition-transform">
-              <Users className="w-4.5 h-4.5" />
-            </div>
+            <Mic className="w-7 h-7" />
             <div>
-              <span className="block font-black text-xs text-slate-800 dark:text-indigo-300">Shift Handover</span>
-              <span className="block text-[9.5px] text-slate-500 dark:text-slate-400 font-medium leading-tight mt-0.5">
-                Synthesize SBAR Cards
-              </span>
+              <span className="block text-[17px] font-extrabold">Voice Scribe</span>
+              <span className="block text-[12.5px] opacity-90">Dictate in your language</span>
             </div>
           </button>
+        </div>
 
-          {/* Card 4: Pediatric Dosing */}
-          <button 
-            type="button"
-            onClick={() => onOpenPediatricCalculator()}
-            className="flex flex-col justify-between p-3.5 bg-sky-500/10 dark:bg-sky-950/20 border border-sky-500/20 hover:border-sky-500/40 rounded-2xl text-left transition-all shadow-xs hover:shadow-md cursor-pointer group min-h-[110px]"
-          >
-            <div className="w-8 h-8 bg-sky-500/20 text-sky-600 dark:text-sky-400 rounded-xl flex items-center justify-center group-hover:scale-105 transition-transform">
-              <Calculator className="w-4.5 h-4.5" />
-            </div>
-            <div>
-              <span className="block font-black text-xs text-slate-800 dark:text-sky-300 truncate">Pediatric Dosing</span>
-              <span className="block text-[9.5px] text-slate-500 dark:text-slate-400 font-medium leading-tight mt-0.5">
-                Weight-based drug reference
-              </span>
-            </div>
-          </button>
-
-          {/* Card 5: EM Drugs & Procedures (Critical) */}
-          <button 
+        <h2 className="text-[12px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider px-1 pt-1">Quick tools</h2>
+        <div className="bg-white dark:bg-slate-900 border border-slate-200/70 dark:border-slate-800 rounded-2xl overflow-hidden shadow-xs">
+          <button
             type="button"
             onClick={() => onNavigateToTab("emdrugs")}
-            className="col-span-2 sm:col-span-1 flex flex-col justify-between p-3.5 bg-rose-500/10 dark:bg-rose-950/20 border border-rose-500/25 hover:border-rose-500/40 rounded-2xl text-left transition-all shadow-xs hover:shadow-md cursor-pointer group min-h-[110px]"
+            className="w-full flex items-center gap-3 px-3.5 py-3 text-left cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/60 transition-colors"
           >
-            <div className="flex items-center justify-between w-full">
-              <div className="w-8 h-8 bg-rose-500/20 text-rose-600 dark:text-rose-400 rounded-xl flex items-center justify-center group-hover:scale-105 transition-transform">
-                <ShieldAlert className="w-4.5 h-4.5 text-rose-500" />
-              </div>
-              <span className="text-[8px] font-mono font-black text-rose-600 dark:text-rose-400 bg-rose-500/15 px-1.5 py-0.5 rounded uppercase">
-                CRITICAL
-              </span>
+            <div className="w-9 h-9 rounded-xl bg-purple-100 dark:bg-purple-950/40 text-purple-600 dark:text-purple-400 flex items-center justify-center shrink-0">
+              <ShieldAlert className="w-5 h-5" />
             </div>
-            <div>
-              <span className="block font-black text-xs text-slate-800 dark:text-rose-300 truncate">EM Drugs & Guide</span>
-              <span className="block text-[9.5px] text-slate-500 dark:text-slate-400 font-medium leading-tight mt-0.5">
-                RSI, Sedation & Resus
-              </span>
+            <div className="flex-1 min-w-0">
+              <span className="block text-[15px] font-semibold text-slate-900 dark:text-white">ER Guide</span>
+              <span className="block text-[12.5px] text-slate-500 dark:text-slate-400">Protocols, drugs, RSI, sedation</span>
             </div>
+            <ChevronRight className="w-4 h-4 text-slate-300 dark:text-slate-600 shrink-0" />
+          </button>
+          <button
+            type="button"
+            onClick={() => onOpenPediatricCalculator()}
+            className="w-full flex items-center gap-3 px-3.5 py-3 text-left cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/60 transition-colors border-t border-slate-100 dark:border-slate-800"
+          >
+            <div className="w-9 h-9 rounded-xl bg-emerald-100 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0">
+              <Calculator className="w-5 h-5" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <span className="block text-[15px] font-semibold text-slate-900 dark:text-white">Pediatric Dosing</span>
+              <span className="block text-[12.5px] text-slate-500 dark:text-slate-400">Weight-based drug reference</span>
+            </div>
+            <ChevronRight className="w-4 h-4 text-slate-300 dark:text-slate-600 shrink-0" />
+          </button>
+          <button
+            type="button"
+            onClick={() => { if (!isOnShift) setShowShiftCheckIn(true); else onStartHandoverChat(); }}
+            className="w-full flex items-center gap-3 px-3.5 py-3 text-left cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/60 transition-colors border-t border-slate-100 dark:border-slate-800"
+          >
+            <div className="w-9 h-9 rounded-xl bg-indigo-100 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 flex items-center justify-center shrink-0">
+              <Users className="w-5 h-5" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <span className="block text-[15px] font-semibold text-slate-900 dark:text-white">Shift Handover</span>
+              <span className="block text-[12.5px] text-slate-500 dark:text-slate-400">SBAR cards for the next team</span>
+            </div>
+            <ChevronRight className="w-4 h-4 text-slate-300 dark:text-slate-600 shrink-0" />
           </button>
         </div>
       </div>
@@ -1552,9 +1479,9 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
                             </p>
                             <div className="flex gap-4 text-[10px] text-slate-400 font-mono pt-1 flex-wrap">
                               <span>Captured: {c.createdAt ? new Date(c.createdAt).toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "N/A"}</span>
-                              <span>Age: {c.patient.age}y</span>
-                              <span>Gender: {c.patient.gender}</span>
-                              <span>UHID: {c.patient.uhid}</span>
+                              {c.patient.age ? <span>Age: {String(c.patient.age).replace(/\s*y(ears?)?$/i, "")}y</span> : null}
+                              {c.patient.gender ? <span>Gender: {c.patient.gender}</span> : null}
+                              {c.patient.uhid ? <span>UHID: {c.patient.uhid}</span> : null}
                               <span className="text-slate-500">Vitals: HR {c.vitals.hr || "N/A"} | BP {c.vitals.bp || "N/A"}</span>
                             </div>
                           </div>
@@ -1787,7 +1714,7 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
                                     </div>
                                     <div className="flex justify-between items-center pt-1">
                                       <p className="text-[10px] text-slate-400">
-                                        Will tag as: <span className="font-bold text-slate-600 dark:text-slate-300">Dr. {profile.name} (Consultant)</span>
+                                        Will tag as: <span className="font-bold text-slate-600 dark:text-slate-300">{drName} (Consultant)</span>
                                       </p>
                                       <button
                                         onClick={() => {
@@ -2222,7 +2149,7 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
                             let text = `==================================================\n`;
                             text += `HOD CLINICAL TRANSFER HANDOVER REPORT\n`;
                             text += `==================================================\n`;
-                            text += `Lead HOD Clinician: Dr. ${profile.name}\n`;
+                            text += `Lead HOD Clinician: ${drName}\n`;
                             text += `Pushed from Clinician: ${selectedClinicianForCases?.name}\n`;
                             text += `Date: ${new Date().toLocaleDateString()} | Time: ${new Date().toLocaleTimeString()}\n\n`;
 
@@ -2255,7 +2182,7 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
                             <p className="mt-1"><strong className="text-blue-700 dark:text-blue-400 font-bold">[S] Situation:</strong> Presents with {c.patient.presentingComplaint}</p>
                             <p><strong className="text-purple-700 dark:text-purple-400 font-bold">[B] Background:</strong> {c.sampleHistory?.pastHistory || "Nil past history documented."}</p>
                             <p><strong className="text-amber-700 dark:text-amber-400 font-bold">[A] Assessment:</strong> Vitals: HR {c.vitals?.hr || "N/A"}, BP {c.vitals?.bp || "N/A"}, SpO2 {c.vitals?.spo2 || "N/A"}%. Airway: {c.primaryAssessment?.airwayStatus || "Not documented"}</p>
-                            <p><strong className="text-emerald-700 dark:text-emerald-400 font-bold">[R] Recommendation:</strong> Handed over to department HOD Dr. {profile.name} for queue management and active assignment.</p>
+                            <p><strong className="text-emerald-700 dark:text-emerald-400 font-bold">[R] Recommendation:</strong> Handed over to department HOD {drName} for queue management and active assignment.</p>
                           </div>
                         ))}
                       </div>
