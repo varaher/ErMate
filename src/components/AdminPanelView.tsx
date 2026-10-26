@@ -223,38 +223,20 @@ function PlatformAdminInviteSection() {
   );
 }
 
-export default function AdminPanelView({
+export default function AdminPanelView(props: AdminPanelViewProps) {
+  const isAuthorizedAdmin =
+    props.currentProfile?.email?.toLowerCase().trim() === "varahgrp@gmail.com" ||
+    auth.currentUser?.email?.toLowerCase().trim() === "varahgrp@gmail.com";
+  // Owner only. Anyone else sees nothing (no "restricted" message).
+  if (!isAuthorizedAdmin) return null;
+  return <AdminPanelInner {...props} />;
+}
+
+function AdminPanelInner({
   currentProfile,
   cases,
   onNavigateToTab
 }: AdminPanelViewProps) {
-  const isAuthorizedAdmin = 
-    currentProfile?.email?.toLowerCase().trim() === "varahgrp@gmail.com" || 
-    auth.currentUser?.email?.toLowerCase().trim() === "varahgrp@gmail.com";
-
-  if (!isAuthorizedAdmin) {
-    return (
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-8 text-center max-w-lg mx-auto shadow-xl space-y-4 my-12 font-sans">
-        <div className="w-14 h-14 bg-red-500/10 text-red-500 rounded-2xl flex items-center justify-center mx-auto">
-          <ShieldAlert className="w-7 h-7" />
-        </div>
-        <div className="space-y-1">
-          <h2 className="text-lg font-extrabold text-slate-900 dark:text-white">Restricted Administrator Area</h2>
-          <p className="text-xs text-slate-500">
-            The Admin Control Center is exclusively authorized for <span className="font-mono text-indigo-600 dark:text-indigo-400 font-bold">varahgrp@gmail.com</span>.
-          </p>
-        </div>
-        {onNavigateToTab && (
-          <button
-            onClick={() => onNavigateToTab("dashboard")}
-            className="px-5 py-2.5 bg-indigo-600 text-white font-bold text-xs rounded-xl shadow-md cursor-pointer hover:bg-indigo-500 transition-all font-mono"
-          >
-            Return to Primary Dashboard
-          </button>
-        )}
-      </div>
-    );
-  }
   const [usersList, setUsersList] = useState<UserProfile[]>([]);
   const [apiLogs, setApiLogs] = useState<ApiLogItem[]>([]);
   const [loading, setLoading] = useState(true);
