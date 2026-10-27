@@ -22,7 +22,7 @@ export default function ProtocolsPanel() {
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search protocols (e.g. adrenaline, pneumothorax)"
+            placeholder="Search by complaint or drug (e.g. chest pain, hematemesis, adrenaline)"
             className="w-full pl-9 pr-3 py-2 text-xs rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800"
             data-testid="protocol-search"
           />
@@ -76,6 +76,14 @@ export default function ProtocolsPanel() {
                 </span>
               </div>
               <p className="text-xs text-slate-600 dark:text-slate-300">{selected.summary}</p>
+              {selected.notice && (
+                <p
+                  className="text-[11px] rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 text-amber-800 dark:text-amber-200 px-3 py-2"
+                  data-testid="protocol-notice"
+                >
+                  {selected.notice}
+                </p>
+              )}
             </div>
 
             {selected.sections.map((section) => (
@@ -95,6 +103,14 @@ export default function ProtocolsPanel() {
                       }`}
                     >
                       {item.critical && <AlertTriangle className="w-3.5 h-3.5 inline mr-1 -mt-0.5" />}
+                      {item.tier === "local" && (
+                        <span
+                          className="inline-block mr-1.5 mb-0.5 text-[9px] font-extrabold uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-purple-100 text-purple-700 dark:bg-purple-950/60 dark:text-purple-300 align-middle"
+                          data-testid="local-practice-badge"
+                        >
+                          Local practice{item.origin ? ` · ${item.origin}` : ""} · not a guideline requirement
+                        </span>
+                      )}
                       {item.label && <strong>{item.label}: </strong>}
                       {item.text}
                     </li>
@@ -102,6 +118,29 @@ export default function ProtocolsPanel() {
                 </ul>
               </div>
             ))}
+
+            {selected.reviewNotes && selected.reviewNotes.length > 0 && (
+              <details className="border border-amber-200 dark:border-amber-900 rounded-2xl p-4 bg-amber-50/60 dark:bg-amber-950/20" data-testid="protocol-review-notes">
+                <summary className="text-xs font-extrabold text-amber-800 dark:text-amber-200 cursor-pointer">
+                  Review notes for clinical sign-off ({selected.reviewNotes.length})
+                </summary>
+                <ul className="mt-2 space-y-1.5 list-disc pl-4 text-[11px] text-amber-900 dark:text-amber-100">
+                  {selected.reviewNotes.map((n, i) => <li key={i}>{n}</li>)}
+                </ul>
+              </details>
+            )}
+
+            {selected.references && selected.references.length > 0 && (
+              <details className="border border-slate-200 dark:border-slate-800 rounded-2xl p-4 bg-white dark:bg-slate-950/60" data-testid="protocol-references">
+                <summary className="text-xs font-extrabold text-slate-700 dark:text-slate-200 cursor-pointer">
+                  References to verify ({selected.references.length})
+                </summary>
+                <p className="mt-2 text-[10px] text-slate-500">Recommended verification sources, not proof that each step has been individually validated.</p>
+                <ul className="mt-1 space-y-1 list-disc pl-4 text-[11px] text-slate-600 dark:text-slate-300">
+                  {selected.references.map((r, i) => <li key={i}>{r}</li>)}
+                </ul>
+              </details>
+            )}
 
             <p className="text-[10px] text-slate-500 leading-snug" data-testid="protocol-footer">
               v{selected.version} · Source: {selected.source}. This is a clinical support reference. Doses and decisions must be confirmed by the treating clinician against the patient's condition and local availability.
