@@ -84,8 +84,8 @@ export async function fulfillCapturedPayment(db: any, payment: any, now: Date = 
 }
 
 export type RefundResult =
-  | { status: "revoked"; creditsRevoked: number; shortfall: number; tierDowngraded: boolean }
-  | { status: "duplicate" }
+  | { status: "revoked"; creditsRevoked: number; shortfall: number; tierDowngraded: boolean; uid: string; planFullyRefunded: boolean }
+  | { status: "duplicate"; uid?: string; planFullyRefunded?: boolean }
   | { status: "unknown_payment" }
   | { status: "no_user" };
 
@@ -107,7 +107,10 @@ export async function fulfillRefund(db: any, refund: any, now: Date = new Date()
 
   return db.runTransaction(async (tx: any): Promise<RefundResult> => {
     const refundSnap = await tx.get(refundRef);
-    if (refundSnap.exists) return { status: "duplicate" };
+    if (refundSnap.exists) {
+      const prev = refundSnap.data() || {};
+      return { status: "duplicate", uid: prev.uid, planFullyRefunded: prev.planFullyRefunded === true };
+    }
     const ledgerSnap = await tx.get(ledgerRef);
     if (!ledgerSnap.exists) return { status: "unknown_payment" };
     const ledger = ledgerSnap.data();
@@ -147,8 +150,9 @@ export async function fulfillRefund(db: any, refund: any, now: Date = new Date()
     tx.set(refundRef, {
       refundId, paymentId, uid: ledger.uid, amountPaise: refundPaise,
       creditsRevoked: revoke, shortfall: delta - revoke, tierDowngraded,
+      planFullyRefunded: ledger.kind === "plan" && totalRefunded >= paid,
       balanceBefore: before, balanceAfter: before - revoke, at: now.toISOString(),
     });
-    return { status: "revoked", creditsRevoked: revoke, shortfall: delta - revoke, tierDowngraded };
+    return { status: "revoked", creditsRevoked: revoke, shortfall: delta - revoke, tierDowngraded, uid: ledger.uid, planFullyRefunded: ledger.kind === "plan" && totalRefunded >= paid };
   });
 }

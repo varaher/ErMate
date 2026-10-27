@@ -5,6 +5,7 @@ import { db } from "../../src/lib/firebase-admin.ts"; // using the actual path
 import { requireAuth, type AuthRequest } from "../../src/middleware/auth.ts"; // using the actual path
 import { PLAN_PRICING } from "../../src/lib/pricing.ts";
 import { verifyWebhookSignature, fulfillCapturedPayment, fulfillRefund } from "../services/paymentFulfillment.ts";
+import { configuredPlanId, createAutopaySubscription, cancelAutopay, handleSubscriptionEvent, buildAutopayView } from "../services/autopay.ts";
 
 const router = Router();
 
@@ -108,6 +109,12 @@ router.post("/webhook", async (req: Request, res: Response) => {
       const r = await fulfillRefund(db, refund);
       if (r.status === "revoked") console.log(`Refund ${refund?.id} applied: ${r.creditsRevoked} credits revoked, shortfall ${r.shortfall}, tierDowngraded=${r.tierDowngraded}`);
       if (r.status === "no_user") return res.status(500).send("User not found.");
+      // A fully refunded plan/renewal payment must not leave a live AutoPay mandate behind.
+      // Runs for duplicates too, so a Razorpay retry finishes a cancel that failed the first time.
+      if ((r.status === "revoked" || r.status === "duplicate") && r.planFullyRefunded && r.uid && RAZORPAY_ENABLED) {
+        const c = await cancelAutopay({ db, rz: getRazorpayClient(), uid: r.uid, reason: "refund" });
+        if (c.status === "error") return res.status(500).send("AutoPay cancel pending.");
+      }
       return res.status(200).send("OK");
     } catch (err) {
       console.error("Refund handling failed:", err);
@@ -115,7 +122,24 @@ router.post("/webhook", async (req: Request, res: Response) => {
     }
   }
 
+  // AutoPay (Razorpay Subscriptions). Only a verified `subscription.charged` extends access; see services/autopay.ts.
+  if (typeof event?.event === "string" && event.event.startsWith("subscription.")) {
+    try {
+      const r = await handleSubscriptionEvent(db, event, { planId: configuredPlanId() });
+      if (r.status === "fulfilled") console.log(`AutoPay renewal fulfilled: ${event.payload?.payment?.entity?.id}`);
+      else if (r.status === "mismatch") console.error(`AutoPay payment NOT fulfilled: ${r.reason}`);
+      else if (r.status === "ignored") console.log(`AutoPay event ${event.event} ignored: ${r.reason}`);
+      if (r.status === "no_user") return res.status(500).send("User not found.");
+      return res.status(200).send("OK");
+    } catch (err) {
+      console.error("Subscription webhook failed:", err);
+      return res.status(500).send("Subscription error."); // Razorpay retries; fulfilment is idempotent
+    }
+  }
+
   if (event?.event !== "payment.captured") return res.status(200).send("OK");
+  // Subscription invoices also emit payment.captured; they are fulfilled via subscription.charged only.
+  if (event.payload?.payment?.entity?.invoice_id) return res.status(200).send("OK");
 
   try {
     const payment = event.payload?.payment?.entity;
@@ -129,6 +153,57 @@ router.post("/webhook", async (req: Request, res: Response) => {
   } catch (err) {
     console.error("Webhook fulfillment failed:", err);
     return res.status(500).send("Fulfillment error."); // Razorpay will retry; fulfillment is idempotent
+  }
+});
+
+/**
+ * AutoPay endpoints. None of these grant access: that happens only in the signed webhook.
+ *  GET  /api/payments/autopay          status + first/next renewal date (shown before the mandate is approved)
+ *  POST /api/payments/autopay/create   creates the subscription server-side (duplicate-safe) -> subscription_id
+ *  POST /api/payments/autopay/cancel   cancels the mandate; paid access is preserved
+ */
+router.get("/autopay", requireAuth, async (req: AuthRequest, res: Response) => {
+  res.setHeader("Cache-Control", "no-store");
+  const uid = req.user?.uid;
+  if (!uid) return res.status(401).json({ error: "Unauthorized" });
+  try {
+    const [u, s] = await Promise.all([db.collection("users").doc(uid).get(), db.collection("autopaySubscriptions").doc(uid).get()]);
+    return res.json(buildAutopayView(u.exists ? u.data() : null, s.exists ? s.data() : null, RAZORPAY_ENABLED ? configuredPlanId() : null));
+  } catch {
+    return res.status(503).json({ error: "Could not load AutoPay status. Please try again." });
+  }
+});
+
+router.post("/autopay/create", requireAuth, async (req: AuthRequest, res: Response) => {
+  res.setHeader("Cache-Control", "no-store");
+  if (!RAZORPAY_ENABLED) return res.status(503).json({ error: "Payments are not yet enabled." });
+  const uid = req.user?.uid;
+  if (!uid) return res.status(401).json({ error: "Unauthorized" });
+  try {
+    const r = await createAutopaySubscription({ db, rz: getRazorpayClient(), uid, planId: configuredPlanId() });
+    if (r.status === "created") {
+      return res.json({ subscriptionId: r.subscriptionId, keyId: process.env.RAZORPAY_KEY_ID, firstRenewalAt: r.firstRenewalAt, amount: 35000, currency: "INR", reused: r.reused });
+    }
+    const http = r.code === "NOT_CONFIGURED" || r.code === "PLAN_INVALID" ? 503 : r.code === "FAILED" ? 502 : r.code === "UNCERTAIN" ? 503 : 409;
+    return res.status(http).json({ error: r.message, code: r.code });
+  } catch (err: any) {
+    console.error("AutoPay create failed:", err?.message || err);
+    return res.status(500).json({ error: "Could not start AutoPay setup. Please try again." });
+  }
+});
+
+router.post("/autopay/cancel", requireAuth, async (req: AuthRequest, res: Response) => {
+  res.setHeader("Cache-Control", "no-store");
+  if (!RAZORPAY_ENABLED) return res.status(503).json({ error: "Payments are not yet enabled." });
+  const uid = req.user?.uid;
+  if (!uid) return res.status(401).json({ error: "Unauthorized" });
+  try {
+    const r = await cancelAutopay({ db, rz: getRazorpayClient(), uid, reason: "user" });
+    if (r.status === "error") return res.status(502).json({ error: r.message });
+    return res.json({ status: r.status });
+  } catch (err: any) {
+    console.error("AutoPay cancel failed:", err?.message || err);
+    return res.status(500).json({ error: "Could not cancel AutoPay. Please try again." });
   }
 });
 
