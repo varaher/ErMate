@@ -19,11 +19,13 @@ export interface DeletionDeps {
   recursiveDelete(ref: any): Promise<void>;
   deleteAuthUser(uid: string): Promise<void>;
   logDeletion(entry: Record<string, any>): Promise<void>;
+  /** Cancels any live AutoPay mandate. Must reject if the mandate could not be cancelled. Optional for older callers. */
+  cancelAutopay?(uid: string): Promise<void>;
 }
 
 export type DeletionResult =
   | { ok: true; deleted: Record<string, number> }
-  | { ok: false; code: "TEAM_MEMBER" | "RECENT_LOGIN_REQUIRED" | "BAD_REQUEST"; message: string };
+  | { ok: false; code: "TEAM_MEMBER" | "RECENT_LOGIN_REQUIRED" | "BAD_REQUEST" | "AUTOPAY_CANCEL_FAILED"; message: string };
 
 export const DELETE_CONFIRM_WORD = "DELETE";
 export const RECENT_LOGIN_SECONDS = 5 * 60;
@@ -52,6 +54,12 @@ export async function deleteAccount(deps: DeletionDeps, uid: string, now: Date =
   if (!uid) return { ok: false, code: "BAD_REQUEST", message: "Missing account." };
   if (await deps.hasActiveTeamMembership(uid)) {
     return { ok: false, code: "TEAM_MEMBER", message: "You are an active member of a hospital team. Leave the team (or ask your HOD to remove you) first, then delete your account. Hospital records stay with the hospital." };
+  }
+
+  // A live AutoPay mandate must never outlive the account. If it cannot be cancelled, delete nothing.
+  if (deps.cancelAutopay) {
+    try { await deps.cancelAutopay(uid); }
+    catch { return { ok: false, code: "AUTOPAY_CANCEL_FAILED", message: "We could not cancel your AutoPay subscription, so nothing was deleted. Please try again in a few minutes." }; }
   }
 
   const deleted: Record<string, number> = {};

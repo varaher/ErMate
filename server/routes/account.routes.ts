@@ -2,6 +2,8 @@ import { Router } from "express";
 import { requireAuth, type AuthRequest } from "../../src/middleware/auth.ts";
 import { db, adminAuth } from "../../src/lib/firebase-admin.ts";
 import { checkDeleteRequest, deleteAccount, type DeletionDeps } from "../services/accountDeletion.ts";
+import { cancelAutopay } from "../services/autopay.ts";
+import { getRazorpayClient, RAZORPAY_ENABLED } from "../services/razorpayClient.ts";
 
 const router = Router();
 
@@ -25,6 +27,13 @@ const deps: DeletionDeps = {
     catch (e: any) { if (e?.code !== "auth/user-not-found") throw e; }
   },
   logDeletion: async (entry) => { await db.collection("accountDeletionLog").add(entry); },
+  cancelAutopay: async (uid) => {
+    const snap = await db.collection("autopaySubscriptions").doc(uid).get();
+    if (!snap.exists) return;
+    if (!RAZORPAY_ENABLED) throw new Error("Payments are disabled; cannot cancel AutoPay mandate.");
+    const r = await cancelAutopay({ db, rz: getRazorpayClient(), uid, reason: "account_deletion" });
+    if (r.status === "error") throw new Error(r.message);
+  },
 };
 
 /** POST /api/account/delete  { confirm: "DELETE" }  — owner only, needs a login within the last 5 minutes. */

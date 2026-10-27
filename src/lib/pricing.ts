@@ -59,3 +59,18 @@ export type CreditAction = keyof typeof CREDIT_COSTS;
 
 export const PLAN_KEYS = Object.keys(PLAN_PRICING);
 export const rupees = (paise: number): string => `₹${(paise / 100).toLocaleString("en-IN")}`;
+
+/**
+ * Core AutoPay (monthly renewal). NOT part of PLAN_PRICING on purpose: the initial Rs 600 checkout and the
+ * recharge packs above are unchanged. A renewal grants platform access only: ZERO AI credits, ever.
+ * The Razorpay plan (RAZORPAY_CORE_MONTHLY_PLAN_ID) must charge exactly `amountPaise` in INR once a month;
+ * the server refuses to create a subscription otherwise.
+ */
+export const CORE_AUTOPAY = {
+  planKey: "core_autopay",
+  label: "ErMate Core AutoPay (monthly)",
+  amountPaise: 35000,      // Rs 350, GST included
+  credits: 0,              // renewals never add AI credits
+  periodDays: 30,          // paid access added per verified renewal
+  totalCount: 120,         // billing cycles Razorpay may run before the subscription completes
+} as const;
