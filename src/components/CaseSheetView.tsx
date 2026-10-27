@@ -2742,12 +2742,12 @@ export default function CaseSheetView({
 **Chief Complaints / Presenting Complaint:**
 - ${currentCase.patient.presentingComplaint || "None"}
 ${pediatricText}
-**Primary Survey (ABCDE):**
-- **Airway (A)** → ${exportSurvey.md.airway}
-- **Breathing (B)** → ${exportSurvey.md.breathing}
-- **Circulation (C)** → ${exportSurvey.md.circulation}
-- **Disability (D)** → ${exportSurvey.md.disability}
-- **Exposure (E)** → ${exportSurvey.md.exposure}
+**Primary Survey:**
+- **Airway** → ${exportSurvey.md.airway}
+- **Breathing** → ${exportSurvey.md.breathing}
+- **Circulation** → ${exportSurvey.md.circulation}
+- **Disability** → ${exportSurvey.md.disability}
+- **Exposure** → ${exportSurvey.md.exposure}
 
 **Adjuvants to Primary:**
 - **ECG:** ${(() => {
@@ -2798,13 +2798,13 @@ ${pediatricText}
   return "Not documented";
 })()}
 
-**History (SAMPLE):**
-- **S - Signs & Symptoms:** ${currentCase.sampleHistory.symptoms || "Not documented"}
-- **A - Allergies:** ${currentCase.sampleHistory.allergies || "Not documented"}
-- **M - Medications:** ${currentCase.sampleHistory.medications || "Not documented"}
-- **P - Past History:** ${currentCase.sampleHistory.pastHistory || "Not documented"}
-- **L - Last Meal:** ${currentCase.sampleHistory.lastMeal || "Not documented"}
-- **E - Events:** ${currentCase.sampleHistory.events || "Not documented"}
+**History:**
+- **Signs & Symptoms:** ${currentCase.sampleHistory.symptoms || "Not documented"}
+- **Allergies:** ${currentCase.sampleHistory.allergies || "Not documented"}
+- **Medications:** ${currentCase.sampleHistory.medications || "Not documented"}
+- **Past History:** ${currentCase.sampleHistory.pastHistory || "Not documented"}
+- **Last Meal:** ${currentCase.sampleHistory.lastMeal || "Not documented"}
+- **Events:** ${currentCase.sampleHistory.events || "Not documented"}
 - **Family / Gynae History:** ${currentCase.sampleHistory.familyHistory || "Not documented"}
 - **LMP:** ${currentCase.isPediatric ? "N/A" : "Not documented"}
 
@@ -2924,13 +2924,13 @@ ${currentCase.progressNotes || "No progress notes recorded."}
   <li>${currentCase.patient.presentingComplaint || "None"}</li>
 </ul>
 ${pediatricHtml}
-<strong>Primary Survey (ABCDE):</strong><br/>
+<strong>Primary Survey:</strong><br/>
 <ul>
-  <li><strong>Airway (A)</strong> → ${buildExportPrimarySurvey(currentCase).html.airway}</li>
-  <li><strong>Breathing (B)</strong> → ${buildExportPrimarySurvey(currentCase).html.breathing}</li>
-  <li><strong>Circulation (C)</strong> → ${buildExportPrimarySurvey(currentCase).html.circulation}</li>
-  <li><strong>Disability (D)</strong> → ${buildExportPrimarySurvey(currentCase).html.disability}</li>
-  <li><strong>Exposure (E)</strong> → ${buildExportPrimarySurvey(currentCase).html.exposure}</li>
+  <li><strong>Airway</strong> → ${buildExportPrimarySurvey(currentCase).html.airway}</li>
+  <li><strong>Breathing</strong> → ${buildExportPrimarySurvey(currentCase).html.breathing}</li>
+  <li><strong>Circulation</strong> → ${buildExportPrimarySurvey(currentCase).html.circulation}</li>
+  <li><strong>Disability</strong> → ${buildExportPrimarySurvey(currentCase).html.disability}</li>
+  <li><strong>Exposure</strong> → ${buildExportPrimarySurvey(currentCase).html.exposure}</li>
 </ul>
 <br/>
 <strong>Adjuvants to Primary:</strong>
@@ -2985,14 +2985,14 @@ ${pediatricHtml}
 </ul>
 </ul>
 <br/>
-<strong>History (SAMPLE):</strong><br/>
+<strong>History:</strong><br/>
 <ul>
-  <li><strong>S - Signs & Symptoms:</strong> ${currentCase.sampleHistory.symptoms || "Not documented"}</li>
-  <li><strong>A - Allergies:</strong> ${currentCase.sampleHistory.allergies || "Not documented"}</li>
-  <li><strong>M - Medications:</strong> ${currentCase.sampleHistory.medications || "Not documented"}</li>
-  <li><strong>P - Past History:</strong> ${currentCase.sampleHistory.pastHistory || "Not documented"}</li>
-  <li><strong>L - Last Meal:</strong> ${currentCase.sampleHistory.lastMeal || "Not documented"}</li>
-  <li><strong>E - Events:</strong> ${currentCase.sampleHistory.events || "Not documented"}</li>
+  <li><strong>Signs & Symptoms:</strong> ${currentCase.sampleHistory.symptoms || "Not documented"}</li>
+  <li><strong>Allergies:</strong> ${currentCase.sampleHistory.allergies || "Not documented"}</li>
+  <li><strong>Medications:</strong> ${currentCase.sampleHistory.medications || "Not documented"}</li>
+  <li><strong>Past History:</strong> ${currentCase.sampleHistory.pastHistory || "Not documented"}</li>
+  <li><strong>Last Meal:</strong> ${currentCase.sampleHistory.lastMeal || "Not documented"}</li>
+  <li><strong>Events:</strong> ${currentCase.sampleHistory.events || "Not documented"}</li>
   <li><strong>Family / Gynae History:</strong> ${currentCase.sampleHistory.familyHistory || "Not documented"}</li>
   <li><strong>LMP:</strong> ${currentCase.isPediatric ? "N/A" : "Not documented"}</li>
 </ul>

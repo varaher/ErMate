@@ -5,7 +5,7 @@ import { ClinicalCase, LegacyPediatricDetails, ProcedureNote, IpsgChecklist } fr
 import { deduplicateConsultations } from "../utils/consultationNormalization";
 import { displayGcs, displayTemperature, displaySpo2, displayGrbs, displayDocumentedBoolean } from "../utils/clinicalFormatter";
 import { getDisplayCaseId } from "../utils/caseIdentity";
-import { formatCaseSheetText } from "../utils/caseSheetFormat";
+import { formatCaseSheetText, caseSheetTextToEmrHtml } from "../utils/caseSheetFormat";
 import { copyTextToClipboard } from "../utils/copyToClipboard";
 import { getTriageDisplay } from "../utils/triageScale";
 import { screeningLines, isolationBanner } from "../utils/triageScreening";
@@ -928,7 +928,7 @@ function PrimarySurveySection({ data }: { data: PrimarySurveyData }) {
   if (!hasAnyData) {
     return (
       <Section>
-        <SectionHeading>Primary Survey (ABCDE)</SectionHeading>
+        <SectionHeading>Primary Survey</SectionHeading>
         <EmptyLine />
       </Section>
     );
@@ -936,17 +936,17 @@ function PrimarySurveySection({ data }: { data: PrimarySurveyData }) {
 
   return (
     <Section>
-      <SectionHeading>Primary Survey (ABCDE)</SectionHeading>
+      <SectionHeading>Primary Survey</SectionHeading>
       <div className="space-y-2 text-sm">
         {/* A - Airway */}
         <div className="border-b border-slate-100 pb-1.5 last:border-b-0">
-          <span className="font-bold text-slate-900">A — Airway: </span>
+          <span className="font-bold text-slate-900">Airway: </span>
           <span>{airwayFindings || "Not documented"}</span>
         </div>
 
         {/* B - Breathing */}
         <div className="border-b border-slate-100 pb-1.5 last:border-b-0">
-          <span className="font-bold text-slate-900">B — Breathing: </span>
+          <span className="font-bold text-slate-900">Breathing: </span>
           <span>{breathingFindings || "Not documented"}</span>
           {(v?.rr || v?.spo2) && (
             <div className="inline-flex items-center gap-3 ml-2 font-mono text-xs bg-slate-100 print:bg-transparent px-2 py-0.5 rounded border border-slate-200 print:border-none">
@@ -958,7 +958,7 @@ function PrimarySurveySection({ data }: { data: PrimarySurveyData }) {
 
         {/* C - Circulation */}
         <div className="border-b border-slate-100 pb-1.5 last:border-b-0">
-          <span className="font-bold text-slate-900">C — Circulation: </span>
+          <span className="font-bold text-slate-900">Circulation: </span>
           <span>{circulationFindings || "Not documented"}</span>
           {(v?.hr || v?.bp) && (
             <div className="inline-flex items-center gap-3 ml-2 font-mono text-xs bg-slate-100 print:bg-transparent px-2 py-0.5 rounded border border-slate-200 print:border-none">
@@ -970,7 +970,7 @@ function PrimarySurveySection({ data }: { data: PrimarySurveyData }) {
 
         {/* D - Disability */}
         <div className="border-b border-slate-100 pb-1.5 last:border-b-0">
-          <span className="font-bold text-slate-900">D — Disability: </span>
+          <span className="font-bold text-slate-900">Disability: </span>
           <span>{disabilityFindings || "Not documented"}</span>
           {(v?.gcs || v?.gcsComponents || v?.grbs) && (
             <div className="inline-flex items-center gap-3 ml-2 font-mono text-xs bg-slate-100 print:bg-transparent px-2 py-0.5 rounded border border-slate-200 print:border-none">
@@ -982,7 +982,7 @@ function PrimarySurveySection({ data }: { data: PrimarySurveyData }) {
 
         {/* E - Exposure */}
         <div className="pb-0.5">
-          <span className="font-bold text-slate-900">E — Exposure: </span>
+          <span className="font-bold text-slate-900">Exposure: </span>
           <span>{exposureFindings || "Not documented"}</span>
           {v?.temp && (
             <div className="inline-flex items-center gap-2 ml-2 font-mono text-xs bg-slate-100 print:bg-transparent px-2 py-0.5 rounded border border-slate-200 print:border-none">
@@ -1207,7 +1207,9 @@ export default function CaseSheetPrintView({
 
   const handleCopyCaseSheet = async () => {
     if (!data) return;
-    const ok = await copyTextToClipboard(formatCaseSheetText(data));
+    // Plain text for notepad-style fields + an HTML flavour (<p>/<br>) so rich-text EMR editors keep the line breaks.
+    const plain = formatCaseSheetText(data);
+    const ok = await copyTextToClipboard(plain, caseSheetTextToEmrHtml(plain));
     if (ok) {
       setCopyFailed(false);
       setCopiedCaseText(true);
@@ -1547,14 +1549,14 @@ export default function CaseSheetPrintView({
             />
 
             <Section>
-              <SectionHeading>Secondary Assessment / SAMPLE History</SectionHeading>
+              <SectionHeading>Secondary Assessment / History</SectionHeading>
               <div className="text-sm space-y-1.5">
-                <div><span className="font-semibold text-slate-900">S — Signs & Symptoms:</span> {data.symptoms.length > 0 ? data.symptoms.join(", ") : ((data.pediatricDetails as LegacyPediatricDetails)?.historySignsSymptoms || "None documented")}</div>
-                <div><span className="font-semibold text-slate-900">A — Allergies:</span> {data.allergies.length > 0 ? data.allergies.join(", ") : ((data.pediatricDetails as LegacyPediatricDetails)?.historyAllergies || "None documented")}</div>
-                <div><span className="font-semibold text-slate-900">M — Medications:</span> {data.currentMedications.length > 0 ? data.currentMedications.join(", ") : ((data.pediatricDetails as LegacyPediatricDetails)?.historyMedications || "None documented")}</div>
-                <div><span className="font-semibold text-slate-900">P — Past Medical History:</span> {data.pastHistory.length > 0 ? data.pastHistory.join(" · ") : ((data.pediatricDetails as LegacyPediatricDetails)?.historyPastMedical || "Not documented")}</div>
-                <div><span className="font-semibold text-slate-900">L — Last Meal:</span> {data.lastMeal || (data.pediatricDetails as LegacyPediatricDetails)?.historyLastMeal || "Not documented"}</div>
-                <div><span className="font-semibold text-slate-900">E — Events Preceding:</span> {data.events || (data.pediatricDetails as LegacyPediatricDetails)?.historyEvents || "Not documented"}</div>
+                <div><span className="font-semibold text-slate-900">Signs & Symptoms:</span> {data.symptoms.length > 0 ? data.symptoms.join(", ") : ((data.pediatricDetails as LegacyPediatricDetails)?.historySignsSymptoms || "None documented")}</div>
+                <div><span className="font-semibold text-slate-900">Allergies:</span> {data.allergies.length > 0 ? data.allergies.join(", ") : ((data.pediatricDetails as LegacyPediatricDetails)?.historyAllergies || "None documented")}</div>
+                <div><span className="font-semibold text-slate-900">Medications:</span> {data.currentMedications.length > 0 ? data.currentMedications.join(", ") : ((data.pediatricDetails as LegacyPediatricDetails)?.historyMedications || "None documented")}</div>
+                <div><span className="font-semibold text-slate-900">Past Medical History:</span> {data.pastHistory.length > 0 ? data.pastHistory.join(" · ") : ((data.pediatricDetails as LegacyPediatricDetails)?.historyPastMedical || "Not documented")}</div>
+                <div><span className="font-semibold text-slate-900">Last Meal:</span> {data.lastMeal || (data.pediatricDetails as LegacyPediatricDetails)?.historyLastMeal || "Not documented"}</div>
+                <div><span className="font-semibold text-slate-900">Events Preceding:</span> {data.events || (data.pediatricDetails as LegacyPediatricDetails)?.historyEvents || "Not documented"}</div>
                 {data.familyHistory && <div><span className="font-semibold text-slate-900">Family History:</span> {data.familyHistory}</div>}
                 {data.hpi && <div><span className="font-semibold text-slate-900">History of Presenting Illness:</span> {data.hpi}</div>}
                 {data.surgicalHistory && <div><span className="font-semibold text-slate-900">Surgical History:</span> {data.surgicalHistory}</div>}
@@ -1729,14 +1731,14 @@ export default function CaseSheetPrintView({
             />
 
             <Section>
-              <SectionHeading>SAMPLE History</SectionHeading>
+              <SectionHeading>History</SectionHeading>
               <div className="text-sm space-y-1.5">
-                <div><span className="font-semibold text-slate-900">S — Signs & Symptoms:</span> {data.symptoms.length > 0 ? data.symptoms.join(", ") : "None documented"}</div>
-                <div><span className="font-semibold text-slate-900">A — Allergies:</span> {data.allergies.length > 0 ? data.allergies.join(", ") : "None documented"}</div>
-                <div><span className="font-semibold text-slate-900">M — Current Medications:</span> {data.currentMedications.length > 0 ? data.currentMedications.join(", ") : "None documented"}</div>
-                <div><span className="font-semibold text-slate-900">P — Past Medical History:</span> {data.pastHistory.length > 0 ? data.pastHistory.join(" · ") : "Not documented"}</div>
-                <div><span className="font-semibold text-slate-900">L — Last Meal:</span> {data.lastMeal || "Not documented"}</div>
-                <div><span className="font-semibold text-slate-900">E — Events Preceding:</span> {data.events || "Not documented"}</div>
+                <div><span className="font-semibold text-slate-900">Signs & Symptoms:</span> {data.symptoms.length > 0 ? data.symptoms.join(", ") : "None documented"}</div>
+                <div><span className="font-semibold text-slate-900">Allergies:</span> {data.allergies.length > 0 ? data.allergies.join(", ") : "None documented"}</div>
+                <div><span className="font-semibold text-slate-900">Current Medications:</span> {data.currentMedications.length > 0 ? data.currentMedications.join(", ") : "None documented"}</div>
+                <div><span className="font-semibold text-slate-900">Past Medical History:</span> {data.pastHistory.length > 0 ? data.pastHistory.join(" · ") : "Not documented"}</div>
+                <div><span className="font-semibold text-slate-900">Last Meal:</span> {data.lastMeal || "Not documented"}</div>
+                <div><span className="font-semibold text-slate-900">Events Preceding:</span> {data.events || "Not documented"}</div>
                 {data.familyHistory && <div><span className="font-semibold text-slate-900">Family History:</span> {data.familyHistory}</div>}
                 {data.hpi && <div><span className="font-semibold text-slate-900">History of Presenting Illness:</span> {data.hpi}</div>}
                 {data.surgicalHistory && <div><span className="font-semibold text-slate-900">Surgical History:</span> {data.surgicalHistory}</div>}

@@ -106,12 +106,12 @@ export function formatCaseSheetText(data: CaseSheetData): string {
   // Primary survey + vitals
   const ps = data.primarySurvey;
   const vc = ps?.vitalsContext || {};
-  section("Primary Survey (ABCDE)", [
-    `A — Airway: ${val(ps?.airway)}`,
-    `B — Breathing: ${val(ps?.breathing)}`,
-    `C — Circulation: ${val(ps?.circulation)}`,
-    `D — Disability: ${val(ps?.disability)}`,
-    `E — Exposure: ${val(ps?.exposure)}`,
+  section("Primary Survey", [
+    `Airway: ${val(ps?.airway)}`,
+    `Breathing: ${val(ps?.breathing)}`,
+    `Circulation: ${val(ps?.circulation)}`,
+    `Disability: ${val(ps?.disability)}`,
+    `Exposure: ${val(ps?.exposure)}`,
   ]);
   section("Vitals", [
     `HR: ${val(vc.hr)} | BP: ${val(vc.bp)} | RR: ${val(vc.rr)} | SpO2: ${val(vc.spo2)} | Temp: ${val(vc.temp)} | GCS: ${val(vc.gcsComponents || vc.gcs)} | GRBS: ${val(vc.grbs)}`,
@@ -129,13 +129,13 @@ export function formatCaseSheetText(data: CaseSheetData): string {
   section("Adjuncts", adj);
 
   // SAMPLE
-  section("SAMPLE History", [
-    `S — Signs & Symptoms: ${list(data.symptoms)}`,
-    `A — Allergies: ${list(data.allergies)}`,
-    `M — Medications: ${list(data.currentMedications)}`,
-    `P — Past History: ${list(data.pastHistory)}`,
-    `L — Last Meal: ${val(data.lastMeal)}`,
-    `E — Events: ${val(data.events)}`,
+  section("History", [
+    `Signs & Symptoms: ${list(data.symptoms)}`,
+    `Allergies: ${list(data.allergies)}`,
+    `Medications: ${list(data.currentMedications)}`,
+    `Past History: ${list(data.pastHistory)}`,
+    `Last Meal: ${val(data.lastMeal)}`,
+    `Events: ${val(data.events)}`,
     hasText(data.familyHistory) ? `Family History: ${data.familyHistory}` : "",
     hasText(data.hpi) ? `History of Presenting Illness: ${data.hpi}` : "",
     hasText(data.surgicalHistory) ? `Surgical History: ${data.surgicalHistory}` : "",
@@ -229,4 +229,32 @@ export function formatCaseSheetText(data: CaseSheetData): string {
   ]);
 
   return out.join("\n").replace(/\n{3,}/g, "\n\n").trim() + "\n";
+}
+
+const escapeHtml = (s: string): string =>
+  s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+/** A line that is only capitals / digits / punctuation is a section heading (e.g. "PRIMARY SURVEY"). */
+const isHeadingLine = (line: string): boolean => /[A-Z]{3}/.test(line) && !/[a-z]/.test(line);
+
+/**
+ * HTML flavour of the SAME text, for pasting into rich-text EMR/HIS editors (TinyMCE and similar).
+ * Those editors treat the "\n" of a plain-text paste as a space, so the whole sheet becomes one run-on
+ * paragraph. Here every section is a <p>, every line inside it is separated by <br>, and headings are bold.
+ * No styles, fonts or classes are added, so the EMR editor applies its own font. Content is escaped and
+ * identical to formatCaseSheetText (nothing added or removed).
+ */
+export function caseSheetTextToEmrHtml(text: string): string {
+  const blocks = text.replace(/\r\n/g, "\n").trim().split(/\n{2,}/);
+  const html = blocks
+    .map((block) =>
+      "<p>" +
+      block
+        .split("\n")
+        .map((line) => (isHeadingLine(line.trim()) ? `<strong>${escapeHtml(line)}</strong>` : escapeHtml(line)))
+        .join("<br>") +
+      "</p>"
+    )
+    .join("");
+  return `<meta charset="utf-8">${html}`;
 }
