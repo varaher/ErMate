@@ -1,54 +1,1072 @@
-// Protocol library data model. Plain data, no AI: what is published is exactly what is shown.
-export type ProtocolStatus = "draft" | "reviewed";
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
 
-export interface ProtocolItem {
-  /** Short label, e.g. "Anaphylaxis" */
-  label?: string;
-  /** The instruction exactly as authored */
-  text: string;
-  /** Shown in red (life-threatening step or safety warning) */
-  critical?: boolean;
-  /**
-   * Where the step comes from. Omitted = written protocol / guideline-based step.
-   * "local" = a practice followed at a named hospital that is NOT a guideline requirement. It is shown with a
-   * purple badge and the hospital's name, and is never presented as the standard of care.
-   */
-  tier?: "guideline" | "local";
-  /** Hospital / department that follows a "local" step, e.g. "Rajagiri Hospital ED" */
-  origin?: string;
+export enum TriageCategory {
+  P1 = "P1 (Immediate)",
+  P2 = "P2 (Urgent)",
+  P3 = "P3 (Non-Urgent)",
 }
 
-export interface ProtocolSection {
-  heading: string;
-  /** Optional one-line note under the heading */
-  note?: string;
-  items: ProtocolItem[];
+/**
+ * Five-level emergency triage scale (Priority I-V). Stored alongside the legacy 3-bucket
+ * `triageCategory`, which every existing consumer (analytics, handover, server) keeps reading.
+ */
+export type TriageLevel = 1 | 2 | 3 | 4 | 5;
+
+export type IsolationType = "Airborne" | "Droplet" | "Contact";
+
+/**
+ * Triage-desk assessment captured at registration (and editable later on the case sheet).
+ * Yes/No fields are tri-state: null/undefined = "not assessed" — never silently "No".
+ */
+export interface TriageScreening {
+  levelOfConsciousness?: "Alert" | "Drowsy" | "Unconscious";
+  orientation?: "Oriented" | "Disoriented";
+  arrivalMobility?: "Walking" | "Wheelchair" | "Stretcher" | "In lap";
+  /** Communicable-disease triage: fever with rash / cough / respiratory distress / bleeding / intense headache / extreme fatigue. */
+  communicableScreenPositive?: boolean | null;
+  /** Epidemiological history (asked when the screen is positive). */
+  travelEndemicArea3Weeks?: boolean | null;
+  travelDetails?: string;
+  closeContactSimilarSymptoms?: boolean | null;
+  healthcareWorkerExposure?: boolean | null;
+  petsLivestockContact?: boolean | null;
+  knownCommunicableDisease?: boolean | null;
+  knownCommunicableDiseaseName?: string;
+  isolationRequired?: boolean | null;
+  isolationTypes?: IsolationType[];
+  completedAt?: string;
+  triagedByName?: string;
+  triagedByEmpId?: string;
 }
 
-export interface ProtocolTopic {
+export enum ArrivalMode {
+  WalkIn = "Walk-in",
+  Ambulance = "Ambulance",
+  Referred = "Referred",
+}
+
+export interface MlcDetails {
+  possibleMlc?: boolean;
+  isMlc?: boolean;
+  natureOfIncident?: string;
+  dateTimeOfIncident?: string;
+  placeOfIncident?: string;
+  identificationMark?: string;
+  informantBroughtBy?: string;
+  policeStation?: string;
+  policeIntimationTime?: string;
+  ddEntryNo?: string;
+  historyStatedBy?: string;
+  allegedCauseOfInjury?: string;
+  opinion?: string;
+  certificateRequestedBy?: string;
+  issuingDoctorRegistration?: string;
+}
+
+export interface PatientDemographics {
+  id?: string;
+  name: string;
+  age: number | null;
+  gender: string;
+  presentingComplaint: string;
+  triageCategory: TriageCategory;
+  /** Optional 5-level priority (I-V). Absent on older cases, which keep their stored triageCategory. */
+  triageLevel?: TriageLevel;
+  /** Months beyond whole years, only for age 0–1 (0.5 = under 1 month); used for age-band normal ranges. */
+  ageMonths?: number;
+  /** Days for neonates/infants (0-90 days). Used for neonatal clinical vital bands and age formatting. */
+  ageDays?: number;
+  /** Primary unit for age entry and presentation: years | months | days */
+  ageUnit?: "years" | "months" | "days";
+  triageScreening?: TriageScreening;
+  arrivalMode?: ArrivalMode;
+  dateOpened: string;
+  uhid?: string;
+  phone?: string;
+  address?: string;
+  bed?: string;
+  isMlc: boolean;
+  mlcDetails?: MlcDetails;
+  caseType?: "Medical" | "Trauma" | "";
+  /** Patient weight in kg (e.g. "70", "14.5"). Critical for emergency dosing and pediatric resuscitation. */
+  weight?: string;
+}
+
+export interface PatientVitals {
+  bp: string;      // BP
+  hr: string;      // Heart rate
+  spo2: string;    // SpO2
+  rr: string;      // Respiratory rate
+  temp: string;    // Temperature (°F)
+  gcs: string;     // Glasgow Coma Scale
+  gcs_e: string;   // GCS Eye (1-4)
+  gcs_v: string;   // GCS Verbal (1-5)
+  gcs_m: string;   // GCS Motor (1-6)
+  grbs: string;    // Blood glucose
+  avpu: string;    // AVPU scale
+  painScore: string; // Pain Score (0-10)
+  weight?: string; // Weight in kg
+}
+
+export interface SampleHistory {
+  medicationsInEnvironment?: string;
+  symptoms: string;
+  allergies: string;
+  medications: string;
+  pastHistory: string;
+  lastMeal: string;
+  events: string;
+  socialHistory: string;
+  familyHistory: string;
+  psychiatricFlags: string;
+  hpi?: string;
+  surgicalHistory?: string;
+  lmp?: string;
+}
+
+export interface PrimarySurvey {
+  airway: {
+    status: 'patent' | 'maintained' | 'compromised' | 'protected' | string;
+    intervention: string | null;
+    cSpine: 'immobilised' | 'not_applicable' | string | null;
+  };
+  breathing: {
+    rr: string | null;
+    spo2: string | null;
+    o2Delivery: string | null;
+    workOfBreathing: 'normal' | 'increased' | string | null;
+    airEntry: string | null;
+    addedSounds: string | null;
+    chestWall: string | null;
+  };
+  circulation: {
+    hr: string | null;
+    rhythm: 'regular' | 'irregular' | string | null;
+    sbp: string | null;
+    dbp: string | null;
+    crt: '<2sec' | '>2sec' | string | null;
+    peripheralPulses: 'normal' | 'weak' | 'absent' | 'bounding' | string | null;
+    skinPerfusion: string | null;
+    bleeding: string | null;
+    ivAccess: string | null;
+    efast: {
+      pericardial: 'negative' | 'positive' | 'not_done' | string;
+      ruq: 'negative' | 'positive' | 'not_done' | string;
+      luq: 'negative' | 'positive' | 'not_done' | string;
+      suprapubic: 'negative' | 'positive' | 'not_done' | string;
+      lungs: 'no_blines' | 'blines' | 'not_done' | string;
+    };
+    ecg: string | null;
+  };
+  disability: {
+    gcsE: string | null;
+    gcsV: string | null;
+    gcsM: string | null;
+    gcsTotal: string | null;
+    pupilsEqual: boolean | null;
+    pupilSizeR: string | null;
+    pupilSizeL: string | null;
+    pupilReaction: 'reactive' | 'sluggish' | 'fixed' | string | null;
+    grbs: string | null;
+    focalDeficit: string | null;
+    seizure: 'none' | 'active' | 'postictal' | string | null;
+  };
+  exposure: {
+    temp: string | null;
+    logRoll: string | null;
+    skin: string | null;
+    pelvis: 'stable' | 'unstable' | 'not_assessed' | string | null;
+    longBones: string | null;
+    hypothermiaPrevention: boolean | null;
+  };
+
+  adjuncts?: {
+    abg?: {
+      sampleType?: string;
+      interpretation?: string;
+      ph?: string;
+      pco2?: string;
+      po2?: string;
+      hco3?: string;
+      be?: string;
+      lactate?: string;
+      sao2?: string;
+      fio2?: string;
+      na?: string;
+      k?: string;
+      cl?: string;
+      ag?: string;
+      glucose?: string;
+      hb?: string;
+      aa?: string;
+      notes?: string;
+      finalDiagnosis?: string;
+      clinicalInterpretation?: string;
+    };
+    ecgStatus?: string;
+    ecgNotes?: string;
+    efastStatus?: string;
+    efastNotes?: string;
+    echoStatus?: string;
+    echoNotes?: string;
+    echoFindings?: string;
+  };
+}
+
+export interface SecondarySurvey {
+  general?: string;
+  cvs?: string;
+  respiratory?: string;
+  abdomen?: string;
+  cns?: string;
+  extremities?: string;
+  cSpineExam?: string;
+  [key: string]: string | undefined;
+}
+
+export interface PrimaryAssessment {
+
+  airway: string;
+  airwayStatus: "Normal" | "Abnormal" | "";
+  breathing: string;
+  breathingStatus: "Normal" | "Abnormal" | "";
+  circulation: string;
+  circulationStatus: "Normal" | "Abnormal" | "";
+  disability: string;
+  disabilityStatus: "Normal" | "Abnormal" | "";
+  exposure: string;
+  exposureStatus: "Normal" | "Abnormal" | "";
+  survey?: PrimarySurvey;
+}
+
+export function getInitialPrimarySurvey(caseType: string = "Medical"): PrimarySurvey {
+  const isTrauma = caseType?.toLowerCase() === "trauma";
+  return {
+    airway: {
+      status: "patent",
+      intervention: null,
+      cSpine: isTrauma ? "immobilised" : "not_applicable",
+    },
+    breathing: {
+      rr: null,
+      spo2: null,
+      o2Delivery: "Room air",
+      workOfBreathing: "normal",
+      airEntry: "Bilaterally equal",
+      addedSounds: "Clear",
+      chestWall: isTrauma ? "Normal" : null,
+    },
+    circulation: {
+      hr: null,
+      rhythm: "regular",
+      sbp: null,
+      dbp: null,
+      crt: "<2sec",
+      peripheralPulses: "normal",
+      skinPerfusion: "Warm + dry",
+      bleeding: isTrauma ? "Nil" : null,
+      ivAccess: null,
+      efast: {
+        pericardial: "not_done",
+        ruq: "not_done",
+        luq: "not_done",
+        suprapubic: "not_done",
+        lungs: "not_done",
+      },
+      ecg: null,
+    },
+    disability: {
+      gcsE: "4",
+      gcsV: "5",
+      gcsM: "6",
+      gcsTotal: "15",
+      pupilsEqual: true,
+      pupilSizeR: "3",
+      pupilSizeL: "3",
+      pupilReaction: "reactive",
+      grbs: null,
+      focalDeficit: "Nil",
+      seizure: "none",
+    },
+    exposure: {
+      temp: null,
+      skin: "No pallor, rashes, or oedema",
+      logRoll: isTrauma ? "Spine clear" : null,
+      pelvis: isTrauma ? "stable" : null,
+      longBones: isTrauma ? "Intact" : null,
+      hypothermiaPrevention: false,
+    },
+  };
+}
+
+export interface TreatmentItem {
   id: string;
-  title: string;
+  drugName: string;
+  dose: string;
+  route: string;
+  instruction?: string;
+  timeGiven: string;
+  ipsgVerified?: boolean; // IPSG medication check
+  provenance?: "scribe" | "manual";
+}
+
+export interface InvestigationItem {
+  id: string;
+  testName: string;
+  result: string;
+  orderTime: string;
+  resultTime: string;
+  isAbnormal?: boolean;
+}
+
+export interface DifferentialDiagnosis {
+  diagnosis: string;
+  status?: "CONSISTENT" | "POSSIBLE" | "LESS LIKELY" | "" | string;
+  reasoning: string;
+  citations: string[];
+  nextSteps: string[];
+}
+
+export interface IpsgChecklist {
+  ipsg1IdentifiersVerified?: boolean | null;
+  ipsg2ReadBackPerformed?: boolean | null;
+  ipsg3HighAlertDoubleChecked?: boolean | null;
+  ipsg4TimeOutPerformed?: boolean | null;
+  ipsg5HandHygieneComplied?: boolean | null;
+  ipsg6FallRiskAssessed?: "Low" | "Medium" | "High" | "" | null;
+}
+
+export interface PsychologicalAssessment {
+  suicidalIdeation?: boolean | null;
+  selfHarmHistory?: boolean | null;
+  intentToHarmOthers?: boolean | null;
+  substanceAbuse?: boolean | null;
+  psychiatricHistory?: boolean | null;
+  currentlyOnPsychiatricTreatment?: boolean | null;
+  hasSupportSystem?: boolean | null;
+  notes?: string | null;
+}
+
+export interface VulnerableAssessment {
+  isVulnerable: boolean;
+  vulnerableType: string; // Pediatric, Geriatric, Pregnant, Physically Challenged, etc.
+  nutritionalScreenPassed: boolean;
+  functionalAssessmentScore: string; // Independent, Assisted, Dependent
+  abuseScreenNegative: boolean;
+  victimOfAbuse?: boolean;
+  severePainDistress?: boolean;
+  isAlertOriented?: boolean;
+  suicidalIdeationRisk?: boolean;
+  confusionAgitation?: boolean;
+  needsMobilityAssistance?: boolean;
+  recentFall?: boolean;
+}
+
+export interface ConsentTimeOut {
+  procedureConsentObtained: boolean;
+  procedureTimeOutPerformed: boolean;
+}
+
+export interface DispositionDetails {
+  dispositionType: "Discharge" | "Admit" | "Refer" | "LAMA" | "Absconded" | "Death" | "ER Observation";
+  durationInEr: string;
+  residentName: string;
+  consultantName: string;
+  observationNotes: string;
+  dischargeVitals?: {
+    hr?: string;
+    bp?: string;
+    rr?: string;
+    spo2?: string;
+    gcs?: string;
+    temp?: string;
+    grbs?: string;
+    painScore?: string;
+  };
+}
+
+export type DischargeSummaryStatus = "DRAFT" | "PREPARED" | "MANUALLY_EDITED" | "FINALIZED";
+
+export interface DischargeInfo {
+  summaryStatus?: DischargeSummaryStatus;
+  preparedAt?: string;
+  finalizedAt?: string;
+  primaryDiagnosis: string;
+  secondaryDiagnosis: string;
+  conditionAtDischarge: string;
+  dischargeMedications: string;
+  followUpPlan: string;
+  patientInstructions: string;
+  aiDrafted?: boolean;
+  aiGenerated?: boolean;
+  dischargeDateTime?: string;
+  dispositionType?: string;
+  emResidentName?: string;
+  emConsultantName?: string;
+  uhid?: string;
+  broughtBy?: string;
+  caseUpdatedAfterPreparation?: boolean;
+  
+  // MLC & Allergy
+  isMlc?: string;
+  mlcNo?: string;
+  allergies?: string;
+  
+  // Arrival Vitals
+  arrivalHr?: string;
+  arrivalBp?: string;
+  arrivalRr?: string;
+  arrivalSpo2?: string;
+  arrivalGcs?: string;
+  arrivalPainScore?: string;
+  arrivalGrbs?: string;
+  arrivalTemp?: string;
+  
+  // Clinical
+  presentingComplaints?: string;
+  historyOfPresentIllness?: string;
+  pastMedicalHistory?: string;
+  familyGynaeHistory?: string;
+  lmp?: string;
+  generalExamination?: string;
+  
+  // Primary Assessment
+  primaryAirway?: string;
+  primaryAirwayIntervention?: string;
+  primaryBreathing?: string;
+  primaryBreathingWork?: string;
+  primaryBreathingAirEntry?: string;
+  primaryBreathingCct?: string;
+  primaryBreathingSubcut?: string;
+  primaryBreathingEfast?: string;
+  primaryBreathingIntervention?: string;
+  primaryCirculationCrt?: string;
+  primaryCirculationDnv?: string;
+  primaryCirculationPct?: string;
+  primaryCirculationDeformity?: string;
+  primaryCirculationFast?: string;
+  primaryCirculationInterventions?: string;
+  primaryDisabilityAvpuGcs?: string;
+  primaryDisabilityPupils?: string;
+  primaryDisabilityGrbs?: string;
+  primaryExposureTemp?: string;
+  primaryExposureTrauma?: string;
+  
+  // Secondary Assessment
+  secondaryPicle?: string;
+  secondaryChest?: string;
+  secondaryCvs?: string;
+  secondaryPa?: string;
+  secondaryCns?: string;
+  secondaryExtremities?: string;
+  
+  // Course and results
+  courseInHospital?: string;
+  investigationsResults?: string;
+  
+  // Discharge Vitals
+  dischargeHr?: string;
+  dischargeBp?: string;
+  dischargeRr?: string;
+  dischargeSpo2?: string;
+  dischargeGcs?: string;
+  dischargePainScore?: string;
+  dischargeGrbs?: string;
+  dischargeTemp?: string;
+  dischargeCondition?: string;
+  dispositionStatus?: string;
+}
+
+export interface VitalsRecord {
+  timestamp: string;
+  bp?: string;
+  systolic?: number | null;
+  diastolic?: number | null;
+  hr?: number | null;
+  spo2?: number | null;
+  rr?: number | null;
+  temp?: number | null;
+}
+
+export interface ClinicalCase {
+  workspaceType?: "individual" | "hospital";
+  ownerUid?: string | null;
+  createdByUid?: string;
+  hospitalId?: string | null;
+  id: string;
+  displayId?: string;
+  scribeSessionId?: string;
+  bedNo?: string;
+  patient: PatientDemographics;
+  vitals: PatientVitals;
+  sampleHistory: SampleHistory;
+  primaryAssessment: PrimaryAssessment;
+  secondaryAssessment: string;
+  secondarySurvey?: SecondarySurvey;
+  investigations: InvestigationItem[];
+  treatments: TreatmentItem[];
+  treatmentNotes?: string;
+  progressNotes: string;
+  dischargeInfo: DischargeInfo | null;
+  differentials: DifferentialDiagnosis[];
+  isPediatric: boolean;
+  status: "Triage" | "Active" | "Discharged";
+  savedTime: string;
+  timeSpentMin: number; // calculated time spent
+  doctorEmail?: string; // assigned doctor's email for custom dashboard cases
+  hospital?: string; // hospital name for data isolation and security
+  hospitalLabel?: string;
+  workplaceName?: string;
+  ipsgChecklist?: IpsgChecklist;
+  vulnerableAssessment?: VulnerableAssessment;
+  psychologicalAssessment?: PsychologicalAssessment;
+  consentTimeOut?: ConsentTimeOut;
+  dispositionDetails?: DispositionDetails;
+  vitalsHistory?: VitalsRecord[];
+  
+  // Advanced features from UI screenshots
+  medications?: Array<string | { drugName: string; dose?: string; route?: string; frequency?: string }>;
+  investigationsOrdered?: Array<{ name: string; category?: string; orderedAt?: string; status?: string }>;
+  investigationResults?: Array<{ name: string; value: string; unit?: string; referenceRange?: string; isAbnormal?: boolean; flag?: "HIGH" | "LOW" | "ABNORMAL" | "NORMAL" }>;
+  investigationLabsOrdered?: string;
+  investigationImaging?: string;
+  investigationResultsSummary?: string;
+  provisionalPrimaryDiagnosis?: string;
+  provisionalDifferentialDiagnoses?: string;
+  otherMedications?: string;
+  otherProcedures?: string;
+  procedureNotes?: import("./types/procedureNotes").ProcedureNote[];
+  addendumNotes?: string;
+  conditionAtShift?: "Stable" | "Unstable";
+  infusions?: Array<{ id: string; fluidName: string; dose: string; dilution: string; rate: string }>;
+  proceduresChecked?: string[]; // list of procedurse checked e.g. ["foleys", "ng_tube"]
+  doctorName?: string;
+  escalated?: boolean;
+  consultantReview?: { reviewedBy: string; reviewText: string; timestamp: string };
+  pediatricDetails?: PediatricDetails;
+  dispositionAndPlan?: {
+    dispositionStatus?: string;
+    destinationUnit?: string;
+    consultsRequested?: string[];
+    pendingInvestigations?: string[];
+    followUpAdvice?: string;
+    managementPlan?: string;
+  };
+  treatment?: {
+    medications?: string[];
+    infusions?: string[];
+    otherNotes?: string;
+  };
+  adjuncts?: AdjunctsDevices;
+  
+  // Handover timeline & status fields
+  notes?: Array<{ id?: string; timestamp?: string; authorName?: string; authorRole?: string; content: string }>;
+  admissionTime?: string;
+  vitalFlags?: string[];
+  primaryDoctor?: string;
+  stayHours?: string;
+  
+  // Creation, shift, and audit fields for access model
+  createdBy?: string;
+  createdByEmail?: string;
+  createdByName?: string;
+  createdByRole?: string;
+  entrySource?: "quick_discharge" | "full_case";
+  shiftId?: string;
+  shiftDate?: string;
+  shiftName?: string;
+  consultantId?: string;
+  consultantName?: string;
+  departmentId?: string;
+  createdAt?: string;
+
+  // Triage-desk hand-off: true while the patient is triaged but no doctor has taken the case yet.
+  awaitingDoctor?: boolean;
+  triagedAt?: string;
+  triagedByUid?: string;
+  triagedByName?: string;
+  claimedAt?: string;
+
+  // Operational current clinician assignment & duty session (Patch D4A)
+  currentAssigneeUid?: string;
+  currentAssigneeEmail?: string;
+  currentAssigneeName?: string;
+  currentAssignmentDutySessionId?: string;
+  currentAssignmentDutyDateKey?: string;
+  currentAssignmentShiftId?: string;
+  currentAssignmentAt?: string;
+
+  lastEditedBy?: string;
+  lastEditedByName?: string;
+  lastEditedByRole?: string;
+  lastEditedAt?: string;
+  discussionMessages?: any[];
+  clinicalSummary?: any;
+
+  // 24-hour soft-archive metadata (never hard-delete)
+  archivedAt?: string;
+  archivedBy?: string;
+  archiveReason?: string;
+}
+
+export interface PediatricDetails {
+  patientWeight?: string;
+  weight?: string;
+  broughtBy?: string;
+  informant?: string;
+  
+  // Primary Assessment - Pediatric Assessment Triangle (PAT)
+  patAppearanceTone?: string;          // moves spontaneously, resists examination, sits or stands
+  patAppearanceInteractivity?: string; // alert/engaged, interacts well, reaches for objects
+  patAppearanceConsolability?: string; // stops crying with holding/comforting
+  patAppearanceLookGaze?: string;      // makes eye contact, tracks visually, normal/abnormal
+  patAppearanceSpeechCry?: string;     // age appropriate speech
+  
+  // Additional Pediatric History & PAT fields
+  immunizationHistory?: string;
+  birthHistory?: string;
+  feedingHistory?: string;
+  developmentalHistory?: string;
+  patAppearance?: string;
+  patWorkOfBreathing?: string;
+  patCirculation?: string;
+  
+  // Additional ABCDE fields that are specifically pediatrics-focused
+  airwayCry?: "Good" | "Weak" | "No Cry" | "";
+  airwayStatus?: "Patent" | "Threatened" | "Compromised" | "";
+  airwayIntervention?: string;
+  breathingWob?: string;            // Increased WOB, flaring, retractions, grunting, wheezing, stridor, etc.
+  breathingAbnormalPositioning?: "YES" | "NO" | ""; // Tripod, sniffing, prefers seated posture
+  breathingAirEntry?: "Normal" | "Abnormal" | "";
+  breathingSubcutaneousEmphysema?: "YES" | "NO" | "";
+  breathingIntervention?: string;
+  circulationCrt?: "Normal" | "Delayed" | ""; // Normal (<2s), Delayed (>2s)
+  circulationSkinColorTemp?: string;     // Pink/Pale/Cyanosed/Mottled
+  circulationDistendedNeckVeins?: "YES" | "NO" | "";
+  circulationIntervention?: string;
+  disabilityAvpuGcs?: string;
+  disabilityPupils?: string;
+  disabilityAbnormalResponses?: string; // Pinpoint, dilated, unilaterally dilated
+  disabilityGrbs?: string;
+  exposureTemp?: string;
+  exposureTraumaLogroll?: string;
+  exposureSignsOfTrauma?: string;       // Rashes, Petechiae, Ecchymosis, Bruises, Burns
+  exposureEvidenceInfectionBleeding?: string; // Petechiae or Purpura
+  exposureLongBoneDeformities?: "YES" | "NO" | "";
+  exposureExtremitiesCheck?: string;     // Check for deformities, bruising, tenderness
+  exposureImmobilizeInjuredLimbs?: "YES" | "NO" | "";
+  adjuvantEfastHeart?: string;
+  adjuvantEfastAbdomen?: string;
+  adjuvantEfastLungs?: string;
+  adjuvantEfastPelvis?: string;
+  
+  // Edit UI Only (these map to shared later)
+  focusedHeent?: string;
+  focusedRespiratory?: string;
+  focusedCardiovascular?: string;
+  focusedAbdomen?: string;
+  focusedBack?: string;
+  focusedCns?: string;
+  focusedExtremities?: string;
+  examHeent?: string;
+  dispositionProvisionalDiagnosis?: string;
+  dispositionConditionAtShift?: string;
+  dispositionEmResident?: string;
+  dispositionEmConsultant?: string;
+  
+  // Removed history/exam properties as they are replaced by shared ClinicalCase properties
+}
+
+export type LegacyPediatricDetails = PediatricDetails & {
+  historySignsSymptoms?: string;
+  historyEvents?: string;
+  historyAllergies?: string;
+  historyMedications?: string;
+  historyPastMedical?: string;
+  historyLastMeal?: string;
+  treatmentGiven?: string;
+  courseInHospital?: string;
+  differentialDiagnosis?: string;
+  provisionalDiagnosisDischarge?: string;
+};
+
+export interface DirectDischargeSummaryItem {
+  id: string;
+  patientName: string;
+  uhid?: string;
+  ageGender?: string;
+  triage?: string;
+  rawText: string;
+  createdAt: string;
+  summary: Record<string, any>;
+}
+
+export interface UserProfile {
+  name: string;
+  email: string;
+  role: string;
+  displayRole?: string;
+  hospital: string;
+  hospitalLabel?: string;
+  workplaceName?: string;
+  place?: string;
+  district?: string;
+  state?: string;
+  hospitalDirectoryId?: string;
+  pincode?: string;
+  hospitalAddress?: string;
+  hospitalPhone?: string;
+  qualifications?: string;
+  regNo?: string;
+  phone?: string;
+  aiCredits: number;
+  streak: number;
+  subscriptionTier: string;
+  /** ISO time when the paid Individual Pro month ends (display only; set by the payments webhook). */
+  tierExpiresAt?: string;
+  termsAcceptedAt?: string;
+  termsVersion?: string;
+  age?: number;
+  seededCases?: boolean;
+  seededTeam?: boolean;
+  seededHandovers?: boolean;
+  teamName?: string;
+  department?: string;
+  teamColor?: "emerald" | "blue" | "indigo" | "violet";
+  hasConsentedToLearning?: boolean;
+  erPhysicalBedCapacity?: number;
+  onboardingComplete?: boolean;
+  onboardingTeamPromptDismissed?: boolean;
+}
+
+export interface HodClaimRequest {
+  id: string;
+  hospital: string;
+  place: string;
+  state: string;
+  pincode: string;
+  claimedByUid: string;
+  claimedByName: string;
+  claimedByEmail: string;
+  reason: string;
+  status: "pending" | "approved" | "rejected";
+  createdAt: string;
+  reviewedAt: string | null;
+  reviewedBy: string | null;
+  rejectionNote: string | null;
+}
+
+export interface ApiLogItem {
+  id: string;
+  timestamp: string;
+  service: "ErMate 2.0 Flash" | "ErMate 3.6 Pro" | "Google Vision OCR" | "Speech-to-Text Voice" | "ErMate Search Grounding" | "Firestore Operations";
+  feature: string;
+  userEmail: string;
+  hospital: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  estimatedCostUSD: number;
+  status: "Success" | "Rate Limited" | "Failed";
+}
+
+export interface HandoverRecord {
+  id: string;
+  senderName: string;
+  senderEmail: string;
+  timestamp: string;
+  caseCount: number;
+  patientsText: string;
+  acknowledgedBy?: string;
+  acknowledgedTime?: string;
+  hospital?: string; // hospital name for data isolation and security
+}
+
+export type CanonicalMembershipStatus =
+  | "active"
+  | "pending_approval"
+  | "cancelled"
+  | "rejected"
+  | "inactive";
+
+export type LegacyMembershipStatus =
+  | "Pending Invite"
+  | "Active (Joined)"
+  | "Pending Approval";
+
+export type MembershipStatus =
+  | CanonicalMembershipStatus
+  | LegacyMembershipStatus
+  | string;
+
+export function isPendingApprovalStatus(status?: string): boolean {
+  if (!status) return false;
+  const s = status.trim().toLowerCase();
+  return s === "pending_approval" || s === "pending approval";
+}
+
+export function isActiveMembershipStatus(status?: string): boolean {
+  if (!status) return false;
+  const s = status.trim().toLowerCase();
+  return s === "active" || s === "active (joined)";
+}
+
+export interface TeamWorkspace {
+  id: string;
+  teamName: string;
+  hospitalName: string;
+  department: string;
+  erPhysicalBedCapacity: number;
+  createdByUid: string;
+  createdByEmail: string;
+  createdAt: string;
+  updatedAt: string;
+  verificationStatus: "unverified" | "verified";
+  isInstitutionallyVerified?: boolean;
+  verifiedAt?: string | null;
+  verifiedBy?: string | null;
+  activeInviteToken?: string | null;
+  activeInviteExpiresAt?: string | null;
+}
+
+export interface TeamMember {
+  id: string;
+  uid?: string;
+  name?: string;
+  email: string;
+  role: string;
+  status: MembershipStatus;
+  shift?: string;
+  hospital?: string;
+  hospitalId?: string;
+  hospitalName?: string;
+  teamId?: string;
+  teamName?: string;
+  department?: string;
+  isTeamAdmin?: boolean;
+  isAdmin?: boolean;
+  isRotaManager?: boolean;
+  rotaManager?: boolean;
+  teamRole?: "admin" | "member";
+  verificationStatus?: "unverified" | "verified";
+  isInstitutionallyVerified?: boolean;
+  assignedBy?: string;
+  updatedAt?: string;
+  membershipVerified?: boolean;
+}
+
+export interface HandoverAlertBanner {
+  criticalAllergies?: string | null;
+  codeStatus?: string | null;
+  criticalValues?: string[];
+  pendingCritical?: string[];
+  isolationPrecautions?: string | null;
+  fallRisk?: boolean;
+  summary?: string;
+}
+
+export interface DayWiseCourse {
+  date: string;
   summary: string;
-  /** "adult" or "paediatric": protocols are never mixed */
-  population: "adult" | "paediatric";
-  status: ProtocolStatus;
-  version: string;
-  /** ISO date of last clinical review; empty while draft */
-  reviewedOn: string;
-  source: string;
-  /** Presenting complaints / words a doctor would search for (e.g. "chest pain", "hematemesis") */
-  keywords?: string[];
-  /** Shown in amber above the protocol (e.g. "not an approved order set") */
-  notice?: string;
-  /** Governance notes for the clinical reviewer: corrections still required before sign-off */
-  reviewNotes?: string[];
-  /** Verification bibliography (recommended sources, not proof that each step was validated) */
-  references?: string[];
-  sections: ProtocolSection[];
 }
 
-export interface ProtocolChapter {
-  id: string;
-  title: string;
-  topics: ProtocolTopic[];
+export interface ActiveProblem {
+  problem: string;
+  status: 'Resolved' | 'Ongoing' | 'Pending workup';
+  note?: string | null;
 }
+
+export interface CrossConsultation {
+  department: string;
+  consultant: string;
+  dateSeen: string;
+  recommendation: string;
+  status: 'Completed' | 'Awaiting review' | 'Awaiting re-consult' | 'Not actioned';
+  flagged?: boolean;
+}
+
+export interface InvestigationTrend {
+  parameter: string;
+  values: string;
+}
+
+export interface InvestigationsGroup {
+  trends?: InvestigationTrend[];
+  normalSummary?: string | null;
+  imaging?: string | null;
+  ecg?: string | null;
+  echo?: string | null;
+  vbg?: string | null;
+  cultures?: string | null;
+  other?: string | null;
+}
+
+export interface AdjunctsAtArrival {
+  ecg?: string | null;
+  vbg?: string | null;
+  abg?: string | null;
+  abgPo2?: string | null;
+  abgHb?: string | null;
+  abgBe?: string | null;
+  abgAnionGap?: string | null;
+  grbs?: string | null;
+  lactate?: string | null;
+  troponinPOC?: string | null;
+  bedsideEcho?: string | null;
+  efast?: string | null;
+  outsideReports?: string | null;
+  physicalOnArrival?: string | null;
+  [key: string]: string | null | undefined;
+}
+
+export interface AdjunctsDevices {
+  ivAccess?: string | null;
+  centralLine?: string | null;
+  arterialLine?: string | null;
+  catheter?: string | null;
+  oxygenDelivery?: string | null;
+  drains?: string | null;
+  monitoring?: string | null;
+  ngt?: string | null;
+  other?: string | null;
+  abgPh?: string | null;
+  abgPco2?: string | null;
+  abgPo2?: string | null;
+  abgHco3?: string | null;
+  abgBe?: string | null;
+  abgLactate?: string | null;
+  abgNa?: string | null;
+  abgK?: string | null;
+  abgCl?: string | null;
+  abgHb?: string | null;
+  abgAnionGap?: string | null;
+  ecgStatus?: string | null;
+  ecgNotes?: string | null;
+  ecgFindings?: string | null;
+  efastStatus?: string | null;
+  efastNotes?: string | null;
+  echoStatus?: string | null;
+  echoNotes?: string | null;
+  echoFindings?: string | null;
+  echoDone?: string | null;
+  efastDone?: string | null;
+  ecgDone?: string | null;
+  [key: string]: string | null | undefined;
+}
+
+export interface ERBoardingStatus {
+  reasonForERRetention?: string | null;
+  whoTrackingBed?: string | null;
+  durationInERPostAdmission?: string | null;
+  riskOfProlongedStay?: string | null;
+}
+
+export interface LatestVitalsInfo {
+  timestamp?: string | null;
+  hr?: string | null;
+  bp?: string | null;
+  spo2?: string | null;
+  rr?: string | null;
+  temp?: string | null;
+  gcs?: string | null;
+  grbs?: string | null;
+  trend?: string | null;
+}
+
+export interface HandoverPatient {
+  id?: string;
+  patientLabel: {
+    name: string;
+    ageSex: string;
+    bed: string | null;
+    currentLocation?: string | null;
+    erNumber: string | null;
+    admittingConsultant: string | null;
+    admittingDepartment?: string | null;
+    admissionDecisionDate?: string | null;
+    daysInERSinceAdmission?: number | null;
+    erBoarder?: boolean;
+    inERSince: string | null;
+    status: 'critical' | 'unstable' | 'stable' | 'discharge';
+    treatingERPhysician?: string | null;
+  };
+  alertBanner?: HandoverAlertBanner;
+  initialPresentation_lockedAt?: string | null;
+  initialPresentation?: {
+    chiefComplaint?: string;
+    initialVitals?: string;
+    abcdeArrival?: string;
+    initialImpression?: string;
+    adjunctsAtArrival?: AdjunctsAtArrival | string | null;
+    lockedAt?: string | null;
+  };
+  adjunctsAtArrival?: AdjunctsAtArrival | string | null;
+  presentingComplaint: string;
+  courseInERDayWise?: DayWiseCourse[];
+  activeProblemList?: ActiveProblem[];
+  story?: string;
+  pmh: string | null;
+  pastMedicalHistory?: string | null;
+  diagnosis: string;
+  crossConsultations?: CrossConsultation[];
+  investigations?: InvestigationsGroup;
+  currentMedications?: string[];
+  adjuncts?: AdjunctsDevices;
+  adjunctsNow?: AdjunctsDevices | null;
+  done: string[];
+  toBeDone: string[];
+  erBoardingStatus?: ERBoardingStatus;
+  bystanderConsent?: string | null;
+  latestVitals?: LatestVitalsInfo;
+  vitalsNow: string | null;
+  criticalAlerts: string[];
+  bystander: string | null;
+  alertRow: string;
+}
+
+export interface QuickPastePatient {
+  id: string;
+  bed?: string;
+  name: string;
+  ageGender: string;
+  triage: string;
+  vitals: string;
+  presentingComplaint?: string;
+  rawNotes: string;
+  structuredSBAR?: {
+    situation: string;
+    background: string;
+    assessment: string;
+    recommendation: string;
+  };
+  handoverCardData?: HandoverPatient;
+  hospital?: string;
+  createdByEmail?: string;
+  updatedAt?: string;
+}
+
+
+
+export interface LogbookEntry {
+  entryId: string;
+  ownerUid: string;
+  sourceCaseId?: string;
+  sourceType: "individual" | "hospital";
+  hospitalIdAtTime?: string | null;
+  hospitalNameAtTime?: string | null;
+  roleAtTime?: string | null;
+  dateSeen?: string;
+  ageGroup?: string;
+  gender?: string;
+  triageCategory?: string;
+  caseCategory?: string;
+  proceduresPerformed?: string[];
+  skills?: string[];
+  learningPoints?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export * from './types/procedureNotes.ts';

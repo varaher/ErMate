@@ -11,13 +11,6 @@ export const DYSPNEA_ADULT: ProtocolTopic = {
   version: "0.1",
   reviewedOn: "",
   source: "ED clinical manual — Dyspnea flowchart algorithm and etiology-specific pathways",
-  keywords: ["breathlessness", "shortness of breath", "sob", "respiratory distress", "wheeze", "anaphylaxis", "pulmonary edema", "pneumothorax", "pulmonary embolism"],
-  notice: "Clinical review draft. The review notes at the bottom list points that must be corrected or confirmed before sign-off.",
-  reviewNotes: [
-    "Anaphylaxis: epinephrine must specify mass (0.5 mg), concentration (1 mg/mL) and route; steroid and antihistamine adjuncts must never delay epinephrine, and antihistamines/steroids are not first-line.",
-    "Routine Avil/ranitidine premedication in ACS, routine DuoNeb in pulmonary edema and blanket NIV for metabolic acidosis are not suitable universal pathway steps.",
-    "A Wells score above 4 does not by itself establish PE; distinguish probability, imaging, hemodynamic risk and treatment.",
-  ],
   sections: [
     {
       heading: "1. Initial assessment and stabilisation",
