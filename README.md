@@ -3,7 +3,7 @@
 ### Subscription and checkout UI (21 October 2026)
 The saved profile and More screen show subscription status, current plan price, validity and credits. The catalogue uses `src/lib/pricing.ts`: ₹600 / 300 credits / 30 days, plus ₹300 / 150, ₹700 / 350 and ₹1,000 / 500 credit recharges, GST included. These are one-time orders with manual renewal.
 
-Recharge options show prices and general usage guidance; amounts credited remain governed by the unchanged server price table. Administrator and hospital-covered users may optionally purchase credits. The card listens to the current user's balance and confirms the specific order through authenticated `GET /api/payments/orders/:orderId`. Only the webhook grants credits. Administrator exemption and hospital coverage have explicit labels; team membership alone does not imply paid coverage. Razorpay receipts use a short unique ID. Existing metering reservation/expiry and live streaming security findings require separate work before production billing is considered complete.
+Recharge options show prices and general usage guidance; amounts credited remain governed by the unchanged server price table. Administrator and hospital-covered users may optionally purchase credits. The card listens to the current user's balance and confirms the specific order through authenticated `GET /api/payments/orders/:orderId`. Only the webhook grants credits. Administrator exemption and hospital coverage have explicit labels; team membership alone does not imply paid coverage. Razorpay receipts use a short unique ID. AutoPay renewal (₹350/month, zero credits) is documented under "Razorpay AutoPay" below. Existing metering reservation/expiry and live streaming security findings require separate work before production billing is considered complete.
 
 > **DPDP Act 2023 Compliant · Offline-Resilient · Multi-Model AI Clinical Copilot**
 
@@ -296,6 +296,9 @@ ErMate employs a dynamic role-based navigation hierarchy computed from `getNorma
 | `/verify_team_coverage_rule.ts` | Verification suite for unified hospital team coverage rule, slug matching, fail-open resiliency, and client parity |
 | `/verify_credit_metering.ts` | Automated test suite for credit metering decisions, deductions, and exemptions |
 | `/verify_payments_individual_plan.ts` | Automated test suite for Razorpay payment fulfillment, webhook signatures, and tier extension |
+| `/server/services/autopay.ts` | Razorpay AutoPay for the monthly plan renewal: plan validation (monthly, interval 1, 35000 paise INR), duplicate-safe subscription creation, cancel, verified `subscription.charged` fulfillment (access only, zero credits), status view |
+| `/src/components/AutoPayPanel.tsx` | "Enable AutoPay · ₹350/month" panel: first renewal date before approval, subscription status, next renewal, credits remaining, "Cancel AutoPay" |
+| `/verify_autopay.ts` | Verification suite for AutoPay plan validation, duplicate prevention, webhook idempotency, failed renewals, cancellation, refunds, account deletion and unchanged ₹600/recharge behaviour |
 | `/src/utils/logbookSync.ts` | Client-side direct Firestore sync for clinician logbook entries with de-identification and permission handling |
 | `/verify_logbook_sync.ts` | P0 verification suite for client logbook direct sync, security rules, and server fallback |
 | `/verify_casesheet_no_invented_values.ts` | Verification suite for Case Sheet zero-invented-vitals honesty and normal exam decoupling |
@@ -337,6 +340,21 @@ ErMate supports independent clinicians practicing in private, non-institutional,
 3. **Workspace Isolation**: Default workspace resolves to `workspaceType: "individual"`, `ownerUid: user.uid`, `hospitalId: null`. Personal cases are strictly private to the authenticated creator.
 4. **Print Retained Identity**: Hospital/workplace display name is preserved on individual clinical cases for printing and PDF generation without granting shared department access.
 5. **Team Creation Preserved**: Hospital workspace creation remains preserved for future team collaboration but is never mandated or forced during individual onboarding.
+
+---
+
+## Razorpay AutoPay (monthly renewal)
+
+The initial ₹600 purchase and the recharge packs are unchanged (`src/lib/pricing.ts`, one-time Razorpay orders). AutoPay adds an optional **monthly renewal of ₹350 (GST included) that grants platform access only: zero AI credits, ever.**
+
+- **Configuration:** `RAZORPAY_CORE_MONTHLY_PLAN_ID=plan_TsmuGiVJaFGsSN` (server env; see `.env.example`). The server refuses to create a subscription unless that Razorpay plan is `monthly`, interval `1`, `35000` paise, `INR`. Existing `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET` and `RAZORPAY_ENABLED` are reused.
+- **Flow:** after a verified purchase the plan card shows "Enable AutoPay · ₹350/month" with the first renewal date (the end of the paid period). `POST /api/payments/autopay/create` creates the subscription server-side with `start_at` = end of the paid period (no upfront charge, no add-ons) and the browser opens Razorpay Checkout with the returned `subscription_id`; the doctor must authorize the mandate.
+- **Duplicate safety:** one Firestore transaction on `autopaySubscriptions/{uid}` is the lock. Repeated clicks reuse the same subscription; an uncertain API result keeps the lock and is reconciled by `notes.attemptId` before anything new is created.
+- **Fulfillment:** only a verified `subscription.charged` (signed webhook, captured, 35000 paise, INR, our plan, our subscription, `notes.app = "ermate"`) extends access by 30 days, exactly once per payment id (`creditLedger`). `subscription.authenticated` / `activated` only record status. `pending` / `halted` record a failed renewal and never change access. Events that are not ErMate's (for example ARYA) are ignored.
+- **Cancel:** `POST /api/payments/autopay/cancel` cancels the mandate immediately at Razorpay; paid access stays until `tierExpiresAt`.
+- **Refunds / deletion:** a full refund of a plan or renewal payment cancels the mandate; account deletion cancels it first and deletes nothing if the cancel fails. Credit and payment ledgers are still kept for audit.
+- **Webhook events to enable in Razorpay:** `payment.captured`, `refund.processed` (existing) plus `subscription.authenticated`, `subscription.activated`, `subscription.charged`, `subscription.pending`, `subscription.halted`, `subscription.cancelled`, `subscription.completed`, `subscription.paused`, `subscription.resumed`.
+- **Tests:** `verify_autopay.ts`.
 
 ---
 
