@@ -48,6 +48,8 @@ const AdminPanelView = React.lazy(() => import("./components/AdminPanelView"));
 const DoctorsDirectoryView = React.lazy(() => import("./components/DoctorsDirectoryView"));
 const ToolsView = React.lazy(() => import("./components/ToolsView"));
 const MoreView = React.lazy(() => import("./components/MoreView"));
+import { computeAccess } from "./lib/access";
+import { AccessBanner, PaywallModal } from "./components/AccessBanner";
 import NewPatientEntryMenu, { type EntryMethod, isTriageCategoryPending } from "./components/NewPatientEntryMenu";
 import { validateTeamInvite } from "./services/teamInviteService";
 import { createQuickDischargeCase } from "./components/QuickDischargeIntake";
@@ -1142,6 +1144,21 @@ useEffect(() => {
   );
 
   const isProfileComplete = isClinicalProfileComplete(profile, erPhysicalBedCapacity);
+    // Trial / paywall: only decides whether NEW cases and log book entries may be started.
+  const [showPaywall, setShowPaywall] = useState<boolean>(false);
+  const access = computeAccess({
+    accountCreatedAt: auth.currentUser?.metadata?.creationTime,
+    email: profile?.email || auth.currentUser?.email,
+    subscriptionTier: profile?.subscriptionTier,
+    tierExpiresAt: profile?.tierExpiresAt,
+    coveredByTeam: isVerifiedTeamUser && hospitalSubscription?.active === true,
+  });
+  /** Returns true when a new case may start; otherwise opens the paywall. */
+  const guardNewCase = (): boolean => {
+    if (access.canCreate) return true;
+    setShowPaywall(true);
+    return false;
+  };
 
 // Auth state listener with real-time UserProfile sync.
 //
@@ -2608,6 +2625,7 @@ const handleDeleteAllCases = async () => {
   // Doctor takes a patient from the waiting queue. Transactional so two doctors cannot both take the same patient.
   const handleTakeQueuedCase = async (caseId: string) => {
     if (!auth.currentUser) return;
+        if (!guardNewCase()) return;
     const dutyOk = Boolean(activeDutySession && isActiveDutySessionNow(activeDutySession, new Date()));
     if (!dutyOk) {
       triggerNotification("Duty Session Required", "Start your current duty before taking a patient.", "warning");
@@ -2778,6 +2796,12 @@ const handleDeleteAllCases = async () => {
     const isAutosave = Boolean(options?.autosave);
     const previousCase = latestCasesRef.current.find(c => c.id === updatedCase.id);
     const isExistingPersistentCase = Boolean(previousCase && !previousCase.id.startsWith("trial-"));
+    
+    // Trial ended and no active plan: a brand-new case cannot be saved. Patients already in the system stay editable.
+    if (!isExistingPersistentCase && !access.canCreate) {
+      setShowPaywall(true);
+      throw new Error("Free trial ended: activate a plan to save new cases.");
+    }
 
     const gate = canPersistClinicalData({
       user: auth.currentUser,
@@ -3370,6 +3394,7 @@ const handleDeleteAllCases = async () => {
   // per the doctor's explicit request that the discussion-only mode live
   // inside the existing Voice Scribe entry point.
   const handleVoiceScribeEntryClick = () => {
+        if (!guardNewCase()) return;
     setShowVoiceScribeEntryChoice(true);
   };
 
@@ -7230,6 +7255,7 @@ const handleSignOut = async () => {
                   onNavigateToDischarge={handleNavigateToDischarge}
                   onStartNewTriage={() => {
                     if (isPreviewMode) {
+                                          if (!guardNewCase()) return;
                       setIsPreviewMode(false);
                       setPreviewCase(null);
                       setPendingPreviewContext(null);
@@ -7351,14 +7377,15 @@ const handleSignOut = async () => {
           {/* 6. Main Tab Views */}
           {!selectedCaseId && !viewCaseSheetPrintId && !activeFormMode && !showDischargeSummaryId && !showPediatricCalculator && !showPocketMirror && !showQuickDischarge && (
             <>
-              {activeTab === "dashboard" && (
+                           {activeTab === "dashboard" && (<>
+                <AccessBanner access={access} onActivate={() => navigateToTab("more")} />
                 <DashboardView
                   profile={profile}
                   cases={cases}
                   pendingContributionsCount={pendingContributionsCount}
                   onDiscussCase={(c, mode) => handleOpenCaseChat(c, mode || "discuss")}
-                  onStartFullFlow={() => setShowEntryMenu(true)}
-                  onStartQuickCase={() => setActiveFormMode("quick")}
+                  onStartFullFlow={() => { if (guardNewCase()) setShowEntryMenu(true); }}
+                 onStartQuickCase={() => { if (guardNewCase()) setActiveFormMode("quick"); }}
                   onSelectCase={handleSelectCase}
                   onTakeQueuedCase={handleTakeQueuedCase}
                   onViewSheet={handleViewPrintSheet}
@@ -7405,7 +7432,7 @@ const handleSignOut = async () => {
                   onStartDutySession={handleStartDutySession}
                   onEndDutySession={handleEndDutySession}
                 />
-              )}
+              </>)}
 
               {activeTab === "analytics" && (
                 <AnalyticsView
@@ -7452,8 +7479,8 @@ const handleSignOut = async () => {
                   onSelectCase={handleSelectCase}
                   onViewSheet={handleViewPrintSheet}
                   onNavigateToDischarge={handleNavigateToDischarge}
-                  onStartFullFlow={() => setShowEntryMenu(true)}
-                  onStartQuickCase={() => setActiveFormMode("quick")}
+                  onStartFullFlow={() => { if (guardNewCase()) setShowEntryMenu(true); }}
+                 onStartQuickCase={() => { if (guardNewCase()) setActiveFormMode("quick"); }}
                   onNavigateToTab={navigateToTab}
                   onDeleteCase={handleDeleteCase}
                   onDeleteAllCases={handleDeleteAllCases}
@@ -7755,6 +7782,7 @@ const handleSignOut = async () => {
       )}
 
       {/* New Patient Entry Method Selection Menu */}
+            <PaywallModal open={showPaywall} onClose={() => setShowPaywall(false)} onActivate={() => { setShowPaywall(false); navigateToTab("more"); }} />
       {showEntryMenu && (
         <NewPatientEntryMenu
           currentUserName={profile?.name || "Duty Doctor"}
