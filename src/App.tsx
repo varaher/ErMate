@@ -1,5 +1,6 @@
 import { displayTimeForUpdate } from "./mate/clinicianUpdateStamp";
 import { resolveWorkspaceForUser } from "./utils/workspaceResolver";
+import { resolveDraftHpi } from "./utils/historyFields";
 import { syncCaseToLogbookDirect } from "./utils/logbookSync";
 import React, { useState, useEffect, useRef, useCallback, Suspense } from "react";
 import { 
@@ -3577,10 +3578,13 @@ const handleDeleteAllCases = async () => {
         socialHistory: extracted.sampleHistory?.socialHistory || extracted.socialHistory || existingMatch?.sampleHistory?.socialHistory || "",
         familyHistory: extracted.sampleHistory?.familyHistory || extracted.familyHistory || existingMatch?.sampleHistory?.familyHistory || "",
         psychiatricFlags: extracted.sampleHistory?.psychiatricFlags || extracted.psychiatricFlags || existingMatch?.sampleHistory?.psychiatricFlags || "",
-        // An HPI already on the sheet (typed or previously applied) is never silently replaced by extraction.
-        hpi: (existingMatch?.sampleHistory?.hpi || "").trim()
-          ? existingMatch!.sampleHistory!.hpi!
-          : (extracted.sampleHistory?.hpi || extracted.hpi || ""),
+                // Same rule as the server: composed from stated symptoms + events when no HPI exists, so the preview shows it.
+        hpi: resolveDraftHpi({
+          existingHpi: existingMatch?.sampleHistory?.hpi,
+          extractedHpi: extracted.sampleHistory?.hpi || extracted.hpi,
+          symptoms: extracted.sampleHistory?.symptoms || (Array.isArray(extracted.symptoms) ? extracted.symptoms.join(", ") : extracted.symptoms) || existingMatch?.sampleHistory?.symptoms,
+          events: extracted.sampleHistory?.events || extracted.events || existingMatch?.sampleHistory?.events,
+        }),
         surgicalHistory: extracted.sampleHistory?.surgicalHistory || extracted.surgicalHistory || existingMatch?.sampleHistory?.surgicalHistory || "",
         lmp: extracted.sampleHistory?.lmp || extracted.lmp || existingMatch?.sampleHistory?.lmp || ""
       },

@@ -33,3 +33,23 @@ export function resolvePastMedicalSurgical(sh?: Partial<SampleHistory> | null): 
   if (pm.toLowerCase().includes(sx.toLowerCase())) return pm;
   return pm ? `${pm}. Surgical: ${sx}` : `Surgical: ${sx}`;
 }
+
+/**
+ * HPI for a case-sheet DRAFT (the MATE / Voice Scribe preview and the Apply that saves it).
+ * Precedence: HPI already on the sheet (typed or applied) is never replaced > HPI the extraction returned >
+ * composed from the clinician-stated symptoms + preceding events. Nothing is invented.
+ * The preview and Apply use the same draft, so what the doctor reviews is exactly what is saved.
+ */
+export function resolveDraftHpi(input: {
+  existingHpi?: unknown;
+  extractedHpi?: unknown;
+  symptoms?: unknown;
+  events?: unknown;
+}): string {
+  const text = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
+  const existing = text(input.existingHpi);
+  if (existing) return existing;
+  const extracted = text(input.extractedHpi);
+  if (extracted) return extracted;
+  return resolveHpi({ symptoms: text(input.symptoms), events: text(input.events) });
+}
