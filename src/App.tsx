@@ -7253,9 +7253,9 @@ const handleSignOut = async () => {
                   }}
                   onSaveCase={handleSaveCase}
                   onNavigateToDischarge={handleNavigateToDischarge}
-                  onStartNewTriage={() => {
+                                    onStartNewTriage={() => {
+                    if (!guardNewCase()) return;
                     if (isPreviewMode) {
-                                          if (!guardNewCase()) return;
                       setIsPreviewMode(false);
                       setPreviewCase(null);
                       setPendingPreviewContext(null);
