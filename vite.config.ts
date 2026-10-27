@@ -10,10 +10,12 @@ export default defineConfig(() => {
       react(),
       tailwindcss(),
       VitePWA({
-        registerType: 'autoUpdate',
+        registerType: 'prompt',
         injectRegister: 'auto',
         includeAssets: ['favicon.png', 'icon.svg', 'icon-192.png', 'icon-512.png', 'logo.png'],
         workbox: {
+          cleanupOutdatedCaches: true,
+          skipWaiting: false,
           maximumFileSizeToCacheInBytes: 6 * 1024 * 1024, // 6 MiB limit for precaching main bundle
           navigateFallback: 'index.html',
           runtimeCaching: [

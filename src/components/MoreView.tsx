@@ -17,6 +17,7 @@ import MortalityAuditModal from "./MortalityAuditModal";
 import { SelfLearningRulesPanel } from "./SelfLearningRulesPanel";
 import RoleChangeSection from "./RoleChangeSection";
 import { ErMateLogo } from "./shared/ErMateLogo";
+import { requestTourReplay } from "./AppTour";
 import { APP_VERSION } from "../changelog";
 import { HardRefreshTile } from "./shared/HardRefreshTile";
 import PitchDeckModal from "./shared/PitchDeckModal";
@@ -1104,6 +1105,22 @@ export default function MoreView({
                 <div>
                   <strong className="text-xs font-bold text-slate-900 dark:text-white block">Notifications</strong>
                   <span className="text-[10px] text-slate-400 font-mono">Alert preferences</span>
+                </div>
+              </div>
+              <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
+            </button>
+
+            <button
+              type="button"
+              onClick={() => { requestTourReplay(); onNavigateToTab("dashboard"); }}
+              className="p-3 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-left hover:border-indigo-500 transition-all cursor-pointer flex items-center justify-between"
+              data-testid="take-app-tour"
+            >
+              <div className="flex items-center gap-2.5">
+                <Compass className="w-4 h-4 text-purple-500 shrink-0" />
+                <div>
+                  <strong className="text-xs font-bold text-slate-900 dark:text-white block">Take the app tour</strong>
+                  <span className="text-[10px] text-slate-400 font-mono">1-minute walkthrough</span>
                 </div>
               </div>
               <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
