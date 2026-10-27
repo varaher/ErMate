@@ -4,6 +4,7 @@ import { sendEmailVerification } from "firebase/auth";
 import { auth, db } from "../firebase";
 import { PLAN_PRICING, rupees, CREDIT_COSTS } from "../lib/pricing";
 import { creditLevel, formatDay, CREDIT_USE_LABELS } from "../lib/creditDisplay";
+import AutoPayPanel from "./AutoPayPanel";
 
 export interface CreditsProfileFields {
   aiCredits?: number;
@@ -195,7 +196,7 @@ export default function CreditsPlanCard({ profile, coveredByTeam = false, teamNa
           <div><p className="text-xs text-slate-400">{exempt ? "Billing" : "Plan price"}</p><p className="mt-1 font-semibold" data-testid="current-price">{amount}</p><span className="text-xs text-slate-400">{exempt ? "No personal payment required" : "Including GST"}</span></div>
           <div><p className="text-xs text-slate-400">{exempt ? "Personal credits remaining" : "Credits remaining"}</p><p data-testid="credits-balance" className={`mt-1 text-3xl font-bold ${creditLevel(balance) === "empty" ? "text-rose-300" : "text-emerald-300"}`}>{balance ?? "—"}</p></div>
         </div>
-        <p className="mt-4 text-xs text-slate-300">{admin ? "Your administrator account is exempt from AI credit charges. Buying additional credits is optional." : coveredByTeam ? `${teamName || "Your hospital"} covers your account. Personal credits are not used during coverage. Buying additional credits is optional.` : pro ? Number.isFinite(expiry) ? `${active ? "Valid until" : "Expired on"} ${formatDay(view.tierExpiresAt)}. Renewal is manual.` : "Your plan expiry is unavailable. Please check with support." : "Your free / trial balance is shown above. Choose Individual Pro to start your monthly plan."}</p>
+        <p className="mt-4 text-xs text-slate-300">{admin ? "Your administrator account is exempt from AI credit charges. Buying additional credits is optional." : coveredByTeam ? `${teamName || "Your hospital"} covers your account. Personal credits are not used during coverage. Buying additional credits is optional.` : pro ? Number.isFinite(expiry) ? `${active ? "Valid until" : "Expired on"} ${formatDay(view.tierExpiresAt)}. Renew manually, or enable AutoPay below.` : "Your plan expiry is unavailable. Please check with support." : "Your free / trial balance is shown above. Choose Individual Pro to start your monthly plan."}</p>
       </header>
       <div className="space-y-5 p-5 sm:p-6">
         {!verified && !exempt && (
@@ -214,10 +215,11 @@ export default function CreditsPlanCard({ profile, coveredByTeam = false, teamNa
         <article className="rounded-2xl border-2 border-emerald-500 bg-emerald-50/50 p-4 dark:bg-emerald-950/20">
           <div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="font-bold text-slate-900 dark:text-white">Individual Pro</h3><p className="text-sm text-slate-600 dark:text-slate-300">One monthly plan. Every feature available.</p></div><div className="text-right"><strong className="text-2xl text-emerald-700 dark:text-emerald-300">{rupees(monthly.amountPaise)}</strong><p className="text-xs text-slate-500">{period} days · GST included</p></div></div>
           <ul className="my-4 space-y-2 text-sm text-slate-700 dark:text-slate-200">
-            <li>✓ Monthly AI usage allowance included</li><li>✓ Voice case sheets, AI discharge, Discuss, Rounds and other AI tools use credits</li><li>✓ Manual documentation, saving and print/export use no credits</li><li>✓ Renew manually. No automatic debit. No annual commitment.</li>
+            <li>✓ Monthly AI usage allowance included</li><li>✓ Voice case sheets, AI discharge, Discuss, Rounds and other AI tools use credits</li><li>✓ Manual documentation, saving and print/export use no credits</li><li>✓ Renew manually, or enable monthly AutoPay (₹350, no AI credits) after your purchase. Cancel any time. No annual commitment.</li>
           </ul>
           <button type="button" data-testid="buy-individual_pro_monthly" disabled={disabled || exempt} onClick={() => void start("individual_pro_monthly")} className={`${button} bg-emerald-600 text-white hover:bg-emerald-700`}>{busy === "individual_pro_monthly" ? "Opening checkout…" : exempt ? "Included through your access" : `${pro ? "Renew" : "Subscribe"} · ${rupees(monthly.amountPaise)}`}</button>
         </article>
+        {!exempt && active && <AutoPayPanel tierExpiresAt={view.tierExpiresAt} credits={balance} loadCheckout={loadCheckout} />}
         <div>
           <h3 className="font-bold text-slate-900 dark:text-white">Need more AI features? Buy credits.</h3>
           <p className="mt-2 text-sm leading-relaxed text-slate-600 dark:text-slate-300">
