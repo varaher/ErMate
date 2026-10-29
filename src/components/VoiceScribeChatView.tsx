@@ -47,6 +47,8 @@ import {
 import { getCasePendingStatus } from "../utils/caseHelper";
 import { checkDischargeCompleteness } from "../utils/dischargeCompleteness";
 import { tryDeterministicFastPath } from "../mate/mateFastPath";
+import { describeNewCriticalAfterUpdate } from "../utils/criticalSpeech";
+import { speakMate } from "../mate/mateSpeech";
 import { interpretWithServer } from "../mate/mateInterpreterClient";
 import { formatCaseCompletenessReply, formatDischargePendingReply } from "../mate/mateReplies";
 import { normalizeMateBedId } from "../mate/mateBedModel";
@@ -1350,11 +1352,34 @@ export default function VoiceScribeChatView({
     }
   };
 
+  /** After an Apply: say (in chat, and aloud if the doctor turned voice on) which critical values the update just caused. Read-only. */
+  const announceCriticalAfterApply = (beforeCase: any, extraction: any) => {
+    try {
+      const r = describeNewCriticalAfterUpdate(beforeCase, extraction);
+      if (!r) return;
+      const critMsg: Message = {
+        id: `crit-${Date.now()}`,
+        sender: "ai",
+        text: `🔴 ${r.text}\nDecision support only. Please check the patient.`,
+        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        mode: "dictation",
+        badge: "command",
+      };
+      setMessages(prev => [...prev, critMsg]);
+      persistMessage(critMsg);
+      speakMate(r.text, { urgent: true });
+    } catch (err) {
+      console.warn("Critical announcement skipped", err);
+    }
+  };
+
   const handleApplyExtraction = async (msgId: string, extractionData: any) => {
     if (processingActionRef.current || processingAction) return;
     processingActionRef.current = true;
     setProcessingAction({ messageId: msgId, type: "caseSheet" });
     setSaveError(null);
+    // Snapshot the case BEFORE saving, so "new critical" compares against what it was.
+    const caseBeforeApply = (activeCaseId && allCases?.find(c => c.id === activeCaseId)) || caseData || null;
     try {
       if (onSaveExtractedCase) {
         // Navigation occurs automatically upon successful persistence
@@ -1387,6 +1412,7 @@ export default function VoiceScribeChatView({
         return [...prev, confirmationMsg];
       });
       persistMessage(confirmationMsg);
+      announceCriticalAfterApply(caseBeforeApply, extractionData);
 
       // Note: we don't clear processingAction on success because we want the UI locked while navigating
     } catch (e: any) {
@@ -2011,6 +2037,7 @@ export default function VoiceScribeChatView({
         setMessages(prev => [...prev, userMsg, aiMsg]);
         persistMessage(userMsg);
         persistMessage(aiMsg);
+        if (fastPathResult.action === "CRITICAL_LIST") speakMate(fastPathResult.replyText || "");
 
         if (fastPathResult.action === "NAVIGATE_TAB" && fastPathResult.targetTab) {
           onNavigateToTab?.(fastPathResult.targetTab);
@@ -3303,8 +3330,10 @@ export default function VoiceScribeChatView({
                     try {
                       if (unappliedMessages.length > 0) {
                         const mergedExtraction = getMergedUnappliedExtraction(messages);
+                        const caseBeforeApplyAll = (activeCaseId && allCases?.find(c => c.id === activeCaseId)) || caseData || null;
                         await onSaveExtractedCase(mergedExtraction, { existingCaseId: activeCaseId || undefined, autoNavigate: true });
                         setMessages(prev => prev.map(m => m.extractionData ? { ...m, extractionApplied: true } : m));
+                        announceCriticalAfterApply(caseBeforeApplyAll, mergedExtraction);
                       } else {
                         if (messages.filter(m => m.extractionData).length === 0) {
                           await onSaveExtractedCase({}, { existingCaseId: activeCaseId || undefined, autoNavigate: true });

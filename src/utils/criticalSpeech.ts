@@ -46,3 +46,32 @@ export function speakCriticalOverview(cases: ClinicalCase[] | null | undefined):
   const head = list.length === 1 ? "1 patient has critical values." : `${list.length} patients have critical values.`;
   return `${head} ${list.map((s) => speakCaseAlerts(s.label, s.alerts)).join(" ")}`;
 }
+/**
+ * After a doctor APPLIES an update: which critical values did that update newly cause (or change)?
+ * Reads only the vitals inside the applied extraction, merged over the case as it was before.
+ * Returns null when nothing new is critical — silence never means "safe", it only means "nothing new".
+ */
+export function describeNewCriticalAfterUpdate(
+  before: ClinicalCase | null | undefined,
+  extraction: any
+): { label: string; newAlerts: CriticalAlert[]; text: string } | null {
+  const ev = extraction && typeof extraction === "object" ? extraction.vitals : null;
+  if (!ev || typeof ev !== "object") return null;
+
+  const base: any = before || {};
+  const merged: Record<string, any> = { ...(base.vitals || {}) };
+  for (const [k, v] of Object.entries(ev)) {
+    if (v !== undefined && v !== null && String(v).trim() !== "") merged[k] = v;
+  }
+  if ((ev as any).pulse && !(ev as any).hr) merged.hr = (ev as any).pulse;
+
+  const after: any = { ...base, id: base.id ?? "pending", status: base.status ?? "Active", isPediatric: base.isPediatric ?? extraction.isPediatric ?? false, vitals: merged };
+  const beforeAlerts = before ? computeCriticalAlerts(before) : [];
+  const afterAlerts = computeCriticalAlerts(after);
+  const prior = new Map(beforeAlerts.map((a) => [a.key, a.display]));
+  const newAlerts = afterAlerts.filter((a) => prior.get(a.key) !== a.display);
+  if (!newAlerts.length) return null;
+
+  const label = caseLabel(before && (before as any).bedNo ? before : { bedNo: extraction.bedNo ?? extraction.bed, patient: { name: extraction.name ?? (before as any)?.patient?.name } });
+  return { label, newAlerts, text: speakCaseAlerts(label, newAlerts).replace(/^([^:]+):/, "$1 now critical:") };
+}
