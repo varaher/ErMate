@@ -895,7 +895,7 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
 
       {/* 1. Shift Status Banner & Controls */}
       {isOnShift ? (
-        <div className="bg-white dark:bg-slate-900 border border-emerald-200/70 dark:border-emerald-900/60 rounded-2xl p-4 flex flex-col sm:flex-row items-center justify-between gap-3 shadow-xs">
+        <div data-coach="shift" className="bg-white dark:bg-slate-900 border border-emerald-200/70 dark:border-emerald-900/60 rounded-2xl p-4 flex flex-col sm:flex-row items-center justify-between gap-3 shadow-xs">
           <div className="flex items-center gap-3">
             <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
             <div>
@@ -940,7 +940,7 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
           </div>
         </div>
       ) : (
-        <div className="bg-white dark:bg-slate-900 border border-amber-200 dark:border-amber-900/40 rounded-2xl p-4 flex items-center justify-between gap-3 shadow-xs">
+        <div data-coach="shift" className="bg-white dark:bg-slate-900 border border-amber-200 dark:border-amber-900/40 rounded-2xl p-4 flex items-center justify-between gap-3 shadow-xs">
           <div className="flex items-center gap-3">
             <div className="w-2.5 h-2.5 rounded-full bg-amber-500" />
             <div>
@@ -1201,7 +1201,7 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
         <div className="grid grid-cols-2 gap-3">
           <button
             type="button"
-            onClick={() => { if (!isOnShift) setShowShiftCheckIn(true); else onStartFullFlow(); }}
+            data-coach="new-patient" onClick={() => { if (!isOnShift) setShowShiftCheckIn(true); else onStartFullFlow(); }}
             className="flex flex-col justify-between p-4 min-h-[118px] rounded-3xl text-left text-white bg-gradient-to-br from-emerald-500 to-emerald-700 shadow-md active:scale-[0.98] transition-transform cursor-pointer"
           >
             <PlusCircle className="w-7 h-7" />
@@ -1212,7 +1212,7 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
           </button>
           <button
             type="button"
-            onClick={() => { if (!isOnShift) setShowShiftCheckIn(true); else onStartVoiceScribe(); }}
+            data-coach="voice-scribe" onClick={() => { if (!isOnShift) setShowShiftCheckIn(true); else onStartVoiceScribe(); }}
             className="flex flex-col justify-between p-4 min-h-[118px] rounded-3xl text-left text-white bg-gradient-to-br from-purple-500 to-purple-700 shadow-md active:scale-[0.98] transition-transform cursor-pointer"
           >
             <Mic className="w-7 h-7" />
@@ -1224,7 +1224,7 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
         </div>
 
         <h2 className="text-[12px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider px-1 pt-1">Quick tools</h2>
-        <div className="bg-white dark:bg-slate-900 border border-slate-200/70 dark:border-slate-800 rounded-2xl overflow-hidden shadow-xs">
+       <div data-coach="quick-tools" className="bg-white dark:bg-slate-900 border border-slate-200/70 dark:border-slate-800 rounded-2xl overflow-hidden shadow-xs">
           <button
             type="button"
             onClick={() => onNavigateToTab("emdrugs")}
@@ -1271,7 +1271,7 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
       </div>
 
       {/* 4. ER Snapshot (Stats Row) */}
-      <div className="grid grid-cols-3 gap-2.5 md:gap-4 no-print">
+      <div data-coach="stats" className="grid grid-cols-3 gap-2.5 md:gap-4 no-print">
         {/* Active Cases */}
         <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-3 md:p-4 shadow-xs flex flex-col md:flex-row items-center md:items-start text-center md:text-left gap-2 md:gap-3.5 min-w-0">
           <div className="p-2 md:p-2.5 bg-indigo-50 dark:bg-indigo-950/40 rounded-xl text-indigo-600 dark:text-indigo-400 shrink-0">

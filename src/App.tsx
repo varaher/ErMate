@@ -50,6 +50,7 @@ const ToolsView = React.lazy(() => import("./components/ToolsView"));
 const MoreView = React.lazy(() => import("./components/MoreView"));
 import { computeAccess } from "./lib/access";
 import { AccessBanner, PaywallModal } from "./components/AccessBanner";
+import CoachMarks from "./components/CoachMarks";
 import NewPatientEntryMenu, { type EntryMethod, isTriageCategoryPending } from "./components/NewPatientEntryMenu";
 import { validateTeamInvite } from "./services/teamInviteService";
 import { createQuickDischargeCase } from "./components/QuickDischargeIntake";
@@ -7005,7 +7006,7 @@ const handleSignOut = async () => {
             return (
               <button
                 key={tab.id}
-                onClick={() => navigateToTab(tab.id)}
+                data-coach={nav-${tab.id}} onClick={() => navigateToTab(tab.id)}
                 className={`text-xs px-3.5 py-2 rounded-xl transition-all flex items-center gap-2 shrink-0 cursor-pointer min-h-[38px] active:scale-95 ${
                   active
                     ? "bg-indigo-50/90 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200/80 dark:border-indigo-800/80 font-bold shadow-2xs"
@@ -7050,7 +7051,7 @@ const handleSignOut = async () => {
               <button
                 key={tab.id}
                 type="button"
-                aria-label={tab.label}
+                data-coach={nav-${tab.id}} aria-label={tab.label}
                 onClick={() => {
                   if (tab.id === "scribe") {
                     // Opening MATE from the tab bar is the general conversation, not a patient focus.
@@ -7782,6 +7783,11 @@ const handleSignOut = async () => {
       )}
 
       {/* New Patient Entry Method Selection Menu */}
+            <CoachMarks
+        activeTab={activeTab}
+        email={profile?.email || auth.currentUser?.email}
+        blocked={Boolean(selectedCaseId || viewCaseSheetPrintId || activeFormMode || showDischargeSummaryId || showPediatricCalculator || showPocketMirror || showVoiceScribeChat || showVoiceScribeEntryChoice || showEntryMenu || showShiftCheckIn || showOnboardingProfile || showPaywall)}
+      />
             <PaywallModal open={showPaywall} onClose={() => setShowPaywall(false)} onActivate={() => { setShowPaywall(false); navigateToTab("more"); }} />
       {showEntryMenu && (
         <NewPatientEntryMenu
