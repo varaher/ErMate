@@ -63,6 +63,8 @@ import { ProcedureDefinition, PROCEDURE_DEFINITIONS } from "../data/procedureDef
 import { ProcedureSelectorModal } from "./ProcedureSelectorModal";
 import { ProcedureNoteFormModal } from "./ProcedureNoteFormModal";
 import { ProcedureNoteCard } from "./ProcedureNoteCard";
+import { CriticalAlertBadge } from "./shared/CriticalAlertBadge";
+import { computeCriticalAlerts } from "../utils/criticalAlerts";
 
 export function parseSecondaryAssessment(text: string) {
   if (!text) return { General: "", CVS: "", RS: "", PA: "", CNS: "", Extremities: "" };
@@ -3221,6 +3223,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
               <span>{isPreview ? "Back to Scribe" : "Cases"}</span>
             </button>
             <div className="flex items-center gap-2">
+                          <CriticalAlertBadge alerts={computeCriticalAlerts(currentCase)} />
               {isPreview ? (
                 <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-amber-100 text-amber-800 dark:bg-amber-950/80 dark:text-amber-300 border border-amber-300 dark:border-amber-700">
                   Preview — changes are not saved
