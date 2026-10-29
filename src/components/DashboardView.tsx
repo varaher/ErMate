@@ -1,5 +1,5 @@
 import VoiceRecorder from "./shared/VoiceRecorder";
-import AppTour, { shouldAutoOpenTour, consumeTourReplay } from "./AppTour";
+
 import React, { useState, useEffect } from "react";
 import { 
   PlusCircle, Zap, TrendingUp, Clock, ArrowRight, Activity, 
@@ -739,21 +739,11 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
 
   const pendingMembers = (teamMembers || []).filter(m => isPendingApprovalStatus(m.status));
 
-  // First-run app tour: auto-opens once for new accounts; replayable from More > App.
-  const [tourOpen, setTourOpen] = useState(false);
-  useEffect(() => {
-    if (consumeTourReplay()) {
-      setTourOpen(true);
-      return;
-    }
-    if (!shouldAutoOpenTour(profile.email)) return;
-    const timer = window.setTimeout(() => setTourOpen(true), 1200);
-    return () => window.clearTimeout(timer);
-  }, [profile.email]);
+  
 
   return (
     <div className="space-y-6 pb-28" id="dashboard-container">
-      <AppTour open={tourOpen} email={profile.email} onClose={() => setTourOpen(false)} onNavigateToTab={onNavigateToTab} />
+
       {onTakeQueuedCase && (
         <TriageQueueCard cases={cases} onTake={onTakeQueuedCase} onOpen={onSelectCase} />
       )}
