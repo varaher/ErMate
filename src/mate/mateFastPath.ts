@@ -10,6 +10,7 @@
  * - ER Overview / status queries ("What's happening in my ER?", "How's my list?", "Who all are there?", "Give me a quick overview")
  * - Incomplete cases inquiry ("Which cases are incomplete?", "What cases are pending?")
  * - Occupied beds inquiry ("Which beds are occupied?", "Occupied beds", "List occupied beds")
+ * - Critical values inquiry ("Who is critical?", "Any critical patients?") — read-only, same rules as the red badge
  * - Exact bed reference single-command without clinical facts ("Open Bed 9", "Bed 9 summary", "Is Bed 10 occupied?")
  * - Exact displayId reference without clinical facts ("Open case 261006004")
  * - Simple app tab navigation ("Go to dashboard", "Show handover", "Open tools")
@@ -28,6 +29,7 @@ import { extractMateBedReference, resolveMateCaseReference } from "./mateCaseRes
 import { extractMateDisplayIdReference, resolveMateCaseByDisplayId } from "./mateCaseDisplayResolver";
 import { getCasePendingStatus } from "../utils/caseHelper";
 import { checkDischargeCompleteness } from "../utils/dischargeCompleteness";
+import { speakCriticalOverview } from "../utils/criticalSpeech";
 import { formatCaseCompletenessReply, greetingForNow, isCurrentPatientPendingFollowUp } from "./mateReplies";
 
 export interface FastPathResult {
@@ -43,6 +45,7 @@ export interface FastPathResult {
     | "COUNT_PATIENTS"
     | "INCOMPLETE_LIST"
     | "OCCUPIED_BEDS"
+    | "CRITICAL_LIST"
     | "BED_STATUS"
     | "CASE_SUMMARY"
     | "OPEN_CASE"
@@ -157,6 +160,17 @@ export function tryDeterministicFastPath(params: {
       handled: true,
       action: "OCCUPIED_BEDS",
       replyText: `Currently occupied beds (${orientation.occupiedBeds.length}): ${orientation.occupiedBeds.join(", ")}.`,
+    };
+  }
+
+  // 5b. Critical values query. Whole-utterance only; read-only; never selects or focuses a patient.
+  if (
+    /^(?:(?:who|which\s+patients?)\s+(?:is|are)\s+critical(?:\s+now|\s+right\s+now)?|(?:any|is\s+any)(?:\s*one|\s+patient|\s+patients)?\s+critical(?:\s+patients?)?(?:\s+now|\s+right\s+now)?|anyone\s+critical|critical\s+patients?|critical\s+alerts?|show\s+critical\s+(?:patients?|alerts?)|list\s+critical\s+patients?)[?.!]?$/i.test(trimmed)
+  ) {
+    return {
+      handled: true,
+      action: "CRITICAL_LIST",
+      replyText: speakCriticalOverview(censusCases),
     };
   }
 
