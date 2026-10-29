@@ -1,12 +1,14 @@
 import React, { useMemo, useState } from "react";
-import { AlertTriangle, ChevronDown, ChevronRight, Search } from "lucide-react";
+import { AlertTriangle, ChevronDown, ChevronRight, Flag, Search } from "lucide-react";
 import { PROTOCOL_CHAPTERS, searchProtocols } from "../data/protocols";
 import type { ProtocolTopic } from "../data/protocols/protocolTypes";
 import { chipsForTopic, sectionIndexForKind, investigationItems, itemLine } from "../data/protocols/protocolViews";
+import ProtocolFlagDialog, { type FlagTarget } from "./ProtocolFlagDialog";
 
 /** Read-only protocol reader: chapter list + search on one side, the selected protocol on the other. */
 export default function ProtocolsPanel() {
   const [query, setQuery] = useState("");
+  const [flagTarget, setFlagTarget] = useState<FlagTarget | null>(null);
   const [selectedId, setSelectedId] = useState<string>(PROTOCOL_CHAPTERS[0]?.topics[0]?.id || "");
   const [openChapters, setOpenChapters] = useState<Record<string, boolean>>(
     () => Object.fromEntries(PROTOCOL_CHAPTERS.map((c) => [c.id, true]))
@@ -131,17 +133,36 @@ export default function ProtocolsPanel() {
                           : "bg-slate-50 dark:bg-slate-900 text-slate-700 dark:text-slate-200"
                       }`}
                     >
-                      {item.critical && <AlertTriangle className="w-3.5 h-3.5 inline mr-1 -mt-0.5" />}
-                      {item.tier === "local" && (
-                        <span
-                          className="inline-block mr-1.5 mb-0.5 text-[9px] font-extrabold uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-purple-100 text-purple-700 dark:bg-purple-950/60 dark:text-purple-300 align-middle"
-                          data-testid="local-practice-badge"
+                      <div className="flex items-start gap-2">
+                        <div className="flex-1 min-w-0">
+                          {item.critical && <AlertTriangle className="w-3.5 h-3.5 inline mr-1 -mt-0.5" />}
+                          {item.tier === "local" && (
+                            <span
+                              className="inline-block mr-1.5 mb-0.5 text-[9px] font-extrabold uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-purple-100 text-purple-700 dark:bg-purple-950/60 dark:text-purple-300 align-middle"
+                              data-testid="local-practice-badge"
+                            >
+                              Local practice{item.origin ? ` · ${item.origin}` : ""} · not a guideline requirement
+                            </span>
+                          )}
+                          {item.label && <strong>{item.label}: </strong>}
+                          {item.text}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setFlagTarget({
+                            topicId: selected.id,
+                            topicTitle: selected.title,
+                            topicVersion: selected.version,
+                            stepKey: `${selected.id}:${sIdx}:${idx}`,
+                            stepLabel: (item.label || item.text).slice(0, 120),
+                          })}
+                          className="shrink-0 inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-500 hover:text-violet-700"
+                          aria-label={`Flag a concern about ${item.label || "this step"}`}
+                          data-testid="protocol-flag-step"
                         >
-                          Local practice{item.origin ? ` · ${item.origin}` : ""} · not a guideline requirement
-                        </span>
-                      )}
-                      {item.label && <strong>{item.label}: </strong>}
-                      {item.text}
+                          <Flag className="w-3 h-3" /> Flag
+                        </button>
+                      </div>
                     </li>
                   ))}
                 </ul>
@@ -171,12 +192,21 @@ export default function ProtocolsPanel() {
               </details>
             )}
 
+            <button
+              type="button"
+              onClick={() => setFlagTarget({ topicId: selected.id, topicTitle: selected.title, topicVersion: selected.version, stepKey: "", stepLabel: "" })}
+              className="inline-flex items-center gap-1.5 text-[11px] font-bold px-3 py-1.5 rounded-full border-[1.5px] border-violet-600 text-violet-700 dark:text-violet-300 dark:border-violet-400"
+              data-testid="protocol-flag-topic"
+            >
+              <Flag className="w-3.5 h-3.5" /> Flag a concern about this protocol
+            </button>
             <p className="text-[10px] text-slate-500 leading-snug" data-testid="protocol-footer">
               v{selected.version} · Source: {selected.source}. This is a clinical support reference. Doses and decisions must be confirmed by the treating clinician against the patient's condition and local availability.
             </p>
           </>
         )}
       </div>
+      {flagTarget && <ProtocolFlagDialog target={flagTarget} onClose={() => setFlagTarget(null)} />}
     </div>
   );
 }

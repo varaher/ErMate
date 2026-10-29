@@ -48,6 +48,7 @@ import extractionRouter from "./server/routes/extraction.routes.ts";
 import logbookRouter from "./server/routes/logbook.routes.ts";
 import teamRouter from "./server/routes/team.routes.ts";
 import mateRouter from "./server/routes/mate.routes.ts";
+import protocolFlagsRouter from "./server/routes/protocolFlags.routes.ts";
 
 import { generateMortalityAudit, generateMortalityAuditDocx } from "./server/mortalityAudit.ts";
 import { legacySqlGuard, buildSyncUserRecord, evaluateCreditGate, learningFeedbackRejectHandler, errorForLog } from "./server/legacyContainment.ts";
@@ -191,6 +192,7 @@ app.use(extractionRouter);
 app.use("/api/logbook", logbookRouter);
 app.use("/api/team", teamRouter);
 app.use("/api/mate", mateRouter);
+app.use("/api/protocol-flags", protocolFlagsRouter);
 
 const upload = multer({ storage: multer.memoryStorage() });
 
