@@ -3861,21 +3861,21 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
                     ? "bg-indigo-500/20 text-indigo-300 border-indigo-500/30" 
                     : "bg-white/15 text-white border-white/20"
                 }`}>
-                  IPASS / SBAR Standardized Tool
+                  SBAR handover
                 </span>
                 <span className={`px-2.5 py-0.5 rounded-full text-[10px] uppercase font-bold tracking-wider font-mono border ${
                   isDarkMode 
                     ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" 
                     : "bg-white/10 text-white border-white/10"
                 }`}>
-                  ✓ Free Feature (Unlimited Cases)
+                  ✓ Free, unlimited
                 </span>
               </div>
-              <h1 className="text-2xl font-black font-display tracking-tight">Shift Handover & Transition Center</h1>
+              <h1 className="text-2xl font-black font-display tracking-tight">Shift Handover</h1>
               <p className={`text-xs max-w-xl font-medium leading-relaxed ${
                 isDarkMode ? "text-slate-300" : "text-indigo-100"
               }`}>
-                Perform clinical shift endorsement safely. Compile outgoing summaries for boarding department cases, or instantly paste EMR dumps to auto-structure printable shift transition sheets.
+                Hand over your patients to the next doctor. First choose where the patient list comes from, below.
               </p>
             </div>
             {onNavigateToTab && (
@@ -3902,46 +3902,54 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
         </div>
       )}
 
-      {/* Navigation Sub-Tabs Toggle */}
-      <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-1.5 bg-slate-100 dark:bg-slate-900 p-1.5 rounded-xl border border-slate-200/60 dark:border-slate-800/80 w-full sm:w-fit no-print">
-        <button
-          onClick={() => {
-            setActiveSubTab("registry");
-            setIsViewingSheet(false);
-          }}
-          className={`px-3.5 py-2.5 rounded-lg text-xs font-bold transition-all flex items-center justify-between sm:justify-start gap-2 ${
-            activeSubTab === "registry"
-              ? "bg-white dark:bg-slate-950 text-indigo-600 dark:text-indigo-400 shadow-sm"
-              : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
-          }`}
-        >
-          <span className="flex items-center gap-2">
-            <LayoutList className="w-4 h-4 shrink-0" />
-            <span>Direct from ErMate Case Log</span>
-          </span>
-          <span className="text-[10px] px-1.5 py-0.2 bg-slate-100 dark:bg-slate-800 text-slate-500 rounded-full font-mono font-bold shrink-0">
-            {activeCases.length}
-          </span>
-        </button>
-        <button
-          onClick={() => {
-            setActiveSubTab("quickpaste");
-            setIsViewingSheet(false);
-          }}
-          className={`px-3.5 py-2.5 rounded-lg text-xs font-bold transition-all flex items-center justify-between sm:justify-start gap-2 ${
-            activeSubTab === "quickpaste"
-              ? "bg-white dark:bg-slate-950 text-indigo-600 dark:text-indigo-400 shadow-sm"
-              : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
-          }`}
-        >
-          <span className="flex items-center gap-2">
-            <ClipboardCopy className="w-4 h-4 shrink-0" />
-            <span>Other than ErMate (Direct EMR Handover)</span>
-          </span>
-          <span className="text-[10px] px-1.5 py-0.2 bg-emerald-100 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 rounded-full font-mono font-bold shrink-0">
-            Always Free
-          </span>
-        </button>
+      {/* Navigation Sub-Tabs Toggle: two clearly labelled choices */}
+      <div className="no-print space-y-2">
+        <p className="text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 px-1">Where are your patients?</p>
+        <div role="tablist" aria-label="Handover source" className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeSubTab === "registry"}
+            onClick={() => {
+              setActiveSubTab("registry");
+              setIsViewingSheet(false);
+            }}
+            className={`text-left rounded-2xl border-2 p-3.5 transition-all flex items-start gap-3 cursor-pointer ${
+              activeSubTab === "registry"
+                ? "border-indigo-500 bg-indigo-50 dark:bg-indigo-950/40"
+                : "border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-slate-300 dark:hover:border-slate-700"
+            }`}
+          >
+            <LayoutList className={`w-5 h-5 shrink-0 mt-0.5 ${activeSubTab === "registry" ? "text-indigo-600 dark:text-indigo-400" : "text-slate-400"}`} />
+            <span className="flex-1 min-w-0">
+              <span className="block text-sm font-extrabold text-slate-900 dark:text-white">Patients in ErMate</span>
+              <span className="block text-xs text-slate-500 dark:text-slate-400 mt-0.5">Patients you added in ErMate. Tick who to hand over.</span>
+            </span>
+            <span className="text-[11px] px-2 py-0.5 bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-full font-mono font-bold shrink-0 border border-slate-200 dark:border-slate-700">
+              {activeCases.length}
+            </span>
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeSubTab === "quickpaste"}
+            onClick={() => {
+              setActiveSubTab("quickpaste");
+              setIsViewingSheet(false);
+            }}
+            className={`text-left rounded-2xl border-2 p-3.5 transition-all flex items-start gap-3 cursor-pointer ${
+              activeSubTab === "quickpaste"
+                ? "border-indigo-500 bg-indigo-50 dark:bg-indigo-950/40"
+                : "border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-slate-300 dark:hover:border-slate-700"
+            }`}
+          >
+            <ClipboardCopy className={`w-5 h-5 shrink-0 mt-0.5 ${activeSubTab === "quickpaste" ? "text-indigo-600 dark:text-indigo-400" : "text-slate-400"}`} />
+            <span className="flex-1 min-w-0">
+              <span className="block text-sm font-extrabold text-slate-900 dark:text-white">Paste from hospital EMR</span>
+              <span className="block text-xs text-slate-500 dark:text-slate-400 mt-0.5">For patients not in ErMate. Paste the list and ErMate arranges it.</span>
+            </span>
+          </button>
+        </div>
       </div>
 
       {/* SUB-TAB 1: REGISTERED ER CASES HANDOVER */}
@@ -3954,8 +3962,8 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
               
               <div className="flex items-center justify-between border-b pb-3">
                 <div>
-                  <h3 className="text-sm font-bold text-slate-800 dark:text-white">Select Cases for Shift Endorsement</h3>
-                  <p className="text-[11px] text-slate-400 font-medium">Toggle checkbox to include the patient in the compiled printable handover.</p>
+                  <h3 className="text-sm font-bold text-slate-800 dark:text-white">Choose patients to hand over</h3>
+                  <p className="text-[11px] text-slate-400 font-medium">Tick each patient to include in the handover sheet.</p>
                 </div>
                 <button
                   onClick={handleSelectAllRegistry}
