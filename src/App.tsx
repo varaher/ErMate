@@ -7006,7 +7006,7 @@ const handleSignOut = async () => {
             return (
               <button
                 key={tab.id}
-                data-coach={nav-${tab.id}} onClick={() => navigateToTab(tab.id)}
+                data-coach={"nav-" + tab.id} onClick={() => navigateToTab(tab.id)}
                 className={`text-xs px-3.5 py-2 rounded-xl transition-all flex items-center gap-2 shrink-0 cursor-pointer min-h-[38px] active:scale-95 ${
                   active
                     ? "bg-indigo-50/90 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200/80 dark:border-indigo-800/80 font-bold shadow-2xs"
@@ -7051,7 +7051,7 @@ const handleSignOut = async () => {
               <button
                 key={tab.id}
                 type="button"
-                data-coach={nav-${tab.id}} aria-label={tab.label}
+               data-coach={"nav-" + tab.id} aria-label={tab.label}
                 onClick={() => {
                   if (tab.id === "scribe") {
                     // Opening MATE from the tab bar is the general conversation, not a patient focus.

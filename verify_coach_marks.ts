@@ -41,7 +41,7 @@ const more = readFileSync("src/components/MoreView.tsx", "utf8");
 const coach = readFileSync("src/components/CoachMarks.tsx", "utf8");
 t("App mounts CoachMarks once", (app.match(/<CoachMarks/g) || []).length === 1);
 t("App blocks tips during case/form/dialogs", /<CoachMarks[\s\S]*blocked=\{Boolean\(selectedCaseId[\s\S]*activeFormMode[\s\S]*showPaywall/.test(app));
-t("both navs carry data-coach", (app.match(/data-coach=\{`nav-\$\{tab\.id\}`\}/g) || []).length === 2);
+t("both navs carry data-coach", (app.match(/data-coach=\{"nav-" \+ tab\.id\}/g) || []).length === 2);
 for (const k of ["shift", "new-patient", "voice-scribe", "quick-tools", "stats"]) t(`Home has data-coach="${k}"`, dash.includes(`data-coach="${k}"`));
 t("old auto-open tour removed from Home", !dash.includes("<AppTour") && !dash.includes("shouldAutoOpenTour"));
 t("More replay resets tips and opens Home", /resetTours\(profile\?\.email\); onNavigateToTab\("dashboard"\)/.test(more) && more.includes('data-testid="take-app-tour"'));
