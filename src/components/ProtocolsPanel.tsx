@@ -1,13 +1,15 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, ChevronDown, ChevronRight, Flag, Search } from "lucide-react";
 import { PROTOCOL_CHAPTERS, searchProtocols } from "../data/protocols";
 import type { ProtocolTopic } from "../data/protocols/protocolTypes";
 import { chipsForTopic, sectionIndexForKind, investigationItems, itemLine } from "../data/protocols/protocolViews";
+import { requestTour } from "../lib/coachTours";
 import ProtocolFlagDialog, { type FlagTarget } from "./ProtocolFlagDialog";
 
 /** Read-only protocol reader: chapter list + search on one side, the selected protocol on the other. */
 export default function ProtocolsPanel() {
   const [query, setQuery] = useState("");
+  useEffect(() => { requestTour("protocols"); }, []);
   const [flagTarget, setFlagTarget] = useState<FlagTarget | null>(null);
   const [selectedId, setSelectedId] = useState<string>(PROTOCOL_CHAPTERS[0]?.topics[0]?.id || "");
   const [openChapters, setOpenChapters] = useState<Record<string, boolean>>(

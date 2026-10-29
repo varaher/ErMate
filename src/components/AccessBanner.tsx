@@ -11,7 +11,7 @@ export function AccessBanner({ access, onActivate }: { access: AccessResult; onA
     : "border-purple-200 bg-purple-50 text-purple-800 dark:border-purple-900/50 dark:bg-purple-950/30 dark:text-purple-200";
   const Icon = locked ? Lock : Clock;
   return (
-    <div role="status" className={`mx-3 mt-2 flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-medium ${tone}`}>
+    <div role="status" data-coach="plan-banner" className={`mx-3 mt-2 flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-medium ${tone}`}>
       <Icon className="h-4 w-4 shrink-0" />
       <span className="flex-1">{access.message}</span>
       {access.state !== "paid" && (

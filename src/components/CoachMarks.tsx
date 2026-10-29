@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { CoachStep, TOURS, TourId, tourForTab, isTourSeen, markTourSeen, markAllToursSeen } from "../lib/coachTours";
+import { CoachStep, TourId, tourForTab, unseenSteps, markTourSeen, markAllToursSeen, COACH_REQUEST_EVENT } from "../lib/coachTours";
 
 /**
  * CoachMarks - one-time pointer walkthrough per page (spotlight + Next / Back / Skip).
@@ -53,20 +53,37 @@ export default function CoachMarks({ activeTab, email, blocked }: Props) {
     setSteps([]);
   }, [tour, email]);
 
+  // Open a tour if this doctor has unseen steps for it. Returning doctors only get the newer steps.
+  const tryOpen = useCallback((id: TourId) => {
+    const usable = unseenSteps(email, id).filter((s) => !s.target || findTarget(s));
+    if (usable.length === 0) return false; // nothing new, or page not rendered yet: try again on the next visit
+    setSteps(usable);
+    setIndex(0);
+    setTour(id);
+    return true;
+  }, [email]);
+
   // Decide whether to open a tour for this page.
   useEffect(() => {
     if (blocked) { setTour(null); setSteps([]); return; }
     const id = tourForTab(activeTab);
-    if (!id || isTourSeen(email, id)) { setTour(null); setSteps([]); return; }
-    const timer = window.setTimeout(() => {
-      const usable = TOURS[id].filter((s) => !s.target || findTarget(s));
-      if (usable.length === 0) return; // page not rendered yet: try again on the next visit
-      setSteps(usable);
-      setIndex(0);
-      setTour(id);
-    }, DELAY_MS);
+    if (!id || unseenSteps(email, id).length === 0) { setTour(null); setSteps([]); return; }
+    const timer = window.setTimeout(() => { tryOpen(id); }, DELAY_MS);
     return () => window.clearTimeout(timer);
-  }, [activeTab, email, blocked]);
+  }, [activeTab, email, blocked, tryOpen]);
+
+  // Pages that are not tabs (the Protocols reader) can request their own tour.
+  useEffect(() => {
+    if (blocked) return;
+    let timer = 0;
+    const onRequest = (e: Event) => {
+      const id = (e as CustomEvent).detail as TourId;
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => { if (!tour) tryOpen(id); }, DELAY_MS);
+    };
+    window.addEventListener(COACH_REQUEST_EVENT, onRequest);
+    return () => { window.removeEventListener(COACH_REQUEST_EVENT, onRequest); window.clearTimeout(timer); };
+  }, [blocked, tour, tryOpen]);
 
   const step = tour ? steps[index] : undefined;
 

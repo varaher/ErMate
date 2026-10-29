@@ -12,6 +12,7 @@ export function MateVoiceToggle() {
   return (
     <button
       type="button"
+      data-coach="mate-voice"
       onClick={() => {
         const next = !on;
         setMateVoiceEnabled(next);
