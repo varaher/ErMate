@@ -1,0 +1,87 @@
+import { PEDIATRIC_DRUGS, DRUG_CATEGORIES } from "./src/data/pediatricDrugs";
+import { getDrugSafetyNotices } from "./src/data/pediatricDrugSafety";
+let fail = 0;
+const t = (n: string, ok: boolean) => { if (!ok) { console.log("FAIL " + n); fail++; } };
+const get = (id: string) => PEDIATRIC_DRUGS.find(d => d.id === id)!;
+const dv = (id: string, w: number) => get(id).calculateDose!(w).doseValue;
+const bd = (id: string, w: number) => get(id).calculateDose!(w).breakdown || "";
+
+const NEW = ["atropine","adenosine","amiodarone","lidocaine","magnesium-sulfate","calcium-gluconate","sodium-bicarbonate","noradrenaline","adrenaline-infusion","milrinone","nitroglycerin","etomidate","propofol","rocuronium","succinylcholine","midazolam-sedation","ketamine","fentanyl","morphine","tramadol","ketorolac","midazolam-seizure","lorazepam","levetiracetam","iv-fluid-bolus","dextrose-10","mannitol","hypertonic-saline-3","insulin-dka","glucagon","naloxone","flumazenil","acetylcysteine","pralidoxime","activated-charcoal","methylene-blue","anti-snake-venom","ipratropium","budesonide-neb","meropenem","gentamicin","amikacin","piperacillin-tazobactam","linezolid","doxycycline","oseltamivir","fluconazole","zinc","tranexamic-acid","hydralazine","labetalol"];
+t("all new ids present", NEW.every(id => !!get(id)));
+t("ids unique", new Set(PEDIATRIC_DRUGS.map(d => d.id)).size === PEDIATRIC_DRUGS.length);
+const catNames = new Set(DRUG_CATEGORIES.map(c => c.name));
+t("every drug has a known category", PEDIATRIC_DRUGS.every(d => catNames.has(d.category)));
+const countCat = (n: string) => PEDIATRIC_DRUGS.filter(d => d.category === n).length;
+for (const c of ["Resuscitation & Arrhythmia","Vasoactive Infusions","Intubation (RSI)","Sedation & Analgesia","Fluids & Metabolic","Antidotes & Toxicology"]) t(`category ${c} not empty`, countCat(c) > 0);
+
+for (const id of NEW) for (const w of [3, 5, 8, 12, 20, 30, 45, 70, 120]) {
+  const r = get(id).calculateDose!(w);
+  const txt = `${r.doseValue} ${r.breakdown || ""} ${r.notes || ""}`;
+  t(`${id} @${w}kg no NaN/undefined/Infinity`, !!r.doseValue && !/NaN|undefined|Infinity/.test(txt));
+}
+// spot checks against hand arithmetic
+t("atropine 10kg = 0.2 mg", dv("atropine", 10).startsWith("0.2 mg"));
+t("atropine 80kg capped 1 mg", dv("atropine", 80).startsWith("1 mg"));
+t("atropine 20kg cap 0.5 n/a (0.4)", dv("atropine", 20).startsWith("0.4 mg"));
+t("atropine 30kg capped 0.5", dv("atropine", 30).startsWith("0.5 mg"));
+t("adenosine 10kg 1 / 2 mg", dv("adenosine", 10).includes("1st: 1 mg, 2nd: 2 mg"));
+t("adenosine 80kg 6 / 12", dv("adenosine", 80).includes("1st: 6 mg, 2nd: 12 mg"));
+t("amiodarone 10kg 50 mg = 1 mL", dv("amiodarone", 10).startsWith("50 mg") && bd("amiodarone", 10).includes("1 mL"));
+t("amiodarone cap 300", dv("amiodarone", 100).startsWith("300 mg"));
+t("calcium gluconate 10kg 600 mg = 6 mL", dv("calcium-gluconate", 10).startsWith("600 mg") && bd("calcium-gluconate", 10).includes("6 mL"));
+t("calcium gluconate cap 2000", dv("calcium-gluconate", 70).startsWith("2000 mg"));
+t("bicarb 10kg 10 mEq = 10 mL", dv("sodium-bicarbonate", 10).startsWith("10 mEq") && bd("sodium-bicarbonate", 10).includes("10 mL"));
+t("mag 20kg 500-1000 mg", dv("magnesium-sulfate", 20).startsWith("500-1000 mg"));
+t("mag cap 2000", dv("magnesium-sulfate", 100).startsWith("1250-2000") || dv("magnesium-sulfate", 100).startsWith("2000"));
+t("midazolam seizure 10kg 2-3 mg", dv("midazolam-seizure", 10).startsWith("2-3 mg"));
+t("midazolam seizure cap 10", dv("midazolam-seizure", 60).startsWith("10 mg"));
+t("lorazepam 10kg 1 mg, cap 4", dv("lorazepam", 10).startsWith("1 mg") && dv("lorazepam", 80).startsWith("4 mg"));
+t("levetiracetam 20kg 800-1200", dv("levetiracetam", 20).startsWith("800-1200 mg"));
+t("levetiracetam cap 4500", dv("levetiracetam", 100).startsWith("4000-4500") || dv("levetiracetam", 100).startsWith("4500"));
+t("fentanyl 10kg 10-20 mcg", dv("fentanyl", 10).startsWith("10-20 mcg"));
+t("fentanyl cap 100", dv("fentanyl", 80).startsWith("80-100") || dv("fentanyl", 80).startsWith("100"));
+t("ketamine 10kg 10-20 mg", dv("ketamine", 10).startsWith("10-20 mg"));
+t("etomidate 10kg 3 mg", dv("etomidate", 10).startsWith("3 mg"));
+t("succinylcholine 10kg 10-20", dv("succinylcholine", 10).startsWith("10-20 mg"));
+t("rocuronium 10kg 10-12", dv("rocuronium", 10).startsWith("10-12 mg"));
+t("ketorolac 10kg 5 mg; cap 15", dv("ketorolac", 10).startsWith("5 mg") && dv("ketorolac", 60).startsWith("15 mg"));
+t("tramadol refuses small", /Not advised/.test(dv("tramadol", 20)));
+t("tramadol 50kg 50-100", dv("tramadol", 50).startsWith("50-100 mg"));
+t("noradrenaline rule of 6 (10 kg = 60 mg)", bd("noradrenaline", 10).includes("60 mg") && bd("noradrenaline", 10).includes("1 mL/h = 1 mcg/kg/min"));
+t("noradrenaline start 0.05", dv("noradrenaline", 10).includes("start 0.05"));
+t("iv bolus 10kg 200 mL", dv("iv-fluid-bolus", 10).startsWith("200 mL"));
+t("dextrose 10 kg 20-50 mL of 10%", dv("dextrose-10", 10).startsWith("20-50 mL"));
+t("mannitol 20kg 5-20 g, cap 50", dv("mannitol", 20).startsWith("5-20 g") && dv("mannitol", 100).startsWith("25-50 g"));
+t("3% saline 10kg 20-50 mL", dv("hypertonic-saline-3", 10).startsWith("20-50 mL"));
+t("insulin 20 kg 1-2 units/h", dv("insulin-dka", 20).startsWith("1-2 units/hour"));
+t("insulin says no bolus", /NOT give an insulin bolus/i.test(bd("insulin-dka", 20)));
+t("glucagon bands", dv("glucagon", 20).startsWith("0.5 mg") && dv("glucagon", 30).startsWith("1 mg"));
+t("naloxone 10kg 0.1 start, 1 full", dv("naloxone", 10).startsWith("0.1 mg") && dv("naloxone", 10).includes("up to 1 mg"));
+t("flumazenil 10kg 0.1 mg", dv("flumazenil", 10).startsWith("0.1 mg"));
+t("flumazenil cap 0.2", dv("flumazenil", 60).startsWith("0.2 mg"));
+t("NAC 20kg 3000 mg / 1000 / 2000", dv("acetylcysteine", 20).startsWith("3000 mg over 1 h, then 1000 mg over 4 h, then 2000 mg over 16 h"));
+t("NAC <40kg diluent 3/7/14 mL/kg", bd("acetylcysteine", 20).includes("60 mL") && bd("acetylcysteine", 20).includes("140 mL") && bd("acetylcysteine", 20).includes("280 mL"));
+t("NAC >=40kg 200/500/1000", bd("acetylcysteine", 50).includes("200 mL") && bd("acetylcysteine", 50).includes("1000 mL"));
+t("pralidoxime 20kg 500-1000", dv("pralidoxime", 20).startsWith("500-1000 mg"));
+t("charcoal 20kg 20 g; cap 50", dv("activated-charcoal", 20).startsWith("20 g") && dv("activated-charcoal", 80).startsWith("50 g"));
+t("methylene blue 10kg 10-20 mg", dv("methylene-blue", 10).startsWith("10-20 mg"));
+t("ASV fixed 10 vials", dv("anti-snake-venom", 15).includes("10 vials") && dv("anti-snake-venom", 70).includes("10 vials"));
+t("ipratropium bands", dv("ipratropium", 15).startsWith("250 mcg") && dv("ipratropium", 25).startsWith("500 mcg"));
+t("meropenem 10kg 200 mg; cap 2000", dv("meropenem", 10).startsWith("200 mg") && dv("meropenem", 120).startsWith("2000 mg"));
+t("gentamicin 10kg 50-75", dv("gentamicin", 10).startsWith("50-75 mg"));
+t("amikacin 10kg 150-225", dv("amikacin", 10).startsWith("150-225 mg"));
+t("pip-taz 20kg 2000 mg; cap 4000", dv("piperacillin-tazobactam", 20).startsWith("2000 mg") && dv("piperacillin-tazobactam", 60).startsWith("4000 mg"));
+t("linezolid 20kg 200; >=40kg 600 q12", dv("linezolid", 20).startsWith("200 mg") && dv("linezolid", 45).startsWith("600 mg"));
+t("doxycycline 20kg 44 mg; cap 100", dv("doxycycline", 20).startsWith("44 mg") && dv("doxycycline", 80).startsWith("100 mg"));
+t("oseltamivir bands", dv("oseltamivir", 14).startsWith("30 mg") && dv("oseltamivir", 20).startsWith("45 mg") && dv("oseltamivir", 30).startsWith("60 mg") && dv("oseltamivir", 50).startsWith("75 mg"));
+t("oseltamivir infant 3 mg/kg", dv("oseltamivir", 6).startsWith("18 mg"));
+t("zinc bands", dv("zinc", 5).startsWith("10 mg") && dv("zinc", 12).startsWith("20 mg"));
+t("TXA 20kg 300 mg; cap 1000", dv("tranexamic-acid", 20).startsWith("300 mg") && dv("tranexamic-acid", 90).startsWith("1000 mg"));
+t("hydralazine cap 20", dv("hydralazine", 150).startsWith("15-20 mg"));
+t("labetalol 10kg 2-10 mg", dv("labetalol", 10).startsWith("2-10 mg"));
+
+// safety notices attach
+const hasSev = (id: string, sev: string) => getDrugSafetyNotices(get(id), null).some(n => n.severity === sev);
+for (const id of ["succinylcholine","flumazenil","tramadol","insulin-dka","noradrenaline","adrenaline-infusion","methylene-blue"]) t(`${id} danger notice`, hasSev(id, "danger"));
+for (const id of NEW.filter(i => !["zinc","iv-fluid-bolus","dextrose-10","glucagon","milrinone","nitroglycerin","ipratropium","budesonide-neb","oseltamivir","fluconazole","doxycycline","levetiracetam"].includes(i))) t(`${id} has a notice`, getDrugSafetyNotices(get(id), null).length > 0);
+console.log(fail ? fail + " FAILED" : "ALL PASS"); process.exit(fail ? 1 : 0);

@@ -9,7 +9,7 @@ const dose = (id: string, w: number) => get(id).calculateDose!(w);
 // Unique ids (duplicate React keys previously made two cards expand together)
 const ids = PEDIATRIC_DRUGS.map((d) => d.id);
 t("all drug ids are unique", new Set(ids).size === ids.length);
-t("127 drugs still present", PEDIATRIC_DRUGS.length === 127);
+t("181 drugs present (127 + 3 antispasmodics + 51 emergency)", PEDIATRIC_DRUGS.length === 181);
 
 // Adrenaline single-dose caps
 t("adrenaline IM 10 kg unchanged (0.10 mL)", dose("adrenaline", 10).doseValue.includes("Anaph IM: 0.10 mL"));

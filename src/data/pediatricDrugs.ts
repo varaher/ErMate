@@ -9,6 +9,9 @@ import { GASTROINTESTINAL_DRUGS } from "./pediatricDrugs_gastrointestinal";
 import { ANTIHELMINTICS_DRUGS } from "./pediatricDrugs_antihelmintics";
 import { ANTIHYPERTENSIVES_DRUGS } from "./pediatricDrugs_antihypertensives";
 import { ANTIVIRAL_DRUGS } from "./pediatricDrugs_antiviral";
+import { ANTISPASMODIC_DRUGS } from "./pediatricDrugs_antispasmodics";
+import { EMERGENCY_DRUGS_A } from "./pediatricDrugs_emergency";
+import { EMERGENCY_DRUGS_B } from "./pediatricDrugs_emergency2";
 
 export type { PediatricDrug, DrugCategory };
 
@@ -105,6 +108,13 @@ export const DRUG_CATEGORIES: DrugCategory[] = [
     bgClass: "bg-teal-500/10 dark:bg-teal-950/20"
   },
   {
+    id: "anti-spasmodics",
+    name: "Anti-Spasmodics",
+    iconName: "Target",
+    colorClass: "text-orange-500",
+    bgClass: "bg-orange-500/10 dark:bg-orange-950/20"
+  },
+  {
     id: "anti-histaminics",
     name: "Anti-Histaminics",
     iconName: "Leaf",
@@ -168,6 +178,48 @@ export const DRUG_CATEGORIES: DrugCategory[] = [
     bgClass: "bg-emerald-600/10 dark:bg-emerald-950/20"
   },
   {
+    id: "resuscitation",
+    name: "Resuscitation & Arrhythmia",
+    iconName: "Heart",
+    colorClass: "text-red-600",
+    bgClass: "bg-red-600/10 dark:bg-red-950/20"
+  },
+  {
+    id: "vasoactive-infusions",
+    name: "Vasoactive Infusions",
+    iconName: "Zap",
+    colorClass: "text-rose-500",
+    bgClass: "bg-rose-500/10 dark:bg-rose-950/20"
+  },
+  {
+    id: "rsi",
+    name: "Intubation (RSI)",
+    iconName: "Wind",
+    colorClass: "text-indigo-500",
+    bgClass: "bg-indigo-500/10 dark:bg-indigo-950/20"
+  },
+  {
+    id: "sedation-analgesia",
+    name: "Sedation & Analgesia",
+    iconName: "Moon",
+    colorClass: "text-violet-600",
+    bgClass: "bg-violet-600/10 dark:bg-violet-950/20"
+  },
+  {
+    id: "fluids-metabolic",
+    name: "Fluids & Metabolic",
+    iconName: "Droplet",
+    colorClass: "text-cyan-500",
+    bgClass: "bg-cyan-500/10 dark:bg-cyan-950/20"
+  },
+  {
+    id: "antidotes",
+    name: "Antidotes & Toxicology",
+    iconName: "ShieldAlert",
+    colorClass: "text-amber-600",
+    bgClass: "bg-amber-600/10 dark:bg-amber-950/20"
+  },
+  {
     id: "miscellaneous",
     name: "Miscellaneous",
     iconName: "Box",
@@ -186,5 +238,8 @@ export const PEDIATRIC_DRUGS: PediatricDrug[] = [
   ...GASTROINTESTINAL_DRUGS,
   ...ANTIHELMINTICS_DRUGS,
   ...ANTIHYPERTENSIVES_DRUGS,
-  ...ANTIVIRAL_DRUGS
+  ...ANTIVIRAL_DRUGS,
+  ...ANTISPASMODIC_DRUGS,
+  ...EMERGENCY_DRUGS_A,
+  ...EMERGENCY_DRUGS_B
 ];

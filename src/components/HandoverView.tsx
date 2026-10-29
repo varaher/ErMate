@@ -1,3 +1,5 @@
+import { CriticalAlertBadge } from “./shared/CriticalAlertBadge”;
+import { computeCriticalAlerts } from “../utils/criticalAlerts”;
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { formatAge } from "../utils/ageLabel";
 import { 

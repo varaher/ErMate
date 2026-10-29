@@ -1,3 +1,5 @@
+import { CriticalAlertBadge } from “./shared/CriticalAlertBadge”;
+import { computeCriticalAlerts } from “../utils/criticalAlerts”;
 import VoiceRecorder from "./shared/VoiceRecorder";
 
 import React, { useState, useEffect } from "react";
