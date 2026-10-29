@@ -12,7 +12,7 @@ export default defineConfig(() => {
       VitePWA({
         registerType: 'prompt',
         injectRegister: 'auto',
-        includeAssets: ['favicon.png', 'icon.svg', 'icon-192.png', 'icon-512.png', 'logo.png'],
+        includeAssets: ['favicon-v4.png', 'pwa-192.png', 'pwa-512.png', 'pwa-maskable-512.png', 'icon-192.png', 'icon-512.png', 'logo.png'],
         workbox: {
           cleanupOutdatedCaches: true,
           skipWaiting: false,
@@ -57,42 +57,15 @@ export default defineConfig(() => {
           name: 'ErMate',
           short_name: 'ErMate',
           description: 'The Scribe Companion for ER',
-          theme_color: '#0D2B1A',
+          theme_color: '#4f46e5',
           background_color: '#ffffff',
           display: 'standalone',
           orientation: 'portrait',
           start_url: '/',
           icons: [
-            {
-              src: '/icon-192.png',
-              sizes: '192x192',
-              type: 'image/png',
-              purpose: 'any',
-            },
-            {
-              src: '/icon-512.png',
-              sizes: '512x512',
-              type: 'image/png',
-              purpose: 'any',
-            },
-            {
-              src: '/icons/icon-192.png',
-              sizes: '192x192',
-              type: 'image/png',
-              purpose: 'any',
-            },
-            {
-              src: '/icons/icon-512.png',
-              sizes: '512x512',
-              type: 'image/png',
-              purpose: 'any',
-            },
-            {
-              src: '/icon.svg',
-              sizes: 'any',
-              type: 'image/svg+xml',
-              purpose: 'any',
-            },
+            { src: '/pwa-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
+            { src: '/pwa-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
+            { src: '/pwa-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
           ],
         },
         devOptions: {

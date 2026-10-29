@@ -1,10 +1,8 @@
-const CACHE_NAME = 'ermate-cache-v3';
+const CACHE_NAME = 'ermate-cache-v4';
 const ASSETS_TO_CACHE = [
   '/',
   '/index.html',
-  '/manifest.json',
   '/favicon.png',
-  '/icon.svg',
   '/icon-192.png',
   '/icon-512.png',
   '/logo.png',

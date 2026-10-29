@@ -49,6 +49,7 @@ import { checkDischargeCompleteness } from "../utils/dischargeCompleteness";
 import { tryDeterministicFastPath } from "../mate/mateFastPath";
 import { describeNewCriticalAfterUpdate } from "../utils/criticalSpeech";
 import { speakMate } from "../mate/mateSpeech";
+import { MateVoiceToggle } from "./MateVoiceToggle";
 import { interpretWithServer } from "../mate/mateInterpreterClient";
 import { formatCaseCompletenessReply, formatDischargePendingReply } from "../mate/mateReplies";
 import { normalizeMateBedId } from "../mate/mateBedModel";
@@ -3274,6 +3275,8 @@ export default function VoiceScribeChatView({
               <span className="truncate max-w-[80px]">{historyLoadError || `Failed (${failedMessages.size || 1})`}</span>
             </div>
           )}
+
+          <MateVoiceToggle />
 
           {!isDiscussionOnly && (
             <button
