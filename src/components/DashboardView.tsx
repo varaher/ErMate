@@ -1,6 +1,6 @@
-import { CriticalAlertBadge } from “./shared/CriticalAlertBadge”;
-import { computeCriticalAlerts } from “../utils/criticalAlerts”;
 import VoiceRecorder from "./shared/VoiceRecorder";
+import { CriticalAlertBadge } from "./shared/CriticalAlertBadge";
+import { computeCriticalAlerts } from "../utils/criticalAlerts";
 
 import React, { useState, useEffect } from "react";
 import { 
@@ -1457,6 +1457,7 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
                               <h4 className="text-sm font-bold text-slate-800 dark:text-white truncate">
                                 {c.patient.name}
                               </h4>
+                              <CriticalAlertBadge alerts={computeCriticalAlerts(c)} />
                               {c.isPediatric ? (
                                 <span className="text-[9px] bg-sky-50 text-sky-700 border border-sky-100 px-1.5 py-0.2 rounded font-semibold uppercase">
                                   Pediatric

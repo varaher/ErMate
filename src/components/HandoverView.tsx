@@ -1,6 +1,6 @@
-import { CriticalAlertBadge } from “./shared/CriticalAlertBadge”;
-import { computeCriticalAlerts } from “../utils/criticalAlerts”;
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { CriticalAlertBadge } from "./shared/CriticalAlertBadge";
+import { computeCriticalAlerts } from "../utils/criticalAlerts";
 import { formatAge } from "../utils/ageLabel";
 import { 
   Users, ClipboardCopy, FileText, Printer, Plus, Trash2, Edit2, Pencil,
@@ -4018,6 +4018,7 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
                             }`}>
                               {String(c.patient.triageCategory || "P2").split(" ")[0]}
                             </span>
+                            <CriticalAlertBadge alerts={computeCriticalAlerts(c)} />
                           </div>
                           
                           <p className="text-slate-600 dark:text-slate-400 truncate"><span className="font-semibold text-slate-700 dark:text-slate-300">Complaint:</span> {c.patient.presentingComplaint}</p>
