@@ -21,6 +21,7 @@ export const DYSPNEA_ADULT: ProtocolTopic = {
   sections: [
     {
       heading: "1. Initial assessment and stabilisation",
+      kind: "first10",
       note: "Critically unstable: threatened airway, tachypnea, increased work of breathing, hypotension.",
       items: [
         { label: "Airway", text: "Protect immediately. Suction, position; RSI / BMV / NIV (CPAP/BiPAP).", critical: true },
@@ -32,6 +33,7 @@ export const DYSPNEA_ADULT: ProtocolTopic = {
     },
     {
       heading: "Stable presentation",
+      kind: "assessment",
       items: [
         { label: "ABCDE", text: "Primary survey and triage." },
         { label: "Monitoring", text: "Continuous cardiac monitoring, pulse oximetry, vitals." },
@@ -41,6 +43,7 @@ export const DYSPNEA_ADULT: ProtocolTopic = {
     },
     {
       heading: "2. Workup and diagnostic panel",
+      kind: "investigations",
       items: [
         { label: "Labs", text: "CBC, CRP, RFT, LFT, serum electrolytes, urea. HS-Troponin and D-Dimer (cardiac / PE). Blood culture and sensitivity (sepsis / infection)." },
         { label: "CXR", text: "Rule out cardiomegaly, pleural effusion, pneumonia, pneumothorax." },
@@ -51,6 +54,7 @@ export const DYSPNEA_ADULT: ProtocolTopic = {
     },
     {
       heading: "3A. Cardiac dyspnea",
+      kind: "treatment",
       note: "Screen with 12-lead ECG, bedside echo / focused POCUS, HS-Troponin and NT-proBNP. Differentiate: acute pulmonary edema, ACS, tamponade / effusion.",
       items: [
         { label: "Acute pulmonary edema", text: "Confirm SBP before nitrate therapy." },
@@ -69,6 +73,7 @@ export const DYSPNEA_ADULT: ProtocolTopic = {
     },
     {
       heading: "3B. Pulmonary dyspnea",
+      kind: "treatment",
       items: [
         { label: "COPD / asthma exacerbation", text: "Neb Duolin / Budecort STAT; continue back-to-back Duolin nebulisations." },
         { text: "Systemic steroids: Inj Hydrocortisone 100–200 mg IV OR Inj Ivepred 20 mg IV." },
@@ -82,6 +87,7 @@ export const DYSPNEA_ADULT: ProtocolTopic = {
     },
     {
       heading: "3C. Vascular dyspnea — pulmonary embolism",
+      kind: "treatment",
       items: [
         { label: "Evaluate", text: "Signs of RV dysfunction; dilated RA/RV on echo; sinus tachycardia / S1Q3T3 on ECG." },
         { label: "Biomarkers", text: "D-Dimer, HS-Troponin, NT-proBNP." },
@@ -94,6 +100,7 @@ export const DYSPNEA_ADULT: ProtocolTopic = {
     },
     {
       heading: "3D. Airway and allergy",
+      kind: "treatment",
       items: [
         { label: "Anaphylaxis", text: "Inj Epinephrine 0.5 mL IM (1:1000) in anterolateral thigh STAT. Repeat every 5–15 min (up to 3 doses).", critical: true },
         { text: "Inj Hydrocortisone 100–200 mg IV. Inj Avil 25 mg slow IV." },
@@ -106,6 +113,7 @@ export const DYSPNEA_ADULT: ProtocolTopic = {
     },
     {
       heading: "3E. Metabolic and other causes",
+      kind: "treatment",
       items: [
         { label: "Metabolic acidosis / uremia", text: "Identify the cause (DKA, uremia, lactic acidosis). Targeted correction. O2 support. NIV if needed (SOS) to assist respiratory compensation." },
         { label: "Severe anemia / high output", text: "Send blood grouping and crossmatch STAT. Transfuse PRBC. Work up the underlying bleeding / systemic source." },
@@ -114,6 +122,7 @@ export const DYSPNEA_ADULT: ProtocolTopic = {
     },
     {
       heading: "3F. Pneumothorax",
+      kind: "treatment",
       items: [
         { label: "Confirm", text: "Bedside lung POCUS (absent lung sliding) or portable CXR." },
         { label: "Tension pneumothorax", text: "Hypotension, tracheal deviation: immediate needle decompression (2nd intercostal space, mid-clavicular line, or 5th intercostal space, anterior axillary line).", critical: true },
@@ -123,6 +132,7 @@ export const DYSPNEA_ADULT: ProtocolTopic = {
     },
     {
       heading: "4. Disposition",
+      kind: "disposition",
       items: [
         { label: "ICU", text: "Hemodynamic instability / shock; intubated or NIV-dependent; severe acidosis / hypercapnia; persistent hypotension needing pressors; post-pericardiocentesis or emergent Cath Lab intervention." },
         { label: "Ward", text: "Persistent O2 requirement; high-risk PE / ACS / heart failure; hemodynamically stable after treatment with a resolving O2 requirement; unable to manage at home." },

@@ -1,6 +1,9 @@
 // Protocol library data model. Plain data, no AI: what is published is exactly what is shown.
 export type ProtocolStatus = "draft" | "reviewed";
 
+/** What a section is for. Drives the jump chips and the "investigations to send" box. Never changes the wording. */
+export type ProtocolSectionKind = "recognition" | "assessment" | "first10" | "investigations" | "treatment" | "disposition" | "pitfalls";
+
 export interface ProtocolItem {
   /** Short label, e.g. "Anaphylaxis" */
   label?: string;
@@ -16,10 +19,14 @@ export interface ProtocolItem {
   tier?: "guideline" | "local";
   /** Hospital / department that follows a "local" step, e.g. "Rajagiri Hospital ED" */
   origin?: string;
+  /** True when this step is an investigation to send / perform (used by the "investigations to send" box) */
+  investigation?: boolean;
 }
 
 export interface ProtocolSection {
   heading: string;
+  /** Optional tag used for jump chips. Untagged sections still show normally. */
+  kind?: ProtocolSectionKind;
   /** Optional one-line note under the heading */
   note?: string;
   items: ProtocolItem[];

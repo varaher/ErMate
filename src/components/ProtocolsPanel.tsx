@@ -2,6 +2,7 @@ import React, { useMemo, useState } from "react";
 import { AlertTriangle, ChevronDown, ChevronRight, Search } from "lucide-react";
 import { PROTOCOL_CHAPTERS, searchProtocols } from "../data/protocols";
 import type { ProtocolTopic } from "../data/protocols/protocolTypes";
+import { chipsForTopic, sectionIndexForKind, investigationItems, itemLine } from "../data/protocols/protocolViews";
 
 /** Read-only protocol reader: chapter list + search on one side, the selected protocol on the other. */
 export default function ProtocolsPanel() {
@@ -76,6 +77,34 @@ export default function ProtocolsPanel() {
                 </span>
               </div>
               <p className="text-xs text-slate-600 dark:text-slate-300">{selected.summary}</p>
+              {chipsForTopic(selected).length > 0 && (
+                <div className="flex flex-wrap gap-2 pt-1" data-testid="protocol-chips">
+                  {chipsForTopic(selected).map((c) => (
+                    <button
+                      key={c.kind}
+                      type="button"
+                      onClick={() => {
+                        const idx = sectionIndexForKind(selected, c.kind);
+                        if (idx < 0) return;
+                        document.getElementById(`protocol-section-${selected.id}-${idx}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+                      }}
+                      className="text-[11px] font-bold px-3 py-1.5 rounded-full border-[1.5px] border-violet-600 text-violet-700 dark:text-violet-300 dark:border-violet-400 hover:bg-violet-600 hover:text-white"
+                    >
+                      {c.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {investigationItems(selected).length > 0 && (
+                <div className="rounded-xl border-[1.5px] border-emerald-600 p-3 space-y-1.5" data-testid="protocol-investigations-box">
+                  <p className="text-[10px] font-extrabold uppercase tracking-wide text-emerald-700 dark:text-emerald-400">Investigations to send (as written in this protocol)</p>
+                  <ul className="space-y-1">
+                    {investigationItems(selected).map((item, i) => (
+                      <li key={i} className="text-[11px] text-slate-700 dark:text-slate-200">{itemLine(item)}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
               {selected.notice && (
                 <p
                   className="text-[11px] rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 text-amber-800 dark:text-amber-200 px-3 py-2"
@@ -86,8 +115,8 @@ export default function ProtocolsPanel() {
               )}
             </div>
 
-            {selected.sections.map((section) => (
-              <div key={section.heading} className="border border-slate-200 dark:border-slate-800 rounded-2xl p-4 bg-white dark:bg-slate-950/60 space-y-3">
+            {selected.sections.map((section, sIdx) => (
+              <div key={section.heading} id={`protocol-section-${selected.id}-${sIdx}`} className="border border-slate-200 dark:border-slate-800 rounded-2xl p-4 bg-white dark:bg-slate-950/60 space-y-3">
                 <div>
                   <h3 className="text-sm font-extrabold text-slate-800 dark:text-white">{section.heading}</h3>
                   {section.note && <p className="text-[11px] text-slate-500 mt-0.5">{section.note}</p>}

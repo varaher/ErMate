@@ -31,6 +31,7 @@ export const CAD_ACS_ADULT: ProtocolTopic = {
   sections: [
     {
       heading: "1. Background and recognition",
+      kind: "recognition",
       items: [
         { text: "Suspect ACS with chest pressure, radiation to arm/jaw/back, diaphoresis, dyspnea, nausea, syncope or unexplained acute deterioration." },
         { text: "Older adults, women, and patients with diabetes or CKD may present without classic chest pain." },
@@ -39,16 +40,18 @@ export const CAD_ACS_ADULT: ProtocolTopic = {
     },
     {
       heading: "2. First 10 minutes: assessment and resuscitation",
+      kind: "first10",
       items: [
         { label: "Resuscitation", text: "ABCDE, monitoring, pulse oximetry, IV access, serial observations and defibrillation readiness.", critical: true },
-        { label: "ECG", text: "Obtain and interpret a 12-lead ECG within 10 minutes; repeat ECGs for persistent or recurrent symptoms.", critical: true },
-        { label: "Extra leads", text: "Add right-sided V3R–V4R for suspected RV infarction and posterior V7–V9 when indicated." },
-        { label: "Bloods", text: "hs-troponin, CBC, creatinine, electrolytes and glucose." },
+        { label: "ECG", text: "Obtain and interpret a 12-lead ECG within 10 minutes; repeat ECGs for persistent or recurrent symptoms.", critical: true, investigation: true },
+        { label: "Extra leads", text: "Add right-sided V3R–V4R for suspected RV infarction and posterior V7–V9 when indicated.", investigation: true },
+        { label: "Bloods", text: "hs-troponin, CBC, creatinine, electrolytes and glucose.", investigation: true },
         { text: "Do not delay reperfusion for laboratory tests or echo.", critical: true },
       ],
     },
     {
       heading: "3. Emergency decision pathway",
+      kind: "treatment",
       items: [
         { label: "STEMI / acute coronary occlusion", text: "Activate cardiology and the cath lab immediately. Primary PCI targets in the source: first medical contact to device ≤90 min for direct presenters and ≤120 min for transfers. Do not wait for troponin.", critical: true },
         { label: "Unstable with a pulse (HASIA)", text: "Hypotension, altered mental status, shock, ischemic chest discomfort, acute heart failure: call senior ED and cardiology; manage rhythm, perfusion and airway; urgent angiography when indicated.", critical: true },
@@ -57,6 +60,7 @@ export const CAD_ACS_ADULT: ProtocolTopic = {
     },
     {
       heading: "4. ECG interpretation and high-risk patterns",
+      kind: "assessment",
       items: [
         { label: "Anterior V1–V4", text: "Anticipate LV failure, shock, ventricular arrhythmias." },
         { label: "Inferior II/III/aVF", text: "Evaluate bradycardia, AV block and RV involvement; avoid preload reduction with RV infarction.", critical: true },
@@ -67,6 +71,7 @@ export const CAD_ACS_ADULT: ProtocolTopic = {
     },
     {
       heading: "5. Acute treatment: source-derived adult options",
+      kind: "treatment",
       items: [
         { label: "Aspirin", text: "300 mg chewed once for likely ACS if eligible; verify prior loading and bleeding risk." },
         { label: "Oxygen", text: "When SpO2 <90% or otherwise clinically indicated; avoid routine oxygen in normoxemia." },
@@ -79,6 +84,7 @@ export const CAD_ACS_ADULT: ProtocolTopic = {
     },
     {
       heading: "6. CAG contrast reaction screening and local premedication",
+      kind: "treatment",
       note: "Guideline step and local practice are shown separately. Do not conflate premedication with ACS antithrombotic treatment.",
       items: [
         { label: "Screen first", text: "Ask about any prior contrast reaction and its severity; use an appropriate contrast strategy and make sure resuscitation is ready." },
@@ -94,6 +100,7 @@ export const CAD_ACS_ADULT: ProtocolTopic = {
     },
     {
       heading: "7. Risk stratification, monitoring and disposition",
+      kind: "disposition",
       note: "Use HEART only after immediate ACS/occlusion and other emergencies are addressed.",
       items: [
         { label: "HEART 0–3", text: "Consider discharge only after a completed validated troponin rule-out, reassuring ECG, resolved symptoms and senior review." },
@@ -105,6 +112,7 @@ export const CAD_ACS_ADULT: ProtocolTopic = {
     },
     {
       heading: "8. Clinical pitfalls and quality checks",
+      kind: "pitfalls",
       items: [
         { text: "A single normal ECG or early troponin does not exclude ACS.", critical: true },
         { text: "Troponin cutoffs are assay-specific; the Rajagiri laboratory values remain to be completed." },

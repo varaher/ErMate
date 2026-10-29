@@ -32,6 +32,7 @@ export const CIRRHOSIS_ADULT: ProtocolTopic = {
   sections: [
     {
       heading: "1. Recognition",
+      kind: "recognition",
       items: [
         { text: "Acute decompensation may present with ascites, variceal hemorrhage, hepatic encephalopathy, spontaneous bacterial peritonitis (SBP), acute kidney injury or acute-on-chronic liver failure (ACLF)." },
         { text: "Search actively for infection and gastrointestinal bleeding." },
@@ -39,6 +40,7 @@ export const CIRRHOSIS_ADULT: ProtocolTopic = {
     },
     {
       heading: "2. Red flags",
+      kind: "recognition",
       items: [
         { text: "Massive hematemesis or shock; grade III–IV encephalopathy with inability to protect the airway.", critical: true },
         { text: "Sepsis, peritonitis, hypoglycemia, severe AKI, respiratory compromise from ascites/hydrothorax, or multiorgan dysfunction.", critical: true },
@@ -46,12 +48,14 @@ export const CIRRHOSIS_ADULT: ProtocolTopic = {
     },
     {
       heading: "3. Differential diagnosis",
+      kind: "assessment",
       items: [
         { text: "Sepsis/SBP, non-variceal GI bleeding, intracranial pathology, medication toxicity, electrolyte/glucose abnormalities, prerenal AKI, acute tubular injury, obstruction and HRS-AKI." },
       ],
     },
     {
       heading: "4. ABCDE / first 0–10 minutes",
+      kind: "first10",
       items: [
         { label: "Airway", text: "Assess aspiration risk and airway protection in severe encephalopathy or hematemesis.", critical: true },
         { label: "Circulation and disability", text: "Check oxygenation, circulation, bedside glucose, mental status and temperature; establish IV access and monitor perfusion." },
@@ -60,6 +64,7 @@ export const CIRRHOSIS_ADULT: ProtocolTopic = {
     },
     {
       heading: "5. Evaluation / 10–30 minutes",
+      kind: "investigations",
       items: [
         { label: "Labs", text: "CBC, electrolytes, renal function, liver tests, albumin, PT/INR, glucose, blood gas/lactate as indicated; blood and urine cultures; chest imaging when appropriate." },
         { label: "Diagnostic paracentesis", text: "Prompt for hospitalised patients with cirrhosis and ascites: ascitic PMN count, culture and albumin/protein. SBP threshold: PMN at least 250 cells/mm3." },
@@ -68,6 +73,7 @@ export const CIRRHOSIS_ADULT: ProtocolTopic = {
     },
     {
       heading: "Branch A: suspected variceal hemorrhage",
+      kind: "treatment",
       items: [
         { label: "Resuscitate", text: "Restrictive red-cell transfusion threshold around Hb 7 g/dL, individualised for active exsanguination or ischemic heart disease.", critical: true },
         { label: "Vasoactive agent", text: "Start promptly: octreotide 50 micrograms IV bolus then 50 micrograms/hour infusion, or terlipressin per local protocol.", critical: true },
@@ -78,6 +84,7 @@ export const CIRRHOSIS_ADULT: ProtocolTopic = {
     },
     {
       heading: "Branch B: hepatic encephalopathy",
+      kind: "treatment",
       items: [
         { text: "Treat precipitating infection, GI bleed, constipation, dehydration, electrolyte abnormalities and sedative exposure." },
         { label: "Lactulose", text: "PO/NG titrated to 2–3 soft stools/day; rifaximin 550 mg PO twice daily as add-on when indicated." },
@@ -86,6 +93,7 @@ export const CIRRHOSIS_ADULT: ProtocolTopic = {
     },
     {
       heading: "Branch C: SBP",
+      kind: "treatment",
       items: [
         { text: "If ascitic PMN is at least 250/mm3, start empiric IV antibiotics guided by acquisition setting, resistance risk and renal function. Do not wait for culture results.", critical: true },
         { label: "Albumin", text: "Consider IV albumin 1.5 g/kg on day 1 and 1 g/kg on day 3, particularly with renal dysfunction or high-risk laboratory features; assess fluid overload risk." },
@@ -94,6 +102,7 @@ export const CIRRHOSIS_ADULT: ProtocolTopic = {
     },
     {
       heading: "Branch D: AKI / possible HRS-AKI",
+      kind: "treatment",
       items: [
         { text: "Identify AKI, review volume status and medications, treat infection, assess urine and ultrasound as appropriate." },
         { text: "A mandatory 48-hour albumin challenge is not a universally required modern diagnostic prerequisite; current consensus uses earlier assessment and individualised resuscitation." },
@@ -102,6 +111,7 @@ export const CIRRHOSIS_ADULT: ProtocolTopic = {
     },
     {
       heading: "6. Reassessment and disposition",
+      kind: "disposition",
       items: [
         { text: "Trend mental status, bleeding, urine output, creatinine, electrolytes, lactate when indicated, respiratory status and volume balance." },
         { label: "ICU", text: "Shock, major bleeding, airway compromise or multiorgan failure." },
