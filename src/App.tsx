@@ -7734,6 +7734,7 @@ const handleSignOut = async () => {
               });
             }}
             onEnsureDraftCase={handleEnsureDraftCase}
+                        onAssignBed={handleAssignBedToCase}
             onSaveExtractedCase={handleSaveExtractedVoiceCase}
             onPrepareDischarge={async (extraction, msgId, chatCaseId) => {
               const targetCaseId = chatCaseId || voiceScribeCaseId || selectedCaseId;

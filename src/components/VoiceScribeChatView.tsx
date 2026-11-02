@@ -50,6 +50,8 @@ import { tryDeterministicFastPath } from "../mate/mateFastPath";
 import { describeNewCriticalAfterUpdate } from "../utils/criticalSpeech";
 import { speakMate } from "../mate/mateSpeech";
 import { MateVoiceToggle } from "./MateVoiceToggle";
+import { isExpectedContextSwitch } from "../mate/contextSwitch";
+import { pickNextFreeBed, parseMoveBedCommand, bedPickedNotice } from "../mate/autoBed";
 import { interpretWithServer } from "../mate/mateInterpreterClient";
 import { formatCaseCompletenessReply, formatDischargePendingReply } from "../mate/mateReplies";
 import { normalizeMateBedId } from "../mate/mateBedModel";
@@ -73,6 +75,8 @@ interface Message {
   mode?: ChatMode;
   /** MATE app-control replies are labelled "Command" rather than "Discuss". */
   badge?: "command" | "mate";
+  /** MATE picked the bed: show a Change bed button under the message. */
+  bedNotice?: boolean;
   extractionData?: any;
   extractionApplied?: boolean;
   dischargeDraft?: string;
@@ -141,6 +145,8 @@ interface VoiceScribeChatViewProps {
   physicalBedCapacity?: number;
   onSwitchCase?: (caseId: string) => void;
   onEnsureDraftCase?: (sessionId: string, options?: { bedNo?: string; forceNew?: boolean }) => Promise<string>;
+  /** Move a case to another bed. Refuses an occupied slot. */
+  onAssignBed?: (caseId: string, bedInput: string) => Promise<{ success: boolean; error?: string; assignedBed?: string }>;
   isSidecar?: boolean;
   isSidecarExpanded?: boolean;
   onToggleSidecarExpand?: () => void;
@@ -804,6 +810,7 @@ export default function VoiceScribeChatView({
   physicalBedCapacity = 30,
   onSwitchCase,
   onEnsureDraftCase,
+  onAssignBed,
   patientFocusCaseId = null,
   isSidecar = false,
   isSidecarExpanded = false,
@@ -914,9 +921,12 @@ export default function VoiceScribeChatView({
   useEffect(() => {
     if (prevActiveCaseIdRef.current !== activeCaseId || prevActiveSessionIdRef.current !== activeSessionId) {
       // If this transition was initiated by a pending MATE switch or handoff, generation was already advanced
-      const isExpectedSwitch =
-        activeCaseId === pendingUtteranceAfterSwitchRef.current?.targetCaseId ||
-        activeCaseId === pendingNewPatientHandoffRef.current?.targetCaseId;
+      const isExpectedSwitch = isExpectedContextSwitch({
+        activeCaseId,
+        incomingCaseId: propCaseId || caseData?.id || null,
+        handoffTargetCaseId: pendingNewPatientHandoffRef.current?.targetCaseId,
+        switchTargetCaseId: pendingUtteranceAfterSwitchRef.current?.targetCaseId,
+      });
       if (!isExpectedSwitch) {
         sessionContextGenerationRef.current += 1;
       }
@@ -1784,11 +1794,11 @@ export default function VoiceScribeChatView({
 
       // ── PASTE-FIRST, BED-SECOND: end a stale or abandoned hold before anything else ─────
       // ── PASTE-FIRST, BED-SECOND ────────────────────────────────
-      const postPair = (userText: string | null, aiText: string) => {
+      const postPair = (userText: string | null, aiText: string, extra?: Partial<Message>) => {
         const stamp = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
         const out: Message[] = [];
         if (userText !== null) out.push({ id: `u-${Date.now()}`, sender: "user", text: userText, timestamp: stamp, mode: "dictation" });
-        out.push({ id: `ai-${Date.now() + 1}`, sender: "ai", text: aiText, timestamp: stamp, mode: "discuss", badge: "command" });
+        out.push({ id: `ai-${Date.now() + 1}`, sender: "ai", text: aiText, timestamp: stamp, mode: "discuss", badge: "command", ...(extra || {}) });
         setMessages((prev) => [...prev, ...out]);
         out.forEach((m) => persistMessage(m));
       };
@@ -1805,6 +1815,31 @@ export default function VoiceScribeChatView({
             postPair(null, "I dropped the case sheet that was waiting for a bed. Nothing was added. Paste it again with a bed when ready.");
           }
         }
+      }
+
+      // ── MOVE BED: "move to Bed 9" ───────────────────────────────────────────
+      // Moves only the patient the doctor is deliberately on (Patient Focus). Never guesses, never overwrites another patient.
+      const moveBedTo = parseMoveBedCommand(trimmed);
+      if (moveBedTo) {
+        setInputText("");
+        const moveCaseId = activeCaseId || activeCaseIdRef.current;
+        const moveCase = moveCaseId ? activeCensusCases.find((c) => c.id === moveCaseId) || null : null;
+        if (!moveCase || !isFocusAuthorized(focusCaseIdRef.current, moveCaseId)) {
+          postPair(trimmed, "Open the patient first (say \"open Bed 5\"), then say \"move to Bed 9\". Nothing was moved.");
+        } else if (!onAssignBed) {
+          postPair(trimmed, "Moving a bed is unavailable right now. Nothing was moved.");
+        } else {
+          const moved = await onAssignBed(moveCase.id, moveBedTo);
+          if (moved.success && moved.assignedBed) {
+            lastReferencedBedRef.current = moved.assignedBed;
+            const movedText = `Moved this patient from Bed ${moveCase.bedNo || "unassigned"} to Bed ${moved.assignedBed}.`;
+            postPair(trimmed, movedText);
+            speakMate(movedText);
+          } else {
+            postPair(trimmed, `${moved.error || "Could not move the patient."} Nothing was moved.`);
+          }
+        }
+        return;
       }
 
       // ── STAGE 0: NEVER GUESS THE PATIENT FOR A CLINICAL WRITE ──────────────
@@ -2160,6 +2195,17 @@ export default function VoiceScribeChatView({
       }
 
       if (shouldHoldPastedSheet({ text: trimmed, hasOpenPatient: Boolean(activeCaseId && activeCensusCases.some((c) => c.id === activeCaseId)) })) {
+        // MATE picks the lowest free bed and tells the doctor; the doctor can move it. Falls back to asking when the ER is full.
+        const autoBed = onEnsureDraftCase ? pickNextFreeBed(activeCensusCases, physicalBedCapacity) : null;
+        if (autoBed) {
+          setInputText("");
+          const pickedText = bedPickedNotice(autoBed, true);
+          postPair(`📄 Case sheet pasted (${trimmed.length} characters)`, pickedText, { bedNotice: true });
+          speakMate(pickedText);
+          lastReferencedBedRef.current = autoBed;
+          await startNewCaseInBed(autoBed, autoBed, false, trimmed);
+          return;
+        }
         pendingPastedSheetRef.current = {
           text: trimmed,
           generation: sessionContextGenerationRef.current,
@@ -2990,6 +3036,12 @@ export default function VoiceScribeChatView({
                 undefined
               );
               let targetBed = rawBed;
+              let bedPickedByMate = false;
+              if (!rawBed) {
+                // New patient, no bed said, nothing open: MATE picks the lowest free bed and tells the doctor.
+                const picked = pickNextFreeBed(allCases || [], physicalBedCapacity);
+                if (picked) { targetBed = picked; bedPickedByMate = true; }
+              }
               if (rawBed) {
                 const alloc = allocateOrValidateBed(rawBed, allCases || [], physicalBedCapacity);
                 if (alloc.success && alloc.canonicalBed) {
@@ -2998,6 +3050,21 @@ export default function VoiceScribeChatView({
               }
 
               const ensuredCaseId = await onEnsureDraftCase(targetSessionId, { bedNo: targetBed });
+              if (ensuredCaseId && bedPickedByMate && targetBed) {
+                const pickedText = bedPickedNotice(targetBed, false);
+                const pickedMsg: Message = {
+                  id: `ai-bedpick-${Date.now()}`,
+                  sender: "ai",
+                  text: pickedText,
+                  timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+                  mode: "discuss",
+                  badge: "command",
+                  bedNotice: true,
+                };
+                setMessages((prev) => [...prev, pickedMsg]);
+                persistMessage(pickedMsg);
+                speakMate(pickedText);
+              }
               if (ensuredCaseId) {
                 activeCaseIdRef.current = ensuredCaseId;
                 focusCaseIdRef.current = ensuredCaseId; // the doctor is dictating this new patient
@@ -3454,6 +3521,16 @@ export default function VoiceScribeChatView({
                   text={msg.text}
                   clinicalReasoning={msg.clinicalReasoning}
                 />
+              )}
+              {msg.bedNotice && msg.sender === "ai" && (
+                <button
+                  type="button"
+                  data-testid="change-bed-button"
+                  onClick={() => setInputText("Move to Bed ")}
+                  className="mt-2 mb-1 inline-flex items-center px-3 py-1.5 rounded-lg border-[1.5px] border-violet-600 text-violet-700 dark:text-violet-300 dark:border-violet-400 text-[11px] font-bold hover:bg-violet-50 dark:hover:bg-violet-950/40"
+                >
+                  Change bed
+                </button>
               )}
 
                                {msg.mode === "dictation" &&

@@ -73,6 +73,7 @@ export const TOURS: Record<TourId, CoachStep[]> = {
   ],
   scribe: [
     { id: "ask-critical", v: 2, feature: "mate-critical-query", title: "Ask who is critical", body: "Say or type \"who is critical?\" and ErMate lists the patients whose saved vitals are in the danger range. When you apply new vitals, a red message tells you if a patient has just become critical." },
+    { id: "auto-bed", v: 3, feature: "mate-auto-bed", title: "MATE picks the bed", body: "Paste a case sheet or start dictating without a bed, and MATE starts a new case in the lowest free bed and tells you which. Wrong bed? Tap Change bed or say \"move to Bed 9\". It never overwrites another patient." },
     { id: "mate-voice", v: 2, feature: "mate-voice", target: { sel: '[data-coach="mate-voice"]' }, title: "Hear replies spoken", body: "This speaker button makes ErMate read its replies aloud. It starts off. Tap it to turn on, tap again to turn off. Your choice is remembered on this device." },
   ],
   protocols: [
