@@ -96,11 +96,16 @@ export function isEstablishedCaseSheet(
     }
     if (pa.survey && typeof pa.survey === "object") {
       const s = pa.survey;
+      // A blank draft case already carries the default survey values (work of breathing "normal",
+      // rhythm "regular", focal deficit "Nil"). Those are defaults, not documented findings, so they
+      // must not make a brand-new draft look like an established case sheet.
+      const documented = (v: any, defaults: string[]): boolean =>
+        typeof v === "string" && v.trim().length > 0 && !defaults.includes(v.trim().toLowerCase());
       if (
-        (s.airway?.intervention && s.airway.intervention.trim()) ||
-        (s.breathing?.workOfBreathing && s.breathing.workOfBreathing.trim()) ||
-        (s.circulation?.rhythm && s.circulation.rhythm.trim()) ||
-        (s.disability?.focalDeficit && s.disability.focalDeficit.trim())
+        documented(s.airway?.intervention, ["none", "nil"]) ||
+        documented(s.breathing?.workOfBreathing, ["normal"]) ||
+        documented(s.circulation?.rhythm, ["regular"]) ||
+        documented(s.disability?.focalDeficit, ["nil", "none"])
       ) {
         return true;
       }

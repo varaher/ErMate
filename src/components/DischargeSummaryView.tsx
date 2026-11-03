@@ -22,6 +22,8 @@ import {
 } from "../utils/dischargeSyncEngine";
 import { authenticatedFetch } from "../services/authenticatedFetch";
 import { copyTextToClipboard } from "../utils/copyToClipboard";
+import ShareWhatsAppDialog from "./ShareWhatsAppDialog";
+import { dischargeToWhatsApp } from "../utils/whatsappShare";
 
 interface DischargeSummaryViewProps {
   currentCase: ClinicalCase;
@@ -368,6 +370,7 @@ export default function DischargeSummaryView({
   const [redFlagsInstructed, setRedFlagsInstructed] = useState(true);
 
     const [copiedDischargeText, setCopiedDischargeText] = useState(false);
+    const [showWaShare, setShowWaShare] = useState(false);
 
   const [copyDischargeFailed, setCopyDischargeFailed] = useState(false);
 
@@ -805,6 +808,24 @@ export default function DischargeSummaryView({
             {copiedDischargeText ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
             {copiedDischargeText ? "Copied to EMR!" : copyDischargeFailed ? "Copy failed — try again" : "Copy to EMR"}
           </button>
+
+          <button
+            type="button"
+            onClick={() => setShowWaShare(true)}
+            data-testid="share-whatsapp-discharge"
+            className="inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-bold rounded-lg transition-all border whitespace-nowrap min-h-[40px] border-emerald-600 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-950/30"
+            title="Share this discharge summary through your own WhatsApp"
+          >
+            Share on WhatsApp
+          </button>
+          {showWaShare && (
+            <ShareWhatsAppDialog
+              title="Share discharge summary"
+              reminder="Send only to the patient or the treating team. This summary has the patient's name and diagnosis."
+              text={dischargeToWhatsApp(getFormattedDischargeSummaryText())}
+              onClose={() => setShowWaShare(false)}
+            />
+          )}
 
           {onDeleteCase && (
             <button

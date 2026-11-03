@@ -10,7 +10,7 @@ const mem = (): KV & { m: Map<string, string> } => { const m = new Map<string, s
 // ---- ADD EVERY NEW FEATURE HERE ----
 const REQUIRED_FEATURES = [
   "plan-banner", "critical-badge", "handover-choice",
-  "mate-critical-query", "mate-voice", "mate-auto-bed",
+  "mate-critical-query", "mate-voice", "mate-auto-bed", "whatsapp-share",
   "protocol-chips", "protocol-investigations", "protocol-flag",
 ];
 

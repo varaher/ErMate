@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { CriticalAlertBadge } from "./shared/CriticalAlertBadge";
 import { computeCriticalAlerts } from "../utils/criticalAlerts";
+import ShareWhatsAppDialog from "./ShareWhatsAppDialog";
+import { formatHandoverWhatsApp, type HandoverShareRow } from "../utils/whatsappShare";
 import { formatAge } from "../utils/ageLabel";
 import { 
   Users, ClipboardCopy, FileText, Printer, Plus, Trash2, Edit2, Pencil,
@@ -887,6 +889,9 @@ export default function HandoverView({
 
   // Copy states
   const [copiedState, setCopiedState] = useState<{ [key: string]: boolean }>({});
+  // Share on WhatsApp: which list is being shared, and whether patient names are left out (default: left out).
+  const [waShare, setWaShare] = useState<"registry" | "quickpaste" | null>(null);
+  const [waHideNames, setWaHideNames] = useState<boolean>(true);
 
   // Medical Scribe Chat States
   const [chatMessages, setChatMessages] = useState<ScribeChatMessage[]>(() => {
@@ -2735,6 +2740,52 @@ function extractLatestVitalsWithTime(
     return text;
   };
 
+  const getRegistryShareText = (): string => {
+    const selectedCases = sortRowsByBedNumber(
+      handoverCases.filter(c => selectedRegistryIds.includes(c.id)).map(c => ({ ...c, bed: c.bedNo }))
+    );
+    const rows: HandoverShareRow[] = selectedCases.map((c: any) => {
+      const { confirmedGiven } = classifyTreatments(c.treatments, c.notes);
+      const v = c.vitals || {};
+      const vitalParts = [
+        v.hr ? `HR ${v.hr}` : "",
+        v.bp ? `BP ${v.bp}` : "",
+        v.spo2 ? `SpO2 ${v.spo2}%` : "",
+      ].filter(Boolean);
+      return {
+        bed: c.bedNo,
+        name: c.patient?.name,
+        ageSex: `${formatAge(c.patient?.age, c.patient?.ageMonths)} ${c.patient?.gender || ""}`.trim(),
+        headline: c.dispositionProvisionalDiagnosis || c.patient?.presentingComplaint || "",
+        vitals: vitalParts.join(", "),
+        critical: computeCriticalAlerts(c).map((a) => `${a.label} (${a.display})`),
+        given: confirmedGiven,
+        plan: c.progressNotes || "",
+      };
+    });
+    return formatHandoverWhatsApp(rows, { hospital: profile.hospital, clinician: `Dr. ${profile.name}`, hideNames: waHideNames });
+  };
+
+  const getQuickPasteShareText = (): string => {
+    const list = sortRowsByBedNumber<QuickPastePatient>(quickPasteList.filter(item => selectedQuickPasteIds.includes(item.id)));
+    const rows: HandoverShareRow[] = list.map((item) => ({
+      bed: item.bed,
+      name: item.name,
+      ageSex: item.ageGender,
+      headline: item.structuredSBAR?.assessment || item.presentingComplaint || "",
+      vitals: item.vitals,
+      plan: item.structuredSBAR?.recommendation || "",
+    }));
+    return formatHandoverWhatsApp(rows, { hospital: profile.hospital, clinician: `Dr. ${profile.name}`, hideNames: waHideNames });
+  };
+
+  const waHideNamesSwitch = (
+    <label className="flex items-start gap-2 text-xs text-slate-700 dark:text-slate-300 cursor-pointer" htmlFor="wa-hide-names">
+      <input id="wa-hide-names" type="checkbox" checked={waHideNames} onChange={(e) => setWaHideNames(e.target.checked)} className="mt-0.5 w-4 h-4 accent-emerald-600" />
+      <span>Leave out patient names (bed, age, sex and diagnosis stay)</span>
+    </label>
+  );
+
   const activeCases = handoverCases;
 
   if (isViewingSheet) {
@@ -4114,6 +4165,27 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
                     </>
                   )}
                 </button>
+
+                <button
+                  type="button"
+                  data-coach="share-whatsapp"
+                  data-testid="share-whatsapp-registry"
+                  disabled={selectedRegistryIds.length === 0}
+                  onClick={() => setWaShare("registry")}
+                  className="w-full py-2.5 border border-emerald-600 text-emerald-700 dark:text-emerald-300 disabled:opacity-50 text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-1.5 hover:bg-emerald-50 dark:hover:bg-emerald-950/30"
+                >
+                  Share on WhatsApp
+                </button>
+                {waShare === "registry" && (
+                  <ShareWhatsAppDialog
+                    title="Share handover"
+                    reminder="Send only to the receiving team. Handovers can name patients."
+                    text={getRegistryShareText()}
+                    onClose={() => setWaShare(null)}
+                  >
+                    {waHideNamesSwitch}
+                  </ShareWhatsAppDialog>
+                )}
               </div>
             </div>
 
@@ -4964,6 +5036,26 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
                     <Download className="w-4 h-4" />
                     Download MS Word (.doc)
                   </button>
+
+                  <button
+                    type="button"
+                    data-testid="share-whatsapp-quickpaste"
+                    onClick={() => setWaShare("quickpaste")}
+                    disabled={selectedQuickPasteIds.length === 0}
+                    className="w-full py-2.5 border border-emerald-600 text-emerald-700 dark:text-emerald-300 disabled:opacity-50 rounded-xl text-xs font-bold transition-all hover:bg-emerald-50 dark:hover:bg-emerald-950/30"
+                  >
+                    Share on WhatsApp
+                  </button>
+                  {waShare === "quickpaste" && (
+                    <ShareWhatsAppDialog
+                      title="Share handover"
+                      reminder="Send only to the receiving team. Handovers can name patients."
+                      text={getQuickPasteShareText()}
+                      onClose={() => setWaShare(null)}
+                    >
+                      {waHideNamesSwitch}
+                    </ShareWhatsAppDialog>
+                  )}
 
                   <div className="grid grid-cols-2 gap-2">
                     <button

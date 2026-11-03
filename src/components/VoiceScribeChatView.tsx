@@ -2947,10 +2947,12 @@ export default function VoiceScribeChatView({
         const fieldsToExtract = rawFieldsToExtract ? { ...rawFieldsToExtract } : {};
         const isEstablishedCase = isEstablishedCaseSheet(caseData, messages);
         if (isEstablishedCase) {
-          if (!fieldsToExtract.clinicianUpdateText && trimmed && !/^(?:hi|hello|hey|good\s+morning|good\s+evening|good\s+afternoon)[\s!.]*$/i.test(trimmed)) {
+          // Always the doctor's own words. The server's copy was built from the de-identified text and can
+          // carry placeholders such as [HOSPITAL] or [PATIENT] into the case sheet.
+          if (trimmed && !/^(?:hi|hello|hey|good\s+morning|good\s+evening|good\s+afternoon)[\s!.]*$/i.test(trimmed)) {
             fieldsToExtract.clinicianUpdateText = trimmed;
           }
-          if (!fieldsToExtract.clinicianUpdates && trimmed && !/^(?:hi|hello|hey|good\s+morning|good\s+evening|good\s+afternoon)[\s!.]*$/i.test(trimmed)) {
+          if (trimmed && !/^(?:hi|hello|hey|good\s+morning|good\s+evening|good\s+afternoon)[\s!.]*$/i.test(trimmed)) {
             fieldsToExtract.clinicianUpdates = [
               { text: trimmed, timestamp: userMsg.timestamp }
             ];
