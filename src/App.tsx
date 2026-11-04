@@ -1528,6 +1528,7 @@ useEffect(() => {
         });
     }
   }, [isLoggedIn]);
+  / ErMate Teams launch: one in-app notification per doctor (kept in the bell list, shown once per device) useEffect(() => { if (!isLoggedIn || !profile?.email) return; const key = ermate_teams_launch_notice_v1_${String(profile.email).trim().toLowerCase()}; try { if (localStorage.getItem(key)) return; localStorage.setItem(key, "1"); } catch { return; } triggerNotification( "ErMate Teams are here", "Create your hospital team or join one with an invite link. Share your rota and work together. Open More, then Open Team Roster.", "info", "team" ); }, [isLoggedIn, profile?.email]);
 
   // B3 & B6: 24-Hour Incomplete Case Soft-Archive Engine (Never Hard-Delete)
   useEffect(() => {
@@ -6654,32 +6655,30 @@ const handleSignOut = async () => {
         coveredByTeam={isVerifiedTeamUser && hospitalSubscription?.active === true}
         teamName={profile?.hospitalLabel || profile?.hospital || undefined}
         erPhysicalBedCapacity={erPhysicalBedCapacity}
-        onSaveProfile={async (updatedProfile, capacity) => {
-          await handleSaveProfile(updatedProfile, capacity);
-          setExploreInTrialMode(false);
-          // Keep OnboardingProfileView visible so the user sees the SAVED state and Edit Profile CTA
-          setShowOnboardingProfile(true);
-          if (activeTrialCase) {
-            await handleSaveActiveTrialCase(updatedProfile);
-          }
-        }}
-        onContinueToDashboard={() => {
-          setShowOnboardingProfile(false);
-          setExploreInTrialMode(false);
-        }}
-        onSkipToTrial={() => {
-          setExploreInTrialMode(true);
-          setShowOnboardingProfile(false);
-        }}
-        onTeamCreated={(hospitalId, hospitalName) => {
-          setExploreInTrialMode(false);
-          setShowOnboardingProfile(false);
-          triggerNotification(
-            "Team Created",
-            `Created ${hospitalName} workspace as Department Lead (HOD).`,
-            "success"
-          );
-        }}
+       onSaveProfile={async (updatedProfile, capacity) => {
+      await handleSaveProfile(updatedProfile, capacity);
+      // Keep OnboardingProfileView visible so the user sees the SAVED state and the team step
+      setShowOnboardingProfile(true);
+      if (activeTrialCase) {
+        await handleSaveActiveTrialCase(updatedProfile);
+      }
+    }}
+    onContinueToDashboard={() => {
+      setShowOnboardingProfile(false);
+    }}
+    onOpenTeam={() => {
+      setShowOnboardingProfile(false);
+      setTimeout(() => navigateToTab("team"), 0);
+    }}
+    onTeamCreated={(hospitalId, hospitalName) => {
+      // Keep this screen up so the doctor sees the invite link and "Set up your rota".
+      setShowOnboardingProfile(true);
+      triggerNotification(
+        "Team Created",
+        `Created ${hospitalName} workspace as Department Lead (HOD).`,
+        "success"
+      );
+    }}
         hasActiveTrialCase={Boolean(activeTrialCase)}
         onSaveActiveTrialCase={handleSaveActiveTrialCase}
       />
@@ -7535,7 +7534,7 @@ const handleSignOut = async () => {
 
               {activeTab === "learn" && <LearnView onNavigateToTab={navigateToTab} isDarkMode={isDarkMode} />}
 
-              {{activeTab === "team" && (FEATURES.teamsLaunch || FEATURES.teamsForIndividuals || isVerifiedTeamUser) && (
+              {activeTab === "team" && (FEATURES.teamsLaunch || FEATURES.teamsForIndividuals || isVerifiedTeamUser) && (
                 <ProfileSettingsView
                   initialSubSection="team"
                   profile={profile}

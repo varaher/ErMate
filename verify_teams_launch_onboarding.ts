@@ -37,5 +37,8 @@ t("incomplete existing doctors see the launch notice", onb.includes('data-testid
 t("one-time bell notification", app.includes("ermate_teams_launch_notice_v1_") && app.includes("ErMate Teams are here"));
 t("team tip target exists", read("src/components/MoreView.tsx").includes('data-coach="more-team"'));
 
+for (const r of ["Postgraduate Resident", "Nursing In-charge", "Paramedic", "Other healthcare staff"]) {
+  for (const f of ["src/components/OnboardingProfileView.tsx", "src/components/MoreView.tsx", "src/components/SignUpView.tsx"]) t(`role "${r}" offered in ${f}`, read(f).includes(r));
+}
 console.log(fail === 0 ? "ALL PASS verify_teams_launch_onboarding" : `${fail} FAIL`);
 process.exit(fail ? 1 : 0);

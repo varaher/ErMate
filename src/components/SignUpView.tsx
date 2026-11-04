@@ -513,8 +513,12 @@ const [registeredEmail, setRegisteredEmail] =
                     <option value="Emergency Physician">Emergency Physician</option>
                     <option value="EM Intern">EM Intern</option>
                     <option value="Fellow">Fellow</option>
+                    <option value="Postgraduate Resident">Postgraduate Resident</option>
                     <option value="HOD / Department Lead">HOD / Department Lead</option>
                     <option value="Staff Nurse">Staff Nurse</option>
+                    <option value="Nursing In-charge">Nursing In-charge</option>
+                    <option value="Paramedic">Paramedic</option>
+                    <option value="Other healthcare staff">Other healthcare staff</option>
                   </select>
                 </div>
 

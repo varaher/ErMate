@@ -39,8 +39,12 @@ export const ROLE_OPTIONS = [
   "Emergency Physician",
   "EM Intern",
   "Fellow",
+  "Postgraduate Resident",
   "HOD / Department Lead",
-  "Staff Nurse"
+  "Staff Nurse",
+  "Nursing In-charge",
+  "Paramedic",
+  "Other healthcare staff"
 ];
 
 export const DEPARTMENT_OPTIONS = [

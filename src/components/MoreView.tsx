@@ -796,10 +796,11 @@ export default function MoreView({
               </p>
             </div>
 
-            {(FEATURES.teamsForIndividuals || isMembershipActive) && (
+            {(FEATURES.teamsLaunch || FEATURES.teamsForIndividuals || isMembershipActive) && (
             <button
               type="button"
               onClick={() => onNavigateToTab("team")}
+              data-coach="more-team"
               className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition-all shadow-xs flex items-center gap-1.5 cursor-pointer font-mono shrink-0"
             >
               <Users className="w-3.5 h-3.5" />
@@ -1296,8 +1297,12 @@ export default function MoreView({
                   <option value="Emergency Physician">Emergency Physician</option>
                   <option value="EM Intern">EM Intern</option>
                   <option value="Fellow">Fellow</option>
+                  <option value="Postgraduate Resident">Postgraduate Resident</option>
                   <option value="HOD / Department Lead">HOD / Department Lead</option>
                   <option value="Staff Nurse">Staff Nurse</option>
+                  <option value="Nursing In-charge">Nursing In-charge</option>
+                  <option value="Paramedic">Paramedic</option>
+                  <option value="Other healthcare staff">Other healthcare staff</option>
                 </select>
                 <span className="text-[10px] text-slate-400 block font-mono">Informational profile credential.</span>
               </div>
