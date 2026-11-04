@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import { Mic, Trash2, Pause, Play, Check, AlertTriangle, RefreshCw } from "lucide-react";
 import { authenticatedFetch } from "../../services/authenticatedFetch";
+import { auth } from "../../firebase";
 
 // Global active recording state tracking across any VoiceRecorder instances
 let globalActiveRecorders = 0;
@@ -175,9 +176,15 @@ export default function VoiceRecorder({
         }
       }, 5000);
 
-      ws.onopen = () => {
-         // Send configuration to backend
-         ws.send(JSON.stringify({ mode: transcriptionMode }));
+      ws.onopen = async () => {
+         // Send configuration + Firebase ID token. The server refuses live dictation without a valid sign-in.
+         try {
+           const token = await auth.currentUser?.getIdToken();
+           if (!token) { ws.close(); return; }
+           ws.send(JSON.stringify({ mode: transcriptionMode, token }));
+         } catch {
+           ws.close();
+         }
       };
 
       ws.onmessage = (event) => {

@@ -134,6 +134,48 @@ async function isExempt(db: any, uid: string, email: string): Promise<boolean> {
   return false;
 }
 
+export const EMAIL_NOT_VERIFIED_MESSAGE =
+  "Verify your email to use AI features. Open More > Team & Subscription and tap Resend verification email. Your case sheet, saving and printing still work.";
+export const INSUFFICIENT_CREDITS_MESSAGE =
+  "AI credits finished. Your case sheet, saving and printing still work. Recharge in More > Team & Subscription to use AI features.";
+
+export type CreditCheck =
+  | { status: "charge" }                       // allowed; deduct after a genuine success
+  | { status: "free" }                         // allowed; exempt or lookup failed (fails open for care)
+  | { status: "email_not_verified" }
+  | { status: "insufficient"; balance: number; required: number };
+
+/**
+ * The one pre-flight credit check, shared by the HTTP middleware and the realtime voice stream.
+ * Same rules as before: exempt users and lookup errors are never blocked.
+ */
+export async function checkCreditAccess(
+  db: any, uid: string, email: string, emailVerified: unknown, action: CreditAction
+): Promise<CreditCheck> {
+  const cost = CREDIT_COSTS[action];
+  if (!uid || cost <= 0) return { status: "free" };
+  try {
+    if (await isExempt(db, uid, email)) return { status: "free" };
+    const snap = await db.collection("users").doc(uid).get();
+    const userData = snap.exists ? snap.data() : undefined;
+    let stored = userData?.aiCredits;
+    if (userData && isPlanExpired(userData)) {
+      await downgradeIfExpired(db, uid).catch((e: any) => console.warn(`[credit-meter:${action}] expiry downgrade failed:`, e?.message || e));
+    }
+    if (userData && needsEmailVerification(userData, emailVerified)) return { status: "email_not_verified" };
+    if (userData && (typeof stored !== "number" || !Number.isFinite(stored))) {
+      try { stored = await grantLegacyCredits(db, uid); }
+      catch (e: any) { console.warn(`[credit-meter:${action}] legacy credit grant failed; not blocking:`, e?.message || e); }
+    }
+    const decision = decideAccess(stored, cost);
+    if (decision.allow === false) return { status: "insufficient", balance: decision.balance, required: decision.required };
+    return { status: "charge" };
+  } catch (e: any) {
+    console.warn(`[credit-meter:${action}] lookup failed; not blocking clinical use:`, e?.message || e);
+    return { status: "free" };
+  }
+}
+
 /** Express middleware factory. Mount AFTER requireAuth. */
 export function meterCredits(action: CreditAction, getDb: () => any) {
   const cost = CREDIT_COSTS[action];
@@ -143,38 +185,19 @@ export function meterCredits(action: CreditAction, getDb: () => any) {
     let db: any;
     try { db = getDb(); } catch { return next(); }
 
-    try {
-      if (await isExempt(db, uid, String(req.user?.email || ""))) return next();
-      const snap = await db.collection("users").doc(uid).get();
-      const userData = snap.exists ? snap.data() : undefined;
-      let stored = userData?.aiCredits;
-      if (userData && isPlanExpired(userData)) {
-        await downgradeIfExpired(db, uid).catch((e: any) => console.warn(`[credit-meter:${action}] expiry downgrade failed:`, e?.message || e));
-      }
-      if (userData && needsEmailVerification(userData, req.user?.email_verified)) {
-        return res.status(403).json({
-          success: false,
-          code: "EMAIL_NOT_VERIFIED",
-          error: "Verify your email to use AI features. Open More > Team & Subscription and tap Resend verification email. Your case sheet, saving and printing still work.",
-        });
-      }
-      if (userData && (typeof stored !== "number" || !Number.isFinite(stored))) {
-        try { stored = await grantLegacyCredits(db, uid); }
-        catch (e: any) { console.warn(`[credit-meter:${action}] legacy credit grant failed; not blocking:`, e?.message || e); }
-      }
-      const decision = decideAccess(stored, cost);
-      if (decision.allow === false) {
-        return res.status(402).json({
-          success: false,
-          code: "INSUFFICIENT_CREDITS",
-          error: "AI credits finished. Your case sheet, saving and printing still work. Recharge in More > Team & Subscription to use AI features.",
-          balance: decision.balance,
-          required: decision.required,
-        });
-      }
-    } catch (e: any) {
-      console.warn(`[credit-meter:${action}] lookup failed; not blocking clinical use:`, e?.message || e);
-      return next();
+    const check = await checkCreditAccess(db, uid, String(req.user?.email || ""), req.user?.email_verified, action);
+    if (check.status === "free") return next();
+    if (check.status === "email_not_verified") {
+      return res.status(403).json({ success: false, code: "EMAIL_NOT_VERIFIED", error: EMAIL_NOT_VERIFIED_MESSAGE });
+    }
+    if (check.status === "insufficient") {
+      return res.status(402).json({
+        success: false,
+        code: "INSUFFICIENT_CREDITS",
+        error: INSUFFICIENT_CREDITS_MESSAGE,
+        balance: check.balance,
+        required: check.required,
+      });
     }
 
     // Charge after the response is sent, only if it succeeded.
