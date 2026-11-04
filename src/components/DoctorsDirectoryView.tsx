@@ -112,7 +112,7 @@ export default function DoctorsDirectoryView({ currentProfile, onNavigateToTab }
       await addDoc(collection(db, "hodClaimRequests"), {
         hospital: activeHospital,
         place: currentProfile.place || "",
-        state: currentProfile.state || "Maharashtra",
+        state: currentProfile.state || "",
         pincode: currentProfile.pincode || "",
         claimedByUid: auth.currentUser.uid,
         claimedByName: currentProfile.name,

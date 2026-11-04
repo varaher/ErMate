@@ -4,6 +4,7 @@ import os from "os";
 import path from "path";
 import { spawn } from "child_process";
 import { getErMateApiKey } from "./sarvamClient.ts";
+import { logAiUsage, wavDurationSeconds } from "./services/aiUsage.ts";
 
 const SARVAM_API_BASE = "https://api.sarvam.ai";
 
@@ -238,6 +239,7 @@ export async function sarvamBatchTranscribe(
     }
 
     console.log("[SarvamBatch] Successfully completed batch transcription.");
+    logAiUsage({ provider: "sarvam", model: "saaras:v3-batch", audioSeconds: wavDurationSeconds(normalizedBuffer) ?? undefined, ok: true });
 
     return {
         success: true,
@@ -247,6 +249,7 @@ export async function sarvamBatchTranscribe(
 
   } catch (err: any) {
     console.error("[SarvamBatch] Error:", err.message);
+    logAiUsage({ provider: "sarvam", model: "saaras:v3-batch", ok: false });
     throw err;
   } finally {
       // Security: Always delete the temporary patient audio files immediately after processing/failure

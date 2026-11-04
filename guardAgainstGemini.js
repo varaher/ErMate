@@ -20,6 +20,7 @@ const GEMINI_WHITELIST = [
   "server/routes/extraction.routes.ts",   // Multimodal EMR image OCR/vision scan
   "server/handover.ts",                   // Rule 1: Handover Synthesis Gemini Pro fallback
   "server/mortalityAudit.ts",             // Rule 1: Mortality Audit Gemini Pro fallback
+  "server/services/aiPrices.ts",          // Price table only (rupee cost per model for the admin portal). Makes NO AI calls.
 ];
 
 const FORBIDDEN_PATTERNS = [

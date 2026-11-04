@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { ConfirmModal } from "./shared/ConfirmModal";
-import { collection, query, where, onSnapshot, doc, updateDoc } from "firebase/firestore";
+import { collection, query, where, onSnapshot } from "firebase/firestore";
 import { db, auth } from "../firebase";
 import { Crown, Check, X, Building2, Mail, Clock } from "lucide-react";
 
@@ -69,28 +69,28 @@ export default function AdminHodClaimReview() {
     );
   }
 
+  const callAdminApi = async (url: string, body: any) => {
+    if (!auth.currentUser) throw new Error("Not authenticated");
+    const idToken = await auth.currentUser.getIdToken(true);
+    return fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${idToken}` },
+      body: JSON.stringify(body),
+    });
+  };
+
   const handleApprove = async (claim: HodClaimRequest) => {
     try {
-      if (!auth.currentUser) throw new Error("Not authenticated");
-      const idToken = await auth.currentUser.getIdToken(true);
-
-      const res = await fetch("/api/team/approve-hod-claim", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${idToken}`
-        },
-        body: JSON.stringify({
-          claimId: claim.id,
-          hospitalName: claim.hospital
-        })
-      });
-
+      let res = await callAdminApi("/api/team/approve-hod-claim", { claimId: claim.id, hospitalName: claim.hospital });
+      if (res.status === 409) {
+        const warn = await res.json().catch(() => ({}));
+        if (!window.confirm(`${warn.error || "Check before approving."}\n\nApprove anyway?`)) return;
+        res = await callAdminApi("/api/team/approve-hod-claim", { claimId: claim.id, hospitalName: claim.hospital, confirmWarnings: true });
+      }
       if (!res.ok) {
         const errorData = await res.json().catch(() => ({}));
         throw new Error(errorData.error || "Failed to approve HOD claim.");
       }
-
       const data = await res.json();
       alert(`Approved! ${claim.claimedByName} is now verified HOD of ${data.hospitalName || claim.hospital}.`);
     } catch (err: any) {
@@ -99,16 +99,15 @@ export default function AdminHodClaimReview() {
     }
   };
 
+  // Rejection goes through the server so it is audit-logged with the reason.
   const handleReject = async (claim: HodClaimRequest) => {
-    const note = rejectionNote[claim.id] || "Request declined by administrator.";
+    const note = (rejectionNote[claim.id] || "").trim() || "Request declined by administrator.";
     try {
-      const now = new Date().toISOString();
-      await updateDoc(doc(db, "hodClaimRequests", claim.id), {
-        status: "rejected",
-        reviewedAt: now,
-        reviewedBy: auth.currentUser?.uid || "admin",
-        rejectionNote: note,
-      });
+      const res = await callAdminApi(`/api/admin/hod-claims/${encodeURIComponent(claim.id)}/reject`, { reason: note });
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to reject HOD claim.");
+      }
       setActiveRejectingId(null);
       alert(`Claim for ${claim.hospital} rejected.`);
     } catch (err: any) {

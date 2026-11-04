@@ -51,7 +51,7 @@ export default defineConfig(() => {
               },
             },
           ],
-          navigateFallbackDenylist: [/^\/api\//, /^\/auth\//, /^\/__\//],
+          navigateFallbackDenylist: [/^\/api\//, /^\/auth\//, /^\/__\//, /^\/admin(\/|$)/],
         },
         manifest: {
           name: 'ErMate',
@@ -86,6 +86,11 @@ export default defineConfig(() => {
       outDir: 'dist',
       emptyOutDir: true,
       rollupOptions: {
+        // Two pages: the doctors' app and the separate admin portal (served at /admin).
+        input: {
+          main: path.resolve(__dirname, 'index.html'),
+          admin: path.resolve(__dirname, 'admin.html'),
+        },
         output: {
           manualChunks(id) {
             if (id.includes('node_modules')) {

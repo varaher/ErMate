@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { hodApprovalWarnings, resolveHodHospital } from "../services/hodClaimChecks.ts";
 import { randomBytes, createHash } from "crypto";
 import { adminAuth, db, PROJECT_ID, FIRESTORE_DATABASE_ID } from "../../src/lib/firebase-admin.ts";
 import { requireAuth, type AuthRequest } from "../../src/middleware/auth.ts";
@@ -2194,13 +2195,21 @@ router.post("/approve-hod-claim", async (req: AuthRequest, res) => {
     }
 
     // Resolve canonical hospitalId and hospitalName
-    const rawHospitalName = String(explicitHospitalName || claim.hospital || "").trim();
+    const { hospitalId: resolvedHospitalId, hospitalName: rawHospitalName } =
+      resolveHodHospital(claim, explicitHospitalId, explicitHospitalName);
     if (!rawHospitalName) {
       return res.status(400).json({ error: "Hospital name cannot be resolved." });
     }
 
-    const rawHospitalId = String(explicitHospitalId || claim.hospitalId || "").trim();
-    const resolvedHospitalId = rawHospitalId || rawHospitalName.toLowerCase().replace(/[^a-z0-9]/g, "_").slice(0, 32);
+    // Duplicate HOD / moving a doctor out of another team needs an explicit second confirmation.
+    const warnings = await hodApprovalWarnings(db, claimantUid, resolvedHospitalId, rawHospitalName);
+    if (warnings.length > 0 && req.body?.confirmWarnings !== true) {
+      return res.status(409).json({
+        code: "HOD_APPROVAL_NEEDS_CONFIRMATION",
+        error: `Check before approving: ${warnings.join(" ")}`,
+        warnings,
+      });
+    }
 
     const now = nowIso();
     const adminUid = req.user!.uid;
@@ -2272,6 +2281,7 @@ router.post("/approve-hod-claim", async (req: AuthRequest, res) => {
       hospitalId: resolvedHospitalId,
       hospitalName: rawHospitalName,
       assignedRole: "HOD / Department Lead",
+      warningsAcknowledged: warnings,
       timestamp: now
     });
 

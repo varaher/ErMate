@@ -999,6 +999,26 @@ match /chatSessions/{sessionId} {
       allow read, write: if false;
     }
 
+    // ── Admin portal data — server only (read through /api/admin/*) ──
+    // AI usage per call and per day, admin action log, and provider balances
+    // entered by the platform admin. No browser may read or write these directly.
+
+    match /aiUsageEvents/{eventId} {
+      allow read, write: if false;
+    }
+
+    match /aiUsageDaily/{day} {
+      allow read, write: if false;
+    }
+
+    match /adminAuditLog/{logId} {
+      allow read, write: if false;
+    }
+
+    match /providerBalances/{provider} {
+      allow read, write: if false;
+    }
+
     // ── Case Counters (atomic daily clinical sequence YYMMDD###) ──
     match /case_counters/{counterDate} {
       allow read: if isLoggedIn();
