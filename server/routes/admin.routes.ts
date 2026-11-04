@@ -547,7 +547,12 @@ router.get("/overview", async (req, res) => {
       db.collection("hodClaimRequests").where("status", "==", "pending").count().get(),
       db.collection("cases").count().get(),
       db.collection("cases").where("createdAt", ">=", fromIso).count().get(),
-      db.collection("creditUsage").where("at", ">=", fromIso).get(),
+      // Credits are compared with AI cost only from the first day AI cost was logged, so days before logging can't skew it.
+      db.collection("aiUsageDaily").orderBy("day").limit(1).get().then((first: any) => {
+        const firstDay = first.empty ? null : String(first.docs[0].data()?.day || first.docs[0].id);
+        const startIso = firstDay ? istDayStartIso(firstDay > from ? firstDay : from) : fromIso;
+        return db.collection("creditUsage").where("at", ">=", startIso).get();
+      }),
       allDocs("hospital_directory"),
     ]);
 
@@ -586,7 +591,7 @@ router.get("/overview", async (req, res) => {
       profitAfterAi: money(revenue.totals.netInr - usage.totals.costInr),
       costPerCredit: {
         creditsUsed, costInr: money(costOfChargedUse),
-        perCredit: creditsUsed > 0 ? money(costOfChargedUse / creditsUsed) : null,
+        perCredit: creditsUsed >= 20 && costOfChargedUse > 0 ? money(costOfChargedUse / creditsUsed) : null,
         priceInr: RUPEES_PER_CREDIT, targetInr: TARGET_COST_PER_CREDIT_RUPEES,
       },
       alerts: {

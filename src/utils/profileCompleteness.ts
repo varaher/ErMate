@@ -166,3 +166,15 @@ export function canPersistClinicalData(
     isTrialOnly: false,
   };
 }
+
+
+/**
+ * ErMate Teams: colleagues find each other by hospital, so a profile also needs the hospital's
+ * place, district and state (the same three fields used to add a hospital to the directory).
+ * Used only by the onboarding gate; it does not change canPersistClinicalData.
+ */
+export function hasHospitalLocation(profile?: UserProfile | null): boolean {
+  if (!profile) return false;
+  const ok = (v: unknown) => String(v || "").trim().length >= 2;
+  return ok((profile as any).place) && ok((profile as any).district) && ok((profile as any).state);
+}

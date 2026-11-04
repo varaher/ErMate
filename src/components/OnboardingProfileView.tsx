@@ -7,8 +7,8 @@ import {
 } from "lucide-react";
 import { UserProfile } from "../types";
 import { ErMateLogo } from "./shared/ErMateLogo";
-import { isClinicalProfileComplete, getProfileCompletenessDetails } from "../utils/profileCompleteness";
-import { createHospitalWorkspace, createTeamInvite } from "../services/teamInviteService";
+import { isClinicalProfileComplete, getProfileCompletenessDetails, hasHospitalLocation } from "../utils/profileCompleteness";
+import { createHospitalWorkspace, createTeamInvite, requestToJoinTeam } from "../services/teamInviteService";
 import { FEATURES } from "../config/features";
 import {
   INDIAN_STATES_AND_UTS,
@@ -23,7 +23,7 @@ interface OnboardingProfileViewProps {
   erPhysicalBedCapacity?: number | null;
   onSaveProfile: (updatedProfile: UserProfile, capacity?: number | null) => Promise<void>;
   onContinueToDashboard?: () => void;
-  onSkipToTrial: () => void;
+  onOpenTeam?: () => void;
   onTeamCreated?: (hospitalId: string, hospitalName: string) => void;
   hasActiveTrialCase?: boolean;
   onSaveActiveTrialCase?: () => Promise<void> | void;
@@ -57,7 +57,7 @@ export default function OnboardingProfileView({
   erPhysicalBedCapacity,
   onSaveProfile,
   onContinueToDashboard,
-  onSkipToTrial,
+  onOpenTeam,
   onTeamCreated,
   hasActiveTrialCase = false,
   onSaveActiveTrialCase,
@@ -103,7 +103,7 @@ export default function OnboardingProfileView({
     bedCapacity: initialCap ?? null,
   });
 
-  const isInitiallyComplete = isClinicalProfileComplete(profile, erPhysicalBedCapacity);
+  const isInitiallyComplete = isClinicalProfileComplete(profile, erPhysicalBedCapacity) && hasHospitalLocation(profile);
 
   // Suggest hospitals already in the directory while the doctor types.
   useEffect(() => {
@@ -154,7 +154,7 @@ export default function OnboardingProfileView({
         department: profile.department || "Emergency & Trauma Medicine",
         bedCapacity: cap,
       });
-      if (isClinicalProfileComplete(profile, erPhysicalBedCapacity) && profileMode === "INCOMPLETE") {
+      if (isClinicalProfileComplete(profile, erPhysicalBedCapacity) && hasHospitalLocation(profile) && profileMode === "INCOMPLETE") {
         setProfileMode("SAVED");
       }
     }
@@ -168,6 +168,25 @@ export default function OnboardingProfileView({
   const [creatingTeam, setCreatingTeam] = useState<boolean>(false);
   const [teamError, setTeamError] = useState<string | null>(null);
   const [trialSaveError, setTrialSaveError] = useState<string | null>(null);
+
+  // Join a team with an invite link (the Department Lead approves)
+  const [joinLink, setJoinLink] = useState<string>("");
+  const [joining, setJoining] = useState<boolean>(false);
+  const [joinMsg, setJoinMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const handleJoinWithLink = async () => {
+    setJoining(true);
+    setJoinMsg(null);
+    try {
+      const raw = joinLink.trim().split("?")[0].replace(/\/+$/, "");
+      const token = raw.split("/").pop() || raw;
+      const res = await requestToJoinTeam(token, savedData.role);
+      setJoinMsg({ ok: !!res.success, text: res.message || (res.success ? "Request sent. Your Department Lead will approve you." : "Could not send the request.") });
+    } catch (err: any) {
+      setJoinMsg({ ok: false, text: err?.message || "Could not send the request. Check the link and try again." });
+    } finally {
+      setJoining(false);
+    }
+  };
   const [isContinuing, setIsContinuing] = useState<boolean>(false);
 
   // Invite share state
@@ -325,11 +344,7 @@ export default function OnboardingProfileView({
         setIsContinuing(false);
       }
     }
-    if (onContinueToDashboard) {
-      onContinueToDashboard();
-    } else {
-      onSkipToTrial();
-    }
+    onContinueToDashboard?.();
   };
 
   // Handle Team Creation Submit
@@ -558,20 +573,53 @@ export default function OnboardingProfileView({
             </button>
           </div>
 
-          {/* Optional Team Workspace creation card (Non-blocking) */}
-          {FEATURES.teamsForIndividuals && (
-          <div className="pt-2 border-t border-slate-100 dark:border-slate-800 text-center space-y-2">
-            <p className="text-[11px] text-slate-500 dark:text-slate-400">
-              Want to collaborate with colleagues? You can create or join an ER team anytime.
-            </p>
-            <button
-              type="button"
-              onClick={() => setStep("team_create")}
-              className="text-xs font-bold text-indigo-600 dark:text-indigo-400 hover:underline flex items-center justify-center gap-1.5 mx-auto cursor-pointer"
-            >
-              <Users className="w-3.5 h-3.5" />
-              <span>Create Team Workspace (Optional)</span>
-            </button>
+          {/* ErMate Teams: create or join (shown right after the profile is saved) */}
+          {FEATURES.teamsLaunch && (
+          <div data-testid="onboarding-team-card" className="pt-3 border-t border-slate-100 dark:border-slate-800 space-y-3">
+            <div className="text-center space-y-1">
+              <h3 className="text-sm font-black text-slate-900 dark:text-white">Work as a team</h3>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                Share your rota, hand over between shifts and see who is on duty at {savedData.hospital || "your hospital"}.
+              </p>
+            </div>
+            <div className="rounded-2xl border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/30 p-3.5 space-y-1.5">
+              <strong className="text-xs text-emerald-900 dark:text-emerald-200 block">Create your team</strong>
+              <p className="text-[11px] text-emerald-800 dark:text-emerald-300">You become Department Lead (HOD) and invite colleagues by link.</p>
+              <button
+                type="button"
+                data-testid="onboarding-create-team"
+                onClick={() => { setTeamHospitalName(savedData.hospital || ""); setStep("team_create"); }}
+                className="w-full min-h-[44px] bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl cursor-pointer flex items-center justify-center gap-2"
+              >
+                <Users className="w-4 h-4" />
+                <span>Create team</span>
+              </button>
+            </div>
+            <div className="rounded-2xl border border-slate-200 dark:border-slate-800 p-3.5 space-y-2">
+              <strong className="text-xs text-slate-900 dark:text-white block">I have an invite link</strong>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400">Paste the link your Department Lead sent. They approve you.</p>
+              <input
+                type="text"
+                data-testid="onboarding-invite-input"
+                value={joinLink}
+                onChange={(e) => { setJoinLink(e.target.value); setJoinMsg(null); }}
+                placeholder="Paste invite link"
+                className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg px-3 py-2 text-xs"
+              />
+              <button
+                type="button"
+                data-testid="onboarding-join-team"
+                disabled={joining || joinLink.trim().length < 6}
+                onClick={handleJoinWithLink}
+                className="w-full min-h-[40px] border border-indigo-500 text-indigo-600 dark:text-indigo-300 text-xs font-bold rounded-xl cursor-pointer disabled:opacity-50"
+              >
+                {joining ? "Sending request..." : "Request to join"}
+              </button>
+              {joinMsg && (
+                <p className={`text-[11px] font-medium ${joinMsg.ok ? "text-emerald-700 dark:text-emerald-300" : "text-red-600 dark:text-red-400"}`}>{joinMsg.text}</p>
+              )}
+            </div>
+            <p className="text-[10px] text-center text-slate-400">You can also do this later from More.</p>
           </div>
           )}
         </div>
@@ -599,9 +647,19 @@ export default function OnboardingProfileView({
             <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-400 max-w-md mx-auto leading-relaxed">
               {isEditing
                 ? "Update your clinical identity, workplace details, or bed capacity."
-                : "Set up your clinical identity to enable permanent case saving, Voice Scribe, and bedside documentation."}
+                : "Your hospital lets colleagues find the same hospital and work as a team: shared rota, handover and cases."}
             </p>
           </div>
+
+          {/* Existing doctors: teams are launching, hospital location is now needed */}
+          {!isEditing && isClinicalProfileComplete(profile, erPhysicalBedCapacity) && !hasHospitalLocation(profile) && (
+            <div data-testid="teams-launch-notice" className="bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800/60 rounded-2xl p-4 text-xs space-y-1">
+              <strong className="text-amber-900 dark:text-amber-200 block">ErMate Teams are launching</strong>
+              <p className="text-amber-800 dark:text-amber-300">
+                Add your hospital's place, district and state so your colleagues can find you and share the rota. Your cases are safe and unchanged.
+              </p>
+            </div>
+          )}
 
           {/* Active Trial Case Notice (if in incomplete mode) */}
           {hasActiveTrialCase && !isEditing && (
@@ -841,15 +899,6 @@ export default function OnboardingProfileView({
                       </>
                     )}
                   </button>
-
-                  <button
-                    type="button"
-                    disabled={saving}
-                    onClick={onSkipToTrial}
-                    className="w-full min-h-[40px] py-2 px-4 border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-400 text-xs font-bold rounded-xl transition-all cursor-pointer text-center disabled:opacity-50"
-                  >
-                    Skip for now — Explore in Trial Mode
-                  </button>
                 </>
               )}
             </div>
@@ -1035,6 +1084,18 @@ export default function OnboardingProfileView({
               >
                 <Share2 className="w-4 h-4" />
                 <span>Share Invitation Link</span>
+              </button>
+            )}
+
+            {onOpenTeam && (
+              <button
+                type="button"
+                data-testid="onboarding-open-rota"
+                onClick={onOpenTeam}
+                className="w-full min-h-[46px] py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl transition-all shadow-md cursor-pointer flex items-center justify-center gap-2"
+              >
+                <Users className="w-4 h-4" />
+                <span>Set up your rota</span>
               </button>
             )}
 

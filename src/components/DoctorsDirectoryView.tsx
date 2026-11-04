@@ -346,7 +346,7 @@ export default function DoctorsDirectoryView({ currentProfile, onNavigateToTab }
                         {doc.hospital || "Emergency Dept"}
                       </td>
                       <td className="py-3.5 px-4 font-mono text-indigo-600 dark:text-indigo-400 font-bold">
-                        {doc.state || "Maharashtra"}
+                        {doc.state || "Not given"}
                       </td>
                       <td className="py-3.5 px-4">
                         <span className="px-2 py-0.5 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-mono text-[10px] font-bold rounded-md">

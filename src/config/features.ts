@@ -14,4 +14,6 @@
  */
 export const FEATURES = {
   teamsForIndividuals: false,
+  /** ErMate Teams launch: team create/join, rota and roster open for everyone. Does NOT open the Clinician Directory. */
+  teamsLaunch: true,
 } as const;

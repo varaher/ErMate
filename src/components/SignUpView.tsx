@@ -3,6 +3,7 @@ import { Activity, User, Building, ShieldCheck, ArrowRight, ArrowLeft, Mail, Key
 import { ErMateLogo } from "./shared/ErMateLogo";
 import { UserProfile } from "../types";
 import { TERMS_VERSION } from "../lib/legal";
+import { INDIAN_STATES_AND_UTS } from "../utils/hospitalDirectory";
 import {
   createUserWithEmailAndPassword,
   sendEmailVerification,
@@ -35,7 +36,7 @@ export default function SignUpView({
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [age, setAge] = useState<string>("");
-  const [stateName, setStateName] = useState("Maharashtra");
+  const [stateName, setStateName] = useState("");
   const [hospitalAddress, setHospitalAddress] = useState("");
   const [bedCapacity, setBedCapacity] = useState<string>("");
   const [subscription, setSubscription] = useState<"Free Trial" | "Pro Doctor" | "Team Department">("Free Trial");
@@ -103,6 +104,12 @@ const [registeredEmail, setRegisteredEmail] =
     // 6. Required: Department
     if (!department.trim() || department.trim().length < 2) {
       setError("Please specify your department (at least 2 characters).");
+      return;
+    }
+
+    // 6b. Required: State (no default, so location reports are never guessed)
+    if (!stateName.trim()) {
+      setError("Please select your state.");
       return;
     }
 
@@ -584,35 +591,24 @@ const [registeredEmail, setRegisteredEmail] =
                   </div>
                 </div>
 
-                {/* Optional State & Hospital Address */}
+                {/* State (required) & Hospital Address (optional) */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div className="space-y-1">
                     <label htmlFor="signup-state" className={`block text-[9px] font-bold uppercase tracking-wider font-mono ${isEmerald ? 'text-slate-500' : 'text-slate-400'}`}>
-                      State / Region (Optional)
+                      State / Region
                     </label>
                     <select
                       id="signup-state"
+                      required
                       value={stateName}
                       onChange={(e) => setStateName(e.target.value)}
                       className={`${isEmerald ? 'bg-slate-50 border-slate-200 text-slate-800 focus:ring-emerald-500' : 'bg-slate-900 border-slate-800 text-slate-200 focus:ring-blue-500'} block w-full px-2.5 py-2 text-xs rounded-lg font-bold focus:outline-none focus:ring-1`}
                     >
-                      <option value="Maharashtra">Maharashtra</option>
-                      <option value="Delhi">Delhi NCR</option>
-                      <option value="Karnataka">Karnataka</option>
-                      <option value="Tamil Nadu">Tamil Nadu</option>
-                      <option value="Telangana">Telangana</option>
-                      <option value="Kerala">Kerala</option>
-                      <option value="Gujarat">Gujarat</option>
-                      <option value="West Bengal">West Bengal</option>
-                      <option value="Uttar Pradesh">Uttar Pradesh</option>
-                      <option value="Rajasthan">Rajasthan</option>
-                      <option value="Madhya Pradesh">Madhya Pradesh</option>
-                      <option value="Andhra Pradesh">Andhra Pradesh</option>
-                      <option value="Punjab">Punjab</option>
-                      <option value="Haryana">Haryana</option>
-                      <option value="Odisha">Odisha</option>
-                      <option value="Assam">Assam</option>
-                      <option value="Goa">Goa</option>
+                      {/* No state is pre-selected: the doctor must choose one (location reports depend on it). */}
+                      <option value="" disabled>Select your state</option>
+                      {INDIAN_STATES_AND_UTS.map((s) => (
+                        <option key={s} value={s}>{s === "Delhi" ? "Delhi NCR" : s}</option>
+                      ))}
                       <option value="Other">Other / International</option>
                     </select>
                   </div>

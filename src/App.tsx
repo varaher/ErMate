@@ -21,7 +21,7 @@ import { saveHandoverPatient } from "./utils/handoverUtils";
 import { clearHandoverLocalCache, enforceHandoverCacheOwner } from "./utils/handoverLocalCache";
 import { triggerPrintWithTip } from "./utils/printWithTip";
 import { getNormalizedRole } from "./utils/roleUtils";
-import { isClinicalProfileComplete, canPersistClinicalData } from "./utils/profileCompleteness";
+import { isClinicalProfileComplete, hasHospitalLocation, canPersistClinicalData } from "./utils/profileCompleteness";
 import { diffForWrite } from "./utils/changedFields";
 import OnboardingProfileView from "./components/OnboardingProfileView";
 import { authenticatedFetch } from "./services/authenticatedFetch";
@@ -1109,7 +1109,7 @@ useEffect(() => {
   };
 
   // Onboarding & Trial Mode states
-  const [exploreInTrialMode, setExploreInTrialMode] = useState<boolean>(false);
+ 
   const [showOnboardingProfile, setShowOnboardingProfile] = useState<boolean>(false);
   const [showTrialSaveModal, setShowTrialSaveModal] = useState<boolean>(false);
   const [activeTrialCase, setActiveTrialCase] = useState<ClinicalCase | null>(null);
@@ -6496,7 +6496,7 @@ const clearAccountScopedState = (previousUid?: string | null) => {
     setActiveTrialCase(null);
     setSelfMembership(null);
     setErPhysicalBedCapacity(null);
-    setExploreInTrialMode(false);
+   
     setShowOnboardingProfile(false);
     setNotifications([]);
 
@@ -6563,7 +6563,7 @@ const handleSignOut = async () => {
   const navigateToTab = (tabId: string) => {
     // Individual V1: team screens hidden for non-team clinicians; directory hidden for all.
     if (!FEATURES.teamsForIndividuals) {
-      const blockedTeam = (tabId === "team" || tabId === "roster") && !isVerifiedTeamUser;
+      const blockedTeam = (tabId === "team" || tabId === "roster") && !isVerifiedTeamUser && !FEATURES.teamsLaunch;
       const blockedDirectory = tabId === "directory";
       if (blockedTeam || blockedDirectory) {
         triggerNotification("Coming soon", "Team features will be available soon. ErMate currently works as your personal workspace.", "info");
@@ -6646,7 +6646,7 @@ const handleSignOut = async () => {
   // Dedicated "Complete Your ErMate Profile" screen on first login / new registration
   if (
     isLoggedIn &&
-    ((!isVerifiedTeamUser && !isProfileComplete && !exploreInTrialMode) || showOnboardingProfile)
+    ((!isVerifiedTeamUser && (!isProfileComplete || !hasHospitalLocation(profile))) || showOnboardingProfile)
   ) {
     return (
       <OnboardingProfileView
@@ -7535,7 +7535,7 @@ const handleSignOut = async () => {
 
               {activeTab === "learn" && <LearnView onNavigateToTab={navigateToTab} isDarkMode={isDarkMode} />}
 
-              {activeTab === "team" && (FEATURES.teamsForIndividuals || isVerifiedTeamUser) && (
+              {{activeTab === "team" && (FEATURES.teamsLaunch || FEATURES.teamsForIndividuals || isVerifiedTeamUser) && (
                 <ProfileSettingsView
                   initialSubSection="team"
                   profile={profile}

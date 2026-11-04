@@ -163,7 +163,9 @@ export function OverviewPage() {
             <Kpi label="Profit after AI" value={d.ai.daysWithData ? inr(d.profitAfterAi) : "—"} sub="Before cloud and fixed costs" subTone={d.profitAfterAi >= 0 ? "good" : "bad"} tag={d.ai.daysWithData ? "Estimated" : "No data"} />
             <Kpi label="AI cost per credit"
               value={d.costPerCredit.perCredit === null ? "—" : inr(d.costPerCredit.perCredit)}
-              sub={`Price ₹${d.costPerCredit.priceInr} · target ₹${d.costPerCredit.targetInr} · ${count(d.costPerCredit.creditsUsed)} credits used`}
+              sub={d.costPerCredit.perCredit === null
+                ? `Needs at least 20 credits used since logging began (${count(d.costPerCredit.creditsUsed)} so far)`
+                : `Price ₹${d.costPerCredit.priceInr} · target ₹${d.costPerCredit.targetInr} · ${count(d.costPerCredit.creditsUsed)} credits used`}
               subTone={d.costPerCredit.perCredit === null ? undefined : d.costPerCredit.perCredit <= d.costPerCredit.targetInr ? "good" : "bad"}
               tag={d.costPerCredit.perCredit === null ? "No data" : "Estimated"}
               tagTitle="AI cost of doctors who were charged credits ÷ credits they used" />
