@@ -113,6 +113,11 @@ function State({ loading, error, onRetry }: { loading: boolean; error: string; o
   return null;
 }
 
+function Warning({ text }: { text?: string | null }) {
+  if (!text) return null;
+  return <div role="note" className="adm-card" style={{ padding: "12px 14px", marginBottom: 14, background: "var(--adm-amber-soft)", color: "#7C2D12", fontSize: 13, borderColor: "#F3D9B1" }}>{text}</div>;
+}
+
 const grid = (min: number): React.CSSProperties => ({ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${min}px, 1fr))`, gap: 14 });
 const linkBtn: React.CSSProperties = { background: "none", border: 0, padding: 0, font: "inherit", fontSize: 13, fontWeight: 600, color: "var(--adm-purple)", cursor: "pointer" };
 
@@ -147,6 +152,7 @@ export function OverviewPage() {
       <State loading={loading && !d} error={error} onRetry={reload} />
       {d && (
         <>
+          <Warning text={d.warning} />
           <div style={{ ...grid(210), marginBottom: 14 }}>
             <Kpi label="Registered doctors" value={count(d.users.total)} sub={`+${d.users.newInRange} in range`} subTone={d.users.newInRange ? "good" : undefined} tag="Actual" />
             <Kpi label="Active doctors" value={count(d.users.activeInRange)} sub="Signed in or used the app in range" tag="Actual" />
@@ -249,6 +255,7 @@ export function UsersPage() {
       <State loading={loading && !data} error={error} onRetry={reload} />
       {data && (
         <>
+          <Warning text={data.warning} />
           <div className="adm-card" style={{ padding: 14, display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 14, alignItems: "flex-end" }}>
             <Field label="Search" grow={2}><input className="adm-input" type="search" placeholder="Name, email, hospital or place" value={q} onChange={e => setQ(e.target.value)} /></Field>
             <Field label="Plan"><select className="adm-input" value={plan} onChange={e => setPlan(e.target.value)}><option>All</option>{plans.map(p => <option key={p}>{p}</option>)}</select></Field>

@@ -21,7 +21,10 @@ export async function api<T = any>(path: string, init?: { method?: string; body?
     body: init?.body ? JSON.stringify(init.body) : undefined,
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new ApiError(data?.error || `Request failed (${res.status})`, res.status, data?.code, data);
+  if (!res.ok) {
+    const msg = (data?.error || `Request failed (${res.status})`) + (data?.detail ? ` Reason: ${data.detail}` : "");
+    throw new ApiError(msg, res.status, data?.code, data);
+  }
   return data as T;
 }
 

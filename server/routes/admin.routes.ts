@@ -63,6 +63,8 @@ const norm = (s: unknown) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g,
 const isActiveMember = (m: any) => ["active", "active (joined)"].includes(String(m?.status || "").trim().toLowerCase());
 const isHodRole = (r: unknown) => String(r || "").trim().toLowerCase().startsWith("hod");
 const money = (n: number) => Math.round(n * 100) / 100;
+/** Short technical reason shown to the admin when a section fails (no patient data is ever in these errors). */
+const errDetail = (e: any) => String(e?.code || "") + (e?.code && e?.message ? ": " : "") + String(e?.message || e || "").slice(0, 300);
 
 async function allDocs(collection: string): Promise<any[]> {
   const snap = await db.collection(collection).get();
@@ -127,7 +129,7 @@ function planFor(user: any, authUser: any, member: any, subs: Map<string, any>) 
   const covered = !!member && isActiveMember(member) && member.membershipVerified === true &&
     [member.hospitalId, member.teamId, hospitalSlug(member.hospital)].map(x => str(x)).filter(Boolean).some(id => subs.get(id)?.active === true);
   const access = computeAccess({
-    accountCreatedAt: authUser?.metadata?.creationTime ? new Date(authUser.metadata.creationTime).toISOString() : null,
+    accountCreatedAt: authUser?.metadata?.creationTime ? new Date(authUser.metadata.creationTime).toISOString() : (str(user?.createdAt) || null),
     email: authUser?.email || user?.email,
     subscriptionTier: user?.subscriptionTier,
     tierExpiresAt: user?.tierExpiresAt,
@@ -145,8 +147,16 @@ function planFor(user: any, authUser: any, member: any, subs: Map<string, any>) 
 // ───────────────────────── users ─────────────────────────
 
 async function buildUsers() {
+  // Sign-in records (join date, last active, email verified) need the Firebase Auth "list users" permission.
+  // If the server's account lacks it, still show every doctor from their profiles and say what is missing.
+  let authWarning = "";
+  const authUsersPromise = listAuthUsers().catch((e: any) => {
+    authWarning = `Sign-in records unavailable (${e?.code || e?.message || "unknown error"}). Join dates and last-active come from profiles only.`;
+    console.error("[admin/users] listUsers failed:", e?.code || "", e?.message || e);
+    return new Map<string, any>();
+  });
   const [authUsers, profiles, members, subsList, autopay, usage] = await Promise.all([
-    listAuthUsers(), allDocs("users"), allDocs("team_members"), allDocs("hospital_subscriptions"),
+    authUsersPromise, allDocs("users"), allDocs("team_members"), allDocs("hospital_subscriptions"),
     allDocs("autopaySubscriptions"), loadUsage(sinceDay(30)),
   ]);
   const profileByUid = new Map(profiles.map(p => [p.id, p]));
@@ -185,16 +195,16 @@ async function buildUsers() {
     };
   });
   rows.sort((x, y) => String(y.createdAt || "").localeCompare(String(x.createdAt || "")));
-  return { rows, usageDays: usage.daysWithData };
+  return { rows, usageDays: usage.daysWithData, authWarning };
 }
 
 router.get("/users", async (_req, res) => {
   try {
-    const { rows, usageDays } = await buildUsers();
-    res.json({ asOf: new Date().toISOString(), users: rows, usageDaysLogged: usageDays });
+    const { rows, usageDays, authWarning } = await buildUsers();
+    res.json({ asOf: new Date().toISOString(), users: rows, usageDaysLogged: usageDays, warning: authWarning || null });
   } catch (e: any) {
     console.error("[admin/users]", e?.message || e);
-    res.status(500).json({ error: "Could not load users." });
+    res.status(500).json({ error: "Could not load users.", detail: errDetail(e) });
   }
 });
 
@@ -257,7 +267,7 @@ router.get("/hospitals", async (_req, res) => {
     res.json({ asOf: new Date().toISOString(), hospitals: rows });
   } catch (e: any) {
     console.error("[admin/hospitals]", e?.message || e);
-    res.status(500).json({ error: "Could not load hospitals." });
+    res.status(500).json({ error: "Could not load hospitals.", detail: errDetail(e) });
   }
 });
 
@@ -304,7 +314,7 @@ router.get("/hod-claims", async (req, res) => {
     res.json({ status, claims: out });
   } catch (e: any) {
     console.error("[admin/hod-claims]", e?.message || e);
-    res.status(500).json({ error: "Could not load HOD requests." });
+    res.status(500).json({ error: "Could not load HOD requests.", detail: errDetail(e) });
   }
 });
 
@@ -336,7 +346,7 @@ router.post("/hod-claims/:id/reject", async (req: AuthRequest, res) => {
     res.json({ success: true });
   } catch (e: any) {
     console.error("[admin/hod-reject]", e?.message || e);
-    res.status(500).json({ error: "Could not reject the request." });
+    res.status(500).json({ error: "Could not reject the request.", detail: errDetail(e) });
   }
 });
 
@@ -369,7 +379,7 @@ router.post("/credits/adjust", async (req: AuthRequest, res) => {
     res.json({ success: true, ...result });
   } catch (e: any) {
     console.error("[admin/credits]", e?.message || e);
-    res.status(500).json({ error: "Could not change credits." });
+    res.status(500).json({ error: "Could not change credits.", detail: errDetail(e) });
   }
 });
 
@@ -400,7 +410,7 @@ router.get("/usage", async (req, res) => {
     });
   } catch (e: any) {
     console.error("[admin/usage]", e?.message || e);
-    res.status(500).json({ error: "Could not load AI usage." });
+    res.status(500).json({ error: "Could not load AI usage.", detail: errDetail(e) });
   }
 });
 
@@ -448,7 +458,7 @@ router.get("/providers", async (_req, res) => {
     res.json({ asOf: new Date().toISOString(), month: today.slice(0, 7), providers: rows });
   } catch (e: any) {
     console.error("[admin/providers]", e?.message || e);
-    res.status(500).json({ error: "Could not load provider dues." });
+    res.status(500).json({ error: "Could not load provider dues.", detail: errDetail(e) });
   }
 });
 
@@ -466,7 +476,7 @@ router.post("/providers/:id", async (req: AuthRequest, res) => {
     res.json({ success: true });
   } catch (e: any) {
     console.error("[admin/providers:set]", e?.message || e);
-    res.status(500).json({ error: "Could not save." });
+    res.status(500).json({ error: "Could not save.", detail: errDetail(e) });
   }
 });
 
@@ -521,7 +531,7 @@ router.get("/revenue", async (req, res) => {
     res.json({ days, ...r, payments: r.payments.map(named), autopay: { ...r.autopay, issues: r.autopay.issues.map(named) }, problems: r.problems.map(named) });
   } catch (e: any) {
     console.error("[admin/revenue]", e?.message || e);
-    res.status(500).json({ error: "Could not load revenue." });
+    res.status(500).json({ error: "Could not load revenue.", detail: errDetail(e) });
   }
 });
 
@@ -532,7 +542,7 @@ router.get("/overview", async (req, res) => {
     const days = rangeDays(req.query);
     const from = sinceDay(days);
     const fromIso = istDayStartIso(from);
-    const [{ rows: users }, usage, revenue, pendingHod, casesTotal, casesInRange, creditUseSnap, directory] = await Promise.all([
+    const [{ rows: users, authWarning }, usage, revenue, pendingHod, casesTotal, casesInRange, creditUseSnap, directory] = await Promise.all([
       buildUsers(), loadUsage(from), buildRevenue(days),
       db.collection("hodClaimRequests").where("status", "==", "pending").count().get(),
       db.collection("cases").count().get(),
@@ -554,7 +564,7 @@ router.get("/overview", async (req, res) => {
     for (const u of users) plans[u.plan] = (plans[u.plan] || 0) + 1;
 
     res.json({
-      asOf: new Date().toISOString(), days, from,
+      asOf: new Date().toISOString(), days, from, warning: authWarning || null,
       users: {
         total: users.length,
         newInRange: users.filter(u => u.createdAt && u.createdAt >= fromIso).length,
@@ -588,7 +598,7 @@ router.get("/overview", async (req, res) => {
     });
   } catch (e: any) {
     console.error("[admin/overview]", e?.message || e);
-    res.status(500).json({ error: "Could not load the overview." });
+    res.status(500).json({ error: "Could not load the overview.", detail: errDetail(e) });
   }
 });
 
@@ -619,7 +629,7 @@ router.get("/audit", async (_req, res) => {
     res.json({ rows });
   } catch (e: any) {
     console.error("[admin/audit]", e?.message || e);
-    res.status(500).json({ error: "Could not load the audit log." });
+    res.status(500).json({ error: "Could not load the audit log.", detail: errDetail(e) });
   }
 });
 
