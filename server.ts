@@ -1,3 +1,5 @@
+// Must be first: logs every AI vendor call (provider, model, tokens/audio, cost) for the admin portal.
+import "./server/services/aiUsageHook.ts";
 import express from "express";
 import path from "path";
 import fs from "fs";
@@ -17,6 +19,8 @@ import { db as firestoreAdmin } from "./src/lib/firebase-admin.ts";
 import { cases, contributions, handovers, hospitalSubscriptions, teamMembers, users } from "./src/db/schema.ts";
 import { eq, desc } from "drizzle-orm";
 import { requireAuth, type AuthRequest } from "./src/middleware/auth.ts";
+import { aiUsageContextMiddleware } from "./server/services/aiUsage.ts";
+import adminRouter from "./server/routes/admin.routes.ts";
 
 // Learned AI rules change the instructions given to the AI for EVERY user,
 // so only the verified platform admin may create, approve or delete them.
@@ -182,6 +186,9 @@ NORMAL STATEMENTS
 const app = express();
 const PORT = 3000;
 
+// Ties every AI vendor call to the doctor and route that caused it (see server/services/aiUsage.ts).
+app.use(aiUsageContextMiddleware);
+
 app.use("/api/payments/webhook", express.raw({ type: "application/json" }));
 
 app.use("/api", apiRateLimit());
@@ -191,6 +198,7 @@ app.use("/api/account", accountRouter);
 app.use(extractionRouter);
 app.use("/api/logbook", logbookRouter);
 app.use("/api/team", teamRouter);
+app.use("/api/admin", adminRouter);
 app.use("/api/mate", mateRouter);
 app.use("/api/protocol-flags", protocolFlagsRouter);
 
@@ -3874,6 +3882,14 @@ app.get(["/api/download/pitch-deck", "/ErMate_Investor_Pitch_Deck.pptx", "/ErMat
 
 // Setup Vite Dev Server / Static Asset Serving
 async function startServer() {
+  // Admin portal: admin.ermate.in (any host starting "admin.") opens /admin; /admin also works on ermate.in.
+  app.use((req, res, next) => {
+    const host = String(req.hostname || "").toLowerCase();
+    if (host.startsWith("admin.") && req.method === "GET" && req.path === "/") return res.redirect(302, "/admin");
+    next();
+  });
+  const isAdminPage = (p: string) => p === "/admin" || p.startsWith("/admin/");
+
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
       server: { 
@@ -3882,9 +3898,20 @@ async function startServer() {
       },
       appType: "spa",
     });
+    app.get(["/admin", "/admin/*"], async (req, res, next) => {
+      try {
+        const html = fs.readFileSync(path.join(process.cwd(), "admin.html"), "utf-8");
+        res.status(200).set({ "Content-Type": "text/html" }).end(await vite.transformIndexHtml(req.originalUrl, html));
+      } catch (e) { next(e); }
+    });
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), "dist");
+    app.get(["/admin", "/admin/*"], (req, res, next) => {
+      if (!isAdminPage(req.path)) return next();
+      res.setHeader("Cache-Control", "no-store");
+      res.sendFile(path.join(distPath, "admin.html"));
+    });
     app.use(express.static(distPath));
     app.get("*", (req, res, next) => {
       // Do not capture Firebase reserved /__/ namespace
