@@ -1528,8 +1528,23 @@ useEffect(() => {
         });
     }
   }, [isLoggedIn]);
-  / ErMate Teams launch: one in-app notification per doctor (kept in the bell list, shown once per device) useEffect(() => { if (!isLoggedIn || !profile?.email) return; const key = ermate_teams_launch_notice_v1_${String(profile.email).trim().toLowerCase()}; try { if (localStorage.getItem(key)) return; localStorage.setItem(key, "1"); } catch { return; } triggerNotification( "ErMate Teams are here", "Create your hospital team or join one with an invite link. Share your rota and work together. Open More, then Open Team Roster.", "info", "team" ); }, [isLoggedIn, profile?.email]);
-
+  // ErMate Teams launch: one in-app notification per doctor (kept in the bell list, shown once per device)
+  useEffect(() => {
+    if (!isLoggedIn || !profile?.email) return;
+    const key = `ermate_teams_launch_notice_v1_${String(profile.email).trim().toLowerCase()}`;
+    try {
+      if (localStorage.getItem(key)) return;
+      localStorage.setItem(key, "1");
+    } catch {
+      return;
+    }
+    triggerNotification(
+      "ErMate Teams are here",
+      "Create your hospital team or join one with an invite link. Share your rota and work together. Open More, then Open Team Roster.",
+      "info",
+      "team"
+    );
+  }, [isLoggedIn, profile?.email]);
   // B3 & B6: 24-Hour Incomplete Case Soft-Archive Engine (Never Hard-Delete)
   useEffect(() => {
     if (!isLoggedIn || !cases || cases.length === 0) return;
