@@ -280,7 +280,25 @@ export async function verifyTeamInstitution(
   }
   return data;
 }
-
+------------------------------------------------------------
+/**
+ * Platform admin only: counts (dry run) or activates members of teams saved before the Teams launch.
+ */
+export async function activateWaitingTeams(
+  confirm: boolean
+): Promise<{ dryRun: boolean; waitingMembers?: number; waitingTeams?: number; activatedMembers?: number; activatedTeams?: number }> {
+  const user = auth.currentUser;
+  if (!user) throw new Error("Not authenticated");
+  const idToken = await user.getIdToken();
+  const res = await fetch("/api/team/activate-waiting-teams", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
+    body: JSON.stringify({ confirm })
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Failed to activate waiting teams.");
+  return data;
+}
 /**
  * Submits an authenticated join request to a team using an invite token.
  * Never activates membership automatically; awaits Team Admin approval.

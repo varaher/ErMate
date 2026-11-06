@@ -2868,6 +2868,36 @@ const handleCreateTeam = async (req: AuthRequest, res: any) => {
     return res.status(400).json({ error: error.message || "Failed to create team workspace." });
   }
 };
+// ── POST /activate-waiting-teams ─────────────────────────────────────
+// Platform admin only. Teams created before the Teams launch were saved as "waiting" (membershipVerified: false),
+// so their members never loaded. This turns them on. It never touches the institution badge (verificationStatus).
+// Without { confirm: true } it only counts and changes nothing.
+router.post("/activate-waiting-teams", async (req: AuthRequest, res) => {
+  try {
+    if (!isPlatformAdminReq(req)) {
+      return res.status(403).json({ error: "Only the platform administrator (varahgrp@gmail.com) can activate waiting teams." });
+    }
+    const snap = await db.collection("team_members").where("membershipVerified", "==", false).get();
+    const waiting = snap.docs.filter((d) => {
+      const status = String(d.data().status || "");
+      return status === "active" || status === "active (joined)";
+    });
+    const teams = new Set(waiting.map((d) => String(d.data().hospitalId || d.data().teamId || d.data().hospital || "")));
+    if (req.body?.confirm !== true) {
+      return res.json({ dryRun: true, waitingMembers: waiting.length, waitingTeams: teams.size });
+    }
+    const now = nowIso();
+    for (let i = 0; i < waiting.length; i += 400) {
+      const batch = db.batch();
+      waiting.slice(i, i + 400).forEach((d) => batch.update(d.ref, { membershipVerified: true, updatedAt: now }));
+      await batch.commit();
+    }
+    return res.json({ dryRun: false, activatedMembers: waiting.length, activatedTeams: teams.size });
+  } catch (error: any) {
+    console.error("Error activating waiting teams:", error);
+    return res.status(500).json({ error: error.message || "Failed to activate waiting teams." });
+  }
+});
 
 router.post("/create-team", handleCreateTeam);
 router.post("/create-workspace", handleCreateTeam);

@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import { TeamMember, UserProfile, ClinicalCase, isPendingApprovalStatus, isActiveMembershipStatus } from "../types";
 import GoogleCalendarModal from "./GoogleCalendarModal";
-import { createTeamInvite, createHospitalWorkspace, acceptSecureTeamInvite, regenerateTeamInvite, revokeTeamInvite, verifyTeamInstitution, requestToJoinTeam, setTeamAdminRole, setTeamRotaManagerRole } from "../services/teamInviteService";
+import { createTeamInvite, createHospitalWorkspace, acceptSecureTeamInvite, regenerateTeamInvite, revokeTeamInvite, verifyTeamInstitution, activateWaitingTeams, requestToJoinTeam, setTeamAdminRole, setTeamRotaManagerRole } from "../services/teamInviteService";
 import { auth, db } from "../firebase";
 import { doc, getDoc } from "firebase/firestore";
 
@@ -322,7 +322,23 @@ export default function TeamRosterBoard({
       alert(e.message || "Failed to verify institution.");
     }
   };
-
+  const handleActivateWaitingTeams = async () => {
+    if (!isPlatformAdmin) return;
+    try {
+      const preview = await activateWaitingTeams(false);
+      if (!preview.waitingMembers) {
+        alert("No teams are waiting. Nothing to activate.");
+        return;
+      }
+      const ok = window.confirm(`${preview.waitingMembers} member(s) in ${preview.waitingTeams} team(s) are waiting. Activate them all?`);
+      if (!ok) return;
+      const done = await activateWaitingTeams(true);
+      alert(`Activated ${done.activatedMembers} member(s) in ${done.activatedTeams} team(s).`);
+      window.location.reload();
+    } catch (e: any) {
+      alert(e.message || "Failed to activate waiting teams.");
+    }
+  };
   type InviteGenerationStatus = "idle" | "loading" | "success" | "error";
   const [inviteStatus, setInviteStatus] = useState<InviteGenerationStatus>("idle");
   const [inviteGenerationError, setInviteGenerationError] = useState<string | null>(null);
@@ -964,36 +980,41 @@ export default function TeamRosterBoard({
   return (
     <div id="team-roster-board" className="space-y-5 text-slate-800 dark:text-slate-100 max-w-7xl mx-auto">
       
-      {/* Unverified Team Status Banner */}
+      {/* Team status: a calm line. The team works; only the hospital badge is pending. */}
       {!isInstitutionalVerified && (
-        <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/80 rounded-2xl p-4 md:p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3.5 text-amber-800 dark:text-amber-200 animate-fade-in shadow-xs" id="unverified-team-banner">
-          <div className="flex items-start gap-3">
-            <div className="p-2 bg-amber-100 dark:bg-amber-900/50 text-amber-600 dark:text-amber-400 rounded-xl shrink-0 mt-0.5">
-              <ShieldAlert className="w-5 h-5" />
-            </div>
-            <div className="space-y-1">
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] bg-amber-200/80 dark:bg-amber-900 text-amber-800 dark:text-amber-200 font-bold px-2 py-0.5 rounded-full font-mono uppercase tracking-wider">
-                  Unverified Team Workspace
-                </span>
-              </div>
-              <h4 className="text-xs font-bold text-amber-900 dark:text-amber-100">
-                Awaiting Institutional Verification
-              </h4>
-              <p className="text-xs text-amber-800/90 dark:text-amber-300/90 leading-relaxed max-w-3xl">
-                Your team workspace is active for shifts, roster scheduling, and team management. Real patient clinical records remain protected in your private individual workspace until institutional verification is completed by the platform administrator.
-              </p>
-            </div>
+        <div
+          data-testid="team-status-line"
+          className="rounded-2xl border border-emerald-200 dark:border-emerald-900/60 bg-emerald-50 dark:bg-emerald-950/30 px-4 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2"
+        >
+          <div className="text-xs text-emerald-900 dark:text-emerald-200">
+            {myCanonicalMember?.membershipVerified === true ? (
+              <>
+                <strong>Your team is active.</strong> Members, rota and shifts are ready. The hospital badge is added later by the ErMate team.
+              </>
+            ) : (
+              <>
+                <strong>Your team is being activated.</strong> Close and reopen ErMate in a minute. If this stays, contact ErMate support.
+              </>
+            )}
           </div>
           {isPlatformAdmin && (
-            <button
-              type="button"
-              onClick={handleVerifyTeamInstitution}
-              className="px-3.5 py-2 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold rounded-xl shadow-xs transition-all shrink-0 cursor-pointer flex items-center gap-1.5 self-end sm:self-center"
-            >
-              <CheckCircle2 className="w-3.5 h-3.5" />
-              <span>Verify Institution</span>
-            </button>
+            <div className="flex flex-wrap gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={handleVerifyTeamInstitution}
+                className="min-h-[40px] px-3 py-2 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold rounded-xl cursor-pointer"
+              >
+                Verify Institution
+              </button>
+              <button
+                type="button"
+                data-testid="activate-waiting-teams"
+                onClick={handleActivateWaitingTeams}
+                className="min-h-[40px] px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl cursor-pointer"
+              >
+                Activate all waiting teams
+              </button>
+            </div>
           )}
         </div>
       )}

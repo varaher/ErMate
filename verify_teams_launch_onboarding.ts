@@ -37,6 +37,28 @@ t("incomplete existing doctors see the launch notice", onb.includes('data-testid
 t("one-time bell notification", app.includes("ermate_teams_launch_notice_v1_") && app.includes("ErMate Teams are here"));
 t("team tip target exists", read("src/components/MoreView.tsx").includes('data-coach="more-team"'));
 
+const cl = read("src/changelog.ts");
+t("changelog has a 3.2.0 entry that mentions Teams", /"3\.2\.0": \[[\s\S]*?ErMate Teams/.test(cl));
+t("APP_VERSION is 3.2.0 in changelog, server and package.json", cl.includes('APP_VERSION = "3.2.0"') && read("server.ts").includes('const APP_VERSION = "3.2.0"') && /"version": "3\.2\.0"/.test(read("package.json")));
+const srv = read("server/routes/team.routes.ts");
+const board = read("src/components/TeamRosterBoard.tsx");
+const home = read("src/components/TeamHomeView.tsx");
+const psv = read("src/components/ProfileSettingsView.tsx");
+t("server flag exists", srv.includes("const AUTO_VERIFY_SELF_SERVE_TEAMS = true;"));
+t("create-team uses the flag", /membershipVerified: AUTO_VERIFY_SELF_SERVE_TEAMS,/.test(srv));
+t("approval uses the flag", srv.includes("membershipVerified: isInstVerified || AUTO_VERIFY_SELF_SERVE_TEAMS"));
+t("rota tab opens first after onboarding and creation", board.includes("ermate_open_rota") && app.includes("ermate_open_rota"));
+t("individual team screen explains what unlocks", board.includes('data-testid="team-unlock-hint"'));
+for (const id of ["team-home-edit-profile", "team-home-edit-hospital", "team-home-edit-team", "team-home-edit-shifts", "team-home-sync-rota"]) t(`Team home row ${id}`, home.includes(`testId="${id}"`));
+for (const w of ["Edit my profile", "Edit hospital profile", "Edit team", "Edit shift timings", "Sync rota with team members"]) t(`plain wording: ${w}`, home.includes(w));
+t("board starts on Team home", board.includes('return "home";') && board.includes("<TeamHomeView"));
+t("profile and hospital rows are wired from the More screen", psv.includes('onEditProfile={() => setSelectedSubSection("profile")}') && psv.includes('onEditHospital={() => setSelectedSubSection("facility")}'));
+t("old scary banner text is gone", !board.includes("Awaiting Institutional Verification") && !board.includes("remain protected in your private individual workspace"));
+t("calm team status line exists", board.includes('data-testid="team-status-line"') && board.includes("Your team is active."));
+t("activate route is admin only and dry-run by default", /router\.post\("\/activate-waiting-teams"[\s\S]*?isPlatformAdminReq[\s\S]*?req\.body\?\.confirm !== true[\s\S]*?dryRun: true/.test(srv));
+const act = srv.slice(srv.indexOf('router.post("/activate-waiting-teams"'), srv.indexOf('router.post("/create-team"'));
+t("activate route only sets membershipVerified, never the institution badge", act.includes("{ membershipVerified: true, updatedAt: now }") && !/verificationStatus:/.test(act));
+t("admin button asks before activating", board.includes("window.confirm(`${preview.waitingMembers}") && board.includes("activateWaitingTeams(false)"));
 for (const r of ["Postgraduate Resident", "Nursing In-charge", "Paramedic", "Other healthcare staff"]) {
   for (const f of ["src/components/OnboardingProfileView.tsx", "src/components/MoreView.tsx", "src/components/SignUpView.tsx"]) t(`role "${r}" offered in ${f}`, read(f).includes(r));
 }
