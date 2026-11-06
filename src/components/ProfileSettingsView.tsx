@@ -1622,6 +1622,8 @@ export default function ProfileSettingsView({
               });
             }}
             onLeaveTeam={onLeaveTeam}
+            onEditProfile={() => setSelectedSubSection("profile")}
+            onEditHospital={() => setSelectedSubSection("facility")}
           />
         </div>
       );

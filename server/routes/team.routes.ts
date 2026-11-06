@@ -1234,7 +1234,7 @@ router.post("/approve-member", async (req: AuthRequest, res) => {
 
       tx.update(targetRef, {
         status: "active",
-        membershipVerified: isInstVerified,
+       membershipVerified: isInstVerified || AUTO_VERIFY_SELF_SERVE_TEAMS,
         verificationStatus: isInstVerified ? "verified" : "unverified",
         role: approvedRole,
         isTeamAdmin: isAppointedAdmin,
@@ -2795,8 +2795,8 @@ const handleCreateTeam = async (req: AuthRequest, res: any) => {
         teamRole: "admin",
         status: "active",
         verificationStatus: "unverified",
-        membershipVerified: false,
-        joinedAt: now,
+        membershipVerified: AUTO_VERIFY_SELF_SERVE_TEAMS,
+        joinedAt: now, 
         createdAt: now,
         updatedAt: now,
         requestProvenance: "create_team",

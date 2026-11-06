@@ -6681,7 +6681,8 @@ const handleSignOut = async () => {
     onContinueToDashboard={() => {
       setShowOnboardingProfile(false);
     }}
-    onOpenTeam={() => {
+    oonOpenTeam={() => {
+      try { sessionStorage.setItem("ermate_open_rota", "1"); } catch { /* ignore */ }
       setShowOnboardingProfile(false);
       setTimeout(() => navigateToTab("team"), 0);
     }}

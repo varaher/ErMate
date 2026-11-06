@@ -84,7 +84,7 @@ export const TOURS: Record<TourId, CoachStep[]> = {
   ],
   more: [
     { id: "menu", target: { sel: '[data-testid="more-side-nav"], [data-testid^="more-landing-"]' }, title: "Everything else", body: "Plan and credits, profile, notifications and Clinical Tools such as Log Book and Analytics live here." },
-    { id: "team", v: 2, feature: "teams", target: { sel: '[data-coach="more-team"]' }, title: "Your ER team", body: "Create your hospital team or join one with an invite link. Share the rota and see who is on duty." },
+    { id: "team", v: 3, feature: "teams", target: { sel: '[data-coach="more-team"]' }, title: "Your ER team", body: "Open Team to edit your profile, hospital, team and shift timings, and to share the rota with your colleagues." },
     { id: "replay", target: { sel: '[data-testid="take-app-tour"]' }, title: "Replay the walkthrough", body: "Tap here to see all the page tips again." },
   ],
 };

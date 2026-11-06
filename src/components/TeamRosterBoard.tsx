@@ -1,3 +1,4 @@
+import TeamHomeView from "./TeamHomeView";
 import { WorkspaceRotaSyncModal } from "./shared/WorkspaceRotaSyncModal";
 import React, { useState, useEffect, useCallback } from "react";
 import { 
@@ -38,6 +39,10 @@ export const SHIFT_COLOR_OPTIONS = [
 ];
 
 export interface TeamRosterBoardProps {
+  /** Opens the personal profile editor (Team home row). */
+  onEditProfile?: () => void;
+  /** Opens Hospital & ER Setup (Team home row). */
+  onEditHospital?: () => void;
   teamMembers: TeamMember[];
   profile: UserProfile;
   cases?: ClinicalCase[];
@@ -59,7 +64,7 @@ export interface TeamRosterBoardProps {
   onUpdateBedCapacity?: (newCapacity: number) => Promise<void> | void;
 }
 
-export type TeamSectionTab = "overview" | "members" | "rota" | "settings";
+export type TeamSectionTab = "home" | "overview" | "members" | "rota" | "settings";
 
 export default function TeamRosterBoard({
   teamMembers,
@@ -80,10 +85,21 @@ export default function TeamRosterBoard({
   onSaveConfig,
   onLeaveTeam,
   erPhysicalBedCapacity = 30,
-  onUpdateBedCapacity,
+   onUpdateBedCapacity,
+  onEditProfile,
+  onEditHospital,
 }: TeamRosterBoardProps) {
   // Navigation Tabs: 1. OVERVIEW, 2. MEMBERS, 3. ROTA, 4. SETTINGS
-  const [activeTab, setActiveTab] = useState<TeamSectionTab>("overview");
+  c  const [activeTab, setActiveTab] = useState<TeamSectionTab>(() => {
+    // "Set up your rota" and a freshly created team open straight on the Rota tab.
+    try {
+      if (typeof sessionStorage !== "undefined" && sessionStorage.getItem("ermate_open_rota") === "1") {
+        sessionStorage.removeItem("ermate_open_rota");
+        return "rota";
+      }
+    } catch { /* storage unavailable: start on Team home */ }
+    return "home";
+  });
 
   // Active dynamic shifts
   const activeShifts = shifts && shifts.length > 0 ? shifts : ROTA_SHIFTS;
@@ -261,7 +277,9 @@ export default function TeamRosterBoard({
         cleanTeam,
         profile.role
       );
+        try { sessionStorage.setItem("ermate_open_rota", "1"); } catch { /* ignore */ }
       setShowCreateTeamModal(false);
+(if the search finds more than one, use the one just above the line  setTeamCreatedSuccessNotice("Your team has been created.");  )
       setTeamCreatedSuccessNotice("Your team has been created.");
       setTimeout(() => setTeamCreatedSuccessNotice(null), 5000);
       window.location.reload();
@@ -701,6 +719,9 @@ export default function TeamRosterBoard({
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
               Selecting a professional role or listing a hospital in your personal profile does not grant team access. Hospital workspace membership is established only through an explicit trusted event:
             </p>
+            <p data-testid="team-unlock-hint" className="text-xs font-bold text-emerald-700 dark:text-emerald-400 mt-2">
+              Create or join a team to unlock the rota, shift timings, member list and calendar sync.
+            </p>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -979,8 +1000,38 @@ export default function TeamRosterBoard({
 
       {/* ======================================================== */}
       {/* TOP-LEVEL 4-SECTION NAVIGATION BAR (MOBILE-FIRST)        */}
-      {/* 1. OVERVIEW  2. MEMBERS  3. ROTA  4. SETTINGS            */}
+       {/* 1. OVERVIEW  2. MEMBERS  3. ROTA  4. SETTINGS            */}
       {/* ======================================================== */}
+      {activeTab === "home" ? (
+        <TeamHomeView
+          teamName={myCanonicalMember?.teamName || profile.teamName || ""}
+          hospitalName={myCanonicalMember?.hospitalName || myCanonicalMember?.hospital || profile.hospital || ""}
+          department={myCanonicalMember?.department || profile.department || ""}
+          bedCapacity={erPhysicalBedCapacity}
+          memberCount={teamMembers.filter((m) => isActiveMembershipStatus(m.status)).length}
+          pendingCount={pendingApprovals.length}
+          canEditRota={isRotaManager || isUserTeamAdmin}
+          onEditProfile={onEditProfile}
+          onEditHospital={onEditHospital}
+          onEditTeam={() => setActiveTab("settings")}
+          onEditShiftTimings={() => {
+            setActiveTab("rota");
+            if (isRotaManager || isUserTeamAdmin) setShowShiftManagerModal(true);
+          }}
+          onSyncRota={() => setActiveTab("rota")}
+          onOpenMembers={() => setActiveTab("members")}
+        />
+      ) : (
+        <button
+          type="button"
+          data-testid="team-back-home"
+          onClick={() => setActiveTab("home")}
+          className="min-h-[40px] text-xs font-bold text-indigo-600 dark:text-indigo-400 cursor-pointer"
+        >
+          ‹ Team
+        </button>
+      )}
+      {activeTab !== "home" && (
       <div className="flex items-center gap-1.5 p-1 bg-slate-100 dark:bg-slate-800/80 rounded-2xl border border-slate-200/80 dark:border-slate-700/80 shadow-xs overflow-x-auto no-scrollbar">
         <button
           type="button"
@@ -1049,6 +1100,7 @@ export default function TeamRosterBoard({
           )}
         </button>
       </div>
+)}
 
       {/* ======================================================== */}
       {/* 1. OVERVIEW (DEFAULT SCREEN)                             */}
@@ -1930,7 +1982,7 @@ export default function TeamRosterBoard({
                 ROTA & DUTY SHIFTS
               </h2>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                Active clinical shift windows, duty status toggles, and Google Calendar sync.
+                Pick a shift for each doctor. Changes are shared with your team automatically.
               </p>
             </div>
 
