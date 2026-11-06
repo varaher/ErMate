@@ -42,6 +42,12 @@ async function getDocWithRestFallback(collectionPath: string, docId: string, aut
 }
 
 const router = Router();
+/**
+ * ErMate Teams launch (Nov 2026): a team created in the app, and members its lead approves, work at once.
+ * The institution badge is separate: verificationStatus stays "unverified" until a platform admin verifies it.
+ * Set to false to go back to "unverified until a platform admin verifies".
+ */
+const AUTO_VERIFY_SELF_SERVE_TEAMS = true;
 
 const PLATFORM_ADMIN_EMAIL = "varahgrp@gmail.com";
 

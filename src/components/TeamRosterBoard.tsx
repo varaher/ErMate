@@ -90,7 +90,7 @@ export default function TeamRosterBoard({
   onEditHospital,
 }: TeamRosterBoardProps) {
   // Navigation Tabs: 1. OVERVIEW, 2. MEMBERS, 3. ROTA, 4. SETTINGS
-  c  const [activeTab, setActiveTab] = useState<TeamSectionTab>(() => {
+    const [activeTab, setActiveTab] = useState<TeamSectionTab>(() => {
     // "Set up your rota" and a freshly created team open straight on the Rota tab.
     try {
       if (typeof sessionStorage !== "undefined" && sessionStorage.getItem("ermate_open_rota") === "1") {
@@ -279,7 +279,7 @@ export default function TeamRosterBoard({
       );
         try { sessionStorage.setItem("ermate_open_rota", "1"); } catch { /* ignore */ }
       setShowCreateTeamModal(false);
-(if the search finds more than one, use the one just above the line  setTeamCreatedSuccessNotice("Your team has been created.");  )
+
       setTeamCreatedSuccessNotice("Your team has been created.");
       setTimeout(() => setTeamCreatedSuccessNotice(null), 5000);
       window.location.reload();
