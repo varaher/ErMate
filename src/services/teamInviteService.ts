@@ -280,7 +280,7 @@ export async function verifyTeamInstitution(
   }
   return data;
 }
-------------------------------------------------------------
+
 /**
  * Platform admin only: counts (dry run) or activates members of teams saved before the Teams launch.
  */

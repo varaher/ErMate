@@ -1,5 +1,5 @@
 // NEW FILE. Simple Team home: five plain actions, in the order a lead needs them.
-import React from "react";
+import React, { useState } from "react";
 import { ChevronRight, Users } from "lucide-react";
 
 export interface TeamHomeViewProps {
@@ -17,6 +17,9 @@ export interface TeamHomeViewProps {
   onEditShiftTimings: () => void;
   onSyncRota: () => void;
   onOpenMembers: () => void;
+  /** Leave this team. The server decides if it is allowed (a sole Team Admin must appoint another first). */
+  onLeaveTeam?: () => Promise<void>;
+  isLead?: boolean;
 }
 
 interface RowProps {
@@ -53,7 +56,10 @@ export default function TeamHomeView(props: TeamHomeViewProps) {
   const {
     teamName, hospitalName, department, bedCapacity, memberCount, pendingCount, canEditRota,
     onEditProfile, onEditHospital, onEditTeam, onEditShiftTimings, onSyncRota, onOpenMembers,
+    onLeaveTeam, isLead,
   } = props;
+  const [confirmLeave, setConfirmLeave] = useState(false);
+  const [leaving, setLeaving] = useState(false);
   const facts = [department, bedCapacity ? `${bedCapacity} beds` : "", `${memberCount} member${memberCount === 1 ? "" : "s"}`]
     .filter(Boolean)
     .join(" · ");
@@ -94,6 +100,53 @@ export default function TeamHomeView(props: TeamHomeViewProps) {
         onClick={onSyncRota}
         highlight
       />
+
+      {onLeaveTeam && !confirmLeave && (
+        <button
+          type="button"
+          data-testid="team-home-leave"
+          onClick={() => setConfirmLeave(true)}
+          className="w-full min-h-[48px] rounded-2xl border border-rose-300 dark:border-rose-900 text-rose-600 dark:text-rose-400 text-sm font-bold cursor-pointer hover:bg-rose-50 dark:hover:bg-rose-950/30"
+        >
+          Leave team
+        </button>
+      )}
+
+      {onLeaveTeam && confirmLeave && (
+        <div data-testid="team-home-leave-confirm" className="rounded-2xl border border-rose-300 dark:border-rose-900 bg-rose-50 dark:bg-rose-950/30 p-4 space-y-3">
+          <strong className="block text-sm text-rose-800 dark:text-rose-200">Leave {teamName || "this team"}?</strong>
+          <p className="text-xs text-rose-800 dark:text-rose-300">
+            You will no longer see the team rota or members. Your own cases stay with you. You can join or create a team again later.
+          </p>
+          {isLead && memberCount > 1 && (
+            <p className="text-xs font-bold text-amber-700 dark:text-amber-400">
+              You are the Department Lead. Make another member Team Admin first (Edit team, then Members), or ErMate will not let you leave.
+            </p>
+          )}
+          <div className="flex gap-2">
+            <button
+              type="button"
+              data-testid="team-home-leave-yes"
+              disabled={leaving}
+              onClick={async () => {
+                setLeaving(true);
+                try { await onLeaveTeam(); } finally { setLeaving(false); setConfirmLeave(false); }
+              }}
+              className="flex-1 min-h-[44px] rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold cursor-pointer disabled:opacity-50"
+            >
+              {leaving ? "Leaving..." : "Yes, leave team"}
+            </button>
+            <button
+              type="button"
+              disabled={leaving}
+              onClick={() => setConfirmLeave(false)}
+              className="flex-1 min-h-[44px] rounded-xl border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold cursor-pointer"
+            >
+              Stay in team
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

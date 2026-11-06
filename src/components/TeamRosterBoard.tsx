@@ -1041,6 +1041,8 @@ export default function TeamRosterBoard({
           }}
           onSyncRota={() => setActiveTab("rota")}
           onOpenMembers={() => setActiveTab("members")}
+                    onLeaveTeam={onLeaveTeam}
+          isLead={isUserTeamAdmin}
         />
       ) : (
         <button
