@@ -10,6 +10,14 @@ export interface VersionInfo {
 }
 
 export const CHANGELOG: Record<string, string[]> = {
+  "3.2.0": [
+    "ErMate Teams: create your hospital team or join one with an invite link, then share the rota with your colleagues",
+    "New Team page: edit your profile, hospital, team and shift timings in one place",
+    "Hospital name, place, district and state are now needed in your profile, so colleagues find the same hospital",
+    "MATE picks a free bed by itself when you dictate a new case, and you can say 'move this patient to bed 12'",
+    "Share handover and discharge summaries to WhatsApp",
+    "More roles to choose from: Postgraduate Resident, Nursing In-charge, Paramedic, Other healthcare staff",
+  ],
   "3.1.0": [
     "Case sheet now saves reliably: no more false 'NOT SAVED', and edits made offline are kept and sent when you reconnect",
     "Two devices editing the same case no longer overwrite each other's untouched fields",
@@ -67,5 +75,4 @@ export const CHANGELOG: Record<string, string[]> = {
 };
 
 // Current application version — increment on release
-export const APP_VERSION = "3.1.0";
-
+export const APP_VERSION = "3.2.0";

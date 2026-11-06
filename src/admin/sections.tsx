@@ -72,14 +72,14 @@ function Pill({ text, tone }: { text: string; tone: "purple" | "green" | "amber"
 const planTone = (p: string): "purple" | "green" | "amber" | "red" | "blue" | "grey" =>
   p === "Paid" ? "green" : p === "Trial" ? "purple" : p === "Hospital plan" ? "blue" : p === "Grace" ? "amber" : p === "Expired" ? "red" : "grey";
 
-function Kpi({ label, value, sub, tag, tagTitle, subTone }: { label: string; value: string; sub?: string; tag: TagKind; tagTitle?: string; subTone?: "good" | "bad" }) {
+function Kpi({ label, value, sub, tag, tagTitle, subTone, text }: { label: string; value: string; sub?: string; tag: TagKind; tagTitle?: string; subTone?: "good" | "bad"; text?: boolean }) {
   return (
     <div className="adm-card" style={{ padding: "16px 18px", display: "flex", flexDirection: "column", gap: 6 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
         <span style={{ fontSize: 13, color: "var(--adm-muted)" }}>{label}</span>
         <Tag kind={tag} title={tagTitle} />
       </div>
-      <strong className="adm-num" style={{ fontSize: 26, fontWeight: 700 }}>{value}</strong>
+      <strong className="adm-num" style={{ fontSize: text ? 18 : 26, fontWeight: 700, lineHeight: 1.25 }}>{value}</strong>
       {sub && <span style={{ fontSize: 12, color: subTone === "good" ? "var(--adm-emerald)" : subTone === "bad" ? "var(--adm-red)" : "var(--adm-muted)" }}>{sub}</span>}
     </div>
   );
@@ -119,6 +119,7 @@ function Warning({ text }: { text?: string | null }) {
 }
 
 const grid = (min: number): React.CSSProperties => ({ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${min}px, 1fr))`, gap: 14 });
+const nameBtn: React.CSSProperties = { background: "none", border: 0, padding: 0, font: "inherit", fontWeight: 600, color: "var(--adm-purple)", cursor: "pointer", textAlign: "left", textDecoration: "underline", textUnderlineOffset: 3 };
 const linkBtn: React.CSSProperties = { background: "none", border: 0, padding: 0, font: "inherit", fontSize: 13, fontWeight: 600, color: "var(--adm-purple)", cursor: "pointer" };
 
 function Bars({ items }: { items: { label: string; value: number; color: string; right: string }[] }) {
@@ -236,6 +237,7 @@ export function UsersPage() {
   const [state, setState] = useState("All");
   const [ws, setWs] = useState("All");
   const [editing, setEditing] = useState<any | null>(null);
+  const [viewing, setViewing] = useState<string | null>(null);
 
   const users: any[] = data?.users || [];
   const states = useMemo(() => [...new Set(users.map(u => u.state).filter(Boolean))].sort(), [users]);
@@ -266,6 +268,7 @@ export function UsersPage() {
           </div>
 
           {editing && <CreditAdjust user={editing} onClose={() => setEditing(null)} onDone={() => { setEditing(null); reload(); }} />}
+          {viewing && <UserDetail uid={viewing} onClose={() => setViewing(null)} />}
 
           <Card style={{ padding: "6px 6px 10px" }}>
             <TableBox minWidth={980}>
@@ -274,7 +277,7 @@ export function UsersPage() {
                 {rows.map(u => (
                   <tr key={u.uid}>
                     <td>
-                      <div style={{ fontWeight: 500 }}>{u.name || "No name"}</div>
+                      <button type="button" style={nameBtn} onClick={() => setViewing(u.uid)} title="See everything this doctor used">{u.name || "No name"}</button>
                       <div style={{ fontSize: 12, color: "var(--adm-muted)" }}>{u.email}{!u.emailVerified && u.email ? " · not verified" : ""}</div>
                       <div style={{ fontSize: 12, color: "var(--adm-muted)" }}>Joined {day(u.createdAt)}</div>
                     </td>
@@ -334,6 +337,118 @@ function CreditAdjust({ user, onClose, onDone }: { user: any; onClose: () => voi
       </div>
       {error && <p role="alert" style={{ color: "var(--adm-red)", fontSize: 13, margin: "10px 0 0" }}>{error}</p>}
     </section>
+  );
+}
+
+// ───────────────────────── One doctor ─────────────────────────
+
+const CREDIT_ACTION_LABELS: Record<string, string> = {
+  stt: "Transcription", scribe_chat: "Scribe dictation turn", scribe_extract: "Scribe extraction", voice_dictation: "Voice dictation",
+  voice_extract: "Voice extraction", ai_discharge: "Discharge draft", discharge_summary: "Discharge summary", case_discussion: "Case discussion",
+  handover_chat: "Handover chat", em_reference: "EM Reference (Q&A)", decision_support: "Decision support", differentials: "Differentials",
+  interpret_abg: "ABG interpretation", lens_report: "Lens report", rounds_debrief: "Rounds debrief", vision_scan: "Document / OCR scan",
+};
+const creditLabel = (a: string) => CREDIT_ACTION_LABELS[a] || a.replace(/_/g, " ");
+
+/** Full-screen panel: everything one doctor used — which AI, which features, credits, payments. */
+export function UserDetail({ uid, onClose }: { uid: string; onClose: () => void }) {
+  const [days, setDays] = useRange();
+  const { data: d, error, loading, reload } = useLoad<any>(`/users/${encodeURIComponent(uid)}/detail?days=${days}`, [uid, days]);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { window.removeEventListener("keydown", onKey); document.body.style.overflow = prev; };
+  }, [onClose]);
+  const doc = d?.doctor, ai = d?.ai;
+  return (
+    <div role="dialog" aria-modal="true" aria-label="Doctor usage" onClick={onClose}
+      style={{ position: "fixed", inset: 0, background: "rgba(28,28,30,0.35)", zIndex: 50, display: "flex", justifyContent: "flex-end" }}>
+      <div onClick={e => e.stopPropagation()}
+        style={{ width: "min(860px, 100%)", height: "100%", overflowY: "auto", background: "var(--adm-bg)", boxSizing: "border-box", padding: "22px clamp(16px, 3vw, 28px) 40px", boxShadow: "-8px 0 24px rgba(0,0,0,0.08)" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 14 }}>
+          <div style={{ minWidth: 0 }}>
+            <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700 }}>{doc?.name || doc?.email || "Doctor"}</h2>
+            {doc && <p style={{ margin: "4px 0 0", fontSize: 13, color: "var(--adm-muted)" }}>{doc.email}{doc.emailVerified ? "" : " · email not verified"}</p>}
+          </div>
+          <button className="adm-btn adm-btn-ghost" onClick={onClose} aria-label="Close">Close</button>
+        </div>
+        <div style={{ marginBottom: 14 }}><RangePicker value={days} onChange={setDays} /></div>
+        <State loading={loading && !d} error={error} onRetry={reload} />
+        {d && (
+          <>
+            <Card style={{ marginBottom: 14 }}>
+              <dl style={{ ...grid(170), gap: "12px 20px", margin: 0, fontSize: 13 }}>
+                <Dd t="Hospital" v={doc.hospital || "—"} />
+                <Dd t="Role · workspace" v={[doc.role, doc.workspace].filter(Boolean).join(" · ") || "—"} />
+                <Dd t="Location" v={place(doc)} />
+                <Dd t="Credits left" v={doc.credits === null ? "—" : count(doc.credits)} />
+                <Dd t="Cases documented (all time)" v={doc.casesAllTime === null ? "—" : count(doc.casesAllTime)} />
+                <Dd t="Joined · last active" v={`${day(doc.createdAt)} · ${ago(doc.lastActiveAt)}`} />
+              </dl>
+            </Card>
+
+            {ai.totals.calls === 0 ? (
+              <Card style={{ marginBottom: 14 }}><p style={{ margin: 0, fontSize: 14, color: "var(--adm-muted)" }}>No AI use logged for this doctor in this range. AI usage is recorded from 4 Nov 2026 onwards.</p></Card>
+            ) : (
+              <>
+                <div style={{ ...grid(170), marginBottom: 14 }}>
+                  <Kpi text label="Most used AI" value={providerLabel(ai.mostUsedProvider)} sub={`${count(ai.providers[0].calls)} of ${count(ai.totals.calls)} calls`} tag="Actual" />
+                  <Kpi text label="Most used feature" value={featureLabel(ai.mostUsedFeature)} sub={`${count(ai.features[0].calls)} calls`} tag="Actual" />
+                  <Kpi label="AI calls" value={count(ai.totals.calls)} sub={`${count(ai.totals.failed)} failed · last ${ago(ai.lastAiAt)}`} tag="Actual" />
+                  <Kpi label="AI cost" value={inr(ai.totals.costInr)} sub={ai.totals.audioSeconds ? `${count(Math.round(ai.totals.audioSeconds / 60))} min audio` : undefined} tag="Estimated" />
+                </div>
+                <Card title="Which AI they used" style={{ marginBottom: 14 }}>
+                  <Bars items={ai.providers.map((p: any) => ({
+                    label: providerLabel(p.provider), value: p.calls, color: PROVIDER_COLORS[p.provider] || "#8E8E93",
+                    right: `${count(p.calls)} calls · ${inr(p.costInr)}${p.failed ? ` · ${p.failed} failed` : ""}`,
+                  }))} />
+                </Card>
+                <Card title="By feature and model" style={{ padding: "18px 6px 10px", marginBottom: 14 }}>
+                  <TableBox minWidth={680}>
+                    <thead><tr><th>Feature</th><th>AI · model</th><th className="r">Calls</th><th className="r">Units</th><th className="r">Cost</th><th className="r">Failed</th></tr></thead>
+                    <tbody>
+                      {ai.rows.map((r: any, i: number) => (
+                        <tr key={i}>
+                          <td style={{ fontWeight: 500 }}>{featureLabel(r.feature)}</td>
+                          <td><span aria-hidden="true" style={{ display: "inline-block", width: 8, height: 8, borderRadius: 999, marginRight: 8, background: PROVIDER_COLORS[r.provider] || "#8E8E93" }} />{providerLabel(r.provider)} · {r.model}</td>
+                          <td className="r adm-num">{count(r.calls)}</td>
+                          <td className="r adm-num" style={{ color: "#3A3A40" }}>{units(r)}</td>
+                          <td className="r adm-num" style={{ fontWeight: 600 }}>{inr(r.costInr)}</td>
+                          <td className="r adm-num">{count(r.failed)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </TableBox>
+                </Card>
+              </>
+            )}
+
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 14 }}>
+              <Card title={`Credits used · ${count(d.credits.used)}`} style={{ flex: "1 1 300px" }}>
+                {d.credits.byAction.length === 0 ? <p style={{ margin: 0, fontSize: 13, color: "var(--adm-muted)" }}>No credits charged in this range{doc.workspace === "Hospital team" ? " (hospital plan doctors are not charged)" : ""}.</p> : (
+                  <TableBox minWidth={260}>
+                    <thead><tr><th>Feature</th><th className="r">Times</th><th className="r">Credits</th></tr></thead>
+                    <tbody>{d.credits.byAction.map((c: any) => (
+                      <tr key={c.action}><td>{creditLabel(c.action)}</td><td className="r adm-num">{count(c.times)}</td><td className="r adm-num" style={{ fontWeight: 600 }}>{count(c.credits)}</td></tr>
+                    ))}</tbody>
+                  </TableBox>
+                )}
+              </Card>
+              <Card title="Payments (all time)" style={{ flex: "1 1 300px" }}>
+                {d.payments.length === 0 ? <p style={{ margin: 0, fontSize: 13, color: "var(--adm-muted)" }}>No payments.</p> : d.payments.map((p: any) => (
+                  <div key={p.paymentId} style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 13, padding: "8px 0", borderTop: "1px solid #F0F0F3" }}>
+                    <span>{p.type}<span style={{ color: "var(--adm-muted)" }}> · {day(p.at)}</span></span>
+                    <span className="adm-num" style={{ fontWeight: 600, color: p.refundedInr ? "var(--adm-red)" : undefined }}>{inr(p.amountInr)}{p.refundedInr ? " (refunded)" : ""}</span>
+                  </div>
+                ))}
+              </Card>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -578,12 +693,14 @@ const units = (r: any) => r.provider === "sarvam"
 
 export function UsagePage() {
   const [days, setDays] = useRange();
+  const [viewing, setViewing] = useState<string | null>(null);
   const { data: d, error, loading, reload } = useLoad<any>(`/usage?days=${days}`, [days]);
   const exportCsv = () => d && downloadCsv(`ermate-ai-usage-${d.from}.csv`,
     ["Feature", "Provider", "Model", "Calls", "Failed", "Input tokens", "Output tokens", "Audio seconds", "Cost INR (est.)"],
     d.rows.map((r: any) => [featureLabel(r.feature), r.provider, r.model, r.calls, r.failed, r.inputTokens, r.outputTokens, r.audioSeconds, r.costInr]));
   return (
     <>
+      {viewing && <UserDetail uid={viewing} onClose={() => setViewing(null)} />}
       <Header title="API Usage" sub="Every AI call, by feature and model. Costs are real token and audio counts × the price table."
         right={<><RangePicker value={days} onChange={setDays} /><button className="adm-btn adm-btn-ghost" onClick={exportCsv} disabled={!d}>Export CSV</button></>} />
       <State loading={loading && !d} error={error} onRetry={reload} />
@@ -624,7 +741,9 @@ export function UsagePage() {
               <tbody>
                 {d.byUser.slice(0, 25).map((u: any, i: number) => (
                   <tr key={i}>
-                    <td><div style={{ fontWeight: 500 }}>{u.name || u.uid || "Unknown"}</div><div style={{ fontSize: 12, color: "var(--adm-muted)" }}>{u.email}</div></td>
+                    <td>{u.uid
+                      ? <button type="button" style={nameBtn} onClick={() => setViewing(u.uid)}>{u.name || u.email || "Unknown"}</button>
+                      : <div style={{ fontWeight: 500 }}>{u.name || "Unknown"}</div>}<div style={{ fontSize: 12, color: "var(--adm-muted)" }}>{u.email}</div></td>
                     <td className="r adm-num">{count(u.calls)}</td>
                     <td className="r adm-num" style={{ fontWeight: 600 }}>{inr(u.costInr)}</td>
                   </tr>

@@ -198,6 +198,117 @@ async function buildUsers() {
   return { rows, usageDays: usage.daysWithData, authWarning };
 }
 
+// ───────────────────────── one doctor ─────────────────────────
+
+/**
+ * Everything one doctor used: AI calls by provider / model / feature, credits spent by feature,
+ * payments, and how many cases they documented (count only, never case content).
+ * AI usage exists only from the day usage logging was deployed.
+ */
+router.get("/users/:uid/detail", async (req, res) => {
+  try {
+    const uid = String(req.params.uid || "").trim();
+    if (!uid || uid.length > 128) return res.status(400).json({ error: "Choose a doctor." });
+    const days = rangeDays(req.query);
+    const from = sinceDay(days);
+    const fromIso = istDayStartIso(from);
+
+    const [authUser, profileSnap, memberSnap, eventSnap, creditSnap, ledgerSnap, casesAll] = await Promise.all([
+      adminAuth.getUser(uid).catch(() => null),
+      db.collection("users").doc(uid).get(),
+      db.collection("team_members").doc(uid).get(),
+      db.collection("aiUsageEvents").where("uid", "==", uid).get(),
+      db.collection("creditUsage").where("uid", "==", uid).get(),
+      db.collection("creditLedger").where("uid", "==", uid).get(),
+      db.collection("cases").where("createdByUid", "==", uid).count().get().then((c: any) => c.data().count as number).catch(() => null),
+    ]);
+    if (!authUser && !profileSnap.exists) return res.status(404).json({ error: "Doctor not found." });
+    const p = profileSnap.exists ? profileSnap.data() || {} : {};
+    const m = memberSnap.exists ? memberSnap.data() || {} : null;
+    const memberActive = !!m && isActiveMember(m);
+
+    // AI usage in range
+    const events = eventSnap.docs.map((d: any) => d.data() || {}).filter((e: any) => String(e.day || "") >= from);
+    const totals = { calls: 0, failed: 0, costInr: 0, inputTokens: 0, outputTokens: 0, audioSeconds: 0 };
+    const byProvider: Record<string, { calls: number; failed: number; costInr: number }> = {};
+    const byFeature: Record<string, { calls: number; failed: number; costInr: number }> = {};
+    const byFeatureModel: Record<string, any> = {};
+    const byDay: Record<string, number> = {};
+    let lastAiAt = "";
+    for (const e of events) {
+      const ok = e.ok !== false, cost = numOr0(e.costInr);
+      totals.calls++; if (!ok) totals.failed++; totals.costInr += cost;
+      totals.inputTokens += numOr0(e.inputTokens); totals.outputTokens += numOr0(e.outputTokens); totals.audioSeconds += numOr0(e.audioSeconds);
+      const pv = (byProvider[e.provider] ||= { calls: 0, failed: 0, costInr: 0 }); pv.calls++; if (!ok) pv.failed++; pv.costInr += cost;
+      const fv = (byFeature[e.feature] ||= { calls: 0, failed: 0, costInr: 0 }); fv.calls++; if (!ok) fv.failed++; fv.costInr += cost;
+      const k = `${e.feature}|${e.provider}|${e.model}`;
+      const t = (byFeatureModel[k] ||= { feature: e.feature, provider: e.provider, model: e.model, calls: 0, failed: 0, costInr: 0, inputTokens: 0, outputTokens: 0, audioSeconds: 0 });
+      t.calls++; if (!ok) t.failed++; t.costInr += cost;
+      t.inputTokens += numOr0(e.inputTokens); t.outputTokens += numOr0(e.outputTokens); t.audioSeconds += numOr0(e.audioSeconds);
+      byDay[e.day] = (byDay[e.day] || 0) + cost;
+      if (String(e.at || "") > lastAiAt) lastAiAt = String(e.at);
+    }
+    const sortCalls = (a: any, b: any) => b.calls - a.calls || b.costInr - a.costInr;
+    const providers = Object.entries(byProvider).map(([provider, v]) => ({ provider, ...v, costInr: money(v.costInr) })).sort(sortCalls);
+    const features = Object.entries(byFeature).map(([feature, v]) => ({ feature, ...v, costInr: money(v.costInr) })).sort(sortCalls);
+
+    // Credits spent in range, by feature
+    const creditRows = creditSnap.docs.map((d: any) => d.data() || {}).filter((c: any) => String(c.at || "") >= fromIso);
+    const creditsByAction: Record<string, { times: number; credits: number }> = {};
+    for (const c of creditRows) {
+      const a = String(c.action || "other");
+      const t = (creditsByAction[a] ||= { times: 0, credits: 0 });
+      t.times++; t.credits += numOr0(c.cost);
+    }
+
+    // Payments (all time, newest first)
+    const payments = ledgerSnap.docs.map((d: any) => ({ id: d.id, ...(d.data() || {}) }))
+      .sort((a: any, b: any) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")))
+      .slice(0, 30)
+      .map((l: any) => ({
+        paymentId: l.paymentId || l.id,
+        type: l.source === "autopay" ? "Renewal ₹350" : l.kind === "plan" ? "Activation ₹600" : "Credit recharge",
+        amountInr: numOr0(l.amountPaise) / 100, credits: numOr0(l.creditsGranted), refundedInr: numOr0(l.refundedPaise) / 100, at: l.createdAt || null,
+      }));
+
+    res.json({
+      days, from,
+      doctor: {
+        uid,
+        name: str(p.name) || str(authUser?.displayName),
+        email: str(authUser?.email) || str(p.email),
+        emailVerified: authUser?.emailVerified === true,
+        createdAt: authUser?.metadata?.creationTime ? new Date(authUser.metadata.creationTime).toISOString() : str(p.createdAt) || null,
+        lastActiveAt: authUser?.metadata?.lastRefreshTime ? new Date(authUser.metadata.lastRefreshTime).toISOString()
+          : authUser?.metadata?.lastSignInTime ? new Date(authUser.metadata.lastSignInTime).toISOString() : null,
+        hospital: memberActive ? (str(m.hospitalName) || str(m.hospital)) : (str(p.workplaceName) || str(p.hospitalLabel) || str(p.hospital)),
+        role: memberActive ? str(m.role) : (str(p.displayRole) || str(p.role)),
+        workspace: memberActive ? "Hospital team" : "Independent",
+        place: str(p.place), district: str(p.district), state: str(p.state),
+        credits: typeof p.aiCredits === "number" ? p.aiCredits : null,
+        casesAllTime: casesAll,
+      },
+      ai: {
+        totals: { ...totals, costInr: money(totals.costInr), audioSeconds: Math.round(totals.audioSeconds) },
+        lastAiAt: lastAiAt || null,
+        mostUsedProvider: providers[0]?.provider || null,
+        mostUsedFeature: features[0]?.feature || null,
+        providers, features,
+        rows: Object.values(byFeatureModel).map((r: any) => ({ ...r, costInr: money(r.costInr), audioSeconds: Math.round(r.audioSeconds) })).sort(sortCalls),
+        daily: Object.entries(byDay).map(([day, costInr]) => ({ day, costInr: money(costInr) })).sort((a, b) => a.day.localeCompare(b.day)),
+      },
+      credits: {
+        used: creditRows.reduce((s: number, c: any) => s + numOr0(c.cost), 0),
+        byAction: Object.entries(creditsByAction).map(([action, v]) => ({ action, ...v })).sort((a, b) => b.credits - a.credits),
+      },
+      payments,
+    });
+  } catch (e: any) {
+    console.error("[admin/user-detail]", e?.message || e);
+    res.status(500).json({ error: "Could not load this doctor.", detail: errDetail(e) });
+  }
+});
+
 router.get("/users", async (_req, res) => {
   try {
     const { rows, usageDays, authWarning } = await buildUsers();
