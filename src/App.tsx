@@ -23,6 +23,7 @@ import { triggerPrintWithTip } from "./utils/printWithTip";
 import { getNormalizedRole } from "./utils/roleUtils";
 import { isClinicalProfileComplete, hasHospitalLocation, canPersistClinicalData } from "./utils/profileCompleteness";
 import { newObservationMeta } from "./utils/observationId"; // ← NEW
+import { useMateEvents } from "./hooks/useMateEvents"; // ← NEW
 import { diffForWrite } from "./utils/changedFields";
 import OnboardingProfileView from "./components/OnboardingProfileView";
 import { authenticatedFetch } from "./services/authenticatedFetch";
@@ -279,11 +280,14 @@ useEffect(() => {
     const toastId = "toast-" + Date.now() + "-" + Math.random().toString(36).substring(2, 6);
     setToasts(prev => [...prev, { id: toastId, title, message, type }]);
 
-    // Auto-remove toast after 5 seconds
+      // Auto-remove toast after 5 seconds
     setTimeout(() => {
       setToasts(prev => prev.filter(t => t.id !== toastId));
     }, 5000);
   };
+
+  // MATE Events (Phase 1): alerts + reminders, in-app toast + voice. // ← NEW
+  const { mateEvents, queueCaseSync, onSeen: onMateSeen, onReviewed: onMateReviewed, onSnooze: onMateSnooze } = useMateEvents(triggerNotification); // ← NEW
 
   // Session authentication state
   const [isLoggedIn, setIsLoggedIn] = useState<boolean>(false);
@@ -1667,7 +1671,19 @@ useEffect(() => {
             uniqueMap.set(c.id, c);
           }
         });
-        setCases(Array.from(uniqueMap.values()));
+              setCases(Array.from(uniqueMap.values()));
+
+        // MATE Events: re-check alerts for cases that were added or changed (ids only). // ← NEW
+        // Initial load: active cases only. Later: any changed case (so discharge/normal readings close alerts). // ← NEW
+        try { // ← NEW
+          const mateIds = snapshot.docChanges() // ← NEW
+            .filter((ch) => ch.type !== "removed") // ← NEW
+            .map((ch) => ch.doc.data() as ClinicalCase) // ← NEW
+            .filter((c) => c && c.id && uniqueMap.has(c.id)) // ← NEW
+            .filter((c) => !isInitialCases.current || (c.status !== "Discharged" && !(c as any).archivedAt)) // ← NEW
+            .map((c) => c.id); // ← NEW
+          if (mateIds.length) queueCaseSync(mateIds); // ← NEW
+        } catch { /* MATE must never break the cases list */ } // ← NEW
 
         // Real-time alert for updates made by other users
         if (!isInitialCases.current) {
