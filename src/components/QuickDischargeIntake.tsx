@@ -74,7 +74,8 @@ export function createQuickDischargeCase(
       caseType: "Medical",
       ...extractedFields.patient,
     },
-         // Rule 8: nothing recorded = empty. No placeholder numbers, no assumed normal GCS/AVPU/pain.
+    vitals: {
+      // Rule 8: nothing recorded = empty. No placeholder numbers, no assumed normal GCS/AVPU/pain.
       bp: "Not recorded",
       hr: "",
       spo2: "",
