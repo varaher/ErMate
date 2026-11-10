@@ -10,6 +10,12 @@ export interface VersionInfo {
 }
 
 export const CHANGELOG: Record<string, string[]> = {
+  "3.3.0": [
+    "MATE critical alerts: a red value you save (for example BP 72/40) now pops up straight away, and MATE says it aloud if MATE voice is on",
+    "A red alert repeats every 15 minutes until a new reading is no longer critical",
+    "GCS is added up from E, V and M when all three are recorded",
+    "Quick Discharge no longer fills in placeholder vitals or a default GCS of 15",
+  ],
   "3.2.0": [
     "ErMate Teams: create your hospital team or join one with an invite link, then share the rota with your colleagues",
     "New Team page: edit your profile, hospital, team and shift timings in one place",
@@ -75,4 +81,4 @@ export const CHANGELOG: Record<string, string[]> = {
 };
 
 // Current application version — increment on release
-export const APP_VERSION = "3.2.0";
+export const APP_VERSION = "3.3.0";

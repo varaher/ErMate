@@ -325,7 +325,7 @@ function getAI(): GoogleGenAI {
 // API Routes
 
 import { getFfmpegPath } from "./server/ffmpegPath.ts";
-const APP_VERSION = "3.2.0";
+const APP_VERSION = "3.3.0";
 const BUILD_TIMESTAMP = new Date().toISOString();
 
 function checkFfmpeg() {
@@ -343,7 +343,7 @@ app.get("/api/version", (req, res) => {
     version: APP_VERSION,
     buildTime: BUILD_TIMESTAMP,
     updatedAt: BUILD_TIMESTAMP,
-    releaseNotes: "ErMate v3.2.0: ErMate Teams with rota sharing, new Team page, MATE auto bed, WhatsApp share.",
+        releaseNotes: "ErMate v3.3.0: MATE critical alerts (pop-up + voice, repeats every 15 min),ErMate Teams with rota sharing, new Team page, MATE auto bed, WhatsApp share .",
     ffmpegAvailable: checkFfmpeg()
   });
 });
