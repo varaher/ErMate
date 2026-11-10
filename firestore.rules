@@ -490,9 +490,93 @@ service cloud.firestore {
         }
       }
 
-      match /meta/{metaDocId} {
+           match /meta/{metaDocId} {
         allow read, write: if isLoggedIn() && isOwner(userId);
       }
+
+      // ── NEW: MATE Events (Phase 1, individual workspace) ─────────────────
+      // Client-generated workflow metadata (alerts / reminders), NOT clinical evidence.
+      // The case record stays the clinical source of truth.
+      match /mateEvents/{eventId} {
+        function ev() { return request.resource.data; }
+        function old() { return resource.data; }
+        function caseDoc() { return get(/databases/$(database)/documents/cases/$(ev().caseId)); }
+        // Phase 1: individual cases owned by this user only.
+        // canAccessCase() also admits hospital/legacy cases, so it is NOT used here.
+        function ownsIndividualCase() {
+          return exists(/databases/$(database)/documents/cases/$(ev().caseId))
+            && caseDoc().data.get('workspaceType', '') == 'individual'
+            && caseDoc().data.get('ownerUid', '') == request.auth.uid;
+        }
+        function validShape() {
+          return ev().keys().hasOnly(['id','type','caseId','bedLabel','title','body','alertState','episodeKey',
+                   'detectedAt','dueAt','nextFireAt','occurrence','lastPresentedAt','seenAt','seenByUid',
+                   'reviewedAt','reviewedByUid','closedAt','closedReason','source','createdAt','updatedAt'])
+            && ev().id == eventId
+            && ev().type in ['critical','abnormal','reminder']
+            && ev().alertState in ['pending','due','seen','reviewed','closed','cancelled']
+            && ev().caseId is string && ev().caseId.size() > 0 && ev().caseId.size() <= 128
+            && ev().bedLabel is string && ev().bedLabel.size() <= 40
+            && ev().title is string && ev().title.size() <= 80
+            && ev().body is string && ev().body.size() <= 160
+            && ev().detectedAt is string && ev().dueAt is string
+            && (ev().nextFireAt == null || ev().nextFireAt is string)
+            && ev().occurrence is int && ev().occurrence >= 0
+            && ev().source in ['system','mate-voice','button']
+            && (!('seenByUid' in ev()) || ev().seenByUid == request.auth.uid)
+            && (!('reviewedByUid' in ev()) || ev().reviewedByUid == request.auth.uid)
+            && (!('closedReason' in ev()) || ev().closedReason in ['normalised','discharged','archived','cancelled']);
+        }
+        function newEpisode() {
+          return ev().get('episodeKey', '') != old().get('episodeKey', '');
+        }
+        function same(f) {
+          return ev().get(f, null) == old().get(f, null);
+        }
+        // Allowed alert-state changes inside the SAME episode.
+        function validTransition() {
+          let a = old().alertState;
+          let b = ev().alertState;
+          return a == b
+            || (a == 'pending'  && b in ['due','reviewed','closed','cancelled'])
+            || (a == 'due'      && b in ['pending','seen','reviewed','closed','cancelled'])
+            || (a == 'seen'     && b == 'closed')
+            || (a == 'reviewed' && b == 'closed');
+        }
+        function freshEpisodeFields() {
+          return ev().occurrence == 0
+            && !('seenAt' in ev()) && !('reviewedAt' in ev()) && !('closedAt' in ev());
+        }
+        function sameEpisodeHistoryFrozen() {
+          return same('detectedAt')
+            && validTransition()
+            && ev().occurrence >= old().occurrence
+            && (!('seenAt' in old())     || (same('seenAt') && same('seenByUid')))
+            && (!('reviewedAt' in old()) || (same('reviewedAt') && same('reviewedByUid')))
+            && (!('closedAt' in old())   || (same('closedAt') && same('closedReason')))
+            && (!('seenAt' in ev())      || ev().alertState in ['seen','closed'])
+            && (!('reviewedAt' in ev())  || ev().alertState in ['reviewed','closed']);
+        }
+
+        allow read: if isLoggedIn() && isOwner(userId);
+
+        allow create: if isLoggedIn() && isOwner(userId)
+          && validShape() && ownsIndividualCase()
+          && ev().alertState in ['pending','due']
+          && freshEpisodeFields();
+
+        allow update: if isLoggedIn() && isOwner(userId)
+          && validShape() && ownsIndividualCase()
+          && same('id') && same('type') && same('caseId') && same('createdAt') && same('source')
+          && (
+               (newEpisode() && freshEpisodeFields())
+            || (!newEpisode() && sameEpisodeHistoryFrozen())
+          );
+
+        // Never deleted: closed events are the audit trail.
+        allow delete: if false;
+      }
+      // ── end NEW ──────────────────────────────────────────────────────────
 
       // My Log Book — private to the owning doctor (UID-owned portfolio).
       match /logbook/{entryId} {
