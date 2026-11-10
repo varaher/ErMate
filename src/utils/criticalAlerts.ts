@@ -72,11 +72,20 @@ function parseSbp(bp: unknown): number | null {
   const m = String(bp ?? "").match(/^\s*(\d{2,3})\s*\/\s*\d{2,3}/);
   return m && Number(m[1]) > 0 ? Number(m[1]) : null;
 }
-
+/**
+ * GCS rule (Dr. Neeraj, 2026-11-10, option B):
+ * 1. A stored total (3–15) is used as is.
+ * 2. Otherwise, ONLY if E, V and M are ALL explicitly recorded and each is in range
+ *    (E 1–4, V 1–5, M 1–6), the total is their sum.
+ * 3. Partial, missing or out-of-range components → null. Never defaulted, never guessed.
+ */
 function gcsTotal(v: any): number | null {
-  // LOCKED RULE: never calculate a total from E/V/M here. Only a stored total counts.
   const total = num(v?.gcs);
-  return total !== null && total >= 3 && total <= 15 ? total : null;
+  if (total !== null && total >= 3 && total <= 15) return total;
+  const e = num(v?.gcs_e), vb = num(v?.gcs_v), m = num(v?.gcs_m);
+  if (e === null || vb === null || m === null) return null;
+  if (e < 1 || e > 4 || vb < 1 || vb > 5 || m < 1 || m > 6) return null;
+  return e + vb + m;
 }
 
 /**
