@@ -6671,9 +6671,16 @@ const handleSignOut = async () => {
         teamName={profile?.hospitalLabel || profile?.hospital || undefined}
         erPhysicalBedCapacity={erPhysicalBedCapacity}
        onSaveProfile={async (updatedProfile, capacity) => {
+            // Was the profile already complete before this save? Then it is a plain edit.
+      const wasAlreadyComplete = isProfileComplete && hasHospitalLocation(profile);
       await handleSaveProfile(updatedProfile, capacity);
-      // Keep OnboardingProfileView visible so the user sees the SAVED state and the team step
-      setShowOnboardingProfile(true);
+      if (wasAlreadyComplete) {
+        // Edit of an existing complete profile: save, close, never ask again.
+        setShowOnboardingProfile(false);
+      } else {
+        // First-time completion: stay so the doctor sees SAVED and the team step
+        setShowOnboardingProfile(true);
+      }
       if (activeTrialCase) {
         await handleSaveActiveTrialCase(updatedProfile);
       }

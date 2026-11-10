@@ -39,6 +39,7 @@ export interface CriticalAlert {
 }
 
 /** °F values are stored by the case sheet; the clinical tables use °C. Values >= 50 are treated as °F. */
+// D4 (2026-11-09): >=50 read as °F for ALERT EVALUATION ONLY. Never use for display or storage.
 export function tempToCelsius(raw: number): number | null {
   if (!Number.isFinite(raw)) return null;
   const c = raw >= 50 ? ((raw - 32) * 5) / 9 : raw;
@@ -58,31 +59,42 @@ function num(v: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+/**
+ * A vital value for ALERT evaluation. 0 or negative = placeholder / "not recorded"
+ * (e.g. Quick Discharge intake stores "0"), never a real reading → ignored.
+ */
+function vital(v: unknown): number | null {
+  const n = num(v);
+  return n !== null && n > 0 ? n : null;
+}
+
 function parseSbp(bp: unknown): number | null {
   const m = String(bp ?? "").match(/^\s*(\d{2,3})\s*\/\s*\d{2,3}/);
-  return m ? Number(m[1]) : null;
+  return m && Number(m[1]) > 0 ? Number(m[1]) : null;
 }
 
 function gcsTotal(v: any): number | null {
+  // LOCKED RULE: never calculate a total from E/V/M here. Only a stored total counts.
   const total = num(v?.gcs);
-  if (total !== null && total >= 3 && total <= 15) return total;
-  const e = num(v?.gcs_e), vb = num(v?.gcs_v), m = num(v?.gcs_m);
-  if (e !== null && vb !== null && m !== null) return e + vb + m;
-  return null;
+  return total !== null && total >= 3 && total <= 15 ? total : null;
 }
 
-/** Latest saved reading per field: current vitals first, then the most recent history record. */
-function latestReadings(c: ClinicalCase) {
+/**
+ * Latest saved reading per field: current vitals first, then the most recent history record.
+ * c.vitals is updated on every logged reading and on direct edits, so it holds the latest value.
+ * Exported for abnormalVitals.ts (MATE Events Phase 1) — do not duplicate this logic.
+ */
+export function latestReadings(c: ClinicalCase) {
   const v: any = c.vitals || {};
   const hist: any[] = Array.isArray((c as any).vitalsHistory) ? (c as any).vitalsHistory : [];
   const last = hist.length ? hist[hist.length - 1] : null;
   return {
-    sbp: parseSbp(v.bp) ?? num(last?.systolic) ?? parseSbp(last?.bp),
-    hr: num(v.hr) ?? num(last?.hr),
-    rr: num(v.rr) ?? num(last?.rr),
-    spo2: num(v.spo2) ?? num(last?.spo2),
-    temp: num(v.temp) ?? num(last?.temp),
-    grbs: num(v.grbs),
+    sbp: parseSbp(v.bp) ?? vital(last?.systolic) ?? parseSbp(last?.bp),
+    hr: vital(v.hr) ?? vital(last?.hr),
+    rr: vital(v.rr) ?? vital(last?.rr),
+    spo2: vital(v.spo2) ?? vital(last?.spo2),
+    temp: vital(v.temp) ?? vital(last?.temp),
+    grbs: vital(v.grbs),
     gcs: gcsTotal(v),
   };
 }
