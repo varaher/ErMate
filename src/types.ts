@@ -482,6 +482,10 @@ export interface DischargeInfo {
 
 export interface VitalsRecord {
   timestamp: string;
+  /** Stable id of this observation, created once when the record is built (MATE Events). */
+  obsId?: string;
+  /** ISO time the reading was SAVED in ErMate. Not the clinical measurement time. Display uses `timestamp`. */
+  recordedAt?: string;
   bp?: string;
   systolic?: number | null;
   diastolic?: number | null;

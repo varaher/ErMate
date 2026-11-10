@@ -22,6 +22,7 @@ import { clearHandoverLocalCache, enforceHandoverCacheOwner } from "./utils/hand
 import { triggerPrintWithTip } from "./utils/printWithTip";
 import { getNormalizedRole } from "./utils/roleUtils";
 import { isClinicalProfileComplete, hasHospitalLocation, canPersistClinicalData } from "./utils/profileCompleteness";
+import { newObservationMeta } from "./utils/observationId"; // ← NEW
 import { diffForWrite } from "./utils/changedFields";
 import OnboardingProfileView from "./components/OnboardingProfileView";
 import { authenticatedFetch } from "./services/authenticatedFetch";
@@ -2583,9 +2584,10 @@ const handleDeleteAllCases = async () => {
         consultantName: queueForDoctor ? "" : "Dr. " + profile.name,
         observationNotes: ""
       } as any,
-      vitalsHistory: hasInitialVitals
+           vitalsHistory: hasInitialVitals
         ? [
             {
+              ...newObservationMeta(), // ← NEW
               timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
               bp: vitals.bp || "",
               systolic: parseNullableInt(vitals.bp?.split("/")[0]),
@@ -4101,7 +4103,8 @@ const handleDeleteAllCases = async () => {
         const rrVal = extracted.vitals?.rr && !isNaN(parseInt(extracted.vitals.rr, 10)) ? parseInt(extracted.vitals.rr, 10) : null;
         const tempVal = extracted.vitals?.temp && !isNaN(parseFloat(extracted.vitals.temp)) ? parseFloat(extracted.vitals.temp) : null;
 
-        const newRecord: VitalsRecord = {
+                const newRecord: VitalsRecord = {
+          ...newObservationMeta(), // ← NEW
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           bp: rawBp,
           systolic: sysVal,

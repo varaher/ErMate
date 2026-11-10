@@ -65,6 +65,7 @@ import { ProcedureNoteFormModal } from "./ProcedureNoteFormModal";
 import { ProcedureNoteCard } from "./ProcedureNoteCard";
 import { CriticalAlertBadge } from "./shared/CriticalAlertBadge";
 import { computeCriticalAlerts } from "../utils/criticalAlerts";
+import { newObservationMeta } from "../utils/observationId";
 
 export function parseSecondaryAssessment(text: string) {
   if (!text) return { General: "", CVS: "", RS: "", PA: "", CNS: "", Extremities: "" };
@@ -984,6 +985,7 @@ export default function CaseSheetView({
     const tempVal = logTemp.trim() && !isNaN(parseFloat(logTemp)) ? parseFloat(logTemp) : undefined;
 
     const newRecord: VitalsRecord = {
+      ...newObservationMeta(),
       timestamp: logTime.trim() || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       bp: logBp.trim() || undefined,
       systolic: sys,
