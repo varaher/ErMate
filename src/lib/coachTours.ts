@@ -61,6 +61,7 @@ export const TOURS: Record<TourId, CoachStep[]> = {
     { id: "quick-case", target: { sel: "#cases-list-container button", text: "Quick Case" }, title: "Quick Case", body: "A short form for a fast entry when the department is busy. Complete the sheet later." },
     { id: "search", target: { sel: "#cases-list-container input" }, title: "Find a patient", body: "Search by name, complaint or ER number, and filter the list." },
     { id: "critical-badge", v: 2, feature: "critical-badge", title: "Red CRITICAL badge", body: "When saved vitals cross a danger limit (for example low BP, very high heart rate, low SpO2 or GCS 8 or less), a red badge appears on that patient on Home, Cases, Handover and the case sheet. It is a prompt to look at the patient, not a diagnosis." },
+    { id: "emr-field-copy", v: 3, feature: "emr-field-copy", title: "Copy to EMR, box by box", body: "Hospital EMR has separate boxes (complaints, HOPI, examination, plan)? Open a case and tap EMR fields, or the case sheet menu: Copy to EMR, field by field. Copy each part, or tap Copy next to go box by box. Set your EMR's boxes once in My EMR layout. One notes box? Use Full case sheet." },
   ],
   handover: [
     { id: "intro", title: "Shift handover", body: "Build a clear handover for the next doctor. Review everything before you hand over." },

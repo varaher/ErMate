@@ -7,6 +7,7 @@ import { displayGcs, displayTemperature, displaySpo2, displayGrbs, displayDocume
 import { getDisplayCaseId } from "../utils/caseIdentity";
 import { formatCaseSheetText, caseSheetTextToEmrHtml } from "../utils/caseSheetFormat";
 import { copyTextToClipboard } from "../utils/copyToClipboard";
+import CopyToEmrPanel from "./CopyToEmrPanel"; // ← NEW
 import { getTriageDisplay } from "../utils/triageScale";
 import { screeningLines, isolationBanner } from "../utils/triageScreening";
 import { formatAge } from "../utils/ageLabel";
@@ -1201,7 +1202,8 @@ export default function CaseSheetPrintView({
   const [applySuccess, setApplySuccess] = useState(false);
   const [applyError, setApplyError] = useState<string | null>(null);
   const [copiedCaseText, setCopiedCaseText] = useState(false);
-  const [copyFailed, setCopyFailed] = useState(false);
+   const [copyFailed, setCopyFailed] = useState(false);
+  const [showEmrPanel, setShowEmrPanel] = useState(false); // ← NEW
 
   const data = propData || (clinicalCase ? convertClinicalCaseToCaseSheetData(clinicalCase, defaultHospital) : null);
 
@@ -1428,6 +1430,17 @@ export default function CaseSheetPrintView({
                   {copiedCaseText ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
                   <span className="whitespace-nowrap">{copiedCaseText ? "Copied to EMR!" : copyFailed ? "Copy failed — try again" : "Copy to EMR"}</span>
                 </button>
+                                <button // ← NEW
+                  type="button" // ← NEW
+                  onClick={() => setShowEmrPanel(true)} // ← NEW
+                  id="print-emr-fields-button" // ← NEW
+                  className="min-w-[44px] min-h-[44px] flex-1 sm:flex-none justify-center inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-xl transition-all cursor-pointer border bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 text-indigo-700 dark:text-indigo-300 border-indigo-300 dark:border-indigo-800" // ← NEW
+                  title="Copy each part into its own box in your hospital EMR" // ← NEW
+                > {/* ← NEW */}
+                  <Copy className="w-3.5 h-3.5" /> {/* ← NEW */}
+                  <span className="whitespace-nowrap">EMR fields</span> {/* ← NEW */}
+                </button> {/* ← NEW */}
+                {showEmrPanel && data && <CopyToEmrPanel data={data} onClose={() => setShowEmrPanel(false)} />} {/* ← NEW */}
                 <button
                   type="button"
                   onClick={handlePrint}

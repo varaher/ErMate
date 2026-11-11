@@ -12,7 +12,7 @@ const REQUIRED_FEATURES = [
   "plan-banner", "critical-badge", "handover-choice",
   "mate-critical-query", "mate-voice", "mate-auto-bed", "whatsapp-share",
   "protocol-chips", "protocol-investigations", "protocol-flag", "teams",
-  "mate-alerts",
+  "mate-alerts", "emr-field-copy",
 ];
 
 const all = (Object.entries(TOURS) as [TourId, typeof TOURS[TourId]][]).flatMap(([tour, steps]) => steps.map(s => ({ tour, s })));
@@ -42,7 +42,7 @@ const s = mem();
 t("new doctor sees all cases steps", unseenSteps("a@x.com", "cases", s).length === TOURS.cases.length);
 s.setItem("ermate_coach_v1_a@x.com_cases", "1"); // flag written by the first release
 const fresh = unseenSteps("a@x.com", "cases", s);
-t("returning doctor sees only the new critical tip", fresh.length === 1 && fresh[0].id === "critical-badge");
+t("returning doctor sees only the newer cases tips", fresh.map(x => x.id).join() === "critical-badge,emr-field-copy");
 markTourSeen("a@x.com", "cases", s);
 t("after seeing, nothing left", isTourSeen("a@x.com", "cases", s));
 s.setItem("ermate_coach_v1_a@x.com_home", "1");

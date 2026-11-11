@@ -34,6 +34,9 @@ import { PediatricAssessmentTriangle } from "./PediatricCaseSheetFields";
 import { SecondarySurveySection } from "./SecondarySurveySection";
 import { applySecondaryNormals, recordedSecondary, SECONDARY_KEYS, type SecondaryKey } from "../utils/secondaryNormals";
 import CaseSheetPrintView, { convertClinicalCaseToCaseSheetData, formatCaseSheetText } from "./CaseSheetPrintView";
+import CopyToEmrPanel from "./CopyToEmrPanel"; // ← NEW
+import { copyTextToClipboard } from "../utils/copyToClipboard"; // ← NEW
+import { caseSheetTextToEmrHtml } from "../utils/caseSheetFormat"; // ← NEW
 import { triggerPrintWithTip } from "../utils/printWithTip";
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend
@@ -904,7 +907,8 @@ export default function CaseSheetView({
   const [backupCase, setBackupCase] = useState<ClinicalCase | null>(null);
 
   // New features: PDF Preview Modal, Disposition Save feedback, Rounds Instructions
-  const [showPdfModal, setShowPdfModal] = useState<boolean>(false);
+    const [showPdfModal, setShowPdfModal] = useState<boolean>(false);
+  const [showEmrPanel, setShowEmrPanel] = useState<boolean>(false); // ← NEW
   const [dispositionSaveMessage, setDispositionSaveMessage] = useState<string | null>(null);
   const [showRoundsGuide, setShowRoundsGuide] = useState<boolean>(true);
 
@@ -3059,41 +3063,16 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
 `;
   };
 
-  const handleCopyCaseSheet = () => {
-    const sheetData = convertClinicalCaseToCaseSheetData(currentCase);
-    const plainText = formatCaseSheetText(sheetData);
-    const htmlText = getFormattedCaseSheetHtml();
-
-    try {
-      if (typeof ClipboardItem !== "undefined") {
-        const clipboardItem = new ClipboardItem({
-          "text/plain": new Blob([plainText], { type: "text/plain" }),
-          "text/html": new Blob([htmlText], { type: "text/html" })
-        });
-        navigator.clipboard.write([clipboardItem]).then(() => {
-          setCopiedCaseText(true);
-          setTimeout(() => setCopiedCaseText(false), 2000);
-        }).catch(err => {
-          console.warn("ClipboardItem write failed, using writeText fallback:", err);
-          navigator.clipboard.writeText(plainText).then(() => {
-            setCopiedCaseText(true);
-            setTimeout(() => setCopiedCaseText(false), 2000);
-          });
-        });
-      } else {
-        navigator.clipboard.writeText(plainText).then(() => {
-          setCopiedCaseText(true);
-          setTimeout(() => setCopiedCaseText(false), 2000);
-        });
-      }
-    } catch (err) {
-      console.warn("Clipboard API exception, using writeText fallback:", err);
-      navigator.clipboard.writeText(plainText).then(() => {
-        setCopiedCaseText(true);
-        setTimeout(() => setCopiedCaseText(false), 2000);
-      });
-    }
-  };
+   // Copy full case sheet (plain text + simple line-break HTML). The old rich/styled HTML pasted messily into hospital EMRs. // ← NEW
+  const handleCopyCaseSheet = async () => { // ← NEW
+    const sheetData = convertClinicalCaseToCaseSheetData(currentCase); // ← NEW
+    const plainText = formatCaseSheetText(sheetData); // ← NEW
+    const ok = await copyTextToClipboard(plainText, caseSheetTextToEmrHtml(plainText)); // ← NEW
+    if (ok) { // ← NEW
+      setCopiedCaseText(true); // ← NEW
+      setTimeout(() => setCopiedCaseText(false), 2000); // ← NEW
+    } // ← NEW
+  }; // ← NEW
 
   const handleDownloadCaseSheet = () => {
     const sheetData = convertClinicalCaseToCaseSheetData(currentCase);
@@ -3337,8 +3316,11 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
                       <div className="h-px bg-slate-100 dark:bg-slate-800 my-1.5" />
                       <div className="px-3 py-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Export</div>
                       <button onClick={handleCopyCaseSheet} className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 flex items-center gap-2">
-                        <Copy className="w-3.5 h-3.5" /> Copy to EMR
+                                              <Copy className="w-3.5 h-3.5" /> Copy to EMR
                       </button>
+                      <button onClick={() => setShowEmrPanel(true)} className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 flex items-center gap-2"> {/* ← NEW */}
+                        <Copy className="w-3.5 h-3.5" /> Copy to EMR — field by field {/* ← NEW */}
+                      </button> {/* ← NEW */}
                       <button onClick={() => setShowPdfModal(true) /* stay in the form so unsaved edits are kept */} className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 flex items-center gap-2">
                         <Printer className="w-3.5 h-3.5" /> View PDF
                       </button>
@@ -6297,6 +6279,10 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
       <div className="hidden print:block">
         <CaseSheetPrintView clinicalCase={currentCase} defaultHospital={profile?.workplaceName || profile?.hospitalLabel || profile?.hospital || undefined} />
       </div>
+
+           {showEmrPanel && ( // ← NEW
+        <CopyToEmrPanel data={convertClinicalCaseToCaseSheetData(currentCase)} onClose={() => setShowEmrPanel(false)} /> // ← NEW
+      )} {/* ← NEW */}
 
       {/* View Case Sheet PDF / Universal Document Modal */}
       {showPdfModal && (
