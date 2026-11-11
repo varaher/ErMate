@@ -1851,10 +1851,14 @@ useEffect(() => {
     // Individual users must never attempt to stream or enumerate hospital members.
     let unsubscribeTeam: () => void = () => {};
 
-    if (hasActiveHospitalTeam && userHospital) {
+      if (hasActiveHospitalTeam && userHospital) {
+      // FIX (team page stuck on "Individual"): teams made in the app are keyed by hospitalId // ← NEW
+      // (e.g. "team_…"), not by the hospital name. Query by hospitalId when the membership has one; // ← NEW
+      // older teams without hospitalId still match by hospital name. Matches firestore.rules checkActiveMember. // ← NEW
+      const teamKeyField: "hospitalId" | "hospital" = selfMembership?.hospitalId ? "hospitalId" : "hospital"; // ← NEW
       const teamQuery = query(
         collection(db, "team_members"),
-        where("hospital", "==", userHospital)
+        where(teamKeyField, "==", userHospital) // ← CHANGED (was: where("hospital", "==", userHospital))
       );
 
       listenerDiagnostics.trackSubscribe("team_members");
@@ -1872,8 +1876,10 @@ useEffect(() => {
             });
           });
 
-          const filteredTeam = loadedTeam.filter((member) => {
-            const memberHospital = (member.hospital || "")
+                  const filteredTeam = loadedTeam.filter((member) => {
+            const memberHospital = String( // ← CHANGED
+              (teamKeyField === "hospitalId" ? (member as any).hospitalId : member.hospital) || "" // ← CHANGED
+            )
               .trim()
               .toLowerCase();
 
