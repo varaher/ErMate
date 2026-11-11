@@ -13,7 +13,7 @@ const app = read("src/App.tsx");
 t("skip button text is gone", !onb.includes("Skip for now"));
 t("onSkipToTrial prop is gone", !onb.includes("onSkipToTrial") && !app.includes("onSkipToTrial"));
 t("trial-mode bypass state is gone", !app.includes("exploreInTrialMode") && !app.includes("setExploreInTrialMode"));
-t("gate no longer lets incomplete users through", /!isVerifiedTeamUser && \(!isProfileComplete \|\| !hasHospitalLocation\(profile\)\)/.test(app));
+t("gate: saved profile stays saved, new fields never re-block", /!isVerifiedTeamUser && !isProfileGateCleared/.test(app) && /onboardingComplete === true/.test(app) && !/\|\| !hasHospitalLocation\(profile\)\)\) \|\| showOnboardingProfile/.test(app));
 
 // hospital location
 const base: any = { name: "Dr A", role: "Consultant", workplaceName: "City Hospital", department: "Emergency Medicine" };

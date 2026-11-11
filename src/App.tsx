@@ -1150,6 +1150,9 @@ useEffect(() => {
   );
 
   const isProfileComplete = isClinicalProfileComplete(profile, erPhysicalBedCapacity);
+  // Once a profile has been saved it stays done. New required fields added in later
+  // updates never lock existing doctors out again (they are asked softly, not blocked).
+  const isProfileGateCleared = isProfileComplete || (profile as any)?.onboardingComplete === true;
     // Trial / paywall: only decides whether NEW cases and log book entries may be started.
   const [showPaywall, setShowPaywall] = useState<boolean>(false);
   const access = computeAccess({
@@ -6681,7 +6684,7 @@ const handleSignOut = async () => {
   // Dedicated "Complete Your ErMate Profile" screen on first login / new registration
   if (
     isLoggedIn &&
-    ((!isVerifiedTeamUser && (!isProfileComplete || !hasHospitalLocation(profile))) || showOnboardingProfile)
+   ((!isVerifiedTeamUser && !isProfileGateCleared) || showOnboardingProfile)
   ) {
     return (
       <OnboardingProfileView
@@ -6691,7 +6694,7 @@ const handleSignOut = async () => {
         erPhysicalBedCapacity={erPhysicalBedCapacity}
        onSaveProfile={async (updatedProfile, capacity) => {
             // Was the profile already complete before this save? Then it is a plain edit.
-      const wasAlreadyComplete = isProfileComplete && hasHospitalLocation(profile);
+       const wasAlreadyComplete = isProfileGateCleared;
       await handleSaveProfile(updatedProfile, capacity);
       if (wasAlreadyComplete) {
         // Edit of an existing complete profile: save, close, never ask again.
