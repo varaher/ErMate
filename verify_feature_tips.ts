@@ -12,6 +12,7 @@ const REQUIRED_FEATURES = [
   "plan-banner", "critical-badge", "handover-choice",
   "mate-critical-query", "mate-voice", "mate-auto-bed", "whatsapp-share",
   "protocol-chips", "protocol-investigations", "protocol-flag", "teams",
+  "mate-alerts",
 ];
 
 const all = (Object.entries(TOURS) as [TourId, typeof TOURS[TourId]][]).flatMap(([tour, steps]) => steps.map(s => ({ tour, s })));
@@ -45,7 +46,9 @@ t("returning doctor sees only the new critical tip", fresh.length === 1 && fresh
 markTourSeen("a@x.com", "cases", s);
 t("after seeing, nothing left", isTourSeen("a@x.com", "cases", s));
 s.setItem("ermate_coach_v1_a@x.com_home", "1");
-t("returning doctor gets plan tip on Home only", unseenSteps("a@x.com", "home", s).map(x => x.id).join() === "plan-banner");
+t("returning doctor gets plan + MATE alerts tips on Home only", unseenSteps("a@x.com", "home", s).map(x => x.id).join() === "plan-banner,mate-alerts");
+s.setItem("ermate_coach_v1_a@x.com_home", "2");
+t("doctor who saw Home v2 gets only the MATE alerts tip", unseenSteps("a@x.com", "home", s).map(x => x.id).join() === "mate-alerts");
 t("never-seen scribe tour shows its tips", unseenSteps("a@x.com", "scribe", s).length === TOURS.scribe.length);
 resetTours("a@x.com", s);
 t("replay brings back every tip", (Object.keys(TOURS) as TourId[]).every(k => unseenSteps("a@x.com", k, s).length === TOURS[k].length));

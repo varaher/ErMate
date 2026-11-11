@@ -4,6 +4,7 @@ import { Search, Filter, Plus, Calendar, Activity, Eye, Edit, Trash2, Clock, Che
 import { ClinicalCase } from "../types";
 import { getTriageDisplay, triageBadgeClass, matchesTriageCode } from "../utils/triageScale";
 import { CriticalAlertBadge } from "./shared/CriticalAlertBadge";
+import { MateCaseAlert } from "./shared/MateCaseAlert";
 import { computeCriticalAlerts } from "../utils/criticalAlerts";
 
 interface CasesListViewProps {
@@ -324,6 +325,7 @@ export default function CasesListView({
                           {c.displayId || c.id}
                         </span>
                         <CriticalAlertBadge alerts={computeCriticalAlerts(c)} />
+                        <MateCaseAlert caseData={c} />
                       </div>
                       <h3 className="text-sm font-bold text-slate-800 dark:text-white mt-1 group-hover:text-blue-600 transition-colors">
                         {c.patient.name}

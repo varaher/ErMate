@@ -1,5 +1,5 @@
 /**
- * ErMate — MATE Events hook. MATE Events Phase 1, Step 7.
+ * ErMate — MATE Events hook. MATE Events Phase 1, Steps 7–8.
  *
  * Connects the pure engine + Firestore service to the app (in-app only; push = Phase 2):
  *  - live list of open MATE events (for bell / case cards in the next steps)
@@ -7,6 +7,9 @@
  *  - fires due events: immediately when a new due event arrives, every 30 s, and when
  *    the app comes back to the foreground
  *  - only the device that WINS the claim shows the toast and speaks (two devices → one voice)
+ *
+ * Also publishes the events + actions to mateEventStore so case cards and the bell can
+ * show them without props (Step 8).
  *
  * Presentation is best-effort. A toast or voice is never an acknowledgement;
  * only Seen / Reviewed taps are.
@@ -24,6 +27,7 @@ import {
   subscribeMateEvents,
   syncCaseAlerts,
 } from "../services/mateEventService";
+import { publishMateEvents } from "../mate/mateEventStore";
 
 type Notify = (title: string, message: string, type?: "info" | "success" | "warning") => void;
 
@@ -148,6 +152,11 @@ export function useMateEvents(notify: Notify) {
     const u = uidRef.current;
     return u ? snooze(u, eventId, minutes) : Promise.resolve(false);
   }, []);
+
+  // Share with case cards / bell (Step 8).
+  useEffect(() => {
+    publishMateEvents(mateEvents, uid ? { seen: onSeen, reviewed: onReviewed, snooze: onSnooze } : null);
+  }, [mateEvents, uid, onSeen, onReviewed, onSnooze]);
 
   return { mateEvents, queueCaseSync, onSeen, onReviewed, onSnooze };
 }
