@@ -39,7 +39,14 @@ t("team tip target exists", read("src/components/MoreView.tsx").includes('data-c
 
 const cl = read("src/changelog.ts");
 t("changelog has a 3.2.0 entry that mentions Teams", /"3\.2\.0": \[[\s\S]*?ErMate Teams/.test(cl));
-t("APP_VERSION is 3.2.0 in changelog, server and package.json", cl.includes('APP_VERSION = "3.2.0"') && read("server.ts").includes('const APP_VERSION = "3.2.0"') && /"version": "3\.2\.0"/.test(read("package.json")));
+// Version moved on (3.3.0 = MATE alerts); the check now only requires the three places to agree and be 3.2.0 or later.
+{
+  const v = (cl.match(/APP_VERSION = "([\d.]+)"/) || [])[1] || "";
+  const sv = (read("server.ts").match(/const APP_VERSION = "([\d.]+)"/) || [])[1] || "";
+  const pv = (read("package.json").match(/"version": "([\d.]+)"/) || [])[1] || "";
+  const atLeast320 = (x: string) => { const [a, b] = x.split(".").map(Number); return a > 3 || (a === 3 && b >= 2); };
+  t("APP_VERSION matches in changelog, server and package.json (3.2.0 or later)", !!v && v === sv && v === pv && atLeast320(v));
+}
 const srv = read("server/routes/team.routes.ts");
 const board = read("src/components/TeamRosterBoard.tsx");
 const home = read("src/components/TeamHomeView.tsx");
