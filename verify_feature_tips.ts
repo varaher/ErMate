@@ -12,7 +12,7 @@ const REQUIRED_FEATURES = [
   "plan-banner", "critical-badge", "handover-choice",
   "mate-critical-query", "mate-voice", "mate-auto-bed", "whatsapp-share",
   "protocol-chips", "protocol-investigations", "protocol-flag", "teams",
-  "mate-alerts", "emr-field-copy",
+  "mate-alerts", "emr-field-copy", "team-start",
 ];
 
 const all = (Object.entries(TOURS) as [TourId, typeof TOURS[TourId]][]).flatMap(([tour, steps]) => steps.map(s => ({ tour, s })));

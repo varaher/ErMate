@@ -1,4 +1,5 @@
 import TeamHomeView from "./TeamHomeView";
+import TeamStartCard from "./TeamStartCard"; // ← NEW
 import { WorkspaceRotaSyncModal } from "./shared/WorkspaceRotaSyncModal";
 import React, { useState, useEffect, useCallback } from "react";
 import { 
@@ -691,104 +692,9 @@ export default function TeamRosterBoard({
   if (!isCanonicalTeamMember) {
     return (
       <div id="team-roster-board" className="space-y-6 text-slate-800 dark:text-slate-100 max-w-4xl mx-auto text-left animate-fade-in">
-        {/* Individual Workspace Status Header */}
-        <div className="bg-gradient-to-br from-indigo-950 via-slate-900 to-slate-950 text-white rounded-3xl p-6 md:p-8 border border-indigo-900/40 shadow-xl space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <span className="text-[10px] font-black uppercase tracking-widest font-mono px-3 py-1 bg-indigo-500/20 text-indigo-300 rounded-full border border-indigo-500/30">
-              Workspace Mode: Individual Clinician
-            </span>
-            <span className="text-xs text-slate-400 font-mono">
-              Private Storage
-            </span>
-          </div>
-
-          <div className="space-y-2">
-            <h2 className="text-2xl md:text-3xl font-black tracking-tight text-white">
-              Individual Practice & Clinical Tools
-            </h2>
-            <p className="text-sm text-slate-300 leading-relaxed max-w-2xl">
-              You are currently working in an <strong>Individual Workspace</strong>. All your clinical encounters, Voice Scribe dictations, Case Sheets, Rounds learning debriefs, and Log Book entries are strictly private to your personal account.
-            </p>
-          </div>
-
-          <div className="pt-2 flex flex-wrap gap-2 text-xs font-mono text-slate-300">
-            <div className="bg-white/10 px-3 py-1.5 rounded-xl border border-white/10">
-              Doctor: <strong className="text-white">{profile.name}</strong>
-            </div>
-            <div className="bg-white/10 px-3 py-1.5 rounded-xl border border-white/10">
-              Professional Role: <strong className="text-white">{profile.role || "Clinician"}</strong> (Informational)
-            </div>
-            {profile.hospital && (
-              <div className="bg-white/10 px-3 py-1.5 rounded-xl border border-white/10">
-                Hospital Label: <strong className="text-white">{profile.hospital}</strong>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Transition to Team Workspace Card */}
-        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 md:p-8 space-y-6 shadow-sm">
-          <div>
-            <h3 className="text-lg font-bold text-slate-900 dark:text-white">
-              Transition to Hospital / Department Team
-            </h3>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-              Selecting a professional role or listing a hospital in your personal profile does not grant team access. Hospital workspace membership is established only through an explicit trusted event:
-            </p>
-            <p data-testid="team-unlock-hint" className="text-xs font-bold text-emerald-700 dark:text-emerald-400 mt-2">
-              Create or join a team to unlock the rota, shift timings, member list and calendar sync.
-            </p>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Option 1: Create Team */}
-            <div className="p-5 rounded-2xl border border-indigo-200 dark:border-indigo-900/50 bg-indigo-50/50 dark:bg-indigo-950/20 space-y-3 flex flex-col justify-between">
-              <div className="space-y-2">
-                <div className="flex items-center gap-2 text-indigo-600 dark:text-indigo-400 font-bold text-xs font-mono uppercase tracking-wider">
-                  <Building2 className="w-4 h-4" />
-                  <span>Option 1</span>
-                </div>
-                <h4 className="text-base font-bold text-slate-900 dark:text-white">
-                  Create Team Workspace
-                </h4>
-                <p className="text-xs text-slate-600 dark:text-slate-400">
-                  Establish a shared Emergency Department workspace for your team. You will become Team Admin to manage shifts and invite colleagues, while preserving your clinical role.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowCreateTeamModal(true)}
-                className="w-full py-2.5 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-xs transition-all cursor-pointer flex items-center justify-center gap-2"
-              >
-                <Plus className="w-4 h-4" />
-                <span>Create Team Workspace</span>
-              </button>
-            </div>
-
-            {/* Option 2: Join Team */}
-            <div className="p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/30 space-y-3 flex flex-col justify-between">
-              <div className="space-y-2">
-                <div className="flex items-center gap-2 text-slate-600 dark:text-slate-400 font-bold text-xs font-mono uppercase tracking-wider">
-                  <Link className="w-4 h-4" />
-                  <span>Option 2</span>
-                </div>
-                <h4 className="text-base font-bold text-slate-900 dark:text-white">
-                  Accept Secure Team Invitation
-                </h4>
-                <p className="text-xs text-slate-600 dark:text-slate-400">
-                  Have an invitation link or token from your department lead? Enter it to join your team with verified department access.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowJoinModal(true)}
-                className="w-full py-2.5 px-4 bg-slate-900 hover:bg-slate-800 dark:bg-slate-100 dark:hover:bg-white text-white dark:text-slate-950 font-bold text-xs rounded-xl shadow-xs transition-all cursor-pointer flex items-center justify-center gap-2"
-              >
-                <CheckCircle2 className="w-4 h-4" />
-                <span>Enter Invitation Code</span>
-              </button>
-            </div>
-          </div>
+             {/* Plain-words "Work as a team" (replaces the Individual Workspace + Transition cards) */}
+        <div data-testid="team-unlock-hint">
+          <TeamStartCard onCreate={() => setShowCreateTeamModal(true)} onJoin={() => setShowJoinModal(true)} />
         </div>
 
         {/* Modal: Create Team Workspace */}

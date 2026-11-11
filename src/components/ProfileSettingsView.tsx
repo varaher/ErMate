@@ -14,6 +14,7 @@ import {
 import { motion, AnimatePresence } from "motion/react";
 import { UserProfile, ClinicalCase, TriageCategory, TeamMember, ArrivalMode, LogbookEntry, isPendingApprovalStatus, isActiveMembershipStatus } from "../types";
 import TeamRosterBoard from "./TeamRosterBoard";
+import ProfileTeamPrompt from "./ProfileTeamPrompt"; // ← NEW
 import MoreView from "./MoreView";
 import TeamBuilder from "./TeamBuilder";
 import MortalityAuditModal from "./MortalityAuditModal";
@@ -2293,6 +2294,10 @@ export default function ProfileSettingsView({
               ⚠️ {profileError}
             </div>
           )}
+                    {/* Not in a team yet: say plainly that rota / shift timings / sync need a team. */} {/* ← NEW */}
+          {!teamMembers.some((m) => isActiveMembershipStatus(m.status) && ((m.email || "").toLowerCase().trim() === (profile.email || "").toLowerCase().trim())) && ( // ← NEW
+            <ProfileTeamPrompt onOpenTeam={handleOpenTeamRoster} /> // ← NEW
+          )} {/* ← NEW */}
           <div className="space-y-1.5">
             <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 uppercase font-mono">
               Doctor Name *

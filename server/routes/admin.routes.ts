@@ -382,6 +382,106 @@ router.get("/hospitals", async (_req, res) => {
   }
 });
 
+// ───────────────────────── Approvals (all in one place) ─────────────────────────
+// Everything that waits for a decision: HOD requests, team badges, hospital names in the
+// directory, join requests (decided by the team lead) and members waiting to be switched on.
+// Read-only except POST /directory/:id/status. Team badge = existing POST /api/team/verify-team.
+
+router.get("/approvals", async (_req, res) => {
+  try {
+    const [teams, members, directory, hodSnap] = await Promise.all([
+      allDocs("teams"),
+      allDocs("team_members"),
+      allDocs("hospital_directory"),
+      db.collection("hodClaimRequests").where("status", "==", "pending").get(),
+    ]);
+
+    const byTeam = new Map<string, any[]>();
+    for (const m of members) {
+      const k = str(m.hospitalId) || str(m.hospital);
+      if (!k) continue;
+      if (!byTeam.has(k)) byTeam.set(k, []);
+      byTeam.get(k)!.push(m);
+    }
+    const isPending = (m: any) => str(m.status).toLowerCase() === "pending_approval";
+
+    const teamRows = teams.map((t: any) => {
+      const ms = byTeam.get(t.id) || [];
+      const lead = ms.find((m: any) => isActiveMember(m) && (m.isTeamAdmin === true || m.teamRole === "admin"));
+      return {
+        teamId: t.id,
+        teamName: str(t.teamName),
+        hospitalName: str(t.hospitalName),
+        department: str(t.department),
+        createdAt: t.createdAt || null,
+        createdByEmail: str(t.createdByEmail),
+        lead: lead ? (str(lead.name) || str(lead.email)) : null,
+        leadEmail: lead ? str(lead.email) : null,
+        members: ms.filter(isActiveMember).length,
+        pendingRequests: ms.filter(isPending).length,
+        verificationStatus: str(t.verificationStatus) || "unverified",
+        verifiedAt: t.verifiedAt || null,
+      };
+    }).sort((a: any, b: any) =>
+      (a.verificationStatus === "verified" ? 1 : 0) - (b.verificationStatus === "verified" ? 1 : 0)
+      || String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+
+    const hospitals = directory
+      .map((d: any) => ({
+        id: d.id, name: str(d.name), place: str(d.place), district: str(d.district), state: str(d.state),
+        status: str(d.status) || "unverified", createdAt: d.createdAt || null,
+      }))
+      .sort((a: any, b: any) =>
+        (a.status === "verified" ? 1 : 0) - (b.status === "verified" ? 1 : 0)
+        || String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+
+    const joinRequests = members.filter(isPending).map((m: any) => ({
+      uid: str(m.uid) || m.id,
+      name: str(m.name),
+      email: str(m.email),
+      hospital: str(m.hospitalName) || str(m.hospital),
+      requestedAt: m.requestedAt || m.createdAt || null,
+    })).sort((a: any, b: any) => String(b.requestedAt || "").localeCompare(String(a.requestedAt || "")));
+
+    const waitingMembers = members.filter((m: any) => isActiveMember(m) && m.membershipVerified !== true).length;
+
+    res.json({
+      counts: {
+        hod: hodSnap.size,
+        teams: teamRows.filter((t: any) => t.verificationStatus !== "verified").length,
+        hospitals: hospitals.filter((h: any) => h.status !== "verified").length,
+        joinRequests: joinRequests.length,
+        waitingMembers,
+      },
+      teams: teamRows,
+      hospitals,
+      joinRequests,
+      waitingMembers,
+    });
+  } catch (e: any) {
+    console.error("[admin/approvals]", e?.message || e);
+    res.status(500).json({ error: "Could not load approvals.", detail: errDetail(e) });
+  }
+});
+
+router.post("/directory/:id/status", async (req: AuthRequest, res) => {
+  try {
+    const status = str(req.body?.status);
+    if (!["verified", "unverified"].includes(status)) return res.status(400).json({ error: "Status must be verified or unverified." });
+    const ref = db.collection("hospital_directory").doc(String(req.params.id));
+    const snap = await ref.get();
+    if (!snap.exists) return res.status(404).json({ error: "Hospital not found in the directory." });
+    const before = str(snap.data()?.status) || "unverified";
+    const now = new Date().toISOString();
+    await ref.update({ status, reviewedAt: now, reviewedBy: req.user!.uid });
+    await adminAudit(req, "hospital_directory_status", { hospitalDirectoryId: snap.id, hospital: str(snap.data()?.name), from: before, to: status });
+    res.json({ success: true, status });
+  } catch (e: any) {
+    console.error("[admin/directory-status]", e?.message || e);
+    res.status(500).json({ error: "Could not update the hospital.", detail: errDetail(e) });
+  }
+});
+
 // ───────────────────────── HOD requests ─────────────────────────
 
 router.get("/hod-claims", async (req, res) => {

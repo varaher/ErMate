@@ -4,11 +4,12 @@ import {
 } from "firebase/auth";
 import { adminAuthClient, api, ApiError, go } from "./api";
 import {
-  OverviewPage, UsersPage, HospitalsPage, LocationsPage, HodPage, UsagePage, ProvidersPage, RevenuePage, AuditPage,
+  OverviewPage, ApprovalsPage, UsersPage, HospitalsPage, LocationsPage, HodPage, UsagePage, ProvidersPage, RevenuePage, AuditPage,
 } from "./sections";
 
 export const SECTIONS = [
   { path: "", label: "Overview", page: OverviewPage },
+  { path: "approvals", label: "Approvals", page: ApprovalsPage },
   { path: "users", label: "Users", page: UsersPage },
   { path: "hospitals", label: "Hospitals", page: HospitalsPage },
   { path: "locations", label: "Locations", page: LocationsPage },
@@ -111,6 +112,7 @@ function SignIn() {
 function Shell({ user }: { user: User }) {
   const [section, setSection] = useState(currentSection());
   const [hodPending, setHodPending] = useState<number | null>(null);
+  const [approvalsPending, setApprovalsPending] = useState<number | null>(null);
 
   useEffect(() => {
     const on = () => setSection(currentSection());
@@ -124,6 +126,18 @@ function Shell({ user }: { user: User }) {
     load();
     window.addEventListener("admin:hod-changed", load);
     return () => window.removeEventListener("admin:hod-changed", load);
+  }, []);
+
+  // Approvals badge: HOD requests + team badges + hospital names + join requests + waiting members.
+  useEffect(() => {
+    const load = () => api("/approvals").then(d => {
+      const c = d?.counts || {};
+      setApprovalsPending((c.hod || 0) + (c.teams || 0) + (c.hospitals || 0) + (c.joinRequests || 0) + (c.waitingMembers || 0));
+    }).catch(() => {});
+    load();
+    window.addEventListener("admin:approvals-changed", load);
+    window.addEventListener("admin:hod-changed", load);
+    return () => { window.removeEventListener("admin:approvals-changed", load); window.removeEventListener("admin:hod-changed", load); };
   }, []);
 
   const active = SECTIONS.find(s => s.path === section) || SECTIONS[0];
@@ -152,6 +166,9 @@ function Shell({ user }: { user: User }) {
                   background: on ? "var(--adm-purple)" : "transparent", color: on ? "#fff" : "var(--adm-ink)", fontWeight: on ? 600 : 400,
                 }}>
                 {s.label}
+                {s.path === "approvals" && approvalsPending ? (
+                  <b style={{ background: on ? "#fff" : "var(--adm-amber)", color: on ? "var(--adm-purple)" : "#fff", fontSize: 11, padding: "2px 7px", borderRadius: 999 }}>{approvalsPending}</b>
+                ) : null}
                 {s.path === "hod-requests" && hodPending ? (
                   <b style={{ background: on ? "#fff" : "var(--adm-amber)", color: on ? "var(--adm-purple)" : "#fff", fontSize: 11, padding: "2px 7px", borderRadius: 999 }}>{hodPending}</b>
                 ) : null}

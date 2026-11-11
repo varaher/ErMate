@@ -937,6 +937,139 @@ export function RevenuePage() {
   );
 }
 
+// ───────────────────────── Approvals ─────────────────────────
+
+export function ApprovalsPage() {
+  const { data, error, loading, reload } = useLoad<any>("/approvals");
+  const [busy, setBusy] = useState<string | null>(null);
+  const [msg, setMsg] = useState<string>("");
+
+  const act = async (key: string, fn: () => Promise<any>, done: string) => {
+    setBusy(key); setMsg("");
+    try { await fn(); setMsg(done); reload(); window.dispatchEvent(new Event("admin:approvals-changed")); }
+    catch (e: any) { setMsg(e?.message || "Action failed."); }
+    finally { setBusy(null); }
+  };
+  const verifyTeam = (t: any, verify: boolean) =>
+    act(`team:${t.teamId}`, () => api("/api/team/verify-team", { body: { teamId: t.teamId, verify } }),
+      verify ? `${t.teamName || t.hospitalName} now shows the verified badge.` : `Badge removed from ${t.teamName || t.hospitalName}.`);
+  const setHospital = (h: any, status: "verified" | "unverified") =>
+    act(`hosp:${h.id}`, () => api(`/directory/${encodeURIComponent(h.id)}/status`, { body: { status } }),
+      status === "verified" ? `${h.name} is verified in the hospital list.` : `${h.name} marked unverified.`);
+  const activateWaiting = () =>
+    act("waiting", () => api("/api/team/activate-waiting-teams", { body: { confirm: true } }), "Waiting team members are switched on.");
+
+  const c = data?.counts || {};
+  const tiles = [
+    { label: "HOD requests", n: c.hod, to: "hod-requests", hint: "Approve or reject" },
+    { label: "Team badges", n: c.teams, to: "#teams", hint: "Teams not yet verified" },
+    { label: "Hospital names", n: c.hospitals, to: "#hospitals", hint: "New in the hospital list" },
+    { label: "Join requests", n: c.joinRequests, to: "#joins", hint: "Decided by the team lead" },
+    { label: "Waiting members", n: c.waitingMembers, to: "#waiting", hint: "Joined but not switched on" },
+  ];
+
+  return (
+    <>
+      <Header title="Approvals" sub="Everything waiting for a decision, in one place" />
+      <State loading={loading && !data} error={error} onRetry={reload} />
+      {msg && <p role="status" style={{ margin: "0 0 14px", fontSize: 13, color: "var(--adm-purple)", fontWeight: 600 }}>{msg}</p>}
+      {data && (
+        <>
+          <div style={{ ...grid(170), marginBottom: 18 }}>
+            {tiles.map(t => (
+              <button key={t.label} type="button" className="adm-card"
+                onClick={() => (t.to.startsWith("#") ? document.getElementById(t.to.slice(1))?.scrollIntoView({ behavior: "smooth" }) : go(t.to))}
+                style={{ textAlign: "left", padding: 16, border: 0, cursor: "pointer", font: "inherit" }}>
+                <div style={{ fontSize: 12, color: "var(--adm-muted)" }}>{t.label}</div>
+                <div style={{ fontSize: 26, fontWeight: 700, color: t.n ? "var(--adm-amber)" : "var(--adm-ink)" }}>{count(t.n ?? 0)}</div>
+                <div style={{ fontSize: 12, color: "var(--adm-muted)" }}>{t.hint}</div>
+              </button>
+            ))}
+          </div>
+
+          <div id="teams" />
+          <Card title="Team badges" right={<span style={{ fontSize: 12, color: "var(--adm-muted)" }}>Teams work straight away. The badge says ErMate checked the institution.</span>}>
+            <TableBox minWidth={820}>
+              <thead><tr><th>Team</th><th>Hospital</th><th>Lead</th><th className="r">Members</th><th className="r">Requests</th><th>Created</th><th>Badge</th><th></th></tr></thead>
+              <tbody>
+                {data.teams.map((t: any) => (
+                  <tr key={t.teamId}>
+                    <td style={{ fontWeight: 500 }}>{t.teamName || "—"}</td>
+                    <td>{t.hospitalName || "—"}</td>
+                    <td title={t.leadEmail || ""}>{t.lead || <span style={{ color: "var(--adm-muted)" }}>None</span>}</td>
+                    <td className="r adm-num">{count(t.members)}</td>
+                    <td className="r adm-num">{count(t.pendingRequests)}</td>
+                    <td>{day(t.createdAt)}</td>
+                    <td><Pill text={t.verificationStatus === "verified" ? "Verified" : "Not verified"} tone={t.verificationStatus === "verified" ? "green" : "amber"} /></td>
+                    <td>
+                      {t.verificationStatus === "verified"
+                        ? <button className="adm-btn adm-btn-ghost" disabled={busy === `team:${t.teamId}`} onClick={() => verifyTeam(t, false)}>Remove badge</button>
+                        : <button className="adm-btn adm-btn-green" disabled={busy === `team:${t.teamId}`} onClick={() => verifyTeam(t, true)}>Verify</button>}
+                    </td>
+                  </tr>
+                ))}
+                {data.teams.length === 0 && <tr><td colSpan={8} style={{ color: "var(--adm-muted)" }}>No teams yet.</td></tr>}
+              </tbody>
+            </TableBox>
+          </Card>
+
+          <div id="hospitals" style={{ height: 14 }} />
+          <Card title="Hospital names" right={<span style={{ fontSize: 12, color: "var(--adm-muted)" }}>Names doctors added to the hospital list</span>}>
+            <TableBox minWidth={720}>
+              <thead><tr><th>Hospital</th><th>Place</th><th>District</th><th>State</th><th>Added</th><th>Status</th><th></th></tr></thead>
+              <tbody>
+                {data.hospitals.map((h: any) => (
+                  <tr key={h.id}>
+                    <td style={{ fontWeight: 500 }}>{h.name}</td>
+                    <td>{h.place || "—"}</td>
+                    <td>{h.district || "—"}</td>
+                    <td>{h.state || "—"}</td>
+                    <td>{day(h.createdAt)}</td>
+                    <td><Pill text={h.status === "verified" ? "Verified" : "Unverified"} tone={h.status === "verified" ? "green" : "amber"} /></td>
+                    <td>
+                      {h.status === "verified"
+                        ? <button className="adm-btn adm-btn-ghost" disabled={busy === `hosp:${h.id}`} onClick={() => setHospital(h, "unverified")}>Mark unverified</button>
+                        : <button className="adm-btn adm-btn-green" disabled={busy === `hosp:${h.id}`} onClick={() => setHospital(h, "verified")}>Verify</button>}
+                    </td>
+                  </tr>
+                ))}
+                {data.hospitals.length === 0 && <tr><td colSpan={7} style={{ color: "var(--adm-muted)" }}>No hospitals in the list yet.</td></tr>}
+              </tbody>
+            </TableBox>
+          </Card>
+
+          <div id="joins" style={{ height: 14 }} />
+          <Card title="Join requests" right={<span style={{ fontSize: 12, color: "var(--adm-muted)" }}>The team lead approves these in the app. Shown here so you can follow up.</span>}>
+            <TableBox minWidth={620}>
+              <thead><tr><th>Doctor</th><th>Email</th><th>Team / hospital</th><th>Requested</th></tr></thead>
+              <tbody>
+                {data.joinRequests.map((j: any) => (
+                  <tr key={j.uid}><td style={{ fontWeight: 500 }}>{j.name || "—"}</td><td>{j.email || "—"}</td><td>{j.hospital || "—"}</td><td>{ago(j.requestedAt)}</td></tr>
+                ))}
+                {data.joinRequests.length === 0 && <tr><td colSpan={4} style={{ color: "var(--adm-muted)" }}>No one is waiting to join a team.</td></tr>}
+              </tbody>
+            </TableBox>
+          </Card>
+
+          <div id="waiting" style={{ height: 14 }} />
+          <Card title="Waiting members">
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 14 }}>
+                {data.waitingMembers
+                  ? `${count(data.waitingMembers)} team member${data.waitingMembers === 1 ? " has" : "s have"} joined but cannot see the team yet (from before teams switched on by themselves).`
+                  : "Nobody is waiting. Every team member can see their team."}
+              </span>
+              {data.waitingMembers > 0 && (
+                <button className="adm-btn adm-btn-green" disabled={busy === "waiting"} onClick={activateWaiting}>Switch them on</button>
+              )}
+            </div>
+          </Card>
+        </>
+      )}
+    </>
+  );
+}
+
 // ───────────────────────── Audit ─────────────────────────
 
 export function AuditPage() {
