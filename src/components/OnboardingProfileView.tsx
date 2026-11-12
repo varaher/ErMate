@@ -5,7 +5,7 @@ import {
   Shield, Users, Share2, Copy, CheckCircle2, AlertCircle, Eye, EyeOff,
   Edit3, Save, RotateCcw
 } from "lucide-react";
-import { UserProfile } from "../types";
+import { UserProfile, type WorkArea } from "../types";
 import { ErMateLogo } from "./shared/ErMateLogo";
 import { isClinicalProfileComplete, getProfileCompletenessDetails, hasHospitalLocation } from "../utils/profileCompleteness";
 import { createHospitalWorkspace, createTeamInvite, requestToJoinTeam } from "../services/teamInviteService";
@@ -90,7 +90,9 @@ export default function OnboardingProfileView({
   const [hospitalState, setHospitalState] = useState<string>(profile?.state || "");
   const [hospitalSuggestions, setHospitalSuggestions] = useState<HospitalDirectoryEntry[]>([]);
   const [showHospitalSuggestions, setShowHospitalSuggestions] = useState<boolean>(false);
-  const [bedCapacity, setBedCapacity] = useState<number | string>(initialCap ?? "");
+   const [bedCapacity, setBedCapacity] = useState<number | string>(initialCap ?? "");
+  // Section the doctor works in — decides which panel opens after login.
+  const [workArea, setWorkArea] = useState<WorkArea>(profile?.workArea || "ER");
 
   // Saved values snapshot (to support Cancel in EDITING and render SAVED state)
   const [savedData, setSavedData] = useState<{
@@ -268,7 +270,8 @@ export default function OnboardingProfileView({
         hospital: profile?.hospital || "",
         workplaceName: cleanHospital,
         hospitalLabel: cleanHospital,
-        department: cleanDept,
+                department: cleanDept,
+        workArea,
         place: cleanPlace,
         district: cleanDistrict,
         state: cleanState,
@@ -321,8 +324,9 @@ export default function OnboardingProfileView({
   const handleCancelEdit = () => {
     setHospitalPlace(profile?.place || "");
     setHospitalDistrict(profile?.district || "");
-    setHospitalState(profile?.state || "");
+        setHospitalState(profile?.state || "");
     setShowHospitalSuggestions(false);
+    setWorkArea(profile?.workArea || "ER");
     setName(savedData.name);
     setRole(savedData.role);
     setHospital(savedData.hospital);
@@ -827,6 +831,44 @@ export default function OnboardingProfileView({
                 ))}
               </datalist>
             </div>
+            {/* 4b. Work area — which ErMate panel opens after login */}
+            <fieldset className="space-y-1.5" disabled={saving}>
+              <legend className="text-[11px] font-bold text-slate-700 dark:text-slate-300 uppercase font-mono flex items-center gap-1.5">
+                <Stethoscope className="w-3.5 h-3.5 text-purple-500" />
+                <span>Where do you work? *</span>
+              </legend>
+              <div className="grid grid-cols-3 gap-2" role="radiogroup" aria-label="Work area">
+                {([
+                  { id: "ER", label: "Emergency", sub: "ER" },
+                  { id: "ICU", label: "ICU", sub: "Critical care" },
+                  { id: "OPD", label: "OPD", sub: "Coming soon" },
+                ] as { id: WorkArea; label: string; sub: string }[]).map((opt) => {
+                  const selected = workArea === opt.id;
+                  const soon = opt.id === "OPD";
+                  return (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      role="radio"
+                      aria-checked={selected}
+                      disabled={soon}
+                      onClick={() => setWorkArea(opt.id)}
+                      className={`min-h-[52px] rounded-xl border px-2 py-2 text-left transition-all ${
+                        selected
+                          ? "border-purple-500 bg-purple-50 dark:bg-purple-950/40 ring-2 ring-purple-500/30"
+                          : "border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950"
+                      } ${soon ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
+                    >
+                      <span className="block text-xs font-bold text-slate-900 dark:text-white">{opt.label}</span>
+                      <span className="block text-[10px] text-slate-500 dark:text-slate-400">{opt.sub}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">
+                ErMate opens this section after you sign in. You can switch any time from the ER · ICU · OPD switch on Home.
+              </span>
+            </fieldset>
 
             {/* 5. ER Physical Bed Capacity (Optional) */}
             <div className="space-y-1.5">

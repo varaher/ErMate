@@ -8,7 +8,7 @@ import {
   Settings, HelpCircle, FileWarning,  Trophy, ClipboardList, Zap, Moon, Sun, Users,
   Search, X, TrendingUp, Bell, BellRing, Trash2, Check, Mic, ShieldCheck, RefreshCw,
   Download, Smartphone, Building2, UserCheck, CheckCircle2, Terminal, MessageSquare,
-  MoreHorizontal, Wrench, Award, AlertCircle
+   MoreHorizontal, Wrench, Award, AlertCircle, HeartPulse
 } from "lucide-react";
 
 import { 
@@ -31,6 +31,9 @@ import { authenticatedFetch } from "./services/authenticatedFetch";
 import DashboardView from "./components/DashboardView";
 const CasesListView = React.lazy(() => import("./components/CasesListView"));
 const CaseSheetView = React.lazy(() => import("./components/CaseSheetView"));
+const IcuHomeView = React.lazy(() => import("./icu/IcuHomeView"));
+import ModeSwitcher from "./components/shared/ModeSwitcher";
+import type { WorkArea } from "./types";
 const CaseSheetPrintView = React.lazy(() => import("./components/CaseSheetPrintView"));
 const DischargeSummaryView = React.lazy(() => import("./components/DischargeSummaryView"));
 const TriageForm = React.lazy(() => import("./components/TriageForm"));
@@ -499,7 +502,7 @@ useEffect(() => {
 
   // Navigation
   const [activeTab, setActiveTab] = useState<
-    "dashboard" | "analytics" | "admin" | "handover" | "cases" | "learn" | "profile" | "emdrugs" | "directory" | "mlc" | "tools" | "more" | "team" | "logbook"
+     "dashboard" | "analytics" | "admin" | "handover" | "cases" | "learn" | "profile" | "emdrugs" | "directory" | "mlc" | "tools" | "more" | "team" | "logbook" | "icu"
   >("dashboard");
   const [discussionModalCase, setDiscussionModalCase] = useState<ClinicalCase | null>(null);
   const [caseChatInitialMode, setCaseChatInitialMode] = useState<"discuss" | "rounds">("discuss");
@@ -6172,8 +6175,12 @@ const handleSaveProfile = async (newProfile: UserProfile, explicitCapacity?: num
         workplaceName: cappedWorkplace,
         hospitalLabel: cappedWorkplace,
         department: cappedDept,
-        onboardingComplete: true,
+             onboardingComplete: true,
       };
+
+      if (newProfile.workArea && ["ER", "ICU", "OPD"].includes(newProfile.workArea)) {
+        updatePayload.workArea = newProfile.workArea;
+      }
 
       if (validCapacity !== undefined) {
         updatePayload.erPhysicalBedCapacity = validCapacity;
@@ -6222,8 +6229,11 @@ const handleSaveProfile = async (newProfile: UserProfile, explicitCapacity?: num
         initialPayload.erPhysicalBedCapacity = validCapacity;
       }
 
-      if (newProfile.hasConsentedToLearning !== undefined) {
+           if (newProfile.hasConsentedToLearning !== undefined) {
         initialPayload.hasConsentedToLearning = newProfile.hasConsentedToLearning;
+      }
+      if (newProfile.workArea && ["ER", "ICU", "OPD"].includes(newProfile.workArea)) {
+        initialPayload.workArea = newProfile.workArea;
       }
       if (newProfile.phone) initialPayload.phone = newProfile.phone.slice(0, 50);
       if (newProfile.regNo) initialPayload.regNo = newProfile.regNo.slice(0, 50);
@@ -6603,6 +6613,36 @@ const handleSignOut = async () => {
     );
   }
 };
+    // Work area chosen at registration: open the doctor's own panel once per sign-in.
+  const workAreaRoutedRef = useRef<string | null>(null);
+  const isIcuUser = profile?.workArea === "ICU";
+  useEffect(() => {
+    if (!isLoggedIn) {
+      workAreaRoutedRef.current = null;
+      return;
+    }
+    const uid = auth.currentUser?.uid || null;
+    if (!uid || workAreaRoutedRef.current === uid) return;
+    if (!profile?.onboardingComplete) return;
+    workAreaRoutedRef.current = uid;
+    if (profile.workArea === "ICU") setActiveTab("icu");
+  }, [isLoggedIn, profile?.onboardingComplete, profile?.workArea]);
+
+  // ER · ICU · OPD switch (Home + ICU screen): open the mode now and remember it.
+  const handleSwitchMode = async (mode: WorkArea) => {
+    if (mode === "OPD") return; // not built yet
+    setActiveTab(mode === "ICU" ? "icu" : "dashboard");
+    setProfile((p) => ({ ...p, workArea: mode }));
+    const uid = auth.currentUser?.uid;
+    if (!uid) return;
+    try {
+      await updateDoc(doc(db, "users", uid), { workArea: mode });
+    } catch (e) {
+      console.warn("[mode] could not save work area", e);
+      triggerNotification("Mode not saved", "Switched for now, but ErMate could not remember it. Check your connection.", "warning");
+    }
+  };
+
   // Direct tab navigating
   const navigateToTab = (tabId: string) => {
     // Individual V1: team screens hidden for non-team clinicians; directory hidden for all.
@@ -7041,8 +7081,11 @@ const handleSignOut = async () => {
               }
             };
 
-            const baseTabs = getRoleNavTabs();
-            return isAdminUser 
+                      const roleTabs = getRoleNavTabs();
+            const baseTabs = isIcuUser
+              ? [{ id: "icu", label: "ICU", icon: HeartPulse }, ...roleTabs]
+              : roleTabs;
+            return isAdminUser
               ? [...baseTabs, { id: "admin", label: "Admin Panel", icon: ShieldCheck }]
               : baseTabs;
           })().map((tab) => {
@@ -7074,8 +7117,10 @@ const handleSignOut = async () => {
       {/* Mobile-Optimized Bottom Navigation Bar (5 Primary Clinical Destinations) */}
       <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white/95 dark:bg-slate-950/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800/80 pb-safe z-40 no-print shadow-lg">
         <div className="grid grid-cols-5 items-stretch h-16 max-w-md mx-auto px-1 w-full overflow-hidden">
-          {[
-            { id: "dashboard", label: "Dashboard", icon: Activity },
+                   {[
+            isIcuUser
+              ? { id: "icu", label: "ICU", icon: HeartPulse }
+              : { id: "dashboard", label: "Dashboard", icon: Activity },
             { id: "cases", label: "Cases", icon: ClipboardList },
             { id: "scribe", label: "Scribe", icon: Sparkles },
             { id: "handover", label: "Handover", icon: Users },
@@ -7088,7 +7133,8 @@ const handleSignOut = async () => {
               if (isAnyModalActive) return false;
               if (tab.id === "scribe") return isScribeActive;
               if (isScribeActive) return false;
-              if (tab.id === "dashboard") return activeTab === "dashboard";
+                            if (tab.id === "dashboard") return activeTab === "dashboard";
+              if (tab.id === "icu") return activeTab === "icu";
               if (tab.id === "cases") return activeTab === "cases";
               if (tab.id === "handover") return activeTab === "handover";
               if (tab.id === "more") {
@@ -7428,7 +7474,10 @@ const handleSignOut = async () => {
           {/* 6. Main Tab Views */}
           {!selectedCaseId && !viewCaseSheetPrintId && !activeFormMode && !showDischargeSummaryId && !showPediatricCalculator && !showPocketMirror && !showQuickDischarge && (
             <>
-                           {activeTab === "dashboard" && (<>
+                                        {activeTab === "dashboard" && (<>
+                <div className="flex justify-end px-4 md:px-0 pt-3">
+                  <ModeSwitcher value="ER" onChange={handleSwitchMode} />
+                </div>
                 <AccessBanner access={access} onActivate={() => navigateToTab("more")} />
                 <DashboardView
                   profile={profile}
@@ -7484,6 +7533,14 @@ const handleSignOut = async () => {
                   onEndDutySession={handleEndDutySession}
                 />
               </>)}
+
+                          {activeTab === "icu" && (
+                <IcuHomeView
+                  profile={profile}
+                  onSwitchMode={handleSwitchMode}
+                  notify={(title, message, type) => triggerNotification(title, message, type)}
+                />
+              )}
 
               {activeTab === "analytics" && (
                 <AnalyticsView

@@ -28,7 +28,7 @@ export interface CoachStep {
   feature?: string;
 }
 
-export type TourId = "home" | "cases" | "handover" | "learn" | "more" | "scribe" | "protocols";
+export type TourId = "home" | "cases" | "handover" | "learn" | "more" | "scribe" | "protocols" | "icu" | "icunote" | "icucases" | "icuhandover";
 
 /** App tab id -> tour shown the first time that tab is opened. */
 export const TAB_TO_TOUR: Record<string, TourId> = {
@@ -37,7 +37,11 @@ export const TAB_TO_TOUR: Record<string, TourId> = {
   handover: "handover",
   learn: "learn",
   more: "more",
-  scribe: "scribe",
+   scribe: "scribe",
+  icu: "icu",
+  // In ICU mode the app passes these ids for the Cases and Handover tabs.
+  icucases: "icucases",
+  icuhandover: "icuhandover",
 };
 
 export const TOURS: Record<TourId, CoachStep[]> = {
@@ -48,6 +52,7 @@ export const TOURS: Record<TourId, CoachStep[]> = {
     { id: "quick-tools", target: { sel: '[data-coach="quick-tools"]' }, title: "Quick tools", body: "ER Guide for protocols and drugs, pediatric dosing by weight, and SBAR shift handover. All one tap away at the bedside." },
     { id: "stats", target: { sel: '[data-coach="stats"]' }, title: "Your ED at a glance", body: "Active, waiting and today's patients update as you work." },
     { id: "plan-banner", v: 2, feature: "plan-banner", target: { sel: '[data-coach="plan-banner"]' }, title: "Your plan", body: "This strip shows your trial days left or plan status. Tap View plans any time to see options or activate." },
+        { id: "mode-switch", v: 4, feature: "mode-switch", target: { sel: '[data-coach="mode-switcher"]' }, title: "ER, ICU or OPD", body: "Switch ErMate's mode here. ICU opens your ICU beds with daily notes and FAST HUGS. ErMate remembers your choice and opens that mode next time. OPD is coming soon." },
     { id: "mate-alerts", v: 3, feature: "mate-alerts", title: "MATE alerts on your patients", body: "When saved vitals are in the red range, the patient card blinks and MATE alerts you (aloud if MATE voice is on) every 15 min until you tap Seen. Amber means abnormal: if no new reading is logged in 1 hour, the card blinks again. Log a new reading to clear it. A prompt, not a monitor." },
     { id: "nav-cases", target: { sel: '[data-coach="nav-cases"]' }, title: "Cases", body: "Every patient you have seen. Open a case to edit it, print the case sheet, Copy to EMR, or write the discharge summary." },
     { id: "nav-scribe", target: { sel: '[data-coach="nav-scribe"]' }, title: "Ask ErMate", body: "Talk through a case or ask a clinical question. Good for a second opinion while you work." },
@@ -78,6 +83,26 @@ export const TOURS: Record<TourId, CoachStep[]> = {
     { id: "ask-critical", v: 2, feature: "mate-critical-query", title: "Ask who is critical", body: "Say or type \"who is critical?\" and ErMate lists the patients whose saved vitals are in the danger range. When you apply new vitals, a red message tells you if a patient has just become critical." },
     { id: "auto-bed", v: 3, feature: "mate-auto-bed", title: "MATE picks the bed", body: "Paste a case sheet or start dictating without a bed, and MATE starts a new case in the lowest free bed and tells you which. Wrong bed? Tap Change bed or say \"move to Bed 9\". It never overwrites another patient." },
     { id: "mate-voice", v: 2, feature: "mate-voice", target: { sel: '[data-coach="mate-voice"]' }, title: "Hear replies spoken", body: "This speaker button makes ErMate read its replies aloud. It starts off. Tap it to turn on, tap again to turn off. Your choice is remembered on this device." },
+  ],
+    icu: [
+    { id: "icu-intro", feature: "icu-mode", title: "ICU mode", body: "Your ICU beds, unit by unit. Each patient's whole ICU stay lives here: admission note, daily notes, FAST HUGS, lines, timed tasks and the final outcome." },
+    { id: "icu-switch", target: { sel: '[data-coach="mode-switcher"]' }, title: "Back to ER any time", body: "Tap ER to return to the emergency dashboard. ErMate opens the mode you used last." },
+    { id: "icu-add-unit", target: { sel: '[data-coach="icu-add-unit"]' }, title: "Add your units", body: "Add each ICU you work in, for example MICU 1, Neuro ICU or CCU, with its number of beds." },
+    { id: "icu-units", target: { sel: '[data-coach="icu-units"]' }, title: "Switch units", body: "Tap a unit to see its beds. Use + to add another unit." },
+    { id: "icu-beds", target: { sel: '[data-coach="icu-beds"]' }, title: "Beds", body: "Tap Admit on an empty bed. Tap a patient to open the note. Amber badges show FAST HUGS items not reviewed and orders to clarify." },
+  ],
+  icunote: [
+    { id: "icu-speak", feature: "icu-scribe", target: { sel: '[data-coach="icu-dictate"]' }, title: "Speak the case", body: "Dictate naturally, in any order. ErMate sorts it into problems, progress, exam, plan, FAST HUGS, tasks and lines, and shows a full preview. Nothing is saved until you tap Apply." },
+    { id: "icu-fasthugs", feature: "icu-fasthugs", target: { sel: '[data-coach="icu-fasthugs-tab"]' }, title: "FAST HUGS BID", body: "All 11 daily checks in one list. Amber means not reviewed. Items are never filled automatically: dictate them, or mark Not applicable with a reason." },
+    { id: "icu-preview", feature: "icu-emr-copy", target: { sel: '[data-coach="icu-preview-tab"]' }, title: "Preview, sign, Copy to EMR", body: "See the finished note, copy the whole note or one section at a time into your hospital EMR, then sign. A signed note cannot be edited." },
+    { id: "icu-nothing-guessed", title: "Nothing is guessed", body: "Empty sections say Not documented. Unclear orders, such as a drug without a dose, are flagged for you to clarify. Day 2 onwards, problems and lines carry forward marked Confirm." },
+  ],
+  icucases: [
+    { id: "icu-cases", feature: "icu-cases", target: { sel: '[data-coach="icu-cases-list"]' }, title: "ICU cases", body: "Every ICU patient, in the ICU now or shifted out. Search, open their notes, or copy a note to your EMR. Switch to ER to see your ER cases." },
+  ],
+  icuhandover: [
+    { id: "icu-handover", feature: "icu-handover", target: { sel: '[data-coach="icu-handover-list"]' }, title: "ICU handover (ISBAR)", body: "Tick the beds to hand over. Each patient is set out as Identify, Situation, Background, Assessment and Recommendation, taken only from the latest note. Pending tasks, orders to clarify and FAST HUGS gaps go under Recommendation." },
+    { id: "icu-handover-share", target: { sel: '[data-coach="icu-handover-share"]' }, title: "Copy or WhatsApp", body: "Copy the handover or share it on WhatsApp. Patient names are hidden unless you switch them on." },
   ],
   protocols: [
     { id: "chips", v: 2, feature: "protocol-chips", target: { sel: '[data-testid="protocol-chips"]' }, title: "Jump to a section", body: "Tap a chip to go straight to that part of the protocol, such as investigations or disposition." },
