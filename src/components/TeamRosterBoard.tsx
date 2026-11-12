@@ -1523,7 +1523,7 @@ export default function TeamRosterBoard({
               <div className="space-y-2">
                 <div className="flex flex-col sm:flex-row bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl p-2 items-center gap-2">
                   <span className="text-[11px] font-mono text-slate-500 dark:text-slate-400 select-all truncate flex-1 px-2 w-full sm:w-auto">
-                    {generatedLink || (inviteStatus === "loading" ? "Generating secure invite link..." : "No active link. Tap New link."
+                      {generatedLink || (inviteStatus === "loading" ? "Generating secure invite link..." : "No active link. Tap New link.")}
                   </span>
                   <div className="flex flex-wrap items-center gap-1.5 w-full sm:w-auto justify-end">
                     <button
@@ -1574,7 +1574,7 @@ export default function TeamRosterBoard({
                       <span className="text-slate-300 dark:text-slate-700">•</span>
                       <button
                         type="button"
-                        o onClick={handleRevokeInvite}
+                        onClick={handleRevokeInvite}
                         disabled={!generatedLink}
                         className="text-[11px] font-bold text-rose-500 hover:underline cursor-pointer disabled:opacity-40"
                       >
@@ -2512,7 +2512,7 @@ export default function TeamRosterBoard({
                     </button>
                   </div>
 
-                  {isUserTeamAdmin && generatedLink && (
+                  {isUserTeamAdmin && (
                     <div className="flex items-center justify-between pt-2 border-t border-slate-200 dark:border-slate-800 text-[11px]">
                       <span className="text-slate-400 font-mono">Reusable link, valid 6 hours</span>
                       <div className="flex items-center gap-2">
@@ -2528,7 +2528,7 @@ export default function TeamRosterBoard({
                         <span className="text-slate-300 dark:text-slate-700">•</span>
                         <button
                           type="button"
-                          nClick={handleRevokeInvite}
+                          onClick={handleRevokeInvite}
                           disabled={!generatedLink}
                           className="text-rose-500 font-bold hover:underline cursor-pointer disabled:opacity-40"
                         >

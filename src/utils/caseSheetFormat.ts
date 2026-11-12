@@ -85,14 +85,22 @@ export function formatCaseSheetText(data: CaseSheetData, opts: { forEmr?: boolea
   };
 
   // Header
-  out.push(`${(data.hospitalName || "").trim() || "Hospital not set"}`);
-  out.push(`EMERGENCY DEPARTMENT — CASE SHEET${data.isPediatric ? " (PEDIATRIC)" : ""}${data.isMlc ? " - MLC" : ""}`);
-  out.push(`Case ID: ${val(data.caseId)}`);
-  out.push("");
-
+  if (forEmr) {
+    out.push(`INITIAL ASSESSMENT AND EMERGENCY DEPARTMENT CASE RECORD${data.isPediatric ? " (PEDIATRIC)" : ""}${data.isMlc ? " - MLC" : ""}`);
+    const seen = emrSeenLine(data);
+    if (seen) out.push(seen);
+    if (hasText(data.patient?.weight)) out.push(`Weight: ${data.patient.weight} kg`);
+    out.push("");
+  } else {
+    out.push(`${(data.hospitalName || "").trim() || "Hospital not set"}`);
+    out.push(`EMERGENCY DEPARTMENT — CASE SHEET${data.isPediatric ? " (PEDIATRIC)" : ""}${data.isMlc ? " - MLC" : ""}`);
+    out.push(`Case ID: ${val(data.caseId)}`);
+    out.push("");
+  }
+ 
   // Patient
   const p = data.patient;
-  section("Patient Details", [
+  if (!forEmr) section("Patient Details", [
     `Name: ${val(p.name)}`,
     `Age / Sex: ${p.age !== null && p.age !== undefined ? formatAge(p.age, p.ageMonths, p.ageDays) : ND} ${p.sex || ""}`.trimEnd(),
     hasText(p.weight) ? `Weight: ${p.weight} kg` : "",

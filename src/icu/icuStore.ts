@@ -58,6 +58,16 @@ export function subscribeActiveAdmissions(onData: (a: IcuAdmission[]) => void, o
   );
 }
 
+/** Every ICU admission (in ICU and shifted out), newest first. For the ICU Cases tab. */
+export function subscribeAllAdmissions(onData: (a: IcuAdmission[]) => void, onError: (e: Error) => void, max = 300): () => void {
+  const uid = uidOrThrow();
+  return onSnapshot(
+    query(admCol(uid), orderBy("admittedAt", "desc"), limit(max)),
+    (snap) => onData(snap.docs.map((d) => d.data() as IcuAdmission)),
+    (err) => onError(err),
+  );
+}
+
 export async function admitPatient(args: {
   unit: IcuUnit; bed: string; patientLabel: string; uhid?: string; ageYears?: number | null;
   sex?: "M" | "F" | "Other" | null; source: IcuAdmissionSource; occupiedBeds: Set<string>;
@@ -123,6 +133,13 @@ export async function startNote(adm: IcuAdmission, authorName: string | null): P
   await setDoc(doc(notesCol(uid, adm.id), note.id), sanitizeForFirestore(note));
   await refreshCensus(adm.id, note);
   return note;
+}
+
+/** The most recent note of an admission, or null. Used by ICU handover and Cases. */
+export async function getLatestNote(admId: string): Promise<IcuNote | null> {
+  const uid = uidOrThrow();
+  const snap = await getDocs(query(notesCol(uid, admId), orderBy("createdAt", "desc"), limit(1)));
+  return snap.empty ? null : (snap.docs[0].data() as IcuNote);
 }
 
 export async function saveNote(note: IcuNote): Promise<void> {
