@@ -34,7 +34,47 @@ function hasText(v: unknown): boolean {
   return v !== null && v !== undefined && String(v).trim().length > 0;
 }
 
-export function formatCaseSheetText(data: CaseSheetData): string {
+/** "12 Nov 2026" -> "12/11/2026". Anything unreadable is passed through as written. */
+function emrDate(raw: unknown): string {
+  const t = String(raw ?? "").trim();
+  if (!t) return "";
+  const d = new Date(t);
+  if (isNaN(d.getTime())) return t;
+  const dd = String(d.getDate()).padStart(2, "0");
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  return `${dd}/${mm}/${d.getFullYear()}`;
+}
+ 
+/** "08:39" or "8:39 PM" -> "8.39am" / "8.39pm". Anything unreadable is passed through as written. */
+function emrTime(raw: unknown): string {
+  const t = String(raw ?? "").trim();
+  if (!t) return "";
+  const m = t.match(/^(\d{1,2})[:.](\d{2})\s*([ap]\.?m\.?)?$/i);
+  if (!m) return t;
+  let h = parseInt(m[1], 10);
+  const min = m[2];
+  let ap = (m[3] || "").toLowerCase().replace(/\./g, "");
+  if (!ap) { ap = h >= 12 ? "pm" : "am"; }
+  if (h === 0) h = 12; else if (h > 12) h -= 12;
+  return `${h}.${min}${ap}`;
+}
+ 
+/** "CASE SEEN BY Dr Anjali on 12/11/2026 at 8.39am" (parts that are not documented are left out). */
+function emrSeenLine(data: CaseSheetData): string {
+  const name = String(data.clinician ?? "").trim().replace(/^dr\.?\s*/i, "");
+  if (!name) return "";
+  const date = emrDate(data.arrival?.date);
+  const time = emrTime(data.arrival?.time);
+  return `CASE SEEN BY Dr ${name}${date ? ` on ${date}` : ""}${time ? ` at ${time}` : ""}`;
+}
+ 
+/**
+ * forEmr: text for pasting into a hospital EMR. The EMR already knows the patient, so the ErMate
+ * header (hospital name, case ID) and the Patient Details block (name, UHID, bed...) are left out.
+ * It opens with the initial-assessment title and the "CASE SEEN BY" line instead.
+ */
+export function formatCaseSheetText(data: CaseSheetData, opts: { forEmr?: boolean } = {}): string {
+  const forEmr = opts.forEmr === true;
   const out: string[] = [];
   const section = (title: string, lines: string[]) => {
     const body = lines.filter((l) => l !== "");

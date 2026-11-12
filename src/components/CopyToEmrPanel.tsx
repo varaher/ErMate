@@ -32,7 +32,7 @@ export default function CopyToEmrPanel({ data, onClose }: Props) {
   const [nextIndex, setNextIndex] = useState(0);
 
   const sections = useMemo(() => buildEmrSections(data), [data]);
-  const fullText = useMemo(() => formatCaseSheetText(data), [data]);
+  const fullText = useMemo(() => formatCaseSheetText(data, { forEmr: true }), [data]);
 
   const items = layout.map((it) => ({ ...it, section: sections[it.key], label: it.label || sections[it.key].title }));
   const copyable = items.filter((it) => it.section.text);

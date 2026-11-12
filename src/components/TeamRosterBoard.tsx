@@ -1,7 +1,7 @@
 import TeamHomeView from "./TeamHomeView";
 import TeamStartCard from "./TeamStartCard"; // ← NEW
 import { WorkspaceRotaSyncModal } from "./shared/WorkspaceRotaSyncModal";
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { 
   Users, Plus, Trash2, Shield, Clock, Search, UserCheck, 
   UserX, ShieldAlert, CheckCircle2, Mail, Calendar, Sparkles,
@@ -439,15 +439,15 @@ export default function TeamRosterBoard({
     }
   }, [resolveCanonicalHospitalScope]);
 
+  // Make one starter link for Team Admins only, once. After a Revoke the admin
+  // decides when to make the next link (no surprise re-creation).
+  const inviteAutoTriedRef = useRef(false);
   useEffect(() => {
-    let active = true;
-    if (auth.currentUser && inviteStatus === "idle") {
+    if (auth.currentUser && isUserTeamAdmin && inviteStatus === "idle" && !inviteAutoTriedRef.current) {
+      inviteAutoTriedRef.current = true;
       handleGenerateInvite();
     }
-    return () => {
-      active = false;
-    };
-  }, [handleGenerateInvite, inviteStatus]);
+  }, [handleGenerateInvite, inviteStatus, isUserTeamAdmin]);
 
   const handleCopyLink = () => {
     if (!generatedLink) return;
@@ -1493,7 +1493,7 @@ export default function TeamRosterBoard({
                 </h3>
               </div>
               <span className="text-[10px] bg-indigo-100 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 font-bold px-2 py-0.5 rounded-full font-mono">
-                Active 7-Day Link
+                Active 6-Hour Link
               </span>
             </div>
 
@@ -1523,7 +1523,7 @@ export default function TeamRosterBoard({
               <div className="space-y-2">
                 <div className="flex flex-col sm:flex-row bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl p-2 items-center gap-2">
                   <span className="text-[11px] font-mono text-slate-500 dark:text-slate-400 select-all truncate flex-1 px-2 w-full sm:w-auto">
-                    {generatedLink || (inviteStatus === "loading" ? "Generating secure invite link..." : "Generating invitation...")}
+                    {generatedLink || (inviteStatus === "loading" ? "Generating secure invite link..." : "No active link. Tap New link."
                   </span>
                   <div className="flex flex-wrap items-center gap-1.5 w-full sm:w-auto justify-end">
                     <button
@@ -1556,7 +1556,7 @@ export default function TeamRosterBoard({
                   </div>
                 </div>
 
-                {isUserTeamAdmin && generatedLink && (
+                {isUserTeamAdmin && (
                   <div className="flex items-center justify-between pt-1 px-1">
                     <span className="text-[10.5px] text-slate-500 dark:text-slate-400 font-mono">
                       Token is secured & expires in 6 hours.
@@ -1569,13 +1569,14 @@ export default function TeamRosterBoard({
                         className="text-[11px] font-bold text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1 cursor-pointer"
                       >
                         <RefreshCw className="w-3 h-3" />
-                        <span>Regenerate Link</span>
+                       <span>New link</span>
                       </button>
                       <span className="text-slate-300 dark:text-slate-700">•</span>
                       <button
                         type="button"
-                        onClick={handleRevokeInvite}
-                        className="text-[11px] font-bold text-rose-500 hover:underline cursor-pointer"
+                        o onClick={handleRevokeInvite}
+                        disabled={!generatedLink}
+                        className="text-[11px] font-bold text-rose-500 hover:underline cursor-pointer disabled:opacity-40"
                       >
                         Revoke
                       </button>
@@ -2513,7 +2514,7 @@ export default function TeamRosterBoard({
 
                   {isUserTeamAdmin && generatedLink && (
                     <div className="flex items-center justify-between pt-2 border-t border-slate-200 dark:border-slate-800 text-[11px]">
-                      <span className="text-slate-400 font-mono">Reusable 7-day token</span>
+                      <span className="text-slate-400 font-mono">Reusable link, valid 6 hours</span>
                       <div className="flex items-center gap-2">
                         <button
                           type="button"
@@ -2522,13 +2523,14 @@ export default function TeamRosterBoard({
                           className="text-indigo-600 dark:text-indigo-400 font-bold hover:underline cursor-pointer flex items-center gap-1"
                         >
                           <RefreshCw className="w-3 h-3" />
-                          <span>Regenerate</span>
+                         <span>New link</span>
                         </button>
                         <span className="text-slate-300 dark:text-slate-700">•</span>
                         <button
                           type="button"
-                          onClick={handleRevokeInvite}
-                          className="text-rose-500 font-bold hover:underline cursor-pointer"
+                          nClick={handleRevokeInvite}
+                          disabled={!generatedLink}
+                          className="text-rose-500 font-bold hover:underline cursor-pointer disabled:opacity-40"
                         >
                           Revoke
                         </button>

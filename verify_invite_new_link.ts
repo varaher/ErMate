@@ -1,0 +1,11 @@
+import fs from "fs";
+const b = fs.readFileSync("src/components/TeamRosterBoard.tsx", "utf8");
+const f = fs.readFileSync("src/firebase.ts", "utf8");
+let fails = 0;
+const t = (n: string, c: boolean) => { console.log(`${c ? "PASS" : "FAIL"}: ${n}`); if (!c) fails++; };
+t("New link button shows for admins without needing an existing link", !/isUserTeamAdmin && generatedLink && \(/.test(b) && (b.match(/\{isUserTeamAdmin && \(/g) || []).length >= 2);
+t("starter link is made once, admins only", /inviteAutoTriedRef/.test(b) && /isUserTeamAdmin && inviteStatus === "idle" && !inviteAutoTriedRef\.current/.test(b));
+t("revoke does not silently re-create", /disabled=\{!generatedLink\}/.test(b));
+t("expiry text says 6 hours", /valid 6 hours/.test(b) && !/7-day/i.test(b));
+t("stay signed in persistence is set", /setPersistence\(auth, indexedDBLocalPersistence\)/.test(f) && /browserLocalPersistence/.test(f));
+process.exit(fails ? 1 : 0);
