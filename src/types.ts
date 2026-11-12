@@ -744,7 +744,12 @@ export interface UserProfile {
   erPhysicalBedCapacity?: number;
   onboardingComplete?: boolean;
   onboardingTeamPromptDismissed?: boolean;
+  /** Section the doctor works in, chosen at registration. Decides which panel opens on login. */
+  workArea?: WorkArea;
 }
+
+export type WorkArea = "ER" | "ICU" | "OPD";
+export const WORK_AREAS: WorkArea[] = ["ER", "ICU", "OPD"];
 
 export interface HodClaimRequest {
   id: string;

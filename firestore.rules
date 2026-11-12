@@ -481,6 +481,46 @@ service cloud.firestore {
         && (incoming().get('streak', 0) is int)
         && (incoming().get('subscriptionTier', '') is string);
 
+            // ── ICU Mode (Phase 1, personal workspace) ───────────────────────────
+      // Owner-only. Team/hospital sharing comes with the workspace resolver in a later phase.
+      match /icuUnits/{unitId} {
+        allow read, delete: if isLoggedIn() && isOwner(userId);
+        allow create, update: if isLoggedIn() && isOwner(userId)
+          && request.resource.data.id == unitId
+          && request.resource.data.name is string && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 40
+          && request.resource.data.type in ['MICU','SICU','NEURO_ICU','NEUROSURGERY_ICU','CCU','LIVER_TRANSPLANT_ICU','CTVS_ICU','PICU']
+          && request.resource.data.beds is list && request.resource.data.beds.size() <= 60;
+      }
+
+      match /icuAdmissions/{admissionId} {
+        allow read: if isLoggedIn() && isOwner(userId);
+        allow create, update: if isLoggedIn() && isOwner(userId)
+          && request.resource.data.id == admissionId
+          && request.resource.data.patientLabel is string && request.resource.data.patientLabel.size() > 0 && request.resource.data.patientLabel.size() <= 100
+          && request.resource.data.status in ['active','closed'];
+        allow delete: if false;
+
+        match /notes/{noteId} {
+          allow read: if isLoggedIn() && isOwner(userId);
+          allow create: if isLoggedIn() && isOwner(userId)
+            && request.resource.data.id == noteId
+            && request.resource.data.admissionId == admissionId
+            && request.resource.data.authorUid == request.auth.uid
+            && request.resource.data.status in ['draft','signed'];
+          // A signed note is final: no edits, no un-signing. Only task ticks may change afterwards.
+          allow update: if isLoggedIn() && isOwner(userId)
+            && request.resource.data.id == noteId
+            && request.resource.data.admissionId == admissionId
+            && request.resource.data.authorUid == resource.data.authorUid
+            && (
+              (resource.data.status == 'draft' && request.resource.data.status in ['draft','signed'])
+              || (resource.data.status == 'signed'
+                  && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['tasks','updatedAt']))
+            );
+          allow delete: if false;
+        }
+      }
+
       // Personal discussion sessions — private to the owning doctor.
       match /discussions/{discussionId} {
         allow read, create, update, delete: if isLoggedIn() && isOwner(userId);
