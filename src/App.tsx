@@ -32,6 +32,8 @@ import DashboardView from "./components/DashboardView";
 const CasesListView = React.lazy(() => import("./components/CasesListView"));
 const CaseSheetView = React.lazy(() => import("./components/CaseSheetView"));
 const IcuHomeView = React.lazy(() => import("./icu/IcuHomeView"));
+const IcuCasesView = React.lazy(() => import("./icu/IcuCasesView"));
+const IcuHandoverView = React.lazy(() => import("./icu/IcuHandoverView"));
 import ModeSwitcher from "./components/shared/ModeSwitcher";
 import type { WorkArea } from "./types";
 const CaseSheetPrintView = React.lazy(() => import("./components/CaseSheetPrintView"));
@@ -7558,7 +7560,15 @@ const handleSignOut = async () => {
                 />
               )}
 
-              {activeTab === "handover" && (
+                            {activeTab === "handover" && isIcuUser && (
+                <IcuHandoverView
+                  profile={profile}
+                  onSwitchMode={handleSwitchMode}
+                  notify={(title, message, type) => triggerNotification(title, message, type)}
+                />
+              )}
+
+              {activeTab === "handover" && !isIcuUser && (
                 <HandoverView
                   key={auth.currentUser?.uid || "signed-out"}
                   cases={cases}
@@ -7581,7 +7591,15 @@ const handleSignOut = async () => {
                 />
               )}
 
-              {activeTab === "cases" && (
+                            {activeTab === "cases" && isIcuUser && (
+                <IcuCasesView
+                  profile={profile}
+                  onSwitchMode={handleSwitchMode}
+                  notify={(title, message, type) => triggerNotification(title, message, type)}
+                />
+              )}
+
+              {activeTab === "cases" && !isIcuUser && (
                 <CasesListView
                   cases={cases}
                   onSelectCase={handleSelectCase}
@@ -7891,8 +7909,8 @@ const handleSignOut = async () => {
       )}
 
       {/* New Patient Entry Method Selection Menu */}
-            <CoachMarks
-        activeTab={activeTab}
+                        <CoachMarks
+        activeTab={isIcuUser && (activeTab === "cases" || activeTab === "handover") ? `icu${activeTab}` : activeTab}
         email={profile?.email || auth.currentUser?.email}
         blocked={Boolean(selectedCaseId || viewCaseSheetPrintId || activeFormMode || showDischargeSummaryId || showPediatricCalculator || showPocketMirror || showVoiceScribeChat || showVoiceScribeEntryChoice || showEntryMenu || showShiftCheckIn || showOnboardingProfile || showPaywall)}
       />
