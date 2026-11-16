@@ -55,8 +55,8 @@ const AdminPanelView = React.lazy(() => import("./components/AdminPanelView"));
 const DoctorsDirectoryView = React.lazy(() => import("./components/DoctorsDirectoryView"));
 const ToolsView = React.lazy(() => import("./components/ToolsView"));
 const MoreView = React.lazy(() => import("./components/MoreView"));
-import { computeAccess } from "./lib/access";
-import { AccessBanner, PaywallModal } from "./components/AccessBanner";
+import { computeAccess, trialMilestone, shouldShowTrialPopup, markTrialPopup, trialPopupText } from "./lib/access";
+import { AccessBanner, PaywallModal, TrialReminderModal } from "./components/AccessBanner";
 import CoachMarks from "./components/CoachMarks";
 import NewPatientEntryMenu, { type EntryMethod, isTriageCategoryPending } from "./components/NewPatientEntryMenu";
 import { validateTeamInvite } from "./services/teamInviteService";
@@ -70,6 +70,7 @@ import { parseSecondaryAssessmentToSurvey } from "./components/SecondarySurveySe
 import PWABadge from "./components/PWABadge";
 import { APP_VERSION, CHANGELOG } from "./changelog";
 import { HeaderUpdateButton } from "./hooks/useAppUpdate";
+import { useRotaShiftAlerts } from "./hooks/useRotaShiftAlerts";
 import { GlobalRefreshButton } from "./components/shared/GlobalRefreshButton";
 import { GlobalHeader } from "./components/GlobalHeader";
 import { updateChatMessage, appendChatMessage, linkScribeSessionAndCase, verifyTwoSidedLink } from "./services/scribeChatStorage";
@@ -1160,6 +1161,8 @@ useEffect(() => {
   const isProfileGateCleared = isProfileComplete || (profile as any)?.onboardingComplete === true;
     // Trial / paywall: only decides whether NEW cases and log book entries may be started.
   const [showPaywall, setShowPaywall] = useState<boolean>(false);
+  // Rota: "rota updated" notice and a ping 30 minutes before each of this doctor's shifts (while ErMate is open).
+  useRotaShiftAlerts(!!auth.currentUser && !!profile, triggerNotification);
   const access = computeAccess({
     accountCreatedAt: auth.currentUser?.metadata?.creationTime,
     email: profile?.email || auth.currentUser?.email,
@@ -1167,6 +1170,25 @@ useEffect(() => {
     tierExpiresAt: profile?.tierExpiresAt,
     coveredByTeam: isVerifiedTeamUser && hospitalSubscription?.active === true,
   });
+ // Trial reminder pop-up (14, 7, 3, 1 days left and when it ends). Once per milestone per device.
+  const [trialPopupOpen, setTrialPopupOpen] = useState<boolean>(false);
+  const trialMs = trialMilestone(access);
+  const trialUid = auth.currentUser?.uid || "";
+  const trialToday = new Date().toISOString().slice(0, 10);
+  useEffect(() => {
+    if (!profile || !trialUid || trialMs === null) return;
+    try {
+      if (shouldShowTrialPopup(localStorage, trialUid, trialMs, trialToday)) {
+        setTrialPopupOpen(true);
+        triggerNotification(trialPopupText(trialMs, access.daysLeft, access.endsAt).title + (trialMs === 0 ? "" : `: ${access.daysLeft} day${access.daysLeft === 1 ? "" : "s"} left`), "Tap to see plans.", trialMs === 0 ? "warning" : "info", "more");
+      }
+    } catch { /* storage blocked */ }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [!!profile, trialUid, trialMs]);
+  const closeTrialPopup = (how: "seen" | "snooze") => {
+    if (trialMs !== null && trialUid) { try { markTrialPopup(localStorage, trialUid, trialMs, how, trialToday); } catch { /* ignore */ } }
+    setTrialPopupOpen(false);
+  };
   /** Returns true when a new case may start; otherwise opens the paywall. */
   const guardNewCase = (): boolean => {
     if (access.canCreate) return true;
@@ -7914,8 +7936,9 @@ const handleSignOut = async () => {
         email={profile?.email || auth.currentUser?.email}
         blocked={Boolean(selectedCaseId || viewCaseSheetPrintId || activeFormMode || showDischargeSummaryId || showPediatricCalculator || showPocketMirror || showVoiceScribeChat || showVoiceScribeEntryChoice || showEntryMenu || showShiftCheckIn || showOnboardingProfile || showPaywall)}
       />
+           {trialMs !== null && (() => { const t = trialPopupText(trialMs, access.daysLeft, access.endsAt); return <TrialReminderModal open={trialPopupOpen} title={t.title} big={t.big} body={t.body} onLater={() => closeTrialPopup("snooze")} onPlans={() => { closeTrialPopup("seen"); navigateToTab("more"); }} />; })()}
             <PaywallModal open={showPaywall} onClose={() => setShowPaywall(false)} onActivate={() => { setShowPaywall(false); navigateToTab("more"); }} />
-      {showEntryMenu && (
+             {showEntryMenu && (
         <NewPatientEntryMenu
           currentUserName={profile?.name || "Duty Doctor"}
           hospitalName={profile?.hospital || "Emergency Dept"}

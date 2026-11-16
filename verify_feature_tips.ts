@@ -12,7 +12,8 @@ const REQUIRED_FEATURES = [
   "plan-banner", "critical-badge", "handover-choice",
   "mate-critical-query", "mate-voice", "mate-auto-bed", "whatsapp-share",
   "protocol-chips", "protocol-investigations", "protocol-flag", "teams",
-  "mate-alerts", "emr-field-copy", "team-start",
+   "mate-alerts", "emr-field-copy", "team-start",
+  "mode-switch", "icu-mode", "icu-scribe", "icu-fasthugs", "icu-emr-copy", "icu-cases", "icu-handover",
 ];
 
 const all = (Object.entries(TOURS) as [TourId, typeof TOURS[TourId]][]).flatMap(([tour, steps]) => steps.map(s => ({ tour, s })));
@@ -35,6 +36,9 @@ for (const m of src.matchAll(/data-coach="([a-z-]+)"/g)) t(`data-coach="${m[1]}"
 
 // tabs
 t("Ask ErMate tab has a tour", TAB_TO_TOUR.scribe === "scribe");
+t("ICU tab has a tour", TAB_TO_TOUR.icu === "icu");
+t("ICU Cases and Handover have tours", TAB_TO_TOUR.icucases === "icucases" && TAB_TO_TOUR.icuhandover === "icuhandover");
+t("ICU note tour is opened by the note screen", readFileSync("src/icu/IcuNoteView.tsx", "utf8").includes('requestTour("icunote")'));
 t("Protocols tour is opened by the reader", readFileSync("src/components/ProtocolsPanel.tsx", "utf8").includes('requestTour("protocols")'));
 
 // returning doctors only see newer tips; new doctors see all; replay brings all back
@@ -46,9 +50,9 @@ t("returning doctor sees only the newer cases tips", fresh.map(x => x.id).join()
 markTourSeen("a@x.com", "cases", s);
 t("after seeing, nothing left", isTourSeen("a@x.com", "cases", s));
 s.setItem("ermate_coach_v1_a@x.com_home", "1");
-t("returning doctor gets plan + MATE alerts tips on Home only", unseenSteps("a@x.com", "home", s).map(x => x.id).join() === "plan-banner,mate-alerts");
+t("returning doctor gets plan + MATE alerts tips on Home only", unseenSteps("a@x.com", "home", s).map(x => x.id).join() === "plan-banner,mode-switch,mate-alerts");
 s.setItem("ermate_coach_v1_a@x.com_home", "2");
-t("doctor who saw Home v2 gets only the MATE alerts tip", unseenSteps("a@x.com", "home", s).map(x => x.id).join() === "mate-alerts");
+t("doctor who saw Home v2 gets the mode switch + MATE alerts tips", unseenSteps("a@x.com", "home", s).map(x => x.id).join() === "mode-switch,mate-alerts");
 t("never-seen scribe tour shows its tips", unseenSteps("a@x.com", "scribe", s).length === TOURS.scribe.length);
 resetTours("a@x.com", s);
 t("replay brings back every tip", (Object.keys(TOURS) as TourId[]).every(k => unseenSteps("a@x.com", k, s).length === TOURS[k].length));

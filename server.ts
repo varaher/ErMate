@@ -71,6 +71,7 @@ import { processScribeChatTurn } from "./server/scribeChatTurn.ts";
 import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
 import { deidentifyText } from "./server/deidentify.ts";
+import { isIcuPayload, buildIcuRoundsPrompt, ICU_ROUNDS_SYSTEM, buildIcuDiscussSystem } from "./server/icuDiscussPrompt.ts";
 import { toSafeHandoverAiInput, getOriginalHandoverIdentity } from "./server/handoverAiInput.ts";
 import { convertAndChunkAudioToWav } from "./server/audioConvert.ts";
 import { sarvamSpeechToText, sarvamSpeechToTextTranslate, isErMateAvailable } from "./server/sarvamClient.ts";
@@ -1459,8 +1460,34 @@ app.post("/api/rounds-debrief", requireAuth, meterCredits("rounds_debrief", () =
     return res.status(400).json({ error: "Patient case data is required" });
   }
 
-  const effectiveUserMessage = userMessage || message || "";
+    const effectiveUserMessage = userMessage || message || "";
   const effectiveHistory = chatHistory || messages || [];
+
+  // ICU stay → Critical Care 7-lens rounds (record de-identified in icuDiscussPrompt.ts)
+  if (isIcuPayload(caseData)) {
+    const icuUnavailable = "ICU rounds mentor is temporarily unavailable. Your notes are safe. Please try again shortly.";
+    try {
+      const icuPrompt = buildIcuRoundsPrompt({ data: caseData, userMessage: effectiveUserMessage, history: effectiveHistory, lens });
+      const icuResult = await executeRoundsDebriefWithFailover(icuPrompt, ICU_ROUNDS_SYSTEM);
+      if (icuResult.success && icuResult.data) {
+        const d = icuResult.data;
+        const content = d.content || d.response || icuResult.response || "";
+        return res.json({
+          success: true,
+          data: d,
+          response: content,
+          reply: content,
+          usedLenses: d.usedLenses || [],
+          provider: icuResult.provider,
+          model: icuResult.provider === "openai" ? "gpt-4o" : "claude-3-5-sonnet",
+        });
+      }
+      return res.json({ success: false, error: icuUnavailable, reply: icuUnavailable, response: icuUnavailable });
+    } catch (error: any) {
+      console.error("[ICU Rounds] Error:", error?.message || error);
+      return res.json({ success: false, error: icuUnavailable, reply: icuUnavailable, response: icuUnavailable });
+    }
+  }
 
   // DPDP Act 2023 Server-side De-identification (Rule 4)
   const safeName = deidentifyText(caseData.patient?.name || "Anonymous Patient").deidentified;
@@ -2343,10 +2370,10 @@ PRESENTING COMPLAINT:
 ${deidentifyText(rawData.presentingComplaint || "Emergency Presentation").deidentified}
 
 CLINICAL STORY:
-${deidentifyText(rawData.story || "No detailed story recorded.").deidentified}
+${deidentifyText(rawData.story || "Not documented").deidentified}
 
 PAST MEDICAL HISTORY:
-${deidentifyText(rawData.pmh || "None documented").deidentified}
+${deidentifyText(rawData.pmh || "Not documented").deidentified}
 
 PROVISIONAL DIAGNOSIS:
 ${rawData.diagnosis || "Under evaluation"}
@@ -2381,16 +2408,16 @@ DIAGNOSIS AT DISCHARGE:
 ${dxList}
 
 HOSPITAL & ER COURSE:
-${deidentifyText(rawData.hospitalCourse || "Clinical course recorded in discharge summary.").deidentified}
+${deidentifyText(rawData.hospitalCourse || "Not documented").deidentified}
 
 LABS & INVESTIGATION SUMMARY:
-${deidentifyText(rawData.investigationSummary || "Standard diagnostic workup completed.").deidentified}
+${deidentifyText(rawData.investigationSummary || "Not documented").deidentified}
 
 DISCHARGE MEDICATIONS:
-${Array.isArray(rawData.dischargeMedications) ? rawData.dischargeMedications.map((m: any) => `- ${m.name} ${m.dose} ${m.frequency}`).join("\n") : "As per prescription"}
+${Array.isArray(rawData.dischargeMedications) && rawData.dischargeMedications.length ? rawData.dischargeMedications.map((m: any) => `- ${[m.name, m.dose, m.frequency].filter(Boolean).join(" ")}`).join("\n") : "Not documented"}
 
 FOLLOW-UP ADVICE:
-${deidentifyText(rawData.followUpAdvice || "Review in ED if symptoms recur.").deidentified}
+${deidentifyText(rawData.followUpAdvice || "Not documented").deidentified}
 ================================
 `;
     } else if (effectiveContextType === "mortality_audit") {
@@ -2405,19 +2432,22 @@ Date & Time of Admission: ${pi.dateAdmission || "N/A"}
 Date & Time of Death: ${pi.dateDeath || "N/A"}
 
 CAUSE OF DEATH DECONSTRUCTION:
-- Immediate Cause (Part I Top): ${cod.immediate || "Cardiorespiratory arrest"}
-- Antecedent Causes: ${cod.antecedent || "N/A"}
-- Underlying Cause: ${cod.underlying || "Under audit"}
-- Contributing Comorbidities (Part II): ${cod.contributing || "N/A"}
+- Immediate Cause (Part I Top): ${cod.immediate || "Not documented"}
+- Antecedent Causes: ${cod.antecedent || "Not documented"}
+- Underlying Cause: ${cod.underlying || "Not documented"}
+- Contributing Comorbidities (Part II): ${cod.contributing || "Not documented"}
 
 CLINICAL TIMELINE & ER RESUSCITATION COURSE:
-${deidentifyText(rawData.clinicalSummary || "Full resuscitation and ER course documented.").deidentified}
+${deidentifyText(rawData.clinicalSummary || "Not documented").deidentified}
 
 ACLS & RESUSCITATION AUDIT:
-${deidentifyText(rawData.resuscitationDetails || "Standard ACLS protocol executed.").deidentified}
+${deidentifyText(rawData.resuscitationDetails || "Not documented").deidentified}
 =================================================
 `;
 
+        } else if (effectiveContextType === "icu") {
+      // ICU stay: the whole record goes into the system instruction below (buildIcuDiscussSystem)
+      contextSummaryText = "";
     } else {
       // Default: 'case'
       const pat = rawData?.patient || {};
@@ -2457,9 +2487,9 @@ PEDIATRIC ASSESSMENT & CONTEXT:
         if (secSurvey.extremities) parts.push(`Extremities: ${secSurvey.extremities}`);
         if (secSurvey.neurological) parts.push(`Neurological: ${secSurvey.neurological}`);
         if (secSurvey.backSpine) parts.push(`Back/Spine: ${secSurvey.backSpine}`);
-        secExamText = parts.length > 0 ? parts.join("\n") : "General: Conscious, oriented. Systemic exams within normal limits.";
+               secExamText = parts.length > 0 ? parts.join("\n") : "Not documented";
       } else {
-        secExamText = "General: Conscious, oriented. Systemic exams within normal limits.";
+        secExamText = "Not documented";
       }
 
       const bedNumber = rawData?.bedNo || pat?.bed || "Unassigned";
@@ -2526,28 +2556,28 @@ RULES FOR PENDING DICTATION:
 === PATIENT CLINICAL CASE RECORD ===
 Patient Name: ${deidentifyText(pat.name || "Unidentified").deidentified}
 Bed Number: ${bedNumber} | Display Case ID: ${displayCaseId}
-Age / Sex: ${pat.age || "N/A"} years | ${pat.gender || "Unknown"}
-Chief Complaint: ${deidentifyText(pat.presentingComplaint || "Emergency presentation").deidentified}
-Triage Category: ${pat.triageCategory || "P2 (Urgent)"}
-Case Type: ${pat.caseType || "Medical"} | Arrival: ${pat.arrivalMode || "Walk-in"}
+Age / Sex: ${pat.age ? `${pat.age} years` : "Age not documented"} | ${pat.gender || "Sex not documented"}
+Chief Complaint: ${pat.presentingComplaint ? deidentifyText(pat.presentingComplaint).deidentified : "Not documented"}
+Triage Category: ${pat.triageCategory || "Not documented"}
+Case Type: ${pat.caseType || "Not documented"} | Arrival: ${pat.arrivalMode || "Not documented"}
 ${isPediatric ? "\n*** PEDIATRIC PATIENT (APPLY PALS PROTOCOLS, AGE-APPROPRIATE RANGES & WEIGHT-BASED DOSING) ***\n" : ""}
 VITALS ON PRESENTATION:
-BP: ${vit.bp || "N/A"} mmHg | HR: ${vit.hr || "N/A"} bpm | SpO2: ${vit.spo2 || "N/A"}% | RR: ${vit.rr || "N/A"}/min
-Temp: ${vit.temp || "N/A"} °F | GCS: ${vit.gcs || "15"} | GRBS: ${vit.grbs || "N/A"} mg/dL
+BP: ${vit.bp || "Not documented"} | HR: ${vit.hr || "Not documented"} | SpO2: ${vit.spo2 || "Not documented"} | RR: ${vit.rr || "Not documented"}
+Temp: ${vit.temp || "Not documented"} | GCS: ${vit.gcs || "Not documented"} | GRBS: ${vit.grbs || "Not documented"}
 ${pedsString}
 SAMPLE HISTORY & PRESENTATION STORY:
-- History / Symptoms: ${deidentifyText(sam.symptoms || "N/A").deidentified}
-- Past Medical History: ${deidentifyText(sam.pastHistory || "None documented").deidentified}
-- Outpatient Medications: ${deidentifyText(sam.medications || "None").deidentified}
-- Allergies: ${deidentifyText(sam.allergies || "NKDA").deidentified}
-- Events / Story of Presenting Illness: ${deidentifyText(sam.events || "N/A").deidentified}
+- History / Symptoms: ${deidentifyText(sam.symptoms || "Not documented").deidentified}
+- Past Medical History: ${deidentifyText(sam.pastHistory || "Not documented").deidentified}
+- Outpatient Medications: ${deidentifyText(sam.medications || "Not documented").deidentified}
+- Allergies: ${deidentifyText(sam.allergies || "Not documented").deidentified}
+- Events / Story of Presenting Illness: ${deidentifyText(sam.events || "Not documented").deidentified}
 
 PRIMARY ASSESSMENT (ABCDE):
-- Airway: ${pri.airway || "Patent"}
-- Breathing: ${pri.breathing || "Normal"}
-- Circulation: ${pri.circulation || "Normal"}
-- Disability: ${pri.disability || "Normal"}
-- Exposure: ${pri.exposure || "Normal"}
+- Airway: ${pri.airway || "Not documented"}
+- Breathing: ${pri.breathing || "Not documented"}
+- Circulation: ${pri.circulation || "Not documented"}
+- Disability: ${pri.disability || "Not documented"}
+- Exposure: ${pri.exposure || "Not documented"}
 
 PHYSICAL EXAMINATION & SECONDARY ASSESSMENT:
 ${deidentifyText(secExamText).deidentified}
@@ -2556,24 +2586,24 @@ LAB INVESTIGATIONS & FINDINGS:
 ${deidentifyText(invSummary).deidentified}
 
 TREATMENTS ADMINISTERED / ORDERED:
-${trts.map((t: any) => `- ${t.drugName} ${t.dose || ""} (${t.route || "IV"})`).join("\n") || "Symptomatic ER monitoring."}
+${trts.map((t: any) => `- ${t.drugName || t.name || "Unnamed drug"}${t.dose ? ` ${t.dose}` : ""}${t.route ? ` (${t.route})` : " (route not documented)"}`).join("\n") || "None documented."}
 
 PROCEDURES PERFORMED:
-${procs.map((p: any) => `- ${p.procedureName || p.name || 'Procedure'}: ${p.notes || p.outcome || 'Completed'}`).join("\n") || "None documented."}
+${procs.map((p: any) => `- ${p.procedureName || p.name || 'Procedure'}: ${p.notes || p.outcome || 'outcome not documented'}`).join("\n") || "None documented."}
 
 PROGRESS NOTES & ER TIMELINE:
-${deidentifyText(rawData?.progressNotes || "No progress notes recorded.").deidentified}
+${deidentifyText(rawData?.progressNotes || "None documented.").deidentified}
 ${reassess.length > 0 ? `\nREASSESSMENTS:\n${reassess.map((r: any) => `- [${r.time || 'ER'}]: ${r.notes || r.findings || ''} (BP: ${r.vitals?.bp || '-'}, HR: ${r.vitals?.hr || '-'})`).join("\n")}` : ""}
 
 DIFFERENTIAL DIAGNOSES / IMPRESSIONS:
 ${diffs.map((d: any) => `- ${typeof d === "string" ? d : d.diagnosis || d.name}`).join("\n") || "Under evaluation"}
 
 DISPOSITION & TERMINAL OUTCOME:
-- Disposition Type: ${rawData?.dispositionDetails?.dispositionType || "In ER"}
-- Duration in ER: ${rawData?.dispositionDetails?.durationInEr || "N/A"}
-- Observation & ER Notes: ${deidentifyText(rawData?.dispositionDetails?.observationNotes || "N/A").deidentified}
-- Primary Diagnosis: ${rawData?.dischargeInfo?.primaryDiagnosis || rawData?.provisionalPrimaryDiagnosis || "Under evaluation"}
-- Condition at Discharge / Terminal Status: ${rawData?.dischargeInfo?.conditionAtDischarge || "N/A"}
+- Disposition Type: ${rawData?.dispositionDetails?.dispositionType || "Not documented"}
+- Duration in ER: ${rawData?.dispositionDetails?.durationInEr || "Not documented"}
+- Observation & ER Notes: ${deidentifyText(rawData?.dispositionDetails?.observationNotes || "Not documented").deidentified}
+- Primary Diagnosis: ${rawData?.dischargeInfo?.primaryDiagnosis || rawData?.provisionalPrimaryDiagnosis || "Not documented"}
+- Condition at Discharge / Terminal Status: ${rawData?.dischargeInfo?.conditionAtDischarge || "Not documented"}
 ${pendingPromptSection}
 ===================================
 `;
@@ -2609,6 +2639,8 @@ Format:
 You are talking to an ER doctor who needs a practical answer NOW.
 Not a medical student needing an explanation of pathophysiology.
 Be concise and clinically precise.`;
+        } else if (effectiveContextType === "icu") {
+      discussionSystemInstruction = buildIcuDiscussSystem(isIcuPayload(rawData) ? rawData : { icuRecord: "No ICU notes documented yet." });
     } else {
       discussionSystemInstruction = `
 You are ErMate AI — Senior Emergency Medicine Consultant and Clinical Educator (Claude 3.5 Sonnet).
@@ -2667,9 +2699,11 @@ YOUR CRITICAL GUIDELINES:
           suggestedUpdate = JSON.parse(match[1]);
           cleanResponse = cleanResponse.replace(/\[UPDATE:\s*\{[^\]]+\}\]/s, "").trim();
         } catch (e) {
-          console.warn("[CaseDiscussion] Failed to parse [UPDATE] tag JSON:", e);
+                console.warn("[CaseDiscussion] Failed to parse [UPDATE] tag JSON:", e);
         }
       }
+      // ICU notes change only through the doctor's own dictation — never a one-tap AI update
+      if (effectiveContextType === "icu") suggestedUpdate = null;
 
       return res.json({
         success: true,

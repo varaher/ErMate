@@ -57,3 +57,20 @@ export function PaywallModal({ open, onClose, onActivate }: { open: boolean; onC
     </div>
   );
 }
+/** One-time pop-up at 14, 7, 3, 1 days left and when the trial ends. */
+export function TrialReminderModal({ open, title, big, body, onLater, onPlans }: { open: boolean; title: string; big: string; body: string; onLater: () => void; onPlans: () => void }) {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-[210] flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true" aria-label={title}>
+      <div className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-xl dark:bg-slate-900">
+        <h3 className="text-base font-bold text-slate-900 dark:text-white">{title}</h3>
+        <p className="mt-1 text-3xl font-bold text-purple-700 dark:text-purple-300">{big}</p>
+        <p className="mt-2 text-sm leading-relaxed text-slate-600 dark:text-slate-300">{body}</p>
+        <div className="mt-4 flex gap-2">
+          <button type="button" onClick={onLater} className="flex-1 rounded-xl border border-slate-200 px-3 py-2.5 text-sm font-semibold text-slate-700 dark:border-slate-700 dark:text-slate-200">Remind me later</button>
+          <button type="button" onClick={onPlans} className="flex-1 rounded-xl bg-emerald-600 px-3 py-2.5 text-sm font-bold text-white hover:bg-emerald-700">See plans</button>
+        </div>
+      </div>
+    </div>
+  );
+}

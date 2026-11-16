@@ -129,3 +129,84 @@ export function computeAccess(input: AccessInput): AccessResult {
 export const LOCKED_TITLE = "Free trial ended";
 export const LOCKED_BODY =
   "You can still view, print and Copy to EMR everything you have saved, and finish patients already in the system. To add new cases and log book entries, activate the Rs 600 plan (includes 300 AI credits) and then Rs 350 a month.";
+export const LOCKED_BODY =
+  "You can still view, print and Copy to EMR everything you have saved, and finish patients already in the system. To add new cases and log book entries, activate the Rs 600 plan (includes 300 AI credits) and then Rs 350 a month.";
+ 
+/** Trial reminder pop-up: which milestone (days left bucket) applies. 14, 7, 3, 1 days left, 0 = trial ended. null = none. */
+export type TrialMilestone = 14 | 7 | 3 | 1 | 0;
+export function trialMilestone(a: Pick<AccessResult, "state" | "daysLeft">): TrialMilestone | null {
+  if (a.state === "locked") return 0;
+  if (a.state !== "trial" || a.daysLeft <= 0 || a.daysLeft > 14) return null;
+  if (a.daysLeft <= 1) return 1;
+  if (a.daysLeft <= 3) return 3;
+  if (a.daysLeft <= 7) return 7;
+  return 14;
+}
+ 
+export interface TrialStore { getItem(k: string): string | null; setItem(k: string, v: string): void }
+const trialKey = (uid: string) => `ermate_trial_popup_${uid}`;
+function readSeen(store: TrialStore, uid: string): Record<string, string> {
+  try { const o = JSON.parse(store.getItem(trialKey(uid)) || "{}"); return o && typeof o === "object" ? o : {}; } catch { return {}; }
+}
+/** True when this milestone's pop-up has not been finished (seen) and is not snoozed until a later day. */
+export function shouldShowTrialPopup(store: TrialStore, uid: string, m: TrialMilestone | null, today: string): boolean {
+  if (m === null || !uid) return false;
+  const v = readSeen(store, uid)[String(m)];
+  if (!v) return true;
+  if (v === "seen") return false;
+  return v < today; // snoozed on an earlier day
+}
+export function markTrialPopup(store: TrialStore, uid: string, m: TrialMilestone, how: "seen" | "snooze", today: string): void {
+  const o = readSeen(store, uid);
+  o[String(m)] = how === "seen" ? "seen" : today;
+  try { store.setItem(trialKey(uid), JSON.stringify(o)); } catch { /* storage blocked: popup may repeat */ }
+}
+export function trialPopupText(m: TrialMilestone, daysLeft: number, endsAt: string): { title: string; big: string; body: string } {
+  const tail = "Everything you have saved stays viewable, printable and ready to copy to your EMR.";
+  if (m === 0) return { title: "Your free trial has ended", big: "Ended", body: LOCKED_BODY };
+  const end = endsAt ? new Date(endsAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "";
+  return {
+    title: "Your free trial is ending soon",
+    big: `${daysLeft} day${daysLeft === 1 ? "" : "s"} left`,
+    body: `${end ? `Your free trial ends on ${end}. ` : ""}After that, new cases and log book entries need a plan: Rs 600 (includes 300 AI credits), then Rs 350 a month. ${tail}`,
+  };
+}
+/** Trial reminder pop-up: which milestone (days left bucket) applies. 14, 7, 3, 1 days left, 0 = trial ended. null = none. */
+export type TrialMilestone = 14 | 7 | 3 | 1 | 0;
+export function trialMilestone(a: Pick<AccessResult, "state" | "daysLeft">): TrialMilestone | null {
+  if (a.state === "locked") return 0;
+  if (a.state !== "trial" || a.daysLeft <= 0 || a.daysLeft > 14) return null;
+  if (a.daysLeft <= 1) return 1;
+  if (a.daysLeft <= 3) return 3;
+  if (a.daysLeft <= 7) return 7;
+  return 14;
+}
+
+export interface TrialStore { getItem(k: string): string | null; setItem(k: string, v: string): void }
+const trialKey = (uid: string) => `ermate_trial_popup_${uid}`;
+function readSeen(store: TrialStore, uid: string): Record<string, string> {
+  try { const o = JSON.parse(store.getItem(trialKey(uid)) || "{}"); return o && typeof o === "object" ? o : {}; } catch { return {}; }
+}
+/** True when this milestone's pop-up has not been finished (seen) and is not snoozed until a later day. */
+export function shouldShowTrialPopup(store: TrialStore, uid: string, m: TrialMilestone | null, today: string): boolean {
+  if (m === null || !uid) return false;
+  const v = readSeen(store, uid)[String(m)];
+  if (!v) return true;
+  if (v === "seen") return false;
+  return v < today; // snoozed on an earlier day
+}
+export function markTrialPopup(store: TrialStore, uid: string, m: TrialMilestone, how: "seen" | "snooze", today: string): void {
+  const o = readSeen(store, uid);
+  o[String(m)] = how === "seen" ? "seen" : today;
+  try { store.setItem(trialKey(uid), JSON.stringify(o)); } catch { /* storage blocked: popup may repeat */ }
+}
+export function trialPopupText(m: TrialMilestone, daysLeft: number, endsAt: string): { title: string; big: string; body: string } {
+  const tail = "Everything you have saved stays viewable, printable and ready to copy to your EMR.";
+  if (m === 0) return { title: "Your free trial has ended", big: "Ended", body: LOCKED_BODY };
+  const end = endsAt ? new Date(endsAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "";
+  return {
+    title: "Your free trial is ending soon",
+    big: `${daysLeft} day${daysLeft === 1 ? "" : "s"} left`,
+    body: `${end ? `Your free trial ends on ${end}. ` : ""}After that, new cases and log book entries need a plan: Rs 600 (includes 300 AI credits), then Rs 350 a month. ${tail}`,
+  };
+}
