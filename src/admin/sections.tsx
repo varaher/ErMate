@@ -615,7 +615,7 @@ function ClaimCard({ c, onChanged }: { c: any; onChanged: () => void }) {
   const approve = async (confirmWarnings: boolean) => {
     setBusy(true); setError("");
     try {
-      await api("/api/team/approve-hod-claim", { body: { claimId: c.id, hospitalName: c.hospital, confirmWarnings } });
+      await api("/team/approve-hod-claim", { body: { claimId: c.id, hospitalName: c.hospital, confirmWarnings } });
       onChanged();
     } catch (e: any) {
       if (e.status === 409 && e.data?.warnings) { setServerWarnings(e.data.warnings); setMode("confirming"); }
@@ -951,20 +951,27 @@ export function ApprovalsPage() {
     finally { setBusy(null); }
   };
   const verifyTeam = (t: any, verify: boolean) =>
-    act(`team:${t.teamId}`, () => api("/api/team/verify-team", { body: { teamId: t.teamId, verify } }),
+    act(`team:${t.teamId}`, () => api("/team/verify-team", { body: { teamId: t.teamId, verify } }),
       verify ? `${t.teamName || t.hospitalName} now shows the verified badge.` : `Badge removed from ${t.teamName || t.hospitalName}.`);
   const setHospital = (h: any, status: "verified" | "unverified") =>
     act(`hosp:${h.id}`, () => api(`/directory/${encodeURIComponent(h.id)}/status`, { body: { status } }),
       status === "verified" ? `${h.name} is verified in the hospital list.` : `${h.name} marked unverified.`);
+  const approveJoin = (j: any) =>
+    act(`join:${j.uid}`, () => api("/team/approve-member", { body: { memberId: j.uid, hospitalId: j.teamId, hospitalName: j.hospital } }),
+      `${j.name || j.email} is now a member of ${j.hospital}.`);
+  const declineJoin = (j: any) => {
+    if (!window.confirm(`Decline ${j.name || j.email}'s request to join ${j.hospital}?`)) return;
+    act(`join:${j.uid}`, () => api("/team/decline-member", { body: { memberId: j.uid } }), `Request from ${j.name || j.email} declined.`);
+  };
   const activateWaiting = () =>
-    act("waiting", () => api("/api/team/activate-waiting-teams", { body: { confirm: true } }), "Waiting team members are switched on.");
+    act("waiting", () => api("/team/activate-waiting-teams", { body: { confirm: true } }), "Waiting team members are switched on.");
 
   const c = data?.counts || {};
   const tiles = [
     { label: "HOD requests", n: c.hod, to: "hod-requests", hint: "Approve or reject" },
     { label: "Team badges", n: c.teams, to: "#teams", hint: "Teams not yet verified" },
     { label: "Hospital names", n: c.hospitals, to: "#hospitals", hint: "New in the hospital list" },
-    { label: "Join requests", n: c.joinRequests, to: "#joins", hint: "Decided by the team lead" },
+    { label: "Join requests", n: c.joinRequests, to: "#joins", hint: "Approve or decline" },
     { label: "Waiting members", n: c.waitingMembers, to: "#waiting", hint: "Joined but not switched on" },
   ];
 
@@ -994,7 +1001,7 @@ export function ApprovalsPage() {
               <tbody>
                 {data.teams.map((t: any) => (
                   <tr key={t.teamId}>
-                    <td style={{ fontWeight: 500 }}>{t.teamName || "—"}</td>
+                    <td style={{ fontWeight: 500 }}>{t.teamName || <span style={{ color: "var(--adm-muted)", fontWeight: 400 }}>No name · {t.teamId}</span>}</td>
                     <td>{t.hospitalName || "—"}</td>
                     <td title={t.leadEmail || ""}>{t.lead || <span style={{ color: "var(--adm-muted)" }}>None</span>}</td>
                     <td className="r adm-num">{count(t.members)}</td>
@@ -1003,7 +1010,7 @@ export function ApprovalsPage() {
                     <td><Pill text={t.verificationStatus === "verified" ? "Verified" : "Not verified"} tone={t.verificationStatus === "verified" ? "green" : "amber"} /></td>
                     <td>
                       {t.verificationStatus === "verified"
-                        ? <button className="adm-btn adm-btn-ghost" disabled={busy === `team:${t.teamId}`} onClick={() => verifyTeam(t, false)}>Remove badge</button>
+                        ? <button className="adm-btn adm-btn-ghost" disabled={busy === `team:${t.teamId}`} onClick={() => { if (window.confirm(`Remove the verified badge from ${t.teamName || t.hospitalName}? Members keep their access.`)) verifyTeam(t, false); }}>Remove badge</button>
                         : <button className="adm-btn adm-btn-green" disabled={busy === `team:${t.teamId}`} onClick={() => verifyTeam(t, true)}>Verify</button>}
                     </td>
                   </tr>
@@ -1039,14 +1046,28 @@ export function ApprovalsPage() {
           </Card>
 
           <div id="joins" style={{ height: 14 }} />
-          <Card title="Join requests" right={<span style={{ fontSize: 12, color: "var(--adm-muted)" }}>The team lead approves these in the app. Shown here so you can follow up.</span>}>
-            <TableBox minWidth={620}>
-              <thead><tr><th>Doctor</th><th>Email</th><th>Team / hospital</th><th>Requested</th></tr></thead>
+          <Card title="Join requests" right={<span style={{ fontSize: 12, color: "var(--adm-muted)" }}>The team lead can approve these in the app, or you can approve them here.</span>}>
+            <TableBox minWidth={820}>
+              <thead><tr><th>Doctor</th><th>Email</th><th>Team / hospital</th><th>Role asked</th><th>Requested</th><th></th></tr></thead>
               <tbody>
                 {data.joinRequests.map((j: any) => (
-                  <tr key={j.uid}><td style={{ fontWeight: 500 }}>{j.name || "—"}</td><td>{j.email || "—"}</td><td>{j.hospital || "—"}</td><td>{ago(j.requestedAt)}</td></tr>
+                  <tr key={j.uid}>
+                    <td style={{ fontWeight: 500 }}>{j.name || "—"}</td>
+                    <td>{j.email || "—"}</td>
+                    <td>{j.hospital || "—"}</td>
+                    <td>{j.role || "—"}</td>
+                    <td>{ago(j.requestedAt)}</td>
+                    <td style={{ whiteSpace: "nowrap" }}>
+                      {j.teamId && j.hospital ? (
+                        <>
+                          <button className="adm-btn adm-btn-green" disabled={busy === `join:${j.uid}`} onClick={() => approveJoin(j)}>Approve</button>{" "}
+                          <button className="adm-btn adm-btn-ghost" style={{ color: "var(--adm-red)" }} disabled={busy === `join:${j.uid}`} onClick={() => declineJoin(j)}>Decline</button>
+                        </>
+                      ) : <span style={{ fontSize: 12, color: "var(--adm-muted)" }}>No team on this request</span>}
+                    </td>
+                  </tr>
                 ))}
-                {data.joinRequests.length === 0 && <tr><td colSpan={4} style={{ color: "var(--adm-muted)" }}>No one is waiting to join a team.</td></tr>}
+                {data.joinRequests.length === 0 && <tr><td colSpan={6} style={{ color: "var(--adm-muted)" }}>No one is waiting to join a team.</td></tr>}
               </tbody>
             </TableBox>
           </Card>

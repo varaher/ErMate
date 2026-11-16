@@ -76,6 +76,21 @@ async function main() {
   const stream = readFileSync("server/sarvamRealtimeStream.ts", "utf8");
   ok(stream.includes("verifyIdToken") && stream.includes("checkCreditAccess") && stream.includes("MAX_SESSION_SECONDS"), "voice stream: auth + credits + time cap");
 
+  // ── Approvals page (16 Nov fixes) ──
+  const verifyTeam = team.slice(team.indexOf('router.post("/verify-team"'), team.indexOf("// ── POST /create-team"));
+  ok(!/membershipVerified:\s*isVerified/.test(verifyTeam) && verifyTeam.includes("...(isVerified ? { membershipVerified: true } : {})"),
+    "removing a team badge never switches members' access off");
+  const activate = team.slice(team.indexOf('router.post("/activate-waiting-teams"'));
+  ok(activate.includes('where("status", "in", ["active", "active (joined)"])') && activate.includes("membershipVerified !== true"),
+    "switch-on also catches members with no access flag (matches the waiting count)");
+  const adminSrc = readFileSync("server/routes/admin.routes.ts", "utf8");
+  ok(/joinRequests[\s\S]{0,600}teamId/.test(adminSrc), "join requests carry their team id");
+  const sectionsSrc = readFileSync("src/admin/sections.tsx", "utf8");
+  ok(sectionsSrc.includes('"/team/approve-member"') && sectionsSrc.includes('"/team/decline-member"'), "join requests can be approved or declined from the portal");
+
+  ok(adminSrc.includes('router.post("/team/:action"') && adminSrc.includes("TEAM_ACTIONS.has(action)"), "team actions are reachable through /api/admin (allow-listed)");
+  ok(!sectionsSrc.includes('api("/api/team/'), "portal never calls /api/team directly (admin.ermate.in only forwards /api/admin)");
+
   console.log(`${passed} passed, ${failed} failed`);
   process.exit(failed ? 1 : 0);
 }

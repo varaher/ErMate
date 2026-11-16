@@ -2671,7 +2671,9 @@ router.post("/verify-team", async (req: AuthRequest, res) => {
       updatedAt: now
     }, { merge: true });
 
-    // Update active members in the team
+    // Update active members in the team.
+    // The badge only changes how the team is labelled. It must never switch a member's access off:
+    // membershipVerified is what lets a member see the team's cases, so removing the badge leaves it alone.
     const membersSnap = await db.collection("team_members").where("hospitalId", "==", String(teamId)).get();
     const batch = db.batch();
     membersSnap.docs.forEach((docSnap) => {
@@ -2679,7 +2681,7 @@ router.post("/verify-team", async (req: AuthRequest, res) => {
       if (data.status === "active" || data.status === "active (joined)") {
         batch.update(docSnap.ref, {
           verificationStatus: isVerified ? "verified" : "unverified",
-          membershipVerified: isVerified,
+          ...(isVerified ? { membershipVerified: true } : {}),
           updatedAt: now
         });
       }
@@ -2877,11 +2879,10 @@ router.post("/activate-waiting-teams", async (req: AuthRequest, res) => {
     if (!isPlatformAdminReq(req)) {
       return res.status(403).json({ error: "Only the platform administrator (varahgrp@gmail.com) can activate waiting teams." });
     }
-    const snap = await db.collection("team_members").where("membershipVerified", "==", false).get();
-    const waiting = snap.docs.filter((d) => {
-      const status = String(d.data().status || "");
-      return status === "active" || status === "active (joined)";
-    });
+    // Active members whose access flag is false OR missing. (A Firestore "== false" query skips members
+    // that have no flag at all, and the rules treat a missing flag as false, so those were left locked.)
+    const snap = await db.collection("team_members").where("status", "in", ["active", "active (joined)"]).get();
+    const waiting = snap.docs.filter((d) => d.data().membershipVerified !== true);
     const teams = new Set(waiting.map((d) => String(d.data().hospitalId || d.data().teamId || d.data().hospital || "")));
     if (req.body?.confirm !== true) {
       return res.json({ dryRun: true, waitingMembers: waiting.length, waitingTeams: teams.size });

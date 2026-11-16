@@ -19,6 +19,7 @@ import { RUPEES_PER_CREDIT, TARGET_COST_PER_CREDIT_RUPEES } from "../../src/lib/
 import { hospitalSlug } from "../services/creditMeter.ts";
 import { hodApprovalWarnings, resolveHodHospital } from "../services/hodClaimChecks.ts";
 import { istDay, usageKey } from "../services/aiUsage.ts";
+import teamRouter from "./team.routes.ts";
 import { usdToInrRate } from "../services/aiPrices.ts";
 
 const router = Router();
@@ -435,13 +436,20 @@ router.get("/approvals", async (_req, res) => {
         (a.status === "verified" ? 1 : 0) - (b.status === "verified" ? 1 : 0)
         || String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
 
-    const joinRequests = members.filter(isPending).map((m: any) => ({
-      uid: str(m.uid) || m.id,
-      name: str(m.name),
-      email: str(m.email),
-      hospital: str(m.hospitalName) || str(m.hospital),
-      requestedAt: m.requestedAt || m.createdAt || null,
-    })).sort((a: any, b: any) => String(b.requestedAt || "").localeCompare(String(a.requestedAt || "")));
+    const teamNameById = new Map(teams.map((t: any) => [t.id, str(t.hospitalName) || str(t.teamName)]));
+    const joinRequests = members.filter(isPending).map((m: any) => {
+      const teamId = str(m.teamId) || str(m.hospitalId);
+      return {
+        uid: str(m.uid) || m.id,
+        name: str(m.name),
+        email: str(m.email),
+        role: str(m.role),
+        teamId,
+        hospital: str(m.hospitalName) || str(m.hospital) || teamNameById.get(teamId) || "",
+        teamExists: !!teamId && teamNameById.has(teamId),
+        requestedAt: m.requestedAt || m.createdAt || null,
+      };
+    }).sort((a: any, b: any) => String(b.requestedAt || "").localeCompare(String(a.requestedAt || "")));
 
     const waitingMembers = members.filter((m: any) => isActiveMember(m) && m.membershipVerified !== true).length;
 
@@ -847,6 +855,18 @@ router.get("/audit", async (_req, res) => {
     console.error("[admin/audit]", e?.message || e);
     res.status(500).json({ error: "Could not load the audit log.", detail: errDetail(e) });
   }
+});
+
+// ───────────────────────── team actions via /api/admin ─────────────────────────
+// The portal sends its team actions (badge, switch on, join requests, HOD approval) through /api/admin,
+// so they work on any address that reaches the admin API (admin.ermate.in forwards /api/admin only).
+// Each one runs the SAME existing /api/team handler, with its own checks; nothing is duplicated.
+const TEAM_ACTIONS = new Set(["verify-team", "activate-waiting-teams", "approve-member", "decline-member", "approve-hod-claim"]);
+router.post("/team/:action", (req: any, res, next) => {
+  const action = String(req.params.action || "");
+  if (!TEAM_ACTIONS.has(action)) return res.status(404).json({ error: "Unknown team action." });
+  req.url = `/${action}`;
+  return (teamRouter as any)(req, res, next);
 });
 
 router.get("/me", (req: AuthRequest, res) => {
