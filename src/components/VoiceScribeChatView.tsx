@@ -2874,10 +2874,9 @@ export default function VoiceScribeChatView({
               contextType: isDiscussionOnly ? "general" : "case",
               contextData: isDiscussionOnly ? {} : (caseData || {}),
               caseData: isDiscussionOnly ? {} : (caseData || {}),
-              history: messages,
-              messages: [...messages, userMsg].map((m) => ({
+               messages: [...messages, userMsg].slice(-14).map((m) => ({
                 sender: m.sender === "user" ? "user" : "ai",
-                text: m.text,
+                text: String(m.text || "").slice(0, 1500),
               })),
             }),
           });

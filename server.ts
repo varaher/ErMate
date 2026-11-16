@@ -2312,6 +2312,9 @@ app.post(
 // route back to it and silently reintroduce the exact Rule 1 violation
 // this fix corrected.
 
+const DISCUSSION_HISTORY_MAX_TURNS = 14;
+const DISCUSSION_HISTORY_MAX_CHARS = 1500;
+ 
 app.post("/api/case-discussion", requireAuth, meterCredits("case_discussion", () => firestoreAdmin), async (req: AuthRequest, res) => {
   try {
     const { caseData, contextType, contextData, messages, history, message } = req.body;
@@ -2634,10 +2637,13 @@ YOUR CRITICAL GUIDELINES:
 
     let conversationHistoryText = "";
     if (Array.isArray(effectiveMessages) && effectiveMessages.length > 0) {
+       // Only the most recent turns go to the model, each trimmed. A long session used to grow the
+      // prompt on every message until it timed out; the case summary above already carries the case.
       conversationHistoryText = effectiveMessages
+        .slice(-DISCUSSION_HISTORY_MAX_TURNS)
         .map((m: any) => {
           const sender = m.sender === "user" || m.role === "user" ? "Doctor" : "Claude";
-          const content = deidentifyText(m.text || m.content || "").deidentified;
+          const content = deidentifyText(String(m.text || m.content || "").slice(0, DISCUSSION_HISTORY_MAX_CHARS)).deidentified;
           return `${sender}: ${content}`;
         })
         .join("\n\n");
