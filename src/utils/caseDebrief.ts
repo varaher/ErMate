@@ -362,9 +362,17 @@ export function migrateLegacySessionMessages(
 export function buildWelcomeMessage(context: ChatContext, mode: 'discuss' | 'rounds' = 'discuss'): ChatMessage {
   const d = context.data || {};
 
-  let welcomeText = '';
+   let welcomeText = '';
 
-  if (mode === 'rounds' || context.type === 'rounds') {
+  if (context.type === 'icu') {
+    // ICU stay: never fall through to the ER case summary
+    const where = [d.unitLabel, d.bed ? `Bed ${d.bed}` : null, d.icuDay ? `ICU day ${d.icuDay}` : null]
+      .filter(Boolean)
+      .join(' · ');
+    welcomeText = mode === 'rounds'
+      ? `**ICU teaching rounds**${where ? ` — ${where}` : ''}\n\nPick a lens or ask anything. I can see the whole stay (names and UHID removed).`
+      : `**Discuss this ICU patient**${where ? ` — ${where}` : ''}\n\nAsk anything about the stay. My answers never change the note — you decide what to dictate.`;
+  } else if (mode === 'rounds' || context.type === 'rounds') {
     welcomeText = 'Want to prepare before rounds? Ask.';
   } else if (context.type === 'case' || mode === 'discuss') {
     welcomeText = generateDiscussCaseDebrief(d, context.pendingClinicalContext);

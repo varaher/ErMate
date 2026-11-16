@@ -129,21 +129,34 @@ export const CaseChatWorkspace: React.FC<CaseChatWorkspaceProps> = ({
   const rawGender = d.patient?.gender ?? pending?.patient?.gender;
   const gender = rawGender ? (rawGender.toUpperCase().startsWith('M') ? 'M' : rawGender.toUpperCase().startsWith('F') ? 'F' : 'O') : '';
   const ageGender = [age !== undefined && age !== null ? `${age}` : '', gender].filter(Boolean).join(' ');
-  const presentingComplaint = d.patient?.presentingComplaint || d.chiefComplaint || pending?.presentingComplaint || 'Emergency presentation';
-  const triageCategory = d.patient?.triageCategory || 'P2 (Urgent)';
-  const provisionalDx = d.dischargeInfo?.primaryDiagnosis || d.provisionalPrimaryDiagnosis || d.diagnosis || pending?.provisionalDiagnosis || 'Under evaluation';
+  const presentingComplaint = d.patient?.presentingComplaint || d.chiefComplaint || pending?.presentingComplaint || 'Complaint not documented';
+  const triageCategory = d.patient?.triageCategory || 'Triage not documented';
+  const provisionalDx = d.dischargeInfo?.primaryDiagnosis || d.provisionalPrimaryDiagnosis || d.diagnosis || pending?.provisionalDiagnosis || 'Not documented';
 
   const isPediatric = !!d.isPediatric || (typeof age === 'number' && age <= 16);
   const peds = d.pediatricDetails || {};
 
+  // ICU stay (Other Modes › ICU): own header + read-only de-identified record panel
+  const isIcu = context.type === 'icu';
+  const icuTitle = isIcu ? [d.unitLabel || 'ICU', d.bed ? `Bed ${d.bed}` : null].filter(Boolean).join(' · ') : '';
+  const icuSubtitle = isIcu ? (d.icuDay ? `ICU day ${d.icuDay}` : 'ICU stay') : '';
+
   // Quick Prompt Chips per Mode (Section O)
-  const discussPrompts = [
-    'Differentials',
-    'Next Step',
-    'Investigations',
-    'Treatment',
-    'Summarize'
-  ];
+  const discussPrompts = isIcu
+    ? [
+        'What changed since the last note?',
+        'Can we de-escalate anything?',
+        'FAST HUGS gaps',
+        'Plan for today',
+        'What is not documented?'
+      ]
+    : [
+        'Differentials',
+        'Next Step',
+        'Investigations',
+        'Treatment',
+        'Summarize'
+      ];
 
   const roundsPrompts = [
     'Prepare Me for Rounds',
@@ -169,7 +182,7 @@ export const CaseChatWorkspace: React.FC<CaseChatWorkspaceProps> = ({
               onClick={handleSafeClose}
               aria-label="Back to ER workspace"
               className="min-w-[44px] min-h-[44px] -ml-1 p-2 text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5 shrink-0 active:scale-95 select-none"
-              title="Back to ER workspace"
+                         title={isIcu ? 'Back to ICU' : 'Back to ER workspace'}
             >
               <ArrowLeft className="w-5 h-5 shrink-0 text-slate-600 dark:text-slate-300" />
               <span className="text-xs font-bold hidden md:inline">Back</span>
@@ -192,7 +205,7 @@ export const CaseChatWorkspace: React.FC<CaseChatWorkspaceProps> = ({
                 <div className="min-w-0">
                   <div className="flex items-center gap-1.5">
                     <span className="font-extrabold text-sm sm:text-base tracking-tight text-slate-900 dark:text-white truncate">
-                      {bed !== 'Unassigned' ? `Bed ${bed}` : 'Bed Unassigned'} • {displayId}
+                                           {isIcu ? icuTitle : <>{bed !== 'Unassigned' ? `Bed ${bed}` : 'Bed Unassigned'} • {displayId}</>}
                     </span>
                     {activeContexts && activeContexts.length > 1 && (
                       <ChevronDown className="w-3.5 h-3.5 text-slate-400 group-hover:text-indigo-500 shrink-0 transition-transform" />
@@ -200,10 +213,20 @@ export const CaseChatWorkspace: React.FC<CaseChatWorkspaceProps> = ({
                   </div>
                   <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate flex items-center gap-1.5 font-medium">
                     {ageGender && <span>{ageGender}</span>}
-                    {ageGender && <span>•</span>}
-                    <span className="truncate max-w-[140px] sm:max-w-[240px]">{presentingComplaint}</span>
-                    <span>•</span>
-                    <span className="font-mono font-semibold text-indigo-600 dark:text-indigo-400 shrink-0">{triageCategory}</span>
+                                        {ageGender && <span>•</span>}
+                    {isIcu ? (
+                      <>
+                        <span className="font-semibold text-indigo-600 dark:text-indigo-400 shrink-0">{icuSubtitle}</span>
+                        <span>•</span>
+                        <span className="text-emerald-700 dark:text-emerald-400 shrink-0">Names never sent to AI</span>
+                      </>
+                    ) : (
+                      <>
+                        <span className="truncate max-w-[140px] sm:max-w-[240px]">{presentingComplaint}</span>
+                        <span>•</span>
+                        <span className="font-mono font-semibold text-indigo-600 dark:text-indigo-400 shrink-0">{triageCategory}</span>
+                      </>
+                    )}
                   </div>
                 </div>
               </button>
@@ -315,8 +338,24 @@ export const CaseChatWorkspace: React.FC<CaseChatWorkspaceProps> = ({
           </div>
         </header>
 
+              {/* ── ICU: read-only de-identified stay record (exactly what the AI sees) ── */}
+        {isContextExpanded && isIcu && (
+          <div className="border-b border-slate-200 dark:border-slate-800 bg-slate-100/90 dark:bg-slate-900/90 p-3 sm:p-4 max-h-[46vh] overflow-y-auto shrink-0 shadow-inner text-xs space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[10px] font-extrabold font-mono uppercase tracking-wider text-indigo-600 dark:text-indigo-400 flex items-center gap-1.5">
+                <FileText className="w-3.5 h-3.5" />
+                What the AI sees (names and UHID removed)
+              </span>
+              <span className="text-[10px] text-slate-500 font-mono">Read-only</span>
+            </div>
+            <pre className="whitespace-pre-wrap break-words font-sans text-[11px] leading-relaxed text-slate-700 dark:text-slate-300 bg-white dark:bg-slate-800/80 p-3 rounded-xl border border-slate-200 dark:border-slate-700">
+              {d.icuRecord || 'No ICU notes documented yet.'}
+            </pre>
+          </div>
+        )}
+
         {/* ── EXPANDABLE PATIENT CONTEXT PANEL (READ-ONLY) ─────────────── */}
-        {isContextExpanded && (
+        {!isIcu && isContextExpanded && (
           <div className="border-b border-slate-200 dark:border-slate-800 bg-slate-100/90 dark:bg-slate-900/90 p-3 sm:p-4 max-h-[46vh] overflow-y-auto shrink-0 shadow-inner text-xs space-y-3">
             <div className="flex items-center justify-between">
               <span className="text-[10px] font-extrabold font-mono uppercase tracking-wider text-indigo-600 dark:text-indigo-400 flex items-center gap-1.5">
@@ -335,7 +374,7 @@ export const CaseChatWorkspace: React.FC<CaseChatWorkspaceProps> = ({
                   Bed: {bed} | Case ID: {displayId}
                 </div>
                 <div className="text-slate-600 dark:text-slate-300">
-                  {ageGender ? `${ageGender} • ` : ''}Arrival: {d.patient?.arrivalMode || 'Walk-in'} • Type: {d.patient?.caseType || 'Medical'}
+                  {ageGender ? `${ageGender} • ` : ''}Arrival: {d.patient?.arrivalMode || 'Not documented'} • Type: {d.patient?.caseType || 'Not documented'}
                 </div>
                 <div className="text-indigo-600 dark:text-indigo-400 font-mono font-bold text-[11px]">
                   Triage: {triageCategory}
@@ -355,13 +394,13 @@ export const CaseChatWorkspace: React.FC<CaseChatWorkspaceProps> = ({
                   <Activity className="w-3 h-3 text-rose-500" /> Vitals on Presentation
                 </div>
                 <div className="font-mono text-slate-700 dark:text-slate-300 grid grid-cols-2 gap-x-2 gap-y-0.5 text-[11px]">
-                  <span>BP: <b className="text-slate-900 dark:text-white">{d.vitals?.bp || 'N/A'}</b></span>
-                  <span>HR: <b className="text-slate-900 dark:text-white">{d.vitals?.hr || 'N/A'} bpm</b></span>
-                  <span>SpO2: <b className="text-slate-900 dark:text-white">{d.vitals?.spo2 || 'N/A'}%</b></span>
-                  <span>RR: <b className="text-slate-900 dark:text-white">{d.vitals?.rr || 'N/A'}/min</b></span>
-                  <span>Temp: <b className="text-slate-900 dark:text-white">{d.vitals?.temp || 'N/A'} °F</b></span>
-                  <span>GRBS: <b className="text-slate-900 dark:text-white">{d.vitals?.grbs || 'N/A'} mg/dL</b></span>
-                  <span>GCS: <b className="text-slate-900 dark:text-white">{d.vitals?.gcs || '15'}</b></span>
+                                   <span>BP: <b className="text-slate-900 dark:text-white">{d.vitals?.bp || '—'}</b></span>
+                  <span>HR: <b className="text-slate-900 dark:text-white">{d.vitals?.hr || '—'}</b></span>
+                  <span>SpO2: <b className="text-slate-900 dark:text-white">{d.vitals?.spo2 || '—'}</b></span>
+                  <span>RR: <b className="text-slate-900 dark:text-white">{d.vitals?.rr || '—'}</b></span>
+                  <span>Temp: <b className="text-slate-900 dark:text-white">{d.vitals?.temp || '—'}</b></span>
+                  <span>GRBS: <b className="text-slate-900 dark:text-white">{d.vitals?.grbs || '—'}</b></span>
+                  <span>GCS: <b className="text-slate-900 dark:text-white">{d.vitals?.gcs || '—'}</b></span>
                 </div>
               </div>
 
@@ -369,11 +408,11 @@ export const CaseChatWorkspace: React.FC<CaseChatWorkspaceProps> = ({
               <div className="bg-white dark:bg-slate-800/80 p-3 rounded-xl border border-slate-200 dark:border-slate-700 space-y-1">
                 <div className="text-[10px] font-bold text-slate-400 font-mono uppercase">SAMPLE History</div>
                 <div className="text-[11px] space-y-0.5 text-slate-600 dark:text-slate-300">
-                  <div><b>Symptoms:</b> {d.sampleHistory?.symptoms || 'N/A'}</div>
-                  <div><b>Allergies:</b> <span className={d.sampleHistory?.allergies ? 'text-rose-600 font-bold' : ''}>{d.sampleHistory?.allergies || 'NKDA'}</span></div>
-                  <div><b>Medications:</b> {d.sampleHistory?.medications || 'None'}</div>
-                  <div><b>Past History:</b> {d.sampleHistory?.pastHistory || 'None documented'}</div>
-                  <div><b>Events:</b> {d.sampleHistory?.events || 'N/A'}</div>
+                         <div><b>Symptoms:</b> {d.sampleHistory?.symptoms || 'Not documented'}</div>
+                  <div><b>Allergies:</b> <span className={d.sampleHistory?.allergies ? 'text-rose-600 font-bold' : ''}>{d.sampleHistory?.allergies || 'Not documented'}</span></div>
+                  <div><b>Medications:</b> {d.sampleHistory?.medications || 'Not documented'}</div>
+                  <div><b>Past History:</b> {d.sampleHistory?.pastHistory || 'Not documented'}</div>
+                  <div><b>Events:</b> {d.sampleHistory?.events || 'Not documented'}</div>
                 </div>
               </div>
 
@@ -383,11 +422,11 @@ export const CaseChatWorkspace: React.FC<CaseChatWorkspaceProps> = ({
                   <HeartPulse className="w-3 h-3 text-emerald-500" /> Primary Survey (ABCDE)
                 </div>
                 <div className="text-[11px] space-y-0.5 text-slate-600 dark:text-slate-300 font-mono">
-                  <div>Airway: <b>{d.primaryAssessment?.airway || 'Patent'}</b></div>
-                  <div>Breathing: <b>{d.primaryAssessment?.breathing || 'Normal'}</b></div>
-                  <div>Circulation: <b>{d.primaryAssessment?.circulation || 'Normal'}</b></div>
-                  <div>Disability: <b>{d.primaryAssessment?.disability || 'Normal'}</b></div>
-                  <div>Exposure: <b>{d.primaryAssessment?.exposure || 'Normal'}</b></div>
+                                 <div>Airway: <b>{d.primaryAssessment?.airway || 'Not documented'}</b></div>
+                  <div>Breathing: <b>{d.primaryAssessment?.breathing || 'Not documented'}</b></div>
+                  <div>Circulation: <b>{d.primaryAssessment?.circulation || 'Not documented'}</b></div>
+                  <div>Disability: <b>{d.primaryAssessment?.disability || 'Not documented'}</b></div>
+                  <div>Exposure: <b>{d.primaryAssessment?.exposure || 'Not documented'}</b></div>
                 </div>
               </div>
 
@@ -408,7 +447,7 @@ export const CaseChatWorkspace: React.FC<CaseChatWorkspaceProps> = ({
                       {d.secondarySurvey.extremities && <div><b>Extremities:</b> {d.secondarySurvey.extremities}</div>}
                     </>
                   ) : (
-                    <div className="text-slate-400 italic">Within normal limits / not documented</div>
+                                       <div className="text-slate-400 italic">Not documented</div>
                   )}
                 </div>
               </div>
@@ -443,7 +482,7 @@ export const CaseChatWorkspace: React.FC<CaseChatWorkspaceProps> = ({
                     <ul className="list-disc list-inside space-y-0.5">
                       {d.treatments.map((t: any, idx: number) => (
                         <li key={idx}>
-                          {t.drugName || t.name} {t.dose || ''} ({t.route || 'IV'})
+                                                   {t.drugName || t.name} {t.dose || ''}{t.route ? ` (${t.route})` : ''}
                         </li>
                       ))}
                     </ul>

@@ -46,6 +46,7 @@ export interface GoogleCalendarEventPayload {
   endDateTime: string;   // ISO String or YYYY-MM-DD format
   timeZone?: string;
   attendeesEmails?: string[];
+    reminderMinutes?: number;
 }
 
 /**
