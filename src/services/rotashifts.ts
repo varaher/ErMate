@@ -1,5 +1,5 @@
 import { authenticatedFetch } from "./authenticatedFetch";
-import type { RotaShift } from "../lib/rotaSync";
+import type { RotaShift } from "../lib/rotasync";
 
 export interface MyShift {
   id: string;

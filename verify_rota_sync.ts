@@ -1,5 +1,5 @@
 import { readFileSync } from "fs";
-import { normalizeShift, resolveShiftTimes, pingDue, describeGoogleError, describeAuthError, missingScopes, REQUIRED_GOOGLE_SCOPES, SAMPLE_ROTA_TSV, shiftNoticeText } from "./src/lib/rotaSync";
+import { normalizeShift, resolveShiftTimes, pingDue, describeGoogleError, describeAuthError, missingScopes, REQUIRED_GOOGLE_SCOPES, SAMPLE_ROTA_TSV, shiftNoticeText } from "./src/lib/rotasync";
 let fail = 0; const t = (n: string, c: boolean) => { if (!c) { fail++; console.log("FAIL " + n); } };
 const read = (p: string) => readFileSync(p, "utf8");
 
@@ -70,7 +70,7 @@ t("my-shifts reads own email only", /rota\/my-shifts[\s\S]{0,600}where\("doctorE
 t("firestore.rules untouched by rota", !read("firestore.rules").includes("rota_shifts"));
 const app = read("src/App.tsx");
 t("App uses alerts hook", app.includes("useRotaShiftAlerts(!!auth.currentUser && !!profile, triggerNotification)"));
-const hook = read("src/hooks/useRotaShiftAlerts.ts");
+const hook = read("src/hooks/userotashiftalerts.ts");
 t("hook pings once per shift", hook.includes("pinged.includes") && hook.includes("ermate_rota_pinged"));
 t("hook announces updated rota once", hook.includes("Your rota is updated") && hook.includes("ermate_rota_seen_publish"));
 t("sync button only for managers", /isRotaManager \|\| isUserTeamAdmin\) && \(\s*<button[\s\S]{0,200}setShowWorkspaceSync\(true\)/.test(read("src/components/TeamRosterBoard.tsx")));

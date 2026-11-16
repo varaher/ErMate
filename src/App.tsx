@@ -70,7 +70,7 @@ import { parseSecondaryAssessmentToSurvey } from "./components/SecondarySurveySe
 import PWABadge from "./components/PWABadge";
 import { APP_VERSION, CHANGELOG } from "./changelog";
 import { HeaderUpdateButton } from "./hooks/useAppUpdate";
-import { useRotaShiftAlerts } from "./hooks/useRotaShiftAlerts";
+import { useRotaShiftAlerts } from "./hooks/userotashiftalerts";
 import { GlobalRefreshButton } from "./components/shared/GlobalRefreshButton";
 import { GlobalHeader } from "./components/GlobalHeader";
 import { updateChatMessage, appendChatMessage, linkScribeSessionAndCase, verifyTwoSidedLink } from "./services/scribeChatStorage";

@@ -12,7 +12,7 @@ const REQUIRED_FEATURES = [
   "plan-banner", "critical-badge", "handover-choice",
   "mate-critical-query", "mate-voice", "mate-auto-bed", "whatsapp-share",
   "protocol-chips", "protocol-investigations", "protocol-flag", "teams",
-   "mate-alerts", "emr-field-copy", "team-start",
+  "mate-alerts", "emr-field-copy", "team-start", "rota-sync",
   "mode-switch", "icu-mode", "icu-scribe", "icu-fasthugs", "icu-emr-copy", "icu-cases", "icu-handover",
 ];
 
@@ -52,7 +52,7 @@ t("after seeing, nothing left", isTourSeen("a@x.com", "cases", s));
 s.setItem("ermate_coach_v1_a@x.com_home", "1");
 t("returning doctor gets plan + MATE alerts tips on Home only", unseenSteps("a@x.com", "home", s).map(x => x.id).join() === "plan-banner,mode-switch,mate-alerts");
 s.setItem("ermate_coach_v1_a@x.com_home", "2");
-t("doctor who saw Home v2 gets the mode switch + MATE alerts tips", unseenSteps("a@x.com", "home", s).map(x => x.id).join() === "mode-switch,mate-alerts");
+t("doctor who saw Home v2 gets the plan (trial reminder) + mode switch + MATE alerts tips", unseenSteps("a@x.com", "home", s).map(x => x.id).join() === "plan-banner,mode-switch,mate-alerts");
 t("never-seen scribe tour shows its tips", unseenSteps("a@x.com", "scribe", s).length === TOURS.scribe.length);
 resetTours("a@x.com", s);
 t("replay brings back every tip", (Object.keys(TOURS) as TourId[]).every(k => unseenSteps("a@x.com", k, s).length === TOURS[k].length));

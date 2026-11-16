@@ -1,6 +1,6 @@
 import { reauthenticateWithPopup, linkWithPopup, GoogleAuthProvider } from "firebase/auth";
 import { auth } from "../firebase";
-import { describeAuthError, describeGoogleError, missingScopes, GoogleApiName } from "../lib/rotaSync";
+import { describeAuthError, describeGoogleError, missingScopes, GoogleApiName } from "../lib/rotasync";
 
 let cachedWorkspaceToken: string | null = null;
 

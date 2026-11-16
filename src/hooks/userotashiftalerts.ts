@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
-import { fetchMyShifts, MyShift } from "../services/rotaShifts";
-import { pingDue, shiftNoticeText } from "../lib/rotaSync";
+import { fetchMyShifts, MyShift } from "../services/rotashifts";
+import { pingDue, shiftNoticeText } from "../lib/rotasync";
 
 type Notify = (title: string, message: string, type?: "info" | "success" | "warning", linkView?: string, actionKey?: string) => void;
 

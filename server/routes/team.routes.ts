@@ -3,6 +3,7 @@ import { hodApprovalWarnings, resolveHodHospital } from "../services/hodClaimChe
 import { randomBytes, createHash } from "crypto";
 import { adminAuth, db, PROJECT_ID, FIRESTORE_DATABASE_ID } from "../../src/lib/firebase-admin.ts";
 import { requireAuth, type AuthRequest } from "../../src/middleware/auth.ts";
+import { normalizeShift, ROTA_MAX_SHIFTS_PER_PUBLISH } from "../../src/lib/rotasync.ts";
 
 export function hashInviteToken(token: string): string {
   return createHash("sha256").update(token.trim()).digest("hex");
@@ -2899,7 +2900,118 @@ router.post("/activate-waiting-teams", async (req: AuthRequest, res) => {
     return res.status(500).json({ error: error.message || "Failed to activate waiting teams." });
   }
 });
-
+// ── Rota shifts: publish (admin or rota manager) and my-shifts (any member) ──
+// Shifts are stored by the server (admin SDK), so firestore.rules are not touched.
+// Doctors read only their own shifts through GET /rota/my-shifts.
+router.post("/rota/publish", async (req: AuthRequest, res) => {
+  try {
+    const uid = req.user!.uid;
+    const callerSnap = await getDocWithRestFallback("team_members", uid, req.headers.authorization);
+    if (!callerSnap.exists) {
+      return res.status(403).json({ error: "Join or create a team before sending a rota." });
+    }
+    const caller = callerSnap.data!;
+    const callerActive = ["active", "active (joined)"].includes(String(caller.status || "").trim().toLowerCase());
+    if (!callerActive || !(isTeamAdmin(caller) || caller.isRotaManager === true || caller.rotaManager === true)) {
+      return res.status(403).json({ error: "Only the Team Admin, HOD or Rota Manager can send the rota." });
+    }
+    const teamId = String(caller.teamId || caller.hospitalId || "").trim();
+    if (!teamId) {
+      return res.status(400).json({ error: "Your team could not be found." });
+    }
+ 
+    const incoming = Array.isArray(req.body?.shifts) ? req.body.shifts : [];
+    if (incoming.length === 0) {
+      return res.status(400).json({ error: "No shifts to send." });
+    }
+    if (incoming.length > ROTA_MAX_SHIFTS_PER_PUBLISH) {
+      return res.status(400).json({ error: `Send at most ${ROTA_MAX_SHIFTS_PER_PUBLISH} shifts at a time.` });
+    }
+ 
+    // Only real, active members of THIS team can receive a shift. An AI-parsed email is never trusted on its own.
+    const membersSnap = await db.collection("team_members").where("hospitalId", "==", teamId).get();
+    const roster = new Set<string>();
+    membersSnap.docs.forEach((d) => {
+      const m = d.data();
+      if (["active", "active (joined)"].includes(String(m.status || "").trim().toLowerCase()) && m.email) {
+        roster.add(String(m.email).trim().toLowerCase());
+      }
+    });
+ 
+    const publishedAt = nowIso();
+    const teamName = String(caller.teamName || caller.hospitalName || caller.hospital || "Your team").slice(0, 120);
+    const batch = db.batch();
+    let saved = 0;
+    let skipped = 0;
+    const notified = new Set<string>();
+    for (const raw of incoming) {
+      const shift = normalizeShift(raw);
+      if (!shift || !roster.has(shift.doctorEmail)) {
+        skipped++;
+        continue;
+      }
+      // Same team, doctor and start time always maps to the same document: syncing again updates, never duplicates.
+      const id = createHash("sha256").update(`${teamId}|${shift.doctorEmail}|${shift.startIso}`).digest("hex").slice(0, 40);
+      batch.set(db.collection("rota_shifts").doc(id), {
+        id,
+        teamId,
+        teamName,
+        doctorEmail: shift.doctorEmail,
+        shiftType: shift.shiftType,
+        startIso: shift.startIso,
+        endIso: shift.endIso,
+        publishedBy: uid,
+        publishedAt,
+      });
+      notified.add(shift.doctorEmail);
+      saved++;
+    }
+    if (saved > 0) await batch.commit();
+ 
+    db.collection("teamAuditLog").doc().set({
+      eventType: "ROTA_PUBLISHED",
+      actorUid: uid,
+      actorEmail: (req.user?.email || "").trim().toLowerCase(),
+      teamId,
+      saved,
+      skipped,
+      createdAt: publishedAt,
+    }).catch(() => {});
+ 
+    return res.json({ success: true, saved, skipped, doctors: notified.size });
+  } catch (error: any) {
+    console.error("Error publishing rota:", error);
+    return res.status(500).json({ error: "Could not save the rota. Please try again." });
+  }
+});
+ 
+router.get("/rota/my-shifts", async (req: AuthRequest, res) => {
+  try {
+    const email = String(req.user?.email || "").trim().toLowerCase();
+    if (!email) return res.json({ shifts: [], latestPublishedAt: "" });
+    const snap = await db.collection("rota_shifts").where("doctorEmail", "==", email).get();
+    const cutoff = Date.now() - 60 * 60 * 1000; // keep shifts that ended in the last hour or are still to come
+    const shifts = snap.docs
+      .map((d) => d.data())
+      .filter((s) => Date.parse(String(s.endIso)) >= cutoff)
+      .sort((a, b) => Date.parse(String(a.startIso)) - Date.parse(String(b.startIso)))
+      .slice(0, 60)
+      .map((s) => ({
+        id: String(s.id),
+        shiftType: String(s.shiftType || "Shift"),
+        startIso: String(s.startIso),
+        endIso: String(s.endIso),
+        teamName: String(s.teamName || ""),
+        publishedAt: String(s.publishedAt || ""),
+      }));
+    const latestPublishedAt = shifts.reduce((m, s) => (s.publishedAt > m ? s.publishedAt : m), "");
+    return res.json({ shifts, latestPublishedAt });
+  } catch (error: any) {
+    console.error("Error loading my shifts:", error);
+    return res.status(500).json({ error: "Could not load your shifts." });
+  }
+});
+ 
 router.post("/create-team", handleCreateTeam);
 router.post("/create-workspace", handleCreateTeam);
 

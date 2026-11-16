@@ -1917,14 +1917,16 @@ export default function TeamRosterBoard({
             </div>
 
             <div className="flex items-center gap-2 w-full sm:w-auto">
-              <button
-                type="button"
-                onClick={() => setShowWorkspaceSync(true)}
-                className="flex-1 sm:flex-initial px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer"
-              >
-                <Calendar className="w-3.5 h-3.5" />
-                <span>Sync Google Calendar</span>
-              </button>
+              {(isRotaManager || isUserTeamAdmin) && (
+                <button
+                  type="button"
+                  onClick={() => setShowWorkspaceSync(true)}
+                  className="flex-1 sm:flex-initial px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  <Calendar className="w-3.5 h-3.5" />
+                  <span>Sync Google Calendar</span>
+                </button>
+              )}
 
               <button
                 type="button"
@@ -2865,10 +2867,9 @@ export default function TeamRosterBoard({
       {showWorkspaceSync && (
         <WorkspaceRotaSyncModal
           onClose={() => setShowWorkspaceSync(false)}
-          onSuccess={(count) => {
+      onSuccess={() => {
             setShowWorkspaceSync(false);
-            alert(`Successfully synced ${count} shifts to Google Calendar!`);
-          }}
+          }} 
           teamMembers={teamMembers.map(m => ({ email: m.email, name: m.name || m.email }))}
         />
       )}

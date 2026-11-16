@@ -24,7 +24,7 @@ import {
 } from '../utils/caseDebrief';
 
 export interface ChatContext {
-  type: 'case' | 'handover' | 'discharge' | 'mortality_audit' | 'reference' | 'general' | 'rounds';
+  type: 'case' | 'handover' | 'discharge' | 'mortality_audit' | 'reference' | 'general' | 'rounds' | 'icu';
   id: string; // parent record ID or user reference ID
   data: Record<string, any>; // full record data or reference state
   pendingClinicalContext?: Record<string, any>; // unapplied Scribe extraction for same case
@@ -61,6 +61,12 @@ export function useBoundChat(context: ChatContext, initialModeOverride?: 'discus
   const [bannerNotice, setBannerNotice] = useState<string | null>(null);
 
   const getStorageKey = (mode: 'discuss' | 'rounds') => {
+    if (context.type === 'icu') {
+      // ICU: keep Discuss and 7-lens Rounds as separate conversations per stay
+      return mode === 'rounds'
+        ? `ermate_chat_session_icu_rounds_${context.id}`
+        : `ermate_chat_session_icu_${context.id}`;
+    }
     if (context.type === 'case') {
       return mode === 'rounds'
         ? `ermate_chat_session_rounds_${context.id}`
@@ -317,8 +323,10 @@ export function useBoundChat(context: ChatContext, initialModeOverride?: 'discus
   };
 
   const applyUpdate = async (overrideUpdate?: Record<string, any>) => {
-    const updatePayload = overrideUpdate || pendingUpdates;
+        const updatePayload = overrideUpdate || pendingUpdates;
     if (!updatePayload || !context.id) return;
+    // ICU notes change only through the doctor's own dictation — never from chat
+    if (context.type === 'icu') { setPendingUpdates(null); return; }
 
     try {
       let collectionName = `${context.type}s`;

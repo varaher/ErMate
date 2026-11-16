@@ -69,6 +69,10 @@ export async function createGoogleCalendarEvent(
         : { dateTime: event.endDateTime, timeZone: event.timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone },
     };
 
+  if (event.reminderMinutes && event.reminderMinutes > 0 && !isAllDay) {
+      payload.reminders = { useDefault: false, overrides: [{ method: "popup", minutes: event.reminderMinutes }] };
+    }
+ 
     if (event.attendeesEmails && event.attendeesEmails.length > 0) {
       payload.attendees = event.attendeesEmails.map(email => ({ email }));
     }

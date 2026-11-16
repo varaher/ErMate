@@ -3,8 +3,8 @@ import { X, FileSpreadsheet, Loader2, CalendarCheck, AlertCircle, CheckCircle2, 
 import { authenticateGoogleWorkspace, getRecentSpreadsheets, getSpreadsheetData, WorkspaceError } from "../../services/googleWorkspace";
 import { createGoogleCalendarEvent } from "../../services/googleCalendar";
 import { authenticatedFetch } from "../../services/authenticatedFetch";
-import { publishRota } from "../../services/rotaShifts";
-import { normalizeShift, ROTA_PING_LEAD_MIN, SAMPLE_ROTA_TSV, RotaShift } from "../../lib/rotaSync";
+import { publishRota } from "../../services/rotashifts";
+import { normalizeShift, ROTA_PING_LEAD_MIN, SAMPLE_ROTA_TSV, RotaShift } from "../../lib/rotasync";
 
 interface Props {
   onClose: () => void;
