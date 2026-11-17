@@ -1,5 +1,5 @@
 import React, { Suspense, useEffect, useMemo, useState } from "react";
-import { HeartPulse, Plus, BedDouble, AlertTriangle, X } from "lucide-react";
+import { HeartPulse, Plus, BedDouble, AlertTriangle, X, Stethoscope } from "lucide-react";
 import type { UserProfile, WorkArea } from "../types";
 import ModeSwitcher from "../components/shared/ModeSwitcher";
 import { ICU_SOURCES, ICU_UNIT_TYPES, type IcuAdmission, type IcuAdmissionSource, type IcuUnit, type IcuUnitType } from "./icuTypes";
@@ -8,6 +8,7 @@ import { icuDayNumber } from "./icuLogic";
 import { DischargePasteRow } from "../components/dischargepasterow";
 
 const IcuNoteView = React.lazy(() => import("./IcuNoteView"));
+const IcuRoundsView = React.lazy(() => import("./IcuRoundsView"));
 
 type Notify = (title: string, message: string, type?: "info" | "success" | "warning") => void;
 
@@ -30,6 +31,7 @@ export default function IcuHomeView({ profile, onSwitchMode, notify, onPrepareDi
   const [admissions, setAdmissions] = useState<IcuAdmission[]>([]);
   const [unitId, setUnitId] = useState<string | null>(null);
   const [openAdmissionId, setOpenAdmissionId] = useState<string | null>(null);
+  const [roundsUnitId, setRoundsUnitId] = useState<string | null>(null);
   const [showUnitSetup, setShowUnitSetup] = useState(false);
   const [admitBed, setAdmitBed] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -53,6 +55,23 @@ export default function IcuHomeView({ profile, onSwitchMode, notify, onPrepareDi
   const unit = units?.find((u) => u.id === unitId) || null;
   const occupiedBeds = useMemo(() => new Set(admissions.map((a) => `${a.unitId}|${a.bed}`)), [admissions]);
   const openAdmission = admissions.find((a) => a.id === openAdmissionId) || null;
+  const roundsUnit = units?.find((u) => u.id === roundsUnitId) || null;
+
+  if (roundsUnit && units) {
+    return (
+      <Suspense fallback={<div className="p-6 text-sm text-slate-500">Starting rounds…</div>}>
+        <IcuRoundsView
+          unit={roundsUnit}
+          units={units}
+          admissions={admissions}
+          occupiedBeds={occupiedBeds}
+          profile={profile}
+          notify={notify}
+          onClose={() => setRoundsUnitId(null)}
+        />
+      </Suspense>
+    );
+  }
 
   if (openAdmission && units) {
     return (
@@ -157,6 +176,13 @@ export default function IcuHomeView({ profile, onSwitchMode, notify, onPrepareDi
             <Stat value={gapTotal} label="FAST HUGS gaps" tone={gapTotal ? "amber" : undefined} />
             <Stat value={flagTotal} label="To clarify" tone={flagTotal ? "amber" : undefined} />
           </div>
+
+          {unit && unitAdmissions.length > 0 && (
+            <button type="button" onClick={() => setRoundsUnitId(unit.id)} data-coach="icu-start-rounds"
+              className="w-full min-h-[52px] rounded-2xl bg-emerald-700 hover:bg-emerald-800 text-white text-[15px] font-semibold flex items-center justify-center gap-2">
+              <Stethoscope className="w-5 h-5" aria-hidden="true" /> Start rounds · {unit.name} ({unitAdmissions.length} {unitAdmissions.length === 1 ? "bed" : "beds"})
+            </button>
+          )}
 
           {unit && (
             <div className="space-y-2" data-coach="icu-beds">

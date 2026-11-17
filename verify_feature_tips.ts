@@ -40,6 +40,8 @@ t("Ask ErMate tab has a tour", TAB_TO_TOUR.scribe === "scribe");
 t("ICU tab has a tour", TAB_TO_TOUR.icu === "icu");
 t("ICU Cases and Handover have tours", TAB_TO_TOUR.icucases === "icucases" && TAB_TO_TOUR.icuhandover === "icuhandover");
 t("ICU note tour is opened by the note screen", readFileSync("src/icu/IcuNoteView.tsx", "utf8").includes('requestTour("icunote")'));
+t("ICU rounds tour is opened by the rounds screen", readFileSync("src/icu/IcuRoundsView.tsx", "utf8").includes('requestTour("icurounds")'));
+t("ICU trends tour is opened by the trends screen", readFileSync("src/icu/IcuTrendsView.tsx", "utf8").includes('requestTour("icutrends")'));
 t("Protocols tour is opened by the reader", readFileSync("src/components/ProtocolsPanel.tsx", "utf8").includes('requestTour("protocols")'));
 
 // returning doctors only see newer tips; new doctors see all; replay brings all back

@@ -58,6 +58,7 @@ import { normalizeMateBedId } from "../mate/mateBedModel";
 import { validateAndBuildMateTask } from "../mate/mateTaskValidator";
 import { resolveInterpretedPatient } from "../mate/matePatientDisambiguator";
 import { mergePastedSheetIntoExtraction, detectSheetIdentityConflict } from "../mate/pastedSheetParser";
+import { applyPastedSheetSections } from "../mate/pastedsheetsections";
 import { stampClinicianUpdates } from "../mate/clinicianUpdateStamp";
 import { classifyDischargeRequest } from "../mate/mateDischargeIntent";
 import { hasExplicitPatientReference, isFocusAuthorized, isImplicitPatientReference, shouldAskWhichPatient, isHeldUpdateExpired, appendHeldUpdate, WHICH_PATIENT_QUESTION, type HeldUpdate } from "../mate/mateWriteTargetGate";
@@ -1920,7 +1921,7 @@ export default function VoiceScribeChatView({
             if (!res.ok) throw new Error(data?.error || "Request failed");
             if (sessionContextGenerationRef.current !== dischargeGen) return;
             const rawFields = data.unappliedExtraction || data.updatedCaseSheetFields || data.extractedFields || {};
-            const draftFields: any = mergePastedSheetIntoExtraction({ ...rawFields }, dischargeRoute.clinicalText);
+            const draftFields: any = applyPastedSheetSections(mergePastedSheetIntoExtraction({ ...rawFields }, dischargeRoute.clinicalText), dischargeRoute.clinicalText);
             delete draftFields.clinicianUpdateText;
             delete draftFields.clinicianUpdates;
             await onPreviewDischargeSummary(draftFields, { existingCaseId: null, standalone: true });
@@ -3000,6 +3001,8 @@ export default function VoiceScribeChatView({
         // locally (never sent to a model) and fill only what extraction left empty.
         if (looksLikeFullCaseSheet(trimmed)) {
           Object.assign(fieldsToExtract, mergePastedSheetIntoExtraction(fieldsToExtract, trimmed));
+          // The sheet's own labelled sections are copied word for word (the model keeps only fragments of a long sheet).
+          Object.assign(fieldsToExtract, applyPastedSheetSections(fieldsToExtract, trimmed));
         }
         // A pasted external case sheet also offers "Preview Discharge Summary" (the doctor still chooses).
         const dischargeIntent = data.dischargeIntent || looksLikeFullCaseSheet(trimmed);

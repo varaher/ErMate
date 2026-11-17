@@ -1622,7 +1622,7 @@ Treat these details as tentative clinical context from the current encounter. Yo
     - Name: ${safeName} (${age}y, ${gender})
     - Chief Complaint: ${safeComplaint}
     - Triage Category: ${triageCategory} | Arrival Mode: ${arrivalMode} | Case Type: ${caseType}
-    - Presentation Vitals: HR ${hr} bpm, BP ${bp} mmHg, RR ${rr} cpm, SpO2 ${spo2}%, Temp ${temp}°F, GRBS ${grbs} mg/dL, GCS ${gcs}
+    - Presentation Vitals: HR ${hr} bpm, BP ${bp} mmHg, RR ${rr} cpm, SpO2 ${spo2}%, Temp ${temp}, GRBS ${grbs} mg/dL, GCS ${gcs}
     - SAMPLE History:
       - Symptoms: ${safeSymptoms}
       - Past Medical History: ${safePastHistory}

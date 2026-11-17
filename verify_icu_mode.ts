@@ -10,6 +10,10 @@ import {
 } from "./src/icu/icuLogic";
 import { buildIcuExtractionPrompt } from "./server/icuPrompt";
 import { buildIcuIsbar, icuHandoverText } from "./src/icu/icuHandover";
+import { buildTrends, filterWindow, parseBp, parseSingleNumber } from "./src/icu/icuTrends";
+import { buildIcuDiscussRecord } from "./src/icu/icuDiscussContext";
+import { isIcuPayload, buildIcuDiscussSystem } from "./server/icuDiscussPrompt";
+import { readFileSync } from "node:fs";
 
 let passed = 0;
 const test = (name: string, fn: () => void) => {
@@ -287,6 +291,80 @@ test("handover: plain text, no markdown", () => {
   const t = icuHandoverText([buildIcuIsbar(admRec, note, { showNames: false, now: NOW })], { now: NOW });
   assert.ok(t.startsWith("ICU HANDOVER"));
   assert.ok(!/\*\*|#{1,3} /.test(t));
+});
+
+// ── Rounds, Discuss, Trends ─────────────────────────────────────
+const trendAdm = { admittedAt: new Date(2026, 10, 9, 8).toISOString() };
+const tNote = (when: Date, vitals: any[], labs: any[]) => {
+  const n: any = newNote({ admissionId: "a1", kind: "daily", authorUid: "u", authorName: "Dr Real Name", now: when });
+  n.status = "signed";
+  n.signedAt = when.toISOString();
+  n.sections.vitals = vitals;
+  n.sections.investigations = labs;
+  return n;
+};
+const tn1 = tNote(new Date(2026, 10, 9, 10),
+  [{ id: "v1", name: "BP", value: "90/60", unit: null, time: "9 AM" }, { id: "v2", name: "Temp", value: "101", unit: null, time: null }],
+  [{ id: "l1", name: "K", value: "8.7", unit: "mmol/L", time: "6 AM" }]);
+const tn2 = tNote(new Date(2026, 10, 11, 10),
+  [{ id: "v3", name: "SpO2", value: "98% on 4L O2", unit: null, time: null }],
+  [{ id: "l2", name: "Potassium", value: "5.1", unit: "mmol/L", time: "4 AM" }, { id: "l3", name: "Lactate", value: "3.8 → 2.1", unit: null, time: null }]);
+const TNOW = new Date(2026, 10, 11, 12);
+const bundle = buildTrends(trendAdm, [tn1, tn2], TNOW);
+
+test("trends: K and Potassium are one line, broken across the gap (no interpolation)", () => {
+  const k = bundle.series.find((x) => x.key === "lab:potassium")!;
+  assert.equal(k.count, 2);
+  assert.ok(k.points.some((p) => p.v === null), "gap > 12 h must insert a null break");
+  assert.equal(k.latest!.v, 5.1);
+});
+
+test("trends: ambiguous values are skipped, never guessed", () => {
+  assert.equal(parseSingleNumber("3.8 → 2.1"), null);
+  assert.equal(parseSingleNumber("98% on 4L O2"), null);
+  assert.ok(!bundle.series.some((x) => x.key === "lab:lactate"));
+  assert.ok(!bundle.series.some((x) => x.key === "vital:SpO2"));
+});
+
+test("trends: BP split, temperature unit never assumed, missing time flagged approx", () => {
+  assert.deepEqual(parseBp("90/60"), { sys: 90, dia: 60 });
+  assert.equal(parseBp("60/90"), null);
+  assert.ok(bundle.series.some((x) => x.key === "vital:SBP") && bundle.series.some((x) => x.key === "vital:DBP"));
+  const temp = bundle.series.find((x) => x.key.startsWith("vital:Temp"))!;
+  assert.equal(temp.label, "Temp (unit not stated)");
+  assert.equal(temp.latest!.approx, true);
+});
+
+test("trends: 24 h window drops older readings", () => {
+  const w = filterWindow(bundle, "24h", TNOW);
+  assert.ok(!w.series.some((x) => x.key === "vital:SBP"));
+  assert.equal(w.series.find((x) => x.key === "lab:potassium")!.count, 1);
+});
+
+test("discuss record: no patient name, UHID, doctor name or calendar date", () => {
+  const admFull: any = {
+    id: "a1", patientLabel: "Ramesh Kumar", uhid: "UH778899", ageYears: 55, sex: "M", source: "ER",
+    admittedAt: trendAdm.admittedAt, status: "active", outcome: null, outcomeAt: null,
+    unitId: "u1", unitName: "MICU 1", unitType: "MICU", bed: "4",
+    stays: [{ unitId: "u1", unitName: "MICU 1", bed: "4", inAt: trendAdm.admittedAt, outAt: null }],
+  };
+  const r = buildIcuDiscussRecord(admFull, [tn1, tn2], TNOW);
+  assert.ok(!/Ramesh|UH778899|Real Name|2026/.test(r.text));
+  assert.ok(r.text.includes("ICU day 3"));
+  assert.equal(r.noteCount, 2);
+});
+
+test("server prompt: ICU record de-identified again, no [UPDATE] edits allowed", () => {
+  assert.equal(isIcuPayload({ icuRecord: "x" }), true);
+  assert.equal(isIcuPayload({ patient: {} }), false);
+  const sys = buildIcuDiscussSystem({ icuRecord: "Patient: 55 years\\nCall 9876543210" });
+  assert.ok(!sys.includes("9876543210"));
+  assert.ok(sys.includes("Do NOT output any [UPDATE: ...] block"));
+});
+
+test("chat hook: ICU chats can never write to the note", () => {
+  const hook = readFileSync("src/hooks/useBoundChat.ts", "utf8");
+  assert.ok(hook.includes("if (context.type === 'icu') { setPendingUpdates(null); return; }"));
 });
 
 console.log(`\nICU mode: ${passed} checks passed`);
