@@ -10,6 +10,7 @@ import { BoundChatModal } from "./BoundChatModal";
 import { captureFeedbackCorrection } from "../services/learningClient";
 import { formatDischargeSummaryText, formatDischargeSummaryHtml, DischargeSummaryData, STATUTORY_FOOTER } from "../utils/dischargeSummaryFormat";
 import { isPediatricPatient } from "../utils/pediatricRanges";
+import { resolveDocumentedPrimarySurvey } from "../utils/primarysurveyresolve";
 import { isLmpApplicable, resolveHpi, resolvePastMedicalSurgical } from "../utils/historyFields";
 import {
   deriveInitialCourseInHospital,
@@ -53,6 +54,8 @@ export default function DischargeSummaryView({
   startInEdit = false
 }: DischargeSummaryViewProps) {
   // Prepopulate from case records or existing dischargeInfo
+  // The same documented primary survey the case sheet shows (adult and paediatric), so nothing dictated is lost here.
+  const documentedPs = resolveDocumentedPrimarySurvey(currentCase);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [activeTab, setActiveTab] = useState<TabType>("admin-vitals");
   // VIEW (read-only, just the captured summary) vs EDIT (form). Opens in VIEW when a summary already
@@ -104,7 +107,7 @@ export default function DischargeSummaryView({
   const [arrivalBp, setArrivalBp] = useState(currentCase.dischargeInfo?.arrivalBp || currentCase.vitals.bp || "");
   const [arrivalRr, setArrivalRr] = useState(currentCase.dischargeInfo?.arrivalRr || currentCase.vitals.rr || "");
   const [arrivalSpo2, setArrivalSpo2] = useState(currentCase.dischargeInfo?.arrivalSpo2 || currentCase.vitals.spo2 || "");
-  const [arrivalGcs, setArrivalGcs] = useState(currentCase.dischargeInfo?.arrivalGcs || currentCase.vitals.gcs || "");
+  const [arrivalGcs, setArrivalGcs] = useState(currentCase.dischargeInfo?.arrivalGcs || currentCase.vitals.gcs || documentedPs.gcsParts || "");
   const [arrivalPainScore, setArrivalPainScore] = useState(currentCase.dischargeInfo?.arrivalPainScore || currentCase.vitals.painScore || "");
   const [arrivalGrbs, setArrivalGrbs] = useState(currentCase.dischargeInfo?.arrivalGrbs || currentCase.vitals.grbs || "");
   const [arrivalTemp, setArrivalTemp] = useState(currentCase.dischargeInfo?.arrivalTemp || currentCase.vitals.temp || "");
@@ -131,77 +134,71 @@ export default function DischargeSummaryView({
 
   // --- Primary Assessment (Arrival) ---
   const [primaryAirway, setPrimaryAirway] = useState(
-    currentCase.dischargeInfo?.primaryAirway || currentCase.primaryAssessment?.airway || ""
+    currentCase.dischargeInfo?.primaryAirway || documentedPs.airway
   );
   const [primaryAirwayIntervention, setPrimaryAirwayIntervention] = useState(
-    currentCase.dischargeInfo?.primaryAirwayIntervention || currentCase.pediatricDetails?.airwayIntervention || ""
+    currentCase.dischargeInfo?.primaryAirwayIntervention || documentedPs.airwayIntervention
   );
 
   const [primaryBreathing, setPrimaryBreathing] = useState(
-    currentCase.dischargeInfo?.primaryBreathing || currentCase.primaryAssessment?.breathing || ""
+    currentCase.dischargeInfo?.primaryBreathing || documentedPs.breathingFindings
   );
   const [primaryBreathingWork, setPrimaryBreathingWork] = useState(
-    currentCase.dischargeInfo?.primaryBreathingWork || currentCase.pediatricDetails?.breathingWob || ""
+    currentCase.dischargeInfo?.primaryBreathingWork || documentedPs.breathingWork
   );
   const [primaryBreathingAirEntry, setPrimaryBreathingAirEntry] = useState(
-    currentCase.dischargeInfo?.primaryBreathingAirEntry || currentCase.pediatricDetails?.breathingAirEntry || ""
+    currentCase.dischargeInfo?.primaryBreathingAirEntry || documentedPs.breathingAirEntry
   );
   const [primaryBreathingCct, setPrimaryBreathingCct] = useState(
-    currentCase.dischargeInfo?.primaryBreathingCct || ""
+    currentCase.dischargeInfo?.primaryBreathingCct || documentedPs.breathingCct
   );
   const [primaryBreathingSubcut, setPrimaryBreathingSubcut] = useState(
-    currentCase.dischargeInfo?.primaryBreathingSubcut || currentCase.pediatricDetails?.breathingSubcutaneousEmphysema || ""
+    currentCase.dischargeInfo?.primaryBreathingSubcut || documentedPs.breathingSubcut
   );
   const [primaryBreathingEfast, setPrimaryBreathingEfast] = useState(
     currentCase.dischargeInfo?.primaryBreathingEfast || ""
   );
   const [primaryBreathingIntervention, setPrimaryBreathingIntervention] = useState(
-    currentCase.dischargeInfo?.primaryBreathingIntervention || currentCase.pediatricDetails?.breathingIntervention || ""
+    currentCase.dischargeInfo?.primaryBreathingIntervention || documentedPs.breathingIntervention
   );
 
+  const [primaryCirculation, setPrimaryCirculation] = useState(
+    currentCase.dischargeInfo?.primaryCirculation || documentedPs.circulationFindings
+  );
   const [primaryCirculationCrt, setPrimaryCirculationCrt] = useState(
-    currentCase.dischargeInfo?.primaryCirculationCrt || currentCase.pediatricDetails?.circulationCrt || ""
+    currentCase.dischargeInfo?.primaryCirculationCrt || documentedPs.circulationCrt
   );
   const [primaryCirculationDnv, setPrimaryCirculationDnv] = useState(
-    currentCase.dischargeInfo?.primaryCirculationDnv || currentCase.pediatricDetails?.circulationDistendedNeckVeins || ""
+    currentCase.dischargeInfo?.primaryCirculationDnv || documentedPs.circulationDnv
   );
   const [primaryCirculationPct, setPrimaryCirculationPct] = useState(
-    currentCase.dischargeInfo?.primaryCirculationPct || ""
+    currentCase.dischargeInfo?.primaryCirculationPct || documentedPs.circulationPct
   );
   const [primaryCirculationDeformity, setPrimaryCirculationDeformity] = useState(
-    currentCase.dischargeInfo?.primaryCirculationDeformity || currentCase.pediatricDetails?.exposureLongBoneDeformities || ""
+    currentCase.dischargeInfo?.primaryCirculationDeformity || documentedPs.circulationDeformity
   );
   const [primaryCirculationFast, setPrimaryCirculationFast] = useState(
     currentCase.dischargeInfo?.primaryCirculationFast || ""
   );
   const [primaryCirculationInterventions, setPrimaryCirculationInterventions] = useState(
-    currentCase.dischargeInfo?.primaryCirculationInterventions || currentCase.pediatricDetails?.circulationIntervention || ""
+    currentCase.dischargeInfo?.primaryCirculationInterventions || documentedPs.circulationIntervention
   );
 
   const [primaryDisabilityAvpuGcs, setPrimaryDisabilityAvpuGcs] = useState(
-    currentCase.dischargeInfo?.primaryDisabilityAvpuGcs || (() => {
-      const neuroParts: string[] = [];
-      if (currentCase.vitals.avpu) {
-        neuroParts.push(currentCase.vitals.avpu);
-      }
-      if (currentCase.vitals.gcs) {
-        neuroParts.push(`GCS ${currentCase.vitals.gcs}`);
-      }
-      return neuroParts.join(" / ");
-    })() || currentCase.pediatricDetails?.disabilityAvpuGcs || ""
+    currentCase.dischargeInfo?.primaryDisabilityAvpuGcs || documentedPs.avpuGcs
   );
   const [primaryDisabilityPupils, setPrimaryDisabilityPupils] = useState(
-    currentCase.dischargeInfo?.primaryDisabilityPupils || currentCase.pediatricDetails?.disabilityPupils || ""
+    currentCase.dischargeInfo?.primaryDisabilityPupils || documentedPs.pupils
   );
   const [primaryDisabilityGrbs, setPrimaryDisabilityGrbs] = useState(
-    currentCase.dischargeInfo?.primaryDisabilityGrbs || currentCase.vitals.grbs || currentCase.pediatricDetails?.disabilityGrbs || ""
+    currentCase.dischargeInfo?.primaryDisabilityGrbs || documentedPs.grbs
   );
 
   const [primaryExposureTemp, setPrimaryExposureTemp] = useState(
-    currentCase.dischargeInfo?.primaryExposureTemp || currentCase.vitals.temp || currentCase.pediatricDetails?.exposureTemp || ""
+    currentCase.dischargeInfo?.primaryExposureTemp || documentedPs.temp
   );
   const [primaryExposureTrauma, setPrimaryExposureTrauma] = useState(
-    currentCase.dischargeInfo?.primaryExposureTrauma || currentCase.pediatricDetails?.exposureTraumaLogroll || ""
+    currentCase.dischargeInfo?.primaryExposureTrauma || documentedPs.trauma
   );
 
   // --- Parse Secondary Assessment ---
@@ -400,8 +397,8 @@ export default function DischargeSummaryView({
     arrivalHr, arrivalBp, arrivalRr, arrivalSpo2, arrivalGcs, arrivalPainScore, arrivalGrbs, arrivalTemp,
     presentingComplaints, historyOfPresentIllness, pastMedicalHistory, familyGynaeHistory, lmp, generalExamination,
     primaryAirway, primaryAirwayIntervention,
-    primaryBreathingWork, primaryBreathingAirEntry, primaryBreathingCct, primaryBreathingSubcut, primaryBreathingEfast, primaryBreathingIntervention,
-    primaryCirculationCrt, primaryCirculationDnv, primaryCirculationPct, primaryCirculationDeformity, primaryCirculationFast, primaryCirculationInterventions,
+    primaryBreathing, primaryBreathingWork, primaryBreathingAirEntry, primaryBreathingCct, primaryBreathingSubcut, primaryBreathingEfast, primaryBreathingIntervention,
+    primaryCirculation, primaryCirculationCrt, primaryCirculationDnv, primaryCirculationPct, primaryCirculationDeformity, primaryCirculationFast, primaryCirculationInterventions,
     primaryDisabilityAvpuGcs, primaryDisabilityPupils, primaryDisabilityGrbs,
     primaryExposureTemp, primaryExposureTrauma,
     secondaryPicle, secondaryChest, secondaryCvs, secondaryPa, secondaryCns, secondaryExtremities,
@@ -668,6 +665,7 @@ export default function DischargeSummaryView({
       primaryBreathingEfast,
       primaryBreathingIntervention,
 
+      primaryCirculation,
       primaryCirculationCrt,
       primaryCirculationDnv,
       primaryCirculationPct,
@@ -1523,6 +1521,10 @@ export default function DischargeSummaryView({
                   <span className="font-extrabold text-[9px] text-slate-500 uppercase block">Circulation Assessment</span>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                     <div className="space-y-1">
+                      <label className="text-[8px] font-bold text-slate-400 uppercase">Circulation findings</label>
+                      <input type="text" value={primaryCirculation} onChange={(e) => setPrimaryCirculation(e.target.value)} className="w-full p-1 bg-white border rounded" />
+                    </div>
+                    <div className="space-y-1">
                       <label className="text-[8px] font-bold text-slate-400 uppercase">Capillary Refill (CRT)</label>
                       <input type="text" value={primaryCirculationCrt} onChange={(e) => setPrimaryCirculationCrt(e.target.value)} className="w-full p-1 bg-white border rounded" />
                     </div>
@@ -1854,8 +1856,8 @@ export default function DischargeSummaryView({
 
   <div className="font-bold mt-4">Primary Assessment:</div>
   <div><span className="font-bold">Airway &rarr;</span> {primaryAirway || "Not documented"} ,Intervention- {primaryAirwayIntervention || "Not documented"}</div>
-  <div><span className="font-bold">Breathing &rarr;</span> Work of breathing- {primaryBreathingWork || "Not documented"} ,Air entry- {primaryBreathingAirEntry || "Not documented"} ,CCT- {primaryBreathingCct || "Not documented"} ,Subcutaneous emphysema- {primaryBreathingSubcut || "Not documented"} ,EFAST- {primaryBreathingEfast || "Not documented"} ,Intervention- {primaryBreathingIntervention || "Not documented"}.</div>
-  <div><span className="font-bold">Circulation &rarr;</span> CRT- {primaryCirculationCrt || "Not documented"} , Distended Neck Veins- {primaryCirculationDnv || "Not documented"} , PCT- {primaryCirculationPct || "Not documented"} ,Long bone deformity- {primaryCirculationDeformity || "Not documented"} ,FAST- {primaryCirculationFast || "Not documented"} ,Interventions- {primaryCirculationInterventions || "Not documented"}.</div>
+  <div><span className="font-bold">Breathing &rarr;</span> {primaryBreathing ? <>Findings- {primaryBreathing} ,</> : null}Work of breathing- {primaryBreathingWork || "Not documented"} ,Air entry- {primaryBreathingAirEntry || "Not documented"} ,CCT- {primaryBreathingCct || "Not documented"} ,Subcutaneous emphysema- {primaryBreathingSubcut || "Not documented"} ,EFAST- {primaryBreathingEfast || "Not documented"} ,Intervention- {primaryBreathingIntervention || "Not documented"}.</div>
+  <div><span className="font-bold">Circulation &rarr;</span> {primaryCirculation ? <>Findings- {primaryCirculation} ,</> : null}CRT- {primaryCirculationCrt || "Not documented"} , Distended Neck Veins- {primaryCirculationDnv || "Not documented"} , PCT- {primaryCirculationPct || "Not documented"} ,Long bone deformity- {primaryCirculationDeformity || "Not documented"} ,FAST- {primaryCirculationFast || "Not documented"} ,Interventions- {primaryCirculationInterventions || "Not documented"}.</div>
   <div><span className="font-bold">Disability &rarr;</span> AVPU/GCS- {primaryDisabilityAvpuGcs || "Not documented"} ,Pupils- {primaryDisabilityPupils || "Not documented"} ,GRBS- {primaryDisabilityGrbs || "Not documented"}</div>
   <div><span className="font-bold">Exposure &rarr;</span> Temp- {primaryExposureTemp || "Not documented"} | Trauma-Logroll- {primaryExposureTrauma || "Not documented"}</div>
 

@@ -403,12 +403,23 @@ function cleanAndParseJSON(rawStr: string): any {
 // text, or is explicitly marked as not documented. NEVER invent a
 // plausible clinical default here — a wrong value in a heuristic fallback
 // is exactly the "wrong AI output is worse than no output" failure mode.
-function buildHeuristicDischargeSummary(rawText: string): Record<string, any> {
-  const bpM = rawText.match(/(?:bp|blood\s*pressure)?\s*[:=-]?\s*(\d{2,3}\/\d{2,3})/i);
-  const hrM = rawText.match(/(?:hr|pulse)?\s*[:=-]?\s*(\d{2,3})/i);
-  const spo2M = rawText.match(/(?:spo2|sat)?\s*[:=-]?\s*(\d{2,3})%/i);
-  const grbsM = rawText.match(/(?:grbs|rbs|blood\s*sugar)?\s*[:=-]?\s*(\d{2,4})/i);
-  const rrM = rawText.match(/(?:rr|resp)?\s*[:=-]?\s*(\d{1,2})/i);
+export function buildHeuristicDischargeSummary(rawText: string): Record<string, any> {
+  // Every vital needs its own label in the text AND a believable value. An unlabelled number
+  // (an age, a dose, a bed number) must never become a vital sign.
+  const labelled = (re: RegExp, min: number, max: number): RegExpMatchArray | null => {
+    const m = rawText.match(re);
+    if (!m) return null;
+    const n = parseInt(m[1], 10);
+    return Number.isFinite(n) && n >= min && n <= max ? m : null;
+  };
+  const bpRaw = rawText.match(/\b(?:bp|b\.p\.?|blood\s*pressure)\s*[:=-]?\s*(\d{2,3})\s*\/\s*(\d{2,3})\b/i);
+  const bpM = bpRaw && +bpRaw[1] >= 50 && +bpRaw[1] <= 300 && +bpRaw[2] >= 20 && +bpRaw[2] <= 200
+    ? ([bpRaw[0], `${bpRaw[1]}/${bpRaw[2]}`] as unknown as RegExpMatchArray)
+    : null;
+  const hrM = labelled(/\b(?:hr|heart\s*rate|pulse(?:\s*rate)?)\s*[:=-]?\s*(\d{2,3})\b(?!\s*\/)/i, 20, 300);
+  const spo2M = labelled(/\b(?:spo2|sp02|spo\s*2|o2\s*sat(?:uration)?|sat(?:uration)?)\s*[:=-]?\s*(\d{2,3})\b/i, 50, 100);
+  const grbsM = labelled(/\b(?:grbs|rbs|random\s*blood\s*sugar|blood\s*sugar|blood\s*glucose)\s*[:=-]?\s*(\d{2,4})\b/i, 20, 900);
+  const rrM = labelled(/\b(?:rr|resp(?:iratory)?\s*rate|resp)\s*[:=-]?\s*(\d{1,2})\b/i, 5, 70);
   const gcsM = rawText.match(/gcs\s*[:=-]?\s*([e1-4v1-5m1-6\d]{2,6}|\d{1,2})/i);
   const dxM = rawText.match(/(?:diagnosis|imp|impression|assessment)\s*[:=-]?\s*([^\n]+)/i);
 

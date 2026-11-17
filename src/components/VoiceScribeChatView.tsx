@@ -64,6 +64,7 @@ import { hasExplicitPatientReference, isFocusAuthorized, isImplicitPatientRefere
 import { detectPatientAnnouncement, detectExplicitNewCaseIntent, bedFromUnmatchedReference, shouldStartCaseForVacantBed, groundPatientReference, isLongClinicalPaste, looksLikeFullCaseSheet, shouldHoldPastedSheet, classifyPendingSheetReply } from "../mate/mateNewCaseIntent";
 import { computeCensusOrientation, formatErOverviewMessage } from "../mate/mateOrientation";
 import { authenticatedFetch } from "../services/authenticatedFetch";
+import { splitEdits, applyEdits, editableFields, diffEdits, collectEditedPaths, isChildCapture, getRows, diffRowEdits, ROW_LISTS, EDITS_KEY, type EditRow } from "../lib/extractionedits";
 
 type ChatMode = "dictation" | "discuss";
 
@@ -494,6 +495,7 @@ function getDisplayableExtractionEntries(data: any): [string, any][] {
   delete normalizedData.controlledPatches;
   delete normalizedData.userConfirmationSummary;
   delete normalizedData.intent;
+  delete normalizedData.dischargeInfoEdit;
 
   return Object.entries(normalizedData).filter(([key, val]) => {
     if (val === null || val === undefined || val === "") return false;
@@ -746,7 +748,10 @@ export function getMergedUnappliedCaseExtraction(messages: Message[], targetId?:
   const contributingMsgIds: string[] = [];
   for (const msg of messages) {
     if (msg.extractionData && !msg.extractionApplied) {
-      merged = deepMergeExtraction(merged, msg.extractionData);
+      const split = splitEdits(msg.extractionData);
+      merged = deepMergeExtraction(merged, split.data);
+      // A correction counts from the dictation it was made on, so newer dictation still wins over older edits.
+      merged = applyEdits(merged, [split.edits]);
       contributingMsgIds.push(msg.id);
     }
     if (targetId && msg.id === targetId) {
@@ -770,7 +775,10 @@ export function getMergedUnappliedDischargeExtraction(messages: Message[], targe
   const contributingMsgIds: string[] = [];
   for (const msg of messages) {
     if (msg.extractionData && !msg.dischargeApplied) {
-      merged = deepMergeExtraction(merged, msg.extractionData);
+      const split = splitEdits(msg.extractionData);
+      merged = deepMergeExtraction(merged, split.data);
+      // A correction counts from the dictation it was made on, so newer dictation still wins over older edits.
+      merged = applyEdits(merged, [split.edits]);
       contributingMsgIds.push(msg.id);
     }
     if (targetId && msg.id === targetId) {
@@ -872,6 +880,11 @@ export default function VoiceScribeChatView({
   const [isSending, setIsSending] = useState(false);
   const [saveConfirmation, setSaveConfirmation] = useState<{ type: "case" | "discharge" } | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+  // Edit-before-preview: which captured card is open for editing, and the text typed so far.
+  const [editingMsgId, setEditingMsgId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState<Record<string, string>>({});
+  const [editRows, setEditRows] = useState<Record<string, EditRow[]>>({});
+  const [editTab, setEditTab] = useState<"case" | "discharge">("case");
   const [processingAction, setProcessingAction] = useState<{messageId: string, type: 'caseSheet' | 'discharge'} | null>(null);
   const [procedureModalState, setProcedureModalState] = useState<{
     isOpen: boolean;
@@ -1347,6 +1360,25 @@ export default function VoiceScribeChatView({
       });
     } else if (onOpenCaseSheet && activeCaseId) {
       onOpenCaseSheet(activeCaseId);
+    }
+  };
+
+  // Keep the doctor's corrections inside this dictation's own data. Nothing reaches the case until the preview is applied.
+  const handleSaveExtractionEdits = (msgId: string, fields: ReturnType<typeof editableFields>, draft: Record<string, string>, rowEdits: Record<string, any> = {}) => {
+    const edits = { ...diffEdits(fields, draft), ...rowEdits };
+    setEditingMsgId(null);
+    setEditDraft({});
+    setEditRows({});
+    if (Object.keys(edits).length === 0) return;
+    const target = messages.find(m => m.id === msgId);
+    if (!target) return;
+    const prior = splitEdits(target.extractionData).edits;
+    const nextData = { ...(target.extractionData || {}), [EDITS_KEY]: { ...prior, ...edits } };
+    setMessages(prev => prev.map(m => (m.id === msgId ? { ...m, extractionData: nextData } : m)));
+    if (activeSessionId) {
+      updateChatMessage(activeSessionId, msgId, { unappliedExtraction: JSON.parse(JSON.stringify(nextData)) } as any, { isSession: true }).catch(err => {
+        console.warn("Could not save your edits to the chat history; they are still on screen.", err);
+      });
     }
   };
 
@@ -3549,8 +3581,18 @@ export default function VoiceScribeChatView({
   return (
     <div className="mt-3 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden shadow-sm">
 
-      <div className="bg-slate-200 dark:bg-slate-800 px-3 py-2 text-[10px] font-bold text-slate-700 dark:text-slate-300 border-b border-slate-200 dark:border-slate-700 uppercase tracking-wider">
-        CAPTURED FROM YOUR UPDATE
+      <div className="bg-slate-200 dark:bg-slate-800 px-3 py-2 text-[10px] font-bold text-slate-700 dark:text-slate-300 border-b border-slate-200 dark:border-slate-700 uppercase tracking-wider flex items-center justify-between gap-2">
+        <span>CAPTURED FROM YOUR UPDATE</span>
+        {msg.extractionApplied !== true && editingMsgId !== msg.id && (
+          <button
+            type="button"
+            data-testid="extraction-edit-button"
+            onClick={() => { setEditDraft({}); setEditRows({}); setEditTab("case"); setEditingMsgId(msg.id); }}
+            className="px-2.5 py-1 bg-violet-600 hover:bg-violet-700 text-white rounded-md text-[10px] font-bold normal-case tracking-normal cursor-pointer"
+          >
+            Edit before preview
+          </button>
+        )}
       </div>
 
       {merged?.mlcDetails?.possibleMlc && !merged?.mlcDetails?.isMlc && (
@@ -3629,6 +3671,79 @@ export default function VoiceScribeChatView({
         );
       })()}
 
+      {editingMsgId === msg.id && msg.extractionApplied !== true ? (() => {
+        const fields = editableFields(merged, { pediatric: isChildCapture(merged, (caseData as any)?.patient?.age) });
+        const editedPaths = collectEditedPaths(messages.slice(0, messages.findIndex(m => m.id === msg.id) + 1).map(m => splitEdits(m.extractionData).edits));
+        const tabFields = fields.filter(f => (f.group === "Discharge only") === (editTab === "discharge"));
+        const groups = Array.from(new Set(tabFields.map(f => f.group)));
+        return (
+          <div data-testid="extraction-editor" className="p-3 text-xs text-slate-600 dark:text-slate-400 max-h-[420px] overflow-y-auto space-y-3">
+            <div className="flex gap-1.5" role="tablist">
+              {(["case", "discharge"] as const).map(t => (
+                <button key={t} type="button" role="tab" aria-selected={editTab === t} data-testid={`extraction-edit-tab-${t}`} onClick={() => setEditTab(t)} className={`px-3 py-1 rounded-full text-[11px] font-bold border cursor-pointer ${editTab === t ? "bg-violet-600 border-violet-600 text-white" : "border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300"}`}>
+                  {t === "case" ? "Case sheet" : "Discharge only"}
+                </button>
+              ))}
+            </div>
+            <p className="text-[11px] text-slate-500 dark:text-slate-400">{editTab === "case" ? "Fix anything the app heard wrongly, or add what is missing. Nothing is saved to the case until you preview it and apply." : "These are not dictated. Fill them here for the discharge summary, or leave blank to complete in the discharge form."}</p>
+            {groups.map(g => (
+              <div key={g} className="space-y-1.5">
+                <div className="text-[10px] font-bold uppercase tracking-wider text-violet-700 dark:text-violet-300">{g}</div>
+                {tabFields.filter(f => f.group === g).map(f => {
+                  const val = editDraft[f.path] !== undefined ? editDraft[f.path] : f.value;
+                  const id = `edit-${msg.id}-${f.path}`;
+                  return (
+                    <div key={f.path} className="grid grid-cols-[88px_minmax(0,1fr)] gap-2 items-start">
+                      <label htmlFor={id} className="pt-1.5 text-[11px] text-slate-500 dark:text-slate-400 break-words">
+                        {f.label}{editedPaths.has(f.path) && <span className="ml-1 text-violet-600 dark:text-violet-300">(edited)</span>}
+                      </label>
+                      {f.kind === "bool" ? (
+                        <select id={id} value={val} onChange={e => setEditDraft(d => ({ ...d, [f.path]: e.target.value }))} className="w-full p-1.5 rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 text-xs">
+                          <option value="true">Yes</option>
+                          <option value="false">No</option>
+                        </select>
+                      ) : f.kind === "long" || f.kind === "list" ? (
+                        <textarea id={id} rows={f.kind === "list" ? Math.min(6, Math.max(2, f.value.split("\n").length)) : 2} value={val} placeholder={f.value === "" ? "Not documented" : undefined} onChange={e => setEditDraft(d => ({ ...d, [f.path]: e.target.value }))} className="w-full p-1.5 rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 text-xs" />
+                      ) : (
+                        <input id={id} type="text" value={val} placeholder={f.value === "" ? "Not documented" : undefined} onChange={e => setEditDraft(d => ({ ...d, [f.path]: e.target.value }))} className="w-full p-1.5 rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 text-xs" />
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+            {ROW_LISTS.filter(d => d.tab === editTab).map(def => {
+              const rows: EditRow[] = editRows[def.id] ?? getRows(merged, def.id);
+              const setRows = (next: EditRow[]) => setEditRows(r => ({ ...r, [def.id]: next }));
+              return (
+                <div key={def.id} data-testid={`extraction-rows-${def.id}`} className="space-y-1.5">
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-violet-700 dark:text-violet-300">{def.label}</div>
+                  {rows.map((r, i) => r.del ? (
+                    <div key={i} className="flex items-center justify-between gap-2 rounded-md bg-rose-50 dark:bg-rose-950/40 px-2 py-1.5 text-[11px] text-slate-600 dark:text-slate-300">
+                      <span>Removed {r.cells[def.cols[0].key] || "row"}</span>
+                      <button type="button" onClick={() => setRows(rows.map((x, j) => (j === i ? { ...x, del: false } : x)))} className="font-bold text-violet-700 dark:text-violet-300 cursor-pointer">Undo</button>
+                    </div>
+                  ) : (
+                    <div key={i} className="grid grid-cols-[minmax(0,1fr)_28px] gap-1.5 items-start">
+                      <div className={`grid gap-1.5 min-w-0 ${def.cols.length === 3 ? "grid-cols-3" : "grid-cols-2"}`}>
+                        {def.cols.map(c => (
+                          <input key={c.key} type="text" aria-label={`${def.label} ${i + 1} ${c.label}`} placeholder={c.label} value={r.cells[c.key] ?? ""} onChange={e => setRows(rows.map((x, j) => (j === i ? { ...x, cells: { ...x.cells, [c.key]: e.target.value } } : x)))} className="w-full min-w-0 p-1.5 rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 text-xs" />
+                        ))}
+                      </div>
+                      <button type="button" aria-label={`Delete ${def.label} row ${i + 1}`} onClick={() => setRows(rows.map((x, j) => (j === i ? { ...x, del: true } : x)))} className="h-[30px] w-7 rounded-md bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-300 border border-slate-200 dark:border-slate-700 cursor-pointer">✕</button>
+                    </div>
+                  ))}
+                  <button type="button" data-testid={`extraction-add-${def.id}`} onClick={() => setRows([...rows, { cells: {} }])} className="px-2.5 py-1 rounded-md border border-dashed border-emerald-500 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 text-[11px] font-bold cursor-pointer">+ {def.addLabel}</button>
+                </div>
+              );
+            })}
+            <div className="flex gap-2 pt-1">
+              <button type="button" data-testid="extraction-edit-save" onClick={() => handleSaveExtractionEdits(msg.id, fields, editDraft, ROW_LISTS.reduce((acc: Record<string, any>, d) => (editRows[d.id] ? { ...acc, ...diffRowEdits(merged, d.id, editRows[d.id]) } : acc), {}))} className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md text-[11px] font-bold cursor-pointer">Save edits</button>
+              <button type="button" onClick={() => { setEditingMsgId(null); setEditDraft({}); setEditRows({}); }} className="px-3 py-1.5 bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-md text-[11px] font-bold cursor-pointer">Cancel</button>
+            </div>
+          </div>
+        );
+      })() : (
       <div className="p-3 text-xs space-y-2 text-slate-600 dark:text-slate-400 max-h-[340px] overflow-y-auto">
 
         {entries.map(([key, val]) => (
@@ -3641,6 +3756,7 @@ export default function VoiceScribeChatView({
         ))}
 
       </div>
+      )}
 
       <div
         data-testid="extraction-save-status"

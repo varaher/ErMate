@@ -35,6 +35,8 @@ export interface DischargeSummaryData {
 
   primaryAirway: string;
   primaryAirwayIntervention: string;
+  primaryBreathing?: string;
+  primaryCirculation?: string;
   primaryBreathingWork: string;
   primaryBreathingAirEntry: string;
   primaryBreathingCct: string;
@@ -165,9 +167,9 @@ export function formatDischargeSummaryText(d: DischargeSummaryData): string {
   lines.push("");
   lines.push("**Airway** \u2192 " + (d.primaryAirway || "Not documented") + " ,Intervention- " + (d.primaryAirwayIntervention || "Not documented"));
   lines.push("");
-  lines.push("**Breathing** \u2192 Work of breathing- " + (d.primaryBreathingWork || "Not documented") + " ,Air entry- " + (d.primaryBreathingAirEntry || "Not documented") + " ,CCT- " + (d.primaryBreathingCct || "Not documented") + " ,Subcutaneous emphysema- " + (d.primaryBreathingSubcut || "Not documented") + " ,EFAST- " + (d.primaryBreathingEfast || "Not documented") + " ,Intervention- " + (d.primaryBreathingIntervention || "Not documented") + ".");
+  lines.push("**Breathing** \u2192 " + (d.primaryBreathing ? "Findings- " + d.primaryBreathing + " ," : "") + "Work of breathing- " +(d.primaryBreathingWork || "Not documented") + " ,Air entry- " + (d.primaryBreathingAirEntry || "Not documented") + " ,CCT- " + (d.primaryBreathingCct || "Not documented") + " ,Subcutaneous emphysema- " + (d.primaryBreathingSubcut || "Not documented") + " ,EFAST- " + (d.primaryBreathingEfast || "Not documented") + " ,Intervention- " + (d.primaryBreathingIntervention || "Not documented") + ".");
   lines.push("");
-  lines.push("**Circulation** \u2192 CRT- " + (d.primaryCirculationCrt || "Not documented") + " , Distended Neck Veins- " + (d.primaryCirculationDnv || "Not documented") + " , PCT- " + (d.primaryCirculationPct || "Not documented") + " ,Long bone deformity- " + (d.primaryCirculationDeformity || "Not documented") + " ,FAST- " + (d.primaryCirculationFast || "Not documented") + " ,Interventions- " + (d.primaryCirculationInterventions || "Not documented") + ".");
+  lines.push("**Circulation** \u2192 " + (d.primaryCirculation ? "Findings- " + d.primaryCirculation + " ," : "") + "CRT- " +(d.primaryCirculationCrt || "Not documented") + " , Distended Neck Veins- " + (d.primaryCirculationDnv || "Not documented") + " , PCT- " + (d.primaryCirculationPct || "Not documented") + " ,Long bone deformity- " + (d.primaryCirculationDeformity || "Not documented") + " ,FAST- " + (d.primaryCirculationFast || "Not documented") + " ,Interventions- " + (d.primaryCirculationInterventions || "Not documented") + ".");
   lines.push("");
   lines.push("**Disability** \u2192 AVPU/GCS- " + (d.primaryDisabilityAvpuGcs || "Not documented") + " ,Pupils- " + (d.primaryDisabilityPupils || "Not documented") + " ,GRBS- " + (d.primaryDisabilityGrbs || "Not documented"));
   lines.push("");
@@ -266,8 +268,8 @@ export function formatDischargeSummaryHtml(d: DischargeSummaryData): string {
   parts.push((d.generalExamination || "Not documented") + "<br/><br/>");
   parts.push("<strong>Primary Assessment:</strong><br/><br/>");
   parts.push("<strong>Airway</strong> \u2192 " + (d.primaryAirway || "Not documented") + " ,Intervention- " + (d.primaryAirwayIntervention || "Not documented") + "<br/><br/>");
-  parts.push("<strong>Breathing</strong> \u2192 Work of breathing- " + (d.primaryBreathingWork || "Not documented") + " ,Air entry- " + (d.primaryBreathingAirEntry || "Not documented") + " ,CCT- " + (d.primaryBreathingCct || "Not documented") + " ,Subcutaneous emphysema- " + (d.primaryBreathingSubcut || "Not documented") + " ,EFAST- " + (d.primaryBreathingEfast || "Not documented") + " ,Intervention- " + (d.primaryBreathingIntervention || "Not documented") + ".<br/><br/>");
-  parts.push("<strong>Circulation</strong> \u2192 CRT- " + (d.primaryCirculationCrt || "Not documented") + " , Distended Neck Veins- " + (d.primaryCirculationDnv || "Not documented") + " , PCT- " + (d.primaryCirculationPct || "Not documented") + " ,Long bone deformity- " + (d.primaryCirculationDeformity || "Not documented") + " ,FAST- " + (d.primaryCirculationFast || "Not documented") + " ,Interventions- " + (d.primaryCirculationInterventions || "Not documented") + ".<br/><br/>");
+  parts.push("<strong>Breathing</strong> \u2192 " + (d.primaryBreathing ? "Findings- " + d.primaryBreathing + " ," : "") + "Work of breathing- " +(d.primaryBreathingWork || "Not documented") + " ,Air entry- " + (d.primaryBreathingAirEntry || "Not documented") + " ,CCT- " + (d.primaryBreathingCct || "Not documented") + " ,Subcutaneous emphysema- " + (d.primaryBreathingSubcut || "Not documented") + " ,EFAST- " + (d.primaryBreathingEfast || "Not documented") + " ,Intervention- " + (d.primaryBreathingIntervention || "Not documented") + ".<br/><br/>");
+  parts.push("<strong>Circulation</strong> \u2192 " + (d.primaryCirculation ? "Findings- " + d.primaryCirculation + " ," : "") + "CRT- " +(d.primaryCirculationCrt || "Not documented") + " , Distended Neck Veins- " + (d.primaryCirculationDnv || "Not documented") + " , PCT- " + (d.primaryCirculationPct || "Not documented") + " ,Long bone deformity- " + (d.primaryCirculationDeformity || "Not documented") + " ,FAST- " + (d.primaryCirculationFast || "Not documented") + " ,Interventions- " + (d.primaryCirculationInterventions || "Not documented") + ".<br/><br/>");
   parts.push("<strong>Disability</strong> \u2192 AVPU/GCS- " + (d.primaryDisabilityAvpuGcs || "Not documented") + " ,Pupils- " + (d.primaryDisabilityPupils || "Not documented") + " ,GRBS- " + (d.primaryDisabilityGrbs || "Not documented") + "<br/><br/>");
   parts.push("<strong>Exposure</strong> \u2192 Temp- " + (d.primaryExposureTemp || "Not documented") + " | Trauma-Logroll- " + (d.primaryExposureTrauma || "Not documented") + "<br/><br/>");
   parts.push("<strong>Secondary Assesment:</strong><br/><br/>");

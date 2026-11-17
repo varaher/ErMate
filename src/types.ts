@@ -443,6 +443,7 @@ export interface DischargeInfo {
   primaryBreathingSubcut?: string;
   primaryBreathingEfast?: string;
   primaryBreathingIntervention?: string;
+  primaryCirculation?: string;
   primaryCirculationCrt?: string;
   primaryCirculationDnv?: string;
   primaryCirculationPct?: string;

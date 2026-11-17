@@ -1921,36 +1921,38 @@ app.post("/api/scribe-extract", requireAuth, meterCredits("scribe_extract", () =
           grbs: ext.vitals?.grbs || null,
           painScore: ext.vitals?.pain || null
         },
-        sampleHistory: ext.sampleHistory || {
+         sampleHistory: ext.sampleHistory || {
           symptoms: refineSymptomsText(ext.symptoms, ext.chiefComplaint, ext.hpi, dictation),
-          allergies: ext.allergies || "Not documented",
+          allergies: ext.allergies || "",
           medications: medPmh.medications,
           pastHistory: medPmh.pastHistory,
           lastMeal: ext.lastMeal || "",
           events: refineEventsText(ext.events, ext.hpi, ext.chiefComplaint, dictation)
         },
-        primaryAssessment: {
+       primaryAssessment: {
           airway: ext.airway || (abcdeNormal ? EXAM_DEFAULTS.airway : null),
-          airwayStatus: (ext.airway || abcdeNormal) ? "Normal" : "Not documented",
+          airwayStatus: (ext.airway || abcdeNormal) ? "Normal" : "",
           breathing: ext.breathing || (abcdeNormal ? EXAM_DEFAULTS.respiratoryExamination : null),
-          breathingStatus: (ext.breathing || abcdeNormal) ? "Normal" : "Not documented",
+          breathingStatus: (ext.breathing || abcdeNormal) ? "Normal" : "",
           circulation: ext.circulation || (abcdeNormal ? EXAM_DEFAULTS.cvsExamination : null),
-          circulationStatus: (ext.circulation || abcdeNormal) ? "Normal" : "Not documented",
+          circulationStatus: (ext.circulation || abcdeNormal) ? "Normal" : "",
           // GCS never embedded here — only qualitative pupil/motor text
           // is gated by abcdeNormal; GCS itself stays in vitals only.
           disability: ext.disability || (abcdeNormal ? `Pupils equal & reactive. ${EXAM_DEFAULTS.cnsExamination}` : null),
-          disabilityStatus: (ext.disability || abcdeNormal) ? "Normal" : "Not documented",
+          disabilityStatus: (ext.disability || abcdeNormal) ? "Normal" : "",
           exposure: ext.exposure || (abcdeNormal ? "No obvious external injuries, rash, or deformities. Normothermic." : null),
-          exposureStatus: (ext.exposure || abcdeNormal) ? "Normal" : "Not documented"
+          exposureStatus: (ext.exposure || abcdeNormal) ? "Normal" : ""
         },
-        secondaryAssessment: [
-          `General: ${ext.generalExamination || (systemicNormal ? EXAM_DEFAULTS.generalExamination : "Not documented")}`,
-          `CVS: ${ext.cvsExamination || (systemicNormal ? EXAM_DEFAULTS.cvsExamination : "Not documented")}`,
-          `RS: ${ext.respiratoryExamination || (systemicNormal ? EXAM_DEFAULTS.respiratoryExamination : "Not documented")}`,
-          `Abdomen: ${ext.abdomenExamination || (systemicNormal ? EXAM_DEFAULTS.abdomenExamination : "Not documented")}`,
-          `CNS: ${ext.cnsExamination || (systemicNormal ? EXAM_DEFAULTS.cnsExamination : "Not documented")}`,
-          `Psych: ${ext.psychologicalAssessment || (systemicNormal ? EXAM_DEFAULTS.psychologicalAssessment : "Not documented")}`
-        ].join("\n"),
+        // Only systems the doctor dictated (or said were normal). An undictated system is left out,
+        // never saved as the words "Not documented"; the screens show that label themselves.
+        secondaryAssessment: ([
+          ["General", ext.generalExamination || (systemicNormal ? EXAM_DEFAULTS.generalExamination : "")],
+          ["CVS", ext.cvsExamination || (systemicNormal ? EXAM_DEFAULTS.cvsExamination : "")],
+          ["RS", ext.respiratoryExamination || (systemicNormal ? EXAM_DEFAULTS.respiratoryExamination : "")],
+          ["Abdomen", ext.abdomenExamination || (systemicNormal ? EXAM_DEFAULTS.abdomenExamination : "")],
+          ["CNS", ext.cnsExamination || (systemicNormal ? EXAM_DEFAULTS.cnsExamination : "")],
+          ["Psych", ext.psychologicalAssessment || (systemicNormal ? EXAM_DEFAULTS.psychologicalAssessment : "")],
+        ] as [string, string][]).filter(([, v]) => v).map(([k, v]) => `${k}: ${v}`).join("\n"),
         progressNotes: Array.isArray(ext.treatment) ? ext.treatment.join("\n") : (ext.treatment || ""),
         rawExtracted: ext
       };
