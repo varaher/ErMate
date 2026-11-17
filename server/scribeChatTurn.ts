@@ -1147,10 +1147,54 @@ export function isClinicianStatedDifferential(candidate: string, rawInputText: s
   }
 
   return false;
-}
 
-function transcriptHasExplicitGcsComponent(text: string, component: "e" | "v" | "m"): boolean {
-  if (!text) return false;
+}
+ 
+// Speech-to-text often writes numbers as words ("GCS fifteen", "E four V five M six").
+const SPOKEN_NUMBERS: Record<string, string> = {
+  one: "1", two: "2", three: "3", four: "4", five: "5", six: "6", seven: "7", eight: "8",
+  nine: "9", ten: "10", eleven: "11", twelve: "12", thirteen: "13", fourteen: "14", fifteen: "15",
+};
+function spokenNumbersToDigits(text: string): string {
+  return (text || "").replace(/\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen)\b/gi, (w) => SPOKEN_NUMBERS[w.toLowerCase()]);
+}
+ 
+// A component can also be dictated in words ("eyes opening spontaneously"). Each phrase maps to one score.
+const GCS_DESCRIPTORS: Record<"e" | "v" | "m", { re: RegExp; score: number }[]> = {
+  e: [
+    { re: /\b(?:eyes?|eye\s+opening)\s+(?:are\s+|is\s+)?(?:open(?:ing|s)?\s+)?spontaneous(?:ly)?\b|\bspontaneous(?:ly)?\s+eye\s+opening\b|\bopens?\s+(?:his\s+|her\s+)?eyes\s+spontaneously\b/i, score: 4 },
+    { re: /\beyes?\s+(?:open(?:ing|s)?\s+)?to\s+(?:voice|speech|sound|verbal\s+command)\b/i, score: 3 },
+    { re: /\beyes?\s+(?:open(?:ing|s)?\s+)?to\s+(?:pain|pressure|painful\s+stimul\w+)\b/i, score: 2 },
+    { re: /\b(?:no\s+eye\s+opening|eyes?\s+(?:do\s+not|don'?t|not)\s+open|eyes?\s+closed\s+to\s+(?:all\s+)?stimul\w+)\b/i, score: 1 },
+  ],
+  v: [
+    { re: /\b(?:verbal\s+response\s+)?(?:is\s+|are\s+)?oriented\b|\bwell\s+oriented\b/i, score: 5 },
+    { re: /\bconfused\s+(?:speech|conversation|verbal)\b|\bverbal\s+(?:response\s+)?confused\b/i, score: 4 },
+    { re: /\binappropriate\s+words\b/i, score: 3 },
+    { re: /\bincomprehensible\s+(?:sounds|words|speech)\b/i, score: 2 },
+    { re: /\bno\s+verbal\s+response\b|\bnon[-\s]?verbal\b/i, score: 1 },
+  ],
+  m: [
+    { re: /\bobey(?:s|ing|ed)?\b/i, score: 6 },
+    { re: /\blocali[sz](?:es|ing|ed)?\s+(?:to\s+)?pain\b|\blocali[sz](?:es|ing)\b/i, score: 5 },
+    { re: /\bwithdraw(?:s|al|ing)?\s+(?:from\s+|to\s+)?pain\b|\bnormal\s+flexion\b/i, score: 4 },
+    { re: /\babnormal\s+flexion\b|\bdecorticate\b/i, score: 3 },
+    { re: /\b(?:abnormal\s+)?extension\s+to\s+pain\b|\bdecerebrate\b/i, score: 2 },
+    { re: /\bno\s+motor\s+response\b/i, score: 1 },
+  ],
+};
+ 
+function gcsDescriptorScore(text: string, component: "e" | "v" | "m"): number | null {
+  for (const d of GCS_DESCRIPTORS[component]) {
+    if (d.re.test(text || "")) return d.score;
+  }
+  return null;
+}
+ 
+function transcriptHasExplicitGcsComponent(rawText: string, component: "e" | "v" | "m"): boolean {
+  if (!rawText) return false;
+  const text = spokenNumbersToDigits(rawText);
+  if (gcsDescriptorScore(rawText, component) !== null) return true;
   switch (component) {
     case "e":
       return /\be\s*[:=-]?\s*([1-4])(?=\D|$)/i.test(text) || /e([1-4])(?=[vm\D]|$)/i.test(text) || /\beye(?:s)?\s*(?:opening|response)?\s*[:=-]?\s*([1-4])\b/i.test(text);
@@ -1160,33 +1204,48 @@ function transcriptHasExplicitGcsComponent(text: string, component: "e" | "v" | 
       return /\bm\s*[:=-]?\s*([1-6])(?=\D|$)/i.test(text) || /m([1-6])(?=[ev\D]|$)/i.test(text) || /\bmotor\s*(?:response)?\s*[:=-]?\s*([1-6])\b/i.test(text);
   }
 }
-
-function isGcsComponentAllowed(k: string, rawInputText: string): boolean {
+ 
+// Same check, but when the doctor spoke in words only, the score must match what the words mean.
+function transcriptGcsComponentMatches(rawText: string, component: "e" | "v" | "m", value: any): boolean {
+  if (!transcriptHasExplicitGcsComponent(rawText, component)) return false;
+  const text = spokenNumbersToDigits(rawText);
+  const hasDigits =
+    component === "e"
+      ? /\be\s*[:=-]?\s*[1-4](?=\D|$)|e[1-4](?=[vm\D]|$)|\beye(?:s)?\s*(?:opening|response)?\s*[:=-]?\s*[1-4]\b/i.test(text)
+      : component === "v"
+      ? /\bv\s*[:=-]?\s*[1-5](?=\D|$)|v[1-5](?=[em\D]|$)|\bverbal\s*(?:response)?\s*[:=-]?\s*[1-5]\b/i.test(text)
+      : /\bm\s*[:=-]?\s*[1-6](?=\D|$)|m[1-6](?=[ev\D]|$)|\bmotor\s*(?:response)?\s*[:=-]?\s*[1-6]\b/i.test(text);
+  if (hasDigits) return true;
+  const score = gcsDescriptorScore(rawText, component);
+  const n = parseInt(String(value).replace(/^[evm]\s*[:=-]?\s*/i, "").trim(), 10);
+  return score !== null && Number.isFinite(n) && n === score;
+}
+ 
+function isGcsComponentAllowed(k: string, rawInputText: string, value?: any): boolean {
   const key = k.toLowerCase();
   if (key === "gcs") {
     return transcriptHasExplicitTotalGcs(rawInputText);
   }
-  if (key === "gcs_e") {
-    return transcriptHasExplicitGcsComponent(rawInputText, "e");
-  }
-  if (key === "gcs_v") {
-    return transcriptHasExplicitGcsComponent(rawInputText, "v");
-  }
-  if (key === "gcs_m") {
-    return transcriptHasExplicitGcsComponent(rawInputText, "m");
-  }
+  if (key === "gcs_e") return transcriptGcsComponentMatches(rawInputText, "e", value);
+  if (key === "gcs_v") return transcriptGcsComponentMatches(rawInputText, "v", value);
+  if (key === "gcs_m") return transcriptGcsComponentMatches(rawInputText, "m", value);
   return true;
 }
-
-function transcriptHasExplicitTotalGcs(text: string): boolean {
-  if (!text) return false;
-
+ 
+function transcriptHasExplicitTotalGcs(rawText: string): boolean {
+  if (!rawText) return false;
+  const text = spokenNumbersToDigits(rawText);
+ 
   // ErMate documentation policy: Total GCS is retained ONLY when an explicit total was dictated.
   // Must be tied syntactically to GCS / Glasgow / total wording.
   // Numbers belonging to limb power (e.g. 5/5, 0/5), BP (160/90), RR (18), age (14yo),
   // glucose, or component-only strings (E3V4M5) must NEVER validate a GCS total.
-  return /\b(?:total\s+gcs|gcs\s+total|gcs\s+score|glasgow\s+(?:coma\s+)?(?:scale|score)|gcs)\s*(?:is|of|[:=-])?\s*(?:total\s*)?(?:[3-9]|1[0-5])\b/i.test(text) ||
+  // Spoken forms accepted: "GCS 15", "GCS is fifteen", "GCS at 15", "Glasgow 15", "GCS came to 14", "GCS 15 by 15".
+  const label = String.raw`(?:total\s+gcs|gcs\s+total|gcs\s+score|glasgow\s+(?:coma\s+)?(?:scale|score)|glasgow|g\.?c\.?s\.?)`;
+  const filler = String.raw`(?:\s*(?:is|are|was|of|at|to|equals?|=|:|-|came\s+(?:to|out\s+as)|score\s+of|score\s+is)\b)*\s*[:=-]?\s*(?:total\s*)?`;
+  return new RegExp(String.raw`\b${label}${filler}(?:[3-9]|1[0-5])\b(?!\s*(?:mm|mg|%)\b)`, "i").test(text) ||
     /\b(?:gcs\s+)?total\s+(?:[3-9]|1[0-5])\s*(?:out\s+of|\/)\s*15\b/i.test(text);
+}
 }
 
 function transcriptGcsEyeOnly(text: string): string | null {
@@ -1444,20 +1503,20 @@ export function mapExtractionToCaseSheetFields(
     for (const [k, v] of Object.entries(raw.vitals)) {
       if (v !== null && v !== undefined && v !== "" && String(v).toLowerCase() !== "unknown" && String(v).toLowerCase() !== "n/a") {
         // SAFETY: deterministic GCS guard.
-        // Never accept an inferred total GCS or unstated subcomponents.
+       // Never accept an inferred total GCS or unstated subcomponents.
         // Example: transcript says only "GCS E4" -> gcs, gcs_v, gcs_m are dropped, only gcs_e survives.
-        if (!isGcsComponentAllowed(k, rawInputText)) {
+        if (!isGcsComponentAllowed(k, rawInputText, v)) {
           continue;
         }
 
         if (k === "gcs_e" || k === "gcs_v" || k === "gcs_m") {
           const num = String(v).replace(/^[evm]\s*[:=-]?\s*/i, "").trim();
-          filteredVitals[k] = num;
+        filteredVitals[k] = num;
         } else {
-          filteredVitals[k] = v;
+          // Always text: the screens call .trim() on vitals, and a number from the model would crash them.
+          filteredVitals[k] = typeof v === "number" ? String(v) : v;
         }
         hasRealVitals = true;
-      }
     }
 
     // Deterministic GCS total from explicit E/V/M components (Patch C1)
