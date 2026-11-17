@@ -113,7 +113,7 @@ export const TOURS: Record<TourId, CoachStep[]> = {
     { id: "menu", target: { sel: '[data-testid="more-side-nav"], [data-testid^="more-landing-"]' }, title: "Everything else", body: "Plan and credits, profile, notifications and Clinical Tools such as Log Book and Analytics live here." },
     { id: "team", v: 3, feature: "teams", target: { sel: '[data-coach="more-team"]' }, title: "Your ER team", body: "Open Team to edit your profile, hospital, team and shift timings, and to share the rota with your colleagues." },
     { id: "team-start", v: 4, feature: "team-start", target: { sel: '[data-coach="more-team"]' }, title: "Rota needs a team", body: "The rota, shift timings and team handover need a team. Open Team: the department lead taps Create team, colleagues tap Join with link. Your own cases stay private either way." },
-    { id: "rota-sync", v: 5, feature: "rota-sync", target: { sel: '[data-coach="more-team"]' }, title: "Send the rota", body: "Team leads: in Team, tap Sync Google Calendar, pick your rota sheet and send. Each doctor gets a calendar email, an ErMate notice, and a reminder 30 minutes before each shift while ErMate is open." },
+    { id: "rota-sync", v: 5, feature: "rota-sync", target: { sel: '[data-coach="more-team"]' }, title: "Send the rota", body: Team leads: in Team, tap Sync Google Calendar, then upload your rota (Excel, CSV, PDF or a photo) or use Google Sheets. Each doctor gets an ErMate notice and a reminder 30 minutes before each shift while ErMate is open.
     { id: "replay", target: { sel: '[data-testid="take-app-tour"]' }, title: "Replay the walkthrough", body: "Tap here to see all the page tips again." },
   ],
 };

@@ -54,7 +54,7 @@ t("login hint set", ws.includes("login_hint"));
 t("scope check present", ws.includes("tokeninfo"));
 t("old vague error gone", !ws.includes('throw new Error("Failed to fetch spreadsheets")'));
 const modal = read("src/components/shared/WorkspaceRotaSyncModal.tsx");
-t("guide first step", modal.includes('useState<Step>("guide")') && !modal.includes("useEffect"));
+("guide first step", modal.includes('useState<Step>("choose")') && modal.includes('setStep("guide")') && !modal.includes("useEffect"));
 t("sample copy button", modal.includes("copySample"));
 t("counts only real invites", modal.includes("if (out.success) invites++"));
 t("publishes to ErMate", modal.includes("publishRota("));

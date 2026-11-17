@@ -3450,8 +3450,11 @@ app.post("/api/handover/compile-sheet", requireAuth, meterCredits("handover_comp
 // ==========================================
 app.post("/api/parse-rota", requireAuth, meterCredits("parse_rota", () => firestoreAdmin), async (req: AuthRequest, res) => {
   try {
-    const { csvData, monthYear } = req.body;
-    if (!csvData) return res.status(400).json({ error: "Missing spreadsheet data" });
+    const { csvData, monthYear, image, mimeType } = req.body;
+    // Text from a sheet or CSV, OR a photo / PDF of the rota (base64). Staff rota only, no patient data.
+    const imageOk = typeof image === "string" && image.length > 0 && image.length < 8_000_000 &&
+      ["image/jpeg", "image/png", "image/webp", "application/pdf"].includes(String(mimeType || ""));
+    if (!csvData && !imageOk) return res.status(400).json({ error: "Missing spreadsheet data" });
 
     const ai = getAI();
     const prompt = `
@@ -3470,15 +3473,16 @@ app.post("/api/parse-rota", requireAuth, meterCredits("parse_rota", () => firest
       Return a JSON array of these shift objects under a 'shifts' key.
       Ensure it is purely valid JSON without any markdown formatting.
       
-      ROTA DATA:
-      ${csvData.substring(0, 8000)}
+    ROTA DATA:
+      ${csvData ? String(csvData).substring(0, 12000) : "(The rota is in the attached image or PDF. Read every row of the table.)"}
     `;
     
     const result = await ai.models.generateContent({
       model: "gemini-2.5-flash",
-      contents: prompt,
+    contents: imageOk ? [{ inlineData: { mimeType: String(mimeType), data: image } }, { text: prompt }] : prompt,
       config: {
-        responseMimeType: "application/json"
+        responseMimeType: "application/json",
+        temperature: 0
       }
     });
     

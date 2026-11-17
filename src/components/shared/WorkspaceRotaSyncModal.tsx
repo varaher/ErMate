@@ -1,10 +1,11 @@
-import React, { useState } from "react";
-import { X, FileSpreadsheet, Loader2, CalendarCheck, AlertCircle, CheckCircle2, Copy } from "lucide-react";
+import React, { useRef, useState } from "react";
+import { X, FileSpreadsheet, Loader2, CalendarCheck, AlertCircle, CheckCircle2, Copy, Upload } from "lucide-react";
 import { authenticateGoogleWorkspace, getRecentSpreadsheets, getSpreadsheetData, WorkspaceError } from "../../services/googleWorkspace";
 import { createGoogleCalendarEvent } from "../../services/googleCalendar";
 import { authenticatedFetch } from "../../services/authenticatedFetch";
 import { publishRota } from "../../services/rotashifts";
 import { normalizeShift, ROTA_PING_LEAD_MIN, SAMPLE_ROTA_TSV, RotaShift } from "../../lib/rotasync";
+import { classifyRotaFile, rotaFileProblem, xlsxToRows, csvToRows, rowsToRotaText } from "../../lib/rotaupload";
 
 interface Props {
   onClose: () => void;
@@ -12,7 +13,7 @@ interface Props {
   teamMembers: { email: string; name: string }[];
 }
 
-type Step = "guide" | "auth" | "select" | "parsing" | "review" | "syncing" | "done";
+type Step = "choose" | "guide" | "auth" | "select" | "parsing" | "review" | "syncing" | "done";
 interface Row { shift: any; matchedEmail: string | null; matchedName: string | null; clean: RotaShift | null }
 interface Problem { title: string; body: string }
 
@@ -25,7 +26,9 @@ export function WorkspaceRotaSyncModal({ onClose, onSuccess, teamMembers }: Prop
   const [loading, setLoading] = useState(false);
   const [spreadsheets, setSpreadsheets] = useState<any[]>([]);
   const [problem, setProblem] = useState<Problem | null>(null);
-  const [step, setStep] = useState<Step>("guide");
+  const [step, setStep] = useState<Step>("choose");
+  const [source, setSource] = useState<"upload" | "google">("google");
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [progress, setProgress] = useState(0);
   const [total, setTotal] = useState(0);
   const [validatedRows, setValidatedRows] = useState<Row[]>([]);
@@ -34,6 +37,7 @@ export function WorkspaceRotaSyncModal({ onClose, onSuccess, teamMembers }: Prop
   const [result, setResult] = useState<{ invites: number; attempted: number; saved: number; doctors: number; calendarNote: string; saveNote: string } | null>(null);
 
   const connect = async () => {
+    setSource("google");
     setStep("auth");
     setLoading(true);
     setProblem(null);
@@ -60,6 +64,29 @@ export function WorkspaceRotaSyncModal({ onClose, onSuccess, teamMembers }: Prop
     }
   };
 
+  // Reads the rota (text from a sheet / CSV, or a photo / PDF) and builds the review list.
+  const runParse = async (payload: { csvData?: string; image?: string; mimeType?: string }) => {
+    const parseRes = await authenticatedFetch("/api/parse-rota", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...payload, monthYear: new Date().toLocaleDateString() })
+    });
+    const parseData = await parseRes.json().catch(() => ({}));
+    if (!parseData.success) throw new Error(parseData.error || "ErMate could not read that rota. Check it has the six columns and try again.");
+
+    const shifts = parseData.shifts || [];
+    if (shifts.length === 0) throw new Error("No shifts were found. Check the columns: Date, Shift, Doctor, Email, Start, End.");
+
+    // An AI-read email is never trusted on its own: it must exactly match a real team member.
+    const rosterByEmail = new Map(teamMembers.map(m => [m.email.toLowerCase().trim(), m.name]));
+    const validated: Row[] = shifts.map((shift: any) => {
+      const rawEmail = (shift.doctorEmail || "").toLowerCase().trim();
+      const matchedName = rosterByEmail.get(rawEmail) || null;
+      return { shift, matchedEmail: matchedName ? rawEmail : null, matchedName, clean: normalizeShift(shift) };
+    });
+    setValidatedRows(validated);
+  };
+
   const handleSelectFile = async (fileId: string) => {
     setLoading(true);
     setProblem(null);
@@ -68,29 +95,7 @@ export function WorkspaceRotaSyncModal({ onClose, onSuccess, teamMembers }: Prop
       const token = await authenticateGoogleWorkspace();
       const rows = await getSpreadsheetData(token, fileId);
       if (!rows.length) throw new Error("That sheet is empty. Add your rota on the first tab and try again.");
-
-      const csvData = rows.map((r: any[]) => r.join(",")).join("\n");
-
-      const parseRes = await authenticatedFetch("/api/parse-rota", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ csvData, monthYear: new Date().toLocaleDateString() })
-      });
-      const parseData = await parseRes.json().catch(() => ({}));
-      if (!parseData.success) throw new Error(parseData.error || "ErMate could not read that sheet. Check it has the six columns and try again.");
-
-      const shifts = parseData.shifts || [];
-      if (shifts.length === 0) throw new Error("No shifts were found. Check the columns: Date, Shift, Doctor, Email, Start, End.");
-
-      // An AI-read email is never trusted on its own: it must exactly match a real team member.
-      const rosterByEmail = new Map(teamMembers.map(m => [m.email.toLowerCase().trim(), m.name]));
-      const validated: Row[] = shifts.map((shift: any) => {
-        const rawEmail = (shift.doctorEmail || "").toLowerCase().trim();
-        const matchedName = rosterByEmail.get(rawEmail) || null;
-        return { shift, matchedEmail: matchedName ? rawEmail : null, matchedName, clean: normalizeShift(shift) };
-      });
-
-      setValidatedRows(validated);
+      await runParse({ csvData: rows.map((r: any[]) => r.join(",")).join("\n") });
       setConfirmedToken(token);
       setStep("review");
     } catch (err: any) {
@@ -101,10 +106,59 @@ export function WorkspaceRotaSyncModal({ onClose, onSuccess, teamMembers }: Prop
     }
   };
 
+  // Photo: shrink to at most 1800 px and re-save as JPEG, so a phone photo stays small and readable.
+  const photoToBase64 = async (file: File): Promise<string> => {
+    const bmp = await createImageBitmap(file);
+    const scale = Math.min(1, 1800 / Math.max(bmp.width, bmp.height));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(bmp.width * scale);
+    canvas.height = Math.round(bmp.height * scale);
+    canvas.getContext("2d")!.drawImage(bmp, 0, 0, canvas.width, canvas.height);
+    const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
+    return dataUrl.split(",")[1] || "";
+  };
+
+  const fileToBase64 = (file: File): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(String(r.result).split(",")[1] || "");
+      r.onerror = () => reject(new Error("Could not read that file."));
+      r.readAsDataURL(file);
+    });
+
+  const handleUpload = async (file: File) => {
+    setProblem(null);
+    const kind = classifyRotaFile(file.name, file.type);
+    const bad = rotaFileProblem(kind, file.size);
+    if (bad) { setProblem(bad); return; }
+    setSource("upload");
+    setLoading(true);
+    setStep("parsing");
+    try {
+      if (kind === "xlsx" || kind === "csv") {
+        const rows = kind === "xlsx" ? await xlsxToRows(new Uint8Array(await file.arrayBuffer())) : csvToRows(await file.text());
+        if (rows.length === 0) throw new Error("No rows were found. Put the rota on the first tab, with the column names in the first row.");
+        await runParse({ csvData: rowsToRotaText(rows) });
+      } else if (kind === "pdf") {
+        await runParse({ image: await fileToBase64(file), mimeType: "application/pdf" });
+      } else {
+        let b64 = "";
+        try { b64 = await photoToBase64(file); } catch { throw new Error("That photo could not be opened. Save it as a JPEG or PNG and try again."); }
+        await runParse({ image: b64, mimeType: "image/jpeg" });
+      }
+      setStep("review");
+    } catch (err: any) {
+      setProblem(toProblem(err, "Could not read that file."));
+      setStep("choose");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const sendable = (r: Row) => !!r.matchedEmail && !!r.clean;
 
   const handleConfirmSync = async () => {
-    if (!confirmedToken) return;
+    if (source === "google" && !confirmedToken) return;
     setStep("syncing");
     const rowsToSync = validatedRows.filter(sendable);
     setTotal(rowsToSync.length);
@@ -113,6 +167,7 @@ export function WorkspaceRotaSyncModal({ onClose, onSuccess, teamMembers }: Prop
     let invites = 0;
     let firstCalendarError = "";
     for (const row of rowsToSync) {
+      if (source !== "google" || !confirmedToken) { setProgress(p => p + 1); continue; }
       const clean = row.clean as RotaShift;
       const out = await createGoogleCalendarEvent(confirmedToken, {
         summary: `ER Shift: ${clean.shiftType} - ${row.matchedName}`,
@@ -163,7 +218,7 @@ export function WorkspaceRotaSyncModal({ onClose, onSuccess, teamMembers }: Prop
             </div>
             <div>
               <h2 className="text-lg font-bold text-slate-800 dark:text-white">Workspace Rota Sync</h2>
-              <p className="text-xs text-slate-500 dark:text-slate-400">Send your rota as calendar invites and ErMate reminders</p>
+              <p className="text-xs text-slate-500 dark:text-slate-400">Send your rota. Doctors get ErMate reminders before each shift</p>
             </div>
           </div>
           <button onClick={onClose} aria-label="Close" className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full text-slate-400 transition-colors">
@@ -182,8 +237,57 @@ export function WorkspaceRotaSyncModal({ onClose, onSuccess, teamMembers }: Prop
             </div>
           )}
 
+          {step === "choose" && (
+            <div className="space-y-3">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".xlsx,.xls,.csv,.txt,.pdf,image/*"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  e.target.value = "";
+                  if (f) handleUpload(f);
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="w-full px-4 py-3 text-sm font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl transition-colors flex items-center justify-center gap-2"
+              >
+                <Upload className="w-4 h-4" />
+                Upload rota file
+              </button>
+              <p className="text-xs text-center text-slate-500 dark:text-slate-400">
+                Excel (.xlsx), CSV, PDF or a clear photo. No Google sign-in needed. Each row needs: date, shift, doctor, email, start and end time. A night shift that ends the next morning (20:00 to 08:00) is understood.
+              </p>
+              <button
+                type="button"
+                onClick={copySample}
+                className="mx-auto flex items-center gap-1.5 text-xs font-bold text-purple-700 dark:text-purple-300 hover:underline"
+              >
+                <Copy className="w-3.5 h-3.5" />
+                {copied ? "Copied. Paste it into a new sheet." : "Copy sample rota to paste into a sheet"}
+              </button>
+              <p className="text-center text-xs text-slate-400">or</p>
+              <button
+                type="button"
+                onClick={() => { setProblem(null); setStep("guide"); }}
+                className="w-full px-4 py-2.5 text-sm font-bold border border-slate-200 dark:border-slate-700 text-purple-700 dark:text-purple-300 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800"
+              >
+                Use Google Sheets and send calendar invites
+              </button>
+              <p className="text-xs text-center text-slate-500 dark:text-slate-400">
+                Needs Google permission. Google may show a warning until ErMate is verified.
+              </p>
+            </div>
+          )}
+
           {step === "guide" && (
             <div className="space-y-4">
+              <button type="button" onClick={() => { setProblem(null); setStep("choose"); }} className="text-xs font-bold text-slate-500 hover:underline">
+                ← Back
+              </button>
               <ol className="list-decimal pl-5 space-y-2 text-sm text-slate-700 dark:text-slate-200">
                 <li>Keep your rota in a <b>Google Sheet</b>. An Excel file in Drive will not show up. Open it in Drive and choose File, Save as Google Sheets.</li>
                 <li>Use these columns on the <b>first tab</b>. ErMate reads the first 100 rows.</li>
@@ -290,7 +394,9 @@ export function WorkspaceRotaSyncModal({ onClose, onSuccess, teamMembers }: Prop
                 </p>
               )}
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                {sendCount} shift{sendCount === 1 ? "" : "s"} for {doctorCount} doctor{doctorCount === 1 ? "" : "s"} will get a Google Calendar email and an ErMate reminder {ROTA_PING_LEAD_MIN} minutes before each shift.
+                {source === "google"
+                  ? <>{sendCount} shift{sendCount === 1 ? "" : "s"} for {doctorCount} doctor{doctorCount === 1 ? "" : "s"} will get a Google Calendar email and an ErMate reminder {ROTA_PING_LEAD_MIN} minutes before each shift.</>
+                  : <>{sendCount} shift{sendCount === 1 ? "" : "s"} for {doctorCount} doctor{doctorCount === 1 ? "" : "s"} will get an ErMate notice and a reminder {ROTA_PING_LEAD_MIN} minutes before each shift.</>}
               </p>
               <div className="flex justify-end gap-2 pt-2">
                 <button
@@ -314,7 +420,7 @@ export function WorkspaceRotaSyncModal({ onClose, onSuccess, teamMembers }: Prop
             <div className="py-12 flex flex-col items-center justify-center text-center">
               <Loader2 className="w-10 h-10 text-emerald-500 animate-spin mb-6" />
               <h3 className="text-base font-bold text-slate-800 dark:text-white mb-2">
-                {step === "parsing" ? "Reading your rota..." : "Sending invites"}
+                {step === "parsing" ? "Reading your rota..." : source === "google" ? "Sending invites" : "Sending to your team"}
               </h3>
               {step === "syncing" && total > 0 && (
                 <div className="w-full max-w-xs">
@@ -340,7 +446,7 @@ export function WorkspaceRotaSyncModal({ onClose, onSuccess, teamMembers }: Prop
                   ) : (
                     <p className="font-bold">No ErMate reminders were saved.</p>
                   )}
-                  <p className="mt-1">Google Calendar invites: {result.invites} of {result.attempted} sent.</p>
+                  {source === "google" && <p className="mt-1">Google Calendar invites: {result.invites} of {result.attempted} sent.</p>}
                 </div>
               </div>
               {result.calendarNote && (
@@ -350,7 +456,9 @@ export function WorkspaceRotaSyncModal({ onClose, onSuccess, teamMembers }: Prop
                 <p className="text-xs text-rose-700 dark:text-rose-300">{result.saveNote}</p>
               )}
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                If you change the rota later, send it again. ErMate updates the shifts. Google Calendar sends a new invite for each shift, so delete the old events first.
+                {source === "google"
+                  ? "If you change the rota later, send it again. ErMate updates the shifts. Google Calendar sends a new invite for each shift, so delete the old events first."
+                  : "If you change the rota later, upload it again. ErMate updates the shifts, so doctors do not get duplicates."}
               </p>
               <button onClick={finish} className="w-full px-4 py-2.5 text-sm font-bold border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800">
                 Done
