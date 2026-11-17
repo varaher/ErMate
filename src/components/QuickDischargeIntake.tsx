@@ -6,7 +6,6 @@ import VoiceRecorder from "./shared/VoiceRecorder";
 import { generateInternalCaseId } from "../utils/caseIdentity";
 import { authenticatedFetch } from "../services/authenticatedFetch";
 import { setCriticalFlag } from "../utils/criticalOps";
-import { buildQuickCaseFieldsFromSheet } from "../mate/quicksheetcase";
 
 /**
  * QuickDischargeIntake.tsx
@@ -169,16 +168,6 @@ export default function QuickDischargeIntake({
       return;
     }
 
-       if (keepSource && rawText.length > 20000) {
-      setError(
-        "This clinical record exceeds the current 20,000-character " +
-        "import limit. No content has been discarded. " +
-        "Please divide the document into sections before importing."
-      );
-      setStatus("error");
-      return;
-    }
-
     setStatus("processing");
     setError(null);
 
@@ -194,130 +183,66 @@ export default function QuickDischargeIntake({
         }),
       });
 
-          if (!response.ok) {
-        throw new Error(
-          `Clinical extraction failed (HTTP ${response.status}).`
-        );
-      }
-
       const resData = await response.json();
-
-      if (!resData.success && !resData.data && !resData.extracted) {
+      if (!resData.success && !resData.data) {
         throw new Error(resData.error || "Extraction failed.");
       }
 
       const ext = resData.data || resData.extracted || {};
-
-      const sheet = keepSource
-        ? buildQuickCaseFieldsFromSheet(rawText)
-        : null;
-
-      const sv = sheet?.found ? sheet : null;
-     
       const extractedCaseData: Partial<ClinicalCase> = {
         patient: {
           name: ext.patientName || "Unassigned Patient",
-          age: sv?.patient.age ?? ext.age ?? null,
-          gender: sv?.patient.gender || ext.gender || "Unknown",
+          age: typeof ext.age === "number" ? ext.age : parseInt(ext.age, 10) || null,
+          gender: ext.gender || "Male",
           uhid: generateUHID(),
-          presentingComplaint:
-            sv?.patient.presentingComplaint ||
-            ext.presentingComplaint ||
-            ext.chiefComplaint ||
-            "Not documented",
+          presentingComplaint: ext.presentingComplaint || ext.chiefComplaint || "Quick discharge intake",
           triageCategory: TriageCategory.P2,
           arrivalMode: ArrivalMode.WalkIn,
           dateOpened: new Date().toISOString(),
           isMlc: false as any,
           caseType: "Medical",
         },
-
         vitals: {
-          bp: toClinicalString(sv?.vitals.bp ?? ext.vitals?.bp),
-          hr: toClinicalString(sv?.vitals.hr ?? ext.vitals?.hr),
-          spo2: toClinicalString(sv?.vitals.spo2 ?? ext.vitals?.spo2),
-          rr: toClinicalString(sv?.vitals.rr ?? ext.vitals?.rr),
-          temp: toClinicalString(sv?.vitals.temp ?? ext.vitals?.temp),
-          gcs: toClinicalString(sv?.vitals.gcs ?? ext.vitals?.gcs),
-          gcs_e: toClinicalString(
-            sv?.vitals.gcs_e ?? ext.vitals?.gcs_e ?? ext.vitals?.gcsE
-          ),
-          gcs_v: toClinicalString(
-            sv?.vitals.gcs_v ?? ext.vitals?.gcs_v ?? ext.vitals?.gcsV
-          ),
-          gcs_m: toClinicalString(
-            sv?.vitals.gcs_m ?? ext.vitals?.gcs_m ?? ext.vitals?.gcsM
-          ),
-          grbs: toClinicalString(sv?.vitals.grbs ?? ext.vitals?.grbs),
+          bp: toClinicalString(ext.vitals?.bp),
+          hr: toClinicalString(ext.vitals?.hr),
+          spo2: toClinicalString(ext.vitals?.spo2),
+          rr: toClinicalString(ext.vitals?.rr),
+          temp: toClinicalString(ext.vitals?.temp),
+          gcs: toClinicalString(ext.vitals?.gcs),
+          gcs_e: toClinicalString(ext.vitals?.gcs_e ?? (ext.vitals as any)?.gcsE),
+          gcs_v: toClinicalString(ext.vitals?.gcs_v ?? (ext.vitals as any)?.gcsV),
+          gcs_m: toClinicalString(ext.vitals?.gcs_m ?? (ext.vitals as any)?.gcsM),
+          grbs: toClinicalString(ext.vitals?.grbs),
           avpu: toClinicalString(ext.vitals?.avpu),
           painScore: toClinicalString(ext.vitals?.painScore),
         },
-
         sampleHistory: {
-          symptoms:
-            sv?.sampleHistory.symptoms ||
-            ext.sampleHistory?.symptoms ||
-            "",
-          allergies:
-            sv?.sampleHistory.allergies ||
-            ext.sampleHistory?.allergies ||
-            "Not documented",
-          medications:
-            ext.sampleHistory?.medications || "Not documented",
-          pastHistory:
-            sv?.sampleHistory.pastHistory ||
-            ext.sampleHistory?.pastHistory ||
-            "Not documented",
+          symptoms: ext.sampleHistory?.symptoms || ext.presentingComplaint || "",
+          allergies: ext.sampleHistory?.allergies || ext.allergies || "Not documented",
+          medications: ext.sampleHistory?.medications || ext.medications || "Not documented",
+          pastHistory: ext.sampleHistory?.pastHistory || ext.pastHistory || "Not documented",
           lastMeal: ext.sampleHistory?.lastMeal || "Not documented",
           events: ext.sampleHistory?.events || "",
           socialHistory: "Not documented",
-          familyHistory:
-            sv?.sampleHistory.familyHistory || "Not documented",
-          psychiatricFlags: "Not documented",
-          ...(sv?.sampleHistory.hpi
-            ? { hpi: sv.sampleHistory.hpi }
-            : {}),
-          ...(sv?.sampleHistory.surgicalHistory
-            ? { surgicalHistory: sv.sampleHistory.surgicalHistory }
-            : {}),
-        } as any,
-
-        primaryAssessment: {
+          familyHistory: "Not documented",
+          psychiatricFlags: "None",
+        },
+        primaryAssessment: ext.primaryAssessment || {
           airway: "Not documented",
+          airwayStatus: "",
           breathing: "Not documented",
+          breathingStatus: "",
           circulation: "Not documented",
+          circulationStatus: "",
           disability: "Not documented",
+          disabilityStatus: "",
           exposure: "Not documented",
-          ...(ext.primaryAssessment || {}),
-          ...(sv?.primaryAssessment || {}),
-        } as any,
-
-        secondaryAssessment:
-          sv?.secondaryAssessment ||
-          (typeof ext.secondaryAssessment === "string"
-            ? ext.secondaryAssessment
-            : ""),
-
-        investigations:
-          sv?.investigations.length
-            ? sv.investigations
-            : ext.investigations || [],
-
-        differentials: sv?.differentialDiagnosis
-          ? [{
-              diagnosis: sv.differentialDiagnosis,
-              status: "POSSIBLE",
-              reasoning: "",
-              citations: [],
-              nextSteps: [],
-            }]
-          : ext.differentials || [],
-
-        progressNotes: keepSource
-          ? `External clinical record — source for review:\n${rawText}`
-          : ext.progressNotes || "",
+          exposureStatus: "",
+        },
+        secondaryAssessment: typeof ext.secondaryAssessment === "string" ? ext.secondaryAssessment : "",
+        // A pasted case sheet is kept as the source so the discharge draft can use its course and treatment.
+        progressNotes: ext.progressNotes || (keepSource ? "Source case sheet (pasted):\n" + rawText.slice(0, 6000) : ""),
       };
-
 
       const minimalCase = createQuickDischargeCase(
         extractedCaseData,
