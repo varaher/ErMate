@@ -28,7 +28,7 @@ export interface CoachStep {
   feature?: string;
 }
 
-export type TourId = "home" | "cases" | "handover" | "learn" | "more" | "scribe" | "protocols" | "icu" | "icunote" | "icucases" | "icuhandover" | "icurounds";
+export type TourId = "home" | "cases" | "handover" | "learn" | "more" | "scribe" | "protocols" | "icu" | "icunote" | "icucases" | "icuhandover" | "icurounds" | "icutrends";
 
 /** App tab id -> tour shown the first time that tab is opened. */
 export const TAB_TO_TOUR: Record<string, TourId> = {
@@ -86,15 +86,14 @@ export const TOURS: Record<TourId, CoachStep[]> = {
     { id: "edit-capture", v: 5, feature: "edit-capture", title: "Fix before you preview", body: "Under each dictation, tap Edit before preview. Correct anything heard wrongly, add what is missing, and add or remove drugs, labs and tests. The Discharge only tab adds course, medications and follow-up. Nothing is saved until you apply the preview." },
     { id: "mate-voice", v: 2, feature: "mate-voice", target: { sel: '[data-coach="mate-voice"]' }, title: "Hear replies spoken", body: "This speaker button makes ErMate read its replies aloud. It starts off. Tap it to turn on, tap again to turn off. Your choice is remembered on this device." },
   ],
-    icu: [
+  icu: [
     { id: "icu-intro", feature: "icu-mode", title: "ICU mode", body: "Your ICU beds, unit by unit. Each patient's whole ICU stay lives here: admission note, daily notes, FAST HUGS, lines, timed tasks and the final outcome." },
     { id: "icu-switch", target: { sel: '[data-coach="mode-switcher"]' }, title: "Back to ER any time", body: "Tap ER to return to the emergency dashboard. ErMate opens the mode you used last." },
     { id: "icu-add-unit", target: { sel: '[data-coach="icu-add-unit"]' }, title: "Add your units", body: "Add each ICU you work in, for example MICU 1, Neuro ICU or CCU, with its number of beds." },
-    { id: "icu-units", target: { sel: '[data-coach="icu-units"]' }, title: "Switch units", body: "Tap a unit to see its beds. Use + to add another unit." },Amber badges show FAST HUGS items not reviewed and orders to clarify." },
+    { id: "icu-units", target: { sel: '[data-coach="icu-units"]' }, title: "Switch units", body: "Tap a unit to see its beds. Use + to add another unit." },
+    { id: "icu-beds", target: { sel: '[data-coach="icu-beds"]' }, title: "Beds", body: "Tap Admit on an empty bed. Tap a patient to open the note. Amber badges show FAST HUGS items not reviewed and orders to clarify." },
     { id: "icu-rounds-start", v: 2, feature: "icu-rounds", target: { sel: '[data-coach="icu-start-rounds"]' }, title: "Start rounds", body: "Walk the unit bed by bed. Each bed shows its problems, new results since the last note, and what to address this round. Tap Next to move on." },
-  ],
-  
-    { id: "icu-beds", target: { sel: '[data-coach="icu-beds"]' }, title: "Beds", body: "Tap Admit on an empty bed. Tap a patient to open the note.   { id: "icu-discharge-paste", v: 2, feature: "icu-discharge-paste", target: { sel: '[data-coach="icu-discharge-paste"]' }, title: "Discharge summary", body: "Paste a case sheet here and ErMate prepares the discharge summary for review. Same as on the ER home screen. Nothing is saved until you save it." },
+    { id: "icu-discharge-paste", v: 2, feature: "icu-discharge-paste", target: { sel: '[data-coach="icu-discharge-paste"]' }, title: "Discharge summary", body: "Paste a case sheet here and ErMate prepares the discharge summary for review. Same as on the ER home screen. Nothing is saved until you save it." },
   ],
   icunote: [
     { id: "icu-speak", feature: "icu-scribe", target: { sel: '[data-coach="icu-dictate"]' }, title: "Speak the case", body: "Dictate naturally, in any order. ErMate sorts it into problems, progress, exam, plan, FAST HUGS, tasks and lines, and shows a full preview. Nothing is saved until you tap Apply." },
@@ -107,6 +106,8 @@ export const TOURS: Record<TourId, CoachStep[]> = {
     { id: "icu-rounds-address", target: { sel: '[data-coach="icu-rounds-address"]' }, title: "To address this round", body: "Taken from the latest note: overdue tasks, orders to clarify, FAST HUGS items not reviewed, and carried-forward items not yet confirmed." },
     { id: "icu-rounds-partners", feature: "icu-trends", target: { sel: '[data-coach="icu-rounds-partners"]' }, title: "Thinking partners and trends", body: "Discuss or 7-lens use this bed's whole stay. Trends plots only documented values: the line breaks where nothing was recorded, and a hollow dot means the time was not stated." },
   ],
+  icutrends: [
+    { id: "icu-trends-window", feature: "icu-trends-window", target: { sel: '[data-coach="icu-trends-window"]' }, title: "Pick the time window", body: "Choose 24 h, 7 days or Whole stay. Only values that were documented are plotted. The line breaks where nothing was recorded." },
   ],
   icucases: [
     { id: "icu-cases", feature: "icu-cases", target: { sel: '[data-coach="icu-cases-list"]' }, title: "ICU cases", body: "Every ICU patient, in the ICU now or shifted out. Search, open their notes, or copy a note to your EMR. Switch to ER to see your ER cases." },

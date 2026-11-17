@@ -1,4 +1,5 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
+import { requestTour } from "../lib/coachTours";
 import { ArrowLeft, TrendingUp } from "lucide-react";
 import {
   CartesianGrid,
@@ -34,6 +35,9 @@ const WINDOWS: { id: TrendWindow; label: string }[] = [
 export default function IcuTrendsView({ admission, notes, onClose }: Props) {
   const [win, setWin] = useState<TrendWindow>("stay");
   const [group, setGroup] = useState<"all" | "vital" | "lab">("all");
+
+  // One-time walkthrough for the time-window control.
+  useEffect(() => { requestTour("icutrends"); }, []);
 
   const now = useMemo(() => new Date(), [notes]);
   const full = useMemo(() => buildTrends(admission, notes, now), [admission, notes, now]);
