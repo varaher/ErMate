@@ -14,6 +14,7 @@ const REQUIRED_FEATURES = [
   "protocol-chips", "protocol-investigations", "protocol-flag", "teams",
   "mate-alerts", "emr-field-copy", "team-start", "rota-sync",
   "mode-switch", "icu-mode", "icu-scribe", "icu-fasthugs", "icu-emr-copy", "icu-cases", "icu-handover",
+  "edit-capture",
 ];
 
 const all = (Object.entries(TOURS) as [TourId, typeof TOURS[TourId]][]).flatMap(([tour, steps]) => steps.map(s => ({ tour, s })));

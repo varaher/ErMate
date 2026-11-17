@@ -4788,6 +4788,29 @@ const handleDeleteAllCases = async () => {
       };
     }
 
+    // Discharge-only fields the doctor typed in "Edit before preview": what they typed wins, blanks leave the saved value alone.
+    const typedDischarge = extracted?.dischargeInfoEdit;
+    if (typedDischarge && typeof typedDischarge === "object") {
+      const base: any = draftCase.dischargeInfo || {
+        summaryStatus: "DRAFT",
+        primaryDiagnosis: "",
+        secondaryDiagnosis: "",
+        conditionAtDischarge: "",
+        dischargeMedications: "",
+        followUpPlan: "",
+        patientInstructions: "",
+      };
+      const typed = (k: string) => (typeof typedDischarge[k] === "string" && typedDischarge[k].trim() ? typedDischarge[k].trim() : base[k] || "");
+      draftCase.dischargeInfo = {
+        ...base,
+        courseInHospital: typed("courseInHospital"),
+        conditionAtDischarge: typed("conditionAtDischarge"),
+        dischargeMedications: typed("dischargeMedications"),
+        followUpPlan: typed("followUpPlan"),
+        patientInstructions: typed("patientInstructions"),
+      };
+    }
+
     // Leave any case-sheet view/preview state so the discharge view can mount.
     setIsPreviewMode(false);
     setPreviewCase(null);

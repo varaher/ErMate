@@ -133,14 +133,22 @@ export function detectClinicalNormalcy(text: string): ClinicalNormalcyDetection 
   const t = (text || "").toLowerCase().replace(/\s+/g, " ").trim();
 
  
-const abcdeNormal =
- 
+
+  const abcdeNormal =
+
     /\b(?:abcde|abcs?|a\s+b\s+c\s+d\s+e|primary(?:\s+(?:survey|assessment|exam(?:ination)?))?)\b[^.;\n]{0,45}\b(?:normal|wnl|nad|unremarkable|fine|okay|ok|all\s+good|no\s+abnormalit(?:y|ies)|nothing\s+significant)\b/i.test(t) ||
- 
+
     /\b(?:normal|wnl|nad|unremarkable|fine|okay|ok|all\s+good)\b[^.;\n]{0,20}\b(?:abcde|abcs?|a\s+b\s+c\s+d\s+e|primary(?:\s+(?:survey|assessment|exam(?:ination)?))?)\b/i.test(t) ||
- 
+
     // "stable" / "intact" count only when said straight after the word, so "airway compromised, now stable" never passes as normal.
     /\b(?:abcde|abcs?|a\s+b\s+c\s+d\s+e|primary\s+(?:survey|assessment|exam(?:ination)?))\s*(?:is\s+|are\s+|was\s+|were\s+|:\s*|-\s*)?(?:all\s+)?(?:stable|intact|maintained|satisfactory)\b/i.test(t);
+
+ 
+
+  const systemicNormal =
+    /\b(?:secondary(?:\s+(?:survey|assessment|exam(?:ination)?))?|systemic(?:\s+(?:exam|examination))?|general\s+and\s+systemic\s+(?:exam|examination)|all\s+systems?|clinical\s+examinations?)\b[^.;\n]{0,55}\b(?:normal|wnl|nad|unremarkable|fine|okay|ok|all\s+good|no\s+abnormalit(?:y|ies)|nothing\s+significant|everything\s+(?:as\s+)?normal)\b/i.test(t) ||
+    /\b(?:normal|wnl|nad|unremarkable|fine|okay|ok|all\s+good)\b[^.;\n]{0,25}\b(?:secondary(?:\s+(?:survey|assessment|exam(?:ination)?))?|systemic(?:\s+(?:exam|examination))?|all\s+systems?|clinical\s+examinations?)\b/i.test(t) ||
+    /\bnothing\s+significant\s+on\s+(?:systemic\s+|secondary\s+)?exam(?:ination)?\b/i.test(t);
 
  
 
@@ -179,4 +187,3 @@ export function isNormalOnlySectionValue(value: unknown): boolean {
     new RegExp(`^(?:exam(?:ination)?\s+)?(?:${NORMAL_WORD})$`, "i").test(v);
 
 }
-
