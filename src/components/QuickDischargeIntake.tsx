@@ -39,6 +39,8 @@ interface Props {
   hospitalName: string;
   onCaseReady: (minimalCase: ClinicalCase) => void;
   onCancel: () => void;
+  /** A case sheet already pasted on the home screen: read it straight away. */
+  initialText?: string;
 }
 
 const toClinicalString = (value: unknown): string => {
@@ -137,6 +139,7 @@ export default function QuickDischargeIntake({
   hospitalName,
   onCaseReady,
   onCancel,
+  initialText,
 }: Props) {
   const [mode, setMode] = useState<InputMode>("paste");
   const [pastedText, setPastedText] = useState("");
@@ -158,7 +161,7 @@ export default function QuickDischargeIntake({
   }, [isRecordingVoice, status]);
 
   // Take raw extracted text -> structured fields -> minimal case -> handoff
-  const finalizeAndHandOff = async (rawText: string) => {
+  const finalizeAndHandOff = async (rawText: string, keepSource: boolean = false) => {
     if (!rawText.trim()) {
       setError("No content to process. Please paste text, dictate, or capture a photo.");
       setStatus("error");
@@ -237,7 +240,8 @@ export default function QuickDischargeIntake({
           exposureStatus: "",
         },
         secondaryAssessment: typeof ext.secondaryAssessment === "string" ? ext.secondaryAssessment : "",
-        progressNotes: ext.progressNotes || "",
+        // A pasted case sheet is kept as the source so the discharge draft can use its course and treatment.
+        progressNotes: ext.progressNotes || (keepSource ? "Source case sheet (pasted):\n" + rawText.slice(0, 6000) : ""),
       };
 
       const minimalCase = createQuickDischargeCase(
@@ -256,8 +260,18 @@ export default function QuickDischargeIntake({
 
   // Mode: Paste
   const handlePasteSubmit = () => {
-    finalizeAndHandOff(pastedText);
+    finalizeAndHandOff(pastedText, true);
   };
+
+  // Pasted on the home screen: start reading it as soon as this screen opens.
+  const autoStartedRef = useRef(false);
+  useEffect(() => {
+    if (initialText && initialText.trim() && !autoStartedRef.current) {
+      autoStartedRef.current = true;
+      setPastedText(initialText);
+      finalizeAndHandOff(initialText, true);
+    }
+  }, []);
 
   // Mode: Voice
   const startRecording = async () => {

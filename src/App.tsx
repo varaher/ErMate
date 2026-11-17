@@ -542,6 +542,8 @@ useEffect(() => {
   const [showPocketMirror, setShowPocketMirror] = useState<boolean>(false);
   const [showQuickDischarge, setShowQuickDischarge] = useState<boolean>(false);
   const [quickDischargeCase, setQuickDischargeCase] = useState<ClinicalCase | null>(null);
+  // Case sheet pasted on the Home or ICU screen, waiting to be read into a discharge summary.
+  const [quickDischargeText, setQuickDischargeText] = useState<string>("");
   
   // Preview Case Sheet State (in-memory review before Firestore write)
   const [previewCase, setPreviewCase] = useState<ClinicalCase | null>(null);
@@ -7477,6 +7479,7 @@ const handleSignOut = async () => {
           {/* Quick Discharge Intake View */}
           {showQuickDischarge && !selectedCaseId && !activeFormMode && (
             <QuickDischargeIntake
+              initialText={quickDischargeText || undefined}
               currentUserEmail={profile?.email || auth.currentUser?.email || "doctor@ermate.ai"}
               currentUserName={profile?.name || "Emergency Physician"}
               hospitalName={profile?.hospital || "General Hospital"}
@@ -7492,6 +7495,9 @@ const handleSignOut = async () => {
                     } : {}),
                   };
                   await handleSaveCase(caseToSave);
+                  // A pasted case sheet opens straight in the editor, so the draft is prepared for review.
+                  if (quickDischargeText) setDischargeStartInEdit(true);
+                  setQuickDischargeText("");
                   setShowQuickDischarge(false);
                   setQuickDischargeCase(caseToSave);
                   setShowDischargeSummaryId(caseToSave.id);
@@ -7500,7 +7506,7 @@ const handleSignOut = async () => {
                   triggerNotification("Save Failed", "Unable to save this case. Please try again.", "warning");
                 }
               }}
-              onCancel={() => setShowQuickDischarge(false)}
+              onCancel={() => { setQuickDischargeText(""); setShowQuickDischarge(false); }}
             />
           )}
 
@@ -7548,6 +7554,11 @@ const handleSignOut = async () => {
                     setActiveTab("handover");
                   }}
                   onStartDischargeSummary={() => {
+                    setQuickDischargeText("");
+                    setShowQuickDischarge(true);
+                  }}
+                  onPrepareDischargeFromText={(text: string) => {
+                    setQuickDischargeText(text);
                     setShowQuickDischarge(true);
                   }}
                   onStartVoiceScribe={handleVoiceScribeEntryClick}
@@ -7585,6 +7596,14 @@ const handleSignOut = async () => {
                 <IcuHomeView
                   profile={profile}
                   onSwitchMode={handleSwitchMode}
+                  onPrepareDischargeFromText={(text: string) => {
+                    setQuickDischargeText(text);
+                    setShowQuickDischarge(true);
+                  }}
+                  onOpenDischargeIntake={() => {
+                    setQuickDischargeText("");
+                    setShowQuickDischarge(true);
+                  }}
                   notify={(title, message, type) => triggerNotification(title, message, type)}
                 />
               )}

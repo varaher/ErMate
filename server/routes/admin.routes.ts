@@ -451,7 +451,8 @@ router.get("/approvals", async (_req, res) => {
       };
     }).sort((a: any, b: any) => String(b.requestedAt || "").localeCompare(String(a.requestedAt || "")));
 
-    const waitingMembers = members.filter((m: any) => isActiveMember(m) && m.membershipVerified !== true).length;
+    // Locked = joined (any spelling) but the rules would refuse them: flag not on, or a status spelling the rules don't accept.
+    const waitingMembers = members.filter((m: any) => isActiveMember(m) && (m.membershipVerified !== true || !["active", "Active (Joined)"].includes(String(m.status)))).length;
 
     res.json({
       counts: {

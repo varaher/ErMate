@@ -17,6 +17,7 @@ import { DutySessionRecord, isActiveDutySessionNow } from "../services/dutySessi
 import { formatLocalDateKey } from "../utils/dutyWindow";
 import { getTriageDisplay, triageBadgeClass } from "../utils/triageScale";
 import TriageQueueCard from "./TriageQueueCard";
+import { DischargePasteRow, type DischargeRecentItem } from "./dischargepasterow";
 import { getCasePendingStatus } from "../utils/caseHelper";
 import { getCaseCreationTimestamp, isCaseEligibleFor24hArchive } from "../utils/caseLifecycle";
 import { triggerPrintWithTip } from "../utils/printWithTip";
@@ -67,6 +68,8 @@ interface DashboardViewProps {
   pendingContributionsCount?: number;
   onDiscussCase?: (patientCase: ClinicalCase, mode?: "discuss" | "rounds") => void;
   onStartDischargeSummary?: () => void;
+  /** Case sheet pasted in the Discharge Summary row: read it and open the prepared summary. */
+  onPrepareDischargeFromText?: (text: string) => void;
   onDeleteAllCases?: () => void;
   onDeleteCase?: (caseId: string) => void;
   isPlatformAdmin?: boolean;
@@ -90,6 +93,7 @@ export default function DashboardView({
   onStartHandoverChat,
   onStartHandoverSheet,
   onStartDischargeSummary,
+  onPrepareDischargeFromText,
   onDeleteAllCases,
   onDeleteCase,
   onStartVoiceScribe,
@@ -685,6 +689,22 @@ ${safetySection}
 ==================================================`;
   };
 
+  // Latest discharge summaries, for the Recent list in the Discharge Summary row.
+  const recentDischarges: DischargeRecentItem[] = (cases || [])
+    .filter((c) => Boolean(c.dischargeInfo?.summaryStatus))
+    .sort((a, b) => String(b.savedTime || "").localeCompare(String(a.savedTime || "")))
+    .slice(0, 3)
+    .map((c) => {
+      const nm = c.patient?.name && !/^(emergency|unassigned) patient$/i.test(c.patient.name) ? c.patient.name : "Patient";
+      const demo = [c.patient?.gender, c.patient?.age !== null && c.patient?.age !== undefined ? `${c.patient.age} y` : ""].filter(Boolean).join(" · ");
+      return {
+        id: c.id,
+        label: c.bedNo ? `Bed ${c.bedNo} · ${nm}` : nm,
+        sub: demo || "Discharge summary",
+        status: c.dischargeInfo?.summaryStatus === "FINALIZED" ? "Finalised" : "Draft",
+      } as DischargeRecentItem;
+    });
+
   const generateDischargeSummaryText = (c: ClinicalCase): string => {
     const d = c.dischargeInfo;
     return `==================================================
@@ -1270,6 +1290,16 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
             </div>
             <ChevronRight className="w-4 h-4 text-slate-300 dark:text-slate-600 shrink-0" />
           </button>
+          {onPrepareDischargeFromText && (
+            <DischargePasteRow
+              withDivider
+              dataCoach="discharge-paste"
+              onPrepare={onPrepareDischargeFromText}
+              onMoreOptions={() => onStartDischargeSummary?.()}
+              recent={recentDischarges}
+              onOpenRecent={(id) => onNavigateToDischarge(id)}
+            />
+          )}
         </div>
       </div>
 

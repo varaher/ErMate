@@ -2679,7 +2679,7 @@ router.post("/verify-team", async (req: AuthRequest, res) => {
     const batch = db.batch();
     membersSnap.docs.forEach((docSnap) => {
       const data = docSnap.data();
-      if (data.status === "active" || data.status === "active (joined)") {
+      if (ACTIVE_STATUS_SPELLINGS.includes(String(data.status || "").trim()) || ["active", "active (joined)"].includes(String(data.status || "").trim().toLowerCase())) {
         batch.update(docSnap.ref, {
           verificationStatus: isVerified ? "verified" : "unverified",
           ...(isVerified ? { membershipVerified: true } : {}),
@@ -2875,6 +2875,11 @@ const handleCreateTeam = async (req: AuthRequest, res: any) => {
 // Platform admin only. Teams created before the Teams launch were saved as "waiting" (membershipVerified: false),
 // so their members never loaded. This turns them on. It never touches the institution badge (verificationStatus).
 // Without { confirm: true } it only counts and changes nothing.
+/** Every spelling of an active member's status found in saved data. */
+const ACTIVE_STATUS_SPELLINGS = ["active", "Active", "ACTIVE", "active (joined)", "Active (Joined)", "Active (joined)", "ACTIVE (JOINED)"];
+/** The only spellings firestore.rules accept as an active member (checkActiveMember and friends). */
+const RULES_ACTIVE_STATUSES = ["active", "Active (Joined)"];
+
 router.post("/activate-waiting-teams", async (req: AuthRequest, res) => {
   try {
     if (!isPlatformAdminReq(req)) {
@@ -2882,8 +2887,9 @@ router.post("/activate-waiting-teams", async (req: AuthRequest, res) => {
     }
     // Active members whose access flag is false OR missing. (A Firestore "== false" query skips members
     // that have no flag at all, and the rules treat a missing flag as false, so those were left locked.)
-    const snap = await db.collection("team_members").where("status", "in", ["active", "active (joined)"]).get();
-    const waiting = snap.docs.filter((d) => d.data().membershipVerified !== true);
+    // Status is saved in several spellings ("active (joined)", "Active (Joined)", "Active"...), so match them all.
+    const snap = await db.collection("team_members").where("status", "in", ACTIVE_STATUS_SPELLINGS).get();
+    const waiting = snap.docs.filter((d) => d.data().membershipVerified !== true || !RULES_ACTIVE_STATUSES.includes(String(d.data().status)));
     const teams = new Set(waiting.map((d) => String(d.data().hospitalId || d.data().teamId || d.data().hospital || "")));
     if (req.body?.confirm !== true) {
       return res.json({ dryRun: true, waitingMembers: waiting.length, waitingTeams: teams.size });
@@ -2891,7 +2897,15 @@ router.post("/activate-waiting-teams", async (req: AuthRequest, res) => {
     const now = nowIso();
     for (let i = 0; i < waiting.length; i += 400) {
       const batch = db.batch();
-      waiting.slice(i, i + 400).forEach((d) => batch.update(d.ref, { membershipVerified: true, updatedAt: now }));
+      waiting.slice(i, i + 400).forEach((d) => {
+        const status = String(d.data().status);
+        batch.update(d.ref, {
+          membershipVerified: true,
+          // The Firestore rules accept only these two spellings; anything else would stay locked even when switched on.
+          ...(RULES_ACTIVE_STATUSES.includes(status) ? {} : { status: "active" }),
+          updatedAt: now,
+        });
+      });
       await batch.commit();
     }
     return res.json({ dryRun: false, activatedMembers: waiting.length, activatedTeams: teams.size });

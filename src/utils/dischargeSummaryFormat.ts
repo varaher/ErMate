@@ -118,6 +118,12 @@ function resolveHospitalLines(d: DischargeSummaryData) {
   };
 }
 
+// One vital per line, in the same order everywhere (preview, print, copy).
+const VITAL_LABELS: Array<[string, string]> = [["HR", "Hr"], ["BP", "Bp"], ["RR", "Rr"], ["SpO2", "Spo2"], ["GCS", "Gcs"], ["Pain Score", "PainScore"], ["GRBS", "Grbs"], ["Temp", "Temp"]];
+export function vitalLines(d: any, when: "arrival" | "discharge"): string[] {
+  return VITAL_LABELS.map(([label, key]) => label + "- " + (d[when + key] || "Not documented"));
+}
+
 export function formatDischargeSummaryText(d: DischargeSummaryData): string {
   var pedInfo = "";
   if (d.pediatric) {
@@ -145,7 +151,7 @@ export function formatDischargeSummaryText(d: DischargeSummaryData): string {
   lines.push("**Allergy :** " + (d.allergies || "Not documented"));
   lines.push("");
   lines.push("**Vitals at the time of arrival:**");
-  lines.push("HR-" + (d.arrivalHr || "Not documented") + " ,BP-" + (d.arrivalBp || "Not documented") + " ,RR-" + (d.arrivalRr || "Not documented") + " ,Spo2-" + (d.arrivalSpo2 || "Not documented") + " ,GCS-" + (d.arrivalGcs || "Not documented") + " ,Pain Score-" + (d.arrivalPainScore || "Not documented") + " ,GRBS-" + (d.arrivalGrbs || "Not documented") + " ,Temp-" + (d.arrivalTemp || "Not documented"));
+  lines.push(...vitalLines(d, "arrival"));
   lines.push("");
   lines.push("**Presenting Complaints:**");
   lines.push(d.presentingComplaints || "Not documented");
@@ -210,7 +216,7 @@ export function formatDischargeSummaryText(d: DischargeSummaryData): string {
   lines.push("**Condition at time of discharge:(STABLE/UNSTABLE)** " + (d.dischargeCondition || "Not documented"));
   lines.push("");
   lines.push("**Vitals at the time of Discharge:**");
-  lines.push("HR-" + (d.dischargeHr || "Not documented") + " ,BP-" + (d.dischargeBp || "Not documented") + " ,RR-" + (d.dischargeRr || "Not documented") + " ,Sp02-" + (d.dischargeSpo2 || "Not documented") + " ,GCS-" + (d.dischargeGcs || "Not documented") + " ,Pain Score-" + (d.dischargePainScore || "Not documented") + " ,GRBS-" + (d.dischargeGrbs || "Not documented") + " ,Temp-" + (d.dischargeTemp || "Not documented"));
+  lines.push(...vitalLines(d, "discharge"));
   lines.push("");
   lines.push("**Follow-Up Advice:**");
   lines.push(d.followUpPlan || "Not documented");
@@ -254,7 +260,7 @@ export function formatDischargeSummaryHtml(d: DischargeSummaryData): string {
   parts.push("<strong>MLC:</strong> " + (d.isMlc === "Yes" ? ("Yes" + (d.mlcNo ? " (" + d.mlcNo + ")" : "")) : "No") + "<br/><br/>");
   parts.push("<strong>Allergy :</strong> " + (d.allergies || "Not documented") + "<br/><br/>");
   parts.push("<strong>Vitals at the time of arrival:</strong><br/>");
-  parts.push("HR-" + (d.arrivalHr || "Not documented") + " ,BP-" + (d.arrivalBp || "Not documented") + " ,RR-" + (d.arrivalRr || "Not documented") + " ,Spo2-" + (d.arrivalSpo2 || "Not documented") + " ,GCS-" + (d.arrivalGcs || "Not documented") + " ,Pain Score-" + (d.arrivalPainScore || "Not documented") + " ,GRBS-" + (d.arrivalGrbs || "Not documented") + " ,Temp-" + (d.arrivalTemp || "Not documented") + "<br/><br/>");
+  parts.push(vitalLines(d, "arrival").join("<br/>") + "<br/><br/>");
   parts.push("<strong>Presenting Complaints:</strong><br/>");
   parts.push((d.presentingComplaints || "Not documented") + "<br/><br/>");
   parts.push("<strong>History of Present Illness:</strong><br/>");
@@ -294,7 +300,7 @@ export function formatDischargeSummaryHtml(d: DischargeSummaryData): string {
   parts.push(dispositionBox(d.dispositionStatus, "Referred") + "<br/><br/>");
   parts.push("<strong>Condition at time of discharge:(STABLE/UNSTABLE)</strong> " + (d.dischargeCondition || "Not documented") + "<br/><br/>");
   parts.push("<strong>Vitals at the time of Discharge:</strong><br/>");
-  parts.push("HR-" + (d.dischargeHr || "Not documented") + " ,BP-" + (d.dischargeBp || "Not documented") + " ,RR-" + (d.dischargeRr || "Not documented") + " ,Sp02-" + (d.dischargeSpo2 || "Not documented") + " ,GCS-" + (d.dischargeGcs || "Not documented") + " ,Pain Score-" + (d.dischargePainScore || "Not documented") + " ,GRBS-" + (d.dischargeGrbs || "Not documented") + " ,Temp-" + (d.dischargeTemp || "Not documented") + "<br/><br/>");
+  parts.push(vitalLines(d, "discharge").join("<br/>") + "<br/><br/>");
   parts.push("<strong>Follow-Up Advice:</strong><br/>");
   parts.push((d.followUpPlan || "Not documented") + "<br/><br/>");
   parts.push("<strong>ED Resident: </strong>" + (d.emResidentName || "Not documented") + " | <strong>ED Consultant: </strong>" + (d.emConsultantName || "Not documented") + "<br/><br/>");

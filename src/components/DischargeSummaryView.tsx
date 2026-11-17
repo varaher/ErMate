@@ -1821,7 +1821,14 @@ export default function DischargeSummaryView({
   <div><span className="font-bold">Allergy :</span> {allergies || "Not documented"}</div>
 
   <div className="font-bold mt-4">Vitals at the time of arrival:</div>
-  <div>HR-{arrivalHr || "Not documented"} ,BP-{arrivalBp || "Not documented"} ,RR-{arrivalRr || "Not documented"} ,Spo2-{arrivalSpo2 || "Not documented"} ,GCS-{arrivalGcs || "Not documented"} ,Pain Score-{arrivalPainScore || "Not documented"} ,GRBS-{arrivalGrbs || "Not documented"} ,Temp-{arrivalTemp || "Not documented"}</div>
+  <div>HR- {arrivalHr || "Not documented"}</div>
+  <div>BP- {arrivalBp || "Not documented"}</div>
+  <div>RR- {arrivalRr || "Not documented"}</div>
+  <div>SpO2- {arrivalSpo2 || "Not documented"}</div>
+  <div>GCS- {arrivalGcs || "Not documented"}</div>
+  <div>Pain Score- {arrivalPainScore || "Not documented"}</div>
+  <div>GRBS- {arrivalGrbs || "Not documented"}</div>
+  <div>Temp- {arrivalTemp || "Not documented"}</div>
 
   <div className="font-bold mt-4">Presenting Complaints:</div>
   <div>{presentingComplaints || "Not documented"}</div>
@@ -1900,7 +1907,14 @@ export default function DischargeSummaryView({
   <div>{dischargeCondition || "Not documented"}</div>
 
   <div className="font-bold mt-4">Vitals at the time of Discharge:</div>
-  <div>HR-{dischargeHr || "Not documented"} ,BP-{dischargeBp || "Not documented"} ,RR-{dischargeRr || "Not documented"} ,Sp02-{dischargeSpo2 || "Not documented"} ,GCS-{dischargeGcs || "Not documented"} ,Pain Score-{dischargePainScore || "Not documented"} ,GRBS-{dischargeGrbs || "Not documented"} ,Temp-{dischargeTemp || "Not documented"}</div>
+  <div>HR- {dischargeHr || "Not documented"}</div>
+  <div>BP- {dischargeBp || "Not documented"}</div>
+  <div>RR- {dischargeRr || "Not documented"}</div>
+  <div>SpO2- {dischargeSpo2 || "Not documented"}</div>
+  <div>GCS- {dischargeGcs || "Not documented"}</div>
+  <div>Pain Score- {dischargePainScore || "Not documented"}</div>
+  <div>GRBS- {dischargeGrbs || "Not documented"}</div>
+  <div>Temp- {dischargeTemp || "Not documented"}</div>
 
   <div className="font-bold mt-4">Follow-Up Advice:</div>
   <div>{followUpPlan || "Not documented"}</div>

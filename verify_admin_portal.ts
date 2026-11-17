@@ -81,8 +81,12 @@ async function main() {
   ok(!/membershipVerified:\s*isVerified/.test(verifyTeam) && verifyTeam.includes("...(isVerified ? { membershipVerified: true } : {})"),
     "removing a team badge never switches members' access off");
   const activate = team.slice(team.indexOf('router.post("/activate-waiting-teams"'));
-  ok(activate.includes('where("status", "in", ["active", "active (joined)"])') && activate.includes("membershipVerified !== true"),
+  ok(activate.includes('where("status", "in", ACTIVE_STATUS_SPELLINGS)') && activate.includes("membershipVerified !== true"),
     "switch-on also catches members with no access flag (matches the waiting count)");
+  ok(team.includes('const ACTIVE_STATUS_SPELLINGS = [') && team.includes('"Active (Joined)"') && team.includes('RULES_ACTIVE_STATUSES = ["active", "Active (Joined)"]'),
+    "switch-on matches every saved spelling of 'active', incl. 'Active (Joined)'");
+  const rulesActive = (readFileSync("firestore.rules", "utf8").match(/status', ''\) in \[([^\]]+)\]/) || [])[1] || "";
+  ok(rulesActive.replace(/\s/g, "") === "'active','Active(Joined)'", "rules still accept exactly 'active' and 'Active (Joined)' (keep RULES_ACTIVE_STATUSES in step)");
   const adminSrc = readFileSync("server/routes/admin.routes.ts", "utf8");
   ok(/joinRequests[\s\S]{0,600}teamId/.test(adminSrc), "join requests carry their team id");
   const sectionsSrc = readFileSync("src/admin/sections.tsx", "utf8");

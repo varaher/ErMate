@@ -1,7 +1,10 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
-  ArrowLeft, AlertTriangle, Check, ClipboardCopy, Copy, FileSignature, Keyboard, MoreHorizontal, Trash2, X,
+   ArrowLeft, AlertTriangle, Check, ClipboardCopy, Copy, FileSignature, Keyboard, MoreHorizontal, Trash2, X,
+  MessageSquare, GraduationCap, TrendingUp,
 } from "lucide-react";
+import type { ChatContext } from "../hooks/useBoundChat";
+import { buildIcuDiscussRecord } from "./icuDiscussContext";
 import VoiceRecorder from "../components/shared/VoiceRecorder";
 import { authenticatedFetch } from "../services/authenticatedFetch";
 import { copyTextToClipboard } from "../utils/copyToClipboard";
@@ -19,6 +22,9 @@ import { closeAdmission, moveBed, saveNote, saveTasks, signNote, startNote, subs
 import IcuEntryChoice, { type IcuEntryMode } from "./IcuEntryChoice";
 import IcuScribePreview from "./IcuScribePreview";
 import { requestTour } from "../lib/coachTours";
+
+const IcuTrendsView = React.lazy(() => import("./IcuTrendsView"));
+const CaseChatWorkspace = React.lazy(() => import("../components/CaseChatWorkspace"));
 
 type Notify = (title: string, message: string, type?: "info" | "success" | "warning") => void;
 type Tab = "note" | "fasthugs" | "plan" | "preview";
@@ -49,7 +55,9 @@ export default function IcuNoteView({ admission, units, occupiedBeds, profile, o
   const [entry, setEntry] = useState<{ mode: IcuEntryMode; text: string } | null>(null);
   const autoEntryShownFor = React.useRef<string | null>(null);
   const [menuOpen, setMenuOpen] = useState<null | "menu" | "move" | "close">(null);
-  const [starting, setStarting] = useState(false);
+   const [starting, setStarting] = useState(false);
+  const [showTrends, setShowTrends] = useState(false);
+  const [chatMode, setChatMode] = useState<"discuss" | "rounds" | null>(null);
 
   const doctorName = profile?.name || null;
   const designation = profile?.displayRole || null;
@@ -76,6 +84,27 @@ export default function IcuNoteView({ admission, units, occupiedBeds, profile, o
 
   const readOnly = !note || note.status === "signed";
   const gaps = note ? noteGapSummary(note) : null;
+
+  // Thinking partners: de-identified whole-stay record (names/UHID never included)
+  const chatContext: ChatContext | null = useMemo(() => {
+    if (!notes || !chatMode) return null;
+    const rec = buildIcuDiscussRecord(admission, notes);
+    return {
+      type: "icu",
+      id: admission.id,
+      canEdit: false,
+      data: {
+        icuRecord: rec.text,
+        icuDay: rec.icuDay,
+        unitLabel: admission.unitName,
+        bed: admission.bed,
+        patient: {
+          age: admission.ageYears,
+          gender: admission.sex === "M" ? "Male" : admission.sex === "F" ? "Female" : admission.sex === "Other" ? "Other" : null,
+        },
+      },
+    };
+  }, [admission, notes, chatMode]);
 
   // A brand-new, untouched draft opens the Speak / Type / Paste choice once.
   useEffect(() => {
@@ -222,9 +251,25 @@ export default function IcuNoteView({ admission, units, occupiedBeds, profile, o
           <p className="text-lg font-bold text-slate-900 dark:text-white">{admission.unitName} · Bed {admission.bed} · {admission.patientLabel}</p>
           <p className="text-xs text-slate-600 dark:text-slate-400">
             ICU day {icuDayNumber(admission.admittedAt)}
-            {note ? ` · ${note.kind === "admission" ? "Admission note" : "Daily note"} · ${new Date(note.createdAt).toLocaleString()}` : ""}
+                      {note ? ` · ${note.kind === "admission" ? "Admission note" : "Daily note"} · ${new Date(note.createdAt).toLocaleString()}` : ""}
           </p>
         </div>
+        {notes !== null && (
+          <div className="flex gap-2 overflow-x-auto" data-coach="icu-note-partners">
+            <button type="button" onClick={() => setChatMode("discuss")}
+              className="shrink-0 min-h-[34px] px-3 rounded-full border border-purple-200 dark:border-purple-900 bg-white dark:bg-slate-900 text-xs font-semibold text-purple-700 dark:text-purple-300 flex items-center gap-1.5">
+              <MessageSquare className="w-3.5 h-3.5" aria-hidden="true" /> Discuss
+            </button>
+            <button type="button" onClick={() => setChatMode("rounds")}
+              className="shrink-0 min-h-[34px] px-3 rounded-full border border-purple-200 dark:border-purple-900 bg-white dark:bg-slate-900 text-xs font-semibold text-purple-700 dark:text-purple-300 flex items-center gap-1.5">
+              <GraduationCap className="w-3.5 h-3.5" aria-hidden="true" /> 7-lens
+            </button>
+            <button type="button" onClick={() => setShowTrends(true)}
+              className="shrink-0 min-h-[34px] px-3 rounded-full border border-purple-200 dark:border-purple-900 bg-white dark:bg-slate-900 text-xs font-semibold text-purple-700 dark:text-purple-300 flex items-center gap-1.5">
+              <TrendingUp className="w-3.5 h-3.5" aria-hidden="true" /> Trends
+            </button>
+          </div>
+        )}
         {note && (
           <div className="flex bg-slate-100 dark:bg-slate-900 rounded-xl p-0.5" role="tablist">
             {([
@@ -262,6 +307,24 @@ export default function IcuNoteView({ admission, units, occupiedBeds, profile, o
           <PreviewTab note={note} admission={admission} doctor={{ name: doctorName, designation }} notify={notify} onSign={handleSign} />
         )}
       </div>
+
+            {showTrends && notes && (
+        <React.Suspense fallback={null}>
+          <IcuTrendsView admission={admission} notes={notes} onClose={() => setShowTrends(false)} />
+        </React.Suspense>
+      )}
+
+      {chatMode && chatContext && (
+        <React.Suspense fallback={null}>
+          <CaseChatWorkspace
+            key={`${chatContext.id}_${chatMode}`}
+            context={chatContext}
+            isOpen
+            initialMode={chatMode}
+            onClose={() => setChatMode(null)}
+          />
+        </React.Suspense>
+      )}
 
       {/* Dictation bar — voice first, typing/paste as backup */}
       {note && !readOnly && (
