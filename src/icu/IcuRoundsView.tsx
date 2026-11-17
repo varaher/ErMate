@@ -7,6 +7,7 @@ import type { IcuAdmission, IcuNote, IcuUnit } from "./icuTypes";
 import { subscribeNotes } from "./icuStore";
 import { buildTrends, noteAnchor, type TrendSeries } from "./icuTrends";
 import { buildIcuDiscussRecord } from "./icuDiscussContext";
+import { requestTour } from "../lib/coachTours";
 
 const IcuNoteView = React.lazy(() => import("./IcuNoteView"));
 const IcuTrendsView = React.lazy(() => import("./IcuTrendsView"));
@@ -73,6 +74,11 @@ export default function IcuRoundsView({ unit, units, admissions, occupiedBeds, p
     }
     return () => unsub();
   }, [adm?.id]);
+
+  // Walkthrough for the rounds screen, once the first bed has loaded and nothing covers it.
+  useEffect(() => {
+    if (notes !== null && !openNote && !showTrends && !chatMode) requestTour("icurounds");
+  }, [notes !== null, openNote, showTrends, chatMode]);
 
   const now = useMemo(() => new Date(), [notes, adm?.id]);
   const sorted = useMemo(() => (notes ? [...notes].sort((a, b) => a.createdAt.localeCompare(b.createdAt)) : []), [notes]);
