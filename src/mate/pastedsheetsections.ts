@@ -1,4 +1,3 @@
-
 /**
  * Local (no-LLM) reader for a pasted external case sheet that has its own labelled sections
  * (Presenting Complaint, Primary Assessment, History of Present Illness, Secondary Survey ...).
@@ -291,6 +290,8 @@ export function applyPastedSheetSections(extraction: Record<string, any>, text: 
   if (p.hpi && out.sampleHistory) out.sampleHistory.hpi = p.hpi;
 
   if (p.vitals) out.vitals = { ...(out.vitals || {}), ...p.vitals };
+  // A tube / non-numeric V (e.g. "E1 VT M1") has no honest total: never keep a computed "3/15".
+  if (out.vitals && /^\s*[a-z]/i.test(String(out.vitals.gcs_v ?? "")) && !p.vitals?.gcs) delete out.vitals.gcs;
   if (p.secondarySurvey) out.secondarySurvey = { ...(out.secondarySurvey || {}), ...p.secondarySurvey };
 
   if (p.labs) {

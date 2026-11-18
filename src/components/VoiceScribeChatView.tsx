@@ -51,6 +51,8 @@ import { describeNewCriticalAfterUpdate } from "../utils/criticalSpeech";
 import { speakMate } from "../mate/mateSpeech";
 import { MateVoiceToggle } from "./MateVoiceToggle";
 import { isExpectedContextSwitch } from "../mate/contextSwitch";
+import MateComposerNotes from "./MateComposerNotes";
+import { chatUsage, buildCarryOver } from "../mate/chatLimit";
 import { pickNextFreeBed, parseMoveBedCommand, bedPickedNotice } from "../mate/autoBed";
 import { interpretWithServer } from "../mate/mateInterpreterClient";
 import { formatCaseCompletenessReply, formatDischargePendingReply } from "../mate/mateReplies";
@@ -59,6 +61,7 @@ import { validateAndBuildMateTask } from "../mate/mateTaskValidator";
 import { resolveInterpretedPatient } from "../mate/matePatientDisambiguator";
 import { mergePastedSheetIntoExtraction, detectSheetIdentityConflict } from "../mate/pastedSheetParser";
 import { applyPastedSheetSections } from "../mate/pastedsheetsections";
+import { restoreDayMarkersDeep } from "../mate/dayplaceholder";
 import { stampClinicianUpdates } from "../mate/clinicianUpdateStamp";
 import { classifyDischargeRequest } from "../mate/mateDischargeIntent";
 import { hasExplicitPatientReference, isFocusAuthorized, isImplicitPatientReference, shouldAskWhichPatient, isHeldUpdateExpired, appendHeldUpdate, WHICH_PATIENT_QUESTION, type HeldUpdate } from "../mate/mateWriteTargetGate";
@@ -1619,7 +1622,7 @@ export default function VoiceScribeChatView({
     onBack();
   };
 
-  const handleStartNewChat = async () => {
+  const handleStartNewChat = async (opts?: { carryOver?: string }) => {
     if (isVoiceRecordingActive || isGlobalVoiceRecordingActive()) {
       if (!window.confirm("Dictation is still recording. Discard it and leave?")) {
         return;
@@ -1649,6 +1652,14 @@ export default function VoiceScribeChatView({
           text: "ErMate is ready.\n\n🎙️ Dictate the case in your native language and save it to the case sheet.\n💬 Or ask a clinical question — about this patient or any case.",
           timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
         },
+        ...(opts?.carryOver
+          ? [{
+              id: `carry-${Date.now()}`,
+              sender: "ai" as const,
+              text: opts.carryOver,
+              timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+            }]
+          : []),
       ]);
       setFailedMessages(new Map());
       setSessionAttachError(null);
@@ -1921,7 +1932,7 @@ export default function VoiceScribeChatView({
             if (!res.ok) throw new Error(data?.error || "Request failed");
             if (sessionContextGenerationRef.current !== dischargeGen) return;
             const rawFields = data.unappliedExtraction || data.updatedCaseSheetFields || data.extractedFields || {};
-            const draftFields: any = applyPastedSheetSections(mergePastedSheetIntoExtraction({ ...rawFields }, dischargeRoute.clinicalText), dischargeRoute.clinicalText);
+            const draftFields: any = restoreDayMarkersDeep(applyPastedSheetSections(mergePastedSheetIntoExtraction({ ...rawFields }, dischargeRoute.clinicalText), dischargeRoute.clinicalText), dischargeRoute.clinicalText);
             delete draftFields.clinicianUpdateText;
             delete draftFields.clinicianUpdates;
             await onPreviewDischargeSummary(draftFields, { existingCaseId: null, standalone: true });
@@ -3004,6 +3015,8 @@ export default function VoiceScribeChatView({
           // The sheet's own labelled sections are copied word for word (the model keeps only fragments of a long sheet).
           Object.assign(fieldsToExtract, applyPastedSheetSections(fieldsToExtract, trimmed));
         }
+        // "[Day N]" is a privacy marker for the AI only: put the doctor's own dates back, never show the marker.
+        Object.assign(fieldsToExtract, restoreDayMarkersDeep(fieldsToExtract, trimmed));
         // A pasted external case sheet also offers "Preview Discharge Summary" (the doctor still chooses).
         const dischargeIntent = data.dischargeIntent || looksLikeFullCaseSheet(trimmed);
         const clinicalReasoning = data.reasoningMessage?.clinicalReasoning || data.clinicalReasoning;
@@ -3384,7 +3397,7 @@ export default function VoiceScribeChatView({
           {!isDiscussionOnly && (
             <button
               type="button"
-              onClick={handleStartNewChat}
+              onClick={() => handleStartNewChat()}
               className="px-2 py-1 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-md text-[11px] font-semibold flex items-center gap-1 transition-all cursor-pointer font-mono"
               title="Start a new Scribe session (clears patient context)"
             >
@@ -3876,6 +3889,12 @@ export default function VoiceScribeChatView({
           </>
         )}
 
+        <MateComposerNotes
+          usage={chatUsage(messages as any)}
+          showBedNote={!isDiscussionOnly}
+          disabled={isSending}
+          onContinue={() => handleStartNewChat({ carryOver: buildCarryOver(messages as any) })}
+        />
         <div className="relative flex items-center gap-1.5 sm:gap-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-2 sm:p-2.5 shadow-sm focus-within:ring-1 focus-within:ring-indigo-500">
           {!isVoiceRecordingActive && (
             <>

@@ -3992,6 +3992,11 @@ const handleDeleteAllCases = async () => {
         })(),
         followUpAdvice: extracted.followUpAdvice || existingMatch?.dispositionAndPlan?.followUpAdvice || undefined,
         dispositionStatus: extracted.dispositionType || existingMatch?.dispositionAndPlan?.dispositionStatus || undefined,
+        // A short stated destination ("SICU / OT shift") shows under Destination on the case sheet, not only in notes.
+        destinationUnit: existingMatch?.dispositionAndPlan?.destinationUnit
+          || (typeof extracted.disposition === "string" && extracted.disposition.trim().length > 0 && extracted.disposition.trim().length <= 80
+            ? extracted.disposition.trim()
+            : undefined),
       },
       conditionAtShift: (extracted.conditionAtShift || existingMatch?.conditionAtShift || undefined) as any,
       dischargeInfo: existingMatch?.dischargeInfo ? {
