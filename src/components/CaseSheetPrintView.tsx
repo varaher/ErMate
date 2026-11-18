@@ -1,6 +1,6 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { formatFlagged, isCulturePositive, type ClinicalParam } from "./clinicalRanges";
-import { ArrowLeft, Edit3, Printer, FileText, AlertTriangle, CheckCircle, RefreshCw, Copy, Check } from "lucide-react";
+import { ArrowLeft, Edit3, Printer, FileText, AlertTriangle, CheckCircle, RefreshCw, Copy, Check, Pencil } from "lucide-react";
 import { ClinicalCase, LegacyPediatricDetails, ProcedureNote, IpsgChecklist } from "../types";
 import { deduplicateConsultations } from "../utils/consultationNormalization";
 import { displayGcs, displayTemperature, displaySpo2, displayGrbs, displayDocumentedBoolean } from "../utils/clinicalFormatter";
@@ -12,6 +12,8 @@ import { getTriageDisplay } from "../utils/triageScale";
 import { screeningLines, isolationBanner } from "../utils/triageScreening";
 import { formatAge } from "../utils/ageLabel";
 import type { TriageScreening } from "../types";
+import { EDIT_GROUPS, EDIT_SECTIONS, applySectionEdits } from "../lib/previewedit";
+import { requestTour } from "../lib/coachTours";
 
 export { formatCaseSheetText };
 
@@ -910,6 +912,73 @@ function Section({ children, className = "" }: { children: React.ReactNode; clas
   );
 }
 
+/** Edit-in-preview: one full-screen form with every editable section, one Save. */
+function EditAllForm({ groups, onSave, onClose }: {
+  groups: { id: string; label: string; fields: { key: string; label: string; multiline?: boolean; value: string }[] }[];
+  onSave: (vals: Record<string, Record<string, string>>) => void;
+  onClose: () => void;
+}) {
+  const initial = React.useMemo(() => Object.fromEntries(groups.map((g) => [g.id, Object.fromEntries(g.fields.map((f) => [f.key, f.value]))])) as Record<string, Record<string, string>>, []);
+  const [vals, setVals] = useState<Record<string, Record<string, string>>>(initial);
+  const isChanged = (g: string, k: string) => (vals[g]?.[k] ?? "").trim() !== (initial[g]?.[k] ?? "").trim();
+  const dirty = groups.reduce((n, g) => n + g.fields.filter((f) => isChanged(g.id, f.key)).length, 0);
+  const grow = (el: HTMLTextAreaElement | null) => { if (el) { el.style.height = "auto"; el.style.height = `${el.scrollHeight}px`; } };
+  const box = "w-full box-border rounded-xl px-3 py-2 text-sm text-slate-900 dark:text-white border-2 border-transparent bg-purple-50 dark:bg-purple-950/30 focus:outline-none focus:border-purple-500 focus:bg-white dark:focus:bg-slate-900";
+  const chg = "!bg-emerald-50 dark:!bg-emerald-950/30 !border-emerald-500";
+  return (
+    <div className="no-print fixed inset-0 z-[60] bg-slate-100 dark:bg-slate-900 overflow-y-auto" role="dialog" aria-modal="true" aria-label="Edit case sheet" data-testid="preview-edit-all">
+      <div className="max-w-2xl mx-auto px-4 pb-28">
+        <div className="sticky top-0 z-10 bg-slate-100/95 dark:bg-slate-900/95 backdrop-blur pt-3 pb-2">
+          <h2 className="text-base font-bold text-slate-900 dark:text-white">Edit case sheet</h2>
+          <div className="flex gap-1.5 overflow-x-auto pt-2">
+            {groups.map((g) => (
+              <button key={g.id} type="button" onClick={() => document.getElementById(`pe-${g.id}`)?.scrollIntoView({ block: "start", behavior: "smooth" })}
+                className="shrink-0 min-h-[34px] px-3 rounded-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-bold text-slate-700 dark:text-slate-200">{g.label}</button>
+            ))}
+          </div>
+        </div>
+        <div className="space-y-4 pt-2">
+          {groups.map((g) => (
+            <section key={g.id} id={`pe-${g.id}`} className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl p-3.5 space-y-2.5" style={{ scrollMarginTop: 96 }}>
+              <h3 className="text-[11px] font-black tracking-widest uppercase text-purple-700 dark:text-purple-300">{g.label}</h3>
+              {g.fields.map((f) => (
+                <label key={f.key} className="block">
+                  <span className="block text-[11.5px] font-bold text-slate-500 dark:text-slate-400 mb-0.5">{f.label}</span>
+                  {f.multiline === false ? (
+                    <input
+                      data-testid={`pe-${g.id}-${f.key}`}
+                      value={vals[g.id]?.[f.key] ?? ""}
+                      onChange={(e) => { const v = e.target.value; setVals((p) => ({ ...p, [g.id]: { ...p[g.id], [f.key]: v } })); }}
+                      className={`${box} ${isChanged(g.id, f.key) ? chg : ""}`}
+                    />
+                  ) : (
+                    <textarea
+                      data-testid={`pe-${g.id}-${f.key}`}
+                      rows={1}
+                      value={vals[g.id]?.[f.key] ?? ""}
+                      ref={grow}
+                      onChange={(e) => { const v = e.target.value; grow(e.target); setVals((p) => ({ ...p, [g.id]: { ...p[g.id], [f.key]: v } })); }}
+                      className={`${box} resize-none overflow-hidden ${isChanged(g.id, f.key) ? chg : ""}`}
+                    />
+                  )}
+                </label>
+              ))}
+            </section>
+          ))}
+        </div>
+      </div>
+      <div className="fixed bottom-0 left-0 right-0 z-[61] bg-white/95 dark:bg-slate-900/95 border-t border-slate-200 dark:border-slate-800 px-4 pt-3" style={{ paddingBottom: "calc(0.75rem + env(safe-area-inset-bottom, 0px))" }}>
+        <div className="max-w-2xl mx-auto flex items-center gap-2">
+          <span className="flex-1 text-xs text-slate-600 dark:text-slate-400" data-testid="preview-edit-count">{dirty ? `${dirty} edit${dirty > 1 ? "s" : ""} not saved` : "No changes"}</span>
+          {dirty > 0 && <button type="button" onClick={() => setVals(initial)} className="min-h-[42px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-300">Undo all</button>}
+          <button type="button" onClick={onClose} className="min-h-[42px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-300">{dirty ? "Discard" : "Close"}</button>
+          <button type="button" data-testid="preview-edit-save" disabled={!dirty} onClick={() => onSave(vals)} className="min-h-[42px] px-4 rounded-xl bg-emerald-600 disabled:opacity-50 text-white text-xs font-bold">Save edits</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function EmptyLine({ text = "Not documented" }: { text?: string }) {
   return <p className="text-sm text-slate-500 italic print:text-black">{text}</p>;
 }
@@ -1205,7 +1274,20 @@ export default function CaseSheetPrintView({
    const [copyFailed, setCopyFailed] = useState(false);
   const [showEmrPanel, setShowEmrPanel] = useState(false); // ← NEW
 
-  const data = propData || (clinicalCase ? convertClinicalCaseToCaseSheetData(clinicalCase, defaultHospital) : null);
+  // Edit-in-preview: edits change a draft copy of the case; Apply saves that draft.
+  const canEditPreview = Boolean(isPreview && clinicalCase && onApplyPreview);
+  const [draftCase, setDraftCase] = useState<ClinicalCase | null>(clinicalCase || null);
+  const [editMode, setEditMode] = useState(false);
+  const [editCount, setEditCount] = useState(0);
+  useEffect(() => {
+    setDraftCase(clinicalCase || null);
+    setEditCount(0);
+    setEditMode(false);
+  }, [clinicalCase]);
+  const shownCase = canEditPreview && draftCase ? draftCase : clinicalCase;
+  useEffect(() => { if (canEditPreview) requestTour("preview"); }, [canEditPreview]);
+
+  const data = propData || (shownCase ? convertClinicalCaseToCaseSheetData(shownCase, defaultHospital) : null);
 
   const handleCopyCaseSheet = async () => {
     if (!data) return;
@@ -1273,7 +1355,7 @@ export default function CaseSheetPrintView({
   );
 
   return (
-    <div className="min-h-screen bg-slate-100 dark:bg-slate-900 print:bg-white text-slate-900 dark:text-slate-100 font-sans">
+    <div className={`min-h-screen bg-slate-100 dark:bg-slate-900 print:bg-white text-slate-900 dark:text-slate-100 font-sans`}>
       {/* Sticky Header with Banner & Toolbar for Preview / Print */}
       <div className="no-print sticky top-[var(--ermate-header-height,50px)] z-30 shadow-sm">
         {isPreview && (
@@ -1291,7 +1373,7 @@ export default function CaseSheetPrintView({
             ) : (
               <>
                 <AlertTriangle className="w-4 h-4 shrink-0" />
-                <span>Preview — changes are not saved yet</span>
+                <span>{`Preview — changes are not saved yet${editCount ? ` · ${editCount} edit${editCount > 1 ? "s" : ""}` : ""}`}</span>
               </>
             )}
           </div>
@@ -1336,6 +1418,18 @@ export default function CaseSheetPrintView({
           <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
             {isPreview ? (
               <>
+                {canEditPreview && !applySuccess && (
+                  <button
+                    type="button"
+                    onClick={() => setEditMode(true)}
+                    id="preview-edit-toggle"
+                    data-coach="preview-edit"
+                    className="min-w-[44px] min-h-[44px] flex-1 sm:flex-none justify-center inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-xl transition-all cursor-pointer border bg-purple-50 dark:bg-purple-950/40 hover:bg-purple-100 text-purple-700 dark:text-purple-300 border-purple-300 dark:border-purple-800"
+                  >
+                    <Pencil className="w-3.5 h-3.5" />
+                    <span className="whitespace-nowrap">Edit this preview</span>
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={handleCopyCaseSheet}
@@ -1386,7 +1480,7 @@ export default function CaseSheetPrintView({
                       try {
                         setIsApplying(true);
                         setApplyError(null);
-                        await onApplyPreview(clinicalCase);
+                        await onApplyPreview((shownCase || clinicalCase) as ClinicalCase);
                         setApplySuccess(true);
                       } catch (err: any) {
                         console.error("Apply preview error:", err);
@@ -1950,6 +2044,26 @@ export default function CaseSheetPrintView({
           @page { margin: 15mm; }
         }
       `}</style>
+      {editMode && canEditPreview && shownCase && (
+        <EditAllForm
+          groups={EDIT_GROUPS.map((g) => ({ id: g.id, label: g.label, fields: (EDIT_SECTIONS[g.title] || []).map((f) => ({ key: f.key, label: f.label, multiline: f.multiline, value: f.get(shownCase, data) })) }))}
+          onClose={() => setEditMode(false)}
+          onSave={(vals) => {
+            let next: any = shownCase;
+            let changed = 0;
+            for (const g of EDIT_GROUPS) {
+              const r = applySectionEdits(next, data, g.title, vals[g.id] || {});
+              next = r.next;
+              changed += r.changed;
+            }
+            if (changed > 0) {
+              setDraftCase(next as ClinicalCase);
+              setEditCount((n) => n + changed);
+            }
+            setEditMode(false);
+          }}
+        />
+      )}
     </div>
   );
 }

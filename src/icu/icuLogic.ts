@@ -436,7 +436,7 @@ export function extractionCounts(ext: IcuExtraction) {
 // ── Note text (Preview + Copy to EMR) ─────────────────────────
 const ND = "Not documented";
 
-export interface EmrSection { key: string; title: string; text: string }
+export interface EmrSection { key: string; title: string; text: string; edited?: boolean }
 
 export function buildIcuEmrSections(note: IcuNote, adm: Pick<IcuAdmission, "unitName" | "bed" | "admittedAt">, now = new Date()): EmrSection[] {
   const s = note.sections;
@@ -496,7 +496,7 @@ export function buildIcuEmrSections(note: IcuNote, adm: Pick<IcuAdmission, "unit
     ? note.tasks.map((t) => `${t.done ? "[done]" : "[ ]"} ${t.when}: ${t.what}`).join("\n")
     : ND;
 
-  return [
+  const generated: EmrSection[] = [
     { key: "diagnosis", title: "DIAGNOSIS / ACTIVE PROBLEMS", text: diagnosis },
     { key: "progress", title: "PROGRESS", text: progress.join("\n") },
     { key: "exam", title: "EXAMINATION", text: exam },
@@ -508,6 +508,11 @@ export function buildIcuEmrSections(note: IcuNote, adm: Pick<IcuAdmission, "unit
     { key: "devices", title: "LINES & TUBES", text: devices },
     { key: "summary", title: "SUMMARY & PROGNOSIS", text: s.summary || ND },
   ];
+  // Wording the doctor edited in the Preview tab replaces the generated text for that section.
+  return generated.map((sec) => {
+    const ov = note.emrEdits?.[sec.key];
+    return typeof ov === "string" && ov.trim() ? { ...sec, text: ov.trim(), edited: true } : sec;
+  });
 }
 
 export function buildIcuNoteText(

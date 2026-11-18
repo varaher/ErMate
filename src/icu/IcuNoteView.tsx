@@ -304,7 +304,8 @@ export default function IcuNoteView({ admission, units, occupiedBeds, profile, o
         {note && tab === "fasthugs" && <FastHugsTab note={note} readOnly={readOnly} update={update} />}
         {note && tab === "plan" && <PlanTab note={note} readOnly={readOnly} update={update} onToggleTask={toggleTask} />}
         {note && tab === "preview" && (
-          <PreviewTab note={note} admission={admission} doctor={{ name: doctorName, designation }} notify={notify} onSign={handleSign} />
+          <PreviewTab note={note} admission={admission} doctor={{ name: doctorName, designation }} notify={notify} onSign={handleSign}
+            onEditSections={(changes) => update((n) => { const m = { ...(n.emrEdits || {}) }; for (const [k, t] of Object.entries(changes)) { if (t === null) delete m[k]; else m[k] = t; } n.emrEdits = m; })} />
         )}
       </div>
 
@@ -727,10 +728,13 @@ function PlanTab({ note, readOnly, update, onToggleTask }: {
 }
 
 // ── Preview + Copy to EMR + Sign ──────────────────────────────
-function PreviewTab({ note, admission, doctor, notify, onSign }: {
+function PreviewTab({ note, admission, doctor, notify, onSign, onEditSections }: {
   note: IcuNote; admission: IcuAdmission; doctor: { name: string | null; designation: string | null };
-  notify: Notify; onSign: () => void;
+  notify: Notify; onSign: () => void; onEditSections: (changes: Record<string, string | null>) => void;
 }) {
+  const [editAll, setEditAll] = useState(false);
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const canEdit = note.status !== "signed";
   const sections = useMemo(() => buildIcuEmrSections(note, admission), [note, admission]);
   const full = useMemo(() => buildIcuNoteText(note, admission, doctor), [note, admission, doctor]);
   const [copied, setCopied] = useState<string | null>(null);
@@ -742,9 +746,57 @@ function PreviewTab({ note, admission, doctor, notify, onSign }: {
     else notify("Copy failed", "Your browser blocked the clipboard. Select the text and copy manually.", "warning");
   };
 
+  const generated = useMemo(() => Object.fromEntries(buildIcuEmrSections({ ...note, emrEdits: undefined }, admission).map((x) => [x.key, x.text])), [note, admission]);
+  const startEdit = () => { setDrafts(Object.fromEntries(sections.map((x) => [x.key, x.text]))); setEditAll(true); };
+  const changedKeys = sections.filter((x) => (drafts[x.key] ?? x.text).trim() !== x.text.trim());
+  const saveAll = () => {
+    const changes: Record<string, string | null> = {};
+    for (const x of changedKeys) {
+      const t = (drafts[x.key] ?? "").trim();
+      changes[x.key] = !t || t === (generated[x.key] || "").trim() ? null : t;
+    }
+    if (Object.keys(changes).length) onEditSections(changes);
+    setEditAll(false);
+  };
+
+  if (editAll) {
+    return (
+      <div className="space-y-3 pb-24" data-testid="icu-preview-edit-all">
+        <p className="text-xs text-slate-600 dark:text-slate-400 px-1">Edit any section below, then save once.</p>
+        {sections.map((x) => (
+          <label key={x.key} className={`${card} p-3 block space-y-1`}>
+            <span className="flex items-center justify-between gap-2">
+              <span className="text-xs font-bold text-slate-700 dark:text-slate-300">{x.title}</span>
+              {(drafts[x.key] ?? x.text).trim() !== (generated[x.key] || "").trim() && (
+                <button type="button" onClick={(e) => { e.preventDefault(); setDrafts((d) => ({ ...d, [x.key]: generated[x.key] || "" })); }}
+                  className="text-[11px] font-semibold text-purple-700 dark:text-purple-300 px-1">Back to generated text</button>
+              )}
+            </span>
+            <textarea
+              className={`${input} ${(drafts[x.key] ?? x.text).trim() !== x.text.trim() ? "ring-2 ring-emerald-500/60" : ""}`}
+              value={drafts[x.key] ?? x.text}
+              aria-label={`Edit ${x.title}`}
+              ref={(el) => { if (el) { el.style.height = "auto"; el.style.height = `${el.scrollHeight}px`; } }}
+              onChange={(e) => { const v = e.target.value; setDrafts((d) => ({ ...d, [x.key]: v })); e.target.style.height = "auto"; e.target.style.height = `${e.target.scrollHeight}px`; }}
+            />
+          </label>
+        ))}
+        <div className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 dark:bg-slate-900/95 border-t border-slate-200 dark:border-slate-800 px-4 py-3 flex items-center gap-2" style={{ paddingBottom: "calc(0.75rem + env(safe-area-inset-bottom, 0px))" }}>
+          <span className="flex-1 text-xs text-slate-600 dark:text-slate-400">{changedKeys.length ? `${changedKeys.length} edit${changedKeys.length > 1 ? "s" : ""} not saved` : "No changes"}</span>
+          <button type="button" onClick={() => setEditAll(false)} className="min-h-[42px] px-4 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-300">Cancel</button>
+          <button type="button" data-testid="icu-preview-save-edits" disabled={!changedKeys.length} onClick={saveAll} className="min-h-[42px] px-4 rounded-xl bg-emerald-600 disabled:opacity-50 text-white text-xs font-bold">Save edits</button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-3">
       <p className="text-xs text-slate-600 dark:text-slate-400 px-1">Only dictated, entered or confirmed findings appear. Empty sections say “Not documented”.</p>
+      {canEdit && (
+        <button type="button" onClick={startEdit} data-testid="icu-preview-edit-all"
+          className="w-full min-h-[44px] rounded-xl border border-purple-300 dark:border-purple-800 text-purple-700 dark:text-purple-300 text-sm font-bold">Edit all sections</button>
+      )}
       <button type="button" onClick={() => copy("__full", full)}
         className="w-full min-h-[48px] rounded-xl border border-purple-200 dark:border-purple-800 bg-purple-50 dark:bg-purple-950/30 text-purple-800 dark:text-purple-200 text-sm font-semibold flex items-center justify-center gap-2">
         {copied === "__full" ? <Check className="w-4 h-4" /> : <ClipboardCopy className="w-4 h-4" aria-hidden="true" />}
@@ -761,6 +813,7 @@ function PreviewTab({ note, admission, doctor, notify, onSign }: {
             </button>
           </div>
           <p className="text-sm text-slate-800 dark:text-slate-200 whitespace-pre-wrap">{sec.text}</p>
+          {sec.edited && <p className="text-[10px] font-semibold text-purple-700 dark:text-purple-300">Edited by you</p>}
         </div>
       ))}
       {note.status !== "signed" && (

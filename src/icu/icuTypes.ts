@@ -243,6 +243,8 @@ export interface IcuNote {
   flags: ClarificationFlag[];
   tasks: IcuTask[];
   devices: IcuDevice[];
+  /** Section wording the doctor changed in the Preview tab (key = EMR section key). Wins over the generated text until reset. */
+  emrEdits?: Record<string, string>;
 }
 
 /** Shape returned by /api/icu/extract after client-side sanitising. */

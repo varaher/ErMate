@@ -28,7 +28,7 @@ export interface CoachStep {
   feature?: string;
 }
 
-export type TourId = "home" | "cases" | "handover" | "learn" | "more" | "scribe" | "protocols" | "icu" | "icunote" | "icucases" | "icuhandover" | "icurounds" | "icutrends";
+export type TourId = "home" | "cases" | "handover" | "learn" | "more" | "scribe" | "protocols" | "icu" | "icunote" | "icucases" | "icuhandover" | "icurounds" | "icutrends" | "preview";
 
 /** App tab id -> tour shown the first time that tab is opened. */
 export const TAB_TO_TOUR: Record<string, TourId> = {
@@ -98,7 +98,7 @@ export const TOURS: Record<TourId, CoachStep[]> = {
   icunote: [
     { id: "icu-speak", feature: "icu-scribe", target: { sel: '[data-coach="icu-dictate"]' }, title: "Speak the case", body: "Dictate naturally, in any order. ErMate sorts it into problems, progress, exam, plan, FAST HUGS, tasks and lines, and shows a full preview. Nothing is saved until you tap Apply." },
     { id: "icu-fasthugs", feature: "icu-fasthugs", target: { sel: '[data-coach="icu-fasthugs-tab"]' }, title: "FAST HUGS BID", body: "All 11 daily checks in one list. Amber means not reviewed. Items are never filled automatically: dictate them, or mark Not applicable with a reason." },
-    { id: "icu-preview", feature: "icu-emr-copy", target: { sel: '[data-coach="icu-preview-tab"]' }, title: "Preview, sign, Copy to EMR", body: "See the finished note, copy the whole note or one section at a time into your hospital EMR, then sign. A signed note cannot be edited." },
+    { id: "icu-preview", v: 2, feature: "icu-emr-copy", target: { sel: '[data-coach="icu-preview-tab"]' }, title: "Preview, sign, Copy to EMR", body: "See the finished note, copy the whole note or one section at a time into your hospital EMR, then sign. Tap Edit all sections to fix any wording in one window first. A signed note cannot be edited." },
     { id: "icu-nothing-guessed", title: "Nothing is guessed", body: "Empty sections say Not documented. Unclear orders, such as a drug without a dose, are flagged for you to clarify. Day 2 onwards, problems and lines carry forward marked Confirm." },
     { id: "icu-note-partners", v: 2, feature: "icu-thinking-partners", target: { sel: '[data-coach="icu-note-partners"]' }, title: "Discuss, 7-lens, Trends", body: "Discuss this patient or run 7-lens teaching rounds on the whole ICU stay. Names and UHID are never sent to the AI, and its answers never change the note. Trends charts every documented value across the stay." },
   ],
@@ -108,6 +108,9 @@ export const TOURS: Record<TourId, CoachStep[]> = {
   ],
   icutrends: [
     { id: "icu-trends-window", feature: "icu-trends-window", target: { sel: '[data-coach="icu-trends-window"]' }, title: "Pick the time window", body: "Choose 24 h, 7 days or Whole stay. Only values that were documented are plotted. The line breaks where nothing was recorded." },
+  ],
+  preview: [
+    { id: "preview-edit", feature: "preview-edit", target: { sel: '[data-coach="preview-edit"]' }, title: "Edit right here", body: "Tap Edit this preview to change anything in one window, then Save edits. Your changes show in the preview, in Copy to EMR and in the saved case sheet. Nothing is saved until you tap Apply." },
   ],
   icucases: [
     { id: "icu-cases", feature: "icu-cases", target: { sel: '[data-coach="icu-cases-list"]' }, title: "ICU cases", body: "Every ICU patient, in the ICU now or shifted out. Search, open their notes, or copy a note to your EMR. Switch to ER to see your ER cases." },
