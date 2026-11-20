@@ -66,6 +66,7 @@ import MateModeBar from "./MateModeBar";
 import { MateMode, MODE_PLACEHOLDER, MODE_ENTERED, parseModeSwitch, lensFromText, bedFromText, findCaseByBed, buildWardLines, looksClinicalReply } from "../mate/mateModes";
 import { stampClinicianUpdates } from "../mate/clinicianUpdateStamp";
 import { classifyDischargeRequest } from "../mate/mateDischargeIntent";
+import { WHICH_BED_QUESTION, shouldAskWhichBed, classifyWhichBedReply } from "../mate/whichBedGate";
 import { hasExplicitPatientReference, isFocusAuthorized, isImplicitPatientReference, shouldAskWhichPatient, isHeldUpdateExpired, appendHeldUpdate, WHICH_PATIENT_QUESTION, type HeldUpdate } from "../mate/mateWriteTargetGate";
 import { detectPatientAnnouncement, detectExplicitNewCaseIntent, bedFromUnmatchedReference, shouldStartCaseForVacantBed, groundPatientReference, isLongClinicalPaste, looksLikeFullCaseSheet, shouldHoldPastedSheet, classifyPendingSheetReply } from "../mate/mateNewCaseIntent";
 import { computeCensusOrientation, formatErOverviewMessage } from "../mate/mateOrientation";
@@ -858,7 +859,8 @@ export default function VoiceScribeChatView({
 
   // Paste-first: a full case sheet that arrived with no bed and no open patient. Held (in memory only)
   // until the doctor gives a bed, then replayed into that new case. Never applied anywhere else.
-  const pendingPastedSheetRef = useRef<{ text: string; generation: number; createdAt: number } | null>(null);
+  // "dictation" = a new patient's dictation that named no bed; same hold, same replay.
+  const pendingPastedSheetRef = useRef<{ text: string; generation: number; createdAt: number; kind?: "sheet" | "dictation" } | null>(null);
 
   // Pending new-patient handoff state
   const pendingNewPatientHandoffRef = useRef<{
@@ -1981,10 +1983,23 @@ export default function VoiceScribeChatView({
           const expired = held.generation !== sessionContextGenerationRef.current || Date.now() - held.createdAt > 15 * 60 * 1000;
           if (expired) {
             pendingPastedSheetRef.current = null;
-          } else if (classifyPendingSheetReply(trimmed).kind === "other") {
-            // A question, another patient or new dictation ends the hold; the message is then handled normally.
-            pendingPastedSheetRef.current = null;
-            postPair(null, "I dropped the case sheet that was waiting for a bed. Nothing was added. Paste it again with a bed when ready.");
+          } else if (classifyWhichBedReply(trimmed).kind === "other") {
+            // More bed-less dictation for the same new patient keeps the hold (it is added below).
+            // A question, another patient or anything else ends the hold; the message is then handled normally.
+            const keepDictation =
+              held.kind === "dictation" &&
+              !hasExplicitPatientReference(trimmed) &&
+              !/\?\s*$/.test(trimmed) &&
+              planMateConversation(trimmed).mayContainClinicalUpdate;
+            if (!keepDictation) {
+              pendingPastedSheetRef.current = null;
+              postPair(
+                null,
+                held.kind === "dictation"
+                  ? "I dropped the dictation that was waiting for a bed. Nothing was saved. Say it again with a bed when ready."
+                  : "I dropped the case sheet that was waiting for a bed. Nothing was added. Paste it again with a bed when ready."
+              );
+            }
           }
         }
       }
@@ -2188,6 +2203,47 @@ export default function VoiceScribeChatView({
         // Anything else (a question, a read of another patient, an explicit-bed update) leaves the hold in place.
       }
 
+      // ── NEW PATIENT, NO BED SAID: ASK "WHICH BED?" FIRST ──────────────────
+      // MATE never guesses the bed of a new patient. The dictation is held (nothing saved) until the doctor
+      // gives a bed, or says "any bed". Dictation that names a bed or case never comes here.
+      {
+        const heldBed = pendingPastedSheetRef.current;
+        if (heldBed?.kind === "dictation" && classifyWhichBedReply(trimmed).kind === "other") {
+          const added = appendHeldUpdate(
+            { text: heldBed.text, generation: heldBed.generation, createdAt: heldBed.createdAt },
+            trimmed,
+            heldBed.generation
+          );
+          pendingPastedSheetRef.current = { ...heldBed, text: added.text };
+          setInputText("");
+          postPair(trimmed, `Noted. ${WHICH_BED_QUESTION}`);
+          return;
+        }
+        if (
+          !heldBed &&
+          onEnsureDraftCase &&
+          !looksLikeFullCaseSheet(trimmed) &&
+          shouldAskWhichBed({
+            text: trimmed,
+            clinicalWrite: clinicalWriteTurn,
+            openCase: activeCase ? { age: (activeCase as any)?.patient?.age, gender: (activeCase as any)?.patient?.gender } : null,
+            hasRecentCase: Boolean(recentCase),
+            hasBedRef: Boolean(extractMateBedReference(trimmed)),
+          })
+        ) {
+          pendingPastedSheetRef.current = {
+            text: trimmed,
+            generation: sessionContextGenerationRef.current,
+            createdAt: Date.now(),
+            kind: "dictation",
+          };
+          setInputText("");
+          const snippet = trimmed.length > 140 ? `${trimmed.slice(0, 140)}…` : trimmed;
+          postPair(`🕘 New patient waiting for a bed: “${snippet}”`, WHICH_BED_QUESTION);
+          return;
+        }
+      }
+
       if (
         shouldAskWhichPatient({
           clinicalWrite: clinicalWriteTurn,
@@ -2328,16 +2384,22 @@ export default function VoiceScribeChatView({
 
       const heldSheet = pendingPastedSheetRef.current;
       if (heldSheet) {
-        const reply = classifyPendingSheetReply(trimmed);
+        const reply = classifyWhichBedReply(trimmed);
+        const heldIsSheet = heldSheet.kind !== "dictation";
         if (reply.kind === "cancel") {
           pendingPastedSheetRef.current = null;
           setInputText("");
-          postPair(trimmed, "Case sheet discarded. Nothing was added or changed.");
+          postPair(trimmed, heldIsSheet ? "Case sheet discarded. Nothing was added or changed." : "Dictation discarded. Nothing was saved.");
           return;
-        } else if (reply.kind === "bed") {
+        } else if (reply.kind === "bed" || reply.kind === "any") {
           setInputText("");
+          const chosenBed = reply.kind === "bed" ? reply.bed : pickNextFreeBed(activeCensusCases, physicalBedCapacity);
+          if (!chosenBed) {
+            postPair(trimmed, `Every bed is occupied. Give a bed, or say "cancel". Your ${heldIsSheet ? "case sheet" : "dictation"} is still held. Nothing was saved.`);
+            return;
+          }
           const dest = resolveMateCaseReference({
-            utterance: `Bed ${reply.bed}`,
+            utterance: `Bed ${chosenBed}`,
             cases: activeCensusCases,
             activeCaseId: null,
             physicalCapacity: physicalBedCapacity,
@@ -2347,46 +2409,43 @@ export default function VoiceScribeChatView({
             postPair(
               trimmed,
               dest.status === "INVALID_LOCATION"
-                ? `Bed ${reply.bed} is outside the configured ER capacity (${physicalBedCapacity || 30} beds). Your case sheet is still held. Give a valid bed, or say "cancel".`
-                : `Bed ${reply.bed} has no free slot. Your case sheet is still held. Give a vacant bed, or say "cancel".`
+                ? `Bed ${chosenBed} is outside the configured ER capacity (${physicalBedCapacity || 30} beds). Your ${heldIsSheet ? "case sheet" : "dictation"} is still held. Give a valid bed, or say "cancel".`
+                : `Bed ${chosenBed} has no free slot. Your ${heldIsSheet ? "case sheet" : "dictation"} is still held. Give a vacant bed, or say "cancel".`
             );
             return;
           }
           if (!onEnsureDraftCase) {
-            postPair(trimmed, "Case creation is unavailable right now. The case sheet was not applied.");
+            postPair(trimmed, heldIsSheet ? "Case creation is unavailable right now. The case sheet was not applied." : "Case creation is unavailable right now. Nothing was saved.");
             return;
           }
-          postPair(trimmed, `Starting the case in Bed ${dest.referenceValue || reply.bed}…`);
-          lastReferencedBedRef.current = reply.bed;
+          if (reply.kind === "any") {
+            const pickedText = bedPickedNotice(chosenBed, heldIsSheet);
+            postPair(trimmed, pickedText, { bedNotice: true });
+            speakMate(pickedText);
+          } else {
+            postPair(trimmed, `Starting the case in Bed ${dest.referenceValue || chosenBed}…`);
+          }
+          lastReferencedBedRef.current = chosenBed;
           // Release the sheet to the case-and-replay handoff; if the case could not be created it stays held.
           pendingPastedSheetRef.current = null;
-          const started = await startNewCaseInBed(dest.referenceValue || reply.bed, reply.bed, false, heldSheet.text);
+          const started = await startNewCaseInBed(dest.referenceValue || chosenBed, chosenBed, false, heldSheet.text);
           if (!started) pendingPastedSheetRef.current = heldSheet;
           return;
         }
       }
 
       if (shouldHoldPastedSheet({ text: trimmed, hasOpenPatient: Boolean(activeCaseId && activeCensusCases.some((c) => c.id === activeCaseId)) })) {
-        // MATE picks the lowest free bed and tells the doctor; the doctor can move it. Falls back to asking when the ER is full.
-        const autoBed = onEnsureDraftCase ? pickNextFreeBed(activeCensusCases, physicalBedCapacity) : null;
-        if (autoBed) {
-          setInputText("");
-          const pickedText = bedPickedNotice(autoBed, true);
-          postPair(`📄 Case sheet pasted (${trimmed.length} characters)`, pickedText, { bedNotice: true });
-          speakMate(pickedText);
-          lastReferencedBedRef.current = autoBed;
-          await startNewCaseInBed(autoBed, autoBed, false, trimmed);
-          return;
-        }
+        // MATE asks which bed first; it never guesses. "any bed" lets MATE pick the lowest free one.
         pendingPastedSheetRef.current = {
           text: trimmed,
           generation: sessionContextGenerationRef.current,
           createdAt: Date.now(),
+          kind: "sheet",
         };
         setInputText("");
         postPair(
           `📄 Case sheet pasted (${trimmed.length} characters)`,
-          "Got the case sheet. Which bed is this patient in? Reply \"Bed 9\" or \"9A\". Nothing has been applied yet."
+          "Got the case sheet. Which bed is this patient in? Reply \"Bed 9\" or \"9A\", or say \"any bed\" and I will pick the next free one. Nothing has been applied yet."
         );
         return;
       }
