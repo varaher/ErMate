@@ -1,7 +1,8 @@
 import TeamHomeView from "./TeamHomeView";
 import TeamStartCard from "./TeamStartCard"; // ← NEW
 import { WorkspaceRotaSyncModal } from "./shared/WorkspaceRotaSyncModal";
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { TEAM_ROLE_OPTIONS, teamRoleLabel, teamRoleOptionsFor } from "../lib/teamRoles";
 import { 
   Users, Plus, Trash2, Shield, Clock, Search, UserCheck, 
   UserX, ShieldAlert, CheckCircle2, Mail, Calendar, Sparkles,
@@ -48,7 +49,7 @@ export interface TeamRosterBoardProps {
   profile: UserProfile;
   cases?: ClinicalCase[];
   onSaveCase?: (updatedCase: ClinicalCase) => Promise<void>;
-  onAddMember: (name: string, email: string, role: string, shift: string) => Promise<void> | void;
+  onAddMember: (name: string, email: string, role: string, shift: string) => Promise<string | void> | string | void;
   onRemoveMember: (id: string) => Promise<void> | void;
   onUpdateShift: (id: string, shift: string) => Promise<void> | void;
   onApproveMember?: (id: string, role?: string, isTeamAdmin?: boolean) => Promise<void> | void;
@@ -68,7 +69,7 @@ export interface TeamRosterBoardProps {
 export type TeamSectionTab = "home" | "overview" | "members" | "rota" | "settings";
 
 export default function TeamRosterBoard({
-  teamMembers,
+  teamMembers: teamMembersAll,
   profile,
   cases = [],
   onSaveCase,
@@ -90,6 +91,13 @@ export default function TeamRosterBoard({
   onEditProfile,
   onEditHospital,
 }: TeamRosterBoardProps) {
+  // Teams audit H2 (20 Nov 2026): the live list holds every record ever filed under this team,
+  // including people who left, were removed, declined or cancelled. Only active members and
+  // pending join requests belong on the Team page, the rota and the counts.
+  const teamMembers = useMemo(
+    () => (teamMembersAll || []).filter(m => isActiveMembershipStatus(m.status) || isPendingApprovalStatus(m.status)),
+    [teamMembersAll]
+  );
   // Navigation Tabs: 1. OVERVIEW, 2. MEMBERS, 3. ROTA, 4. SETTINGS
     const [activeTab, setActiveTab] = useState<TeamSectionTab>(() => {
     // "Set up your rota" and a freshly created team open straight on the Rota tab.
@@ -139,6 +147,9 @@ export default function TeamRosterBoard({
   const [newName, setNewName] = useState("");
   const [newEmail, setNewEmail] = useState("");
   const [newRole, setNewRole] = useState("EM Resident");
+  // Personal invite links made by "Add clinician" / bulk add in this visit (Teams audit H5).
+  const [personalInviteLinks, setPersonalInviteLinks] = useState<{ name: string; email: string; link: string }[]>([]);
+  const [copiedInviteEmail, setCopiedInviteEmail] = useState("");
   const [newShift, setNewShift] = useState("morning");
   const [bulkEmailsText, setBulkEmailsText] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -164,7 +175,6 @@ export default function TeamRosterBoard({
   }, [erPhysicalBedCapacity]);
 
   // Sandbox Simulator State
-  const [selectedSimEmail, setSelectedSimEmail] = useState("");
 
   // Calendar sync modal state
   const [isCalendarModalOpen, setIsCalendarModalOpen] = useState(false);
@@ -540,8 +550,11 @@ export default function TeamRosterBoard({
     setSuccessMsg("");
 
     try {
-      await onAddMember(newName.trim(), emailLower, newRole, newShift);
-      setSuccessMsg(`Successfully added Dr. ${newName.trim()} to the team!`);
+      const link = await onAddMember(newName.trim(), emailLower, newRole, newShift);
+      if (typeof link === "string" && link) {
+        setPersonalInviteLinks(prev => [{ name: newName.trim(), email: emailLower, link }, ...prev.filter(p => p.email !== emailLower)]);
+      }
+      setSuccessMsg(`Invite link ready for Dr. ${newName.trim()}. Send it to them below — they join after you approve.`);
       setNewName("");
       setNewEmail("");
       setNewRole("EM Resident");
@@ -581,17 +594,29 @@ export default function TeamRosterBoard({
     setErrorMsg("");
     setSuccessMsg("");
 
+    // One personal link per email. Each is kept and shown (with Copy / WhatsApp); a failure on one
+    // email doesn't hide the links already made.
+    const made: { name: string; email: string; link: string }[] = [];
+    const failedEmails: string[] = [];
     try {
       for (const email of newOnes) {
         const namePart = email.split("@")[0].replace(/[._-]+/g, " ");
         const formattedName = namePart.charAt(0).toUpperCase() + namePart.slice(1);
-        await onAddMember(formattedName, email, newRole, newShift);
+        try {
+          const link = await onAddMember(formattedName, email, newRole, newShift);
+          if (typeof link === "string" && link) made.push({ name: formattedName, email, link });
+        } catch {
+          failedEmails.push(email);
+        }
       }
-      setSuccessMsg(`Successfully added ${newOnes.length} clinicians to team!`);
-      setBulkEmailsText("");
-      setTimeout(() => setSuccessMsg(""), 4000);
-    } catch (err: any) {
-      setErrorMsg(err?.message || "Failed to import clinicians.");
+      if (made.length > 0) {
+        setPersonalInviteLinks(prev => [...made, ...prev.filter(p => !made.some(m => m.email === p.email))]);
+        setSuccessMsg(`${made.length} invite link${made.length > 1 ? "s" : ""} ready. Send each one below — they join after you approve.`);
+        setBulkEmailsText("");
+      }
+      if (failedEmails.length > 0) {
+        setErrorMsg(`Could not make a link for: ${failedEmails.join(", ")}.`);
+      }
     } finally {
       setIsSubmitting(false);
     }
@@ -672,11 +697,14 @@ export default function TeamRosterBoard({
   };
 
   // Filter calculations
+  // Members list and rota show active members only; pending requests have their own approval list.
   const filteredMembers = teamMembers.filter(m => {
-    const matchesSearch = 
-      m.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      m.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      m.role.toLowerCase().includes(searchQuery.toLowerCase());
+    if (!isActiveMembershipStatus(m.status)) return false;
+    const q = searchQuery.toLowerCase();
+    const matchesSearch =
+      String(m.name || "").toLowerCase().includes(q) ||
+      String(m.email || "").toLowerCase().includes(q) ||
+      String(m.role || "").toLowerCase().includes(q);
     const matchesShift = shiftFilter === "all" || m.shift === shiftFilter;
     return matchesSearch && matchesShift;
   });
@@ -1396,11 +1424,9 @@ export default function TeamRosterBoard({
                         onChange={e => setNewRole(e.target.value)}
                         className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-xs font-bold text-slate-900 dark:text-white focus:outline-none"
                       >
-                        <option value="Senior Consultant">Senior Consultant</option>
-                        <option value="EM Resident">EM Resident</option>
-                        <option value="HOD / Shift Lead">HOD / Shift Lead</option>
-                        <option value="Scribe Specialist">Scribe Specialist</option>
-                        <option value="EM Intern">EM Intern</option>
+                        {TEAM_ROLE_OPTIONS.map(r => (
+                          <option key={r} value={r}>{r}</option>
+                        ))}
                       </select>
                     </div>
 
@@ -1437,7 +1463,7 @@ export default function TeamRosterBoard({
                       className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs rounded-xl shadow-xs transition-all cursor-pointer flex items-center gap-1.5"
                     >
                       <Check className="w-3.5 h-3.5" />
-                      <span>{isSubmitting ? "Adding..." : "Add to Team"}</span>
+                      <span>{isSubmitting ? "Making link..." : "Make invite link"}</span>
                     </button>
                   </div>
                 </form>
@@ -1473,10 +1499,46 @@ export default function TeamRosterBoard({
                       disabled={isSubmitting}
                       className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs rounded-xl shadow-xs transition-all cursor-pointer"
                     >
-                      {isSubmitting ? "Importing..." : "Add Clinicians in Bulk"}
+                      {isSubmitting ? "Making links..." : "Make invite links"}
                     </button>
                   </div>
                 </form>
+              )}
+
+              {/* Personal invite links made above — each must be sent to that doctor (Teams audit H5). */}
+              {personalInviteLinks.length > 0 && (
+                <div className="mt-4 border-t border-slate-100 dark:border-slate-800 pt-3 space-y-2">
+                  <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">
+                    Send each doctor their link (valid 6 hours, works only for their email)
+                  </p>
+                  {personalInviteLinks.map(p => (
+                    <div key={p.email} className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl p-2.5">
+                      <div className="min-w-0">
+                        <p className="text-xs font-bold text-slate-900 dark:text-white truncate">Dr. {p.name}</p>
+                        <p className="text-[11px] text-slate-500 font-mono truncate">{p.email}</p>
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            try { await navigator.clipboard.writeText(p.link); setCopiedInviteEmail(p.email); setTimeout(() => setCopiedInviteEmail(""), 2000); } catch { /* clipboard blocked */ }
+                          }}
+                          className="px-3 py-1.5 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold rounded-lg cursor-pointer"
+                        >
+                          {copiedInviteEmail === p.email ? "Copied" : "Copy link"}
+                        </button>
+                        <a
+                          href={`https://wa.me/?text=${encodeURIComponent(`Join our ED team on ErMate: ${p.link}`)}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-lg"
+                        >
+                          WhatsApp
+                        </a>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               )}
             </div>
           )}
@@ -1600,7 +1662,10 @@ export default function TeamRosterBoard({
               <div className="space-y-2.5">
                 {/* Pending Team Admin Approvals */}
                 {pendingApprovals.map(req => {
-                  const selectedRole = approvalRoles[req.id] || req.role || "Resident";
+                  // Default to the requested role only if it is on the shared list (an "HOD" request
+                  // defaults to Resident: the HOD title comes from platform HOD verification).
+                  const requestedLabel = teamRoleLabel(req.role);
+                  const selectedRole = approvalRoles[req.id] || (TEAM_ROLE_OPTIONS.includes(requestedLabel) ? requestedLabel : "Resident");
                   const isMakeAdmin = approvalAdminStatus[req.id] === true;
 
                   return (
@@ -1613,7 +1678,7 @@ export default function TeamRosterBoard({
                           </span>
                         </div>
                         <p className="text-[11px] text-slate-500 dark:text-slate-400 font-mono">
-                          {req.email} • Requested: <span className="font-semibold text-slate-700 dark:text-slate-300">{req.role || "Resident"}</span>
+                          {req.email} • Requested: <span className="font-semibold text-slate-700 dark:text-slate-300">{teamRoleLabel(req.role) || "Resident"}</span>
                         </p>
                       </div>
 
@@ -1627,15 +1692,9 @@ export default function TeamRosterBoard({
                               onChange={(e) => setApprovalRoles(prev => ({ ...prev, [req.id]: e.target.value }))}
                               className="text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1 text-slate-900 dark:text-slate-100 font-semibold focus:outline-none"
                             >
-                              <option value="Resident">Resident</option>
-                              <option value="Senior Resident">Senior Resident</option>
-                              <option value="Consultant">Consultant</option>
-                              <option value="Senior Consultant">Senior Consultant</option>
-                              <option value="Medical Officer">Medical Officer</option>
-                              <option value="Fellow">Fellow</option>
-                              <option value="Emergency Physician">Emergency Physician</option>
-                              <option value="Staff Nurse">Staff Nurse</option>
-                              <option value="Clinical Pharmacist">Clinical Pharmacist</option>
+                              {TEAM_ROLE_OPTIONS.map(r => (
+                                <option key={r} value={r}>{r}</option>
+                              ))}
                             </select>
                           </div>
 
@@ -1776,21 +1835,16 @@ export default function TeamRosterBoard({
                         <span className="text-[9px] text-slate-400 uppercase font-bold font-mono block">Designation</span>
                         {isUserHOD && !isSelf && onUpdateRole ? (
                           <select
-                            value={member.role}
+                            value={teamRoleLabel(member.role)}
                             onChange={e => onUpdateRole(member.id, e.target.value)}
                             className="bg-transparent text-xs font-bold text-slate-800 dark:text-slate-200 focus:outline-none cursor-pointer"
                           >
-                            <option value="Senior Consultant">Senior Consultant</option>
-                            <option value="Consultant">Consultant</option>
-                            <option value="Senior Resident">Senior Resident</option>
-                            <option value="EM Resident">EM Resident</option>
-                            <option value="Medical Officer">Medical Officer</option>
-                            <option value="HOD / Shift Lead">HOD / Shift Lead</option>
-                            <option value="Scribe Specialist">Scribe Specialist</option>
-                            <option value="EM Intern">EM Intern</option>
+                            {teamRoleOptionsFor(member.role).map(r => (
+                              <option key={r} value={r}>{r}</option>
+                            ))}
                           </select>
                         ) : (
-                          <span className="font-bold text-slate-800 dark:text-slate-200">{member.role}</span>
+                          <span className="font-bold text-slate-800 dark:text-slate-200">{teamRoleLabel(member.role)}</span>
                         )}
                       </div>
 
@@ -2343,70 +2397,34 @@ export default function TeamRosterBoard({
                 })()}
               </div>
 
-              {/* Hospital License / Subscription Status */}
-              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 space-y-3 shadow-xs">
-                <div className="flex justify-between items-center border-b border-slate-100 dark:border-slate-800 pb-2">
-                  <span className="text-xs font-black uppercase font-mono tracking-wider text-slate-900 dark:text-white">
-                    Hospital Group License
-                  </span>
-                  <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full font-mono">
-                    {hospitalSubscriptionActive || joinedMembers.length > 0 ? "Active" : "Awaiting Verification"}
-                  </span>
-                </div>
+              {/* Team summary (Teams audit H4: replaces a group-licence card that showed no real plan,
+                  and a test "simulate join" panel whose button made a real approval call).
+                  Only true facts here. */}
+              {(() => {
+                const badgeVerified =
+                  myCanonicalMember?.isInstitutionallyVerified === true ||
+                  String(myCanonicalMember?.verificationStatus || "").toLowerCase() === "verified";
+                return (
+                  <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 space-y-3 shadow-xs">
+                    <div className="flex justify-between items-center border-b border-slate-100 dark:border-slate-800 pb-2">
+                      <span className="text-xs font-black uppercase font-mono tracking-wider text-slate-900 dark:text-white">
+                        Team summary
+                      </span>
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full font-mono ${badgeVerified ? "text-emerald-700 bg-emerald-50" : "text-slate-600 bg-slate-100 dark:bg-slate-800 dark:text-slate-300"}`}>
+                        {badgeVerified ? "Hospital verified" : "Hospital not yet verified"}
+                      </span>
+                    </div>
 
-                <div className="text-xs space-y-1.5 text-slate-600 dark:text-slate-300">
-                  <p>• Department Seats: <strong className="text-slate-900 dark:text-white">{teamMembers.length} allowlisted</strong></p>
-                  <p>• Active Clinicians: <strong className="text-emerald-600">{joinedMembers.length} joined</strong></p>
-                  <p>• Group License Tier: <strong className="text-indigo-600">Department Covered (Enterprise)</strong></p>
-                </div>
-              </div>
-
-              {/* Colleague Onboarding Simulator */}
-              <div className="bg-gradient-to-br from-indigo-950 via-slate-950 to-blue-950/90 text-white border border-indigo-800/40 rounded-2xl p-5 shadow-lg space-y-3 relative overflow-hidden">
-                <div className="flex justify-between items-center border-b border-indigo-900/60 pb-2">
-                  <h4 className="text-xs font-black uppercase tracking-wider text-indigo-300 flex items-center gap-1.5 font-mono">
-                    <RefreshCw className="w-3.5 h-3.5 text-emerald-400" />
-                    Sandbox Invitation Simulator
-                  </h4>
-                  <span className="text-[8.5px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-1.5 py-0.2 rounded font-mono font-bold uppercase">
-                    Testing
-                  </span>
-                </div>
-
-                <p className="text-[11px] text-slate-300 font-mono">
-                  Simulate a colleague clicking the generated invitation link on their device.
-                </p>
-
-                <div className="flex gap-2">
-                  <select
-                    value={selectedSimEmail}
-                    onChange={e => setSelectedSimEmail(e.target.value)}
-                    className="flex-1 px-3 py-1.5 bg-slate-900 border border-slate-800 rounded-xl text-xs font-bold text-white focus:outline-none"
-                  >
-                    <option value="">-- Choose doctor to simulate join --</option>
-                    {teamMembers.map(m => (
-                      <option key={m.id} value={m.email}>{m.name} ({m.email})</option>
-                    ))}
-                  </select>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (!selectedSimEmail) return;
-                      const target = teamMembers.find(m => m.email === selectedSimEmail);
-                      if (target && onApproveMember) {
-                        onApproveMember(target.id);
-                        alert(`Simulated successful join for ${target.name}!`);
-                      }
-                    }}
-                    disabled={!selectedSimEmail}
-                    className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold text-xs rounded-xl transition-all cursor-pointer flex items-center gap-1"
-                  >
-                    <Send className="w-3 h-3" />
-                    <span>Simulate</span>
-                  </button>
-                </div>
-              </div>
+                    <div className="text-xs space-y-1.5 text-slate-600 dark:text-slate-300">
+                      <p>• Active members: <strong className="text-emerald-600">{joinedMembers.length}</strong></p>
+                      <p>• Waiting for approval: <strong className="text-amber-600">{pendingApprovals.length}</strong></p>
+                      <p className="text-[11px] text-slate-500">
+                        The team works fully either way. "Hospital verified" is a badge the ErMate team adds after checking the department.
+                      </p>
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* Leave Team option */}
               {onLeaveTeam && !isUserHOD && (

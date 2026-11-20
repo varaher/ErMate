@@ -1078,6 +1078,9 @@ useEffect(() => {
 
   // Canonical verified team membership state for the current user
   const [selfMembership, setSelfMembership] = useState<any | null>(null);
+  // Teams audit M2: this doctor's own join request while it waits for approval. The team list
+  // only streams for active members, so the "waiting for approval" banner read from it never showed.
+  const [myJoinRequest, setMyJoinRequest] = useState<{ teamName: string } | null>(null);
 
   // Normalized clinical role for role-based navigation and permissions
   // CORE PRODUCT RULE:
@@ -1994,6 +1997,7 @@ useEffect(() => {
         selfMembershipRef,
         (memberSnapshot) => {
           if (!memberSnapshot.exists()) {
+            setMyJoinRequest(null);
             activeShiftsHospitalId = null;
             unsubscribeShifts();
             unsubscribeShifts = () => {};
@@ -2014,6 +2018,13 @@ useEffect(() => {
 
           const isVerifiedMembership =
             membership.membershipVerified === true;
+
+          if (isPendingApprovalStatus(membershipStatus)) {
+            const teamName = String(membership.teamName || membership.hospitalName || membership.hospital || "").trim();
+            setMyJoinRequest((prev) => (prev && prev.teamName === teamName ? prev : { teamName }));
+          } else {
+            setMyJoinRequest((prev) => (prev === null ? prev : null));
+          }
 
           const trustedHospitalId =
             typeof membership.hospitalId === "string" &&
@@ -2137,6 +2148,7 @@ useEffect(() => {
           unsubscribeShifts();
           unsubscribeShifts = () => {};
           setSelfMembership((prev: any) => (prev === null ? prev : null));
+          setMyJoinRequest(null);
           setShifts(ROTA_SHIFTS);
           // No verified team: individual capacity comes from users/{uid}, never wiped here.
           setErPhysicalBedCapacity(getIndividualBedCapacity());
@@ -5624,7 +5636,7 @@ const handleDeclineTeamMember = async (memberId: string) => {
 
     triggerNotification(
       "Left Department",
-      "You have successfully left your previous hospital team. You are now on a Standalone Standard plan.",
+      "You have left the hospital team. Your own plan and your own cases are unchanged.",
       "info"
     );
   } catch (err: any) {
@@ -5795,27 +5807,17 @@ const handleCancelJoinRequest = async () => {
     const link =
       `${origin}/join/${data.token}`;
 
-    triggerNotification(
-      "Invite Generated",
-      `Secure invite link created for ${email}. Please share this link: ${link}`,
-      "success"
-    );
-
-    if (navigator.clipboard) {
-      navigator.clipboard
-        .writeText(link)
-        .catch(() => {});
-    }
+    // Teams audit H5: hand the personal link back to the Team page, which shows it with
+    // Copy / WhatsApp buttons. (It used to be copied silently to the clipboard, so a bulk add
+    // kept only the last link, and the page claimed the doctor was "added".)
+    return link;
   } catch (err: any) {
     console.error(
       "Error creating invite:",
       err
     );
-
-    alert(
-      err.message ||
-      "Failed to create invite."
-    );
+    // Let the Team page show the real error instead of a false "added" message.
+    throw new Error(err?.message || "Failed to create invite.");
   }
 };
 
@@ -7251,12 +7253,8 @@ const handleSignOut = async () => {
           
           {/* Non-blocking Join Request Pending Alert Banner */}
           {(() => {
-            const myTeamMember = teamMembers.find(
-              m => m.email.toLowerCase().trim() === (profile?.email || "").toLowerCase().trim()
-            );
-            const isPendingApproval = myTeamMember && isPendingApprovalStatus(myTeamMember.status);
-
-            if (isPendingApproval) {
+            // Read from this doctor's own membership record (Teams audit M2).
+            if (myJoinRequest) {
               return (
                 <div className="mb-4 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/80 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-amber-800 dark:text-amber-200 animate-fade-in" id="pending-approval-banner">
                   <div className="flex items-center gap-3">
@@ -7264,7 +7262,7 @@ const handleSignOut = async () => {
                     <div>
                       <strong className="text-xs font-bold block">Join request sent. Waiting for Admin approval.</strong>
                       <span className="text-xs opacity-90">
-                        Your request to join {profile?.hospital || "the department team"} is pending review by the Team Admin. You can continue using your Individual Workspace in the meantime.
+                        Your request to join {myJoinRequest.teamName || profile?.hospital || "the department team"} is pending review by the Team Admin. You can continue using your Individual Workspace in the meantime.
                       </span>
                     </div>
                   </div>

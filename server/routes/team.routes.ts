@@ -72,6 +72,10 @@ const INVITE_ALLOWED_ROLES = new Set([
   "medical_officer",
   "medical officer",
   "scribe specialist",
+  // Teams audit M5: roles offered by the Team page dropdowns (src/lib/teamRoles.ts) that were missing.
+  "senior resident",
+  "staff nurse",
+  "clinical pharmacist",
   "hod",
   "hod / department lead",
   "hod / shift lead",

@@ -42,7 +42,7 @@ interface ProfileSettingsViewProps {
   setHandovers?: any;
   onNavigateToTab?: (tabId: string) => void;
   teamMembers: TeamMember[];
-  onAddMember: (name: string, email: string, role: string, shift: string) => Promise<void>;
+  onAddMember: (name: string, email: string, role: string, shift: string) => Promise<string | void>;
   onRemoveMember: (id: string) => Promise<void>;
   onUpdateShift: (id: string, shift: string) => Promise<void>;
   onApproveMember?: (id: string) => Promise<void>;
