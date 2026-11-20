@@ -9,6 +9,9 @@ import { authenticatedFetch } from "../services/authenticatedFetch";
 import { setCriticalFlag } from "../utils/criticalOps";
 import { buildQuickCaseFieldsFromSheet } from "../mate/quicksheetcase";
 
+/** Longest outside record accepted in one import (about 10,000 words). */
+export const MAX_IMPORT_CHARS = 60000;
+
 /**
  * QuickDischargeIntake.tsx
  *
@@ -170,9 +173,9 @@ export default function QuickDischargeIntake({
       return;
     }
 
-       if (keepSource && rawText.length > 20000) {
+       if (keepSource && rawText.length > MAX_IMPORT_CHARS) {
       setError(
-        "This clinical record exceeds the current 20,000-character " +
+        `This clinical record exceeds the current ${MAX_IMPORT_CHARS.toLocaleString("en-US")}-character ` +
         "import limit. No content has been discarded. " +
         "Please divide the document into sections before importing."
       );
