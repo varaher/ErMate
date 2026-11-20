@@ -71,6 +71,7 @@ import { processScribeChatTurn } from "./server/scribeChatTurn.ts";
 import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
 import { deidentifyText } from "./server/deidentify.ts";
+import { stripDayMarkersDeep } from "./server/dayMarkers.ts";
 import { isIcuPayload, buildIcuRoundsPrompt, ICU_ROUNDS_SYSTEM, buildIcuDiscussSystem } from "./server/icuDiscussPrompt.ts";
 import { toSafeHandoverAiInput, getOriginalHandoverIdentity } from "./server/handoverAiInput.ts";
 import { convertAndChunkAudioToWav } from "./server/audioConvert.ts";
@@ -1413,6 +1414,8 @@ app.post("/api/ai-discharge", requireAuth, meterCredits("ai_discharge", () => fi
       if (!data || typeof data !== "object" || Array.isArray(data)) {
         throw new Error("Model returned unparseable JSON");
       }
+      // The AI sees "[Day N]" in place of dates; they cannot be restored per field, so none is shown to the doctor.
+      Object.assign(data, stripDayMarkersDeep(data));
       data.courseInHospital = sanitizeCourseNarrative(data.courseInHospital);
       data.dischargeMedications = sanitizeDischargeMeds(data);
       const factCheck = validateNarrativeFacts(data.courseInHospital, caseData);

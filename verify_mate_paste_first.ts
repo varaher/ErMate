@@ -34,7 +34,7 @@ t("hold/stale-drop runs before the fast path", at("end a stale or abandoned hold
 t("fast path skipped while a sheet is held", /const fastPathResult = pendingPastedSheetRef\.current \? null : tryDeterministicFastPath/.test(src));
 t("hold + bed reply handled after startNewCaseInBed is defined", at("const heldSheet = pendingPastedSheetRef.current") > at("const startNewCaseInBed"));
 t("hold happens before explicit new-patient intake", at("shouldHoldPastedSheet({") < at("// Check for explicit new-patient intake"));
-t("replay reuses the existing handoff with the held text", /startNewCaseInBed\(dest\.referenceValue \|\| reply\.bed, reply\.bed, false, heldSheet\.text\)/.test(src));
+t("replay reuses the existing handoff with the held text", /startNewCaseInBed\(dest\.referenceValue \|\| chosenBed, chosenBed, false, heldSheet\.text\)/.test(src));
 t("startNewCaseInBed reports success", /Promise<boolean>/.test(src) && /if \(!started\) pendingPastedSheetRef\.current = heldSheet/.test(src));
 t("replay still skips MATE resolution (no re-hold loop)", /sendToChat\(pendingNew\.utterance, \{ skipMatePatientResolution: true \}\)/.test(src));
 t("hold expires (15 min) and drops on other messages", /15 \* 60 \* 1000/.test(src) && /I dropped the case sheet that was waiting for a bed/.test(src));

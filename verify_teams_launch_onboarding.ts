@@ -64,7 +64,7 @@ t("old scary banner text is gone", !board.includes("Awaiting Institutional Verif
 t("calm team status line exists", board.includes('data-testid="team-status-line"') && board.includes("Your team is active."));
 t("activate route is admin only and dry-run by default", /router\.post\("\/activate-waiting-teams"[\s\S]*?isPlatformAdminReq[\s\S]*?req\.body\?\.confirm !== true[\s\S]*?dryRun: true/.test(srv));
 const act = srv.slice(srv.indexOf('router.post("/activate-waiting-teams"'), srv.indexOf('router.post("/create-team"'));
-t("activate route only sets membershipVerified, never the institution badge", act.includes("{ membershipVerified: true, updatedAt: now }") && !/verificationStatus:/.test(act));
+t("activate route switches on membershipVerified (and fixes a legacy status spelling), never the institution badge", act.includes("membershipVerified: true,") && act.includes('{ status: "active" }') && act.includes("RULES_ACTIVE_STATUSES") && !/verificationStatus:/.test(act));
 t("admin button asks before activating", board.includes("window.confirm(`${preview.waitingMembers}") && board.includes("activateWaitingTeams(false)"));
 for (const r of ["Postgraduate Resident", "Nursing In-charge", "Paramedic", "Other healthcare staff"]) {
   for (const f of ["src/components/OnboardingProfileView.tsx", "src/components/MoreView.tsx", "src/components/SignUpView.tsx"]) t(`role "${r}" offered in ${f}`, read(f).includes(r));
