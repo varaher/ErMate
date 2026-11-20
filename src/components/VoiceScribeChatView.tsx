@@ -62,6 +62,8 @@ import { resolveInterpretedPatient } from "../mate/matePatientDisambiguator";
 import { mergePastedSheetIntoExtraction, detectSheetIdentityConflict } from "../mate/pastedSheetParser";
 import { applyPastedSheetSections } from "../mate/pastedsheetsections";
 import { restoreDayMarkersDeep } from "../mate/dayplaceholder";
+import MateModeBar from "./MateModeBar";
+import { MateMode, MODE_PLACEHOLDER, MODE_ENTERED, parseModeSwitch, lensFromText, bedFromText, findCaseByBed, buildWardLines, looksClinicalReply } from "../mate/mateModes";
 import { stampClinicianUpdates } from "../mate/clinicianUpdateStamp";
 import { classifyDischargeRequest } from "../mate/mateDischargeIntent";
 import { hasExplicitPatientReference, isFocusAuthorized, isImplicitPatientReference, shouldAskWhichPatient, isHeldUpdateExpired, appendHeldUpdate, WHICH_PATIENT_QUESTION, type HeldUpdate } from "../mate/mateWriteTargetGate";
@@ -82,6 +84,8 @@ interface Message {
   badge?: "command" | "mate";
   /** MATE picked the bed: show a Change bed button under the message. */
   bedNotice?: boolean;
+  /** Reply came from a read-only Ask / Chat mode. */
+  askMode?: "case" | "ward" | "chat";
   extractionData?: any;
   extractionApplied?: boolean;
   dischargeDraft?: string;
@@ -881,6 +885,8 @@ export default function VoiceScribeChatView({
     },
   ]);
   const [inputText, setInputText] = useState("");
+  // Every window opens in Dictate. Only Dictate can write to a case sheet; the other modes are read-only.
+  const [mateMode, setMateMode] = useState<MateMode>("dictate");
   const [isSending, setIsSending] = useState(false);
   const [saveConfirmation, setSaveConfirmation] = useState<{ type: "case" | "discharge" } | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -1663,6 +1669,7 @@ export default function VoiceScribeChatView({
       ]);
       setFailedMessages(new Map());
       setSessionAttachError(null);
+      setMateMode("dictate");
       focusCaseIdRef.current = null;
       pendingUnreferencedUpdateRef.current = null;
       onNewChat?.();
@@ -1677,7 +1684,7 @@ export default function VoiceScribeChatView({
     }
   };
 
-  const runRoundsLens = async (lensId: string, doctorPromptText?: string) => {
+  const runRoundsLens = async (lensId: string, doctorPromptText?: string, caseOverride?: any) => {
     if (isSending) return;
 
     const matchedLens = LENSES.find(l => l.id === lensId);
@@ -1709,7 +1716,9 @@ export default function VoiceScribeChatView({
       // 1. Obtain current in-memory case (saved ClinicalCase + any unapplied Scribe extractions)
       const unappliedExtraction = getMergedUnappliedExtraction(messages);
       let targetCase: ClinicalCase | null = null;
-      if (onRequestRoundsCase) {
+      if (caseOverride) {
+        targetCase = caseOverride;
+      } else if (onRequestRoundsCase) {
         targetCase = onRequestRoundsCase(unappliedExtraction);
       } else if (caseData) {
         targetCase = caseData;
@@ -1813,11 +1822,130 @@ export default function VoiceScribeChatView({
     }
   };
 
+  // ── MODES: Ask (case / ward), Chat, Rounds. All read-only; the bed bar and quick commands still work. ──
+  const postModeNote = (next: MateMode, userText: string) => {
+    const stamp = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    const u: Message = { id: `u-${Date.now()}`, sender: "user", text: userText, timestamp: stamp, mode: "discuss" };
+    const a: Message = { id: `ai-${Date.now()}`, sender: "ai", text: MODE_ENTERED[next], timestamp: stamp, mode: "discuss", badge: "mate" };
+    setMessages((prev) => [...prev, u, a]);
+    setInputText("");
+  };
+
+  const runAskMode = async (question: string, mode: "case" | "ward" | "chat", census: any[], activeCase: any) => {
+    setInputText("");
+    setIsSending(true);
+    const requestGeneration = sessionContextGenerationRef.current;
+    const stamp = () => new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    const userMsg: Message = { id: `u-${Date.now()}`, sender: "user", text: question, timestamp: stamp(), mode: "discuss" };
+    setMessages((prev) => [...prev, userMsg]);
+    persistMessage({ id: userMsg.id, role: "user", type: "text", content: question, timestamp: new Date().toISOString() });
+    const reply = (text: string, extra?: Partial<Message>) => {
+      const aiMsg: Message = { id: `ai-${Date.now()}`, sender: "ai", text, timestamp: stamp(), mode: "discuss", ...(extra || {}) };
+      setMessages((prev) => [...prev, aiMsg]);
+      persistMessage({ id: aiMsg.id, role: "assistant", type: "text", content: text, timestamp: new Date().toISOString() });
+    };
+    try {
+      let contextType = "chat";
+      let contextData: any = {};
+      let pending: any = undefined;
+      if (mode === "case") {
+        if (!activeCase) {
+          reply("No patient is open. Say “open bed 4”, or switch to Ask: my ward.");
+          return;
+        }
+        contextType = "case";
+        contextData = activeCase;
+        const un = getMergedUnappliedExtraction(messages);
+        if (un && Object.keys(un).length > 0) pending = un;
+      } else if (mode === "ward") {
+        const lines = buildWardLines(census);
+        if (lines.length === 0) {
+          reply("There are no open beds yet.");
+          return;
+        }
+        contextType = "ward";
+        contextData = { ward: lines };
+      }
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 75000);
+      let res: Response;
+      try {
+        res = await authenticatedFetch("/api/case-discussion", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          signal: controller.signal,
+          body: JSON.stringify({
+            message: question,
+            contextType,
+            contextData,
+            caseData: mode === "case" ? activeCase : {},
+            pendingClinicalContext: pending,
+            messages: [...messages, userMsg].slice(-14).map((m) => ({
+              sender: m.sender === "user" ? "user" : "ai",
+              text: String(m.text || "").slice(0, 1500),
+            })),
+          }),
+        });
+      } finally {
+        clearTimeout(timeoutId);
+      }
+      const data = await res.json().catch(() => ({}));
+      if (sessionContextGenerationRef.current !== requestGeneration) return;
+      // suggestedUpdate is deliberately ignored: these modes never write to a case sheet.
+      reply(
+        data.response || data.reply || (res.ok ? "I couldn't form a clear answer just now." : "I couldn't complete that response right now. Please try again."),
+        { askMode: mode },
+      );
+    } catch (err: any) {
+      console.error("[VoiceScribeChatView] Ask mode failed:", err);
+      reply("I couldn't complete that response right now. Please try again.");
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  /** Returns true when the turn was fully handled by a read-only mode. */
+  const handleModeTurn = async (trimmed: string): Promise<boolean> => {
+    if (mateMode === "dictate") return false;
+    if (pendingPastedSheetRef.current) return false;
+    // A pasted case sheet is dictation by nature: go back to Dictate so it gets the bed + preview flow.
+    if (looksLikeFullCaseSheet(trimmed)) {
+      setMateMode("dictate");
+      return false;
+    }
+    const census = (allCases || []).filter((c) => !(c as any).archivedAt);
+    const activeCase = (activeCaseId ? census.find((c) => c.id === activeCaseId) : null) || caseData || null;
+    const recentCase = lastReferencedCaseIdRef.current ? census.find((c) => c.id === lastReferencedCaseIdRef.current) || null : null;
+    // Quick commands (move / open / critical list ...) work in every mode and need no AI.
+    if (parseMoveBedCommand(trimmed)) return false;
+    const fp = tryDeterministicFastPath({ utterance: trimmed, activeCase, recentCase, censusCases: census, physicalCapacity: physicalBedCapacity });
+    if (fp && fp.handled) return false;
+    if (mateMode === "rounds") {
+      const lens = detectRoundsLensIntent(trimmed) || lensFromText(trimmed);
+      const target = findCaseByBed(census as any[], bedFromText(trimmed));
+      await runRoundsLens(lens, trimmed, target || undefined);
+      return true;
+    }
+    await runAskMode(trimmed, mateMode, census, activeCase);
+    return true;
+  };
+
    const sendToChat = async (text: string, options?: { skipMatePatientResolution?: boolean }) => {
     const trimmed = text.trim();
     if (!trimmed || isSending) return;
 
     const requestGeneration = sessionContextGenerationRef.current;
+
+    // Mode switch by voice or typing ("chat mode", "back to dictate"), then the read-only modes.
+    if (!isDiscussionOnly && !options?.skipMatePatientResolution) {
+      const wanted = parseModeSwitch(trimmed);
+      if (wanted) {
+        setMateMode(wanted);
+        postModeNote(wanted, trimmed);
+        return;
+      }
+      if (await handleModeTurn(trimmed)) return;
+    }
 
     // Natural-language Rounds routing (patient-linked / case conversation)
     if (!isDiscussionOnly && !options?.skipMatePatientResolution) {
@@ -3558,7 +3686,7 @@ export default function VoiceScribeChatView({
                 </div>
               ) : msg.mode === "discuss" && msg.sender === "ai" && (
                 <div className="mb-1.5 inline-flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider text-purple-500 dark:text-purple-400">
-                  <Sparkles size={10} /> Discuss
+                  <Sparkles size={10} /> {msg.askMode === "case" ? "Ask · case" : msg.askMode === "ward" ? "Ask · ward" : msg.askMode === "chat" ? "Chat" : "Discuss"}
                 </div>
               )}
               {msg.sender === "user" ? (
@@ -3570,6 +3698,20 @@ export default function VoiceScribeChatView({
                   text={msg.text}
                   clinicalReasoning={msg.clinicalReasoning}
                 />
+              )}
+              {msg.askMode === "case" && msg.sender === "ai" && looksClinicalReply(msg.text) && (
+                <button
+                  type="button"
+                  data-testid="use-in-dictate-button"
+                  onClick={() => {
+                    setMateMode("dictate");
+                    setInputText(msg.text);
+                    inputTextareaRef.current?.focus();
+                  }}
+                  className="mt-2 mb-1 inline-flex items-center px-3 py-1.5 rounded-lg border-[1.5px] border-emerald-600 text-emerald-700 dark:text-emerald-300 dark:border-emerald-400 text-[11px] font-bold hover:bg-emerald-50 dark:hover:bg-emerald-950/40"
+                >
+                  Use in Dictate
+                </button>
               )}
               {msg.bedNotice && msg.sender === "ai" && (
                 <button
@@ -3889,6 +4031,7 @@ export default function VoiceScribeChatView({
           </>
         )}
 
+        {!isDiscussionOnly && <MateModeBar mode={mateMode} onChange={setMateMode} disabled={isSending} />}
         <MateComposerNotes
           usage={chatUsage(messages as any)}
           showBedNote={!isDiscussionOnly}
@@ -3942,7 +4085,7 @@ export default function VoiceScribeChatView({
                       }
                     }
                   }}
-                  placeholder={isDiscussionOnly ? "Ask anything about this case..." : "Talk to MATE — dictate, ask, or give a command..."}
+                  placeholder={isDiscussionOnly ? "Ask anything about this case..." : MODE_PLACEHOLDER[mateMode]}
                   disabled={isSending}
                   rows={1}
                   className="flex-1 w-full bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2 text-xs text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:opacity-50 resize-none overflow-y-auto leading-relaxed"

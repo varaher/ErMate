@@ -2447,7 +2447,16 @@ ${deidentifyText(rawData.resuscitationDetails || "Not documented").deidentified}
 =================================================
 `;
 
-        } else if (effectiveContextType === "icu") {
+        } else if (effectiveContextType === "chat") {
+      // General assistant mode: no patient record is sent at all.
+      contextSummaryText = "";
+    } else if (effectiveContextType === "ward") {
+      // Ask: my ward. One line per open bed, de-identified here again before the model sees it (Rule 4).
+      const wardLines: string[] = Array.isArray(rawData?.ward)
+        ? rawData.ward.slice(0, 40).map((l: any) => deidentifyText(String(l || "").slice(0, 400)).deidentified).filter((l: string) => l.trim())
+        : [];
+      contextSummaryText = `=== DOCTOR'S OPEN BEDS (${wardLines.length}) ===\n${wardLines.map((l) => `- ${l}`).join("\n") || "No open beds."}\n===================================`;
+    } else if (effectiveContextType === "icu") {
       // ICU stay: the whole record goes into the system instruction below (buildIcuDiscussSystem)
       contextSummaryText = "";
     } else {
@@ -2641,7 +2650,28 @@ Format:
 You are talking to an ER doctor who needs a practical answer NOW.
 Not a medical student needing an explanation of pathophysiology.
 Be concise and clinically precise.`;
-        } else if (effectiveContextType === "icu") {
+        } else if (effectiveContextType === "chat") {
+      discussionSystemInstruction = `You are MATE, the voice-first assistant of an emergency physician in an Indian emergency department (Claude Sonnet).
+You are in CHAT mode: a general, helpful assistant. Answer any topic naturally, like a good colleague: explain, draft messages, translate, calculate, plan, summarise.
+- Be direct and concise. Match the doctor's language and tone; use short paragraphs or short bullets only when it helps.
+- No fixed template and no headings unless the doctor asks for a structured answer.
+- For medical questions give practical, calibrated emergency-medicine answers (conditional wording, doses only when you are sure, mention key cautions).
+- You have NO access to any patient record in this mode. If the doctor asks about a patient, say they can switch to "Ask: this case" or "Ask: my ward".
+- You cannot save, change or create any record. Never claim that you did. Never output an [UPDATE] block.
+- If the doctor shares identifying details, do not repeat names, phone numbers or ID numbers back.`;
+    } else if (effectiveContextType === "ward") {
+      discussionSystemInstruction = `You are MATE, the assistant of an emergency physician in an Indian emergency department (Claude Sonnet).
+You are in ASK: MY WARD mode. You can see ONLY the list of the doctor's open beds below. Answer questions that span patients: who to see first, who is unstable, what is pending, a quick round summary, a shift hand-over outline.
+${contextSummaryText}
+
+RULES:
+1. Use ONLY what is in the list. If something is not listed, say it is not documented. Never invent vitals, results or plans.
+2. When ranking, give a short reason per bed from the listed facts (shock, ventilated, pending review, abnormal sugar and so on). Use calibrated wording: "consider", "appears".
+3. Refer to patients by bed number only.
+4. Keep it short and scannable: a numbered list for rankings, otherwise brief prose.
+5. You cannot save or change any record. Never claim that you did. Never output an [UPDATE] block.
+6. For detailed reasoning about one patient, tell the doctor to open the bed and use "Ask: this case".`;
+    } else if (effectiveContextType === "icu") {
       discussionSystemInstruction = buildIcuDiscussSystem(isIcuPayload(rawData) ? rawData : { icuRecord: "No ICU notes documented yet." });
     } else {
       discussionSystemInstruction = `
@@ -2665,6 +2695,7 @@ YOUR CRITICAL GUIDELINES:
 4. Keep answers clean, professional, and well-structured with bold terms and short bullet points.
 5. End clinical discussions with authoritative citations where appropriate (Tintinalli's, Rosen's, Harrison's, WikEM, UpToDate).
 6. PEDIATRIC CONTEXT FLAG: If the case record indicates this is a pediatric patient (age < 16), you MUST force PALS protocols, age-appropriate vital sign references, and calculate weight-based dosing strictly.
+8. DRAFTING FROM THIS RECORD: If the doctor asks you to draft a hand-over, referral, consult request or summary for this patient, write it ready to send using ONLY facts documented above. Do not add findings, results or plans that are not documented, and do not output an [UPDATE] block for a draft.
 7. EMPTY / MINIMALLY DOCUMENTED CASES: Do NOT automatically generate "Chief complaint not documented", "Vitals missing", "Critical gaps", or "Record significantly incomplete" unless the doctor specifically asks ("What is missing?", "Review completeness", "What should I document?"). Answer the doctor's specific clinical query directly based on whatever facts are known, without lecturing on missing documentation.
 `;
     }

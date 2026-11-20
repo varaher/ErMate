@@ -2,30 +2,36 @@
 // reach a case sheet. This puts the real date back from the doctor's own text (kept on the device); if a
 // marker cannot be matched, it is removed rather than shown.
 
-const DATE_RE = /\b(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{2,4})\b/g;
+// Must stay identical to DATE_PATTERN / parseDateString in server/deidentify.ts: the server numbers its
+// "[Day N]" markers from the earliest date it matched, and we must number the same dates the same way.
+const DATE_PATTERN = /\b(?<!\d)(?:(?:0?[1-9]|[12]\d|3[01])[\/\.-](?:0?[1-9]|1[012])[\/\.-](?:19|20)?\d\d|(?:19|20)\d\d[\/\.-](?:0?[1-9]|1[012])[\/\.-](?:0?[1-9]|[12]\d|3[01]))(?!\d)\b/g;
 const MARKER_RE = /\[Day\s*(-?\d+)\]/gi;
 
-function toUtcDay(d: number, m: number, y: number): number | null {
-  const year = y < 100 ? 2000 + y : y;
-  if (m < 1 || m > 12 || d < 1 || d > 31) return null;
-  return Math.floor(Date.UTC(year, m - 1, d) / 86400000);
+function parseToUtcDay(raw: string): number | null {
+  const parts = raw.split(/[\/\.-]/).map((p) => parseInt(p, 10));
+  if (parts.length !== 3 || parts.some(isNaN)) return null;
+  let day: number, month: number, year: number;
+  if (parts[0] > 1000) {
+    year = parts[0]; month = parts[1] - 1; day = parts[2];
+  } else {
+    day = parts[0]; month = parts[1] - 1; year = parts[2] < 100 ? 2000 + parts[2] : parts[2];
+  }
+  const ms = Date.UTC(year, month, day);
+  return isNaN(ms) ? null : Math.round(ms / 86400000);
 }
 
-/** Day offset (0 = earliest date in the text) -> date exactly as the doctor wrote it. */
+/** "Day N" number (1 = earliest date in the text) -> the date exactly as the doctor wrote it. */
 export function dayMapFromText(source: string): Map<number, string> {
-  const found: { day: number; raw: string }[] = [];
-  let m: RegExpExecArray | null;
-  const re = new RegExp(DATE_RE.source, "g");
-  while ((m = re.exec(source || ""))) {
-    const day = toUtcDay(parseInt(m[1], 10), parseInt(m[2], 10), parseInt(m[3], 10));
-    if (day !== null) found.push({ day, raw: m[0] });
-  }
+  const matches = (source || "").match(DATE_PATTERN) || [];
+  const found = matches
+    .map((m) => ({ raw: m.trim(), day: parseToUtcDay(m.trim()) }))
+    .filter((f): f is { raw: string; day: number } => f.day !== null);
   const out = new Map<number, string>();
   if (!found.length) return out;
   const first = Math.min(...found.map((f) => f.day));
   for (const f of found) {
-    const off = f.day - first;
-    if (!out.has(off)) out.set(off, f.raw);
+    const dayNo = f.day - first + 1;
+    if (!out.has(dayNo)) out.set(dayNo, f.raw);
   }
   return out;
 }
@@ -34,8 +40,7 @@ export function restoreDayMarkers(value: string, map: Map<number, string>): stri
   if (typeof value !== "string" || !/\[Day/i.test(value)) return value;
   return value
     .replace(MARKER_RE, (_all, n) => {
-      const off = parseInt(n, 10) - 1;
-      return map.get(off) ?? "";
+      return map.get(parseInt(n, 10)) ?? "";
     })
     .replace(/\s+(?=[,.;])/g, "")
     .replace(/[ \t]{2,}/g, " ")

@@ -1,3 +1,4 @@
+import { restoreDayMarkersDeep } from "../mate/dayplaceholder";
 import { generateUHID } from "../utils/caseHelper";
 import React, { useState, useRef, useEffect } from "react";
 import { Mic, Camera, FileText, Loader2, ArrowRight } from "lucide-react";
@@ -206,7 +207,8 @@ export default function QuickDischargeIntake({
         throw new Error(resData.error || "Extraction failed.");
       }
 
-      const ext = resData.data || resData.extracted || {};
+      // The privacy step swaps dates for "[Day N]" before the AI sees the text: put the real dates back.
+      const ext = restoreDayMarkersDeep(resData.data || resData.extracted || {}, rawText);
 
       const sheet = keepSource
         ? buildQuickCaseFieldsFromSheet(rawText)
