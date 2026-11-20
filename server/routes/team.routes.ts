@@ -84,10 +84,21 @@ function isExactHospitalAdminRole(role?: string): boolean {
   return EXACT_ADMIN_ROLES.has(role.trim().toLowerCase());
 }
 
+/**
+ * One active-status check for every team action. Saved data holds several spellings
+ * ("active", "Active", "Active (Joined)", "active (joined)"...). Comparing to a single spelling
+ * left "Active (Joined)" members unable to leave, be removed or change role, and let them
+ * create or join a second team, overwriting the membership they already had.
+ */
+function isActiveStatus(status: unknown): boolean {
+  const s = String(status || "").trim().toLowerCase();
+  return s === "active" || s === "active (joined)";
+}
+
 function isVerifiedHod(member: any): boolean {
   if (!member) return false;
   return (
-    member.status === "active" &&
+    isActiveStatus(member.status) &&
     member.membershipVerified === true &&
     isExactHospitalAdminRole(member.role) &&
     !!member.hospitalId
@@ -617,7 +628,7 @@ router.post("/accept-invite", async (req: AuthRequest, res) => {
 
       if (existingMemberSnap.exists) {
         const existingMember = existingMemberSnap.data()!;
-        if (existingMember.status === "active" && existingMember.membershipVerified === true) {
+        if (isActiveStatus(existingMember.status)) {
           throw new Error("You already have an active hospital membership. Leave your current team before requesting to join another team.");
         }
         if (existingMember.status === "pending_approval") {
@@ -747,10 +758,7 @@ router.post("/request-join", async (req: AuthRequest, res) => {
       if (currentSnap.exists) {
         const current = currentSnap.data()!;
 
-        if (
-          current.status === "active" &&
-          current.membershipVerified === true
-        ) {
+        if (isActiveStatus(current.status)) {
           throw new Error(
             "You already have an active verified hospital membership. Leave your current team first."
           );
@@ -1359,7 +1367,9 @@ tx.set(
       ) ||
       message.includes(
         "not in your hospital"
-      )
+      ) ||
+      message.includes("Only Team Admins") ||
+      message.includes("not in your team")
         ? 403
         : message.includes(
             "no longer exists"
@@ -1433,10 +1443,7 @@ router.post("/update-role", async (req: AuthRequest, res) => {
         );
       }
 
-      if (
-        target.status !== "active" &&
-        target.status !== "active (joined)"
-      ) {
+      if (!isActiveStatus(target.status)) {
         throw new Error(
           "Only active members can have their role changed."
         );
@@ -1611,6 +1618,8 @@ tx.set(
     const status =
       message.includes("Only active verified HODs") ||
       message.includes("not in your hospital") ||
+      message.includes("Only Team Admins") ||
+      message.includes("not in your team") ||
       message.includes("platform administrator")
         ? 403
         : 400;
@@ -1850,10 +1859,7 @@ router.post("/remove-member", async (req: AuthRequest, res) => {
        * /remove-member is for an existing active team member.
        * Pending join requests must use /decline-member instead.
        */
-      if (
-        target.status !== "active" &&
-        target.status !== "active (joined)"
-      ) {
+      if (!isActiveStatus(target.status)) {
         throw new Error(
           "Only active members can be removed."
         );
@@ -1913,7 +1919,7 @@ router.post("/remove-member", async (req: AuthRequest, res) => {
           adminsSnap.docs.filter(
             (docSnap) =>
               docSnap.id !== targetUid &&
-              docSnap.data().status === "active" &&
+              isActiveStatus(docSnap.data().status) &&
               isTeamAdmin(docSnap.data())
           );
 
@@ -1933,16 +1939,21 @@ router.post("/remove-member", async (req: AuthRequest, res) => {
       });
 
       /*
-       * Clear hospital access mirror on users/{uid}.
-       * Authority remains team_members/{uid}.
+       * Clear the team mirror on users/{uid}. Authority remains team_members/{uid}.
+       * NEVER touch subscriptionTier here: the doctor's own paid plan (Individual Pro) is not
+       * part of the team and must survive leaving or removal.
+       * users.hospital (their workplace name) is kept so the mandatory profile stays complete.
        */
       tx.set(
         userRef,
         {
-          hospital: "",
           hospitalId: "",
-          subscriptionTier:
-            "Free Standard"
+          teamId: "",
+          isTeamAdmin: false,
+          teamRole: "",
+          isRotaManager: false,
+          rotaManager: false,
+          updatedAt: nowIso()
         },
         { merge: true }
       );
@@ -2034,7 +2045,9 @@ tx.set(
       ) ||
       message.includes(
         "not in your hospital"
-      )
+      ) ||
+      message.includes("Only Team Admins") ||
+      message.includes("not in your team")
         ? 403
         : message.includes(
             "Member not found"
@@ -2061,7 +2074,7 @@ const memSnap = await tx.get(memRef);
 
       if (!memSnap.exists) throw new Error("No active membership to leave.");
       const me = memSnap.data()!;
-      if (me.status !== "active" && me.status !== "active (joined)") {
+      if (!isActiveStatus(me.status)) {
         throw new Error("No active membership to leave.");
       }
       if (isTeamAdmin(me)) {
@@ -2069,7 +2082,7 @@ const memSnap = await tx.get(memRef);
         const membersSnap = await tx.get(
           db.collection("team_members").where("hospitalId", "==", teamId)
         );
-        const activeMembers = membersSnap.docs.filter((d) => d.data().status === "active");
+        const activeMembers = membersSnap.docs.filter((d) => isActiveStatus(d.data().status));
         const otherAdmins = activeMembers.filter((d) => d.id !== uid && isTeamAdmin(d.data()));
         if (activeMembers.length > 1 && otherAdmins.length === 0) {
           throw new Error("Cannot leave team: You are the sole active Team Admin. Please appoint another Team Admin first.");
@@ -2083,12 +2096,18 @@ tx.update(memRef, {
   updatedAt: nowIso(),
   reason: "voluntary"
 });
+     // Clear only the team mirror. NEVER touch subscriptionTier (the doctor's own paid plan),
+     // and keep users.hospital (their workplace name) so the mandatory profile stays complete.
      tx.set(
   userRef,
   {
-    hospital: "",
     hospitalId: "",
-    subscriptionTier: "Free Standard"
+    teamId: "",
+    isTeamAdmin: false,
+    teamRole: "",
+    isRotaManager: false,
+    rotaManager: false,
+    updatedAt: nowIso()
   },
   { merge: true }
 );
@@ -2532,12 +2551,16 @@ router.post("/set-team-admin", async (req: AuthRequest, res) => {
 
     const willBeAdmin = Boolean(targetIsAdmin);
 
+    if (willBeAdmin && !isActiveStatus(target.status)) {
+      return res.status(400).json({ error: "Only active members can be made Team Admin." });
+    }
+
     // If revoking admin, ensure at least one admin remains
     if (!willBeAdmin && isTeamAdmin(target)) {
       const teamId = target.teamId || target.hospitalId;
       const membersSnap = await db.collection("team_members").where("hospitalId", "==", teamId).get();
       const otherAdmins = membersSnap.docs.filter(
-        d => d.id !== String(memberId) && d.data().status === "active" && isTeamAdmin(d.data())
+        d => d.id !== String(memberId) && isActiveStatus(d.data().status) && isTeamAdmin(d.data())
       );
       if (otherAdmins.length === 0) {
         return res.status(400).json({ error: "Cannot remove the only Team Admin. Appoint another Admin first." });
@@ -2580,10 +2603,8 @@ router.post("/set-team-admin", async (req: AuthRequest, res) => {
   }
 });
 
-router.post("/appoint-admin", async (req: any, res: any) => {
-  req.body.isTeamAdmin = true;
-  return (router as any).handle(req, res);
-});
+// (Removed "/appoint-admin": it re-sent the request to itself in a loop and nothing called it.
+//  Use POST /set-team-admin with { memberId, isTeamAdmin: true }.)
 
 // ── POST /set-rota-manager (Appoint or Revoke Rota Manager — Team Admin / HOD / Platform Admin) ──
 router.post("/set-rota-manager", async (req: AuthRequest, res) => {
@@ -2596,8 +2617,15 @@ router.post("/set-rota-manager", async (req: AuthRequest, res) => {
       return res.status(400).json({ error: "memberId is required." });
     }
 
-    const callerSnap = await getDocWithRestFallback("team_members", uid, req.headers.authorization);
+    const targetRef = db.collection("team_members").doc(String(memberId));
+    const targetSnap = await targetRef.get();
+    if (!targetSnap.exists) {
+      return res.status(404).json({ error: "Team member not found." });
+    }
+    const target = targetSnap.data()!;
+
     if (!isAdmin) {
+      const callerSnap = await getDocWithRestFallback("team_members", uid, req.headers.authorization);
       if (!callerSnap.exists) {
         return res.status(403).json({ error: "Only Team Admins or HODs can assign Rota Manager permissions." });
       }
@@ -2605,12 +2633,16 @@ router.post("/set-rota-manager", async (req: AuthRequest, res) => {
       if (!isTeamAdmin(caller)) {
         return res.status(403).json({ error: "Only Team Admins or HODs can assign Rota Manager permissions." });
       }
+      // A Team Admin may only change rota permissions inside their own team.
+      const callerTeamId = caller.teamId || caller.hospitalId;
+      const targetTeamId = target.teamId || target.hospitalId;
+      if (!callerTeamId || callerTeamId !== targetTeamId) {
+        return res.status(403).json({ error: "Target member is not in your team." });
+      }
     }
 
-    const targetRef = db.collection("team_members").doc(String(memberId));
-    const targetSnap = await targetRef.get();
-    if (!targetSnap.exists) {
-      return res.status(404).json({ error: "Team member not found." });
+    if (isRotaManager === true && !isActiveStatus(target.status)) {
+      return res.status(400).json({ error: "Only active members can be made Rota Manager." });
     }
 
     const willBeRotaManager = isRotaManager === true;
@@ -2760,7 +2792,7 @@ const handleCreateTeam = async (req: AuthRequest, res: any) => {
       if (existingSnap.exists) {
         const existing = existingSnap.data()!;
         // Requirement G.7: Protect team creation against overwriting existing memberships
-        if (existing.status === "active") {
+        if (isActiveStatus(existing.status)) {
           throw new Error("You already have an active hospital team membership. Leave your current team before creating a new workspace.");
         }
         if (existing.status === "pending_approval") {
