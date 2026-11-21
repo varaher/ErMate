@@ -5,7 +5,8 @@ import { ClinicalCase, LegacyPediatricDetails, ProcedureNote, IpsgChecklist } fr
 import { deduplicateConsultations } from "../utils/consultationNormalization";
 import { displayGcs, displayTemperature, displaySpo2, displayGrbs, displayDocumentedBoolean } from "../utils/clinicalFormatter";
 import { getDisplayCaseId } from "../utils/caseIdentity";
-import { formatCaseSheetText, caseSheetTextToEmrHtml } from "../utils/caseSheetFormat";
+import { formatCaseSheetText, formatCaseSheetHtml } from "../utils/caseSheetFormat";
+import { buildErCaseRecord, type ErLine } from "../utils/erCaseRecord";
 import { copyTextToClipboard } from "../utils/copyToClipboard";
 import CopyToEmrPanel from "./CopyToEmrPanel"; // ← NEW
 import { getTriageDisplay } from "../utils/triageScale";
@@ -878,6 +879,37 @@ export function convertClinicalCaseToCaseSheetData(c: ClinicalCase, defaultHospi
 
 // ── Presentational helpers ────────────────────────────────────────────
 
+/** Adult ER case record, laid out like the hospital EMR's Visit Notes (bold headings, indented lines). */
+function ErCaseRecordBody({ lines }: { lines: ErLine[] }) {
+  return (
+    <div data-testid="er-case-record" className="text-sm leading-relaxed space-y-1.5 pt-1">
+      {lines.map((l, i) => {
+        switch (l.kind) {
+          case "title":
+            return <p key={i} className="font-black uppercase tracking-wide pt-1 pb-1">{l.text}</p>;
+          case "heading":
+            return <p key={i} className="font-bold pt-1.5 break-after-avoid">{l.text}</p>;
+          case "subheading":
+            return <p key={i} className="font-bold pl-2 break-after-avoid">{l.text}</p>;
+          case "item":
+            return <p key={i} className="pl-8 whitespace-pre-line">{l.text}</p>;
+          case "dash":
+            return <p key={i} className="pl-2">- {l.text}</p>;
+          case "para":
+            return <p key={i} className="whitespace-pre-line">{l.text}</p>;
+          case "labelled":
+            return l.arrow ? (
+              <p key={i} className="pl-8"><span className="font-bold">{l.label}</span> → {l.text}</p>
+            ) : (
+              <p key={i} className={/^EM (Resident|Consultant)$/.test(l.label) ? "pt-1.5" : ""}><span className="font-bold">{l.label}:</span> {l.text}</p>
+            );
+        }
+      })}
+    </div>
+  );
+}
+
+
 function MlcDetailsSection({ isMlc, details }: { isMlc: boolean; details: CaseSheetData["mlcDetails"] }) {
   if (!isMlc && !details) return null;
   const row = (label: string, value: string | null) => (
@@ -1293,7 +1325,7 @@ export default function CaseSheetPrintView({
     if (!data) return;
     // Plain text for notepad-style fields + an HTML flavour (<p>/<br>) so rich-text EMR editors keep the line breaks.
     const plain = formatCaseSheetText(data);
-    const ok = await copyTextToClipboard(plain, caseSheetTextToEmrHtml(plain));
+    const ok = await copyTextToClipboard(plain, formatCaseSheetHtml(data));
     if (ok) {
       setCopyFailed(false);
       setCopiedCaseText(true);
@@ -1602,7 +1634,12 @@ export default function CaseSheetPrintView({
           </div>
         </Section>
 
-        {screeningLines(data.triageScreening).length > 0 && (
+        {/* Adult ER cases: everything below the patient block follows the hospital's
+            "INITIAL ASSESSMENT AND EMERGENCY DEPARTMENT CASE RECORD" (src/utils/erCaseRecord.ts).
+            Pediatric cases keep the pediatric sheet. */}
+        {!data.isPediatric && <ErCaseRecordBody lines={buildErCaseRecord(data)} />}
+
+        {data.isPediatric && screeningLines(data.triageScreening).length > 0 && (
           <Section>
             <SectionHeading>Triage Assessment & Infection Screening</SectionHeading>
             {isolationBanner(data.triageScreening) && (
@@ -1614,12 +1651,14 @@ export default function CaseSheetPrintView({
           </Section>
         )}
 
+        {data.isPediatric && (
         <Section>
           <SectionHeading>Presenting Complaint</SectionHeading>
           <div className="text-sm font-medium">{data.presentingComplaint || <EmptyLine />}</div>
         </Section>
+        )}
 
-        {data.isPediatric ? (
+        {data.isPediatric && (
           <>
             {data.pediatricDetails && (
               <Section>
@@ -1825,180 +1864,9 @@ export default function CaseSheetPrintView({
               </div>
             </Section>
           </>
-        ) : (
-          <>
-            <MlcDetailsSection isMlc={data.isMlc} details={data.mlcDetails} />
-            <PrimarySurveySection data={data.primarySurvey} />
-
-            <AdjunctsSection
-              ecg={data.ecg}
-              bedsideEcho={data.bedsideEcho}
-              efast={data.efast}
-              vbgAbg={data.vbgAbg}
-            />
-
-            <Section>
-              <SectionHeading>History</SectionHeading>
-              <div className="text-sm space-y-1.5">
-                <div><span className="font-semibold text-slate-900">Signs & Symptoms:</span> {data.symptoms.length > 0 ? data.symptoms.join(", ") : "None documented"}</div>
-                <div><span className="font-semibold text-slate-900">Allergies:</span> {data.allergies.length > 0 ? data.allergies.join(", ") : "None documented"}</div>
-                <div><span className="font-semibold text-slate-900">Current Medications:</span> {data.currentMedications.length > 0 ? data.currentMedications.join(", ") : "None documented"}</div>
-                <div><span className="font-semibold text-slate-900">Past Medical History:</span> {data.pastHistory.length > 0 ? data.pastHistory.join(" · ") : "Not documented"}</div>
-                <div><span className="font-semibold text-slate-900">Last Meal:</span> {data.lastMeal || "Not documented"}</div>
-                <div><span className="font-semibold text-slate-900">Events Preceding:</span> {data.events || "Not documented"}</div>
-                {data.familyHistory && <div><span className="font-semibold text-slate-900">Family History:</span> {data.familyHistory}</div>}
-                {data.hpi && <div><span className="font-semibold text-slate-900">History of Presenting Illness:</span> {data.hpi}</div>}
-                {data.surgicalHistory && <div><span className="font-semibold text-slate-900">Surgical History:</span> {data.surgicalHistory}</div>}
-                {data.lmp && <div><span className="font-semibold text-slate-900">LMP:</span> {data.lmp}</div>}
-              </div>
-            </Section>
-
-            <SecondarySurveySection data={data.secondarySurvey} />
-            <PsychologicalAssessmentSection data={data.psychologicalAssessment} />
-            
-            {hasAdultDiagnosis && (
-              <Section>
-                <SectionHeading>Provisional & Differential Diagnosis</SectionHeading>
-                {data.provisionalDiagnosis && <div className="text-sm font-bold text-indigo-950 print:text-black mb-1">{data.provisionalDiagnosis}</div>}
-                {data.differentials.length > 0 && (
-                  <ul className="text-sm list-disc pl-5 mt-1 space-y-0.5">
-                    {data.differentials.map((d, i) => <li key={i}>{d.diagnosis}{d.status ? ` (${d.status})` : ""}</li>)}
-                  </ul>
-                )}
-                {data.provisionalDifferentialDiagnoses && (
-                  <div className="text-sm whitespace-pre-line mt-2 text-slate-700 print:text-black">
-                    {data.differentials.length > 0 && <span className="font-semibold">Notes / Differential Details: </span>}
-                    {data.provisionalDifferentialDiagnoses}
-                  </div>
-                )}
-              </Section>
-            )}
-
-            {hasInvestigations && (
-              <Section>
-                <SectionHeading>Investigations & Diagnostic Studies</SectionHeading>
-                <div className="space-y-3">
-                  {data.investigationLabsOrdered && (
-                    <div>
-                      <p className="text-xs font-bold uppercase tracking-wide text-slate-600 print:text-black mb-0.5">Laboratory Investigations Ordered</p>
-                      <p className="text-sm whitespace-pre-line text-slate-900 print:text-black">{data.investigationLabsOrdered}</p>
-                    </div>
-                  )}
-
-                  {data.labs.length > 0 && (
-                    <div>
-                      {data.labs.map((panel, i) => (
-                        <div key={i} className="mb-2">
-                          <p className="text-xs font-bold uppercase tracking-wide text-slate-600 print:text-black mb-1">{panel.panelName}</p>
-                          <p className="text-sm font-mono leading-relaxed">
-                            {panel.values.map(v => `${v.name}: ${v.param ? formatFlagged(v.param, v.value) : (v.value ?? "Pending")}${v.unit && v.value !== null ? ` ${v.unit}` : ""}`).join("  |  ")}
-                          </p>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {data.investigationImaging && (
-                    <div>
-                      <p className="text-xs font-bold uppercase tracking-wide text-slate-600 print:text-black mb-0.5">Diagnostic Imaging (X-Ray / CT / MRI / USG)</p>
-                      <p className="text-sm whitespace-pre-line text-slate-900 print:text-black">{data.investigationImaging}</p>
-                    </div>
-                  )}
-
-                  {data.investigationResultsSummary && (
-                    <div>
-                      <p className="text-xs font-bold uppercase tracking-wide text-slate-600 print:text-black mb-0.5">Investigation Results Summary</p>
-                      <p className="text-sm whitespace-pre-line text-slate-900 print:text-black">{data.investigationResultsSummary}</p>
-                    </div>
-                  )}
-                </div>
-              </Section>
-            )}
-
-            {hasTreatments && (
-              <Section>
-                <SectionHeading>Treatment Given & Emergency Orders</SectionHeading>
-                {data.treatmentGiven.length > 0 && (
-                  <ul className="text-sm list-disc pl-5 space-y-0.5 font-mono mb-2">
-                    {data.treatmentGiven.map((t, i) => <li key={i}>{t}</li>)}
-                  </ul>
-                )}
-                {data.treatmentNotes && (
-                  <div>
-                    {data.treatmentGiven.length > 0 && <p className="text-xs font-bold uppercase tracking-wide text-slate-600 print:text-black mb-0.5">Treatment Notes & Orders</p>}
-                    <p className="text-sm whitespace-pre-line font-mono">{data.treatmentNotes}</p>
-                  </div>
-                )}
-              </Section>
-            )}
-
-            {((data.procedures.procedureNotes && data.procedures.procedureNotes.length > 0) || data.procedures.proceduresChecked.length > 0 || data.procedures.otherProcedures) && (
-              <Section>
-                <SectionHeading>Procedures & Interventions</SectionHeading>
-                <div className="text-sm space-y-2">
-                  {data.procedures.procedureNotes && data.procedures.procedureNotes.length > 0 && (
-                    <div className="space-y-3">
-                      {data.procedures.procedureNotes.map((note) => (
-                        <div key={note.id} className="p-2.5 rounded border border-slate-200 print:border-slate-400 bg-slate-50/50 print:bg-transparent space-y-1">
-                          <div className="flex justify-between items-center text-xs font-bold text-slate-800 print:text-black border-b pb-1 border-slate-200 print:border-slate-300">
-                            <span className="uppercase tracking-wider">{note.procedureName}</span>
-                            <span className="font-mono font-normal text-[11px]">{[note.metadata.date, note.metadata.time].filter(Boolean).join(" ")}</span>
-                          </div>
-                          <div className="text-xs font-mono whitespace-pre-line leading-relaxed text-slate-900 print:text-black">
-                            {note.generatedNarrative}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  {data.procedures.proceduresChecked.length > 0 && (
-                    <div><span className="font-bold">Procedures Performed:</span> {data.procedures.proceduresChecked.join(", ")}</div>
-                  )}
-                  {data.procedures.otherProcedures && (
-                    <div><span className="font-bold">Procedure Details:</span> {data.procedures.otherProcedures}</div>
-                  )}
-                </div>
-              </Section>
-            )}
-
-            {(data.consultation.consultsRequested.length > 0 || data.consultation.consultantReview) && (
-              <Section>
-                <SectionHeading>Specialist Consultation & Review</SectionHeading>
-                <div className="text-sm space-y-1.5">
-                  {data.consultation.consultsRequested.length > 0 && (
-                    <div><span className="font-bold">Consults Requested:</span> {data.consultation.consultsRequested.join(", ")}</div>
-                  )}
-                  {data.consultation.consultantReview && (
-                    <div className="bg-slate-50 print:bg-transparent p-2 rounded border border-slate-200 print:border-none">
-                      <div className="font-bold text-xs uppercase tracking-wide text-slate-700 print:text-black">
-                        Consultant Review{data.consultation.consultantReview.reviewedBy ? ` — ${data.consultation.consultantReview.reviewedBy}` : ""}
-                        {data.consultation.consultantReview.timestamp ? ` (${data.consultation.consultantReview.timestamp})` : ""}
-                      </div>
-                      <p className="text-sm mt-0.5 whitespace-pre-line">{data.consultation.consultantReview.reviewText}</p>
-                    </div>
-                  )}
-                </div>
-              </Section>
-            )}
-
-            <SafetyAndAccreditationSection data={data.safetyAndAccreditation} />
-
-            <Section>
-              <SectionHeading>Disposition & Outcome</SectionHeading>
-              <div className="text-sm space-y-1">
-                <div><span className="font-bold">Status:</span> {data.disposition.status || "Not yet determined"}</div>
-                {data.disposition.destinationUnit && <div><span className="font-bold">Destination:</span> {data.disposition.destinationUnit}</div>}
-                {data.disposition.durationInEr && <div><span className="font-bold">Duration in ER:</span> {data.disposition.durationInEr}</div>}
-                {data.disposition.conditionAtShift && <div><span className="font-bold">Condition at Shift:</span> {data.disposition.conditionAtShift}</div>}
-                {data.disposition.managementPlan && <div><span className="font-bold">Management Plan:</span> {data.disposition.managementPlan}</div>}
-                {data.disposition.consultsRequested.length > 0 && <div><span className="font-bold">Consults Requested:</span> {data.disposition.consultsRequested.join(", ")}</div>}
-                {data.disposition.followUpAdvice && <div><span className="font-bold">Follow-Up Advice:</span> {data.disposition.followUpAdvice}</div>}
-              </div>
-            </Section>
-          </>
         )}
 
-        {((data.notes.progressNotes && data.notes.progressNotes.trim() !== "Case created via ErMate Voice Scribe dictation.") || data.notes.addendum) && (
+        {data.isPediatric && ((data.notes.progressNotes && data.notes.progressNotes.trim() !== "Case created via ErMate Voice Scribe dictation.") || data.notes.addendum) && (
           <Section>
             <SectionHeading>Clinical Notes & Addendum</SectionHeading>
             {data.notes.progressNotes && data.notes.progressNotes.trim() !== "Case created via ErMate Voice Scribe dictation." && (
@@ -2008,6 +1876,7 @@ export default function CaseSheetPrintView({
           </Section>
         )}
 
+        {data.isPediatric && (
         <div className="pt-8 mt-4 flex flex-wrap items-end justify-between text-sm gap-y-4">
           <div className="flex flex-wrap items-end gap-6">
             <div>
@@ -2033,6 +1902,7 @@ export default function CaseSheetPrintView({
             <div className="text-[10px] italic">Electronically Signed Record</div>
           </div>
         </div>
+        )}
       </div>
 
       <style>{`

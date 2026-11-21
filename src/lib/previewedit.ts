@@ -72,7 +72,10 @@ const caseText = (key: string, label: string, path: string[], getFrom: (c: any, 
 const HISTORY: PreviewField[] = [
   sh("symptoms", "Signs & symptoms"), sh("allergies", "Allergies"), sh("medications", "Current medications"),
   sh("pastHistory", "Past medical history"), sh("lastMeal", "Last meal", false), sh("events", "Events preceding"),
-  sh("familyHistory", "Family history"), sh("hpi", "History of presenting illness"), sh("surgicalHistory", "Surgical history"),
+  sh("familyHistory", "Family history"),
+  // Editing the HPI in the preview makes it the doctor's HPI (the case-summary writer will not replace it).
+  ((f: PreviewField): PreviewField => ({ ...f, set: (c, v) => setIn(f.set(c, v), ["sampleHistory", "hpiSource"], "doctor") }))(sh("hpi", "History of presenting illness")),
+  sh("surgicalHistory", "Surgical history"),
   sh("lmp", "LMP", false),
 ];
 

@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from "react";
 import { X, Copy, Check, ChevronUp, ChevronDown, Settings2, RotateCcw, ArrowRight, FileText, ListChecks } from "lucide-react";
 import type { CaseSheetData } from "./CaseSheetPrintView";
-import { formatCaseSheetText, caseSheetTextToEmrHtml } from "../utils/caseSheetFormat";
+import { formatCaseSheetText, formatCaseSheetHtml } from "../utils/caseSheetFormat";
 import { copyTextToClipboard } from "../utils/copyToClipboard";
 import {
   buildEmrSections, EMR_SECTION_CATALOG, loadEmrLayout, saveEmrLayout, resetEmrLayout,
@@ -56,7 +56,7 @@ export default function CopyToEmrPanel({ data, onClose }: Props) {
   };
 
   const copyFull = async () => {
-    const ok = await copyTextToClipboard(fullText, caseSheetTextToEmrHtml(fullText));
+    const ok = await copyTextToClipboard(fullText, formatCaseSheetHtml(data, { forEmr: true }));
     flash("__full", ok);
   };
 

@@ -123,6 +123,12 @@ export interface SampleHistory {
   familyHistory: string;
   psychiatricFlags: string;
   hpi?: string;
+  /**
+   * Who last wrote the HPI. "doctor" = typed/edited by the clinician (never overwritten automatically);
+   * "case-summary" = written from the whole case when the sheet was prepared; "dictation" (or absent) =
+   * from a single dictation turn. See src/utils/caseSummaryHpi.ts.
+   */
+  hpiSource?: "doctor" | "case-summary" | "dictation";
   surgicalHistory?: string;
   lmp?: string;
 }

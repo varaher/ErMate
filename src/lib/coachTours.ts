@@ -68,6 +68,7 @@ export const TOURS: Record<TourId, CoachStep[]> = {
     { id: "search", target: { sel: "#cases-list-container input" }, title: "Find a patient", body: "Search by name, complaint or ER number, and filter the list." },
     { id: "critical-badge", v: 2, feature: "critical-badge", title: "Red CRITICAL badge", body: "When saved vitals cross a danger limit (for example low BP, very high heart rate, low SpO2 or GCS 8 or less), a red badge appears on that patient on Home, Cases, Handover and the case sheet. It is a prompt to look at the patient, not a diagnosis." },
     { id: "emr-field-copy", v: 3, feature: "emr-field-copy", title: "Copy to EMR, box by box", body: "Hospital EMR has separate boxes (complaints, HOPI, examination, plan)? Open a case and tap EMR fields, or the case sheet menu: Copy to EMR, field by field. Copy each part, or tap Copy next to go box by box. Set your EMR's boxes once in My EMR layout. One notes box? Use Full case sheet." },
+    { id: "er-record-hpi", v: 6, feature: "er-record-hpi", title: "Your hospital's case record", body: "Adult ER case sheets now print and copy in the Initial Assessment and ED Case Record format. When you preview, ErMate writes the HPI from everything recorded in the case, using only what was documented. Edited the HPI yourself? It is kept. Tap Rewrite HPI from case in the case sheet to refresh it." },
   ],
   handover: [
     { id: "intro", title: "Shift handover", body: "Build a clear handover for the next doctor. Review everything before you hand over." },
@@ -129,6 +130,8 @@ export const TOURS: Record<TourId, CoachStep[]> = {
     { id: "team", v: 3, feature: "teams", target: { sel: '[data-coach="more-team"]' }, title: "Your ER team", body: "Open Team to edit your profile, hospital, team and shift timings, and to share the rota with your colleagues." },
     { id: "team-start", v: 4, feature: "team-start", target: { sel: '[data-coach="more-team"]' }, title: "Rota needs a team", body: "The rota, shift timings and team handover need a team. Open Team: the department lead taps Create team, colleagues tap Join with link. Your own cases stay private either way." },
         { id: "rota-sync", v: 5, feature: "rota-sync", target: { sel: '[data-coach="more-team"]' }, title: "Send the rota", body: "Team leads: in Team, tap Sync Google Calendar, then upload your rota (Excel, CSV, PDF or a photo) or use Google Sheets. Each doctor gets an ErMate notice and a reminder 30 minutes before each shift while ErMate is open." },
+    { id: "hospital-team", v: 6, feature: "hospital-team-join", target: { sel: '[data-coach="more-team"]' }, title: "One team per hospital", body: "If your hospital already has a team, Team shows it with a Request to join button instead of Create team. The team's lead approves you." },
+    { id: "role-requests", v: 6, feature: "team-role-requests", target: { sel: '[data-coach="more-team"]' }, title: "Role changes and HOD", body: "Need a new designation, or HOD? Ask from your profile's Role section. Your team's admins approve it. Team leads can also set anyone's role, including HOD, in Team, Members." },
     { id: "replay", target: { sel: '[data-testid="take-app-tour"]' }, title: "Replay the walkthrough", body: "Tap here to see all the page tips again." },
   ],
 };

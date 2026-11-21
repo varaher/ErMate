@@ -221,7 +221,8 @@ export async function processScribeChatTurn(
       references: { source: string; note: string }[];
       watchFor: string[];
     }>;
-  }
+  },
+  options?: { includeReasoning?: boolean }
 ): Promise<ScribeTurnResponse> {
   // Conversational-only turns skip extraction + reasoning entirely.
   if (isConversationalOnly(userInput)) {

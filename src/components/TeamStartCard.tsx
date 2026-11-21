@@ -5,7 +5,7 @@ import { Users, Crown, Link2, Lock, ChevronRight } from "lucide-react";
  * Plain-words "Work as a team" card for doctors who are not in a team yet (More → Team).
  * Presentation only. Create / Join open the existing team modals.
  */
-export default function TeamStartCard({ onCreate, onJoin }: { onCreate: () => void; onJoin: () => void }) {
+export default function TeamStartCard({ onCreate, onJoin }: { role?: string; onCreate: () => void; onJoin: () => void }) {
   return (
     <div className="space-y-4 text-left">
       <div className="rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 shadow-sm space-y-2">

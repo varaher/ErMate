@@ -17,7 +17,42 @@ import type { CaseSheetData } from "../components/CaseSheetPrintView";
 
 import { screeningLines, isolationBanner } from "./triageScreening";
 import { formatAge } from "./ageLabel";
+import { buildErCaseRecord, erCaseRecordToText, erCaseRecordToHtml } from "./erCaseRecord";
 const ND = "Not documented";
+
+/**
+ * Adult ER cases use the hospital's own "INITIAL ASSESSMENT AND EMERGENCY DEPARTMENT CASE RECORD"
+ * format (src/utils/erCaseRecord.ts, Neeraj 21 Nov 2026). Pediatric cases keep the pediatric sheet.
+ */
+const usesErRecord = (data: CaseSheetData): boolean => !data.isPediatric;
+
+/** Patient block for the printed / "Copy case sheet" version (the EMR already knows the patient). */
+function patientHeaderLines(data: CaseSheetData): string[] {
+  const p = data.patient;
+  return [
+    `${(data.hospitalName || "").trim() || "Hospital not set"}`,
+    `Case ID: ${val(data.caseId)}`,
+    `Name: ${val(p.name)}`,
+    `Age / Sex: ${p.age !== null && p.age !== undefined ? formatAge(p.age, p.ageMonths, p.ageDays) : ND} ${p.sex || ""}`.trimEnd(),
+    `UHID: ${val(p.uhid)}`,
+    `Bed: ${val(p.bed)}`,
+    `Arrival: ${hasText(data.arrival?.date) || hasText(data.arrival?.time) ? `${data.arrival?.date || ""} ${data.arrival?.time || ""}`.trim() : ND}`,
+  ];
+}
+
+/**
+ * HTML flavour for rich-text EMR editors. Adult ER record: one paragraph per line with bold headings.
+ * Pediatric: the existing text → HTML conversion.
+ */
+export function formatCaseSheetHtml(data: CaseSheetData, opts: { forEmr?: boolean } = {}): string {
+  if (usesErRecord(data)) {
+    const record = erCaseRecordToHtml(buildErCaseRecord(data));
+    if (opts.forEmr) return record;
+    const head = patientHeaderLines(data).map((l) => `<p>${l.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</p>`).join("");
+    return record.replace('<meta charset="utf-8">', `<meta charset="utf-8">${head}<p></p>`);
+  }
+  return caseSheetTextToEmrHtml(formatCaseSheetText(data, opts));
+}
 
 function val(v: unknown): string {
   if (v === null || v === undefined) return ND;
@@ -75,6 +110,10 @@ function emrSeenLine(data: CaseSheetData): string {
  */
 export function formatCaseSheetText(data: CaseSheetData, opts: { forEmr?: boolean } = {}): string {
   const forEmr = opts.forEmr === true;
+  if (usesErRecord(data)) {
+    const record = erCaseRecordToText(buildErCaseRecord(data));
+    return forEmr ? record : `${patientHeaderLines(data).join("\n")}\n\n${record}`;
+  }
   const out: string[] = [];
   const section = (title: string, lines: string[]) => {
     const body = lines.filter((l) => l !== "");
