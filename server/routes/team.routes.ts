@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { hodApprovalWarnings, resolveHodHospital } from "../services/hodClaimChecks.ts";
+import { findExistingHospitalTeam, identityFromUser, hospitalKey } from "../services/hospitalTeamMatch.ts";
 import { randomBytes, createHash } from "crypto";
 import { adminAuth, db, PROJECT_ID, FIRESTORE_DATABASE_ID } from "../../src/lib/firebase-admin.ts";
 import { requireAuth, type AuthRequest } from "../../src/middleware/auth.ts";
@@ -738,6 +739,17 @@ router.post("/request-join", async (req: AuthRequest, res) => {
       requestedHospitalName = invite.hospitalName || "";
       requestedTeamName = invite.teamName || invite.hospitalName || "";
       requestedDepartment = invite.department || "Emergency Medicine";
+    } else if (requestedHospitalId) {
+      // Request to join a team found for the doctor's hospital (no link). The team must exist;
+      // its own names are used, never the ones sent by the app. The team's admin still approves.
+      const teamSnap = await db.collection("teams").doc(requestedHospitalId).get();
+      if (!teamSnap.exists) {
+        return res.status(404).json({ error: "That team was not found." });
+      }
+      const team = teamSnap.data()!;
+      requestedHospitalName = String(team.hospitalName || "");
+      requestedTeamName = String(team.teamName || team.hospitalName || "");
+      requestedDepartment = String(team.department || "Emergency Medicine");
     }
 
     if (!requestedHospitalId) {
@@ -1490,8 +1502,16 @@ router.post("/update-role", async (req: AuthRequest, res) => {
       const previousRole =
         String(target.role || "").trim().toLowerCase();
 
+      // A Team Admin may make a member HOD (Neeraj, 20 Nov 2026). HOD means team admin.
+      const makesHod = isExactHospitalAdminRole(normalizedRole);
+      // Changing the role away from HOD can also take away admin power (when it came only from the role).
+      const losesAdmin =
+        isTeamAdmin(target) &&
+        (req.body.isTeamAdmin === false ||
+          (!makesHod && !isTeamAdmin({ ...target, role: normalizedRole })));
+
       // If updating admin status, ensure hospital is never left without an admin
-      if (req.body.isTeamAdmin === false && isTeamAdmin(target)) {
+      if (losesAdmin) {
         const membersSnap = await tx.get(
           db
             .collection("team_members")
@@ -1522,6 +1542,9 @@ router.post("/update-role", async (req: AuthRequest, res) => {
       if (req.body.isTeamAdmin !== undefined) {
         updates.isTeamAdmin = Boolean(req.body.isTeamAdmin);
         updates.teamRole = req.body.isTeamAdmin ? "admin" : "member";
+      } else if (makesHod) {
+        updates.isTeamAdmin = true;
+        updates.teamRole = "admin";
       }
 
       tx.update(targetRef, updates);
@@ -1796,6 +1819,192 @@ tx.set(
 });
 
 // ── POST /remove-member ─────────────────────────────────────────────────────
+// ── Role-change requests (Neeraj, 20 Nov 2026: the team's own admins approve them) ───
+// A member asks for a new designation (including HOD). Admins of THAT team see and decide.
+// Before this, requests were addressed to "the HOD" but Firestore rules let only the requester
+// read them, so nobody could ever approve one.
+
+async function loadActiveMember(uid: string): Promise<any | null> {
+  const snap = await db.collection("team_members").doc(uid).get();
+  if (!snap.exists) return null;
+  const m = snap.data()!;
+  return isActiveStatus(m.status) ? { ...m, id: snap.id } : null;
+}
+
+const memberTeamId = (m: any) => String(m?.teamId || m?.hospitalId || "").trim();
+
+// GET /role-requests → { mine, toReview, canReview }
+router.get("/role-requests", async (req: AuthRequest, res) => {
+  try {
+    const uid = req.user!.uid;
+    const me = await loadActiveMember(uid);
+    const mineSnap = await db.collection("roleChangeRequests").where("requestedBy", "==", uid).get();
+    const mine = mineSnap.docs
+      .map(d => ({ id: d.id, ...(d.data() as any) }))
+      .filter(r => r.status === "pending")
+      .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")))[0] || null;
+
+    const canReview = !!me && isTeamAdmin(me);
+    let toReview: any[] = [];
+    if (canReview) {
+      const teamId = memberTeamId(me);
+      const snap = await db.collection("roleChangeRequests").where("teamId", "==", teamId).get();
+      toReview = snap.docs
+        .map(d => ({ id: d.id, ...(d.data() as any) }))
+        .filter(r => r.status === "pending" && r.requestedBy !== uid)
+        .sort((a, b) => String(a.createdAt || "").localeCompare(String(b.createdAt || "")));
+    }
+    return res.json({ success: true, mine, toReview, canReview, inTeam: !!me });
+  } catch (error: any) {
+    console.error("[Team] role-requests list failed:", error?.message || error);
+    return res.status(500).json({ error: "Could not load role requests." });
+  }
+});
+
+// POST /role-requests/create { requestedRole, reason }
+router.post("/role-requests/create", async (req: AuthRequest, res) => {
+  try {
+    const uid = req.user!.uid;
+    const email = (req.user!.email || "").trim().toLowerCase();
+    const requestedRoleRaw = String(req.body?.requestedRole || "").trim();
+    const reason = String(req.body?.reason || "").trim().slice(0, 1000);
+    const requestedRole = requestedRoleRaw.toLowerCase();
+    if (!INVITE_ALLOWED_ROLES.has(requestedRole)) {
+      return res.status(400).json({ error: "Please choose a valid role." });
+    }
+    if (reason.length < 10) {
+      return res.status(400).json({ error: "Please give a reason of at least 10 characters." });
+    }
+    const me = await loadActiveMember(uid);
+    if (!me) {
+      return res.status(400).json({ error: "Join or create a team first. Your team's admin approves role changes." });
+    }
+    if (String(me.role || "").trim().toLowerCase() === requestedRole) {
+      return res.status(400).json({ error: "That is already your role." });
+    }
+
+    // One pending request per doctor: an older pending one is replaced.
+    const oldSnap = await db.collection("roleChangeRequests").where("requestedBy", "==", uid).get();
+    const batch = db.batch();
+    const now = nowIso();
+    oldSnap.docs.filter(d => (d.data() as any).status === "pending").forEach(d =>
+      batch.update(d.ref, { status: "cancelled", reviewedBy: "Replaced by a newer request", reviewedAt: now, updatedAt: now })
+    );
+    const ref = db.collection("roleChangeRequests").doc();
+    batch.set(ref, {
+      requestedBy: uid,
+      requestedByName: me.name || req.user!.name || email,
+      requestedByEmail: email,
+      currentRole: me.role || "",
+      requestedRole: requestedRoleRaw,
+      reason,
+      status: "pending",
+      teamId: memberTeamId(me),
+      hospital: me.hospitalName || me.hospital || "",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await batch.commit();
+    return res.json({ success: true, id: ref.id });
+  } catch (error: any) {
+    console.error("[Team] role-request create failed:", error?.message || error);
+    return res.status(500).json({ error: "Could not send the request." });
+  }
+});
+
+// POST /role-requests/cancel { requestId } — the requester withdraws their own pending request.
+router.post("/role-requests/cancel", async (req: AuthRequest, res) => {
+  try {
+    const uid = req.user!.uid;
+    const ref = db.collection("roleChangeRequests").doc(String(req.body?.requestId || ""));
+    const snap = await ref.get();
+    if (!snap.exists || (snap.data() as any).requestedBy !== uid) {
+      return res.status(404).json({ error: "Request not found." });
+    }
+    if ((snap.data() as any).status !== "pending") {
+      return res.status(400).json({ error: "This request is no longer pending." });
+    }
+    await ref.update({ status: "cancelled", reviewedBy: "Cancelled by requester", reviewedAt: nowIso(), updatedAt: nowIso() });
+    return res.json({ success: true });
+  } catch (error: any) {
+    return res.status(500).json({ error: "Could not cancel the request." });
+  }
+});
+
+// POST /role-requests/decide { requestId, decision: "approve" | "reject" } — Team Admins of that team.
+router.post("/role-requests/decide", async (req: AuthRequest, res) => {
+  try {
+    const callerUid = req.user!.uid;
+    const isAdmin = isPlatformAdminReq(req);
+    const decision = String(req.body?.decision || "");
+    if (decision !== "approve" && decision !== "reject") {
+      return res.status(400).json({ error: "decision must be approve or reject." });
+    }
+    const reqRef = db.collection("roleChangeRequests").doc(String(req.body?.requestId || ""));
+    const callerRef = db.collection("team_members").doc(callerUid);
+    let result: { newRole?: string } = {};
+
+    await db.runTransaction(async (tx) => {
+      const reqSnap = await tx.get(reqRef);
+      if (!reqSnap.exists) throw new Error("Request not found.");
+      const r = reqSnap.data() as any;
+      if (r.status !== "pending") throw new Error("This request is no longer pending.");
+      if (r.requestedBy === callerUid) throw new Error("You cannot decide your own request.");
+
+      const targetRef = db.collection("team_members").doc(String(r.requestedBy));
+      const targetSnap = await tx.get(targetRef);
+      const target = targetSnap.exists ? targetSnap.data()! : null;
+
+      if (!isAdmin) {
+        const callerSnap = await tx.get(callerRef);
+        const caller = callerSnap.exists ? callerSnap.data()! : null;
+        if (!caller || !isTeamAdmin(caller)) throw new Error("Only Team Admins can decide role requests.");
+        if (memberTeamId(caller) !== String(r.teamId || "")) throw new Error("This request is not in your team.");
+      }
+
+      const now = nowIso();
+      if (decision === "reject") {
+        tx.update(reqRef, { status: "rejected", reviewedBy: req.user!.email || callerUid, reviewedByUid: callerUid, reviewedAt: now, updatedAt: now });
+        return;
+      }
+
+      // Approve: the doctor must still be an active member of the same team.
+      if (!target || !isActiveStatus(target.status) || memberTeamId(target) !== String(r.teamId || "")) {
+        throw new Error("This doctor is no longer an active member of the team.");
+      }
+      const newRole = String(r.requestedRole || "").trim().toLowerCase();
+      if (!INVITE_ALLOWED_ROLES.has(newRole)) throw new Error("Invalid clinical role.");
+      const makesHod = isExactHospitalAdminRole(newRole);
+      const updates: any = { role: newRole, updatedAt: now };
+      if (makesHod) { updates.isTeamAdmin = true; updates.teamRole = "admin"; }
+      tx.update(targetRef, updates);
+      tx.set(db.collection("users").doc(String(r.requestedBy)), { role: newRole }, { merge: true });
+      tx.update(reqRef, { status: "approved", reviewedBy: req.user!.email || callerUid, reviewedByUid: callerUid, reviewedAt: now, updatedAt: now });
+      const logRef = db.collection("roleChangeLog").doc();
+      tx.set(logRef, {
+        targetUid: String(r.requestedBy), targetEmail: target.email || "", hospitalId: target.hospitalId || "",
+        previousRole: String(target.role || "").trim().toLowerCase(), newRole,
+        changedByUid: callerUid, changedByPlatformAdmin: isAdmin, viaRoleRequest: reqRef.id, changedAt: now,
+      });
+      const auditRef = db.collection("teamAuditLog").doc();
+      tx.set(auditRef, {
+        id: auditRef.id, eventType: "TEAM_MEMBER_ROLE_CHANGED", actorUid: callerUid,
+        actorEmail: (req.user?.email || "").trim().toLowerCase(), actorType: isAdmin ? "platform_admin" : "team_admin",
+        hospitalId: target.hospitalId || "", targetUid: String(r.requestedBy), targetEmail: target.email || "",
+        previousRole: String(target.role || "").trim().toLowerCase(), newRole, viaRoleRequest: reqRef.id, createdAt: now,
+      });
+      result = { newRole };
+    });
+
+    return res.json({ success: true, ...result });
+  } catch (error: any) {
+    const message = error?.message || "Could not decide the request.";
+    const status = /Only Team Admins|not in your team|your own request/.test(message) ? 403
+      : /not found/.test(message) ? 404 : 400;
+    return res.status(status).json({ error: message });
+  }
+});
+
 router.post("/remove-member", async (req: AuthRequest, res) => {
   try {
     const { memberId } = req.body || {};
@@ -2224,12 +2433,24 @@ router.post("/approve-hod-claim", async (req: AuthRequest, res) => {
       return res.status(400).json({ error: "Claimant Firebase user record not found." });
     }
 
-    // Resolve canonical hospitalId and hospitalName
-    const { hospitalId: resolvedHospitalId, hospitalName: rawHospitalName } =
-      resolveHodHospital(claim, explicitHospitalId, explicitHospitalName);
-    if (!rawHospitalName) {
-      return res.status(400).json({ error: "Hospital name cannot be resolved." });
+    // Teams audit C3 (20 Nov 2026): an HOD is made HOD of the team they are actually in.
+    // The old path built a hospital id from the claim's hospital NAME, which never matches an
+    // in-app team id ("team_…"), so approved HODs landed in an empty team with broken access.
+    // Teams are created and run by their own lead; the platform only confirms the title.
+    const claimantMemberSnap = await db.collection("team_members").doc(claimantUid).get();
+    const claimantMember = claimantMemberSnap.exists ? claimantMemberSnap.data()! : null;
+    const claimantTeamId = claimantMember && isActiveStatus(claimantMember.status)
+      ? String(claimantMember.teamId || claimantMember.hospitalId || "").trim()
+      : "";
+    if (!claimantTeamId) {
+      return res.status(400).json({
+        code: "HOD_CLAIMANT_NOT_IN_TEAM",
+        error: "This doctor is not in a team yet. Ask them to create their hospital's team (they become its lead) or join it. Then approve again, or their team admin can make them HOD."
+      });
     }
+    void resolveHodHospital; void explicitHospitalId; void explicitHospitalName; // name-based ids are no longer used
+    const resolvedHospitalId = claimantTeamId;
+    const rawHospitalName = String(claimantMember!.hospitalName || claimantMember!.hospital || claim.hospitalName || "").trim();
 
     // Duplicate HOD / moving a doctor out of another team needs an explicit second confirmation.
     const warnings = await hodApprovalWarnings(db, claimantUid, resolvedHospitalId, rawHospitalName);
@@ -2259,9 +2480,12 @@ router.post("/approve-hod-claim", async (req: AuthRequest, res) => {
         role: "HOD / Department Lead",
         status: "active",
         membershipVerified: true,
+        teamId: resolvedHospitalId,
         hospitalId: resolvedHospitalId,
         hospital: rawHospitalName,
         hospitalName: rawHospitalName,
+        isTeamAdmin: true,
+        teamRole: "admin",
         assignedBy: adminEmail,
         approvedBy: adminUid,
         approvedAt: now,
@@ -2278,11 +2502,10 @@ router.post("/approve-hod-claim", async (req: AuthRequest, res) => {
       userRef,
       {
         role: "HOD / Department Lead",
-        hospital: rawHospitalName,
         hospitalId: resolvedHospitalId,
-        hospitalName: rawHospitalName,
-        state: claim.state || "",
-        place: claim.place || "",
+        teamId: resolvedHospitalId,
+        isTeamAdmin: true,
+        teamRole: "admin",
         updatedAt: now
       },
       { merge: true }
@@ -2779,15 +3002,28 @@ const handleCreateTeam = async (req: AuthRequest, res: any) => {
     const teamRef = db.collection("teams").doc(uniqueTeamId);
     const shiftRef = db.collection("hospital_shifts").doc(uniqueTeamId);
 
+    const existingUserSnap = await userRef.get().catch(() => null);
+    const creatorUser = existingUserSnap && existingUserSnap.exists ? existingUserSnap.data()! : {};
+
     // Resolve creator's professional designation (NEVER automatically forced to HOD!)
     let creatorClinicalRole = "Emergency Physician";
     if (professionalRole && typeof professionalRole === "string" && professionalRole.trim()) {
       creatorClinicalRole = professionalRole.trim();
-    } else {
-      const existingUserSnap = await userRef.get().catch(() => null);
-      if (existingUserSnap && existingUserSnap.exists) {
-        const uData = existingUserSnap.data()!;
-        if (uData.role) creatorClinicalRole = uData.role;
+    } else if (creatorUser.role) {
+      creatorClinicalRole = creatorUser.role;
+    }
+
+    // One team per hospital (Neeraj, 20 Nov 2026): if this hospital already has a live team,
+    // the doctor requests to join it instead of creating a second one.
+    const myHospital = identityFromUser(creatorUser, rawHospitalName);
+    if (!isPlatformAdminReq(req)) {
+      const existingTeam = await findExistingHospitalTeam(db, myHospital);
+      if (existingTeam) {
+        return res.status(409).json({
+          code: "HOSPITAL_TEAM_EXISTS",
+          error: `${existingTeam.hospitalName || rawHospitalName} already has a team (${existingTeam.teamName}). Request to join it instead.`,
+          existingTeam,
+        });
       }
     }
 
@@ -2811,6 +3047,10 @@ const handleCreateTeam = async (req: AuthRequest, res: any) => {
         id: uniqueTeamId,
         teamName: cleanTeamName,
         hospitalName: rawHospitalName,
+        // Hospital identity for the one-team-per-hospital check (server/services/hospitalTeamMatch.ts)
+        hospitalNameKey: myHospital.nameKey || hospitalKey(rawHospitalName),
+        hospitalDirectoryId: myHospital.directoryId || null,
+        district: myHospital.district || null,
         department: cleanDepartment,
         erPhysicalBedCapacity: parsedBedCapacity,
         createdByUid: uid,
@@ -3063,6 +3303,30 @@ router.get("/rota/my-shifts", async (req: AuthRequest, res) => {
 });
  
 router.post("/create-team", handleCreateTeam);
+
+// ── GET /hospital-team ───────────────────────────────────────────────────────
+// Does the doctor's hospital (from their profile) already have a team? Used by the
+// "Work as a team" screens to offer "Request to join" instead of "Create team".
+// Returns only the team's name, hospital and active member count — no member details.
+router.get("/hospital-team", async (req: AuthRequest, res) => {
+  try {
+    const uid = req.user!.uid;
+    const userSnap = await db.collection("users").doc(uid).get();
+    const user = userSnap.exists ? userSnap.data()! : {};
+    const memberSnap = await db.collection("team_members").doc(uid).get();
+    const member = memberSnap.exists ? memberSnap.data()! : null;
+    const existingTeam = await findExistingHospitalTeam(db, identityFromUser(user));
+    return res.json({
+      success: true,
+      existingTeam,
+      alreadyMember: !!(member && existingTeam && (member.teamId || member.hospitalId) === existingTeam.teamId && isActiveStatus(member.status)),
+      pendingForThisTeam: !!(member && existingTeam && (member.teamId || member.hospitalId) === existingTeam.teamId && member.status === "pending_approval"),
+    });
+  } catch (error: any) {
+    console.error("[Team] hospital-team lookup failed:", error?.message || error);
+    return res.status(500).json({ error: "Could not check for your hospital's team." });
+  }
+});
 router.post("/create-workspace", handleCreateTeam);
 
 export default router;

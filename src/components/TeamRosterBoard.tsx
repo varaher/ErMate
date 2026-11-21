@@ -722,7 +722,7 @@ export default function TeamRosterBoard({
       <div id="team-roster-board" className="space-y-6 text-slate-800 dark:text-slate-100 max-w-4xl mx-auto text-left animate-fade-in">
              {/* Plain-words "Work as a team" (replaces the Individual Workspace + Transition cards) */}
         <div data-testid="team-unlock-hint">
-          <TeamStartCard onCreate={() => setShowCreateTeamModal(true)} onJoin={() => setShowJoinModal(true)} />
+          <TeamStartCard role={profile?.role} onCreate={() => setShowCreateTeamModal(true)} onJoin={() => setShowJoinModal(true)} />
         </div>
 
         {/* Modal: Create Team Workspace */}
@@ -1662,10 +1662,10 @@ export default function TeamRosterBoard({
               <div className="space-y-2.5">
                 {/* Pending Team Admin Approvals */}
                 {pendingApprovals.map(req => {
-                  // Default to the requested role only if it is on the shared list (an "HOD" request
-                  // defaults to Resident: the HOD title comes from platform HOD verification).
+                  // Default to the requested role if it is on the shared list. An "HOD" request still
+                  // defaults to Resident: HOD makes them a Team Admin, so the lead picks it on purpose.
                   const requestedLabel = teamRoleLabel(req.role);
-                  const selectedRole = approvalRoles[req.id] || (TEAM_ROLE_OPTIONS.includes(requestedLabel) ? requestedLabel : "Resident");
+                  const selectedRole = approvalRoles[req.id] || (TEAM_ROLE_OPTIONS.includes(requestedLabel) && requestedLabel !== "HOD" ? requestedLabel : "Resident");
                   const isMakeAdmin = approvalAdminStatus[req.id] === true;
 
                   return (

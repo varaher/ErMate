@@ -21,6 +21,7 @@ import { eq, desc } from "drizzle-orm";
 import { requireAuth, type AuthRequest } from "./src/middleware/auth.ts";
 import { aiUsageContextMiddleware } from "./server/services/aiUsage.ts";
 import adminRouter from "./server/routes/admin.routes.ts";
+import { sarvamOcr } from "./server/sarvamDocOcr.ts";
 
 // Learned AI rules change the instructions given to the AI for EVERY user,
 // so only the verified platform admin may create, approve or delete them.
@@ -54,6 +55,7 @@ import teamRouter from "./server/routes/team.routes.ts";
 import mateRouter from "./server/routes/mate.routes.ts";
 import protocolFlagsRouter from "./server/routes/protocolFlags.routes.ts";
 import icuRouter from "./server/routes/icu.routes.ts";
+import hpiRouter from "./server/routes/hpi.routes.ts";
 
 import { generateMortalityAudit, generateMortalityAuditDocx } from "./server/mortalityAudit.ts";
 import { legacySqlGuard, buildSyncUserRecord, evaluateCreditGate, learningFeedbackRejectHandler, errorForLog } from "./server/legacyContainment.ts";
@@ -204,6 +206,7 @@ app.use("/api/team", teamRouter);
 app.use("/api/admin", adminRouter);
 app.use("/api/mate", mateRouter);
 app.use("/api/protocol-flags", protocolFlagsRouter);
+app.use("/api/case-sheet", hpiRouter); // HPI written from the whole case (server/caseSummaryHpi.ts)
 app.use(icuRouter);
 
 const upload = multer({ storage: multer.memoryStorage() });
@@ -2152,7 +2155,9 @@ Return valid JSON with:
               references: [],
             };
           }
-        }
+        },
+        // Sonnet clinical reasoning only when asked (question in the turn, or the app sends includeReasoning: true).
+        { includeReasoning: req.body?.includeReasoning === true }
       );
 
       return res.json({
@@ -2966,122 +2971,110 @@ app.post("/api/handover/pdf", requireAuth, async (req: AuthRequest, res) => {
 });
 
 // 5d. AI Scribe Document Scanner (OCR & Mapping)
+// ── Scribe OCR scan: Sarvam Vision reads the page, GPT-4o-mini → Claude Haiku maps it to fields ──
+// The image goes only to Sarvam (Indian provider). The text is de-identified before any overseas model sees it;
+// the patient's name is read locally from the text and never sent out. Missing fields stay null (Rule 8).
+const OCR_REFERRAL_FIELDS: Record<string, string> = {
+  age: "age in years as a number, or null",
+  gender: "Male, Female or Other, or null",
+  presentingComplaint: "chief complaint / reason for referral",
+  triageCategory: "P1 (Immediate), P2 (Urgent) or P3 (Non-Urgent) ONLY if the document states it, else null",
+  caseType: "Medical or Trauma, only if clear from the document",
+  arrivalMode: "Walk-in, Ambulance or Referred, only if stated",
+  bp: "blood pressure as written", hr: "heart rate", spo2: "SpO2", rr: "respiratory rate", temp: "temperature with its unit as written",
+  gcs: "GCS as written", grbs: "blood sugar / GRBS", painScore: "pain score",
+  symptoms: "symptoms", allergies: "allergies as written (null if not mentioned)", medications: "current medications / treatment given",
+  pastHistory: "past medical / surgical history", lastMeal: "last meal", events: "events leading to presentation",
+  airway: "airway findings", airwayStatus: "airway status", breathing: "breathing findings", breathingStatus: "breathing status",
+  circulation: "circulation findings", circulationStatus: "circulation status", disability: "disability / neuro findings",
+  disabilityStatus: "disability status", exposure: "exposure findings", exposureStatus: "exposure status",
+  secondaryAssessment: "secondary assessment / systemic examination", progressNotes: "investigations, course and treatment in the referring hospital",
+  clinicalNarrative: "a concise factual summary of the letter for the receiving physician, using only what is written",
+};
+
+/** Patient name from a "Name:" style line in the scanned text. Local only — never sent to a model. */
+function localPatientNameFromText(text: string): string | null {
+  const m = String(text || "").match(/(?:patient(?:'s)?\s*name|name\s+of\s+(?:the\s+)?patient|^\s*name)\s*[:\-]\s*([A-Za-z][A-Za-z .']{1,60})/im);
+  const name = m?.[1]?.replace(/\s{2,}/g, " ").replace(/\b(age|sex|gender|uhid|ip|op|mrd|dob)\b.*$/i, "").trim();
+  return name && name.length >= 2 ? name : null;
+}
+
+async function structureReferralText(safeText: string): Promise<Record<string, any>> {
+  const keys = Object.keys(OCR_REFERRAL_FIELDS);
+  const sys = "You extract facts from a hospital referral / transfer letter into JSON for an emergency physician. " +
+    "Use ONLY what the text states. If something is not written, use null. Never guess, infer or add normal findings. " +
+    "Placeholders such as [PATIENT] or [HOSPITAL] are redacted identifiers: never copy them into any field. Return JSON only.";
+  const user = `Fields (return every key):\n${keys.map(k => `- ${k}: ${OCR_REFERRAL_FIELDS[k]}`).join("\n")}\n\nLETTER TEXT:\n"""\n${safeText.slice(0, 20000)}\n"""`;
+  const clean = (obj: any) => {
+    const out: Record<string, any> = {};
+    for (const k of keys) {
+      let v = obj?.[k];
+      if (typeof v === "string") {
+        v = v.trim();
+        const onlyPlaceholder = /\[[A-Z-]+\]/.test(v) && v.replace(/\[[A-Z-]+\]/g, "").trim().length < 3;
+        if (!v || /^(null|n\/a|not (mentioned|documented|stated))$/i.test(v) || onlyPlaceholder) v = null;
+      }
+      if (k === "age") { const n = Number(v); v = v !== null && v !== "" && Number.isFinite(n) && n >= 0 && n < 130 ? n : null; }
+      out[k] = v ?? null;
+    }
+    return out;
+  };
+
+  const openaiKey = process.env.OPENAI_API_KEY;
+  if (openaiKey) {
+    try {
+      const r = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + openaiKey },
+        body: JSON.stringify({
+          model: "gpt-4o-mini", temperature: 0, response_format: { type: "json_object" },
+          messages: [{ role: "system", content: sys }, { role: "user", content: user }],
+        }),
+      });
+      if (r.ok) {
+        const j = await r.json();
+        return clean(JSON.parse(j?.choices?.[0]?.message?.content || "{}"));
+      }
+      console.warn("[Scribe OCR] GPT-4o-mini mapping failed:", r.status);
+    } catch (e: any) { console.warn("[Scribe OCR] GPT-4o-mini mapping error:", e?.message || e); }
+  }
+  const anthropic = getAnthropicClient();
+  if (anthropic) {
+    const msg = await anthropic.messages.create({ model: "claude-haiku-4-5-20251001", max_tokens: 2048, temperature: 0.0, system: sys, messages: [{ role: "user", content: user }] });
+    const raw = ((msg.content[0] as any)?.text || "{}").replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/```$/s, "").trim();
+    return clean(JSON.parse(raw));
+  }
+  throw new Error("No extraction model available");
+}
+
 app.post("/api/scribe-ocr-scan", requireAuth, meterCredits("vision_scan", () => firestoreAdmin), async (req: AuthRequest, res) => {
-  const { image, mimeType, imageText } = req.body;
+  const { image, imageBase64, mimeType, imageText } = req.body || {};
+  const b64 = typeof image === "string" && image ? image : (typeof imageBase64 === "string" ? imageBase64 : "");
 
   try {
-    const ai = getAI();
-    let response;
-
-    const schema = {
-      type: Type.OBJECT,
-      properties: {
-        hospitalName: { type: Type.STRING, description: "Name of the hospital/clinic that issued this letter" },
-        patientName: { type: Type.STRING },
-        age: { type: Type.INTEGER, nullable: true },
-        gender: { type: Type.STRING, description: "Male, Female, or Other" },
-        presentingComplaint: { type: Type.STRING },
-        triageCategory: { type: Type.STRING, description: "P1 (Immediate), P2 (Urgent), or P3 (Non-Urgent)" },
-        caseType: { type: Type.STRING, description: "Medical or Trauma" },
-        arrivalMode: { type: Type.STRING, description: "Walk-in, Ambulance, or Referred" },
-        bp: { type: Type.STRING },
-        hr: { type: Type.STRING },
-        spo2: { type: Type.STRING },
-        rr: { type: Type.STRING },
-        temp: { type: Type.STRING },
-        gcs: { type: Type.STRING },
-        grbs: { type: Type.STRING },
-        painScore: { type: Type.STRING },
-        symptoms: { type: Type.STRING },
-        allergies: { type: Type.STRING },
-        medications: { type: Type.STRING },
-        pastHistory: { type: Type.STRING },
-        lastMeal: { type: Type.STRING },
-        events: { type: Type.STRING },
-        airway: { type: Type.STRING },
-        airwayStatus: { type: Type.STRING },
-        breathing: { type: Type.STRING },
-        breathingStatus: { type: Type.STRING },
-        circulation: { type: Type.STRING },
-        circulationStatus: { type: Type.STRING },
-        disability: { type: Type.STRING },
-        disabilityStatus: { type: Type.STRING },
-        exposure: { type: Type.STRING },
-        exposureStatus: { type: Type.STRING },
-        secondaryAssessment: { type: Type.STRING },
-        progressNotes: { type: Type.STRING },
-        clinicalNarrative: { type: Type.STRING, description: "A structured concise medical summary of this reference letter for the physician" }
-      },
-      required: [
-        "hospitalName", "patientName", "age", "gender", "presentingComplaint", "triageCategory", "caseType", "arrivalMode",
-        "bp", "hr", "spo2", "rr", "temp", "gcs", "grbs", "painScore",
-        "symptoms", "allergies", "medications", "pastHistory", "lastMeal", "events",
-        "airway", "airwayStatus", "breathing", "breathingStatus", "circulation", "circulationStatus", "disability", "disabilityStatus", "exposure", "exposureStatus",
-        "secondaryAssessment", "progressNotes", "clinicalNarrative"
-      ]
-    };
-
-    if (image) {
-      // Multimodal image OCR scan
-      const imagePart = {
-        inlineData: {
-          mimeType: mimeType || "image/jpeg",
-          data: image,
-        },
-      };
-      const textPart = {
-        text: `You are an expert clinical OCR processing system. Extract patient details, clinical history, vitals, allergies, and the chief reasons for transfer from this scanned hospital reference/referral letter. Fill out all properties in the schema correctly.`
-      };
-
-      response = await ai.models.generateContent({
-        model: "gemini-2.0-flash",
-        contents: { parts: [imagePart, textPart] },
-        config: {
-          systemInstruction: "You are an expert emergency medical OCR processing system. Convert clinical reference/referral images into accurate structured clinical data in JSON.",
-          responseMimeType: "application/json",
-          responseSchema: schema
-        }
-      });
-    } else if (imageText && imageText.trim()) {
-      // Text-based OCR parser
-      const safeImageText = deidentifyText(imageText).deidentified;
-      const prompt = `
-        You are an expert clinical OCR processing system.
-        Extract patient details, clinical history, vitals, allergies, and chief reasons for transfer from this hospital reference/referral letter text:
-        
-        "${safeImageText}"
-      `;
-
-      response = await ai.models.generateContent({
-        model: "gemini-2.0-flash",
-        contents: prompt,
-        config: {
-          systemInstruction: "You map clinical referral text into clean structured medical data modules. Return JSON only.",
-          responseMimeType: "application/json",
-          responseSchema: schema
-        }
-      });
+    let letterText = "";
+    let source: "sarvam-vision" | "text" = "text";
+    if (b64) {
+      const buf = Buffer.from(b64.replace(/^data:[^;]+;base64,/, ""), "base64");
+      if (buf.length === 0) return res.status(400).json({ success: false, error: "The image could not be read." });
+      if (buf.length > 15 * 1024 * 1024) return res.status(413).json({ success: false, error: "The image is too large (max 15 MB)." });
+      const ocr = await sarvamOcr(buf, String(mimeType || "image/jpeg"));
+      letterText = ocr.text;
+      source = "sarvam-vision";
+    } else if (typeof imageText === "string" && imageText.trim()) {
+      letterText = imageText;
     } else {
-      // FAB-26 FIX: no image and no text was provided at all — there is
-      // nothing to scan. Fail honestly instead of falling through to
-      // fabricated data below.
-      return res.status(400).json({
-        success: false,
-        error: "No image or text was provided to scan."
-      });
+      // FAB-26: nothing to scan → fail honestly, never fabricate.
+      return res.status(400).json({ success: false, error: "No image or text was provided to scan." });
     }
 
-    const data = JSON.parse(response.text || "{}");
-    res.json({ success: true, data });
+    const patientName = localPatientNameFromText(letterText);
+    const safeText = deidentifyText(letterText).deidentified;
+    const fields = await structureReferralText(safeText);
+    const data = { hospitalName: null, patientName, ...fields };
+    res.json({ success: true, data, source });
   } catch (error: any) {
-    // FAB-26 FIX (Sept 2026): the previous catch block fabricated a
-    // complete fictional referral letter ("Robert Miller", 68, Metro
-    // Heart & General Hospital, penicillin anaphylaxis, CABG x2, CKD
-    // Stage 3, etc.) and returned it as {success: true, simulated: true}
-    // on ANY OCR failure. A frontend that didn't specifically check
-    // `simulated` could populate a doctor's case sheet with a wholly
-    // invented patient referral. Per Rule 8 (null over hallucination),
-    // this now fails honestly instead of inventing a referral letter.
+    // FAB-26 FIX (Sept 2026): never fabricate a referral letter on failure (Rule 8). Fail honestly.
     console.error("[Scribe OCR Scan] OCR failed, no fallback fabrication:", error?.message || error);
     res.status(503).json({
       success: false,

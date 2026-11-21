@@ -1,6 +1,7 @@
 import { displayTimeForUpdate } from "./mate/clinicianUpdateStamp";
 import { resolveWorkspaceForUser } from "./utils/workspaceResolver";
 import { resolveDraftHpi } from "./utils/historyFields";
+import { withCaseSummaryHpi } from "./utils/caseSummaryHpi";
 import { syncCaseToLogbookDirect } from "./utils/logbookSync";
 import React, { useState, useEffect, useRef, useCallback, Suspense } from "react";
 import { 
@@ -548,6 +549,9 @@ useEffect(() => {
   // Preview Case Sheet State (in-memory review before Firestore write)
   const [previewCase, setPreviewCase] = useState<ClinicalCase | null>(null);
   const [isPreviewMode, setIsPreviewMode] = useState<boolean>(false);
+  // True while the case sheet preview is being prepared (HPI written from the whole case).
+  const [preparingPreview, setPreparingPreview] = useState(false);
+  const preparingPreviewRef = useRef(false);
   const [pendingPreviewContext, setPendingPreviewContext] = useState<{
     msgId?: string;
     caseId: string;
@@ -3695,6 +3699,8 @@ const handleDeleteAllCases = async () => {
           symptoms: extracted.sampleHistory?.symptoms || (Array.isArray(extracted.symptoms) ? extracted.symptoms.join(", ") : extracted.symptoms) || existingMatch?.sampleHistory?.symptoms,
           events: extracted.sampleHistory?.events || extracted.events || existingMatch?.sampleHistory?.events,
         }),
+        // Keep who wrote the HPI, so a doctor-written HPI is never replaced by the case-summary writer.
+        ...((existingMatch?.sampleHistory as any)?.hpiSource ? { hpiSource: (existingMatch!.sampleHistory as any).hpiSource } : {}),
         surgicalHistory: extracted.sampleHistory?.surgicalHistory || extracted.surgicalHistory || existingMatch?.sampleHistory?.surgicalHistory || "",
         lmp: extracted.sampleHistory?.lmp || extracted.lmp || existingMatch?.sampleHistory?.lmp || ""
       },
@@ -4700,13 +4706,25 @@ const handleDeleteAllCases = async () => {
       };
     }
 
-    const draftCase = buildExtractedCaseDraft(existingMatch, extracted, {
+    const builtDraft = buildExtractedCaseDraft(existingMatch, extracted, {
       caseId: existingId,
       workspaceMetadata,
       profile,
       currentUser: auth.currentUser,
       teamMembers,
     });
+    // HPI written from the whole case in the hospital's style (Neeraj, 21 Nov 2026).
+    // Skipped when the doctor wrote the HPI; on any failure the draft keeps its HPI (nothing invented).
+    if (preparingPreviewRef.current) return; // a second tap while the first is still preparing
+    preparingPreviewRef.current = true;
+    setPreparingPreview(true);
+    let draftCase = builtDraft;
+    try {
+      draftCase = (await withCaseSummaryHpi(builtDraft)).case;
+    } finally {
+      preparingPreviewRef.current = false;
+      setPreparingPreview(false);
+    }
 
     if (options?.msgId) {
       setPendingPreviewContext({
@@ -7032,6 +7050,12 @@ const handleSignOut = async () => {
   return (
     <div className="min-h-screen min-h-dvh bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 flex flex-col font-sans transition-colors duration-200">
       <PWABadge />
+      {preparingPreview && (
+        <div role="status" aria-live="polite" data-testid="preparing-preview" className="fixed bottom-24 left-1/2 -translate-x-1/2 z-[70] px-4 py-2.5 rounded-2xl bg-slate-900/90 text-white text-xs font-bold shadow-lg flex items-center gap-2">
+          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+          <span>Preparing case sheet — writing HPI…</span>
+        </div>
+      )}
       
       {/* Upper Navigation & Branding Header */}
       <GlobalHeader

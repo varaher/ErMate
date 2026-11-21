@@ -563,3 +563,67 @@ export async function setTeamRotaManagerRole(
 
   return data;
 }
+
+// ── One team per hospital + role-change requests (20 Nov 2026) ──────────────
+
+async function teamApi<T = any>(path: string, body?: any): Promise<T> {
+  const user = auth.currentUser;
+  if (!user) throw new Error("Not authenticated");
+  const idToken = await user.getIdToken();
+  const res = await fetch(`/api/team/${path}`, {
+    method: body === undefined ? "GET" : "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err: any = new Error(data.error || "Request failed.");
+    err.status = res.status;
+    err.data = data;
+    throw err;
+  }
+  return data as T;
+}
+
+export interface ExistingHospitalTeam {
+  teamId: string;
+  teamName: string;
+  hospitalName: string;
+  activeMembers: number;
+}
+
+/** Does the doctor's hospital (from their profile) already have a team? */
+export function getMyHospitalTeam(): Promise<{ existingTeam: ExistingHospitalTeam | null; alreadyMember: boolean; pendingForThisTeam: boolean }> {
+  return teamApi("hospital-team");
+}
+
+/** Ask to join the team found for the doctor's hospital. That team's admin approves. */
+export function requestJoinHospitalTeam(teamId: string, role?: string): Promise<{ success: boolean }> {
+  return teamApi("request-join", { hospitalId: teamId, role });
+}
+
+export interface RoleChangeRequest {
+  id: string;
+  requestedBy: string;
+  requestedByName: string;
+  requestedByEmail: string;
+  currentRole: string;
+  requestedRole: string;
+  reason: string;
+  status: "pending" | "approved" | "rejected" | "cancelled";
+  createdAt: string;
+  teamId?: string;
+}
+
+export function listRoleRequests(): Promise<{ mine: RoleChangeRequest | null; toReview: RoleChangeRequest[]; canReview: boolean; inTeam: boolean }> {
+  return teamApi("role-requests");
+}
+export function createRoleRequest(requestedRole: string, reason: string): Promise<{ success: boolean; id: string }> {
+  return teamApi("role-requests/create", { requestedRole, reason });
+}
+export function cancelRoleRequest(requestId: string): Promise<{ success: boolean }> {
+  return teamApi("role-requests/cancel", { requestId });
+}
+export function decideRoleRequest(requestId: string, decision: "approve" | "reject"): Promise<{ success: boolean; newRole?: string }> {
+  return teamApi("role-requests/decide", { requestId, decision });
+}
