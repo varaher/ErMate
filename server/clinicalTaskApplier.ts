@@ -24,6 +24,7 @@
  */
 
 import { normalizeConsultationSpecialty, deduplicateConsultations } from "./consultationNormalization.ts";
+import { PSYCH_LABEL } from "./psychLabel.ts";
 
 export type ClinicalIntent =
   | "QUESTION"
@@ -212,7 +213,7 @@ const FULL_DICTATION_MARKERS: RegExp[] = [
   /\bsystemic\s+exam(?:ination)?\b/i,
   /\bcvs\b/i,
   /\bcns\b/i,
-  /\bpsychological\s+assessment\b/i,
+  new RegExp(String.raw`\b(?:${PSYCH_LABEL})\b`, "i"),
   /\binvestigations?\s*:/i,
   /\btreatment\s+plan\b/i,
   /\bdifferential\s+diagnosis\b/i,
@@ -386,7 +387,7 @@ export function resolveNaturalLanguageClinicalTask(
   }
 
   // 2. SAMPLE History & Psychological Assessment
-  if (/\b(?:sample|past\s+medical|allerg|medication|psychological)\b/i.test(text)) {
+  if (/\b(?:sample|past\s+medical|allerg|medication|psychological|psychology|psychiatric|psych|mental\s+(?:status|health))\b/i.test(text)) {
     // PMH Nil
     if (/(?:past\s+medical(?:\s+history)?|pmh)\b[^.]*?\b(?:nil|none|no\s+comorbidities|nkco|negative)\b/i.test(text) ||
         /\b(?:nil|no)\s+(?:past\s+medical\s+history|pmh|comorbidities)\b/i.test(text)) {
@@ -425,7 +426,7 @@ export function resolveNaturalLanguageClinicalTask(
 
     // Psychological Assessment — verbatim dictated content only, never collapsed to "Normal"
     const psychMatch = text.match(
-      /\b(?:psychological|psychiatric)\s+(?:assessment|evaluation|status)\b\s*[:\-]?\s*((?:[^.\n;]|(?<=\d)\.(?=\d))+)/i
+      new RegExp(String.raw`\b(?:${PSYCH_LABEL})\b\s*[:\-]?\s*((?:[^.\n;]|(?<=\d)\.(?=\d))+)`, "i")
     );
     if (psychMatch && psychMatch[1] && psychMatch[1].trim()) {
       const val = psychMatch[1].trim();

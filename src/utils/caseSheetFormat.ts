@@ -228,6 +228,7 @@ export function formatCaseSheetText(data: CaseSheetData, opts: { forEmr?: boolea
     `Last Meal: ${val(data.lastMeal)}`,
     `Events: ${val(data.events)}`,
     hasText(data.familyHistory) ? `Family History: ${data.familyHistory}` : "",
+    hasText(data.socialHistory) ? `Social History: ${data.socialHistory}` : "",
     hasText(data.surgicalHistory) ? `Surgical History: ${data.surgicalHistory}` : "",
     hasText(data.lmp) ? `LMP: ${data.lmp}` : "",
   ]);
@@ -301,6 +302,7 @@ export function formatCaseSheetText(data: CaseSheetData, opts: { forEmr?: boolea
   section("Disposition", [
     `Disposition: ${val(disp?.status)}`,
     hasText(disp?.destinationUnit) ? `Destination: ${disp?.destinationUnit}` : "",
+    hasText(disp?.observationNotes) ? `Disposition notes: ${disp?.observationNotes}` : "",
     hasText(disp?.conditionAtShift) ? `Condition at shift: ${disp?.conditionAtShift}` : "",
     hasText(disp?.durationInEr) ? `Duration in ER: ${disp?.durationInEr}` : "",
     hasText(disp?.managementPlan) ? `Plan: ${disp?.managementPlan}` : "",

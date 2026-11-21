@@ -417,15 +417,36 @@ export function cleanExtractionOutput(raw: RawExtractionFields): CleanedExtracti
 
   // Labs & Imaging — strictly separate laboratory investigations from imaging
   let rawLabs: { name: string; value: string | number | null }[] = [];
-  const labsField = raw.labs ?? raw.investigationResults ?? raw.investigations ?? raw.investigationFindings?.labs;
-  if (Array.isArray(labsField)) {
-    rawLabs = labsField.map(l => typeof l === 'string' ? { name: l, value: null } : l);
-  } else if (labsField && typeof labsField === "object") {
-    rawLabs = Object.entries(labsField).map(([name, value]) => ({
-      name,
-      value: value as any,
-    }));
+  // Use EVERY investigation source the model filled, not just the first one: tests with results
+  // (investigationResults / labs) and tests only ordered (investigationsOrdered / investigations).
+  // Taking only the first non-null source dropped "CBC, RFT ordered" whenever a results object (even an empty
+  // one) was present. A test seen twice keeps the entry that has a value.
+  const labSources: any[] = [
+    raw.labs,
+    raw.investigationResults,
+    (raw as any).investigationsOrdered,
+    raw.investigations,
+    raw.investigationFindings?.labs,
+  ];
+  const labByName = new Map<string, { name: string; value: string | number | null }>();
+  for (const src of labSources) {
+    let items: any[] = [];
+    if (Array.isArray(src)) {
+      items = src.map(l => typeof l === 'string' ? { name: l, value: null } : l);
+    } else if (src && typeof src === "object") {
+      items = Object.entries(src).map(([name, value]) => ({ name, value: value as any }));
+    }
+    for (const it of items) {
+      const nm = typeof it?.name === "string" ? it.name.trim() : (typeof it?.testName === "string" ? it.testName.trim() : "");
+      if (!nm) continue;
+      const key = nm.toLowerCase();
+      const prev = labByName.get(key);
+      const hasVal = it.value !== null && it.value !== undefined && String(it.value).trim() !== "";
+      if (!prev) labByName.set(key, { ...it, name: nm, value: hasVal ? it.value : null });
+      else if ((prev.value === null || prev.value === undefined || String(prev.value).trim() === "") && hasVal) labByName.set(key, { ...prev, value: it.value });
+    }
   }
+  rawLabs = Array.from(labByName.values());
 
   // Also include raw.imaging if present
   let rawImaging: { name: string; value: string | number | null }[] = [];

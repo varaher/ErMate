@@ -67,6 +67,7 @@
  * ("efastNotes"), producing a duplicated "eFAST / POCUS" row.
  */
 
+import { PSYCH_LABEL, withPsychLabel } from "./psychLabel.ts";
 import {
   deidentifyText,
   protectInternalClinicians,
@@ -1410,7 +1411,8 @@ function extractExplicitSecondarySection(
       /\bextremities(?:\s+examination)?\s*[:,-]?\s*([\s\S]*?)(?=\b(?:psychological\s+assessment|investigations|treatment\s+plan|differential\s+diagnosis)\b|$)/i,
   };
 
-  const match = text.match(patterns[section]);
+  // "psychology assessment" / "psychiatric evaluation" end an exam section just like "psychological assessment".
+  const match = text.match(withPsychLabel(patterns[section]));
 
   if (!match?.[1]) return null;
 
@@ -1440,7 +1442,10 @@ function extractExplicitPsychologicalAssessment(text: string): string | null {
   if (!text || typeof text !== "string") return null;
 
   const labelled = text.match(
-    /\bpsychological\s+assessment\s*[:,-]?\s*([\s\S]*?)(?=\b(?:investigations?|treatment\s+plan|differential\s+diagnosis|disposition|doctor\s+[A-Za-z]|em\s+consultant)\b|$)/i
+    new RegExp(
+      String.raw`\b(?:${PSYCH_LABEL})\s*[:,-]?\s*([\s\S]*?)(?=\b(?:investigations?|treatment\s+plan|differential\s+diagnosis|disposition|doctor\s+[A-Za-z]|em\s+consultant)\b|$)`,
+      "i"
+    )
   );
 
   if (labelled?.[1]) {

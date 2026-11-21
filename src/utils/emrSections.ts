@@ -102,6 +102,7 @@ export function buildEmrSections(data: CaseSheetData): Record<EmrSectionKey, Emr
     join(data.pastHistory) ? `Past history: ${join(data.pastHistory)}` : "",
     line("Surgical history", data.surgicalHistory),
     line("Family history", data.familyHistory),
+    line("Social history", data.socialHistory),
     line("Last meal", data.lastMeal),
     line("LMP", data.lmp),
   ]));
@@ -181,7 +182,7 @@ export function buildEmrSections(data: CaseSheetData): Record<EmrSectionKey, Emr
   put("consults", lines(cons));
 
   put("plan", lines([
-    line("Disposition", disp.status), line("Destination", disp.destinationUnit),
+    line("Disposition", disp.status), line("Destination", disp.destinationUnit), line("Disposition notes", disp.observationNotes),
     line("Condition", disp.conditionAtShift), line("Plan", disp.managementPlan),
     line("Follow-up", disp.followUpAdvice),
   ]));

@@ -55,7 +55,8 @@ const LABELS: { key: Key; re: string }[] = [
   { key: "allergies", re: String.raw`allerg(?:y|ies)` },
   { key: "general", re: String.raw`general\s+examination` },
   { key: "systemic", re: String.raw`systemic\s+examination` },
-  { key: "psych", re: String.raw`psychological\s+assessment` },
+  // Same wording as server/psychLabel.ts (verify_psych_capture.ts keeps them identical).
+  { key: "psych", re: String.raw`(?:psycholog(?:ical|y)|psychiatr(?:ic|y)|psych)\s+(?:assessment|evaluation|examination|exam|status|screening|review|findings?)|mental\s+(?:health|status)(?:\s+(?:assessment|evaluation|examination|exam))?` },
   { key: "inv", re: String.raw`investigations?` },
   { key: "plan", re: String.raw`(?:treatment|management)\s+plan` },
   { key: "dispo", re: String.raw`disposition` },

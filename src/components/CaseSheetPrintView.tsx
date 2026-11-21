@@ -28,7 +28,8 @@ export interface VitalReading {
 
 export interface LabPanel {
   panelName: string;
-  values: { name: string; param: ClinicalParam | null; value: number | null; unit?: string }[];
+  /** `text` carries a result that is not a plain number ("Positive", "Fatty liver", "Positive 2+"), so it is shown as stated and not as "Pending". */
+  values: { name: string; param: ClinicalParam | null; value: number | null; unit?: string; text?: string }[];
 }
 
 export interface PrimarySurveyData {
@@ -134,6 +135,8 @@ export interface CaseSheetData {
   disposition: {
     status: string | null;
     destinationUnit: string | null;
+    /** What the doctor said about the disposition in words, when it is longer than a destination. */
+    observationNotes?: string | null;
     durationInEr: string | null;
     conditionAtShift: string | null;
     managementPlan: string | null;
@@ -178,6 +181,7 @@ export interface CaseSheetData {
     policeStation: string | null;
   } | null;
   familyHistory: string | null;
+  socialHistory?: string | null;
   hpi: string | null;
   surgicalHistory: string | null;
   lmp: string | null;
@@ -431,13 +435,18 @@ export function convertClinicalCaseToCaseSheetData(c: ClinicalCase, defaultHospi
     ]);
   }
 
+  // The assessment can arrive as plain text, as a structured object, or only as the SAMPLE-history note.
+  // A text value (what extraction and pasted sheets produce) used to be read as an object and showed "Not documented".
   let psychologicalAssessment: PsychologicalAssessmentData | null = null;
-  if (c.psychologicalAssessment) {
-    psychologicalAssessment = c.psychologicalAssessment;
-  } else if (c.sampleHistory?.psychiatricFlags) {
-    psychologicalAssessment = {
-      notes: c.sampleHistory.psychiatricFlags,
-    };
+  const psyRaw: any = c.psychologicalAssessment;
+  const psyFlags = typeof c.sampleHistory?.psychiatricFlags === "string" ? c.sampleHistory.psychiatricFlags.trim() : "";
+  if (typeof psyRaw === "string" && psyRaw.trim()) {
+    psychologicalAssessment = { notes: psyRaw.trim() };
+  } else if (psyRaw && typeof psyRaw === "object") {
+    const hasNotes = typeof psyRaw.notes === "string" && psyRaw.notes.trim();
+    psychologicalAssessment = psyFlags && !hasNotes ? { ...psyRaw, notes: psyFlags } : psyRaw;
+  } else if (psyFlags) {
+    psychologicalAssessment = { notes: psyFlags };
   }
 
   const treatmentList: string[] = [];
@@ -477,14 +486,24 @@ export function convertClinicalCaseToCaseSheetData(c: ClinicalCase, defaultHospi
     });
   }
 
+  // A result that is words ("Positive", "Fatty liver") or starts with words ("Positive 2+") is kept as stated.
+  // Only a result that begins with a number is read as a number (and flagged high/low).
+  const labText = (raw: any): string | undefined => {
+    const t = raw === null || raw === undefined ? "" : String(raw).trim();
+    if (!t || /^(?:ordered|pending|sent|awaited|not\s+done)\.?$/i.test(t)) return undefined;
+    if (parseVal(t) === null) return t;
+    return /^[A-Za-z]/.test(t) ? t : undefined;
+  };
   const labValues: LabPanel["values"] = [];
   if (Array.isArray(c.investigationResults)) {
     c.investigationResults.forEach(r => {
+      const text = labText(r.value);
       labValues.push({
         name: r.name || "Lab Test",
         param: matchLabParam(r.name || ""),
-        value: parseVal(r.value),
-        unit: r.unit || ""
+        value: text ? null : parseVal(r.value),
+        unit: r.unit || "",
+        ...(text ? { text } : {}),
       });
     });
   }
@@ -492,7 +511,8 @@ export function convertClinicalCaseToCaseSheetData(c: ClinicalCase, defaultHospi
     c.investigations.forEach(i => {
       // Legacy array — only add if not already covered by investigationResults
       if (!labValues.some(lv => lv.name === i.testName)) {
-        labValues.push({ name: i.testName, param: matchLabParam(i.testName), value: parseVal(i.result), unit: "" });
+        const text = labText(i.result);
+        labValues.push({ name: i.testName, param: matchLabParam(i.testName), value: text ? null : parseVal(i.result), unit: "", ...(text ? { text } : {}) });
       }
     });
   }
@@ -810,6 +830,10 @@ export function convertClinicalCaseToCaseSheetData(c: ClinicalCase, defaultHospi
     disposition: {
       status: c.dispositionDetails?.dispositionType || c.dispositionAndPlan?.dispositionStatus || null,
       destinationUnit: c.dispositionAndPlan?.destinationUnit || null,
+      observationNotes: (() => {
+        const o = typeof (c.dispositionDetails as any)?.observationNotes === "string" ? (c.dispositionDetails as any).observationNotes.trim() : "";
+        return o && o !== (c.dispositionAndPlan?.destinationUnit || "").trim() ? o : null;
+      })(),
       durationInEr: c.dispositionDetails?.durationInEr || null,
       conditionAtShift: c.conditionAtShift || (c.dispositionDetails as any)?.conditionAtShift || (c.pediatricDetails as any)?.dispositionConditionAtShift || null,
       managementPlan: c.dispositionAndPlan?.managementPlan || (c as any).managementPlan || (c as any).plan || null,
@@ -864,6 +888,7 @@ export function convertClinicalCaseToCaseSheetData(c: ClinicalCase, defaultHospi
       return Object.values(out).some(Boolean) ? out : null;
     })(),
     familyHistory: (typeof c.sampleHistory?.familyHistory === "string" && c.sampleHistory.familyHistory.trim()) ? c.sampleHistory.familyHistory.trim() : null,
+    socialHistory: (typeof c.sampleHistory?.socialHistory === "string" && c.sampleHistory.socialHistory.trim()) ? c.sampleHistory.socialHistory.trim() : null,
     hpi: (typeof c.sampleHistory?.hpi === "string" && c.sampleHistory.hpi.trim()) ? c.sampleHistory.hpi.trim() : null,
     surgicalHistory: (typeof c.sampleHistory?.surgicalHistory === "string" && c.sampleHistory.surgicalHistory.trim()) ? c.sampleHistory.surgicalHistory.trim() : null,
     lmp: (typeof c.sampleHistory?.lmp === "string" && c.sampleHistory.lmp.trim()) ? c.sampleHistory.lmp.trim() : null,
@@ -1711,6 +1736,7 @@ export default function CaseSheetPrintView({
                 <div><span className="font-semibold text-slate-900">Last Meal:</span> {data.lastMeal || (data.pediatricDetails as LegacyPediatricDetails)?.historyLastMeal || "Not documented"}</div>
                 <div><span className="font-semibold text-slate-900">Events Preceding:</span> {data.events || (data.pediatricDetails as LegacyPediatricDetails)?.historyEvents || "Not documented"}</div>
                 {data.familyHistory && <div><span className="font-semibold text-slate-900">Family History:</span> {data.familyHistory}</div>}
+                {data.socialHistory && <div><span className="font-semibold text-slate-900">Social History:</span> {data.socialHistory}</div>}
                 {data.surgicalHistory && <div><span className="font-semibold text-slate-900">Surgical History:</span> {data.surgicalHistory}</div>}
                 {data.lmp && <div><span className="font-semibold text-slate-900">LMP:</span> {data.lmp}</div>}
               </div>
@@ -1736,7 +1762,7 @@ export default function CaseSheetPrintView({
                         <div key={i} className="mb-2">
                           <p className="text-xs font-bold uppercase tracking-wide text-slate-600 print:text-black mb-1">{panel.panelName}</p>
                           <p className="text-sm font-mono leading-relaxed">
-                            {panel.values.map(v => `${v.name}: ${v.param ? formatFlagged(v.param, v.value) : (v.value ?? "Pending")}${v.unit && v.value !== null ? ` ${v.unit}` : ""}`).join("  |  ")}
+                            {panel.values.map(v => `${v.name}: ${v.value === null && v.text ? v.text : (v.param ? formatFlagged(v.param, v.value) : (v.value ?? "Pending"))}${v.unit && v.value !== null ? ` ${v.unit}` : ""}`).join("  |  ")}
                           </p>
                         </div>
                       ))}
@@ -1862,6 +1888,7 @@ export default function CaseSheetPrintView({
               <div className="text-sm space-y-1">
                 <div><span className="font-bold">Status:</span> {data.disposition.status || "Not yet determined"}</div>
                 {data.disposition.destinationUnit && <div><span className="font-bold">Destination:</span> {data.disposition.destinationUnit}</div>}
+                {data.disposition.observationNotes && <div><span className="font-bold">Disposition Notes:</span> {data.disposition.observationNotes}</div>}
                 {data.disposition.durationInEr && <div><span className="font-bold">Duration in ER:</span> {data.disposition.durationInEr}</div>}
                 {data.disposition.conditionAtShift && <div><span className="font-bold">Condition at Shift:</span> {data.disposition.conditionAtShift}</div>}
                 {data.disposition.managementPlan && <div><span className="font-bold">Management Plan:</span> {data.disposition.managementPlan}</div>}

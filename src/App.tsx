@@ -3691,7 +3691,13 @@ const handleDeleteAllCases = async () => {
         events: extracted.sampleHistory?.events || extracted.events || existingMatch?.sampleHistory.events || "",
         socialHistory: extracted.sampleHistory?.socialHistory || extracted.socialHistory || existingMatch?.sampleHistory?.socialHistory || "",
         familyHistory: extracted.sampleHistory?.familyHistory || extracted.familyHistory || existingMatch?.sampleHistory?.familyHistory || "",
-        psychiatricFlags: extracted.sampleHistory?.psychiatricFlags || extracted.psychiatricFlags || existingMatch?.sampleHistory?.psychiatricFlags || "",
+        // The extraction and the pasted-sheet reader name this field "psychologicalAssessment" (text, or an object with notes).
+        // Read it here too, otherwise a captured psychological assessment never reaches the saved case or its preview.
+        psychiatricFlags: extracted.sampleHistory?.psychiatricFlags || extracted.psychiatricFlags || (() => {
+          const p = extracted.psychologicalAssessment;
+          const t = typeof p === "string" ? p : (p && typeof p === "object" ? p.notes : "");
+          return typeof t === "string" && t.trim() && !/^(?:not documented|unknown|none|n\/a)\.?$/i.test(t.trim()) ? t.trim() : "";
+        })() || existingMatch?.sampleHistory?.psychiatricFlags || "",
                 // Same rule as the server: composed from stated symptoms + events when no HPI exists, so the preview shows it.
         hpi: resolveDraftHpi({
           existingHpi: existingMatch?.sampleHistory?.hpi,

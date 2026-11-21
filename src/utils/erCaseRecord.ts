@@ -313,6 +313,10 @@ export function buildErCaseRecord(data: CaseSheetData): ErLine[] {
   dashes(splitSentences(data.surgicalHistory));
   heading("Family / Gynae History:");
   dashes([...splitSentences(data.familyHistory), ...(has(data.lmp) ? [`LMP: ${clean(data.lmp)}`] : [])]);
+  if (has(data.socialHistory)) {
+    heading("Social History:");
+    dashes(splitSentences(data.socialHistory));
+  }
   heading("Allergies:");
   dashes((data.allergies || []).flatMap(splitSentences));
   if (has(data.lastMeal)) {
@@ -365,7 +369,7 @@ export function buildErCaseRecord(data: CaseSheetData): ErLine[] {
       ...splitList(data.investigationImaging),
     ];
     (data.labs || []).forEach((panel) =>
-      (panel.values || []).forEach((v) => inv.push(`${v.name}: ${v.value ?? "Pending"}${v.unit && v.value !== null ? ` ${v.unit}` : ""}`))
+      (panel.values || []).forEach((v) => inv.push(`${v.name}: ${v.value ?? v.text ?? "Pending"}${v.unit && v.value !== null ? ` ${v.unit}` : ""}`))
     );
     (data.cultureResults || []).forEach((c) => inv.push(`${c.name}: ${clean(c.result) || "Pending"}`));
     splitSentences(data.investigationResultsSummary).forEach((s) => inv.push(sentence(s)));
@@ -407,6 +411,7 @@ export function buildErCaseRecord(data: CaseSheetData): ErLine[] {
     if (has(d.durationInEr)) lines.push(`Duration in ER: ${clean(d.durationInEr)}`);
     lines.push(...splitSentences(d.managementPlan));
     if (has(d.followUpAdvice)) lines.push(`Follow-up: ${clean(d.followUpAdvice)}`);
+    if (has(d.observationNotes)) lines.push(...splitSentences(d.observationNotes));
     items(lines);
   }
   const review = data.consultation?.consultantReview;
@@ -427,7 +432,9 @@ export function buildErCaseRecord(data: CaseSheetData): ErLine[] {
     const dd = (data.differentials || [])
       .map((d) => `${clean(d.diagnosis)}${has(d.status) && !/^(suspected|considered|possible)$/i.test(clean(d.status)) ? ` (${clean(d.status)})` : ""}`)
       .filter((s) => s && !/^\(/.test(s));
-    items(dd.length ? dd : splitSentences(data.provisionalDifferentialDiagnoses));
+    // Differentials list AND the free-text differential notes are both kept (the old sheet showed both).
+    const ddNotes = splitSentences(data.provisionalDifferentialDiagnoses).filter((n) => !dd.some((x) => x.toLowerCase() === n.toLowerCase().replace(/[.\s]+$/, "")));
+    items([...dd, ...ddNotes]);
   }
 
   // Patient safety (only when recorded)

@@ -1505,10 +1505,13 @@ router.post("/update-role", async (req: AuthRequest, res) => {
       // A Team Admin may make a member HOD (Neeraj, 20 Nov 2026). HOD means team admin.
       const makesHod = isExactHospitalAdminRole(normalizedRole);
       // Changing the role away from HOD can also take away admin power (when it came only from the role).
+      // makesHod now stores isTeamAdmin: true on the member, so the flag alone can no longer tell "admin because
+      // HOD" from "admin by choice". Moving a member off HOD, without an explicit isTeamAdmin in the request,
+      // therefore removes the admin power it gave (the last-admin guard below still protects the only admin).
+      const leavesHod =
+        !!normalizedRole && !makesHod && isExactHospitalAdminRole(previousRole) && req.body.isTeamAdmin === undefined;
       const losesAdmin =
-        isTeamAdmin(target) &&
-        (req.body.isTeamAdmin === false ||
-          (!makesHod && !isTeamAdmin({ ...target, role: normalizedRole })));
+        isTeamAdmin(target) && (req.body.isTeamAdmin === false || leavesHod);
 
       // If updating admin status, ensure hospital is never left without an admin
       if (losesAdmin) {
@@ -1545,6 +1548,9 @@ router.post("/update-role", async (req: AuthRequest, res) => {
       } else if (makesHod) {
         updates.isTeamAdmin = true;
         updates.teamRole = "admin";
+      } else if (leavesHod) {
+        updates.isTeamAdmin = false;
+        updates.teamRole = "member";
       }
 
       tx.update(targetRef, updates);
