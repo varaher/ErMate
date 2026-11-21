@@ -21,7 +21,7 @@ import { FieldValue } from "firebase-admin/firestore";
 import { db } from "../../src/lib/firebase-admin.ts";
 import {
   audioCostInr, tokenCostInr, round4, type CostBasis,
-  PER_CALL_FALLBACK_INR, SARVAM_TRANSLATE_INR_PER_10K_CHARS,
+  PER_CALL_FALLBACK_INR, SARVAM_TRANSLATE_INR_PER_10K_CHARS, SARVAM_OCR_INR_PER_PAGE,
 } from "./aiPrices.ts";
 
 export type AiProvider = "anthropic" | "openai" | "google" | "sarvam";
@@ -35,6 +35,7 @@ export interface AiUsageEvent {
   outputTokens?: number;
   audioSeconds?: number;
   characters?: number;
+  pages?: number;            // OCR pages (Sarvam Vision)
   ok: boolean;
   httpStatus?: number;
   latencyMs?: number;
@@ -77,6 +78,7 @@ function costFor(e: AiUsageEvent): { costInr: number; basis: CostBasis; priceKno
   if (!e.ok) return { costInr: 0, basis: "none", priceKnown: true };
   if (e.provider === "sarvam") {
     if (num(e.audioSeconds)) return { costInr: audioCostInr(num(e.audioSeconds)), basis: "audio", priceKnown: true };
+    if (num(e.pages)) return { costInr: round4(num(e.pages) * SARVAM_OCR_INR_PER_PAGE), basis: "pages", priceKnown: true };
     if (num(e.characters)) return { costInr: round4((num(e.characters) / 10000) * SARVAM_TRANSLATE_INR_PER_10K_CHARS), basis: "characters", priceKnown: true };
     return { costInr: PER_CALL_FALLBACK_INR.sarvam, basis: "per_call_estimate", priceKnown: false };
   }
@@ -106,7 +108,7 @@ export function logAiUsage(e: AiUsageEvent): void {
     const row = {
       at: now.toISOString(), day, month: day.slice(0, 7),
       uid: uid || null, feature, provider: e.provider, model,
-      inputTokens, outputTokens, audioSeconds, characters: num(e.characters),
+      inputTokens, outputTokens, audioSeconds, characters: num(e.characters), pages: num(e.pages),
       costInr, costBasis: basis, priceKnown,
       ok: e.ok, httpStatus: e.httpStatus ?? null, latencyMs: e.latencyMs ?? null,
     };
@@ -188,6 +190,7 @@ function classify(url: string): { provider: AiProvider; kind: string; pathModel?
   }
   if (host === "api.sarvam.ai") {
     if (path.startsWith("/speech-to-text/job")) return null;            // batch plumbing — logged once in sarvamBatch.ts
+    if (path.startsWith("/doc-ai/")) return null;                       // OCR job plumbing — logged once per scan in sarvamDocOcr.ts
     if (path.startsWith("/speech-to-text")) return { provider: "sarvam", kind: "stt" };
     if (path.startsWith("/translate")) return { provider: "sarvam", kind: "translate" };
     return { provider: "sarvam", kind: "other" };

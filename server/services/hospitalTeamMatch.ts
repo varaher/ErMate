@@ -1,126 +1,111 @@
 /**
- * One-team-per-hospital matching service (server/services/hospitalTeamMatch.ts).
- * Ensures that if a hospital already has a live team with active members, doctors from
- * the same hospital are guided to request to join that team rather than creating duplicates.
+ * One team per hospital (Neeraj, 20 Nov 2026): once a hospital has a team, other doctors there
+ * request to join it instead of creating a second one.
+ *
+ * Matching a doctor's hospital to an existing team:
+ *  - both sides have a hospital-directory id (name + district + state) → the ids must be equal;
+ *  - otherwise the hospital names must match (punctuation/case ignored) and, when both districts
+ *    are known, the districts must match too (so "General Hospital" in two districts stay apart).
+ * Only teams with at least one active member count; an abandoned team never blocks a hospital.
  */
 
-export interface HospitalIdentity {
-  name: string;
-  nameKey: string;
-  directoryId: string | null;
-  district: string | null;
+/** Same normalisation as src/utils/hospitalDirectory.ts directoryKey(): "M.B.M. Hospital, Kochi" → "mbm-hospital-kochi". */
+export function hospitalKey(text: unknown): string {
+  return String(text || "")
+    .toLowerCase()
+    .replace(/[.'’`]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 100);
 }
 
-export interface ExistingHospitalTeamMatch {
+export interface HospitalIdentity {
+  nameKey: string;
+  directoryId?: string;
+  district?: string;
+}
+
+export function sameHospital(a: HospitalIdentity, b: HospitalIdentity): boolean {
+  if (!a.nameKey && !a.directoryId) return false;
+  if (a.directoryId && b.directoryId) return a.directoryId === b.directoryId;
+  if (!a.nameKey || a.nameKey !== b.nameKey) return false;
+  const da = hospitalKey(a.district);
+  const dbk = hospitalKey(b.district);
+  return !da || !dbk || da === dbk;
+}
+
+/** The doctor's hospital from their profile (users/{uid}). If a different hospital name is given, only the name is used. */
+export function identityFromUser(user: any, overrideHospitalName?: string): HospitalIdentity {
+  const profileName = String(user?.workplaceName || user?.hospitalLabel || user?.hospitalName || user?.hospital || "").trim();
+  const name = String(overrideHospitalName || profileName).trim();
+  const nameKey = hospitalKey(name);
+  const sameAsProfile = !!profileName && hospitalKey(profileName) === nameKey;
+  return {
+    nameKey,
+    directoryId: sameAsProfile && user?.hospitalDirectoryId ? String(user.hospitalDirectoryId) : undefined,
+    district: sameAsProfile && user?.district ? String(user.district) : undefined,
+  };
+}
+
+/** A team's hospital. Older teams didn't store directory/district, so the creator's profile fills the gap. */
+export function identityFromTeam(team: any, creator?: any): HospitalIdentity {
+  const nameKey = String(team?.hospitalNameKey || "") || hospitalKey(team?.hospitalName);
+  const creatorMatches = !!creator && hospitalKey(creator.workplaceName || creator.hospitalLabel || creator.hospitalName || creator.hospital) === nameKey;
+  return {
+    nameKey,
+    directoryId: team?.hospitalDirectoryId || (creatorMatches && creator.hospitalDirectoryId ? String(creator.hospitalDirectoryId) : undefined),
+    district: team?.district || (creatorMatches && creator.district ? String(creator.district) : undefined),
+  };
+}
+
+export interface ExistingHospitalTeam {
   teamId: string;
   teamName: string;
   hospitalName: string;
   activeMembers: number;
 }
 
-/** Normalized key for comparing hospital names across minor punctuation/casing differences. */
-export function hospitalKey(raw: unknown): string {
-  return String(raw || "")
-    .toLowerCase()
-    .replace(/&/g, " and ")
-    .replace(/[^a-z0-9]+/g, " ")
-    .trim()
-    .replace(/\s+/g, " ");
-}
-
-function isActiveMemberStatus(status: unknown): boolean {
-  const s = String(status || "").trim().toLowerCase();
-  return s === "active" || s === "active (joined)";
-}
-
-/** Extracts canonical hospital identity from a user document and/or an explicit hospital name. */
-export function identityFromUser(user: any, explicitHospitalName?: unknown): HospitalIdentity {
-  const name = String(
-    explicitHospitalName ||
-      user?.hospitalName ||
-      user?.hospital ||
-      ""
-  ).trim();
-  const directoryId =
-    typeof user?.hospitalDirectoryId === "string" && user.hospitalDirectoryId.trim()
-      ? user.hospitalDirectoryId.trim()
-      : typeof user?.facilityId === "string" && user.facilityId.trim()
-      ? user.facilityId.trim()
-      : null;
-  const districtRaw = user?.district || user?.place || "";
-  const district =
-    typeof districtRaw === "string" && districtRaw.trim()
-      ? districtRaw.trim().toLowerCase()
-      : null;
-
-  return {
-    name,
-    nameKey: hospitalKey(name),
-    directoryId,
-    district,
-  };
-}
+const isActive = (s: unknown) => {
+  const v = String(s || "").trim().toLowerCase();
+  return v === "active" || v === "active (joined)";
+};
 
 /**
- * Looks up an existing live team for the given hospital identity.
- * A team counts as live if it has at least one active member.
+ * Finds a live team for this hospital. Reads the teams collection (small: one per hospital);
+ * add an index on hospitalNameKey if it ever grows into thousands.
  */
-export async function findExistingHospitalTeam(
-  db: any,
-  identity: HospitalIdentity
-): Promise<ExistingHospitalTeamMatch | null> {
-  if (!db || (!identity.nameKey && !identity.directoryId)) {
-    return null;
-  }
-
-  const teamsSnap = await db.collection("teams").get();
-  const candidates: Array<{ id: string; data: any }> = [];
-
+export async function findExistingHospitalTeam(db: any, mine: HospitalIdentity, excludeTeamId?: string): Promise<ExistingHospitalTeam | null> {
+  if (!mine.nameKey && !mine.directoryId) return null;
+  const teamsSnap = await db.collection("teams").limit(2000).get();
+  const creatorCache = new Map<string, any>();
   for (const docSnap of teamsSnap.docs) {
-    const data = docSnap.data() || {};
-    const teamId = String(data.id || docSnap.id || "").trim();
-    if (!teamId) continue;
+    if (excludeTeamId && docSnap.id === excludeTeamId) continue;
+    const team = docSnap.data() || {};
+    // Cheap pre-filter: name or directory id must be able to match.
+    const quickName = String(team.hospitalNameKey || "") || hospitalKey(team.hospitalName);
+    if (quickName !== mine.nameKey && !(mine.directoryId && team.hospitalDirectoryId === mine.directoryId)) continue;
 
-    const dirMatch =
-      Boolean(identity.directoryId) &&
-      Boolean(data.hospitalDirectoryId) &&
-      String(data.hospitalDirectoryId).trim() === identity.directoryId;
-
-    const teamKey = String(data.hospitalNameKey || hospitalKey(data.hospitalName || data.teamName || "")).trim();
-    const nameMatch = Boolean(identity.nameKey) && Boolean(teamKey) && teamKey === identity.nameKey;
-
-    if (!dirMatch && !nameMatch) continue;
-
-    // If both specify a district and they differ (and directoryId did not explicitly match), skip.
-    const teamDistrict = typeof data.district === "string" && data.district.trim() ? data.district.trim().toLowerCase() : null;
-    if (!dirMatch && identity.district && teamDistrict && identity.district !== teamDistrict) {
-      continue;
+    let creator: any = undefined;
+    const creatorUid = String(team.createdByUid || "");
+    if (creatorUid && (!team.hospitalDirectoryId || !team.district)) {
+      if (!creatorCache.has(creatorUid)) {
+        const u = await db.collection("users").doc(creatorUid).get().catch(() => null);
+        creatorCache.set(creatorUid, u && u.exists ? u.data() : null);
+      }
+      creator = creatorCache.get(creatorUid) || undefined;
     }
+    if (!sameHospital(mine, identityFromTeam(team, creator))) continue;
 
-    candidates.push({ id: teamId, data });
-  }
+    const membersSnap = await db.collection("team_members").where("hospitalId", "==", docSnap.id).get();
+    const activeMembers = membersSnap.docs.filter((d: any) => isActive(d.data()?.status)).length;
+    if (activeMembers === 0) continue;
 
-  if (candidates.length === 0) return null;
-
-  let best: ExistingHospitalTeamMatch | null = null;
-  for (const c of candidates) {
-    const membersSnap = await db
-      .collection("team_members")
-      .where("hospitalId", "==", c.id)
-      .get();
-    const activeMembers = membersSnap.docs.filter((d: any) => isActiveMemberStatus(d.data()?.status)).length;
-    if (activeMembers <= 0) continue;
-
-    const match: ExistingHospitalTeamMatch = {
-      teamId: c.id,
-      teamName: String(c.data.teamName || c.data.hospitalName || "ED Team"),
-      hospitalName: String(c.data.hospitalName || identity.name || ""),
+    return {
+      teamId: docSnap.id,
+      teamName: String(team.teamName || team.hospitalName || "Hospital team"),
+      hospitalName: String(team.hospitalName || ""),
       activeMembers,
     };
-    if (!best || match.activeMembers > best.activeMembers) {
-      best = match;
-    }
   }
-
-  return best;
+  return null;
 }

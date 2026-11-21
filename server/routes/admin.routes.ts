@@ -512,9 +512,18 @@ router.get("/hod-claims", async (req, res) => {
         rejectionNote: c.rejectionNote || null, resolvedHospitalName: c.resolvedHospitalName || null,
       };
       if (status !== "pending") return base;
-      const { hospitalId, hospitalName } = resolveHodHospital(c);
+      // Teams audit C3: an HOD is approved into the team they are actually in (approve-hod-claim).
+      const memberSnap = base.claimedByUid ? await db.collection("team_members").doc(base.claimedByUid).get().catch(() => null) : null;
+      const member = memberSnap && memberSnap.exists ? memberSnap.data() : null;
+      const memberActive = !!member && ["active", "active (joined)"].includes(String(member.status || "").trim().toLowerCase());
+      const teamId = memberActive ? String(member.teamId || member.hospitalId || "") : "";
+      const hospitalId = teamId || resolveHodHospital(c).hospitalId;
+      const hospitalName = memberActive ? str(member.hospitalName || member.hospital || c.hospital) : resolveHodHospital(c).hospitalName;
       const [warnings, authUser, profile] = await Promise.all([
-        hodApprovalWarnings(db, base.claimedByUid, hospitalId, hospitalName).catch(() => ["Could not check existing HODs and memberships."]),
+        (teamId
+          ? hodApprovalWarnings(db, base.claimedByUid, hospitalId, hospitalName)
+          : Promise.resolve(["Not in a team yet. Ask them to create their hospital's team (they become its lead) or join it. Approval is refused until then."])
+        ).catch(() => ["Could not check existing HODs and memberships."]),
         base.claimedByUid ? adminAuth.getUser(base.claimedByUid).catch(() => null) : Promise.resolve(null),
         base.claimedByUid ? db.collection("users").doc(base.claimedByUid).get().then((s: any) => (s.exists ? s.data() : null)).catch(() => null) : Promise.resolve(null),
       ]);

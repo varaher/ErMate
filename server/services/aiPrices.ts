@@ -59,8 +59,10 @@ export function tokenRateFor(provider: string, model: string): { rate: TokenRate
   return { rate: PROVIDER_FALLBACK[provider] || PROVIDER_FALLBACK.anthropic, known: false };
 }
 
-/** Sarvam speech-to-text, rupees per hour of audio (batch, sync and realtime). */
-export const SARVAM_STT_INR_PER_HOUR = 30;
+/** Sarvam speech-to-text, rupees per hour of audio (batch, sync and realtime): ₹0.49/min pay-as-you-go. */
+export const SARVAM_STT_INR_PER_HOUR = 29.4;
+/** Sarvam Vision OCR (Document Digitization API), rupees per page. */
+export const SARVAM_OCR_INR_PER_PAGE = 0.5;
 /** Sarvam text translate, rupees per 10,000 characters. */
 export const SARVAM_TRANSLATE_INR_PER_10K_CHARS = 20;
 /** Used only when a call's size cannot be measured (e.g. a Sarvam PDF parse). Labelled "per-call estimate". */
@@ -68,7 +70,7 @@ export const PER_CALL_FALLBACK_INR: Record<string, number> = {
   sarvam: 0.5,
 };
 
-export type CostBasis = "tokens" | "audio" | "characters" | "per_call_estimate" | "none";
+export type CostBasis = "tokens" | "audio" | "characters" | "pages" | "per_call_estimate" | "none";
 
 export function tokenCostInr(provider: string, model: string, inputTokens: number, outputTokens: number): { costInr: number; known: boolean } {
   const { rate, known } = tokenRateFor(provider, model);

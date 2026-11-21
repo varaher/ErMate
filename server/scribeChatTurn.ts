@@ -222,7 +222,12 @@ export async function processScribeChatTurn(
       watchFor: string[];
     }>;
   },
-  options?: { includeReasoning?: boolean }
+  /**
+   * includeReasoning: run the Claude Sonnet clinical-reasoning note on a plain dictation turn.
+   * Default OFF (Neeraj, Oct 2026: reasoning only when the doctor asks). A question in the turn
+   * (intent QUESTION or MIXED) still gets Sonnet reasoning automatically.
+   */
+  options: { includeReasoning?: boolean } = {}
 ): Promise<ScribeTurnResponse> {
   // Conversational-only turns skip extraction + reasoning entirely.
   if (isConversationalOnly(userInput)) {
@@ -343,7 +348,12 @@ export async function processScribeChatTurn(
     }
   }
 
-  // Run extraction and clinical reasoning IN PARALLEL — independent
+  // Clinical reasoning (Claude Sonnet, ~₹2 per call) runs only when the doctor asks for it:
+  // a question inside this turn (MIXED intent) or an explicit request from the app.
+  // Plain dictation turns run extraction only (GPT-4o-mini → Haiku), so dictating history costs a fraction.
+  const wantReasoning = options.includeReasoning === true || taskResolution.intent === "MIXED";
+
+  // Run extraction and (when wanted) clinical reasoning IN PARALLEL — independent
   // failures, independent models, independent fallback chains.
   const [extractionResult, reasoningResult] = await Promise.allSettled([
     runExtraction(
@@ -354,12 +364,14 @@ export async function processScribeChatTurn(
       helpers.callExtractionModel,
       clinicianProtection
     ),
-    runClinicalReasoning(
-      deidentifiedInput.replace(/__ERMATE_EM_(?:RESIDENT|CONSULTANT)_\d+__/g, "[DOCTOR]"),
-      mergedPendingExtraction,
-      chatHistory,
-      helpers.callClinicalReasoningModel
-    ),
+    wantReasoning
+      ? runClinicalReasoning(
+          deidentifiedInput.replace(/__ERMATE_EM_(?:RESIDENT|CONSULTANT)_\d+__/g, "[DOCTOR]"),
+          mergedPendingExtraction,
+          chatHistory,
+          helpers.callClinicalReasoningModel
+        )
+      : Promise.resolve(null),
   ]);
 
   // ── Handle extraction outcome ──
@@ -552,7 +564,16 @@ export async function processScribeChatTurn(
   // ── Handle clinical reasoning outcome ──
   let reasoningMessage: ScribeChatMessage;
 
-  if (reasoningResult.status === "fulfilled") {
+  if (reasoningResult.status === "fulfilled" && reasoningResult.value === null) {
+    // Reasoning not requested on this dictation turn: no Sonnet call, no reasoning card.
+    reasoningMessage = {
+      id: "reason-skipped-" + Date.now(),
+      role: "assistant",
+      timestamp: new Date().toISOString(),
+      type: "text",
+      content: "",
+    };
+  } else if (reasoningResult.status === "fulfilled" && reasoningResult.value) {
     reasoningMessage = {
       id: "reason-" + Date.now() + "-" + Math.random().toString(36).substring(2, 6),
       role: "assistant",
@@ -575,10 +596,17 @@ export async function processScribeChatTurn(
       type: "error",
       content: "Clinical reference is temporarily unavailable. Your case sheet update was still saved.",
     };
-    console.error(`[scribeChatTurn] Clinical reasoning failed for case ${caseId}`, reasoningResult.reason);
+    console.error(`[scribeChatTurn] Clinical reasoning failed for case ${caseId}`, reasoningResult.status === "rejected" ? reasoningResult.reason : "empty result");
   }
 
   let replyText = buildUnifiedReplyProse(extractionMessage, reasoningMessage);
+  if (!wantReasoning) {
+    // Walkthrough tip, shown once per conversation: reasoning is now on request.
+    const REASONING_TIP = "Ask a question (e.g. “differentials?” or “red flags?”) when you want clinical reasoning.";
+    const tipAlreadyShown = chatHistory.some((m: any) => String(m?.content ?? m?.text ?? "").includes(REASONING_TIP));
+    if (!replyText) replyText = "Noted.";
+    if (!tipAlreadyShown) replyText += `\n\n💡 ${REASONING_TIP}`;
+  }
   if (ageQuestionNeeded) {
     replyText += "\n\n❓ **What is the patient's age?** I need this to apply the correct adult or pediatric assessment checklist.";
   }

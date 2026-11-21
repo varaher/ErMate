@@ -1,11 +1,15 @@
-import React from "react";
+import React, { useState } from "react";
 import { Users, Crown, Link2, Lock, ChevronRight } from "lucide-react";
+import HospitalTeamFinder from "./HospitalTeamFinder";
 
 /**
  * Plain-words "Work as a team" card for doctors who are not in a team yet (More → Team).
  * Presentation only. Create / Join open the existing team modals.
  */
-export default function TeamStartCard({ onCreate, onJoin }: { role?: string; onCreate: () => void; onJoin: () => void }) {
+export default function TeamStartCard({ onCreate, onJoin, role }: { onCreate: () => void; onJoin: () => void; role?: string }) {
+  // One team per hospital: when the doctor's hospital already has a team, offer "Request to join"
+  // and hide "Create team" (the server refuses a second team for the same hospital anyway).
+  const [hospitalHasTeam, setHospitalHasTeam] = useState(false);
   return (
     <div className="space-y-4 text-left">
       <div className="rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 shadow-sm space-y-2">
@@ -21,6 +25,9 @@ export default function TeamStartCard({ onCreate, onJoin }: { role?: string; onC
         </p>
       </div>
 
+      <HospitalTeamFinder role={role} onResult={setHospitalHasTeam} />
+
+      {!hospitalHasTeam && (
       <div className="rounded-3xl border border-indigo-200 dark:border-indigo-900 bg-indigo-50/60 dark:bg-indigo-950/30 p-5 space-y-3">
         <div className="flex items-start gap-3">
           <span className="w-7 h-7 shrink-0 rounded-full bg-indigo-600 text-white text-xs font-black flex items-center justify-center">1</span>
@@ -33,6 +40,7 @@ export default function TeamStartCard({ onCreate, onJoin }: { role?: string; onC
           Create team <ChevronRight className="w-4 h-4" />
         </button>
       </div>
+      )}
 
       <div className="rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 space-y-3">
         <div className="flex items-start gap-3">

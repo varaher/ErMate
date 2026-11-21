@@ -9,6 +9,7 @@ import { UserProfile, type WorkArea } from "../types";
 import { ErMateLogo } from "./shared/ErMateLogo";
 import { isClinicalProfileComplete, getProfileCompletenessDetails, hasHospitalLocation } from "../utils/profileCompleteness";
 import { createHospitalWorkspace, createTeamInvite, requestToJoinTeam } from "../services/teamInviteService";
+import HospitalTeamFinder from "./HospitalTeamFinder";
 import { FEATURES } from "../config/features";
 import {
   INDIAN_STATES_AND_UTS,
@@ -194,6 +195,8 @@ export default function OnboardingProfileView({
     }
   };
   const [isContinuing, setIsContinuing] = useState<boolean>(false);
+  // One team per hospital: hide "Create team" when the doctor's hospital already has one.
+  const [hospitalHasTeam, setHospitalHasTeam] = useState<boolean>(false);
 
   // Invite share state
   const [inviteLink, setInviteLink] = useState<string>("");
@@ -590,6 +593,8 @@ export default function OnboardingProfileView({
                 Share your rota, hand over between shifts and see who is on duty at {savedData.hospital || "your hospital"}.
               </p>
             </div>
+            <HospitalTeamFinder role={savedData.role} onResult={setHospitalHasTeam} />
+            {!hospitalHasTeam && (
             <div className="rounded-2xl border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/30 p-3.5 space-y-1.5">
               <strong className="text-xs text-emerald-900 dark:text-emerald-200 block">Create your team</strong>
               <p className="text-[11px] text-emerald-800 dark:text-emerald-300">You become Department Lead (HOD) and invite colleagues by link.</p>
@@ -603,6 +608,7 @@ export default function OnboardingProfileView({
                 <span>Create team</span>
               </button>
             </div>
+            )}
             <div className="rounded-2xl border border-slate-200 dark:border-slate-800 p-3.5 space-y-2">
               <strong className="text-xs text-slate-900 dark:text-white block">I have an invite link</strong>
               <p className="text-[11px] text-slate-500 dark:text-slate-400">Paste the link your Department Lead sent. They approve you.</p>

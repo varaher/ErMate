@@ -4,10 +4,11 @@
  * Every entry, lower-cased, must also be in INVITE_ALLOWED_ROLES in server/routes/team.routes.ts
  * (verify_teams_batch_b.ts checks this), otherwise the server rejects it as "Invalid clinical role".
  *
- * HOD is deliberately NOT here: the HOD title comes from the platform's HOD verification,
- * not from a team dropdown.
+ * HOD (Neeraj, 20 Nov 2026): the team's own lead/admin can make a member HOD — no platform
+ * approval needed. On the server, HOD also makes that member a Team Admin.
  */
 export const TEAM_ROLE_OPTIONS: string[] = [
+  "HOD",
   "Emergency Physician",
   "Consultant",
   "Senior Consultant",
