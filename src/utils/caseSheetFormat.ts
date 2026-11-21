@@ -215,6 +215,10 @@ export function formatCaseSheetText(data: CaseSheetData, opts: { forEmr?: boolea
   }
   section("Adjuncts", adj);
 
+  // History of Present Illness: its own section right after Primary Survey and Adjuncts
+  // (pediatric sheet, Neeraj 21 Nov 2026). Adult cases use erCaseRecord.ts and never reach here.
+  section("History of Present Illness", [val(data.hpi)]);
+
   // SAMPLE
   section("History", [
     `Signs & Symptoms: ${list(data.symptoms)}`,
@@ -224,7 +228,6 @@ export function formatCaseSheetText(data: CaseSheetData, opts: { forEmr?: boolea
     `Last Meal: ${val(data.lastMeal)}`,
     `Events: ${val(data.events)}`,
     hasText(data.familyHistory) ? `Family History: ${data.familyHistory}` : "",
-    hasText(data.hpi) ? `History of Presenting Illness: ${data.hpi}` : "",
     hasText(data.surgicalHistory) ? `Surgical History: ${data.surgicalHistory}` : "",
     hasText(data.lmp) ? `LMP: ${data.lmp}` : "",
   ]);

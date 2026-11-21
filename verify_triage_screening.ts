@@ -45,7 +45,10 @@ const text = formatCaseSheetText({
   caseId: "X", patient: { name: "T", age: 5, sex: "Male", uhid: null, bed: null }, arrival: { date: null, time: null },
   triageScreening: full, triageCategory: "P3 · Urgent",
 } as any);
-check("EMR text has screening section with banner", text.includes("TRIAGE ASSESSMENT & INFECTION SCREENING") && text.includes("ISOLATION REQUIRED"));
+// Adult ER record (21 Nov 2026) shows triage under "Triage:"; the pediatric sheet keeps its own section.
+check("EMR text has screening section with banner", text.includes("\nTriage:\n") && text.includes("ISOLATION REQUIRED"));
+const pedText = formatCaseSheetText({ caseId: "X", isPediatric: true, patient: { name: "T", age: 5, sex: "Male", uhid: null, bed: null }, arrival: { date: null, time: null }, triageScreening: full, triageCategory: "P3 · Urgent" } as any);
+check("pediatric sheet keeps its screening section", pedText.includes("TRIAGE ASSESSMENT & INFECTION SCREENING") && pedText.includes("ISOLATION REQUIRED"));
 const textNone = formatCaseSheetText({ caseId: "X", patient: { name: "T", age: 5, sex: "Male", uhid: null, bed: null }, arrival: { date: null, time: null } } as any);
 check("EMR text omits section when nothing recorded", !textNone.includes("INFECTION SCREENING"));
 

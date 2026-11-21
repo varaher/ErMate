@@ -1,4 +1,5 @@
 import { isLmpApplicable } from "../utils/historyFields";
+import { withCaseSummaryHpi } from "../utils/caseSummaryHpi";
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import VoiceRecorder from "./shared/VoiceRecorder";
 import { 
@@ -36,7 +37,7 @@ import { applySecondaryNormals, recordedSecondary, SECONDARY_KEYS, type Secondar
 import CaseSheetPrintView, { convertClinicalCaseToCaseSheetData, formatCaseSheetText } from "./CaseSheetPrintView";
 import CopyToEmrPanel from "./CopyToEmrPanel"; // ← NEW
 import { copyTextToClipboard } from "../utils/copyToClipboard"; // ← NEW
-import { caseSheetTextToEmrHtml } from "../utils/caseSheetFormat"; // ← NEW
+import { formatCaseSheetHtml } from "../utils/caseSheetFormat";
 import { triggerPrintWithTip } from "../utils/printWithTip";
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend
@@ -1516,8 +1517,23 @@ export default function CaseSheetView({
   const updateHistory = (field: keyof SampleHistory, value: string) => {
     setCurrentCase(prev => ({
       ...prev,
-      sampleHistory: { ...prev.sampleHistory, [field]: value }
+      // Typing in the HPI box makes it the doctor's HPI: the case-summary writer will not replace it.
+      sampleHistory: { ...prev.sampleHistory, [field]: value, ...(field === "hpi" ? { hpiSource: "doctor" as const } : {}) }
     }));
+  };
+
+  // "Rewrite HPI from case": writes the HPI from the whole recorded case (src/utils/caseSummaryHpi.ts).
+  const [hpiRewriteState, setHpiRewriteState] = useState<"idle" | "working" | "done" | "failed">("idle");
+  const handleRewriteHpi = async () => {
+    setHpiRewriteState("working");
+    const r = await withCaseSummaryHpi(currentCase, { force: true });
+    if (r.changed) {
+      setCurrentCase(prev => ({ ...prev, sampleHistory: { ...prev.sampleHistory, hpi: r.case.sampleHistory.hpi, hpiSource: "case-summary" } }));
+      setHpiRewriteState("done");
+    } else {
+      setHpiRewriteState(r.reason === "unchanged" ? "done" : "failed");
+    }
+    setTimeout(() => setHpiRewriteState("idle"), 3000);
   };
 
   const updatePrimary = (field: keyof PrimaryAssessment, value: string) => {
@@ -3067,7 +3083,7 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
   const handleCopyCaseSheet = async () => { // ← NEW
     const sheetData = convertClinicalCaseToCaseSheetData(currentCase); // ← NEW
     const plainText = formatCaseSheetText(sheetData); // ← NEW
-    const ok = await copyTextToClipboard(plainText, caseSheetTextToEmrHtml(plainText)); // ← NEW
+    const ok = await copyTextToClipboard(plainText, formatCaseSheetHtml(sheetData));
     if (ok) { // ← NEW
       setCopiedCaseText(true); // ← NEW
       setTimeout(() => setCopiedCaseText(false), 2000); // ← NEW
@@ -4697,11 +4713,23 @@ ${currentCase.progressNotes || "No progress notes recorded."}<br/>
               {/* History of Presenting Illness / Surgical / LMP */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-4 border-t">
                 <div className="space-y-1 md:col-span-2">
-                  <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">
-                    History of Presenting Illness
-                  </label>
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">
+                      History of Presenting Illness
+                    </label>
+                    <button
+                      type="button"
+                      data-testid="rewrite-hpi-from-case"
+                      onClick={handleRewriteHpi}
+                      disabled={hpiRewriteState === "working"}
+                      title="Write the HPI from everything recorded in this case"
+                      className="min-h-[36px] px-2.5 py-1 rounded-lg border border-indigo-200 dark:border-indigo-800 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 text-[11px] font-bold disabled:opacity-60 cursor-pointer"
+                    >
+                      {hpiRewriteState === "working" ? "Writing…" : hpiRewriteState === "done" ? "HPI updated" : hpiRewriteState === "failed" ? "Couldn't write — try again" : "Rewrite HPI from case"}
+                    </button>
+                  </div>
                   <textarea
-                    rows={3}
+                    rows={4}
                     value={currentCase.sampleHistory.hpi || ""}
                     onChange={(e) => updateHistory("hpi", e.target.value)}
                     placeholder="Onset, duration, progression, associated symptoms, treatment taken before arrival..."

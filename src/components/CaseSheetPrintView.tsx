@@ -1694,6 +1694,13 @@ export default function CaseSheetPrintView({
               vbgAbg={data.vbgAbg}
             />
 
+            {/* Pediatric: History of Present Illness as its own section, right after Primary Survey
+                and Adjuncts (Neeraj, 21 Nov 2026). Written from the whole case on Preview. */}
+            <Section>
+              <SectionHeading>History of Present Illness</SectionHeading>
+              {data.hpi ? <p className="text-sm whitespace-pre-line">{data.hpi}</p> : <EmptyLine />}
+            </Section>
+
             <Section>
               <SectionHeading>Secondary Assessment / History</SectionHeading>
               <div className="text-sm space-y-1.5">
@@ -1704,7 +1711,6 @@ export default function CaseSheetPrintView({
                 <div><span className="font-semibold text-slate-900">Last Meal:</span> {data.lastMeal || (data.pediatricDetails as LegacyPediatricDetails)?.historyLastMeal || "Not documented"}</div>
                 <div><span className="font-semibold text-slate-900">Events Preceding:</span> {data.events || (data.pediatricDetails as LegacyPediatricDetails)?.historyEvents || "Not documented"}</div>
                 {data.familyHistory && <div><span className="font-semibold text-slate-900">Family History:</span> {data.familyHistory}</div>}
-                {data.hpi && <div><span className="font-semibold text-slate-900">History of Presenting Illness:</span> {data.hpi}</div>}
                 {data.surgicalHistory && <div><span className="font-semibold text-slate-900">Surgical History:</span> {data.surgicalHistory}</div>}
                 {data.lmp && <div><span className="font-semibold text-slate-900">LMP:</span> {data.lmp}</div>}
               </div>

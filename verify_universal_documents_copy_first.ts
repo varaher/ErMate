@@ -245,12 +245,13 @@ test("2. Adult Plain-Text Formatter produces complete EMR text", () => {
   const data = convertClinicalCaseToCaseSheetData(adultCase);
   const text = formatCaseSheetText(data);
 
-  assert.ok(text.includes("EMERGENCY DEPARTMENT — CASE SHEET"), "Header must be present");
+  // 21 Nov 2026: adult ER cases use the hospital's "INITIAL ASSESSMENT AND EMERGENCY DEPARTMENT CASE RECORD".
+  assert.ok(text.includes("INITIAL ASSESSMENT AND EMERGENCY DEPARTMENT CASE RECORD"), "Header must be present");
   assert.ok(text.includes("Rajesh Kumar"), "Patient name present");
   assert.ok(text.includes("48y M"), "Age/Sex present");
   assert.ok(text.includes("UHID: UHID-556677"), "UHID present");
   assert.ok(text.includes("Acute retrosternal chest pain"), "Presenting complaint present");
-  assert.ok(text.includes("A — Airway: Patent, speaking in full sentences"), "Primary survey airway present");
+  assert.ok(text.includes("Airway → Patent, speaking in full sentences"), "Primary survey airway present");
   assert.ok(text.includes("Penicillin (causes urticaria)"), "Allergies present");
   assert.ok(text.includes("Tab Amlodipine"), "Medications present");
   assert.ok(text.includes("Hypertension for 5 years"), "Past history present");
@@ -324,6 +325,16 @@ test("5. Pediatric Section Ordering follows strict clinical sequence", () => {
   assert.ok(idxExam < idxInv, "Focused Exam must precede Investigations");
   assert.ok(idxInv < idxTreat, "Investigations must precede Treatment Given");
   assert.ok(idxTreat < idxDiag, "Treatment Given must precede Provisional Diagnosis");
+
+  // History of Present Illness: own section right after Primary Survey + Adjuncts (Neeraj, 21 Nov 2026)
+  const idxAdj = text.indexOf("\nADJUNCTS\n");
+  const idxHpi = text.indexOf("\nHISTORY OF PRESENT ILLNESS\n");
+  const idxPrimary = text.search(/\nPRIMARY (SURVEY|ASSESSMENT)/);
+  assert.ok(idxHpi !== -1, "Pediatric sheet must have a HISTORY OF PRESENT ILLNESS section");
+  assert.ok(idxPrimary === -1 || idxPrimary < idxHpi, "HPI must come after Primary Survey");
+  assert.ok(idxAdj === -1 || idxAdj < idxHpi, "HPI must come after Adjuncts");
+  assert.ok(idxHpi < idxExam, "HPI must come before Focused Physical Examination");
+  assert.ok(!text.includes("History of Presenting Illness:"), "HPI must not be repeated inside the History section");
 });
 
 // 6. Adult Section Ordering: Primary Survey -> SAMPLE -> Secondary Survey -> Diagnosis -> Investigations -> Treatment
@@ -332,18 +343,23 @@ test("6. Adult Section Ordering follows standard ATLS/adult sequence", () => {
   const data = convertClinicalCaseToCaseSheetData(adultCase);
   const text = formatCaseSheetText(data);
 
-  const idxPrimary = text.indexOf("\nPRIMARY SURVEY (ABCDE)\n");
-  const idxSample = text.indexOf("\nSAMPLE HISTORY\n");
-  const idxSec = text.indexOf("\nSECONDARY SURVEY / SYSTEMIC EXAMINATION\n");
-  const idxDiag = text.indexOf("\nDIAGNOSIS\n");
-  const idxInv = text.indexOf("\nINVESTIGATIONS\n");
-  const idxTreat = text.indexOf("\nTREATMENT GIVEN\n");
+  // Hospital ER record order (21 Nov 2026): Primary → HPI → Secondary Survey/history → Examination →
+  // Investigations → Treatment Plan → Disposition → Differential Diagnosis.
+  const idxPrimary = text.indexOf("\nPrimary Assessment:\n");
+  const idxHpi = text.indexOf("\nHistory of Present Illness:\n");
+  const idxSec = text.indexOf("\nSecondary Survey:\n");
+  const idxExam = text.indexOf("\nSystemic Examination:\n");
+  const idxInv = text.indexOf("\nInvestigations:\n");
+  const idxTreat = text.indexOf("\nTreatment Plan:\n");
+  const idxDisp = text.indexOf("\nDisposition:\n");
+  const idxDiag = text.indexOf("\nDifferential Diagnosis:\n");
 
-  assert.ok(idxPrimary < idxSample, "Primary Survey must precede SAMPLE");
-  assert.ok(idxSample < idxSec, "SAMPLE must precede Secondary Survey");
-  assert.ok(idxSec < idxDiag, "Secondary Survey must precede Diagnosis");
-  assert.ok(idxDiag < idxInv, "Diagnosis must precede Investigations");
-  assert.ok(idxInv < idxTreat, "Investigations must precede Treatment");
+  assert.ok(idxPrimary > 0 && idxPrimary < idxHpi, "Primary Assessment must precede HPI");
+  assert.ok(idxHpi < idxSec, "HPI must precede Secondary Survey");
+  assert.ok(idxSec < idxExam, "Secondary Survey history must precede Systemic Examination");
+  assert.ok(idxExam < idxInv, "Examination must precede Investigations");
+  assert.ok(idxInv < idxTreat, "Investigations must precede Treatment Plan");
+  assert.ok(idxTreat < idxDisp && idxDisp < idxDiag, "Disposition, then Differential Diagnosis");
 });
 
 // 7. Age routing: 0-16 pediatric, 17+ adult, unknown stays unknown/adult
@@ -384,7 +400,7 @@ test("8. Zero hallucination invariant: missing clinical fields are not fabricate
   assert.ok(!text.includes("S1 S2 heard"), "Must not invent cardiac sounds");
   assert.ok(!text.includes("Soft, non-tender"), "Must not invent abdominal examination");
   assert.ok(!text.includes("No focal deficit"), "Must not invent neuro exam");
-  assert.ok(text.includes("A — Airway: Not documented"), "Unrecorded airway must be Not documented");
+  assert.ok(text.includes("Airway → Not documented."), "Unrecorded airway must be Not documented");
 });
 
 // 9. COPY FIRST, PRINT SECOND invariant: CaseSheetPrintView button order
