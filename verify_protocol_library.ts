@@ -6,7 +6,7 @@ const t = (n: string, c: boolean) => { if (c) { pass++; console.log(`[PASS] ${n}
 
 const topics = allProtocolTopics();
 const ids = topics.map((x) => x.id);
-t("48 topics published (resus 7, trauma 7, paeds 6, tox 7, neuro 7, metabolic 3, breathing 3, ACS, GI 7)", topics.length === 48 && ["dyspnea-adult", "cad-acs-adult", "cirrhosis-liver-adult", "variceal-bleed-adult", "sbp-adult", "hepatic-encephalopathy-adult", "hrs-aki-adult"].every((i) => ids.includes(i)));
+t("58 topics published (48 clinical + 10 procedures)", topics.length === 58 && ["dyspnea-adult", "cad-acs-adult", "cirrhosis-liver-adult", "variceal-bleed-adult", "sbp-adult", "hepatic-encephalopathy-adult", "hrs-aki-adult"].every((i) => ids.includes(i)));
 t("topic ids unique", new Set(ids).size === ids.length);
 t("all draft, none falsely marked reviewed", topics.every((x) => x.status === "draft" && x.reviewedOn === ""));
 t("adult and paediatric never mixed within a chapter", PROTOCOL_CHAPTERS.every((c) => new Set(c.topics.map((x) => x.population)).size === 1));
@@ -198,13 +198,28 @@ t("hypoNa: 3% saline 150 mL over 20 min; limit 10 (8 high risk) per 24 h; desmop
 t("adrenal: hydrocortisone 100 mg now then 200 mg/24 h; don't wait for cortisol", has(ac, /100 mg IV \/ IM bolus, then 200 mg over 24 hours/) && has(ac, /Waiting for the cortisol result/));
 t("UGIB: GBS 0-1 outpatient; Hb < 7 (8 CVD); PPI; endoscopy within 24 h; no TXA", has(ugi, /0–1/) && has(ugi, /below 8 with cardiovascular disease/) && has(ugi, /Pantoprazole 80 mg/) && has(ugi, /within 24 hours/) && has(ugi, /Not recommended — no benefit/));
 t("pancreatitis: 2 of 3 criteria; moderate fluids 1.5 mL/kg/h (WATERFALL); early oral feeding; no prophylactic antibiotics", has(panc, /2 of 3/) && has(panc, /1\.5 mL\/kg\/hour/) && has(panc, /within 24 hours as tolerated/) && has(panc, /Not prophylactic/));
+// Batch 8 — procedures
+const procIds = ["rsi", "chest-drain", "paracentesis", "central-line", "lp", "cardioversion", "pacing", "io-access", "pericardiocentesis", "balloon-tamponade"].map((x) => `${x}-procedure`);
+const procs = procIds.map((id) => topics.find((x) => x.id === id)!);
+t("10 procedure pages published", procs.every(Boolean));
+t("every procedure has indications, steps, complications, aftercare", procs.every((pp) => ["assessment", "approach", "pitfalls", "disposition"].every((k) => pp.sections.some((s: any) => s.kind === k))));
+const rsi = procs[0], cd = procs[1], para = procs[2], cvc = procs[3], lp = procs[4], cv = procs[5], pace = procs[6], io = procs[7], bt = procs[9];
+t("RSI: resuscitate before induction; VL first; waveform ETCO2; CICO -> scalpel-bougie-tube; no sux in OP / hyperK", has(rsi, /Resuscitate/) && has(rsi, /Video laryngoscopy first-pass/) && has(rsi, /waveform ETCO2/) && has(rsi, /Scalpel–bougie–tube/) && has(rsi, /organophosphate/));
+t("chest drain: safe triangle, no trocar, over the rib, drain <= 1.5 L at once, never clamp bubbling", has(cd, /safe triangle/) && has(cd, /without a trocar/) && has(cd, /over the top of the rib/) && has(cd, /1\.5 L/) && has(cd, /Never clamp/));
+t("paracentesis: INR/platelets not contraindications; albumin 6-8 g/L > 5 L; bedside culture bottles", has(para, /not contraindications/) && has(para, /6–8 g of albumin per litre/) && has(para, /blood-culture bottle/));
+t("CVC: real-time ultrasound; confirm wire in vein before dilating", has(cvc, /Real-time ultrasound/) && has(cvc, /before dilating/));
+t("LP: CT-first criteria; antibiotics not delayed; atraumatic needle", has(lp, /CT first if/) && has(lp, /antibiotics before CT/) && has(lp, /atraumatic/));
+t("cardioversion: SYNC re-selected each shock; AF 200 J+; anticoagulation >= 48 h", has(cv, /Re-select SYNC/) && has(cv, /AF 200 J or more/) && has(cv, /48 hours/));
+t("pacing: demand mode; confirm mechanical capture by femoral pulse", has(pace, /demand mode/) && has(pace, /femoral pulse/));
+t("IO: IV first in arrest; tibia / humerus landmarks; lidocaine 40 mg if conscious; remove < 24 h", has(io, /try IV first/) && has(io, /2 cm below the tibial tuberosity/) && has(io, /lidocaine 40 mg/) && has(io, /within 24 hours/));
+t("balloon tamponade: intubate first; max 24 h; stent preferred (Baveno VIII); scissors at bedside", has(bt, /Intubate first/) && has(bt, /maximum 24 hours/) && has(bt, /stent where available/) && has(bt, /scissors/));
 t("dyspnea review notes carried, content kept", (topics.find((x) => x.id === "dyspnea-adult")!.reviewNotes || []).length === 3 && topics.find((x) => x.id === "dyspnea-adult")!.sections.length >= 8);
 
 t("search by complaint: chest pain -> ACS", searchProtocols("chest pain").some((x) => x.id === "cad-acs-adult"));
 t("search by complaint: hematemesis -> cirrhosis", searchProtocols("hematemesis").some((x) => x.id === "cirrhosis-liver-adult"));
 t("search by complaint: breathlessness -> dyspnea", searchProtocols("breathlessness").some((x) => x.id === "dyspnea-adult"));
 t("search by drug: avil finds ACS", searchProtocols("avil").some((x) => x.id === "cad-acs-adult"));
-t("empty search returns all", searchProtocols("").length === 48);
+t("empty search returns all", searchProtocols("").length === 58);
 t("search: terlipressin finds variceal + HRS", ["variceal-bleed-adult", "hrs-aki-adult"].every((id) => searchProtocols("terlipressin").some((x) => x.id === id)));
 t("search: confusion finds HE", searchProtocols("confusion").some((x) => x.id === "hepatic-encephalopathy-adult"));
 t("nonsense search returns none", searchProtocols("zzzzqqq").length === 0);
@@ -212,7 +227,7 @@ t("nonsense search returns none", searchProtocols("zzzzqqq").length === 0);
 const panel = readFileSync("src/components/ProtocolsPanel.tsx", "utf8");
 t("panel shows local-practice badge", panel.includes('data-testid="local-practice-badge"') && panel.includes("not a guideline requirement"));
 t("panel shows notice, review notes, references", panel.includes("protocol-notice") && panel.includes("protocol-review-notes") && panel.includes("protocol-references"));
-const dataSrc = ["cad_acs", "cirrhosis", "dyspnea", "variceal_bleed", "sbp", "hepatic_encephalopathy", "hrs_aki", "cardiac_arrest", "post_rosc", "bradycardia", "tachycardia", "shock", "sepsis", "anaphylaxis", "trauma_primary_survey", "haemorrhagic_shock", "tbi", "chest_trauma", "tension_pneumothorax", "spinal_injury", "burns", "paeds_cardiac_arrest", "paeds_septic_shock", "paeds_status_epilepticus", "paeds_dka", "paeds_asthma", "paeds_bronchiolitis", "poisoning_approach", "organophosphate", "snakebite", "aluminium_phosphide", "paraquat", "paracetamol", "methanol", "stroke", "ich", "sah", "seizure", "meningitis", "hypoglycaemia", "alcohol_withdrawal", "pulmonary_embolism", "pneumonia", "hyperkalaemia", "hyponatraemia", "adrenal_crisis", "upper_gi_bleed", "pancreatitis", "index", "protocolTypes", "protocolViews"].map((f) => readFileSync(`src/data/protocols/${f}.ts`, "utf8")).join("\n");
+const dataSrc = ["cad_acs", "cirrhosis", "dyspnea", "variceal_bleed", "sbp", "hepatic_encephalopathy", "hrs_aki", "cardiac_arrest", "post_rosc", "bradycardia", "tachycardia", "shock", "sepsis", "anaphylaxis", "trauma_primary_survey", "haemorrhagic_shock", "tbi", "chest_trauma", "tension_pneumothorax", "spinal_injury", "burns", "paeds_cardiac_arrest", "paeds_septic_shock", "paeds_status_epilepticus", "paeds_dka", "paeds_asthma", "paeds_bronchiolitis", "poisoning_approach", "organophosphate", "snakebite", "aluminium_phosphide", "paraquat", "paracetamol", "methanol", "stroke", "ich", "sah", "seizure", "meningitis", "hypoglycaemia", "alcohol_withdrawal", "pulmonary_embolism", "pneumonia", "hyperkalaemia", "hyponatraemia", "adrenal_crisis", "upper_gi_bleed", "pancreatitis", "proc_rsi", "proc_chest_drain", "proc_paracentesis", "proc_central_line", "proc_lp", "proc_cardioversion", "proc_pacing", "proc_io_access", "proc_pericardiocentesis", "proc_balloon_tamponade", "index", "protocolTypes", "protocolViews"].map((f) => readFileSync(`src/data/protocols/${f}.ts`, "utf8")).join("\n");
 t("library stays AI-free: no fetch / API / model imports", !/fetch\(|authenticatedFetch|gemini|anthropic|openai|sarvam/i.test(dataSrc + panel));
 console.log(`\nProtocol library: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

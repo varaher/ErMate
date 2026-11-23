@@ -47,6 +47,16 @@ import { HYPONATRAEMIA_ADULT } from "./hyponatraemia";
 import { ADRENAL_CRISIS_ADULT } from "./adrenal_crisis";
 import { UPPER_GI_BLEED_ADULT } from "./upper_gi_bleed";
 import { PANCREATITIS_ADULT } from "./pancreatitis";
+import { RSI_PROCEDURE } from "./proc_rsi";
+import { CHEST_DRAIN_PROCEDURE } from "./proc_chest_drain";
+import { PARACENTESIS_PROCEDURE } from "./proc_paracentesis";
+import { CENTRAL_LINE_PROCEDURE } from "./proc_central_line";
+import { LP_PROCEDURE } from "./proc_lp";
+import { CARDIOVERSION_PROCEDURE } from "./proc_cardioversion";
+import { PACING_PROCEDURE } from "./proc_pacing";
+import { IO_ACCESS_PROCEDURE } from "./proc_io_access";
+import { PERICARDIOCENTESIS_PROCEDURE } from "./proc_pericardiocentesis";
+import { BALLOON_TAMPONADE_PROCEDURE } from "./proc_balloon_tamponade";
 
 /** ErMate Handbook chapters. A topic can link to any other topic by id (see protocolViews.resolveLink). */
 export const PROTOCOL_CHAPTERS: ProtocolChapter[] = [
@@ -86,6 +96,11 @@ export const PROTOCOL_CHAPTERS: ProtocolChapter[] = [
     id: "gi-hepatic",
     title: "GI & Liver",
     topics: [CIRRHOSIS_ADULT, VARICEAL_BLEED_ADULT, SBP_ADULT, HEPATIC_ENCEPHALOPATHY_ADULT, HRS_AKI_ADULT, UPPER_GI_BLEED_ADULT, PANCREATITIS_ADULT],
+  },
+  {
+    id: "procedures",
+    title: "Procedures",
+    topics: [RSI_PROCEDURE, CHEST_DRAIN_PROCEDURE, PARACENTESIS_PROCEDURE, CENTRAL_LINE_PROCEDURE, LP_PROCEDURE, CARDIOVERSION_PROCEDURE, PACING_PROCEDURE, IO_ACCESS_PROCEDURE, PERICARDIOCENTESIS_PROCEDURE, BALLOON_TAMPONADE_PROCEDURE],
   },
 ];
 

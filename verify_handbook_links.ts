@@ -54,6 +54,10 @@ t("ICH / hypoglycaemia / alcohol-withdrawal / meningitis links now resolve", ["i
 t("metabolic chapter sixth", (await import("./src/data/protocols")).PROTOCOL_CHAPTERS[5].id === "metabolic");
 t("PE, pneumonia, hyperK, hypoNa, adrenal, UGIB, pancreatitis links now resolve", ["pulmonary-embolism-adult", "pneumonia-adult", "hyperkalaemia-adult", "hyponatraemia-adult", "adrenal-crisis-adult", "upper-gi-bleed-adult", "pancreatitis-adult"].every((id) => !!resolveLink(id, topics)));
 
+t("procedures chapter last, 10 pages", (await import("./src/data/protocols")).PROTOCOL_CHAPTERS.slice(-1)[0].id === "procedures" && (await import("./src/data/protocols")).PROTOCOL_CHAPTERS.slice(-1)[0].topics.length === 10);
+t("procedure links now resolve (RSI, chest drain, paracentesis, central line, LP, cardioversion, pacing, IO, pericardiocentesis, balloon)", ["rsi", "chest-drain", "paracentesis", "central-line", "lp", "cardioversion", "pacing", "io-access", "pericardiocentesis", "balloon-tamponade"].every((x) => !!resolveLink(`${x}-procedure`, topics)));
+t("every procedure page links back to a clinical topic", topics.filter((x) => x.id.endsWith("-procedure")).every((x) => linkedTopicIds(x).some((id) => !id.endsWith("-procedure"))));
+
 // Old founder pages still render unchanged.
 t("dyspnea and ACS pages kept as authored", !!findTopic("dyspnea-adult") && !!findTopic("cad-acs-adult"));
 
