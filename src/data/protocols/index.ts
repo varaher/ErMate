@@ -33,6 +33,13 @@ import { ALUMINIUM_PHOSPHIDE_ADULT } from "./aluminium_phosphide";
 import { PARAQUAT_ADULT } from "./paraquat";
 import { PARACETAMOL_ADULT } from "./paracetamol";
 import { METHANOL_ADULT } from "./methanol";
+import { STROKE_ADULT } from "./stroke";
+import { ICH_ADULT } from "./ich";
+import { SAH_ADULT } from "./sah";
+import { SEIZURE_ADULT } from "./seizure";
+import { MENINGITIS_ADULT } from "./meningitis";
+import { HYPOGLYCAEMIA_ADULT } from "./hypoglycaemia";
+import { ALCOHOL_WITHDRAWAL_ADULT } from "./alcohol_withdrawal";
 
 /** ErMate Handbook chapters. A topic can link to any other topic by id (see protocolViews.resolveLink). */
 export const PROTOCOL_CHAPTERS: ProtocolChapter[] = [
@@ -55,6 +62,11 @@ export const PROTOCOL_CHAPTERS: ProtocolChapter[] = [
     id: "toxicology",
     title: "Toxicology & Envenomation",
     topics: [POISONING_APPROACH_ADULT, ORGANOPHOSPHATE_ADULT, SNAKEBITE_ADULT, ALUMINIUM_PHOSPHIDE_ADULT, PARAQUAT_ADULT, PARACETAMOL_ADULT, METHANOL_ADULT],
+  },
+  {
+    id: "neurology",
+    title: "Neurology & Altered Sensorium",
+    topics: [STROKE_ADULT, ICH_ADULT, SAH_ADULT, SEIZURE_ADULT, MENINGITIS_ADULT, HYPOGLYCAEMIA_ADULT, ALCOHOL_WITHDRAWAL_ADULT],
   },
   { id: "breathing", title: "Breathing & Airway", topics: [DYSPNEA_ADULT] },
   { id: "cardiac", title: "Cardiac & Chest Pain", topics: [CAD_ACS_ADULT] },

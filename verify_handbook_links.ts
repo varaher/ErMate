@@ -11,7 +11,7 @@ const topics = allProtocolTopics();
 const handbook = topics.filter((x) => x.firstTen && x.firstTen.length); // new-format pages
 const REQUIRED_KINDS = ["symptoms", "pathophysiology", "approach", "differentials", "investigations", "treatment", "disposition", "pitfalls"];
 
-t("32 new-format Handbook pages (resuscitation 7 + trauma 7 + paediatric 6 + toxicology 7 + liver 5)", handbook.length === 32);
+t("39 new-format Handbook pages (resuscitation 7 + trauma 7 + paediatric 6 + toxicology 7 + neurology 7 + liver 5)", handbook.length === 39);
 for (const tp of handbook) {
   const kinds = new Set(tp.sections.map((s) => s.kind));
   const missing = REQUIRED_KINDS.filter((k) => !kinds.has(k as any) && !(k === "symptoms" && tp.sections.some((s) => /grade/i.test(s.heading))));
@@ -47,6 +47,9 @@ t("no paediatric page links to an adult page", topics.filter((x) => x.population
 
 t("toxicology chapter fourth", (await import("./src/data/protocols")).PROTOCOL_CHAPTERS[3].id === "toxicology");
 t("OP / poisoning links from bradycardia, arrest, shock now resolve", ["organophosphate-poisoning-adult", "poisoning-approach-adult"].every((id) => !!resolveLink(id, topics)) && linkedTopicIds(findTopic("bradycardia-adult")!).includes("organophosphate-poisoning-adult"));
+
+t("neurology chapter fifth", (await import("./src/data/protocols")).PROTOCOL_CHAPTERS[4].id === "neurology");
+t("ICH / hypoglycaemia / alcohol-withdrawal / meningitis links now resolve", ["intracranial-haemorrhage-adult", "hypoglycaemia-adult", "alcohol-withdrawal-adult", "meningitis-adult", "seizure-adult"].every((id) => !!resolveLink(id, topics)));
 
 // Old founder pages still render unchanged.
 t("dyspnea and ACS pages kept as authored", !!findTopic("dyspnea-adult") && !!findTopic("cad-acs-adult"));
