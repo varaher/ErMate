@@ -2461,9 +2461,9 @@ ${deidentifyText(rawData.resuscitationDetails || "Not documented").deidentified}
     } else if (effectiveContextType === "ward") {
       // Ask: my ward. One line per open bed, de-identified here again before the model sees it (Rule 4).
       const wardLines: string[] = Array.isArray(rawData?.ward)
-        ? rawData.ward.slice(0, 40).map((l: any) => deidentifyText(String(l || "").slice(0, 400)).deidentified).filter((l: string) => l.trim())
+        ? rawData.ward.slice(0, 40).map((l: any) => deidentifyText(String(l || "").slice(0, 700)).deidentified).filter((l: string) => l.trim())
         : [];
-      contextSummaryText = `=== DOCTOR'S OPEN BEDS (${wardLines.length}) ===\n${wardLines.map((l) => `- ${l}`).join("\n") || "No open beds."}\n===================================`;
+      contextSummaryText = `=== DOCTOR'S OPEN BEDS (${wardLines.length}) ===\nEach line lists only what is documented for that bed. A missing item means NOT DOCUMENTED, never normal and never absent in the patient. Do not guess it.\n${wardLines.map((l) => `- ${l}`).join("\n") || "No open beds."}\n===================================`;
     } else if (effectiveContextType === "icu") {
       // ICU stay: the whole record goes into the system instruction below (buildIcuDiscussSystem)
       contextSummaryText = "";

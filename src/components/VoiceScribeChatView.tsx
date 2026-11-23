@@ -1852,7 +1852,7 @@ export default function VoiceScribeChatView({
       let pending: any = undefined;
       if (mode === "case") {
         if (!activeCase) {
-          reply("No patient is open. Say “open bed 4”, or switch to Ask: my ward.");
+          reply("No patient is open. Say “open bed 4”, or switch to Ask: my list.");
           return;
         }
         contextType = "case";
@@ -3745,7 +3745,7 @@ export default function VoiceScribeChatView({
                 </div>
               ) : msg.mode === "discuss" && msg.sender === "ai" && (
                 <div className="mb-1.5 inline-flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider text-purple-500 dark:text-purple-400">
-                  <Sparkles size={10} /> {msg.askMode === "case" ? "Ask · case" : msg.askMode === "ward" ? "Ask · ward" : msg.askMode === "chat" ? "Chat" : "Discuss"}
+                  <Sparkles size={10} /> {msg.askMode === "case" ? "Ask · case" : msg.askMode === "ward" ? "Ask · list" : msg.askMode === "chat" ? "Chat" : "Discuss"}
                 </div>
               )}
               {msg.sender === "user" ? (
