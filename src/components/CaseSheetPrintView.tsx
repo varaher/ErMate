@@ -1424,7 +1424,9 @@ export default function CaseSheetPrintView({
   const shownCase = canEditPreview && draftCase ? draftCase : clinicalCase;
   useEffect(() => { if (canEditPreview) requestTour("preview"); }, [canEditPreview]);
 
-  const data = propData || (shownCase ? convertClinicalCaseToCaseSheetData(shownCase, defaultHospital) : null);
+  // While the preview is editable, the doctor's draft always wins: print, Copy to EMR and EMR fields
+  // must never fall back to a caller-supplied `data` snapshot that predates the edits (audit 23 Nov 2026).
+  const data = (canEditPreview ? null : propData) || (shownCase ? convertClinicalCaseToCaseSheetData(shownCase, defaultHospital) : null);
 
   // Adult and pediatric sheets are edited in place (click a line and type); one shared base (InlineEdit.tsx).
   const inlineEdit = Boolean(canEditPreview && data && !applySuccess);
@@ -1628,6 +1630,17 @@ export default function CaseSheetPrintView({
                   {copiedCaseText ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
                   <span className="whitespace-nowrap">{copiedCaseText ? "Copied to EMR!" : copyFailed ? "Copy failed — try again" : "Copy to EMR"}</span>
                 </button>
+                <button
+                  type="button"
+                  onClick={() => setShowEmrPanel(true)}
+                  id="preview-emr-fields-button"
+                  className="min-w-[44px] min-h-[44px] flex-1 sm:flex-none justify-center inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-xl transition-all cursor-pointer border bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800"
+                  title="Copy each part into its own box in your hospital EMR (uses the edited preview)"
+                >
+                  <Copy className="w-3.5 h-3.5" />
+                  <span className="whitespace-nowrap">EMR fields</span>
+                </button>
+                {showEmrPanel && data && <CopyToEmrPanel data={data} onClose={() => setShowEmrPanel(false)} />}
                 <button
                   type="button"
                   onClick={handlePrint}
