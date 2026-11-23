@@ -209,7 +209,7 @@ ok(!ped.includes("Adjuvants to Primary:") && ped.includes("PRIMARY SURVEY"), "pe
 
 // Wiring
 const print = readFileSync("src/components/CaseSheetPrintView.tsx", "utf8");
-ok(/\{!data\.isPediatric && <ErCaseRecordBody lines=\{buildErCaseRecord\(data\)\} \/>\}/.test(print), "printed sheet renders the same record for adults");
+ok(/\{!data\.isPediatric && <ErCaseRecordBody[^>]*lines=\{buildErCaseRecord\(data\)\}[^>]*\/>\}/.test(print), "printed sheet renders the same record for adults");
 for (const f of ["src/components/CaseSheetPrintView.tsx", "src/components/CopyToEmrPanel.tsx", "src/components/CaseSheetView.tsx"]) {
   ok(/formatCaseSheetHtml\(/.test(readFileSync(f, "utf8")), `${f}: rich-text copy uses the same record`);
 }

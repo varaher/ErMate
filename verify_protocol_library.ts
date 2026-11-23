@@ -6,11 +6,12 @@ const t = (n: string, c: boolean) => { if (c) { pass++; console.log(`[PASS] ${n}
 
 const topics = allProtocolTopics();
 const ids = topics.map((x) => x.id);
-t("3 adult protocols published", topics.length === 3 && ids.includes("dyspnea-adult") && ids.includes("cad-acs-adult") && ids.includes("cirrhosis-liver-adult"));
+t("7 adult topics published (dyspnea, ACS, cirrhosis + 4 liver branches)", topics.length === 7 && ["dyspnea-adult", "cad-acs-adult", "cirrhosis-liver-adult", "variceal-bleed-adult", "sbp-adult", "hepatic-encephalopathy-adult", "hrs-aki-adult"].every((i) => ids.includes(i)));
 t("topic ids unique", new Set(ids).size === ids.length);
 t("all draft, none falsely marked reviewed", topics.every((x) => x.status === "draft" && x.reviewedOn === ""));
 t("adult and paediatric never mixed", topics.every((x) => x.population === "adult"));
 t("every topic has a source and sections", topics.every((x) => x.source.length > 10 && x.sections.length >= 5));
+t("every topic has a dated reference list or is founder-authored", topics.every((x) => (x.references || []).length > 0 || x.id === "dyspnea-adult" || x.id === "cad-acs-adult"));
 t("every item has text", topics.every((x) => x.sections.every((s) => s.items.length > 0 && s.items.every((i) => i.text.trim().length > 3))));
 t("chapters list the new topics", PROTOCOL_CHAPTERS.some((c) => c.id === "cardiac") && PROTOCOL_CHAPTERS.some((c) => c.id === "gi-hepatic"));
 
@@ -31,26 +32,49 @@ t("RV infarction: avoid preload reduction", allCad.some((i) => /avoid preload re
 t("cardiac topic carries the not-an-order-set notice", /Not an approved clinical order set/.test(cad.notice || ""));
 
 const cir = topics.find((x) => x.id === "cirrhosis-liver-adult")!;
-const allCir = cir.sections.flatMap((s) => s.items);
-t("SBP threshold PMN 250", allCir.some((i) => i.text.includes("250")));
-t("octreotide 50 mcg bolus then 50 mcg/h", allCir.some((i) => /octreotide 50 micrograms IV bolus then 50 micrograms\/hour/.test(i.text)));
-t("restrictive transfusion Hb 7", allCir.some((i) => /Hb 7 g\/dL/.test(i.text)));
-t("no routine TXA / FFP", allCir.some((i) => /Avoid routine TXA/.test(i.text)));
-t("four branches A-D present", ["Branch A", "Branch B", "Branch C", "Branch D"].every((b) => cir.sections.some((s) => s.heading.startsWith(b))));
-t("cirrhosis review notes carried", (cir.reviewNotes || []).length === 4);
+const vb = topics.find((x) => x.id === "variceal-bleed-adult")!;
+const sbp = topics.find((x) => x.id === "sbp-adult")!;
+const he = topics.find((x) => x.id === "hepatic-encephalopathy-adult")!;
+const hrs = topics.find((x) => x.id === "hrs-aki-adult")!;
+const items = (tp: any) => tp.sections.flatMap((s: any) => s.items) as Array<{ text: string; label?: string; critical?: boolean }>;
+const has = (tp: any, re: RegExp) => items(tp).some((i) => re.test(`${i.label || ""} ${i.text}`)) || (tp.firstTen || []).some((f: string) => re.test(f));
+t("cirrhosis v0.3: First 10 minutes present", (cir.firstTen || []).length >= 4);
+t("thiamine never delays glucose", has(cir, /never delay glucose|never before it/i));
+t("beta-blockers/diuretics are conditional, not stopped in everyone", has(cir, /Do not stop them automatically/));
+t("raised INR is not corrected on its own", has(cir, /does not predict bleeding/));
+t("SBP threshold PMN 250", has(sbp, /250/));
+t("SBP albumin 1.5 g/kg day 1 and 1 g/kg day 3", has(sbp, /1\.5 g\/kg/) && has(sbp, /1 g\/kg on day 3/));
+t("variceal: restrictive transfusion Hb 7", has(vb, /below 7 g\/dL/));
+t("variceal: terlipressin 2 mg 4-hourly with ischaemia + hypoxia warnings", has(vb, /2 mg IV every 4 hours/) && has(vb, /hypoxia/) && has(vb, /ischaemi/i));
+t("variceal: octreotide 50 mcg bolus then 50 mcg/h", has(vb, /50 micrograms IV bolus, then 50 micrograms per hour/));
+t("variceal: no TXA, no FFP for numbers", has(vb, /Do not give tranexamic acid/));
+t("variceal: antibiotic prophylaxis", has(vb, /Ceftriaxone 1 g/));
+t("variceal: endoscopy within 12 hours", has(vb, /12 hours/));
+t("variceal: intubation triggers listed", has(vb, /intubate for massive haematemesis/i));
+t("variceal: Baveno VIII stent preferred over balloon where available", has(vb, /stent is preferred where available/));
+t("HE: West Haven grades I-IV", ["Grade I", "Grade II", "Grade III", "Grade IV"].every((g) => items(he).some((i) => i.label === g)));
+t("HE: ammonia does not guide treatment", has(he, /does not guide treatment/));
+t("HE: flumazenil not routine", has(he, /flumazenil routinely/));
+t("HRS: no mandatory 48-hour challenge (ADQI-ICA 2024)", has(hrs, /No fixed 48-hour challenge/) && !has(hrs, /mandatory 48-hour albumin challenge before/));
+t("HRS: terlipressin safety (SpO2, overload)", has(hrs, /SpO2 below 90%/));
+t("HRS: noradrenaline alternative", has(hrs, /Noradrenaline/));
+t("no flumazenil/LOLA/PEG as routine first-line anywhere", !items(he).some((i) => i.critical && /LOLA|PEG|flumazenil/i.test(i.text)));
+t("liver branches point back to the cirrhosis page", [vb, sbp, he, hrs].every((x) => x.parent === "cirrhosis-liver-adult"));
 t("dyspnea review notes carried, content kept", (topics.find((x) => x.id === "dyspnea-adult")!.reviewNotes || []).length === 3 && topics.find((x) => x.id === "dyspnea-adult")!.sections.length >= 8);
 
 t("search by complaint: chest pain -> ACS", searchProtocols("chest pain").some((x) => x.id === "cad-acs-adult"));
 t("search by complaint: hematemesis -> cirrhosis", searchProtocols("hematemesis").some((x) => x.id === "cirrhosis-liver-adult"));
 t("search by complaint: breathlessness -> dyspnea", searchProtocols("breathlessness").some((x) => x.id === "dyspnea-adult"));
 t("search by drug: avil finds ACS", searchProtocols("avil").some((x) => x.id === "cad-acs-adult"));
-t("empty search returns all", searchProtocols("").length === 3);
+t("empty search returns all", searchProtocols("").length === 7);
+t("search: terlipressin finds variceal + HRS", ["variceal-bleed-adult", "hrs-aki-adult"].every((id) => searchProtocols("terlipressin").some((x) => x.id === id)));
+t("search: confusion finds HE", searchProtocols("confusion").some((x) => x.id === "hepatic-encephalopathy-adult"));
 t("nonsense search returns none", searchProtocols("zzzzqqq").length === 0);
 
 const panel = readFileSync("src/components/ProtocolsPanel.tsx", "utf8");
 t("panel shows local-practice badge", panel.includes('data-testid="local-practice-badge"') && panel.includes("not a guideline requirement"));
 t("panel shows notice, review notes, references", panel.includes("protocol-notice") && panel.includes("protocol-review-notes") && panel.includes("protocol-references"));
-const dataSrc = ["cad_acs", "cirrhosis", "dyspnea", "index", "protocolTypes"].map((f) => readFileSync(`src/data/protocols/${f}.ts`, "utf8")).join("\n");
+const dataSrc = ["cad_acs", "cirrhosis", "dyspnea", "variceal_bleed", "sbp", "hepatic_encephalopathy", "hrs_aki", "index", "protocolTypes", "protocolViews"].map((f) => readFileSync(`src/data/protocols/${f}.ts`, "utf8")).join("\n");
 t("library stays AI-free: no fetch / API / model imports", !/fetch\(|authenticatedFetch|gemini|anthropic|openai|sarvam/i.test(dataSrc + panel));
 console.log(`\nProtocol library: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

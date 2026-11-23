@@ -32,8 +32,8 @@ const EM_GROUPS: Array<{
    color: string;
   tabs: Array<{ id: EMSectionTab; label: string }>;
 }> = [
-  { id: "protocolgroup", label: "Protocols", icon: ClipboardList, color: "text-rose-600 bg-rose-600/10",
-    tabs: [{ id: "protocols", label: "Protocols" }] },
+  { id: "protocolgroup", label: "ErMate Handbook", icon: ClipboardList, color: "text-rose-600 bg-rose-600/10",
+    tabs: [{ id: "protocols", label: "ErMate Handbook" }] },
   { id: "airway", label: "Airway & Ventilation", icon: Wind, color: "text-red-500 bg-red-500/10",
     tabs: [{ id: "rsi", label: "RSI Protocol" }, { id: "vent", label: "Ventilator Settings" }, { id: "bipap", label: "BiPAP & CPAP" }] },
   { id: "sedproc", label: "Sedation & Procedures", icon: Zap, color: "text-amber-500 bg-amber-500/10",

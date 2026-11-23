@@ -1,12 +1,17 @@
 import type { ProtocolItem, ProtocolSection, ProtocolSectionKind, ProtocolTopic } from "./protocolTypes";
 
-// Pure helpers over the protocol data. No AI, no network, never rewrites a protocol's wording.
+// Pure helpers over the Handbook data. No AI, no network, never rewrites a protocol's wording.
 // The same helpers feed the on-screen chips and (next step) MATE's spoken answers.
 
 export const KIND_CHIPS: Array<{ kind: ProtocolSectionKind; label: string }> = [
   { kind: "first10", label: "First 10 min" },
+  { kind: "symptoms", label: "Symptoms" },
+  { kind: "pathophysiology", label: "Pathophysiology" },
+  { kind: "approach", label: "Approach" },
+  { kind: "differentials", label: "Differentials" },
   { kind: "investigations", label: "Investigations" },
   { kind: "treatment", label: "Treatment" },
+  { kind: "procedures", label: "Procedures" },
   { kind: "disposition", label: "Disposition" },
   { kind: "pitfalls", label: "Pitfalls" },
 ];
@@ -51,4 +56,26 @@ export function speakInvestigations(topic: ProtocolTopic): string {
   const status = topic.status === "reviewed" ? `Reviewed ${topic.reviewedOn}.` : "Draft protocol, not yet clinically reviewed.";
   if (!items.length) return `${topic.title}: this protocol does not list investigations. ${status}`;
   return `${topic.title}. Investigations: ${items.map(itemLine).join(" ")} ${status}`;
+}
+
+// ---------- links between topics ----------
+
+/** Every topic id this topic links to (items + parent), in page order, without duplicates or itself. */
+export function linkedTopicIds(topic: ProtocolTopic): string[] {
+  const out: string[] = [];
+  const add = (id?: string) => { if (id && id !== topic.id && !out.includes(id)) out.push(id); };
+  add(topic.parent);
+  for (const s of topic.sections) for (const i of s.items) add(i.link);
+  return out;
+}
+
+/** Resolves a link against the published topics. undefined = "Topic coming" (never an error). */
+export function resolveLink(id: string | undefined, topics: ProtocolTopic[]): ProtocolTopic | undefined {
+  if (!id) return undefined;
+  return topics.find((t) => t.id === id);
+}
+
+/** Topics whose page links to this one ("Linked from"). */
+export function backlinks(topicId: string, topics: ProtocolTopic[]): ProtocolTopic[] {
+  return topics.filter((t) => t.id !== topicId && linkedTopicIds(t).includes(topicId));
 }

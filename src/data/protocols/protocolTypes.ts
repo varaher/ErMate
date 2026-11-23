@@ -1,8 +1,22 @@
-// Protocol library data model. Plain data, no AI: what is published is exactly what is shown.
+// ErMate Handbook data model. Plain data, no AI: what is published is exactly what is shown.
+// WikEM-style topic pages (Neeraj, 23 Nov 2026): First 10 minutes, symptoms, pathophysiology, approach,
+// differentials (linked to their own topics), investigations, treatment, procedures, disposition, pitfalls.
 export type ProtocolStatus = "draft" | "reviewed";
 
 /** What a section is for. Drives the jump chips and the "investigations to send" box. Never changes the wording. */
-export type ProtocolSectionKind = "recognition" | "assessment" | "first10" | "investigations" | "treatment" | "disposition" | "pitfalls";
+export type ProtocolSectionKind =
+  | "recognition"
+  | "symptoms"
+  | "pathophysiology"
+  | "approach"
+  | "assessment"
+  | "first10"
+  | "differentials"
+  | "investigations"
+  | "treatment"
+  | "procedures"
+  | "disposition"
+  | "pitfalls";
 
 export interface ProtocolItem {
   /** Short label, e.g. "Anaphylaxis" */
@@ -21,6 +35,11 @@ export interface ProtocolItem {
   origin?: string;
   /** True when this step is an investigation to send / perform (used by the "investigations to send" box) */
   investigation?: boolean;
+  /**
+   * Id of another Handbook topic this step opens ("Open Variceal bleed →").
+   * A link to a topic that is not written yet shows as "Topic coming" and never breaks.
+   */
+  link?: string;
 }
 
 export interface ProtocolSection {
@@ -29,6 +48,8 @@ export interface ProtocolSection {
   kind?: ProtocolSectionKind;
   /** Optional one-line note under the heading */
   note?: string;
+  /** "tiles" = shown as a grid of tiles (used for differentials). Default: list. */
+  layout?: "list" | "tiles";
   items: ProtocolItem[];
 }
 
@@ -47,6 +68,10 @@ export interface ProtocolTopic {
   keywords?: string[];
   /** Shown in amber above the protocol (e.g. "not an approved order set") */
   notice?: string;
+  /** The red "First 10 minutes" box at the top of the page: immediate actions, in order. */
+  firstTen?: string[];
+  /** Id of the parent pathway (e.g. variceal bleed → decompensated cirrhosis). Shown as "Part of …". */
+  parent?: string;
   /** Governance notes for the clinical reviewer: corrections still required before sign-off */
   reviewNotes?: string[];
   /** Verification bibliography (recommended sources, not proof that each step was validated) */
