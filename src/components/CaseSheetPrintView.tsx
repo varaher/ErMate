@@ -7,14 +7,14 @@ import { displayGcs, displayTemperature, displaySpo2, displayGrbs, displayDocume
 import { getDisplayCaseId } from "../utils/caseIdentity";
 import { formatCaseSheetText, formatCaseSheetHtml } from "../utils/caseSheetFormat";
 import { buildErCaseRecord, type ErLine } from "../utils/erCaseRecord";
-import { EditableBlock, InlineSpan, INLINE_EDIT_CSS } from "./InlineEdit";
+import { EditableBlock, InlineSpan, INLINE_EDIT_CSS, InlineEditCtx, EdText, EdBlock } from "./InlineEdit";
 import { copyTextToClipboard } from "../utils/copyToClipboard";
 import CopyToEmrPanel from "./CopyToEmrPanel"; // ← NEW
 import { getTriageDisplay } from "../utils/triageScale";
 import { screeningLines, isolationBanner } from "../utils/triageScreening";
 import { formatAge } from "../utils/ageLabel";
 import type { TriageScreening } from "../types";
-import { EDIT_GROUPS, EDIT_SECTIONS, applySectionEdits } from "../lib/previewedit";
+import { EDIT_GROUPS, EDIT_SECTIONS, applySectionEdits, isEditableSection } from "../lib/previewedit";
 import { requestTour } from "../lib/coachTours";
 
 export { formatCaseSheetText };
@@ -1104,8 +1104,9 @@ function PrimarySurveySection({ data }: { data: PrimarySurveyData }) {
 
   const hasAnyData = airwayFindings || breathingFindings || circulationFindings || disabilityFindings || exposureFindings ||
     v?.rr || v?.spo2 || v?.hr || v?.bp || v?.gcs || v?.grbs || v?.temp;
+  const { editing: ieOn } = React.useContext(InlineEditCtx);
 
-  if (!hasAnyData) {
+  if (!hasAnyData && !ieOn) {
     return (
       <Section>
         <SectionHeading>Primary Survey</SectionHeading>
@@ -1121,13 +1122,13 @@ function PrimarySurveySection({ data }: { data: PrimarySurveyData }) {
         {/* A - Airway */}
         <div className="border-b border-slate-100 pb-1.5 last:border-b-0">
           <span className="font-bold text-slate-900">Airway: </span>
-          <span>{airwayFindings || "Not documented"}</span>
+          <EdText s="Primary Survey" k="airway" text={airwayFindings || ""} shown={airwayFindings || "Not documented"} />
         </div>
 
         {/* B - Breathing */}
         <div className="border-b border-slate-100 pb-1.5 last:border-b-0">
           <span className="font-bold text-slate-900">Breathing: </span>
-          <span>{breathingFindings || "Not documented"}</span>
+          <EdText s="Primary Survey" k="breathing" text={breathingFindings || ""} shown={breathingFindings || "Not documented"} />
           {(v?.rr || v?.spo2) && (
             <div className="inline-flex items-center gap-3 ml-2 font-mono text-xs bg-slate-100 print:bg-transparent px-2 py-0.5 rounded border border-slate-200 print:border-none">
               {v.rr && <span><strong className="font-sans text-[11px] text-slate-600">RR:</strong> {v.rr} /min</span>}
@@ -1139,7 +1140,7 @@ function PrimarySurveySection({ data }: { data: PrimarySurveyData }) {
         {/* C - Circulation */}
         <div className="border-b border-slate-100 pb-1.5 last:border-b-0">
           <span className="font-bold text-slate-900">Circulation: </span>
-          <span>{circulationFindings || "Not documented"}</span>
+          <EdText s="Primary Survey" k="circulation" text={circulationFindings || ""} shown={circulationFindings || "Not documented"} />
           {(v?.hr || v?.bp) && (
             <div className="inline-flex items-center gap-3 ml-2 font-mono text-xs bg-slate-100 print:bg-transparent px-2 py-0.5 rounded border border-slate-200 print:border-none">
               {v.hr && <span><strong className="font-sans text-[11px] text-slate-600">HR:</strong> {v.hr} bpm</span>}
@@ -1151,7 +1152,7 @@ function PrimarySurveySection({ data }: { data: PrimarySurveyData }) {
         {/* D - Disability */}
         <div className="border-b border-slate-100 pb-1.5 last:border-b-0">
           <span className="font-bold text-slate-900">Disability: </span>
-          <span>{disabilityFindings || "Not documented"}</span>
+          <EdText s="Primary Survey" k="disability" text={disabilityFindings || ""} shown={disabilityFindings || "Not documented"} />
           {(v?.gcs || v?.gcsComponents || v?.grbs) && (
             <div className="inline-flex items-center gap-3 ml-2 font-mono text-xs bg-slate-100 print:bg-transparent px-2 py-0.5 rounded border border-slate-200 print:border-none">
               {(v.gcs || v.gcsComponents) && <span><strong className="font-sans text-[11px] text-slate-600">GCS:</strong> {displayGcs(v)}</span>}
@@ -1163,7 +1164,7 @@ function PrimarySurveySection({ data }: { data: PrimarySurveyData }) {
         {/* E - Exposure */}
         <div className="pb-0.5">
           <span className="font-bold text-slate-900">Exposure: </span>
-          <span>{exposureFindings || "Not documented"}</span>
+          <EdText s="Primary Survey" k="exposure" text={exposureFindings || ""} shown={exposureFindings || "Not documented"} />
           {v?.temp && (
             <div className="inline-flex items-center gap-2 ml-2 font-mono text-xs bg-slate-100 print:bg-transparent px-2 py-0.5 rounded border border-slate-200 print:border-none">
               <span><strong className="font-sans text-[11px] text-slate-600">Temp:</strong> {displayTemperature(v.temp)}</span>
@@ -1236,6 +1237,28 @@ function AdjunctsSection({
 }
 
 function SecondarySurveySection({ data, title = "Secondary Survey / Systemic Examination" }: { data: SecondarySurveyData, title?: string }) {
+  const { editing: ieOn } = React.useContext(InlineEditCtx);
+  const editSection = isEditableSection(title) ? title : undefined;
+  if (ieOn && editSection) {
+    const all: { key: string; label: string; value: string }[] = [
+      { key: "general", label: "General", value: data.general || "" },
+      { key: "cvs", label: "CVS", value: data.cvs || "" },
+      { key: "respiratory", label: "Respiratory", value: data.respiratory || "" },
+      { key: "abdomen", label: "Abdomen", value: data.abdomen || "" },
+      { key: "cns", label: "CNS", value: data.cns || "" },
+      { key: "extremities", label: "Extremities", value: data.extremities || "" },
+    ];
+    return (
+      <Section>
+        <SectionHeading>{title}</SectionHeading>
+        <ul className="text-sm list-disc pl-5 space-y-0.5">
+          {all.map((r) => (
+            <li key={r.key}><span className="font-semibold">{r.label}:</span> <EdText s={editSection} k={r.key} text={r.value} /></li>
+          ))}
+        </ul>
+      </Section>
+    );
+  }
   const items = [
     { label: "General", value: data.general },
     { label: "CVS", value: data.cvs },
@@ -1260,7 +1283,8 @@ function SecondarySurveySection({ data, title = "Secondary Survey / Systemic Exa
 }
 
 function PsychologicalAssessmentSection({ data }: { data: PsychologicalAssessmentData | null }) {
-  if (!data) {
+  const { editing: ieOn } = React.useContext(InlineEditCtx);
+  if (!data && !ieOn) {
     return (
       <Section>
         <SectionHeading>Psychological Assessment</SectionHeading>
@@ -1269,6 +1293,7 @@ function PsychologicalAssessmentSection({ data }: { data: PsychologicalAssessmen
     );
   }
 
+  data = data ?? ({} as PsychologicalAssessmentData);
   const fields: { label: string; value: boolean | null | undefined; isRiskFlag: boolean }[] = [
     { label: "Suicidal Ideation", value: data.suicidalIdeation, isRiskFlag: true },
     { label: "Self-Harm History", value: data.selfHarmHistory, isRiskFlag: true },
@@ -1282,7 +1307,7 @@ function PsychologicalAssessmentSection({ data }: { data: PsychologicalAssessmen
   const hasAnyStructured = fields.some(f => f.value !== undefined && f.value !== null && (f.value as any) !== "");
   const hasNotes = Boolean(data.notes && data.notes.trim());
 
-  if (!hasAnyStructured && !hasNotes) {
+  if (!hasAnyStructured && !hasNotes && !ieOn) {
     return (
       <Section>
         <SectionHeading>Psychological Assessment</SectionHeading>
@@ -1310,8 +1335,8 @@ function PsychologicalAssessmentSection({ data }: { data: PsychologicalAssessmen
           ))}
         </div>
       )}
-      {hasNotes && (
-        <p className="text-sm mt-2"><span className="font-semibold">Notes:</span> {data.notes}</p>
+      {(hasNotes || ieOn) && (
+        <p className="text-sm mt-2"><span className="font-semibold">Notes:</span> <EdText s="Psychological Assessment" k="psych" text={data.notes || ""} shown={data.notes} /></p>
       )}
     </Section>
   );
@@ -1401,8 +1426,8 @@ export default function CaseSheetPrintView({
 
   const data = propData || (shownCase ? convertClinicalCaseToCaseSheetData(shownCase, defaultHospital) : null);
 
-  // Adult sheets are edited in place (click a line and type). Pediatric sheets keep the edit window.
-  const inlineEdit = Boolean(canEditPreview && data && !data.isPediatric && !applySuccess);
+  // Adult and pediatric sheets are edited in place (click a line and type); one shared base (InlineEdit.tsx).
+  const inlineEdit = Boolean(canEditPreview && data && !applySuccess);
   const commitInlineEdit = (section: string, key: string, value: string) => {
     if (!shownCase || !data) return;
     const r = applySectionEdits(shownCase, data, section, { [key]: value });
@@ -1447,6 +1472,8 @@ export default function CaseSheetPrintView({
     else window.print();
   };
 
+  const ieNow = Boolean(inlineEdit && inlineOn); // the Edit switch is on
+
   const hasInvestigations = Boolean(
     data.investigationLabsOrdered ||
     data.labs.length > 0 ||
@@ -1478,6 +1505,7 @@ export default function CaseSheetPrintView({
   );
 
   return (
+    <InlineEditCtx.Provider value={{ editing: ieNow, onEdit: ieNow ? commitInlineEdit : undefined }}>
     <div className={`min-h-screen bg-slate-100 dark:bg-slate-900 print:bg-white text-slate-900 dark:text-slate-100 font-sans`}>
       {/* Sticky Header with Banner & Toolbar for Preview / Print */}
       <div className="no-print sticky top-[var(--ermate-header-height,50px)] z-30 shadow-sm">
@@ -1722,7 +1750,7 @@ export default function CaseSheetPrintView({
         )}
       </div>
 
-      <div className="case-sheet-print max-w-3xl mx-auto bg-white shadow-md print:shadow-none px-8 py-8 my-6 print:my-0 text-slate-900 border border-slate-200 print:border-none rounded-xl print:rounded-none">
+      <div className={`case-sheet-print max-w-3xl mx-auto bg-white shadow-md print:shadow-none px-8 py-8 my-6 print:my-0 text-slate-900 border border-slate-200 print:border-none rounded-xl print:rounded-none${ieNow && data.isPediatric ? " ie-on" : ""}`}>
         <div className="flex items-center justify-between border-b-2 border-black pb-3 mb-4">
           <div className="flex items-center gap-3">
             <img src="/icon-192.png" alt="ErMate" className="w-10 h-10 object-contain rounded-lg shrink-0" />
@@ -1776,7 +1804,7 @@ export default function CaseSheetPrintView({
         {data.isPediatric && (
         <Section>
           <SectionHeading>Presenting Complaint</SectionHeading>
-          <div className="text-sm font-medium">{data.presentingComplaint || <EmptyLine />}</div>
+          <div className="text-sm font-medium"><EdText s="Presenting Complaint" k="cc" text={data.presentingComplaint || ""} hint="Add presenting complaint" shown={data.presentingComplaint || <EmptyLine />} /></div>
         </Section>
         )}
 
@@ -1820,36 +1848,50 @@ export default function CaseSheetPrintView({
                 and Adjuncts (Neeraj, 21 Nov 2026). Written from the whole case on Preview. */}
             <Section>
               <SectionHeading>History of Present Illness</SectionHeading>
-              {data.hpi ? <p className="text-sm whitespace-pre-line">{data.hpi}</p> : <EmptyLine />}
+              <div className="text-sm"><EdBlock s="Secondary Assessment / History" k="hpi" lines={data.hpi ? [data.hpi] : []} shown={data.hpi ? <p className="whitespace-pre-line">{data.hpi}</p> : <EmptyLine />} /></div>
             </Section>
 
             <Section>
               <SectionHeading>Secondary Assessment / History</SectionHeading>
               <div className="text-sm space-y-1.5">
-                <div><span className="font-semibold text-slate-900">Signs & Symptoms:</span> {data.symptoms.length > 0 ? data.symptoms.join(", ") : ((data.pediatricDetails as LegacyPediatricDetails)?.historySignsSymptoms || "None documented")}</div>
-                <div><span className="font-semibold text-slate-900">Allergies:</span> {data.allergies.length > 0 ? data.allergies.join(", ") : ((data.pediatricDetails as LegacyPediatricDetails)?.historyAllergies || "None documented")}</div>
-                <div><span className="font-semibold text-slate-900">Medications:</span> {data.currentMedications.length > 0 ? data.currentMedications.join(", ") : ((data.pediatricDetails as LegacyPediatricDetails)?.historyMedications || "None documented")}</div>
-                <div><span className="font-semibold text-slate-900">Past Medical History:</span> {data.pastHistory.length > 0 ? data.pastHistory.join(" · ") : ((data.pediatricDetails as LegacyPediatricDetails)?.historyPastMedical || "Not documented")}</div>
-                <div><span className="font-semibold text-slate-900">Last Meal:</span> {data.lastMeal || (data.pediatricDetails as LegacyPediatricDetails)?.historyLastMeal || "Not documented"}</div>
-                <div><span className="font-semibold text-slate-900">Events Preceding:</span> {data.events || (data.pediatricDetails as LegacyPediatricDetails)?.historyEvents || "Not documented"}</div>
-                {data.familyHistory && <div><span className="font-semibold text-slate-900">Family History:</span> {data.familyHistory}</div>}
-                {data.socialHistory && <div><span className="font-semibold text-slate-900">Social History:</span> {data.socialHistory}</div>}
-                {data.surgicalHistory && <div><span className="font-semibold text-slate-900">Surgical History:</span> {data.surgicalHistory}</div>}
-                {data.lmp && <div><span className="font-semibold text-slate-900">LMP:</span> {data.lmp}</div>}
+                {(() => {
+                  const legacy = (data.pediatricDetails || {}) as LegacyPediatricDetails;
+                  const S = "Secondary Assessment / History";
+                  const rows: { label: string; k: string; text: string; empty: string; always: boolean }[] = [
+                    { label: "Signs & Symptoms", k: "symptoms", text: data.symptoms.length > 0 ? data.symptoms.join(", ") : (legacy.historySignsSymptoms || ""), empty: "None documented", always: true },
+                    { label: "Allergies", k: "allergies", text: data.allergies.length > 0 ? data.allergies.join(", ") : (legacy.historyAllergies || ""), empty: "None documented", always: true },
+                    { label: "Medications", k: "medications", text: data.currentMedications.length > 0 ? data.currentMedications.join(", ") : (legacy.historyMedications || ""), empty: "None documented", always: true },
+                    { label: "Past Medical History", k: "pastHistory", text: data.pastHistory.length > 0 ? data.pastHistory.join(" · ") : (legacy.historyPastMedical || ""), empty: "Not documented", always: true },
+                    { label: "Last Meal", k: "lastMeal", text: data.lastMeal || legacy.historyLastMeal || "", empty: "Not documented", always: true },
+                    { label: "Events Preceding", k: "events", text: data.events || legacy.historyEvents || "", empty: "Not documented", always: true },
+                    { label: "Family History", k: "familyHistory", text: data.familyHistory || "", empty: "Not documented", always: false },
+                    { label: "Social History", k: "socialHistory", text: data.socialHistory || "", empty: "Not documented", always: false },
+                    { label: "Surgical History", k: "surgicalHistory", text: data.surgicalHistory || "", empty: "Not documented", always: false },
+                    { label: "LMP", k: "lmp", text: data.lmp || "", empty: "Not documented", always: false },
+                  ];
+                  return rows
+                    .filter((r) => r.always || r.text || (inlineEdit && inlineOn))
+                    .map((r) => (
+                      <div key={r.k}>
+                        <span className="font-semibold text-slate-900">{r.label}:</span>{" "}
+                        <EdText s={S} k={r.k} text={r.text} shown={r.text || r.empty} />
+                      </div>
+                    ));
+                })()}
               </div>
             </Section>
 
             <SecondarySurveySection data={data.secondarySurvey} title="Focused Physical Examination" />
             <PsychologicalAssessmentSection data={data.psychologicalAssessment} />
 
-            {hasInvestigations && (
+            {(hasInvestigations || ieNow) && (
               <Section>
                 <SectionHeading>Investigations & Diagnostic Studies</SectionHeading>
                 <div className="space-y-3">
-                  {data.investigationLabsOrdered && (
+                  {(data.investigationLabsOrdered || ieNow) && (
                     <div>
                       <p className="text-xs font-bold uppercase tracking-wide text-slate-600 print:text-black mb-0.5">Laboratory Investigations Ordered</p>
-                      <p className="text-sm whitespace-pre-line text-slate-900 print:text-black">{data.investigationLabsOrdered}</p>
+                      <div className="text-sm text-slate-900 print:text-black"><EdBlock s="Investigations & Diagnostic Studies" k="labsOrdered" lines={(data.investigationLabsOrdered ? String(data.investigationLabsOrdered).split("\n") : [])} shown={<p className="whitespace-pre-line">{data.investigationLabsOrdered}</p>} /></div>
                     </div>
                   )}
 
@@ -1866,26 +1908,38 @@ export default function CaseSheetPrintView({
                     </div>
                   )}
 
-                  {data.investigationImaging && (
+                  {(data.investigationImaging || ieNow) && (
                     <div>
                       <p className="text-xs font-bold uppercase tracking-wide text-slate-600 print:text-black mb-0.5">Diagnostic Imaging (X-Ray / CT / MRI / USG)</p>
-                      <p className="text-sm whitespace-pre-line text-slate-900 print:text-black">{data.investigationImaging}</p>
+                      <div className="text-sm text-slate-900 print:text-black"><EdBlock s="Investigations & Diagnostic Studies" k="imaging" lines={(data.investigationImaging ? String(data.investigationImaging).split("\n") : [])} shown={<p className="whitespace-pre-line">{data.investigationImaging}</p>} /></div>
                     </div>
                   )}
 
-                  {data.investigationResultsSummary && (
+                  {(data.investigationResultsSummary || ieNow) && (
                     <div>
                       <p className="text-xs font-bold uppercase tracking-wide text-slate-600 print:text-black mb-0.5">Investigation Results Summary</p>
-                      <p className="text-sm whitespace-pre-line text-slate-900 print:text-black">{data.investigationResultsSummary}</p>
+                      <div className="text-sm text-slate-900 print:text-black"><EdBlock s="Investigations & Diagnostic Studies" k="resultsSummary" lines={(data.investigationResultsSummary ? String(data.investigationResultsSummary).split("\n") : [])} shown={<p className="whitespace-pre-line">{data.investigationResultsSummary}</p>} /></div>
                     </div>
                   )}
                 </div>
               </Section>
             )}
 
-            {hasTreatments && (
+            {(hasTreatments || ieNow) && (
               <Section>
                 <SectionHeading>Treatment Given & Emergency Orders</SectionHeading>
+                {ieNow ? (
+                  <div className="space-y-2">
+                    <div>
+                      <p className="text-xs font-bold uppercase tracking-wide text-slate-600 mb-0.5">Treatment given (one per line)</p>
+                      <EdBlock s="Treatment Given & Emergency Orders" k="drugs" kind="dash" lines={data.treatmentGiven} />
+                    </div>
+                    <div>
+                      <p className="text-xs font-bold uppercase tracking-wide text-slate-600 mb-0.5">Treatment Notes & Orders</p>
+                      <div className="text-sm font-mono"><EdBlock s="Treatment Given & Emergency Orders" k="treatmentNotes" lines={data.treatmentNotes ? data.treatmentNotes.split("\n") : []} /></div>
+                    </div>
+                  </div>
+                ) : (<>
                 {data.treatmentGiven.length > 0 && (
                   <ul className="text-sm list-disc pl-5 space-y-0.5 font-mono mb-2">
                     {data.treatmentGiven.map((t, i) => <li key={i}>{t}</li>)}
@@ -1899,20 +1953,26 @@ export default function CaseSheetPrintView({
                 ) : !data.treatmentGiven.length && (data.pediatricDetails as LegacyPediatricDetails)?.treatmentGiven ? (
                   <div className="text-sm font-mono">{(data.pediatricDetails as LegacyPediatricDetails)?.treatmentGiven}</div>
                 ) : null}
+                </>)}
               </Section>
             )}
 
-            {hasPedProvisionalDiagnosis && (
+            {(hasPedProvisionalDiagnosis || ieNow) && (
               <Section>
                 <SectionHeading>Provisional Diagnosis</SectionHeading>
-                <div className="text-sm font-bold text-indigo-950 print:text-black">{data.provisionalDiagnosis || (data.pediatricDetails as LegacyPediatricDetails)?.provisionalDiagnosisDischarge}</div>
+                <div className="text-sm font-bold text-indigo-950 print:text-black"><EdText s="Provisional Diagnosis" k="provisional" text={data.provisionalDiagnosis || (data.pediatricDetails as LegacyPediatricDetails)?.provisionalDiagnosisDischarge || ""} hint="Add provisional diagnosis" /></div>
               </Section>
             )}
 
-            {hasPedDifferentials && (
+            {(hasPedDifferentials || ieNow) && (
               <Section>
                 <SectionHeading>Differential Diagnosis</SectionHeading>
-                {data.differentials.length > 0 ? (
+                {ieNow && !data.differentials.some((d) => d.status) ? (
+                  <div className="text-sm space-y-2">
+                    <EdBlock s="Differential Diagnosis" k="differentials" kind="dash" lines={data.differentials.map((d) => d.diagnosis)} hint="Add differentials, one per line" />
+                    <div><span className="font-semibold">Notes / Differential Details:</span> <EdBlock s="Differential Diagnosis" k="diffNotes" lines={data.provisionalDifferentialDiagnoses ? data.provisionalDifferentialDiagnoses.split("\n") : []} hint="Add notes" /></div>
+                  </div>
+                ) : data.differentials.length > 0 ? (
                   <ul className="text-sm list-disc pl-5 mt-1 space-y-0.5">
                     {data.differentials.map((d, i) => <li key={i}>{d.diagnosis}{d.status ? ` (${d.status})` : ""}</li>)}
                   </ul>
@@ -1983,26 +2043,31 @@ export default function CaseSheetPrintView({
             <Section>
               <SectionHeading>Condition at Time of Shift / Disposition</SectionHeading>
               <div className="text-sm space-y-1">
-                <div><span className="font-bold">Status:</span> {data.disposition.status || "Not yet determined"}</div>
-                {data.disposition.destinationUnit && <div><span className="font-bold">Destination:</span> {data.disposition.destinationUnit}</div>}
+                <div><span className="font-bold">Status:</span> <EdText s="Condition at Time of Shift / Disposition" k="status" text={data.disposition.status || ""} shown={data.disposition.status || "Not yet determined"} hint="Not yet determined" /></div>
+                {(data.disposition.destinationUnit || ieNow) && <div><span className="font-bold">Destination:</span> <EdText s="Condition at Time of Shift / Disposition" k="destination" text={data.disposition.destinationUnit || ""} hint="Add" /></div>}
                 {data.disposition.observationNotes && <div><span className="font-bold">Disposition Notes:</span> {data.disposition.observationNotes}</div>}
                 {data.disposition.durationInEr && <div><span className="font-bold">Duration in ER:</span> {data.disposition.durationInEr}</div>}
-                {data.disposition.conditionAtShift && <div><span className="font-bold">Condition at Shift:</span> {data.disposition.conditionAtShift}</div>}
-                {data.disposition.managementPlan && <div><span className="font-bold">Management Plan:</span> {data.disposition.managementPlan}</div>}
+                {(data.disposition.conditionAtShift || ieNow) && <div><span className="font-bold">Condition at Shift:</span> <EdText s="Condition at Time of Shift / Disposition" k="condition" text={data.disposition.conditionAtShift || ""} hint="Add" /></div>}
+                {(data.disposition.managementPlan || ieNow) && <div><span className="font-bold">Management Plan:</span> <EdText s="Condition at Time of Shift / Disposition" k="plan" text={data.disposition.managementPlan || ""} hint="Add" /></div>}
                 {data.disposition.consultsRequested.length > 0 && <div><span className="font-bold">Consults Requested:</span> {data.disposition.consultsRequested.join(", ")}</div>}
-                {data.disposition.followUpAdvice && <div><span className="font-bold">Follow-Up Advice:</span> {data.disposition.followUpAdvice}</div>}
+                {(data.disposition.followUpAdvice || ieNow) && <div><span className="font-bold">Follow-Up Advice:</span> <EdText s="Condition at Time of Shift / Disposition" k="followUp" text={data.disposition.followUpAdvice || ""} hint="Add" /></div>}
               </div>
             </Section>
           </>
         )}
 
-        {data.isPediatric && ((data.notes.progressNotes && data.notes.progressNotes.trim() !== "Case created via ErMate Voice Scribe dictation.") || data.notes.addendum) && (
+        {data.isPediatric && (ieNow || (data.notes.progressNotes && data.notes.progressNotes.trim() !== "Case created via ErMate Voice Scribe dictation.") || data.notes.addendum) && (
           <Section>
             <SectionHeading>Clinical Notes & Addendum</SectionHeading>
-            {data.notes.progressNotes && data.notes.progressNotes.trim() !== "Case created via ErMate Voice Scribe dictation." && (
-              <p className="text-sm whitespace-pre-line">{data.notes.progressNotes}</p>
-            )}
-            {data.notes.addendum && <p className="text-sm whitespace-pre-line mt-1"><span className="font-bold">Addendum:</span> {data.notes.addendum}</p>}
+            {(() => {
+              const pn = data.notes.progressNotes && data.notes.progressNotes.trim() !== "Case created via ErMate Voice Scribe dictation." ? data.notes.progressNotes : "";
+              return (
+                <>
+                  {(pn || ieNow) && <div className="text-sm"><EdBlock s="Clinical Notes & Addendum" k="notes" lines={pn ? pn.split("\n") : []} shown={<p className="whitespace-pre-line">{pn}</p>} hint="Add clinical notes" /></div>}
+                  {(data.notes.addendum || ieNow) && <div className="text-sm mt-1"><span className="font-bold">Addendum:</span> <EdBlock s="Clinical Notes & Addendum" k="addendum" lines={data.notes.addendum ? data.notes.addendum.split("\n") : []} shown={<span className="whitespace-pre-line">{data.notes.addendum}</span>} hint="Add addendum" /></div>}
+                </>
+              );
+            })()}
           </Section>
         )}
 
@@ -2065,5 +2130,6 @@ export default function CaseSheetPrintView({
         />
       )}
     </div>
+    </InlineEditCtx.Provider>
   );
 }

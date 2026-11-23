@@ -36,10 +36,17 @@ export function blockTextToValue(text: string): string {
     .join("\n");
 }
 
+/** Text box content back to the stored text for free-text documents (discharge summary): keeps the doctor's own "-" / "•" marks and blank lines. */
+export function blockTextToFreeValue(text: string): string {
+  return text.split("\n").map((l) => l.replace(/\s+$/, "")).join("\n").trim();
+}
+
 export function EditableBlock({
-  kind, lines, placeholder, onCommit,
+  kind, lines, placeholder, onCommit, keepMarks,
 }: {
   kind: LineKind;
+  /** Free-text field: do not strip leading "-" marks or blank lines on commit. */
+  keepMarks?: boolean;
   lines: string[];
   /** The block is only the "Not documented." placeholder of an empty field. */
   placeholder?: boolean;
@@ -82,7 +89,7 @@ export function EditableBlock({
         onBlur={() => {
           setEditing(false);
           if (cancelled.current) { cancelled.current = false; return; }
-          if (text !== initial) onCommit(blockTextToValue(text));
+          if (text !== initial) onCommit(keepMarks ? blockTextToFreeValue(text) : blockTextToValue(text));
         }}
         className="no-print block w-full resize-none overflow-hidden rounded-md border-2 border-indigo-500 bg-white px-2 py-1 text-sm leading-relaxed text-slate-900 outline-none shadow-sm"
       />
@@ -148,6 +155,44 @@ export function InlineSpan({
         const v = (e.currentTarget.textContent || "").replace(/\s+/g, " ").trim();
         if (v !== text.trim()) onCommit(v);
       }}
+    />
+  );
+}
+
+/**
+ * SHARED BASE for every sheet type (adult ER, pediatric, and the ICU / OPD sheets later).
+ * A sheet wraps its body in <InlineEditCtx.Provider value={{ editing, onEdit }}> and marks each editable
+ * place with <EdText> (one line next to a label) or <EdBlock> (a paragraph / list of lines), giving the
+ * section title + field key from src/lib/previewedit.ts. Outside edit mode they print the plain text, so
+ * the sheet looks and prints exactly as before. A new sheet type only has to add its fields to previewedit.ts.
+ */
+export interface InlineEditState {
+  editing: boolean;
+  onEdit?: (section: string, key: string, value: string) => void;
+}
+export const InlineEditCtx = React.createContext<InlineEditState>({ editing: false });
+
+/** One typeable line after a label ("Airway: ..."). `text` is what is stored ("" when empty); `shown` is what is printed when not editing. */
+export function EdText({ s, k, text, shown, hint }: { s?: string; k: string; text: string; shown?: React.ReactNode; hint?: string }) {
+  const { editing, onEdit } = React.useContext(InlineEditCtx);
+  if (!editing || !onEdit || !s) return <>{shown ?? text}</>;
+  return <InlineSpan text={text} hint={hint || "Not documented"} placeholder={!text} onCommit={(v) => onEdit(s, k, v)} />;
+}
+
+/** A paragraph or list of lines for one field. `kind` "dash" keeps "- " rows. */
+export function EdBlock({ s, k, lines, kind = "para", shown, hint, keepMarks }: {
+  s?: string; k: string; lines: string[]; kind?: LineKind; shown?: React.ReactNode; hint?: string; keepMarks?: boolean;
+}) {
+  const { editing, onEdit } = React.useContext(InlineEditCtx);
+  if (!editing || !onEdit || !s) return <>{shown ?? lines.map((l, i) => <p key={i} className={LINE_CLASS[kind]}>{kind === "dash" ? `- ${l}` : l}</p>)}</>;
+  const empty = lines.length === 0 || lines.every((l) => !l.trim());
+  return (
+    <EditableBlock
+      kind={kind}
+      lines={empty ? [hint || "Not documented"] : lines}
+      placeholder={empty}
+      keepMarks={keepMarks}
+      onCommit={(v) => onEdit(s, k, v)}
     />
   );
 }

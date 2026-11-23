@@ -102,6 +102,12 @@ export interface DischargeSummaryData {
 export const STATUTORY_FOOTER =
   "This discharge summary provides clinical information to facilitate continuity of patient care. A treatment/discharge certificate for statutory purposes will be issued on request as per applicable state medico-legal regulations. For a disability certificate, approach the Government-constituted Medical Board.";
 
+// A number means years ("45 Years"); text such as "6 months" or "14 days" is printed as given (infants were printed as "N Years").
+function ageText(age: string | number): string {
+  if (typeof age === "string" && /[a-z]/i.test(age)) return age;
+  return age ? age + " Years" : "Not documented";
+}
+
 const HOSPITAL_NAME_NOT_SET = "[Hospital name not set]";
 const HOSPITAL_ADDRESS_NOT_SET = "Hospital address not set in profile";
 const HOSPITAL_PHONE_NOT_SET = "Hospital contact number not set in profile";
@@ -143,7 +149,7 @@ export function formatDischargeSummaryText(d: DischargeSummaryData): string {
   lines.push("**Discharge Summary**");
   lines.push("");
   lines.push("**PATIENT NAME:** " + d.patientName);
-  lines.push("**AGE / GENDER:** " + (d.patientAge ? d.patientAge + " Years" : "Not documented") + " / " + (d.patientGender || "Not documented"));
+  lines.push("**AGE / GENDER:** " + ageText(d.patientAge) + " / " + (d.patientGender || "Not documented"));
   lines.push("**UHID / CR NUMBER:** " + (d.uhid || "Not documented"));
   lines.push("");
   lines.push("**MLC:** " + (d.isMlc === "Yes" ? ("Yes" + (d.mlcNo ? " (" + d.mlcNo + ")" : "")) : "No"));
@@ -255,7 +261,7 @@ export function formatDischargeSummaryHtml(d: DischargeSummaryData): string {
   parts.push(hosp.addressLine + "<br/><br/>");
   parts.push("<strong>Discharge Summary</strong><br/><br/>");
   parts.push("<strong>PATIENT NAME:</strong> " + d.patientName + "<br/>");
-  parts.push("<strong>AGE / GENDER:</strong> " + (d.patientAge ? d.patientAge + " Years" : "Not documented") + " / " + (d.patientGender || "Not documented") + "<br/>");
+  parts.push("<strong>AGE / GENDER:</strong> " + ageText(d.patientAge) + " / " + (d.patientGender || "Not documented") + "<br/>");
   parts.push("<strong>UHID / CR NUMBER:</strong> " + (d.uhid || "Not documented") + "<br/><br/>");
   parts.push("<strong>MLC:</strong> " + (d.isMlc === "Yes" ? ("Yes" + (d.mlcNo ? " (" + d.mlcNo + ")" : "")) : "No") + "<br/><br/>");
   parts.push("<strong>Allergy :</strong> " + (d.allergies || "Not documented") + "<br/><br/>");

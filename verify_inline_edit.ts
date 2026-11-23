@@ -50,7 +50,8 @@ t("plain text output has no edit markup", !/edit|"s":/.test(erCaseRecordToText(l
 
 // wiring
 const view = readFileSync("src/components/CaseSheetPrintView.tsx", "utf8");
-t("adult preview edits in place, pediatric keeps the window", /const inlineEdit = Boolean\(canEditPreview && data && !data\.isPediatric && !applySuccess\)/.test(view) && /onEdit=\{inlineEdit \? commitInlineEdit : undefined\}/.test(view));
+t("adult and pediatric previews edit in place (shared base)", /const inlineEdit = Boolean\(canEditPreview && data && !applySuccess\)/.test(view) && /onEdit=\{inlineEdit && inlineOn \? commitInlineEdit : undefined\}/.test(view));
 
+t("an explicit Edit switch turns it on, and is off by default", /const \[inlineOn, setInlineOn\] = useState\(false\)/.test(view) && /\{inlineOn \? "Done editing" : "Edit"\}/.test(view));
 console.log(fail ? `${fail} FAILED` : "ALL PASS");
 process.exit(fail ? 1 : 0);

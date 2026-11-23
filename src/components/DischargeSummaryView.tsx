@@ -1,8 +1,9 @@
 import { missingDischargeItems, mayAiFillDischargeField, type AiDischargeField } from "../mate/mateDischargeIntent";
 import React, { useState, useEffect, useRef } from "react";
 import { formatAgeLong } from "../utils/ageLabel";
+import { InlineEditCtx, EdText, EdBlock, INLINE_EDIT_CSS } from "./InlineEdit";
 import { ConfirmModal } from "./shared/ConfirmModal";
-import { ArrowLeft, Sparkles, CheckCircle, Save, RefreshCw, AlertCircle, Printer, ShieldAlert, FileText, Check, AlertTriangle, ListFilter, Copy, Download, ChevronDown, FileCheck, MessageSquare, Trash2 } from "lucide-react";
+import { Pencil, ArrowLeft, Sparkles, CheckCircle, Save, RefreshCw, AlertCircle, Printer, ShieldAlert, FileText, Check, AlertTriangle, ListFilter, Copy, Download, ChevronDown, FileCheck, MessageSquare, Trash2 } from "lucide-react";
 import { ClinicalCase, DischargeInfo, DischargeSummaryStatus, UserProfile } from "../types";
 import VoiceRecorder from "./shared/VoiceRecorder";
 import { triggerPrintWithTip } from "../utils/printWithTip";
@@ -42,6 +43,15 @@ interface DischargeSummaryViewProps {
 
 type TabType = "admin-vitals" | "clinical-hx" | "primary-assessment" | "secondary-assessment" | "course-plans";
 
+/** One typeable value on the discharge sheet (module level so it keeps focus while typing). */
+function DF({ k, v, hint }: { k: string; v: string; hint?: string }) {
+  return <EdText s="discharge" k={k} text={v || ""} shown={v || "Not documented"} hint={hint} />;
+}
+/** A paragraph / list field on the discharge sheet. */
+function DB({ k, v }: { k: string; v: string }) {
+  return <EdBlock s="discharge" k={k} lines={v ? v.split("\n") : []} keepMarks shown={v || "Not documented"} />;
+}
+
 export default function DischargeSummaryView({
   currentCase,
   onBack,
@@ -73,6 +83,7 @@ export default function DischargeSummaryView({
   }, [currentCase.id, startInEdit]);
   const [editedNotSaved, setEditedNotSaved] = useState<boolean>(false);
   const showEditor = previewMode || isEditing;
+  const [inlineOn, setInlineOn] = useState(false); // Edit switch: the sheet itself becomes typeable
   const [downloadMenuOpen, setDownloadMenuOpen] = useState(false);
   const [isDiscussModalOpen, setIsDiscussModalOpen] = useState(false);
 
@@ -388,7 +399,8 @@ export default function DischargeSummaryView({
   // --- Canonical discharge summary formatter (shared with HandoverView's paste-from-EMR path) ---
   const buildDischargeSummaryData = (): DischargeSummaryData => ({
     patientName: currentCase.patient.name,
-    patientAge: currentCase.patient.age || "",
+    // Months/days for infants, years for adults (the preview already showed this; the copy said "N Years").
+    patientAge: (currentCase.patient.age && currentCase.patient.age >= 1 && !currentCase.patient.ageMonths) ? currentCase.patient.age : formatAgeLong(currentCase.patient.age, currentCase.patient.ageMonths, (currentCase.patient as any).ageDays),
     patientGender: currentCase.patient.gender,
     uhid,
     isMlc,
@@ -703,6 +715,33 @@ export default function DischargeSummaryView({
     };
   };
 
+  // Edit on the sheet: every typeable place names its field; the value goes through the same setters the form uses.
+  const applyInline = (_section: string, key: string, value: string) => {
+    const setters: Record<string, (v: string) => void> = {
+      uhid: setUhid, allergies: setAllergies,
+      arrivalHr: setArrivalHr, arrivalBp: setArrivalBp, arrivalRr: setArrivalRr, arrivalSpo2: setArrivalSpo2, arrivalGcs: setArrivalGcs, arrivalPainScore: setArrivalPainScore, arrivalGrbs: setArrivalGrbs, arrivalTemp: setArrivalTemp,
+      dischargeHr: setDischargeHr, dischargeBp: setDischargeBp, dischargeRr: setDischargeRr, dischargeSpo2: setDischargeSpo2, dischargeGcs: setDischargeGcs, dischargePainScore: setDischargePainScore, dischargeGrbs: setDischargeGrbs, dischargeTemp: setDischargeTemp,
+      presentingComplaints: setPresentingComplaints, historyOfPresentIllness: setHistoryOfPresentIllness, pastMedicalHistory: setPastMedicalHistory, familyGynaeHistory: setFamilyGynaeHistory, lmp: setLmp, generalExamination: setGeneralExamination,
+      primaryAirway: setPrimaryAirway, primaryAirwayIntervention: setPrimaryAirwayIntervention,
+      primaryBreathing: setPrimaryBreathing, primaryBreathingWork: setPrimaryBreathingWork, primaryBreathingAirEntry: setPrimaryBreathingAirEntry, primaryBreathingCct: setPrimaryBreathingCct, primaryBreathingSubcut: setPrimaryBreathingSubcut, primaryBreathingEfast: setPrimaryBreathingEfast, primaryBreathingIntervention: setPrimaryBreathingIntervention,
+      primaryCirculation: setPrimaryCirculation, primaryCirculationCrt: setPrimaryCirculationCrt, primaryCirculationDnv: setPrimaryCirculationDnv, primaryCirculationPct: setPrimaryCirculationPct, primaryCirculationDeformity: setPrimaryCirculationDeformity, primaryCirculationFast: setPrimaryCirculationFast, primaryCirculationInterventions: setPrimaryCirculationInterventions,
+      primaryDisabilityAvpuGcs: setPrimaryDisabilityAvpuGcs, primaryDisabilityPupils: setPrimaryDisabilityPupils, primaryDisabilityGrbs: setPrimaryDisabilityGrbs,
+      primaryExposureTemp: setPrimaryExposureTemp, primaryExposureTrauma: setPrimaryExposureTrauma,
+      secondaryPicle: setSecondaryPicle, secondaryChest: setSecondaryChest, secondaryCvs: setSecondaryCvs, secondaryPa: setSecondaryPa, secondaryCns: setSecondaryCns, secondaryExtremities: setSecondaryExtremities,
+      courseInHospital: setCourseInHospital, investigationsResults: setInvestigationsResults,
+      primaryDiagnosis: setPrimaryDiagnosis, secondaryDiagnosis: setSecondaryDiagnosis,
+      dischargeMedications: setDischargeMedications, dischargeCondition: setDischargeCondition, followUpPlan: setFollowUpPlan,
+      emResidentName: setEmResidentName, emConsultantName: setEmConsultantName,
+    };
+    const set = setters[key];
+    if (!set) return;
+    if (key === "courseInHospital") courseTextRef.current = value; // keep the live-course merge from overwriting a typed course
+    set(value);
+    setIsManuallyEdited(true);
+    if (summaryStatus !== "FINALIZED") setSummaryStatus("MANUALLY_EDITED");
+    setEditedNotSaved(true);
+  };
+
   const handleApplyPreviewDischargeAction = async () => {
     if (!onApplyPreviewDischarge || isApplyingDischarge) return;
     setIsApplyingDischarge(true);
@@ -749,7 +788,9 @@ export default function DischargeSummaryView({
   };
 
   return (
+    <InlineEditCtx.Provider value={{ editing: inlineOn, onEdit: inlineOn ? applyInline : undefined }}>
     <div className="max-w-7xl mx-auto space-y-6" id="discharge-summary-container">
+      <style>{INLINE_EDIT_CSS}</style>
       {/* Header */}
       <div className="sticky top-[var(--ermate-header-height,50px)] z-20 bg-white/95 dark:bg-slate-950/95 backdrop-blur-md -mx-4 px-4 py-2.5 sm:py-3 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3 mb-4 shadow-2xs no-print">
         <div className="flex items-center gap-2 sm:gap-3 min-w-0">
@@ -904,6 +945,17 @@ export default function DischargeSummaryView({
             )}
           </div>
 
+          <button
+            type="button"
+            onClick={() => setInlineOn((v) => !v)}
+            aria-pressed={inlineOn}
+            id="discharge-inline-edit-toggle"
+            title={inlineOn ? "Finish editing the sheet" : "Edit on the sheet: every highlighted line becomes typeable"}
+            className={`inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold rounded-lg transition-all border cursor-pointer ${inlineOn ? "bg-purple-600 hover:bg-purple-700 text-white border-purple-600" : "bg-purple-50 hover:bg-purple-100 text-purple-700 border-purple-300 dark:bg-purple-950/40 dark:text-purple-300 dark:border-purple-800"}`}
+          >
+            {inlineOn ? <Check className="w-4 h-4" /> : <Pencil className="w-4 h-4" />}
+            {inlineOn ? "Done editing" : "Edit on sheet"}
+          </button>
           <button
             onClick={() => triggerPrintWithTip()}
             className="inline-flex items-center gap-1.5 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-lg transition-all dark:bg-slate-800 dark:text-slate-300"
@@ -1800,7 +1852,7 @@ export default function DischargeSummaryView({
           </div>
 
           {/* Actual Printable Page Wrapper */}
-          <div className="flex-1 overflow-y-auto p-8 md:p-10 font-sans leading-relaxed text-[12px] text-slate-900 bg-white space-y-4 select-text max-w-full print:p-0 print:m-0 print:w-full print:max-w-full print:text-[12px] whitespace-pre-wrap" id="print-sheet-content">
+          <div className={`flex-1 overflow-y-auto p-8 md:p-10 font-sans leading-relaxed text-[12px] text-slate-900 bg-white space-y-4 select-text max-w-full print:p-0 print:m-0 print:w-full print:max-w-full print:text-[12px] whitespace-pre-wrap${inlineOn ? " ie-on" : ""}`} id="print-sheet-content">
             <div className="flex items-center justify-between border-b pb-3 mb-3">
               <div className="flex items-center gap-3">
                 <img src="/icon-192.png" alt="ErMate" className="w-10 h-10 object-contain rounded-lg shrink-0" />
@@ -1814,34 +1866,34 @@ export default function DischargeSummaryView({
 
   <div><span className="font-bold">PATIENT NAME:</span> {currentCase.patient.name}</div>
   <div><span className="font-bold">AGE / GENDER:</span> {formatAgeLong(currentCase.patient.age, currentCase.patient.ageMonths)} / {currentCase.patient.gender || "Not documented"}</div>
-  <div><span className="font-bold">UHID / CR NUMBER:</span> {uhid || "Not documented"}</div>
+  <div><span className="font-bold">UHID / CR NUMBER:</span> <DF k="uhid" v={uhid} /></div>
 
   <div className="mt-4"><span className="font-bold">MLC:</span> {isMlc === "Yes" ? `Yes (${mlcNo || "Not documented"})` : "No"}</div>
 
-  <div><span className="font-bold">Allergy :</span> {allergies || "Not documented"}</div>
+  <div><span className="font-bold">Allergy :</span> <DF k="allergies" v={allergies} /></div>
 
   <div className="font-bold mt-4">Vitals at the time of arrival:</div>
-  <div>HR- {arrivalHr || "Not documented"}</div>
-  <div>BP- {arrivalBp || "Not documented"}</div>
-  <div>RR- {arrivalRr || "Not documented"}</div>
-  <div>SpO2- {arrivalSpo2 || "Not documented"}</div>
-  <div>GCS- {arrivalGcs || "Not documented"}</div>
-  <div>Pain Score- {arrivalPainScore || "Not documented"}</div>
-  <div>GRBS- {arrivalGrbs || "Not documented"}</div>
-  <div>Temp- {arrivalTemp || "Not documented"}</div>
+  <div>HR- <DF k="arrivalHr" v={arrivalHr} /></div>
+  <div>BP- <DF k="arrivalBp" v={arrivalBp} /></div>
+  <div>RR- <DF k="arrivalRr" v={arrivalRr} /></div>
+  <div>SpO2- <DF k="arrivalSpo2" v={arrivalSpo2} /></div>
+  <div>GCS- <DF k="arrivalGcs" v={arrivalGcs} /></div>
+  <div>Pain Score- <DF k="arrivalPainScore" v={arrivalPainScore} /></div>
+  <div>GRBS- <DF k="arrivalGrbs" v={arrivalGrbs} /></div>
+  <div>Temp- <DF k="arrivalTemp" v={arrivalTemp} /></div>
 
   <div className="font-bold mt-4">Presenting Complaints:</div>
-  <div>{presentingComplaints || "Not documented"}</div>
+  <div><DB k="presentingComplaints" v={presentingComplaints} /></div>
 
   <div className="font-bold mt-4">History of Present Illness:</div>
-  <div>{historyOfPresentIllness || "Not documented"}</div>
+  <div><DB k="historyOfPresentIllness" v={historyOfPresentIllness} /></div>
 
   <div className="font-bold mt-4">Past Medical/Surgical Histories:</div>
-  <div>{pastMedicalHistory || "Not documented"}</div>
+  <div><DB k="pastMedicalHistory" v={pastMedicalHistory} /></div>
 
-  <div className="mt-2"><span className="font-bold">Family / Gynae History :</span> {familyGynaeHistory || "Not documented"}</div>
+  <div className="mt-2"><span className="font-bold">Family / Gynae History :</span> <DF k="familyGynaeHistory" v={familyGynaeHistory} /></div>
   {(lmp || isLmpApplicable(currentCase.patient)) && (
-    <div><span className="font-bold">LMP :</span> {lmp || "Not documented"}</div>
+    <div><span className="font-bold">LMP :</span> <DF k="lmp" v={lmp} /></div>
   )}
 
   {isPediatricCase && currentCase.pediatricDetails && (() => {
@@ -1859,34 +1911,35 @@ export default function DischargeSummaryView({
   })()}
 
   <div className="font-bold mt-4">General Examination / Systemic examination:</div>
-  <div>{generalExamination || "Not documented"}</div>
+  <div><DB k="generalExamination" v={generalExamination} /></div>
 
   <div className="font-bold mt-4">Primary Assessment:</div>
-  <div><span className="font-bold">Airway &rarr;</span> {primaryAirway || "Not documented"} ,Intervention- {primaryAirwayIntervention || "Not documented"}</div>
-  <div><span className="font-bold">Breathing &rarr;</span> {primaryBreathing ? <>Findings- {primaryBreathing} ,</> : null}Work of breathing- {primaryBreathingWork || "Not documented"} ,Air entry- {primaryBreathingAirEntry || "Not documented"} ,CCT- {primaryBreathingCct || "Not documented"} ,Subcutaneous emphysema- {primaryBreathingSubcut || "Not documented"} ,EFAST- {primaryBreathingEfast || "Not documented"} ,Intervention- {primaryBreathingIntervention || "Not documented"}.</div>
-  <div><span className="font-bold">Circulation &rarr;</span> {primaryCirculation ? <>Findings- {primaryCirculation} ,</> : null}CRT- {primaryCirculationCrt || "Not documented"} , Distended Neck Veins- {primaryCirculationDnv || "Not documented"} , PCT- {primaryCirculationPct || "Not documented"} ,Long bone deformity- {primaryCirculationDeformity || "Not documented"} ,FAST- {primaryCirculationFast || "Not documented"} ,Interventions- {primaryCirculationInterventions || "Not documented"}.</div>
-  <div><span className="font-bold">Disability &rarr;</span> AVPU/GCS- {primaryDisabilityAvpuGcs || "Not documented"} ,Pupils- {primaryDisabilityPupils || "Not documented"} ,GRBS- {primaryDisabilityGrbs || "Not documented"}</div>
-  <div><span className="font-bold">Exposure &rarr;</span> Temp- {primaryExposureTemp || "Not documented"} | Trauma-Logroll- {primaryExposureTrauma || "Not documented"}</div>
+  <div><span className="font-bold">Airway &rarr;</span> <DF k="primaryAirway" v={primaryAirway} /> ,Intervention- <DF k="primaryAirwayIntervention" v={primaryAirwayIntervention} /></div>
+  <div><span className="font-bold">Breathing &rarr;</span> {(primaryBreathing || inlineOn) ? <>Findings- <DF k="primaryBreathing" v={primaryBreathing} hint="Add findings" /> ,</> : null}Work of breathing- <DF k="primaryBreathingWork" v={primaryBreathingWork} /> ,Air entry- <DF k="primaryBreathingAirEntry" v={primaryBreathingAirEntry} /> ,CCT- <DF k="primaryBreathingCct" v={primaryBreathingCct} /> ,Subcutaneous emphysema- <DF k="primaryBreathingSubcut" v={primaryBreathingSubcut} /> ,EFAST- <DF k="primaryBreathingEfast" v={primaryBreathingEfast} /> ,Intervention- <DF k="primaryBreathingIntervention" v={primaryBreathingIntervention} />.</div>
+  <div><span className="font-bold">Circulation &rarr;</span> {(primaryCirculation || inlineOn) ? <>Findings- <DF k="primaryCirculation" v={primaryCirculation} hint="Add findings" /> ,</> : null}CRT- <DF k="primaryCirculationCrt" v={primaryCirculationCrt} /> , Distended Neck Veins- <DF k="primaryCirculationDnv" v={primaryCirculationDnv} /> , PCT- <DF k="primaryCirculationPct" v={primaryCirculationPct} /> ,Long bone deformity- <DF k="primaryCirculationDeformity" v={primaryCirculationDeformity} /> ,FAST- <DF k="primaryCirculationFast" v={primaryCirculationFast} /> ,Interventions- <DF k="primaryCirculationInterventions" v={primaryCirculationInterventions} />.</div>
+  <div><span className="font-bold">Disability &rarr;</span> AVPU/GCS- <DF k="primaryDisabilityAvpuGcs" v={primaryDisabilityAvpuGcs} /> ,Pupils- <DF k="primaryDisabilityPupils" v={primaryDisabilityPupils} /> ,GRBS- <DF k="primaryDisabilityGrbs" v={primaryDisabilityGrbs} /></div>
+  <div><span className="font-bold">Exposure &rarr;</span> Temp- <DF k="primaryExposureTemp" v={primaryExposureTemp} /> | Trauma-Logroll- <DF k="primaryExposureTrauma" v={primaryExposureTrauma} /></div>
 
   <div className="font-bold mt-4">Secondary Assesment:</div>
-  <div>Pallor Icterus Cyanosis Clubbing Lymphadenopathy Edema- {secondaryPicle || "Not documented"}</div>
-  <div><span className="font-bold">CHEST-</span> {secondaryChest || "Not documented"}</div>
-  <div><span className="font-bold">CVS-</span> {secondaryCvs || "Not documented"}</div>
-  <div><span className="font-bold">P/A-</span> {secondaryPa || "Not documented"}</div>
-  <div><span className="font-bold">CNS-</span> {secondaryCns || "Not documented"}</div>
-  <div><span className="font-bold">EXTREMITIES-</span> {secondaryExtremities || "Not documented"}</div>
+  <div>Pallor Icterus Cyanosis Clubbing Lymphadenopathy Edema- <DF k="secondaryPicle" v={secondaryPicle} /></div>
+  <div><span className="font-bold">CHEST-</span> <DF k="secondaryChest" v={secondaryChest} /></div>
+  <div><span className="font-bold">CVS-</span> <DF k="secondaryCvs" v={secondaryCvs} /></div>
+  <div><span className="font-bold">P/A-</span> <DF k="secondaryPa" v={secondaryPa} /></div>
+  <div><span className="font-bold">CNS-</span> <DF k="secondaryCns" v={secondaryCns} /></div>
+  <div><span className="font-bold">EXTREMITIES-</span> <DF k="secondaryExtremities" v={secondaryExtremities} /></div>
 
   <div className="font-bold mt-4">Course in Hospital with Medications and Procedure:</div>
-  <div>{courseInHospital || "Not documented"}</div>
+  <div><DB k="courseInHospital" v={courseInHospital} /></div>
 
   <div className="font-bold mt-4">Investigations:</div>
-  <div>{investigationsResults || "Not documented"}</div>
+  <div><DB k="investigationsResults" v={investigationsResults} /></div>
 
   <div className="font-bold mt-4">Diagnosis at the time of discharge:</div>
-  <div>{primaryDiagnosis || "Not documented"}{secondaryDiagnosis ? ` ; ${secondaryDiagnosis}` : ""}</div>
+  <div><DF k="primaryDiagnosis" v={primaryDiagnosis} hint="Primary diagnosis" /></div>
+  {(secondaryDiagnosis || inlineOn) && <div><DF k="secondaryDiagnosis" v={secondaryDiagnosis} hint="Add secondary diagnosis" /></div>}
 
   <div className="font-bold mt-4">Discharge Medications:</div>
-  <div>{dischargeMedications || "Not documented"}</div>
+  <div><DB k="dischargeMedications" v={dischargeMedications} /></div>
 
   <div className="font-bold mt-4">Disposition:</div>
   {(!dispositionStatus || dispositionStatus === "Pending / Not Documented") ? (
@@ -1904,24 +1957,24 @@ export default function DischargeSummaryView({
   )}
 
   <div className="font-bold mt-4">Condition at time of discharge:(STABLE/UNSTABLE)</div>
-  <div>{dischargeCondition || "Not documented"}</div>
+  <div><DF k="dischargeCondition" v={dischargeCondition} /></div>
 
   <div className="font-bold mt-4">Vitals at the time of Discharge:</div>
-  <div>HR- {dischargeHr || "Not documented"}</div>
-  <div>BP- {dischargeBp || "Not documented"}</div>
-  <div>RR- {dischargeRr || "Not documented"}</div>
-  <div>SpO2- {dischargeSpo2 || "Not documented"}</div>
-  <div>GCS- {dischargeGcs || "Not documented"}</div>
-  <div>Pain Score- {dischargePainScore || "Not documented"}</div>
-  <div>GRBS- {dischargeGrbs || "Not documented"}</div>
-  <div>Temp- {dischargeTemp || "Not documented"}</div>
+  <div>HR- <DF k="dischargeHr" v={dischargeHr} /></div>
+  <div>BP- <DF k="dischargeBp" v={dischargeBp} /></div>
+  <div>RR- <DF k="dischargeRr" v={dischargeRr} /></div>
+  <div>SpO2- <DF k="dischargeSpo2" v={dischargeSpo2} /></div>
+  <div>GCS- <DF k="dischargeGcs" v={dischargeGcs} /></div>
+  <div>Pain Score- <DF k="dischargePainScore" v={dischargePainScore} /></div>
+  <div>GRBS- <DF k="dischargeGrbs" v={dischargeGrbs} /></div>
+  <div>Temp- <DF k="dischargeTemp" v={dischargeTemp} /></div>
 
   <div className="font-bold mt-4">Follow-Up Advice:</div>
-  <div>{followUpPlan || "Not documented"}</div>
+  <div><DB k="followUpPlan" v={followUpPlan} /></div>
 
   <div className="mt-8 flex gap-8">
-    <div><span className="font-bold">ED Resident:</span> {emResidentName || "Not documented"}</div>
-    <div><span className="font-bold">ED Consultant:</span> {emConsultantName || "Not documented"}</div>
+    <div><span className="font-bold">ED Resident:</span> <DF k="emResidentName" v={emResidentName} /></div>
+    <div><span className="font-bold">ED Consultant:</span> <DF k="emConsultantName" v={emConsultantName} /></div>
   </div>
 
   <div className="flex gap-8 mt-2">
@@ -1998,5 +2051,6 @@ export default function DischargeSummaryView({
         onCancel={() => setShowDeleteConfirm(false)}
       />
     </div>
+    </InlineEditCtx.Provider>
   );
 }
