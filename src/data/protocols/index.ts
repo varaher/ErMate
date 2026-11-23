@@ -6,9 +6,21 @@ import { VARICEAL_BLEED_ADULT } from "./variceal_bleed";
 import { SBP_ADULT } from "./sbp";
 import { HEPATIC_ENCEPHALOPATHY_ADULT } from "./hepatic_encephalopathy";
 import { HRS_AKI_ADULT } from "./hrs_aki";
+import { CARDIAC_ARREST_ADULT } from "./cardiac_arrest";
+import { POST_ROSC_ADULT } from "./post_rosc";
+import { BRADYCARDIA_ADULT } from "./bradycardia";
+import { TACHYCARDIA_ADULT } from "./tachycardia";
+import { SHOCK_UNDIFFERENTIATED_ADULT } from "./shock";
+import { SEPSIS_ADULT } from "./sepsis";
+import { ANAPHYLAXIS_ADULT } from "./anaphylaxis";
 
 /** ErMate Handbook chapters. A topic can link to any other topic by id (see protocolViews.resolveLink). */
 export const PROTOCOL_CHAPTERS: ProtocolChapter[] = [
+  {
+    id: "resuscitation",
+    title: "Resuscitation & Life Threats",
+    topics: [CARDIAC_ARREST_ADULT, POST_ROSC_ADULT, BRADYCARDIA_ADULT, TACHYCARDIA_ADULT, SHOCK_UNDIFFERENTIATED_ADULT, SEPSIS_ADULT, ANAPHYLAXIS_ADULT],
+  },
   { id: "breathing", title: "Breathing & Airway", topics: [DYSPNEA_ADULT] },
   { id: "cardiac", title: "Cardiac & Chest Pain", topics: [CAD_ACS_ADULT] },
   {

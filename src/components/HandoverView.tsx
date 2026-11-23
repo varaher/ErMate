@@ -8,11 +8,11 @@ import {
   Users, ClipboardCopy, FileText, Printer, Plus, Trash2, Edit2, Pencil,
   CheckCircle, HelpCircle, Download, Check, RefreshCw, Layers, LayoutList,
   AlertTriangle, ChevronLeft, X, Camera, UploadCloud, Sparkles, Send,
-  MoreHorizontal, BookmarkCheck, MessageSquare
+  MoreHorizontal, BookmarkCheck, MessageSquare, BookOpen
 } from "lucide-react";
 import VoiceRecorder from "./shared/VoiceRecorder";
 import { sanitizeDoctorError } from "../utils/sanitizeError";
-import { triggerPrintWithTip } from "../utils/printWithTip";
+import { triggerPrintWithTip, triggerBookPrint } from "../utils/printWithTip";
 import { ClinicalCase, UserProfile, HandoverRecord, QuickPastePatient, InvestigationItem, HandoverPatient, DirectDischargeSummaryItem, TreatmentItem } from "../types";
 import { HandoverCard } from "./HandoverCard";
 import { isCaseHandoverEligible } from "../utils/caseLifecycle";
@@ -2918,6 +2918,18 @@ function extractLatestVitalsWithTime(
       document.body.removeChild(link);
     };
 
+    // Print the sheet normally (A4) or as a book (A5 pages for the printer's Booklet mode).
+    const handlePrintSheet = (asBook: boolean) => {
+      if (asBook) triggerBookPrint(); else triggerPrintWithTip();
+      setPostPrintDataType(activeSubTab === "registry" ? "registry" : "quickpaste");
+      if (activeSubTab === "registry") {
+        setIdsToCleanup(editableRows.map(r => r.id));
+      } else {
+        setIdsToCleanup(quickPasteList.map(p => p.id));
+      }
+      setShowPostPrintCleanPrompt(true);
+    };
+
     return (
       <div className="max-w-7xl mx-auto px-4 py-6 space-y-6 font-sans" id="landscape-handover-sheet-workspace">
         <style dangerouslySetInnerHTML={{ __html: `
@@ -3195,20 +3207,20 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
               {copiedState["sheet_copy"] ? "Copied!" : "Copy Clipboard"}
             </button>
             <button
-              onClick={() => {
-                triggerPrintWithTip();
-                setPostPrintDataType(activeSubTab === "registry" ? "registry" : "quickpaste");
-                if (activeSubTab === "registry") {
-                  setIdsToCleanup(editableRows.map(r => r.id));
-                } else {
-                  setIdsToCleanup(quickPasteList.map(p => p.id));
-                }
-                setShowPostPrintCleanPrompt(true);
-              }}
+              onClick={() => handlePrintSheet(false)}
               className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 shadow-sm cursor-pointer"
             >
               <Printer className="w-3.5 h-3.5" />
               Print Handover Sheet
+            </button>
+            <button
+              onClick={() => handlePrintSheet(true)}
+              id="print-handover-book-btn"
+              title="A5 book pages: pick the printer's Booklet option, double-sided. About half the sheets."
+              className="px-4 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 shadow-sm cursor-pointer"
+            >
+              <BookOpen className="w-3.5 h-3.5" />
+              Print as Book
             </button>
           </div>
         </div>

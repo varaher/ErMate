@@ -11,7 +11,7 @@ const topics = allProtocolTopics();
 const handbook = topics.filter((x) => x.firstTen && x.firstTen.length); // new-format pages
 const REQUIRED_KINDS = ["symptoms", "pathophysiology", "approach", "differentials", "investigations", "treatment", "disposition", "pitfalls"];
 
-t("5 new-format Handbook pages (liver pathway)", handbook.length === 5);
+t("12 new-format Handbook pages (resuscitation 7 + liver 5)", handbook.length === 12);
 for (const tp of handbook) {
   const kinds = new Set(tp.sections.map((s) => s.kind));
   const missing = REQUIRED_KINDS.filter((k) => !kinds.has(k as any) && !(k === "symptoms" && tp.sections.some((s) => /grade/i.test(s.heading))));
@@ -34,6 +34,10 @@ t("cirrhosis links to all 4 branches", ["variceal-bleed-adult", "sbp-adult", "he
 t("each branch is linked back from cirrhosis (backlinks)", ["variceal-bleed-adult", "sbp-adult", "hepatic-encephalopathy-adult", "hrs-aki-adult"].every((id) => backlinks(id, topics).some((b) => b.id === "cirrhosis-liver-adult")));
 t("branches cross-link (variceal -> HE, SBP -> HRS)", linkedTopicIds(findTopic("variceal-bleed-adult")!).includes("hepatic-encephalopathy-adult") && linkedTopicIds(findTopic("sbp-adult")!).includes("hrs-aki-adult"));
 t("resolveLink: unknown id is undefined, not an error", resolveLink("does-not-exist-adult", topics) === undefined && resolveLink(undefined, topics) === undefined);
+
+t("sepsis link from cirrhosis/SBP now resolves", !!resolveLink("sepsis-adult", topics) && linkedTopicIds(findTopic("cirrhosis-liver-adult")!).includes("sepsis-adult"));
+t("arrest <-> ROSC linked both ways", linkedTopicIds(findTopic("cardiac-arrest-adult")!).includes("post-rosc-adult") && linkedTopicIds(findTopic("post-rosc-adult")!).includes("cardiac-arrest-adult"));
+t("resuscitation chapter listed first", (await import("./src/data/protocols")).PROTOCOL_CHAPTERS[0].id === "resuscitation");
 
 // Old founder pages still render unchanged.
 t("dyspnea and ACS pages kept as authored", !!findTopic("dyspnea-adult") && !!findTopic("cad-acs-adult"));
