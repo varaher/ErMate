@@ -31,7 +31,7 @@ const sh = (key: string, label: string, multiline = true): PreviewField => ({
     const fromData: Record<string, string> = {
       symptoms: join(d.symptoms, ", "), allergies: join(d.allergies, ", "), medications: join(d.currentMedications, ", "),
       pastHistory: join(d.pastHistory, " · "), lastMeal: txt(d.lastMeal), events: txt(d.events),
-      familyHistory: txt(d.familyHistory), hpi: txt(d.hpi), surgicalHistory: txt(d.surgicalHistory), lmp: txt(d.lmp),
+      familyHistory: txt(d.familyHistory), socialHistory: txt(d.socialHistory), hpi: txt(d.hpi), surgicalHistory: txt(d.surgicalHistory), lmp: txt(d.lmp),
     };
     return fromData[key] ?? "";
   },
@@ -73,6 +73,7 @@ const HISTORY: PreviewField[] = [
   sh("symptoms", "Signs & symptoms"), sh("allergies", "Allergies"), sh("medications", "Current medications"),
   sh("pastHistory", "Past medical history"), sh("lastMeal", "Last meal", false), sh("events", "Events preceding"),
   sh("familyHistory", "Family history"),
+  sh("socialHistory", "Social history"),
   // Editing the HPI in the preview makes it the doctor's HPI (the case-summary writer will not replace it).
   ((f: PreviewField): PreviewField => ({ ...f, set: (c, v) => setIn(f.set(c, v), ["sampleHistory", "hpiSource"], "doctor") }))(sh("hpi", "History of presenting illness")),
   sh("surgicalHistory", "Surgical history"),
@@ -147,6 +148,19 @@ const DISPOSITION: PreviewField[] = [
   caseText("followUp", "Follow-up advice", ["dispositionAndPlan", "followUpAdvice"], (_c, d) => txt(d.disposition?.followUpAdvice)),
 ];
 
+/** Psychological assessment: the preview reads the structured notes first, then the SAMPLE note, so both are written. */
+const PSYCH: PreviewField[] = [{
+  key: "psych", label: "Psychological assessment", multiline: true,
+  get: (_c, d) => txt(d.psychologicalAssessment?.notes),
+  set: (c, v) => {
+    let out = setIn(c, ["sampleHistory", "psychiatricFlags"], v);
+    const pa = out.psychologicalAssessment;
+    if (typeof pa === "string") out = { ...out, psychologicalAssessment: v };
+    else if (pa && typeof pa === "object") out = setIn(out, ["psychologicalAssessment", "notes"], v);
+    return out;
+  },
+}];
+
 const PRIMARY: PreviewField[] = [
   primary("airway", "Airway"), primary("breathing", "Breathing"), primary("circulation", "Circulation"),
   primary("disability", "Disability"), primary("exposure", "Exposure"),
@@ -159,6 +173,7 @@ export const EDIT_SECTIONS: Record<string, PreviewField[]> = {
   "Primary Survey": PRIMARY,
   "Secondary Assessment / History": HISTORY,
   "History": HISTORY,
+  "Psychological Assessment": PSYCH,
   "Focused Physical Examination": SURVEY,
   "Secondary Survey": SURVEY,
   "Investigations & Diagnostic Studies": INVESTIGATIONS,
@@ -204,6 +219,7 @@ export const EDIT_GROUPS: { id: string; label: string; title: string }[] = [
   { id: "primary", label: "Primary", title: "Primary Survey" },
   { id: "history", label: "History", title: "History" },
   { id: "exam", label: "Exam", title: "Secondary Survey" },
+  { id: "psych", label: "Psych", title: "Psychological Assessment" },
   { id: "tests", label: "Tests", title: "Investigations & Diagnostic Studies" },
   { id: "treatment", label: "Treatment", title: "Treatment Given & Emergency Orders" },
   { id: "diagnosis", label: "Diagnosis", title: "Provisional Diagnosis" },

@@ -7,6 +7,7 @@ import { displayGcs, displayTemperature, displaySpo2, displayGrbs, displayDocume
 import { getDisplayCaseId } from "../utils/caseIdentity";
 import { formatCaseSheetText, formatCaseSheetHtml } from "../utils/caseSheetFormat";
 import { buildErCaseRecord, type ErLine } from "../utils/erCaseRecord";
+import { EditableBlock, InlineSpan, INLINE_EDIT_CSS } from "./InlineEdit";
 import { copyTextToClipboard } from "../utils/copyToClipboard";
 import CopyToEmrPanel from "./CopyToEmrPanel"; // ← NEW
 import { getTriageDisplay } from "../utils/triageScale";
@@ -904,32 +905,84 @@ export function convertClinicalCaseToCaseSheetData(c: ClinicalCase, defaultHospi
 
 // ── Presentational helpers ────────────────────────────────────────────
 
-/** Adult ER case record, laid out like the hospital EMR's Visit Notes (bold headings, indented lines). */
-function ErCaseRecordBody({ lines }: { lines: ErLine[] }) {
+/**
+ * Adult ER case record, laid out like the hospital EMR's Visit Notes (bold headings, indented lines).
+ * With `onEdit`, every line that belongs to a case field can be clicked and typed into, like a Word
+ * document (src/components/InlineEdit.tsx); `onEdit` receives the field (section title + key) and the new text.
+ */
+function ErCaseRecordBody({ lines, onEdit, editing }: { lines: ErLine[]; onEdit?: (section: string, key: string, value: string) => void; editing?: boolean }) {
+  const out: React.ReactNode[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i];
+    switch (l.kind) {
+      case "title":
+        out.push(<p key={i} className="font-black uppercase tracking-wide pt-1 pb-1">{l.text}</p>);
+        break;
+      case "heading":
+        out.push(<p key={i} className="font-bold pt-1.5 break-after-avoid">{l.text}</p>);
+        break;
+      case "subheading":
+        out.push(<p key={i} className="font-bold pl-2 break-after-avoid">{l.text}</p>);
+        break;
+      case "item":
+      case "dash":
+      case "para": {
+        const edit = onEdit ? l.edit : undefined;
+        if (edit) {
+          // Consecutive lines of the same field are ONE editable block.
+          const run: ErLine[] = [l];
+          while (i + 1 < lines.length) {
+            const n = lines[i + 1];
+            if ((n.kind === "item" || n.kind === "dash" || n.kind === "para") && n.kind === l.kind && n.edit && n.edit.s === edit.s && n.edit.k === edit.k) { run.push(n); i++; } else break;
+          }
+          out.push(
+            <EditableBlock
+              key={i}
+              kind={l.kind}
+              lines={run.map((r) => (r as { text: string }).text)}
+              placeholder={edit.ph}
+              onCommit={(v) => onEdit!(edit.s, edit.k, v)}
+            />
+          );
+        } else if (l.kind === "item") out.push(<p key={i} className="pl-8 whitespace-pre-line">{l.text}</p>);
+        else if (l.kind === "dash") out.push(<p key={i} className="pl-2">- {l.text}</p>);
+        else out.push(<p key={i} className="whitespace-pre-line">{l.text}</p>);
+        break;
+      }
+      case "labelled": {
+        if (l.arrow && onEdit && l.segs && l.segs.some((sg) => sg.edit)) {
+          const editable = l.segs.filter((sg) => sg.edit);
+          out.push(
+            <p key={i} className="pl-8">
+              <span className="font-bold">{l.label}</span> →{" "}
+              {l.segs.map((sg, j) => {
+                if (!sg.edit) return <span key={j}>{sg.text}</span>;
+                const e = sg.edit;
+                return (
+                  <InlineSpan
+                    key={j}
+                    text={sg.text}
+                    hint={sg.hint}
+                    placeholder={e.ph}
+                    onCommit={(v) => {
+                      // One field can be typed in two pieces (CRT + other findings): join them back together.
+                      const parts = editable.map((x) => (x === sg ? v : x.text.trim()));
+                      onEdit(e.s, e.k, parts.filter(Boolean).join(", "));
+                    }}
+                  />
+                );
+              })}
+            </p>
+          );
+        } else if (l.arrow) out.push(<p key={i} className="pl-8"><span className="font-bold">{l.label}</span> → {l.text}</p>);
+        else out.push(<p key={i} className={/^EM (Resident|Consultant)$/.test(l.label) ? "pt-1.5" : ""}><span className="font-bold">{l.label}:</span> {l.text}</p>);
+        break;
+      }
+    }
+  }
   return (
-    <div data-testid="er-case-record" className="text-sm leading-relaxed space-y-1.5 pt-1">
-      {lines.map((l, i) => {
-        switch (l.kind) {
-          case "title":
-            return <p key={i} className="font-black uppercase tracking-wide pt-1 pb-1">{l.text}</p>;
-          case "heading":
-            return <p key={i} className="font-bold pt-1.5 break-after-avoid">{l.text}</p>;
-          case "subheading":
-            return <p key={i} className="font-bold pl-2 break-after-avoid">{l.text}</p>;
-          case "item":
-            return <p key={i} className="pl-8 whitespace-pre-line">{l.text}</p>;
-          case "dash":
-            return <p key={i} className="pl-2">- {l.text}</p>;
-          case "para":
-            return <p key={i} className="whitespace-pre-line">{l.text}</p>;
-          case "labelled":
-            return l.arrow ? (
-              <p key={i} className="pl-8"><span className="font-bold">{l.label}</span> → {l.text}</p>
-            ) : (
-              <p key={i} className={/^EM (Resident|Consultant)$/.test(l.label) ? "pt-1.5" : ""}><span className="font-bold">{l.label}:</span> {l.text}</p>
-            );
-        }
-      })}
+    <div data-testid="er-case-record" className={`text-sm leading-relaxed space-y-1.5 pt-1${editing ? " ie-on" : ""}`}>
+      {out}
     </div>
   );
 }
@@ -1335,16 +1388,29 @@ export default function CaseSheetPrintView({
   const canEditPreview = Boolean(isPreview && clinicalCase && onApplyPreview);
   const [draftCase, setDraftCase] = useState<ClinicalCase | null>(clinicalCase || null);
   const [editMode, setEditMode] = useState(false);
+  const [inlineOn, setInlineOn] = useState(false); // adult sheets: the Edit switch (lines are typeable only while it is on)
   const [editCount, setEditCount] = useState(0);
   useEffect(() => {
     setDraftCase(clinicalCase || null);
     setEditCount(0);
     setEditMode(false);
+    setInlineOn(false);
   }, [clinicalCase]);
   const shownCase = canEditPreview && draftCase ? draftCase : clinicalCase;
   useEffect(() => { if (canEditPreview) requestTour("preview"); }, [canEditPreview]);
 
   const data = propData || (shownCase ? convertClinicalCaseToCaseSheetData(shownCase, defaultHospital) : null);
+
+  // Adult sheets are edited in place (click a line and type). Pediatric sheets keep the edit window.
+  const inlineEdit = Boolean(canEditPreview && data && !data.isPediatric && !applySuccess);
+  const commitInlineEdit = (section: string, key: string, value: string) => {
+    if (!shownCase || !data) return;
+    const r = applySectionEdits(shownCase, data, section, { [key]: value });
+    if (r.changed > 0) {
+      setDraftCase(r.next as ClinicalCase);
+      setEditCount((n) => n + r.changed);
+    }
+  };
 
   const handleCopyCaseSheet = async () => {
     if (!data) return;
@@ -1430,7 +1496,7 @@ export default function CaseSheetPrintView({
             ) : (
               <>
                 <AlertTriangle className="w-4 h-4 shrink-0" />
-                <span>{`Preview — changes are not saved yet${editCount ? ` · ${editCount} edit${editCount > 1 ? "s" : ""}` : ""}`}</span>
+                <span>{`Preview${inlineEdit ? (inlineOn ? " — Editing: click any highlighted line to change it" : " — press Edit to change anything") : ""} — changes are not saved yet${editCount ? ` · ${editCount} edit${editCount > 1 ? "s" : ""}` : ""}`}</span>
               </>
             )}
           </div>
@@ -1475,7 +1541,38 @@ export default function CaseSheetPrintView({
           <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
             {isPreview ? (
               <>
-                {canEditPreview && !applySuccess && (
+                {canEditPreview && !applySuccess && inlineEdit && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setInlineOn((v) => !v)}
+                      id="preview-edit-toggle"
+                      data-coach="preview-edit"
+                      aria-pressed={inlineOn}
+                      title={inlineOn ? "Finish editing" : "Edit this case sheet: every highlighted line becomes typeable"}
+                      className={`min-w-[44px] min-h-[44px] flex-1 sm:flex-none justify-center inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-xl transition-all cursor-pointer border ${
+                        inlineOn
+                          ? "bg-purple-600 hover:bg-purple-700 text-white border-purple-600"
+                          : "bg-purple-50 dark:bg-purple-950/40 hover:bg-purple-100 text-purple-700 dark:text-purple-300 border-purple-300 dark:border-purple-800"
+                      }`}
+                    >
+                      {inlineOn ? <Check className="w-3.5 h-3.5" /> : <Pencil className="w-3.5 h-3.5" />}
+                      <span className="whitespace-nowrap">{inlineOn ? "Done editing" : "Edit"}</span>
+                    </button>
+                    {inlineOn && (
+                      <button
+                        type="button"
+                        onClick={() => setEditMode(true)}
+                        id="preview-edit-more-fields"
+                        title="Vitals, patient details and other fields that are not lines on the sheet"
+                        className="min-w-[44px] min-h-[44px] flex-1 sm:flex-none justify-center inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-xl transition-all cursor-pointer border bg-white dark:bg-slate-900 hover:bg-slate-50 text-purple-700 dark:text-purple-300 border-purple-300 dark:border-purple-800"
+                      >
+                        <span className="whitespace-nowrap">More fields</span>
+                      </button>
+                    )}
+                  </>
+                )}
+                {canEditPreview && !applySuccess && !inlineEdit && (
                   <button
                     type="button"
                     onClick={() => setEditMode(true)}
@@ -1662,7 +1759,7 @@ export default function CaseSheetPrintView({
         {/* Adult ER cases: everything below the patient block follows the hospital's
             "INITIAL ASSESSMENT AND EMERGENCY DEPARTMENT CASE RECORD" (src/utils/erCaseRecord.ts).
             Pediatric cases keep the pediatric sheet. */}
-        {!data.isPediatric && <ErCaseRecordBody lines={buildErCaseRecord(data)} />}
+        {!data.isPediatric && <ErCaseRecordBody editing={inlineEdit && inlineOn} lines={buildErCaseRecord(data)} onEdit={inlineEdit && inlineOn ? commitInlineEdit : undefined} />}
 
         {data.isPediatric && screeningLines(data.triageScreening).length > 0 && (
           <Section>
@@ -1938,7 +2035,7 @@ export default function CaseSheetPrintView({
         )}
       </div>
 
-      <style>{`
+      <style>{`${INLINE_EDIT_CSS}
         @media print {
           .no-print { display: none !important; }
           body { background: #fff !important; color: #000 !important; }
