@@ -13,6 +13,13 @@ import { TACHYCARDIA_ADULT } from "./tachycardia";
 import { SHOCK_UNDIFFERENTIATED_ADULT } from "./shock";
 import { SEPSIS_ADULT } from "./sepsis";
 import { ANAPHYLAXIS_ADULT } from "./anaphylaxis";
+import { TRAUMA_PRIMARY_SURVEY_ADULT } from "./trauma_primary_survey";
+import { HAEMORRHAGIC_SHOCK_ADULT } from "./haemorrhagic_shock";
+import { TBI_ADULT } from "./tbi";
+import { CHEST_TRAUMA_ADULT } from "./chest_trauma";
+import { TENSION_PNEUMOTHORAX_ADULT } from "./tension_pneumothorax";
+import { SPINAL_INJURY_ADULT } from "./spinal_injury";
+import { BURNS_ADULT } from "./burns";
 
 /** ErMate Handbook chapters. A topic can link to any other topic by id (see protocolViews.resolveLink). */
 export const PROTOCOL_CHAPTERS: ProtocolChapter[] = [
@@ -20,6 +27,11 @@ export const PROTOCOL_CHAPTERS: ProtocolChapter[] = [
     id: "resuscitation",
     title: "Resuscitation & Life Threats",
     topics: [CARDIAC_ARREST_ADULT, POST_ROSC_ADULT, BRADYCARDIA_ADULT, TACHYCARDIA_ADULT, SHOCK_UNDIFFERENTIATED_ADULT, SEPSIS_ADULT, ANAPHYLAXIS_ADULT],
+  },
+  {
+    id: "trauma",
+    title: "Trauma",
+    topics: [TRAUMA_PRIMARY_SURVEY_ADULT, HAEMORRHAGIC_SHOCK_ADULT, TBI_ADULT, CHEST_TRAUMA_ADULT, TENSION_PNEUMOTHORAX_ADULT, SPINAL_INJURY_ADULT, BURNS_ADULT],
   },
   { id: "breathing", title: "Breathing & Airway", topics: [DYSPNEA_ADULT] },
   { id: "cardiac", title: "Cardiac & Chest Pain", topics: [CAD_ACS_ADULT] },

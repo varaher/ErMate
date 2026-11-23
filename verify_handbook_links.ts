@@ -11,7 +11,7 @@ const topics = allProtocolTopics();
 const handbook = topics.filter((x) => x.firstTen && x.firstTen.length); // new-format pages
 const REQUIRED_KINDS = ["symptoms", "pathophysiology", "approach", "differentials", "investigations", "treatment", "disposition", "pitfalls"];
 
-t("12 new-format Handbook pages (resuscitation 7 + liver 5)", handbook.length === 12);
+t("19 new-format Handbook pages (resuscitation 7 + trauma 7 + liver 5)", handbook.length === 19);
 for (const tp of handbook) {
   const kinds = new Set(tp.sections.map((s) => s.kind));
   const missing = REQUIRED_KINDS.filter((k) => !kinds.has(k as any) && !(k === "symptoms" && tp.sections.some((s) => /grade/i.test(s.heading))));
@@ -38,6 +38,9 @@ t("resolveLink: unknown id is undefined, not an error", resolveLink("does-not-ex
 t("sepsis link from cirrhosis/SBP now resolves", !!resolveLink("sepsis-adult", topics) && linkedTopicIds(findTopic("cirrhosis-liver-adult")!).includes("sepsis-adult"));
 t("arrest <-> ROSC linked both ways", linkedTopicIds(findTopic("cardiac-arrest-adult")!).includes("post-rosc-adult") && linkedTopicIds(findTopic("post-rosc-adult")!).includes("cardiac-arrest-adult"));
 t("resuscitation chapter listed first", (await import("./src/data/protocols")).PROTOCOL_CHAPTERS[0].id === "resuscitation");
+
+t("trauma chapter second", (await import("./src/data/protocols")).PROTOCOL_CHAPTERS[1].id === "trauma");
+t("shock page now opens haemorrhagic shock + tension pneumothorax", ["haemorrhagic-shock-adult", "tension-pneumothorax-adult"].every((id) => !!resolveLink(id, topics) && linkedTopicIds(findTopic("shock-undifferentiated-adult")!).includes(id)));
 
 // Old founder pages still render unchanged.
 t("dyspnea and ACS pages kept as authored", !!findTopic("dyspnea-adult") && !!findTopic("cad-acs-adult"));
