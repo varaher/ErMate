@@ -6,7 +6,7 @@ const t = (n: string, c: boolean) => { if (c) { pass++; console.log(`[PASS] ${n}
 
 const topics = allProtocolTopics();
 const ids = topics.map((x) => x.id);
-t("27 topics published (resuscitation 7, trauma 7, paediatric 6, dyspnea, ACS, liver 5)", topics.length === 27 && ["dyspnea-adult", "cad-acs-adult", "cirrhosis-liver-adult", "variceal-bleed-adult", "sbp-adult", "hepatic-encephalopathy-adult", "hrs-aki-adult"].every((i) => ids.includes(i)));
+t("34 topics published (resuscitation 7, trauma 7, paediatric 6, toxicology 7, dyspnea, ACS, liver 5)", topics.length === 34 && ["dyspnea-adult", "cad-acs-adult", "cirrhosis-liver-adult", "variceal-bleed-adult", "sbp-adult", "hepatic-encephalopathy-adult", "hrs-aki-adult"].every((i) => ids.includes(i)));
 t("topic ids unique", new Set(ids).size === ids.length);
 t("all draft, none falsely marked reviewed", topics.every((x) => x.status === "draft" && x.reviewedOn === ""));
 t("adult and paediatric never mixed within a chapter", PROTOCOL_CHAPTERS.every((c) => new Set(c.topics.map((x) => x.population)).size === 1));
@@ -138,13 +138,37 @@ t("DKA: deficit over 24-48 h; cerebral oedema mannitol / 3% saline; no bicarbona
 t("asthma: prednisolone 1-2 mg/kg max 40; MgSO4 40-50 mg/kg max 2 g", has(pas, /1–2 mg\/kg/) && has(pas, /40–50 mg\/kg \(maximum 2 g\)/));
 t("bronchiolitis: no salbutamol / steroids / antibiotics; HFNC", has(pbr, /Do not use/) && has(pbr, /High-flow nasal cannula/));
 t("paediatric pages never link to adult pages (doses differ)", paeds.every((x) => x.sections.every((s: any) => s.items.every((i: any) => !i.link || !/-adult$/.test(i.link)))));
+// Batch 5 — toxicology (MoHFW snakebite STG 2017 / NAPSE 2024, ANZ paracetamol 2020, EXTRIP 2015)
+const pa = topics.find((x) => x.id === "poisoning-approach-adult")!;
+const op = topics.find((x) => x.id === "organophosphate-poisoning-adult")!;
+const sb = topics.find((x) => x.id === "snakebite-adult")!;
+const alp = topics.find((x) => x.id === "aluminium-phosphide-poisoning-adult")!;
+const pq = topics.find((x) => x.id === "paraquat-poisoning-adult")!;
+const pcm = topics.find((x) => x.id === "paracetamol-poisoning-adult")!;
+const meoh = topics.find((x) => x.id === "methanol-poisoning-adult")!;
+const localItems = (tp: any) => tp.sections.flatMap((s: any) => s.items).filter((i: any) => i.tier === "local");
+t("approach: glucose, ECG, paracetamol level in intentional overdose; charcoal only within 1 h; no routine lavage", has(pa, /Bedside glucose/) && has(pa, /paracetamol level/i) && has(pa, /within 1 hour/) && has(pa, /Gastric lavage is not routine/));
+t("approach: medico-legal + psychiatric assessment", /medico-legal/i.test(pa.notice || "") && has(pa, /Psychiatric assessment/));
+t("OP: atropine 1.8-3 mg doubling every 5 min to clear chest; infusion 10-20%", has(op, /1\.8–3 mg/) && has(op, /doubl/) && has(op, /10–20%/));
+t("OP: pralidoxime shown as LOCAL practice, not guideline", localItems(op).some((i: any) => /Pralidoxime/.test(i.label)));
+t("OP: no suxamethonium; intermediate syndrome watch", has(op, /suxamethonium/) && has(op, /Intermediate syndrome/i));
+t("snake: ASV only with envenoming; 20WBCT; no test dose; IV only", has(sb, /ASV indications/) && has(sb, /20WBCT/) && has(sb, /test dose/) && has(sb, /locally or IM/));
+t("snake: neurotoxic 10 + 10 vials max 20; haemotoxic 10 vials", has(sb, /Maximum 20 vials/) && has(sb, /10 vials IV over 30 minutes \(6 for saw-scaled viper/));
+t("snake: AN trial 0.6 mg atropine + 1.5 mg neostigmine", has(sb, /Atropine 0\.6 mg with neostigmine 1\.5 mg/));
+t("snake: observe every bite 24 h", has(sb, /At least 24 hours for every bite/));
+t("phosphide: no antidote, early ICU, ECMO; Mg and oil = LOCAL", has(alp, /ECMO/) && localItems(alp).length >= 2);
+t("paraquat: avoid oxygen unless SpO2 < 90; immunosuppression = LOCAL", has(pq, /SpO2 is below 90%|SpO2 below 90%/) && localItems(pq).some((i: any) => /Immunosuppression/.test(i.label)));
+t("paracetamol: 200 mg/kg / 10 g threshold; two-bag 200 then 100 mg/kg; 8 h rule", has(pcm, /10 g or 200 mg\/kg/) && has(pcm, /200 mg\/kg over 4 hours, then 100 mg\/kg over 16 hours/) && has(pcm, /8 hours/));
+t("paracetamol: no nomogram for staggered / unknown time", has(pcm, /Do not use the nomogram/));
+t("methanol: fomepizole 15 then 10 mg/kg; ethanol alternative; folate; EXTRIP dialysis", has(meoh, /15 mg\/kg IV loading, then 10 mg\/kg every 12 hours/) && has(meoh, /Ethanol/) && has(meoh, /Folinic/) && has(meoh, /700 mg\/L/));
+t("every LOCAL item names where it comes from", topics.every((tp) => localItems(tp).every((i: any) => (i.origin || "").length > 3)));
 t("dyspnea review notes carried, content kept", (topics.find((x) => x.id === "dyspnea-adult")!.reviewNotes || []).length === 3 && topics.find((x) => x.id === "dyspnea-adult")!.sections.length >= 8);
 
 t("search by complaint: chest pain -> ACS", searchProtocols("chest pain").some((x) => x.id === "cad-acs-adult"));
 t("search by complaint: hematemesis -> cirrhosis", searchProtocols("hematemesis").some((x) => x.id === "cirrhosis-liver-adult"));
 t("search by complaint: breathlessness -> dyspnea", searchProtocols("breathlessness").some((x) => x.id === "dyspnea-adult"));
 t("search by drug: avil finds ACS", searchProtocols("avil").some((x) => x.id === "cad-acs-adult"));
-t("empty search returns all", searchProtocols("").length === 27);
+t("empty search returns all", searchProtocols("").length === 34);
 t("search: terlipressin finds variceal + HRS", ["variceal-bleed-adult", "hrs-aki-adult"].every((id) => searchProtocols("terlipressin").some((x) => x.id === id)));
 t("search: confusion finds HE", searchProtocols("confusion").some((x) => x.id === "hepatic-encephalopathy-adult"));
 t("nonsense search returns none", searchProtocols("zzzzqqq").length === 0);
@@ -152,7 +176,7 @@ t("nonsense search returns none", searchProtocols("zzzzqqq").length === 0);
 const panel = readFileSync("src/components/ProtocolsPanel.tsx", "utf8");
 t("panel shows local-practice badge", panel.includes('data-testid="local-practice-badge"') && panel.includes("not a guideline requirement"));
 t("panel shows notice, review notes, references", panel.includes("protocol-notice") && panel.includes("protocol-review-notes") && panel.includes("protocol-references"));
-const dataSrc = ["cad_acs", "cirrhosis", "dyspnea", "variceal_bleed", "sbp", "hepatic_encephalopathy", "hrs_aki", "cardiac_arrest", "post_rosc", "bradycardia", "tachycardia", "shock", "sepsis", "anaphylaxis", "trauma_primary_survey", "haemorrhagic_shock", "tbi", "chest_trauma", "tension_pneumothorax", "spinal_injury", "burns", "paeds_cardiac_arrest", "paeds_septic_shock", "paeds_status_epilepticus", "paeds_dka", "paeds_asthma", "paeds_bronchiolitis", "index", "protocolTypes", "protocolViews"].map((f) => readFileSync(`src/data/protocols/${f}.ts`, "utf8")).join("\n");
+const dataSrc = ["cad_acs", "cirrhosis", "dyspnea", "variceal_bleed", "sbp", "hepatic_encephalopathy", "hrs_aki", "cardiac_arrest", "post_rosc", "bradycardia", "tachycardia", "shock", "sepsis", "anaphylaxis", "trauma_primary_survey", "haemorrhagic_shock", "tbi", "chest_trauma", "tension_pneumothorax", "spinal_injury", "burns", "paeds_cardiac_arrest", "paeds_septic_shock", "paeds_status_epilepticus", "paeds_dka", "paeds_asthma", "paeds_bronchiolitis", "poisoning_approach", "organophosphate", "snakebite", "aluminium_phosphide", "paraquat", "paracetamol", "methanol", "index", "protocolTypes", "protocolViews"].map((f) => readFileSync(`src/data/protocols/${f}.ts`, "utf8")).join("\n");
 t("library stays AI-free: no fetch / API / model imports", !/fetch\(|authenticatedFetch|gemini|anthropic|openai|sarvam/i.test(dataSrc + panel));
 console.log(`\nProtocol library: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

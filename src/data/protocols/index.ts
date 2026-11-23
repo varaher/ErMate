@@ -26,6 +26,13 @@ import { STATUS_EPILEPTICUS_PAEDS } from "./paeds_status_epilepticus";
 import { DKA_PAEDS } from "./paeds_dka";
 import { ASTHMA_PAEDS } from "./paeds_asthma";
 import { BRONCHIOLITIS_PAEDS } from "./paeds_bronchiolitis";
+import { POISONING_APPROACH_ADULT } from "./poisoning_approach";
+import { ORGANOPHOSPHATE_ADULT } from "./organophosphate";
+import { SNAKEBITE_ADULT } from "./snakebite";
+import { ALUMINIUM_PHOSPHIDE_ADULT } from "./aluminium_phosphide";
+import { PARAQUAT_ADULT } from "./paraquat";
+import { PARACETAMOL_ADULT } from "./paracetamol";
+import { METHANOL_ADULT } from "./methanol";
 
 /** ErMate Handbook chapters. A topic can link to any other topic by id (see protocolViews.resolveLink). */
 export const PROTOCOL_CHAPTERS: ProtocolChapter[] = [
@@ -43,6 +50,11 @@ export const PROTOCOL_CHAPTERS: ProtocolChapter[] = [
     id: "paediatric",
     title: "Paediatric Emergencies (under 16)",
     topics: [CARDIAC_ARREST_PAEDS, SEPTIC_SHOCK_PAEDS, STATUS_EPILEPTICUS_PAEDS, DKA_PAEDS, ASTHMA_PAEDS, BRONCHIOLITIS_PAEDS],
+  },
+  {
+    id: "toxicology",
+    title: "Toxicology & Envenomation",
+    topics: [POISONING_APPROACH_ADULT, ORGANOPHOSPHATE_ADULT, SNAKEBITE_ADULT, ALUMINIUM_PHOSPHIDE_ADULT, PARAQUAT_ADULT, PARACETAMOL_ADULT, METHANOL_ADULT],
   },
   { id: "breathing", title: "Breathing & Airway", topics: [DYSPNEA_ADULT] },
   { id: "cardiac", title: "Cardiac & Chest Pain", topics: [CAD_ACS_ADULT] },

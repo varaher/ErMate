@@ -11,7 +11,7 @@ const topics = allProtocolTopics();
 const handbook = topics.filter((x) => x.firstTen && x.firstTen.length); // new-format pages
 const REQUIRED_KINDS = ["symptoms", "pathophysiology", "approach", "differentials", "investigations", "treatment", "disposition", "pitfalls"];
 
-t("25 new-format Handbook pages (resuscitation 7 + trauma 7 + paediatric 6 + liver 5)", handbook.length === 25);
+t("32 new-format Handbook pages (resuscitation 7 + trauma 7 + paediatric 6 + toxicology 7 + liver 5)", handbook.length === 32);
 for (const tp of handbook) {
   const kinds = new Set(tp.sections.map((s) => s.kind));
   const missing = REQUIRED_KINDS.filter((k) => !kinds.has(k as any) && !(k === "symptoms" && tp.sections.some((s) => /grade/i.test(s.heading))));
@@ -44,6 +44,9 @@ t("shock page now opens haemorrhagic shock + tension pneumothorax", ["haemorrhag
 
 t("paediatric chapter third, all paediatric", (await import("./src/data/protocols")).PROTOCOL_CHAPTERS[2].id === "paediatric" && (await import("./src/data/protocols")).PROTOCOL_CHAPTERS[2].topics.every((x) => x.population === "paediatric"));
 t("no paediatric page links to an adult page", topics.filter((x) => x.population === "paediatric").every((x) => linkedTopicIds(x).every((id) => !/-adult$/.test(id))));
+
+t("toxicology chapter fourth", (await import("./src/data/protocols")).PROTOCOL_CHAPTERS[3].id === "toxicology");
+t("OP / poisoning links from bradycardia, arrest, shock now resolve", ["organophosphate-poisoning-adult", "poisoning-approach-adult"].every((id) => !!resolveLink(id, topics)) && linkedTopicIds(findTopic("bradycardia-adult")!).includes("organophosphate-poisoning-adult"));
 
 // Old founder pages still render unchanged.
 t("dyspnea and ACS pages kept as authored", !!findTopic("dyspnea-adult") && !!findTopic("cad-acs-adult"));
