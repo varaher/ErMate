@@ -20,6 +20,12 @@ import { CHEST_TRAUMA_ADULT } from "./chest_trauma";
 import { TENSION_PNEUMOTHORAX_ADULT } from "./tension_pneumothorax";
 import { SPINAL_INJURY_ADULT } from "./spinal_injury";
 import { BURNS_ADULT } from "./burns";
+import { CARDIAC_ARREST_PAEDS } from "./paeds_cardiac_arrest";
+import { SEPTIC_SHOCK_PAEDS } from "./paeds_septic_shock";
+import { STATUS_EPILEPTICUS_PAEDS } from "./paeds_status_epilepticus";
+import { DKA_PAEDS } from "./paeds_dka";
+import { ASTHMA_PAEDS } from "./paeds_asthma";
+import { BRONCHIOLITIS_PAEDS } from "./paeds_bronchiolitis";
 
 /** ErMate Handbook chapters. A topic can link to any other topic by id (see protocolViews.resolveLink). */
 export const PROTOCOL_CHAPTERS: ProtocolChapter[] = [
@@ -32,6 +38,11 @@ export const PROTOCOL_CHAPTERS: ProtocolChapter[] = [
     id: "trauma",
     title: "Trauma",
     topics: [TRAUMA_PRIMARY_SURVEY_ADULT, HAEMORRHAGIC_SHOCK_ADULT, TBI_ADULT, CHEST_TRAUMA_ADULT, TENSION_PNEUMOTHORAX_ADULT, SPINAL_INJURY_ADULT, BURNS_ADULT],
+  },
+  {
+    id: "paediatric",
+    title: "Paediatric Emergencies (under 16)",
+    topics: [CARDIAC_ARREST_PAEDS, SEPTIC_SHOCK_PAEDS, STATUS_EPILEPTICUS_PAEDS, DKA_PAEDS, ASTHMA_PAEDS, BRONCHIOLITIS_PAEDS],
   },
   { id: "breathing", title: "Breathing & Airway", topics: [DYSPNEA_ADULT] },
   { id: "cardiac", title: "Cardiac & Chest Pain", topics: [CAD_ACS_ADULT] },

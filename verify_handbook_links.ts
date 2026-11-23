@@ -11,7 +11,7 @@ const topics = allProtocolTopics();
 const handbook = topics.filter((x) => x.firstTen && x.firstTen.length); // new-format pages
 const REQUIRED_KINDS = ["symptoms", "pathophysiology", "approach", "differentials", "investigations", "treatment", "disposition", "pitfalls"];
 
-t("19 new-format Handbook pages (resuscitation 7 + trauma 7 + liver 5)", handbook.length === 19);
+t("25 new-format Handbook pages (resuscitation 7 + trauma 7 + paediatric 6 + liver 5)", handbook.length === 25);
 for (const tp of handbook) {
   const kinds = new Set(tp.sections.map((s) => s.kind));
   const missing = REQUIRED_KINDS.filter((k) => !kinds.has(k as any) && !(k === "symptoms" && tp.sections.some((s) => /grade/i.test(s.heading))));
@@ -28,7 +28,7 @@ for (const tp of handbook) {
 const allLinks = topics.flatMap((tp) => linkedTopicIds(tp));
 const unresolved = Array.from(new Set(allLinks.filter((id) => !resolveLink(id, topics))));
 t("link ids are kebab-case", allLinks.every((id) => /^[a-z0-9]+(-[a-z0-9]+)*$/.test(id)));
-t("unresolved links are only planned topics/procedures (shown as Topic coming)", unresolved.every((id) => /-(adult|procedure)$/.test(id)));
+t("unresolved links are only planned topics/procedures (shown as Topic coming)", unresolved.every((id) => /-(adult|paeds|procedure)$/.test(id)));
 console.log(`   planned topics referenced: ${unresolved.join(", ")}`);
 t("cirrhosis links to all 4 branches", ["variceal-bleed-adult", "sbp-adult", "hepatic-encephalopathy-adult", "hrs-aki-adult"].every((id) => linkedTopicIds(findTopic("cirrhosis-liver-adult")!).includes(id)));
 t("each branch is linked back from cirrhosis (backlinks)", ["variceal-bleed-adult", "sbp-adult", "hepatic-encephalopathy-adult", "hrs-aki-adult"].every((id) => backlinks(id, topics).some((b) => b.id === "cirrhosis-liver-adult")));
@@ -41,6 +41,9 @@ t("resuscitation chapter listed first", (await import("./src/data/protocols")).P
 
 t("trauma chapter second", (await import("./src/data/protocols")).PROTOCOL_CHAPTERS[1].id === "trauma");
 t("shock page now opens haemorrhagic shock + tension pneumothorax", ["haemorrhagic-shock-adult", "tension-pneumothorax-adult"].every((id) => !!resolveLink(id, topics) && linkedTopicIds(findTopic("shock-undifferentiated-adult")!).includes(id)));
+
+t("paediatric chapter third, all paediatric", (await import("./src/data/protocols")).PROTOCOL_CHAPTERS[2].id === "paediatric" && (await import("./src/data/protocols")).PROTOCOL_CHAPTERS[2].topics.every((x) => x.population === "paediatric"));
+t("no paediatric page links to an adult page", topics.filter((x) => x.population === "paediatric").every((x) => linkedTopicIds(x).every((id) => !/-adult$/.test(id))));
 
 // Old founder pages still render unchanged.
 t("dyspnea and ACS pages kept as authored", !!findTopic("dyspnea-adult") && !!findTopic("cad-acs-adult"));

@@ -1,67 +1,158 @@
-import type { ProtocolChapter, ProtocolTopic } from "./protocolTypes";
-import { DYSPNEA_ADULT } from "./dyspnea";
-import { CAD_ACS_ADULT } from "./cad_acs";
-import { CIRRHOSIS_ADULT } from "./cirrhosis";
-import { VARICEAL_BLEED_ADULT } from "./variceal_bleed";
-import { SBP_ADULT } from "./sbp";
-import { HEPATIC_ENCEPHALOPATHY_ADULT } from "./hepatic_encephalopathy";
-import { HRS_AKI_ADULT } from "./hrs_aki";
-import { CARDIAC_ARREST_ADULT } from "./cardiac_arrest";
-import { POST_ROSC_ADULT } from "./post_rosc";
-import { BRADYCARDIA_ADULT } from "./bradycardia";
-import { TACHYCARDIA_ADULT } from "./tachycardia";
-import { SHOCK_UNDIFFERENTIATED_ADULT } from "./shock";
-import { SEPSIS_ADULT } from "./sepsis";
-import { ANAPHYLAXIS_ADULT } from "./anaphylaxis";
-import { TRAUMA_PRIMARY_SURVEY_ADULT } from "./trauma_primary_survey";
-import { HAEMORRHAGIC_SHOCK_ADULT } from "./haemorrhagic_shock";
-import { TBI_ADULT } from "./tbi";
-import { CHEST_TRAUMA_ADULT } from "./chest_trauma";
-import { TENSION_PNEUMOTHORAX_ADULT } from "./tension_pneumothorax";
-import { SPINAL_INJURY_ADULT } from "./spinal_injury";
-import { BURNS_ADULT } from "./burns";
+// MARKER: ERMATE-PROTOCOL-LIBRARY-V2
+import { readFileSync } from "fs";
+import { PROTOCOL_CHAPTERS, allProtocolTopics, searchProtocols } from "./src/data/protocols";
+let pass = 0, fail = 0;
+const t = (n: string, c: boolean) => { if (c) { pass++; console.log(`[PASS] ${n}`); } else { fail++; console.log(`[FAIL] ${n}`); } };
 
-/** ErMate Handbook chapters. A topic can link to any other topic by id (see protocolViews.resolveLink). */
-export const PROTOCOL_CHAPTERS: ProtocolChapter[] = [
-  {
-    id: "resuscitation",
-    title: "Resuscitation & Life Threats",
-    topics: [CARDIAC_ARREST_ADULT, POST_ROSC_ADULT, BRADYCARDIA_ADULT, TACHYCARDIA_ADULT, SHOCK_UNDIFFERENTIATED_ADULT, SEPSIS_ADULT, ANAPHYLAXIS_ADULT],
-  },
-  {
-    id: "trauma",
-    title: "Trauma",
-    topics: [TRAUMA_PRIMARY_SURVEY_ADULT, HAEMORRHAGIC_SHOCK_ADULT, TBI_ADULT, CHEST_TRAUMA_ADULT, TENSION_PNEUMOTHORAX_ADULT, SPINAL_INJURY_ADULT, BURNS_ADULT],
-  },
-  { id: "breathing", title: "Breathing & Airway", topics: [DYSPNEA_ADULT] },
-  { id: "cardiac", title: "Cardiac & Chest Pain", topics: [CAD_ACS_ADULT] },
-  {
-    id: "gi-hepatic",
-    title: "GI & Liver",
-    topics: [CIRRHOSIS_ADULT, VARICEAL_BLEED_ADULT, SBP_ADULT, HEPATIC_ENCEPHALOPATHY_ADULT, HRS_AKI_ADULT],
-  },
-];
+const topics = allProtocolTopics();
+const ids = topics.map((x) => x.id);
+t("27 topics published (resuscitation 7, trauma 7, paediatric 6, dyspnea, ACS, liver 5)", topics.length === 27 && ["dyspnea-adult", "cad-acs-adult", "cirrhosis-liver-adult", "variceal-bleed-adult", "sbp-adult", "hepatic-encephalopathy-adult", "hrs-aki-adult"].every((i) => ids.includes(i)));
+t("topic ids unique", new Set(ids).size === ids.length);
+t("all draft, none falsely marked reviewed", topics.every((x) => x.status === "draft" && x.reviewedOn === ""));
+t("adult and paediatric never mixed within a chapter", PROTOCOL_CHAPTERS.every((c) => new Set(c.topics.map((x) => x.population)).size === 1));
+t("every topic has a source and sections", topics.every((x) => x.source.length > 10 && x.sections.length >= 5));
+t("every topic has a dated reference list or is founder-authored", topics.every((x) => (x.references || []).length > 0 || x.id === "dyspnea-adult" || x.id === "cad-acs-adult"));
+t("every item has text", topics.every((x) => x.sections.every((s) => s.items.length > 0 && s.items.every((i) => i.text.trim().length > 3))));
+t("chapters list the new topics", PROTOCOL_CHAPTERS.some((c) => c.id === "cardiac") && PROTOCOL_CHAPTERS.some((c) => c.id === "gi-hepatic"));
 
-export function allProtocolTopics(): ProtocolTopic[] {
-  return PROTOCOL_CHAPTERS.flatMap((c) => c.topics);
-}
+const cad = topics.find((x) => x.id === "cad-acs-adult")!;
+const allCad = cad.sections.flatMap((s) => s.items);
+const avil = allCad.filter((i) => /avil/i.test(i.label || "") || /pheniramine/i.test(i.label || ""));
+t("Avil before CAG exists exactly once", avil.length === 1);
+t("Avil is tagged local practice with the hospital named", avil[0]?.tier === "local" && avil[0]?.origin === "Rajagiri Hospital ED");
+t("Avil step says it is not in the written protocol", /not in the written/i.test(avil[0]?.text || ""));
+t("only the Avil step is local practice", allCad.filter((i) => i.tier === "local").length === 1);
+t("PCI is never delayed for antihistamine (critical warning)", allCad.some((i) => i.critical && /never delay time-critical primary PCI/i.test(i.text)));
+t("guideline note says universal premedication is not required", allCad.some((i) => /not an established guideline requirement/i.test(i.text)));
+t("STEMI: cath lab without waiting for troponin", allCad.some((i) => i.critical && /Do not wait for troponin/.test(i.text)));
+t("ECG within 10 minutes", allCad.some((i) => /within 10 minutes/.test(i.text)));
+t("aspirin 300 mg, SL GTN 0.4 mg, atorvastatin 80 mg present", ["300 mg chewed", "0.4 mg", "Atorvastatin 80 mg"].every((x) => allCad.some((i) => i.text.includes(x))));
+t("UFH dosing present", allCad.some((i) => i.text.includes("60 units/kg IV (max 4000 units)")));
+t("RV infarction: avoid preload reduction", allCad.some((i) => /avoid preload reduction with RV infarction/.test(i.text)));
+t("cardiac topic carries the not-an-order-set notice", /Not an approved clinical order set/.test(cad.notice || ""));
 
-export function findTopic(id: string | undefined): ProtocolTopic | undefined {
-  if (!id) return undefined;
-  return allProtocolTopics().find((t) => t.id === id);
-}
+const cir = topics.find((x) => x.id === "cirrhosis-liver-adult")!;
+const vb = topics.find((x) => x.id === "variceal-bleed-adult")!;
+const sbp = topics.find((x) => x.id === "sbp-adult")!;
+const he = topics.find((x) => x.id === "hepatic-encephalopathy-adult")!;
+const hrs = topics.find((x) => x.id === "hrs-aki-adult")!;
+const items = (tp: any) => tp.sections.flatMap((s: any) => s.items) as Array<{ text: string; label?: string; critical?: boolean }>;
+const has = (tp: any, re: RegExp) => items(tp).some((i) => re.test(`${i.label || ""} ${i.text}`)) || (tp.firstTen || []).some((f: string) => re.test(f));
+t("cirrhosis v0.3: First 10 minutes present", (cir.firstTen || []).length >= 4);
+t("thiamine never delays glucose", has(cir, /never delay glucose|never before it/i));
+t("beta-blockers/diuretics are conditional, not stopped in everyone", has(cir, /Do not stop them automatically/));
+t("raised INR is not corrected on its own", has(cir, /does not predict bleeding/));
+t("SBP threshold PMN 250", has(sbp, /250/));
+t("SBP albumin 1.5 g/kg day 1 and 1 g/kg day 3", has(sbp, /1\.5 g\/kg/) && has(sbp, /1 g\/kg on day 3/));
+t("variceal: restrictive transfusion Hb 7", has(vb, /below 7 g\/dL/));
+t("variceal: terlipressin 2 mg 4-hourly with ischaemia + hypoxia warnings", has(vb, /2 mg IV every 4 hours/) && has(vb, /hypoxia/) && has(vb, /ischaemi/i));
+t("variceal: octreotide 50 mcg bolus then 50 mcg/h", has(vb, /50 micrograms IV bolus, then 50 micrograms per hour/));
+t("variceal: no TXA, no FFP for numbers", has(vb, /Do not give tranexamic acid/));
+t("variceal: antibiotic prophylaxis", has(vb, /Ceftriaxone 1 g/));
+t("variceal: endoscopy within 12 hours", has(vb, /12 hours/));
+t("variceal: intubation triggers listed", has(vb, /intubate for massive haematemesis/i));
+t("variceal: Baveno VIII stent preferred over balloon where available", has(vb, /stent is preferred where available/));
+t("HE: West Haven grades I-IV", ["Grade I", "Grade II", "Grade III", "Grade IV"].every((g) => items(he).some((i) => i.label === g)));
+t("HE: ammonia does not guide treatment", has(he, /does not guide treatment/));
+t("HE: flumazenil not routine", has(he, /flumazenil routinely/));
+t("HRS: no mandatory 48-hour challenge (ADQI-ICA 2024)", has(hrs, /No fixed 48-hour challenge/) && !has(hrs, /mandatory 48-hour albumin challenge before/));
+t("HRS: terlipressin safety (SpO2, overload)", has(hrs, /SpO2 below 90%/));
+t("HRS: noradrenaline alternative", has(hrs, /Noradrenaline/));
+t("no flumazenil/LOLA/PEG as routine first-line anywhere", !items(he).some((i) => i.critical && /LOLA|PEG|flumazenil/i.test(i.text)));
+t("liver branches point back to the cirrhosis page", [vb, sbp, he, hrs].every((x) => x.parent === "cirrhosis-liver-adult"));
+// Batch 2 — resuscitation (AHA 2025, SSC 2026)
+const ca = topics.find((x) => x.id === "cardiac-arrest-adult")!;
+const rosc = topics.find((x) => x.id === "post-rosc-adult")!;
+const brady = topics.find((x) => x.id === "bradycardia-adult")!;
+const tachy = topics.find((x) => x.id === "tachycardia-adult")!;
+const shock = topics.find((x) => x.id === "shock-undifferentiated-adult")!;
+const sep = topics.find((x) => x.id === "sepsis-adult")!;
+const ana = topics.find((x) => x.id === "anaphylaxis-adult")!;
+t("arrest: CPR 100-120, 5-6 cm", has(ca, /100–120 per minute, 5–6 cm/));
+t("arrest: adrenaline 1 mg every 3-5 min, early in non-shockable, after initial shocks in VF", has(ca, /1 mg IV\/IO every 3–5 minutes/) && has(ca, /as soon as possible in PEA/));
+t("arrest: amiodarone 300 then 150", has(ca, /300 mg IV\/IO after the third shock/) && has(ca, /150 mg/));
+t("arrest: IV first, IO second; no endotracheal drugs", has(ca, /IV access first/) && has(ca, /IV or IO only/));
+t("arrest: pregnancy delivery within 5 minutes + uterine displacement", has(ca, /within 5 minutes/) && has(ca, /left uterine displacement/));
+t("ROSC: SpO2 90-98, PaCO2 35-45, MAP 65", has(rosc, /SpO2 90–98%/) && has(rosc, /35–45 mmHg/) && has(rosc, /MAP at least 65/));
+t("ROSC: temperature 32-37.5 for at least 36 h (AHA 2025)", has(rosc, /32 and 37\.5 °C for at least 36 hours/));
+t("ROSC: prognosis waits 72 h", has(rosc, /72 hours/));
+t("brady: atropine 1 mg to max 3 mg, pacing, adrenaline 2-10", has(brady, /1 mg IV every 3–5 minutes, maximum 3 mg/) && has(brady, /2–10 micrograms per minute/) && has(brady, /pacing/i));
+t("tachy: AF cardioversion 200 J or more (AHA 2025)", has(tachy, /AF 200 J or more/));
+t("tachy: adenosine 6 then 12", has(tachy, /6 mg rapid IV push/) && has(tachy, /12 mg/));
+t("tachy: sotalol not recommended", has(tachy, /Sotalol is no longer recommended/));
+t("tachy: no AV-node blockers in pre-excited AF", has(tachy, /pre-excited AF/));
+t("shock: four types each linked", ["Hypovolaemic", "Distributive", "Cardiogenic", "Obstructive"].every((l) => items(shock).some((i: any) => i.label === l && i.link)));
+t("shock: noradrenaline first-line, peripheral acceptable", has(shock, /peripheral line/));
+t("sepsis: NEWS2 not qSOFA alone (SSC 2026)", has(sep, /not qSOFA alone/));
+t("sepsis: antibiotics within 1 hour in shock", has(sep, /within 1 hour/));
+t("sepsis: balanced crystalloid preferred", has(sep, /Balanced crystalloid/));
+t("sepsis: MAP 60-65 if aged 65+", has(sep, /60–65 mmHg in patients aged 65 and over/));
+t("sepsis: beta-lactam loading + extended infusion; no routine anaerobe/antifungal", has(sep, /extended infusions/) && has(sep, /no routine empiric antifungals/));
+t("sepsis: India tropical screen", has(sep, /scrub typhus/));
+t("anaphylaxis: IM adrenaline 0.5 mg thigh, repeat 5 min", has(ana, /0\.5 mg/) && has(ana, /anterolateral thigh/) && has(ana, /every 5 minutes/));
+t("anaphylaxis: refractory after 2 IM doses -> infusion", has(ana, /after 2 IM doses/));
+t("anaphylaxis: antihistamine/steroid not first-line", has(ana, /Not first-line and never instead of adrenaline/));
+t("anaphylaxis: glucagon for beta-blocked", has(ana, /Glucagon/));
+t("ROSC links back to arrest", rosc.parent === "cardiac-arrest-adult");
+// Batch 3 — trauma (ATLS 11th edition)
+const tps = topics.find((x) => x.id === "trauma-primary-survey-adult")!;
+const hs = topics.find((x) => x.id === "haemorrhagic-shock-adult")!;
+const tbi = topics.find((x) => x.id === "tbi-adult")!;
+const chest = topics.find((x) => x.id === "chest-trauma-adult")!;
+const tpx = topics.find((x) => x.id === "tension-pneumothorax-adult")!;
+const spine = topics.find((x) => x.id === "spinal-injury-adult")!;
+const burns = topics.find((x) => x.id === "burns-adult")!;
+t("ATLS 11: x (exsanguination) before A", /^x —/.test(tps.firstTen![0]) && /^A —/.test(tps.firstTen![1]));
+t("ATLS 11: video laryngoscopy, selective spinal motion restriction", has(tps, /video laryngoscopy/) && has(tps, /selective/));
+t("TXA 1 g + 1 g within 3 hours", has(hs, /1 g IV over 10 minutes, then 1 g over 8 hours/) && has(hs, /within 3 hours/));
+t("MTP 1:1:1 or whole blood; minimal crystalloid", has(hs, /1:1:1/) && has(hs, /whole blood/) && has(tps, /Minimise crystalloid/));
+t("calcium in massive transfusion", has(hs, /ionised calcium above 1\.1/));
+t("permissive hypotension excludes TBI", has(hs, /Not in traumatic brain injury/));
+t("TBI: SBP 100 / 110 by age; no permissive hypotension", has(tbi, /at least 110 mmHg/) && has(tbi, /No permissive hypotension/));
+t("TBI: hyperosmolar therapy + anticoagulant reversal + no steroids", has(tbi, /3% saline/) && has(tbi, /idarucizumab/) && has(tbi, /Steroids/));
+t("chest: thoracotomy criteria 1500 mL / 200 mL/h", has(chest, /1500 mL/) && has(chest, /200 mL per hour/));
+t("tension: decompress 4th-5th ICS anterior to mid-axillary line", has(tpx, /4th–5th intercostal space/) && has(tpx, /Do not wait for an X-ray/));
+t("spine: MAP 75-80 to 90-95 for 3-7 days; no routine methylprednisolone", has(spine, /75–80/) && has(spine, /90–95/) && has(spine, /methylprednisolone is not recommended/));
+t("spine: NEXUS / Canadian C-spine", has(spine, /NEXUS or the Canadian C-Spine Rule/));
+t("burns: cool 20 min, 2-4 mL/kg/%TBSA titrated to urine 0.5 mL/kg/h", has(burns, /20 minutes/) && has(burns, /2–4 mL\/kg\/%TBSA/) && has(burns, /0\.5 mL\/kg\/hour/));
+t("burns: early intubation for inhalation injury", has(burns, /intubate early/));
+t("trauma branches point back to the primary survey", [hs, tbi, chest, spine, burns].every((x) => x.parent === "trauma-primary-survey-adult") && tpx.parent === "chest-trauma-adult");
+// Batch 4 — paediatric (PALS 2025, SSC Children 2020 / Phoenix 2024, ISPAD 2022, GINA 2025, AAP/NICE)
+const pca = topics.find((x) => x.id === "cardiac-arrest-paeds")!;
+const pss = topics.find((x) => x.id === "septic-shock-paeds")!;
+const pse = topics.find((x) => x.id === "status-epilepticus-paeds")!;
+const pdka = topics.find((x) => x.id === "dka-paeds")!;
+const pas = topics.find((x) => x.id === "asthma-paeds")!;
+const pbr = topics.find((x) => x.id === "bronchiolitis-paeds")!;
+const paeds = [pca, pss, pse, pdka, pas, pbr];
+t("paediatric pages are population paediatric", paeds.every((x) => x.population === "paediatric"));
+t("PALS 2025: 2 J/kg then 4 J/kg, max 10 J/kg", has(pca, /2 J\/kg, then 4 J\/kg/) && has(pca, /10 J\/kg/));
+t("PALS 2025: adrenaline 0.01 mg/kg max 1 mg, ASAP in non-shockable", has(pca, /0\.01 mg\/kg/) && has(pca, /as soon as possible/));
+t("PALS 2025: amiodarone 5 mg/kg up to 3 doses; 15:2; breath every 2-3 s", has(pca, /5 mg\/kg/) && has(pca, /15:2/) && has(pca, /every 2–3 seconds/));
+t("PALS 2025: post-ROSC avoid > 37.5 C, BP above 10th centile", has(pca, /37\.5 °C/) && has(pca, /10th centile/));
+t("paeds sepsis: antibiotics within 1 h; 10-20 mL/kg boluses reassessed; no boluses without ICU unless hypotensive", has(pss, /within 1 hour/) && has(pss, /10–20 mL\/kg/) && has(pss, /no boluses/));
+t("paeds sepsis: Phoenix criteria", has(pss, /Phoenix/));
+t("status: benzo at 5 min, max 2 doses, then levetiracetam 60 / phenytoin 20 / valproate 40", has(pse, /At 5 minutes/) && has(pse, /Two doses in total/) && has(pse, /60 mg\/kg/) && has(pse, /20 mg\/kg/) && has(pse, /40 mg\/kg/));
+t("DKA: insulin 0.05-0.1 u/kg/h after 1 h, no bolus", has(pdka, /0\.05–0\.1 unit\/kg\/hour/) && has(pdka, /No insulin bolus/));
+t("DKA: deficit over 24-48 h; cerebral oedema mannitol / 3% saline; no bicarbonate", has(pdka, /24–48 hours/) && has(pdka, /Mannitol 0\.5–1 g\/kg/) && has(pdka, /Not used/));
+t("asthma: prednisolone 1-2 mg/kg max 40; MgSO4 40-50 mg/kg max 2 g", has(pas, /1–2 mg\/kg/) && has(pas, /40–50 mg\/kg \(maximum 2 g\)/));
+t("bronchiolitis: no salbutamol / steroids / antibiotics; HFNC", has(pbr, /Do not use/) && has(pbr, /High-flow nasal cannula/));
+t("paediatric pages never link to adult pages (doses differ)", paeds.every((x) => x.sections.every((s: any) => s.items.every((i: any) => !i.link || !/-adult$/.test(i.link)))));
+t("dyspnea review notes carried, content kept", (topics.find((x) => x.id === "dyspnea-adult")!.reviewNotes || []).length === 3 && topics.find((x) => x.id === "dyspnea-adult")!.sections.length >= 8);
 
-/** Plain-text search over title, summary, First 10 minutes and every instruction. No AI. */
-export function searchProtocols(query: string): ProtocolTopic[] {
-  const q = query.trim().toLowerCase();
-  if (!q) return allProtocolTopics();
-  return allProtocolTopics().filter((t) => {
-    if (t.title.toLowerCase().includes(q) || t.summary.toLowerCase().includes(q)) return true;
-    if ((t.keywords || []).some((k) => k.toLowerCase().includes(q) || q.includes(k.toLowerCase()))) return true;
-    if ((t.firstTen || []).some((f) => f.toLowerCase().includes(q))) return true;
-    return t.sections.some((s) =>
-      s.heading.toLowerCase().includes(q) ||
-      s.items.some((i) => (i.label || "").toLowerCase().includes(q) || i.text.toLowerCase().includes(q))
-    );
-  });
-}
+t("search by complaint: chest pain -> ACS", searchProtocols("chest pain").some((x) => x.id === "cad-acs-adult"));
+t("search by complaint: hematemesis -> cirrhosis", searchProtocols("hematemesis").some((x) => x.id === "cirrhosis-liver-adult"));
+t("search by complaint: breathlessness -> dyspnea", searchProtocols("breathlessness").some((x) => x.id === "dyspnea-adult"));
+t("search by drug: avil finds ACS", searchProtocols("avil").some((x) => x.id === "cad-acs-adult"));
+t("empty search returns all", searchProtocols("").length === 27);
+t("search: terlipressin finds variceal + HRS", ["variceal-bleed-adult", "hrs-aki-adult"].every((id) => searchProtocols("terlipressin").some((x) => x.id === id)));
+t("search: confusion finds HE", searchProtocols("confusion").some((x) => x.id === "hepatic-encephalopathy-adult"));
+t("nonsense search returns none", searchProtocols("zzzzqqq").length === 0);
+
+const panel = readFileSync("src/components/ProtocolsPanel.tsx", "utf8");
+t("panel shows local-practice badge", panel.includes('data-testid="local-practice-badge"') && panel.includes("not a guideline requirement"));
+t("panel shows notice, review notes, references", panel.includes("protocol-notice") && panel.includes("protocol-review-notes") && panel.includes("protocol-references"));
+const dataSrc = ["cad_acs", "cirrhosis", "dyspnea", "variceal_bleed", "sbp", "hepatic_encephalopathy", "hrs_aki", "cardiac_arrest", "post_rosc", "bradycardia", "tachycardia", "shock", "sepsis", "anaphylaxis", "trauma_primary_survey", "haemorrhagic_shock", "tbi", "chest_trauma", "tension_pneumothorax", "spinal_injury", "burns", "paeds_cardiac_arrest", "paeds_septic_shock", "paeds_status_epilepticus", "paeds_dka", "paeds_asthma", "paeds_bronchiolitis", "index", "protocolTypes", "protocolViews"].map((f) => readFileSync(`src/data/protocols/${f}.ts`, "utf8")).join("\n");
+t("library stays AI-free: no fetch / API / model imports", !/fetch\(|authenticatedFetch|gemini|anthropic|openai|sarvam/i.test(dataSrc + panel));
+console.log(`\nProtocol library: ${pass} passed, ${fail} failed`);
+process.exit(fail ? 1 : 0);
