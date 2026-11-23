@@ -40,6 +40,13 @@ import { SEIZURE_ADULT } from "./seizure";
 import { MENINGITIS_ADULT } from "./meningitis";
 import { HYPOGLYCAEMIA_ADULT } from "./hypoglycaemia";
 import { ALCOHOL_WITHDRAWAL_ADULT } from "./alcohol_withdrawal";
+import { PULMONARY_EMBOLISM_ADULT } from "./pulmonary_embolism";
+import { PNEUMONIA_ADULT } from "./pneumonia";
+import { HYPERKALAEMIA_ADULT } from "./hyperkalaemia";
+import { HYPONATRAEMIA_ADULT } from "./hyponatraemia";
+import { ADRENAL_CRISIS_ADULT } from "./adrenal_crisis";
+import { UPPER_GI_BLEED_ADULT } from "./upper_gi_bleed";
+import { PANCREATITIS_ADULT } from "./pancreatitis";
 
 /** ErMate Handbook chapters. A topic can link to any other topic by id (see protocolViews.resolveLink). */
 export const PROTOCOL_CHAPTERS: ProtocolChapter[] = [
@@ -68,12 +75,17 @@ export const PROTOCOL_CHAPTERS: ProtocolChapter[] = [
     title: "Neurology & Altered Sensorium",
     topics: [STROKE_ADULT, ICH_ADULT, SAH_ADULT, SEIZURE_ADULT, MENINGITIS_ADULT, HYPOGLYCAEMIA_ADULT, ALCOHOL_WITHDRAWAL_ADULT],
   },
-  { id: "breathing", title: "Breathing & Airway", topics: [DYSPNEA_ADULT] },
+  {
+    id: "metabolic",
+    title: "Metabolic & Endocrine",
+    topics: [HYPERKALAEMIA_ADULT, HYPONATRAEMIA_ADULT, ADRENAL_CRISIS_ADULT],
+  },
+  { id: "breathing", title: "Breathing & Airway", topics: [DYSPNEA_ADULT, PULMONARY_EMBOLISM_ADULT, PNEUMONIA_ADULT] },
   { id: "cardiac", title: "Cardiac & Chest Pain", topics: [CAD_ACS_ADULT] },
   {
     id: "gi-hepatic",
     title: "GI & Liver",
-    topics: [CIRRHOSIS_ADULT, VARICEAL_BLEED_ADULT, SBP_ADULT, HEPATIC_ENCEPHALOPATHY_ADULT, HRS_AKI_ADULT],
+    topics: [CIRRHOSIS_ADULT, VARICEAL_BLEED_ADULT, SBP_ADULT, HEPATIC_ENCEPHALOPATHY_ADULT, HRS_AKI_ADULT, UPPER_GI_BLEED_ADULT, PANCREATITIS_ADULT],
   },
 ];
 
