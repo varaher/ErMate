@@ -12,7 +12,8 @@ import {
 } from "lucide-react";
 import VoiceRecorder from "./shared/VoiceRecorder";
 import { sanitizeDoctorError } from "../utils/sanitizeError";
-import { triggerPrintWithTip, triggerBookPrint } from "../utils/printWithTip";
+import { triggerPrintWithTip } from "../utils/printWithTip";
+import { printHandoverBooklet, readRotateBack, saveRotateBack } from "../utils/handoverBooklet";
 import { ClinicalCase, UserProfile, HandoverRecord, QuickPastePatient, InvestigationItem, HandoverPatient, DirectDischargeSummaryItem, TreatmentItem } from "../types";
 import { HandoverCard } from "./HandoverCard";
 import { isCaseHandoverEligible } from "../utils/caseLifecycle";
@@ -521,6 +522,10 @@ export default function HandoverView({
 
   // Post-Print Handover Completion State
   const [showPostPrintCleanPrompt, setShowPostPrintCleanPrompt] = useState(false);
+  // Print as Book: ErMate imposes the booklet itself (A5 pages two-up on A4 landscape, numbered).
+  const [showBookletDialog, setShowBookletDialog] = useState(false);
+  const [bookletRotateBack, setBookletRotateBack] = useState<boolean>(() => readRotateBack());
+  const [bookletNotice, setBookletNotice] = useState<string | null>(null);
   const [postPrintDataType, setPostPrintDataType] = useState<"registry" | "quickpaste">("registry");
   const [idsToCleanup, setIdsToCleanup] = useState<string[]>([]);
   const [actionSuccessMsg, setActionSuccessMsg] = useState<string | null>(null);
@@ -2920,7 +2925,12 @@ function extractLatestVitalsWithTime(
 
     // Print the sheet normally (A4) or as a book (A5 pages for the printer's Booklet mode).
     const handlePrintSheet = (asBook: boolean) => {
-      if (asBook) triggerBookPrint(); else triggerPrintWithTip();
+      if (asBook) { setBookletNotice(null); setShowBookletDialog(true); return; }
+      triggerPrintWithTip();
+      afterPrintCleanupPrompt();
+    };
+
+    const afterPrintCleanupPrompt = () => {
       setPostPrintDataType(activeSubTab === "registry" ? "registry" : "quickpaste");
       if (activeSubTab === "registry") {
         setIdsToCleanup(editableRows.map(r => r.id));
@@ -2930,8 +2940,44 @@ function extractLatestVitalsWithTime(
       setShowPostPrintCleanPrompt(true);
     };
 
+    const runBookletPrint = () => {
+      saveRotateBack(bookletRotateBack);
+      const cards = Array.from(document.querySelectorAll<HTMLElement>("#landscape-handover-sheet-workspace .print-page .print-card"));
+      if (!cards.length) { setBookletNotice("Nothing to print yet: add patients to the handover sheet first."); return; }
+      const pages = printHandoverBooklet(cards, {
+        hospitalLine: `${hospitalName && hospitalName !== "EMERGENCY DEPARTMENT" ? `${hospitalName} \u2014 ` : ""}EMERGENCY DEPARTMENT`,
+        date: handoverMeta.date, from: handoverMeta.from, to: handoverMeta.to, time: handoverMeta.time,
+      }, { rotateBack: bookletRotateBack });
+      setShowBookletDialog(false);
+      if (pages > 0) afterPrintCleanupPrompt();
+    };
+
     return (
       <div className="max-w-7xl mx-auto px-4 py-6 space-y-6 font-sans" id="landscape-handover-sheet-workspace">
+        {showBookletDialog && (
+          <div className="no-print fixed inset-0 z-[9999] bg-black/50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="booklet-dialog-title">
+            <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-xl max-w-md w-full p-5 space-y-3 text-slate-800 dark:text-slate-100" data-testid="booklet-dialog">
+              <h2 id="booklet-dialog-title" className="text-base font-extrabold flex items-center gap-2"><BookOpen className="w-4 h-4 text-purple-600" /> Print as Book</h2>
+              <p className="text-xs text-slate-600 dark:text-slate-300">ErMate makes a numbered A5 book: each A4 sheet holds 4 pages. Fold every sheet in half with its first page outside, then stack the folded sheets in order (sheet 1 on top) \u2014 it reads 1, 2, 3, 4 \u2026 No printer \u201cBooklet\u201d option is needed.</p>
+              <ol className="list-decimal pl-5 text-xs space-y-1" data-testid="booklet-steps">
+                <li>Paper <strong>A4</strong>, layout <strong>Landscape</strong>, scale <strong>100% / Actual size</strong> (not \u201cFit\u201d).</li>
+                <li>Double-sided: <strong>Flip on SHORT edge</strong>.</li>
+                <li>Fold each sheet in half (page 1, 5, 9 \u2026 on the outside), stack in order and staple along the fold.</li>
+                <li>Do <strong>not</strong> choose the printer\u2019s Booklet option \u2014 the pages are already arranged.</li>
+                <li>To keep a copy, choose <strong>Save as PDF</strong>; print that PDF the same way later. Blank halves appear only at the end of the last sheet.</li>
+              </ol>
+              <label className="flex items-start gap-2 text-xs cursor-pointer select-none">
+                <input type="checkbox" checked={bookletRotateBack} onChange={(e) => setBookletRotateBack(e.target.checked)} className="mt-0.5" data-testid="booklet-rotate-back" />
+                <span>My printer prints the back side <strong>upside down</strong> (it can only flip on the long edge). ErMate will turn the back pages for you.</span>
+              </label>
+              {bookletNotice && <p className="text-xs text-red-600" role="alert">{bookletNotice}</p>}
+              <div className="flex justify-end gap-2 pt-1">
+                <button type="button" onClick={() => setShowBookletDialog(false)} className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-300 dark:border-slate-700">Cancel</button>
+                <button type="button" onClick={runBookletPrint} className="px-4 py-1.5 text-xs font-bold rounded-lg bg-purple-600 hover:bg-purple-700 text-white" data-testid="booklet-print-go">Print booklet</button>
+              </div>
+            </div>
+          </div>
+        )}
         <style dangerouslySetInnerHTML={{ __html: `
           .print-mirror-div {
             display: none;
@@ -3216,7 +3262,8 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
             <button
               onClick={() => handlePrintSheet(true)}
               id="print-handover-book-btn"
-              title="A5 book pages: pick the printer's Booklet option, double-sided. About half the sheets."
+              data-coach="handover-booklet"
+              title="Numbered A5 book: double-sided, flip on short edge, fold each sheet and stack in order."
               className="px-4 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 shadow-sm cursor-pointer"
             >
               <BookOpen className="w-3.5 h-3.5" />

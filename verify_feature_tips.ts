@@ -11,7 +11,7 @@ const mem = (): KV & { m: Map<string, string> } => { const m = new Map<string, s
 const REQUIRED_FEATURES = [
   "plan-banner", "critical-badge", "handover-choice",
   "mate-critical-query", "mate-voice", "mate-auto-bed", "whatsapp-share",
-  "protocol-chips", "protocol-investigations", "protocol-flag", "handbook-links", "teams",
+  "protocol-chips", "protocol-investigations", "protocol-flag", "handbook-links", "handover-booklet", "teams",
   "mate-alerts", "emr-field-copy", "team-start", "rota-sync",
   "mode-switch", "icu-mode", "icu-scribe", "icu-fasthugs", "icu-emr-copy", "icu-cases", "icu-handover",
   "edit-capture", "discharge-paste", "icu-discharge-paste", "icu-rounds", "icu-thinking-partners", "icu-trends", "icu-trends-window", "preview-edit",

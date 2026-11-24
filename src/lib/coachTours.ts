@@ -73,6 +73,7 @@ export const TOURS: Record<TourId, CoachStep[]> = {
   handover: [
     { id: "intro", title: "Shift handover", body: "Build a clear handover for the next doctor. Review everything before you hand over." },
     { id: "choice-cards", v: 2, feature: "handover-choice", title: "Two ways to start", body: "Pick \"Patients in ErMate\" to tick patients you already added, or \"Paste from hospital EMR\" to paste an existing handover and let ErMate organise it." },
+    { id: "handover-booklet", v: 4, feature: "handover-booklet", target: { sel: '[data-coach="handover-booklet"]' }, title: "Print as Book", body: "ErMate prints the handover as a numbered A5 book. Print A4 landscape, double-sided, flip on the SHORT edge. Fold each sheet in half with its first page outside, stack in order and staple along the fold. No printer Booklet option needed." },
     { id: "share-whatsapp", v: 3, feature: "whatsapp-share", target: { sel: '[data-coach="share-whatsapp"]' }, title: "Share on WhatsApp", body: "Send the handover through your own WhatsApp. Patient names are left out unless you switch them on. The discharge summary has the same button. Send only to the receiving team or the patient." },
     { id: "compile", target: { sel: "#handover-section h3", text: "Compile Sheet" }, title: "Compile the sheet", body: "Pulls your active patients into one handover sheet. Edit any cell, then print or share." },
   ],
