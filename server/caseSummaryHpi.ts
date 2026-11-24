@@ -11,6 +11,8 @@
  *
  * Safety:
  *  - Only recorded facts. Every number in the HPI must exist in the case (else the AI text is rejected).
+ *  - Clinical facts guard: no symptom / condition / referral that is not in the case; recorded negatives
+ *    stay negative and recorded positives are never negated (clinicalFactsProblem).
  *  - Identifiers removed (deidentifyText) before any model sees the text; placeholders never reach the HPI.
  *  - Extraction cascade: GPT-4o-mini → Claude Haiku, temperature 0. No Gemini.
  *  - If no model is available: a plain template from the complaint and events, or nothing (the
@@ -90,6 +92,8 @@ export const HPI_SYSTEM_PROMPT = [
   "- Do not include vitals, examination findings, investigations, ED treatment, diagnosis or plan.",
   "- Bracketed placeholders such as [PATIENT] or [HOSPITAL] are removed identifiers. Never copy them. Refer to the patient as \"the patient\" or the given pronoun; write \"a local hospital\" only if the case says the patient went to another hospital first.",
   "- Do not invent a hospital department, a time, or a number. Write durations and numbers exactly as written in the case.",
+  "- Keep every recorded negative as a negative (\"no vomiting\" stays \"no vomiting\"). Do not add negatives that are not written.",
+  "- If two parts of the case disagree (for example different durations), leave that detail out rather than choosing one.",
   "- Output the paragraph only: no heading, no quotes, no bullet points.",
 ].join("\n");
 
@@ -111,6 +115,141 @@ export function numbersAreFromCase(hpi: string, caseText: string): boolean {
   return nums(hpi).every((n) => allowed.has(n));
 }
 
+/**
+ * Clinical facts guard (audit 23 Nov 2026). The number check cannot catch a negative turned positive
+ * ("no vomiting" → "vomiting") or an added symptom / condition / referral. This deterministic check
+ * works on a fixed vocabulary of clinical concepts (with synonyms and abbreviations):
+ *   A. every concept the HPI mentions must appear somewhere in the case;
+ *   B. a concept the case only ever negates must not be stated as present in the HPI;
+ *   C. a concept the case only ever states as present must not be negated in the HPI.
+ * Anything it cannot verify is rejected (null over hallucination).
+ */
+export const HPI_CONCEPTS: Record<string, RegExp> = {
+  fever: /\b(fever|febrile|pyrexia|temperature rise|chills|rigors?)\b/i,
+  vomiting: /\b(vomit\w*|emesis|throwing up)\b/i,
+  nausea: /\bnause\w*\b/i,
+  diarrhoea: /\b(diarrh\w*|loose stools?|loose motions?)\b/i,
+  constipation: /\bconstipat\w*\b/i,
+  headache: /\b(headaches?|cephalgia)\b/i,
+  chest_pain: /\b(chest (pain|discomfort|tightness|heaviness)|angina)\b/i,
+  abdominal_pain: /\b((abdominal|abdomen|epigastric|stomach|belly|flank|loin) (pain|discomfort|cramps?)|pain (in|over) the (abdomen|epigastrium))\b/i,
+  back_pain: /\bback ?(pain|ache)\b/i,
+  breathlessness: /\b(breathless\w*|shortness of breath|sob|dyspn\w*|breathing difficulty|difficulty (in )?breathing|respiratory distress)\b/i,
+  cough: /\bcough\w*\b/i,
+  sputum: /\b(sputum|phlegm|expectoration)\b/i,
+  haemoptysis: /\bha?emoptysis\b/i,
+  wheeze: /\bwheez\w*\b/i,
+  palpitations: /\bpalpitations?\b/i,
+  syncope: /\b(syncop\w*|faint\w*|black ?outs?|passed out|collapse\w*)\b/i,
+  loc: /\b(loss of consciousness|loc|unconscious\w*|unresponsive)\b/i,
+  giddiness: /\b(giddiness|dizz\w*|vertigo|lightheaded\w*)\b/i,
+  seizure: /\b(seizures?|convulsions?|fits|epileptic|tonic.clonic)\b/i,
+  weakness: /\b(weakness|hemiparesis|paralysis|paresis|numbness)\b/i,
+  slurred_speech: /\b(slurr\w* (of )?speech|dysarthria|aphasia)\b/i,
+  confusion: /\b(confus\w*|altered sensorium|disorient\w*|drows\w*|delirium)\b/i,
+  haematemesis: /\b(ha?ematemesis|vomiting (of )?blood|blood in vomit)\b/i,
+  melaena: /\b(mela?ena|black (tarry )?stools?)\b/i,
+  bleeding: /\b(bleed\w*|ha?emorrhag\w*)\b/i,
+  jaundice: /\b(jaundice\w*|icter\w*|yellowish discolou?ration)\b/i,
+  rash: /\b(rash\w*|urticaria|hives)\b/i,
+  swelling: /\b(swelling|oedema|edema)\b/i,
+  dysuria: /\b(dysuria|burning micturition|painful urination)\b/i,
+  urine_output: /\b(oliguria|anuria|reduced urine|decreased urine)\b/i,
+  trauma: /\b(rta|road traffic|accident|assault\w*|injur\w*|trauma\w*)\b/i,
+  fall: /\b(falls?|fell|fallen)\b/i,
+  bite: /\b(snake ?bite|bitten|dog bite|bite)\b/i,
+  poisoning: /\b(poison\w*|overdose|ingest\w*|consumed|intake of)\b/i,
+  diabetes: /\b(diabet\w*|dm|t2dm|t1dm)\b/i,
+  hypertension: /\b(hypertensi\w*|htn)\b/i,
+  heart_disease: /\b(cad|ihd|coronary|heart disease|heart failure|cardiac failure|mi|myocardial infarction|angioplasty|cabg|ptca)\b/i,
+  kidney_disease: /\b(ckd|renal failure|kidney disease|dialysis)\b/i,
+  asthma_copd: /\b(asthma\w*|copd|bronchial asthma)\b/i,
+  stroke_history: /\b(cva|stroke)\b/i,
+  tb: /\b(tb|tuberculosis|koch'?s)\b/i,
+  thyroid: /\b(thyroid|hypothyroid\w*|hyperthyroid\w*)\b/i,
+  liver_disease: /\b(cirrhosis|cld|chronic liver disease|liver disease)\b/i,
+  epilepsy: /\bepilep\w*\b/i,
+  cancer: /\b(cancer|malignan\w*|carcinoma|tumou?r|chemotherapy)\b/i,
+  pregnancy: /\b(pregnan\w*|gravid\w*|antenatal|lmp)\b/i,
+  alcohol: /\b(alcohol\w*|ethanol|drinker|drinking)\b/i,
+  smoking: /\b(smok\w*|tobacco|beedi|bidi)\b/i,
+  surgery: /\b(surger\w*|operated|operation|post.?op\w*)\b/i,
+  // "[HOSPITAL]" = a hospital name removed by de-identification, i.e. care elsewhere was recorded.
+  outside_care: /\[hospital[^\]]*\]|\b(local hospital|another hospital|outside hospital|other hospital|private hospital|nursing home|clinic|phc|chc|taluk|district hospital|general hospital|referred|referral|first aid|medical college)\b/i,
+  follow_up: /\b(follow.?up|regular (review|treatment)|under treatment)\b/i,
+  dept_pulmonology: /\b(pulmonology|chest medicine|respiratory medicine)\b/i,
+  dept_cardiology: /\b(cardiology)\b/i,
+  dept_nephrology: /\b(nephrology)\b/i,
+  dept_neurology: /\b(neurology)\b/i,
+  dept_gastroenterology: /\b(gastroenterology|gastro)\b/i,
+  dept_oncology: /\b(oncology)\b/i,
+  dept_general_medicine: /\b(medicine department|general medicine|internal medicine)\b/i,
+  dept_general_surgery: /\b(surgery department|general surgery)\b/i,
+  dept_orthopaedics: /\b(orthopa?edics)\b/i,
+  dept_obgyn: /\b(obstetrics|gyna?ecology|obg)\b/i,
+  dept_psychiatry: /\b(psychiatry)\b/i,
+  dept_urology: /\b(urology)\b/i,
+  dept_ent: /\b(ent department|otolaryngology)\b/i,
+};
+
+const NEGATION_START = /\b(no|not|nil|denies|denied|denying|without|absence of|negative for|never|free of|neither|nor)\b/gi;
+const CLAUSE_END = /[.;:!?]|\b(but|however|although|though|then|with|after|before|following|since|due to|because|and (?:had|has|have|was|is|were|developed|complained|complains|reports?|noticed|started))\b/i;
+
+/** Splits text into (negated parts, the rest). A negated part runs from a negation word to the end of its clause. */
+function splitNegated(text: string): { negated: string[]; rest: string } {
+  const negated: string[] = [];
+  let rest = "";
+  let i = 0;
+  NEGATION_START.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = NEGATION_START.exec(text))) {
+    if (m.index < i) continue;
+    rest += text.slice(i, m.index);
+    const after = text.slice(m.index + m[0].length);
+    const end = after.search(CLAUSE_END);
+    let span = end === -1 ? after : after.slice(0, end);
+    // "not" / "never" negate only the words right after them ("could not walk after the fall").
+    if (/^(not|never)$/i.test(m[0])) {
+      const short = span.match(/^\s*(?:\S+\s+){0,2}\S+/);
+      span = short ? short[0] : span;
+    }
+    negated.push(span);
+    i = m.index + m[0].length + span.length;
+    NEGATION_START.lastIndex = i;
+  }
+  rest += text.slice(i);
+  return { negated, rest };
+}
+
+export function conceptMentions(text: string): { any: Set<string>; positive: Set<string>; negated: Set<string> } {
+  const { negated, rest } = splitNegated(text);
+  const any = new Set<string>(), positive = new Set<string>(), neg = new Set<string>();
+  for (const [id, re] of Object.entries(HPI_CONCEPTS)) {
+    const inRest = re.test(rest);
+    const inNeg = negated.some((n) => re.test(n));
+    if (inRest) positive.add(id);
+    if (inNeg) neg.add(id);
+    if (inRest || inNeg) any.add(id);
+  }
+  return { any, positive, negated: neg };
+}
+
+/** Returns null when the HPI is faithful to the case, else a short reason. */
+export function clinicalFactsProblem(hpi: string, caseText: string): string | null {
+  const h = conceptMentions(hpi);
+  const c = conceptMentions(caseText);
+  for (const id of h.any) {
+    if (!c.any.has(id)) return `adds "${id}" not in the case`;
+  }
+  for (const id of h.positive) {
+    if (c.negated.has(id) && !c.positive.has(id)) return `states "${id}" that the case records as absent`;
+  }
+  for (const id of h.negated) {
+    if (c.positive.has(id) && !c.negated.has(id)) return `negates "${id}" that the case records as present`;
+  }
+  return null;
+}
+
 /** Cleans model output; returns null if it is unusable. */
 export function cleanHpiOutput(raw: unknown, safeText: string): string | null {
   let t = str(raw)
@@ -122,6 +261,11 @@ export function cleanHpiOutput(raw: unknown, safeText: string): string | null {
   if (/\[[A-Za-z][A-Za-z0-9 _-]*\]/.test(t)) return null; // other placeholders leaked → reject
   if (t.length > 1500) return null;
   if (!numbersAreFromCase(t, safeText)) return null;
+  const problem = clinicalFactsProblem(t, safeText);
+  if (problem) {
+    console.warn(`[HPI from case] rejected: ${problem}`);
+    return null;
+  }
   t = t.charAt(0).toUpperCase() + t.slice(1);
   return /[.!?]$/.test(t) ? t : `${t}.`;
 }
