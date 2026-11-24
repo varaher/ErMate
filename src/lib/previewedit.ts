@@ -167,10 +167,133 @@ const PRIMARY: PreviewField[] = [
   vital("rr", "RR"), vital("hr", "HR"), vital("spo2", "SpO₂"), vital("bp", "BP"), vital("grbs", "GRBS"), vital("temp", "Temp (with unit)"),
 ];
 
+/**
+ * Adjuncts to the primary survey (24 Nov 2026). The preview reads survey.adjuncts first, then older copies;
+ * a typed text goes into survey.adjuncts and, when cleared, the older copies are cleared too, so the
+ * sheet shows exactly what was typed (or "Not documented.").
+ */
+const SA = ["primaryAssessment", "survey", "adjuncts"];
+const isObj = (v: any) => v && typeof v === "object";
+const low = (v: any) => txt(v).toLowerCase();
+const clearOld = (c: any, adjKeys: string[], circKey?: string, doneKey?: string): any => {
+  let out = c;
+  if (isObj(out.adjuncts)) {
+    for (const k of adjKeys) if (txt(out.adjuncts[k])) out = setIn(out, ["adjuncts", k], "");
+    if (doneKey && out.adjuncts[doneKey]) out = setIn(out, ["adjuncts", doneKey], false);
+  }
+  const circ = out.primaryAssessment?.survey?.circulation;
+  if (circKey && isObj(circ) && typeof circ[circKey] === "string" && circ[circKey]) out = setIn(out, ["primaryAssessment", "survey", "circulation", circKey], "");
+  return out;
+};
+/** ECG / echo: notes plus a dropdown status that the preview puts in front of the notes. */
+const adjText = (key: "ecg" | "echo", label: string, getFrom: (d: any) => string, notesKey: string, statusKey: string, old: string[], circKey: string, doneKey: string): PreviewField => ({
+  key, label, multiline: true,
+  get: (_c, d) => txt(getFrom(d)),
+  set: (c, v) => {
+    let out = setIn(c, [...SA, notesKey], v);
+    const status = txt(out.primaryAssessment?.survey?.adjuncts?.[statusKey]);
+    if (status && (!v || !low(v).includes(status.toLowerCase()))) out = setIn(out, [...SA, statusKey], "");
+    if (!v) {
+      // survey.adjuncts.echoFindings is read right after echoNotes.
+      if (key === "echo" && txt(out.primaryAssessment?.survey?.adjuncts?.echoFindings)) out = setIn(out, [...SA, "echoFindings"], "");
+      out = clearOld(out, old, circKey, doneKey);
+    }
+    return out;
+  },
+});
+/** The eFAST line the preview builds from the structured windows (same rule as the preview). */
+export function efastStructuredText(c: any): string {
+  const circ = c?.primaryAssessment?.survey?.circulation;
+  const all: Record<string, any> = { ...(isObj(circ?.efast) ? circ.efast : {}), ...(isObj(c?.fastFindings) ? c.fastFindings : {}) };
+  const pos = Object.entries(all).filter(([, v]) => {
+    if (!v) return false;
+    const s = String(v).toLowerCase();
+    return s !== "not_done" && s !== "negative" && s !== "no_blines" && (s.includes("pos") || s === "done" || s.includes("fluid"));
+  });
+  if (pos.length) return `Positive (${pos.map(([k, v]) => `${k}: ${v}`).join(", ")})`;
+  return Object.values(all).some((v) => v && v !== "not_done") ? "Negative" : "";
+}
+const EFAST: PreviewField = {
+  key: "efast", label: "eFAST", multiline: true,
+  get: (_c, d) => txt(d.efast?.findings),
+  set: (c, v) => {
+    const structured = efastStructuredText(c);
+    let notes = v;
+    let out = c;
+    if (structured.startsWith("Positive")) {
+      // Keep the structured windows when their line is still in the typed text; otherwise the typed text replaces them.
+      const i = low(v).indexOf(structured.toLowerCase());
+      if (i >= 0 && v) notes = (v.slice(0, i) + v.slice(i + structured.length)).replace(/^[\s·,;.]+|[\s·,;]+$/g, "").trim();
+      else {
+        if (isObj(out.primaryAssessment?.survey?.circulation?.efast)) out = setIn(out, ["primaryAssessment", "survey", "circulation", "efast"], {});
+        if (isObj(out.fastFindings)) out = { ...out, fastFindings: {} };
+      }
+    } else if (structured && !v) {
+      if (isObj(out.primaryAssessment?.survey?.circulation?.efast)) out = setIn(out, ["primaryAssessment", "survey", "circulation", "efast"], {});
+      if (isObj(out.fastFindings)) out = { ...out, fastFindings: {} };
+    }
+    out = setIn(out, [...SA, "efastNotes"], notes);
+    if (!v) {
+      if (txt(out.primaryAssessment?.survey?.adjuncts?.efastStatus)) out = setIn(out, [...SA, "efastStatus"], "");
+      out = clearOld(out, ["efastNotes", "efastInterpretation", "efastFindings"], undefined, "efastDone");
+    }
+    return out;
+  },
+};
+/** VBG / ABG: values stay as measured; the interpretation is typeable. */
+const GAS: PreviewField = {
+  key: "gas", label: "VBG / ABG interpretation", multiline: true,
+  get: (_c, d) => txt(d.vbgAbg?.notes),
+  set: (c, v) => {
+    let out = setIn(c, [...SA, "abg", "finalDiagnosis"], v);
+    if (!v) for (const k of ["interpretation", "clinicalInterpretation"]) if (txt(out.primaryAssessment?.survey?.adjuncts?.abg?.[k])) out = setIn(out, [...SA, "abg", k], "");
+    return out;
+  },
+};
+const ADJUNCTS: PreviewField[] = [
+  adjText("ecg", "ECG", (d) => d.ecg?.findings, "ecgNotes", "ecgStatus", ["ecgNotes", "ecgFindings", "ecgRhythm"], "ecg", "ecgDone"),
+  GAS,
+  adjText("echo", "Bedside screening echo", (d) => d.bedsideEcho?.findings, "echoNotes", "echoStatus", ["echoNotes", "echoFindings"], "echo", "echoDone"),
+  EFAST,
+];
+
+/**
+ * Pediatric Assessment (PAT) block of the pediatric sheet (24 Nov 2026). Written to pediatricDetails under
+ * the name the preview reads first; a cleared value also clears the older name it falls back to.
+ */
+const ped = (key: string, label: string, write: string, older: string[] = [], multiline = false): PreviewField => ({
+  key, label, multiline,
+  get: (_c, d) => txt(d.pediatricDetails?.[key]),
+  set: (c, v) => {
+    let out = setIn(c, ["pediatricDetails", write], key === "weight" ? v.replace(/\s*kg\s*$/i, "").trim() : v);
+    if (!v) for (const o of older) if (txt(out.pediatricDetails?.[o])) out = setIn(out, ["pediatricDetails", o], "");
+    return out;
+  },
+});
+const PEDIATRIC_PAT: PreviewField[] = [
+  ped("weight", "Weight (kg)", "patientWeight", ["weight"]),
+  ped("patAppearanceTone", "Tone", "patAppearanceTone"),
+  ped("patAppearanceInteractivity", "Interactivity", "patAppearanceInteractivity"),
+  ped("patAppearanceConsolability", "Consolability", "patAppearanceConsolability"),
+  ped("patAppearanceLookGaze", "Look / gaze", "patAppearanceLookGaze"),
+  ped("patAppearanceSpeechCry", "Speech / cry", "patAppearanceSpeechCry"),
+  ped("patWorkOfBreathing", "Work of breathing", "patWorkOfBreathing", ["workOfBreathing"]),
+  ped("patCirculation", "Circulation (skin)", "patCirculation", ["circulation"]),
+  ped("birthHistory", "Birth history", "birthHistory", [], true),
+  ped("feedingHistory", "Feeding history", "feedingHistory", [], true),
+  ped("developmentalHistory", "Developmental history", "developmentalHistory", [], true),
+  ped("immunizationHistory", "Immunization history", "immunizationHistory", [], true),
+  ped("broughtBy", "Brought by", "broughtBy"),
+  ped("informant", "Informant", "informant"),
+];
+
 /** Section heading text (as printed in the preview) -> its editable fields. */
 export const EDIT_SECTIONS: Record<string, PreviewField[]> = {
   "Presenting Complaint": [caseText("cc", "Presenting complaint", ["patient", "presentingComplaint"], (_c, d) => txt(d.presentingComplaint))],
   "Primary Survey": PRIMARY,
+  "Adjuvants to Primary": ADJUNCTS,
+  "Adjuncts to Primary Assessment": ADJUNCTS,
+  "Pediatric Assessment (PAT)": PEDIATRIC_PAT,
   "Secondary Assessment / History": HISTORY,
   "History": HISTORY,
   "Psychological Assessment": PSYCH,
@@ -214,9 +337,11 @@ export function applySectionEdits(
 }
 
 /** One-window edit form: jump chips and the order of sections shown. */
-export const EDIT_GROUPS: { id: string; label: string; title: string }[] = [
+export const EDIT_GROUPS: { id: string; label: string; title: string; pediatricOnly?: boolean }[] = [
   { id: "complaint", label: "Complaint", title: "Presenting Complaint" },
+  { id: "pat", label: "PAT", title: "Pediatric Assessment (PAT)", pediatricOnly: true },
   { id: "primary", label: "Primary", title: "Primary Survey" },
+  { id: "adjuncts", label: "Adjuncts", title: "Adjuvants to Primary" },
   { id: "history", label: "History", title: "History" },
   { id: "exam", label: "Exam", title: "Secondary Survey" },
   { id: "psych", label: "Psych", title: "Psychological Assessment" },

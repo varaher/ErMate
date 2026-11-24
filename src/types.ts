@@ -414,6 +414,11 @@ export interface DischargeInfo {
   emConsultantName?: string;
   uhid?: string;
   broughtBy?: string;
+  /** Pediatric supplemental notes as edited on the discharge sheet (24 Nov 2026). */
+  pedWeight?: string;
+  pedWorkOfBreathing?: string;
+  pedCirculation?: string;
+  pedImmunization?: string;
   caseUpdatedAfterPreparation?: boolean;
   
   // MLC & Allergy

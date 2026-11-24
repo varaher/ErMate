@@ -99,6 +99,6 @@ if (fail) { console.log(fail + " failed"); process.exit(1); } console.log("ALL P
 for (const g of EDIT_GROUPS) t(`group "${g.label}" maps to an editable section`, isEditableSection(g.title));
 {
   const src = readFileSync("src/components/CaseSheetPrintView.tsx", "utf8");
-  t("one-window form is wired", src.includes("<EditAllForm") && src.includes("EDIT_GROUPS.map"));
+  t("one-window form is wired", src.includes("<EditAllForm") && /EDIT_GROUPS(\.filter\(\(g\) => !g\.pediatricOnly \|\| data\.isPediatric\))?\.map/.test(src));
   t("old section pop-up is gone", !src.includes("SectionEditor") && !src.includes("PreviewEditCtx"));
 }

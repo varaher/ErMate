@@ -1198,6 +1198,28 @@ function AdjunctsSection({
     (vbgAbg.values && vbgAbg.values.length > 0) ||
     vbgAbg.notes;
 
+  const { editing: ieOn } = React.useContext(InlineEditCtx);
+  if (ieOn) {
+    // Edit mode (24 Nov 2026): every adjunct is typeable, including empty ones. Gas values stay as measured.
+    const A = "Adjuncts to Primary Assessment";
+    const vals = vbgAbg.performed ? vbgAbg.values.filter((v) => v.value !== null && v.value !== undefined) : [];
+    return (
+      <Section>
+        <SectionHeading>Adjuncts to Primary Assessment</SectionHeading>
+        <div className="text-sm space-y-1.5">
+          <div><span className="font-semibold text-slate-900">ECG: </span><EdText s={A} k="ecg" text={ecg.findings || ""} /></div>
+          <div><span className="font-semibold text-slate-900">Bedside Echo / POCUS: </span><EdText s={A} k="echo" text={bedsideEcho.findings || ""} /></div>
+          <div><span className="font-semibold text-slate-900">eFAST: </span><EdText s={A} k="efast" text={efast.findings || ""} /></div>
+          <div>
+            <span className="font-semibold text-slate-900">{vbgAbg.type || "ABG/VBG"}: </span>
+            {vals.length > 0 && <span className="font-mono text-xs">{vals.map((v) => `${v.name} ${formatFlagged(v.param, v.value)}`).join(" · ")} — </span>}
+            <EdText s={A} k="gas" text={vbgAbg.notes || ""} hint="Add interpretation" />
+          </div>
+        </div>
+      </Section>
+    );
+  }
+
   if (!hasAdjuncts) {
     return null;
   }
@@ -1532,7 +1554,7 @@ export default function CaseSheetPrintView({
           </div>
         )}
 
-        <div className="bg-white/95 dark:bg-slate-950/95 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 px-2 sm:px-4 py-2 sm:py-2.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+        <div className="bg-white/95 dark:bg-slate-950/95 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 px-3 sm:px-4 py-2 sm:py-2.5 flex flex-col lg:flex-row items-start lg:items-center justify-between gap-2.5">
           <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto justify-between sm:justify-start">
             <div className="flex items-center gap-2">
               {onBack && (
@@ -1568,7 +1590,7 @@ export default function CaseSheetPrintView({
               </div>
             </div>
           </div>
-          <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-2.5 w-full sm:w-auto justify-end" data-preview-toolbar>
             {isPreview ? (
               <>
                 {canEditPreview && !applySuccess && inlineEdit && (
@@ -1580,7 +1602,7 @@ export default function CaseSheetPrintView({
                       data-coach="preview-edit"
                       aria-pressed={inlineOn}
                       title={inlineOn ? "Finish editing" : "Edit this case sheet: every highlighted line becomes typeable"}
-                      className={`min-w-[44px] min-h-[44px] flex-1 sm:flex-none justify-center inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-xl transition-all cursor-pointer border ${
+                      className={`min-w-[44px] min-h-[44px] flex-auto sm:flex-none shrink-0 justify-center inline-flex items-center gap-2 px-4 py-2 whitespace-nowrap text-xs font-bold rounded-xl transition-all cursor-pointer border ${
                         inlineOn
                           ? "bg-purple-600 hover:bg-purple-700 text-white border-purple-600"
                           : "bg-purple-50 dark:bg-purple-950/40 hover:bg-purple-100 text-purple-700 dark:text-purple-300 border-purple-300 dark:border-purple-800"
@@ -1595,7 +1617,7 @@ export default function CaseSheetPrintView({
                         onClick={() => setEditMode(true)}
                         id="preview-edit-more-fields"
                         title="Vitals, patient details and other fields that are not lines on the sheet"
-                        className="min-w-[44px] min-h-[44px] flex-1 sm:flex-none justify-center inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-xl transition-all cursor-pointer border bg-white dark:bg-slate-900 hover:bg-slate-50 text-purple-700 dark:text-purple-300 border-purple-300 dark:border-purple-800"
+                        className="min-w-[44px] min-h-[44px] flex-auto sm:flex-none shrink-0 justify-center inline-flex items-center gap-2 px-4 py-2 whitespace-nowrap text-xs font-bold rounded-xl transition-all cursor-pointer border bg-white dark:bg-slate-900 hover:bg-slate-50 text-purple-700 dark:text-purple-300 border-purple-300 dark:border-purple-800"
                       >
                         <span className="whitespace-nowrap">More fields</span>
                       </button>
@@ -1608,7 +1630,7 @@ export default function CaseSheetPrintView({
                     onClick={() => setEditMode(true)}
                     id="preview-edit-toggle"
                     data-coach="preview-edit"
-                    className="min-w-[44px] min-h-[44px] flex-1 sm:flex-none justify-center inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-xl transition-all cursor-pointer border bg-purple-50 dark:bg-purple-950/40 hover:bg-purple-100 text-purple-700 dark:text-purple-300 border-purple-300 dark:border-purple-800"
+                    className="min-w-[44px] min-h-[44px] flex-auto sm:flex-none shrink-0 justify-center inline-flex items-center gap-2 px-4 py-2 whitespace-nowrap text-xs font-bold rounded-xl transition-all cursor-pointer border bg-purple-50 dark:bg-purple-950/40 hover:bg-purple-100 text-purple-700 dark:text-purple-300 border-purple-300 dark:border-purple-800"
                   >
                     <Pencil className="w-3.5 h-3.5" />
                     <span className="whitespace-nowrap">Edit this preview</span>
@@ -1618,7 +1640,7 @@ export default function CaseSheetPrintView({
                   type="button"
                   onClick={handleCopyCaseSheet}
                   id="preview-copy-casesheet-button"
-                  className={`min-w-[44px] min-h-[44px] flex-1 sm:flex-none justify-center inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-xl transition-all cursor-pointer border ${
+                  className={`min-w-[44px] min-h-[44px] flex-auto sm:flex-none shrink-0 justify-center inline-flex items-center gap-2 px-4 py-2 whitespace-nowrap text-xs font-bold rounded-xl transition-all cursor-pointer border ${
                     copiedCaseText
                       ? "bg-emerald-600 border-emerald-600 text-white"
                       : copyFailed
@@ -1634,7 +1656,7 @@ export default function CaseSheetPrintView({
                   type="button"
                   onClick={() => setShowEmrPanel(true)}
                   id="preview-emr-fields-button"
-                  className="min-w-[44px] min-h-[44px] flex-1 sm:flex-none justify-center inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-xl transition-all cursor-pointer border bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800"
+                  className="min-w-[44px] min-h-[44px] flex-auto sm:flex-none shrink-0 justify-center inline-flex items-center gap-2 px-4 py-2 whitespace-nowrap text-xs font-bold rounded-xl transition-all cursor-pointer border bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800"
                   title="Copy each part into its own box in your hospital EMR (uses the edited preview)"
                 >
                   <Copy className="w-3.5 h-3.5" />
@@ -1645,7 +1667,7 @@ export default function CaseSheetPrintView({
                   type="button"
                   onClick={handlePrint}
                   id="preview-print-casesheet-button"
-                  className="min-w-[44px] min-h-[44px] flex-1 sm:flex-none justify-center inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold rounded-xl transition-all cursor-pointer border border-slate-200 dark:border-slate-700"
+                  className="min-w-[44px] min-h-[44px] flex-auto sm:flex-none shrink-0 justify-center inline-flex items-center gap-2 px-4 py-2 whitespace-nowrap bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold rounded-xl transition-all cursor-pointer border border-slate-200 dark:border-slate-700"
                 >
                   <Printer className="w-3.5 h-3.5" />
                   <span>Print / PDF</span>
@@ -1661,7 +1683,7 @@ export default function CaseSheetPrintView({
                       }
                     }}
                     id="preview-view-casesheet-button"
-                    className="min-w-[44px] min-h-[44px] flex-1 sm:flex-none justify-center inline-flex items-center gap-1.5 px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all shadow-sm cursor-pointer"
+                    className="min-w-[44px] min-h-[44px] flex-auto sm:flex-none shrink-0 justify-center inline-flex items-center gap-2 px-4 py-2 whitespace-nowrap bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all shadow-sm cursor-pointer"
                   >
                     <Edit3 className="w-3.5 h-3.5" />
                     <span>View Case Sheet</span>
@@ -1685,7 +1707,7 @@ export default function CaseSheetPrintView({
                       }
                     }}
                     id="preview-apply-button"
-                    className="min-w-[44px] min-h-[44px] flex-1 sm:flex-none justify-center inline-flex items-center gap-1.5 px-4 py-1.5 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all shadow-sm cursor-pointer"
+                    className="min-w-[44px] min-h-[44px] flex-auto sm:flex-none shrink-0 justify-center inline-flex items-center gap-2 px-4 py-2 whitespace-nowrap bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all shadow-sm cursor-pointer"
                   >
                     {isApplying ? (
                       <>
@@ -1707,7 +1729,7 @@ export default function CaseSheetPrintView({
                   type="button"
                   onClick={handleCopyCaseSheet}
                   id="print-copy-casesheet-button"
-                  className={`min-w-[44px] min-h-[44px] flex-1 sm:flex-none justify-center inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-xl transition-all cursor-pointer border ${
+                  className={`min-w-[44px] min-h-[44px] flex-auto sm:flex-none shrink-0 justify-center inline-flex items-center gap-2 px-4 py-2 whitespace-nowrap text-xs font-bold rounded-xl transition-all cursor-pointer border ${
                     copiedCaseText
                       ? "bg-emerald-600 border-emerald-600 text-white"
                       : copyFailed
@@ -1719,22 +1741,22 @@ export default function CaseSheetPrintView({
                   {copiedCaseText ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
                   <span className="whitespace-nowrap">{copiedCaseText ? "Copied to EMR!" : copyFailed ? "Copy failed — try again" : "Copy to EMR"}</span>
                 </button>
-                                <button // ← NEW
-                  type="button" // ← NEW
-                  onClick={() => setShowEmrPanel(true)} // ← NEW
-                  id="print-emr-fields-button" // ← NEW
-                  className="min-w-[44px] min-h-[44px] flex-1 sm:flex-none justify-center inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-xl transition-all cursor-pointer border bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 text-indigo-700 dark:text-indigo-300 border-indigo-300 dark:border-indigo-800" // ← NEW
-                  title="Copy each part into its own box in your hospital EMR" // ← NEW
-                > {/* ← NEW */}
-                  <Copy className="w-3.5 h-3.5" /> {/* ← NEW */}
-                  <span className="whitespace-nowrap">EMR fields</span> {/* ← NEW */}
-                </button> {/* ← NEW */}
-                {showEmrPanel && data && <CopyToEmrPanel data={data} onClose={() => setShowEmrPanel(false)} />} {/* ← NEW */}
+                <button
+                  type="button"
+                  onClick={() => setShowEmrPanel(true)}
+                  id="print-emr-fields-button"
+                  className="min-w-[44px] min-h-[44px] flex-auto sm:flex-none shrink-0 justify-center inline-flex items-center gap-2 px-4 py-2 whitespace-nowrap text-xs font-bold rounded-xl transition-all cursor-pointer border bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 text-indigo-700 dark:text-indigo-300 border-indigo-300 dark:border-indigo-800"
+                  title="Copy each part into its own box in your hospital EMR"
+                >
+                  <Copy className="w-3.5 h-3.5" />
+                  <span className="whitespace-nowrap">EMR fields</span>
+                </button>
+                {showEmrPanel && data && <CopyToEmrPanel data={data} onClose={() => setShowEmrPanel(false)} />}
                 <button
                   type="button"
                   onClick={handlePrint}
                   id="print-download-casesheet-button"
-                  className="min-w-[44px] min-h-[44px] flex-1 sm:flex-none justify-center inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl shadow-sm transition-all cursor-pointer"
+                  className="min-w-[44px] min-h-[44px] flex-auto sm:flex-none shrink-0 justify-center inline-flex items-center gap-2 px-4 py-2 whitespace-nowrap bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl shadow-sm transition-all cursor-pointer"
                 >
                   <Printer className="w-3.5 h-3.5" />
                   <span className="hidden sm:inline">Print / Download PDF</span>
@@ -1745,7 +1767,7 @@ export default function CaseSheetPrintView({
                     type="button"
                     onClick={onEdit}
                     id="print-edit-casesheet-button"
-                    className="min-w-[44px] min-h-[44px] flex-1 sm:flex-none justify-center inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-bold transition-all cursor-pointer border border-slate-200 dark:border-slate-700"
+                    className="min-w-[44px] min-h-[44px] flex-auto sm:flex-none shrink-0 justify-center inline-flex items-center gap-2 px-4 py-2 whitespace-nowrap bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-bold transition-all cursor-pointer border border-slate-200 dark:border-slate-700"
                   >
                     <Edit3 className="w-3.5 h-3.5 text-slate-500" />
                     <span>Edit<span className="hidden sm:inline"> Case Sheet</span></span>
@@ -1800,7 +1822,7 @@ export default function CaseSheetPrintView({
         {/* Adult ER cases: everything below the patient block follows the hospital's
             "INITIAL ASSESSMENT AND EMERGENCY DEPARTMENT CASE RECORD" (src/utils/erCaseRecord.ts).
             Pediatric cases keep the pediatric sheet. */}
-        {!data.isPediatric && <ErCaseRecordBody editing={inlineEdit && inlineOn} lines={buildErCaseRecord(data)} onEdit={inlineEdit && inlineOn ? commitInlineEdit : undefined} />}
+        {!data.isPediatric && <ErCaseRecordBody editing={inlineEdit && inlineOn} lines={buildErCaseRecord(data, { editing: Boolean(inlineEdit && inlineOn) })} onEdit={inlineEdit && inlineOn ? commitInlineEdit : undefined} />}
 
         {data.isPediatric && screeningLines(data.triageScreening).length > 0 && (
           <Section>
@@ -1823,7 +1845,39 @@ export default function CaseSheetPrintView({
 
         {data.isPediatric && (
           <>
-            {data.pediatricDetails && (
+            {ieNow && (() => {
+              // Edit mode (24 Nov 2026): every PAT / pediatric history line is typeable, recorded or not.
+              const P = "Pediatric Assessment (PAT)";
+              const pd = (data.pediatricDetails || {}) as Record<string, any>;
+              const row = (label: string, k: string, suffix = "") => (
+                <div key={k}><span className="font-bold">{label}:</span> <EdText s={P} k={k} text={pd[k] ? String(pd[k]) : ""} />{suffix}</div>
+              );
+              return (
+                <Section>
+                  <SectionHeading>Pediatric Assessment (PAT)</SectionHeading>
+                  <div className="text-sm space-y-1">
+                    {row("Weight", "weight", " kg")}
+                    <div className="font-bold">PAT — Appearance (TICLS):</div>
+                    <div className="pl-3 space-y-0.5">
+                      {row("Tone", "patAppearanceTone")}
+                      {row("Interactivity", "patAppearanceInteractivity")}
+                      {row("Consolability", "patAppearanceConsolability")}
+                      {row("Look/Gaze", "patAppearanceLookGaze")}
+                      {row("Speech/Cry", "patAppearanceSpeechCry")}
+                    </div>
+                    {row("Work of Breathing", "patWorkOfBreathing")}
+                    {row("Circulation", "patCirculation")}
+                    {row("Birth History", "birthHistory")}
+                    {row("Feeding History", "feedingHistory")}
+                    {row("Developmental History", "developmentalHistory")}
+                    {row("Immunization History", "immunizationHistory")}
+                    {row("Brought By", "broughtBy")}
+                    {row("Informant", "informant")}
+                  </div>
+                </Section>
+              );
+            })()}
+            {!ieNow && data.pediatricDetails && (
               <Section>
                 <SectionHeading>Pediatric Assessment (PAT)</SectionHeading>
                 <div className="text-sm space-y-1">
@@ -1980,7 +2034,7 @@ export default function CaseSheetPrintView({
             {(hasPedDifferentials || ieNow) && (
               <Section>
                 <SectionHeading>Differential Diagnosis</SectionHeading>
-                {ieNow && !data.differentials.some((d) => d.status) ? (
+                {ieNow ? (
                   <div className="text-sm space-y-2">
                     <EdBlock s="Differential Diagnosis" k="differentials" kind="dash" lines={data.differentials.map((d) => d.diagnosis)} hint="Add differentials, one per line" />
                     <div><span className="font-semibold">Notes / Differential Details:</span> <EdBlock s="Differential Diagnosis" k="diffNotes" lines={data.provisionalDifferentialDiagnoses ? data.provisionalDifferentialDiagnoses.split("\n") : []} hint="Add notes" /></div>
@@ -2124,7 +2178,7 @@ export default function CaseSheetPrintView({
       `}</style>
       {editMode && canEditPreview && shownCase && (
         <EditAllForm
-          groups={EDIT_GROUPS.map((g) => ({ id: g.id, label: g.label, fields: (EDIT_SECTIONS[g.title] || []).map((f) => ({ key: f.key, label: f.label, multiline: f.multiline, value: f.get(shownCase, data) })) }))}
+          groups={EDIT_GROUPS.filter((g) => !g.pediatricOnly || data.isPediatric).map((g) => ({ id: g.id, label: g.label, fields: (EDIT_SECTIONS[g.title] || []).map((f) => ({ key: f.key, label: f.label, multiline: f.multiline, value: f.get(shownCase, data) })) }))}
           onClose={() => setEditMode(false)}
           onSave={(vals) => {
             let next: any = shownCase;

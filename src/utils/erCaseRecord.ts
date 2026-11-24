@@ -177,7 +177,14 @@ const VBG_NAMES: Record<string, string> = { na: "Sodium", k: "Potassium", cl: "C
 
 // ── builder ──────────────────────────────────────────────────────────────────
 
-export function buildErCaseRecord(data: CaseSheetData): ErLine[] {
+/**
+ * opts.editing (preview Edit mode only, 24 Nov 2026 — Neeraj: "edit all the fields, the things which are not
+ * documented also"): every field gets its own editable line, with an editable "Not documented." placeholder
+ * when empty, including sections that otherwise print only when recorded. Print, Copy to EMR and EMR fields
+ * never pass it, so their output is unchanged.
+ */
+export function buildErCaseRecord(data: CaseSheetData, opts: { editing?: boolean } = {}): ErLine[] {
+  const E = Boolean(opts.editing);
   const L: ErLine[] = [];
   const heading = (text: string) => L.push({ kind: "heading", text });
   const sub = (text: string) => L.push({ kind: "subheading", text });
@@ -308,14 +315,33 @@ export function buildErCaseRecord(data: CaseSheetData): ErLine[] {
 
   // Adjuvants to Primary
   heading("Adjuvants to Primary:");
-  let anyAdjunct = false;
-  if (data.ecg?.performed || has(data.ecg?.findings)) {
+  const ADJ = "Adjuvants to Primary";
+  if (E) {
+    sub("ECG:");
+    dashes(splitSentences(data.ecg?.findings), { edit: { s: ADJ, k: "ecg" } });
+    const g = data.vbgAbg;
+    sub(`${g?.type || "VBG / ABG"}:`);
+    const gv = (g?.values || []).filter((x) => x.value !== null && x.value !== undefined).map((x) => {
+      const key = String(x.param || x.name || "").toLowerCase();
+      const unit = VBG_UNITS[key];
+      return `${VBG_NAMES[key] || x.name}: ${x.value}${unit ? ` ${unit}` : ""}`;
+    });
+    gv.forEach((v) => L.push({ kind: "item", text: capFirst(v) }));
+    if (gv.length) sub("Interpretation:");
+    items(splitSentences(g?.notes), { edit: { s: ADJ, k: "gas" } });
+    sub("Bedside Screening Echo:");
+    items(splitSentences(data.bedsideEcho?.findings), { edit: { s: ADJ, k: "echo" } });
+    sub("eFAST:");
+    items(splitSentences(data.efast?.findings), { edit: { s: ADJ, k: "efast" } });
+  }
+  let anyAdjunct = E;
+  if (!E && (data.ecg?.performed || has(data.ecg?.findings))) {
     anyAdjunct = true;
     sub("ECG:");
     dashes(has(data.ecg?.findings) ? splitSentences(data.ecg.findings) : ["Done, findings not documented"]);
   }
   const gas = data.vbgAbg;
-  if (gas?.performed && ((gas.values || []).length || has(gas.notes))) {
+  if (!E && gas?.performed && ((gas.values || []).length || has(gas.notes))) {
     anyAdjunct = true;
     sub(`${gas.type || "VBG"}:`);
     const vals = (gas.values || [])
@@ -329,12 +355,12 @@ export function buildErCaseRecord(data: CaseSheetData): ErLine[] {
     items(vals, { period: false });
     if (has(gas.notes)) L.push({ kind: "item", text: sentence(`Interpretation: ${clean(gas.notes)}`) });
   }
-  if (data.bedsideEcho?.performed || has(data.bedsideEcho?.findings)) {
+  if (!E && (data.bedsideEcho?.performed || has(data.bedsideEcho?.findings))) {
     anyAdjunct = true;
     sub("Bedside Screening Echo:");
     items(has(data.bedsideEcho?.findings) ? splitSentences(data.bedsideEcho.findings) : ["Done, findings not documented"]);
   }
-  if (data.efast?.performed || has(data.efast?.findings)) {
+  if (!E && (data.efast?.performed || has(data.efast?.findings))) {
     anyAdjunct = true;
     sub("eFAST:");
     items(has(data.efast?.findings) ? splitSentences(data.efast.findings) : ["Done, findings not documented"]);
@@ -350,6 +376,7 @@ export function buildErCaseRecord(data: CaseSheetData): ErLine[] {
     if (hpi) L.push({ kind: "para", text: sentence(hpi), edit: { s: HIST, k: "hpi" } });
     if (evShown) L.push({ kind: "para", text: sentence(evShown), edit: { s: HIST, k: "events" } });
     if (!hpi && !evShown) L.push({ kind: "para", text: ND, edit: { s: HIST, k: "hpi", ph: true } });
+    if (E && !events) { sub("Events preceding:"); L.push({ kind: "para", text: ND, edit: { s: HIST, k: "events", ph: true } }); }
   }
 
   // Secondary Survey
@@ -358,7 +385,7 @@ export function buildErCaseRecord(data: CaseSheetData): ErLine[] {
   items((data.symptoms || []).flatMap(splitSentences), { edit: { s: HIST, k: "symptoms" } });
   heading("Past Medical History:");
   items((data.pastHistory || []).flatMap(splitSentences), { edit: { s: HIST, k: "pastHistory" } });
-  if ((data.currentMedications || []).some(has)) {
+  if (E || (data.currentMedications || []).some(has)) {
     heading("Current Medications:");
     items((data.currentMedications || []).flatMap(splitSentences), { edit: { s: HIST, k: "medications" } });
   }
@@ -367,21 +394,25 @@ export function buildErCaseRecord(data: CaseSheetData): ErLine[] {
   heading("Family / Gynae History:");
   {
     const fam = splitSentences(data.familyHistory);
-    if (!fam.length && !has(data.lmp)) dashes([], { edit: { s: HIST, k: "familyHistory" } });
+    if (E) {
+      dashes(fam, { edit: { s: HIST, k: "familyHistory" } });
+      sub("LMP:");
+      dashes(has(data.lmp) ? [clean(data.lmp)] : [], { edit: { s: HIST, k: "lmp" } });
+    } else if (!fam.length && !has(data.lmp)) dashes([], { edit: { s: HIST, k: "familyHistory" } });
     else {
       if (fam.length) dashes(fam, { edit: { s: HIST, k: "familyHistory" } });
       if (has(data.lmp)) L.push({ kind: "dash", text: sentence(`LMP: ${clean(data.lmp)}`) });
     }
   }
-  if (has(data.socialHistory)) {
+  if (E || has(data.socialHistory)) {
     heading("Social History:");
     dashes(splitSentences(data.socialHistory), { edit: { s: HIST, k: "socialHistory" } });
   }
   heading("Allergies:");
   dashes((data.allergies || []).flatMap(splitSentences), { edit: { s: HIST, k: "allergies" } });
-  if (has(data.lastMeal)) {
+  if (E || has(data.lastMeal)) {
     heading("Last Meal:");
-    dashes([clean(data.lastMeal)], { edit: { s: HIST, k: "lastMeal" } });
+    dashes(has(data.lastMeal) ? [clean(data.lastMeal)] : [], { edit: { s: HIST, k: "lastMeal" } });
   }
 
   // Examination
@@ -422,6 +453,7 @@ export function buildErCaseRecord(data: CaseSheetData): ErLine[] {
     }
     if (!lines.length) items([], { edit: PSY });
     else {
+      if (E && !noteLines.length) items([], { edit: PSY });
       noteLines.forEach((l) => L.push({ kind: "item", text: sentence(l), edit: PSY }));
       lines.slice(noteLines.length).forEach((l) => L.push({ kind: "item", text: sentence(l) }));
     }
@@ -431,6 +463,20 @@ export function buildErCaseRecord(data: CaseSheetData): ErLine[] {
   heading("Investigations:");
   {
     const INV = "Investigations & Diagnostic Studies";
+    if (E) {
+      sub("Labs ordered:");
+      items(splitList(data.investigationLabsOrdered), { period: false, edit: { s: INV, k: "labsOrdered" } });
+      const res: string[] = [];
+      (data.labs || []).forEach((panel) =>
+        (panel.values || []).forEach((v) => res.push(`${v.name}: ${v.value ?? v.text ?? "Pending"}${v.unit && v.value !== null ? ` ${v.unit}` : ""}`))
+      );
+      (data.cultureResults || []).forEach((c) => res.push(`${c.name}: ${clean(c.result) || "Pending"}`));
+      if (res.length) { sub("Results:"); res.forEach((t) => L.push({ kind: "item", text: capFirst(t) })); }
+      sub("Imaging:");
+      items(splitList(data.investigationImaging), { period: false, edit: { s: INV, k: "imaging" } });
+      sub("Results summary:");
+      items(splitSentences(data.investigationResultsSummary), { edit: { s: INV, k: "resultsSummary" } });
+    }
     const inv: { text: string; edit?: Omit<ErEdit, "ph"> }[] = [
       ...splitList(data.investigationLabsOrdered).map((text) => ({ text, edit: { s: INV, k: "labsOrdered" } })),
       ...splitList(data.investigationImaging).map((text) => ({ text, edit: { s: INV, k: "imaging" } })),
@@ -440,7 +486,8 @@ export function buildErCaseRecord(data: CaseSheetData): ErLine[] {
     );
     (data.cultureResults || []).forEach((c) => inv.push({ text: `${c.name}: ${clean(c.result) || "Pending"}` }));
     splitSentences(data.investigationResultsSummary).forEach((s) => inv.push({ text: sentence(s), edit: { s: INV, k: "resultsSummary" } }));
-    if (!inv.length) items([], { edit: { s: INV, k: "labsOrdered" } });
+    if (E) { /* shown above, field by field */ }
+    else if (!inv.length) items([], { edit: { s: INV, k: "labsOrdered" } });
     else inv.forEach((l) => L.push({ kind: "item", text: capFirst(l.text), ...(l.edit ? { edit: l.edit } : {}) }));
   }
 
@@ -454,7 +501,13 @@ export function buildErCaseRecord(data: CaseSheetData): ErLine[] {
     if (has(data.treatment?.otherNotes) && clean(data.treatment?.otherNotes) !== clean(data.treatmentNotes)) {
       extra.push(...splitSentences(data.treatment?.otherNotes));
     }
-    if (!tx.length && !notes.length && !extra.length) items([], { edit: { s: TRT, k: "drugs" } });
+    if (E) {
+      sub("Drugs given:");
+      items(tx, { edit: { s: TRT, k: "drugs" } });
+      sub("Treatment notes / orders:");
+      items(notes, { edit: { s: TRT, k: "treatmentNotes" } });
+      extra.forEach((l) => L.push({ kind: "item", text: sentence(l) }));
+    } else if (!tx.length && !notes.length && !extra.length) items([], { edit: { s: TRT, k: "drugs" } });
     else {
       tx.forEach((l) => L.push({ kind: "item", text: sentence(l), edit: { s: TRT, k: "drugs" } }));
       notes.forEach((l) => L.push({ kind: "item", text: sentence(l), edit: { s: TRT, k: "treatmentNotes" } }));
@@ -489,7 +542,17 @@ export function buildErCaseRecord(data: CaseSheetData): ErLine[] {
     const post: string[] = [];
     if (has(d.followUpAdvice)) post.push(`Follow-up: ${clean(d.followUpAdvice)}`);
     if (has(d.observationNotes)) post.push(...splitSentences(d.observationNotes));
-    if (!lines.length && !plan.length && !post.length) items([], { edit: { s: DSP, k: "plan" } });
+    if (E) {
+      const one = (label: string, k: string, v: string) => { sub(label); items(has(v) ? splitSentences(v) : [], { edit: { s: DSP, k } }); };
+      one("Status:", "status", clean(d.status));
+      one("Destination:", "destination", clean(d.destinationUnit));
+      consults.forEach((c) => L.push({ kind: "item", text: sentence(/consult/i.test(c) ? c : `${c} consultation`) }));
+      one("Condition:", "condition", clean(d.conditionAtShift));
+      if (has(d.durationInEr)) L.push({ kind: "item", text: sentence(`Duration in ER: ${clean(d.durationInEr)}`) });
+      one("Management plan:", "plan", clean(d.managementPlan));
+      one("Follow-up:", "followUp", clean(d.followUpAdvice));
+      if (has(d.observationNotes)) splitSentences(d.observationNotes).forEach((l) => L.push({ kind: "item", text: sentence(l) }));
+    } else if (!lines.length && !plan.length && !post.length) items([], { edit: { s: DSP, k: "plan" } });
     else {
       lines.forEach((l) => L.push({ kind: "item", text: sentence(l) }));
       plan.forEach((l) => L.push({ kind: "item", text: sentence(l), edit: { s: DSP, k: "plan" } }));
@@ -505,7 +568,7 @@ export function buildErCaseRecord(data: CaseSheetData): ErLine[] {
   }
 
   // Diagnosis
-  if (has(data.provisionalDiagnosis)) {
+  if (E || has(data.provisionalDiagnosis)) {
     heading("Provisional Diagnosis:");
     items(splitSentences(data.provisionalDiagnosis), { edit: { s: "Provisional Diagnosis", k: "provisional" } });
   }
@@ -519,7 +582,13 @@ export function buildErCaseRecord(data: CaseSheetData): ErLine[] {
     const DX = "Provisional Diagnosis";
     // A status in brackets ("(confirmed)") cannot be typed back into the diagnosis name, so such a list stays read-only.
     const ddEditable = dd.every((x) => !/\([^)]*\)\s*$/.test(x));
-    if (!dd.length && !ddNotes.length) items([], { edit: { s: DX, k: "differentials" } });
+    if (E) {
+      // Names only (the status is kept by the writer when the name is unchanged), so every list is typeable.
+      sub("Differentials:");
+      items((data.differentials || []).map((d) => clean(d.diagnosis)).filter(Boolean), { edit: { s: DX, k: "differentials" } });
+      sub("Differential notes:");
+      items(splitSentences(data.provisionalDifferentialDiagnoses), { edit: { s: DX, k: "diffNotes" } });
+    } else if (!dd.length && !ddNotes.length) items([], { edit: { s: DX, k: "differentials" } });
     else {
       dd.forEach((l) => L.push({ kind: "item", text: sentence(l), ...(ddEditable ? { edit: { s: DX, k: "differentials" } } : {}) }));
       ddNotes.forEach((l) => L.push({ kind: "item", text: sentence(l), edit: { s: DX, k: "diffNotes" } }));
@@ -546,13 +615,13 @@ export function buildErCaseRecord(data: CaseSheetData): ErLine[] {
   }
 
   // Notes (only when recorded)
-  if (has(data.notes?.progressNotes)) {
+  if (E || has(data.notes?.progressNotes)) {
     heading("Progress Notes:");
-    splitSentences(data.notes.progressNotes).forEach((p) => L.push({ kind: "item", text: sentence(p), edit: { s: "Clinical Notes & Addendum", k: "notes" } }));
+    items(splitSentences(data.notes?.progressNotes), { edit: { s: "Clinical Notes & Addendum", k: "notes" } });
   }
-  if (has(data.notes?.addendum)) {
+  if (E || has(data.notes?.addendum)) {
     heading("Addendum:");
-    splitSentences(data.notes.addendum).forEach((p) => L.push({ kind: "item", text: sentence(p), edit: { s: "Clinical Notes & Addendum", k: "addendum" } }));
+    items(splitSentences(data.notes?.addendum), { edit: { s: "Clinical Notes & Addendum", k: "addendum" } });
   }
 
   // Signatures

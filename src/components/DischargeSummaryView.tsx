@@ -109,6 +109,20 @@ export default function DischargeSummaryView({
   const [mlcNo, setMlcNo] = useState(
     currentCase.dischargeInfo?.mlcNo || currentCase.patient.mlcDetails?.ddEntryNo || ""
   );
+  // Pediatric supplemental notes: typeable on the sheet and saved with the summary (24 Nov 2026).
+  const pedSrc = (currentCase.pediatricDetails || {}) as any;
+  const [pedWeight, setPedWeight] = useState<string>(
+    currentCase.dischargeInfo?.pedWeight ?? String(pedSrc.patientWeight || pedSrc.weight || "")
+  );
+  const [pedWorkOfBreathing, setPedWorkOfBreathing] = useState<string>(
+    currentCase.dischargeInfo?.pedWorkOfBreathing ?? String(pedSrc.patWorkOfBreathing || pedSrc.workOfBreathing || pedSrc.breathingWob || "")
+  );
+  const [pedCirculation, setPedCirculation] = useState<string>(
+    currentCase.dischargeInfo?.pedCirculation ?? String(pedSrc.patCirculation || pedSrc.circulation || pedSrc.circulationSkinColorTemp || "")
+  );
+  const [pedImmunization, setPedImmunization] = useState<string>(
+    currentCase.dischargeInfo?.pedImmunization ?? String(pedSrc.immunizationHistory || pedSrc.immunization || "")
+  );
   const [allergies, setAllergies] = useState(
     currentCase.dischargeInfo?.allergies || currentCase.sampleHistory?.allergies || ""
   );
@@ -640,6 +654,10 @@ export default function DischargeSummaryView({
       emConsultantName,
       uhid,
       broughtBy,
+      pedWeight,
+      pedWorkOfBreathing,
+      pedCirculation,
+      pedImmunization,
 
       // Lifecycle status tracking
       summaryStatus: effectiveStatus,
@@ -716,6 +734,8 @@ export default function DischargeSummaryView({
   };
 
   // Edit on the sheet: every typeable place names its field; the value goes through the same setters the form uses.
+  const setIsMlcTyped = (v: string) => setIsMlc(/^y/i.test(v.trim()) ? "Yes" : "No"); // "yes"/"y" → Yes, anything else → No
+  const setPedWeightTyped = (v: string) => setPedWeight(v.replace(/\s*kg\s*$/i, "").trim());
   const applyInline = (_section: string, key: string, value: string) => {
     const setters: Record<string, (v: string) => void> = {
       uhid: setUhid, allergies: setAllergies,
@@ -732,6 +752,10 @@ export default function DischargeSummaryView({
       primaryDiagnosis: setPrimaryDiagnosis, secondaryDiagnosis: setSecondaryDiagnosis,
       dischargeMedications: setDischargeMedications, dischargeCondition: setDischargeCondition, followUpPlan: setFollowUpPlan,
       emResidentName: setEmResidentName, emConsultantName: setEmConsultantName,
+      // 24 Nov 2026: the rest of the sheet is typeable too (MLC, disposition, date).
+      isMlc: setIsMlcTyped, mlcNo: setMlcNo,
+      dispositionStatus: setDispositionStatus, dischargeDateTime: setDischargeDateTime,
+      pedWeight: setPedWeightTyped, pedWorkOfBreathing: setPedWorkOfBreathing, pedCirculation: setPedCirculation, pedImmunization: setPedImmunization,
     };
     const set = setters[key];
     if (!set) return;
@@ -1868,7 +1892,11 @@ export default function DischargeSummaryView({
   <div><span className="font-bold">AGE / GENDER:</span> {formatAgeLong(currentCase.patient.age, currentCase.patient.ageMonths)} / {currentCase.patient.gender || "Not documented"}</div>
   <div><span className="font-bold">UHID / CR NUMBER:</span> <DF k="uhid" v={uhid} /></div>
 
-  <div className="mt-4"><span className="font-bold">MLC:</span> {isMlc === "Yes" ? `Yes (${mlcNo || "Not documented"})` : "No"}</div>
+  {inlineOn ? (
+    <div className="mt-4"><span className="font-bold">MLC:</span> <DF k="isMlc" v={isMlc} hint="Yes / No" /> , MLC No- <DF k="mlcNo" v={mlcNo} /></div>
+  ) : (
+    <div className="mt-4"><span className="font-bold">MLC:</span> {isMlc === "Yes" ? `Yes (${mlcNo || "Not documented"})` : "No"}</div>
+  )}
 
   <div><span className="font-bold">Allergy :</span> <DF k="allergies" v={allergies} /></div>
 
@@ -1892,23 +1920,19 @@ export default function DischargeSummaryView({
   <div><DB k="pastMedicalHistory" v={pastMedicalHistory} /></div>
 
   <div className="mt-2"><span className="font-bold">Family / Gynae History :</span> <DF k="familyGynaeHistory" v={familyGynaeHistory} /></div>
-  {(lmp || isLmpApplicable(currentCase.patient)) && (
+  {(lmp || inlineOn || isLmpApplicable(currentCase.patient)) && (
     <div><span className="font-bold">LMP :</span> <DF k="lmp" v={lmp} /></div>
   )}
 
-  {isPediatricCase && currentCase.pediatricDetails && (() => {
-    const ped = currentCase.pediatricDetails as any;
-    const weight = ped.patientWeight || ped.weight;
-    return (
+  {isPediatricCase && (currentCase.pediatricDetails || inlineOn) && (
       <div className="mt-2 text-slate-600">
         <div className="font-bold">Pediatric Notes (supplemental):</div>
-        <div>Weight: {weight ? `${weight} kg` : "Not recorded"}</div>
-        <div>Work of Breathing: {ped.patWorkOfBreathing || ped.workOfBreathing || ped.breathingWob || "Not recorded"}</div>
-        <div>Circulation: {ped.patCirculation || ped.circulation || ped.circulationSkinColorTemp || "Not recorded"}</div>
-        <div>Immunization Status: {ped.immunizationHistory || ped.immunization || "Not recorded"}</div>
+        <div>Weight: {inlineOn ? <><DF k="pedWeight" v={pedWeight} /> kg</> : pedWeight ? `${pedWeight} kg` : "Not recorded"}</div>
+        <div>Work of Breathing: {inlineOn ? <DF k="pedWorkOfBreathing" v={pedWorkOfBreathing} /> : pedWorkOfBreathing || "Not recorded"}</div>
+        <div>Circulation: {inlineOn ? <DF k="pedCirculation" v={pedCirculation} /> : pedCirculation || "Not recorded"}</div>
+        <div>Immunization Status: {inlineOn ? <DF k="pedImmunization" v={pedImmunization} /> : pedImmunization || "Not recorded"}</div>
       </div>
-    );
-  })()}
+  )}
 
   <div className="font-bold mt-4">General Examination / Systemic examination:</div>
   <div><DB k="generalExamination" v={generalExamination} /></div>
@@ -1942,7 +1966,9 @@ export default function DischargeSummaryView({
   <div><DB k="dischargeMedications" v={dischargeMedications} /></div>
 
   <div className="font-bold mt-4">Disposition:</div>
-  {(!dispositionStatus || dispositionStatus === "Pending / Not Documented") ? (
+  {inlineOn ? (
+    <div><DF k="dispositionStatus" v={dispositionStatus === "Pending / Not Documented" ? "" : dispositionStatus} hint="Normal Discharge / Discharge at Request / Discharge Against Medical Advice / Referred" /></div>
+  ) : (!dispositionStatus || dispositionStatus === "Pending / Not Documented") ? (
     <div className="text-slate-500 italic">Pending / Not Documented</div>
   ) : (
     <>
@@ -1982,7 +2008,7 @@ export default function DischargeSummaryView({
     <div><span className="font-bold">Sign and Time:</span> ___________________</div>
   </div>
 
-  <div className="mt-2"><span className="font-bold">Date:</span> {dischargeDateTime}</div>
+  <div className="mt-2"><span className="font-bold">Date:</span> {inlineOn ? <DF k="dischargeDateTime" v={dischargeDateTime} /> : dischargeDateTime}</div>
 
     <div className="mt-8 font-bold">Hospital Address and Contact Information:</div>
   <div>{displayHospitalName}</div>

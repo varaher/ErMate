@@ -112,7 +112,7 @@ export const TOURS: Record<TourId, CoachStep[]> = {
     { id: "icu-trends-window", feature: "icu-trends-window", target: { sel: '[data-coach="icu-trends-window"]' }, title: "Pick the time window", body: "Choose 24 h, 7 days or Whole stay. Only values that were documented are plotted. The line breaks where nothing was recorded." },
   ],
   preview: [
-    { id: "preview-edit", feature: "preview-edit", target: { sel: '[data-coach="preview-edit"]' }, title: "Edit right here", body: "Tap Edit this preview to change anything in one window, then Save edits. Your changes show in the preview, in Copy to EMR and in the saved case sheet. Nothing is saved until you tap Apply." },
+    { id: "preview-edit", feature: "preview-edit", target: { sel: '[data-coach="preview-edit"]' }, title: "Edit right here", body: "Tap Edit, then tap any line and type — every field, including the ones that say Not documented. Your changes show in the preview, in Copy to EMR and in the saved case sheet. Nothing is saved until you tap Apply." },
   ],
   icucases: [
     { id: "icu-cases", feature: "icu-cases", target: { sel: '[data-coach="icu-cases-list"]' }, title: "ICU cases", body: "Every ICU patient, in the ICU now or shifted out. Search, open their notes, or copy a note to your EMR. Switch to ER to see your ER cases." },
