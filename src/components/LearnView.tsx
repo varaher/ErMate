@@ -359,20 +359,6 @@ ${m.physicianReflections || "No reflections logged."}
         {activeTab === "trivia" && (
           <div className="animate-fade-in space-y-4">
             
-            {/* Streak indicator banner */}
-            <div className="bg-gradient-to-r from-amber-500 to-orange-600 text-white rounded-xl p-4 flex items-center justify-between shadow-xs max-w-3xl mx-auto">
-              <div className="flex items-center gap-3">
-                <span className="text-2xl">🔥</span>
-                <div>
-                  <h4 className="text-xs font-extrabold uppercase tracking-wider text-amber-100 font-mono">Streak Achieved!</h4>
-                  <p className="text-sm font-bold font-display">Weekly Streak Badge: 5 Days Active</p>
-                </div>
-              </div>
-              <span className="text-[10px] bg-white/20 text-white border border-white/20 px-2.5 py-0.5 rounded font-mono font-bold uppercase tracking-wide shrink-0">
-                +120 XP
-              </span>
-            </div>
-
             <TriviaView />
           </div>
         )}

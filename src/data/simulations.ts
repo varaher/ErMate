@@ -19,7 +19,8 @@ export interface SimulationCase {
   title: string;
   description: string;
   difficulty: "Beginner" | "Intermediate" | "Advanced";
-  vitals: {
+  /** Absent for cases generated from the Handbook: no patient numbers are invented. */
+  vitals?: {
     bp: string;
     hr: string;
     spo2: string;
@@ -29,6 +30,10 @@ export interface SimulationCase {
   initialState: string;
   steps: { [key: string]: SimulationStep };
   debrief: string;
+  /** Generated from an ER Guide (Handbook) topic by src/lib/protocolSim.ts */
+  generated?: boolean;
+  topicId?: string;
+  topicStatus?: "draft" | "reviewed";
 }
 
 export const SIMULATION_CASES: SimulationCase[] = [

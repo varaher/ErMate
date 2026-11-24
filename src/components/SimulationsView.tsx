@@ -1,6 +1,8 @@
 import React, { useState } from "react";
 import { Play, RotateCcw, AlertCircle, CheckCircle, ChevronRight, BookOpen, Star, Sparkles } from "lucide-react";
 import { SIMULATION_CASES, SimulationCase, SimulationStep } from "../data/simulations";
+import { PROTOCOL_CHAPTERS, allProtocolTopics } from "../data/protocols";
+import { buildSimulation, canSimulate } from "../lib/protocolSim";
 
 export default function SimulationsView() {
   const [selectedCase, setSelectedCase] = useState<SimulationCase | null>(null);
@@ -10,6 +12,15 @@ export default function SimulationsView() {
   const [selectedChoiceIndex, setSelectedChoiceIndex] = useState<number | null>(null);
   const [isCompleted, setIsCompleted] = useState<boolean>(false);
   const [feedbackMessage, setFeedbackMessage] = useState<{ text: string; positive: boolean } | null>(null);
+
+  const [genTopicId, setGenTopicId] = useState<string>("");
+  const newSeed = () => Math.floor(Math.random() * 2147483000) + 1;
+  const startGenerated = (topicId: string) => {
+    const topics = allProtocolTopics();
+    const t = topics.find((x) => x.id === topicId);
+    const c = t ? buildSimulation(t, topics, newSeed()) : null;
+    if (c) startCase(c);
+  };
 
   const startCase = (c: SimulationCase) => {
     setSelectedCase(c);
@@ -67,7 +78,9 @@ export default function SimulationsView() {
 
   const resetCase = () => {
     if (selectedCase) {
-      startCase(selectedCase);
+      // a generated case is rebuilt with a new seed, so the choices come in a new order
+      if (selectedCase.generated && selectedCase.topicId) startGenerated(selectedCase.topicId);
+      else startCase(selectedCase);
     }
   };
 
@@ -113,6 +126,7 @@ export default function SimulationsView() {
                   </p>
 
                   {/* Base Vitals preview */}
+                  {c.vitals && (
                   <div className="bg-slate-50 dark:bg-slate-900 p-2.5 rounded-lg border border-slate-100 dark:border-slate-850 grid grid-cols-5 gap-1.5 text-center text-[10px] font-mono text-slate-500">
                     <div>
                       <span className="block font-bold text-slate-400">BP</span>
@@ -135,6 +149,7 @@ export default function SimulationsView() {
                       <span className="font-semibold">{c.vitals.temp}°F</span>
                     </div>
                   </div>
+                  )}
                 </div>
 
                 <button
@@ -146,6 +161,55 @@ export default function SimulationsView() {
                 </button>
               </div>
             ))}
+          </div>
+
+          {/* Cases generated from the ER Guide */}
+          <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl p-5 shadow-sm space-y-3" data-testid="sim-generate-panel">
+            <div>
+              <h3 className="text-base font-bold text-slate-800 dark:text-white font-display">Run a case from the ER Guide</h3>
+              <p className="text-xs text-slate-500 leading-relaxed">
+                Pick a topic. The decisions come from that topic's First 10 minutes and critical steps in the Handbook, in the Handbook's order. Choices appear in a new order each time. Nothing is invented, and it is free.
+              </p>
+            </div>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <select
+                value={genTopicId}
+                onChange={(e) => setGenTopicId(e.target.value)}
+                data-testid="sim-topic-select"
+                aria-label="ER Guide topic"
+                className="flex-1 min-w-0 text-xs border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200"
+              >
+                <option value="">Choose a topic…</option>
+                {PROTOCOL_CHAPTERS.map((ch) => {
+                  const usable = ch.topics.filter(canSimulate);
+                  return usable.length ? (
+                    <optgroup key={ch.id} label={ch.title}>
+                      {usable.map((t) => <option key={t.id} value={t.id}>{t.title}</option>)}
+                    </optgroup>
+                  ) : null;
+                })}
+              </select>
+              <button
+                type="button"
+                disabled={!genTopicId}
+                onClick={() => startGenerated(genTopicId)}
+                data-testid="sim-generate-start"
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white font-bold rounded-lg text-xs flex items-center justify-center gap-1.5"
+              >
+                <Play className="w-3.5 h-3.5 fill-current" /> Start case
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const usable = allProtocolTopics().filter(canSimulate);
+                  if (usable.length) startGenerated(usable[Math.floor(Math.random() * usable.length)].id);
+                }}
+                data-testid="sim-generate-random"
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold rounded-lg text-xs"
+              >
+                Surprise me
+              </button>
+            </div>
           </div>
         </div>
       ) : (
@@ -182,6 +246,11 @@ export default function SimulationsView() {
               {/* Scenario Context */}
               <div className="bg-gradient-to-r from-blue-700 to-indigo-800 text-white p-5 rounded-xl shadow-sm space-y-2">
                 <span className="text-[10px] font-bold tracking-wider uppercase bg-white/10 px-2 py-0.5 rounded">Active Case Briefing</span>
+                {selectedCase.generated && (
+                  <span data-testid="sim-generated-badge" className="ml-2 text-[10px] font-bold tracking-wider uppercase bg-amber-400/90 text-amber-950 px-2 py-0.5 rounded">
+                    From the ER Guide{selectedCase.topicStatus === "draft" ? " · Draft, not yet signed off" : ""}
+                  </span>
+                )}
                 <h2 className="text-lg font-bold font-display leading-tight">{selectedCase.title}</h2>
                 <p className="text-xs text-blue-100 leading-relaxed font-mono pt-1">{selectedCase.initialState}</p>
               </div>
@@ -263,7 +332,7 @@ export default function SimulationsView() {
                     <h4 className="font-bold text-slate-800 dark:text-white flex items-center gap-1">
                       <BookOpen className="w-4 h-4 text-blue-500" /> Clinical Debrief & Guideline Key Points
                     </h4>
-                    <p className="text-slate-600 dark:text-slate-400 font-mono">
+                    <p className="text-slate-600 dark:text-slate-400 font-mono whitespace-pre-line">
                       {selectedCase.debrief}
                     </p>
                   </div>
@@ -289,7 +358,8 @@ export default function SimulationsView() {
             {/* Vitals & History tracking Sidebar */}
             <div className="space-y-4">
               
-              {/* Current Patient Vitals monitor panel */}
+              {/* Current Patient Vitals monitor panel (not shown for Handbook cases: no numbers are invented) */}
+              {selectedCase.vitals && (
               <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 p-4 rounded-xl shadow-sm space-y-3 text-xs">
                 <h4 className="font-bold text-slate-400 uppercase tracking-wider">Patient Vitals</h4>
                 <div className="grid grid-cols-2 gap-2 font-mono text-slate-600 dark:text-slate-400 bg-slate-50 dark:bg-slate-900 p-3 rounded-lg">
@@ -300,6 +370,7 @@ export default function SimulationsView() {
                   <div className="col-span-2 border-t pt-1.5 mt-1.5">Temp: <strong className="text-slate-700 dark:text-slate-300">{selectedCase.vitals.temp} °F</strong></div>
                 </div>
               </div>
+              )}
 
               {/* Progress Steps history log */}
               <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 p-4 rounded-xl shadow-sm space-y-3 text-xs">
