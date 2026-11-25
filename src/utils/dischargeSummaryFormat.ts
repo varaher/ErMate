@@ -1,3 +1,4 @@
+import { withVitalUnit, VITAL_KINDS } from "./vitalUnits";
 // ============================================================
 // ErMate — Canonical Discharge Summary Formatter
 // Single source of truth for discharge summary text/HTML output.
@@ -125,9 +126,9 @@ function resolveHospitalLines(d: DischargeSummaryData) {
 }
 
 // One vital per line, in the same order everywhere (preview, print, copy).
-const VITAL_LABELS: Array<[string, string]> = [["HR", "Hr"], ["BP", "Bp"], ["RR", "Rr"], ["SpO2", "Spo2"], ["GCS", "Gcs"], ["Pain Score", "PainScore"], ["GRBS", "Grbs"], ["Temp", "Temp"]];
+/** Every vital is printed with its unit (HR 84/min, BP 130/80 mmHg, SpO2 98%, GRBS 141 mg/dL, Temp 97.8°F). */
 export function vitalLines(d: any, when: "arrival" | "discharge"): string[] {
-  return VITAL_LABELS.map(([label, key]) => label + "- " + (d[when + key] || "Not documented"));
+  return VITAL_KINDS.map(([label, key, kind]) => label + "- " + (withVitalUnit(kind, d[when + key]) || "Not documented"));
 }
 
 export function formatDischargeSummaryText(d: DischargeSummaryData): string {
@@ -183,9 +184,9 @@ export function formatDischargeSummaryText(d: DischargeSummaryData): string {
   lines.push("");
   lines.push("**Circulation** \u2192 " + (d.primaryCirculation ? "Findings- " + d.primaryCirculation + " ," : "") + "CRT- " +(d.primaryCirculationCrt || "Not documented") + " , Distended Neck Veins- " + (d.primaryCirculationDnv || "Not documented") + " , PCT- " + (d.primaryCirculationPct || "Not documented") + " ,Long bone deformity- " + (d.primaryCirculationDeformity || "Not documented") + " ,FAST- " + (d.primaryCirculationFast || "Not documented") + " ,Interventions- " + (d.primaryCirculationInterventions || "Not documented") + ".");
   lines.push("");
-  lines.push("**Disability** \u2192 AVPU/GCS- " + (d.primaryDisabilityAvpuGcs || "Not documented") + " ,Pupils- " + (d.primaryDisabilityPupils || "Not documented") + " ,GRBS- " + (d.primaryDisabilityGrbs || "Not documented"));
+  lines.push("**Disability** \u2192 AVPU/GCS- " + (d.primaryDisabilityAvpuGcs || "Not documented") + " ,Pupils- " + (d.primaryDisabilityPupils || "Not documented") + " ,GRBS- " + (withVitalUnit("grbs", d.primaryDisabilityGrbs) || "Not documented"));
   lines.push("");
-  lines.push("**Exposure** \u2192 Temp- " + (d.primaryExposureTemp || "Not documented") + " | Trauma-Logroll- " + (d.primaryExposureTrauma || "Not documented"));
+  lines.push("**Exposure** \u2192 Temp- " + (withVitalUnit("temp", d.primaryExposureTemp) || "Not documented") + " | Trauma-Logroll- " + (d.primaryExposureTrauma || "Not documented"));
   lines.push("");
   lines.push("**Secondary Assesment:**");
   lines.push("");
@@ -218,6 +219,9 @@ export function formatDischargeSummaryText(d: DischargeSummaryData): string {
   lines.push(dispositionBox(d.dispositionStatus, "Discharge at Request"));
   lines.push(dispositionBox(d.dispositionStatus, "Discharge Against Medical Advice"));
   lines.push(dispositionBox(d.dispositionStatus, "Referred"));
+  lines.push(dispositionBox(d.dispositionStatus, "Admitted"));
+  lines.push(dispositionBox(d.dispositionStatus, "Expired"));
+  if (d.dispositionStatus && !["Normal Discharge", "Discharge at Request", "Discharge Against Medical Advice", "Referred", "Admitted", "Expired", "Pending / Not Documented"].includes(d.dispositionStatus)) lines.push("[x] " + d.dispositionStatus);
   lines.push("");
   lines.push("**Condition at time of discharge:(STABLE/UNSTABLE)** " + (d.dischargeCondition || "Not documented"));
   lines.push("");
@@ -244,6 +248,17 @@ export function formatDischargeSummaryText(d: DischargeSummaryData): string {
   return lines.join("\n");
 }
 
+/** Escape a value and keep its line breaks (EMR editors collapse raw newlines into one line). */
+function htmlText(v: string | undefined | null): string {
+  return String(v ?? "")
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/\r?\n/g, "<br/>");
+}
+/** Section heading for the EMR copy: bold and a little larger than the text (25 Nov 2026). */
+function htmlHeading(label: string): string {
+  return '<strong style="font-size:13.5px">' + label + "</strong>";
+}
+
 export function formatDischargeSummaryHtml(d: DischargeSummaryData): string {
   var pedHtml = "";
   if (d.pediatric) {
@@ -265,58 +280,72 @@ export function formatDischargeSummaryHtml(d: DischargeSummaryData): string {
   parts.push("<strong>UHID / CR NUMBER:</strong> " + (d.uhid || "Not documented") + "<br/><br/>");
   parts.push("<strong>MLC:</strong> " + (d.isMlc === "Yes" ? ("Yes" + (d.mlcNo ? " (" + d.mlcNo + ")" : "")) : "No") + "<br/><br/>");
   parts.push("<strong>Allergy :</strong> " + (d.allergies || "Not documented") + "<br/><br/>");
-  parts.push("<strong>Vitals at the time of arrival:</strong><br/>");
+  parts.push(htmlHeading("Vitals at the time of arrival:") + "<br/>");
   parts.push(vitalLines(d, "arrival").join("<br/>") + "<br/><br/>");
-  parts.push("<strong>Presenting Complaints:</strong><br/>");
-  parts.push((d.presentingComplaints || "Not documented") + "<br/><br/>");
-  parts.push("<strong>History of Present Illness:</strong><br/>");
-  parts.push((d.historyOfPresentIllness || "Not documented") + "<br/><br/>");
-  parts.push("<strong>Past Medical/Surgical Histories:</strong><br/>");
-  parts.push((d.pastMedicalHistory || "Not documented") + "<br/><br/>");
+  parts.push(htmlHeading("Presenting Complaints:") + "<br/>");
+  parts.push(htmlText(d.presentingComplaints || "Not documented") + "<br/><br/>");
+  parts.push(htmlHeading("History of Present Illness:") + "<br/>");
+  parts.push(htmlText(d.historyOfPresentIllness || "Not documented") + "<br/><br/>");
+  parts.push(htmlHeading("Past Medical/Surgical Histories:") + "<br/>");
+  parts.push(htmlText(d.pastMedicalHistory || "Not documented") + "<br/><br/>");
   parts.push("<strong>Family / Gynae History :</strong> " + (d.familyGynaeHistory || "Not documented") + "<br/>");
   parts.push(d.lmp ? "<strong>LMP :</strong> " + d.lmp + "<br/><br/>" : "<br/>");
   if (pedHtml) parts.push(pedHtml);
-  parts.push("<strong>General Examination / Systemic examination:</strong><br/>");
-  parts.push((d.generalExamination || "Not documented") + "<br/><br/>");
-  parts.push("<strong>Primary Assessment:</strong><br/><br/>");
+  parts.push(htmlHeading("General Examination / Systemic examination:") + "<br/>");
+  parts.push(htmlText(d.generalExamination || "Not documented") + "<br/><br/>");
+  parts.push(htmlHeading("Primary Assessment:") + "<br/><br/>");
   parts.push("<strong>Airway</strong> \u2192 " + (d.primaryAirway || "Not documented") + " ,Intervention- " + (d.primaryAirwayIntervention || "Not documented") + "<br/><br/>");
   parts.push("<strong>Breathing</strong> \u2192 " + (d.primaryBreathing ? "Findings- " + d.primaryBreathing + " ," : "") + "Work of breathing- " +(d.primaryBreathingWork || "Not documented") + " ,Air entry- " + (d.primaryBreathingAirEntry || "Not documented") + " ,CCT- " + (d.primaryBreathingCct || "Not documented") + " ,Subcutaneous emphysema- " + (d.primaryBreathingSubcut || "Not documented") + " ,EFAST- " + (d.primaryBreathingEfast || "Not documented") + " ,Intervention- " + (d.primaryBreathingIntervention || "Not documented") + ".<br/><br/>");
   parts.push("<strong>Circulation</strong> \u2192 " + (d.primaryCirculation ? "Findings- " + d.primaryCirculation + " ," : "") + "CRT- " +(d.primaryCirculationCrt || "Not documented") + " , Distended Neck Veins- " + (d.primaryCirculationDnv || "Not documented") + " , PCT- " + (d.primaryCirculationPct || "Not documented") + " ,Long bone deformity- " + (d.primaryCirculationDeformity || "Not documented") + " ,FAST- " + (d.primaryCirculationFast || "Not documented") + " ,Interventions- " + (d.primaryCirculationInterventions || "Not documented") + ".<br/><br/>");
-  parts.push("<strong>Disability</strong> \u2192 AVPU/GCS- " + (d.primaryDisabilityAvpuGcs || "Not documented") + " ,Pupils- " + (d.primaryDisabilityPupils || "Not documented") + " ,GRBS- " + (d.primaryDisabilityGrbs || "Not documented") + "<br/><br/>");
-  parts.push("<strong>Exposure</strong> \u2192 Temp- " + (d.primaryExposureTemp || "Not documented") + " | Trauma-Logroll- " + (d.primaryExposureTrauma || "Not documented") + "<br/><br/>");
-  parts.push("<strong>Secondary Assesment:</strong><br/><br/>");
+  parts.push("<strong>Disability</strong> \u2192 AVPU/GCS- " + (d.primaryDisabilityAvpuGcs || "Not documented") + " ,Pupils- " + (d.primaryDisabilityPupils || "Not documented") + " ,GRBS- " + (withVitalUnit("grbs", d.primaryDisabilityGrbs) || "Not documented") + "<br/><br/>");
+  parts.push("<strong>Exposure</strong> \u2192 Temp- " + (withVitalUnit("temp", d.primaryExposureTemp) || "Not documented") + " | Trauma-Logroll- " + (d.primaryExposureTrauma || "Not documented") + "<br/><br/>");
+  parts.push(htmlHeading("Secondary Assesment:") + "<br/><br/>");
   parts.push("Pallor Icterus Cyanosis Clubbing Lymphadenopathy Edema- " + (d.secondaryPicle || "Not documented") + "<br/><br/>");
-  parts.push("CHEST- " + (d.secondaryChest || "Not documented") + "<br/><br/>");
-  parts.push("CVS- " + (d.secondaryCvs || "Not documented") + "<br/><br/>");
-  parts.push("P/A- " + (d.secondaryPa || "Not documented") + "<br/><br/>");
-  parts.push("CNS- " + (d.secondaryCns || "Not documented") + "<br/><br/>");
-  parts.push("EXTREMITIES- " + (d.secondaryExtremities || "Not documented") + "<br/><br/>");
-  parts.push("<strong>Course in Hospital with Medications and Procedure:</strong><br/>");
-  parts.push((d.courseInHospital || "Not documented") + "<br/><br/>");
-  parts.push("<strong>Investigations:</strong><br/>");
-  parts.push((d.investigationsResults || "Not documented") + "<br/><br/>");
-  parts.push("<strong>Diagnosis at the time of discharge:</strong><br/>");
-  parts.push((d.primaryDiagnosis || "Not documented") + (d.secondaryDiagnosis ? "<br/>" + d.secondaryDiagnosis : "") + "<br/><br/>");
-  parts.push("<strong>Discharge Medications:</strong><br/>");
-  parts.push((d.dischargeMedications || "Not documented") + "<br/><br/>");
-  parts.push("<strong>Disposition:</strong><br/>");
+  parts.push("<strong>CHEST-</strong> " + (d.secondaryChest || "Not documented") + "<br/><br/>");
+  parts.push("<strong>CVS-</strong> " + (d.secondaryCvs || "Not documented") + "<br/><br/>");
+  parts.push("<strong>P/A-</strong> " + (d.secondaryPa || "Not documented") + "<br/><br/>");
+  parts.push("<strong>CNS-</strong> " + (d.secondaryCns || "Not documented") + "<br/><br/>");
+  parts.push("<strong>EXTREMITIES-</strong> " + (d.secondaryExtremities || "Not documented") + "<br/><br/>");
+  parts.push(htmlHeading("Course in Hospital with Medications and Procedure:") + "<br/>");
+  parts.push(htmlText(d.courseInHospital || "Not documented") + "<br/><br/>");
+  parts.push(htmlHeading("Investigations:") + "<br/>");
+  parts.push(htmlText(d.investigationsResults || "Not documented") + "<br/><br/>");
+  parts.push(htmlHeading("Diagnosis at the time of discharge:") + "<br/>");
+  parts.push(htmlText(d.primaryDiagnosis || "Not documented") + (d.secondaryDiagnosis ? "<br/>" + htmlText(d.secondaryDiagnosis) : "") + "<br/><br/>");
+  parts.push(htmlHeading("Discharge Medications:") + "<br/>");
+  parts.push(htmlText(d.dischargeMedications || "Not documented") + "<br/><br/>");
+  parts.push(htmlHeading("Disposition:") + "<br/>");
   parts.push(dispositionBox(d.dispositionStatus, "Normal Discharge") + "<br/>");
   parts.push(dispositionBox(d.dispositionStatus, "Discharge at Request") + "<br/>");
   parts.push(dispositionBox(d.dispositionStatus, "Discharge Against Medical Advice") + "<br/>");
-  parts.push(dispositionBox(d.dispositionStatus, "Referred") + "<br/><br/>");
-  parts.push("<strong>Condition at time of discharge:(STABLE/UNSTABLE)</strong> " + (d.dischargeCondition || "Not documented") + "<br/><br/>");
-  parts.push("<strong>Vitals at the time of Discharge:</strong><br/>");
+  parts.push(dispositionBox(d.dispositionStatus, "Referred") + "<br/>");
+  parts.push(dispositionBox(d.dispositionStatus, "Admitted") + "<br/>");
+  parts.push(dispositionBox(d.dispositionStatus, "Expired") + "<br/>");
+  if (d.dispositionStatus && !["Normal Discharge", "Discharge at Request", "Discharge Against Medical Advice", "Referred", "Admitted", "Expired", "Pending / Not Documented"].includes(d.dispositionStatus)) parts.push("[x] " + htmlText(d.dispositionStatus) + "<br/>");
+  parts.push("<br/>");
+  parts.push(htmlHeading("Condition at time of discharge:(STABLE/UNSTABLE)") + " " + (d.dischargeCondition || "Not documented") + "<br/><br/>");
+  parts.push(htmlHeading("Vitals at the time of Discharge:") + "<br/>");
   parts.push(vitalLines(d, "discharge").join("<br/>") + "<br/><br/>");
-  parts.push("<strong>Follow-Up Advice:</strong><br/>");
-  parts.push((d.followUpPlan || "Not documented") + "<br/><br/>");
+  parts.push(htmlHeading("Follow-Up Advice:") + "<br/>");
+  parts.push(htmlText(d.followUpPlan || "Not documented") + "<br/><br/>");
   parts.push("<strong>ED Resident: </strong>" + (d.emResidentName || "Not documented") + " | <strong>ED Consultant: </strong>" + (d.emConsultantName || "Not documented") + "<br/><br/>");
   parts.push("<strong>Sign and Time: </strong>___________________ | <strong>Sign and Time: </strong>___________________<br/><br/>");
   parts.push("<strong>Date: </strong>" + d.dischargeDateTime + "<br/><br/>");
-  parts.push("Hospital Address and Contact Information:<br/>");
+  parts.push(htmlHeading("Hospital Address and Contact Information:") + "<br/>");
   parts.push(hosp.nameLine + "<br/>");
   parts.push(hosp.addressLine + "<br/>");
   parts.push(hosp.phoneLine + "<br/><br/>");
   parts.push(STATUTORY_FOOTER);
 
   return parts.join("");
+}
+
+/**
+ * Plain-text flavour for EMR boxes that do not keep formatting (25 Nov 2026): a heading on its own line is
+ * written in CAPITALS so it still stands out; "**" markers are removed everywhere else.
+ */
+export function dischargeSummaryPlainForEmr(markdownText: string): string {
+  return markdownText
+    .replace(/^\*\*([^*\n]+?)\*\*\s*$/gm, (_m, h: string) => h.trim().toUpperCase())
+    .replace(/\*\*/g, "");
 }

@@ -176,6 +176,18 @@ courseInHospital:
   CORE RULE: Course in Hospital ≠ Case Sheet summary.
   Do NOT reproduce the complete ABCDE, SAMPLE, secondary survey, systemic examination, complete vitals, full investigation list, or full diagnosis list inside Course in Hospital (those have their own separate discharge sections).
 
+  HOUSE STYLE (ErMate, 25 Nov 2026) — follow exactly:
+  - Open with: "The patient presented to the Emergency Department with the above-mentioned complaints." (use "The child" for a child). Do NOT restate the complaints; they are printed above. If referred from another hospital, add ", referred from <hospital>" and summarise the care given there in ONE sentence only.
+  - Status in one phrase: write "The patient was hemodynamically stable." ONLY when HR, BP and SpO2 are all documented and normal. Otherwise mention only the abnormal values that mattered, with units (e.g. "hypotension with BP 80/50 mmHg", "GRBS 345 mg/dL"). Never list normal vitals.
+  - Treatment: drugs actually given, with dose and route (e.g. "Inj. Ondansetron 4 mg IV and Inj. Pantoprazole 40 mg IV"). With more than three, write "Medications given:" followed by one drug per line starting with "• ".
+  - Every number keeps its unit (/min, mmHg, %, mg/dL, °F or °C).
+  - Open with the mechanism when a preceding event is documented (trauma, fall, assault, poisoning, bite): "The patient presented to the Emergency Department following an alleged ...".
+  - For head injury, seizure, syncope, stroke or altered sensorium, state the documented GCS and pupils even when normal.
+  - Write the consultant's advice in its own words (e.g. "Neurosurgery advised no active intervention at present").
+  - Keep result qualifiers exactly as recorded (e.g. "verbal report", "pending").
+  - Observation is not a treatment: write "The patient was kept under observation in the ER." in the course, never in a drug list.
+  - End with the outcome in one short paragraph starting with "Hence," (discharge, discharge at request, referral, LAMA, death or admission). ErMate replaces this last paragraph with the recorded disposition details, so keep it brief and never invent counselling, consent, time of death or names.
+
   Answer chronologically:
   1. Why was the patient evaluated in ER? (Documented chief complaint and presenting clinical context).
   2. What clinically important issue affected management? (Include examination or vitals only when clinically relevant to the ER course, e.g. "On arrival, the patient was hypotensive with BP 80/50 mmHg." Do NOT recite normal ABCDE or normal vitals).

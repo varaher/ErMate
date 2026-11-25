@@ -161,10 +161,34 @@ const PSYCH: PreviewField[] = [{
   },
 }];
 
+/** GCS: "E4V5M6" fills the three components and the total; a number fills the total (25 Nov 2026). */
+const GCS_FIELD: PreviewField = {
+  key: "gcs", label: "GCS", multiline: false,
+  get: (c) => {
+    const v: any = c.vitals || {};
+    return v.gcs_e || v.gcs_v || v.gcs_m ? `E${v.gcs_e || "?"}V${v.gcs_v || "?"}M${v.gcs_m || "?"}` : txt(v.gcs);
+  },
+  set: (c, raw) => {
+    const v = raw.trim();
+    const m = v.match(/E\s*(\d)\s*V\s*(\d|T)\s*M\s*(\d)/i);
+    let out = c;
+    if (m) {
+      out = setIn(out, ["vitals", "gcs_e"], m[1]);
+      out = setIn(out, ["vitals", "gcs_v"], m[2].toUpperCase());
+      out = setIn(out, ["vitals", "gcs_m"], m[3]);
+      out = setIn(out, ["vitals", "gcs"], m[2].toUpperCase() === "T" ? `E${m[1]}VTM${m[3]}` : String(Number(m[1]) + Number(m[2]) + Number(m[3])));
+    } else {
+      for (const k of ["gcs_e", "gcs_v", "gcs_m"]) if ((out as any).vitals?.[k]) out = setIn(out, ["vitals", k], "");
+      out = setIn(out, ["vitals", "gcs"], v.replace(/\s*\/\s*15\s*$/, ""));
+    }
+    return out;
+  },
+};
+
 const PRIMARY: PreviewField[] = [
   primary("airway", "Airway"), primary("breathing", "Breathing"), primary("circulation", "Circulation"),
   primary("disability", "Disability"), primary("exposure", "Exposure"),
-  vital("rr", "RR"), vital("hr", "HR"), vital("spo2", "SpO₂"), vital("bp", "BP"), vital("grbs", "GRBS"), vital("temp", "Temp (with unit)"),
+  vital("rr", "RR"), vital("hr", "HR"), vital("spo2", "SpO₂"), vital("bp", "BP"), vital("grbs", "GRBS"), vital("temp", "Temp (with unit)"), GCS_FIELD,
 ];
 
 /**

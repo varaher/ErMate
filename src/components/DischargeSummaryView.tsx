@@ -9,13 +9,15 @@ import VoiceRecorder from "./shared/VoiceRecorder";
 import { triggerPrintWithTip } from "../utils/printWithTip";
 import { BoundChatModal } from "./BoundChatModal";
 import { captureFeedbackCorrection } from "../services/learningClient";
-import { formatDischargeSummaryText, formatDischargeSummaryHtml, DischargeSummaryData, STATUTORY_FOOTER } from "../utils/dischargeSummaryFormat";
+import { formatDischargeSummaryText, formatDischargeSummaryHtml, dischargeSummaryPlainForEmr, DischargeSummaryData, STATUTORY_FOOTER } from "../utils/dischargeSummaryFormat";
 import { isPediatricPatient } from "../utils/pediatricRanges";
 import { resolveDocumentedPrimarySurvey } from "../utils/primarysurveyresolve";
 import { isLmpApplicable, resolveHpi, resolvePastMedicalSurgical } from "../utils/historyFields";
 import {
   deriveInitialCourseInHospital,
   courseHasSourceDump,
+  courseLooksOldFormat,
+  endCourseWithOutcome,
   classifyDisposition,
   outcomeChecklist,
   type OutcomeDetails,
@@ -29,6 +31,7 @@ import {
 import { authenticatedFetch } from "../services/authenticatedFetch";
 import DischargeOutcomeFields, { OutcomeChecklistNote } from "./DischargeOutcomeFields";
 import { copyTextToClipboard } from "../utils/copyToClipboard";
+import { withVitalUnit, type VitalKind } from "../utils/vitalUnits";
 import ShareWhatsAppDialog from "./ShareWhatsAppDialog";
 import { dischargeToWhatsApp } from "../utils/whatsappShare";
 
@@ -51,6 +54,10 @@ type TabType = "admin-vitals" | "clinical-hx" | "primary-assessment" | "secondar
 /** One typeable value on the discharge sheet (module level so it keeps focus while typing). */
 function DF({ k, v, hint }: { k: string; v: string; hint?: string }) {
   return <EdText s="discharge" k={k} text={v || ""} shown={v || "Not documented"} hint={hint} />;
+}
+/** A vital on the discharge sheet: typed as a bare value, always shown and printed with its unit. */
+function DV({ k, v, kind }: { k: string; v: string; kind: VitalKind }) {
+  return <EdText s="discharge" k={k} text={v || ""} shown={withVitalUnit(kind, v) || "Not documented"} />;
 }
 /** A paragraph / list field on the discharge sheet. */
 function DB({ k, v }: { k: string; v: string }) {
@@ -296,8 +303,12 @@ export default function DischargeSummaryView({
 
   // A course saved before 25 Nov 2026 may quote the whole pasted case sheet; rebuild it from the case instead.
   const _savedCourse = _safeCourseInHospital(currentCase.dischargeInfo?.courseInHospital);
+  // A course in the old wording (before 25 Nov 2026) that the doctor never edited is rebuilt in the current
+  // format; a finalised or hand-edited course is kept and can be rebuilt with "Rebuild course".
+  const _savedStatus = currentCase.dischargeInfo?.summaryStatus;
+  const _rebuildOld = Boolean(_savedCourse) && courseLooksOldFormat(_savedCourse) && _savedStatus !== "FINALIZED" && _savedStatus !== "MANUALLY_EDITED";
   const [courseInHospital, setCourseInHospital] = useState(
-    (_savedCourse && !courseHasSourceDump(_savedCourse) ? _savedCourse : "") || deriveInitialCourseInHospital(currentCase)
+    (_savedCourse && !courseHasSourceDump(_savedCourse) && !_rebuildOld ? _savedCourse : "") || deriveInitialCourseInHospital(currentCase)
   );
   const [investigationsResults, setInvestigationsResults] = useState(
     currentCase.dischargeInfo?.investigationsResults || formatInvestigationsText(currentCase)
@@ -351,6 +362,7 @@ export default function DischargeSummaryView({
     dischargeInfo: { ...(currentCase.dischargeInfo || {}), dispositionStatus, dischargeCondition, followUpPlan, outcome } as any,
   });
   const lastAutoCourseRef = useRef<string>(autoCourseSnapshot);
+  const [courseBeforeRebuild, setCourseBeforeRebuild] = useState<string | null>(null);
   const courseTextRef = useRef<string>(courseInHospital);
 
   useEffect(() => {
@@ -474,7 +486,8 @@ export default function DischargeSummaryView({
   const handleCopyDischargeSummary = async () => {
     // Plain-text flavour must paste cleanly into EMR text boxes: strip markdown bold markers.
     // (Rich editors still receive the HTML flavour with real formatting.)
-    const plainText = getFormattedDischargeSummaryText().replace(/\*\*/g, "");
+    // Headings on their own line become CAPITALS so they still stand out where bold is lost.
+    const plainText = dischargeSummaryPlainForEmr(getFormattedDischargeSummaryText());
     const htmlText = getFormattedDischargeSummaryHtml();
     const ok = await copyTextToClipboard(plainText, htmlText);
     if (ok) {
@@ -552,7 +565,9 @@ export default function DischargeSummaryView({
         // Instructions were overwritten unconditionally, even by the automatic draft; it now fills blanks only.
         if (resData.data.patientInstructions && mayFill("patientInstructions")) setPatientInstructions((p) => apply(p, resData.data.patientInstructions));
         if (resData.data.courseInHospital) {
-          setCourseInHospital((p) => apply(p, _safeCourseInHospital(resData.data.courseInHospital)));
+          // The AI's story, ending with ErMate's own outcome paragraph (disposition + recorded details).
+          const liveCase: any = { ...currentCase, dischargeInfo: { ...(currentCase.dischargeInfo || {}), dispositionStatus, dischargeCondition, followUpPlan, outcome } };
+          setCourseInHospital((p) => apply(p, endCourseWithOutcome(_safeCourseInHospital(resData.data.courseInHospital), liveCase)));
         }
         setAiDrafted(true);
 
@@ -1809,7 +1824,30 @@ export default function DischargeSummaryView({
                 </div>
 
                 <div className="space-y-1">
-                  <label className="font-bold text-slate-500 uppercase text-[9px]">Clinical Course in Hospital</label>
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="font-bold text-slate-500 uppercase text-[9px]">Clinical Course in Hospital</label>
+                    <span className="flex items-center gap-2">
+                      {courseBeforeRebuild !== null && (
+                        <button type="button" onClick={() => { const prev = courseBeforeRebuild; setCourseBeforeRebuild(null); courseTextRef.current = prev; setCourseInHospital(prev); }} className="text-[10px] font-bold text-slate-500 hover:text-slate-700 cursor-pointer">Undo</button>
+                      )}
+                      <button
+                        type="button"
+                        id="discharge-rebuild-course"
+                        title="Write the course again from the case in the ErMate format (replaces the text below)"
+                        onClick={() => {
+                          setCourseBeforeRebuild(courseInHospital);
+                          courseTextRef.current = autoCourseSnapshot;
+                          lastAutoCourseRef.current = autoCourseSnapshot;
+                          setCourseInHospital(autoCourseSnapshot);
+                          setIsManuallyEdited(true);
+                          if (summaryStatus !== "FINALIZED") setSummaryStatus("MANUALLY_EDITED");
+                        }}
+                        className="text-[10px] font-bold px-2 py-1 rounded-md border border-indigo-200 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 cursor-pointer"
+                      >
+                        Rebuild course
+                      </button>
+                    </span>
+                  </div>
                   <textarea
                     rows={3}
                     value={courseInHospital}
@@ -1966,23 +2004,23 @@ export default function DischargeSummaryView({
 
   <div><span className="font-bold">Allergy :</span> <DF k="allergies" v={allergies} /></div>
 
-  <div className="font-bold mt-4">Vitals at the time of arrival:</div>
-  <div>HR- <DF k="arrivalHr" v={arrivalHr} /></div>
-  <div>BP- <DF k="arrivalBp" v={arrivalBp} /></div>
-  <div>RR- <DF k="arrivalRr" v={arrivalRr} /></div>
-  <div>SpO2- <DF k="arrivalSpo2" v={arrivalSpo2} /></div>
-  <div>GCS- <DF k="arrivalGcs" v={arrivalGcs} /></div>
-  <div>Pain Score- <DF k="arrivalPainScore" v={arrivalPainScore} /></div>
-  <div>GRBS- <DF k="arrivalGrbs" v={arrivalGrbs} /></div>
-  <div>Temp- <DF k="arrivalTemp" v={arrivalTemp} /></div>
+  <div className="ds-h font-bold mt-5 text-[13.5px] print:text-[13px] text-black">Vitals at the time of arrival:</div>
+  <div>HR- <DV k="arrivalHr" v={arrivalHr} kind="hr" /></div>
+  <div>BP- <DV k="arrivalBp" v={arrivalBp} kind="bp" /></div>
+  <div>RR- <DV k="arrivalRr" v={arrivalRr} kind="rr" /></div>
+  <div>SpO2- <DV k="arrivalSpo2" v={arrivalSpo2} kind="spo2" /></div>
+  <div>GCS- <DV k="arrivalGcs" v={arrivalGcs} kind="gcs" /></div>
+  <div>Pain Score- <DV k="arrivalPainScore" v={arrivalPainScore} kind="pain" /></div>
+  <div>GRBS- <DV k="arrivalGrbs" v={arrivalGrbs} kind="grbs" /></div>
+  <div>Temp- <DV k="arrivalTemp" v={arrivalTemp} kind="temp" /></div>
 
-  <div className="font-bold mt-4">Presenting Complaints:</div>
+  <div className="ds-h font-bold mt-5 text-[13.5px] print:text-[13px] text-black">Presenting Complaints:</div>
   <div><DB k="presentingComplaints" v={presentingComplaints} /></div>
 
-  <div className="font-bold mt-4">History of Present Illness:</div>
+  <div className="ds-h font-bold mt-5 text-[13.5px] print:text-[13px] text-black">History of Present Illness:</div>
   <div><DB k="historyOfPresentIllness" v={historyOfPresentIllness} /></div>
 
-  <div className="font-bold mt-4">Past Medical/Surgical Histories:</div>
+  <div className="ds-h font-bold mt-5 text-[13.5px] print:text-[13px] text-black">Past Medical/Surgical Histories:</div>
   <div><DB k="pastMedicalHistory" v={pastMedicalHistory} /></div>
 
   <div className="mt-2"><span className="font-bold">Family / Gynae History :</span> <DF k="familyGynaeHistory" v={familyGynaeHistory} /></div>
@@ -2000,17 +2038,17 @@ export default function DischargeSummaryView({
       </div>
   )}
 
-  <div className="font-bold mt-4">General Examination / Systemic examination:</div>
+  <div className="ds-h font-bold mt-5 text-[13.5px] print:text-[13px] text-black">General Examination / Systemic examination:</div>
   <div><DB k="generalExamination" v={generalExamination} /></div>
 
-  <div className="font-bold mt-4">Primary Assessment:</div>
+  <div className="ds-h font-bold mt-5 text-[13.5px] print:text-[13px] text-black">Primary Assessment:</div>
   <div><span className="font-bold">Airway &rarr;</span> <DF k="primaryAirway" v={primaryAirway} /> ,Intervention- <DF k="primaryAirwayIntervention" v={primaryAirwayIntervention} /></div>
   <div><span className="font-bold">Breathing &rarr;</span> {(primaryBreathing || inlineOn) ? <>Findings- <DF k="primaryBreathing" v={primaryBreathing} hint="Add findings" /> ,</> : null}Work of breathing- <DF k="primaryBreathingWork" v={primaryBreathingWork} /> ,Air entry- <DF k="primaryBreathingAirEntry" v={primaryBreathingAirEntry} /> ,CCT- <DF k="primaryBreathingCct" v={primaryBreathingCct} /> ,Subcutaneous emphysema- <DF k="primaryBreathingSubcut" v={primaryBreathingSubcut} /> ,EFAST- <DF k="primaryBreathingEfast" v={primaryBreathingEfast} /> ,Intervention- <DF k="primaryBreathingIntervention" v={primaryBreathingIntervention} />.</div>
   <div><span className="font-bold">Circulation &rarr;</span> {(primaryCirculation || inlineOn) ? <>Findings- <DF k="primaryCirculation" v={primaryCirculation} hint="Add findings" /> ,</> : null}CRT- <DF k="primaryCirculationCrt" v={primaryCirculationCrt} /> , Distended Neck Veins- <DF k="primaryCirculationDnv" v={primaryCirculationDnv} /> , PCT- <DF k="primaryCirculationPct" v={primaryCirculationPct} /> ,Long bone deformity- <DF k="primaryCirculationDeformity" v={primaryCirculationDeformity} /> ,FAST- <DF k="primaryCirculationFast" v={primaryCirculationFast} /> ,Interventions- <DF k="primaryCirculationInterventions" v={primaryCirculationInterventions} />.</div>
-  <div><span className="font-bold">Disability &rarr;</span> AVPU/GCS- <DF k="primaryDisabilityAvpuGcs" v={primaryDisabilityAvpuGcs} /> ,Pupils- <DF k="primaryDisabilityPupils" v={primaryDisabilityPupils} /> ,GRBS- <DF k="primaryDisabilityGrbs" v={primaryDisabilityGrbs} /></div>
-  <div><span className="font-bold">Exposure &rarr;</span> Temp- <DF k="primaryExposureTemp" v={primaryExposureTemp} /> | Trauma-Logroll- <DF k="primaryExposureTrauma" v={primaryExposureTrauma} /></div>
+  <div><span className="font-bold">Disability &rarr;</span> AVPU/GCS- <DF k="primaryDisabilityAvpuGcs" v={primaryDisabilityAvpuGcs} /> ,Pupils- <DF k="primaryDisabilityPupils" v={primaryDisabilityPupils} /> ,GRBS- <DV k="primaryDisabilityGrbs" v={primaryDisabilityGrbs} kind="grbs" /></div>
+  <div><span className="font-bold">Exposure &rarr;</span> Temp- <DV k="primaryExposureTemp" v={primaryExposureTemp} kind="temp" /> | Trauma-Logroll- <DF k="primaryExposureTrauma" v={primaryExposureTrauma} /></div>
 
-  <div className="font-bold mt-4">Secondary Assesment:</div>
+  <div className="ds-h font-bold mt-5 text-[13.5px] print:text-[13px] text-black">Secondary Assesment:</div>
   <div>Pallor Icterus Cyanosis Clubbing Lymphadenopathy Edema- <DF k="secondaryPicle" v={secondaryPicle} /></div>
   <div><span className="font-bold">CHEST-</span> <DF k="secondaryChest" v={secondaryChest} /></div>
   <div><span className="font-bold">CVS-</span> <DF k="secondaryCvs" v={secondaryCvs} /></div>
@@ -2018,20 +2056,20 @@ export default function DischargeSummaryView({
   <div><span className="font-bold">CNS-</span> <DF k="secondaryCns" v={secondaryCns} /></div>
   <div><span className="font-bold">EXTREMITIES-</span> <DF k="secondaryExtremities" v={secondaryExtremities} /></div>
 
-  <div className="font-bold mt-4">Course in Hospital with Medications and Procedure:</div>
+  <div className="ds-h font-bold mt-5 text-[13.5px] print:text-[13px] text-black">Course in Hospital with Medications and Procedure:</div>
   <div><DB k="courseInHospital" v={courseInHospital} /></div>
 
-  <div className="font-bold mt-4">Investigations:</div>
+  <div className="ds-h font-bold mt-5 text-[13.5px] print:text-[13px] text-black">Investigations:</div>
   <div><DB k="investigationsResults" v={investigationsResults} /></div>
 
-  <div className="font-bold mt-4">Diagnosis at the time of discharge:</div>
+  <div className="ds-h font-bold mt-5 text-[13.5px] print:text-[13px] text-black">Diagnosis at the time of discharge:</div>
   <div><DF k="primaryDiagnosis" v={primaryDiagnosis} hint="Primary diagnosis" /></div>
   {(secondaryDiagnosis || inlineOn) && <div><DF k="secondaryDiagnosis" v={secondaryDiagnosis} hint="Add secondary diagnosis" /></div>}
 
-  <div className="font-bold mt-4">Discharge Medications:</div>
+  <div className="ds-h font-bold mt-5 text-[13.5px] print:text-[13px] text-black">Discharge Medications:</div>
   <div><DB k="dischargeMedications" v={dischargeMedications} /></div>
 
-  <div className="font-bold mt-4">Disposition:</div>
+  <div className="ds-h font-bold mt-5 text-[13.5px] print:text-[13px] text-black">Disposition:</div>
   {inlineOn ? (
     <div><DF k="dispositionStatus" v={dispositionStatus === "Pending / Not Documented" ? "" : dispositionStatus} hint="Normal Discharge / Discharge at Request / Discharge Against Medical Advice / Referred / Admitted / Expired" /></div>
   ) : (!dispositionStatus || dispositionStatus === "Pending / Not Documented") ? (
@@ -2050,20 +2088,20 @@ export default function DischargeSummaryView({
     </>
   )}
 
-  <div className="font-bold mt-4">Condition at time of discharge:(STABLE/UNSTABLE)</div>
+  <div className="ds-h font-bold mt-5 text-[13.5px] print:text-[13px] text-black">Condition at time of discharge:(STABLE/UNSTABLE)</div>
   <div><DF k="dischargeCondition" v={dischargeCondition} /></div>
 
-  <div className="font-bold mt-4">Vitals at the time of Discharge:</div>
-  <div>HR- <DF k="dischargeHr" v={dischargeHr} /></div>
-  <div>BP- <DF k="dischargeBp" v={dischargeBp} /></div>
-  <div>RR- <DF k="dischargeRr" v={dischargeRr} /></div>
-  <div>SpO2- <DF k="dischargeSpo2" v={dischargeSpo2} /></div>
-  <div>GCS- <DF k="dischargeGcs" v={dischargeGcs} /></div>
-  <div>Pain Score- <DF k="dischargePainScore" v={dischargePainScore} /></div>
-  <div>GRBS- <DF k="dischargeGrbs" v={dischargeGrbs} /></div>
-  <div>Temp- <DF k="dischargeTemp" v={dischargeTemp} /></div>
+  <div className="ds-h font-bold mt-5 text-[13.5px] print:text-[13px] text-black">Vitals at the time of Discharge:</div>
+  <div>HR- <DV k="dischargeHr" v={dischargeHr} kind="hr" /></div>
+  <div>BP- <DV k="dischargeBp" v={dischargeBp} kind="bp" /></div>
+  <div>RR- <DV k="dischargeRr" v={dischargeRr} kind="rr" /></div>
+  <div>SpO2- <DV k="dischargeSpo2" v={dischargeSpo2} kind="spo2" /></div>
+  <div>GCS- <DV k="dischargeGcs" v={dischargeGcs} kind="gcs" /></div>
+  <div>Pain Score- <DV k="dischargePainScore" v={dischargePainScore} kind="pain" /></div>
+  <div>GRBS- <DV k="dischargeGrbs" v={dischargeGrbs} kind="grbs" /></div>
+  <div>Temp- <DV k="dischargeTemp" v={dischargeTemp} kind="temp" /></div>
 
-  <div className="font-bold mt-4">Follow-Up Advice:</div>
+  <div className="ds-h font-bold mt-5 text-[13.5px] print:text-[13px] text-black">Follow-Up Advice:</div>
   <div><DB k="followUpPlan" v={followUpPlan} /></div>
 
   <div className="mt-8 flex gap-8">
@@ -2078,7 +2116,7 @@ export default function DischargeSummaryView({
 
   <div className="mt-2"><span className="font-bold">Date:</span> {inlineOn ? <DF k="dischargeDateTime" v={dischargeDateTime} /> : dischargeDateTime}</div>
 
-    <div className="mt-8 font-bold">Hospital Address and Contact Information:</div>
+    <div className="ds-h mt-8 font-bold text-[13.5px] print:text-[13px] text-black">Hospital Address and Contact Information:</div>
   <div>{displayHospitalName}</div>
   <div>{displayHospitalAddress}</div>
   <div>{profile?.hospitalPhone ? `Phone: ${profile.hospitalPhone}` : "Hospital contact number not set in profile"}</div>

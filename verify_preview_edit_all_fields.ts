@@ -40,7 +40,7 @@ for (const [n, c] of [["empty", empty], ["full", full]] as const) {
 // 2. Edit mode: every field of the editor has a line on the sheet, and on an empty case each is an editable placeholder
 const edLines = buildErCaseRecord(view(empty), { editing: true });
 const tagged = new Set(edLines.flatMap((l: any) => [l.edit, ...(l.segs || []).map((s: any) => s.edit)]).filter(Boolean).map((e: any) => `${e.s}|${e.k}`));
-const skip = new Set(["rr", "hr", "spo2", "bp", "grbs", "temp", "status_x"]); // vitals: "More fields"
+const skip = new Set<string>(); // 25 Nov 2026: vitals (RR, SpO2, HR, BP, GCS, GRBS, Temp) are typeable on the sheet too
 const normal = (s: string) => (s === "History" || s === "Secondary Assessment / History" ? "History" : s);
 for (const g of EDIT_GROUPS.filter((x) => !x.pediatricOnly)) {
   for (const f of EDIT_SECTIONS[g.title]) {
@@ -131,6 +131,25 @@ for (const k of ["isMlc", "mlcNo", "dispositionStatus", "dischargeDateTime", "pe
 t("discharge: LMP line shown while editing", /\(lmp \|\| inlineOn \|\| isLmpApplicable/.test(ds2));
 t("discharge: pediatric notes saved with the summary", /pedWeight,\s*pedWorkOfBreathing,\s*pedCirculation,\s*pedImmunization,/.test(ds2) && /pedImmunization\?: string/.test(fs.readFileSync("src/types.ts", "utf8")));
 t("discharge: typed MLC normalises to Yes / No", /setIsMlc\(\/\^y\/i\.test\(v\.trim\(\)\) \? "Yes" : "No"\)/.test(ds2));
+
+
+// 9. Vitals typeable on the sheet (25 Nov 2026: "the vitals cannot be edited once dictated")
+const vCase: any = { id: "v", patient: { name: "V", age: 40, gender: "Male" }, vitals: { rr: "18", spo2: "98", hr: "84", bp: "130/80", gcs_e: "4", gcs_v: "5", gcs_m: "6", gcs: "15", grbs: "141", temp: "98.6 F" }, primaryAssessment: { circulation: "CRT < 2 sec, pulses felt" }, createdAt: new Date().toISOString() };
+const vl = buildErCaseRecord(view(vCase), { editing: true }) as any[];
+const seg = (label: string, k: string) => vl.find((l) => l.label === label)?.segs?.find((x: any) => x.edit?.k === k)?.text;
+t("adult sheet: each vital is its own typeable piece, bare value", seg("Breathing", "rr") === "18" && seg("Breathing", "spo2") === "98" && seg("Circulation", "hr") === "84" && seg("Circulation", "bp") === "130/80" && seg("Disability", "gcs") === "E4 V5 M6".replace(/ /g, "") || (seg("Disability", "gcs") || "").replace(/\s/g, "") === "E4V5M6");
+t("adult sheet: units printed after the piece", /RR: 18\/min, SpO2: 98%/.test(vl.find((l) => l.label === "Breathing").text) && /GRBS: 141 mg\/dL/.test(vl.find((l) => l.label === "Disability").text));
+const vEmpty = buildErCaseRecord(view(empty), { editing: true }) as any[];
+t("adult sheet: empty vitals still typeable", ["rr", "spo2"].every((k) => vEmpty.find((l) => l.label === "Breathing").segs.some((x: any) => x.edit?.k === k && x.text === "")) && vEmpty.find((l) => l.label === "Exposure").segs.some((x: any) => x.edit?.k === "temp"));
+t("print / copy (not editing) unchanged", !buildErCaseRecord(view(vCase)).some((l: any) => l.segs?.some((x: any) => ["rr", "hr", "spo2", "bp", "gcs", "grbs", "temp"].includes(x.edit?.k))));
+const ap = (k: string, val: string) => view(applySectionEdits(vCase, view(vCase), "Primary Survey", { [k]: val }).next);
+t("typing HR / BP / SpO2 / RR / GRBS / Temp saves to the case", ap("hr", "110").primarySurvey.vitalsContext.hr === "110" && ap("bp", "90/60").primarySurvey.vitalsContext.bp === "90/60" && ap("spo2", "91").primarySurvey.vitalsContext.spo2 === "91" && ap("rr", "28").primarySurvey.vitalsContext.rr === "28" && ap("grbs", "60").primarySurvey.vitalsContext.grbs === "60" && ap("temp", "101 F").primarySurvey.vitalsContext.temp === "101 F");
+const g1 = applySectionEdits(vCase, view(vCase), "Primary Survey", { gcs: "E2V3M5" }).next;
+t("typing GCS E2V3M5 fills components and total", g1.vitals.gcs_e === "2" && g1.vitals.gcs_v === "3" && g1.vitals.gcs_m === "5" && g1.vitals.gcs === "10");
+const g2 = applySectionEdits(vCase, view(vCase), "Primary Survey", { gcs: "12" }).next;
+t("typing GCS 12 clears the old components", g2.vitals.gcs === "12" && !g2.vitals.gcs_e && !g2.vitals.gcs_v && !g2.vitals.gcs_m);
+t("a piece commits only its own field (CRT + findings still join, vitals do not)", /editable\.filter\(\(x\) => x\.edit!\.s === e\.s && x\.edit!\.k === e\.k\)/.test(pv));
+t("paediatric sheet: vitals typeable in Edit mode", ["rr", "spo2", "hr", "bp", "gcs", "grbs", "temp"].every((k) => new RegExp(`<EdText s="Primary Survey" k="${k}"`).test(pv)));
 
 console.log(fail ? `${fail} FAILED` : "ALL PASS");
 process.exit(fail ? 1 : 0);

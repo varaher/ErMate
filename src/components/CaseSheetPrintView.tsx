@@ -966,7 +966,8 @@ function ErCaseRecordBody({ lines, onEdit, editing }: { lines: ErLine[]; onEdit?
                     placeholder={e.ph}
                     onCommit={(v) => {
                       // One field can be typed in two pieces (CRT + other findings): join them back together.
-                      const parts = editable.map((x) => (x === sg ? v : x.text.trim()));
+                      // Other pieces on the line (RR, SpO2, HR, BP … in Edit mode) are fields of their own.
+                      const parts = editable.filter((x) => x.edit!.s === e.s && x.edit!.k === e.k).map((x) => (x === sg ? v : x.text.trim()));
                       onEdit(e.s, e.k, parts.filter(Boolean).join(", "));
                     }}
                   />
@@ -1093,6 +1094,11 @@ function EmptyLine({ text = "Not documented" }: { text?: string }) {
   return <p className="text-sm text-slate-500 italic print:text-black">{text}</p>;
 }
 
+/** A vital as typed, without its unit (the unit is printed next to the box). */
+function bareVital(raw: unknown): string {
+  return String(raw ?? "").trim().replace(/\s*(\/\s*min|bpm|per\s*min|mm\s*hg|mg\s*\/?\s*dl|%|\/\s*15)\s*$/i, "").trim();
+}
+
 function PrimarySurveySection({ data }: { data: PrimarySurveyData }) {
   const v = data.vitalsContext;
 
@@ -1129,7 +1135,12 @@ function PrimarySurveySection({ data }: { data: PrimarySurveyData }) {
         <div className="border-b border-slate-100 pb-1.5 last:border-b-0">
           <span className="font-bold text-slate-900">Breathing: </span>
           <EdText s="Primary Survey" k="breathing" text={breathingFindings || ""} shown={breathingFindings || "Not documented"} />
-          {(v?.rr || v?.spo2) && (
+          {ieOn ? (
+            <div className="inline-flex items-center gap-3 ml-2 font-mono text-xs bg-slate-100 print:bg-transparent px-2 py-0.5 rounded border border-slate-200 print:border-none">
+              <span><strong className="font-sans text-[11px] text-slate-600">RR:</strong> <EdText s="Primary Survey" k="rr" text={bareVital(v?.rr)} hint="RR" /> /min</span>
+              <span><strong className="font-sans text-[11px] text-slate-600">SpO2:</strong> <EdText s="Primary Survey" k="spo2" text={bareVital(v?.spo2)} hint="SpO2" />%</span>
+            </div>
+          ) : (v?.rr || v?.spo2) && (
             <div className="inline-flex items-center gap-3 ml-2 font-mono text-xs bg-slate-100 print:bg-transparent px-2 py-0.5 rounded border border-slate-200 print:border-none">
               {v.rr && <span><strong className="font-sans text-[11px] text-slate-600">RR:</strong> {v.rr} /min</span>}
               {v.spo2 && <span><strong className="font-sans text-[11px] text-slate-600">SpO2:</strong> {displaySpo2(v.spo2)}</span>}
@@ -1141,7 +1152,12 @@ function PrimarySurveySection({ data }: { data: PrimarySurveyData }) {
         <div className="border-b border-slate-100 pb-1.5 last:border-b-0">
           <span className="font-bold text-slate-900">Circulation: </span>
           <EdText s="Primary Survey" k="circulation" text={circulationFindings || ""} shown={circulationFindings || "Not documented"} />
-          {(v?.hr || v?.bp) && (
+          {ieOn ? (
+            <div className="inline-flex items-center gap-3 ml-2 font-mono text-xs bg-slate-100 print:bg-transparent px-2 py-0.5 rounded border border-slate-200 print:border-none">
+              <span><strong className="font-sans text-[11px] text-slate-600">HR:</strong> <EdText s="Primary Survey" k="hr" text={bareVital(v?.hr)} hint="HR" /> /min</span>
+              <span><strong className="font-sans text-[11px] text-slate-600">BP:</strong> <EdText s="Primary Survey" k="bp" text={bareVital(v?.bp)} hint="BP" /> mmHg</span>
+            </div>
+          ) : (v?.hr || v?.bp) && (
             <div className="inline-flex items-center gap-3 ml-2 font-mono text-xs bg-slate-100 print:bg-transparent px-2 py-0.5 rounded border border-slate-200 print:border-none">
               {v.hr && <span><strong className="font-sans text-[11px] text-slate-600">HR:</strong> {v.hr} bpm</span>}
               {v.bp && <span><strong className="font-sans text-[11px] text-slate-600">BP:</strong> {v.bp} mmHg</span>}
@@ -1153,7 +1169,12 @@ function PrimarySurveySection({ data }: { data: PrimarySurveyData }) {
         <div className="border-b border-slate-100 pb-1.5 last:border-b-0">
           <span className="font-bold text-slate-900">Disability: </span>
           <EdText s="Primary Survey" k="disability" text={disabilityFindings || ""} shown={disabilityFindings || "Not documented"} />
-          {(v?.gcs || v?.gcsComponents || v?.grbs) && (
+          {ieOn ? (
+            <div className="inline-flex items-center gap-3 ml-2 font-mono text-xs bg-slate-100 print:bg-transparent px-2 py-0.5 rounded border border-slate-200 print:border-none">
+              <span><strong className="font-sans text-[11px] text-slate-600">GCS:</strong> <EdText s="Primary Survey" k="gcs" text={(String(v?.gcsComponents || "").match(/E\s*\d\s*V\s*(?:\d|T)\s*M\s*\d/i) || [])[0] || bareVital(v?.gcs)} hint="GCS" /></span>
+              <span><strong className="font-sans text-[11px] text-slate-600">GRBS:</strong> <EdText s="Primary Survey" k="grbs" text={bareVital(v?.grbs)} hint="GRBS" /> mg/dL</span>
+            </div>
+          ) : (v?.gcs || v?.gcsComponents || v?.grbs) && (
             <div className="inline-flex items-center gap-3 ml-2 font-mono text-xs bg-slate-100 print:bg-transparent px-2 py-0.5 rounded border border-slate-200 print:border-none">
               {(v.gcs || v.gcsComponents) && <span><strong className="font-sans text-[11px] text-slate-600">GCS:</strong> {displayGcs(v)}</span>}
               {v.grbs && <span><strong className="font-sans text-[11px] text-slate-600">GRBS:</strong> {displayGrbs(v.grbs)}</span>}
@@ -1165,7 +1186,11 @@ function PrimarySurveySection({ data }: { data: PrimarySurveyData }) {
         <div className="pb-0.5">
           <span className="font-bold text-slate-900">Exposure: </span>
           <EdText s="Primary Survey" k="exposure" text={exposureFindings || ""} shown={exposureFindings || "Not documented"} />
-          {v?.temp && (
+          {ieOn ? (
+            <div className="inline-flex items-center gap-2 ml-2 font-mono text-xs bg-slate-100 print:bg-transparent px-2 py-0.5 rounded border border-slate-200 print:border-none">
+              <span><strong className="font-sans text-[11px] text-slate-600">Temp:</strong> <EdText s="Primary Survey" k="temp" text={String(v?.temp || "")} hint="e.g. 98.6 F" /></span>
+            </div>
+          ) : v?.temp && (
             <div className="inline-flex items-center gap-2 ml-2 font-mono text-xs bg-slate-100 print:bg-transparent px-2 py-0.5 rounded border border-slate-200 print:border-none">
               <span><strong className="font-sans text-[11px] text-slate-600">Temp:</strong> {displayTemperature(v.temp)}</span>
             </div>

@@ -31,6 +31,11 @@ export function isSourceRecordText(text: string | undefined | null): boolean {
   return headings >= 3;
 }
 
+/** A course written by the builder before 25 Nov 2026 (old wording): rebuilt in the current format on open. */
+export function courseLooksOldFormat(text: string | undefined | null): boolean {
+  return /The (patient|child) was evaluated in the Emergency Department with|Initial assessment revealed (blood pressure|pulse|heart rate)\b|\bpulse was \d+\/min\b(?![\s\S]*hemodynamically)| as documented\.|Specialist consultations requested:/i.test(String(text || ""));
+}
+
 /** A saved course that quoted the pasted sheet (before 25 Nov 2026): rebuilt instead of shown. */
 export function courseHasSourceDump(text: string | undefined | null): boolean {
   return /external clinical record\s*[—–-]+\s*source for review/i.test(String(text || ""));
@@ -354,13 +359,23 @@ export function deriveInitialCourseInHospital(c: ClinicalCase): string {
   const hasPc = Boolean(rawPc) && !/^quick discharge intake$/i.test(rawPc);
   const referredFrom = filled((c.patient as any)?.referredFrom) || filled((c as any).referredFrom);
   const referredIn = referredFrom ? `, referred from ${referredFrom}` : String(c.patient?.arrivalMode || "") === "Referred" ? " on referral" : "";
-  p1.push(`${subject} presented to the Emergency Department${hasPc ? " with the above-mentioned complaints" : ""}${referredIn}.`);
-
   const event = extractPrecedingEvent(c);
-  if (event) {
-    const ev = noDot(event);
-    if (/^(?:symptoms?|pain|onset|the\s+patient|patient|the\s+child|child|alleged|reported|witnessed|h\/o|history)\b/i.test(ev)) p1.push(`${ev.charAt(0).toUpperCase()}${ev.slice(1)}.`);
-    else p1.push(`Symptoms followed ${lowerFirst(ev)}.`);
+  const ev = event ? noDot(event) : "";
+  // Trauma, fall, poisoning, bite and similar: open with the mechanism (25 Nov 2026, from Neeraj's samples).
+  const MECHANISM = /\b(alleged|accident|rta|road traffic|fall|fell|slip|assault|hit|struck|impact|injur|trauma|bite|bitten|sting|burn|ingest|consum|poison|overdose|hang|drown|electric|fight)/i;
+  // An event already written as a sentence ("The patient sustained a fall …") is kept as its own sentence.
+  const isSentence = /^(?:the\s+)?(?:patient|child|he|she|symptoms?|pain|onset)\b/i.test(ev);
+  if (ev && MECHANISM.test(ev) && !isSentence) {
+    let mech = ev.replace(/^(?:h\/o|history of|hx of)\s+/i, "");
+    mech = lowerFirst(mech);
+    if (/^alleged\b/i.test(mech)) mech = `an ${mech}`;
+    p1.push(`${subject} presented to the Emergency Department following ${mech}${referredIn}.`);
+  } else {
+    p1.push(`${subject} presented to the Emergency Department${hasPc ? " with the above-mentioned complaints" : ""}${referredIn}.`);
+    if (ev) {
+      if (/^(?:symptoms?|pain|onset|the\s+patient|patient|the\s+child|child|alleged|reported|witnessed|h\/o|history)\b/i.test(ev)) p1.push(`${ev.charAt(0).toUpperCase()}${ev.slice(1)}.`);
+      else p1.push(`Symptoms followed ${lowerFirst(ev)}.`);
+    }
   }
 
   // Pediatric Assessment Triangle: one phrase
@@ -393,7 +408,10 @@ export function deriveInitialCourseInHospital(c: ClinicalCase): string {
     const tempInfo = formatTemperature(v.temp);
     const gcsTxt = String(v.gcs || "").trim();
     const gcsNum = parseInt(gcsTxt, 10);
-    const alteredGcs = gcsTxt && !/^15(\/15)?$/.test(gcsTxt) && (Number.isFinite(gcsNum) ? gcsNum < 15 : /^E\d/i.test(gcsTxt));
+    // E4V5M6 adds up to 15 = normal; "VT" (intubated) or a lower total is altered.
+    const evm = gcsTxt.match(/E\s*(\d)\s*V\s*(\d|T)\s*M\s*(\d)/i);
+    const evmTotal = evm && evm[2].toUpperCase() !== "T" ? Number(evm[1]) + Number(evm[2]) + Number(evm[3]) : null;
+    const alteredGcs = Boolean(gcsTxt) && !/^15(\/15)?$/.test(gcsTxt) && (evm ? evmTotal !== 15 : Number.isFinite(gcsNum) ? gcsNum < 15 : false);
     const grbs = parseInt(String(v.grbs || ""), 10);
 
     if (isPed) {
@@ -421,7 +439,22 @@ export function deriveInitialCourseInHospital(c: ClinicalCase): string {
     if (Number.isFinite(grbs) && (grbs >= 250 || grbs < 70)) tokens.push(`GRBS ${grbs} mg/dL`);
 
     if (tokens.length) p1.push(`Initial assessment revealed ${tokens.join(", ")}.`);
-    else if (!isPed && adultVitalsAllNormal(v)) p1.push(`${subject} was hemodynamically stable.`);
+    // Head injury, seizure, syncope, stroke, altered sensorium: GCS and pupils matter even when normal.
+    const neuroContext = [rawPc, ev, c.provisionalPrimaryDiagnosis, info.primaryDiagnosis].map((x) => String(x || "")).join(" ");
+    if (/head|seizure|convuls|\bfits?\b|syncope|faint|unconscious|loss of consciousness|\bloc\b|altered|drows|stroke|hemipar|weakness|cva|rta|road traffic|fall|fell|assault|giddiness|vertigo|headache/i.test(neuroContext)) {
+      const ps: any = c.primaryAssessment || {};
+      const disText = [typeof ps.disability === "string" ? ps.disability : "", ps.survey?.disability?.pupils ? `pupils ${ps.survey.disability.pupils}` : ""].join(" ");
+      const pupilM = disText.match(/pupils?\b[^.;]*/i);
+      const pupils = pupilM ? noDot(pupilM[0]).replace(/\s*,\s*grbs.*$/i, "").trim() : "";
+      const cnsText = String((c as any).secondarySurvey?.cns || (c as any).secondarySurvey?.neuro || "");
+      const oriented = /conscious(,|\s+and)\s+oriented/i.test(`${disText} ${cnsText}`);
+      const parts: string[] = [];
+      if (oriented) parts.push("conscious and oriented");
+      if (gcsTxt && !alteredGcs) parts.push(`GCS ${gcsTxt}`);
+      if (pupils) parts.push(lowerFirst(pupils.replace(/^pupils?\b/i, "pupils")));
+      if (parts.length) p1.push(`${subject} was ${parts[0] === "conscious and oriented" ? `conscious and oriented${parts.length > 1 ? `, with ${andJoin(parts.slice(1))}` : ""}` : `noted to have ${andJoin(parts)}`}.`);
+    }
+    if (!tokens.length && !isPed && adultVitalsAllNormal(v)) p1.push(`${subject} was hemodynamically stable.`);
   }
 
   // --- 3. Management ---
@@ -430,7 +463,9 @@ export function deriveInitialCourseInHospital(c: ClinicalCase): string {
   if (filled(c.investigationLabsOrdered)) inv.push(`Blood investigations including ${noDot(String(c.investigationLabsOrdered))} were sent.`);
   if (filled(c.investigationImaging)) {
     const img = String(c.investigationImaging).trim();
-    inv.push(/[.]$/.test(img) ? img : `${img} was done.`);
+    // A result ("CT brain (verbal report): no bleed") is kept as written; a bare test name becomes "… was done."
+    const isResult = /:|\b(showed|shows|revealed|normal|no |negative|positive|suggestive|report)/i.test(img);
+    inv.push(/[.]$/.test(img) ? img : isResult ? `${img}.` : `${img} was done.`);
   }
   if (c.investigations && c.investigations.length > 0) {
     // "Ordered"/"Pending" are order statuses, not results: never report them as "showed ...".
@@ -447,7 +482,9 @@ export function deriveInitialCourseInHospital(c: ClinicalCase): string {
   }
   if (inv.length) p2.push(inv.join(" "));
 
-  const drugs = (c.treatments || []).map(drugText).filter(Boolean);
+  const isObservation = (t: any) => /^(observation|monitoring|observe|monitor)\b/i.test(String(t?.drugName || "").trim());
+  const keptUnderObservation = (c.treatments || []).some(isObservation);
+  const drugs = (c.treatments || []).filter((t: any) => !isObservation(t)).map(drugText).filter(Boolean);
   const infusions = (c.infusions || []).map((i: any) => [i.fluidName, i.dose, i.rate ? `at ${i.rate}` : ""].filter(Boolean).join(" ").trim()).filter(Boolean);
   const allMeds = [...drugs, ...infusions];
   let medsList = "";
@@ -462,9 +499,14 @@ export function deriveInitialCourseInHospital(c: ClinicalCase): string {
   const consults = (c.dispositionAndPlan?.consultsRequested || []).map((x) => String(x).trim()).filter(Boolean);
   if (consults.length) p2.push(`${consults.join(" and ")} consultation${consults.length > 1 ? "s were" : " was"} sought.`);
   if (c.consultantReview?.reviewText) {
-    const by = c.consultantReview.reviewedBy ? ` (${c.consultantReview.reviewedBy})` : "";
-    p2.push(`Consultant review${by}: ${noDot(c.consultantReview.reviewText)}.`);
+    const by = filled(c.consultantReview.reviewedBy);
+    const txt = noDot(c.consultantReview.reviewText);
+    p2.push(`${by ? `On review by ${by}, ` : "On consultant review, "}${lowerFirst(txt)}.`);
   }
+  // The specialist's / treating plan, in its own words (e.g. "Neurosurgery advised no active intervention").
+  const plan = filled(c.dispositionAndPlan?.managementPlan) || filled(info.managementPlan);
+  if (plan && !p2.some((x) => x.toLowerCase().includes(plan.toLowerCase().slice(0, 40)))) p2.push(/[.]$/.test(plan.trim()) ? plan.trim() : `${plan.trim()}.`);
+  if (keptUnderObservation && classifyDisposition(info.dispositionStatus || c.dispositionDetails?.dispositionType) !== "observation") p2.push(`${subject} was kept under observation in the Emergency Department.`);
 
   // --- 4. Observation / reassessment: only from a real note ---
   const p3: string[] = [];
@@ -476,6 +518,28 @@ export function deriveInitialCourseInHospital(c: ClinicalCase): string {
   }
 
   // --- 5. Outcome ---
+  const outcomePara = deriveOutcomeParagraph(c);
+
+  const paragraphs = [
+    p1.join(" "),
+    [p2.join(" "), medsList].filter(Boolean).join("\n"),
+    p3.join(" "),
+    outcomePara,
+  ].map(p => p.trim()).filter(Boolean);
+
+  return paragraphs.join("\n\n");
+}
+
+/**
+ * The closing paragraph of the course for how the visit ended (discharge, at request, referral, LAMA,
+ * death, admission, observation). Used by the course builder and to end an AI-drafted course the same way.
+ */
+export function deriveOutcomeParagraph(c: ClinicalCase): string {
+  const ageNum = parseFloat(String(c.patient?.age ?? ""));
+  const isPed = c.isPediatric === true || (Number.isFinite(ageNum) && ageNum <= 16);
+  const subject = isPed ? "The child" : "The patient";
+  const subj = subject.toLowerCase();
+  const info: any = c.dischargeInfo || {};
   const p4: string[] = [];
   const dispStatus = info.dispositionStatus || info.dispositionType || c.dispositionDetails?.dispositionType ||
     (c.dispositionAndPlan as any)?.disposition || c.dispositionAndPlan?.dispositionStatus;
@@ -532,14 +596,27 @@ export function deriveInitialCourseInHospital(c: ClinicalCase): string {
     p4.push(`Disposition: ${noDot(String(dispStatus))}.`);
   }
 
-  const paragraphs = [
-    p1.join(" "),
-    [p2.join(" "), medsList].filter(Boolean).join("\n"),
-    p3.join(" "),
-    p4.join(" "),
-  ].map(p => p.trim()).filter(Boolean);
+  return p4.join(" ");
+}
 
-  return paragraphs.join("\n\n");
+/**
+ * An AI-drafted course keeps its own story, but always ends with ErMate's outcome paragraph, so the
+ * ending matches the disposition and the referral / LAMA / death details recorded on screen
+ * (those details are never sent to the AI).
+ */
+export function endCourseWithOutcome(aiCourse: string, c: ClinicalCase): string {
+  const outcome = deriveOutcomeParagraph(c);
+  const paras = String(aiCourse || "").split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
+  if (!outcome) return paras.join("\n\n");
+  const OUTCOME_WORDS = /\b(discharged|discharge at request|referred|transferred|against medical advice|LAMA|DAMA|declared dead|expired|passed away|admitted|shifted to)\b/i;
+  if (paras.length > 1 && OUTCOME_WORDS.test(paras[paras.length - 1])) paras.pop();
+  else if (paras.length === 1) {
+    // One paragraph: drop its trailing sentences that state the outcome.
+    const sentences = paras[0].split(/(?<=\.)\s+/);
+    while (sentences.length > 1 && OUTCOME_WORDS.test(sentences[sentences.length - 1])) sentences.pop();
+    paras[0] = sentences.join(" ");
+  }
+  return [...paras, outcome].join("\n\n");
 }
 
 export const CANONICAL_COURSE_HEADINGS = [

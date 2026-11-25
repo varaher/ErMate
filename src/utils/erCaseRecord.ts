@@ -269,48 +269,87 @@ export function buildErCaseRecord(data: CaseSheetData, opts: { editing?: boolean
     L.push({ kind: "labelled", arrow: true, label, text, ...(segs ? { segs } : {}) });
   };
   primaryLine("Airway", "airway", has(ps.airway) ? sentence(clean(ps.airway)) : ND, has(ps.airway) ? sentence(clean(ps.airway)) : "", false);
-  {
-    const vit = [
-      has(vc.rr) ? `RR: ${withUnit(vc.rr, "/min", /\/\s*min|per\s*min|bpm/i)}` : "",
-      has(vc.spo2) ? `SpO2: ${spo2Text(vc.spo2)}` : "",
-    ];
-    const f = clean(ps.breathing);
-    primaryLine("Breathing", "breathing", joinVitalsAndFindings(vit, f), f ? sentence(f) : "", vit.some(Boolean));
-  }
-  const circ = takeCrt(clean(ps.circulation));
-  {
-    const vit = [
-      circ.crt,
-      has(vc.hr) ? `HR: ${withUnit(vc.hr, "/min", /\/\s*min|bpm|per\s*min/i)}` : "",
-      has(vc.bp) ? `BP: ${withUnit(vc.bp, " mmHg", /mm\s*hg/i)}` : "",
-    ];
-    const text = joinVitalsAndFindings(vit, circ.rest);
-    const edit: ErEdit = { s: PRIM, k: "circulation" };
-    let segs: ErSeg[] | undefined;
-    if (text === ND) segs = [{ text: "", edit: { ...edit, ph: true }, hint: ND }];
-    // CRT and the other findings are two typeable pieces of ONE field; the writer joins them back with ", ".
-    else {
-      segs = carve(text, [
-        ...(circ.crt ? [{ text: circ.crt, edit, hint: "CRT" }] : []),
-        ...(circ.rest ? [{ text: sentence(circ.rest), edit, hint: "Add findings" }] : []),
-      ]);
-      if (segs && !circ.rest) segs.push({ text: "", edit, hint: "Add findings" });
+  if (E) {
+    // Edit mode (25 Nov 2026, Neeraj: "the vitals cannot be edited once dictated"): every vital is its own
+    // typeable piece — the bare value, with its unit printed after it — next to the doctor's findings.
+    const bare = (raw: unknown, unit: RegExp) => clean(raw).replace(unit, "").trim();
+    const vitalSegs = (list: Array<{ label: string; k: string; raw: unknown; unit: string; strip: RegExp }>): ErSeg[] => {
+      const out: ErSeg[] = [];
+      list.forEach((x, idx) => {
+        if (idx) out.push({ text: ", " });
+        out.push({ text: `${x.label}: ` });
+        out.push({ text: bare(x.raw, x.strip), edit: { s: PRIM, k: x.k }, hint: x.label });
+        if (x.unit) out.push({ text: x.unit });
+      });
+      return out;
+    };
+    const editLine = (label: string, key: string, vit: ErSeg[], findings: string, extra: ErSeg[] = []) => {
+      const edit: ErEdit = { s: PRIM, k: key };
+      const segs: ErSeg[] = [...vit, { text: vit.length ? ". " : "" }, ...extra, { text: findings, edit, hint: "Add findings" }];
+      const text = segs.map((x) => x.text).join("");
+      L.push({ kind: "labelled", arrow: true, label, text, segs });
+    };
+    editLine("Breathing", "breathing", vitalSegs([
+      { label: "RR", k: "rr", raw: vc.rr, unit: "/min", strip: /\s*(\/\s*min|per\s*min|bpm|breaths\/min)\s*$/i },
+      { label: "SpO2", k: "spo2", raw: vc.spo2, unit: "%", strip: /\s*%\s*$/ },
+    ]), clean(ps.breathing) ? sentence(clean(ps.breathing)) : "");
+    const c2 = takeCrt(clean(ps.circulation));
+    // CRT stays part of the circulation findings (one field, joined back with ", ").
+    editLine("Circulation", "circulation", vitalSegs([
+      { label: "HR", k: "hr", raw: vc.hr, unit: "/min", strip: /\s*(\/\s*min|bpm|per\s*min)\s*$/i },
+      { label: "BP", k: "bp", raw: vc.bp, unit: " mmHg", strip: /\s*mm\s*hg\s*$/i },
+    ]), c2.rest ? sentence(c2.rest) : "", c2.crt ? [{ text: c2.crt, edit: { s: PRIM, k: "circulation" }, hint: "CRT" }, { text: " " }] : []);
+    editLine("Disability", "disability", vitalSegs([
+      { label: "GCS", k: "gcs", raw: (clean(vc.gcsComponents).match(/E\s*\d\s*V\s*(?:\d|T)\s*M\s*\d/i) || [])[0] || vc.gcs, unit: "", strip: /\s*\/\s*15\s*$/ },
+      { label: "GRBS", k: "grbs", raw: vc.grbs, unit: " mg/dL", strip: /\s*mg\s*\/?\s*dl\s*$/i },
+    ]), clean(ps.disability) ? sentence(clean(ps.disability)) : "");
+    editLine("Exposure", "exposure", vitalSegs([
+      { label: "Temperature", k: "temp", raw: vc.temp, unit: "", strip: /^$/ },
+    ]), clean(ps.exposure) ? sentence(clean(ps.exposure)) : "");
+  } else {
+    {
+      const vit = [
+        has(vc.rr) ? `RR: ${withUnit(vc.rr, "/min", /\/\s*min|per\s*min|bpm/i)}` : "",
+        has(vc.spo2) ? `SpO2: ${spo2Text(vc.spo2)}` : "",
+      ];
+      const f = clean(ps.breathing);
+      primaryLine("Breathing", "breathing", joinVitalsAndFindings(vit, f), f ? sentence(f) : "", vit.some(Boolean));
     }
-    L.push({ kind: "labelled", arrow: true, label: "Circulation", text, ...(segs ? { segs } : {}) });
-  }
-  {
-    const gcs = gcsText(vc);
-    const dis = clean(ps.disability);
-    const grbs = has(vc.grbs) ? `GRBS: ${displayGrbs(vc.grbs)}` : "";
-    const head = [gcs ? `GCS: ${gcs}` : "", dis ? (gcs ? continuation(dis) : dis) : ""].filter(Boolean).join(", ");
-    const text = [head ? sentence(head) : "", grbs ? sentence(grbs) : ""].filter(Boolean).join(" ");
-    const shown = dis ? (gcs ? continuation(dis) : dis) : "";
-    primaryLine("Disability", "disability", text || ND, shown, Boolean(gcs || grbs));
-  }
-  {
-    const vit = [has(vc.temp) ? `Temperature: ${displayTemperature(vc.temp)}` : ""];
-    const f = clean(ps.exposure);
-    primaryLine("Exposure", "exposure", joinVitalsAndFindings(vit, f), f ? sentence(f) : "", vit.some(Boolean));
+    const circ = takeCrt(clean(ps.circulation));
+    {
+      const vit = [
+        circ.crt,
+        has(vc.hr) ? `HR: ${withUnit(vc.hr, "/min", /\/\s*min|bpm|per\s*min/i)}` : "",
+        has(vc.bp) ? `BP: ${withUnit(vc.bp, " mmHg", /mm\s*hg/i)}` : "",
+      ];
+      const text = joinVitalsAndFindings(vit, circ.rest);
+      const edit: ErEdit = { s: PRIM, k: "circulation" };
+      let segs: ErSeg[] | undefined;
+      if (text === ND) segs = [{ text: "", edit: { ...edit, ph: true }, hint: ND }];
+      // CRT and the other findings are two typeable pieces of ONE field; the writer joins them back with ", ".
+      else {
+        segs = carve(text, [
+          ...(circ.crt ? [{ text: circ.crt, edit, hint: "CRT" }] : []),
+          ...(circ.rest ? [{ text: sentence(circ.rest), edit, hint: "Add findings" }] : []),
+        ]);
+        if (segs && !circ.rest) segs.push({ text: "", edit, hint: "Add findings" });
+      }
+      L.push({ kind: "labelled", arrow: true, label: "Circulation", text, ...(segs ? { segs } : {}) });
+    }
+    {
+      const gcs = gcsText(vc);
+      const dis = clean(ps.disability);
+      const grbs = has(vc.grbs) ? `GRBS: ${displayGrbs(vc.grbs)}` : "";
+      const head = [gcs ? `GCS: ${gcs}` : "", dis ? (gcs ? continuation(dis) : dis) : ""].filter(Boolean).join(", ");
+      const text = [head ? sentence(head) : "", grbs ? sentence(grbs) : ""].filter(Boolean).join(" ");
+      const shown = dis ? (gcs ? continuation(dis) : dis) : "";
+      primaryLine("Disability", "disability", text || ND, shown, Boolean(gcs || grbs));
+    }
+    {
+      const vit = [has(vc.temp) ? `Temperature: ${displayTemperature(vc.temp)}` : ""];
+      const f = clean(ps.exposure);
+      primaryLine("Exposure", "exposure", joinVitalsAndFindings(vit, f), f ? sentence(f) : "", vit.some(Boolean));
+    }
   }
 
   // Adjuvants to Primary

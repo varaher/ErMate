@@ -9,7 +9,7 @@ const t = (n: string, c: boolean) => { c ? pass++ : fail++; console.log(`${c ? "
 const view = fs.readFileSync("src/components/DischargeSummaryView.tsx", "utf8");
 
 // every tagged place has a setter
-const keys = new Set([...view.matchAll(/<D[FB] k="(\w+)"/g)].map((m) => m[1]));
+const keys = new Set([...view.matchAll(/<D[FBV] k="(\w+)"/g)].map((m) => m[1]));
 const setterBlock = view.slice(view.indexOf("const setters: Record"), view.indexOf("const set = setters[key]"));
 const missing = [...keys].filter((k) => !new RegExp(`\\b${k}: set`).test(setterBlock));
 t(`every tagged place has a setter (${keys.size} fields)${missing.length ? " missing " + missing : ""}`, keys.size >= 45 && missing.length === 0);
