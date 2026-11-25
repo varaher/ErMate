@@ -396,10 +396,26 @@ export interface DispositionDetails {
 
 export type DischargeSummaryStatus = "DRAFT" | "PREPARED" | "MANUALLY_EDITED" | "FINALIZED";
 
+/** Details recorded for a referral, LAMA or death; they write the closing paragraph of the course (25 Nov 2026). */
+export interface DischargeOutcomeDetails {
+  // Referral
+  referredTo?: string; referralReason?: string; acceptingDoctor?: string; transportMode?: string; transferSupport?: string;
+  // LAMA
+  counselledPerson?: string; counselledRelation?: string; risksExplained?: string; lamaFormSignedAt?: string; witness?: string;
+  // Death
+  timeOfDeath?: string; causeOfDeath?: string; resuscitation?: string; declaredBy?: string; bodyHandedTo?: string;
+  // MLC cases
+  policeInformed?: string;
+}
+
 export interface DischargeInfo {
   summaryStatus?: DischargeSummaryStatus;
   preparedAt?: string;
   finalizedAt?: string;
+  /** Last time the doctor saved this summary (drives the 24-hour Discharge Summaries list). */
+  savedAt?: string;
+  /** Referral / LAMA / death details. */
+  outcome?: DischargeOutcomeDetails;
   primaryDiagnosis: string;
   secondaryDiagnosis: string;
   conditionAtDischarge: string;
@@ -624,6 +640,8 @@ export interface ClinicalCase {
 
   // 24-hour soft-archive metadata (never hard-delete)
   archivedAt?: string;
+  /** Set when the case was created by Quick Discharge (paste / dictate / photo), so its summary is listed (25 Nov 2026). */
+  quickDischargeAt?: string;
   archivedBy?: string;
   archiveReason?: string;
 }

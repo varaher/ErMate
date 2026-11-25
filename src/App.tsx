@@ -3357,19 +3357,26 @@ const handleDeleteAllCases = async () => {
   };
 
   // Finalize discharge summary
-  const handleSaveDischarge = async (dischargeInfo: DischargeInfo) => {
+ const handleSaveDischarge = async (dischargeInfo: DischargeInfo) => {
     if (!showDischargeSummaryId) return;
-    const targetCase = cases.find(c => c.id === showDischargeSummaryId);
-    if (targetCase) {
-      try {
-        await persistDischargeInfo(targetCase, dischargeInfo);
-      } catch (err: any) {
-        console.error("Error updating discharge summary in Firestore:", err);
-        handleFirestoreError(err, OperationType.WRITE, "cases");
-      }
+    // A quick-discharge case may not be in the synced list yet: save it from the copy on screen (25 Nov 2026).
+    const targetCase = cases.find(c => c.id === showDischargeSummaryId)
+      || (quickDischargeCase?.id === showDischargeSummaryId ? quickDischargeCase : null);
+    if (!targetCase) {
+      triggerNotification("Save Failed", "This discharge summary could not be saved: its case was not found. Please try again.", "warning");
+      return;
+    }
+    try {
+      const saved = await persistDischargeInfo(targetCase, dischargeInfo);
+      if (quickDischargeCase?.id === saved.id) setQuickDischargeCase(saved);
+      if (!cases.some(c => c.id === saved.id)) setCases(prev => [saved, ...prev.filter(c => c.id !== saved.id)]);
+    } catch (err: any) {
+      console.error("Error updating discharge summary in Firestore:", err);
+      handleFirestoreError(err, OperationType.WRITE, "cases");
     }
   };
-
+ 
+ 
   // Trigger discharge flow for active case
   const [dischargeStartInEdit, setDischargeStartInEdit] = useState<boolean>(false);
   const handleNavigateToDischarge = (caseId: string, startInEdit: boolean = false) => {

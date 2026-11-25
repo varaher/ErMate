@@ -15,6 +15,10 @@ import { resolveDocumentedPrimarySurvey } from "../utils/primarysurveyresolve";
 import { isLmpApplicable, resolveHpi, resolvePastMedicalSurgical } from "../utils/historyFields";
 import {
   deriveInitialCourseInHospital,
+  courseHasSourceDump,
+  classifyDisposition,
+  outcomeChecklist,
+  type OutcomeDetails,
   mergeAutoCoursePreservingManualEdits,
   formatInvestigationsText,
   formatDischargeMedicationsText,
@@ -23,6 +27,7 @@ import {
   mergeDischargeMedications
 } from "../utils/dischargeSyncEngine";
 import { authenticatedFetch } from "../services/authenticatedFetch";
+import DischargeOutcomeFields, { OutcomeChecklistNote } from "./DischargeOutcomeFields";
 import { copyTextToClipboard } from "../utils/copyToClipboard";
 import ShareWhatsAppDialog from "./ShareWhatsAppDialog";
 import { dischargeToWhatsApp } from "../utils/whatsappShare";
@@ -103,6 +108,13 @@ export default function DischargeSummaryView({
       currentCase.dispositionDetails.dispositionType === "Discharge" ? "Normal Discharge" : currentCase.dispositionDetails.dispositionType
     ) : "")
   );
+  // Referral / LAMA / death details (25 Nov 2026): feed the closing paragraph of the course and the Finalise check.
+  const [outcome, setOutcome] = useState<OutcomeDetails>(() => ({ ...((currentCase.dischargeInfo as any)?.outcome || {}) }));
+  const setOutcomeField = (k: keyof OutcomeDetails, v: string) => {
+    setOutcome((prev) => ({ ...prev, [k]: v }));
+    setIsManuallyEdited(true);
+    if (summaryStatus !== "FINALIZED") setSummaryStatus("MANUALLY_EDITED");
+  };
   const [isMlc, setIsMlc] = useState(
     currentCase.dischargeInfo?.isMlc || (currentCase.patient.isMlc ? "Yes" : "No")
   );
@@ -282,8 +294,10 @@ export default function DischargeSummaryView({
     return String(course);
   };
 
+  // A course saved before 25 Nov 2026 may quote the whole pasted case sheet; rebuild it from the case instead.
+  const _savedCourse = _safeCourseInHospital(currentCase.dischargeInfo?.courseInHospital);
   const [courseInHospital, setCourseInHospital] = useState(
-    _safeCourseInHospital(currentCase.dischargeInfo?.courseInHospital) || deriveInitialCourseInHospital(currentCase)
+    (_savedCourse && !courseHasSourceDump(_savedCourse) ? _savedCourse : "") || deriveInitialCourseInHospital(currentCase)
   );
   const [investigationsResults, setInvestigationsResults] = useState(
     currentCase.dischargeInfo?.investigationsResults || formatInvestigationsText(currentCase)
@@ -314,8 +328,28 @@ export default function DischargeSummaryView({
     currentCase.dischargeInfo?.summaryStatus === "MANUALLY_EDITED"
   );
 
+  // --- Discharge Vitals & Follow-Up ---
+  const [dischargeHr, setDischargeHr] = useState(currentCase.dischargeInfo?.dischargeHr || currentCase.dispositionDetails?.dischargeVitals?.hr || "");
+  const [dischargeBp, setDischargeBp] = useState(currentCase.dischargeInfo?.dischargeBp || currentCase.dispositionDetails?.dischargeVitals?.bp || "");
+  const [dischargeRr, setDischargeRr] = useState(currentCase.dischargeInfo?.dischargeRr || currentCase.dispositionDetails?.dischargeVitals?.rr || "");
+  const [dischargeSpo2, setDischargeSpo2] = useState(currentCase.dischargeInfo?.dischargeSpo2 || currentCase.dispositionDetails?.dischargeVitals?.spo2 || "");
+  const [dischargeGcs, setDischargeGcs] = useState(currentCase.dischargeInfo?.dischargeGcs || currentCase.dispositionDetails?.dischargeVitals?.gcs || "");
+  const [dischargePainScore, setDischargePainScore] = useState(currentCase.dischargeInfo?.dischargePainScore || currentCase.dispositionDetails?.dischargeVitals?.painScore || "");
+  const [dischargeGrbs, setDischargeGrbs] = useState(currentCase.dischargeInfo?.dischargeGrbs || currentCase.dispositionDetails?.dischargeVitals?.grbs || "");
+  const [dischargeTemp, setDischargeTemp] = useState(currentCase.dischargeInfo?.dischargeTemp || currentCase.dispositionDetails?.dischargeVitals?.temp || "");
+
+  const [dischargeCondition, setDischargeCondition] = useState(
+    currentCase.dischargeInfo?.dischargeCondition || currentCase.dischargeInfo?.conditionAtDischarge || ""
+  );
+  const [followUpPlan, setFollowUpPlan] = useState(
+    currentCase.dischargeInfo?.followUpPlan || ""
+  );
   // --- Live Course-in-Hospital Synchronization (Patch C4B) ---
-  const autoCourseSnapshot = deriveInitialCourseInHospital(currentCase);
+  // The course follows the outcome as it is chosen on this screen (disposition, condition, follow-up, outcome details).
+  const autoCourseSnapshot = deriveInitialCourseInHospital({
+    ...currentCase,
+    dischargeInfo: { ...(currentCase.dischargeInfo || {}), dispositionStatus, dischargeCondition, followUpPlan, outcome } as any,
+  });
   const lastAutoCourseRef = useRef<string>(autoCourseSnapshot);
   const courseTextRef = useRef<string>(courseInHospital);
 
@@ -351,22 +385,6 @@ export default function DischargeSummaryView({
     }
   }, [autoCourseSnapshot, summaryStatus]);
 
-  // --- Discharge Vitals & Follow-Up ---
-  const [dischargeHr, setDischargeHr] = useState(currentCase.dischargeInfo?.dischargeHr || currentCase.dispositionDetails?.dischargeVitals?.hr || "");
-  const [dischargeBp, setDischargeBp] = useState(currentCase.dischargeInfo?.dischargeBp || currentCase.dispositionDetails?.dischargeVitals?.bp || "");
-  const [dischargeRr, setDischargeRr] = useState(currentCase.dischargeInfo?.dischargeRr || currentCase.dispositionDetails?.dischargeVitals?.rr || "");
-  const [dischargeSpo2, setDischargeSpo2] = useState(currentCase.dischargeInfo?.dischargeSpo2 || currentCase.dispositionDetails?.dischargeVitals?.spo2 || "");
-  const [dischargeGcs, setDischargeGcs] = useState(currentCase.dischargeInfo?.dischargeGcs || currentCase.dispositionDetails?.dischargeVitals?.gcs || "");
-  const [dischargePainScore, setDischargePainScore] = useState(currentCase.dischargeInfo?.dischargePainScore || currentCase.dispositionDetails?.dischargeVitals?.painScore || "");
-  const [dischargeGrbs, setDischargeGrbs] = useState(currentCase.dischargeInfo?.dischargeGrbs || currentCase.dispositionDetails?.dischargeVitals?.grbs || "");
-  const [dischargeTemp, setDischargeTemp] = useState(currentCase.dischargeInfo?.dischargeTemp || currentCase.dispositionDetails?.dischargeVitals?.temp || "");
-
-  const [dischargeCondition, setDischargeCondition] = useState(
-    currentCase.dischargeInfo?.dischargeCondition || currentCase.dischargeInfo?.conditionAtDischarge || ""
-  );
-  const [followUpPlan, setFollowUpPlan] = useState(
-    currentCase.dischargeInfo?.followUpPlan || ""
-  );
   const [patientInstructions, setPatientInstructions] = useState(
     currentCase.dischargeInfo?.patientInstructions || "Emergency warnings: return immediately if you experience breathing difficulty, high fever, chest tightness or severe pain."
   );
@@ -662,6 +680,7 @@ export default function DischargeSummaryView({
       // Lifecycle status tracking
       summaryStatus: effectiveStatus,
       preparedAt: currentCase.dischargeInfo?.preparedAt || nowIso,
+      savedAt: nowIso,
       finalizedAt: effectiveStatus === "FINALIZED" ? (currentCase.dischargeInfo?.finalizedAt || nowIso) : currentCase.dischargeInfo?.finalizedAt,
       caseUpdatedAfterPreparation: false,
 
@@ -729,7 +748,8 @@ export default function DischargeSummaryView({
       dischargeGrbs,
       dischargeTemp,
       dischargeCondition,
-      dispositionStatus
+      dispositionStatus,
+      outcome,
     };
   };
 
@@ -786,6 +806,13 @@ export default function DischargeSummaryView({
       return;
     }
 
+    // LAMA / death / referral details must be recorded before finalising (kept as a draft otherwise).
+    if (statusToSave === "FINALIZED") {
+      const k = classifyDisposition(dispositionStatus);
+      const chk = outcomeChecklist(k, outcome, { condition: dischargeCondition, vitalsAtExit: Boolean(String(dischargeHr || "").trim() || String(dischargeBp || "").trim()), isMlc: isMlc === "Yes", followUp: followUpPlan });
+      if (chk.required.length) { setIsEditing(true); window.scrollTo({ top: 0, behavior: "smooth" }); return; }
+    }
+
     // Determine the lifecycle status
     const effectiveStatus: DischargeSummaryStatus = statusToSave || (isManuallyEdited ? "MANUALLY_EDITED" : (summaryStatus === "FINALIZED" ? "FINALIZED" : "PREPARED"));
     setSummaryStatus(effectiveStatus);
@@ -810,6 +837,17 @@ export default function DischargeSummaryView({
       setSaveBanner(false);
     }, 5000);
   };
+
+  // Referral / LAMA / death: what must be recorded before the summary can be finalised.
+  const outcomeKind = classifyDisposition(dispositionStatus);
+  const outcomeCheck = outcomeChecklist(outcomeKind, outcome, {
+    condition: dischargeCondition,
+    vitalsAtExit: Boolean(String(dischargeHr || "").trim() || String(dischargeBp || "").trim()),
+    isMlc: isMlc === "Yes",
+    followUp: followUpPlan,
+  });
+  const finaliseBlocked = !previewMode && outcomeCheck.required.length > 0;
+  const outcomeLabel = outcomeKind === "lama" ? "LAMA" : outcomeKind === "death" ? "Death" : outcomeKind === "referral" ? "Referral" : "Discharge";
 
   return (
     <InlineEditCtx.Provider value={{ editing: inlineOn, onEdit: inlineOn ? applyInline : undefined }}>
@@ -1042,7 +1080,9 @@ export default function DischargeSummaryView({
               </button>
               <button
                 onClick={() => handleSave("FINALIZED")}
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 shadow-xs"
+                disabled={finaliseBlocked}
+                title={finaliseBlocked ? `${outcomeLabel} details needed: ${outcomeCheck.required.join(", ")}` : undefined}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 shadow-xs"
                 id="save-btn-discharge"
               >
                 <CheckCircle className="w-4 h-4" />
@@ -1057,7 +1097,20 @@ export default function DischargeSummaryView({
       {saveBanner && (
         <div className="bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900 text-emerald-700 dark:text-emerald-300 p-4 rounded-xl flex items-center gap-2 text-sm font-semibold no-print">
           <CheckCircle className="w-5 h-5 text-emerald-500 shrink-0" />
-          Discharge Summary Card permanently finalized and archived. Status changed to DISCHARGED!
+          <span>
+            {summaryStatus === "FINALIZED" ? "Discharge summary finalised and saved. The patient is marked Discharged." : "Discharge summary saved as a draft."}
+            {" "}Find it under <strong>Discharge summaries</strong> on the Dashboard and in Cases — listed there for 24 hours, and always in the case record.
+          </span>
+        </div>
+      )}
+
+      {/* Referral / LAMA / death details still to record (not printed) */}
+      {!previewMode && summaryStatus !== "FINALIZED" && (outcomeCheck.required.length > 0 || (outcomeKind !== "discharge" && outcomeCheck.advised.length > 0)) && (
+        <div className="bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900 text-slate-800 dark:text-slate-200 p-3 rounded-xl no-print" data-testid="discharge-outcome-banner">
+          <OutcomeChecklistNote title={`${outcomeLabel}: details to record`} required={outcomeCheck.required} advised={outcomeCheck.advised} />
+          {!isEditing && (
+            <button type="button" onClick={() => setIsEditing(true)} className="mt-2 px-3 py-1 rounded-lg bg-white dark:bg-slate-900 border border-red-300 dark:border-red-800 text-xs font-bold cursor-pointer">Add details</button>
+          )}
         </div>
       )}
 
@@ -1387,8 +1440,10 @@ export default function DischargeSummaryView({
                       onChange={(e) => setDischargeCondition(e.target.value)}
                       className="w-full px-2.5 py-1.5 bg-slate-50 dark:bg-slate-900 border rounded-lg font-bold"
                     >
+                      <option value="">Not documented</option>
                       <option value="STABLE">STABLE</option>
                       <option value="UNSTABLE">UNSTABLE</option>
+                      <option value="CRITICAL">CRITICAL</option>
                     </select>
                   </div>
                   <div className="space-y-1">
@@ -1406,13 +1461,24 @@ export default function DischargeSummaryView({
                       <option value="Normal Discharge">Normal Discharge</option>
                       <option value="Discharge at Request">Discharge at Request</option>
                       <option value="Discharge Against Medical Advice">Discharge Against Medical Advice (DAMA)</option>
-                      <option value="Referred">Referred (External Clinic)</option>
-                      {dispositionStatus && !["", "Normal Discharge", "Discharge at Request", "Discharge Against Medical Advice", "Referred"].includes(dispositionStatus) && (
+                      <option value="Referred">Referred to another hospital</option>
+                      <option value="Admitted">Admitted</option>
+                      <option value="Expired">Expired (Death)</option>
+                      {dispositionStatus && !["", "Normal Discharge", "Discharge at Request", "Discharge Against Medical Advice", "Referred", "Admitted", "Expired"].includes(dispositionStatus) && (
                         <option value={dispositionStatus}>{dispositionStatus}</option>
                       )}
                     </select>
                   </div>
                 </div>
+
+                <DischargeOutcomeFields
+                  kind={outcomeKind}
+                  outcome={outcome}
+                  onChange={setOutcomeField}
+                  isMlc={isMlc === "Yes"}
+                  required={outcomeCheck.required}
+                  advised={outcomeCheck.advised}
+                />
 
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
                   <div className="space-y-1">
@@ -1967,7 +2033,7 @@ export default function DischargeSummaryView({
 
   <div className="font-bold mt-4">Disposition:</div>
   {inlineOn ? (
-    <div><DF k="dispositionStatus" v={dispositionStatus === "Pending / Not Documented" ? "" : dispositionStatus} hint="Normal Discharge / Discharge at Request / Discharge Against Medical Advice / Referred" /></div>
+    <div><DF k="dispositionStatus" v={dispositionStatus === "Pending / Not Documented" ? "" : dispositionStatus} hint="Normal Discharge / Discharge at Request / Discharge Against Medical Advice / Referred / Admitted / Expired" /></div>
   ) : (!dispositionStatus || dispositionStatus === "Pending / Not Documented") ? (
     <div className="text-slate-500 italic">Pending / Not Documented</div>
   ) : (
@@ -1976,7 +2042,9 @@ export default function DischargeSummaryView({
       <div>[{dispositionStatus === "Discharge at Request" ? "x" : " "}] Discharge at Request</div>
       <div>[{dispositionStatus === "Discharge Against Medical Advice" ? "x" : " "}] Discharge Against Medical Advice</div>
       <div>[{dispositionStatus === "Referred" ? "x" : " "}] Referred</div>
-      {!["Normal Discharge", "Discharge at Request", "Discharge Against Medical Advice", "Referred"].includes(dispositionStatus) && (
+      <div>[{dispositionStatus === "Admitted" ? "x" : " "}] Admitted</div>
+      <div>[{dispositionStatus === "Expired" ? "x" : " "}] Expired</div>
+      {!["Normal Discharge", "Discharge at Request", "Discharge Against Medical Advice", "Referred", "Admitted", "Expired"].includes(dispositionStatus) && (
         <div>[x] {dispositionStatus}</div>
       )}
     </>

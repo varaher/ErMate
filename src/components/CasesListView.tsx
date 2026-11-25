@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { ConfirmModal } from "./shared/ConfirmModal";
 import { Search, Filter, Plus, Calendar, Activity, Eye, Edit, Trash2, Clock, CheckCircle, ChevronLeft, MessageSquare, FileText, Bed, X, AlertTriangle, GraduationCap } from "lucide-react";
 import { ClinicalCase } from "../types";
+import DischargeSummariesPanel from "./DischargeSummariesPanel";
 import { getTriageDisplay, triageBadgeClass, matchesTriageCode } from "../utils/triageScale";
 import { CriticalAlertBadge } from "./shared/CriticalAlertBadge";
 import { MateCaseAlert } from "./shared/MateCaseAlert";
@@ -171,6 +172,9 @@ export default function CasesListView({
           )}
         </div>
       </div>
+
+      {/* Discharge summaries prepared in the last 24 hours (25 Nov 2026) */}
+      {onNavigateToDischarge && <DischargeSummariesPanel cases={cases} onOpen={(id) => onNavigateToDischarge(id)} limit={5} />}
 
       {/* Filter and Search controls */}
       <div className="space-y-3">

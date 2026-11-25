@@ -64,6 +64,7 @@ export function createQuickDischargeCase(
   return {
     id: generateInternalCaseId(),
     displayId: extractedFields.displayId || undefined,
+    quickDischargeAt: now,
     status: "Active",
     savedTime: now,
     timeSpentMin: 0,

@@ -186,12 +186,12 @@ test("1. Adult Complete Case Integration", () => {
   } as any;
 
   const course = deriveInitialCourseInHospital(adultCase);
-  assert.ok(course.includes("The patient was evaluated in the Emergency Department with Chest pain for 2 hours."));
+  assert.ok(course.includes("The patient presented to the Emergency Department with the above-mentioned complaints."));
   assert.ok(course.includes("Pain started while climbing stairs."));
   assert.ok(course.includes("Initial assessment revealed"));
   assert.ok(course.includes("Bedside ECG demonstrated ST elevation in II, III, aVF") || course.includes("ST elevation in II, III, aVF"));
-  assert.ok(course.includes("Aspirin 300 mg oral, Clopidogrel 300 mg oral, Atorvastatin 80 mg oral"));
-  assert.ok(course.includes("Admitted under Cardiology"));
+  assert.ok(course.includes("Aspirin 300 mg oral, Clopidogrel 300 mg oral and Atorvastatin 80 mg oral"));
+  assert.ok(course.includes("admitted under Cardiology"));
   assert.ok(!course.includes("Presentation:\n"), "Must not contain Presentation heading");
   assert.ok(!course.includes("Events Leading to Presentation:\n"), "Must not contain Events heading");
 
@@ -264,7 +264,7 @@ test("2. Pediatric Complete Case Integration", () => {
 
   // 2. Course generation check
   const course = deriveInitialCourseInHospital(pedsCase);
-  assert.ok(course.includes("The child was evaluated in the Emergency Department with Fever for 2 days.") || course.includes("The child presented to the Emergency Department with Fever for 2 days."));
+  assert.ok(course.includes("The child presented to the Emergency Department with the above-mentioned complaints."));
   assert.ok(!course.includes("Events Leading to Presentation:"), "Events section must be omitted");
   assert.ok(course.includes("The Pediatric Assessment Triangle was documented as normal."));
   assert.ok(course.includes("Paracetamol 250 mg oral"));
@@ -387,7 +387,7 @@ test("7. Canonical Narrative Course Structure & Zero Filler", () => {
   const course = deriveInitialCourseInHospital(minimalCase);
   assert.ok(!course.includes("COURSE IN EMERGENCY DEPARTMENT"), "No banner title");
   assert.ok(!course.includes("Presentation:"), "No section headings");
-  assert.ok(course.includes("Headache"));
+  assert.ok(course.includes("above-mentioned complaints")); // the complaint itself is printed in its own section
   assert.ok(course.includes("discharged"));
   assert.ok(!course.includes("No investigations ordered"));
   assert.ok(!course.includes("No treatment given"));
@@ -405,7 +405,7 @@ test("8. Live Course Merge & Manual Edit Protection", () => {
 
   // Clinician manually rewrites presentation
   const clinicianEdited = baseAuto.replace(
-    "The patient was evaluated in the Emergency Department with Fever for 2 days.",
+    "The patient presented to the Emergency Department with the above-mentioned complaints.",
     "The patient was brought with a 2-day history of high-grade fever."
   );
 
@@ -508,7 +508,7 @@ test("12. Same Drug Different Context Coexistence", () => {
   const course = deriveInitialCourseInHospital(testCase);
   const rx = formatDischargeMedicationsText(testCase);
 
-  assert.ok(course.includes("Paracetamol 1 g iv"));
+  assert.ok(course.includes("Paracetamol 1 g IV"));
   assert.strictEqual(rx, "Tab Paracetamol 500 mg SOS");
 });
 
