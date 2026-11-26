@@ -11,11 +11,12 @@ import ProtocolFlagDialog, { type FlagTarget } from "./ProtocolFlagDialog";
  * Topics link to each other (differentials, pathophysiology, approach steps); "Back" returns along the trail.
  * A link to a topic that is not written yet shows "Topic coming" and never breaks.
  */
-export default function ProtocolsPanel() {
+export default function ProtocolsPanel({ initialTopicId }: { initialTopicId?: string } = {}) {
   const [query, setQuery] = useState("");
   useEffect(() => { requestTour("protocols"); }, []);
   const [flagTarget, setFlagTarget] = useState<FlagTarget | null>(null);
-  const [selectedId, setSelectedId] = useState<string>(PROTOCOL_CHAPTERS[0]?.topics[0]?.id || "");
+  // Opened from another ER Guide page (e.g. a ventilator-graphics card link): start on that topic.
+  const [selectedId, setSelectedId] = useState<string>(initialTopicId || PROTOCOL_CHAPTERS[0]?.topics[0]?.id || "");
   const [trail, setTrail] = useState<string[]>([]);
   const topRef = useRef<HTMLDivElement | null>(null);
   const [openChapters, setOpenChapters] = useState<Record<string, boolean>>(

@@ -239,7 +239,7 @@ function candidatesFor(topic: ProtocolTopic, all: ProtocolTopic[], rnd: () => nu
   // Recognise the topic from its own summary (skipped when the summary names the topic)
   const key = norm(topic.title.replace(/\(.*?\)/g, ""));
   if (topic.summary && usable(topic.summary.trim()) && key && !norm(topic.summary).includes(key)) {
-    const others = shuffle(distractorTopics(topic, all), rnd).map((o) => o.title).filter((tt) => !tooSimilar(tt, topic.title));
+    const others = shuffle(distractorTopics(topic, all), rnd).map((o) => o.title).filter((tt) => !tooSimilar(tt, topic.title) && !topicCorpus(topic).includes(norm(tt)) && !topicCorpus(topic).includes(norm(tt.replace(/\(.*?\)/g, ""))));
     add(finish({ ...base, kind: "recognise", prompt: `Which Handbook topic is this? “${topic.summary.trim()}”`, correct: topic.title, wrong: others, explanation: `Handbook › ${topic.title}: ${topic.summary.trim()}`, source: topic.title }, rnd));
   }
 

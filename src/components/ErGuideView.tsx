@@ -7,6 +7,7 @@ import {
   Camera, Upload, ClipboardList
 } from "lucide-react";
 import ProtocolsPanel from "./ProtocolsPanel";
+import VentilatorGraphicsPanel from "./VentilatorGraphicsPanel";
 import { 
   RSI_7_PS, INDUCTION_AGENTS, PARALYTIC_AGENTS, 
   SEDATION_AGENTS, VENT_STRATEGIES, CENTRAL_LINE_PROTOCOLS,
@@ -23,7 +24,7 @@ interface EMDrugsViewProps {
   isDarkMode?: boolean;
 }
 
-type EMSectionTab = "protocols" | "rsi" | "sedation" | "vent" | "bipap" | "neuro" | "lines" |"dialysis" | "mnemonics" | "pediatric" | "pocketmirror";
+type EMSectionTab = "protocols" | "rsi" | "sedation" | "vent" | "ventgfx" | "bipap" | "neuro" | "lines" |"dialysis" | "mnemonics" | "pediatric" | "pocketmirror";
 // Four groups instead of eight tabs. Same panels, same ids; only the navigation is grouped.
 const EM_GROUPS: Array<{
   id: string;
@@ -35,7 +36,7 @@ const EM_GROUPS: Array<{
   { id: "protocolgroup", label: "ErMate Handbook", icon: ClipboardList, color: "text-rose-600 bg-rose-600/10",
     tabs: [{ id: "protocols", label: "ErMate Handbook" }] },
   { id: "airway", label: "Airway & Ventilation", icon: Wind, color: "text-red-500 bg-red-500/10",
-    tabs: [{ id: "rsi", label: "RSI Protocol" }, { id: "vent", label: "Ventilator Settings" }, { id: "bipap", label: "BiPAP & CPAP" }] },
+    tabs: [{ id: "rsi", label: "RSI Protocol" }, { id: "vent", label: "Ventilator Settings" }, { id: "ventgfx", label: "Ventilator Graphics" }, { id: "bipap", label: "BiPAP & CPAP" }] },
   { id: "sedproc", label: "Sedation & Procedures", icon: Zap, color: "text-amber-500 bg-amber-500/10",
     tabs: [{ id: "sedation", label: "Procedural Sedation" }, { id: "lines", label: "Central & Art Lines" }] },
   { id: "critical", label: "Critical Care", icon: Activity, color: "text-purple-500 bg-purple-500/10",
@@ -50,6 +51,8 @@ const EM_GROUPS: Array<{
 
 export default function ErGuideView({ onBack, isDarkMode }: EMDrugsViewProps) {
   const [activeSubTab, setActiveSubTab] = useState<EMSectionTab>("protocols");
+  // A Handbook topic opened from another ER Guide page (ventilator-graphics links).
+  const [handbookTopic, setHandbookTopic] = useState<string | undefined>(undefined);
 
   // RSI Calculator State
   const [rsiWeight, setRsiWeight] = useState<string>("70");
@@ -534,7 +537,7 @@ export default function ErGuideView({ onBack, isDarkMode }: EMDrugsViewProps) {
           {/* PROTOCOLS: read-only protocol library */}
           {activeSubTab === "protocols" && (
             <div className="animate-fade-in" id="protocols-view-panel">
-              <ProtocolsPanel />
+              <ProtocolsPanel key={handbookTopic || "handbook"} initialTopicId={handbookTopic} />
             </div>
           )}
 
@@ -925,6 +928,13 @@ export default function ErGuideView({ onBack, isDarkMode }: EMDrugsViewProps) {
                 </ul>
               </div>
 
+            </div>
+          )}
+
+          {/* VENTILATOR GRAPHICS (26 Nov 2026): animated normal and abnormal curves */}
+          {activeSubTab === "ventgfx" && (
+            <div className="animate-fade-in" id="vent-graphics-panel">
+              <VentilatorGraphicsPanel onOpenTopic={(id) => { setHandbookTopic(id); setActiveSubTab("protocols"); window.scrollTo({ top: 0, behavior: "smooth" }); }} />
             </div>
           )}
 

@@ -127,6 +127,7 @@ export const TOURS: Record<TourId, CoachStep[]> = {
     { id: "chips", v: 2, feature: "protocol-chips", target: { sel: '[data-testid="protocol-chips"]' }, title: "Jump to a section", body: "Tap a chip to go straight to that part of the protocol, such as investigations or disposition." },
     { id: "investigations", v: 2, feature: "protocol-investigations", target: { sel: '[data-testid="protocol-investigations-box"]' }, title: "Investigations at a glance", body: "The tests this protocol suggests are collected in one box so you can order them quickly." },
     { id: "handbook-links", v: 3, feature: "handbook-links", title: "ErMate Handbook", body: "Each topic opens with a red First 10 minutes box, then symptoms, pathophysiology, approach, differentials, treatment and disposition. Purple tiles and Open links take you to the linked topic; Back brings you here." },
+    { id: "vent-graphics", v: 1, feature: "vent-graphics", title: "Ventilator graphics", body: "Open Airway & Ventilation › Ventilator graphics: 14 animated ventilator curves, normal and abnormal. Tap Show normal to compare, and read what you see, the common causes and what to do." },
     { id: "flag", v: 2, feature: "protocol-flag", target: { sel: '[data-testid="protocol-flag-step"]' }, title: "Flag a concern", body: "Think a step is wrong, outdated or unsafe? Tap Flag and tell us. Reviewers see it. Protocols marked Draft are still under review." },
   ],
   more: [
