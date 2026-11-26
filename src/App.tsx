@@ -57,7 +57,8 @@ const DoctorsDirectoryView = React.lazy(() => import("./components/DoctorsDirect
 const ToolsView = React.lazy(() => import("./components/ToolsView"));
 const MoreView = React.lazy(() => import("./components/MoreView"));
 import { computeAccess, trialMilestone, shouldShowTrialPopup, markTrialPopup, trialPopupText } from "./lib/access";
-import { AccessBanner, PaywallModal, TrialReminderModal } from "./components/AccessBanner";
+import { AccessBanner, PaywallModal, TrialReminderModal, ProUpgradeHost } from "./components/AccessBanner";
+import { publishAccess } from "./lib/entitlements";
 import CoachMarks from "./components/CoachMarks";
 import NewPatientEntryMenu, { type EntryMethod, isTriageCategoryPending } from "./components/NewPatientEntryMenu";
 import { validateTeamInvite } from "./services/teamInviteService";
@@ -1177,8 +1178,10 @@ useEffect(() => {
     email: profile?.email || auth.currentUser?.email,
     subscriptionTier: profile?.subscriptionTier,
     tierExpiresAt: profile?.tierExpiresAt,
-    coveredByTeam: isVerifiedTeamUser && hospitalSubscription?.active === true,
+   coveredByTeam: isVerifiedTeamUser && hospitalSubscription?.active === true,
   });
+  // Free/Pro (26 Nov 2026): share access with every screen (ER Guide, Handover, ICU, Learn, Analytics).
+  useEffect(() => { publishAccess(access); }, [access.state, access.isPro, access.daysLeft]);
  // Trial reminder pop-up (14, 7, 3, 1 days left and when it ends). Once per milestone per device.
   const [trialPopupOpen, setTrialPopupOpen] = useState<boolean>(false);
   const trialMs = trialMilestone(access);
@@ -8020,6 +8023,7 @@ const handleSignOut = async () => {
       />
            {trialMs !== null && (() => { const t = trialPopupText(trialMs, access.daysLeft, access.endsAt); return <TrialReminderModal open={trialPopupOpen} title={t.title} big={t.big} body={t.body} onLater={() => closeTrialPopup("snooze")} onPlans={() => { closeTrialPopup("seen"); navigateToTab("more"); }} />; })()}
             <PaywallModal open={showPaywall} onClose={() => setShowPaywall(false)} onActivate={() => { setShowPaywall(false); navigateToTab("more"); }} />
+             <ProUpgradeHost onPlans={() => navigateToTab("more")} />
              {showEntryMenu && (
         <NewPatientEntryMenu
           currentUserName={profile?.name || "Duty Doctor"}

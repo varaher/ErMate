@@ -9,7 +9,7 @@ t("14", trialMilestone(tr(14)) === 14); t("8", trialMilestone(tr(8)) === 14);
 t("7", trialMilestone(tr(7)) === 7); t("4", trialMilestone(tr(4)) === 7);
 t("3", trialMilestone(tr(3)) === 3); t("2", trialMilestone(tr(2)) === 3);
 t("1", trialMilestone(tr(1)) === 1);
-t("locked 0", trialMilestone({ state: "locked", daysLeft: 0 }) === 0);
+t("free (trial ended) 0", trialMilestone({ state: "free", daysLeft: 0 }) === 0);
 t("paid none", trialMilestone({ state: "paid", daysLeft: 5 }) === null);
 t("exempt none", trialMilestone({ state: "exempt", daysLeft: 0 }) === null);
 const s = mem();

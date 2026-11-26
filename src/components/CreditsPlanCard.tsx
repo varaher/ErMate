@@ -96,7 +96,7 @@ export default function CreditsPlanCard({ profile, coveredByTeam = false, teamNa
   const period = monthly.periodDays || 30;
   // Supported recharge packs: credits_refill_150, credits_refill_350, credits_refill_500. One-time payment; does not renew automatically.
   const refillKeys = Object.keys(PLAN_PRICING).filter(key => PLAN_PRICING[key].kind === "refill");
-  const label = admin ? "Administrator access" : coveredByTeam ? "Hospital-covered" : pro ? "Individual Pro" : "Free / trial";
+  const label = admin ? "Administrator access" : coveredByTeam ? "Hospital-covered" : pro ? "ErMate Pro" : "ErMate Free / trial";
   const state = exempt ? "Covered" : active ? "Active" : pro ? (Number.isFinite(expiry) ? "Expired" : "Validity unavailable") : "Not subscribed";
   const amount = admin ? "₹0" : coveredByTeam ? "Paid by hospital" : pro ? `${rupees(monthly.amountPaise)} / ${period} days` : "₹0";
   const release = () => { lock.current = false; confirming.current = false; setBusy(null); };
@@ -166,7 +166,7 @@ export default function CreditsPlanCard({ profile, coveredByTeam = false, teamNa
       if (order.amount !== PLAN_PRICING[key].amountPaise) throw new Error("Pricing has changed. Refresh ErMate before paying.");
       checkout.current = new (window as any).Razorpay({
         key: order.keyId, order_id: order.orderId, amount: order.amount, currency: order.currency,
-        name: "ErMate", description: PLAN_PRICING[key].kind === "refill" ? "ErMate AI credits recharge" : PLAN_PRICING[key].label,
+        name: "ErMate", description: PLAN_PRICING[key].kind === "refill" ? "ErMate AI credits recharge" : "ErMate Pro Starter (30 days + 300 AI credits)",
         prefill: { email: auth.currentUser?.email || profile?.email || "" },
         theme: { color: "#059669" },
         handler: () => {
@@ -196,7 +196,7 @@ export default function CreditsPlanCard({ profile, coveredByTeam = false, teamNa
           <div><p className="text-xs text-slate-400">{exempt ? "Billing" : "Plan price"}</p><p className="mt-1 font-semibold" data-testid="current-price">{amount}</p><span className="text-xs text-slate-400">{exempt ? "No personal payment required" : "Including GST"}</span></div>
           <div><p className="text-xs text-slate-400">{exempt ? "Personal credits remaining" : "Credits remaining"}</p><p data-testid="credits-balance" className={`mt-1 text-3xl font-bold ${creditLevel(balance) === "empty" ? "text-rose-300" : "text-emerald-300"}`}>{balance ?? "—"}</p></div>
         </div>
-        <p className="mt-4 text-xs text-slate-300">{admin ? "Your administrator account is exempt from AI credit charges. Buying additional credits is optional." : coveredByTeam ? `${teamName || "Your hospital"} covers your account. Personal credits are not used during coverage. Buying additional credits is optional.` : pro ? Number.isFinite(expiry) ? `${active ? "Valid until" : "Expired on"} ${formatDay(view.tierExpiresAt)}. Renew manually, or enable AutoPay below.` : "Your plan expiry is unavailable. Please check with support." : "Your free / trial balance is shown above. Choose Individual Pro to start your monthly plan."}</p>
+        <p className="mt-4 text-xs text-slate-300">{admin ? "Your administrator account is exempt from AI credit charges. Buying additional credits is optional." : coveredByTeam ? `${teamName || "Your hospital"} covers your account. Personal credits are not used during coverage. Buying additional credits is optional.` : pro ? Number.isFinite(expiry) ? `${active ? "Valid until" : "Expired on"} ${formatDay(view.tierExpiresAt)}. Renew manually, or enable AutoPay below.` : "Your plan expiry is unavailable. Please check with support." : "Manual case sheets, discharge summaries, saving, printing and your log book are free forever. You can buy AI credits any time. Choose Pro Starter for the full ER Guide, handover, ICU mode and more."}</p>
       </header>
       <div className="space-y-5 p-5 sm:p-6">
         {!verified && !exempt && (
@@ -213,11 +213,11 @@ export default function CreditsPlanCard({ profile, coveredByTeam = false, teamNa
         {balance === 0 && !exempt && <p data-testid="credits-empty-notice" className="rounded-xl bg-rose-50 p-3 text-sm text-rose-700 dark:bg-rose-950/30 dark:text-rose-300">No credits remaining. Manual entry, saving and printing use no credits.</p>}
         {balance !== null && balance > 0 && creditLevel(balance) === "low" && !exempt && <p data-testid="credits-low-notice" className="text-sm text-amber-700 dark:text-amber-300">Your credits are running low. Recharge when needed.</p>}
         <article className="rounded-2xl border-2 border-emerald-500 bg-emerald-50/50 p-4 dark:bg-emerald-950/20">
-          <div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="font-bold text-slate-900 dark:text-white">Individual Pro</h3><p className="text-sm text-slate-600 dark:text-slate-300">One monthly plan. Every feature available.</p></div><div className="text-right"><strong className="text-2xl text-emerald-700 dark:text-emerald-300">{rupees(monthly.amountPaise)}</strong><p className="text-xs text-slate-500">{period} days · GST included</p></div></div>
+          <div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="font-bold text-slate-900 dark:text-white">ErMate Pro Starter</h3><p className="text-sm text-slate-600 dark:text-slate-300">30 days of Pro + {monthly.credits} AI credits (worth {rupees(monthly.credits * 200)} at the standard recharge rate).</p></div><div className="text-right"><strong className="text-2xl text-emerald-700 dark:text-emerald-300">{rupees(monthly.amountPaise)}</strong><p className="text-xs text-slate-500">{period} days · GST included</p></div></div>
           <ul className="my-4 space-y-2 text-sm text-slate-700 dark:text-slate-200">
-            <li>✓ Monthly AI usage allowance included</li><li>✓ Voice case sheets, AI discharge, Discuss, Rounds and other AI tools use credits</li><li>✓ Manual documentation, saving and print/export use no credits</li><li>✓ Renew manually, or enable monthly AutoPay (₹350, no AI credits) after your purchase. Cancel any time. No annual commitment.</li>
+            <li>✓ {monthly.credits} AI credits included with Pro Starter</li><li>✓ Full ER Guide, Handbook and ventilator graphics</li><li>✓ Shift handover, ICU mode and rounds</li><li>✓ Simulations, analytics and log book export</li><li>✓ Continue Pro for ₹350/month with optional AutoPay. Renewals do not include AI credits. Cancel any time.</li><li className="text-slate-500 dark:text-slate-400">Manual documentation stays free, even without Pro.</li>
           </ul>
-          <button type="button" data-testid="buy-individual_pro_monthly" disabled={disabled || exempt} onClick={() => void start("individual_pro_monthly")} className={`${button} bg-emerald-600 text-white hover:bg-emerald-700`}>{busy === "individual_pro_monthly" ? "Opening checkout…" : exempt ? "Included through your access" : `${pro ? "Renew" : "Subscribe"} · ${rupees(monthly.amountPaise)}`}</button>
+          <button type="button" data-testid="buy-individual_pro_monthly" disabled={disabled || exempt} onClick={() => void start("individual_pro_monthly")} className={`${button} bg-emerald-600 text-white hover:bg-emerald-700`}>{busy === "individual_pro_monthly" ? "Opening checkout…" : exempt ? "Included through your access" : `${pro ? "Renew with Pro Starter" : "Get Pro Starter"} · ${rupees(monthly.amountPaise)}`}</button>
         </article>
         {!exempt && active && <AutoPayPanel tierExpiresAt={view.tierExpiresAt} credits={balance} loadCheckout={loadCheckout} />}
         <div>

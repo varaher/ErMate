@@ -1,9 +1,11 @@
 import type { NextFunction, Response } from "express";
 import { CREDIT_COSTS, FREE_STARTER_CREDITS, type CreditAction } from "../../src/lib/pricing.ts";
+import { GRACE_DAYS } from "../../src/lib/access.ts";
 
 /**
  * AI credit metering.
- *  - Free forever: case sheet, saving/viewing, triage, handover PDF, team, logbook (these routes are not metered).
+ *  - Not metered: case sheet, saving/viewing, triage, handover PDF, team, logbook.
+ *  - Credits work the same for ErMate Free and Pro doctors (26 Nov 2026): buying and using credits never needs Pro.
  *  - A credit is deducted ONLY after a successful AI response, never for failed / simulated / fallback replies.
  *  - Fails OPEN for care: unknown balance, lookup errors, team members and the platform admin are never blocked.
  *  - Balance is server-owned (users/{uid}.aiCredits). Nothing the client sends is ever read.
@@ -23,12 +25,15 @@ export function decideAccess(stored: unknown, cost: number): MeterDecision {
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-/** True when the stored plan is Individual Pro and its paid period has ended. Credits are NOT touched. */
+/**
+ * True when the stored plan is Individual Pro and its paid period PLUS the grace window has ended.
+ * Matches the app (access.ts GRACE_DAYS), so a doctor in grace keeps Pro on every device. Credits are NOT touched.
+ */
 export function isPlanExpired(user: any, now: number = Date.now()): boolean {
   const tier = typeof user?.subscriptionTier === "string" ? user.subscriptionTier.toLowerCase() : "";
   if (!tier.includes("individual pro")) return false;
   const exp = typeof user?.tierExpiresAt === "string" ? Date.parse(user.tierExpiresAt) : NaN;
-  return Number.isFinite(exp) && exp < now;
+  return Number.isFinite(exp) && exp + GRACE_DAYS * DAY_MS < now;
 }
 
 /**

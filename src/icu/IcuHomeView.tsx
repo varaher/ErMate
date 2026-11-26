@@ -6,6 +6,7 @@ import { ICU_SOURCES, ICU_UNIT_TYPES, type IcuAdmission, type IcuAdmissionSource
 import { admitPatient, createUnit, subscribeActiveAdmissions, subscribeUnits } from "./icuStore";
 import { icuDayNumber } from "./icuLogic";
 import { DischargePasteRow } from "../components/dischargepasterow";
+import { guardPro } from "../lib/entitlements";
 
 const IcuNoteView = React.lazy(() => import("./IcuNoteView"));
 const IcuRoundsView = React.lazy(() => import("./IcuRoundsView"));
@@ -128,7 +129,7 @@ export default function IcuHomeView({ profile, onSwitchMode, notify, onPrepareDi
           <p className="text-sm text-slate-600 dark:text-slate-400">
             Add each unit you work in, for example MICU 1, Neuro ICU or CCU, with its number of beds.
           </p>
-          <button type="button" onClick={() => setShowUnitSetup(true)} data-coach="icu-add-unit"
+          <button type="button" onClick={() => { if (guardPro("icu")) setShowUnitSetup(true); }} data-coach="icu-add-unit"
             className="min-h-[44px] px-4 rounded-xl bg-purple-600 text-white text-sm font-semibold flex items-center gap-2">
             <Plus className="w-4 h-4" aria-hidden="true" /> Add ICU unit
           </button>
@@ -165,7 +166,7 @@ export default function IcuHomeView({ profile, onSwitchMode, notify, onPrepareDi
                 {u.name}
               </button>
             ))}
-            <button type="button" onClick={() => setShowUnitSetup(true)} aria-label="Add ICU unit"
+            <button type="button" onClick={() => { if (guardPro("icu")) setShowUnitSetup(true); }} aria-label="Add ICU unit"
               className="shrink-0 min-h-[40px] px-3 rounded-full border border-dashed border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-400">
               <Plus className="w-4 h-4" aria-hidden="true" />
             </button>
@@ -178,7 +179,7 @@ export default function IcuHomeView({ profile, onSwitchMode, notify, onPrepareDi
           </div>
 
           {unit && unitAdmissions.length > 0 && (
-            <button type="button" onClick={() => setRoundsUnitId(unit.id)} data-coach="icu-start-rounds"
+            <button type="button" onClick={() => { if (guardPro("rounds")) setRoundsUnitId(unit.id); }} data-coach="icu-start-rounds"
               className="w-full min-h-[52px] rounded-2xl bg-emerald-700 hover:bg-emerald-800 text-white text-[15px] font-semibold flex items-center justify-center gap-2">
               <Stethoscope className="w-5 h-5" aria-hidden="true" /> Start rounds · {unit.name} ({unitAdmissions.length} {unitAdmissions.length === 1 ? "bed" : "beds"})
             </button>
@@ -195,7 +196,7 @@ export default function IcuHomeView({ profile, onSwitchMode, notify, onPrepareDi
                         <span className="w-11 h-11 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 font-bold flex items-center justify-center">{bed}</span>
                         <span className="text-sm text-slate-600 dark:text-slate-400">Empty</span>
                       </div>
-                      <button type="button" onClick={() => setAdmitBed(bed)}
+                      <button type="button" onClick={() => { if (guardPro("icu")) setAdmitBed(bed); }}
                         className="min-h-[40px] px-3 rounded-xl bg-emerald-600 text-white text-xs font-semibold">
                         Admit
                       </button>

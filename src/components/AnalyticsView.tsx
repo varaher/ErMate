@@ -1,4 +1,6 @@
 import React from "react";
+import { ProLockedCard } from "./AccessBanner";
+import { useAccess, requestProUpgrade } from "../lib/entitlements";
 import { 
   TrendingUp, Activity, BarChart3, Users, CheckCircle2, AlertTriangle, PieChart as PieIcon, ShieldAlert,
   ChevronLeft
@@ -16,7 +18,14 @@ interface AnalyticsViewProps {
   isDarkMode?: boolean;
 }
 
-export default function AnalyticsView({ profile, cases, onNavigateToTab, isDarkMode = false }: AnalyticsViewProps) {
+/** Free/Pro (26 Nov 2026): Analytics is Pro. Free doctors see the upgrade card. */
+export default function AnalyticsView(props: AnalyticsViewProps) {
+  const { isPro } = useAccess();
+  if (!isPro) return <ProLockedCard feature="analytics" onUpgrade={() => requestProUpgrade("analytics")} />;
+  return <AnalyticsViewInner {...props} />;
+}
+
+function AnalyticsViewInner({ profile, cases, onNavigateToTab, isDarkMode = false }: AnalyticsViewProps) {
   // Parse dates and count active vs discharged for "ER Patient Flow Trends"
   const parseDateOpened = (dateStr: string) => {
     if (!dateStr) return "Unknown";

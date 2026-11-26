@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { guardPro } from "../lib/entitlements";
 import { Users, Crown, Link2, Lock, ChevronRight } from "lucide-react";
 import HospitalTeamFinder from "./HospitalTeamFinder";
 
@@ -36,7 +37,7 @@ export default function TeamStartCard({ onCreate, onJoin, role }: { onCreate: ()
             <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">Create your team, then share the invite link with your colleagues.</p>
           </div>
         </div>
-        <button type="button" onClick={onCreate} className="w-full min-h-[48px] rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold flex items-center justify-center gap-2">
+        <button type="button" onClick={() => { if (guardPro("teams-create")) onCreate(); }} className="w-full min-h-[48px] rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold flex items-center justify-center gap-2">
           Create team <ChevronRight className="w-4 h-4" />
         </button>
       </div>

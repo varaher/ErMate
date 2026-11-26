@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { ProLockedCard } from "./AccessBanner";
+import { useAccess, requestProUpgrade, hasRecentHandover } from "../lib/entitlements";
 import { CriticalAlertBadge } from "./shared/CriticalAlertBadge";
 import { computeCriticalAlerts } from "../utils/criticalAlerts";
 import ShareWhatsAppDialog from "./ShareWhatsAppDialog";
@@ -398,7 +400,18 @@ function getHandoverSheetRef() {
   return doc(db, "handover_sheets", auth.currentUser?.uid || "__signed_out__");
 }
 
-export default function HandoverView({ 
+/**
+ * Free/Pro (26 Nov 2026): Handover is Pro. For care continuity a doctor whose Pro has ended can still
+ * open Handover when a handover was sent or received in the last 24 hours, to finish or acknowledge it.
+ */
+export default function HandoverView(props: HandoverViewProps) {
+  const { isPro } = useAccess();
+  const recent = hasRecentHandover((props.handovers || []).map((h) => h?.timestamp));
+  if (!isPro && !recent) return <ProLockedCard feature="handover" onUpgrade={() => requestProUpgrade("handover")} />;
+  return <HandoverViewInner {...props} />;
+}
+
+function HandoverViewInner({ 
   profile, 
   cases, 
   handovers, 
@@ -3072,7 +3085,7 @@ function extractLatestVitalsWithTime(
               <span className="text-lg leading-none">🛡️</span>
               <div>
                 <div className="font-extrabold text-[11.5px] uppercase tracking-wide text-emerald-800 dark:text-emerald-300">
-                  Automatic de-identification active
+                  DPDP Act 2023 Compliant De-identification Active
                 </div>
                 <div className="text-[11px] text-emerald-700 dark:text-emerald-200 mt-0.5 font-sans">
                   Stripped <strong>{phiShieldInfo.count} patient identifier(s)</strong> ({phiShieldInfo.details?.names || 0} names, {phiShieldInfo.details?.ids || 0} hospital IDs, {phiShieldInfo.details?.dates || 0} dates) on Indian Cloud Run server before AI processing.

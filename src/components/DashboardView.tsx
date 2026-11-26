@@ -20,6 +20,7 @@ import TriageQueueCard from "./TriageQueueCard";
 import { DischargePasteRow } from "./dischargepasterow";
 import DischargeSummariesPanel from "./DischargeSummariesPanel";
 import DrugDilutionsView from "./DrugDilutionsView";
+import { guardPro } from "../lib/entitlements";
 import { getCasePendingStatus } from "../utils/caseHelper";
 import { getCaseCreationTimestamp, isCaseEligibleFor24hArchive } from "../utils/caseLifecycle";
 import { triggerPrintWithTip } from "../utils/printWithTip";
@@ -1281,7 +1282,7 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
           </button>
           <button
             type="button"
-            onClick={() => { if (!isOnShift) setShowShiftCheckIn(true); else onStartHandoverChat(); }}
+            onClick={() => { if (!guardPro("handover")) return; if (!isOnShift) setShowShiftCheckIn(true); else onStartHandoverChat(); }}
             className="w-full flex items-center gap-3 px-3.5 py-3 text-left cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/60 transition-colors border-t border-slate-100 dark:border-slate-800"
           >
             <div className="w-9 h-9 rounded-xl bg-indigo-100 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 flex items-center justify-center shrink-0">

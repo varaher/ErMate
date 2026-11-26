@@ -8,6 +8,9 @@ import {
 } from "lucide-react";
 import ProtocolsPanel from "./ProtocolsPanel";
 import VentilatorGraphicsPanel from "./VentilatorGraphicsPanel";
+import { ProLockedCard } from "./AccessBanner";
+import { useAccess, getAccess, requestProUpgrade } from "../lib/entitlements";
+import { canOpenGuideTab, type ProFeature } from "../lib/access";
 import { 
   RSI_7_PS, INDUCTION_AGENTS, PARALYTIC_AGENTS, 
   SEDATION_AGENTS, VENT_STRATEGIES, CENTRAL_LINE_PROTOCOLS,
@@ -50,7 +53,12 @@ const EM_GROUPS: Array<{
 ];
 
 export default function ErGuideView({ onBack, isDarkMode }: EMDrugsViewProps) {
-  const [activeSubTab, setActiveSubTab] = useState<EMSectionTab>("protocols");
+  // Free/Pro (26 Nov 2026): free doctors open on a free tab; Pro tabs show the upgrade card.
+  const [activeSubTab, setActiveSubTab] = useState<EMSectionTab>(() => (getAccess().isPro ? "protocols" : "rsi"));
+  const access = useAccess();
+  const guideLocked = !canOpenGuideTab(access, activeSubTab);
+  const lockedFeature: ProFeature = activeSubTab === "ventgfx" ? "vent-graphics" : activeSubTab === "protocols" ? "handbook" : "er-guide-full";
+  const shownSubTab: EMSectionTab | "__locked" = guideLocked ? "__locked" : activeSubTab;
   // A Handbook topic opened from another ER Guide page (ventilator-graphics links).
   const [handbookTopic, setHandbookTopic] = useState<string | undefined>(undefined);
 
@@ -527,22 +535,24 @@ export default function ErGuideView({ onBack, isDarkMode }: EMDrugsViewProps) {
                         : "bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:border-emerald-500"
                     }`}
                   >
-                    {t.label}
+                    {t.label}{!canOpenGuideTab(access, t.id) && <span className="ml-1 text-[10px] font-extrabold uppercase text-purple-500" aria-label="Pro">Pro</span>}
                   </button>
                 ))}
               </div>
             );
           })()}
 
+          {guideLocked && <ProLockedCard feature={lockedFeature} onUpgrade={() => requestProUpgrade(lockedFeature)} />}
+
           {/* PROTOCOLS: read-only protocol library */}
-          {activeSubTab === "protocols" && (
+          {shownSubTab === "protocols" && (
             <div className="animate-fade-in" id="protocols-view-panel">
               <ProtocolsPanel key={handbookTopic || "handbook"} initialTopicId={handbookTopic} />
             </div>
           )}
 
           {/* TAB 1: RAPID SEQUENCE INTUBATION */}
-          {activeSubTab === "rsi" && (
+          {shownSubTab === "rsi" && (
             <div className="space-y-6 animate-fade-in" id="rsi-view-panel">
               
               {/* Weight-Based RSI Calculator */}
@@ -761,7 +771,7 @@ export default function ErGuideView({ onBack, isDarkMode }: EMDrugsViewProps) {
           )}
 
           {/* TAB 2: PROCEDURAL SEDATION */}
-          {activeSubTab === "sedation" && (
+          {shownSubTab === "sedation" && (
             <div className="space-y-6 animate-fade-in" id="sedation-view-panel">
               
               {/* Interactive Sedation Calculator */}
@@ -932,14 +942,14 @@ export default function ErGuideView({ onBack, isDarkMode }: EMDrugsViewProps) {
           )}
 
           {/* VENTILATOR GRAPHICS (26 Nov 2026): animated normal and abnormal curves */}
-          {activeSubTab === "ventgfx" && (
+          {shownSubTab === "ventgfx" && (
             <div className="animate-fade-in" id="vent-graphics-panel">
               <VentilatorGraphicsPanel onOpenTopic={(id) => { setHandbookTopic(id); setActiveSubTab("protocols"); window.scrollTo({ top: 0, behavior: "smooth" }); }} />
             </div>
           )}
 
           {/* TAB 3: VENTILATOR SETTINGS */}
-          {activeSubTab === "vent" && (
+          {shownSubTab === "vent" && (
             <div className="space-y-6 animate-fade-in" id="vent-view-panel">
               
               {/* Predicted Tidal Volume & IBW Calculator */}
@@ -1131,7 +1141,7 @@ export default function ErGuideView({ onBack, isDarkMode }: EMDrugsViewProps) {
           )}
 
           {/* TAB 4: BIPAP & CPAP */}
-          {activeSubTab === "bipap" && (
+          {shownSubTab === "bipap" && (
             <div className="space-y-6 animate-fade-in" id="bipap-view-panel">
               
               {/* CPAP and BiPAP Side by Side */}
@@ -1231,7 +1241,7 @@ export default function ErGuideView({ onBack, isDarkMode }: EMDrugsViewProps) {
           )}
 
           {/* TAB 5: NEUROPROTECTIVE CARE */}
-          {activeSubTab === "neuro" && (
+          {shownSubTab === "neuro" && (
             <div className="space-y-6 animate-fade-in" id="neuro-view-panel">
               
               <div className="bg-white dark:bg-slate-950/40 border border-slate-150 dark:border-slate-850 rounded-2xl p-5 space-y-4 shadow-xs">
@@ -1278,7 +1288,7 @@ export default function ErGuideView({ onBack, isDarkMode }: EMDrugsViewProps) {
           )}
 
           {/* TAB 6: CENTRAL & ARTERIAL LINES */}
-          {activeSubTab === "lines" && (
+          {shownSubTab === "lines" && (
             <div className="space-y-6 animate-fade-in" id="lines-view-panel">
               
               {/* Central Lines Section */}
@@ -1427,7 +1437,7 @@ export default function ErGuideView({ onBack, isDarkMode }: EMDrugsViewProps) {
           )}
 
           {/* TAB 7: EMERGENCY DIALYSIS */}
-          {activeSubTab === "dialysis" && (
+          {shownSubTab === "dialysis" && (
             <div className="space-y-6 animate-fade-in" id="dialysis-view-panel">
               <div className="bg-white dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-sm space-y-4">
                 <div className="flex items-center gap-3 border-b border-slate-100 dark:border-slate-850 pb-4">
@@ -1527,20 +1537,20 @@ export default function ErGuideView({ onBack, isDarkMode }: EMDrugsViewProps) {
               </div>
             </div>
           )}
-                    {activeSubTab === "pediatric" && (
+                    {shownSubTab === "pediatric" && (
             <div className="animate-fade-in" id="pediatric-view-panel">
               <PediatricDrugCalculatorView onBack={() => setActiveSubTab("protocols")} />
             </div>
           )}
 
-          {activeSubTab === "pocketmirror" && (
+          {shownSubTab === "pocketmirror" && (
             <div className="animate-fade-in" id="pocketmirror-view-panel">
               <PocketMirrorView onBack={() => setActiveSubTab("protocols")} />
             </div>
           )}
 
           {/* TAB 8: CLINICAL MNEMONICS */}
-          {activeSubTab === "mnemonics" && (
+          {shownSubTab === "mnemonics" && (
             <div className="space-y-6 animate-fade-in" id="mnemonics-view-panel">
               {/* Toolbar */}
               <div className="bg-white dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-sm space-y-4">

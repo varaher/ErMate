@@ -12,6 +12,8 @@ import TriviaView from "./TriviaView";
 import GoogleClassroomModal from "./GoogleClassroomModal";
 import ChatMarkdown from "./shared/ChatMarkdown";
 import ErGuideView from "./ErGuideView";
+import { ProLockedCard } from "./AccessBanner";
+import { useAccess, requestProUpgrade } from "../lib/entitlements";
 
 interface LearnViewProps {
   onNavigateToTab?: (tabId: string) => void;
@@ -196,6 +198,7 @@ const LEARN_NAV: Array<{ id: LearnTab; label: string; short: string; icon: any }
 
 export default function LearnView({ onNavigateToTab, isDarkMode = false }: LearnViewProps) {
   const [activeTab, setActiveTab] = useState<LearnTab>("erguide");
+  const simsAllowed = useAccess().isPro; // Free/Pro (26 Nov 2026): simulations are Pro
   const [isClassroomModalOpen, setIsClassroomModalOpen] = useState(false);
 
   // Clinical memories log state
@@ -351,7 +354,7 @@ ${m.physicianReflections || "No reflections logged."}
         {/* Sub-view: Branched clinical simulations */}
         {activeTab === "simulations" && (
           <div className="animate-fade-in space-y-4">
-            <SimulationsView />
+            {simsAllowed ? <SimulationsView /> : <ProLockedCard feature="simulations" onUpgrade={() => requestProUpgrade("simulations")} />}
           </div>
         )}
 
