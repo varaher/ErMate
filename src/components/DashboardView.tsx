@@ -9,7 +9,7 @@ import {
   Calendar, Users, FileText, Heart, ShieldAlert, ChevronRight, Calculator,
   Mic, AlertTriangle, CheckCircle, Edit, Copy, Download, Check, Eye, ChevronDown, ChevronUp, Briefcase,
   Camera, Building, Trash2, UserPlus, ShieldCheck, Share2, Lightbulb, BookOpen, MessageSquare, GraduationCap,
-  Bed, X
+  Bed, X, Syringe
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { ClinicalCase, UserProfile, HandoverRecord, TeamMember, isPendingApprovalStatus, isActiveMembershipStatus } from "../types";
@@ -19,6 +19,7 @@ import { getTriageDisplay, triageBadgeClass } from "../utils/triageScale";
 import TriageQueueCard from "./TriageQueueCard";
 import { DischargePasteRow } from "./dischargepasterow";
 import DischargeSummariesPanel from "./DischargeSummariesPanel";
+import DrugDilutionsView from "./DrugDilutionsView";
 import { getCasePendingStatus } from "../utils/caseHelper";
 import { getCaseCreationTimestamp, isCaseEligibleFor24hArchive } from "../utils/caseLifecycle";
 import { triggerPrintWithTip } from "../utils/printWithTip";
@@ -164,6 +165,7 @@ export default function DashboardView({
   const CURRENT_LIST_WINDOW_MS = 24 * 60 * 60 * 1000;
   // Re-evaluate every minute so an incomplete case leaves the list the moment its 24h passes.
   const [, setListClockTick] = useState(0);
+  const [showDilutions, setShowDilutions] = useState(false); // Drug dilutions (26 Nov 2026)
   useEffect(() => {
     const t = setInterval(() => setListClockTick((n) => n + 1), 60_000);
     return () => clearInterval(t);
@@ -1250,6 +1252,21 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
           </button>
           <button
             type="button"
+            data-coach="drug-dilutions"
+            onClick={() => setShowDilutions(true)}
+            className="w-full flex items-center gap-3 px-3.5 py-3 text-left cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/60 transition-colors border-t border-slate-100 dark:border-slate-800"
+          >
+            <div className="w-9 h-9 rounded-xl bg-rose-100 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 flex items-center justify-center shrink-0">
+              <Syringe className="w-5 h-5" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <span className="block text-[15px] font-semibold text-slate-900 dark:text-white">Drug dilutions</span>
+              <span className="block text-[12.5px] text-slate-500 dark:text-slate-400">Infusion strength and pump rate, adult and paediatric</span>
+            </div>
+            <ChevronRight className="w-4 h-4 text-slate-300 dark:text-slate-600 shrink-0" />
+          </button>
+          <button
+            type="button"
             onClick={() => onOpenPediatricCalculator()}
             className="w-full flex items-center gap-3 px-3.5 py-3 text-left cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/60 transition-colors border-t border-slate-100 dark:border-slate-800"
           >
@@ -1286,6 +1303,8 @@ Follow up with General OPD / Primary care physician within 3 to 5 days, or soone
           )}
         </div>
       </div>
+
+      {showDilutions && <DrugDilutionsView onClose={() => setShowDilutions(false)} />}
 
       {/* Discharge summaries prepared in the last 24 hours (25 Nov 2026) */}
       <DischargeSummariesPanel cases={cases || []} onOpen={(id) => onNavigateToDischarge(id)} limit={3} hideWhenEmpty dataCoach="discharge-list" />
